@@ -1,0 +1,23 @@
+{
+  "name": "4lsg-api",
+  "version": "1.0.0",
+  "description": "4lsg.api",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "nodejs",
+    "express",
+    "mysql",
+    "restapi"
+  ],
+  "author": "YSR",
+  "license": "ISC",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "mysql": "^2.18.1",
+    "node-fetch": "^2.7.0"
+  }
+}
