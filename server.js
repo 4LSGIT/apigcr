@@ -15,10 +15,10 @@ app.use(express.urlencoded({ extended: true }));
 
 // MySQL Connection Configuration
 const db = mysql.createConnection({
-  host: process.env.host,
-  user: process.env.user,
-  password: process.env.password,
-  database: process.env.database
+  host: "db4free.net",
+  user: "test4lsg_admin2",
+  password: "4lsgPassword",
+  database: "test4lsg2"
 });
 
 db.connect((err) => {
