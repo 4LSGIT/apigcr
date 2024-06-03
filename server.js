@@ -37,13 +37,14 @@ app.get('/', (req, res) => {
 // Route to handle user authentication and query processing
 app.get("/db", (req, res) => {
   const { username, password, query } = req.query;
-
+console.log(req)
   // Query to check user authorization
   const authQuery = `SELECT user_auth FROM users WHERE username='${username}' AND password='${password}'`;
+  console.log(authQuery)
 
   db.query(authQuery, (err, result) => {
     if (err) {
-      console.log(err)
+      console.log("error is: "+err)
       res.status(500).json({ error: "Error executing authorization query" });
     } else {
       console.log(result)
