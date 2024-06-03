@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
-const mysql = require("mysql");
+//const mysql = require("mysql");
+const mysql = require("mysql2");
 const fetch = require("node-fetch");
 
 const app = express();
@@ -14,12 +15,22 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // MySQL Connection Configuration
-const db = mysql.createConnection({
+/*const db = mysql.createConnection({
   host: "35.206.107.55",
   user: "uai6bp5cbi4ij",
   password: "Ibhn1$$m3b7*",
   database: "dbnwqdrfyz9vmq"
+});*/
+const db = mysql.createConnection({
+  host: "35.206.107.55",
+  user: "uai6bp5cbi4ij",
+  password: "abcd1234@#$%",
+  database: "dbnwqdrfyz9vmq",
+  authPlugins: {
+    mysql_clear_password: () => () => Buffer.from("abcd1234@#$%")
+  }
 });
+
 
 db.connect((err) => {
   if (err) {
