@@ -38,8 +38,10 @@ app.get("/db", (req, res) => {
 
   db.query(authQuery, (err, result) => {
     if (err) {
+      console.log(err)
       res.status(500).json({ error: "Error executing authorization query" });
     } else {
+      console.log(result)
       if (result.length > 0 && result[0].user_auth.startsWith("authorized")) {
         // User is authorized, proceed with the main query
         db.query(query, (err, result) => {
