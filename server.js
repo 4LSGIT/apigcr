@@ -29,6 +29,11 @@ db.connect((err) => {
   console.log("Connected to MySQL database as ID " + db.threadId);
 });
 
+
+app.get('/', (req, res) => {
+  res.send('Welcome');
+});
+
 // Route to handle user authentication and query processing
 app.get("/db", (req, res) => {
   const { username, password, query } = req.query;
