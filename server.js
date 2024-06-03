@@ -27,8 +27,9 @@ const db = mysql.createConnection({
   password: "abcd1234@#$%",
   database: "dbnwqdrfyz9vmq",
   authPlugins: {
-    mysql_clear_password: () => () => Buffer.from("abcd1234@#$%")
-  }
+  mysql_clear_password: () => () => Buffer.from("abcd1234@#$%")
+}
+
 });
 
 
