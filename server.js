@@ -15,10 +15,10 @@ app.use(express.urlencoded({ extended: true }));
 
 // MySQL Connection Configuration
 const db = mysql.createConnection({
-  host: "db4free.net",
-  user: "test4lsg_admin2",
-  password: "4lsgPassword",
-  database: "test4lsg2"
+  host: process.env.host,
+  user: process.env.user,
+  password: process.env.password,
+  database: process.env.database
 });
 
 db.connect((err) => {
@@ -34,13 +34,13 @@ app.get("/db", (req, res) => {
   const { username, password, query } = req.query;
 
   // Query to check user authorization
-  const authQuery = `SELECT user_auth FROM users WHERE user_name='${username}' AND user_password='${password}'`;
+  const authQuery = `SELECT user_auth FROM users WHERE username='${username}' AND password='${password}'`;
 
   db.query(authQuery, (err, result) => {
     if (err) {
       res.status(500).json({ error: "Error executing authorization query" });
     } else {
-      if (result.length > 0 && result[0].user_auth === "authorized") {
+      if (result.length > 0 && result[0].user_auth.startsWith("authorized")) {
         // User is authorized, proceed with the main query
         db.query(query, (err, result) => {
           if (err) {
