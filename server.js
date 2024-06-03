@@ -70,6 +70,22 @@ app.get('/delay', (req, res) => {
 });
 
 
+
+app.get('/myip', async (req, res) => {
+    try {
+        const response = await fetch('https://curlmyip.org');
+        const data = await response.text();
+        const ipAddress = data.trim(); // Extract IP address from the response
+
+        res.json({ ip: ipAddress });
+    } catch (error) {
+        console.error('Error fetching IP address:', error);
+        res.status(500).json({ error: 'Failed to fetch IP address' });
+    }
+});
+
+
+
 // Set port and start the server
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
