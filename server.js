@@ -33,12 +33,13 @@ db.connect((err) => {
 
 
 app.get('/', (req, res) => {
-  res.send('Welcome');
+  res.send('Welcome everyone');
 });
 
 // Route to handle user authentication and query processing
 app.get("/db", (req, res) => {
   const { username, password, query } = req.query;
+  
   // Query to check user authorization
   const authQuery = `SELECT user_auth FROM users WHERE username='${username}' AND password='${password}'`;
   console.log(authQuery)
