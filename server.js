@@ -1,7 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-//const mysql = require("mysql");
-const mysql = require("mysql2");
+const mysql = require("mysql");
 const fetch = require("node-fetch");
 
 const app = express();
@@ -15,20 +14,11 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // MySQL Connection Configuration
-/*const db = mysql.createConnection({
-  host: "35.206.107.55",
-  user: "uai6bp5cbi4ij",
-  password: "Ibhn1$$m3b7*",
-  database: "dbnwqdrfyz9vmq"
-});*/
 const db = mysql.createConnection({
-  host: "35.206.107.55",
-  user: "uai6bp5cbi4ij",
-  password: "abcd1234@#$%",
-  database: "dbnwqdrfyz9vmq",
-  authPlugins: {
-    mysql_clear_password: () => () => Buffer.from("abcd1234@#$%")
-  }
+  host: process.env.host,
+  user: process.env.user,
+  password: process.env.password,
+  database: process.env.database
 });
 
 
@@ -49,17 +39,14 @@ app.get('/', (req, res) => {
 // Route to handle user authentication and query processing
 app.get("/db", (req, res) => {
   const { username, password, query } = req.query;
-console.log(req)
   // Query to check user authorization
   const authQuery = `SELECT user_auth FROM users WHERE username='${username}' AND password='${password}'`;
   console.log(authQuery)
 
   db.query(authQuery, (err, result) => {
     if (err) {
-      console.log("error is: "+err)
       res.status(500).json({ error: "Error executing authorization query" });
     } else {
-      console.log(result)
       if (result.length > 0 && result[0].user_auth.startsWith("authorized")) {
         // User is authorized, proceed with the main query
         db.query(query, (err, result) => {
