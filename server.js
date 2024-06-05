@@ -33,7 +33,7 @@ db.connect((err) => {
 
 
 app.get('/', (req, res) => {
-  res.send('Welcome everyone');
+  res.send('Welcome here');
 });
 
 // Route to handle user authentication and query processing
@@ -42,10 +42,11 @@ app.get("/db", (req, res) => {
   
   // Query to check user authorization
   const authQuery = `SELECT user_auth FROM users WHERE username='${username}' AND password='${password}'`;
-  console.log(authQuery)
+  console.log("authQuery: "+authQuery)
 
   db.query(authQuery, (err, result) => {
     if (err) {
+      console.log(err)
       res.status(500).json({ error: "Error executing authorization query" });
     } else {
       if (result.length > 0 && result[0].user_auth.startsWith("authorized")) {
