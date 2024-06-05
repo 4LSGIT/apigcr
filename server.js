@@ -14,56 +14,6 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // MySQL Connection Configuration
-/*const db = mysql.createConnection({
-  host: process.env.host,
-  user: process.env.user,
-  password: process.env.password,
-  database: process.env.database
-});
-
-
-
-db.connect((err) => {
-  if (err) {
-    console.error("Error connecting to MySQL database: " + err.stack);
-    return;
-  }
-  console.log("Connected to MySQL database as ID " + db.threadId);
-});
-
-
-app.get('/', (req, res) => {
-  res.send('The 4LSG API lives here.');
-});
-
-// Route to handle user authentication and query processing
-app.get("/db", (req, res) => {
-  const { username, password, query } = req.query;
-  
-  // Query to check user authorization
-  const authQuery = `SELECT user_auth FROM users WHERE username='${username}' AND password='${password}'`;
-  console.log("authQuery: "+authQuery)
-
-  db.query(authQuery, (err, result) => {
-    if (err) {
-      console.log(err)
-      res.status(500).json({ error: "Error executing authorization query" });
-    } else {
-      if (result.length > 0 && result[0].user_auth.startsWith("authorized")) {
-        // User is authorized, proceed with the main query
-        db.query(query, (err, result) => {
-          if (err) {
-            res.status(500).json({ error: "Error executing main query" });
-          } else {
-            res.json({ data: result });
-          }
-        });
-      } else {
-        res.status(401).json({ error: "Unauthorized access" });
-      }
-    }
-  });
-});*/
 const db = mysql.createPool({
   connectionLimit: 10, // Maximum number of connections in the pool
   host: process.env.host,
@@ -84,10 +34,10 @@ app.get('/', (req, res) => {
 // Route to handle user authentication and query processing
 app.get("/db", (req, res) => {
   const { username, password, query } = req.query;
-  
+
   // Query to check user authorization
-  const authQuery = `SELECT user_auth FROM users WHERE username='${username}' AND password='${password}'`;
-  console.log("authQuery: "+authQuery)
+  const authQuery = "SELECT user_auth FROM users WHERE username = ? AND password = ?";
+  const authParams = [username, password];
 
   db.getConnection((err, connection) => {
     if (err) {
@@ -96,11 +46,11 @@ app.get("/db", (req, res) => {
       return;
     }
 
-    connection.query(authQuery, (err, result) => {
+    connection.query(authQuery, authParams, (err, result) => {
       connection.release(); // Release the connection back to the pool
 
       if (err) {
-        console.log(err)
+        console.log(err);
         res.status(500).json({ error: "Error executing authorization query" });
       } else {
         if (result.length > 0 && result[0].user_auth.startsWith("authorized")) {
