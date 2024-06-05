@@ -33,7 +33,7 @@ db.connect((err) => {
 
 
 app.get('/', (req, res) => {
-  res.send('Welcome here');
+  res.send('The 4LSG API lives here.');
 });
 
 // Route to handle user authentication and query processing
