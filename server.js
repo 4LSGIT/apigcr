@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const mysql = require("mysql2");
+const mysql = require("mysql");
 const fetch = require("node-fetch");
 
 const app = express();
@@ -29,10 +29,11 @@ db.on("error", (err) => {
 });
 
 app.get('/', (req, res) => {
-  res.send('The 4LSG API lives here.');
+  res.send('Where does the 4LSG API lives?');
 });
 
-// Route to handle db authentication and query processing
+// Route to handle user authentication and query processing
+// Route to handle user authentication and query processing
 app.get("/db", (req, res) => {
   const { username, password, query } = req.query;
   let queries = query.split(";");
@@ -56,32 +57,37 @@ app.get("/db", (req, res) => {
         res.status(500).json({ error: "Error executing authorization query" });
       } else {
         if (result.length > 0 && result[0].user_auth.startsWith("authorized")) {
-          // User is authorized, proceed with the main queries
-          let results = [];
+          // User is authorized, proceed with the main query
+          db.getConnection((err, connection) => {
+            if (err) {
+              console.error("Error getting MySQL connection: " + err.stack);
+              res.status(500).json({ error: "Error getting MySQL connection" });
+              return;
+            }
 
-          // Execute each query separately
-          queries.forEach((query) => {
-            db.getConnection((err, connection) => {
-              if (err) {
-                console.error("Error getting MySQL connection: " + err.stack);
-                res.status(500).json({ error: "Error getting MySQL connection" });
-                return;
-              }
+            let queryResults = {}; // Object to store the results of all queries
 
-              connection.query(query, (err, result) => {
-                connection.release(); // Release the connection back to the pool
-
-                if (err) {
-                  res.status(500).json({ error: "Error executing query: " + query });
-                } else {
-                  results.push(result);
-                  if (results.length === queries.length) {
-                    // All queries have been executed, return the results
-                    res.json({ data: results });
+            // Execute each query in the order provided
+            queries.forEach((query, index) => {
+              if (query.trim() !== "") {
+                connection.query(query, (err, result) => {
+                  if (err) {
+                    queryResults[`query${index + 1}`] = { error: err.message }; // Store the error message
+                  } else {
+                    queryResults[`query${index + 1}`] = result; // Store the query result
                   }
-                }
-              });
+
+                  // Check if all queries have been executed
+                  if (Object.keys(queryResults).length === queries.length) {
+                    res.json({ data: queryResults }); // Return the results object
+                  }
+                });
+              } else {
+                queryResults[`query${index + 1}`] = { error: "Empty query" }; // Store the empty query error
+              }
             });
+
+            connection.release(); // Release the connection back to the pool
           });
         } else {
           res.status(401).json({ error: "Unauthorized access" });
@@ -90,6 +96,7 @@ app.get("/db", (req, res) => {
     });
   });
 });
+
 
 
 app.get('/delay', (req, res) => {
