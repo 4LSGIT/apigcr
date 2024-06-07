@@ -32,9 +32,10 @@ app.get('/', (req, res) => {
   res.send('The 4LSG API lives here.');
 });
 
-// Route to handle user authentication and query processing
+// Route to handle db authentication and query processing
 app.get("/db", (req, res) => {
   const { username, password, query } = req.query;
+  let queries = query.split(";");
 
   // Query to check user authorization
   const authQuery = "SELECT user_auth FROM users WHERE username = ? AND password = ?";
@@ -55,22 +56,31 @@ app.get("/db", (req, res) => {
         res.status(500).json({ error: "Error executing authorization query" });
       } else {
         if (result.length > 0 && result[0].user_auth.startsWith("authorized")) {
-          // User is authorized, proceed with the main query
-          db.getConnection((err, connection) => {
-            if (err) {
-              console.error("Error getting MySQL connection: " + err.stack);
-              res.status(500).json({ error: "Error getting MySQL connection" });
-              return;
-            }
+          // User is authorized, proceed with the main queries
+          let results = [];
 
-            connection.query(query, (err, result) => {
-              connection.release(); // Release the connection back to the pool
-
+          // Execute each query separately
+          queries.forEach((query) => {
+            db.getConnection((err, connection) => {
               if (err) {
-                res.status(500).json({ error: "Error executing main query" });
-              } else {
-                res.json({ data: result });
+                console.error("Error getting MySQL connection: " + err.stack);
+                res.status(500).json({ error: "Error getting MySQL connection" });
+                return;
               }
+
+              connection.query(query, (err, result) => {
+                connection.release(); // Release the connection back to the pool
+
+                if (err) {
+                  res.status(500).json({ error: "Error executing query: " + query });
+                } else {
+                  results.push(result);
+                  if (results.length === queries.length) {
+                    // All queries have been executed, return the results
+                    res.json({ data: results });
+                  }
+                }
+              });
             });
           });
         } else {
