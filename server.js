@@ -36,7 +36,8 @@ app.get('/', (req, res) => {
 // Route to handle user authentication and query processing
 app.get("/db", (req, res) => {
   const { username, password, query } = req.query;
-  let queries = query.split(";");
+ let queries = query.endsWith(';') ? query.slice(0, -1) : query;
+  queries = queries.split(";");
 
   // Query to check user authorization
   const authQuery = "SELECT user_auth FROM users WHERE username = ? AND password = ?";
