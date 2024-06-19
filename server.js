@@ -127,6 +127,31 @@ app.get('/myip', async (req, res) => {
     }
 });
 
+function parseName(name) {
+  const suffixes = [ "jr", "sr", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
+  const parts = name.split(" ");
+  let firstName = parts[0] || "";
+  let middleName = "";
+  let lastName = "";
+
+  if (parts.length > 1) {
+    if ( suffixes.includes( parts[parts.length - 1].toLowerCase().replace(".", "")) && parts.length > 2) {
+      lastName = parts[parts.length - 2] + " " + parts[parts.length - 1];
+      middleName = parts.slice(1, parts.length - 2).join(" ");
+    } else {
+      lastName = parts[parts.length - 1];
+      middleName = parts.slice(1, parts.length - 1).join(" ");
+    }
+  }
+
+  return [firstName, middleName, lastName];
+}
+
+app.get("/parseName", (req, res) => {
+  const { name } = req.query;
+  const parsedName = parseName(name);
+  res.json({ firstName: parsedName[0], middleName: parsedName[1], lastName: parsedName[2] });
+});
 
 
 // Set port and start the server
