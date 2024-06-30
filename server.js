@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql");
 const fetch = require("node-fetch");
+const path = require('path');
 
 const app = express();
 
@@ -13,6 +14,8 @@ origin: "*"
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
 
 // MySQL Connection Configuration
 const db = mysql.createPool({
@@ -156,6 +159,10 @@ app.get("/parseName", (req, res) => {
   const { name } = req.query;
   const parsedName = parseName(name);
   res.json({ firstName: parsedName[0], middleName: parsedName[1], lastName: parsedName[2], lastNameOnly: parsedName[3], lastNameSuffix: parsedName[4]});
+});
+
+app.get('/home', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 
