@@ -133,24 +133,29 @@ function parseName(name) {
   let firstName = parts[0] || "";
   let middleName = "";
   let lastName = "";
+  let suffix = "";
+  let lnameOnly = "";
 
   if (parts.length > 1) {
     if ( suffixes.includes( parts[parts.length - 1].toLowerCase().replace(".", "")) && parts.length > 2) {
       lastName = parts[parts.length - 2] + " " + parts[parts.length - 1];
       middleName = parts.slice(1, parts.length - 2).join(" ");
+     lnameOnly = parts[parts.length-2].split("-")[0]
+      suffix = parts[parts.length-1]
     } else {
       lastName = parts[parts.length - 1];
       middleName = parts.slice(1, parts.length - 1).join(" ");
+     lnameOnly = lastName.split("-")[0]
     }
   }
 
-  return [firstName, middleName, lastName];
+  return [firstName, middleName, lastName, lnameOnly, suffix];
 }
 
 app.get("/parseName", (req, res) => {
   const { name } = req.query;
   const parsedName = parseName(name);
-  res.json({ firstName: parsedName[0], middleName: parsedName[1], lastName: parsedName[2] });
+  res.json({ firstName: parsedName[0], middleName: parsedName[1], lastName: parsedName[2], lastNameOnly: parsedName[3], lastNameSuffix: parsedName[4]});
 });
 
 
