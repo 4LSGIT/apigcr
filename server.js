@@ -164,6 +164,12 @@ app.get("/parseName", (req, res) => {
 app.get('/home', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
+app.get('/style.css', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'style.css'));
+});
+app.get('/script.js', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'script.js'));
+});
 
 
 // Set port and start the server
