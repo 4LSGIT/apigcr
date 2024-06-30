@@ -1229,11 +1229,11 @@ login()
   if (fileType == 'case') {
     fileButton.innerHTML = `<i class="fa-solid fa-landmark"></i> ${fileName}`
     //file.innerHTML = `<iframe src="https://4lsg.glitch.me/fileCase.html?caseID=${fileID}"></iframe>`
-    file.innerHTML = `<iframe src="newerfileCase.html?caseID=${fileID}"></iframe>`
+    file.innerHTML = `<iframe src="/case.html?caseID=${fileID}"></iframe>`
   }
   else if (fileType == 'client' || fileType == 'contact') {
     fileButton.innerHTML = `<i class="fa-solid fa-user"></i> ${fileName}`
-    file.innerHTML = `<iframe src="/newerfileclient.html?clientID=${fileID}"></iframe>`
+    file.innerHTML = `<iframe src="/contact.html?clientID=${fileID}"></iframe>`
   }
   else if (fileType == 'bill') {
     fileButton.innerHTML = `<i class="fa-solid fa-file-invoice-dollar"></i> ${fileName}`
