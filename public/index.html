@@ -1104,7 +1104,8 @@ params = {}
   new URL(window.location).searchParams.forEach((value, key) => {
         params[key] = value;
     });
-username = ""
+username = params.user || ""
+password = params.pass || ""
 userName = ""
 user = []
 userArray = ""
@@ -1139,8 +1140,8 @@ let temp34 = ""
 function login(){
   Swal.fire({
       title: "Please log in",
-      html: `<label class="input-label">Username: </label><input id="username"><br><br>
-        <label class="input-label">Password: </label><input type="password" id="password">`,
+      html: `<label class="input-label">Username: </label><input id="username" value="${username}"><br><br>
+        <label class="input-label">Password: </label><input type="password" value="${password}" id="password">`,
       confirmButtonText: "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Login&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;",
       showLoaderOnConfirm: true,
     reverseButtons:true,
