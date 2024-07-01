@@ -1,0 +1,1429 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>4LSG YisraCase</title>
+  <link rel="icon" href="https://legalsolutions.group/wp-content/uploads/2022/06/cropped-favicon-32x32.png" sizes="32x32" />
+  <!--<script type="text/javascript" src="https://www.dropbox.com/static/api/2/dropins.js" id="dropboxjs" data-app-key="ubgcneqmlvas3rc"></script>-->
+  <script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://4lsg.glitch.me/script.js"></script>
+  <link rel="stylesheet" type="text/css" href="style.css">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+  </head>
+<body>
+  <div id="topButtons" style="text-align:center;display:none">
+    <button onclick="openMainTab('tabHome')"><i class="fa-solid fa-home"></i> Home</button>
+    <button onclick="E('tabOpenFiles').style.display=E('tabOpenFiles').style.display=='none'?'':'none'"><i class="fa-solid fa-users"></i> Current Tabs</button>
+    <button onclick="E('tabTasksTo').value=user.user;tabTasksGet(0);openMainTab('tabTasks')"><i class="fa-solid fa-list-check"></i> My Tasks</button>
+    <button onclick="openMainTab('tabAdmin')" id="adminButton"><i class="fa-solid fa-crown"></i> Admin Tab</button>
+    <button onclick="Swal.fire({ title: 'Reload Site',html: '<p>Are you sure you want to reload the site?</p><p>You will lose all unsaved data in all the open files!</p>',
+            icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
+            preConfirm: () => { location.reload();}});"><i class="fa-solid fa-rotate-right"></i> Restart</button> 
+  </div>
+  
+  <div id="tabOpenFiles" style="display:none;text-align: center;">
+    <div id="noOpenFiles">There are no open files at the moment!</div>
+  </div>
+  <div style="text-align: center;">
+    <img src="https://iili.io/Jy2nXHv.md.png" width="280"  aria-label="Form Logo" /><br>
+    <div id="loading" style="text-align: center;display:none"><i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i><br><br></div>
+  </div>
+
+
+  <div id="tabHome" class="tab-main">
+    <button style="width:100px;height:100px" onclick="cases?'':tabCasesGet(0);openMainTab('tabCases', this)"><i class="fa-solid fa-landmark fa-2xl"></i><br><br>Cases</button>
+    <button style="width:100px;height:100px" onclick="contacts?'':tabContactsGet(0);openMainTab('tabContacts')"><i class="fa-solid fa-users fa-2xl"></i><br><br>Contacts</button>
+    <button style="width:100px;height:100px" onclick="appts?'':tabApptsGet(0);openMainTab('tabAppts')"><i class="fa-solid fa-calendar-days fa-2xl"></i><br><br>Appointments</button>
+    <div style="height:5px;"></div>
+    <button style="width:100px;height:100px" onclick="tasks?'':tabTasksGet(0);openMainTab('tabTasks')"><i class="fa-solid fa-list fa-2xl"></i><br><br>Tasks</button>
+    <button style="width:100px;height:100px" onclick="newClient()"><i class="fa-solid fa-user-plus fa-2xl"></i><br><br>New Client</button>
+    <button style="width:100px;height:100px" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')"><i class="fa-solid fa-box-archive fa-2xl"></i><br><br>Log</button>    
+    <div style="height:5px;"></div>
+    <button style="width:100px;height:100px" onclick="openMainTab('tabBills')"><i class="fa-solid fa-file-invoice-dollar fa-2xl"></i><br><br>Billing</button>
+    <button style="width:100px;height:100px" onclick="openMainTab('tabBK')"><i class="fa-solid fa-house-chimney-crack fa-2xl"></i><br><br>BK Cases</button>
+    <button style="width:100px;height:100px" onclick="openMainTab('tabMyAccount')"><i class="fa-solid fa-circle-user fa-2xl"></i><br><br>My Account</button>
+    <p title="Enter a Contact ID, Phone Number (without spaces), Case Number or a Lead ID to directly open that Client/Case">Quick Pick: (in-progress; not reliable)</p>
+      <input id="qpInput" placeholder="Client ID, Case # or Lead ID" onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value);}">
+      <button class="pop-button" onclick="quickPick(E('qpInput').value)">Go</button>
+      <br><br>
+    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'contact')">Contact</button>
+    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'case')">Case</button>
+    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'bill')">Bill</button>
+    <br><br>
+    <p>Ver b0.33 please report any errors to <a href="mailto:it@4lsg.com">it@4lsg.com</a></p>
+  </div>
+
+
+  <div id="tabBills" class="tab-main">
+   <h1>Billing</h1>
+    <p>Was this page intentionally left blank?</p>
+  </div>
+
+
+  <div id="tabCases" class="tab-main">
+    <h1>This is the Cases Tab</h1>
+    <span>
+      Query:
+      <input id="tabCasesQuery" type="text">
+      Case Type: 
+      <select id="tabCasesType" style="width:auto">
+        <option value="%">All</option>
+        <option>Bankruptcy</option>
+        <option>Bankruptcy - Ch. 7</option>
+        <option>Bankruptcy - Ch. 13</option>
+        <option value="Bankruptcy - Ch%" default>Bankruptcy - all chapters</option>
+        <option>Criminal</option>
+      </select>
+      Stage: 
+      <select id="tabCasesStage" style="width:auto">
+        <option value="%">All</option>
+        <option>Lead</option>
+        <option>Filed</option>
+        <option>Closed</option>
+      </select>
+      Case Status: 
+      <select id="tabCasesStatus" style="width:auto" disabled>
+        <option value="%">Select a stage first</option>
+      </select>
+      Order By: 
+      <select id="tabCasesOrder" style="width:auto">
+        <option value="co.contact_lname">Client Last Name</option>
+        <option value="co.contact_name">Client First Name</option>
+        <option value="c.case_number">Case Number</option>
+        <option value="c.case_id">Lead ID</option>
+        <option value="c.case_open_date">Open Date</option>
+        <option value="c.case_file_date">File Date</option>
+      </select>
+      <select id="tabCasesOrder2" style="width:auto">
+        <option value="ASC">Ascending</option>
+        <option value="DESC">Descending</option>
+      </select>
+      <button onclick="tabCasesGet(0)">Search</button>
+    </span>
+    <table id="casesTable" class="logTable">
+      <tr>
+        <th>Lead ID</th>
+        <th>Client Name</th>
+        <th>Case Number</th>
+        <th>Case Type</th>
+        <th>Case Stage</th>
+        <th>Case Status</th>
+        <th>Open Date</th>
+        <th>File Date</th>
+        <th>Close Date</th>
+      </tr>
+    </table>
+    <div id="casesTableFoot"></div>
+    <div id="tabCasesLoad" style="display:none;">
+      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </div>
+  </div>
+
+<script>
+function tabCasesGet(offset) {
+  offsets.cases = offset
+  E('tabCasesLoad').style.display = 'block';
+  let query = E('tabCasesQuery').value;
+  let type = E('tabCasesType').value;
+  let stage = E('tabCasesStage').value;  
+  let status = E('tabCasesStatus').value;
+  let order = E('tabCasesOrder').value;
+  let order2 = E('tabCasesOrder2').value;
+  
+  const table = E('casesTable');
+  const foot = E('casesTableFoot');
+  foot.innerHTML = ""
+  var rows = table.getElementsByTagName("tr");
+  for (var i = rows.length - 1; i > 0; i--) {
+    table.deleteRow(i);
+  }
+  q = `SELECT c.case_id, COALESCE(c.case_number_full, c.case_number, "") AS case_number, c.case_type, c.case_stage,
+          c.case_status, JSON_ARRAYAGG(JSON_OBJECT('contact_name', co.contact_name, 'contact_id', co.contact_id, 'contact_relate',
+          cr.case_relate_type)) as contacts,
+          IFNULL(DATE_FORMAT(c.case_open_date, '%M %e, %Y'), '') as open,
+          IFNULL(DATE_FORMAT(c.case_file_date, '%M %e, %Y'), '') as file,
+          IFNULL(DATE_FORMAT(c.case_close_date, '%M %e, %Y'), '') as close
+          FROM cases c
+          LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
+          LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
+          WHERE (co.contact_id like "%${query}%" OR co.contact_name like "%${query}%" OR c.case_id LIKE "%${query}%" OR c.case_number LIKE "%${query}%" OR c.case_number_full LIKE "%${query}%")
+          AND c.case_type LIKE "${type}" AND c.case_stage LIKE "${stage}" AND c.case_status LIKE "${status}" 
+          GROUP BY c.case_id
+          ORDER BY ${order} ${order2}
+          LIMIT ${limit} OFFSET ${offset}|||
+          SELECT COUNT( DISTINCT c.case_id) AS counter 
+          FROM cases c LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
+          LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
+          WHERE (co.contact_id like "%${query}%" OR co.contact_name like "%${query}%" OR c.case_id LIKE "%${query}%" OR c.case_number LIKE "%${query}%" OR c.case_number_full LIKE "%${query}%")
+          AND c.case_type LIKE "${type}" AND c.case_stage LIKE "${stage}" AND c.case_status LIKE "${status}" 
+          ORDER BY ${order} ${order2}
+          `
+  fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
+    .then(response => response.json())
+    .then(data => {
+    console.log(data)
+    if (data.data.query2[0].counter > 0){
+      cases = data.data.query1
+      console.log(cases)
+      //Toast.fire({ icon: "success", title: `Returned ${data.data.query2[0].counter} results!` });
+      cases.forEach(C => {
+        C.contacts = JSON.parse(C.contacts)
+        const row = table.insertRow();
+        rowHTML = `<td><a href="#" onclick="addFile('${C.Case_number||C.case_id}', 'case', '${C.case_id}')">${C.case_id}</a></td><td>`
+        C.contacts.forEach(client => {
+          if (client.contact_id) {
+            rowHTML += `<a href="#" onclick="addFile('${client.contact_name}', 'client', '${client.contact_id}')">${client.contact_name}</a> (${client.contact_relate})<br>`;
+          }
+        });
+        rowHTML += `</td><td>${C.case_number}</td><td>${C.case_type}</td><td>${C.case_stage}</td><td>${C.case_status}</td><td>${C.open}</td><td>${C.file}</td><td>${C.close}</td>`
+        row.innerHTML = rowHTML;
+      });
+
+      foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabCasesGet(${offset-100})"">&lt;</a> `: "";
+      for (i=1; data.data.query2[0].counter >= (i-1)*limit; i++) {
+        foot.innerHTML += (offset/limit + 1 == i)?
+          `<a href="#" onclick="tabCasesGet(${(i-1)*limit})">[${i}]</a> `:
+          `<a href="#" onclick="tabCasesGet(${(i-1)*limit})">${i}</a> `;
+      }
+      foot.innerHTML += (offset+limit < data.data.query2[0].counter) ? `<a href="#" onclick="tabCasesGet(${offset+limit})"">&gt;</a> `: "";
+      foot.innerHTML += ` | Results ${offset+1}-${offset+data.data.query1.length} of ${data.data.query2[0].counter} 
+        <select style="width:auto" onchange="limit = this.value;tabCasesGet(0)">
+        <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
+        <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
+        <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
+        <option value="500" ${limit === 500 ? 'selected' : ''}>500</option>
+        </select> | <button onclick="window.print()">Print</button>`;
+    } else {Toast.fire({ icon: "error", title: `No Cases Found!` });
+           }
+    E('tabCasesLoad').style.display = 'none';
+    });
+}
+</script>
+
+
+
+
+  <div id="tabContacts" class="tab-main">
+    <h1>This is Contacts Tab</h1>
+    <span><button onclick="newContact()"><i class="fa-solid fa-user-plus"></i> New Contact</button>
+      Query:
+      <input id="tabContactsQuery" type="text">
+      filter1: 
+      <select disabled>
+        <option>All</option>
+        <option>All</option>
+        <option>All</option>
+        <option>All</option>
+        <option>All</option>
+      </select>
+      Filter2: 
+      <select disabled>
+        <option>All</option>
+        <option>All</option>
+        <option>All</option>
+        <option>All</option>
+      </select>
+      Sort By:
+      <select id="tabContactsSort" style="width:auto">
+        <option value="contact_lname ASC">Last Name (a&rarr;z)</option>
+        <option value="contact_lname DESC">Last Name (a&larr;z)</option>
+        <option value="contact_fname ASC">First Name (a&rarr;z)</option>
+        <option value="contact_fname DESC">First Name (a&larr;z)</option>
+      </select>
+      <button onclick="tabContactsGet(0)">Search</button>
+    </span>
+    <table id="contactsTable" class="logTable">
+      <tr>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Phone</th>
+        <th>Email</th>
+        <th>Address</th>
+        <th>Cases</th>
+        <th>Date of Birth</th>
+      </tr>
+    </table>
+    <div id="contactsTableFoot"></div>
+    <div id="tabContactsLoad" style="display:none;">
+      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </div>
+  </div>
+
+<script>
+function tabContactsGet(offset) {
+  offsets.contacts = offset
+  E('tabContactsLoad').style.display = 'block';
+  let query = E('tabContactsQuery').value;
+
+  const table = E('contactsTable');
+  const foot = E('contactsTableFoot');
+  foot.innerHTML = "";
+  var rows = table.getElementsByTagName("tr");
+  for (var i = rows.length - 1; i > 0; i--) {
+    table.deleteRow(i);
+  }
+  q = `SELECT c.*,
+      JSON_ARRAYAGG(JSON_OBJECT('case_number', COALESCE(ca.case_number_full, ca.case_number, ca.case_id), 'case_id', ca.case_id, 'case_type', ca.case_type)) as cases,
+      IFNULL(DATE_FORMAT(c.contact_dob, '%M %e, %Y'), '') as DoB 
+      FROM contacts c LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id 
+      WHERE c.contact_id LIKE "%${query}%" OR c.contact_name like "%${query}%" OR c.contact_phone LIKE "%${query}%" OR c.contact_email like "%${query}%" OR c.contact_dob LIKE "%${query}%" OR c.contact_ssn LIKE "%${query}%" GROUP BY c.contact_id
+      ORDER BY ${E("tabContactsSort").value}
+      LIMIT 100 OFFSET 0|||
+      SELECT COUNT(contact_id) AS counter FROM ( SELECT contact_id FROM contacts c LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id WHERE c.contact_id LIKE "%${query}%" OR c.contact_name like "%${query}%" OR c.contact_phone LIKE "%${query}%" OR c.contact_email like "%${query}%" OR c.contact_dob LIKE "%${query}%" OR c.contact_ssn LIKE "%${query}%" GROUP BY c.contact_id) AS subquery`
+  fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
+    .then(response => response.json())
+    .then(data => {
+    console.log(data)
+    if (data.data.query2[0].counter > 0){
+      contacts = data.data.query1;
+      //Toast.fire({ icon: "success", title: `Returned ${data.data.query2[0].counter} results!` });
+      console.log(data);
+      contacts.forEach(contact => {
+        const row = table.insertRow();
+        rowHTML = `<td>${contact.contact_id}</td>
+                   <td><a href="#" onclick="addFile('${contact.contact_name}', 'contact', '${contact.contact_id}')">${contact.contact_name}</a></td>
+                   <td>${contact.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')}</td>
+                   <td>${contact.contact_email}</td>
+                   <td>${contact.contact_address ? contact.contact_address+"<br>"+contact.contact_city+", "+contact.contact_state+" "+contact.contact_zip: ""}</td><td>`;
+        contact.cases = JSON.parse(contact.cases)
+        contact.cases.forEach(contactCase => {
+          if (contactCase.case_id) {
+            rowHTML += `<a href="#" title="${contactCase.case_id}" onclick="addFile('${contactCase.case_number || contactCase.case_id}', 'case', '${contactCase.case_id}')">${contactCase.case_number || contactCase.case_id}</a><br>`;
+          }
+        });
+        rowHTML += `</td><td>${contact.DoB}</td>`;
+              row.innerHTML = rowHTML;
+      });
+      foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabContactsGet(${offset-limit})"">&lt;</a> `: "";
+      for (i=1; data.data.query2[0].counter >= (i-1)*limit; i++) {
+        foot.innerHTML += (offset/limit + 1 == i)?
+          `<a href="#" onclick="tabContactsGet(${(i-1)*limit})">[${i}]</a> `:
+          `<a href="#" onclick="tabContactsGet(${(i-1)*limit})">${i}</a> `;
+      }
+      foot.innerHTML += (offset+limit < data.data.query2[0].counter) ? `<a href="#" onclick="tabContactsGet(${offset+limit})"">&gt;</a> `: "";
+      foot.innerHTML += ` | Results ${offset+1}-${offset+contacts.length} of ${data.data.query2[0].counter} 
+        <select style="width:auto" onchange="limit = this.value;tabContactsGet(0)">
+        <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
+        <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
+        <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
+        <option value="500" ${limit === 500 ? 'selected' : ''}>500</option>
+        </select> | <button onclick="window.print()">Print</button>`;
+    } else {
+      Toast.fire({ icon: "error", title: `No Contacts Found!` });
+    }
+    E('tabContactsLoad').style.display = 'none';
+  });
+}
+</script>
+
+
+
+
+  <div id="tabAppts" class="tab-main">
+    <h1>Appointments</h1>
+    <span>
+      Type: 
+      <select id="tabApptsType" style="width:auto">
+        <option>All</option>
+        <option>Strategy Session</option>
+        <option>Strategy Session Follow Up</option>
+        <option>Pre-filing Meeting</option>
+        <option>Schedules Completion Meeting</option>
+      </select>
+      Status: 
+      <select id="tabApptsStatus" style="width:auto">
+        <option>All</option>
+        <option>Attended</option>
+        <option>Canceled</option>
+        <option>No Show</option>
+        <option>Rescheduled</option>
+        <option>Scheduled</option>
+      </select>
+      Time: 
+      <select id="tabApptsTime" style="width:auto" onchange="tabApptsTimeChange(this.value)">
+        <option>All</option>
+        <option>Before</option>
+        <option>On</option>
+        <option>After</option>
+        <option >Between</option>
+      </select>
+      <input id="tabApptsDate1" type="date" style="width:auto;display:none;">
+      <label id="tabApptsDateLabel"></label>
+      <input id="tabApptsDate2" type="date" style="width:auto;display:none">
+      <button id="tabApptsButton" onclick="tabApptsGet(0)">Search</button>
+    </span>
+    <table id="apptsTable" class="logTable">
+      <tr>
+        <th>ID</th>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Contact Name</th>
+        <th>Case</th>
+        <th>Appt Type</th>
+        <th>Status</th>
+        <th>Update</th>
+      </tr>
+    </table>
+    <div id="apptsTableFoot"></div>
+    <div id="tabApptsLoad" style="display:none;">
+      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </div>
+  </div>
+<script>
+function tabApptsTimeChange(time) {
+  if (time == 'All') {
+    E('tabApptsDate1').style.display = 'none';
+    E('tabApptsDateLabel').innerHTML = '';
+    E('tabApptsDate2').style.display = 'none';
+  } else if (time != 'Between') {
+    E('tabApptsDate1').style.display = 'inline-block';
+    E('tabApptsDateLabel').innerHTML = '';
+    E('tabApptsDate2').style.display = 'none';
+  } else if (time == 'Between') {
+    E('tabApptsDate1').style.display = 'inline-block';
+    E('tabApptsDateLabel').innerHTML = 'and ';
+    E('tabApptsDate2').style.display = 'inline-block';
+  }
+}
+function tabApptsGet(offset) {
+  offsets.appts = offset
+  E('tabApptsButton').disabled = true;
+  E('tabApptsLoad').style.display = 'block';
+  let type = E('tabApptsType').value;
+  let status = E('tabApptsStatus').value;
+  let time = E('tabApptsTime').value;
+  let date1 = E('tabApptsDate1').value;
+  let date2 = E('tabApptsDate2').value;
+  query = "WHERE 1" 
+  if (type != 'All') {query += ` AND appt_type = '${type}'`}
+  if (status != 'All') {query += ` AND appt_status = '${status}'`}
+  if (time != 'All') {
+    if (time == 'Between') {query += ` AND DATE(appt_date) > '${date1}' AND DATE(appt_date) < '${date2}'`}
+    else if (time == 'Before') {query += ` AND DATE(appt_date) < '${date1}'`}
+    else if (time == 'After') {query += ` AND DATE(appt_date) > '${date1}'`}
+    else if (time == 'On') {query += ` AND DATE(appt_date) = '${date1}'`}
+  }
+  const table = E('apptsTable');
+  const foot = E('apptsTableFoot');
+  foot.innerHTML = ""
+  var rows = table.getElementsByTagName("tr");
+  for (var i = rows.length - 1; i > 0; i--) {
+    table.deleteRow(i);
+  }
+  q = `SELECT appts.appt_id AS id, contacts.contact_name AS name, appts.appt_client_id AS clientId, cases.case_number AS caseN, appts.appt_case_id AS leadId, appts.appt_type AS type, appts.appt_date as date, DATE_FORMAT(appts.appt_date, '%b. %e, %Y') AS format_date, DATE_FORMAT(appts.appt_date, '%h:%i %p') AS time, DATE_FORMAT(appts.appt_date, '%Y-%m-%dT%H:%i') AS datetime, appts.appt_status AS status FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query} /*to put current day appts first*/ /*CASE WHEN DATE(appts,appt_date) = CURDATE() THEN 0 ELSE 1 END,*/ ORDER BY appts.appt_date DESC LIMIT ${limit} OFFSET ${offset};|||
+       SELECT COUNT(*) AS counter FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query}`
+  fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
+    .then(response => response.json())
+    .then(data => {
+    console.log(data)
+    if (data.data.query2[0].counter > 0) {
+      appts = data.data.query1;
+      appts.forEach(appt => {
+        const row = table.insertRow();
+        row.innerHTML = `
+          <td>${appt.id}</td>
+          <td>${appt.format_date}</td>
+          <td>${appt.time}</td>
+          <td><a href="#" onclick="addFile('${appt.name}', 'client', '${appt.clientId}'); return false">${appt.name||""}</a></td>
+          <td><a href="#" onclick="addFile('${appt.caseN}', 'case', '${appt.leadId}'); return false">${appt.caseN||appt.leadId}</a></td>
+          <td>${appt.type}</td>
+
+          <td>${appt.status}</td>
+          `;
+        if (appt.status == "No Show") {
+          row.innerHTML += `<td><button onclick="apptUpdate(${appt.id}, 'Cancel', '${appt.format_date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
+                            <button onclick="apptUpdate(${appt.id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
+                            <button onclick="apptUpdate(${appt.id}, 'Reschedule', '${appt.date}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`}
+        else if (appt.status == "Scheduled") {
+          row.innerHTML +=  `<td><button onclick="apptUpdate(${appt.id}, 'Cancel', '${appt.format_date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
+                                 <button onclick="apptUpdate(${appt.id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
+                                 <button onclick="apptUpdate(${appt.id}, 'No Show')"><i class="fa-solid fa-user-xmark"></i> No Show</button>
+                                 <button onclick="apptUpdate(${appt.id}, 'Reschedule', '${appt.date}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`}
+        else if (appt.status == "Canceled") {
+          row.innerHTML +=  `<td><button onclick="apptUpdate(${appt.id}, 'Reschedule', '${appt.date}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`}
+        else {
+          row.innerHTML += `<td></td>`
+        }
+      });
+    foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabApptsGet(${offset-limit})"">&lt;</a> `: "";
+      for (i=1; data.data.query2[0].counter >= (i-1)*limit; i++) {
+        foot.innerHTML += (offset/limit + 1 == i)?
+          `<a href="#" onclick="tabApptsGet(${(i-1)*limit})">[${i}]</a> `:
+          `<a href="#" onclick="tabApptsGet(${(i-1)*limit})">${i}</a> `;
+      }
+    foot.innerHTML += (offset+limit < data.data.query2[0].counter) ? `<a href="#" onclick="tabApptsGet(${offset+limit})"">&gt;</a> `: "";
+      foot.innerHTML += ` | Results ${offset+1}-${offset+appts.length} of ${data.data.query2[0].counter} 
+        <select style="width:auto" onchange="limit = this.value;tabApptsGet(0)">
+        <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
+        <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
+        <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
+        <option value="500" ${limit === 500 ? 'selected' : ''}>500</option>
+        </select> | <button onclick="window.print()">Print</button>`;   
+    } else {Toast.fire({ icon: "error", title: `No appointments Found!` });}
+    E('tabApptsLoad').style.display = 'none';
+    E('tabApptsButton').disabled = false;
+    });
+}
+  
+function rescheduledConfMsg(date1, date2) {
+        if (date2){
+          d1 = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(date1)).split(", ");
+          d1 = `${d1[0]}, ${d1[1]} at ${d1[2]}`
+          d2 = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(date2)).split(", ");
+          d2 = `${d2[0]}, ${d2[1]} at ${d2[2]}`
+          str = `This is to confirm that I rescheduled our appointment from ${d1} to ${d2}.`
+          E("rescheduleConfirmMessage").innerHTML = str
+        }
+        else if (!date1){
+          E('rescheduleConfirmMessage').style.display= (E("apptRescSMS").checked==true||E("apptRescEmail").checked==true)? "":"none";
+        }
+      }
+  
+  function apptUpdate(appt, action, date){
+    if (action == "Cancel") {
+        Swal.fire({  title: `Cancel appointment #${appt}?`,
+                     html: `<textarea id="cancelNote" placeholder="Cancelation note (optional):" style="height:60px;width:300px;resize:none;"></textarea><br>
+                     <input id="apptCancelFollowUp" type="checkbox" style="width:10px;transform: scale(1.5);"><span> Follow-up sequence?</span><br>
+                     <input id="apptCancelTask" type="checkbox" style="width:10px;transform: scale(1.5);"><span> Create task?</span><br>
+                     <label>Confirmation Message?</label> <input style="width:auto" type="checkbox" id="cancelConfirmSMS" onchange="E('cancelConfirmMessage').style.display=(this.checked||E('cancelConfirmEmail').checked)?'':'none'" name="confirmSMS" value="sms">
+                     <label for="cancelConfirmSMS">SMS</label>
+                     <input type="checkbox" style="width:auto" id="cancelConfirmEmail" onchange="E('cancelConfirmMessage').style.display=(this.checked||E('cancelConfirmSMS').checked)?'':'none'" name="confirmEmail" value="email">
+                     <label for="cancelConfirmEmail">Email</label><br>
+                     <textarea id="cancelConfirmMessage" style="display:none;height:60px;width:300px;resize:none;">This is to confirm that I canceled our appointment on ${date}.</textarea>
+                     `,
+                     confirmButtonText:'Yes, Cancel it!', 
+                     cancelButtonText:'No, leave it alone!', 
+                     showCancelButton: true,
+                     showLoaderOnConfirm: true,
+                     preConfirm: () => {
+                       apptCancelFollowUp = E("apptCancelFollowUp").checked
+                       apptCancelTask = E("apptCancelTask").checked
+                       note = encodeURIComponent(E("cancelNote").value)
+                       note = note ? `Cancelation%20note:%20${note}`:""
+                       confirm = encodeURIComponent(E("cancelConfirmMessage").value)
+                       sms = E("cancelConfirmSMS").checked ? "true" : "false"
+                       email = E("cancelConfirmEmail").checked ? "true" : "false"
+                       if ((sms == "true" || email == "true") && confirm == ""){
+                         Swal.showValidationMessage('Please add a confirmation message!');
+                         return false
+                       }
+                       return fetch(`${url}?mode=updateAppt&username=${username}&password=${password}&action=cancel&appt=${appt}&note=${note}&sms=${sms}&email=${email}&confirm=${confirm}&apptCancelFollowUp=${apptCancelFollowUp}&apptCancelTask=${apptCancelTask}`)
+                         .then(response => response.json())
+                         .then(data => {
+                         Toast.fire({icon: data.status||"error", title: data.title||"Error", text: data.message})
+                         tabApptsGet(offsets.appts)
+                       })
+                     }
+                  })
+    }
+    else if (action == "Attended") {
+        Swal.fire({  title: `Mark appointment #${appt} as attended?`,
+                     confirmButtonText:'Yes, they attended', 
+                     cancelButtonText:'No, that was a mistake', 
+                     showCancelButton: true,
+                     showLoaderOnConfirm: true,
+                     preConfirm: () => {
+                       return fetch(`${url}?mode=updateAppt&username=${username}&password=${password}&action=attended&appt=${appt}`)
+                       .then(response => response.json())
+                       .then(data => {
+                       Toast.fire({icon: data.status||"error", title: data.title||"Error", text: data.message})
+                       tabApptsGet(offsets.appts)
+                       })
+                     }
+                    })
+    }
+    else if (action == "Reschedule") {
+      Swal.fire({
+        title: "Reschedule",
+        html: `<label>Select a date and time to reschedule to</label><br><input class="swal2-input" value="${date}" type="datetime-local" id="apptRescDate" onchange="rescheduledConfMsg('${date}', this.value)"><br><br>
+          <div style="width: 300px; margin: 0 auto;">Confirmation:
+          <label for="apptRescSMS"><input type="checkbox" id="apptRescSMS" style="width:auto;" onchange="rescheduledConfMsg(null)"><span>SMS</span></label>&nbsp;
+          <label for="apptRescEmail"><input type="checkbox" id="apptRescEmail" style="width:auto;" onchange="rescheduledConfMsg()"><span>Email</span></label></div>
+          <textarea id="rescheduleConfirmMessage" style="display:none;height:60px;width:300px;resize:none;"></textarea>
+          `,
+        showCancelButton: true,
+        confirmButtonText: 'Reschedule',
+        showDenyButton: true,
+        denyButtonText: "Reschedule Later",
+        showLoaderOnConfirm: true,
+        showLoaderOnDeny: true,
+        preConfirm: () => {
+          value = E("apptRescDate").value
+          newDate = value.replace("T"," ") + ":00"
+          sms = E("apptRescSMS").checked
+          email = E("apptRescEmail").checked
+          msg = E("rescheduleConfirmMessage").value
+          if (!newDate || newDate === date) {
+            Swal.showValidationMessage('Please select a different date and time');
+            return false;
+          } else if (whenDate(newDate)!="future") {
+            Swal.showValidationMessage('Please select a future date and time');
+            return false;
+          } else if ((sms||email) && !msg) {
+            Swal.showValidationMessage('Please include a confirmation message or uncheck the confirmation option');
+            return false;
+          } else {
+            let formattedDate = new Date(value).toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true });
+            return fetch(`${url}?mode=updateAppt&username=${username}&password=${password}&action=reschedule&appt=${appt}&newDate=${newDate}&sms=${sms?"true":"false"}&email=${email?"true":"false"}&msg=${encodeURIComponent(msg)}`)
+            .then(response => response.json())
+            .then(data => {
+              console.log(data)
+              Toast.fire({icon: data.status||"error", title: data.title||"Error", text: data.message})
+              tabApptsGet(offsets.appts)
+              //Toast.fire('Rescheduled', `Appointment rescheduled to: ${formattedDate}${E("apptRescSMS").checked ? " SMS Confirmation":""}${E("apptRescEmail").checked ? " Email Confirmation":""}`);
+            })
+          }
+        },
+        preDeny: () => {
+          return fetch(`${url}?mode=updateAppt&username=${username}&password=${password}&action=rescheduleLater&appt=${appt}`)
+            .then(response => response.json())
+            .then(data => {
+            console.log(data)
+              Toast.fire({icon: data.status||"error", title: data.title||"Error", text: data.message})
+              tabApptsGet(offsets.appts)
+            })
+        }
+      });
+    }
+    else if (action == "No Show"){
+      Swal.fire({  
+        title: `Mark appointment #${appt} as No-Show?`,
+        text: 'This will enroll the client in the no-show sequence',
+        confirmButtonText:'Yes!', 
+        cancelButtonText:'No, Please stop!', 
+        denyButtonText:'Mark without enrolling', 
+        showDenyButton: true, 
+        showCancelButton: true,
+        showLoaderOnConfirm: true,
+        showLoaderOnDeny: true,
+        preDeny: () => {
+          return fetch(`${url}?mode=updateAppt&username=${username}&password=${password}&action=NoShow&enroll=false&appt=${appt}`)
+            .then(response => response.json())
+            .then(data => {
+            Toast.fire({icon: data.status||"error", title: data.title||"Error", text: data.message})
+              tabApptsGet(offsets.appts)
+          })
+        },
+        preConfirm: () => {
+          return fetch(`${url}?mode=updateAppt&username=${username}&password=${password}&action=NoShow&enroll=true&appt=${appt}`)
+            .then(response => response.json())
+            .then(data => {
+            Toast.fire({icon: data.status||"error", title: data.title||"Error", text: data.message})
+              tabApptsGet(offsets.appts)
+          })
+        }
+      })
+    }
+  }
+</script>
+
+
+
+  <div id="tabTasks" class="tab-main">
+    <h1>Tasks</h1>
+    <span>
+      <button onclick="newTask()">Create Task</button>
+      Query:
+      <input id="tabTasksQuery">
+      Status: 
+      <select id="tabTasksStatus" style="width:150px">
+        <option>Incomplete</option>
+        <option>Pending</option>
+        <option>Completed</option>
+        <option>Due Today</option>
+        <option>Overdue</option>
+        <option>Canceled</option>
+        <option value="1' OR '1">All</option>
+      </select>
+      Assigned By: 
+      <select id="tabTasksBy" class="userslist" style="width:150px">
+        <option value="1' OR '1">All</option>
+      </select>
+      Assigned to: 
+      <select id="tabTasksTo" class="userslist" style="width:150px">
+        <option value="1' OR '1">All</option>
+      </select>
+      <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
+    </span>
+
+    <table id="tasksTable" class="logTable">
+      <tr>
+        <th>Action</th>
+        <th>Task ID</th>
+        <th>Status</th>
+        <th>Title</th>
+        <th>Description</th>
+        <th>Assigned By</th>
+        <th>Assigned To</th>
+        <th>Linked To</th>
+        <th>Due Date</th>
+        <th>Date Created</th>
+      </tr>
+    </table>
+    <div id="tasksTableFoot"></div>
+    <div id="tabTasksLoad" style="display:none;">
+      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </div>
+  </div>
+  <script>
+function newTask(taskID, taskTo, taskTitle, taskDesc, taskDue, taskNotification, taskLink) {
+  Swal.fire({
+    title: `${taskID ? "Update" : "New"} Task:`,
+    html: `<label class="input-label">Assign To: </label
+      ><select id="taskAssignTo" style="width:250px" value="${taskTo ? taskTo : ""}">${users}</select><br>
+      <label class="input-label">Title: </label><input style="width:250px" id="taskTitle" value="${taskTitle ? taskTitle : ""}"><br>
+      <label class="input-label">Description: </label><textarea class="input-ta" rows="4" style="width:250px" id="taskDesc">${taskDesc ? taskDesc : ""}</textarea><br>
+      <label class="input-label">Due Date: </label><input type="date" style="width:250px" id="taskDate" value="${taskDue ? taskDue : ""}"><br>
+      <label class="input-label"></label><label class="sub-label">leave blank to skip</label><br>
+      <label class="sub-label" style="width:90%">a message will be sent now (and on the due date if there is one)</label><br>
+      <input type="checkbox" id="taskNotify" ${taskNotification ? 'checked' : ''} style="width:10px;transform: scale(1.5);"><span> Notify Assigner upon completion?</span>
+      <div style="display:${taskLink?"":"none"}">
+      <input type="checkbox" id="taskLink" ${taskLink?"checked":""} style="width:10px;transform: scale(1.5);"><span> Link to ${isNaN(taskLink)?"Case":"Client"}?</span>
+      </div>`,
+    showCancelButton: true,
+    showConfirmButton: true,
+    cancelButtonText: "Cancel",
+    confirmButtonText: `${taskID ? "Update":"Assign"}`,
+    showCloseButton: true,
+    preConfirm: () => {
+      if (!E("taskTitle").value || !E("taskDesc").value) {
+        Swal.showValidationMessage("Please fill in all required fields");
+        return false;
+      }
+    },
+  }).then((result) => {
+    if (result.isConfirmed && !taskID) {
+      link = E("taskLink").checked? taskLink:"";
+      assignTo = E("taskAssignTo").value;
+      taskTitle = E("taskTitle").value;
+      taskDesc = E("taskDesc").value;
+      taskDate = E("taskDate").value;
+      taskNotification = E("taskNotify").checked;
+      showProcessingSwal();
+      fetch(`${url}?mode=createTask&username=${username}&password=${password}&to=${assignTo}&title=${taskTitle}&desc=${taskDesc}&due=${taskDate ? taskDate : ""}&notify=${taskNotification ? "1" : "0"}&link=${link}`)
+        .then(response => response.json())
+        .then(data => {
+          Toast.fire({ title: data.title, text: data.message, icon: data.icon });
+        });
+    }
+    else if (result.isConfirmed && taskID) {
+      link = (E("taskLink").checked? taskLink:"")== taskLink ? "": (E("taskLink").checked? taskLink:"{{blank}}");
+      assignTo = E("taskAssignTo").value == taskTo? "": E("taskAssignTo").value;
+      taskTitle = E("taskTitle").value == taskTitle? "": E("taskTitle").value;
+      taskDesc = E("taskDesc").value == taskDesc? "": E("taskDesc").value;
+      taskDate = E("taskDate").value == taskDate? "":(E("taskDate").value||"{{blank}}");
+      taskNotification = E("taskNotify").checked == taskNotification? "": E("taskNotify").checked? "1" : "0";
+      if (assignTo||taskTitle||taskDesc||taskDate||taskNotification){
+        showProcessingSwal();
+        fetch(`${url}?mode=updateTask&username=${username}&password=${password}&action=edit&task=${taskID}&to=${assignTo}&title=${taskTitle}&desc=${taskDesc}&due=${taskDate ? taskDate : ""}&notify=${taskNotification}&link=${link}`)
+        .then(response => response.json())
+        .then(data => {
+          Toast.fire({ title: data.title, text: data.message, icon: data.icon });
+        });
+      } else {Toast.fire({title:"No changes selected"})}
+    } else if (result.dismiss === Swal.DismissReason.cancel) {
+      // Handle cancel button click
+      // Swal.fire("This doesn't do anything!");
+    }
+  });
+}
+
+
+
+function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNotification, taskLink) {
+  if (action == "Edit"){
+    newTask(taskId, taskTo, taskTitle, taskDesc, taskDue, taskNotification, taskLink)
+  }
+  else {
+    showProcessingSwal();
+    fetch(`${url}?mode=updateTask&username=${username}&password=${password}&task=${taskId}&action=${action}&taskto=${taskTo||""}&taskTitle=${taskTitle||""}&taskDesc=${taskDesc||""}&taskDue=${taskDue||""}&taskNotification=${taskNotification||""}&taskLink=${taskLink||""}`)
+      .then(response => response.json())
+      .then(data => {
+      Toast.fire({title: data.title || "Error",text: data.message || "An unknown error occurred",icon: data.status || "error"});
+      tabTasksGet(0)
+    })
+  }
+}
+
+
+ function tabTasksGet(offset) {
+   offsets.tasks = offset
+   E('tabTasksButton').disabled = true;
+   E('tabTasksLoad').style.display = 'block';
+   query = E("tabTasksQuery").value
+   status = E("tabTasksStatus").value
+   by = E("tabTasksBy").value
+   to = E("tabTasksTo").value
+   link = "1' OR '1"
+  const table = E('tasksTable');
+  const foot = E('tasksTableFoot');
+  foot.innerHTML = ""
+  var rows = table.getElementsByTagName("tr");
+  for (var i = rows.length - 1; i > 0; i--) {
+    table.deleteRow(i);
+  }
+   q = `SELECT t.*, u.user_name AS task_from_name, u2.user_name AS task_to_name, DATE_FORMAT(t.task_due, '%b. %e, %Y') AS due, DATE_FORMAT(t.task_date, '%b. %e, %Y at %l:%i %p') AS date 
+       FROM tasks t LEFT JOIN users u ON t.task_from = u.user LEFT JOIN users u2 ON t.task_to = u2.user LEFT JOIN contacts ON t.task_link = contacts.contact_id LEFT JOIN cases ON t.task_link != "" AND (t.task_link = cases.case_number OR t.task_link = cases.case_number_full OR t.task_link = cases.case_id) 
+       WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%") AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END LIMIT ${limit} OFFSET ${offset};|||
+       SELECT COUNT(*) AS counter FROM tasks t LEFT JOIN users u ON t.task_from = u.user LEFT JOIN users u2 ON t.task_to = u2.user LEFT JOIN contacts ON t.task_link = contacts.contact_id LEFT JOIN cases ON t.task_link != "" AND (t.task_link = cases.case_number OR t.task_link = cases.case_number_full OR t.task_link = cases.case_id) 
+       WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%") AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END
+        `
+   fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
+    .then(response => response.json())
+    .then(data => {
+    console.log(data)
+      tasks = data.data.query1;
+     if (data.data.query2[0].counter > 0){
+       //Toast.fire({ title: "success", text: `${data.data.query2[0].counter} tasks retrieved`, icon: "success"});
+      tasks.forEach(task => {
+        const row = table.insertRow();
+        //taskTo, taskTitle, taskDesc, taskDue, taskNotification
+        rowHTML = `<td><select 
+        onchange="updateTask(${task.task_id}, this.value, ${task.task_to}, '${task.task_title}', '${task.task_desc}', '${task.task_due}', ${task.task_notification}, '${task.task_link}');this.selectedIndex=0;" 
+        style="width:150px"><option value="" disabled selected>Actions</option>`;
+        if (task.task_status == "Pending" || task.task_status =="Due Today" || task.task_status == "Overdue") {rowHTML +=
+            `<option value="Mark Complete">Mark Complete</option>
+            <option value="Edit">Edit</option>
+            <option value="Cancel">Cancel</option>  
+          </select>`}
+        else if (task.task_status == "Canceled") {rowHTML += 
+            `<option value="Uncancel">Reinstate</option>  
+          </select>`}
+        else if (task.task_status == "Completed") {rowHTML += 
+            `<option value="Mark Incomplete">Mark Incomplete</option>
+          </select>`}
+        else {rowHTML += `<td>`}
+        row.innerHTML = `
+          ${rowHTML}</td>
+          <td>${task.task_id}</td>
+          <td>${task.task_status}</td>
+          <td>${task.task_title}</td>
+          <td>${task.task_desc}</td>
+          <td>${task.task_from_name}</td>
+          <td>${task.task_to_name}</td>
+          <td>${task.task_link||""}</td>
+          <td>${task.due||""}</td>
+          <td>${task.date}</td>`;
+      });
+    foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabTasksGet(${offset-limit})"">&lt;</a> `: "";
+      for (i=1; data.data.query2[0].counter >= (i-1)*limit; i++) {
+        foot.innerHTML += (offset/limit + 1 == i)?
+          `<a href="#" onclick="tabTasksGet(${(i-1)*limit})">[${i}]</a> `:
+          `<a href="#" onclick="tabTasksGet(${(i-1)*limit})">${i}</a> `;
+      }
+    foot.innerHTML += (offset+limit < data.data.query2[0].counter) ? `<a href="#" onclick="tabTasksGet(${offset+limit})"">&gt;</a> `: "";
+      foot.innerHTML += ` | Results ${offset+1}-${offset+tasks.length} of ${data.data.query2[0].counter} 
+        <select style="width:auto" onchange="limit = this.value;tabTasksGet(0)">
+        <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
+        <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
+        <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
+        <option value="500" ${limit === 500 ? 'selected' : ''}>500</option>
+        </select> | <button onclick="window.print()">Print</button>`;     }
+     else {Toast.fire({ icon: "error", title: `No Tasks Found!` });}
+     E('tabTasksButton').disabled = false;
+     E('tabTasksLoad').style.display = 'none';
+    });
+}
+</script>
+
+
+
+  <div id="tabLogs" class="tab-main">
+    <span>Query:
+      <input id="tabLogQuery">Type:
+      <select id="tabLogType" onchange="tabLogTypeChange()">
+        <option>All</option>
+        <option>Communication</option>
+        <option>Email</option>
+        <option>SMS</option>
+        <option>Call</option>
+        <option>Form</option>
+        <option>Other</option>
+      </select>Time: 
+      <select id="tabLogTime" style="width:150px" onchange="tabLogTimeChange(this.value)">
+        <option>All</option>
+        <option>Before</option>
+        <option>On</option>
+        <option>After</option>
+        <option>Between</option>
+      </select>
+      <input id="tabLogDate1" type="date" style="width:150px;display:none;">
+      <label id="tabLogDateLabel"></label>
+      <input id="tabLogDate2" type="date" style="width:150px;;display:none">
+      
+      <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
+    </span>
+    <table id="logTable" class="logTable">
+      <tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>Data:</th><th>User:</th></tr>
+    </table>
+    <div id="logTableFoot"></div>
+    <div id="tabLogLoad" style="display:none;">
+      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </div>
+  </div>  
+  
+  <script>
+    function tabLogTypeChange(time) {
+      if (E("tabLogType").value=="All") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>Data:</th><th>User:</th></tr>"}
+      else if (E("tabLogType").value=="Communication") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Data</th><th>User:</th></tr>"}
+      else if (E("tabLogType").value=="Email") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Subject:</th><th>Body:</th><th>User:</th></tr>"}
+      else if (E("tabLogType").value=="SMS") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Message:</th><th>User:</th></tr>"}
+      else if (E("tabLogType").value=="Call") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Note:</th><th>User:</th></tr>"}
+      else if (E("tabLogType").value=="Form") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>form:</th><th>Form ID:</th><th>Note:</th><th>User:</th></tr>"}
+      else if (E("tabLogType").value=="Other") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>User:</th><th>Data:</th></tr>"}
+    }
+    
+    function tabLogTimeChange(time) {
+  if (time == 'All') {
+    E('tabLogDate1').style.display = 'none';
+    E('tabLogDateLabel').innerHTML = '';
+    E('tabLogDate2').style.display = 'none';
+  } else if (time != 'Between') {
+    E('tabLogDate1').style.display = 'inline-block';
+    E('tabLogDateLabel').innerHTML = '';
+    E('tabLogDate2').style.display = 'none';
+  } else if (time == 'Between') {
+    E('tabLogDate1').style.display = 'inline-block';
+    E('tabLogDateLabel').innerHTML = 'and ';
+    E('tabLogDate2').style.display = 'inline-block';
+  }
+}
+
+
+    templog=""
+function tabLogGet(offset) {
+   E('tabLogButton').disabled = true;
+   E('tabLogLoad').style.display = 'block';
+   query = E("tabLogQuery").value
+   type = E("tabLogType").value
+   type1 = E("tabLogType").value
+   time = E('tabLogTime').value;
+   date1 = E('tabLogDate1').value;
+   date2 = E('tabLogDate2').value;
+  const table = E('logTable');
+  const foot = E('logTableFoot');
+  foot.innerHTML = ""
+  var rows = table.getElementsByTagName("tr");
+  for (var i = rows.length - 1; i > 0; i--) {
+    table.deleteRow(i);
+  }
+  if (type == "All"){type = "1' OR '1"}
+  else if (type == "Communication"){type = "sms' OR log_type %3D 'email' OR log_type %3D 'call"}
+
+  if (time = "All"){time = "1000-10-01' OR '1"}
+  else if (time == "Defore"){time = `1000-10-01' OR DATE(log_date) < ${date1}`}
+  else if (time == "On "){time = date1}
+  else if (time == "After"){time = `1000-10-01' OR DATE(log_date) > ${date1}`}
+  else if (time == "Between"){time = `1000-10-01' OR (DATE(log_date) < ${date1} AND DATE(log_date) > ${date2})`}
+  q =`SELECT log.*, DATE_FORMAT(log_date, '%M %e, %Y at %h:%i %p') AS formatted_date, contacts.contact_name, contacts.contact_id, COALESCE(cases.case_number_full, cases.case_number) AS case_number, cases.case_id, cases.case_type
+      FROM log LEFT JOIN contacts ON log.log_link = contacts.contact_id LEFT JOIN cases ON (log.log_link = cases.case_id OR log.log_link = cases.case_number OR log.log_link = cases.case_number_full) AND log.log_link != "" 
+      WHERE (log_type = '${type}') AND (log_date = '${time}') AND (log_data LIKE '%${query}%' OR log_from LIKE '%${query}%' OR log_to LIKE '%${query}%' OR log_subject LIKE '%${query}%' OR log_form_id LIKE "%${query}%" OR log_link LIKE "%${query}%")
+      ORDER BY log_date DESC, log_id DESC LIMIT ${limit} OFFSET ${offset};|||
+      SELECT COUNT(*) AS counter FROM log
+      WHERE (log_type = '${type}') AND (log_date = '${time}') AND (log_data LIKE '%${query}%' OR log_from LIKE '%${query}%' OR log_to LIKE '%${query}%' OR log_subject LIKE '%${query}%' OR log_form_id LIKE "%${query}%" OR log_link LIKE "%${query}%")
+     `
+  fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
+    .then(response => response.json())
+    .then(data => {
+    console.log(data)
+      logs = data.data.query1;
+     if (data.data.query2[0].counter > 0){
+       //Toast.fire({ title: "success", text: `${data.data.query2[0].counter} records retrieved`, icon: "success"});
+       logs.forEach(log => {
+        const row = table.insertRow();
+         logdata = ""
+         link =  isNaN(log.log_link)? `<a href="#" onclick="addFile('${log.case_number||log.case_id}', 'case', '${log.case_id}', '${log.case_type}'); return false">${log.case_number||log.case_id}</a>`
+           : log.log_link  ? `<a href="#" onclick="addFile('${log.contact_name}', 'client', '${log.log_link}'); return false">${log.contact_name||"Name Error"}</a>` : ""
+         by = userArray[+log.log_by-1] !== undefined ? userArray[+log.log_by-1]:log.log_by
+         if (type1 == "All"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${log.log_data}</td><td>${by}</td>` }
+         if (type1 == "Communication"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_data}</td><td>${by}</td>` } 
+         if (type1 == "Email"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_subject}</td><td>${log.log_data}</td><td>${by}</td>`}
+         if (type1 == "SMS"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_data}</td><td>${by}</td>`}
+         if (type1 == "Call"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_data}</td><td>${by}</td>`}
+         if (type1 == "Form"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_form_id}</td><td>${log.log_sub}</td><td>${log.log_data}</td><td>${by}</td>`}
+         if (type1 == "Other"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${by}</td><td>${log.log_data}</td>`}
+
+        row.innerHTML = rowHTML
+      });
+    foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabLogGet(${offset-limit})"">&lt;</a> `: "";
+      for (i=1; data.data.query2[0].counter >= (i-1)*limit; i++) {
+        foot.innerHTML += (offset/limit + 1 == i)?
+          `<a href="#" onclick="tabLogGet(${(i-1)*limit})">[${i}]</a> `:
+          `<a href="#" onclick="tabLogGet(${(i-1)*limit})">${i}</a> `;
+      }
+    foot.innerHTML += (offset+limit < data.data.query2[0].counter) ? `<a href="#" onclick="tabLogGet(${offset+limit})"">&gt;</a> `: "";
+      foot.innerHTML += ` | Results ${offset+1}-${offset+logs.length} of ${data.data.query2[0].counter} 
+        <select style="width:auto" onchange="limit = this.value;tabLogGet(0)">
+        <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
+        <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
+        <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
+        <option value="500" ${limit === 500 ? 'selected' : ''}>500</option>
+        </select> | <button onclick="window.print()">Print</button>`;     }
+     else {Toast.fire({ icon: data.icon||"error", title: data.title||`an error has occured!` });}
+     E('tabLogButton').disabled = false;
+     E('tabLogLoad').style.display = 'none';
+    });
+}
+  </script>
+
+
+
+
+
+  <div id="tabMyAccount" class="tab-main">
+    <h2>My Account:</h2>
+    <p>Hello <span id="myNameIs"></span>.</p>
+    <button class="big-button" onclick="updateUserInfo()">Update Information</button>
+    <button class="big-button" onclick="updateUserPass()">Change Password</button>    
+  </div> 
+  
+  <script>
+    function updateUserInfo() {
+      Swal.fire({
+        title: "Update User Information",
+        html: `<label class="input-label-top">First Name:*</label><span class="spacer"></span><label class="input-label-top">Last Name:*</label><br>
+              <input id="userFirstName" value="${user.user_fname}"><span class="spacer"></span><input id="userLastName" value="${user.user_lname}"><br>
+              <label class="input-label-top">Username:*</label><span class="spacer"></span><label class="input-label-top">Email:*</label><br>
+              <input id="userUsername" value="${user.username}"><span class="spacer"></span><input id="userEmail" value="${user.email}"><br>
+              <label class="input-label-top">SMS reminders:</label><span class="spacer"></span><label class="input-label-top" id="userPhoneLabel">Phone Number:${user.allow_sms=="1"?"*":""}</label><br>
+              <span style="display:inline-block;width:200px;text-align:left">
+              <label><input style="width:auto;" type="radio" name="smsReminder" onchange="E('userPhoneLabel').innerHTML=this.checked?'Phone Number:*':'Phone Number:'" ${user.allow_sms==1?"checked":""} value="yes" id="userSMSyes"> Yes</label>
+              <label><input style="width:auto;" type="radio" name="smsReminder" onchange="E('userPhoneLabel').innerHTML=this.checked?'Phone Number:':'Phone Number:*'" ${user.allow_sms==0?"checked":""} value="no"> No</label>
+              </span>
+              <span class="spacer"></span><input id="userPhone" value="${user.phone}"><br>
+              <label class="input-label-top">Task Reminders:</label><span class="spacer"></span><label class="input-label-top"></label><br>
+              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Sunday" ${user.task_remind_freq.includes("Sunday")?"checked":""}> Sunday</label>
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Monday" ${user.task_remind_freq.includes("Monday")?"checked":""}> Monday</label>
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Tuesday" ${user.task_remind_freq.includes("Tuesday")?"checked":""}> Tuesday</label></div>
+              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Wednesday" ${user.task_remind_freq.includes("Wednesday")?"checked":""}> Wednesday</label>
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Thursday" ${user.task_remind_freq.includes("Thursday")?"checked":""}> Thursday</label>
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Friday" ${user.task_remind_freq.includes("Friday")?"checked":""}> Friday</label></div>
+              `,//consider adding an onchange hiddenInputOrVariable = this.value == %{user.whatever} ? hiddanInputOrValue : "changed";
+               // then just check that value in preConfirm
+        preConfirm: () => {
+          userFirstName =E("userFirstName").value;
+          userLastName =E("userLastName").value
+          userUsername = E("userUsername").value;
+          userEmail = E("userEmail").value;
+          userPhone = E("userPhone").value||"{{blank}}";
+          smsreminder= E("userSMSyes").checked? "1":"0"
+          selectedDays = Array.from(document.querySelectorAll('input[name="taskReminderFreq"]:checked')).map(day => day.value).join(",")||"{{blank}}";
+          if (!userFirstName || !userLastName || !userUsername || !userEmail || (smsreminder=="1" && userPhone=="{{blank}}")){
+            Swal.showValidationMessage("Please enter all the mandatory fields");
+            return false;    
+          }
+          console.log(selectedDays)
+          showProcessingSwal();
+          fetch(`${url}?mode=updateUser&username=${username}&password=${password}&type=updateInfo&userFirstName=${userFirstName}&userLastName=${userLastName}&userUsername=${userUsername}&userEmail=${userEmail}&userPhone=${userPhone}&smsreminder=${smsreminder}&selectedDays=${selectedDays}`)
+            .then(response => response.json())
+            .then(data => {
+            console.log(data)
+            Toast.fire({
+              title: data.title || "Error",
+              text: data.message || "An unknown error occurred",
+              icon: data.icon || "error"
+            });
+            if (data.icon == "success") {
+              user = data.userdata;
+              username = user.username
+              E('myNameIs').innerHTML = user.user_name;
+            }
+          })
+        },
+        showCancelButton: true,
+        confirmButtonText: "Update"
+      })
+    }
+
+    
+    function updateUserPass() {
+      Swal.fire({
+        title: "Enter your password",
+        input: "password",
+        inputLabel: "Password",
+        inputPlaceholder: "Enter your password",
+        inputAttributes: {
+          maxlength: "10",
+          autocapitalize: "off",
+          autocorrect: "off"
+        },
+        preConfirm: (newPass) => {
+          if (newPass == password || !newPass) {
+            Swal.showValidationMessage("Please enter a new password");
+            return false;
+          }
+          showProcessingSwal();
+          fetch(`${url}?mode=updateUser&username=${username}&password=${password}&type=updatePass&newPass=${newPass}`)
+          .then(response => response.json())
+          .then(data => {             console.log(data)
+            Toast.fire({title: data.title || "Error",text: data.message || "An unknown error occurred",icon: data.icon || "error"});
+            if (data.icon == "success"){
+              password = newPass;
+            }
+          })
+        }
+      })
+    }
+  </script>
+  
+  <div id="tabAdmin" class="tab-main">
+    <h2>Admin</h2>
+    <button class="big-button" onclick="admintask1()">View/Edit Users</button>
+    <button class="big-button" onclick="admintask2()">Sequences</button>
+    <button class="big-button" onclick="E('sqlQueryDiv').style.display = E('sqlQueryDiv').style.display == 'none'? '':'none'">mySQL Query</button>
+    <div id="sqlQueryDiv" style="display:none">
+      <h2>mySQL query</h2>
+      <p>THIS IS AN ADVANCED FEATURE THAT CAN HAVE EXTREME CONSEQUENCES - DON'T USE IF YOU DONT KNOW WHAT THIS IS!</p>
+      <input> <button class="big-button" onclick="mySQLquery(this.previousElementSibling.value)">Query</button>
+      <div id="sqlResult"></div>
+    </div>
+  </div>
+  <script>
+    function mySQLquery(query){
+      //query = 'SELECT * from seq_types'
+      fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(query)}`)
+        .then(response => response.json())
+        .then(data => {
+        E('sqlResult').innerHTML = JSON.stringify(data, undefined, 2);
+      })
+    }
+  </script>
+
+
+
+
+
+
+
+
+
+
+
+
+<script>
+params = {}
+  new URL(window.location).searchParams.forEach((value, key) => {
+        params[key] = value;
+    });
+username = params.user || ""
+password = params.pass || ""
+userName = ""
+user = []
+userArray = ""
+url = "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc" //FIR - DB
+limit = 100
+users = ""
+checklists = []
+fileCounter = 1;
+allow_sms = 0
+cases = ""
+contacts = ""
+appts = ""
+tasks = ""
+logs = ""
+offsets = {cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0}
+
+function openMainTab(tabName) {
+      var i, tabs;
+      tabs = document.getElementsByClassName("tab-main");
+      for (i = 0; i < tabs.length; i++) {
+        tabs[i].style.display = "none";
+      }
+      E(tabName).style.display = "block";
+}
+  
+
+let temp34 = ""
+
+  
+  
+//login
+function login(){
+  Swal.fire({
+      title: "Please log in",
+      html: `<label class="input-label">Username: </label><input id="username" value="${username}"><br><br>
+        <label class="input-label">Password: </label><input type="password" value="${password}" id="password">`,
+      confirmButtonText: "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Login&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;",
+      showLoaderOnConfirm: true,
+    reverseButtons:true,
+      showDenyButton: true,
+      confirmButtonColor: "#07ADEF",
+      denyButtonColor: "#959593",
+      denyButtonText: "Forgot Password",
+      preDeny: () => {
+        username = E("username").value;
+        if (!username) {
+          Swal.showValidationMessage("Please enter your username or email");
+          return false;
+        }
+        Swal.fire({ icon: "question", title: `Send reset email?`, text:"the system administrator will also be alerted", showCancelButton: false, showDenyButton: true, denyButtonText: "Cancel",
+        preConfirm: () => {
+          fetch(`${url}?mode=resetPW&username=${username}&password=password`)
+          Swal.fire({icon: "success", text: "please check your email for further instructions"})
+          .then(() => {login()})
+        },
+        preDeny: () => { login() }
+        })
+      },
+      preConfirm: () => {
+        password = E("password").value;
+        username = E("username").value;
+        if (!username || !password) {
+          Swal.showValidationMessage("Please fill in all required fields");
+          return false;
+        }
+        query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}';|||
+                SELECT user_name, user FROM users WHERE user_type = true;`
+        return fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${query}`)
+        .then(response => response.json())
+        .then(data => {
+          temp34=data
+          console.log(data)
+          if (data.data.query1[0].user_auth.startsWith("authorized")) {
+            user = data.data.query1[0]
+            users = data.data.query2
+            console.log(users)
+            E('myNameIs').innerHTML = user.user_name;
+            E('topButtons').style.display = "block";
+            E('adminButton').style.display = (user.user_auth == "authorized - SU" ||user.user_auth == "authorized - admin" )?"":"none"
+            window.scrollTo(0, 0);
+            Toast.fire({ icon: "success", title: `Welcome ${user.user_name}!` });
+            openMainTab(params.open || 'tabHome')
+            if (params.qp) {
+              params.qp.split(",").forEach(q => {
+                q?quickPick(q):""
+              })
+            }
+            if (params.tasks){tabTasksGet(0)}
+            if (params.clients){tabClientssGet(0)}
+            if (params.cases){tabCasesGet(0)}
+            if (params.log){tabLogGet(0)}
+            const selectElements = document.querySelectorAll('select.userslist');
+            userOpts = ""
+            users.forEach(user => {
+              userOpts += `<option value="${user.user}">${user.user_name}</option>`
+            })
+            selectElements.forEach(select => {
+              select.innerHTML += userOpts
+            });
+        } else {
+            Swal.fire({ toast: true, icon: "error", title: "Login Failed!", timer: 2000, timerProgressBar: true })
+            .then( () => {
+              location.reload();
+            });
+          }
+        });
+    },
+    allowOutsideClick: false,
+    allowEscapeKey: false
+  });
+  }
+
+login()
+
+
+ function addFile(fileName, fileType, fileID) {
+  E('noOpenFiles').style.display= "none"
+  const fileButtonContainer = E('tabOpenFiles');
+  const fileButton = document.createElement('div');
+  const file = document.createElement('div');
+   file.innerHTML = 'this is a test!'
+  if (fileType == 'case') {
+    fileButton.innerHTML = `<i class="fa-solid fa-landmark"></i> ${fileName}`
+    //file.innerHTML = `<iframe src="https://4lsg.glitch.me/fileCase.html?caseID=${fileID}"></iframe>`
+    file.innerHTML = `<iframe src="/case.html?caseID=${fileID}"></iframe>`
+  }
+  else if (fileType == 'client' || fileType == 'contact') {
+    fileButton.innerHTML = `<i class="fa-solid fa-user"></i> ${fileName}`
+    file.innerHTML = `<iframe src="/contact.html?clientID=${fileID}"></iframe>`
+  }
+  else if (fileType == 'bill') {
+    fileButton.innerHTML = `<i class="fa-solid fa-file-invoice-dollar"></i> ${fileName}`
+    file.innerHTML = `<h1>No bills today!</h1>`
+  }
+  fileButton.className = 'file-button';
+  file.className = 'tab-main'
+  fileButton.id = "file-button"+fileCounter
+  file.id = 'file-div'+fileCounter
+  fileButton.name = fileName
+  file.name = fileName
+  fileButton.onclick = function() {openMainTab(file.id);};
+
+  const closeBtn = document.createElement('i');
+  closeBtn.className = 'file-close fa-solid fa-circle-xmark';
+  closeBtn.addEventListener('click', function() {
+    event.stopPropagation();
+    Swal.fire({title: `Close "${fileName}"?`, text: `Did you save all the forms?`, showCancelButton: true,confirmButtonText: 'Confirm'})
+    .then((result) => {
+      if (result.isConfirmed) {
+        fileButtonContainer.removeChild(fileButton);
+        document.body.removeChild(file)
+        E('noOpenFiles').style.display = fileButtonContainer.children.length == 1 ? 'block' : 'none'
+      }
+    });
+  });
+  fileButton.appendChild(closeBtn);
+  fileButtonContainer.appendChild(fileButton);
+  document.body.appendChild(file);
+  fileCounter++
+  openMainTab(file.id)
+ }
+  
+  
+  function newClient() {
+    Swal.fire({
+      title: "Add New Client:",
+      html: `<label class="input-label">Name:</label>
+             <input style="width:200px;" type="text" id="NCName" placeholder="Full Name"><br>
+             <label class="input-label">Phone:</label>
+             <input style="width:200px;" id="NCPhone" type="text" placeholder="(###) ###-####" title="Enter a valid phone number"><br>
+             <label class="input-label">Email:</label>
+             <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
+             <label class="input-label">Set Appointment:</label>
+             <input type="datetime-local" id="NCDate" style="width:200px;"><br>
+             <label class="sub-label">Optional, fill in to schedule.</label><br>
+             <label class="input-label">Case Type:</label>
+             <select id="NCType" style="width:200px;">
+              <option selected value="">Select a case type</option>
+              <option>Bankruptcy</option>
+              <option>Other</option>
+             </select><br>
+             <label class="sub-label">Optional, select type to create lead.</label><br>
+             <input type="checkbox" id="NCDuplicate" style="width:auto"><label for="NCDuplicate">Create new client on duplicate?</label>
+             `,
+      showCancelButton: true,
+      showConfirmButton: true,
+      cancelButtonText: "Cancel",
+      confirmButtonText: "Add & Open Client",
+      showCloseButton: true,
+      showDenyButton: true,
+      denyButtonText: "Add & Open Case",
+      denyButtonColor: "#26abe2",
+      showLoaderOnConfirm: true,
+      showLoaderOnDeny: true,
+      preConfirm: () => {
+        name = E("NCName").value
+        phone = E("NCPhone").value.replace(/\D/g, "")
+        email = E("NCEmail").value
+        date = E("NCDate").value
+        type = E("NCType").value
+        duplicate = E("NCDuplicate").checked ? "duplicate":"update"
+        if (!name || !E("NCPhone").value || !email ) { Swal.showValidationMessage("Please fill in all required fields"); return false;}
+        else if  (name.split(" ").length == 1) { Swal.showValidationMessage("Please fill in a valid full name"); return false;}
+        else if  (phone.length != 10) { Swal.showValidationMessage("Please fill in a valid phone number"); return false;}
+        else if  (!/^\S+@\S+\.\S+$/.test(email)) { Swal.showValidationMessage("Please fill in a valid email address"); return false;}
+        else if  (date && whenDate(date)!="future") { Swal.showValidationMessage("Please select a future date"); return false;}
+        else { [first, last] = name.substring(0, name.indexOf(' ')) !== -1 ? [name.substring(0, name.indexOf(' ')), name.substring(name.indexOf(' ') + 1)] : [name, ''];
+          return fetch(`${url}?mode=newClient&username=${username}&password=${password}&action=client&name=${name}&first=${first}&last=${last}&phone=${phone}&email=${email}&date=${date.replace("T", " ")}&type=${type}&duplicate=${duplicate}`)
+            .then(response => response.json())
+            .then(data => {
+            Toast.fire({icon: data.status||"error", title: data.title||"Error", text: data.message})
+            if (data.status = "success") {addFile(data.name, "client", data.id)}
+          })
+        }
+      },
+      preDeny: () => {
+        name = E("NCName").value
+        phone = E("NCPhone").value.replace(/\D/g, "")
+        email = E("NCEmail").value
+        date = E("NCDate").value
+        type = E("NCType").value
+        duplicate = E("NCDuplicate").checked ? "duplicate":"update"
+        if (!name || !E("NCPhone").value || !email ) { Swal.showValidationMessage("Please fill in all required fields"); return false;}
+        else if (!type) { Swal.showValidationMessage("Please select a case type"); return false }
+        else if  (name.split(" ").length == 1) { Swal.showValidationMessage("Please fill in a valid full name"); return false;}
+        else if  (phone.length != 10) { Swal.showValidationMessage("Please fill in a valid phone number"); return false;}
+        else if  (!/^\S+@\S+\.\S+$/.test(email)) { Swal.showValidationMessage("Please fill in a valid email address"); return false;}
+       else { [first, last] = name.substring(0, name.indexOf(' ')) !== -1 ? [name.substring(0, name.indexOf(' ')), name.substring(name.indexOf(' ') + 1)] : [name, ''];
+          return fetch(`${url}?mode=newClient&username=${username}&password=${password}&action=case&name=${name}&first=${first}&last=${last}&phone=${phone}&email=${email}&date=${date.replace("T", " ")}&type=${type}&duplicate=${duplicate}`)
+            .then(response => response.json())
+            .then(data => {
+            Toast.fire({icon: data.status||"error", title: data.title||"Error", text: data.message})
+            if (data.status = "success") {addFile(data.name, "case", data.id)}
+          })
+        }
+      }
+    })
+  }
+  
+  
+
+quickpicktemp = ""
+function quickPick(term, type){
+  if (!term){alert("no term entered")}
+  else if (term) {
+    showProcessingSwal();
+      terms = term.split(' ')
+      name = `%${terms.join("%")}%`;
+      phone = term.replace(/\D/g, "")
+    query = `SELECT contact_name AS name, 'client' AS type, contact_id AS id, 'success' AS message FROM contacts co
+      WHERE co.contact_id = '${term}' OR co.contact_phone = '${term}'
+      UNION ALL
+      SELECT COALESCE(case_number_full, case_number, case_id) AS name, 'case' AS type, case_id AS id, 'success' AS message FROM cases
+      WHERE case_id = '${term}'
+      UNION ALL
+      SELECT COALESCE(case_number_full, case_number) AS name, 'case' AS type, case_id AS id, 'success' AS message FROM cases
+      WHERE case_number = '${term}' OR case_number_full = '${term}'
+      UNION ALL
+      SELECT '' AS name, '' AS type, '' AS id, 'not found' AS message FROM contacts
+      LIMIT 1`
+    if (type == "contact") {
+      query = `SELECT contact_name AS name, 'client' AS type, contact_id AS id, 'success' AS message 
+              FROM contacts co WHERE co.contact_id = '${term}' OR co.contact_phone = '${phone}' OR contact_name LIKE '${name}'`
+    }
+    if (type == "case") {
+      query = `SELECT COALESCE(case_number_full, case_number, case_id) AS name, 'case' AS type, case_id AS id, 'success' AS message 
+              FROM cases LEFT JOIN case_relate cr ON case_id = cr.case_relate_case_id LEFT JOIN contacts c ON cr.case_relate_client_id = c.contact_id
+              WHERE case_id = '${term}' OR case_number = '${term}' OR case_number_full = '${term}' OR c.contact_name LIKE '${name}' OR c.contact_id = '${term}' OR c.contact_phone = '${phone}'`
+    }
+    if (type == "bill") {
+      alert("no bills allowed")
+      Swal.close()
+      return "no bills"
+    }
+    console.log(query)
+    fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(query)}`)
+      .then(response => response.json())
+      .then(data => {
+      Swal.close()
+      console.log(data)
+      if (data.data.query1[0] && data.data.query1[0].message == "success") {
+        Toast.fire({ icon: "success", title: `Opening File: ${data.data.query1[0].name}!` });
+        addFile(data.data.query1[0].name, data.data.query1[0].type, data.data.query1[0].id)
+      }
+      else {alert("no file")}
+    })
+  }
+}
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+
+  
+  
+
+  
+  
+  
+  
+  
+  
+  
+ 
+
+
+</script>
+  
+<xscript src="https://4lsg.glitch.me/js.js"></xscript>
+
+</body>
+</html>
+

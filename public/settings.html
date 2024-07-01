@@ -1,0 +1,66 @@
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="https://legalsolutions.group/wp-content/uploads/2022/06/cropped-favicon-32x32.png" sizes="32x32" />
+  <script type="text/javascript" src="https://www.dropbox.com/static/api/2/dropins.js" id="dropboxjs" data-app-key="ubgcneqmlvas3rc"></script>
+  <script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://4lsg.glitch.me/script.js"></script>
+  <link rel="stylesheet" type="text/css" href="style.css">
+<!--<button onclick="sendQuery('select * from users').then( result => {console.log(result.data.query1)})">Click</button>-->
+</head>
+
+<script>
+function openTab(tab, tabName) {
+      var i, tabContent, tabLinks;
+  if (tab){
+      tabs = document.getElementsByClassName("tab");
+      for (i = 0; i < tabs.length; i++) {
+        tabs[i].classList.remove("active");
+      }
+      tab.classList.add("active")}
+      tabContent = document.getElementsByClassName("tab-content");
+      for (i = 0; i < tabContent.length; i++) {
+        tabContent[i].style.display = "none";
+      }
+      E(tabName).style.display = "block";
+}
+
+
+
+function processing() {
+  Swal.fire({
+        title: 'Processing...',
+        html: '<div style="display: flex; align-items: center; justify-content: center; height: 150px; overflow: hidden; display: block"><i class="fa-solid fa-spinner fa-spin-pulse fa-6x"></i><br><p><div>please wait</p>',
+        showConfirmButton: false,
+        width: "250px"
+    });
+}
+
+
+checklists = []
+caseData = ""
+appts = ""
+clients = ""
+log=""
+tasks = ""
+username = window.parent.username || new URLSearchParams(window.location.search).get('user')||prompt("username")
+password = window.parent.password || new URLSearchParams(window.location.search).get('pass')||prompt("password")
+limit = window.parent.limit || 100
+url = window.parent.url || "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc" 
+caseID = new URLSearchParams(window.location.search).get('caseID')||prompt("case id");
+caseFiled = []
+caseOpen = []
+caseClosed = []
+case341_i = []
+case341_c = []
+  
+processing()
+q = `SELECT 5`
+fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
+  .then(response => response.json())
+  .then(data => {
+  console.log(data)
+  
+  Swal.close()
+})
+    </script>
