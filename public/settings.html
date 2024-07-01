@@ -55,7 +55,7 @@ case341_i = []
 case341_c = []
   
 processing()
-q = `SELECT 5
+q = `SELECT 5`
 fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
   .then(response => response.json())
   .then(data => {
