@@ -12,6 +12,3 @@ npm install
 ### Run
 ```
 node server.js
-```
-$ curl https://ifconfig.me
-3.90.216.63
