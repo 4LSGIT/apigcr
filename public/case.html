@@ -11,6 +11,7 @@
 <div id="tabViewCase" class="tab-main" style="text-align: center;display:block">
         <div id="tabButtons" class="tabs" style="text-align: center;display:block">
         <div id="caseButtons">
+          <!-- Use the format id="?Button" to append case=caseID,tab to url -->
           <button class="tab active" onclick="openTab(this, 'tabOverview')"><i class="fa-solid fa-star"></i> Overview</button>
           <button class="tab" onclick="openTab(this, 'tabClients')"><i class="fa-solid fa-circle-question"></i> People</button>
           <button class="tab" onclick="openTab(this, 'tabAppts')"><i class="fa-solid fa-calendar-check"></i> Appointments</button>
@@ -24,10 +25,10 @@
         </div>
         <div id="bkButtons" style="display:none;">
           <!--<button class="tab" onclick="openTab(this, 'tabStatus')"><i class="fa-solid fa-chart-simple fa-rotate-180"></i> Set Status</button>-->
-          <button class="tab" onclick="openTab(this, 'tabInfo')"><i class="fa-solid fa-circle-info"></i> Initial Strategy Session Notes</button>
+          <button class="tab" id="ISSNButton" onclick="openTab(this, 'tabInfo')"><i class="fa-solid fa-circle-info"></i> Initial Strategy Session Notes</button>
           <button class="tab" onclick="openTab(this, 'tabSend')"><i class="fa-solid fa-comments"></i> Sending Form</button>
           <button class="tab" onclick="openTab(this, 'tabCase')"><i class="fa-solid fa-landmark"></i> Case Details</button>
-          <button class="tab" onclick="openTab(this, 'tab341')"><i class="fa-solid fa-gavel"></i> 341 Notes</button>          
+          <button class="tab" id="341Button" onclick="openTab(this, 'tab341')"><i class="fa-solid fa-gavel"></i> 341 Notes</button>          
           <button class="tab" onclick="openTab(this, 'tabDet')"><i class="fa-brands fa-wpforms"></i> Detailed Questionaire</button>
         </div>
         <h4 style="color:#000;">Primary Client Name:
@@ -652,6 +653,7 @@ password = window.parent.password || new URLSearchParams(window.location.search)
 limit = window.parent.limit || 100
 url = window.parent.url || "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc" 
 caseID = new URLSearchParams(window.location.search).get('caseID')||prompt("case id");
+tab = new URLSearchParams(window.location.search).get('tab')||"";
 caseFiled = []
 caseOpen = []
 caseClosed = []
@@ -681,7 +683,7 @@ fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=$
     if (Array.isArray(appts)){ putAppts() }
   E("tabButtons").style.display = "block"
   Swal.close()
-  openTab(null, 'tabOverview')
+  tab?E(`${tab}Button`).click():openTab(null, 'tabOverview')
     PC = clients.find(client => client.case_relate_type === "Primary")
     SC = clients.find(client => client.case_relate_type === "Secondary")
     E('leadID').innerHTML  = caseData.case_id     || ""

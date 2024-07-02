@@ -1194,6 +1194,9 @@ function login(){
                 q?quickPick(q):""
               })
             }
+            if (params.case){
+              quickPick(params.case.split(",")[0],"case",params.case.split(",")[1])
+            }
             if (params.tasks){tabTasksGet(0)}
             if (params.clients){tabClientssGet(0)}
             if (params.cases){tabCasesGet(0)}
@@ -1349,7 +1352,7 @@ login()
   
 
 quickpicktemp = ""
-function quickPick(term, type){
+function quickPick(term, type, tab){
   if (!term){alert("no term entered")}
   else if (term) {
     showProcessingSwal();
@@ -1389,7 +1392,7 @@ function quickPick(term, type){
       console.log(data)
       if (data.data.query1[0] && data.data.query1[0].message == "success") {
         Toast.fire({ icon: "success", title: `Opening File: ${data.data.query1[0].name}!` });
-        addFile(data.data.query1[0].name, data.data.query1[0].type, data.data.query1[0].id)
+        addFile(data.data.query1[0].name, data.data.query1[0].type, data.data.query1[0].id+(tab?`&tab=${tab}`:``))
       }
       else {alert("no file")}
     })
