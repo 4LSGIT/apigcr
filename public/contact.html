@@ -135,26 +135,33 @@
     <h1>Sequences:</h1>
     <h2>No Sequences</h2>
     <table id="seqTable" class="logTable" style="display:none">
-      <tr><th>Sequence ID:</th><th>Type:</th><th>Status:</th><th>link:</th><th>Date:</th><th></th></tr>
     </table>
   </div>
 <script>
-    function abortSeq(id, type) {
-      Swal.fire({
+function abortSeq(id, type) {
+    Swal.fire({
         title: "Abort Sequence?",
-        text: `are you sure you want to abort this "${type}" sequence?`,
-    showCancelButton: true,
-    confirmButtonText: 'Confirm',
-    showLoaderOnConfirm: true,
-    preConfirm: () => {
-        return fetch(`${url}?mode=clientAction&action=abortSeq&username=${username}&password=${password}&seq=${id}`)
-          .then(response => response.json())
-          .then(data => {
-          console.log(data)
-          Toast.fire({icon: data.status, title: data.title, text: data.message})
-        })
-      }
-  });
+        text: `Are you sure you want to abort this "${type}" sequence?`,
+        showCancelButton: true,
+        confirmButtonText: 'Confirm',
+        showLoaderOnConfirm: true,
+        preConfirm: async () => {
+            data = await sendQuery(`UPDATE sequences SET seq_status = 'aborted' WHERE seq_id = '${id}'|||
+                 SELECT *, IFNULL(DATE_FORMAT(seq.seq_start_date, '%b. %e, %Y at %l:%i %p'), '') as start_date FROM sequences seq WHERE seq.seq_client = '${clientID}';`);
+            seq = data.data.query2;
+            if (Array.isArray(seq)) {
+                putSeq();
+            }
+            /*
+            return fetch(`${url}?mode=clientAction&action=abortSeq&username=${username}&password=${password}&seq=${id}`)
+                .then(response => response.json())
+                .then(data => {
+                    console.log(data);
+                    Toast.fire({icon: data.status, title: data.title, text: data.message});
+                });
+            */
+        }
+    });
 }
 </script>
   <div id="tabAppts" class="tab-content">
@@ -552,9 +559,11 @@ function putSeq(){
   table=E("seqTable")
   table.style.display=""
   table.previousElementSibling.style.display="none"
+  table.innerHTML = "<tr><th>ID:</th><th>Type:</th><th>Status:</th><th>link:</th><th>Start Date:</th><th>Next Step:</th><th></th></tr>"
   seq.forEach(seq => {
     row = table.insertRow();
-    row.innerHTML = `<td>${seq.seq_id}</td><td>${seq.seq_type}</td><td>${seq.seq_status}</td><td>${seq.seq_link}</td><td>${seq.seq_start}</td><td><button onclick="abortSeq('${seq.seq_id}','${seq.seq_type}')">Abort</button></td>`
+    row.innerHTML = seq.seq_status == "active"? `<td>${seq.seq_id}</td><td>${seq.seq_type}</td><td>${seq.seq_status}</td><td>${seq.seq_link}</td><td>${seq.start_date}</td><td>${seq.seq_next_step}</td><td><button onclick="abortSeq('${seq.seq_id}','${seq.seq_type}')">Abort</button></td>`:
+                                               `<td>${seq.seq_id}</td><td>${seq.seq_type}</td><td>${seq.seq_status}</td><td>${seq.seq_link}</td><td>${seq.start_date}</td><td>${seq.seq_next_step}</td><td></td>`
    })
 }
 
@@ -583,7 +592,7 @@ seq = ""
 
 processing()
   query = `SELECT co.*  FROM contacts co WHERE co.contact_id = '${clientID}';|||
-  SELECT *, DATE_FORMAT(seq.seq_start_date, '%b. %e, %Y at %l:%i %p') FROM sequences seq WHERE seq.seq_client = '${clientID}';|||
+  SELECT *, IFNULL(DATE_FORMAT(seq.seq_start_date, '%b. %e, %Y at %l:%i %p'), '') as start_date FROM sequences seq WHERE seq.seq_client = '${clientID}';|||
   SELECT *, IFNULL(DATE_FORMAT(case_open_date, '%b. %e, %Y'), '') AS open, IFNULL(DATE_FORMAT(case_file_date, '%b. %e, %Y'), '') AS file, IFNULL(DATE_FORMAT(case_close_date, '%b. %e, %Y'), '') AS close 
     FROM case_relate cr LEFT JOIN cases ca ON ca.case_id = cr.case_relate_case_id
     WHERE cr.case_relate_client_id = '${clientID}';|||
