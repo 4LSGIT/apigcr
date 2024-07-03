@@ -17,9 +17,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 
-// MySQL Connection Configuration
 const db = mysql.createPool({
-  connectionLimit: 10, // Maximum number of connections in the pool
+  connectionLimit: 10,
   host: process.env.host,
   user: process.env.user,
   password: process.env.password,
@@ -35,7 +34,6 @@ app.get('/', (req, res) => {
   res.send('Where does the 4LSG API lives?');
 });
 
-// Route to handle user authentication and query processing
 // Route to handle user authentication and query processing
 app.get("/db", (req, res) => {
   const { username, password, query } = req.query;
@@ -98,6 +96,34 @@ app.get("/db", (req, res) => {
         }
       }
     });
+  });
+});
+
+
+app.post("/logEmail", (req, res) => {
+  let { to, from, subject, body_plain, attachments} = req.body;
+  if (from.endsWith("@4lsg.com") && to.endsWith("@4lsg.com")) {
+    res.status(200).json({ message: "Internal Email not logged" });
+    return;
+  }
+  const currentDate = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const contactEmail = from.toLowerCase().endsWith("@4lsg.com") ? to : from;
+  subject = subject.replace(/["']/g, '\\$&');
+  let message = body_plain.replace(/["']/g, '\\$&');
+  if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+    attachments.forEach((attachment, index) => {
+      message += `\nAttachment ${index + 1}: ${attachment}`;
+    });
+  }
+  let string = `{"From": "${from}", "To": "${to}", "Subject": "${subject}", "Message": "${message}"}`;
+  const insertQuery = `INSERT INTO log (log_type, log_date, log_link, log_by, log_data) SELECT "email", "${currentDate}", c.contact_id, 0, '${string}' FROM contacts c WHERE c.contact_email = "${contactEmail}"`;
+  db.query(insertQuery, (err, result) => {
+  if (err) {
+    console.error("Error inserting email data into the log table:", err);
+    res.status(500).json({ error: "Failed to log email data", details: err.message , sql: insertQuery});
+  } else {
+    res.status(200).json({ message: "Email data logged successfully", details: result, sql: insertQuery});
+  }
   });
 });
 
