@@ -116,6 +116,9 @@ app.post("/logEmail", (req, res) => {
     });
   }
   let string = `{"From": "${from}", "To": "${to}", "Subject": "${subject}", "Message": "${message}"}`;
+  if (string.length > 65501){
+    string = string.substring(0,65500) + '"}'
+  }
   const insertQuery = `INSERT INTO log (log_type, log_date, log_link, log_by, log_data) SELECT "email", "${currentDate}", c.contact_id, 0, '${string}' FROM contacts c WHERE c.contact_email = "${contactEmail}"`;
   db.query(insertQuery, (err, result) => {
   if (err) {
