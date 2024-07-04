@@ -831,7 +831,7 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
   <div id="tabLogs" class="tab-main">
     <span>Query:
       <input id="tabLogQuery">Type:
-      <select id="tabLogType" onchange="tabLogTypeChange()">
+      <select id="tabLogType">
         <option>All</option>
         <option>Communication</option>
         <option>Email</option>
@@ -853,7 +853,7 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
       
       <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
     </span>
-    <table id="logTable" class="logTable">
+    <table id="logTable" class="logTable" style="text-align: left;">
       <tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>Data:</th><th>User:</th></tr>
     </table>
     <div id="logTableFoot"></div>
@@ -862,17 +862,7 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
     </div>
   </div>  
   
-  <script>
-    function tabLogTypeChange(time) {/*
-      if (E("tabLogType").value=="All") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>Data:</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="Communication") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Data</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="Email") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Subject:</th><th>Body:</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="SMS") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Message:</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="Call") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Note:</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="Form") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>form:</th><th>Form ID:</th><th>Note:</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="Other") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>User:</th><th>Data:</th></tr>"}
-    */}
-    
+  <script>    
     function tabLogTimeChange(time) {
   if (time == 'All') {
     E('tabLogDate1').style.display = 'none';
@@ -928,7 +918,6 @@ function tabLogGet(offset) {
     console.log(data)
       logs = data.data.query1;
      if (data.data.query2[0].counter > 0){
-       //Toast.fire({ title: "success", text: `${data.data.query2[0].counter} records retrieved`, icon: "success"});
        logs.forEach(log => {
         const row = table.insertRow();
          logdata = ""
@@ -943,13 +932,6 @@ function tabLogGet(offset) {
          } catch (error) {
            cell_data = log.log_data;
          }
-         /*if (type1 == "All"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${log.log_data}</td><td>${by}</td>` }
-         if (type1 == "Communication"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_data}</td><td>${by}</td>` } 
-         if (type1 == "Email"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_subject}</td><td>${log.log_data}</td><td>${by}</td>`}
-         if (type1 == "SMS"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_data}</td><td>${by}</td>`}
-         if (type1 == "Call"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_data}</td><td>${by}</td>`}
-         if (type1 == "Form"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_form_id}</td><td>${log.log_sub}</td><td>${log.log_data}</td><td>${by}</td>`}
-         if (type1 == "Other"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${by}</td><td>${log.log_data}</td>`}*/
          rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${cell_data}</td><td>${by}</td>`
 
         row.innerHTML = rowHTML
@@ -1422,16 +1404,12 @@ function quickPick(term, type, tab){
   
   
 
-  
+  /*
   
 window.onbeforeunload = function(e) {
     return "Don't leave";
 };
- /*
-
-window.onbeforeunload = function() {
-    return "Are you sure you want to leave?";
-};*/
+*/
 </script>
   
 <xscript src="https://4lsg.glitch.me/js.js"></xscript>
