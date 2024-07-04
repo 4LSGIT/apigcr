@@ -863,7 +863,7 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
   </div>  
   
   <script>
-    function tabLogTypeChange(time) {
+    function tabLogTypeChange(time) {/*
       if (E("tabLogType").value=="All") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>Data:</th><th>User:</th></tr>"}
       else if (E("tabLogType").value=="Communication") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Data</th><th>User:</th></tr>"}
       else if (E("tabLogType").value=="Email") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Subject:</th><th>Body:</th><th>User:</th></tr>"}
@@ -871,7 +871,7 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
       else if (E("tabLogType").value=="Call") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Note:</th><th>User:</th></tr>"}
       else if (E("tabLogType").value=="Form") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>form:</th><th>Form ID:</th><th>Note:</th><th>User:</th></tr>"}
       else if (E("tabLogType").value=="Other") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>User:</th><th>Data:</th></tr>"}
-    }
+    */}
     
     function tabLogTimeChange(time) {
   if (time == 'All') {
@@ -935,13 +935,22 @@ function tabLogGet(offset) {
          link =  isNaN(log.log_link)? `<a href="#" onclick="addFile('${log.case_number||log.case_id}', 'case', '${log.case_id}', '${log.case_type}'); return false">${log.case_number||log.case_id}</a>`
            : log.log_link  ? `<a href="#" onclick="addFile('${log.contact_name}', 'client', '${log.log_link}'); return false">${log.contact_name||"Name Error"}</a>` : ""
          by = userArray[+log.log_by-1] !== undefined ? userArray[+log.log_by-1]:log.log_by
-         if (type1 == "All"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${log.log_data}</td><td>${by}</td>` }
+         let cell_data;
+         try {
+           let jsonData = log.log_data.replace(/\n/g, "\\n").replace(/\r/g, "\\r");
+           jsonData = JSON.parse(jsonData);
+           cell_data = Object.keys(jsonData).map(key => `<b>${key}:</b> ${jsonData[key]}`).join('<br>');
+         } catch (error) {
+           cell_data = log.log_data;
+         }
+         /*if (type1 == "All"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${log.log_data}</td><td>${by}</td>` }
          if (type1 == "Communication"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_data}</td><td>${by}</td>` } 
          if (type1 == "Email"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_subject}</td><td>${log.log_data}</td><td>${by}</td>`}
          if (type1 == "SMS"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_data}</td><td>${by}</td>`}
          if (type1 == "Call"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_data}</td><td>${by}</td>`}
          if (type1 == "Form"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_form_id}</td><td>${log.log_sub}</td><td>${log.log_data}</td><td>${by}</td>`}
-         if (type1 == "Other"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${by}</td><td>${log.log_data}</td>`}
+         if (type1 == "Other"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${by}</td><td>${log.log_data}</td>`}*/
+         rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${cell_data}</td><td>${by}</td>`
 
         row.innerHTML = rowHTML
       });
@@ -1415,14 +1424,14 @@ function quickPick(term, type, tab){
 
   
   
-  
-  
-  
-  
-  
- 
+window.onbeforeunload = function(e) {
+    return "Don't leave";
+};
+ /*
 
-
+window.onbeforeunload = function() {
+    return "Are you sure you want to leave?";
+};*/
 </script>
   
 <xscript src="https://4lsg.glitch.me/js.js"></xscript>
