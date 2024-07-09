@@ -82,9 +82,7 @@
         <option>Closed</option>
       </select>
       Case Status: 
-      <select id="tabCasesStatus" style="width:auto" disabled>
-        <option value="%">Select a stage first</option>
-      </select>
+      <input id="tabCasesStatus" style="width:auto">
       Order By: 
       <select id="tabCasesOrder" style="width:auto">
         <option value="co.contact_lname">Client Last Name</option>
@@ -127,6 +125,7 @@ function tabCasesGet(offset) {
   let type = E('tabCasesType').value;
   let stage = E('tabCasesStage').value;  
   let status = E('tabCasesStatus').value;
+  status = status?`%$status}%`:"%"
   let order = E('tabCasesOrder').value;
   let order2 = E('tabCasesOrder2').value;
   
@@ -838,6 +837,8 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
         <option>SMS</option>
         <option>Call</option>
         <option>Form</option>
+        <option>Status</option>
+        <option>Note</option>
         <option>Other</option>
       </select>Time: 
       <select id="tabLogTime" style="width:150px" onchange="tabLogTimeChange(this.value)">
@@ -1404,12 +1405,6 @@ function quickPick(term, type, tab){
   
   
 
-  /*
-  
-window.onbeforeunload = function(e) {
-    return "Don't leave";
-};
-*/
 </script>
   
 <xscript src="https://4lsg.glitch.me/js.js"></xscript>
