@@ -132,6 +132,16 @@ app.post("/logEmail", (req, res) => {
 
 
 
+app.get('/date', (req, res) => {
+  let offset = req.query.offset || 0;
+  let currentDate = new Date();
+  currentDate.setDate(currentDate.getDate() + parseInt(offset));
+  let formattedDate = currentDate.toISOString().slice(0, 19).replace('T', ' ');
+  res.send(formattedDate);
+});
+
+
+
 app.get('/delay', (req, res) => {
   const { value, delay, callback} = req.query
     // Do something
