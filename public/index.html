@@ -899,7 +899,7 @@ function tabLogGet(offset) {
     table.deleteRow(i);
   }
   if (type == "All"){type = "1' OR '1"}
-  else if (type == "Communication"){type = "sms' OR log_type %3D 'email' OR log_type %3D 'call"}
+  else if (type == "Communication"){type = "sms' OR log_type = 'email' OR log_type = 'call"}
 
   if (time = "All"){time = "1000-10-01' OR '1"}
   else if (time == "Defore"){time = `1000-10-01' OR DATE(log_date) < ${date1}`}
