@@ -133,7 +133,7 @@ app.post("/logEmail", (req, res) => {
 
 
 app.get('/date', (req, res) => {
-  let offset = req.query.offset || 0;
+  /*let offset = req.query.offset || 0;
   let currentDate = new Date();
   currentDate.setDate(currentDate.getDate() + parseInt(offset));
   const year = currentDate.getFullYear();
@@ -141,8 +141,8 @@ app.get('/date', (req, res) => {
   const day = String(currentDate.getDate()).padStart(2, '0');
   const hours = String(currentDate.getHours()).padStart(2, '0');
   const minutes = String(currentDate.getMinutes()).padStart(2, '0');
-  const seconds = String(currentDate.getSeconds()).padStart(2, '0');
-  const formattedDate = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  const seconds = String(currentDate.getSeconds()).padStart(2, '0');*/
+  let formattedDate = new Date(new Date().valueOf() - (new Date().getTimezoneOffset() * 60 * 1000)).toISOString().split(".")[0].replace("T"," ")
   res.send(formattedDate);
 });
 
