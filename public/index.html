@@ -1226,15 +1226,15 @@ login()
   if (fileType == 'case') {
     fileButton.innerHTML = `<i class="fa-solid fa-landmark"></i> ${fileName}`
     //file.innerHTML = `<iframe src="https://4lsg.glitch.me/fileCase.html?caseID=${fileID}"></iframe>`
-    file.innerHTML = `<iframe src="/case.html?caseID=${fileID}"></iframe>`
+    file.innerHTML = `<iframe src="/case.html?caseID=${fileID}&fileCount=${fileCounter}"></iframe>`
   }
   else if (fileType == 'client' || fileType == 'contact') {
     fileButton.innerHTML = `<i class="fa-solid fa-user"></i> ${fileName}`
-    file.innerHTML = `<iframe src="/contact.html?clientID=${fileID}"></iframe>`
+    file.innerHTML = `<iframe src="/contact.html?clientID=${fileID}&fileCount=${fileCounter}"></iframe>`
   }
   else if (fileType == 'bill') {
     fileButton.innerHTML = `<i class="fa-solid fa-file-invoice-dollar"></i> ${fileName}`
-    file.innerHTML = `<h1>No bills today!</h1>`
+    file.innerHTML = `<h1>No bills today!</h1><p>file Count: ${fileCounter}</p>`
   }
   fileButton.className = 'file-button';
   file.className = 'tab-main'
