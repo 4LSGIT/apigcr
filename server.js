@@ -99,6 +99,40 @@ app.get("/db", (req, res) => {
   });
 });
 
+function dateNow(){
+const now = new Date();
+const estOffset = -4; // EST offset from UTC
+const dstOffset = isDST(now.getFullYear(), now.getMonth(), now.getDate()) ? 1 : 0; // Check if DST is in effect
+
+const estWithDST = new Date(now.getTime() + (estOffset + dstOffset) * 3600000);
+const mysqlFormattedDateTime = estWithDST.toISOString().slice(0, 19).replace('T', ' ');
+return mysqlFormattedDateTime
+
+function isDST(year, month, day) {
+  const dstStart = getNthWeekdayOfMonth(year, 2, 0, 1); // DST starts on the second Sunday in March
+  const dstEnd = getNthWeekdayOfMonth(year, 10, 0, 1); // DST ends on the first Sunday in November
+  const checkDate = new Date(year, month, day);
+
+  return checkDate >= dstStart && checkDate < dstEnd && checkDate.getDay() === 0;
+}
+function getNthWeekdayOfMonth(year, month, weekday, n) {
+  const date = new Date(year, month, 1);
+  let count = 0;
+  while (date.getDay() !== weekday || count < n) {
+    if (date.getDay() === weekday) {
+      count++;
+    }
+    date.setDate(date.getDate() + 1);
+  }
+  return date;
+}
+}
+
+app.get('/date', (req, res) => {
+res.send({"date":dateNow()})
+});
+
+
 
 app.post("/logEmail", (req, res) => {
   let { to, from, subject, body_plain, attachments} = req.body;
@@ -106,7 +140,7 @@ app.post("/logEmail", (req, res) => {
     res.status(200).json({ message: "Internal Email not logged" });
     return;
   }
-  const currentDate = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const currentDate = dateNow();
   const contactEmail = from.toLowerCase().endsWith("@4lsg.com") ? to : from;
   subject = subject.replace(/["']/g, '\\$&');
   let message = body_plain.replace(/["']/g, '\\$&');
@@ -132,19 +166,6 @@ app.post("/logEmail", (req, res) => {
 
 
 
-app.get('/date', (req, res) => {
-  /*let offset = req.query.offset || 0;
-  let currentDate = new Date();
-  currentDate.setDate(currentDate.getDate() + parseInt(offset));
-  const year = currentDate.getFullYear();
-  const month = String(currentDate.getMonth() + 1).padStart(2, '0'); // Adding 1 to month as it is zero-based
-  const day = String(currentDate.getDate()).padStart(2, '0');
-  const hours = String(currentDate.getHours()).padStart(2, '0');
-  const minutes = String(currentDate.getMinutes()).padStart(2, '0');
-  const seconds = String(currentDate.getSeconds()).padStart(2, '0');*/
-  let formattedDate = new Date(new Date().valueOf() - (new Date().getTimezoneOffset() * 60 * 1000)).toISOString().split(".")[0].replace("T"," ")
-  res.send(formattedDate);
-});
 
 
 
