@@ -198,7 +198,7 @@ app.get('/myip', async (req, res) => {
 
 function parseName(name) {
   const suffixes = [ "jr", "sr", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
-  const parts = name.replace(/,/g,"").split(" ");
+  const parts = name.replace(/,/g,"").replace(/\n/g, ' ').replace(/  /g, ' ').split(" ");
   let firstName = parts[0] || "";
   let middleName = "";
   let lastName = "";

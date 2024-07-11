@@ -40,7 +40,7 @@
     <button style="width:100px;height:100px" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')"><i class="fa-solid fa-box-archive fa-2xl"></i><br><br>Log</button>    
     <div style="height:5px;"></div>
     <button style="width:100px;height:100px" onclick="openMainTab('tabBills')"><i class="fa-solid fa-file-invoice-dollar fa-2xl"></i><br><br>Billing</button>
-    <button style="width:100px;height:100px" onclick="openMainTab('tabBK')"><i class="fa-solid fa-house-chimney-crack fa-2xl"></i><br><br>BK Cases</button>
+    <button style="width:100px;height:100px" onclick="openMainTab('tabReports')"><i class="fa-solid fa-table-cells fa-2xl"></i><br><br>Reports</button>
     <button style="width:100px;height:100px" onclick="openMainTab('tabMyAccount')"><i class="fa-solid fa-circle-user fa-2xl"></i><br><br>My Account</button>
     <p title="Enter a Contact ID, Phone Number (without spaces), Case Number or a Lead ID to directly open that Client/Case">Quick Pick: (in-progress; not reliable)</p>
       <input id="qpInput" placeholder="Client ID, Case # or Lead ID" onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value);}">
@@ -58,8 +58,19 @@
    <h1>Billing</h1>
     <p>Was this page intentionally left blank?</p>
   </div>
+  
 
-
+  <div id="tabReports" class="tab-main">
+   <h1>Reports</h1>
+    <select id="reportTemplate" style="width:auto">
+      <option value="" selected disabled>Select a Report Template</option>
+      <table id="reportsTable" class="logTable">
+      </table>
+    </select>
+  </div>
+  
+  
+  
   <div id="tabCases" class="tab-main">
     <h1>This is the Cases Tab</h1>
     <span>
@@ -328,6 +339,7 @@ function tabContactsGet(offset) {
         <option>Strategy Session Follow Up</option>
         <option>Pre-filing Meeting</option>
         <option>Schedules Completion Meeting</option>
+        <option>341 Meeting</option>
       </select>
       Status: 
       <select id="tabApptsStatus" style="width:auto">
@@ -409,7 +421,8 @@ function tabApptsGet(offset) {
   for (var i = rows.length - 1; i > 0; i--) {
     table.deleteRow(i);
   }
-  q = `SELECT appts.appt_id AS id, contacts.contact_name AS name, appts.appt_client_id AS clientId, cases.case_number AS caseN, appts.appt_case_id AS leadId, appts.appt_type AS type, appts.appt_date as date, DATE_FORMAT(appts.appt_date, '%b. %e, %Y') AS format_date, DATE_FORMAT(appts.appt_date, '%h:%i %p') AS time, DATE_FORMAT(appts.appt_date, '%Y-%m-%dT%H:%i') AS datetime, appts.appt_status AS status FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query} /*to put current day appts first*/ /*CASE WHEN DATE(appts,appt_date) = CURDATE() THEN 0 ELSE 1 END,*/ ORDER BY appts.appt_date DESC LIMIT ${limit} OFFSET ${offset};|||
+  q = `SELECT appts.appt_id AS id, contacts.contact_name AS name, appts.appt_client_id AS clientId, cases.case_number AS caseN, appts.appt_case_id AS leadId, appts.appt_type AS type, appts.appt_date as date, DATE_FORMAT(appts.appt_date, '%b. %e, %Y') AS format_date, DATE_FORMAT(appts.appt_date, '%h:%i %p') AS time, DATE_FORMAT(appts.appt_date, '%Y-%m-%dT%H:%i') AS datetime, appts.appt_status AS status
+       FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query} /*to put current day appts first*/ /*CASE WHEN DATE(appts,appt_date) = CURDATE() THEN 0 ELSE 1 END,*/ ORDER BY appts.appt_date DESC LIMIT ${limit} OFFSET ${offset};|||
        SELECT COUNT(*) AS counter FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query}`
   fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
     .then(response => response.json())
