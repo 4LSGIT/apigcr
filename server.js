@@ -204,6 +204,7 @@ function parseName(name) {
   let lastName = "";
   let suffix = "";
   let lnameOnly = "";
+  let flname = "";
 
   if (parts.length > 1) {
     if ( suffixes.includes( parts[parts.length - 1].toLowerCase().replace(".", "")) && parts.length > 2) {
@@ -217,14 +218,15 @@ function parseName(name) {
      lnameOnly = lastName.split("-")[0]
     }
   }
+  flname = firstName + (lnameOnly?` ${lnameOnly}`:"");
 
-  return [firstName, middleName, lastName, lnameOnly, suffix];
+  return [firstName, middleName, lastName, lnameOnly, suffix, flname];
 }
 
 app.get("/parseName", (req, res) => {
   const { name } = req.query;
   const parsedName = parseName(name);
-  res.json({ firstName: parsedName[0], middleName: parsedName[1], lastName: parsedName[2], lastNameOnly: parsedName[3], lastNameSuffix: parsedName[4]});
+  res.json({ firstName: parsedName[0], middleName: parsedName[1], lastName: parsedName[2], lastNameOnly: parsedName[3], lastNameSuffix: parsedName[4], flname: parsedName[5]});
 });
 
 
