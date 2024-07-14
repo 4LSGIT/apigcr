@@ -6,7 +6,7 @@
   <!--<script type="text/javascript" src="https://www.dropbox.com/static/api/2/dropins.js" id="dropboxjs" data-app-key="ubgcneqmlvas3rc"></script>-->
   <script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-  <script src="https://4lsg.glitch.me/script.js"></script>
+  <script src="/scripts.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css">
 <meta name="viewport" content="width=device-width, initial-scale=1">
   </head>
@@ -95,7 +95,7 @@
       Case Status: 
       <input id="tabCasesStatus" style="width:auto">
       Order By: 
-      <select id="tabCasesOrder" style="width:auto">
+      <select id="tabCasesOrder" style="width:auto" data-type="sortBy">
         <option value="co.contact_lname">Client Last Name</option>
         <option value="co.contact_name">Client First Name</option>
         <option value="c.case_number">Case Number</option>
@@ -103,7 +103,7 @@
         <option value="c.case_open_date">Open Date</option>
         <option value="c.case_file_date">File Date</option>
       </select>
-      <select id="tabCasesOrder2" style="width:auto">
+      <select id="tabCasesOrder2" style="width:auto" data-type="sortDi">
         <option value="ASC">Ascending</option>
         <option value="DESC">Descending</option>
       </select>
@@ -111,7 +111,7 @@
     </span>
     <table id="casesTable" class="logTable">
       <tr>
-        <th>Lead ID</th>
+        <th onclick="sort(this, 'c.case_id')">Lead ID</th>
         <th>Client Name</th>
         <th>Case Number</th>
         <th>Case Type</th>
@@ -1426,8 +1426,6 @@ function quickPick(term, type, tab){
 
 </script>
   
-<xscript src="https://4lsg.glitch.me/js.js"></xscript>
-
 </body>
 </html>
 

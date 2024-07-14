@@ -67,3 +67,20 @@ function dateTimeParts(dateString) {
   dateString[3] = dateString[3] > 12 ? dateString[3]-12:dateString[3]
   return dateString
 }
+
+
+
+function sort(header, sort){
+  const parentDiv = header.parentNode.parentNode.parentNode.parentNode;
+  const sortBy = parentDiv.querySelector('select[data-type="sortBy"]')
+  const sortDi = parentDiv.querySelector('select[data-type="sortDi"]')
+  const headers = parentDiv.querySelectorAll('th')
+  sort = sort || header.innerText.replace(' ↑', '').replace(' ↓', '');
+  if (sortBy.value !== sort) {
+    sortBy.value = sort;
+  } else {
+    sortDi.value = sortDi.value === 'ASC' ? 'DESC' : 'ASC';
+  }
+  headers.forEach(h => h.innerText = h.innerText.replace(' ↑', '').replace(' ↓', ''));
+  header.innerText += sortDi.value === 'ASC' ? ' ↑' : ' ↓';
+}
