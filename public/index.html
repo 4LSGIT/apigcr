@@ -480,11 +480,17 @@ function tabApptsGet(offset) {
 function rescheduledConfMsg(date1, date2) {
         if (date2){
           d1 = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(date1)).split(", ");
+          console.log("d1a",d1)
           d1 = `${d1[0]}, ${d1[1]} at ${d1[2]}`
           d2 = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric', hour12: true }).format(new Date(date2)).split(", ");
+          console.log("d2a",d2)
           d2 = `${d2[0]}, ${d2[1]} at ${d2[2]}`
           str = `This is to confirm that I rescheduled our appointment from ${d1} to ${d2}.`
           E("rescheduleConfirmMessage").innerHTML = str
+          console.log("d1",d1)
+          console.log("date1",date1)
+          console.log("d2", d2)
+          console.log("date2",date2)
         }
         else if (!date1){
           E('rescheduleConfirmMessage').style.display= (E("apptRescSMS").checked==true||E("apptRescEmail").checked==true)? "":"none";
