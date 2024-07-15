@@ -22,6 +22,7 @@
   
   <div id="tabOpenFiles" style="display:none;text-align: center;">
     <div id="noOpenFiles">There are no open files at the moment!</div>
+    <div id="closeAllFiles" style="display:none;" class="file-button" onclick="closeAllFiles(this)">Close All<!--<i class="file-close fa-solid fa-circle-xmark"></i>--></div>
   </div>
   <div style="text-align: center;">
     <img src="https://iili.io/Jy2nXHv.md.png" width="280"  aria-label="Form Logo" /><br>
@@ -1244,6 +1245,7 @@ login()
  function addFile(fileName, fileType, fileID) {
   E('noOpenFiles').style.display= "none"
   const fileButtonContainer = E('tabOpenFiles');
+  E('closeAllFiles').style.display = fileButtonContainer.children.length > 2 ? '' : 'none'
   const fileButton = document.createElement('div');
   const file = document.createElement('div');
    file.innerHTML = 'this is a test!'
@@ -1261,7 +1263,7 @@ login()
     file.innerHTML = `<h1>No bills today!</h1><p>file Count: ${fileCounter}</p>`
   }
   fileButton.className = 'file-button';
-  file.className = 'tab-main'
+  file.className = 'tab-main file'
   fileButton.id = "file-button"+fileCounter
   file.id = 'file-div'+fileCounter
   fileButton.name = fileName
@@ -1277,7 +1279,8 @@ login()
       if (result.isConfirmed) {
         fileButtonContainer.removeChild(fileButton);
         document.body.removeChild(file)
-        E('noOpenFiles').style.display = fileButtonContainer.children.length == 1 ? 'block' : 'none'
+        E('noOpenFiles').style.display = fileButtonContainer.children.length == 2 ? 'block' : 'none'
+        E('closeAllFiles').style.display = fileButtonContainer.children.length > 3 ? '' : 'none'
       }
     });
   });
@@ -1288,6 +1291,22 @@ login()
   openMainTab(file.id)
  }
   
+ function closeAllFiles(button){
+    Swal.fire({title: `Close all files?`, text: `Did you save all the forms?`, showCancelButton: true,confirmButtonText: 'Confirm'})
+    .then((result) => {
+    if (result.isConfirmed) {
+    const files = document.querySelectorAll('.file');
+    const fileButtons = document.querySelectorAll('.file-button');
+    files.forEach(element => {
+      element.parentNode.removeChild(element);
+    });
+    fileButtons.forEach(element => {
+      element.parentNode.removeChild(element);
+    });
+      E("noOpenFiles").style.display = "block"
+      }
+    })
+ }
   
   function newClient() {
     Swal.fire({
