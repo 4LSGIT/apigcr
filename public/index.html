@@ -74,7 +74,7 @@
     <h1>This is the Cases Tab</h1>
     <span>
       Query:
-      <input id="tabCasesQuery" type="text">
+      <input id="tabCasesQuery" type="text" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}">
       Case Type: 
       <select id="tabCasesType" style="width:auto">
         <option value="%">All</option>
@@ -94,31 +94,35 @@
       Case Status: 
       <input id="tabCasesStatus" style="width:auto">
       Order By: 
-      <select id="tabCasesOrder" style="width:auto" data-type="sortBy">
+      <select id="tabCasesOrder" style="width:auto" data-type="sortBy" onchange="sortSelect(this)">
         <option value="co.contact_lname">Client Last Name</option>
         <option value="co.contact_name">Client First Name</option>
         <option value="c.case_number">Case Number</option>
         <option value="c.case_id">Lead ID</option>
         <option value="c.case_open_date">Open Date</option>
         <option value="c.case_file_date">File Date</option>
+        <option value="c.case_close_date">Close Date</option>
+        <option value="c.case_type">Case Type</option>
+        <option value="c.case_stage">Case Stage</option>
+        <option value="c.case_status">Case Status</option>
       </select>
-      <select id="tabCasesOrder2" style="width:auto" data-type="sortDi">
+      <select id="tabCasesOrder2" style="width:auto" data-type="sortDi" onchange="sortSelect(this)">
         <option value="ASC">Ascending</option>
         <option value="DESC">Descending</option>
       </select>
-      <button onclick="tabCasesGet(0)">Search</button>
+      <button onclick="tabCasesGet(0)" data-type="goButton">Search</button>
     </span>
     <table id="casesTable" class="logTable">
       <tr>
         <th onclick="sort(this, 'c.case_id')">Lead ID</th>
-        <th>Client Name</th>
-        <th>Case Number</th>
-        <th>Case Type</th>
-        <th>Case Stage</th>
-        <th>Case Status</th>
-        <th>Open Date</th>
-        <th>File Date</th>
-        <th>Close Date</th>
+        <th onclick="sort(this, 'co.contact_lname')">Client Name</th>
+        <th onclick="sort(this, 'c.case_number')">Case Number</th>
+        <th onclick="sort(this, 'c.case_type')">Case Type</th>
+        <th onclick="sort(this, 'c.case_stage')">Case Stage</th>
+        <th onclick="sort(this, 'c.case_status')">Case Status</th>
+        <th onclick="sort(this, 'c.case_open_date')">Open Date</th>
+        <th onclick="sort(this, 'c.case_file_date')">File Date</th>
+        <th onclick="sort(this, 'c.case_close_date')">Close Date</th>
       </tr>
     </table>
     <div id="casesTableFoot"></div>
@@ -174,7 +178,6 @@ function tabCasesGet(offset) {
     if (data.data.query2[0].counter > 0){
       cases = data.data.query1
       console.log(cases)
-      //Toast.fire({ icon: "success", title: `Returned ${data.data.query2[0].counter} results!` });
       cases.forEach(C => {
         C.contacts = JSON.parse(C.contacts)
         const row = table.insertRow();
@@ -1081,6 +1084,8 @@ function tabLogGet(offset) {
     <button class="big-button" onclick="admintask1()">View/Edit Users</button>
     <button class="big-button" onclick="admintask2()">Sequences</button>
     <button class="big-button" onclick="E('sqlQueryDiv').style.display = E('sqlQueryDiv').style.display == 'none'? '':'none'">mySQL Query</button>
+    <div id="sequencesDiv" style="display:none;">
+    </div>
     <div id="sqlQueryDiv" style="display:none">
       <h2>mySQL query</h2>
       <p>THIS IS AN ADVANCED FEATURE THAT CAN HAVE EXTREME CONSEQUENCES - DON'T USE IF YOU DONT KNOW WHAT THIS IS!</p>
@@ -1090,7 +1095,6 @@ function tabLogGet(offset) {
   </div>
   <script>
     function mySQLquery(query){
-      //query = 'SELECT * from seq_types'
       fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(query)}`)
         .then(response => response.json())
         .then(data => {
@@ -1098,6 +1102,7 @@ function tabLogGet(offset) {
       })
     }
   </script>
+  
 
 
 
