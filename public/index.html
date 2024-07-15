@@ -219,7 +219,7 @@ function tabCasesGet(offset) {
     <h1>This is Contacts Tab</h1>
     <span><button onclick="newContact()"><i class="fa-solid fa-user-plus"></i> New Contact</button>
       Query:
-      <input id="tabContactsQuery" type="text">
+      <input id="tabContactsQuery" type="text" onkeypress="if (event.keyCode == 13) {tabContactsGet(0)}">
       filter1: 
       <select disabled>
         <option>All</option>
@@ -644,7 +644,7 @@ function rescheduledConfMsg(date1, date2) {
     <span>
       <button onclick="newTask()">Create Task</button>
       Query:
-      <input id="tabTasksQuery">
+      <input id="tabTasksQuery" onkeypress="if (event.keyCode == 13) {tabTasksGet(0)}">
       Status: 
       <select id="tabTasksStatus" style="width:150px">
         <option>Incomplete</option>
@@ -850,7 +850,8 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
 
   <div id="tabLogs" class="tab-main">
     <span>Query:
-      <input id="tabLogQuery">Type:
+      <input id="tabLogQuery" onkeypress="if (event.keyCode == 13) {tabLogGet(0)}">
+      Type:
       <select id="tabLogType">
         <option>All</option>
         <option>Communication</option>
