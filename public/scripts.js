@@ -3,6 +3,7 @@ const V = (id) => document.getElementById(id).value;
 const S = (id) => document.getElementById(id).style;
 const D = (id) => document.getElementById(id).style.display;
 const U = (str) => encodeURIComponent(str.replace(/(["'`\\])/g, '\\\\$1').replace(/\n/g, '\\\\n'))
+
 // Function to compare dates in EST with DST consideration
 function whenDate(date) {
   const now = new Date(new Date().toLocaleString("en-US", {timeZone: "America/New_York"}));
@@ -74,6 +75,7 @@ function sort(header, sort){
   const parentDiv = header.parentNode.parentNode.parentNode.parentNode;
   const sortBy = parentDiv.querySelector('select[data-type="sortBy"]')
   const sortDi = parentDiv.querySelector('select[data-type="sortDi"]')
+  const go = parentDiv.querySelector('button[data-type="goButton"]')
   const headers = parentDiv.querySelectorAll('th')
   sort = sort || header.innerText.replace(' ↑', '').replace(' ↓', '');
   if (sortBy.value !== sort) {
@@ -83,4 +85,27 @@ function sort(header, sort){
   }
   headers.forEach(h => h.innerText = h.innerText.replace(' ↑', '').replace(' ↓', ''));
   header.innerText += sortDi.value === 'ASC' ? ' ↑' : ' ↓';
+  go.click()
+}
+
+
+function sortSelect(element) {
+  const sortBy = element.parentNode.querySelector('select[data-type="sortBy"]')
+  const sortDi = element.parentNode.querySelector('select[data-type="sortDi"]')
+  const go = element.parentNode.querySelector('button[data-type="goButton"]')
+  const table = element.parentNode.parentNode.querySelector('table');
+  const headers = table.querySelectorAll('th')
+  headers.forEach(head => {
+    let header = ""
+    if (head.onclick){
+      header = head.getAttribute('onclick').split("'")[1]
+    }
+    let text = head.innerText.replace(' ↑', '').replace(' ↓', '');
+    if (sortBy.value === header) {
+      head.innerText = `${text} ${sortDi.value === 'ASC' ? ' ↑' : ' ↓'}` 
+    } else {
+      head.innerText = text
+    }
+  });
+  go.click()
 }

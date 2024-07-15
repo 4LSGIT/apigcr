@@ -40,6 +40,9 @@ db.on("error", (err) => {
 app.get('/', (req, res) => {
   res.send('Where does the 4LSG API lives?');
 });
+app.get('/appt', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'appt.html'));
+});
 
 // Route to handle user authentication and query processing
 app.get("/db", (req, res) => {
