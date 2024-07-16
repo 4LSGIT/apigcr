@@ -152,14 +152,6 @@ function abortSeq(id, type) {
             if (Array.isArray(seq)) {
                 putSeq();
             }
-            /*
-            return fetch(`${url}?mode=clientAction&action=abortSeq&username=${username}&password=${password}&seq=${id}`)
-                .then(response => response.json())
-                .then(data => {
-                    console.log(data);
-                    Toast.fire({icon: data.status, title: data.title, text: data.message});
-                });
-            */
         }
     });
 }
@@ -212,18 +204,32 @@ function abortSeq(id, type) {
     Everything you want?!
   </div>
 
+
+      
+      
+    
+      
+    
+    
+      
+    
+    
+
   <div id="tabLog" class="tab-content"> 
     <h1>Client Log</h1>
     <span><button onclick="addLog()">Add Log</button>
       Query:
-      <input id="tabLogQuery">Type:
-      <select id="tabLogType" onchange="tabLogTypeChange()">
+      <input id="tabLogQuery" onkeypress="if (event.keyCode == 13) {tabLogGet(0)}">
+      Type:
+      <select id="tabLogType">
         <option>All</option>
         <option>Communication</option>
         <option>Email</option>
         <option>SMS</option>
         <option>Call</option>
         <option>Form</option>
+        <option>Status</option>
+        <option>Note</option>
         <option>Other</option>
       </select>Time: 
       <select id="tabLogTime" style="width:150px" onchange="tabLogTimeChange(this.value)">
@@ -239,7 +245,7 @@ function abortSeq(id, type) {
       
       <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
     </span>
-    <table id="logTable" class="logTable">
+    <table id="logTable" class="logTable" style="text-align: left;">
       <tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>Data:</th><th>User:</th></tr>
     </table>
     <div id="logTableFoot"></div>
@@ -248,18 +254,10 @@ function abortSeq(id, type) {
     </div>
   </div>  
   
-  <script>
-    function tabLogTypeChange(time) {
-      if (E("tabLogType").value=="All") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>Data:</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="Communication") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Data</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="Email") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Subject:</th><th>Body:</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="SMS") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Message:</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="Call") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>from:</th><th>To:</th><th>Note:</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="Form") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>form:</th><th>Submission:</th><th>Note:</th><th>User:</th></tr>"}
-      else if (E("tabLogType").value=="Other") {E("logTable").innerHTML = "<tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>User:</th><th>Data:</th></tr>"}
-    }
-    
-    function tabLogTimeChange(time) {
+  
+<script>
+  
+function tabLogTimeChange(time) {
   if (time == 'All') {
     E('tabLogDate1').style.display = 'none';
     E('tabLogDateLabel').innerHTML = '';
@@ -275,7 +273,8 @@ function abortSeq(id, type) {
   }
 }
     
-    
+
+
 function tabLogGet(offset) {
    E('tabLogButton').disabled = true;
    E('tabLogLoad').style.display = 'block';
@@ -293,50 +292,67 @@ function tabLogGet(offset) {
     table.deleteRow(i);
   }
   if (type == "All"){type = "1' OR '1"}
-  else if (type == "Communication"){type = "sms' OR log_type %3D 'email' OR log_type %3D 'call"}
-
-  if (time = "All"){time = "1000-10-01' OR '1"}
-  else if (time == "Defore"){time = `1' OR DATE(log_date) < ${date1}`}
+  else if (type == "Communication"){type = "sms' OR log_type = 'email' OR log_type = 'call"}
+  if (time == "All"){time = "1000-10-01' OR '1"}
+  else if (time == "Defore"){time = `1000-10-01' OR DATE(log_date) < ${date1}`}
   else if (time == "On "){time = date1}
   else if (time == "After"){time = `1000-10-01' OR DATE(log_date) > ${date1}`}
   else if (time == "Between"){time = `1000-10-01' OR (DATE(log_date) < ${date1} AND DATE(log_date) > ${date2})`}
-  fetch(`${url}?mode=getClientLog&username=${username}&password=${password}&client=${clientID}&query=${query}&type=${type}&time=${time}&offset=${offset}&limit=${limit}`)
-     .then(response => response.json())
-     .then(data => {
-      logs = data.data;
-      console.log(data);
-     if (data.message == "log records retrieved"){
-       Toast.fire({ title: "success", text: `${data.results} records retrieved`, icon: "success"});
+  q =`SELECT log.*, DATE_FORMAT(log_date, '%M %e, %Y at %h:%i %p') AS formatted_date, contacts.contact_name, contacts.contact_id, COALESCE(cases.case_number_full, cases.case_number) AS case_number, cases.case_id, cases.case_type
+      FROM log
+      LEFT JOIN contacts ON log.log_link = contacts.contact_id
+      LEFT JOIN cases ON log.log_link = cases.case_id OR cases.case_id IN (SELECT case_relate_case_id FROM case_relate WHERE case_relate_client_id = contacts.contact_id)
+      WHERE log.log_link = '${clientID}' OR 
+      log.log_link IN (SELECT case_id FROM cases WHERE case_id IN (SELECT case_relate_case_id FROM case_relate WHERE case_relate_client_id = '${clientID}'))
+      AND (log_type = '${type}') AND (log_date = '${time}') AND (log_data LIKE '%${query}%' OR log_from LIKE '%${query}%' OR log_to LIKE '%${query}%' OR log_subject LIKE '%${query}%' OR log_form_id LIKE "%${query}%" OR log_link LIKE "%${query}%")
+      ORDER BY log_date DESC, log_id DESC LIMIT ${limit} OFFSET ${offset};|||
+      SELECT COUNT(*) AS counter
+      FROM log
+      LEFT JOIN contacts ON log.log_link = contacts.contact_id
+      LEFT JOIN cases ON log.log_link = cases.case_id OR cases.case_id IN (SELECT case_relate_case_id FROM case_relate WHERE case_relate_client_id = contacts.contact_id)
+      WHERE log.log_link = '${clientID}' OR 
+      log.log_link IN (SELECT case_id FROM cases WHERE case_id IN (SELECT case_relate_case_id FROM case_relate WHERE case_relate_client_id = '${clientID}'))
+      AND (log_type = '${type}') AND (log_date = '${time}') AND (log_data LIKE '%${query}%' OR log_from LIKE '%${query}%' OR log_to LIKE '%${query}%' OR log_subject LIKE '%${query}%' OR log_form_id LIKE "%${query}%" OR log_link LIKE "%${query}%")
+     `
+  fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
+    .then(response => response.json())
+    .then(data => {
+    console.log(data)
+      logs = data.data.query1;
+     if (data.data.query2[0].counter > 0){
        logs.forEach(log => {
         const row = table.insertRow();
          logdata = ""
-         link =  isNaN(log.log_link)? `<a href="#" onclick="window.parent.addFile('${log.case_number||log.case_id}', 'case', '${log.case_id}'); return false">${log.case_number||log.case_id}</a>`
-           : log.log_link == ""? "":`<a href="#" onclick="window.parent.addFile('${log.contact_name}', 'client', '${log.log_link}'); return false">${log.contact_name||"Name Error"}</a>`
+         link =  log.log_link/*isNaN(log.log_link)? `<a href="#" onclick="addFile('${log.case_number||log.case_id}', 'case', '${log.case_id}', '${log.case_type}'); return false">${log.case_number||log.case_id}</a>`
+           : log.log_link  ? `<a href="#" onclick="addFile('${log.contact_name}', 'client', '${log.log_link}'); return false">${log.contact_name||"Name Error"}</a>` : ""*/
          by = window.parent.userArray[+log.log_by-1] !== undefined ? window.parent.userArray[+log.log_by-1]:log.log_by
-         if (type1 == "All"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${log.log_data}</td><td>${by}</td>` }
-         if (type1 == "Communication"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_data}</td><td>${by}</td>` } 
-         if (type1 == "Email"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_subject}</td><td>${log.log_message}</td><td>${by}</td>`}
-         if (type1 == "SMS"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_message}</td><td>${by}</td>`}
-         if (type1 == "Call"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_from}</td><td>${log.log_to}</td><td>${log.log_message}</td><td>${by}</td>`}
-         if (type1 == "Form"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_form_id}</td><td>${log.log_sub}</td><td>${log.log_data}</td><td>${by}</td>`}
-         if (type1 == "Other"){rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${log.log_link}</td><td>${log.log_data}</td><td>${by}</td>`}
+         let cell_data;
+         try {
+           let jsonData = log.log_data.replace(/\n/g, "\\n").replace(/\r/g, "\\r");
+           jsonData = JSON.parse(jsonData);
+           cell_data = Object.keys(jsonData).map(key => `<b>${key}:</b> ${jsonData[key]}`).join('<br>');
+         } catch (error) {
+           cell_data = log.log_data;
+         }
+         rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${cell_data}</td><td>${by}</td>`
+
         row.innerHTML = rowHTML
       });
     foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabLogGet(${offset-limit})"">&lt;</a> `: "";
-      for (i=1; data.results >= (i-1)*limit; i++) {
+      for (i=1; data.data.query2[0].counter >= (i-1)*limit; i++) {
         foot.innerHTML += (offset/limit + 1 == i)?
           `<a href="#" onclick="tabLogGet(${(i-1)*limit})">[${i}]</a> `:
           `<a href="#" onclick="tabLogGet(${(i-1)*limit})">${i}</a> `;
       }
-    foot.innerHTML += (offset+limit < data.results) ? `<a href="#" onclick="tabLogGet(${offset+limit})"">&gt;</a> `: "";
-      foot.innerHTML += ` | Results ${offset+1}-${offset+data.data.length} of ${data.results} 
+    foot.innerHTML += (offset+limit < data.data.query2[0].counter) ? `<a href="#" onclick="tabLogGet(${offset+limit})"">&gt;</a> `: "";
+      foot.innerHTML += ` | Results ${offset+1}-${offset+logs.length} of ${data.data.query2[0].counter} 
         <select style="width:auto" onchange="limit = this.value;tabLogGet(0)">
         <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
         <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
         <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
         <option value="500" ${limit === 500 ? 'selected' : ''}>500</option>
         </select> | <button onclick="window.print()">Print</button>`;     }
-     else {Toast.fire({ icon: data.icon||"error", title: data.title||`an error has occured!` });foot.innerHTML="No Records"}
+     else {Toast.fire({ icon: data.icon||"error", title: data.title||`an error has occured!` });}
      E('tabLogButton').disabled = false;
      E('tabLogLoad').style.display = 'none';
     });
