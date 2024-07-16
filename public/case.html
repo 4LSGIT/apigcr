@@ -15,7 +15,7 @@
           <button class="tab active" onclick="openTab(this, 'tabOverview')"><i class="fa-solid fa-star"></i> Overview</button>
           <button class="tab" onclick="openTab(this, 'tabClients')"><i class="fa-solid fa-circle-question"></i> People</button>
           <button class="tab" onclick="openTab(this, 'tabAppts')"><i class="fa-solid fa-calendar-check"></i> Appointments</button>
-          <button class="tab" onclick="openTab(this, 'checklists');if (checklists.length == 0) getChecklists();"><i class="fa-solid fa-list-check"></i> Checklists</button>
+          <button class="tab" id="checklistsButton" onclick="openTab(this, 'checklists');if (checklists.length == 0) getChecklists();"><i class="fa-solid fa-list-check"></i> Checklists</button>
           <button class="tab" onclick="openTab(this, 'tabDB')"><i class="fa-brands fa-dropbox"></i> Dropbox</button>
           <button class="tab" onclick="openTab(this, 'tabTasks')"><i class="fa-solid fa-clipboard"></i> Tasks</button>
           <button class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Client Log</button>
