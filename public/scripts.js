@@ -64,7 +64,7 @@ async function sendQuery(q) {
 
 function dateTimeParts(dateString) {
   dateString =  (dateString && !dateString.startsWith('0000-00-00')) ? [...dateString.split("T")[0].split("-"), ...dateString.split("T")[1].split(":").slice(0, 2)] : ["", "", "", "", "", "", ""]
-  dateString[5] = dateString[3] >= 12 ? "PM":"PM"
+  dateString[5] = dateString[3] >= 12 ? "PM":"AM"
   dateString[3] = dateString[3] > 12 ? dateString[3]-12:dateString[3]
   return dateString
 }
