@@ -1212,6 +1212,9 @@ function login(){
             if (params.case){
               quickPick(params.case.split(",")[0],"case",params.case.split(",")[1])
             }
+            if (params.contact){
+              quickPick(params.contact.split(",")[0],"contact",params.contact.split(",")[1])
+            }
             if (params.tasks){tabTasksGet(0)}
             if (params.clients){tabClientssGet(0)}
             if (params.cases){tabCasesGet(0)}
