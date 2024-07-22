@@ -11,11 +11,11 @@
   </head>
 <body>
   <div id="topButtons" style="text-align:center;display:none">
-    <button onclick="openMainTab('tabHome')"><i class="fa-solid fa-home"></i> Home</button>
-    <button onclick="E('tabOpenFiles').style.display=E('tabOpenFiles').style.display=='none'?'':'none'"><i class="fa-solid fa-users"></i> Current Tabs</button>
-    <button onclick="E('tabTasksTo').value=user.user;tabTasksGet(0);openMainTab('tabTasks')"><i class="fa-solid fa-list-check"></i> My Tasks</button>
-    <button onclick="openMainTab('tabAdmin')" id="adminButton"><i class="fa-solid fa-crown"></i> Admin Tab</button>
-    <button onclick="Swal.fire({ title: 'Reload Site',html: '<p>Are you sure you want to reload the site?</p><p>You will lose all unsaved data in all the open files!</p>',
+    <button style="height:30px" onclick="openMainTab('tabHome')"><i class="fa-solid fa-home"></i> Home</button>
+    <button style="height:30px" onclick="E('tabOpenFiles').style.display=E('tabOpenFiles').style.display=='none'?'':'none'"><i class="fa-solid fa-users"></i> Current Tabs</button>
+    <button style="height:30px" onclick="E('tabTasksTo').value=user.user;tabTasksGet(0);openMainTab('tabTasks')"><i class="fa-solid fa-list-check"></i> My Tasks</button>
+    <button style="height:30px" onclick="openMainTab('tabAdmin')" id="adminButton"><i class="fa-solid fa-crown"></i> Admin Tab</button>
+    <button style="height:30px" onclick="Swal.fire({ title: 'Reload Site',html: '<p>Are you sure you want to reload the site?</p><p>You will lose all unsaved data in all the open files!</p>',
             icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
             preConfirm: () => { location.reload();}});"><i class="fa-solid fa-rotate-right"></i> Restart</button> 
   </div>
