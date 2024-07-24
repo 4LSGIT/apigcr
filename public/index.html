@@ -1202,7 +1202,7 @@ function login(){
             E('topButtons').style.display = "block";
             E('adminButton').style.display = (user.user_auth == "authorized - SU" ||user.user_auth == "authorized - admin" )?"":"none"
             window.scrollTo(0, 0);
-            Toast.fire({ icon: "success", title: `Welcome ${user.user_name}!` });
+            Toast.fire({ icon: "success", title: `Welcome ${user.user_name}!`, timer: 1000 });
             openMainTab(params.open || 'tabHome')
             if (params.qp) {
               params.qp.split(",").forEach(q => {
