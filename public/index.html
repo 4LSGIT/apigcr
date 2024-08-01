@@ -337,6 +337,7 @@ function tabContactsGet(offset) {
     <span>
       Type: 
       <select id="tabApptsType" style="width:auto">
+        <option>Default</option>
         <option>All</option>
         <option>Strategy Session</option>
         <option>Strategy Session Follow Up</option>
@@ -409,7 +410,8 @@ function tabApptsGet(offset) {
   let date1 = E('tabApptsDate1').value;
   let date2 = E('tabApptsDate2').value;
   query = "WHERE 1" 
-  if (type != 'All') {query += ` AND appt_type = '${type}'`}
+  if (type != 'All' && type != 'Default') {query += ` AND appt_type = '${type}'`}
+  if (type == 'Default') {query += ` AND appt_type != '341 Meeting'`}
   if (status != 'All') {query += ` AND appt_status = '${status}'`}
   if (time != 'All') {
     if (time == 'Between') {query += ` AND DATE(appt_date) > '${date1}' AND DATE(appt_date) < '${date2}'`}
