@@ -10,6 +10,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
   </head>
 <body>
+    <div style="text-align: center;">
+    <img src="https://iili.io/Jy2nXHv.md.png" width="280"  aria-label="Form Logo" /><br>
+    <div id="loading" style="text-align: center;display:none"><i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i><br><br></div>
+  </div>
   <div id="topButtons" style="text-align:center;display:none">
     <button style="height:30px" onclick="openMainTab('tabHome')"><i class="fa-solid fa-home"></i> Home</button>
     <button style="height:30px" onclick="E('tabOpenFiles').style.display=E('tabOpenFiles').style.display=='none'?'':'none'"><i class="fa-solid fa-users"></i> Current Tabs</button>
@@ -24,10 +28,7 @@
     <div id="noOpenFiles">There are no open files at the moment!</div>
     <div id="closeAllFiles" style="display:none;" class="file-button" onclick="closeAllFiles(this)">Close All<!--<i class="file-close fa-solid fa-circle-xmark"></i>--></div>
   </div>
-  <div style="text-align: center;">
-    <img src="https://iili.io/Jy2nXHv.md.png" width="280"  aria-label="Form Logo" /><br>
-    <div id="loading" style="text-align: center;display:none"><i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i><br><br></div>
-  </div>
+
 
 
   <div id="tabHome" class="tab-main">
@@ -863,6 +864,7 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
         <option>Form</option>
         <option>Status</option>
         <option>Note</option>
+        <option>Court Email</option>
         <option>Other</option>
       </select>Time: 
       <select id="tabLogTime" style="width:150px" onchange="tabLogTimeChange(this.value)">
