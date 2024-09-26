@@ -646,7 +646,7 @@ function putClients() {
   table.innerHTML = `<tr><th>ID</th><th>Name</th><th>Phone</th><th>Email</th><th>Address</th><th>City</th><th>State</th><th>Zip</th><th>Date of Birth</th><th>SSN</th><th>Relate</th><th></th></tr>`
   clients.forEach(client => {
     row = table.insertRow();
-    row.innerHTML = `<td><a href="#" onclick="window.parent.addFile('${client.contact_name}', 'client', '${client.contact_id}'); return false">${client.contact_id}</a></td>
+    row.innerHTML = `<td><a href="#" onclick="window.parent.addFile('${client.contact_name.replace(/'/g, "\\'")}', 'client', '${client.contact_id}'); return false">${client.contact_id}</a></td>
     <td>${client.contact_name}</td><td>${client.contact_phone}</td><td>${client.contact_email}</td><td>${client.contact_address||""}</td><td>${client.contact_city||""}</td><td>${client.contact_state||""}</td>
     <td>${client.contact_zip||""}</td><td>${client.dob||""}</td><td>${client.contact_ssn||""}</td><td>${client.case_relate_type}</td>
     <td><button onclick="modifyCaseClient('${client.case_relate_id}','${client.case_relate_type}')">Modify</button></td>`
