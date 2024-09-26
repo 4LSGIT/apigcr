@@ -193,7 +193,7 @@ function tabCasesGet(offset) {
         rowHTML = `<td><a href="#" onclick="addFile('${C.Case_number||C.case_id}', 'case', '${C.case_id}')">${C.case_id}</a></td><td>`
         C.contacts.forEach(client => {
           if (client.contact_id) {
-            rowHTML += `<a href="#" onclick="addFile('${client.contact_name}', 'client', '${client.contact_id}')">${client.contact_name}</a> (${client.contact_relate})<br>`;
+            rowHTML += `<a href="#" onclick="addFile('${client.contact_name.replace(/'/g, "\\'")}', 'client', '${client.contact_id}')">${client.contact_name}</a> (${client.contact_relate})<br>`;
           }
         });
         rowHTML += `</td><td>${C.case_number}</td><td>${C.case_type}</td><td>${C.case_stage}</td><td>${C.case_status}</td><td>${C.open}</td><td>${C.file}</td><td>${C.close}</td>`
@@ -302,7 +302,7 @@ function tabContactsGet(offset) {
       contacts.forEach(contact => {
         const row = table.insertRow();
         rowHTML = `<td>${contact.contact_id}</td>
-                   <td><a href="#" onclick="addFile('${contact.contact_name}', 'contact', '${contact.contact_id}')">${contact.contact_name}</a></td>
+                   <td><a href="#" onclick="addFile('${contact.contact_name.replace(/'/g, "\\'")}', 'contact', '${contact.contact_id}')">${contact.contact_name}</a></td>
                    <td>${contact.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')}</td>
                    <td>${contact.contact_email}</td>
                    <td>${contact.contact_address ? contact.contact_address+"<br>"+contact.contact_city+", "+contact.contact_state+" "+contact.contact_zip: ""}</td><td>`;
@@ -449,7 +449,7 @@ function tabApptsGet(offset) {
           <td>${appt.id}</td>
           <td>${appt.format_date}</td>
           <td>${appt.time}</td>
-          <td><a href="#" onclick="addFile('${appt.name}', 'client', '${appt.clientId}'); return false">${appt.name||""}</a></td>
+          <td><a href="#" onclick="addFile('${appt.name.replace(/'/g, "\\'")}', 'client', '${appt.clientId}'); return false">${appt.name||""}</a></td>
           <td><a href="#" onclick="addFile('${appt.caseN}', 'case', '${appt.leadId}'); return false">${appt.caseN||appt.leadId}</a></td>
           <td>${appt.type}</td>
 
@@ -955,7 +955,7 @@ function tabLogGet(offset) {
         const row = table.insertRow();
          logdata = ""
          link =  isNaN(log.log_link)? `<a href="#" onclick="addFile('${log.case_number||log.case_id}', 'case', '${log.case_id}', '${log.case_type}'); return false">${log.case_number||log.case_id}</a>`
-           : log.log_link  ? `<a href="#" onclick="addFile('${log.contact_name}', 'client', '${log.log_link}'); return false">${log.contact_name||"Name Error"}</a>` : ""
+           : log.log_link  ? `<a href="#" onclick="addFile('${log.contact_name.replace(/'/g, "\\'")}', 'client', '${log.log_link}'); return false">${log.contact_name||"Name Error"}</a>` : ""
          by = userArray[+log.log_by-1] !== undefined ? userArray[+log.log_by-1]:log.log_by
          let cell_data;
          try {
