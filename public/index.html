@@ -1419,12 +1419,12 @@ function quickPick(term, type, tab){
       LIMIT 1`
     if (type == "contact") {
       query = `SELECT contact_name AS name, 'client' AS type, contact_id AS id, 'success' AS message 
-              FROM contacts co WHERE co.contact_id = '${term}' OR co.contact_phone = '${phone}' OR contact_name LIKE '${name}'`
+              FROM contacts co WHERE (co.contact_id = '${term}' AND co.contact_id != "") OR (co.contact_phone = '${phone}' AND co.contact_phone != "") OR contact_name LIKE '${name}'`
     }
     if (type == "case") {
       query = `SELECT COALESCE(case_number_full, case_number, case_id) AS name, 'case' AS type, case_id AS id, 'success' AS message 
               FROM cases LEFT JOIN case_relate cr ON case_id = cr.case_relate_case_id LEFT JOIN contacts c ON cr.case_relate_client_id = c.contact_id
-              WHERE case_id = '${term}' OR case_number = '${term}' OR case_number_full = '${term}' OR c.contact_name LIKE '${name}' OR c.contact_id = '${term}' OR c.contact_phone = '${phone}'`
+              WHERE (case_id = '${term}' AND case_id != '') OR (case_number = '${term}' AND case_number != '') OR (case_number_full = '${term}' AND case_number_full != '') OR (c.contact_name LIKE '${name}' AND c.contact_name != '') OR (c.contact_id = '${term}' AND c.contact_id != '') OR (c.contact_phone = '${phone}' AND c.contact_phone != '')`
     }
     if (type == "bill") {
       alert("no bills allowed")
