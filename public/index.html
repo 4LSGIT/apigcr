@@ -1301,6 +1301,7 @@ login()
   document.body.appendChild(file);
   fileCounter++
   openMainTab(file.id)
+  E('tabOpenFiles').style.display=E('tabOpenFiles').style.display=='none'?'':'none'
  }
   
  function closeAllFiles(button){
