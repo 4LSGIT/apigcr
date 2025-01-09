@@ -615,7 +615,7 @@ processing()
   SELECT appt_id AS id, DATE_FORMAT(appt_date, '%Y-%m-%d %H:%i:%s') AS raw_date,
     DATE_FORMAT(appt_date, '%b. %e, %Y') AS date, DATE_FORMAT(appt_date, '%l:%i %p') AS time,
     appt_type AS type, appt_length AS length, appt_note AS note, appt_status AS status
-    FROM appts WHERE appt_client_id = "${clientID}"`
+    FROM appts WHERE appt_client_id = "${clientID}" ORDER BY raw_date DESC`
   query = encodeURIComponent(query)
 fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${query}`)
   .then(response => response.json())
@@ -718,7 +718,7 @@ function newAppt() {
           console.log(newApptTemp)
           Toast.fire({icon: data.status, title: data.title, text: data.message})
           if (data.status == "success"){
-            E("apptsTable").insertRow().innerHTML = `<td>${data.id}</td><td>${type}</td><td>${dateP[0]}</td><td>${dateP[1]}</td><td>${len}</td><td>Scheduled</td><td>${note}</td>
+            E("apptsTable").insertRow(0).innerHTML = `<td>${data.id}</td><td>${type}</td><td>${dateP[0]}</td><td>${dateP[1]}</td><td>${len}</td><td>Scheduled</td><td>${note}</td>
                                 <td><button onclick="window.parent.apptUpdate(${data.id}, 'Cancel', '${dateP[0]} at ${dateP[1]}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
                                  <button onclick="window.parent.apptUpdate(${data.id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
                                  <button onclick="window.parent.apptUpdate(${data.id}, 'No Show')"><i class="fa-solid fa-user-xmark"></i> No Show</button>
