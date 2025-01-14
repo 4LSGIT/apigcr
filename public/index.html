@@ -700,7 +700,7 @@ function newTask(taskID, taskTo, taskTitle, taskDesc, taskDue, taskNotification,
   Swal.fire({
     title: `${taskID ? "Update" : "New"} Task:`,
     html: `<label class="input-label">Assign To: </label
-      ><select id="taskAssignTo" style="width:250px" value="${taskTo ? taskTo : ""}">${users}</select><br>
+      ><select id="taskAssignTo" style="width:250px" value="${taskTo ? taskTo : ""}">${userOpts}</select><br>
       <label class="input-label">Title: </label><input style="width:250px" id="taskTitle" value="${taskTitle ? taskTitle : ""}"><br>
       <label class="input-label">Description: </label><textarea class="input-ta" rows="4" style="width:250px" id="taskDesc">${taskDesc ? taskDesc : ""}</textarea><br>
       <label class="input-label">Due Date: </label><input type="date" style="width:250px" id="taskDate" value="${taskDue ? taskDue : ""}"><br>
