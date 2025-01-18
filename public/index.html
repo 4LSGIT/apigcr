@@ -696,13 +696,15 @@ function rescheduledConfMsg(date1, date2) {
     </div>
   </div>
   <script>
-function newTask(taskID, taskTo, taskTitle, taskDesc, taskDue, taskNotification, taskLink) {
+function newTask(taskID, taskTo, taskTitle, taskDesc, taskDue, taskNotification, taskLink, taskStart) {
   Swal.fire({
     title: `${taskID ? "Update" : "New"} Task:`,
     html: `<label class="input-label">Assign To: </label
       ><select id="taskAssignTo" style="width:250px" value="${taskTo ? taskTo : ""}">${userOpts}</select><br>
       <label class="input-label">Title: </label><input style="width:250px" id="taskTitle" value="${taskTitle ? taskTitle : ""}"><br>
       <label class="input-label">Description: </label><textarea class="input-ta" rows="4" style="width:250px" id="taskDesc">${taskDesc ? taskDesc : ""}</textarea><br>
+      <label class="input-label">Start Date: </label><input type="date" style="width:250px" id="taskStart" value="${taskStart ? taskStart : ""}"><br>
+      <label class="input-label"></label><label class="sub-label">leave blank to Start Immediately</label><br>
       <label class="input-label">Due Date: </label><input type="date" style="width:250px" id="taskDate" value="${taskDue ? taskDue : ""}"><br>
       <label class="input-label"></label><label class="sub-label">leave blank to skip</label><br>
       <label class="sub-label" style="width:90%">a message will be sent now (and on the due date if there is one)</label><br>
@@ -728,9 +730,10 @@ function newTask(taskID, taskTo, taskTitle, taskDesc, taskDue, taskNotification,
       taskTitle = E("taskTitle").value;
       taskDesc = E("taskDesc").value;
       taskDate = E("taskDate").value;
+      taskStart = E("taskStart").value;
       taskNotification = E("taskNotify").checked;
       showProcessingSwal();
-      fetch(`${url}?mode=createTask&username=${username}&password=${password}&to=${assignTo}&title=${taskTitle}&desc=${taskDesc}&due=${taskDate ? taskDate : ""}&notify=${taskNotification ? "1" : "0"}&link=${link}`)
+      fetch(`${url}?mode=createTask&username=${username}&password=${password}&to=${assignTo}&title=${taskTitle}&desc=${taskDesc}&due=${taskDate ? taskDate : ""}&start=${taskStart ? taskStart : ""}&notify=${taskNotification ? "1" : "0"}&link=${link}`)
         .then(response => response.json())
         .then(data => {
           Toast.fire({ title: data.title, text: data.message, icon: data.icon });
@@ -742,10 +745,11 @@ function newTask(taskID, taskTo, taskTitle, taskDesc, taskDue, taskNotification,
       taskTitle = E("taskTitle").value == taskTitle? "": E("taskTitle").value;
       taskDesc = E("taskDesc").value == taskDesc? "": E("taskDesc").value;
       taskDate = E("taskDate").value == taskDate? "":(E("taskDate").value||"{{blank}}");
+      taskstart = E("taskStart").value == taskStart? "":(E("taskStart").value||"{{blank}}");
       taskNotification = E("taskNotify").checked == taskNotification? "": E("taskNotify").checked? "1" : "0";
-      if (assignTo||taskTitle||taskDesc||taskDate||taskNotification){
+      if (assignTo||taskTitle||taskDesc||taskDate||taskstart||taskNotification){
         showProcessingSwal();
-        fetch(`${url}?mode=updateTask&username=${username}&password=${password}&action=edit&task=${taskID}&to=${assignTo}&title=${taskTitle}&desc=${taskDesc}&due=${taskDate ? taskDate : ""}&notify=${taskNotification}&link=${link}`)
+        fetch(`${url}?mode=updateTask&username=${username}&password=${password}&action=edit&task=${taskID}&to=${assignTo}&title=${taskTitle}&desc=${taskDesc}&due=${taskDate ? taskDate : ""}&start=${taskStart ? taskStart : ""}&notify=${taskNotification}&link=${link}`)
         .then(response => response.json())
         .then(data => {
           Toast.fire({ title: data.title, text: data.message, icon: data.icon });
