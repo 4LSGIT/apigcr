@@ -23,16 +23,13 @@
             icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
             preConfirm: () => { location.reload();}});"><i class="fa-solid fa-rotate-right"></i> Restart</button> 
   </div>
-  <!-- 
-  <br>
-  removed by request 
-  -->
+
   <div id="tabOpenFiles" style="display:none;text-align: center;">
     <div id="noOpenFiles">There are no open files at the moment!</div>
     <div id="closeAllFiles" style="display:none;" class="file-button" onclick="closeAllFiles(this)">Close All<!--<i class="file-close fa-solid fa-circle-xmark"></i>--></div>
   </div>
-
-
+  
+<hr> <!-- End of the header (requested)-->
 
   <div id="tabHome" class="tab-main">
     <button style="width:100px;height:100px" onclick="cases?'':tabCasesGet(0);openMainTab('tabCases', this)"><i class="fa-solid fa-landmark fa-2xl"></i><br><br>Cases</button>
