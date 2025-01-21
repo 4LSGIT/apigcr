@@ -75,9 +75,9 @@
    <h1>Reports</h1>
     <select id="reportTemplate" style="width:auto">
       <option value="" selected disabled>Select a Report Template</option>
-      <table id="reportsTable" class="logTable">
-      </table>
     </select>
+    <table id="reportsTable" class="logTable">
+    </table>
   </div>
   
   
@@ -804,11 +804,21 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
   for (var i = rows.length - 1; i > 0; i--) {
     table.deleteRow(i);
   }
-   q = `SELECT t.*, u.user_name AS task_from_name, u2.user_name AS task_to_name, DATE_FORMAT(t.task_due, '%b. %e, %Y') AS due, DATE_FORMAT(t.task_date, '%b. %e, %Y at %l:%i %p') AS date 
+   q = `SELECT t.*, u.user_name AS task_from_name, u2.user_name AS task_to_name, DATE_FORMAT(t.task_due, '%b. %e, %Y') AS due, DATE_FORMAT(t.task_date, '%b. %e, %Y at %l:%i %p') AS date,
+       contacts.contact_name, contacts.contact_id, cases.case_id,
+    CASE WHEN contacts.contact_id IS NOT NULL THEN 'contact' WHEN cases.case_id IS NOT NULL THEN 'case' ELSE NULL END AS link_type,
+    CASE 
+        WHEN cases.case_number_full IS NOT NULL THEN cases.case_number_full
+        WHEN cases.case_number IS NOT NULL THEN cases.case_number
+        WHEN cases.case_id IS NOT NULL THEN cases.case_id
+        WHEN contacts.contact_name IS NOT NULL THEN contacts.contact_name
+    END AS link_title
        FROM tasks t LEFT JOIN users u ON t.task_from = u.user LEFT JOIN users u2 ON t.task_to = u2.user LEFT JOIN contacts ON t.task_link = contacts.contact_id LEFT JOIN cases ON t.task_link != "" AND (t.task_link = cases.case_number OR t.task_link = cases.case_number_full OR t.task_link = cases.case_id) 
-       WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%") AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END LIMIT ${limit} OFFSET ${offset};|||
+       WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%" OR contacts.contact_name LIKE "%${query}%" OR cases.case_number LIKE "%${query}%" OR cases.case_number_full LIKE "%${query}%" OR cases.case_id LIKE "%${query}%" OR contacts.contact_name LIKE "%${query}%")
+         AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END LIMIT ${limit} OFFSET ${offset};|||
        SELECT COUNT(*) AS counter FROM tasks t LEFT JOIN users u ON t.task_from = u.user LEFT JOIN users u2 ON t.task_to = u2.user LEFT JOIN contacts ON t.task_link = contacts.contact_id LEFT JOIN cases ON t.task_link != "" AND (t.task_link = cases.case_number OR t.task_link = cases.case_number_full OR t.task_link = cases.case_id) 
-       WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%") AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END
+       WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%" OR contacts.contact_name LIKE "%${query}%" OR cases.case_number LIKE "%${query}%" OR cases.case_number_full LIKE "%${query}%" OR cases.case_id LIKE "%${query}%" OR contacts.contact_name LIKE "%${query}%")
+         AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END
         `
    fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
     .then(response => response.json())
@@ -835,6 +845,7 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
             `<option value="Mark Incomplete">Mark Incomplete</option>
           </select>`}
         else {rowHTML += `<td>`}
+        taskLink = task.task_link ? `<a href="#" onclick="addFile('${task.link_title}', '${task.link_type}', '${task.task_link}'); return false">${task.link_title}</a>`:""
         row.innerHTML = `
           ${rowHTML}</td>
           <td>${task.task_id}</td>
@@ -843,7 +854,7 @@ function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNo
           <td>${task.task_desc}</td>
           <td>${task.task_from_name}</td>
           <td>${task.task_to_name}</td>
-          <td>${task.task_link||""}</td>
+          <td>${taskLink}</td>
           <td>${task.due||""}</td>
           <td>${task.date}</td>`;
       });
