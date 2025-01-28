@@ -981,11 +981,7 @@ function tabLogGet(offset) {
          try {
            let jsonData = log.log_data.replace(/\n/g, "\\n").replace(/\r/g, "\\r");
            jsonData = JSON.parse(jsonData);
-           cell_data = Object.keys(jsonData).map(key => `<b>${key}:</b> ${jsonData[key]}`).join('<br>');
-           cell_data = cell_data
-             .replace(/{{DOUBLEQUOTE}}/g, '"')
-             .replace(/{{SINGLEQUOTE}}/g, "'")
-             .replace(/{{BACKTICK}}/g, '`');
+           cell_data = Object.keys(jsonData).map(key => `<b>${key}:</b> ${decodeURIComponent(jsonData[key])}`).join('<br>');
 //does this help??!!
          } catch (error) {
            cell_data = log.log_data;
