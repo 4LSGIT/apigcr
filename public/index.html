@@ -63,10 +63,10 @@
   
   
   <div id="tabDeadlines" class="tab-main">
-   <h1>Billing</h1>
+   <h1>Deadlines</h1>
     <p>lets set a deadline to complete this page</p>
   </div>
-  
+
 
   <div id="tabReports" class="tab-main">
    <h1>Reports</h1>
@@ -982,6 +982,11 @@ function tabLogGet(offset) {
            let jsonData = log.log_data.replace(/\n/g, "\\n").replace(/\r/g, "\\r");
            jsonData = JSON.parse(jsonData);
            cell_data = Object.keys(jsonData).map(key => `<b>${key}:</b> ${jsonData[key]}`).join('<br>');
+           cell_data = cell_data
+             .replace(/{{DOUBLEQUOTE}}/g, '"')
+             .replace(/{{SINGLEQUOTE}}/g, "'")
+             .replace(/{{BACKTICK}}/g, '`');
+//does this help??!!
          } catch (error) {
            cell_data = log.log_data;
          }
