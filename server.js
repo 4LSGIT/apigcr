@@ -144,7 +144,18 @@ res.send({"date":dateNow()})
 
 
 
-
+function escStr(str) {
+  return str.replace(/['"`]/g, function(match) {
+    switch (match) {
+      case "'":
+        return '&#39;'; // or &apos; if preferred
+      case '"':
+        return '&quot;';
+      case '`':
+        return '&#96;';
+    }
+  });
+}
 
 app.post("/logEmail", (req, res) => {
   let { to, from, subject, body_plain, attachments} = req.body;
@@ -154,8 +165,10 @@ app.post("/logEmail", (req, res) => {
   }
   const currentDate = dateNow();
   const contactEmail = from.toLowerCase().endsWith("@4lsg.com") ? to : from;
-  subject = subject.replace(/["']/g, '\\\$&');
-  let message = body_plain.replace(/["']/g, '\\\$&');
+//  subject = subject.replace(/["']/g, '\\$&');
+//  let message = body_plain.replace(/["']/g, '\\$&');
+  subject = escStr(subject);
+  let message = escStr(body_plain);
   if (attachments && Array.isArray(attachments) && attachments.length > 0) {
     attachments.forEach((attachment, index) => {
       message += `\nAttachment ${index + 1}: ${attachment}`;
