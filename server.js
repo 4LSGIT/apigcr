@@ -143,7 +143,7 @@ res.send({"date":dateNow()})
 });
 
 
-
+/*
 app.post("/logEmail", (req, res) => {
   let { to, from, subject, body_plain, attachments} = req.body;
   if (from.endsWith("@4lsg.com") && to.endsWith("@4lsg.com")) {
@@ -173,7 +173,49 @@ app.post("/logEmail", (req, res) => {
   }
   });
 });
+*/
+app.post("/logEmail", (req, res) => {
+  let { to, from, subject, body_plain, attachments } = req.body;
+  if (from.endsWith("@4lsg.com") && to.endsWith("@4lsg.com")) {
+    res.status(200).json({ message: "Internal Email not logged" });
+    return;
+  }
+  const currentDate = dateNow();
+  const contactEmail = from.toLowerCase().endsWith("@4lsg.com") ? to : from;
 
+  // Append any attachments to the message content
+  let content = body_plain;
+  if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+    attachments.forEach((attachment, index) => {
+      content += `\nAttachment ${index + 1}: ${attachment}`;
+    });
+  }
+
+  // Create an object with the desired keys
+  const logObj = {
+    subject: subject,
+    content: content
+  };
+
+  // Convert the object to a JSON string
+  let string = JSON.stringify(logObj);
+
+  // Optionally truncate the string if it exceeds a maximum length
+  if (string.length > 65501) {
+    string = string.substring(0, 65500) + '"}';
+  }
+
+  // Construct the SQL query
+  const insertQuery = `INSERT INTO log (log_type, log_date, log_link, log_by, log_data) SELECT "email", "${currentDate}", c.contact_id, 0, '${string}' FROM contacts c WHERE c.contact_email = "${contactEmail}"`;
+  db.query(insertQuery, (err, result) => {
+    if (err) {
+      console.error("Error inserting email data into the log table:", err);
+      res.status(500).json({ error: "Failed to log email data", details: err.message, sql: insertQuery });
+    } else {
+      res.status(200).json({ message: "Email data logged successfully", details: result, sql: insertQuery });
+    }
+  });
+});
 
 
 
