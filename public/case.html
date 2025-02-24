@@ -591,6 +591,10 @@ function addLog() {
         <iframe id="341"></iframe>
         <button onclick="new341(trello)" style="background-color: red; color: white; font-weight: bold;">Clear Form</button>
       </div>
+  
+      <div id="tabDet" class="tab-content">
+        <iframe id="det"></iframe>
+      </div>
     
 <!-- other case types here -->    
   </div>
@@ -735,7 +739,9 @@ fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=$
       docsDue = dateParts(caseData.docs_due)
       E('caseForm').src += `&docsMissing=${encodeURIComponent(caseData.docs_missing)}&notes=${encodeURIComponent(caseData.case_notes)}&alerts=${encodeURIComponent(caseData.case_alerts)}&docsDue[month]=${docsDue[1]}&docsDue[day]=${docsDue[2]}&docsDue[year]=${docsDue[0]}&docs=${caseData.docs}`
       E('341').src = caseData.case_341_form ? `https://jotform.com/edit/${caseData.case_341_form}` :
-        `https://jotform.com/241702405563450?debtors_name[first]=${PC.contact_fname}&debtors_name[middle]=${PC.contact_mname}&debtors_name[last]=${PC.contact_lname}&341meeting[month]=${case341_c[1]}&341meeting[day]=${case341_c[2]}&341meeting[year]=${case341_c[0]}&341meeting[ampm]=${case341_c[5]}&341meeting[timeInput]=${case341_c[3] > 12 ? case341_c[3] - 12 : case341_c[3]}:${case341_c[4]}&trustee_name=${caseData.case_trustee}&caseNumber=${caseData.case_number_full||caseData.case_number||""}&newControl[ampm]=PM&caseId=${caseData.case_id}&codebtorsName[first]=${SC?SC.contact_fname:""}&codebtorsName[middle]=${SC?SC.contact_mname:""}&codebtorsName[last]=${SC?SC.contact_lname:""}`;
+        `https://jotform.com/241702405563450?debtors_name[first]=${PC.contact_fname}&debtors_name[middle]=${PC.contact_mname}&debtors_name[last]=${PC.contact_lname}&341meeting[month]=${case341_c[1]}&341meeting[day]=${case341_c[2]}&341meeting[year]=${case341_c[0]}&341meeting[ampm]=${case341_c[5]}&341meeting[timeInput]=${case341_c[3] > 12 ? case341_c[3] - 12 : case341_c[3]}:${case341_c[4]}&trustee_name=${caseData.case_trustee}&caseNumber=${caseData.case_number_full||caseData.case_number||""}&newControl[ampm]=PM&caseId=${caseData.case_id}&codebtorsName[first]=${SC?SC.contact_fname:""}&codebtorsName[middle]=${SC?SC.contact_mname:""}&codebtorsName[last]=${SC?SC.contact_lname:""}`
+      E("det").src=caseData.case_detailed_link?caseData.case_detailed_link:"";
+      
     }
     if (caseData.case_dropbox){
       E('yesDB').style.display = "block";
