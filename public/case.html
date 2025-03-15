@@ -632,7 +632,7 @@ function putAppts() {
   appts.forEach(appt => {
     row = table.insertRow();
     if (appt.appt_status == "No Show") {
-      rowHTML = `<td><button onclick="window.parent.apptUpdate(${appt._appt_id}, 'Cancel', '${appt.date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
+      rowHTML = `<td><button onclick="window.parent.apptUpdate(${appt.appt_id}, 'Cancel', '${appt.date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
       <button onclick="window.parent.apptUpdate(${appt.appt_id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
       <button onclick="window.parent.apptUpdate(${appt.appt_id}, 'Reschedule', '${appt.appt_date.slice(0, -5)}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`}
     else if (appt.appt_status == "Scheduled") {
