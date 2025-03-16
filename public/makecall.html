@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RingCentral Click-to-Call Test</title>
+    <script src="https://ringcentral.github.io/ringcentral-embeddable/adapter.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <h1>Test Click-to-Call with RingCentral</h1>
+    <p>Click the button below to call the client.</p>
+
+    <!-- Replace with your test client's number -->
+    <button onclick="callClient('+15551234567')">Call Client</button>
+
+    <script>
+        // Setup the RingCentral Embeddable Adapter
+        window.addEventListener('message', function (event) {
+            if (event.data.type === 'rc-adapter-ready') {
+                window.postMessage({
+                    type: 'rc-adapter-config',
+                    callWithRingCentral: true
+                }, '*');
+            }
+        });
+
+        // Function to trigger a call
+        function callClient(clientNumber) {
+            window.postMessage({
+                type: 'rc-adapter-call',
+                phoneNumber: clientNumber
+            }, '*');
+            alert("Calling " + clientNumber + " via RingCentral...");
+        }
+    </script>
+
+</body>
+</html>

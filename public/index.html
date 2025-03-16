@@ -1234,6 +1234,7 @@ function login(){
             E('topButtons').style.display = "block";
             E('adminButton').style.display = (user.user_auth == "authorized - SU" ||user.user_auth == "authorized - admin" )?"":"none"
             window.scrollTo(0, 0);
+            if (user.ringcentral == "1") {document.head.appendChild(Object.assign(document.createElement("script"), { src: "https://ringcentral.github.io/ringcentral-embeddable/adapter.js", async: true }));}
             Toast.fire({ icon: "success", title: `Welcome ${user.user_name}!`, timer: 1000 });
             openMainTab(params.open || 'tabHome')
             if (params.qp) {
