@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RingCentral Call Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 50px;
+        }
+        button {
+            display: block;
+            width: 250px;
+            margin: 10px auto;
+            padding: 10px;
+            font-size: 18px;
+            color: white;
+            background-color: #07ADEF;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0589c8;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>RingCentral Call Test</h1>
+    <p>Click a button below to make a call:</p>
+
+    <!-- Call with RingCentral (if installed) -->
+    <button onclick="callRingCentral('+12026702603')">Call via RingCentral</button>
+
+    <!-- Call with Default Phone Dialer -->
+    <button onclick="window.location.href='tel:+12026702603'">Call via Default Dialer</button>
+
+    <script>
+        function callRingCentral(phoneNumber) {
+            const rcUrl = `rcmobile://call?number=${phoneNumber}`;
+            const telUrl = `tel:${phoneNumber}`;
+
+            // Try RingCentral first
+            window.location.href = rcUrl;
+
+            // Fallback to default dialer after 1 second (if RingCentral doesn't open)
+            setTimeout(() => {
+                window.location.href = telUrl;
+            }, 1000);
+        }
+    </script>
+
+</body>
+</html>
