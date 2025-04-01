@@ -13,12 +13,30 @@
 <body>
 
     <h1>Test Click-to-Call with RingCentral</h1>
+  <a href="tel:+12345678888">+12345678888</a>
     <p>Click the button below to call the client.</p>
+  <span id="phone" onclick="callRingCentral('+12026702603')" style="color:#07ADEF;">Call 202-670-2603</span>
+  <script>
+    function callRingCentral(phoneNumber) {
+    const rcUrl = `rcmobile://call?number=${phoneNumber}`;
+    const telUrl = `tel:${phoneNumber}`;
+    
+    // Try RingCentral app first
+    window.location.href = rcUrl; 
+    
+    // Optional: Fallback to default dialer (not always needed)
+    setTimeout(() => {
+        window.location.href = telUrl;
+    }, 1000); // Wait 1 second before fallback
+}
+  </script>
 
-    <!-- Replace with your test client's number -->
+    <!-- Replace with your test client's number 
     <button onclick="callClient('+15551234567')">Call Client</button>
 
     <script>
+
+
         // Setup the RingCentral Embeddable Adapter
         window.addEventListener('message', function (event) {
             if (event.data.type === 'rc-adapter-ready') {
@@ -37,7 +55,7 @@
             }, '*');
             alert("Calling " + clientNumber + " via RingCentral...");
         }
-    </script>
+    </script>-->
 
 </body>
 </html>
