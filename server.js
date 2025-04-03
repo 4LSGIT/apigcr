@@ -37,12 +37,25 @@ db.on("error", (err) => {
   console.error("Error connecting to MySQL database: " + err.stack);
 });
 
+
+
+
+
 app.get('/', (req, res) => {
   res.send('Where does the 4LSG API lives?');
 });
+
+
+
+
 app.get('/appt', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'appt.html'));
 });
+
+
+
+
+
 
 // Route to handle user authentication and query processing
 app.get("/db", (req, res) => {
@@ -109,6 +122,11 @@ app.get("/db", (req, res) => {
   });
 });
 
+
+
+
+
+
 function dateNow(){
 const now = new Date();
 const estOffset = -4; // EST offset from UTC
@@ -141,6 +159,11 @@ function getNthWeekdayOfMonth(year, month, weekday, n) {
 app.get('/date', (req, res) => {
 res.send({"date":dateNow()})
 });
+
+
+
+
+
 
 
 
@@ -211,6 +234,10 @@ app.get('/delay', (req, res) => {
 
 
 
+
+
+
+
 app.get('/myip', async (req, res) => {
     try {
         const response = await fetch('https://curlmyip.org');
@@ -223,6 +250,10 @@ app.get('/myip', async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch IP address' });
     }
 });
+
+
+
+
 
 function parseName(name) {
   const suffixes = [ "jr", "sr", "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"];
