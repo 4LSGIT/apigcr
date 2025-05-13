@@ -22,11 +22,6 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 
 
-
-
-
-
-
 const db = mysql.createPool({
   connectionLimit: 10,
   host: process.env.host,
