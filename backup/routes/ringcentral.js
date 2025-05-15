@@ -6,82 +6,44 @@ const path = require("path");
 require("dotenv").config();
 
 let tokenData = null;
-let cachedApiKey = null;
 let refreshTimeout;
-
-// --- Token file fallback (optional if DB fails) ---
 const TOKEN_PATH = path.join(__dirname, "..", "rc_token.json");
 
 const RINGCENTRAL_AUTH_URL = "https://platform.ringcentral.com/restapi/oauth/authorize";
 const RINGCENTRAL_TOKEN_URL = "https://platform.ringcentral.com/restapi/oauth/token";
 
-// --- DB Settings Helpers ---
-async function getSetting(db, key) {
-  return new Promise((resolve, reject) => {
-    db.query("SELECT value FROM app_settings WHERE `key` = ?", [key], (err, results) => {
-      if (err) return reject(err);
-      if (results.length === 0) return resolve(null);
-      resolve(results[0].value);
-    });
-  });
-}
-
-async function setSetting(db, key, value) {
-  return new Promise((resolve, reject) => {
-    db.query(
-      "REPLACE INTO app_settings (`key`, `value`) VALUES (?, ?)",
-      [key, value],
-      (err) => (err ? reject(err) : resolve())
-    );
-  });
-}
-
-// --- Load Token from DB or Disk ---
-async function loadToken(db) {
-  try {
-    const raw = await getSetting(db, "rc_token");
-    if (raw) {
-      tokenData = JSON.parse(raw);
-      console.log("Loaded token from DB.");
-      scheduleRefresh(db);
-      return;
-    }
-  } catch (err) {
-    console.error("Failed to load token from DB:", err);
-  }
-
+// --- Token Persistence ---
+function loadToken() {
   if (fs.existsSync(TOKEN_PATH)) {
     try {
       const data = fs.readFileSync(TOKEN_PATH);
       tokenData = JSON.parse(data);
-      console.log("Loaded token from disk (fallback).");
-      scheduleRefresh(db);
+      console.log("Loaded token from disk.");
+      scheduleRefresh();
     } catch (err) {
-      console.error("Failed to load token from disk:", err);
+      console.error("Failed to load token:", err);
     }
   }
 }
 
-// --- Save Token to DB & Disk ---
-async function saveToken(db) {
+function saveToken() {
   try {
-    await setSetting(db, "rc_token", JSON.stringify(tokenData));
     fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenData, null, 2));
-    console.log("Token saved to DB and disk.");
+    console.log("Token saved to disk.");
   } catch (err) {
     console.error("Failed to save token:", err);
   }
 }
 
-// --- Token Auto Refresh ---
-function scheduleRefresh(db) {
+// --- Refresh Token Logic ---
+function scheduleRefresh() {
   if (!tokenData || !tokenData.expires_in) return;
-  const refreshTime = (tokenData.expires_in - 600) * 1000; // 10 min before expiration
+  const refreshTime = (tokenData.expires_in - 60) * 1000; // 1 minute before expiration
   clearTimeout(refreshTimeout);
-  refreshTimeout = setTimeout(() => refreshAccessToken(db), refreshTime);
+  refreshTimeout = setTimeout(refreshAccessToken, refreshTime);
 }
 
-async function refreshAccessToken(db) {
+async function refreshAccessToken() {
   if (!tokenData || !tokenData.refresh_token) return;
 
   try {
@@ -102,8 +64,8 @@ async function refreshAccessToken(db) {
         ...await res.json(),
         issued_at: Date.now()
       };
-      await saveToken(db);
-      scheduleRefresh(db);
+      saveToken();
+      scheduleRefresh();
       console.log("Token refreshed.");
     } else {
       const error = await res.text();
@@ -114,26 +76,16 @@ async function refreshAccessToken(db) {
   }
 }
 
-// --- API Key Middleware ---
-async function checkApiKey(req, res, next) {
-  if (!cachedApiKey) {
-    try {
-      const dbKey = await getSetting(req.db, "api_key");
-      cachedApiKey = dbKey || process.env.RINGCENTRAL_API_KEY;
-    } catch (e) {
-      console.error("Failed to load API key:", e);
-      cachedApiKey = process.env.RINGCENTRAL_API_KEY;
-    }
-  }
-
+// --- Middleware for Testing API Key ---
+function checkApiKey(req, res, next) {
   const key = req.headers["x-api-key"] || req.query.key;
-  if (key !== cachedApiKey) {
+  if (key !== process.env.RINGCENTRAL_API_KEY) {
     return res.status(403).json({ error: "Invalid API Key" });
   }
   next();
 }
 
-// --- Authorize Manually ---
+// --- Authorization URL Redirect ---
 router.get("/ringcentral/authorize", (req, res) => {
   const authUrl = `${RINGCENTRAL_AUTH_URL}?response_type=code&client_id=${process.env.RINGCENTRAL_CLIENT_ID}&redirect_uri=${process.env.RINGCENTRAL_REDIRECT_URI}`;
   res.redirect(authUrl);
@@ -142,7 +94,6 @@ router.get("/ringcentral/authorize", (req, res) => {
 // --- OAuth Callback ---
 router.get("/ringcentral/callback", async (req, res) => {
   const code = req.query.code;
-  const db = req.db;
 
   try {
     const resToken = await fetch(RINGCENTRAL_TOKEN_URL, {
@@ -163,8 +114,8 @@ router.get("/ringcentral/callback", async (req, res) => {
         ...await resToken.json(),
         issued_at: Date.now()
       };
-      await saveToken(db);
-      scheduleRefresh(db);
+      saveToken();
+      scheduleRefresh();
       res.send("Authorization successful. You can now send SMS.");
     } else {
       const error = await resToken.text();
@@ -179,7 +130,9 @@ router.get("/ringcentral/callback", async (req, res) => {
 
 // --- Send SMS ---
 router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
-  const { from, to, message } = { ...req.query, ...req.body };
+  const from = req.body.from || req.query.from;
+  const to = req.body.to || req.query.to;
+  const message = req.body.message || req.query.message;
 
   if (!from || !to || !message) {
     return res.status(400).json({ error: "Missing required fields" });
@@ -217,7 +170,7 @@ router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
   }
 });
 
-// --- Status Check ---
+// --- Status ---
 router.get("/ringcentral/status", checkApiKey, (req, res) => {
   if (!tokenData || !tokenData.access_token) {
     return res.json({ authorized: false });
@@ -236,10 +189,7 @@ router.get("/ringcentral/status", checkApiKey, (req, res) => {
   });
 });
 
-// --- Initial Token Load ---
-router.use(async (req, res, next) => {
-  if (!tokenData) await loadToken(req.db);
-  next();
-});
+// --- Load token on startup ---
+loadToken();
 
 module.exports = router;
