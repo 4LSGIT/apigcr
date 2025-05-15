@@ -82,7 +82,7 @@ app.get('/proxy-pabbly', async (req, res) => {
 });
 
 
-
+require("./startup/init")(db);
 
 
 // Set port and start the server

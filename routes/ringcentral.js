@@ -10,7 +10,7 @@ let cachedApiKey = null;
 let refreshTimeout;
 
 // --- Token file fallback (optional if DB fails) ---
-const TOKEN_PATH = path.join(__dirname, "..", "rc_token.json");
+//const TOKEN_PATH = path.join(__dirname, "..", "rc_token.json");
 
 const RINGCENTRAL_AUTH_URL = "https://platform.ringcentral.com/restapi/oauth/authorize";
 const RINGCENTRAL_TOKEN_URL = "https://platform.ringcentral.com/restapi/oauth/token";
@@ -50,7 +50,7 @@ async function loadToken(db) {
     console.error("Failed to load token from DB:", err);
   }
 
-  if (fs.existsSync(TOKEN_PATH)) {
+/*  if (fs.existsSync(TOKEN_PATH)) {
     try {
       const data = fs.readFileSync(TOKEN_PATH);
       tokenData = JSON.parse(data);
@@ -59,15 +59,15 @@ async function loadToken(db) {
     } catch (err) {
       console.error("Failed to load token from disk:", err);
     }
-  }
+  }*/
 }
 
 // --- Save Token to DB & Disk ---
 async function saveToken(db) {
   try {
     await setSetting(db, "rc_token", JSON.stringify(tokenData));
-    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenData, null, 2));
-    console.log("Token saved to DB and disk.");
+//    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokenData, null, 2));
+    console.log("Token saved to DB.");
   } catch (err) {
     console.error("Failed to save token:", err);
   }
@@ -243,3 +243,4 @@ router.use(async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.loadTokenFromDb = loadToken; 
