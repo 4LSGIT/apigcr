@@ -52,36 +52,7 @@ fs.readdirSync(routesPath).forEach((file) => {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+//this is a temporary endpoint to fix a specific pabbly cors issue
 app.get('/proxy-pabbly', async (req, res) => {
     try {
         const pabblyUrl = 'https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc?'
