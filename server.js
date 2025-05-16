@@ -21,7 +21,8 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 
 
-
+/*
+//this was moved to /startup/db.js but left here for now for reference
 const db = mysql.createPool({
   connectionLimit: 10,
   host: process.env.host,
@@ -29,12 +30,11 @@ const db = mysql.createPool({
   password: process.env.password,
   database: process.env.database
 });
-
-// Handle MySQL connection errors
 db.on("error", (err) => {
   console.error("Error connecting to MySQL database: " + err.stack);
 });
-
+*/
+const db = require("./startup/db");
 
 
 const routesPath = path.join(__dirname, "routes");

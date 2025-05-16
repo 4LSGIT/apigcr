@@ -106,3 +106,4 @@ router.get("/parseName", (req, res) => {
 
 
 module.exports = router;
+module.exports.dateNow = dateNow;
