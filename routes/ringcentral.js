@@ -37,7 +37,7 @@ async function setSetting(db, key, value) {
 }
 
 // --- Load Token from DB or Disk ---
-async function loadToken(db) {
+/*async function loadToken(db) {
   try {
     const raw = await getSetting(db, "rc_token");
     if (raw) {
@@ -49,18 +49,34 @@ async function loadToken(db) {
   } catch (err) {
     console.error("Failed to load token from DB:", err);
   }
+}*/
+async function loadToken(db) {
+  try {
+    const raw = await getSetting(db, "rc_token");
+    if (raw) {
+      tokenData = JSON.parse(raw);
+      console.log("Loaded token from DB.");
 
-/*  if (fs.existsSync(TOKEN_PATH)) {
-    try {
-      const data = fs.readFileSync(TOKEN_PATH);
-      tokenData = JSON.parse(data);
-      console.log("Loaded token from disk (fallback).");
-      scheduleRefresh(db);
-    } catch (err) {
-      console.error("Failed to load token from disk:", err);
+      // Check if token is expired
+      const issuedAt = tokenData.issued_at || Date.now();
+      const now = Date.now();
+      const expiresIn = tokenData.expires_in * 1000;
+      const tokenExpiry = issuedAt + expiresIn;
+
+      if (now >= tokenExpiry) {
+        console.log("Access token expired on load, attempting refresh...");
+        await refreshAccessToken(db);
+      } else {
+        scheduleRefresh(db);
+      }
+
+      return;
     }
-  }*/
+  } catch (err) {
+    console.error("Failed to load token from DB:", err);
+  }
 }
+
 
 // --- Save Token to DB & Disk ---
 async function saveToken(db) {
@@ -178,6 +194,7 @@ router.get("/ringcentral/callback", async (req, res) => {
 });
 
 // --- Send SMS ---
+/*
 router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
   const { from, to, message } = { ...req.query, ...req.body };
 
@@ -215,7 +232,56 @@ router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
     console.error("SMS send error:", err);
     res.status(500).send("Error sending SMS.");
   }
+});*/
+router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
+  const { from, to, message } = { ...req.query, ...req.body };
+  if (!from || !to || !message) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+  const db = req.db;
+  if (!tokenData || !tokenData.access_token) {
+    return res.status(401).json({ error: "Not authorized with RingCentral" });
+  }
+  const now = Date.now();
+  const issuedAt = tokenData.issued_at || now;
+  const expiresIn = tokenData.expires_in * 1000;
+  const tokenExpiry = issuedAt + expiresIn;
+  // If token is expired, try to refresh
+  if (now >= tokenExpiry) {
+    console.log("Token expired during SMS send, refreshing...");
+    await refreshAccessToken(db);
+    if (!tokenData || !tokenData.access_token) {
+      return res.status(401).json({ error: "Failed to refresh access token" });
+    }
+  }
+  // Continue to send SMS
+  try {
+    const smsRes = await fetch("https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/sms", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        from: { phoneNumber: from },
+        to: [{ phoneNumber: to }],
+        text: message
+      })
+    });
+    if (smsRes.ok) {
+      const result = await smsRes.json();
+      res.json(result);
+    } else {
+      const error = await smsRes.text();
+      console.error("SMS error:", error);
+      res.status(500).send("Failed to send SMS.");
+    }
+  } catch (err) {
+    console.error("SMS send error:", err);
+    res.status(500).send("Error sending SMS.");
+  }
 });
+
 
 // --- Status Check ---
 router.get("/ringcentral/status", checkApiKey, (req, res) => {
