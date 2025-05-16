@@ -122,8 +122,13 @@ async function refreshAccessToken(db) {
       scheduleRefresh(db);
       console.log("Token refreshed.");
     } else {
-      const error = await res.text();
-      console.error("Refresh failed:", error);
+      const status = res.status;
+      const statusText = res.statusText;
+      const errorBody = await res.text();
+      console.error("Token refresh failed:");
+      console.error("Status:", status);
+      console.error("Status Text:", statusText);
+      console.error("Response Body:", errorBody);
     }
   } catch (err) {
     console.error("Error refreshing token:", err);
