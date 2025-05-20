@@ -4,6 +4,7 @@ const mysql = require("mysql");
 const fetch = require("node-fetch");
 const path = require('path');
 const fs = require("fs");
+require('dotenv').config();
 
 const app = express();
 var corsOptions = { origin: "*"};
@@ -52,34 +53,7 @@ fs.readdirSync(routesPath).forEach((file) => {
 
 
 
-//this is a temporary endpoint to fix a specific pabbly cors issue
-app.get('/proxy-pabbly', async (req, res) => {
-    try {
-        const pabblyUrl = 'https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc?'
-            + new URLSearchParams(req.query).toString(); // Pass query params dynamically
 
-        const response = await fetch(pabblyUrl, {
-            method: 'GET',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-
-        // Check if response is JSON
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-            const data = await response.json();
-            res.json(data);
-        } else {
-            const text = await response.text();
-            res.send(text);
-        }
-
-    } catch (error) {
-        console.error("Error fetching Pabbly response:", error);
-        res.status(500).json({ error: "Failed to fetch data from Pabbly", details: error.message });
-    }
-});
 
 
 require("./startup/init")(db);
