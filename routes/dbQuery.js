@@ -1,11 +1,22 @@
 const express = require("express");
 const router = express.Router();
 const path = require("path");
+const db = require('../startup/db');
 
 // Route to handle user authentication and query processing
 router.get("/db", (req, res) => {
-  const db = req.db;
+  //const db = req.db;
   const { username, password, query } = req.query;
+
+  const requiredParams = ["username", "password", "query"];
+  const missingParams = requiredParams.filter(param => !req.query[param]);
+
+  if (missingParams.length > 0) {
+    return res.status(400).json({
+      error: `Missing required parameter${missingParams.length > 1 ? "s" : ""}: ${missingParams.join(", ")}`
+    });
+  }
+  
  let queries = query.endsWith('|||') ? query.slice(0, -3) : query;
   queries = queries.split("|||");
 

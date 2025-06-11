@@ -36,20 +36,7 @@ async function setSetting(db, key, value) {
   });
 }
 
-// --- Load Token from DB or Disk ---
-/*async function loadToken(db) {
-  try {
-    const raw = await getSetting(db, "rc_token");
-    if (raw) {
-      tokenData = JSON.parse(raw);
-      console.log("Loaded token from DB.");
-      scheduleRefresh(db);
-      return;
-    }
-  } catch (err) {
-    console.error("Failed to load token from DB:", err);
-  }
-}*/
+
 async function loadToken(db) {
   try {
     const raw = await getSetting(db, "rc_token");
@@ -78,7 +65,6 @@ async function loadToken(db) {
 }
 
 
-// --- Save Token to DB & Disk ---
 async function saveToken(db) {
   try {
     await setSetting(db, "rc_token", JSON.stringify(tokenData));
@@ -89,8 +75,7 @@ async function saveToken(db) {
   }
 }
 
-// --- Token Auto Refresh ---
-function scheduleRefresh(db) {
+function scheduleRefresh(db) {//we honestly dont need this because we check and refresh if its expired before use.
   if (!tokenData || !tokenData.expires_in) return;
   const refreshTime = (tokenData.expires_in - 600) * 1000; // 10 min before expiration
   clearTimeout(refreshTimeout);
