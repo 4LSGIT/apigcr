@@ -10,7 +10,7 @@ router.get("/dbq", (req, res) => {
       console.error("Database query error:", err);
       return res.status(500).json({ error: "Database query failed" });
     }
-    res.json({ result: results[0].result }); // Send the result in response
+    res.json({ result: results[0].result });
   });
 });
 
