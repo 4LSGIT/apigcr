@@ -11,6 +11,10 @@ router.get('/appt', (req, res) => {
   res.sendFile(path.join(__dirname, "..", 'public', 'appt.html'));
 });
 
+router.get('/docs', (req, res) => {
+  res.sendFile(path.join(__dirname, "..", 'public', 'docs.html'));
+});
+
 router.get("/newpath", (req, res) => {
   res.json({ message: "This is the new path!" });
 });
