@@ -18,7 +18,7 @@
           <button class="tab" id="checklistsButton" onclick="openTab(this, 'checklists');if (checklists.length == 0) getChecklists();"><i class="fa-solid fa-list-check"></i> Checklists</button>
           <button class="tab" onclick="openTab(this, 'tabDB')"><i class="fa-brands fa-dropbox"></i> Dropbox</button>
           <button class="tab" onclick="openTab(this, 'tabTasks')"><i class="fa-solid fa-clipboard"></i> Tasks</button>
-          <button class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Client Log</button>
+          <button class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Case Log</button>
           <button class="tab" onclick="Swal.fire({ toast:true, title: 'Reload Page',html: '<p>Are you sure you want to reload the page?</p><p>You will lose all unsaved data!</p>',
                                        icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
                                        preConfirm: () => { location.reload();}});"><i class="fa-solid fa-circle-down"></i> Refresh</button>
@@ -314,6 +314,7 @@
       Type:
       <select id="tabLogType">
         <option>All</option>
+        <option>Appt</option>
         <option>Communication</option>
         <option>Email</option>
         <option>SMS</option>
