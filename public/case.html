@@ -138,9 +138,14 @@
         onchange="sendQuery(`UPDATE cases SET case_status = '${this.value}' WHERE case_id = '${caseID}'`)"
       /><br><br>
     </div><br>
-    <div style="margin:0 auto;max-width:650px;border:3px solid black;">
+    <div style="margin:0 auto; max-width:650px; border:3px solid black;">
       <h3>case notes:</h3>
-      <textarea id="overviewCaseNotes" style="width: 90%; box-sizing: border-box;" rows="5" placeholder="Eter your text here..."></textarea>
+      <textarea
+        id="overviewCaseNotes"
+        style="width: 90%; box-sizing: border-box; overflow-y: hidden; resize: none; min-height: 100px; max-height: 300px;"
+        placeholder="Enter your text here..."
+        oninput="resizeTextarea(this)"
+      ></textarea>
       <br>
       <div style="width: 95%; text-align: right; box-sizing: border-box; margin-top: 5px;">
         <button onclick="updateCaseNotes()">Update</button>
@@ -1159,6 +1164,7 @@
           E("caseStageSelect").value = caseData.case_stage || "";
           E("caseStatusInput").value = caseData.case_status || "N/A";
           E("overviewCaseNotes").value = caseData.case_notes || "";
+          resizeTextarea(E("overviewCaseNotes"));
           if (
             caseData.case_type == "Bankruptcy" ||
             caseData.case_type.startsWith("Bankruptcy - Ch")

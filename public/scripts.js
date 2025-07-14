@@ -8,6 +8,11 @@ const U = (str) =>
   );
 const X = (str) => str.replace(/(["'`\\])/g, "\\$1").replace(/\n/g, "\\n");
 
+function resizeTextarea(textarea) {
+  textarea.style.height = "auto"; // Reset height
+  textarea.style.height = Math.min(textarea.scrollHeight, 300) + "px"; // Adjust but don't exceed max
+}
+
 // Function to compare dates in EST with DST consideration
 function whenDate(date) {
   const now = new Date(
