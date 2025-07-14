@@ -137,7 +137,12 @@
         id="caseStatusInput"
         onchange="sendQuery(`UPDATE cases SET case_status = '${this.value}' WHERE case_id = '${caseID}'`)"
       /><br><br>
-    </div><br>
+    </div><br><div style="margin:0 auto;max-width:650px;border:3px solid black;">
+      <h3 style="color: red">Alerts:</h3>
+      <div id="alertsDiv">No Alerts</div>
+      <br />
+    </div>
+    <br />
     <div style="margin:0 auto; max-width:650px; border:3px solid black;">
       <h3>case notes:</h3>
       <textarea
@@ -151,13 +156,8 @@
         <button onclick="updateCaseNotes()">Update</button>
       </div>
     </div>
-    <br><div style="margin:0 auto;max-width:650px;border:3px solid black;">
-        <h3 style="color: red">Alerts:</h3>
-        <div id="alertsDiv">No Alerts</div>
-        <br />
-      </div>
-      <br /><br />
-      <div>
+    <br>
+    <div>
         <button
           class="big-button"
           onclick="Swal.fire({ title: 'Delete Case Page',
