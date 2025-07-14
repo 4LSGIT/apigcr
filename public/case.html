@@ -1,121 +1,290 @@
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="https://legalsolutions.group/wp-content/uploads/2022/06/cropped-favicon-32x32.png" sizes="32x32" />
-  <script type="text/javascript" src="https://www.dropbox.com/static/api/2/dropins.js" id="dropboxjs" data-app-key="ubgcneqmlvas3rc"></script>
-  <script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link
+    rel="icon"
+    href="https://legalsolutions.group/wp-content/uploads/2022/06/cropped-favicon-32x32.png"
+    sizes="32x32"
+  />
+  <script
+    type="text/javascript"
+    src="https://www.dropbox.com/static/api/2/dropins.js"
+    id="dropboxjs"
+    data-app-key="ubgcneqmlvas3rc"
+  ></script>
+  <script
+    src="https://kit.fontawesome.com/b48f1b97af.js"
+    crossorigin="anonymous"
+  ></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/scripts.js"></script>
-  <link rel="stylesheet" type="text/css" href="style.css">
-<!--<button onclick="sendQuery('select * from users').then( result => {console.log(result.data.query1)})">Click</button>-->
+  <link rel="stylesheet" type="text/css" href="style.css" />
+  <!--<button onclick="sendQuery('select * from users').then( result => {console.log(result.data.query1)})">Click</button>-->
 </head>
-<div id="tabViewCase" class="tab-main" style="text-align: center;display:block">
-        <div id="tabButtons" class="tabs" style="text-align: center;display:block">
-        <div id="caseButtons">
-          <!-- Use the format id="?Button" to append case=caseID,tab to url -->
-          <button class="tab active" onclick="openTab(this, 'tabOverview')"><i class="fa-solid fa-star"></i> Overview</button>
-          <button class="tab" onclick="openTab(this, 'tabClients')"><i class="fa-solid fa-circle-question"></i> People</button>
-          <button class="tab" onclick="openTab(this, 'tabAppts')"><i class="fa-solid fa-calendar-check"></i> Appointments</button>
-          <button class="tab" id="checklistsButton" onclick="openTab(this, 'checklists');if (checklists.length == 0) getChecklists();"><i class="fa-solid fa-list-check"></i> Checklists</button>
-          <button class="tab" onclick="openTab(this, 'tabDB')"><i class="fa-brands fa-dropbox"></i> Dropbox</button>
-          <button class="tab" onclick="openTab(this, 'tabTasks')"><i class="fa-solid fa-clipboard"></i> Tasks</button>
-          <button class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Case Log</button>
-          <button class="tab" onclick="Swal.fire({ toast:true, title: 'Reload Page',html: '<p>Are you sure you want to reload the page?</p><p>You will lose all unsaved data!</p>',
+<div
+  id="tabViewCase"
+  class="tab-main"
+  style="text-align: center; display: block"
+>
+  <div id="tabButtons" class="tabs" style="text-align: center; display: block">
+    <div id="caseButtons">
+      <!-- Use the format id="?Button" to append case=caseID,tab to url -->
+      <button class="tab active" onclick="openTab(this, 'tabOverview')">
+        <i class="fa-solid fa-star"></i> Overview
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabClients')">
+        <i class="fa-solid fa-circle-question"></i> People
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabAppts')">
+        <i class="fa-solid fa-calendar-check"></i> Appointments
+      </button>
+      <button
+        class="tab"
+        id="checklistsButton"
+        onclick="openTab(this, 'checklists');if (checklists.length == 0) getChecklists();"
+      >
+        <i class="fa-solid fa-list-check"></i> Checklists
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabDB')">
+        <i class="fa-brands fa-dropbox"></i> Dropbox
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabTasks')">
+        <i class="fa-solid fa-clipboard"></i> Tasks
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabLog')">
+        <i class="fa-solid fa-receipt"></i> Case Log
+      </button>
+      <button
+        class="tab"
+        onclick="Swal.fire({ toast:true, title: 'Reload Page',html: '<p>Are you sure you want to reload the page?</p><p>You will lose all unsaved data!</p>',
                                        icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
-                                       preConfirm: () => { location.reload();}});"><i class="fa-solid fa-circle-down"></i> Refresh</button>
-        </div>
-        <div id="bkButtons" style="display:none;">
-          <!--<button class="tab" onclick="openTab(this, 'tabStatus')"><i class="fa-solid fa-chart-simple fa-rotate-180"></i> Set Status</button>-->
-          <button class="tab" id="ISSNButton" onclick="openTab(this, 'tabInfo')"><i class="fa-solid fa-circle-info"></i> Initial Strategy Session Notes</button>
-          <button class="tab" onclick="openTab(this, 'tabSend')"><i class="fa-solid fa-comments"></i> Sending Form</button>
-          <button class="tab" onclick="openTab(this, 'tabCase')"><i class="fa-solid fa-landmark"></i> Case Details</button>
-          <button class="tab" id="341Button" onclick="openTab(this, 'tab341')"><i class="fa-solid fa-gavel"></i> 341 Notes</button>          
-          <button class="tab" onclick="openTab(this, 'tabDet')"><i class="fa-brands fa-wpforms"></i> Detailed Questionaire</button>
-        </div>
-        <h4 style="color:#000;">Primary Client Name:
-          <span onclick="copy(this.innerText)">
-          <span id="clientName" style="color:#07ADEF;">John Doe</span></span>
-          Phone: <span id="phone" onclick="copy(this.innerText)" 
-                       style="color:#07ADEF;">000-000-0000</span>
-        </h4>
-        <h4 id="caseLine" style="color:#000;">Lead ID: <span id="leadID" onclick="copy(this.innerText)" 
-                                                               style="color:#07ADEF;">abc123</span>
-          Case Number: <span id="case" onclick="copy(this.innerText)" 
-                             style="color:#07ADEF;">Not Filed</span>
-          Type: <span id="type" onclick="copy(this.innerText)"
-                         style="color:#07ADEF;">N/A</span>
-        </h4>         
-          
+                                       preConfirm: () => { location.reload();}});"
+      >
+        <i class="fa-solid fa-circle-down"></i> Refresh
+      </button>
     </div>
-      
-      <!-- Standard case tabs -->
-      <div id="tabOverview" class="tab-content">
-        <div style="margin:0 auto;max-width:650px;border:3px solid black;">
-          <br><label class="input-label">Case Type:</label>
-          <select id="caseTypeSelect" onchange="sendQuery(`UPDATE cases SET case_type = '${this.value}' WHERE case_id = '${caseID}'`)">
-            <option selected disabled>Select a Case Type</option>
-            <option>Bankruptcy</option>
-            <option>Bankruptcy - Ch. 7</option>
-            <option>Bankruptcy - Ch. 13</option>
-            <option>Other</option>
-          </select><br>
-           <label class="input-label">Stage:</label>
-          <select id="caseStageSelect" onchange="sendQuery(`UPDATE cases SET case_stage = '${this.value}' WHERE case_id = '${caseID}'`)">
-            <option selected disabled>Select a Stage</option>
-            <option>Open</option>
-            <option>Pending</option>
-            <option>Filed</option>
-            <option>Concluded</option>
-            <option>Closed</option>
-          </select><br>
-           <label class="input-label">Status:</label>
-          <input id="caseStatusInput" onchange="sendQuery(`UPDATE cases SET case_status = '${this.value}' WHERE case_id = '${caseID}'`)"
-                 ><br><br>
-       </div><br>
-        <div style="margin:0 auto;max-width:650px;border:3px solid black;">
-          <h3 style="color:red">Alerts:</h3>
-          <div id="alertsDiv">No Alerts</div><br>
-        </div>
-        <br><br>
-        <div>
-          <button class="big-button" onclick="Swal.fire({ title: 'Delete Case Page',
+    <div id="bkButtons" style="display: none">
+      <!--<button class="tab" onclick="openTab(this, 'tabStatus')"><i class="fa-solid fa-chart-simple fa-rotate-180"></i> Set Status</button>-->
+      <button class="tab" id="ISSNButton" onclick="openTab(this, 'tabInfo')">
+        <i class="fa-solid fa-circle-info"></i> Initial Strategy Session Notes
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabSend')">
+        <i class="fa-solid fa-comments"></i> Sending Form
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabCase')">
+        <i class="fa-solid fa-landmark"></i> Case Details
+      </button>
+      <button class="tab" id="341Button" onclick="openTab(this, 'tab341')">
+        <i class="fa-solid fa-gavel"></i> 341 Notes
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabDet')">
+        <i class="fa-brands fa-wpforms"></i> Detailed Questionaire
+      </button>
+    </div>
+    <h4 style="color: #000">
+      Primary Client Name:
+      <span onclick="copy(this.innerText)">
+        <span id="clientName" style="color: #07adef">John Doe</span></span
+      >
+      Phone:
+      <span id="phone" onclick="copy(this.innerText)" style="color: #07adef"
+        >000-000-0000</span
+      >
+    </h4>
+    <h4 id="caseLine" style="color: #000">
+      Lead ID:
+      <span id="leadID" onclick="copy(this.innerText)" style="color: #07adef"
+        >abc123</span
+      >
+      Case Number:
+      <span id="case" onclick="copy(this.innerText)" style="color: #07adef"
+        >Not Filed</span
+      >
+      Type:
+      <span id="type" onclick="copy(this.innerText)" style="color: #07adef"
+        >N/A</span
+      >
+    </h4>
+  </div>
+
+  <!-- Standard case tabs -->
+  <div id="tabOverview" class="tab-content">
+    <div style="margin: 0 auto; max-width: 650px; border: 3px solid black">
+      <br /><label class="input-label">Case Type:</label>
+      <select
+        id="caseTypeSelect"
+        onchange="sendQuery(`UPDATE cases SET case_type = '${this.value}' WHERE case_id = '${caseID}'`)"
+      >
+        <option selected disabled>Select a Case Type</option>
+        <option>Bankruptcy</option>
+        <option>Bankruptcy - Ch. 7</option>
+        <option>Bankruptcy - Ch. 13</option>
+        <option>Other</option></select
+      ><br />
+      <label class="input-label">Stage:</label>
+      <select
+        id="caseStageSelect"
+        onchange="sendQuery(`UPDATE cases SET case_stage = '${this.value}' WHERE case_id = '${caseID}'`)"
+      >
+        <option selected disabled>Select a Stage</option>
+        <option>Open</option>
+        <option>Pending</option>
+        <option>Filed</option>
+        <option>Concluded</option>
+        <option>Closed</option></select
+      ><br />
+      <label class="input-label">Status:</label>
+      <input
+        id="caseStatusInput"
+        onchange="sendQuery(`UPDATE cases SET case_status = '${this.value}' WHERE case_id = '${caseID}'`)"
+      /><br><br>
+    </div><br>
+    <div style="margin:0 auto;max-width:650px;border:3px solid black;">
+      <h3>case notes:</h3>
+      <textarea id="overviewCaseNotes" style="width: 90%; box-sizing: border-box;" rows="5" placeholder="Eter your text here..."></textarea>
+      <br>
+      <div style="width: 95%; text-align: right; box-sizing: border-box; margin-top: 5px;">
+        <button onclick="updateCaseNotes()">Update</button>
+      </div>
+    </div>
+    <br><div style="margin:0 auto;max-width:650px;border:3px solid black;">
+        <h3 style="color: red">Alerts:</h3>
+        <div id="alertsDiv">No Alerts</div>
+        <br />
+      </div>
+      <br /><br />
+      <div>
+        <button
+          class="big-button"
+          onclick="Swal.fire({ title: 'Delete Case Page',
                                               html: `<p>Are you sure you want to delete case ${caseID}?</p><p>There is no way to restore thhe data!</p>`,
                                               icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, Delete!',cancelButtonText: 'No, cancel',
                                               preConfirm: () => { document.write(`<h1 style='text-align:center'>Case Deleted! You may close the tab.</h1>`);}});"
-                  style="background-color:red">Delete Lead</button>
-          <button class="big-button" onclick="alert('no! I am tired!')" style="background-color:blue">Merge Leads</button>
-          <button class="big-button" onclick="alert('Which words?')" style="background-color:green">Words Go Here</button>
-        </div>
+          style="background-color: red"
+        >
+          Delete Lead
+        </button>
+        <button
+          class="big-button"
+          onclick="alert('no! I am tired!')"
+          style="background-color: blue"
+        >
+          Merge Leads
+        </button>
+        <button
+          class="big-button"
+          onclick="alert('Which words?')"
+          style="background-color: green"
+        >
+          Words Go Here
+        </button>
       </div>
-  
-      <div id="tabStatus" class="tab-content">
-        <iframe id="status"></iframe>
-        <button onclick="newStatus(trello)" style="background-color: red; color: white; font-weight: bold;">Clear Form</button>
-      </div>
-  
-      <div id="tabAppts" class="tab-content">
-        <h1>Appointments connected to this case:</h1>
-        <button class="file-button" onclick="newAppt()"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button><br>
-        <table id="apptsTable" class="logTable">
-          <tr><th>ID</th><th>Type</th><th>Date</th><th>Time</th><th>Length</th><th>Status</th><th>Note</th><th>Client</th><th>Case</th><th>Action</th></tr>
-        </table>
-      </div>
+    </div>
 <script>
-  function conMsg() {
-    date = new Date(E('scheduleDateTime').value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}).replace(',', ' at');
-    E("confirmMessageText").style.display = (E("confirmSMS").checked||E("confirmEmail").checked) ? "":"none";
-    E("confirmMessageText").value = (E("confirmSMS").checked||E("confirmEmail").checked) ? 
-      `This is to confirm that I scheduled you for a ${E("apptLen").value} minute ${document.querySelector('input[name="schedulePlatform"]:checked').value} ${E("apptType").value} on ${date}.` : "";
-    E("apptDatePretty").value= new Date(E('scheduleDateTime').value).toLocaleString('en-US', { month: 'short', day: 'numeric' }) + ', ' + new Date(E('scheduleDateTime').value).toLocaleString('en-US', { year: 'numeric', hour: 'numeric', minute: '2-digit' }).replace(',', ' at');
-  }
-  function newAppt() {
-    clientSelect= (clients.length == 1)? `<select style="width:300px;" id="newApptClient">` : `<select style="width:300px;" id="newApptClient"><option disabled selected value="">Select a Client</option>`
-    clients.forEach(client => {
-    clientSelect += `<option value="{'id':'${client.contact_id}','name':'${client.contact_name}','email':'${client.contact_email}','phone':'${client.contact_phone}'}">${client.contact_id} ${client.contact_name} - ${client.case_relate_type}</option>`
-  })
-    clientSelect += "</select>"
-  Swal.fire({
-    title: "Schedule Appointment",
-    html: `${clientSelect}<br><form onchange="conMsg()""><select style="width:300px" onchange="[E('apptType').value,E('apptLen').value]=this.value.split(',');document.getElementById('ApptOtherSpan').style.display=this.value==','?'block':'none'">
+    async function updateCaseNotes() {
+      processing();
+      notes = X(E("overviewCaseNotes").value)
+      if (!caseData.case_id) {
+        console.error("Missing or invalid case_id");
+        return;
+      }
+      const query = `update cases set case_notes = '${notes}' where case_id = '${caseData.case_id}'`;
+      const result = await sendQuery(query);
+      console.log("Query result:", result);
+      Swal.close();
+      const res = result.data.query1;
+      if (!res) {
+        Toast.fire({icon: "error", title: "Error", text: "No response from server.",});
+        return;
+      }
+      if (res.affectedRows === 1 && res.changedRows === 1) {
+        Toast.fire({ icon: "success", title: "Updated", text: "Case notes updated successfully.",});
+      }
+      else if (res.affectedRows === 1 && res.changedRows === 0) {
+        Toast.fire({ icon: "info", title: "No Change", text: "Case notes were unchanged.",});
+      } else {
+        Toast.fire({ icon: "error", title: "Failed", text: "Case notes update failed. Please contact IT for further information.", });
+      }
+    }
+  </script>
+
+
+    <div id="tabStatus" class="tab-content">
+      <iframe id="status"></iframe>
+      <button
+        onclick="newStatus(trello)"
+        style="background-color: red; color: white; font-weight: bold"
+      >
+        Clear Form
+      </button>
+    </div>
+
+    <div id="tabAppts" class="tab-content">
+      <h1>Appointments connected to this case:</h1>
+      <button class="file-button" onclick="newAppt()">
+        <i class="fa-solid fa-calendar-plus"></i> New Appointment</button
+      ><br />
+      <table id="apptsTable" class="logTable">
+        <tr>
+          <th>ID</th>
+          <th>Type</th>
+          <th>Date</th>
+          <th>Time</th>
+          <th>Length</th>
+          <th>Status</th>
+          <th>Note</th>
+          <th>Client</th>
+          <th>Case</th>
+          <th>Action</th>
+        </tr>
+      </table>
+    </div>
+    <script>
+      function conMsg() {
+        date = new Date(E("scheduleDateTime").value)
+          .toLocaleString("en-US", {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })
+          .replace(",", " at");
+        E("confirmMessageText").style.display =
+          E("confirmSMS").checked || E("confirmEmail").checked ? "" : "none";
+        E("confirmMessageText").value =
+          E("confirmSMS").checked || E("confirmEmail").checked
+            ? `This is to confirm that I scheduled you for a ${
+                E("apptLen").value
+              } minute ${
+                document.querySelector('input[name="schedulePlatform"]:checked')
+                  .value
+              } ${E("apptType").value} on ${date}.`
+            : "";
+        E("apptDatePretty").value =
+          new Date(E("scheduleDateTime").value).toLocaleString("en-US", {
+            month: "short",
+            day: "numeric",
+          }) +
+          ", " +
+          new Date(E("scheduleDateTime").value)
+            .toLocaleString("en-US", {
+              year: "numeric",
+              hour: "numeric",
+              minute: "2-digit",
+            })
+            .replace(",", " at");
+      }
+      function newAppt() {
+        clientSelect =
+          clients.length == 1
+            ? `<select style="width:300px;" id="newApptClient">`
+            : `<select style="width:300px;" id="newApptClient"><option disabled selected value="">Select a Client</option>`;
+        clients.forEach((client) => {
+          clientSelect += `<option value="{'id':'${client.contact_id}','name':'${client.contact_name}','email':'${client.contact_email}','phone':'${client.contact_phone}'}">${client.contact_id} ${client.contact_name} - ${client.case_relate_type}</option>`;
+        });
+        clientSelect += "</select>";
+        Swal.fire({
+          title: "Schedule Appointment",
+          html: `${clientSelect}<br><form onchange="conMsg()""><select style="width:300px" onchange="[E('apptType').value,E('apptLen').value]=this.value.split(',');document.getElementById('ApptOtherSpan').style.display=this.value==','?'block':'none'">
       <option disabled selected>Appointment Type:</option>
       <option value="Strategy Session,15">Strategy Session (15 min)</option>
       <option value="Strategy Session Follow Up,15">Strategy Session Follow Up (15 min)</option>
@@ -139,247 +308,370 @@
       <label for="email">Email</label><br></form>
       <textarea id="confirmMessageText" style="display:none;height:60px;width:300px;resize:none;"></textarea>
       <input id="apptDatePretty" style="display:none">`,
-    showCancelButton: true,
-    confirmButtonText: 'Schedule',
-    showLoaderOnConfirm: true,
-    preConfirm: () => {
-      newApptClient=JSON.parse(E("newApptClient").value.replace(/'/g, '"'))
-      len=E("apptLen").value
-      dateP=E("apptDatePretty").value.split(" at ")
-      platform= document.querySelector('input[name="schedulePlatform"]:checked').value
-      type=E("apptType").value
-      date=E("scheduleDateTime").value.replace("T", " ").concat(":00")
-      note=E("appointmentNote").value
-      if ((!newApptClient) || (!E("apptType").value) || (!E("apptLen").value) || (!E("scheduleDateTime").value)) {
-        Swal.showValidationMessage("Please complete all the mandatory fields");
-        return false;
-      } else if (whenDate(date) == "past") {
-        Swal.showValidationMessage("Please chose a future date");
-        return false;
-      } else {
-        return fetch(`${url}?mode=updateAppt&action=newAppt&username=${username}&password=${password}&case=${caseID}&client=${newApptClient.id}&len=${E("apptLen").value}&platform=${document.querySelector('input[name="schedulePlatform"]:checked').value}&type=${E("apptType").value}&date=${E("scheduleDateTime").value.replace("T", " ")}:00&confirmEmail=${E("confirmEmail").checked}&confirmSMS=${E("confirmSMS").checked}&sms=${newApptClient.phone}&email=${newApptClient.email}&clientName=${newApptClient.name}&note=${encodeURIComponent(E("appointmentNote").value)}&confirmMessage=${encodeURIComponent(E("confirmMessageText").value)}`)
-          .then(response => response.json())
-          .then(data => {
-          newApptTemp = data
-          console.log(newApptTemp)
-          Toast.fire({icon: data.status, title: data.title, text: data.message})
-          if (data.status == "success"){
-            q = `SELECT appts.*, DATE_FORMAT(appt_date, '%b. %e, %Y') AS date, DATE_FORMAT(appt_date, '%l:%i %p') AS time, contacts.contact_name, contacts.contact_id
+          showCancelButton: true,
+          confirmButtonText: "Schedule",
+          showLoaderOnConfirm: true,
+          preConfirm: () => {
+            newApptClient = JSON.parse(
+              E("newApptClient").value.replace(/'/g, '"')
+            );
+            len = E("apptLen").value;
+            dateP = E("apptDatePretty").value.split(" at ");
+            platform = document.querySelector(
+              'input[name="schedulePlatform"]:checked'
+            ).value;
+            type = E("apptType").value;
+            date = E("scheduleDateTime").value.replace("T", " ").concat(":00");
+            note = E("appointmentNote").value;
+            if (
+              !newApptClient ||
+              !E("apptType").value ||
+              !E("apptLen").value ||
+              !E("scheduleDateTime").value
+            ) {
+              Swal.showValidationMessage(
+                "Please complete all the mandatory fields"
+              );
+              return false;
+            } else if (whenDate(date) == "past") {
+              Swal.showValidationMessage("Please chose a future date");
+              return false;
+            } else {
+              return fetch(
+                `${url}?mode=updateAppt&action=newAppt&username=${username}&password=${password}&case=${caseID}&client=${
+                  newApptClient.id
+                }&len=${E("apptLen").value}&platform=${
+                  document.querySelector(
+                    'input[name="schedulePlatform"]:checked'
+                  ).value
+                }&type=${E("apptType").value}&date=${E(
+                  "scheduleDateTime"
+                ).value.replace("T", " ")}:00&confirmEmail=${
+                  E("confirmEmail").checked
+                }&confirmSMS=${E("confirmSMS").checked}&sms=${
+                  newApptClient.phone
+                }&email=${newApptClient.email}&clientName=${
+                  newApptClient.name
+                }&note=${encodeURIComponent(
+                  E("appointmentNote").value
+                )}&confirmMessage=${encodeURIComponent(
+                  E("confirmMessageText").value
+                )}`
+              )
+                .then((response) => response.json())
+                .then((data) => {
+                  newApptTemp = data;
+                  console.log(newApptTemp);
+                  Toast.fire({
+                    icon: data.status,
+                    title: data.title,
+                    text: data.message,
+                  });
+                  if (data.status == "success") {
+                    q = `SELECT appts.*, DATE_FORMAT(appt_date, '%b. %e, %Y') AS date, DATE_FORMAT(appt_date, '%l:%i %p') AS time, contacts.contact_name, contacts.contact_id
                 FROM appts
                 LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id
                 LEFT JOIN cases ON appts.appt_case_id = cases.case_id OR appts.appt_case_id = cases.case_number OR appts.appt_case_id = cases.case_number_full
-                WHERE cases.case_id = "${caseID}" ORDER BY appts.appt_date DESC`
-            sendQuery(q)
-              .then( result => {
-              appts = result.data.query1
-              putAppts()
-            })
-          }
-        })
+                WHERE cases.case_id = "${caseID}" ORDER BY appts.appt_date DESC`;
+                    sendQuery(q).then((result) => {
+                      appts = result.data.query1;
+                      putAppts();
+                    });
+                  }
+                });
+            }
+          },
+        });
       }
-    }
-  });
-}
-  </script>
-      <div id="checklists" class="tab-content" style="width:650px; text-align:left; margin: 0 auto;">
-        <h1>Checklists</h1>
-        <div style="border:1px solid grey;padding: 20px;" id="checklistDiv">
-        </div>
-      </div>
-  
-      <div id="tabDB" class="tab-content">
-        <div id="noDB" style="text-align: center; color: red;">
-        <p>No Dropbox folder associated with this account!</p>
-        <button class="big-button"
-          onclick="newDB()">Create Dropbox Folder</button>
-        </div>
-        <div id="yesDB" style="margin: auto; width:600px; height:800px">
-        </div>
-      </div>
-  
-<div id="tabTasks" class="tab-content">
-  <h1>Tasks connected to this Case</h1>
-    <span>
-      <button onclick="window.parent.newTask(null,null,null,null,null,null,caseID)">Create Task</button>
-      Query:
-      <input id="tabTasksQuery">
-      Status: 
-      <select id="tabTasksStatus" style="width:auto">
-        <option>Incomplete</option>
-        <option>Pending</option>
-        <option>Completed</option>
-        <option>Due Today</option>
-        <option>Overdue</option>
-        <option>Canceled</option>
-        <option value="1' OR '1">All</option>
-      </select>
-      Assigned By: 
-      <select id="tabTasksBy" class="userslist" style="width:auto">
-        <option value="1' OR '1">All</option>
-      </select>
-      Assigned to: 
-      <select id="tabTasksTo" class="userslist" style="width:auto">
-        <option value="1' OR '1">All</option>
-      </select>
-      <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
-    </span>
-    <table id="tasksTable" class="logTable">
-      <tr>
-        <th>Action</th>
-        <th>Task ID</th>
-        <th>Status</th>
-        <th>Title</th>
-        <th>Description</th>
-        <th>Assigned By</th>
-        <th>Assigned To</th>
-        <th>Linked To</th>
-        <th>Due Date</th>
-        <th>Date Created</th>
-      </tr>
-    </table>
-    <div id="tasksTableFoot"></div>
-    <div id="tabTasksLoad" style="display:none;">
-      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </script>
+    <div
+      id="checklists"
+      class="tab-content"
+      style="width: 650px; text-align: left; margin: 0 auto"
+    >
+      <h1>Checklists</h1>
+      <div
+        style="border: 1px solid grey; padding: 20px"
+        id="checklistDiv"
+      ></div>
     </div>
-  </div>
-  
-  <script>
-    function tabTasksGet(offset) {
-      E('tabTasksButton').disabled = true;
-      E('tabTasksLoad').style.display = 'block';
-      query = E("tabTasksQuery").value
-      status = E("tabTasksStatus").value
-      by = E("tabTasksBy").value
-      to = E("tabTasksTo").value
-      const table = E('tasksTable');
-      const foot = E('tasksTableFoot');
-      foot.innerHTML = ""
-      var rows = table.getElementsByTagName("tr");
-      for (var i = rows.length - 1; i > 0; i--) {
-        table.deleteRow(i);
-      }
-      fetch(`${url}?mode=getCaseTasks&username=${username}&password=${password}&case=${caseID}&query=${query}&status=${status}&by=${by}&to=${to}&offset=${offset}&limit=${limit}&link=${caseID}`)
-        .then(response => response.json())
-        .then(data => {
-        tasks = data.data;
-        console.log(data);
-        if (data.message == "tasks retrieved"){
-          Toast.fire({ title: "success", text: `${data.results} tasks retrieved`, icon: "success"});
-          tasks.forEach(task => {
-            const row = table.insertRow();
-            rowHTML = `<td><select 
+
+    <div id="tabDB" class="tab-content">
+      <div id="noDB" style="text-align: center; color: red">
+        <p>No Dropbox folder associated with this account!</p>
+        <button class="big-button" onclick="newDB()">
+          Create Dropbox Folder
+        </button>
+      </div>
+      <div id="yesDB" style="margin: auto; width: 600px; height: 800px"></div>
+    </div>
+
+    <div id="tabTasks" class="tab-content">
+      <h1>Tasks connected to this Case</h1>
+      <span>
+        <button
+          onclick="window.parent.newTask(null,null,null,null,null,null,caseID)"
+        >
+          Create Task
+        </button>
+        Query:
+        <input id="tabTasksQuery" />
+        Status:
+        <select id="tabTasksStatus" style="width: auto">
+          <option>Incomplete</option>
+          <option>Pending</option>
+          <option>Completed</option>
+          <option>Due Today</option>
+          <option>Overdue</option>
+          <option>Canceled</option>
+          <option value="1' OR '1">All</option>
+        </select>
+        Assigned By:
+        <select id="tabTasksBy" class="userslist" style="width: auto">
+          <option value="1' OR '1">All</option>
+        </select>
+        Assigned to:
+        <select id="tabTasksTo" class="userslist" style="width: auto">
+          <option value="1' OR '1">All</option>
+        </select>
+        <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
+      </span>
+      <table id="tasksTable" class="logTable">
+        <tr>
+          <th>Action</th>
+          <th>Task ID</th>
+          <th>Status</th>
+          <th>Title</th>
+          <th>Description</th>
+          <th>Assigned By</th>
+          <th>Assigned To</th>
+          <th>Linked To</th>
+          <th>Due Date</th>
+          <th>Date Created</th>
+        </tr>
+      </table>
+      <div id="tasksTableFoot"></div>
+      <div id="tabTasksLoad" style="display: none">
+        <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+      </div>
+    </div>
+
+    <script>
+      function tabTasksGet(offset) {
+        E("tabTasksButton").disabled = true;
+        E("tabTasksLoad").style.display = "block";
+        query = E("tabTasksQuery").value;
+        status = E("tabTasksStatus").value;
+        by = E("tabTasksBy").value;
+        to = E("tabTasksTo").value;
+        const table = E("tasksTable");
+        const foot = E("tasksTableFoot");
+        foot.innerHTML = "";
+        var rows = table.getElementsByTagName("tr");
+        for (var i = rows.length - 1; i > 0; i--) {
+          table.deleteRow(i);
+        }
+        fetch(
+          `${url}?mode=getCaseTasks&username=${username}&password=${password}&case=${caseID}&query=${query}&status=${status}&by=${by}&to=${to}&offset=${offset}&limit=${limit}&link=${caseID}`
+        )
+          .then((response) => response.json())
+          .then((data) => {
+            tasks = data.data;
+            console.log(data);
+            if (data.message == "tasks retrieved") {
+              Toast.fire({
+                title: "success",
+                text: `${data.results} tasks retrieved`,
+                icon: "success",
+              });
+              tasks.forEach((task) => {
+                const row = table.insertRow();
+                rowHTML = `<td><select 
               onchange="window.parent.updateTask(${task.task_id}, this.value, ${task.task_to}, '${task.task_title}', '${task.task_desc}', '${task.task_due}', ${task.task_notification}, '${task.task_link}');this.selectedIndex=0;" 
               style="width:150px"><option value="" disabled selected>Actions</option>`;
-            if (task.task_status == "Pending" || task.task_status =="Due Today" || task.task_status == "Overdue") {rowHTML +=
-              `<option value="Mark Complete">Mark Complete</option><option value="Edit">Edit</option>
-              <option value="Cancel">Cancel</option></select>`}
-            else if (task.task_status == "Canceled") {rowHTML += 
-              `<option value="Uncancel">Reinstate</option></select>`}
-            else if (task.task_status == "Completed") {rowHTML +=
-              `<option value="Mark Incomplete">Mark Incomplete</option></select>`}
-            else {rowHTML += `<td>`}
-            row.innerHTML = `
-              ${rowHTML}</td><td>${task.task_id}</td><td>${task.task_status}</td><td>${task.task_title}</td><td>${task.task_desc}</td>
-              <td>${task.task_from_name||"TASKMASTER"}</td><td>${task.task_to_name}</td><td><a href="#" onclick="window.parent.addFile('${task.case_number||task.case_id||task.contact_name}', '${isNaN(task.task_link)? "case":"client"}', '${task.task_link}')">${task.case_number||task.case_id||task.contact_name}</a></td><td>${task.due||""}</td><td>${task.date}</td>`;
-          });
-          foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabTasksGet(${offset-limit})"">&lt;</a> `: "";
-          for (i=1; data.results >= (i-1)*limit; i++) {
-            foot.innerHTML += (offset/limit + 1 == i)?
-              `<a href="#" onclick="tabTasksGet(${(i-1)*limit})">[${i}]</a> `:
-              `<a href="#" onclick="tabTasksGet(${(i-1)*limit})">${i}</a> `;
-          }
-          foot.innerHTML += (offset+limit < data.results) ? `<a href="#" onclick="tabTasksGet(${offset+limit})"">&gt;</a> `: "";
-          foot.innerHTML += ` | Results ${offset+1}-${offset+data.data.length} of ${data.results}
+                if (
+                  task.task_status == "Pending" ||
+                  task.task_status == "Due Today" ||
+                  task.task_status == "Overdue"
+                ) {
+                  rowHTML += `<option value="Mark Complete">Mark Complete</option><option value="Edit">Edit</option>
+              <option value="Cancel">Cancel</option></select>`;
+                } else if (task.task_status == "Canceled") {
+                  rowHTML += `<option value="Uncancel">Reinstate</option></select>`;
+                } else if (task.task_status == "Completed") {
+                  rowHTML += `<option value="Mark Incomplete">Mark Incomplete</option></select>`;
+                } else {
+                  rowHTML += `<td>`;
+                }
+                row.innerHTML = `
+              ${rowHTML}</td><td>${task.task_id}</td><td>${
+                  task.task_status
+                }</td><td>${task.task_title}</td><td>${task.task_desc}</td>
+              <td>${task.task_from_name || "TASKMASTER"}</td><td>${
+                  task.task_to_name
+                }</td><td><a href="#" onclick="window.parent.addFile('${
+                  task.case_number || task.case_id || task.contact_name
+                }', '${isNaN(task.task_link) ? "case" : "client"}', '${
+                  task.task_link
+                }')">${
+                  task.case_number || task.case_id || task.contact_name
+                }</a></td><td>${task.due || ""}</td><td>${task.date}</td>`;
+              });
+              foot.innerHTML =
+                offset > 0
+                  ? `<a href="#" onclick="tabTasksGet(${
+                      offset - limit
+                    })"">&lt;</a> `
+                  : "";
+              for (i = 1; data.results >= (i - 1) * limit; i++) {
+                foot.innerHTML +=
+                  offset / limit + 1 == i
+                    ? `<a href="#" onclick="tabTasksGet(${
+                        (i - 1) * limit
+                      })">[${i}]</a> `
+                    : `<a href="#" onclick="tabTasksGet(${
+                        (i - 1) * limit
+                      })">${i}</a> `;
+              }
+              foot.innerHTML +=
+                offset + limit < data.results
+                  ? `<a href="#" onclick="tabTasksGet(${
+                      offset + limit
+                    })"">&gt;</a> `
+                  : "";
+              foot.innerHTML += ` | Results ${offset + 1}-${
+                offset + data.data.length
+              } of ${data.results}
           <select style="width:auto" onchange="limit = this.value;tabTasksGet(0)">
-          <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
-          <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
-          <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
-          <option value="500" ${limit === 500 ? 'selected' : ''}>500</option>
+          <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
+          <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
+          <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
+          <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
           </select> | <button onclick="window.print()">Print</button>`;
-        }
-        else {Toast.fire({ icon: "error", title: `No Tasks Found!` }); foot.innerHTML = "No Tasks Related to Client"}
-        E('tabTasksButton').disabled = false;
-        E('tabTasksLoad').style.display = 'none';
-      });
-    }
-  </script>
-  
-  
-  
-  <div id="tabLog" class="tab-content"> 
-    <h1>Case Log</h1>
-    <span><button onclick="addLog()">Add Log</button>
-      Query:
-      <input id="tabLogQuery" onkeypress="if (event.keyCode == 13) {tabLogGet(0)}">
-      Type:
-      <select id="tabLogType">
-        <option>All</option>
-        <option>Appt</option>
-        <option>Communication</option>
-        <option>Email</option>
-        <option>SMS</option>
-        <option>Call</option>
-        <option>Form</option>
-        <option>Status</option>
-        <option>Note</option>
-        <option>Other</option>
-      </select>Time: 
-      <select id="tabLogTime" style="width:150px" onchange="tabLogTimeChange(this.value)">
-        <option>All</option>
-        <option>Before</option>
-        <option>On</option>
-        <option>After</option>
-        <option>Between</option>
-      </select>
-      <input id="tabLogDate1" type="date" style="width:150px;display:none;">
-      <label id="tabLogDateLabel"></label>
-      <input id="tabLogDate2" type="date" style="width:150px;;display:none">
-      
-      <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
-    </span>
-    <table id="logTable" class="logTable" style="text-align: left;">
-      <tr><th>Log ID:</th><th>Type:</th><th>Date/Time:</th><th>Link:</th><th>Data:</th><th>User:</th></tr>
-    </table>
-    <div id="logTableFoot"></div>
-    <div id="tabLogLoad" style="display:none;">
-      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
-    </div>
-  </div>  
-  
-<script>
-    
- function tabLogTimeChange(time) {
-  if (time == 'All') { E('tabLogDate1').style.display = 'none'; E('tabLogDateLabel').innerHTML = ''; E('tabLogDate2').style.display = 'none'; }
-  else if (time != 'Between') { E('tabLogDate1').style.display = 'inline-block'; E('tabLogDateLabel').innerHTML = ''; E('tabLogDate2').style.display = 'none'; }
-  else if (time == 'Between') { E('tabLogDate1').style.display = 'inline-block'; E('tabLogDateLabel').innerHTML = 'and '; E('tabLogDate2').style.display = 'inline-block'; }
- }
-    
-    
-function tabLogGet(offset) {
-   E('tabLogButton').disabled = true;
-   E('tabLogLoad').style.display = 'block';
-   query = E("tabLogQuery").value
-   type = E("tabLogType").value
-   type1 = E("tabLogType").value
-   time = E('tabLogTime').value;
-   date1 = E('tabLogDate1').value;
-   date2 = E('tabLogDate2').value;
-  const table = E('logTable');
-  const foot = E('logTableFoot');
-  foot.innerHTML = ""
-  var rows = table.getElementsByTagName("tr");
-  for (var i = rows.length - 1; i > 0; i--) {
-    table.deleteRow(i);
-  }
-  if (type == "All"){type = "1' OR '1"}
-  else if (type == "Communication"){type = "sms' OR log_type = 'email' OR log_type = 'call"}
-  if (time == "All"){time = "1000-10-01' OR '1"}
-  else if (time == "Defore"){time = `1000-10-01' OR DATE(log_date) < ${date1}`}
-  else if (time == "On "){time = date1}
-  else if (time == "After"){time = `1000-10-01' OR DATE(log_date) > ${date1}`}
-  else if (time == "Between"){time = `1000-10-01' OR (DATE(log_date) < ${date1} AND DATE(log_date) > ${date2})`}
+            } else {
+              Toast.fire({ icon: "error", title: `No Tasks Found!` });
+              foot.innerHTML = "No Tasks Related to Client";
+            }
+            E("tabTasksButton").disabled = false;
+            E("tabTasksLoad").style.display = "none";
+          });
+      }
+    </script>
 
-  q =`SELECT log.*, DATE_FORMAT(log_date, '%M %e, %Y at %h:%i %p') AS formatted_date, contacts.contact_name, contacts.contact_id, COALESCE(cases.case_number_full, cases.case_number) AS case_number, cases.case_id, cases.case_type
+    <div id="tabLog" class="tab-content">
+      <h1>Case Log</h1>
+      <span
+        ><button onclick="addLog()">Add Log</button>
+        Query:
+        <input
+          id="tabLogQuery"
+          onkeypress="if (event.keyCode == 13) {tabLogGet(0)}"
+        />
+        Type:
+        <select id="tabLogType">
+          <option>All</option>
+          <option>Appt</option>
+          <option>Communication</option>
+          <option>Email</option>
+          <option>SMS</option>
+          <option>Call</option>
+          <option>Form</option>
+          <option>Status</option>
+          <option>Note</option>
+          <option>Other</option></select
+        >Time:
+        <select
+          id="tabLogTime"
+          style="width: 150px"
+          onchange="tabLogTimeChange(this.value)"
+        >
+          <option>All</option>
+          <option>Before</option>
+          <option>On</option>
+          <option>After</option>
+          <option>Between</option>
+        </select>
+        <input
+          id="tabLogDate1"
+          type="date"
+          style="width: 150px; display: none"
+        />
+        <label id="tabLogDateLabel"></label>
+        <input
+          id="tabLogDate2"
+          type="date"
+          style="width: 150px; display: none"
+        />
+
+        <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
+      </span>
+      <table id="logTable" class="logTable" style="text-align: left">
+        <tr>
+          <th>Log ID:</th>
+          <th>Type:</th>
+          <th>Date/Time:</th>
+          <th>Link:</th>
+          <th>Data:</th>
+          <th>User:</th>
+        </tr>
+      </table>
+      <div id="logTableFoot"></div>
+      <div id="tabLogLoad" style="display: none">
+        <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+      </div>
+    </div>
+
+    <script>
+      function tabLogTimeChange(time) {
+        if (time == "All") {
+          E("tabLogDate1").style.display = "none";
+          E("tabLogDateLabel").innerHTML = "";
+          E("tabLogDate2").style.display = "none";
+        } else if (time != "Between") {
+          E("tabLogDate1").style.display = "inline-block";
+          E("tabLogDateLabel").innerHTML = "";
+          E("tabLogDate2").style.display = "none";
+        } else if (time == "Between") {
+          E("tabLogDate1").style.display = "inline-block";
+          E("tabLogDateLabel").innerHTML = "and ";
+          E("tabLogDate2").style.display = "inline-block";
+        }
+      }
+
+      function tabLogGet(offset) {
+        E("tabLogButton").disabled = true;
+        E("tabLogLoad").style.display = "block";
+        query = E("tabLogQuery").value;
+        type = E("tabLogType").value;
+        type1 = E("tabLogType").value;
+        time = E("tabLogTime").value;
+        date1 = E("tabLogDate1").value;
+        date2 = E("tabLogDate2").value;
+        const table = E("logTable");
+        const foot = E("logTableFoot");
+        foot.innerHTML = "";
+        var rows = table.getElementsByTagName("tr");
+        for (var i = rows.length - 1; i > 0; i--) {
+          table.deleteRow(i);
+        }
+        if (type == "All") {
+          type = "1' OR '1";
+        } else if (type == "Communication") {
+          type = "sms' OR log_type = 'email' OR log_type = 'call";
+        }
+        if (time == "All") {
+          time = "1000-10-01' OR '1";
+        } else if (time == "Defore") {
+          time = `1000-10-01' OR DATE(log_date) < ${date1}`;
+        } else if (time == "On ") {
+          time = date1;
+        } else if (time == "After") {
+          time = `1000-10-01' OR DATE(log_date) > ${date1}`;
+        } else if (time == "Between") {
+          time = `1000-10-01' OR (DATE(log_date) < ${date1} AND DATE(log_date) > ${date2})`;
+        }
+
+        q = `SELECT log.*, DATE_FORMAT(log_date, '%M %e, %Y at %h:%i %p') AS formatted_date, contacts.contact_name, contacts.contact_id, COALESCE(cases.case_number_full, cases.case_number) AS case_number, cases.case_id, cases.case_type
       FROM log
       LEFT JOIN cases ON log.log_link = cases.case_id OR log.log_link = cases.case_number OR log.log_link = cases.case_number_full
       LEFT JOIN contacts ON log.log_link = contacts.contact_id 
@@ -392,292 +684,435 @@ function tabLogGet(offset) {
       WHERE (log.log_link = '${caseID}' OR log.log_link = '${caseData.case_number}' OR log.log_link = '${caseData.case_number_full}' OR
       log.log_link IN (SELECT case_relate_client_id FROM case_relate WHERE case_relate_case_id = '${caseID}'))
       AND (log_type = '${type}') AND (log_date = '${time}') AND (log_data LIKE '%${query}%' OR log_from LIKE '%${query}%' OR log_to LIKE '%${query}%' OR log_subject LIKE '%${query}%' OR log_form_id LIKE "%${query}%" OR log_link LIKE "%${query}%")
-     `
-  fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
-    .then(response => response.json())
-    .then(data => {
-    console.log(data)
-      logs = data.data.query1;
-     if (data.data.query2[0].counter > 0){
-       logs.forEach(log => {
-        const row = table.insertRow();
-         logdata = ""
-         link =  log.log_link/*isNaN(log.log_link)? `<a href="#" onclick="addFile('${log.case_number||log.case_id}', 'case', '${log.case_id}', '${log.case_type}'); return false">${log.case_number||log.case_id}</a>`
+     `;
+        fetch(
+          `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+            q
+          )}`
+        )
+          .then((response) => response.json())
+          .then((data) => {
+            console.log(data);
+            logs = data.data.query1;
+            if (data.data.query2[0].counter > 0) {
+              logs.forEach((log) => {
+                const row = table.insertRow();
+                logdata = "";
+                link =
+                  log.log_link; /*isNaN(log.log_link)? `<a href="#" onclick="addFile('${log.case_number||log.case_id}', 'case', '${log.case_id}', '${log.case_type}'); return false">${log.case_number||log.case_id}</a>`
            : log.log_link  ? `<a href="#" onclick="addFile('${log.contact_name}', 'client', '${log.log_link}'); return false">${log.contact_name||"Name Error"}</a>` : ""*/
-         by = window.parent.userArray[+log.log_by-1] !== undefined ? window.parent.userArray[+log.log_by-1]:log.log_by
-         let cell_data;
-         try {
-           let jsonData = log.log_data.replace(/\n/g, "\\n").replace(/\r/g, "\\r");
-           jsonData = JSON.parse(jsonData);
-           cell_data = Object.keys(jsonData).map(key => `<b>${key}:</b> ${jsonData[key]}`).join('<br>');
-         } catch (error) {
-           cell_data = log.log_data;
-         }
-         rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${cell_data}</td><td>${by}</td>`
+                by =
+                  window.parent.userArray[+log.log_by - 1] !== undefined
+                    ? window.parent.userArray[+log.log_by - 1]
+                    : log.log_by;
+                let cell_data;
+                try {
+                  let jsonData = log.log_data
+                    .replace(/\n/g, "\\n")
+                    .replace(/\r/g, "\\r");
+                  jsonData = JSON.parse(jsonData);
+                  cell_data = Object.keys(jsonData)
+                    .map((key) => `<b>${key}:</b> ${jsonData[key]}`)
+                    .join("<br>");
+                } catch (error) {
+                  cell_data = log.log_data;
+                }
+                rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${cell_data}</td><td>${by}</td>`;
 
-        row.innerHTML = rowHTML
-      });
-    foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabLogGet(${offset-limit})"">&lt;</a> `: "";
-      for (i=1; data.data.query2[0].counter >= (i-1)*limit; i++) {
-        foot.innerHTML += (offset/limit + 1 == i)?
-          `<a href="#" onclick="tabLogGet(${(i-1)*limit})">[${i}]</a> `:
-          `<a href="#" onclick="tabLogGet(${(i-1)*limit})">${i}</a> `;
-      }
-    foot.innerHTML += (offset+limit < data.data.query2[0].counter) ? `<a href="#" onclick="tabLogGet(${offset+limit})"">&gt;</a> `: "";
-      foot.innerHTML += ` | Results ${offset+1}-${offset+logs.length} of ${data.data.query2[0].counter} 
-        <select style="width:auto" onchange="limit = this.value;tabLogGet(0)">
-        <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
-        <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
-        <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
-        <option value="500" ${limit === 500 ? 'selected' : ''}>500</option>
-        </select> | <button onclick="window.print()">Print</button>`;     }
-     else {Toast.fire({ icon: data.icon||"error", title: data.title||`an error has occured!` });}
-     E('tabLogButton').disabled = false;
-     E('tabLogLoad').style.display = 'none';
-    });
-}
-
-function addLog() {
-  Swal.fire({
-    title: "Add Log:",
-    html: `<textarea id="addLogText" style="height:60px;width:300px;resize:none;"></textarea>`,
-    showCancelButton: true,
-    confirmButtonText: 'Log',
-    showLoaderOnConfirm: true,
-    preConfirm: () => {
-      text=E("addLogText").value
-      if (!text) {
-        Swal.showValidationMessage("Please add a log message");
-        return false;
-      } else {
-        return fetch(`${url}?mode=caseAction&action=addLog&username=${username}&password=${password}&case=${caseData.case_id}&client=&text=${encodeURIComponent(text)}`)
-          .then(response => response.json())
-          .then(data => {
-          console.log(data)
-          Toast.fire({icon: data.status, title: data.title, text: data.message})
-        })
-      }
-    }
-  });
-}
-  </script>  
-
-
-  <div id="tabClients" class="tab-content">
-    <h1>People in this case:</h1>
-    <table id="clientsTable" class="logTable">
-      <tr>
-        <th>ID</th><th>Name</th><th>Phone</th><th>Email</th><th>Address</th><th>City</th><th>State</th><th>Zip</th><th>Date of Birth</th><th>SSN</th><th>Relate</th><th></th>
-      </tr>
-    </table>
-    <button onclick="addCaseClient()">Add Person to Case</button>
-  </div>
-  <script>
-    function modifyCaseClient(relateId, relateType) {
-      Swal.fire({
-        title: 'Modify Client',
-        input: 'select',
-        inputOptions: {
-          'Primary': 'Primary',
-          'Secondary': 'Secondary',
-          'Other': 'Other',
-          'Bystander': 'Bystander',
-          'Remove': 'Remove from Case'
-        },
-        inputValue: relateType,
-        showCancelButton: true,
-        confirmButtonText: "Confirm",
-        showLoaderOnConfirm: true,
-        preConfirm: (value) => {
-          if (value==relateType){
-            Swal.showValidationMessage("No Change Detected!");
-            return false;
-          } else {
-            return fetch(`${url}?mode=caseAction&action=modifyCaseClient&username=${username}&password=${password}&relateid=${relateId}&relateType=${value}`)
-              .then(response => response.json())
-              .then(data => {
-              console.log(data)
-              if (data.status == "success") {
-                let index = clients.findIndex(item => item.relate_id == relateId);
-                console.log(index+ relateId)
-                value == "Remove" ? clients.splice(index, 1) : clients[index].relate_type = value
-                  //index2 = clients.findIndex(item => item.relate_type == "Primary")
-                  //if (value == "Primary" && index2 != -1) { clients[index2].relate_type = "Secondary" }
-                if (clients) {putClients()}
+                row.innerHTML = rowHTML;
+              });
+              foot.innerHTML =
+                offset > 0
+                  ? `<a href="#" onclick="tabLogGet(${
+                      offset - limit
+                    })"">&lt;</a> `
+                  : "";
+              for (i = 1; data.data.query2[0].counter >= (i - 1) * limit; i++) {
+                foot.innerHTML +=
+                  offset / limit + 1 == i
+                    ? `<a href="#" onclick="tabLogGet(${
+                        (i - 1) * limit
+                      })">[${i}]</a> `
+                    : `<a href="#" onclick="tabLogGet(${
+                        (i - 1) * limit
+                      })">${i}</a> `;
               }
-              Toast.fire({icon: data.status, title: data.title, text: data.message})
-            })
-          }
-          
-        }
-      })
-    }
-    function addCaseClient() {
-      Swal.fire({
-        title: "Add Person:",
-        html: `<p>Enter a Contact ID and press "Add Person" or enter a search term (name, phone number, or email) and press "Lookup"</p>
+              foot.innerHTML +=
+                offset + limit < data.data.query2[0].counter
+                  ? `<a href="#" onclick="tabLogGet(${
+                      offset + limit
+                    })"">&gt;</a> `
+                  : "";
+              foot.innerHTML += ` | Results ${offset + 1}-${
+                offset + logs.length
+              } of ${data.data.query2[0].counter} 
+        <select style="width:auto" onchange="limit = this.value;tabLogGet(0)">
+        <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
+        <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
+        <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
+        <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
+        </select> | <button onclick="window.print()">Print</button>`;
+            } else {
+              Toast.fire({
+                icon: data.icon || "error",
+                title: data.title || `an error has occured!`,
+              });
+            }
+            E("tabLogButton").disabled = false;
+            E("tabLogLoad").style.display = "none";
+          });
+      }
+
+      function addLog() {
+        Swal.fire({
+          title: "Add Log:",
+          html: `<textarea id="addLogText" style="height:60px;width:300px;resize:none;"></textarea>`,
+          showCancelButton: true,
+          confirmButtonText: "Log",
+          showLoaderOnConfirm: true,
+          preConfirm: () => {
+            text = E("addLogText").value;
+            if (!text) {
+              Swal.showValidationMessage("Please add a log message");
+              return false;
+            } else {
+              return fetch(
+                `${url}?mode=caseAction&action=addLog&username=${username}&password=${password}&case=${
+                  caseData.case_id
+                }&client=&text=${encodeURIComponent(text)}`
+              )
+                .then((response) => response.json())
+                .then((data) => {
+                  console.log(data);
+                  Toast.fire({
+                    icon: data.status,
+                    title: data.title,
+                    text: data.message,
+                  });
+                });
+            }
+          },
+        });
+      }
+    </script>
+
+    <div id="tabClients" class="tab-content">
+      <h1>People in this case:</h1>
+      <table id="clientsTable" class="logTable">
+        <tr>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Phone</th>
+          <th>Email</th>
+          <th>Address</th>
+          <th>City</th>
+          <th>State</th>
+          <th>Zip</th>
+          <th>Date of Birth</th>
+          <th>SSN</th>
+          <th>Relate</th>
+          <th></th>
+        </tr>
+      </table>
+      <button onclick="addCaseClient()">Add Person to Case</button>
+    </div>
+    <script>
+      function modifyCaseClient(relateId, relateType) {
+        Swal.fire({
+          title: "Modify Client",
+          input: "select",
+          inputOptions: {
+            Primary: "Primary",
+            Secondary: "Secondary",
+            Other: "Other",
+            Bystander: "Bystander",
+            Remove: "Remove from Case",
+          },
+          inputValue: relateType,
+          showCancelButton: true,
+          confirmButtonText: "Confirm",
+          showLoaderOnConfirm: true,
+          preConfirm: (value) => {
+            if (value == relateType) {
+              Swal.showValidationMessage("No Change Detected!");
+              return false;
+            } else {
+              return fetch(
+                `${url}?mode=caseAction&action=modifyCaseClient&username=${username}&password=${password}&relateid=${relateId}&relateType=${value}`
+              )
+                .then((response) => response.json())
+                .then((data) => {
+                  console.log(data);
+                  if (data.status == "success") {
+                    let index = clients.findIndex(
+                      (item) => item.relate_id == relateId
+                    );
+                    console.log(index + relateId);
+                    value == "Remove"
+                      ? clients.splice(index, 1)
+                      : (clients[index].relate_type = value);
+                    //index2 = clients.findIndex(item => item.relate_type == "Primary")
+                    //if (value == "Primary" && index2 != -1) { clients[index2].relate_type = "Secondary" }
+                    if (clients) {
+                      putClients();
+                    }
+                  }
+                  Toast.fire({
+                    icon: data.status,
+                    title: data.title,
+                    text: data.message,
+                  });
+                });
+            }
+          },
+        });
+      }
+      function addCaseClient() {
+        Swal.fire({
+          title: "Add Person:",
+          html: `<p>Enter a Contact ID and press "Add Person" or enter a search term (name, phone number, or email) and press "Lookup"</p>
               <input id="addCaseClientInput" style="width:300px"><br>
               <select id="addCaseClientRelate" style="width:300px"><option value="" selected disabled>Select a relation to case</option><option>Primary</option><option>Secondary</option><option>Other</option><option>Bystander</option></select><br>
               <select id="addCaseClientSelect" style="display:none;width:300px" onchange="E('addCaseClientInput').value = this.value"><option>this option</option></select>`,
-        showCancelButton: true,
-        showLoaderOnConfirm: true,
-        showLoaderOnDeny: true,
-        confirmButtonText: 'Add Person',
-        showLoaderOnConfirm: true,
-        showDenyButton: true,
-        denyButtonText: "Lookup",
-        preConfirm: () => {
-          text=E("addCaseClientInput").value
-          relate=E("addCaseClientRelate").value
-          if (!text || isNaN(text)) {
-            Swal.showValidationMessage("Please enter a Client ID");
-            return false;
-          } else if (!relate) {
-            Swal.showValidationMessage("Please select a relation to case");
-            return false;
-          } else {
-            return fetch(`${url}?mode=caseAction&action=addCaseClient&username=${username}&password=${password}&case=${caseData.case_id}&client=${encodeURIComponent(text)}&relate=${relate}`)
-              .then(response => response.json())
-              .then(data => {
-              console.log(data)
-              alert("need to add to table")
-              Toast.fire({icon: data.status, title: data.title, text: data.message})
-            })
-          }
-        },
-        preDeny: () => {
-          text=E("addCaseClientInput").value
-          if (!text) {
-            Swal.showValidationMessage("Please enter a search term");
-            return false;
-          } else {
-            return fetch(`${url}?mode=caseAction&action=getClientsToAdd&username=${username}&password=${password}&text=${encodeURIComponent(text)}`)
-              .then(response => response.json())
-              .then(data => {
-              console.log(data)
-              if (data.options != "no options"){
-                E("addCaseClientSelect").style.display = ""
-                E("addCaseClientSelect").innerHTML = `<option selected disabled>Select a Contact:</option>${data.options}`
-                Swal.resetValidationMessage()
-                return false}
-              else {
-                Swal.showValidationMessage("No matching people found");
-                return false;
-              }
-            })
-          }
-        }
-      });
-    }
-  </script>
+          showCancelButton: true,
+          showLoaderOnConfirm: true,
+          showLoaderOnDeny: true,
+          confirmButtonText: "Add Person",
+          showLoaderOnConfirm: true,
+          showDenyButton: true,
+          denyButtonText: "Lookup",
+          preConfirm: () => {
+            text = E("addCaseClientInput").value;
+            relate = E("addCaseClientRelate").value;
+            if (!text || isNaN(text)) {
+              Swal.showValidationMessage("Please enter a Client ID");
+              return false;
+            } else if (!relate) {
+              Swal.showValidationMessage("Please select a relation to case");
+              return false;
+            } else {
+              return fetch(
+                `${url}?mode=caseAction&action=addCaseClient&username=${username}&password=${password}&case=${
+                  caseData.case_id
+                }&client=${encodeURIComponent(text)}&relate=${relate}`
+              )
+                .then((response) => response.json())
+                .then((data) => {
+                  console.log(data);
+                  alert("need to add to table");
+                  Toast.fire({
+                    icon: data.status,
+                    title: data.title,
+                    text: data.message,
+                  });
+                });
+            }
+          },
+          preDeny: () => {
+            text = E("addCaseClientInput").value;
+            if (!text) {
+              Swal.showValidationMessage("Please enter a search term");
+              return false;
+            } else {
+              return fetch(
+                `${url}?mode=caseAction&action=getClientsToAdd&username=${username}&password=${password}&text=${encodeURIComponent(
+                  text
+                )}`
+              )
+                .then((response) => response.json())
+                .then((data) => {
+                  console.log(data);
+                  if (data.options != "no options") {
+                    E("addCaseClientSelect").style.display = "";
+                    E(
+                      "addCaseClientSelect"
+                    ).innerHTML = `<option selected disabled>Select a Contact:</option>${data.options}`;
+                    Swal.resetValidationMessage();
+                    return false;
+                  } else {
+                    Swal.showValidationMessage("No matching people found");
+                    return false;
+                  }
+                });
+            }
+          },
+        });
+      }
+    </script>
 
-  
-  <!-- BK case tabs -->
-  
-      <div id="tabInfo" class="tab-content">
-        <p style="text-align: center; color: red;">You must submit the form below to update the clients file!</p> 
-        <iframe id="ISSNinfo"></iframe>
-        <button onclick="newISSNinfo(trello)" style="background-color: red; color: white; font-weight: bold;">Clear Form</button>
-      </div>
-  
-      <div id="tabSend" class="tab-content">
-        <iframe id="SendingForm"></iframe>
-      </div>
-  
-      <div id="tabCase" class="tab-content">
-        <iframe id="caseForm"></iframe>
-      </div>
+    <!-- BK case tabs -->
 
-      <div id="tab341" class="tab-content">
-        <iframe id="341"></iframe>
-        <button onclick="new341(trello)" style="background-color: red; color: white; font-weight: bold;">Clear Form</button>
-      </div>
-  
-      <div id="tabDet" class="tab-content">
-        <iframe id="det"></iframe>
-      </div>
-    
-<!-- other case types here -->    
+    <div id="tabInfo" class="tab-content">
+      <p style="text-align: center; color: red">
+        You must submit the form below to update the clients file!
+      </p>
+      <iframe id="ISSNinfo"></iframe>
+      <button
+        onclick="newISSNinfo(trello)"
+        style="background-color: red; color: white; font-weight: bold"
+      >
+        Clear Form
+      </button>
+    </div>
+
+    <div id="tabSend" class="tab-content">
+      <iframe id="SendingForm"></iframe>
+    </div>
+
+    <div id="tabCase" class="tab-content">
+      <iframe id="caseForm"></iframe>
+    </div>
+
+    <div id="tab341" class="tab-content">
+      <iframe id="341"></iframe>
+      <button
+        onclick="new341(trello)"
+        style="background-color: red; color: white; font-weight: bold"
+      >
+        Clear Form
+      </button>
+    </div>
+
+    <div id="tabDet" class="tab-content">
+      <iframe id="det"></iframe>
+    </div>
+
+    <!-- other case types here -->
   </div>
 
-<script>
-function openTab(tab, tabName) {
+  <script>
+    function openTab(tab, tabName) {
       var i, tabContent, tabLinks;
-  if (tab){
-      tabs = document.getElementsByClassName("tab");
-      for (i = 0; i < tabs.length; i++) {
-        tabs[i].classList.remove("active");
+      if (tab) {
+        tabs = document.getElementsByClassName("tab");
+        for (i = 0; i < tabs.length; i++) {
+          tabs[i].classList.remove("active");
+        }
+        tab.classList.add("active");
       }
-      tab.classList.add("active")}
       tabContent = document.getElementsByClassName("tab-content");
       for (i = 0; i < tabContent.length; i++) {
         tabContent[i].style.display = "none";
       }
       E(tabName).style.display = "block";
-}
+    }
 
-
-
-function processing() {
-  Swal.fire({
-        title: 'Processing...',
+    function processing() {
+      Swal.fire({
+        title: "Processing...",
         html: '<div style="display: flex; align-items: center; justify-content: center; height: 150px; overflow: hidden; display: block"><i class="fa-solid fa-spinner fa-spin-pulse fa-6x"></i><br><p><div>please wait</p>',
         showConfirmButton: false,
-        width: "250px"
-    });
-}
+        width: "250px",
+      });
+    }
 
-function putAppts() {
-  table=E("apptsTable")
-  table.innerHTML = "<tr><th>ID</th><th>Type</th><th>Date</th><th>Time</th><th>Length</th><th>Status</th><th>Note</th><th>Client</th><th>Case</th><th>Action</th></tr>"
-  appts.forEach(appt => {
-    row = table.insertRow();
-    if (appt.appt_status == "No Show") {
-      rowHTML = `<td><button onclick="window.parent.apptUpdate(${appt.appt_id}, 'Cancel', '${appt.date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-      <button onclick="window.parent.apptUpdate(${appt.appt_id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-      <button onclick="window.parent.apptUpdate(${appt.appt_id}, 'Reschedule', '${appt.appt_date.slice(0, -5)}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`}
-    else if (appt.appt_status == "Scheduled") {
-      rowHTML =  `<td><button onclick="window.parent.apptUpdate(${appt.appt_id}, 'Cancel', '${appt.date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-      <button onclick="window.parent.apptUpdate(${appt.appt_id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-      <button onclick="window.parent.apptUpdate(${appt.appt_id}, 'No Show')"><i class="fa-solid fa-user-xmark"></i> No Show</button>
-      <button onclick="window.parent.apptUpdate(${appt.appt_id}, 'Reschedule', '${appt.appt_date.slice(0, -5)}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`}
-    else { rowHTML = `<td></td>` }
-    row.innerHTML = `<td>${appt.appt_id}</td><td>${appt.appt_type}</td><td>${appt.date}</td><td>${appt.time}</td><td>${appt.appt_length}</td><td>${appt.appt_status}</td><td>${appt.appt_note||""}
-      </td><td>${appt.contact_name || appt.appt_client_id}</td><td>${appt.appt_case_id}</td>${rowHTML}`
-  })
-}  
-function putClients() {
-  table=E("clientsTable")
-  table.innerHTML = `<tr><th>ID</th><th>Name</th><th>Phone</th><th>Email</th><th>Address</th><th>City</th><th>State</th><th>Zip</th><th>Date of Birth</th><th>SSN</th><th>Relate</th><th></th></tr>`
-  clients.forEach(client => {
-    row = table.insertRow();
-    row.innerHTML = `<td><a href="#" onclick="window.parent.addFile('${client.contact_name.replace(/'/g, "\\'")}', 'client', '${client.contact_id}'); return false">${client.contact_id}</a></td>
-    <td>${client.contact_name}</td><td>${client.contact_phone}</td><td>${client.contact_email}</td><td>${client.contact_address||""}</td><td>${client.contact_city||""}</td><td>${client.contact_state||""}</td>
-    <td>${client.contact_zip||""}</td><td>${client.dob||""}</td><td>${client.contact_ssn||""}</td><td>${client.case_relate_type}</td>
-    <td><button onclick="modifyCaseClient('${client.case_relate_id}','${client.case_relate_type}')">Modify</button></td>`
-  })
-}  
+    function putAppts() {
+      table = E("apptsTable");
+      table.innerHTML =
+        "<tr><th>ID</th><th>Type</th><th>Date</th><th>Time</th><th>Length</th><th>Status</th><th>Note</th><th>Client</th><th>Case</th><th>Action</th></tr>";
+      appts.forEach((appt) => {
+        row = table.insertRow();
+        if (appt.appt_status == "No Show") {
+          rowHTML = `<td><button onclick="window.parent.apptUpdate(${
+            appt.appt_id
+          }, 'Cancel', '${appt.date} at ${
+            appt.time
+          }')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
+      <button onclick="window.parent.apptUpdate(${
+        appt.appt_id
+      }, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
+      <button onclick="window.parent.apptUpdate(${
+        appt.appt_id
+      }, 'Reschedule', '${appt.appt_date.slice(
+            0,
+            -5
+          )}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`;
+        } else if (appt.appt_status == "Scheduled") {
+          rowHTML = `<td><button onclick="window.parent.apptUpdate(${
+            appt.appt_id
+          }, 'Cancel', '${appt.date} at ${
+            appt.time
+          }')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
+      <button onclick="window.parent.apptUpdate(${
+        appt.appt_id
+      }, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
+      <button onclick="window.parent.apptUpdate(${
+        appt.appt_id
+      }, 'No Show')"><i class="fa-solid fa-user-xmark"></i> No Show</button>
+      <button onclick="window.parent.apptUpdate(${
+        appt.appt_id
+      }, 'Reschedule', '${appt.appt_date.slice(
+            0,
+            -5
+          )}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`;
+        } else {
+          rowHTML = `<td></td>`;
+        }
+        row.innerHTML = `<td>${appt.appt_id}</td><td>${
+          appt.appt_type
+        }</td><td>${appt.date}</td><td>${appt.time}</td><td>${
+          appt.appt_length
+        }</td><td>${appt.appt_status}</td><td>${appt.appt_note || ""}
+      </td><td>${appt.contact_name || appt.appt_client_id}</td><td>${
+          appt.appt_case_id
+        }</td>${rowHTML}`;
+      });
+    }
+    function putClients() {
+      table = E("clientsTable");
+      table.innerHTML = `<tr><th>ID</th><th>Name</th><th>Phone</th><th>Email</th><th>Address</th><th>City</th><th>State</th><th>Zip</th><th>Date of Birth</th><th>SSN</th><th>Relate</th><th></th></tr>`;
+      clients.forEach((client) => {
+        row = table.insertRow();
+        row.innerHTML = `<td><a href="#" onclick="window.parent.addFile('${client.contact_name.replace(
+          /'/g,
+          "\\'"
+        )}', 'client', '${client.contact_id}'); return false">${
+          client.contact_id
+        }</a></td>
+    <td>${client.contact_name}</td><td>${client.contact_phone}</td><td>${
+          client.contact_email
+        }</td><td>${client.contact_address || ""}</td><td>${
+          client.contact_city || ""
+        }</td><td>${client.contact_state || ""}</td>
+    <td>${client.contact_zip || ""}</td><td>${client.dob || ""}</td><td>${
+          client.contact_ssn || ""
+        }</td><td>${client.case_relate_type}</td>
+    <td><button onclick="modifyCaseClient('${client.case_relate_id}','${
+          client.case_relate_type
+        }')">Modify</button></td>`;
+      });
+    }
 
-checklists = []
-caseData = ""
-appts = ""
-clients = ""
-log=""
-tasks = ""
-username = window.parent.username || new URLSearchParams(window.location.search).get('user')||prompt("username")
-password = window.parent.password || new URLSearchParams(window.location.search).get('pass')||prompt("password")
-limit = window.parent.limit || 100
-url = window.parent.url || "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc" 
-caseID = new URLSearchParams(window.location.search).get('caseID')||prompt("case id");
-tab = new URLSearchParams(window.location.search).get('tab')||"";
-caseFiled = []
-caseOpen = []
-caseClosed = []
-case341_i = []
-case341_c = []
-  
-processing()
-q = `SELECT * FROM cases WHERE case_id = "${caseID}";|||
+    checklists = [];
+    caseData = "";
+    appts = "";
+    clients = "";
+    log = "";
+    tasks = "";
+    username =
+      window.parent.username ||
+      new URLSearchParams(window.location.search).get("user") ||
+      prompt("username");
+    password =
+      window.parent.password ||
+      new URLSearchParams(window.location.search).get("pass") ||
+      prompt("password");
+    limit = window.parent.limit || 100;
+    url =
+      window.parent.url ||
+      "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc";
+    caseID =
+      new URLSearchParams(window.location.search).get("caseID") ||
+      prompt("case id");
+    tab = new URLSearchParams(window.location.search).get("tab") || "";
+    caseFiled = [];
+    caseOpen = [];
+    caseClosed = [];
+    case341_i = [];
+    case341_c = [];
+
+    processing();
+    q = `SELECT * FROM cases WHERE case_id = "${caseID}";|||
      SELECT *, IFNULL(DATE_FORMAT(contact_dob, '%b. %e, %Y'), '') as dob from contacts
       LEFT JOIN case_relate on contact_id = case_relate.case_relate_client_id
       WHERE case_relate.case_relate_case_id = "${caseID}";|||
@@ -685,202 +1120,303 @@ q = `SELECT * FROM cases WHERE case_id = "${caseID}";|||
       FROM appts
       LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id
       LEFT JOIN cases ON appts.appt_case_id = cases.case_id OR appts.appt_case_id = cases.case_number OR appts.appt_case_id = cases.case_number_full
-      WHERE appt_case_id = "${caseID}" ORDER BY appts.appt_date DESC`
-fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
-  .then(response => response.json())
-  .then(data => {
-  console.log(data)
-  if (data.data.query1) {
-    caseData = data.data.query1[0]
-    caseID = caseData.case_id
-    appts = data.data.query3
-    clients= data.data.query2
-    if (Array.isArray(clients)){ putClients() }
-    if (Array.isArray(appts)){ putAppts() }
-  E("tabButtons").style.display = "block"
-  Swal.close()
-  tab?E(`${tab}Button`).click():openTab(null, 'tabOverview')
-    PC = clients.find(client => client.case_relate_type === "Primary")
-    SC = clients.find(client => client.case_relate_type === "Secondary")
-    E('leadID').innerHTML  = caseData.case_id     || ""
-    E('phone').innerHTML   = PC.contact_phone     ? PC.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : ""
-    E('clientName').innerHTML   = PC.contact_name     || ""
-    E('case').innerHTML    = caseData.case_number_full || caseData.case_number   || "Not Filed"
-    E('type').innerHTML = caseData.case_type || "N/A"
-    E('caseTypeSelect').value = caseData.case_type || ""
-    E('caseStageSelect').value = caseData.case_stage || ""
-    E('caseStatusInput').value = caseData.case_status || "N/A"
-    if (caseData.case_type == "Bankruptcy"||caseData.case_type.startsWith("Bankruptcy - Ch")){
-      //bankruptcy stuff 
-      S("bkButtons").display = ""
-      E('ISSNinfo').src = caseData.case_ISSN_form ? `https://jotform.com/edit/${caseData.case_ISSN_form}` : 
-        `https://jotform.com/241676649437470?caseId=${caseData.case_id}&clientName[first]=${PC.contact_fname}&clientName[middle]=${PC.contact_mname}&clientName[last]=${PC.contact_lname}&phoneNumber[full]=${PC.contact_phone}&email=${PC.contact_email}&clientId=${PC.contact_id}`;
-      E('ISSNinfo').src += SC? `&maritalStatus=Married&isCD=Yes&CDname[first]=${SC.contact_fname}&CDname[middle]=${SC.contact_mname}&CDname[last]=${SC.contact_lname}&CDphone[full]=${SC.contact_phone}&CDDemail=${SC.contact_email}&CDid=${SC.contact_id}`:""
-      E('SendingForm').src = `https://jotform.com/241675479457472?caseId=${caseData.case_id}&contact1[first]=${PC.contact_fname}&contact1[middle]=${PC.contact_mname}&contact1[last]=${PC.contact_lname}&number1[full]=${PC.contact_phone}&email1=${PC.contact_email}&clientId1=${PC.contact_id}`
-      E('SendingForm').src += SC? `&contact2[first]=${SC.contact_fname}&contact2[middle]=${SC.contact_mname}&contact2[last]=${SC.contact_lname}&number2[full]=${SC.contact_phone}&email2=${SC.contact_email}&clientId2=${SC.contact_id}`:"";
-      E('caseForm').src = `https://form.jotform.com/240882429837064?name[first]=${PC.contact_fname}&name[middle]=${PC.contact_mname}&name[last]=${PC.contact_lname}&case_id=${caseData.case_id}`;
-      E('caseForm').src += SC? `&codebtor=Co-Debtor&codebtorName[first]=${SC.contact_fname}&codebtorName[middle]=${SC.contact_mname}&codebtorName[last]=${SC.contact_lname}`:""
-      caseFiled = dateParts(caseData.case_file_date)
-      E('caseForm').src += `&caseNumber=${caseData.case_number_full||caseData.case_number}&chapter=${caseData.case_chapter}&filed[month]=${caseFiled[1]}&filed[day]=${caseFiled[2]}&filed[year]=${caseFiled[0]}`
-      case341_c = dateTimeParts(caseData.case_341_current)
-      E('caseForm').src += caseData.case_341_current? `&current341[month]=${case341_c[1]}&current341[day]=${case341_c[2]}&current341[year]=${case341_c[0]}&current341[ampm]=${case341_c[5]}&current341[timeInput]=${case341_c[3] > 12 ? case341_c[3] - 12 : case341_c[3]}:${case341_c[4]}`:""
-      case341_i = dateParts(caseData.case_341_initial)
-      E('caseForm').src += `&trustee=${caseData.case_trustee||""}&initial341[month]=${case341_i[1]}&initial341[day]=${case341_i[2]}&initial341[year]=${case341_i[0]}`
-      E('caseForm').src += `&prePet=${caseData.case_pre_petition}&postPet=${caseData.case_post_petition}&1stCourse=${caseData.case_1st_course}&2ndCourse=${caseData.case_2nd_course}&vehicle=${caseData.case_issues_bk_vehicle}&garnishment=${caseData.case_garnish}&other=${caseData.case_issues_bk_other}`
-      matrix_o = dateParts(caseData.matrix_date_original)
-      matrix_p = dateParts(caseData.matrix_date_proposed)
-      E('caseForm').src += `&originalMatrix[month]=${matrix_o[1]}&originalMatrix[day]=${matrix_o[2]}&originalMatrix[year]=${matrix_o[0]}&matrix=${caseData.matrix}&proposedMatrix[month]=${matrix_p[1]}&proposedMatrix[day]=${matrix_p[2]}&proposedMatrix[year]=${matrix_p[0]}`
-      schedules_o = dateParts(caseData.schedules_due_original)
-      schedules_p = dateParts(caseData.schedules_due_proposed)
-      E('caseForm').src += `&schedulesDueO[month]=${schedules_o[1]}&schedulesDueO[day]=${schedules_o[2]}&schedulesDueO[year]=${schedules_o[0]}&schedules=${caseData.schedules}&schedulesDueP[month]=${schedules_p[1]}&schedulesDueP[day]=${schedules_p[2]}&schedulesDueP[year]=${schedules_p[0]}`
-      finalInstall = dateParts(caseData.final_installment)
-      showCause = dateTimeParts(caseData.show_cause)
-      FFExtDeadline = dateParts(caseData.filing_fee_extended_deadline)
-      E('caseForm').src += `&finalInstallment[month]=${finalInstall[1]}&finalInstallment[day]=${finalInstall[2]}&finalInstallment[year]=${finalInstall[0]}&filingFee=${caseData.filing_fee}&showCause[month]=${showCause[1]}&showCause[day]=${showCause[2]}&showCause[year]=${showCause[0]}&showCause[ampm]=${showCause[5]}&showCause[timeInput]=${showCause[3]}${showCause[4]?':':''}${showCause[4]}&FFExtDeadline[month]=${FFExtDeadline[1]}&FFExtDeadline[day]=${FFExtDeadline[2]}&FFExtDeadline[year]=${FFExtDeadline[0]}`
-      docsDue = dateParts(caseData.docs_due)
-      E('caseForm').src += `&docsMissing=${encodeURIComponent(caseData.docs_missing)}&notes=${encodeURIComponent(caseData.case_notes)}&alerts=${encodeURIComponent(caseData.case_alerts)}&docsDue[month]=${docsDue[1]}&docsDue[day]=${docsDue[2]}&docsDue[year]=${docsDue[0]}&docs=${caseData.docs}`
-      E('341').src = caseData.case_341_form ? `https://jotform.com/edit/${caseData.case_341_form}` :
-        `https://jotform.com/241702405563450?debtors_name[first]=${PC.contact_fname}&debtors_name[middle]=${PC.contact_mname}&debtors_name[last]=${PC.contact_lname}&341meeting[month]=${case341_c[1]}&341meeting[day]=${case341_c[2]}&341meeting[year]=${case341_c[0]}&341meeting[ampm]=${case341_c[5]}&341meeting[timeInput]=${case341_c[3] > 12 ? case341_c[3] - 12 : case341_c[3]}:${case341_c[4]}&trustee_name=${caseData.case_trustee}&caseNumber=${caseData.case_number_full||caseData.case_number||""}&newControl[ampm]=PM&caseId=${caseData.case_id}&codebtorsName[first]=${SC?SC.contact_fname:""}&codebtorsName[middle]=${SC?SC.contact_mname:""}&codebtorsName[last]=${SC?SC.contact_lname:""}`
-      E("det").src=caseData.case_detailed_link?caseData.case_detailed_link:"";
-      
+      WHERE appt_case_id = "${caseID}" ORDER BY appts.appt_date DESC`;
+    fetch(
+      `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+        q
+      )}`
+    )
+      .then((response) => response.json())
+      .then((data) => {
+        console.log(data);
+        if (data.data.query1) {
+          caseData = data.data.query1[0];
+          caseID = caseData.case_id;
+          appts = data.data.query3;
+          clients = data.data.query2;
+          if (Array.isArray(clients)) {
+            putClients();
+          }
+          if (Array.isArray(appts)) {
+            putAppts();
+          }
+          E("tabButtons").style.display = "block";
+          Swal.close();
+          tab ? E(`${tab}Button`).click() : openTab(null, "tabOverview");
+          PC = clients.find((client) => client.case_relate_type === "Primary");
+          SC = clients.find(
+            (client) => client.case_relate_type === "Secondary"
+          );
+          E("leadID").innerHTML = caseData.case_id || "";
+          E("phone").innerHTML = PC.contact_phone
+            ? PC.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3")
+            : "";
+          E("clientName").innerHTML = PC.contact_name || "";
+          E("case").innerHTML =
+            caseData.case_number_full || caseData.case_number || "Not Filed";
+          E("type").innerHTML = caseData.case_type || "N/A";
+          E("caseTypeSelect").value = caseData.case_type || "";
+          E("caseStageSelect").value = caseData.case_stage || "";
+          E("caseStatusInput").value = caseData.case_status || "N/A";
+          E("overviewCaseNotes").value = caseData.case_notes || "";
+          if (
+            caseData.case_type == "Bankruptcy" ||
+            caseData.case_type.startsWith("Bankruptcy - Ch")
+          ) {
+            //bankruptcy stuff
+            S("bkButtons").display = "";
+            E("ISSNinfo").src = caseData.case_ISSN_form
+              ? `https://jotform.com/edit/${caseData.case_ISSN_form}`
+              : `https://jotform.com/241676649437470?caseId=${caseData.case_id}&clientName[first]=${PC.contact_fname}&clientName[middle]=${PC.contact_mname}&clientName[last]=${PC.contact_lname}&phoneNumber[full]=${PC.contact_phone}&email=${PC.contact_email}&clientId=${PC.contact_id}`;
+            E("ISSNinfo").src += SC
+              ? `&maritalStatus=Married&isCD=Yes&CDname[first]=${SC.contact_fname}&CDname[middle]=${SC.contact_mname}&CDname[last]=${SC.contact_lname}&CDphone[full]=${SC.contact_phone}&CDDemail=${SC.contact_email}&CDid=${SC.contact_id}`
+              : "";
+            E(
+              "SendingForm"
+            ).src = `https://jotform.com/241675479457472?caseId=${caseData.case_id}&contact1[first]=${PC.contact_fname}&contact1[middle]=${PC.contact_mname}&contact1[last]=${PC.contact_lname}&number1[full]=${PC.contact_phone}&email1=${PC.contact_email}&clientId1=${PC.contact_id}`;
+            E("SendingForm").src += SC
+              ? `&contact2[first]=${SC.contact_fname}&contact2[middle]=${SC.contact_mname}&contact2[last]=${SC.contact_lname}&number2[full]=${SC.contact_phone}&email2=${SC.contact_email}&clientId2=${SC.contact_id}`
+              : "";
+            E(
+              "caseForm"
+            ).src = `https://form.jotform.com/240882429837064?name[first]=${PC.contact_fname}&name[middle]=${PC.contact_mname}&name[last]=${PC.contact_lname}&case_id=${caseData.case_id}`;
+            E("caseForm").src += SC
+              ? `&codebtor=Co-Debtor&codebtorName[first]=${SC.contact_fname}&codebtorName[middle]=${SC.contact_mname}&codebtorName[last]=${SC.contact_lname}`
+              : "";
+            caseFiled = dateParts(caseData.case_file_date);
+            E("caseForm").src += `&caseNumber=${
+              caseData.case_number_full || caseData.case_number
+            }&chapter=${caseData.case_chapter}&filed[month]=${
+              caseFiled[1]
+            }&filed[day]=${caseFiled[2]}&filed[year]=${caseFiled[0]}`;
+            case341_c = dateTimeParts(caseData.case_341_current);
+            E("caseForm").src += caseData.case_341_current
+              ? `&current341[month]=${case341_c[1]}&current341[day]=${
+                  case341_c[2]
+                }&current341[year]=${case341_c[0]}&current341[ampm]=${
+                  case341_c[5]
+                }&current341[timeInput]=${
+                  case341_c[3] > 12 ? case341_c[3] - 12 : case341_c[3]
+                }:${case341_c[4]}`
+              : "";
+            case341_i = dateParts(caseData.case_341_initial);
+            E("caseForm").src += `&trustee=${
+              caseData.case_trustee || ""
+            }&initial341[month]=${case341_i[1]}&initial341[day]=${
+              case341_i[2]
+            }&initial341[year]=${case341_i[0]}`;
+            E(
+              "caseForm"
+            ).src += `&prePet=${caseData.case_pre_petition}&postPet=${caseData.case_post_petition}&1stCourse=${caseData.case_1st_course}&2ndCourse=${caseData.case_2nd_course}&vehicle=${caseData.case_issues_bk_vehicle}&garnishment=${caseData.case_garnish}&other=${caseData.case_issues_bk_other}`;
+            matrix_o = dateParts(caseData.matrix_date_original);
+            matrix_p = dateParts(caseData.matrix_date_proposed);
+            E(
+              "caseForm"
+            ).src += `&originalMatrix[month]=${matrix_o[1]}&originalMatrix[day]=${matrix_o[2]}&originalMatrix[year]=${matrix_o[0]}&matrix=${caseData.matrix}&proposedMatrix[month]=${matrix_p[1]}&proposedMatrix[day]=${matrix_p[2]}&proposedMatrix[year]=${matrix_p[0]}`;
+            schedules_o = dateParts(caseData.schedules_due_original);
+            schedules_p = dateParts(caseData.schedules_due_proposed);
+            E(
+              "caseForm"
+            ).src += `&schedulesDueO[month]=${schedules_o[1]}&schedulesDueO[day]=${schedules_o[2]}&schedulesDueO[year]=${schedules_o[0]}&schedules=${caseData.schedules}&schedulesDueP[month]=${schedules_p[1]}&schedulesDueP[day]=${schedules_p[2]}&schedulesDueP[year]=${schedules_p[0]}`;
+            finalInstall = dateParts(caseData.final_installment);
+            showCause = dateTimeParts(caseData.show_cause);
+            FFExtDeadline = dateParts(caseData.filing_fee_extended_deadline);
+            E("caseForm").src += `&finalInstallment[month]=${
+              finalInstall[1]
+            }&finalInstallment[day]=${finalInstall[2]}&finalInstallment[year]=${
+              finalInstall[0]
+            }&filingFee=${caseData.filing_fee}&showCause[month]=${
+              showCause[1]
+            }&showCause[day]=${showCause[2]}&showCause[year]=${
+              showCause[0]
+            }&showCause[ampm]=${showCause[5]}&showCause[timeInput]=${
+              showCause[3]
+            }${showCause[4] ? ":" : ""}${showCause[4]}&FFExtDeadline[month]=${
+              FFExtDeadline[1]
+            }&FFExtDeadline[day]=${FFExtDeadline[2]}&FFExtDeadline[year]=${
+              FFExtDeadline[0]
+            }`;
+            docsDue = dateParts(caseData.docs_due);
+            E("caseForm").src += `&docsMissing=${encodeURIComponent(
+              caseData.docs_missing
+            )}&notes=${encodeURIComponent(
+              caseData.case_notes
+            )}&alerts=${encodeURIComponent(
+              caseData.case_alerts
+            )}&docsDue[month]=${docsDue[1]}&docsDue[day]=${
+              docsDue[2]
+            }&docsDue[year]=${docsDue[0]}&docs=${caseData.docs}`;
+            E("341").src = caseData.case_341_form
+              ? `https://jotform.com/edit/${caseData.case_341_form}`
+              : `https://jotform.com/241702405563450?debtors_name[first]=${
+                  PC.contact_fname
+                }&debtors_name[middle]=${PC.contact_mname}&debtors_name[last]=${
+                  PC.contact_lname
+                }&341meeting[month]=${case341_c[1]}&341meeting[day]=${
+                  case341_c[2]
+                }&341meeting[year]=${case341_c[0]}&341meeting[ampm]=${
+                  case341_c[5]
+                }&341meeting[timeInput]=${
+                  case341_c[3] > 12 ? case341_c[3] - 12 : case341_c[3]
+                }:${case341_c[4]}&trustee_name=${
+                  caseData.case_trustee
+                }&caseNumber=${
+                  caseData.case_number_full || caseData.case_number || ""
+                }&newControl[ampm]=PM&caseId=${
+                  caseData.case_id
+                }&codebtorsName[first]=${
+                  SC ? SC.contact_fname : ""
+                }&codebtorsName[middle]=${
+                  SC ? SC.contact_mname : ""
+                }&codebtorsName[last]=${SC ? SC.contact_lname : ""}`;
+            E("det").src = caseData.case_detailed_link
+              ? caseData.case_detailed_link
+              : "";
+          }
+          if (caseData.case_dropbox) {
+            E("yesDB").style.display = "block";
+            E("noDB").style.display = "none";
+            var options = { link: caseData.case_dropbox };
+            Dropbox.embed(options, yesDB);
+          }
+        }
+      });
+
+    function getChecklists() {
+      processing();
+      fetch(
+        `${url}?mode=getChecklists&username=${username}&password=${password}&trello=${caseID}`
+      )
+        .then((response) => response.json())
+        .then((data) => {
+          console.log(data);
+          checklists = data.checklists;
+          displayCheck();
+        });
     }
-    if (caseData.case_dropbox){
-      E('yesDB').style.display = "block";
-      E('noDB').style.display = "none";
-      var options = {link: caseData.case_dropbox}
-      Dropbox.embed(options, yesDB);
+
+    function checkDelete(list, item, itemId) {
+      if (
+        confirm(
+          `Are you sure you want to delete the item "${checklists[list].checkItems[item].name}" from checklist "${checklists[list].name}"?\nThere is no undo!`
+        ) == true
+      ) {
+        processing();
+        fetch(
+          `${url}?mode=updateChecklists&username=${username}&password=${password}&trello=${caseID}&item=${itemId}&action=deleteItem`
+        );
+        checklists[list].checkItems.splice(item, 1);
+        displayCheck();
+      }
     }
 
-  }
-})
+    function checklistDelete(list, listId) {
+      if (
+        confirm(
+          `Are you sure you want to delete the "${checklists[list].name}" checklist?\nThere is no undo!`
+        ) == true
+      ) {
+        processing();
+        fetch(
+          `${url}?mode=updateChecklists&username=${username}&password=${password}&trello=${caseID}&item=${listId}&action=deleteList`
+        );
+        checklists.splice(list, 1);
+        displayCheck();
+      }
+    }
 
+    function checkItem(itemId, state) {
+      fetch(
+        `${url}?mode=updateChecklists&username=${username}&password=${password}&trello=${caseID}&item=${itemId}&action=${state}`
+      );
+    }
 
-  
- 
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
-  
+    function addCheckItem(list, listName) {
+      name = prompt(`Add item to the "${listName}" checklist:`);
+      if (name != "") {
+        processing();
+        fetch(
+          `${url}?mode=updateChecklists&username=${username}&password=${password}&trello=${caseID}&item=${list}&action=addCheckItem&name=${name}`
+        )
+          .then((response) => response.json())
+          .then((data) => {
+            checklists = data.checklists;
+            displayCheck();
+          });
+      } else {
+        alert("No Item Added");
+      }
+    }
 
+    function addChecklist() {
+      name = prompt(`Add checklist:`);
+      if (name) {
+        processing();
+        fetch(
+          `${url}?mode=updateChecklists&username=${username}&password=${password}&trello=${caseID}&action=addChecklist&name=${name}`
+        )
+          .then((response) => response.json())
+          .then((data) => {
+            checklists = data.checklists;
+            displayCheck();
+          });
+      } else {
+        alert("No Checklist Added");
+      }
+    }
 
-  
-  
-
-  
-function getChecklists(){
-  processing()
-  fetch(`${url}?mode=getChecklists&username=${username}&password=${password}&trello=${caseID}`)
-    .then(response => response.json())
-    .then(data => {
-    console.log(data)
-    checklists = data.checklists
-    displayCheck();
-  })}
-
-function checkDelete(list, item, itemId){
-  if (confirm(`Are you sure you want to delete the item "${checklists[list].checkItems[item].name}" from checklist "${checklists[list].name}"?\nThere is no undo!`) == true) {
-    processing()
-    fetch(`${url}?mode=updateChecklists&username=${username}&password=${password}&trello=${caseID}&item=${itemId}&action=deleteItem`);
-    checklists[list].checkItems.splice(item, 1)
-    displayCheck()
-  }}
-  
-function checklistDelete(list, listId){
-  if (confirm(`Are you sure you want to delete the "${checklists[list].name}" checklist?\nThere is no undo!`) == true) {
-    processing()
-    fetch(`${url}?mode=updateChecklists&username=${username}&password=${password}&trello=${caseID}&item=${listId}&action=deleteList`);
-    checklists.splice(list, 1)
-    displayCheck()
-  }}
-  
-function checkItem(itemId, state){
-  fetch(`${url}?mode=updateChecklists&username=${username}&password=${password}&trello=${caseID}&item=${itemId}&action=${state}`);
-}
-  
-function addCheckItem(list, listName){
-  name = prompt(`Add item to the "${listName}" checklist:`)
-  if (name != "") {
-    processing()
-    fetch(`${url}?mode=updateChecklists&username=${username}&password=${password}&trello=${caseID}&item=${list}&action=addCheckItem&name=${name}`)
-   .then(response => response.json())
-   .then(data => {
-     checklists = data.checklists
-     displayCheck();
-    })
-  } else {
-    alert("No Item Added")
-  }}
-  
-function addChecklist(){
-  name = prompt(`Add checklist:`)
-  if (name){
-    processing()
-    fetch(`${url}?mode=updateChecklists&username=${username}&password=${password}&trello=${caseID}&action=addChecklist&name=${name}`)
-    .then(response => response.json())
-    .then(data => {
-     checklists = data.checklists
-     displayCheck();
-    })
-  } else {
-    alert("No Checklist Added")
-  }}
-  
-function displayCheck(){
-  checklistDiv = E('checklistDiv');
-  checklistDiv.innerHTML = ""
-  if (checklists){
-  for (let i=0; i < checklists.length; i++){
-    const head = document.createElement('h3')
-    head.innerHTML = `${checklists[i].name}  <button onclick="checklistDelete('${i}', '${checklists[i].id}')"><i class="fa-solid fa-trash-can"></i></button>`
-    checklistDiv.appendChild(head)
-    if (checklists[i].checkItems){
-    for (let j=0; j< checklists[i].checkItems.length; j++){
-     const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-      //move to styleclass
-        checkbox.checked = checklists[i].checkItems[j].state;
-        checkbox.style.width = "5%";
-        checkbox.style.transform = "scale(1.4)";
-        checkbox.onchange = function() { checkItem(checklists[i].checkItems[j].id, this.checked ? "checked" : "unchecked");};
-     const label = document.createElement('span');
-        label.innerHTML = `${checklists[i].checkItems[j].name} <a href="#" onclick="checkDelete('${i}', '${j}', '${checklists[i].checkItems[j].id}')">&#x2716;</a>`
-        label.style.paddingLeft = "5px"
-        label.style.width = "95%"
-        label.style.fontSize = "18px";
-    const container = document.createElement('div');
-       container.appendChild(checkbox);
-       container.appendChild(label);
-       container.style.marginBottom = "2px"
-       container.style.display = "flex";
-       container.style.alignItems = "baseline";
-    checklistDiv.appendChild(container);
-    }} //for loop of checkItems
-    let newCheckItem = document.createElement('span');
-      newCheckItem.innerHTML = `<a href='#' onclick="addCheckItem('${checklists[i].id}', '${checklists[i].name}')">&#43; New Item</a>`;
-      newCheckItem.style.paddingLeft = "10px"
-      checklistDiv.appendChild(newCheckItem);
-}} //for loop of checklists
-    let newButton = document.createElement('button');
+    function displayCheck() {
+      checklistDiv = E("checklistDiv");
+      checklistDiv.innerHTML = "";
+      if (checklists) {
+        for (let i = 0; i < checklists.length; i++) {
+          const head = document.createElement("h3");
+          head.innerHTML = `${checklists[i].name}  <button onclick="checklistDelete('${i}', '${checklists[i].id}')"><i class="fa-solid fa-trash-can"></i></button>`;
+          checklistDiv.appendChild(head);
+          if (checklists[i].checkItems) {
+            for (let j = 0; j < checklists[i].checkItems.length; j++) {
+              const checkbox = document.createElement("input");
+              checkbox.type = "checkbox";
+              //move to styleclass
+              checkbox.checked = checklists[i].checkItems[j].state;
+              checkbox.style.width = "5%";
+              checkbox.style.transform = "scale(1.4)";
+              checkbox.onchange = function () {
+                checkItem(
+                  checklists[i].checkItems[j].id,
+                  this.checked ? "checked" : "unchecked"
+                );
+              };
+              const label = document.createElement("span");
+              label.innerHTML = `${checklists[i].checkItems[j].name} <a href="#" onclick="checkDelete('${i}', '${j}', '${checklists[i].checkItems[j].id}')">&#x2716;</a>`;
+              label.style.paddingLeft = "5px";
+              label.style.width = "95%";
+              label.style.fontSize = "18px";
+              const container = document.createElement("div");
+              container.appendChild(checkbox);
+              container.appendChild(label);
+              container.style.marginBottom = "2px";
+              container.style.display = "flex";
+              container.style.alignItems = "baseline";
+              checklistDiv.appendChild(container);
+            }
+          } //for loop of checkItems
+          let newCheckItem = document.createElement("span");
+          newCheckItem.innerHTML = `<a href='#' onclick="addCheckItem('${checklists[i].id}', '${checklists[i].name}')">&#43; New Item</a>`;
+          newCheckItem.style.paddingLeft = "10px";
+          checklistDiv.appendChild(newCheckItem);
+        }
+      } //for loop of checklists
+      let newButton = document.createElement("button");
       newButton.innerHTML = `New Checklist`;
-      newButton.style.paddingLeft = "10px"
-      newButton.onclick = function(){addChecklist()}
-      checklistDiv.appendChild(document.createElement('br'));
-      checklistDiv.appendChild(document.createElement('br'));
+      newButton.style.paddingLeft = "10px";
+      newButton.onclick = function () {
+        addChecklist();
+      };
+      checklistDiv.appendChild(document.createElement("br"));
+      checklistDiv.appendChild(document.createElement("br"));
       checklistDiv.appendChild(newButton);
-Swal.close()
-}
-  
-</script>
+      Swal.close();
+    }
+  </script>
+</div>
