@@ -681,9 +681,11 @@
           )}', 'client', '${appt.clientId}'); return false">${
                   appt.name || ""
                 }</a></td>
-          <td><a href="#" onclick="addFile('${appt.caseN}', 'case', '${
-                  appt.leadId
-                }'); return false">${appt.caseN || appt.leadId}</a></td>
+          <td><a href="#" onclick="addFile('${
+            appt.caseN || appt.leadId
+          }', 'case', '${appt.leadId}'); return false">${
+                  appt.caseN || appt.leadId
+                }</a></td>
           <td>${appt.type}</td>
 
           <td>${appt.status}</td>
