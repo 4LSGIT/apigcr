@@ -744,7 +744,7 @@
           });
       }
 
-      function rescheduledConfMsg(date1, date2) {
+      function rescheduledConfMsg(date1, date2, apptype) {
         if (date2) {
           d1 = new Intl.DateTimeFormat("en-US", {
             weekday: "short",
@@ -753,11 +753,12 @@
             hour: "numeric",
             minute: "numeric",
             hour12: true,
-          })
-            .format(new Date(date1))
-            .split(", ");
-          console.log("d1a", d1);
-          d1 = `${d1[0]}, ${d1[1]} at ${d1[2]}`;
+          }).format(new Date(date1));
+          d1 = d1
+            .replace(/, /g, " ")
+            .replace(/ (\d{1,2}:\d{2} [AP]M)$/, " at $1")
+            .replace(/\bat at\b/g, "at");
+
           d2 = new Intl.DateTimeFormat("en-US", {
             weekday: "short",
             month: "short",
@@ -765,11 +766,12 @@
             hour: "numeric",
             minute: "numeric",
             hour12: true,
-          })
-            .format(new Date(date2))
-            .split(", ");
-          console.log("d2a", d2);
-          d2 = `${d2[0]}, ${d2[1]} at ${d2[2]}`;
+          }).format(new Date(date2));
+          d2 = d2
+            .replace(/, /g, " ")
+            .replace(/ (\d{1,2}:\d{2} [AP]M)$/, " at $1")
+            .replace(/\bat at\b/g, "at");
+
           str = `This is to confirm that I rescheduled our appointment from ${d1} to ${d2}.`;
           E("rescheduleConfirmMessage").innerHTML = str;
           console.log("d1", d1);
