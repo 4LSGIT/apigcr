@@ -292,7 +292,7 @@
           FROM cases c
           LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
           LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
-          WHERE (co.contact_id like "%${query}%" OR co.contact_name like "%${query}%" OR c.case_id LIKE "%${query}%" OR c.case_number LIKE "%${query}%" OR c.case_number_full LIKE "%${query}%")
+          WHERE (co.contact_id like "%${query}%" OR co.contact_name like "%${query}%" OR c.case_id LIKE "%${query}%" OR c.case_number LIKE "%${query}%" OR c.case_number_full LIKE "%${query}%" OR c.case_notes LIKE "%${query}%")
           AND c.case_type LIKE "${type}" AND c.case_stage LIKE "${stage}" AND c.case_status LIKE "${status}" 
           GROUP BY c.case_id
           ORDER BY ${order} ${order2}
@@ -300,7 +300,7 @@
           SELECT COUNT( DISTINCT c.case_id) AS counter 
           FROM cases c LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
           LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
-          WHERE (co.contact_id like "%${query}%" OR co.contact_name like "%${query}%" OR c.case_id LIKE "%${query}%" OR c.case_number LIKE "%${query}%" OR c.case_number_full LIKE "%${query}%")
+          WHERE (co.contact_id like "%${query}%" OR co.contact_name like "%${query}%" OR c.case_id LIKE "%${query}%" OR c.case_number LIKE "%${query}%" OR c.case_number_full LIKE "%${query}%" OR c.case_notes LIKE "%${query}%")
           AND c.case_type LIKE "${type}" AND c.case_stage LIKE "${stage}" AND c.case_status LIKE "${status}" 
           ORDER BY ${order} ${order2}
           `;
