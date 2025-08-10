@@ -47,13 +47,11 @@ router.post("/logEmail", (req, res) => {
   const db = req.db;
   let { to, from, subject, body_plain, attachments, messageID } = req.body;
 
-  // Validate messageID
   if (!messageID) {
     console.error("Missing messageID in payload");
     return res.status(400).json({ error: "messageID is required" });
   }
 
-  // Check if messageID exists in email_log
   db.query(
     "SELECT message_id FROM email_log WHERE message_id = ?",
     [messageID],
@@ -68,15 +66,14 @@ router.post("/logEmail", (req, res) => {
         return res.status(200).json({ message: "Email already processed" });
       }
 
-      // Internal email check
       if (from.endsWith("@4lsg.com") && to.endsWith("@4lsg.com")) {
         console.log(`Skipped email ID ${messageID}: internal email (from: ${from}, to: ${to})`);
         return res.status(200).json({ message: "Internal Email not logged" });
       }
 
-      // Store in email_log using dateNow
       const attachmentsStr = attachments && Array.isArray(attachments) ? JSON.stringify(attachments) : '[]';
-      const currentDate = dateNow(); // Use for both email_log and log
+      const currentDate = dateNow();
+
       db.query(
         "INSERT INTO email_log (message_id, from_email, to_email, subject, body, attachments, processed_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [messageID, from, to, subject, body_plain, attachmentsStr, currentDate],
@@ -86,7 +83,6 @@ router.post("/logEmail", (req, res) => {
             return res.status(500).json({ error: "Failed to store email log", details: err.message });
           }
 
-          // Proceed with existing log table insertion
           const contactEmail = from.toLowerCase().endsWith("@4lsg.com") ? to : from;
           const escapedSubject = escStr(subject);
           let message = escStr(body_plain);
@@ -99,18 +95,44 @@ router.post("/logEmail", (req, res) => {
           if (string.length > 65501) {
             string = string.substring(0, 65500) + '"}';
           }
+
           const insertLogQuery = `INSERT INTO log (log_type, log_date, log_link, log_by, log_data) 
                                  SELECT 'email', '${currentDate}', c.contact_id, 0, '${string}' 
                                  FROM contacts c WHERE c.contact_email = '${contactEmail}'`;
 
-          db.query(insertLogQuery, (err, result) => {
+          db.query(insertLogQuery, (err, logResult) => {
             if (err) {
               console.error(`Error inserting email ID ${messageID} into log table:`, err);
               return res.status(500).json({ error: "Failed to log email data", details: err.message, sql: insertLogQuery });
             }
 
-            console.log(`Processed email ID ${messageID} from ${from} to ${to} with subject: ${subject}`);
-            res.status(200).json({ message: "Email data logged successfully", details: result, sql: insertLogQuery });
+            // NEW: Update appointments from 'no show' to 'canceled'
+            const updateApptsQuery = `
+              UPDATE appts
+              SET appt_status = 'canceled'
+              WHERE appt_status = 'no show'
+                AND appt_client_id = (
+                  SELECT contact_id FROM contacts WHERE contact_email = ?
+                )
+            `;
+
+            db.query(updateApptsQuery, [contactEmail], (err, updateResult) => {
+              if (err) {
+                console.error(`Error updating appointments for ${contactEmail}:`, err);
+                return res.status(500).json({ error: "Failed to update appointments", details: err.message, sql: updateApptsQuery });
+              }
+
+              console.log(`Processed email ID ${messageID} from ${from} to ${to} with subject: ${subject}`);
+              console.log(`Updated ${updateResult.affectedRows} appointment(s) for ${contactEmail} from 'no show' to 'canceled'`);
+
+              res.status(200).json({
+                message: "Email data logged successfully",
+                logDetails: logResult,
+                apptUpdate: updateResult,
+                sqlLogInsert: insertLogQuery,
+                sqlApptUpdate: updateApptsQuery
+              });
+            });
           });
         }
       );
