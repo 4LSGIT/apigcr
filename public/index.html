@@ -215,7 +215,11 @@
           <option>Closed</option>
         </select>
         Case Status:
-        <input id="tabCasesStatus" style="width: auto" />
+        <input
+          id="tabCasesStatus"
+          style="width: auto"
+          onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}"
+        />
         Order By:
         <select
           id="tabCasesOrder"
