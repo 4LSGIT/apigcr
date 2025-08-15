@@ -42,7 +42,7 @@ async function setSetting(db, key, value) {
 // --- Webhook Alert Helper ---
 async function sendAlert(errorType, message, extraData = {}) {
   try {
-    fetch("ALERT_URL", {
+    fetch(ALERT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
