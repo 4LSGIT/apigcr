@@ -7,18 +7,25 @@ let tokenData = null;
 let cachedApiKey = null;
 let refreshTimeout;
 
-// --- RingCentral URLs ---
-const RINGCENTRAL_AUTH_URL = "https://platform.ringcentral.com/restapi/oauth/authorize";
-const RINGCENTRAL_TOKEN_URL = "https://platform.ringcentral.com/restapi/oauth/token";
-
+// ---  URLs ---
+const RINGCENTRAL_AUTH_URL =
+  "https://platform.ringcentral.com/restapi/oauth/authorize";
+const RINGCENTRAL_TOKEN_URL =
+  "https://platform.ringcentral.com/restapi/oauth/token";
+const ALERT_URL =
+  "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZhMDYzMTA0M2Q1MjY5NTUzNjUxMzUi_pc";
 // --- DB Helpers ---
 async function getSetting(db, key) {
   return new Promise((resolve, reject) => {
-    db.query("SELECT value FROM app_settings WHERE `key` = ?", [key], (err, results) => {
-      if (err) return reject(err);
-      if (results.length === 0) return resolve(null);
-      resolve(results[0].value);
-    });
+    db.query(
+      "SELECT value FROM app_settings WHERE `key` = ?",
+      [key],
+      (err, results) => {
+        if (err) return reject(err);
+        if (results.length === 0) return resolve(null);
+        resolve(results[0].value);
+      }
+    );
   });
 }
 
@@ -35,16 +42,16 @@ async function setSetting(db, key, value) {
 // --- Webhook Alert Helper ---
 async function sendAlert(errorType, message, extraData = {}) {
   try {
-    fetch("https://www.webhook.com/hook", {
+    fetch("ALERT_URL", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         error_type: errorType,
         alert: message,
         timestamp: new Date().toISOString(),
-        ...extraData
-      })
-    }).catch(err => console.error("Failed to send alert webhook:", err));
+        ...extraData,
+      }),
+    }).catch((err) => console.error("Failed to send alert webhook:", err));
   } catch (err) {
     console.error("Failed to send alert webhook:", err);
   }
@@ -64,7 +71,7 @@ async function fetchWithRetries(url, options, retries = 3, delay = 500) {
       lastError = err;
       console.warn(`Fetch attempt ${attempt} failed: ${err.message}`);
       if (attempt < retries) {
-        await new Promise(r => setTimeout(r, delay * attempt));
+        await new Promise((r) => setTimeout(r, delay * attempt));
       }
     }
   }
@@ -78,7 +85,9 @@ async function saveToken(db) {
     console.log("Token saved to DB.");
   } catch (err) {
     console.error("Failed to save token:", err);
-    sendAlert("token_save_failed", "Failed to save token to DB", { error: err.message });
+    sendAlert("token_save_failed", "Failed to save token to DB", {
+      error: err.message,
+    });
   }
 }
 
@@ -100,25 +109,31 @@ async function refreshAccessToken(db) {
       const res = await fetchWithRetries(RINGCENTRAL_TOKEN_URL, {
         method: "POST",
         headers: {
-          Authorization: "Basic " + Buffer.from(`${process.env.RINGCENTRAL_CLIENT_ID}:${process.env.RINGCENTRAL_CLIENT_SECRET}`).toString("base64"),
-          "Content-Type": "application/x-www-form-urlencoded"
+          Authorization:
+            "Basic " +
+            Buffer.from(
+              `${process.env.RINGCENTRAL_CLIENT_ID}:${process.env.RINGCENTRAL_CLIENT_SECRET}`
+            ).toString("base64"),
+          "Content-Type": "application/x-www-form-urlencoded",
         },
         body: new URLSearchParams({
           grant_type: "refresh_token",
-          refresh_token: tokenData.refresh_token
-        })
+          refresh_token: tokenData.refresh_token,
+        }),
       });
 
       tokenData = {
-        ...await res.json(),
-        issued_at: Date.now()
+        ...(await res.json()),
+        issued_at: Date.now(),
       };
       await saveToken(db);
       scheduleRefresh(db);
       console.log("Token refreshed successfully.");
     } catch (err) {
       console.error("Error refreshing token:", err);
-      sendAlert("token_refresh_failed", "Token refresh failed after retries", { error: err.message });
+      sendAlert("token_refresh_failed", "Token refresh failed after retries", {
+        error: err.message,
+      });
       throw err;
     } finally {
       isRefreshing = false;
@@ -171,7 +186,9 @@ async function loadToken(db) {
       }
     } catch (err) {
       console.error("Failed to load token from DB:", err);
-      sendAlert("token_load_failed", "Token load failed", { error: err.message });
+      sendAlert("token_load_failed", "Token load failed", {
+        error: err.message,
+      });
       throw err;
     } finally {
       isLoadingToken = false;
@@ -191,12 +208,14 @@ async function loadTokenWithRetries(db, retries = 3, delay = 500) {
       lastError = err;
       console.warn(`Token load attempt ${attempt} failed: ${err.message}`);
       if (attempt < retries) {
-        await new Promise(r => setTimeout(r, delay * attempt));
+        await new Promise((r) => setTimeout(r, delay * attempt));
       }
     }
   }
   console.error("Token load failed after retries:", lastError);
-  sendAlert("token_load_failed", "Token load failed after retries", { error: lastError.message });
+  sendAlert("token_load_failed", "Token load failed after retries", {
+    error: lastError.message,
+  });
 }
 
 // --- API Key Middleware ---
@@ -216,7 +235,7 @@ async function checkApiKey(req, res, next) {
     sendAlert("unauthorized_access", "Invalid API key attempt", {
       ip: req.ip,
       path: req.originalUrl,
-      provided_key: key || null
+      provided_key: key || null,
     });
     return res.status(403).json({ error: "Invalid API Key" });
   }
@@ -237,26 +256,32 @@ router.get("/ringcentral/callback", async (req, res) => {
     const resToken = await fetchWithRetries(RINGCENTRAL_TOKEN_URL, {
       method: "POST",
       headers: {
-        Authorization: "Basic " + Buffer.from(`${process.env.RINGCENTRAL_CLIENT_ID}:${process.env.RINGCENTRAL_CLIENT_SECRET}`).toString("base64"),
-        "Content-Type": "application/x-www-form-urlencoded"
+        Authorization:
+          "Basic " +
+          Buffer.from(
+            `${process.env.RINGCENTRAL_CLIENT_ID}:${process.env.RINGCENTRAL_CLIENT_SECRET}`
+          ).toString("base64"),
+        "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({
         grant_type: "authorization_code",
         code,
-        redirect_uri: process.env.RINGCENTRAL_REDIRECT_URI
-      })
+        redirect_uri: process.env.RINGCENTRAL_REDIRECT_URI,
+      }),
     });
 
     tokenData = {
-      ...await resToken.json(),
-      issued_at: Date.now()
+      ...(await resToken.json()),
+      issued_at: Date.now(),
     };
     await saveToken(db);
     scheduleRefresh(db);
     res.send("Authorization successful. You can now send SMS.");
   } catch (err) {
     console.error("OAuth error:", err);
-    sendAlert("token_load_failed", "OAuth callback failed", { error: err.message });
+    sendAlert("token_load_failed", "OAuth callback failed", {
+      error: err.message,
+    });
     res.status(500).send("Failed to retrieve token.");
   }
 });
@@ -283,7 +308,11 @@ router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
     try {
       await refreshAccessToken(db);
     } catch (err) {
-      sendAlert("token_refresh_failed", "Failed to refresh access token during SMS send", { from, to, message, error: err.message });
+      sendAlert(
+        "token_refresh_failed",
+        "Failed to refresh access token during SMS send",
+        { from, to, message, error: err.message }
+      );
       return res.status(401).json({ error: "Failed to refresh access token" });
     }
   }
@@ -295,13 +324,13 @@ router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
         method: "POST",
         headers: {
           Authorization: `Bearer ${tokenData.access_token}`,
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           from: { phoneNumber: from },
           to: [{ phoneNumber: to }],
-          text: message
-        })
+          text: message,
+        }),
       }
     );
 
@@ -309,7 +338,12 @@ router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("SMS send error:", err);
-    sendAlert("sms_send_failed", "SMS send failed after retries", { from, to, message, error: err.message });
+    sendAlert("sms_send_failed", "SMS send failed after retries", {
+      from,
+      to,
+      message,
+      error: err.message,
+    });
     res.status(500).send("Error sending SMS.");
   }
 });
@@ -327,8 +361,10 @@ router.get("/ringcentral/status", checkApiKey, (req, res) => {
     authorized: true,
     access_token_expires_at: expiresAt.toISOString(),
     refresh_token_expires_at: tokenData.refresh_token_expires_in
-      ? new Date(Number(issuedAt) + tokenData.refresh_token_expires_in * 1000).toISOString()
-      : "unknown"
+      ? new Date(
+          Number(issuedAt) + tokenData.refresh_token_expires_in * 1000
+        ).toISOString()
+      : "unknown",
   });
 });
 
