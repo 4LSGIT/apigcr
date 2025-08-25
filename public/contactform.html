@@ -16,7 +16,7 @@
 
 <button id="toggleBtn">View</button>
 
-<form id="clientForm" action="https://exampleurl.com" method="POST">
+<form id="clientForm" action="https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY1MDYzNjA0MzY1MjZhNTUzMTUxMzEi_pc" method="POST">
   <label>First Name: <input type="text" name="firstname"></label>
   <label>Middle Name: <input type="text" name="middlename"></label>
   <label>Last Name: <input type="text" name="lastname"></label>
@@ -80,25 +80,50 @@ function initForm() {
   document.querySelector("[name=notes]").value = params.notes || "";
 }
 
-document.getElementById("toggleBtn").addEventListener("click", () => {
+function setReadOnlyMode(on) {
   const form = document.getElementById("clientForm");
   const btn = document.getElementById("toggleBtn");
   const updateBtn = document.getElementById("updateBtn");
 
-  if (form.classList.contains("readonly")) {
-    form.classList.remove("readonly");
-    btn.textContent = "View";
-    updateBtn.style.display = "inline-block";
-  } else {
+  if (on) {
     form.classList.add("readonly");
     btn.textContent = "Edit";
     updateBtn.style.display = "none";
+  } else {
+    form.classList.remove("readonly");
+    btn.textContent = "View";
+    updateBtn.style.display = "inline-block";
+  }
+}
+
+document.getElementById("toggleBtn").addEventListener("click", () => {
+  const form = document.getElementById("clientForm");
+  setReadOnlyMode(form.classList.contains("readonly"));
+});
+
+document.getElementById("clientForm").addEventListener("submit", async (e) => {
+  e.preventDefault(); // stop page reload
+
+  const form = e.target;
+  const url = form.action;
+  const data = new FormData(form);
+
+  try {
+    await fetch(url, {
+      method: "POST",
+      body: data
+    });
+    // Reset to read-only mode after successful submit
+    setReadOnlyMode(true);
+    alert("Data submitted successfully!");
+  } catch (err) {
+    alert("Submission failed: " + err);
   }
 });
 
 window.onload = () => {
   initForm();
-  document.getElementById("clientForm").classList.add("readonly");
+  setReadOnlyMode(true);
 };
 </script>
 
