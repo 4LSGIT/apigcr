@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Client Form</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    .readonly input, .readonly textarea { border: none; background: #f5f5f5; pointer-events: none; }
+    label { display: block; margin-top: 10px; font-weight: bold; }
+    input, textarea { width: 100%; padding: 6px; margin-top: 4px; }
+    #updateBtn { display: none; margin-top: 20px; padding: 10px 20px; background: green; color: white; border: none; cursor: pointer; }
+    #toggleBtn { padding: 10px 20px; margin-bottom: 20px; }
+  </style>
+</head>
+<body>
+
+<button id="toggleBtn">View</button>
+
+<form id="clientForm" action="https://exampleurl.com" method="POST">
+  <label>First Name: <input type="text" name="firstname"></label>
+  <label>Middle Name: <input type="text" name="middlename"></label>
+  <label>Last Name: <input type="text" name="lastname"></label>
+  <label>Client ID: <input type="text" name="clientid"></label>
+  <label>Phone: <input type="text" name="phone"></label>
+  <label>Email: <input type="email" name="email"></label>
+  <label>Date of Birth: <input type="text" name="dob"></label>
+  <label>SSN: <input type="text" name="ssn"></label>
+  <label>Address: <input type="text" name="address"></label>
+  <label>City: <input type="text" name="city"></label>
+  <label>State: <input type="text" name="state"></label>
+  <label>Zip: <input type="text" name="zip"></label>
+  <label>Tags: <input type="text" name="tags"></label>
+  <label>Notes: <textarea name="notes"></textarea></label>
+
+  <button type="submit" id="updateBtn">Update</button>
+</form>
+
+<script>
+function getParams() {
+  const params = new URLSearchParams(window.location.search);
+  const obj = {};
+  for (const [key, value] of params.entries()) obj[key.toLowerCase()] = value;
+  return obj;
+}
+
+function formatPhone(phone) {
+  if (!phone) return "";
+  return phone.replace(/^(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3");
+}
+
+function formatSSN(ssn) {
+  if (!ssn) return "";
+  return ssn.replace(/^(\d{3})(\d{2})(\d{4})$/, "$1-$2-$3");
+}
+
+function formatDate(d) {
+  if (!d) return "";
+  const date = new Date(d);
+  if (isNaN(date)) return d;
+  return (date.getMonth()+1).toString().padStart(2,"0") + "/" +
+         date.getDate().toString().padStart(2,"0") + "/" +
+         date.getFullYear();
+}
+
+function initForm() {
+  const params = getParams();
+  document.querySelector("[name=firstname]").value = params.firstname || "";
+  document.querySelector("[name=middlename]").value = params.middlename || "";
+  document.querySelector("[name=lastname]").value = params.lastname || "";
+  document.querySelector("[name=clientid]").value = params.clientid || "";
+  document.querySelector("[name=phone]").value = formatPhone(params.phone || "");
+  document.querySelector("[name=email]").value = params.email || "";
+  document.querySelector("[name=dob]").value = formatDate(params.dob || "");
+  document.querySelector("[name=ssn]").value = formatSSN(params.ssn || "");
+  document.querySelector("[name=address]").value = params.address || "";
+  document.querySelector("[name=city]").value = params.city || "";
+  document.querySelector("[name=state]").value = params.state || "";
+  document.querySelector("[name=zip]").value = params.zip || "";
+  document.querySelector("[name=tags]").value = params.tags || "";
+  document.querySelector("[name=notes]").value = params.notes || "";
+}
+
+document.getElementById("toggleBtn").addEventListener("click", () => {
+  const form = document.getElementById("clientForm");
+  const btn = document.getElementById("toggleBtn");
+  const updateBtn = document.getElementById("updateBtn");
+
+  if (form.classList.contains("readonly")) {
+    form.classList.remove("readonly");
+    btn.textContent = "View";
+    updateBtn.style.display = "inline-block";
+  } else {
+    form.classList.add("readonly");
+    btn.textContent = "Edit";
+    updateBtn.style.display = "none";
+  }
+});
+
+window.onload = () => {
+  initForm();
+  document.getElementById("clientForm").classList.add("readonly");
+};
+</script>
+
+</body>
+</html>
