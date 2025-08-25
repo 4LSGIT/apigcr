@@ -4,33 +4,193 @@
   <meta charset="UTF-8">
   <title>Client Form</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; }
-    .readonly input, .readonly textarea { border: none; background: #f5f5f5; pointer-events: none; }
-    label { display: block; margin-top: 10px; font-weight: bold; }
-    input, textarea { width: 100%; padding: 6px; margin-top: 4px; }
-    #updateBtn { display: none; margin-top: 20px; padding: 10px 20px; background: green; color: white; border: none; cursor: pointer; }
-    #toggleBtn { padding: 10px 20px; margin-bottom: 20px; }
+    body {
+      font-family: Arial, sans-serif;
+      background: #f8f9fa;
+      padding: 20px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    #clientForm {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .form-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    #toggleBtn {
+      background: #008080;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #warning {
+      color: red;
+      font-weight: bold;
+      display: none;
+    }
+    #updateBtn {
+      display: none;
+      background: #28a745;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 20px;
+    }
+    label.section-label {
+      display: block;
+      font-weight: bold;
+      color: #495057;
+      margin-top: 20px;
+      margin-bottom: 5px;
+    }
+    .form-row {
+      display: flex;
+      gap: 10px;
+    }
+    .form-group {
+      flex: 1;
+    }
+    .form-group input, .form-group textarea {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+    .form-group small {
+      display: block;
+      color: #6c757d;
+      margin-top: 4px;
+    }
+    .readonly input, .readonly textarea {
+      border: none;
+      background: transparent;
+      pointer-events: none;
+    }
+    .readonly .form-group small.placeholder {
+      display: none;
+    }
+    #notesCounter {
+      text-align: right;
+      color: #6c757d;
+      font-size: 12px;
+    }
+    .calendar-icon {
+      position: relative;
+    }
+    .calendar-icon::after {
+      content: '📅';
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+    }
+    .calendar-icon input {
+      padding-right: 30px;
+    }
   </style>
 </head>
 <body>
 
-<button id="toggleBtn">View</button>
+<div class="form-header">
+  <button id="toggleBtn">View</button>
+  <span id="warning">You must press UPDATE to save changes!</span>
+</div>
 
 <form id="clientForm" action="https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY1MDYzNjA0MzY1MjZhNTUzMTUxMzEi_pc" method="POST">
-  <label>First Name: <input type="text" name="firstname"></label>
-  <label>Middle Name: <input type="text" name="middlename"></label>
-  <label>Last Name: <input type="text" name="lastname"></label>
-  <label>Client ID: <input type="text" name="clientid"></label>
-  <label>Phone: <input type="text" name="phone"></label>
-  <label>Email: <input type="email" name="email"></label>
-  <label>Date of Birth: <input type="text" name="dob"></label>
-  <label>SSN: <input type="text" name="ssn"></label>
-  <label>Address: <input type="text" name="address"></label>
-  <label>City: <input type="text" name="city"></label>
-  <label>State: <input type="text" name="state"></label>
-  <label>Zip: <input type="text" name="zip"></label>
-  <label>Tags: <input type="text" name="tags"></label>
-  <label>Notes: <textarea name="notes"></textarea></label>
+  <div class="form-row">
+    <div class="form-group">
+      <label class="section-label" for="firstname">Client Name:</label>
+      <div class="form-row">
+        <div class="form-group">
+          <input type="text" name="firstname" placeholder="First Name">
+        </div>
+        <div class="form-group">
+          <input type="text" name="middlename" placeholder="Middle Name">
+        </div>
+        <div class="form-group">
+          <input type="text" name="lastname" placeholder="Last Name">
+        </div>
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="section-label" for="clientid">Client ID:</label>
+      <input type="text" name="clientid" placeholder="">
+    </div>
+  </div>
+
+  <label class="section-label" for="preferredname">Preferred Name:</label>
+  <input type="text" name="preferredname" placeholder="">
+
+  <div class="form-row">
+    <div class="form-group">
+      <label class="section-label" for="phone">Phone Number:</label>
+      <input type="text" name="phone" placeholder="(000) 000-0000">
+      <small class="placeholder">Please enter a valid phone number.</small>
+    </div>
+    <div class="form-group">
+      <label class="section-label" for="email">Email:</label>
+      <input type="email" name="email" placeholder="">
+    </div>
+  </div>
+
+  <div class="form-row">
+    <div class="form-group">
+      <label class="section-label" for="secondaryphone">Secondary Phone Number</label>
+      <input type="text" name="secondaryphone" placeholder="(000) 000-0000">
+    </div>
+    <div class="form-group">
+      <label class="section-label" for="secondaryemail">Secondary Email</label>
+      <input type="email" name="secondaryemail" placeholder="example@example.com">
+    </div>
+  </div>
+
+  <div class="form-row">
+    <div class="form-group">
+      <label class="section-label" for="dob">Date of Birth:</label>
+      <div class="calendar-icon">
+        <input type="text" name="dob" placeholder="MM/DD/YYYY">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="section-label" for="ssn">SSN:</label>
+      <input type="text" name="ssn" placeholder="###-##-####">
+    </div>
+  </div>
+
+  <label class="section-label" for="address">Address:</label>
+  <input type="text" name="address" placeholder="Street Address">
+
+  <div class="form-row">
+    <div class="form-group">
+      <input type="text" name="city" placeholder="City">
+    </div>
+    <div class="form-group">
+      <input type="text" name="state" placeholder="State">
+    </div>
+  </div>
+
+  <label class="section-label" for="zip">Zip Code</label>
+  <input type="text" name="zip" placeholder="0/1000">
+
+  <label class="section-label" for="tags">Tags:</label>
+  <input type="text" name="tags" placeholder="">
+
+  <label class="section-label" for="notes">Notes:</label>
+  <textarea name="notes" rows="4"></textarea>
+  <small id="notesCounter">0/1000</small>
 
   <button type="submit" id="updateBtn">Update</button>
 </form>
@@ -45,20 +205,28 @@ function getParams() {
 
 function formatPhone(phone) {
   if (!phone) return "";
-  return phone.replace(/^(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3");
+  phone = phone.replace(/\D/g, '');
+  if (phone.length === 10) {
+    return phone.replace(/^(\d{3})(\d{3})(\d{4})$/, "($1) $2-$3");
+  }
+  return phone;
 }
 
 function formatSSN(ssn) {
   if (!ssn) return "";
-  return ssn.replace(/^(\d{3})(\d{2})(\d{4})$/, "$1-$2-$3");
+  ssn = ssn.replace(/\D/g, '');
+  if (ssn.length === 9) {
+    return ssn.replace(/^(\d{3})(\d{2})(\d{4})$/, "$1-$2-$3");
+  }
+  return ssn;
 }
 
 function formatDate(d) {
   if (!d) return "";
   const date = new Date(d);
   if (isNaN(date)) return d;
-  return (date.getMonth()+1).toString().padStart(2,"0") + "/" +
-         date.getDate().toString().padStart(2,"0") + "/" +
+  return (date.getMonth() + 1).toString().padStart(2, "0") + "/" +
+         date.getDate().toString().padStart(2, "0") + "/" +
          date.getFullYear();
 }
 
@@ -67,9 +235,12 @@ function initForm() {
   document.querySelector("[name=firstname]").value = params.firstname || "";
   document.querySelector("[name=middlename]").value = params.middlename || "";
   document.querySelector("[name=lastname]").value = params.lastname || "";
+  document.querySelector("[name=preferredname]").value = params.preferredname || "";
   document.querySelector("[name=clientid]").value = params.clientid || "";
   document.querySelector("[name=phone]").value = formatPhone(params.phone || "");
+  document.querySelector("[name=secondaryphone]").value = formatPhone(params.secondaryphone || "");
   document.querySelector("[name=email]").value = params.email || "";
+  document.querySelector("[name=secondaryemail]").value = params.secondaryemail || "";
   document.querySelector("[name=dob]").value = formatDate(params.dob || "");
   document.querySelector("[name=ssn]").value = formatSSN(params.ssn || "");
   document.querySelector("[name=address]").value = params.address || "";
@@ -78,32 +249,59 @@ function initForm() {
   document.querySelector("[name=zip]").value = params.zip || "";
   document.querySelector("[name=tags]").value = params.tags || "";
   document.querySelector("[name=notes]").value = params.notes || "";
+  updateNotesCounter();
+}
+
+function updateNotesCounter() {
+  const notes = document.querySelector("[name=notes]");
+  const counter = document.getElementById("notesCounter");
+  counter.textContent = `${notes.value.length}/1000`;
 }
 
 function setReadOnlyMode(on) {
   const form = document.getElementById("clientForm");
-  const btn = document.getElementById("toggleBtn");
+  const toggleBtn = document.getElementById("toggleBtn");
   const updateBtn = document.getElementById("updateBtn");
+  const warning = document.getElementById("warning");
 
   if (on) {
     form.classList.add("readonly");
-    btn.textContent = "Edit";
+    toggleBtn.textContent = "Edit";
     updateBtn.style.display = "none";
+    warning.style.display = "none";
+    console.log("Switched to View mode");
   } else {
     form.classList.remove("readonly");
-    btn.textContent = "View";
-    updateBtn.style.display = "inline-block";
+    toggleBtn.textContent = "View";
+    updateBtn.style.display = "block";
+    warning.style.display = "block";
+    console.log("Switched to Edit mode");
   }
 }
 
 document.getElementById("toggleBtn").addEventListener("click", () => {
   const form = document.getElementById("clientForm");
-  setReadOnlyMode(form.classList.contains("readonly"));
+  const isReadOnly = form.classList.contains("readonly");
+  setReadOnlyMode(!isReadOnly);
+  console.log("Toggle button clicked, isReadOnly:", isReadOnly);
+});
+
+document.querySelector("[name=notes]").addEventListener("input", updateNotesCounter);
+
+document.querySelector("[name=phone]").addEventListener("input", (e) => {
+  e.target.value = formatPhone(e.target.value);
+});
+
+document.querySelector("[name=secondaryphone]").addEventListener("input", (e) => {
+  e.target.value = formatPhone(e.target.value);
+});
+
+document.querySelector("[name=ssn]").addEventListener("input", (e) => {
+  e.target.value = formatSSN(e.target.value);
 });
 
 document.getElementById("clientForm").addEventListener("submit", async (e) => {
-  e.preventDefault(); // stop page reload
-
+  e.preventDefault();
   const form = e.target;
   const url = form.action;
   const data = new FormData(form);
@@ -113,7 +311,6 @@ document.getElementById("clientForm").addEventListener("submit", async (e) => {
       method: "POST",
       body: data
     });
-    // Reset to read-only mode after successful submit
     setReadOnlyMode(true);
     alert("Data submitted successfully!");
   } catch (err) {
@@ -124,6 +321,7 @@ document.getElementById("clientForm").addEventListener("submit", async (e) => {
 window.onload = () => {
   initForm();
   setReadOnlyMode(true);
+  console.log("Page loaded, initial mode set to View");
 };
 </script>
 
