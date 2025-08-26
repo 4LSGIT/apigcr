@@ -60,6 +60,7 @@
     }
     .form-group {
       flex: 1;
+      position: relative;
     }
     .form-group input,
     input[name="preferredname"],
@@ -76,11 +77,20 @@
       color: #6c757d;
       margin-top: 4px;
     }
+    .form-group small.error {
+      color: red;
+      font-weight: bold;
+    }
+    .form-group small.format-note {
+      color: #6c757d;
+      font-style: italic;
+    }
     .readonly input,
     .readonly textarea {
       pointer-events: none;
     }
-    .readonly .form-group small.placeholder {
+    .readonly .form-group small.placeholder,
+    .readonly .form-group small.error {
       display: none;
     }
     #notesCounter {
@@ -98,8 +108,18 @@
       top: 50%;
       transform: translateY(-50%);
       pointer-events: none;
+      display: none;
+    }
+    .readonly .calendar-icon::after {
+      display: block;
     }
     .calendar-icon input {
+      padding-right: 30px;
+    }
+    .calendar-icon input[type="date"] {
+      padding-right: 8px;
+    }
+    .readonly .calendar-icon input[type="text"] {
       padding-right: 30px;
     }
     .address-group .form-row {
@@ -112,11 +132,13 @@
     .tags-notes-row .form-group {
       flex: 1;
     }
-    .tags-notes-row .form-group input {
-      height: 100px;
-    }
     .tags-notes-row .form-group textarea {
       height: 100px;
+    }
+    @media (max-width: 600px) {
+      .form-row {
+        flex-direction: column;
+      }
     }
   </style>
 </head>
@@ -161,21 +183,27 @@
       <label class="section-label" for="phone">Phone Number:</label>
       <input type="text" name="phone" placeholder="(000) 000-0000">
       <small class="placeholder">Please enter a valid phone number.</small>
+      <small class="error" style="display: none;"></small>
     </div>
     <div class="form-group">
       <label class="section-label" for="email">Email:</label>
       <input type="email" name="email" placeholder="">
+      <small class="error" style="display: none;"></small>
     </div>
   </div>
 
   <div class="form-row">
     <div class="form-group">
-      <label class="section-label" for="secondaryphone">Secondary Phone Number</label>
+      <label class="section-label" for="secondary
+
+phone">Secondary Phone Number</label>
       <input type="text" name="secondaryphone" placeholder="(000) 000-0000">
+      <small class="error" style="display: none;"></small>
     </div>
     <div class="form-group">
       <label class="section-label" for="secondaryemail">Secondary Email</label>
       <input type="email" name="secondaryemail" placeholder="example@example.com">
+      <small class="error" style="display: none;"></small>
     </div>
   </div>
 
@@ -183,12 +211,16 @@
     <div class="form-group">
       <label class="section-label" for="dob">Date of Birth:</label>
       <div class="calendar-icon">
-        <input type="text" name="dob" placeholder="MM/DD/YYYY">
+        <input type="date" name="dob" placeholder="YYYY-MM-DD" aria-describedby="dob-placeholder">
       </div>
+      <small class="format-note">Format: MM/DD/YYYY</small>
+      <small class="placeholder">Please enter date as YYYY-MM-DD (e.g., 1993-01-23).</small>
+      <small class="error" style="display: none;"></small>
     </div>
     <div class="form-group">
       <label class="section-label" for="ssn">SSN:</label>
       <input type="text" name="ssn" placeholder="###-##-####">
+      <small class="error" style="display: none;"></small>
     </div>
   </div>
 
@@ -209,7 +241,7 @@
     </div>
     <div class="form-row">
       <div class="form-group">
-        <input type="text" name="zip" placeholder="0/1000">
+        <input type="text" name="zip" placeholder="ZIP Code">
       </div>
     </div>
   </div>
@@ -217,7 +249,7 @@
   <div class="form-row tags-notes-row">
     <div class="form-group">
       <label class="section-label" for="tags">Tags:</label>
-      <input type="text" name="tags" placeholder="">
+      <textarea name="tags" rows="4" placeholder=""></textarea>
     </div>
     <div class="form-group">
       <label class="section-label" for="notes">Notes:</label>
@@ -233,7 +265,9 @@
 function getParams() {
   const params = new URLSearchParams(window.location.search);
   const obj = {};
-  for (const [key, value] of params.entries()) obj[key.toLowerCase()] = value;
+  for (const [key, value] of params.entries()) {
+    obj[key.toLowerCase()] = value ? value.trim() : '';
+  }
   return obj;
 }
 
@@ -246,6 +280,10 @@ function formatPhone(phone) {
   return phone;
 }
 
+function validatePhone(phone) {
+  return /^\(\d{3}\) \d{3}-\d{4}$/.test(phone);
+}
+
 function formatSSN(ssn) {
   if (!ssn) return "";
   ssn = ssn.replace(/\D/g, '');
@@ -255,6 +293,14 @@ function formatSSN(ssn) {
   return ssn;
 }
 
+function validateSSN(ssn) {
+  return /^\d{3}-\d{2}-\d{4}$/.test(ssn);
+}
+
+function validateEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 function formatDate(d) {
   if (!d) return "";
   const date = new Date(d);
@@ -262,6 +308,32 @@ function formatDate(d) {
   return (date.getMonth() + 1).toString().padStart(2, "0") + "/" +
          date.getDate().toString().padStart(2, "0") + "/" +
          date.getFullYear();
+}
+
+function parseDateForInput(d) {
+  if (!d) return "";
+  // Handle both YYYY-MM-DD and ISO formats (e.g., 1993-01-23T12:04:...)
+  const date = new Date(d.split('T')[0]); // Take only the date part
+  if (isNaN(date)) return "";
+  return date.getFullYear() + "-" +
+         (date.getMonth() + 1).toString().padStart(2, "0") + "-" +
+         date.getDate().toString().padStart(2, "0");
+}
+
+function validateDate(date) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) && !isNaN(new Date(date));
+}
+
+function showError(input, message) {
+  const errorEl = input.closest('.form-group').querySelector('small.error');
+  errorEl.textContent = message;
+  errorEl.style.display = 'block';
+}
+
+function clearError(input) {
+  const errorEl = input.closest('.form-group').querySelector('small.error');
+  errorEl.textContent = '';
+  errorEl.style.display = 'none';
 }
 
 function initForm() {
@@ -275,7 +347,7 @@ function initForm() {
   document.querySelector("[name=secondaryphone]").value = formatPhone(params.secondaryphone || "");
   document.querySelector("[name=email]").value = params.email || "";
   document.querySelector("[name=secondaryemail]").value = params.secondaryemail || "";
-  document.querySelector("[name=dob]").value = formatDate(params.dob || "");
+  document.querySelector("[name=dob]").value = parseDateForInput(params.dob || "");
   document.querySelector("[name=ssn]").value = formatSSN(params.ssn || "");
   document.querySelector("[name=address]").value = params.address || "";
   document.querySelector("[name=city]").value = params.city || "";
@@ -303,12 +375,80 @@ function setReadOnlyMode(on) {
     toggleBtn.textContent = "Edit";
     updateBtn.style.display = "none";
     warning.style.display = "none";
+    // Convert date input to formatted text for display
+    const dobInput = document.querySelector("[name=dob]");
+    dobInput.type = "text";
+    dobInput.value = formatDate(dobInput.value);
+    // Hide placeholder in view mode, keep format note visible
+    const dobPlaceholder = dobInput.closest('.form-group').querySelector('small.placeholder');
+    if (dobPlaceholder) dobPlaceholder.style.display = 'none';
   } else {
     form.classList.remove("readonly");
     toggleBtn.textContent = "View";
     updateBtn.style.display = "block";
     warning.style.display = "block";
+    // Restore date input type
+    const dobInput = document.querySelector("[name=dob]");
+    dobInput.type = "date";
+    dobInput.value = parseDateForInput(dobInput.value);
+    // Show placeholder in edit mode
+    const dobPlaceholder = dobInput.closest('.form-group').querySelector('small.placeholder');
+    if (dobPlaceholder) dobPlaceholder.style.display = 'block';
   }
+}
+
+function validateForm() {
+  let isValid = true;
+  const phone = document.querySelector("[name=phone]");
+  const secondaryPhone = document.querySelector("[name=secondaryphone]");
+  const email = document.querySelector("[name=email]");
+  const secondaryEmail = document.querySelector("[name=secondaryemail]");
+  const dob = document.querySelector("[name=dob]");
+  const ssn = document.querySelector("[name=ssn]");
+
+  if (phone.value && !validatePhone(phone.value)) {
+    showError(phone, "Invalid phone number format (use (XXX) XXX-XXXX)");
+    isValid = false;
+  } else {
+    clearError(phone);
+  }
+
+  if (secondaryPhone.value && !validatePhone(secondaryPhone.value)) {
+    showError(secondaryPhone, "Invalid secondary phone number format (use (XXX) XXX-XXXX)");
+    isValid = false;
+  } else {
+    clearError(secondaryPhone);
+  }
+
+  if (email.value && !validateEmail(email.value)) {
+    showError(email, "Invalid email format");
+    isValid = false;
+  } else {
+    clearError(email);
+  }
+
+  if (secondaryEmail.value && !validateEmail(secondaryEmail.value)) {
+    showError(secondaryEmail, "Invalid secondary email format");
+    isValid = false;
+  } else {
+    clearError(secondaryEmail);
+  }
+
+  if (dob.value && !validateDate(dob.value)) {
+    showError(dob, "Invalid date format (use YYYY-MM-DD)");
+    isValid = false;
+  } else {
+    clearError(dob);
+  }
+
+  if (ssn.value && !validateSSN(ssn.value)) {
+    showError(ssn, "Invalid SSN format (use XXX-XX-XXXX)");
+    isValid = false;
+  } else {
+    clearError(ssn);
+  }
+
+  return isValid;
 }
 
 document.getElementById("toggleBtn").addEventListener("click", () => {
@@ -317,27 +457,93 @@ document.getElementById("toggleBtn").addEventListener("click", () => {
   setReadOnlyMode(!isReadOnly);
 });
 
-document.querySelector("[name=notes]").addEventListener("input", updateNotesCounter);
+document.querySelector("[name=notes]").addEventListener("input", (e) => {
+  if (e.target.value.length > 1000) {
+    e.target.value = e.target.value.slice(0, 1000);
+  }
+  updateNotesCounter();
+});
 
 document.querySelector("[name=phone]").addEventListener("input", (e) => {
   e.target.value = formatPhone(e.target.value);
+});
+
+document.querySelector("[name=phone]").addEventListener("blur", (e) => {
+  if (e.target.value && !validatePhone(e.target.value)) {
+    showError(e.target, "Invalid phone number format (use (XXX) XXX-XXXX)");
+  } else {
+    clearError(e.target);
+  }
 });
 
 document.querySelector("[name=secondaryphone]").addEventListener("input", (e) => {
   e.target.value = formatPhone(e.target.value);
 });
 
+document.querySelector("[name=secondaryphone]").addEventListener("blur", (e) => {
+  if (e.target.value && !validatePhone(e.target.value)) {
+    showError(e.target, "Invalid secondary phone number format (use (XXX) XXX-XXXX)");
+  } else {
+    clearError(e.target);
+  }
+});
+
+document.querySelector("[name=email]").addEventListener("blur", (e) => {
+  if (e.target.value && !validateEmail(e.target.value)) {
+    showError(e.target, "Invalid email format");
+  } else {
+    clearError(e.target);
+  }
+});
+
+document.querySelector("[name=secondaryemail]").addEventListener("blur", (e) => {
+  if (e.target.value && !validateEmail(e.target.value)) {
+    showError(e.target, "Invalid secondary email format");
+  } else {
+    clearError(e.target);
+  }
+});
+
+document.querySelector("[name=dob]").addEventListener("blur", (e) => {
+  if (e.target.value && !validateDate(e.target.value)) {
+    showError(e.target, "Invalid date format (use YYYY-MM-DD)");
+  } else {
+    clearError(e.target);
+  }
+});
+
 document.querySelector("[name=ssn]").addEventListener("input", (e) => {
   e.target.value = formatSSN(e.target.value);
 });
 
+document.querySelector("[name=ssn]").addEventListener("blur", (e) => {
+  if (e.target.value && !validateSSN(e.target.value)) {
+    showError(e.target, "Invalid SSN format (use XXX-XX-XXXX)");
+  } else {
+    clearError(e.target);
+  }
+});
+
 document.getElementById("clientForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (!validateForm()) {
+    alert("Please fix the errors in the form before submitting.");
+    return;
+  }
+
   const form = e.target;
   const url = form.action;
   const data = new FormData(form);
 
   try {
+    // Attempt to get username and password from parent window
+    if (window.parent && window.parent.username && window.parent.password) {
+      data.append('username', window.parent.username.trim());
+      data.append('password', window.parent.password.trim());
+    } else {
+      console.warn("Could not access username or password from parent window.");
+    }
+
     await fetch(url, {
       method: "POST",
       body: data
@@ -345,7 +551,8 @@ document.getElementById("clientForm").addEventListener("submit", async (e) => {
     setReadOnlyMode(true);
     alert("Data submitted successfully!");
   } catch (err) {
-    alert("Submission failed: " + err);
+    console.error("Submission error:", err);
+    alert("Submission failed: " + err.message);
   }
 });
 
