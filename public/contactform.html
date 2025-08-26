@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Client Form</title>
+  <title>Contact Form</title>
+  <!-- Bootstrap 5 CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -11,7 +13,7 @@
       max-width: 800px;
       margin: 0 auto;
     }
-    #clientForm {
+    #contactForm {
       background: white;
       padding: 20px;
       border-radius: 8px;
@@ -22,14 +24,6 @@
       justify-content: space-between;
       align-items: center;
       margin-bottom: 20px;
-    }
-    #toggleBtn {
-      background: #008080;
-      color: white;
-      border: none;
-      padding: 8px 16px;
-      border-radius: 4px;
-      cursor: pointer;
     }
     #warning {
       color: red;
@@ -72,6 +66,10 @@
       box-sizing: border-box;
       background-color: #f1f3f5;
     }
+    .form-group input:disabled {
+      background-color: #e9ecef;
+      color: #495057;
+    }
     .form-group small {
       display: block;
       color: #6c757d;
@@ -89,7 +87,9 @@
     .readonly textarea {
       pointer-events: none;
     }
-    .readonly .form-group small.placeholder,
+    .readonly input[type="date"] {
+      pointer-events: auto; /* Allow disabled date input to be styled */
+    }
     .readonly .form-group small.error {
       display: none;
     }
@@ -97,30 +97,6 @@
       text-align: right;
       color: #6c757d;
       font-size: 12px;
-    }
-    .calendar-icon {
-      position: relative;
-    }
-    .calendar-icon::after {
-      content: '📅';
-      position: absolute;
-      right: 10px;
-      top: 50%;
-      transform: translateY(-50%);
-      pointer-events: none;
-      display: none;
-    }
-    .readonly .calendar-icon::after {
-      display: block;
-    }
-    .calendar-icon input {
-      padding-right: 30px;
-    }
-    .calendar-icon input[type="date"] {
-      padding-right: 8px;
-    }
-    .readonly .calendar-icon input[type="text"] {
-      padding-right: 30px;
     }
     .address-group .form-row {
       margin-bottom: 10px;
@@ -135,9 +111,25 @@
     .tags-notes-row .form-group textarea {
       height: 100px;
     }
+    /* Bootstrap switch customization */
+    .form-switch .form-check-input {
+      cursor: pointer;
+      width: 3em; /* Larger toggle */
+      height: 1.5em;
+    }
+    .form-switch .form-check-label {
+      margin-left: 12px;
+      font-weight: bold;
+      color: #495057;
+      font-size: 1.2rem; /* Larger label text */
+      padding-top: 2px;
+    }
     @media (max-width: 600px) {
       .form-row {
         flex-direction: column;
+      }
+      .form-switch .form-check-label {
+        font-size: 1rem; /* Slightly smaller on mobile */
       }
     }
   </style>
@@ -145,34 +137,37 @@
 <body>
 
 <div class="form-header">
-  <button id="toggleBtn">View</button>
+  <div class="form-check form-switch">
+    <input class="form-check-input" type="checkbox" id="toggleBtn">
+    <label class="form-check-label" for="toggleBtn" id="toggleLabel">View Mode</label>
+  </div>
   <span id="warning">You must press UPDATE to save changes!</span>
 </div>
 
-<form id="clientForm" action="https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY1MDYzNjA0MzY1MjZhNTUzMTUxMzEi_pc" method="POST">
+<form id="contactForm" action="https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY1MDYzNjA0MzY1MjZhNTUzMTUxMzEi_pc" method="POST">
   <div class="form-row">
     <div class="form-group">
       <label class="section-label" for="preferredname">Preferred Name:</label>
-      <input type="text" name="preferredname" placeholder="">
+      <input type="text" name="preferredname" placeholder="Preferred name">
     </div>
     <div class="form-group">
-      <label class="section-label" for="clientid">Client ID:</label>
-      <input type="text" name="clientid" placeholder="">
+      <label class="section-label" for="contactid">Contact ID:</label>
+      <input type="text" name="contactid" placeholder="Contact ID">
     </div>
   </div>
 
   <div class="form-row">
     <div class="form-group">
-      <label class="section-label" for="firstname">Client Name:</label>
+      <label class="section-label" for="firstname">Contact Name:</label>
       <div class="form-row">
         <div class="form-group">
-          <input type="text" name="firstname" placeholder="First Name">
+          <input type="text" name="firstname" placeholder="First name">
         </div>
         <div class="form-group">
-          <input type="text" name="middlename" placeholder="Middle Name">
+          <input type="text" name="middlename" placeholder="Middle name">
         </div>
         <div class="form-group">
-          <input type="text" name="lastname" placeholder="Last Name">
+          <input type="text" name="lastname" placeholder="Last name">
         </div>
       </div>
     </div>
@@ -182,27 +177,24 @@
     <div class="form-group">
       <label class="section-label" for="phone">Phone Number:</label>
       <input type="text" name="phone" placeholder="(000) 000-0000">
-      <small class="placeholder">Please enter a valid phone number.</small>
       <small class="error" style="display: none;"></small>
     </div>
     <div class="form-group">
       <label class="section-label" for="email">Email:</label>
-      <input type="email" name="email" placeholder="">
+      <input type="email" name="email" placeholder="Email">
       <small class="error" style="display: none;"></small>
     </div>
   </div>
 
   <div class="form-row">
     <div class="form-group">
-      <label class="section-label" for="secondary
-
-phone">Secondary Phone Number</label>
+      <label class="section-label" for="secondaryphone">Secondary Phone Number</label>
       <input type="text" name="secondaryphone" placeholder="(000) 000-0000">
       <small class="error" style="display: none;"></small>
     </div>
     <div class="form-group">
       <label class="section-label" for="secondaryemail">Secondary Email</label>
-      <input type="email" name="secondaryemail" placeholder="example@example.com">
+      <input type="email" name="secondaryemail" placeholder="Secondary email">
       <small class="error" style="display: none;"></small>
     </div>
   </div>
@@ -210,11 +202,8 @@ phone">Secondary Phone Number</label>
   <div class="form-row">
     <div class="form-group">
       <label class="section-label" for="dob">Date of Birth:</label>
-      <div class="calendar-icon">
-        <input type="date" name="dob" placeholder="YYYY-MM-DD" aria-describedby="dob-placeholder">
-      </div>
-      <small class="format-note">Format: MM/DD/YYYY</small>
-      <small class="placeholder">Please enter date as YYYY-MM-DD (e.g., 1993-01-23).</small>
+      <input type="date" name="dob" placeholder="YYYY-MM-DD" aria-describedby="dob-format">
+      <!--<small class="format-note" id="dob-format">Format: YYYY-MM-DD</small>-->
       <small class="error" style="display: none;"></small>
     </div>
     <div class="form-group">
@@ -228,7 +217,7 @@ phone">Secondary Phone Number</label>
   <div class="address-group">
     <div class="form-row">
       <div class="form-group">
-        <input type="text" name="address" placeholder="Street Address">
+        <input type="text" name="address" placeholder="Street address">
       </div>
     </div>
     <div class="form-row">
@@ -241,7 +230,7 @@ phone">Secondary Phone Number</label>
     </div>
     <div class="form-row">
       <div class="form-group">
-        <input type="text" name="zip" placeholder="ZIP Code">
+        <input type="text" name="zip" placeholder="ZIP code">
       </div>
     </div>
   </div>
@@ -249,11 +238,11 @@ phone">Secondary Phone Number</label>
   <div class="form-row tags-notes-row">
     <div class="form-group">
       <label class="section-label" for="tags">Tags:</label>
-      <textarea name="tags" rows="4" placeholder=""></textarea>
+      <textarea name="tags" rows="4" placeholder="Enter tags separated by a comma"></textarea>
     </div>
     <div class="form-group">
       <label class="section-label" for="notes">Notes:</label>
-      <textarea name="notes" rows="4"></textarea>
+      <textarea name="notes" rows="4" placeholder="Notes"></textarea>
       <small id="notesCounter">0/1000</small>
     </div>
   </div>
@@ -301,15 +290,6 @@ function validateEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function formatDate(d) {
-  if (!d) return "";
-  const date = new Date(d);
-  if (isNaN(date)) return d;
-  return (date.getMonth() + 1).toString().padStart(2, "0") + "/" +
-         date.getDate().toString().padStart(2, "0") + "/" +
-         date.getFullYear();
-}
-
 function parseDateForInput(d) {
   if (!d) return "";
   // Handle both YYYY-MM-DD and ISO formats (e.g., 1993-01-23T12:04:...)
@@ -342,7 +322,7 @@ function initForm() {
   document.querySelector("[name=middlename]").value = params.middlename || "";
   document.querySelector("[name=lastname]").value = params.lastname || "";
   document.querySelector("[name=preferredname]").value = params.preferredname || "";
-  document.querySelector("[name=clientid]").value = params.clientid || "";
+  document.querySelector("[name=contactid]").value = params.contactid || params.clientid || "";
   document.querySelector("[name=phone]").value = formatPhone(params.phone || "");
   document.querySelector("[name=secondaryphone]").value = formatPhone(params.secondaryphone || "");
   document.querySelector("[name=email]").value = params.email || "";
@@ -365,35 +345,27 @@ function updateNotesCounter() {
 }
 
 function setReadOnlyMode(on) {
-  const form = document.getElementById("clientForm");
+  const form = document.getElementById("contactForm");
   const toggleBtn = document.getElementById("toggleBtn");
+  const toggleLabel = document.getElementById("toggleLabel");
   const updateBtn = document.getElementById("updateBtn");
   const warning = document.getElementById("warning");
+  const dobInput = document.querySelector("[name=dob]");
 
   if (on) {
     form.classList.add("readonly");
-    toggleBtn.textContent = "Edit";
+    toggleBtn.checked = false;
+    toggleLabel.textContent = "View Mode";
     updateBtn.style.display = "none";
     warning.style.display = "none";
-    // Convert date input to formatted text for display
-    const dobInput = document.querySelector("[name=dob]");
-    dobInput.type = "text";
-    dobInput.value = formatDate(dobInput.value);
-    // Hide placeholder in view mode, keep format note visible
-    const dobPlaceholder = dobInput.closest('.form-group').querySelector('small.placeholder');
-    if (dobPlaceholder) dobPlaceholder.style.display = 'none';
+    dobInput.disabled = true;
   } else {
     form.classList.remove("readonly");
-    toggleBtn.textContent = "View";
+    toggleBtn.checked = true;
+    toggleLabel.textContent = "Edit Mode";
     updateBtn.style.display = "block";
     warning.style.display = "block";
-    // Restore date input type
-    const dobInput = document.querySelector("[name=dob]");
-    dobInput.type = "date";
-    dobInput.value = parseDateForInput(dobInput.value);
-    // Show placeholder in edit mode
-    const dobPlaceholder = dobInput.closest('.form-group').querySelector('small.placeholder');
-    if (dobPlaceholder) dobPlaceholder.style.display = 'block';
+    dobInput.disabled = false;
   }
 }
 
@@ -451,8 +423,8 @@ function validateForm() {
   return isValid;
 }
 
-document.getElementById("toggleBtn").addEventListener("click", () => {
-  const form = document.getElementById("clientForm");
+document.getElementById("toggleBtn").addEventListener("change", () => {
+  const form = document.getElementById("contactForm");
   const isReadOnly = form.classList.contains("readonly");
   setReadOnlyMode(!isReadOnly);
 });
@@ -524,7 +496,7 @@ document.querySelector("[name=ssn]").addEventListener("blur", (e) => {
   }
 });
 
-document.getElementById("clientForm").addEventListener("submit", async (e) => {
+document.getElementById("contactForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!validateForm()) {
     alert("Please fix the errors in the form before submitting.");
