@@ -635,7 +635,7 @@ fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=$
   document.getElementById("tabInfoIframe").src =
       `contactform.html?firstname=${clientData.contact_fname}&middlename=${clientData.contact_mname}&lastname=${clientData.contact_lname}&preferredname=${clientData.contact_pname}
       &email=${clientData.contact_email}&phone=${clientData.contact_phone}&secondaryemail=${clientData.contact_email2}&secondaryphone=${clientData.contact_phone2}
-      &dob=${clientData.contact_dob}&ssn=${clientData.contact_ssn}
+      &dob=${clientData.contact_dob||""}&ssn=${clientData.contact_ssn}
       &address=${clientData.contact_address}&city=${clientData.contact_city}&state=${clientData.contact_state}&zip=${clientData.contact_zip}
       &clientid=${clientID}&tags=${clientData.contact_tags}&notes=${encodeURIComponent(clientData.contact_notes)}
       `;document.getElementById("tabViewClient").style.display = "block";
