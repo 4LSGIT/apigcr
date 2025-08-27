@@ -79,28 +79,31 @@ function parseName(name) {
   let suffix = "";
   let lnameOnly = "";
   let flname = "";
+  let lastlastname = ""
 
   if (parts.length > 1) {
     if ( suffixes.includes( parts[parts.length - 1].toLowerCase().replace(".", "")) && parts.length > 2) {
       lastName = parts[parts.length - 2] + " " + parts[parts.length - 1];
       middleName = parts.slice(1, parts.length - 2).join(" ");
      lnameOnly = parts[parts.length-2].split("-")[0]
+      lastlastname  = lastName.split("-").pop()
       suffix = parts[parts.length-1]
     } else {
       lastName = parts[parts.length - 1];
       middleName = parts.slice(1, parts.length - 1).join(" ");
      lnameOnly = lastName.split("-")[0]
+      lastlastname = lastName.split("-").pop()
     }
   }
   flname = firstName + (lnameOnly?` ${lnameOnly}`:"");
 
-  return [firstName, middleName, lastName, lnameOnly, suffix, flname];
+  return [firstName, middleName, lastName, lnameOnly, suffix, flname, lastlastname];
 }
 
 router.get("/parseName", (req, res) => {
   const { name } = req.query;
   const parsedName = parseName(name);
-  res.json({ firstName: parsedName[0], middleName: parsedName[1], lastName: parsedName[2], lastNameOnly: parsedName[3], lastNameSuffix: parsedName[4], flname: parsedName[5]});
+  res.json({ firstName: parsedName[0], middleName: parsedName[1], lastName: parsedName[2], lastNameOnly: parsedName[3], lastNameSuffix: parsedName[4], flname: parsedName[5], lastlastname: parsedName[6]});
 });
 
 
