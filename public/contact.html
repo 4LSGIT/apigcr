@@ -532,6 +532,14 @@ function openTab(tab, tabName) {
     tabContent[i].style.display = "none";
   }
   document.getElementById(tabName).style.display = "block";
+  /*Force re-render for tabLog to fix scrolling*/
+  if (tabName === "tabLog") {
+    const logTable = document.getElementById("logTable");
+    logTable.style.display = "none"; // Briefly hide
+    setTimeout(() => {
+      logTable.style.display = ""; // Restore display
+    }, 0); // Trigger reflow in next event loop
+  }
 }
 
 
