@@ -177,7 +177,16 @@ async function loadToken(db) {
 
         if (now >= tokenExpiry) {
           console.log("Access token expired on load, attempting refresh...");
-          await refreshAccessToken(db);
+          try {
+            await refreshAccessToken(db);
+          } catch (err) {
+            console.error("Could not refresh token on load:", err.message);
+            sendAlert("token_refresh_failed", "Token refresh failed on load", {
+              error: err.message,
+            });
+            // clear token so /status shows not authorized
+            tokenData = null;
+          }
         } else {
           scheduleRefresh(db);
         }
@@ -189,7 +198,7 @@ async function loadToken(db) {
       sendAlert("token_load_failed", "Token load failed", {
         error: err.message,
       });
-      throw err;
+      // don’t rethrow — keep server alive
     } finally {
       isLoadingToken = false;
     }
