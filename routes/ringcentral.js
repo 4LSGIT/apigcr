@@ -371,7 +371,12 @@ router.get("/ringcentral/status", checkApiKey, (req, res) => {
 // --- Initial Token Load ---
 router.use(async (req, res, next) => {
   if (!tokenData) {
-    await loadTokenWithRetries(req.db);
+    try {
+      await loadTokenWithRetries(req.db);
+    } catch (err) {
+      console.error("Skipping token load (DB unavailable):", err.message);
+      // important: do not throw here, let the server keep running
+    }
   }
   next();
 });
