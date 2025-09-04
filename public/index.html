@@ -599,6 +599,7 @@
           <th>Case</th>
           <th>Appt Type</th>
           <th>Status</th>
+          <th>With</th>
           <th>Update</th>
         </tr>
       </table>
@@ -660,8 +661,8 @@
         for (var i = rows.length - 1; i > 0; i--) {
           table.deleteRow(i);
         }
-        q = `SELECT appts.appt_id AS id, contacts.contact_name AS name, appts.appt_client_id AS clientId, cases.case_number AS caseN, appts.appt_case_id AS leadId, appts.appt_type AS type, appts.appt_date as date, DATE_FORMAT(appts.appt_date, '%b. %e, %Y') AS format_date, DATE_FORMAT(appts.appt_date, '%h:%i %p') AS time, DATE_FORMAT(appts.appt_date, '%Y-%m-%dT%H:%i') AS datetime, appts.appt_status AS status
-       FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query} /*to put current day appts first*/ /*CASE WHEN DATE(appts,appt_date) = CURDATE() THEN 0 ELSE 1 END,*/ ORDER BY appts.appt_date DESC LIMIT ${limit} OFFSET ${offset};|||
+        q = `SELECT appts.appt_id AS id, contacts.contact_name AS name, appts.appt_client_id AS clientId, cases.case_number AS caseN, appts.appt_case_id AS leadId, appts.appt_type AS type, appts.appt_date as date, DATE_FORMAT(appts.appt_date, '%b. %e, %Y') AS format_date, DATE_FORMAT(appts.appt_date, '%h:%i %p') AS time, DATE_FORMAT(appts.appt_date, '%Y-%m-%dT%H:%i') AS datetime, appts.appt_status AS status, users.user_name AS user_name, users.user as user
+       FROM appts LEFT JOIN users ON users.user = appts.appt_with LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query} /*to put current day appts first*/ /*CASE WHEN DATE(appts,appt_date) = CURDATE() THEN 0 ELSE 1 END,*/ ORDER BY appts.appt_date DESC LIMIT ${limit} OFFSET ${offset};|||
        SELECT COUNT(*) AS counter FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query}`;
         fetch(
           `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
@@ -691,8 +692,8 @@
                   appt.caseN || appt.leadId
                 }</a></td>
           <td>${appt.type}</td>
-
           <td>${appt.status}</td>
+          <td>${appt.user_name}</td>
           `;
                 if (appt.status == "No Show") {
                   row.innerHTML += `<td><button onclick="apptUpdate(${appt.id}, 'Cancel', '${appt.format_date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
