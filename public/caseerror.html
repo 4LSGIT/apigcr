@@ -80,6 +80,9 @@
     .form-row .form-group {
       flex: 1;
     }
+    #additionalFields {
+      display: none;
+    }
     @media (max-width: 600px) {
       .form-row {
         flex-direction: column;
@@ -137,6 +140,25 @@
       <small class="error">Chapter is required</small>
     </div>
   </div>
+  <div id="additionalFields">
+    <div class="form-group">
+      <label for="trustee">Trustee:</label>
+      <input type="text" name="trustee" id="trustee" placeholder="Enter full or last name">
+      <small class="error">Trustee is required</small>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label for="opposeDate">Oppose Date:</label>
+        <input type="date" name="opposeDate" id="opposeDate" placeholder="YYYY-MM-DD">
+        <small class="error">Oppose Date is required</small>
+      </div>
+      <div class="form-group">
+        <label for="meeting341">341 Meeting:</label>
+        <input type="datetime-local" name="meeting341" id="meeting341" placeholder="YYYY-MM-DD HH:MM">
+        <small class="error">341 Meeting is required</small>
+      </div>
+    </div>
+  </div>
   <div class="form-check">
     <input class="form-check-input" type="checkbox" name="sendQuestionnaire" id="sendQuestionnaire" checked>
     <label class="form-check-label" for="sendQuestionnaire">Send Questionnaire</label>
@@ -150,12 +172,20 @@ function validateCaseNumber(caseNumber) {
   return /^\d{2}-\d{5}(?:-[a-zA-Z]{3})?$/.test(caseNumber);
 }
 
+function isLongCaseNumber(caseNumber) {
+  return /^\d{2}-\d{5}-[a-zA-Z]{3}$/.test(caseNumber);
+}
+
 function validateCaseId(caseId) {
   return /^[a-zA-Z0-9]{8}$/.test(caseId);
 }
 
 function validateDate(date) {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) && !isNaN(new Date(date));
+}
+
+function validateDateTime(dateTime) {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dateTime) && !isNaN(new Date(dateTime));
 }
 
 function showError(input, message) {
@@ -169,6 +199,31 @@ function clearError(input) {
   errorEl.style.display = 'none';
 }
 
+function toggleAdditionalFields(show) {
+  const additionalFields = document.getElementById("additionalFields");
+  const trustee = document.getElementById("trustee");
+  const opposeDate = document.getElementById("opposeDate");
+  const meeting341 = document.getElementById("meeting341");
+  additionalFields.style.display = show ? 'block' : 'none';
+  trustee.required = show;
+  opposeDate.required = show;
+  meeting341.required = show;
+}
+
+document.getElementById("caseNumber").addEventListener("blur", (e) => {
+  const caseNumber = e.target.value;
+  if (!caseNumber) {
+    showError(e.target, "Case Number is required");
+    toggleAdditionalFields(false);
+  } else if (!validateCaseNumber(caseNumber)) {
+    showError(e.target, "Invalid case number format (e.g., 22-12345 or 25-54321-abc)");
+    toggleAdditionalFields(false);
+  } else {
+    clearError(e.target);
+    toggleAdditionalFields(isLongCaseNumber(caseNumber));
+  }
+});
+
 document.getElementById("caseForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   let isValid = true;
@@ -180,6 +235,9 @@ document.getElementById("caseForm").addEventListener("submit", async (e) => {
   const caseId = document.getElementById("caseId");
   const fileDate = document.getElementById("fileDate");
   const chapter = document.getElementById("chapter");
+  const trustee = document.getElementById("trustee");
+  const opposeDate = document.getElementById("opposeDate");
+  const meeting341 = document.getElementById("meeting341");
 
   if (!username.value) {
     showError(username, "Username is required");
@@ -232,6 +290,35 @@ document.getElementById("caseForm").addEventListener("submit", async (e) => {
     clearError(chapter);
   }
 
+  if (isLongCaseNumber(caseNumber.value)) {
+    if (!trustee.value) {
+      showError(trustee, "Trustee is required");
+      isValid = false;
+    } else {
+      clearError(trustee);
+    }
+
+    if (!opposeDate.value) {
+      showError(opposeDate, "Oppose Date is required");
+      isValid = false;
+    } else if (!validateDate(opposeDate.value)) {
+      showError(opposeDate, "Invalid date format (use YYYY-MM-DD)");
+      isValid = false;
+    } else {
+      clearError(opposeDate);
+    }
+
+    if (!meeting341.value) {
+      showError(meeting341, "341 Meeting is required");
+      isValid = false;
+    } else if (!validateDateTime(meeting341.value)) {
+      showError(meeting341, "Invalid datetime format (use YYYY-MM-DD HH:MM)");
+      isValid = false;
+    } else {
+      clearError(meeting341);
+    }
+  }
+
   if (!isValid) {
     Swal.fire({
       icon: 'error',
@@ -259,6 +346,7 @@ document.getElementById("caseForm").addEventListener("submit", async (e) => {
     if (result.status === 'success') {
       form.reset();
       document.getElementById("sendQuestionnaire").checked = true;
+      toggleAdditionalFields(false);
     }
   } catch (err) {
     console.error("Submission error:", err);
@@ -281,16 +369,6 @@ document.getElementById("username").addEventListener("blur", (e) => {
 document.getElementById("password").addEventListener("blur", (e) => {
   if (!e.target.value) {
     showError(e.target, "Password is required");
-  } else {
-    clearError(e.target);
-  }
-});
-
-document.getElementById("caseNumber").addEventListener("blur", (e) => {
-  if (!e.target.value) {
-    showError(e.target, "Case Number is required");
-  } else if (!validateCaseNumber(e.target.value)) {
-    showError(e.target, "Invalid case number format (e.g., 22-12345 or 25-54321-abc)");
   } else {
     clearError(e.target);
   }
@@ -321,6 +399,38 @@ document.getElementById("chapter").addEventListener("blur", (e) => {
     showError(e.target, "Chapter is required");
   } else {
     clearError(e.target);
+  }
+});
+
+document.getElementById("trustee").addEventListener("blur", (e) => {
+  if (isLongCaseNumber(document.getElementById("caseNumber").value) && !e.target.value) {
+    showError(e.target, "Trustee is required");
+  } else {
+    clearError(e.target);
+  }
+});
+
+document.getElementById("opposeDate").addEventListener("blur", (e) => {
+  if (isLongCaseNumber(document.getElementById("caseNumber").value)) {
+    if (!e.target.value) {
+      showError(e.target, "Oppose Date is required");
+    } else if (!validateDate(e.target.value)) {
+      showError(e.target, "Invalid date format (use YYYY-MM-DD)");
+    } else {
+      clearError(e.target);
+    }
+  }
+});
+
+document.getElementById("meeting341").addEventListener("blur", (e) => {
+  if (isLongCaseNumber(document.getElementById("caseNumber").value)) {
+    if (!e.target.value) {
+      showError(e.target, "341 Meeting is required");
+    } else if (!validateDateTime(e.target.value)) {
+      showError(e.target, "Invalid datetime format (use YYYY-MM-DD HH:MM)");
+    } else {
+      clearError(e.target);
+    }
   }
 });
 </script>
