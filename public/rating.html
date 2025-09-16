@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IT Department Feedback</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen">
+    <div class="bg-white p-8 rounded-lg shadow-lg w-full max-w-md">
+        <h1 class="text-2xl font-bold text-center text-gray-800 mb-6">IT Department Feedback</h1>
+        <p class="text-gray-600 text-center mb-4">We value your feedback! Please rate your recent call with our IT team.</p>
+        
+        <form id="feedbackForm" class="space-y-6">
+            <div>
+                <label for="agent" class="block text-sm font-medium text-gray-700">Select Agent</label>
+                <select id="agent" name="agent" class="mt-1 block w-full p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="Fred">Fred</option>
+                    <option value="Ysr">Ysr</option>
+                    <option value="Mr Rosin">Mr. Rosin</option>
+                </select>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Rate Your Experience</label>
+                <div class="flex justify-between mt-2">
+                    <button type="button" onclick="submitRating(1)" class="px-4 py-2 bg-yellow-400 text-white rounded hover:bg-yellow-500">1 ★</button>
+                    <button type="button" onclick="submitRating(2)" class="px-4 py-2 bg-yellow-400 text-white rounded hover:bg-yellow-500">2 ★</button>
+                    <button type="button" onclick="submitRating(3)" class="px-4 py-2 bg-yellow-400 text-white rounded hover:bg-yellow-500">3 ★</button>
+                    <button type="button" onclick="submitRating(4)" class="px-4 py-2 bg-yellow-400 text-white rounded hover:bg-yellow-500">4 ★</button>
+                    <button type="button" onclick="submitRating(5)" class="px-4 py-2 bg-yellow-400 text-white rounded hover:bg-yellow-500">5 ★</button>
+                </div>
+            </div>
+        </form>
+        
+        <div id="response" class="mt-4 text-center hidden">
+            <div id="loading" class="hidden flex items-center justify-center">
+                <svg class="animate-spin h-5 w-5 mr-2 text-blue-500" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+                </svg>
+                <span id="loadingText"></span>
+            </div>
+            <p id="responseText" class="text-gray-700"></p>
+        </div>
+    </div>
+
+    <script>
+        function submitRating(rating) {
+            const responseDiv = document.getElementById('response');
+            const loadingDiv = document.getElementById('loading');
+            const responseText = document.getElementById('responseText');
+            const loadingText = document.getElementById('loadingText');
+            const agent = document.getElementById('agent').value;
+
+            // Reset response area
+            responseDiv.classList.remove('hidden');
+            responseText.classList.add('hidden');
+            loadingDiv.classList.add('hidden');
+
+            if (rating === 1) {
+                loadingDiv.classList.remove('hidden');
+                loadingText.textContent = 'Installing virus... Please wait.';
+                setTimeout(() => {
+                    loadingDiv.classList.add('hidden');
+                    responseText.textContent = 'Just kidding! But seriously, a 1-star rating? Our IT team is crying binary tears!';
+                    responseText.classList.remove('hidden');
+                }, 2000);
+            } else if (rating === 2) {
+                loadingDiv.classList.remove('hidden');
+                loadingText.textContent = 'Submitting feedback...';
+                setTimeout(() => {
+                    loadingDiv.classList.add('hidden');
+                    responseText.textContent = 'Oops! Due to a technical glitch, 2-star ratings can’t be submitted. Try giving us more stars!';
+                    responseText.classList.remove('hidden');
+                }, 1500);
+            } else if (rating === 3) {
+                loadingDiv.classList.remove('hidden');
+                loadingText.textContent = 'Processing...';
+                setTimeout(() => {
+                    loadingDiv.classList.add('hidden');
+                    responseText.textContent = '3 stars? Our servers are overheating from this lukewarm feedback! Please try again with more enthusiasm!';
+                    responseText.classList.remove('hidden');
+                }, 1500);
+            } else if (rating === 4) {
+                loadingDiv.classList.remove('hidden');
+                loadingText.textContent = 'Almost there...';
+                setTimeout(() => {
+                    loadingDiv.classList.add('hidden');
+                    responseText.textContent = '4 stars is close, but we only accept perfection! Give us 5 stars to unlock the submission button!';
+                    responseText.classList.remove('hidden');
+                }, 1500);
+            } else if (rating === 5) {
+                loadingDiv.classList.remove('hidden');
+                loadingText.textContent = 'Submitting feedback...';
+                fetch('https://webhook.site/9dfd2bba-16d6-4b41-8cd5-1d262f8d2116', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        agent: agent,
+                        rating: rating,
+                        timestamp: new Date().toISOString()
+                    })
+                })
+                .then(response => {
+                    loadingDiv.classList.add('hidden');
+                    responseText.textContent = `Thank you for the 5-star rating for ${agent}! Your feedback has been submitted successfully!`;
+                    responseText.classList.remove('hidden');
+                })
+                .catch(error => {
+                    loadingDiv.classList.add('hidden');
+                    responseText.textContent = 'Error submitting feedback, but we appreciate the 5 stars!';
+                    responseText.classList.remove('hidden');
+                });
+            }
+        }
+    </script>
+</body>
+</html>
