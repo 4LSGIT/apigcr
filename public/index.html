@@ -432,6 +432,24 @@
     </div>
 
     <script>
+      function showAppt(apptID) {
+        Swal.fire({
+          title: `Appointment ${apptID}`,
+          html: `
+      <iframe 
+        src="/apptform.html?appt=${apptID}" 
+        width="100%" 
+        height="600" 
+        style="border:none;">
+      </iframe>
+    `,
+          width: "75%", // relative to viewport width
+          heightAuto: true,
+          showConfirmButton: false,
+          showCloseButton: true,
+        });
+      }
+
       function tabContactsGet(offset) {
         offsets.contacts = offset;
         E("tabContactsLoad").style.display = "block";
@@ -446,8 +464,8 @@
         }
         q = `SELECT c.*,
       JSON_ARRAYAGG(JSON_OBJECT('case_number', COALESCE(ca.case_number_full, ca.case_number, ca.case_id), 'case_id', ca.case_id, 'case_type', ca.case_type)) as cases,
-      IFNULL(DATE_FORMAT(c.contact_dob, '%M %e, %Y'), '') as DoB 
-      FROM contacts c LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id 
+      IFNULL(DATE_FORMAT(c.contact_dob, '%M %e, %Y'), '') as DoB
+      FROM contacts c LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id
       WHERE c.contact_id LIKE "%${query}%" OR c.contact_name like "%${query}%" OR c.contact_phone LIKE "%${query}%" OR c.contact_email like "%${query}%" OR c.contact_dob LIKE "%${query}%" OR c.contact_ssn LIKE "%${query}%" GROUP BY c.contact_id
       ORDER BY ${E("tabContactsSort").value}
       LIMIT 100 OFFSET 0|||
@@ -528,7 +546,7 @@
                   : "";
               foot.innerHTML += ` | Results ${offset + 1}-${
                 offset + contacts.length
-              } of ${data.data.query2[0].counter} 
+              } of ${data.data.query2[0].counter}
         <select style="width:auto" onchange="limit = this.value;tabContactsGet(0)">
         <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
         <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
@@ -677,7 +695,7 @@
               appts.forEach((appt) => {
                 const row = table.insertRow();
                 row.innerHTML = `
-          <td>${appt.id}</td>
+          <td><a href="#" onclick="showAppt(${appt.id})">${appt.id}</a></td>
           <td>${appt.format_date}</td>
           <td>${appt.time}</td>
           <td><a href="#" onclick="addFile('${appt.name.replace(
