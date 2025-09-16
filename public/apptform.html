@@ -161,7 +161,7 @@
   <span id="warning">You must press UPDATE to save changes!</span>
 </div>
 
-<form id="appointmentForm" action="https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY1MDYzNjA0MzY1MjZhNT" method="POST">
+<form id="appointmentForm" action="https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY1MDYzNjA0MzY1MjZhNTUzMTUxMzEi_pc" method="POST">
   <div class="form-row">
     <div class="form-group">
       <label class="section-label" for="caseid">Case ID:</label>
@@ -255,7 +255,7 @@
       <label class="section-label">Method:</label>
       <div class="d-flex">
         <div class="form-check form-check-radio">
-          <input class="form-check-input" type="radio" name="method" id="methodTelephone" value="Telephone" checked>
+          <input class="form-check-input" type="radio" name="method" id="methodTelephone" value="Telephone">
           <label class="form-check-label" for="methodTelephone">Telephone</label>
         </div>
         <div class="form-check form-check-radio">
@@ -343,31 +343,49 @@ function clearError(input) {
   errorEl.style.display = 'none';
 }
 
+let params, apptData;
 function initForm() {
-  const params = getParams();
-  document.querySelector("[name=caseid]").value = params.caseid || "";
-  document.querySelector("[name=appointmentid]").value = params.appointmentid || "";
-  document.querySelector("[name=primaryname]").value = params.primaryname || "";
-  document.querySelector("[name=contactid]").value = params.contactid || "";
-  document.querySelector("[name=email]").value = params.email || "";
-  document.querySelector("[name=phone]").value = formatPhone(params.phone || "");
-  document.querySelector("[name=with]").value = params.with || "";
-  document.querySelector("[name=status]").value = params.status || "Scheduled";
-  document.querySelector("[name=method][value='" + (params.method || "Telephone") + "']").checked = true;
-  document.querySelector("[name=datetime]").value = parseDateTimeForInput(params.datetime || "");
-  document.querySelector("[name=notes]").value = params.notes || "";
-  
-  const apptTypeSelect = document.getElementById("apptTypeSelect");
-  const apptType = params.appttype || "";
-  const apptLen = params.apptlen || "";
-  if (apptType && apptLen) {
-    const optionExists = Array.from(apptTypeSelect.options).some(opt => opt.value === `${apptType},${apptLen}`);
-    apptTypeSelect.value = optionExists ? `${apptType},${apptLen}` : ",";
-    document.getElementById("apptType").value = apptType;
-    document.getElementById("apptLen").value = apptLen;
-    document.getElementById("ApptOtherSpan").style.display = optionExists ? "none" : "block";
-  }
-  updateNotesCounter();
+  params = getParams();
+  q = `SELECT * FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON cases.case_id = appts.appt_case_id WHERE appt_id = '${params.apptid}'`;
+  window.parent.sendQuery(q).then(data => {
+    apptData = data.data.query1[0];
+    console.log(apptData); // Verify field names
+    if (!apptData) {
+      console.warn("No appointment data found");
+      return;
+    }
+    document.querySelector("[name=caseid]").value = apptData.case_id || params.caseid || "";
+    document.querySelector("[name=appointmentid]").value = apptData.appt_id || params.appointmentid || "";
+    document.querySelector("[name=primaryname]").value = apptData.contact_name || params.primaryname || "";
+    document.querySelector("[name=contactid]").value = apptData.contact_id || params.contactid || "";
+    document.querySelector("[name=email]").value = apptData.contact_email || params.email || "";
+    document.querySelector("[name=phone]").value = formatPhone(apptData.contact_phone || params.phone || "");
+    document.querySelector("[name=with]").value = apptData.appt_with || params.with || "";
+    document.querySelector("[name=status]").value = apptData.appt_status || params.status || "Scheduled";
+
+    const methodValue = apptData.appt_platform ? apptData.appt_platform.toLowerCase() : "";
+    if (methodValue) {
+      const methodRadio = document.querySelector(`[name=method][value="${methodValue.charAt(0).toUpperCase() + methodValue.slice(1)}"]`);
+      if (methodRadio) methodRadio.checked = true;
+    }
+    document.querySelector("[name=datetime]").value = apptData.appt_date.slice(0, 16) || "";
+    document.querySelector("[name=notes]").value = apptData.appt_note || "";
+
+    // Handle appointment type select
+    const apptTypeSelect = document.getElementById("apptTypeSelect");
+    const apptType = apptData.appt_type || "";
+    const apptLen = apptData.appt_length || "";
+    if (apptType && apptLen) {
+      const valueToCheck = `${apptType},${apptLen}`;
+      const optionExists = Array.from(apptTypeSelect.options).some(opt => opt.value === valueToCheck);
+      apptTypeSelect.value = optionExists ? valueToCheck : ",";
+      document.getElementById("apptType").value = apptType;
+      document.getElementById("apptLen").value = apptLen;
+      document.getElementById("ApptOtherSpan").style.display = (apptTypeSelect.value === ",") ? "block" : "none";
+    }
+
+    updateNotesCounter();
+  }).catch(err => console.error("Query error:", err));
 }
 
 function updateNotesCounter() {
