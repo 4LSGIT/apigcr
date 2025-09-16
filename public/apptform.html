@@ -2,8 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Contact Form</title>
-  <!-- Bootstrap 5 CSS -->
+  <title>Appointment Form</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <style>
     body {
@@ -13,7 +12,7 @@
       max-width: 800px;
       margin: 0 auto;
     }
-    #contactForm {
+    #appointmentForm {
       background: white;
       padding: 20px;
       border-radius: 8px;
@@ -57,7 +56,7 @@
       position: relative;
     }
     .form-group input,
-    input[name="preferredname"],
+    .form-group select,
     .form-group textarea {
       width: 100%;
       padding: 8px;
@@ -66,7 +65,9 @@
       box-sizing: border-box;
       background-color: #f1f3f5;
     }
-    .form-group input:disabled {
+    .form-group input:disabled,
+    .form-group select:disabled,
+    .form-group textarea:disabled {
       background-color: #e9ecef;
       color: #495057;
     }
@@ -84,11 +85,13 @@
       font-style: italic;
     }
     .readonly input,
+    .readonly select,
     .readonly textarea {
       pointer-events: none;
     }
-    .readonly input[type="date"] {
-      pointer-events: auto; /* Allow disabled date input to be styled */
+    .readonly input[type="date"],
+    .readonly input[type="datetime-local"] {
+      pointer-events: auto;
     }
     .readonly .form-group small.error {
       display: none;
@@ -98,38 +101,52 @@
       color: #6c757d;
       font-size: 12px;
     }
-    .address-group .form-row {
-      margin-bottom: 10px;
+    .form-check-radio {
+      margin-right: 20px;
     }
-    .tags-notes-row {
-      display: flex;
-      gap: 10px;
+    .form-check-input[type="radio"] {
+      width: 1.2em;
+      height: 1.2em;
+      margin-top: 0.2em;
+      vertical-align: top;
+      border-radius: 50%; /* Ensure circular shape */
+      appearance: radio; /* Reset to default radio appearance */
+      -webkit-appearance: radio; /* Safari/Chrome */
+      -moz-appearance: radio; /* Firefox */
     }
-    .tags-notes-row .form-group {
-      flex: 1;
+    .form-check-input[type="radio"]:checked {
+      background-color: #0d6efd; /* Match Bootstrap's checked color */
+      border-color: #0d6efd;
     }
-    .tags-notes-row .form-group textarea {
-      height: 100px;
+    .form-check-input[type="checkbox"] {
+      width: 3em; /* Restore switch size */
+      height: 1.5em;
+      cursor: pointer;
     }
-    /* Bootstrap switch customization */
     .form-switch .form-check-input {
       cursor: pointer;
-      width: 3em; /* Larger toggle */
+      width: 3em;
       height: 1.5em;
     }
     .form-switch .form-check-label {
       margin-left: 12px;
       font-weight: bold;
       color: #495057;
-      font-size: 1.2rem; /* Larger label text */
+      font-size: 1.2rem;
       padding-top: 2px;
+    }
+    #ApptOtherSpan {
+      display: none;
     }
     @media (max-width: 600px) {
       .form-row {
         flex-direction: column;
       }
       .form-switch .form-check-label {
-        font-size: 1rem; /* Slightly smaller on mobile */
+        font-size: 1rem;
+      }
+      .form-check-radio {
+        margin-right: 10px;
       }
     }
   </style>
@@ -144,11 +161,22 @@
   <span id="warning">You must press UPDATE to save changes!</span>
 </div>
 
-<form id="contactForm" action="https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY1MDYzNjA0MzY1MjZhNTUzMTUxMzEi_pc" method="POST">
+<form id="appointmentForm" action="https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY1MDYzNjA0MzY1MjZhNT" method="POST">
   <div class="form-row">
     <div class="form-group">
-      <label class="section-label" for="preferredname">Preferred Name:</label>
-      <input type="text" name="preferredname" placeholder="Preferred name">
+      <label class="section-label" for="caseid">Case ID:</label>
+      <input type="text" name="caseid" placeholder="Case ID">
+    </div>
+    <div class="form-group">
+      <label class="section-label" for="appointmentid">Appointment ID:</label>
+      <input type="text" name="appointmentid" placeholder="Appointment ID">
+    </div>
+  </div>
+
+  <div class="form-row">
+    <div class="form-group">
+      <label class="section-label" for="primaryname">Primary Name:</label>
+      <input type="text" name="primaryname" placeholder="Primary name">
     </div>
     <div class="form-group">
       <label class="section-label" for="contactid">Contact ID:</label>
@@ -158,88 +186,99 @@
 
   <div class="form-row">
     <div class="form-group">
-      <label class="section-label" for="firstname">Contact Name:</label>
-      <div class="form-row">
-        <div class="form-group">
-          <input type="text" name="firstname" placeholder="First name">
-        </div>
-        <div class="form-group">
-          <input type="text" name="middlename" placeholder="Middle name">
-        </div>
-        <div class="form-group">
-          <input type="text" name="lastname" placeholder="Last name">
-        </div>
-      </div>
+      <label class="section-label" for="email">Email:</label>
+      <input type="email" name="email" placeholder="Email">
+      <small class="error" style="display: none;"></small>
     </div>
-  </div>
-
-  <div class="form-row">
     <div class="form-group">
       <label class="section-label" for="phone">Phone Number:</label>
       <input type="text" name="phone" placeholder="(000) 000-0000">
       <small class="error" style="display: none;"></small>
     </div>
+  </div>
+
+  <div class="form-row">
     <div class="form-group">
-      <label class="section-label" for="email">Email:</label>
-      <input type="email" name="email" placeholder="Email">
-      <small class="error" style="display: none;"></small>
+      <label class="section-label" for="with">With:</label>
+      <select name="with">
+        <option disabled selected>Select Person:</option>
+        <option value="1">Stuart Sandweiss</option>
+        <option value="2">Rena</option>
+        <option value="3">Shoshana</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="section-label" for="status">Status:</label>
+      <select name="status" id="status">
+        <option value="All">All</option>
+        <option value="Attended">Attended</option>
+        <option value="Canceled">Canceled</option>
+        <option value="No Show">No Show</option>
+        <option value="Rescheduled">Rescheduled</option>
+        <option value="Scheduled" selected>Scheduled</option>
+      </select>
     </div>
   </div>
 
   <div class="form-row">
     <div class="form-group">
-      <label class="section-label" for="secondaryphone">Secondary Phone Number</label>
-      <input type="text" name="secondaryphone" placeholder="(000) 000-0000">
-      <small class="error" style="display: none;"></small>
+      <label class="section-label" for="apptTypeSelect">Appointment Type:</label>
+      <select id="apptTypeSelect" onchange="[document.getElementById('apptType').value, document.getElementById('apptLen').value]=this.value.split(','); document.getElementById('ApptOtherSpan').style.display=this.value==','?'block':'none'">
+        <option disabled selected>Appointment Type:</option>
+        <option value="Strategy Session,15">Strategy Session (15 min)</option>
+        <option value="Strategy Session Follow Up,15">Strategy Session Follow Up (15 min)</option>
+        <option value="Strategy Session Follow Up,30">Strategy Session Follow Up (30 min)</option>
+        <option value="Pre-filing Meeting,30">Pre-filing Meeting (30 min)</option>
+        <option value="Schedules Completion Meeting,45">Schedules Completion Meeting (45 min)</option>
+        <option value="Documents Completion Meeting,30">Documents Completion Meeting (30 min)</option>
+        <option value="Matrix Completion Meeting,15">Matrix Completion Meeting (15 min)</option>
+        <option value="Schedules Completion Meeting,20">Schedules Completion Meeting (20 min)</option>
+        <option value=",">Other</option>
+      </select>
     </div>
+  </div>
+  <span id="ApptOtherSpan">
+    <div class="form-row">
+      <div class="form-group">
+        <label class="section-label" for="apptType">Custom Appointment Type:</label>
+        <input type="text" id="apptType" name="apptType" placeholder="Custom appointment type">
+      </div>
+      <div class="form-group">
+        <label class="section-label" for="apptLen">Custom Appointment Length (min):</label>
+        <input type="number" id="apptLen" name="apptLen" placeholder="Length in minutes">
+      </div>
+    </div>
+  </span>
+
+  <div class="form-row">
     <div class="form-group">
-      <label class="section-label" for="secondaryemail">Secondary Email</label>
-      <input type="email" name="secondaryemail" placeholder="Secondary email">
-      <small class="error" style="display: none;"></small>
+      <label class="section-label">Method:</label>
+      <div class="d-flex">
+        <div class="form-check form-check-radio">
+          <input class="form-check-input" type="radio" name="method" id="methodTelephone" value="Telephone" checked>
+          <label class="form-check-label" for="methodTelephone">Telephone</label>
+        </div>
+        <div class="form-check form-check-radio">
+          <input class="form-check-input" type="radio" name="method" id="methodZoom" value="Zoom">
+          <label class="form-check-label" for="methodZoom">Zoom</label>
+        </div>
+        <div class="form-check form-check-radio">
+          <input class="form-check-input" type="radio" name="method" id="methodInPerson" value="In-person">
+          <label class="form-check-label" for="methodInPerson">In-person</label>
+        </div>
+      </div>
     </div>
   </div>
 
   <div class="form-row">
     <div class="form-group">
-      <label class="section-label" for="dob">Date of Birth:</label>
-      <input type="date" name="dob" placeholder="YYYY-MM-DD" aria-describedby="dob-format">
-      <!--<small class="format-note" id="dob-format">Format: YYYY-MM-DD</small>-->
-      <small class="error" style="display: none;"></small>
-    </div>
-    <div class="form-group">
-      <label class="section-label" for="ssn">SSN:</label>
-      <input type="text" name="ssn" placeholder="###-##-####">
+      <label class="section-label" for="datetime">Date and Time:</label>
+      <input type="datetime-local" name="datetime" placeholder="YYYY-MM-DD HH:MM">
       <small class="error" style="display: none;"></small>
     </div>
   </div>
 
-  <label class="section-label" for="address">Address:</label>
-  <div class="address-group">
-    <div class="form-row">
-      <div class="form-group">
-        <input type="text" name="address" placeholder="Street address">
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <input type="text" name="city" placeholder="City">
-      </div>
-      <div class="form-group">
-        <input type="text" name="state" placeholder="State">
-      </div>
-    </div>
-    <div class="form-row">
-      <div class="form-group">
-        <input type="text" name="zip" placeholder="ZIP code">
-      </div>
-    </div>
-  </div>
-
-  <div class="form-row tags-notes-row">
-    <div class="form-group">
-      <label class="section-label" for="tags">Tags:</label>
-      <textarea name="tags" rows="4" placeholder="Enter tags separated by a comma"></textarea>
-    </div>
+  <div class="form-row">
     <div class="form-group">
       <label class="section-label" for="notes">Notes:</label>
       <textarea name="notes" rows="4" placeholder="Notes"></textarea>
@@ -273,35 +312,23 @@ function validatePhone(phone) {
   return /^\(\d{3}\) \d{3}-\d{4}$/.test(phone);
 }
 
-function formatSSN(ssn) {
-  if (!ssn) return "";
-  ssn = ssn.replace(/\D/g, '');
-  if (ssn.length === 9) {
-    return ssn.replace(/^(\d{3})(\d{2})(\d{4})$/, "$1-$2-$3");
-  }
-  return ssn;
-}
-
-function validateSSN(ssn) {
-  return /^\d{3}-\d{2}-\d{4}$/.test(ssn);
-}
-
 function validateEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function parseDateForInput(d) {
-  if (!d) return "";
-  // Handle both YYYY-MM-DD and ISO formats (e.g., 1993-01-23T12:04:...)
-  const date = new Date(d.split('T')[0]); // Take only the date part
+function parseDateTimeForInput(dt) {
+  if (!dt) return "";
+  const date = new Date(dt);
   if (isNaN(date)) return "";
   return date.getFullYear() + "-" +
          (date.getMonth() + 1).toString().padStart(2, "0") + "-" +
-         date.getDate().toString().padStart(2, "0");
+         date.getDate().toString().padStart(2, "0") + "T" +
+         date.getHours().toString().padStart(2, "0") + ":" +
+         date.getMinutes().toString().padStart(2, "0");
 }
 
-function validateDate(date) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(date) && !isNaN(new Date(date));
+function validateDateTime(dt) {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(dt) && !isNaN(new Date(dt));
 }
 
 function showError(input, message) {
@@ -318,23 +345,28 @@ function clearError(input) {
 
 function initForm() {
   const params = getParams();
-  document.querySelector("[name=firstname]").value = params.firstname || "";
-  document.querySelector("[name=middlename]").value = params.middlename || "";
-  document.querySelector("[name=lastname]").value = params.lastname || "";
-  document.querySelector("[name=preferredname]").value = params.preferredname || "";
-  document.querySelector("[name=contactid]").value = params.contactid || params.clientid || "";
-  document.querySelector("[name=phone]").value = formatPhone(params.phone || "");
-  document.querySelector("[name=secondaryphone]").value = formatPhone(params.secondaryphone || "");
+  document.querySelector("[name=caseid]").value = params.caseid || "";
+  document.querySelector("[name=appointmentid]").value = params.appointmentid || "";
+  document.querySelector("[name=primaryname]").value = params.primaryname || "";
+  document.querySelector("[name=contactid]").value = params.contactid || "";
   document.querySelector("[name=email]").value = params.email || "";
-  document.querySelector("[name=secondaryemail]").value = params.secondaryemail || "";
-  document.querySelector("[name=dob]").value = parseDateForInput(params.dob || "");
-  document.querySelector("[name=ssn]").value = formatSSN(params.ssn || "");
-  document.querySelector("[name=address]").value = params.address || "";
-  document.querySelector("[name=city]").value = params.city || "";
-  document.querySelector("[name=state]").value = params.state || "";
-  document.querySelector("[name=zip]").value = params.zip || "";
-  document.querySelector("[name=tags]").value = params.tags || "";
+  document.querySelector("[name=phone]").value = formatPhone(params.phone || "");
+  document.querySelector("[name=with]").value = params.with || "";
+  document.querySelector("[name=status]").value = params.status || "Scheduled";
+  document.querySelector("[name=method][value='" + (params.method || "Telephone") + "']").checked = true;
+  document.querySelector("[name=datetime]").value = parseDateTimeForInput(params.datetime || "");
   document.querySelector("[name=notes]").value = params.notes || "";
+  
+  const apptTypeSelect = document.getElementById("apptTypeSelect");
+  const apptType = params.appttype || "";
+  const apptLen = params.apptlen || "";
+  if (apptType && apptLen) {
+    const optionExists = Array.from(apptTypeSelect.options).some(opt => opt.value === `${apptType},${apptLen}`);
+    apptTypeSelect.value = optionExists ? `${apptType},${apptLen}` : ",";
+    document.getElementById("apptType").value = apptType;
+    document.getElementById("apptLen").value = apptLen;
+    document.getElementById("ApptOtherSpan").style.display = optionExists ? "none" : "block";
+  }
   updateNotesCounter();
 }
 
@@ -345,12 +377,12 @@ function updateNotesCounter() {
 }
 
 function setReadOnlyMode(on) {
-  const form = document.getElementById("contactForm");
+  const form = document.getElementById("appointmentForm");
   const toggleBtn = document.getElementById("toggleBtn");
   const toggleLabel = document.getElementById("toggleLabel");
   const updateBtn = document.getElementById("updateBtn");
   const warning = document.getElementById("warning");
-  const dobInput = document.querySelector("[name=dob]");
+  const datetimeInput = document.querySelector("[name=datetime]");
 
   if (on) {
     form.classList.add("readonly");
@@ -358,38 +390,28 @@ function setReadOnlyMode(on) {
     toggleLabel.textContent = "View Mode";
     updateBtn.style.display = "none";
     warning.style.display = "none";
-    dobInput.disabled = true;
+    datetimeInput.disabled = true;
   } else {
     form.classList.remove("readonly");
     toggleBtn.checked = true;
     toggleLabel.textContent = "Edit Mode";
     updateBtn.style.display = "block";
     warning.style.display = "block";
-    dobInput.disabled = false;
+    datetimeInput.disabled = false;
   }
 }
 
 function validateForm() {
   let isValid = true;
   const phone = document.querySelector("[name=phone]");
-  const secondaryPhone = document.querySelector("[name=secondaryphone]");
   const email = document.querySelector("[name=email]");
-  const secondaryEmail = document.querySelector("[name=secondaryemail]");
-  const dob = document.querySelector("[name=dob]");
-  const ssn = document.querySelector("[name=ssn]");
+  const datetime = document.querySelector("[name=datetime]");
 
   if (phone.value && !validatePhone(phone.value)) {
     showError(phone, "Invalid phone number format (use (XXX) XXX-XXXX)");
     isValid = false;
   } else {
     clearError(phone);
-  }
-
-  if (secondaryPhone.value && !validatePhone(secondaryPhone.value)) {
-    showError(secondaryPhone, "Invalid secondary phone number format (use (XXX) XXX-XXXX)");
-    isValid = false;
-  } else {
-    clearError(secondaryPhone);
   }
 
   if (email.value && !validateEmail(email.value)) {
@@ -399,32 +421,18 @@ function validateForm() {
     clearError(email);
   }
 
-  if (secondaryEmail.value && !validateEmail(secondaryEmail.value)) {
-    showError(secondaryEmail, "Invalid secondary email format");
+  if (datetime.value && !validateDateTime(datetime.value)) {
+    showError(datetime, "Invalid date/time format (use YYYY-MM-DD HH:MM)");
     isValid = false;
   } else {
-    clearError(secondaryEmail);
-  }
-
-  if (dob.value && !validateDate(dob.value)) {
-    showError(dob, "Invalid date format (use YYYY-MM-DD)");
-    isValid = false;
-  } else {
-    clearError(dob);
-  }
-
-  if (ssn.value && !validateSSN(ssn.value)) {
-    showError(ssn, "Invalid SSN format (use XXX-XX-XXXX)");
-    isValid = false;
-  } else {
-    clearError(ssn);
+    clearError(datetime);
   }
 
   return isValid;
 }
 
 document.getElementById("toggleBtn").addEventListener("change", () => {
-  const form = document.getElementById("contactForm");
+  const form = document.getElementById("appointmentForm");
   const isReadOnly = form.classList.contains("readonly");
   setReadOnlyMode(!isReadOnly);
 });
@@ -448,18 +456,6 @@ document.querySelector("[name=phone]").addEventListener("blur", (e) => {
   }
 });
 
-document.querySelector("[name=secondaryphone]").addEventListener("input", (e) => {
-  e.target.value = formatPhone(e.target.value);
-});
-
-document.querySelector("[name=secondaryphone]").addEventListener("blur", (e) => {
-  if (e.target.value && !validatePhone(e.target.value)) {
-    showError(e.target, "Invalid secondary phone number format (use (XXX) XXX-XXXX)");
-  } else {
-    clearError(e.target);
-  }
-});
-
 document.querySelector("[name=email]").addEventListener("blur", (e) => {
   if (e.target.value && !validateEmail(e.target.value)) {
     showError(e.target, "Invalid email format");
@@ -468,35 +464,15 @@ document.querySelector("[name=email]").addEventListener("blur", (e) => {
   }
 });
 
-document.querySelector("[name=secondaryemail]").addEventListener("blur", (e) => {
-  if (e.target.value && !validateEmail(e.target.value)) {
-    showError(e.target, "Invalid secondary email format");
+document.querySelector("[name=datetime]").addEventListener("blur", (e) => {
+  if (e.target.value && !validateDateTime(e.target.value)) {
+    showError(e.target, "Invalid date/time format (use YYYY-MM-DD HH:MM)");
   } else {
     clearError(e.target);
   }
 });
 
-document.querySelector("[name=dob]").addEventListener("blur", (e) => {
-  if (e.target.value && !validateDate(e.target.value)) {
-    showError(e.target, "Invalid date format (use YYYY-MM-DD)");
-  } else {
-    clearError(e.target);
-  }
-});
-
-document.querySelector("[name=ssn]").addEventListener("input", (e) => {
-  e.target.value = formatSSN(e.target.value);
-});
-
-document.querySelector("[name=ssn]").addEventListener("blur", (e) => {
-  if (e.target.value && !validateSSN(e.target.value)) {
-    showError(e.target, "Invalid SSN format (use XXX-XX-XXXX)");
-  } else {
-    clearError(e.target);
-  }
-});
-
-document.getElementById("contactForm").addEventListener("submit", async (e) => {
+document.getElementById("appointmentForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!validateForm()) {
     alert("Please fix the errors in the form before submitting.");
@@ -508,7 +484,6 @@ document.getElementById("contactForm").addEventListener("submit", async (e) => {
   const data = new FormData(form);
 
   try {
-    // Attempt to get username and password from parent window
     if (window.parent && window.parent.username && window.parent.password) {
       data.append('username', window.parent.username.trim());
       data.append('password', window.parent.password.trim());
