@@ -432,24 +432,6 @@
     </div>
 
     <script>
-      function showAppt(apptID) {
-        Swal.fire({
-          title: `Appointment ${apptID}`,
-          html: `
-      <iframe 
-        src="/apptform.html?appt=${apptID}" 
-        width="100%" 
-        height="600" 
-        style="border:none;">
-      </iframe>
-    `,
-          width: "75%", // relative to viewport width
-          heightAuto: true,
-          showConfirmButton: false,
-          showCloseButton: true,
-        });
-      }
-
       function tabContactsGet(offset) {
         offsets.contacts = offset;
         E("tabContactsLoad").style.display = "block";
@@ -627,6 +609,24 @@
       </div>
     </div>
     <script>
+      function showAppt(apptID, apptNum) {
+        Swal.fire({
+          title: `Appointment ${apptID}`,
+          html: `
+      <iframe 
+        src="/apptform.html?apptID=${apptID}&apptNum=${apptNum}" 
+        width="100%" 
+        height="600" 
+        style="border:none;">
+      </iframe>
+    `,
+          width: "75%", // relative to viewport width
+          heightAuto: true,
+          showConfirmButton: false,
+          showCloseButton: true,
+        });
+      }
+
       function tabApptsTimeChange(time) {
         if (time == "All") {
           E("tabApptsDate1").style.display = "none";
@@ -692,10 +692,12 @@
             console.log(data);
             if (data.data.query2[0].counter > 0) {
               appts = data.data.query1;
-              appts.forEach((appt) => {
+              appts.forEach((appt, apptNum) => {
                 const row = table.insertRow();
                 row.innerHTML = `
-          <td><a href="#" onclick="showAppt(${appt.id})">${appt.id}</a></td>
+          <td><a href="#" onclick="showAppt(${appt.id}, ${apptNum})">${
+                  appt.id
+                }</a></td>
           <td>${appt.format_date}</td>
           <td>${appt.time}</td>
           <td><a href="#" onclick="addFile('${appt.name.replace(
