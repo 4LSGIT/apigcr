@@ -362,7 +362,7 @@ function initForm() {
     document.querySelector("[name=phone]").value = formatPhone(apptData.contact_phone || params.phone || "");
     document.querySelector("[name=with]").value = apptData.appt_with || params.with || "";
     document.querySelector("[name=status]").value = apptData.appt_status || params.status || "Scheduled";
-    document.getElementById("caseidlabel").innerHTML = `<a href="#" onclick="addFile('${apptData.case_id}', 'case', '${apptData.case_id}'); return false">Case ID:</a>`
+    document.getElementById("caseidlabel").innerHTML = `<a href="#" onclick="window.parent.addFile('${apptData.case_id}', 'case', '${apptData.case_id}'); return false">Case ID:</a>`
     document.getElementById("contactidlabel").innerHTML = `<a href="#" onclick="window.parent.addFile('${apptData.contact_name}', 'client', '${apptData.contact_id}'); return false">Contact ID:</a>`
 
     const methodValue = apptData.appt_platform ? apptData.appt_platform.toLowerCase() : "";
