@@ -1725,11 +1725,30 @@
           },
         });
       }
+
+            function testSwalPage() {
+        Swal.fire({
+          title: `test swal page iframe`,
+          html: `
+      <iframe 
+        src="/testswalpage.html" 
+        width="100%" 
+        height="600" 
+        style="border:none;">
+      </iframe>
+    `,
+          width: "75%", // relative to viewport width
+          heightAuto: true,
+          showConfirmButton: false,
+          showCloseButton: true,
+        });
+      }
     </script>
 
     <div id="tabAdmin" class="tab-main">
       <h2>Admin</h2>
       <button class="big-button" onclick="admintask1()">View/Edit Users</button>
+      <button class="big-button" onclick="testSwalPage()">Test Swal Page</button>
       <button class="big-button" onclick="admintask2()">Sequences</button>
       <button
         class="big-button"
