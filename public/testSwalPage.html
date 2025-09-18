@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SweetAlert2 Examples</title>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 2rem;
+    }
+    button {
+      margin: 0.5rem;
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>SweetAlert2 Demo</h1>
+
+  <button id="basic">Basic Alert</button>
+  <button id="success">Success Alert</button>
+  <button id="confirm">Confirmation</button>
+  <button id="input">Input Prompt</button>
+  <button id="queue">Queue Example</button>
+  <button id="toast">Toast Example</button>
+
+  <script>
+    // Basic alert
+    document.getElementById('basic').addEventListener('click', () => {
+      Swal.fire('Hello!', 'This is a basic alert.', 'info');
+    });
+
+    // Success alert
+    document.getElementById('success').addEventListener('click', () => {
+      Swal.fire({
+        icon: 'success',
+        title: 'Success!',
+        text: 'Your action was completed successfully.'
+      });
+    });
+
+    // Confirmation dialog
+    document.getElementById('confirm').addEventListener('click', () => {
+      Swal.fire({
+        title: 'Are you sure?',
+        text: 'You won\'t be able to revert this!',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Yes, do it!',
+        cancelButtonText: 'Cancel'
+      }).then((result) => {
+        if (result.isConfirmed) {
+          Swal.fire('Done!', 'Your action has been confirmed.', 'success');
+        }
+      });
+    });
+
+    // Input prompt
+    document.getElementById('input').addEventListener('click', () => {
+      Swal.fire({
+        title: 'Enter your name',
+        input: 'text',
+        inputPlaceholder: 'Type here',
+        showCancelButton: true
+      }).then((result) => {
+        if (result.value) {
+          Swal.fire(`Hello, ${result.value}!`);
+        }
+      });
+    });
+
+    // Queue of alerts
+    document.getElementById('queue').addEventListener('click', () => {
+      Swal.queue([
+        {
+          title: 'Step 1',
+          text: 'This is the first step.'
+        },
+        {
+          title: 'Step 2',
+          text: 'This is the second step.'
+        },
+        {
+          title: 'Done!',
+          text: 'All steps finished.'
+        }
+      ]);
+    });
+
+    // Toast example
+    document.getElementById('toast').addEventListener('click', () => {
+      const Toast = Swal.mixin({
+        toast: true,
+        position: 'top-end',
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true
+      });
+
+      Toast.fire({
+        icon: 'info',
+        title: 'This is a toast notification'
+      });
+    });
+  </script>
+</body>
+</html>
