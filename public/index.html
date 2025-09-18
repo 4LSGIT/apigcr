@@ -1913,6 +1913,9 @@
                   if (params.log) {
                     tabLogGet(0);
                   }
+                  if (params.appt) {
+                    showAppt(appt);
+                  }
                   const selectElements =
                     document.querySelectorAll("select.userslist");
                   userOpts = "";
