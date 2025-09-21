@@ -70,7 +70,7 @@ router.get('/isWorkday', async (req, res) => {
         if (event.category === 'holiday' && !event.title.startsWith("Erev")) {
           // Check if the event title matches a Yom Tov holiday
           const isYomTov = YOM_TOV_HOLIDAYS.some(holiday => 
-            holiday === 'Rosh Hashanah' ? event.title.includes('Rosh Hashanah') : event.title === holiday
+            holiday === 'Rosh Hashana' ? event.title.includes('Rosh Hashana') : event.title === holiday
           );
           if (isYomTov) {
             const holidayStart = moment(event.date).subtract(1, 'day').set({ hour: START_HOUR, minute: 0 }); // 6 PM previous day
