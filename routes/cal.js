@@ -34,19 +34,53 @@ router.get('/isWorkday', async (req, res) => {
     }
 
     const inputDate = moment(date);
-    const startDate = moment(inputDate).subtract(1, 'day').startOf('day'); // Start from previous day
-    const endDate = moment(inputDate).add(1, 'day').endOf('day'); // End on the next day
 
-    // Check if the input date falls within Shabbos (Friday 6 PM to Saturday 10 PM)
+    // Wider date range for fetching holidays to handle chains
+    const startDate = moment(inputDate).subtract(3, 'days').startOf('day');
+    const endDate = moment(inputDate).add(5, 'days').endOf('day');
+
+    // Fetch Jewish holidays from Hebcal API for the date range
+    const hebcalUrl = `https://www.hebcal.com/hebcal?cfg=json&v=1&maj=on&min=on&mod=on&start=${startDate.format('YYYY-MM-DD')}&end=${endDate.format('YYYY-MM-DD')}`;
+    const response = await fetch(hebcalUrl);
+    if (!response.ok) {
+      throw new Error(`Hebcal API request failed with status ${response.status}`);
+    }
+    const data = await response.json();
+    const events = data.items;
+
+    // Build restricted days (Saturdays or Yom Tov holidays)
+    const restricted = new Set();
+    for (let d = startDate.clone(); d.isBefore(endDate.add(1, 'day')); d.add(1, 'days')) {
+      const dateStr = d.format('YYYY-MM-DD');
+      let isRest = d.day() === 6;
+      if (!isRest) {
+        for (const event of events) {
+          if (event.date.startsWith(dateStr) && event.category === 'holiday' && !event.title.startsWith("Erev")) {
+            const isYomTov = YOM_TOV_HOLIDAYS.some(holiday => 
+              holiday === 'Rosh Hashana' ? event.title.includes('Rosh Hashana') : event.title === holiday
+            );
+            if (isYomTov) {
+              isRest = true;
+              break;
+            }
+          }
+        }
+      }
+      if (isRest) {
+        restricted.add(dateStr);
+      }
+    }
+
+    // Check if the input date falls within Shabbos (Friday 6 PM to Saturday 10 PM, exclusive end)
     let isShabbos = false;
     if (inputDate.day() === 5) { // Friday
-      const shabbosStart = moment(inputDate).set({ hour: START_HOUR, minute: 0 });
+      const shabbosStart = moment(inputDate).set({ hour: START_HOUR, minute: 0, second: 0 });
       if (inputDate.isSameOrAfter(shabbosStart)) {
         isShabbos = true;
       }
     } else if (inputDate.day() === 6) { // Saturday
-      const shabbosEnd = moment(inputDate).set({ hour: END_HOUR, minute: 0 });
-      if (inputDate.isSameOrBefore(shabbosEnd)) {
+      const shabbosEnd = moment(inputDate).set({ hour: END_HOUR, minute: 0, second: 0 });
+      if (inputDate.isBefore(shabbosEnd)) {
         isShabbos = true;
       }
     }
@@ -56,26 +90,16 @@ router.get('/isWorkday', async (req, res) => {
 
     // If not Shabbos, check for holidays
     if (!isShabbos) {
-      // Fetch Jewish holidays from Hebcal API for the date range
-      const hebcalUrl = `https://www.hebcal.com/hebcal?cfg=json&v=1&maj=on&min=on&mod=on&start=${startDate.format('YYYY-MM-DD')}&end=${endDate.format('YYYY-MM-DD')}`;
-      const response = await fetch(hebcalUrl);
-      if (!response.ok) {
-        throw new Error(`Hebcal API request failed with status ${response.status}`);
-      }
-      const data = await response.json();
-      const events = data.items;
-
-      // Check if the date falls within a Yom Tov holiday period (6 PM previous day to 10 PM holiday)
+      // Check if the date falls within a Yom Tov holiday period (6 PM previous day to 10 PM holiday, exclusive end)
       for (const event of events) {
         if (event.category === 'holiday' && !event.title.startsWith("Erev")) {
-          // Check if the event title matches a Yom Tov holiday
           const isYomTov = YOM_TOV_HOLIDAYS.some(holiday => 
             holiday === 'Rosh Hashana' ? event.title.includes('Rosh Hashana') : event.title === holiday
           );
           if (isYomTov) {
-            const holidayStart = moment(event.date).subtract(1, 'day').set({ hour: START_HOUR, minute: 0 }); // 6 PM previous day
-            const holidayEnd = moment(event.date).set({ hour: END_HOUR, minute: 0 }); // 10 PM holiday
-            if (inputDate.isBetween(holidayStart, holidayEnd, null, '[]')) {
+            const holidayStart = moment(event.date).subtract(1, 'day').set({ hour: START_HOUR, minute: 0, second: 0 });
+            const holidayEnd = moment(event.date).set({ hour: END_HOUR, minute: 0, second: 0 });
+            if (inputDate.isSameOrAfter(holidayStart) && inputDate.isBefore(holidayEnd)) {
               isHoliday = true;
               holidayName = event.title;
               break;
@@ -85,13 +109,54 @@ router.get('/isWorkday', async (req, res) => {
       }
     }
 
+    const workday = !isShabbos && !isHoliday;
+
+    // Calculate workdayIn
+    let workdayIn = 0;
+    if (!workday) {
+      // Find covering restricted days (D where period covers inputDate)
+      const coveringDs = [];
+      for (const dateStr of restricted) {
+        const D = moment(dateStr);
+        const periodStart = D.clone().subtract(1, 'day').set({ hour: START_HOUR, minute: 0, second: 0 });
+        const periodEnd = D.clone().set({ hour: END_HOUR, minute: 0, second: 0 });
+        if (inputDate.isSameOrAfter(periodStart) && inputDate.isBefore(periodEnd)) {
+          coveringDs.push(D);
+        }
+      }
+
+      if (coveringDs.length === 0) {
+        // Should not happen if !workday
+        throw new Error('Inconsistent workday calculation');
+      }
+
+      // Find max D among covering
+      let maxD = coveringDs.reduce((max, cur) => cur.isAfter(max) ? cur : max, coveringDs[0]);
+
+      // Extend forward if consecutive restricted days
+      let nextDay = maxD.clone().add(1, 'day').startOf('day');
+      let nextDateStr = nextDay.format('YYYY-MM-DD');
+      while (restricted.has(nextDateStr)) {
+        maxD = nextDay.clone();
+        nextDay.add(1, 'day');
+        nextDateStr = nextDay.format('YYYY-MM-DD');
+      }
+
+      // End time is maxD at END_HOUR
+      const endTime = maxD.clone().set({ hour: END_HOUR, minute: 0, second: 0 });
+
+      // Minutes until endTime
+      workdayIn = endTime.diff(inputDate, 'minutes');
+    }
+
     // Prepare response
     const result = {
       date: inputDate.format('YYYY-MM-DDTHH:mm:ss'),
       isShabbos,
       isHoliday,
       holidayName: isHoliday ? holidayName : null,
-      workday: !isShabbos && !isHoliday
+      workday,
+      workdayIn
     };
 
     res.json(result);
