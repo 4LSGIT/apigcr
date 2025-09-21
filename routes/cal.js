@@ -37,18 +37,18 @@ router.get('/isWorkday', async (req, res) => {
     const inputDate = moment(date);
     console.log(`Processing date: ${inputDate.format('YYYY-MM-DDTHH:mm:ss')}`);
 
-    // --- Check Shabbos ---
+    // --- Check Shabbos (Friday after START_HOUR -> Saturday before END_HOUR) ---
     let isShabbos = false;
     if (inputDate.day() === 5) { // Friday
-      const shabbosStart = inputDate.clone().set({ hour: START_HOUR, minute: 0, second: 0 });
+      const shabbosStart = inputDate.clone().set({ hour: START_HOUR, minute: 0, second: 0, millisecond: 0 });
       if (inputDate.isSameOrAfter(shabbosStart)) isShabbos = true;
     } else if (inputDate.day() === 6) { // Saturday
-      const shabbosEnd = inputDate.clone().set({ hour: END_HOUR, minute: 0, second: 0 });
+      const shabbosEnd = inputDate.clone().set({ hour: END_HOUR, minute: 0, second: 0, millisecond: 0 });
       if (inputDate.isBefore(shabbosEnd)) isShabbos = true;
     }
     console.log(`Is Shabbos: ${isShabbos}`);
 
-    // --- Fetch Hebcal holidays if not Shabbos ---
+    // --- Fetch Hebcal holidays (only if not inside Shabbos detection; we still fetch around the window) ---
     let events = [];
     if (!isShabbos) {
       const startDate = inputDate.clone().subtract(1, 'day').startOf('day');
@@ -70,35 +70,41 @@ router.get('/isWorkday', async (req, res) => {
         }
       } catch (apiError) {
         console.error('Hebcal API error:', apiError.message);
+        events = [];
       }
     }
 
-    // --- Build restricted days ---
+    // --- Build restricted days set (dates that are considered "non-workday" days) ---
+    // We scan from day before input to +3 days (covers chains up to a few days)
     const restricted = new Set();
-    const startScan = inputDate.clone().subtract(1, 'day').startOf('day');
-    const endScan = inputDate.clone().add(3, 'days').endOf('day');
+    const scanStart = inputDate.clone().subtract(1, 'day').startOf('day');
+    const scanEnd = inputDate.clone().add(3, 'days').endOf('day');
 
-    for (let d = startScan.clone(); d.isSameOrBefore(endScan); d.add(1, 'day')) {
+    for (let d = scanStart.clone(); d.isSameOrBefore(scanEnd); d.add(1, 'day')) {
       const dateStr = d.format('YYYY-MM-DD');
+
+      // Mark Saturday as restricted (Shabbos full date)
       if (d.day() === 6) {
         restricted.add(dateStr);
-      } else {
-        for (const event of events) {
-          if (event.date.startsWith(dateStr) && event.category === 'holiday' && !event.title.startsWith('Erev')) {
-            const isYomTov = YOM_TOV_HOLIDAYS.some(holiday =>
-              holiday === 'Rosh Hashana' ? event.title.includes('Rosh Hashana') : event.title === holiday
-            );
-            if (isYomTov) {
-              restricted.add(dateStr);
-              break;
-            }
+        continue;
+      }
+
+      // Check hebcal events for Yom Tov days (exclude 'Erev' entries)
+      for (const event of events) {
+        if (event.date.startsWith(dateStr) && event.category === 'holiday' && !event.title.startsWith('Erev')) {
+          const isYomTov = YOM_TOV_HOLIDAYS.some(holiday =>
+            holiday === 'Rosh Hashana' ? event.title.includes('Rosh Hashana') : event.title === holiday
+          );
+          if (isYomTov) {
+            restricted.add(dateStr);
+            break;
           }
         }
       }
     }
     console.log(`Restricted days: ${Array.from(restricted).join(', ')}`);
 
-    // --- Check if input date is inside holiday window ---
+    // --- Determine whether this specific input datetime is inside a holiday window (isHoliday) ---
     let isHoliday = false;
     let holidayName = null;
     if (!isShabbos) {
@@ -107,14 +113,16 @@ router.get('/isWorkday', async (req, res) => {
           const isYomTov = YOM_TOV_HOLIDAYS.some(holiday =>
             holiday === 'Rosh Hashana' ? event.title.includes('Rosh Hashana') : event.title === holiday
           );
-          if (isYomTov) {
-            const holidayStart = moment(event.date).subtract(1, 'day').set({ hour: START_HOUR, minute: 0, second: 0 });
-            const holidayEnd = moment(event.date).set({ hour: END_HOUR, minute: 0, second: 0 });
-            if (inputDate.isSameOrAfter(holidayStart) && inputDate.isBefore(holidayEnd)) {
-              isHoliday = true;
-              holidayName = event.title;
-              break;
-            }
+          if (!isYomTov) continue;
+
+          // Define the holiday coverage window (same logic as shabbos: START_HOUR of previous day -> END_HOUR of event day)
+          const holidayStart = moment(event.date).subtract(1, 'day').set({ hour: START_HOUR, minute: 0, second: 0, millisecond: 0 });
+          const holidayEnd = moment(event.date).set({ hour: END_HOUR, minute: 0, second: 0, millisecond: 0 });
+
+          if (inputDate.isSameOrAfter(holidayStart) && inputDate.isBefore(holidayEnd)) {
+            isHoliday = true;
+            holidayName = event.title;
+            break;
           }
         }
       }
@@ -124,25 +132,75 @@ router.get('/isWorkday', async (req, res) => {
     const workday = !isShabbos && !isHoliday;
     console.log(`Is Workday: ${workday}`);
 
-    // --- Calculate workdayIn ---
+    // --- Calculate workdayIn (minutes until next workday begins) ---
+    // Behavior:
+    // - If it's a workday => workdayIn = 0
+    // - If not a workday => find the restricted *period* that covers the input datetime,
+    //   extend through consecutive restricted days, take END_HOUR of last restricted day as reopen time,
+    //   return minutes from input to that reopen time (0 if input is already past reopen time).
     let workdayIn = 0;
+
     if (!workday) {
-      let currentDay = inputDate.clone().startOf('day');
+      // 1) Find the restricted day whose coverage period contains inputDate
+      let coveringDay = null;
+      for (let d = scanStart.clone(); d.isSameOrBefore(scanEnd); d.add(1, 'day')) {
+        const dateStr = d.format('YYYY-MM-DD');
+        if (!restricted.has(dateStr)) continue;
 
-      // Skip forward through restricted days
-      while (restricted.has(currentDay.format('YYYY-MM-DD'))) {
-        currentDay.add(1, 'day');
+        const periodStart = d.clone().subtract(1, 'day').set({ hour: START_HOUR, minute: 0, second: 0, millisecond: 0 });
+        const periodEnd = d.clone().set({ hour: END_HOUR, minute: 0, second: 0, millisecond: 0 });
+
+        if (inputDate.isSameOrAfter(periodStart) && inputDate.isBefore(periodEnd)) {
+          // keep the latest covering day (if multiple overlap, the later one is the one that matters)
+          coveringDay = d.clone();
+        }
       }
 
-      // The next non-restricted day's END_HOUR is when work resumes
-      const nextWorkdayEnd = currentDay.clone().set({ hour: END_HOUR, minute: 0, second: 0 });
+      if (coveringDay) {
+        // 2) Extend through consecutive restricted days to find the last restricted day in the chain
+        let lastRestricted = coveringDay.clone();
+        while (restricted.has(lastRestricted.clone().add(1, 'day').format('YYYY-MM-DD'))) {
+          lastRestricted.add(1, 'day');
+        }
 
-      if (inputDate.isBefore(nextWorkdayEnd)) {
-        workdayIn = nextWorkdayEnd.diff(inputDate, 'minutes');
+        // 3) Reopen time is END_HOUR on lastRestricted
+        const reopenTime = lastRestricted.clone().set({ hour: END_HOUR, minute: 0, second: 0, millisecond: 0 });
+
+        if (inputDate.isSameOrAfter(reopenTime)) {
+          workdayIn = 0;
+        } else {
+          workdayIn = reopenTime.diff(inputDate, 'minutes');
+          if (workdayIn < 0) workdayIn = 0;
+        }
       } else {
-        workdayIn = 0; // Already past END_HOUR
+        // Fallback: if for some reason we couldn't find a covering restricted day
+        // then find the next non-restricted day and use its END_HOUR as reopen time.
+        let nextDay = inputDate.clone().startOf('day');
+        let found = false;
+        for (let i = 0; i < 7; i++) {
+          const dateStr = nextDay.format('YYYY-MM-DD');
+          if (!restricted.has(dateStr)) {
+            const reopenTime = nextDay.clone().set({ hour: END_HOUR, minute: 0, second: 0, millisecond: 0 });
+            if (inputDate.isSameOrAfter(reopenTime)) {
+              workdayIn = 0;
+            } else {
+              workdayIn = reopenTime.diff(inputDate, 'minutes');
+            }
+            found = true;
+            break;
+          }
+          nextDay.add(1, 'day');
+        }
+        if (!found) {
+          // last-resort safety: set to 0
+          workdayIn = 0;
+        }
       }
+    } else {
+      // If it's a workday we follow your earlier instruction to return 0
+      workdayIn = 0;
     }
+
     console.log(`Workday In: ${workdayIn} minutes`);
 
     // --- Response ---
@@ -153,15 +211,15 @@ router.get('/isWorkday', async (req, res) => {
       holidayName: isHoliday ? holidayName : null,
       workday,
       workdayIn,
-      version: "2"
+      version: '3' // bumped version for debugging
     };
 
     console.log(`Response: ${JSON.stringify(result)}`);
-    res.json(result);
+    return res.json(result);
 
   } catch (error) {
-    console.error('Error in /isWorkday:', error.message);
-    res.status(500).json({ error: 'Internal server error', details: error.message });
+    console.error('Error in /isWorkday:', error && error.message ? error.message : error);
+    return res.status(500).json({ error: 'Internal server error', details: error && error.message ? error.message : String(error) });
   }
 });
 
