@@ -9,7 +9,7 @@ const END_HOUR = 22;   // 10 PM
 
 // List of strict Yom Tov holidays (based on provided list)
 const YOM_TOV_HOLIDAYS = [
-  'Rosh Hashanah', // Will use partial match for variations like "Rosh Hashanah 5788" or "Rosh Hashanah II"
+  'Rosh Hashana', // Will use partial match for variations like "Rosh Hashanah 5788" or "Rosh Hashanah II"
   'Yom Kippur',
   'Sukkot I',
   'Sukkot II',
