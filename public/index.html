@@ -181,12 +181,72 @@
 
     <div id="tabReports" class="tab-main">
       <h1>Reports</h1>
-      <select id="reportTemplate" style="width: auto">
-        <option value="" selected disabled>Select a Report Template</option>
-      </select>
-      <table id="reportsTable" class="logTable"></table>
+      <input placeholder="enter tags, separated by a comma" id="reportTagChoose"><button id="reportButton" style="width: auto" class="big-button" onclick="getForReport()">
+        Get Contacts
+      </button>
+      <table id="reportsTable" class="logTable">
+        <tr><th>select</th><th>ID</th><th>Name</th><th>Phone</th><th>Email</th><th>Tags</th></tr>
+      </table>
     </div>
-
+<script>
+  function getForReport() {
+    const tagInput = E("reportTagChoose").value;
+    const tags = tagInput.split(",").map(tag => tag.trim()).filter(tag => tag !== "");
+    if (tags.length === 0) {
+        console.error("No valid tags provided");
+        alert("Please enter at least one tag.");
+        return;
+    }
+    // Construct query for exact tag matching in comma-separated contact_tags (VARCHAR)
+    const likeConditions = tags.map(tag => {
+        // Basic escaping for SQL injection (replace single quotes)
+        const safeTag = tag.replace(/'/g, "''");
+        // Match exact tags: standalone, start, middle, or end of comma-separated list
+        return `(contact_tags = '${safeTag}' OR contact_tags LIKE '${safeTag},%' OR contact_tags LIKE '%,${safeTag},%' OR contact_tags LIKE '%,${safeTag}')`;
+    });
+    const q = `SELECT * FROM contacts WHERE ${likeConditions.join(" OR ")}`;
+    console.log("Executing query:", q);
+    const table = E("reportsTable");
+    while (table.rows.length > 1) {
+        table.deleteRow(1); // Keep header row (index 0)
+    }
+    sendQuery(q)
+        .then(response => {
+            const results = response.data.query1; // Array of contact objects
+            if (!Array.isArray(results) || results.length === 0) {
+                console.warn("No results found for the query");
+                const row = table.insertRow();
+                const cell = row.insertCell();
+                cell.textContent = "No results found";
+                cell.colSpan = 5; // Span across all columns
+                return;
+            }
+            results.forEach((contact, index) => {
+                const row = table.insertRow();
+                const checkboxCell = row.insertCell();
+                const checkbox = document.createElement("input");
+                checkbox.type = "checkbox";
+                checkbox.checked = true;
+                checkbox.id = `contact-checkbox-${index}`;
+                checkboxCell.appendChild(checkbox);
+                const fields = ["contact_id", "contact_name", "contact_phone", "contact_email", "contact_tags"];
+                fields.forEach((field, fieldIndex) => {
+                    const cell = row.insertCell();
+                    if (field === "contact_id") {
+                        const escapedName = contact.contact_name ? contact.contact_name.replace(/'/g, "\\'") : "";
+                        cell.innerHTML = `<a href="#" onclick="addFile('${escapedName}', 'contact', '${contact.contact_id}')">${contact.contact_id}</a>`;
+                    } else {
+                        cell.textContent = contact[field] || "-"; // Handle missing data
+                    }
+                });
+            });
+        })
+        .catch(error => {
+            console.error("Query failed:", error);
+            alert("An error occurred while fetching the report. Please try again.");
+        });
+}
+</script>
     <div id="tabCases" class="tab-main">
       <h1>This is the Cases Tab</h1>
       <span>
