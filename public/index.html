@@ -180,108 +180,99 @@
     </div>
 
     <div id="tabReports" class="tab-main">
-      <div id="campaignsContainer">
-    <!-- Tab Header -->
-    <div class="tab-header">
-      <button class="tab-button active" onclick="showTab('tabReports')">Select Contacts</button>
-      <button class="tab-button" onclick="showTab('tabComposeCampaign')">Compose Campaign</button>
-      <button class="tab-button" onclick="showTab('tabScheduledCampaigns')">Scheduled Campaigns</button>
-    </div>
+  <div id="campaign-tab-reports" class="campaign-tab-main active">
+    <h1>Reports</h1>
+    <div class="input-label">Tags:</div>
+    <input placeholder="enter tags, separated by a comma" id="campaign-report-tag-choose" class="input">
+    <button id="campaign-report-button" class="big-button" onclick="campaignGetForReport()">
+      Get Contacts
+    </button>
+    <table id="campaign-reports-table" class="logTable">
+      <tr>
+        <th>Select</th>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Phone</th>
+        <th>Email</th>
+        <th>Tags</th>
+      </tr>
+    </table>
+  </div>
 
-    <!-- Tab: Select Contacts -->
-    <div id="tabReports" class="tab-main active">
-      <h1>Reports</h1>
-      <input placeholder="enter tags, separated by a comma" id="reportTagChoose">
-      <button id="reportButton" class="big-button" onclick="getForReport()">
-        Get Contacts
-      </button>
-      <table id="reportsTable" class="logTable">
-        <tr>
-          <th>Select</th>
-          <th>ID</th>
-          <th>Name</th>
-          <th>Phone</th>
-          <th>Email</th>
-          <th>Tags</th>
-        </tr>
-      </table>
-    </div>
-
-    <!-- Tab: Compose Campaign -->
-    <div id="tabComposeCampaign" class="tab-main">
-      <h1>Compose Campaign</h1>
-      <div class="campaign-form">
-        <div class="checkbox-group">
-          <label><input type="checkbox" id="campaignEmail" onchange="toggleCampaignFields()"> Email</label>
-          <label><input type="checkbox" id="campaignSMS" onchange="toggleCampaignFields()"> SMS</label>
-        </div>
-        <div id="emailFields" class="hidden">
-          <label for="emailSubject">Email Subject:</label>
-          <input type="text" id="emailSubject" placeholder="Enter email subject">
-          <label for="emailBody">Email Body:</label>
-          <textarea id="emailBody" rows="5" placeholder="Enter email body"></textarea>
-        </div>
-        <div id="smsFields" class="hidden">
-          <label for="smsBody">SMS Body:</label>
-          <textarea id="smsBody" rows="3" placeholder="Enter SMS body (max 160 characters)"></textarea>
-        </div>
-        <label><input type="checkbox" id="sendNow" onchange="toggleScheduleField()"> Send Now</label>
-        <div id="scheduleField">
-          <label for="campaignSchedule">Schedule Date/Time:</label>
-          <input type="datetime-local" id="campaignSchedule">
-        </div>
-        <button class="big-button" onclick="scheduleCampaign()">Schedule Campaign</button>
+  <!-- Tab: Compose Campaign -->
+  <div id="campaign-tab-compose" class="campaign-tab-main">
+    <h1>Compose Campaign</h1>
+    <div class="campaign-form">
+      <div class="checkbox-group">
+        <label><input type="checkbox" id="campaign-email-checkbox" onchange="campaignToggleFields()"> Email</label>
+        <label><input type="checkbox" id="campaign-sms-checkbox" onchange="campaignToggleFields()"> SMS</label>
       </div>
+      <div id="campaign-email-fields" class="campaign-hidden">
+        <div class="input-label">Email Subject:</div>
+        <input type="text" id="campaign-email-subject" class="input" placeholder="Enter email subject">
+        <div class="input-label">Email Body:</div>
+        <textarea id="campaign-email-body" class="input-ta" rows="5" placeholder="Enter email body"></textarea>
+      </div>
+      <div id="campaign-sms-fields" class="campaign-hidden">
+        <div class="input-label">SMS Body:</div>
+        <textarea id="campaign-sms-body" class="input-ta" rows="3" placeholder="Enter SMS body (max 160 characters)"></textarea>
+      </div>
+      <label><input type="checkbox" id="campaign-send-now" onchange="campaignToggleSchedule()"> Send Now</label>
+      <div id="campaign-schedule-field">
+        <div class="input-label">Schedule Date/Time:</div>
+        <input type="datetime-local" id="campaign-schedule" class="input">
+      </div>
+      <button class="big-button" onclick="campaignScheduleCampaign()">Schedule Campaign</button>
     </div>
+  </div>
 
-    <!-- Tab: Scheduled Campaigns -->
-    <div id="tabScheduledCampaigns" class="tab-main">
-      <h1>Scheduled Campaigns</h1>
-      <table id="scheduledCampaignsTable" class="logTable">
-        <tr>
-          <th>ID</th>
-          <th>Type</th>
-          <th>Subject</th>
-          <th>Scheduled Time</th>
-          <th>Action</th>
-        </tr>
-      </table>
-    </div>
+  <!-- Tab: Scheduled Campaigns -->
+  <div id="campaign-tab-scheduled" class="campaign-tab-main">
+    <h1>Scheduled Campaigns</h1>
+    <table id="campaign-scheduled-table" class="logTable">
+      <tr>
+        <th>ID</th>
+        <th>Type</th>
+        <th>Subject</th>
+        <th>Scheduled Time</th>
+        <th>Action</th>
+      </tr>
+    </table>
   </div>
 
   <script>
     // Tab switching function
-    function showTab(tabId) {
-      document.querySelectorAll('.tab-button').forEach(button => {
+    function campaignShowTab(tabId) {
+      document.querySelectorAll('.campaign-tab-button').forEach(button => {
         button.classList.remove('active');
       });
-      document.querySelectorAll('.tab-main').forEach(tab => {
+      document.querySelectorAll('.campaign-tab-main').forEach(tab => {
         tab.classList.remove('active');
       });
-      document.querySelector(`button[onclick="showTab('${tabId}')"]`).classList.add('active');
+      document.querySelector(`button[onclick="campaignShowTab('${tabId}')"]`).classList.add('active');
       document.getElementById(tabId).classList.add('active');
     }
 
     // Toggle email/SMS fields based on checkboxes
-    function toggleCampaignFields() {
-      const emailCheckbox = E("campaignEmail");
-      const smsCheckbox = E("campaignSMS");
-      const emailFields = E("emailFields");
-      const smsFields = E("smsFields");
-      emailFields.classList.toggle("hidden", !emailCheckbox.checked);
-      smsFields.classList.toggle("hidden", !smsCheckbox.checked);
+    function campaignToggleFields() {
+      const emailCheckbox = E("campaign-email-checkbox");
+      const smsCheckbox = E("campaign-sms-checkbox");
+      const emailFields = E("campaign-email-fields");
+      const smsFields = E("campaign-sms-fields");
+      emailFields.classList.toggle("campaign-hidden", !emailCheckbox.checked);
+      smsFields.classList.toggle("campaign-hidden", !smsCheckbox.checked);
     }
 
     // Toggle schedule field based on Send Now checkbox
-    function toggleScheduleField() {
-      const sendNow = E("sendNow").checked;
-      const scheduleField = E("scheduleField");
-      scheduleField.classList.toggle("hidden", sendNow);
+    function campaignToggleSchedule() {
+      const sendNow = E("campaign-send-now").checked;
+      const scheduleField = E("campaign-schedule-field");
+      scheduleField.classList.toggle("campaign-hidden", sendNow);
     }
 
-    // Existing getForReport function (unchanged)
-    function getForReport() {
-      const tagInput = E("reportTagChoose").value;
+    // Updated getForReport function with renamed IDs
+    function campaignGetForReport() {
+      const tagInput = E("campaign-report-tag-choose").value;
       const tags = tagInput.split(",").map(tag => tag.trim()).filter(tag => tag !== "");
       if (tags.length === 0) {
         console.error("No valid tags provided");
@@ -294,7 +285,7 @@
       });
       const q = `SELECT * FROM contacts WHERE ${likeConditions.join(" OR ")}`;
       console.log("Executing query:", q);
-      const table = E("reportsTable");
+      const table = E("campaign-reports-table");
       while (table.rows.length > 1) {
         table.deleteRow(1);
       }
@@ -315,7 +306,7 @@
             const checkbox = document.createElement("input");
             checkbox.type = "checkbox";
             checkbox.checked = true;
-            checkbox.id = `contact-checkbox-${index}`;
+            checkbox.id = `campaign-contact-checkbox-${index}`;
             checkboxCell.appendChild(checkbox);
             const fields = ["contact_id", "contact_name", "contact_phone", "contact_email", "contact_tags"];
             fields.forEach((field, fieldIndex) => {
@@ -336,19 +327,19 @@
     }
 
     // Updated scheduleCampaign function
-    function scheduleCampaign() {
-      const emailCheckbox = E("campaignEmail").checked;
-      const smsCheckbox = E("campaignSMS").checked;
-      const emailSubject = E("emailSubject").value;
-      const emailBody = E("emailBody").value;
-      const smsBody = E("smsBody").value;
-      const sendNow = E("sendNow").checked;
-      const schedule = sendNow ? new Date().toISOString() : E("campaignSchedule").value;
-      const selectedContacts = Array.from(document.querySelectorAll('#reportsTable input[type="checkbox"]:checked'))
+    function campaignScheduleCampaign() {
+      const emailCheckbox = E("campaign-email-checkbox").checked;
+      const smsCheckbox = E("campaign-sms-checkbox").checked;
+      const emailSubject = E("campaign-email-subject").value;
+      const emailBody = E("campaign-email-body").value;
+      const smsBody = E("campaign-sms-body").value;
+      const sendNow = E("campaign-send-now").checked;
+      const schedule = sendNow ? new Date().toISOString() : E("campaign-schedule").value;
+      const selectedContacts = Array.from(document.querySelectorAll('#campaign-reports-table input[type="checkbox"]:checked'))
         .map(checkbox => {
           const row = checkbox.closest('tr');
           const contactIdCell = row.cells[1].querySelector('a');
-          return contactIdCell.textContent; // Get contact_id from the anchor tag
+          return contactIdCell.textContent;
         });
 
       // Validation
@@ -373,7 +364,7 @@
         return;
       }
 
-      // Example query (adjust for your backend)
+      // Example query
       const campaigns = [];
       if (emailCheckbox) {
         campaigns.push({
@@ -386,29 +377,28 @@
       if (smsCheckbox) {
         campaigns.push({
           type: 'sms',
-          subject: '', // SMS typically has no subject
+          subject: '',
           body: smsBody.replace(/'/g, "''"),
           schedule: schedule
         });
       }
-      // Log sample queries (replace with sendQuery calls)
       campaigns.forEach(campaign => {
         const q = `INSERT INTO campaigns (type, subject, body, schedule, contact_ids) VALUES ('${campaign.type}', '${campaign.subject}', '${campaign.body}', '${campaign.schedule}', '${selectedContacts.join(",")}')`;
         console.log("Scheduling campaign with query:", q);
-        // sendQuery(q).then(...).catch(...); // Implement backend call
+        // sendQuery(q).then(...).catch(...);
       });
       alert("Campaign(s) scheduled (placeholder).");
     }
 
-    // Placeholder function for fetching and displaying scheduled campaigns
-    function loadScheduledCampaigns() {
-      const table = E("scheduledCampaignsTable");
+    // Placeholder function for fetching scheduled campaigns
+    function campaignLoadScheduledCampaigns() {
+      const table = E("campaign-scheduled-table");
       while (table.rows.length > 1) {
         table.deleteRow(1);
       }
       const q = `SELECT campaign_id, type, subject, scheduled_time FROM campaigns WHERE status = 'scheduled'`;
       console.log("Fetching scheduled campaigns with query:", q);
-      // Mock data for demonstration
+      // Mock data
       const mockCampaigns = [
         { campaign_id: "1", type: "email", subject: "Welcome Email", scheduled_time: "2025-10-01T10:00" },
         { campaign_id: "2", type: "sms", subject: "", scheduled_time: "2025-10-02T14:00" }
@@ -420,22 +410,24 @@
         row.insertCell().textContent = campaign.subject || "-";
         row.insertCell().textContent = campaign.scheduled_time;
         const actionCell = row.insertCell();
-        actionCell.innerHTML = `<button class="big-button" onclick="deleteCampaign('${campaign.campaign_id}')">Delete</button>`;
+        actionCell.innerHTML = `<button class="big-button" onclick="campaignDeleteCampaign('${campaign.campaign_id}')">Delete</button>`;
       });
     }
 
     // Placeholder function for deleting a campaign
-    function deleteCampaign(campaignId) {
+    function campaignDeleteCampaign(campaignId) {
       const q = `DELETE FROM campaigns WHERE campaign_id = '${campaignId}'`;
       console.log("Deleting campaign with query:", q);
-      // sendQuery(q).then(...).catch(...); // Implement backend call
+      // sendQuery(q).then(...).catch(...);
       alert(`Campaign ${campaignId} deleted (placeholder).`);
-      loadScheduledCampaigns();
+      campaignLoadScheduledCampaigns();
     }
 
     // Load scheduled campaigns when the tab is opened
-    document.querySelector('button[onclick="showTab(\'tabScheduledCampaigns\')"]').addEventListener('click', loadScheduledCampaigns);
-  </script></div>
+    document.querySelector('button[onclick="campaignShowTab(\'campaign-tab-scheduled\')"]').addEventListener('click', campaignLoadScheduledCampaigns);
+  </script>
+</div>
+    </div>
     <div id="tabCases" class="tab-main">
       <h1>This is the Cases Tab</h1>
       <span>
