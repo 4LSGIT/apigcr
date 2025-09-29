@@ -175,6 +175,7 @@ body.swal2-shown > [aria-hidden="true"] {
    /* Campaign-specific styles */
     .campaign-tab-header {
       display: flex;
+      justify-content: center;
       gap: 10px;
       margin-bottom: 20px;
     }
