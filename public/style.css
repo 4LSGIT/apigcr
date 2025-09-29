@@ -203,7 +203,7 @@ body.swal2-shown > [aria-hidden="true"] {
       display: flex;
       flex-direction: column;
       gap: 10px;
-      max-width: 500px;
+      max-width: 800px;
     }
     .campaign-form .input-label {
       font-weight: bold;
