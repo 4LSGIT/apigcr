@@ -181,7 +181,15 @@
 
     <div id="tabReports" class="tab-main">
   <div id="campaign-tab-reports" class="campaign-tab-main active">
-    <h1>Reports</h1>
+      <div class="campaign-tab-header">
+    <button class="campaign-tab-button active" onclick="campaignShowTab('campaign-tab-reports')">Select Contacts</button>
+    <button class="campaign-tab-button" onclick="campaignShowTab('campaign-tab-compose')">Compose Campaign</button>
+    <button class="campaign-tab-button" onclick="campaignShowTab('campaign-tab-scheduled')">Scheduled Campaigns</button>
+  </div>
+
+  <!-- Tab: Select Contacts -->
+        <h1>Reports</h1>
+
     <div class="input-label">Tags:</div>
     <input placeholder="enter tags, separated by a comma" id="campaign-report-tag-choose" class="input">
     <button id="campaign-report-button" class="big-button" onclick="campaignGetForReport()">
