@@ -101,7 +101,7 @@
       >
         <i class="fa-solid fa-list fa-2xl"></i><br /><br />Tasks
       </button>
-      <button style="width: 100px; height: 100px" onclick="newClient()">
+      <button style="width: 100px; height: 100px" onclick="newContact()">
         <i class="fa-solid fa-user-plus fa-2xl"></i><br /><br />New Client
       </button>
       <button
@@ -2374,7 +2374,7 @@ document.querySelector('button[onclick="campaignShowTab(\'campaign-tab-scheduled
         });
       }
 
-      function newClient() {
+      function newContact() {
         Swal.fire({
           title: "Add New Client:",
           html: `<label class="input-label">Name:</label>
