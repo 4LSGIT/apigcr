@@ -39,6 +39,17 @@ db.on("error", (err) => {
 const db = require("./startup/db");
 
 const routesPath = path.join(__dirname, "routes");
+
+app.get("/:page", (req, res, next) => {
+  const filePath = path.join(__dirname, "public", req.params.page + ".html");
+
+  if (fs.existsSync(filePath)) {
+    return res.sendFile(filePath);
+  }
+
+  next(); // continue to normal routes if file doesn’t exist
+});
+
 fs.readdirSync(routesPath).forEach((file) => {
   if (file.endsWith(".js")) {
     const route = require(`./routes/${file}`);
