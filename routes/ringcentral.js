@@ -12,6 +12,16 @@ const RINGCENTRAL_TOKEN_URL =
   "https://platform.ringcentral.com/restapi/oauth/token";
 const ALERT_URL =
   "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZhMDYzMTA0M2Q1MjY5NTUzNjUxMzUi_pc";
+
+function normalizeNumber(num) {
+  if (!num) return null;
+  let cleaned = num.toString().replace(/\D/g, "");
+  if (cleaned.length === 11 && cleaned.startsWith("1")) { return `+${cleaned}`;}
+  if (cleaned.length === 10) { return `+1${cleaned}`; }
+  if (num.startsWith("+")) { return num; }
+  return null;
+}
+
 // --- DB Helpers ---
 async function getSetting(db, key) {
   return new Promise((resolve, reject) => {
@@ -247,6 +257,8 @@ async function checkApiKey(req, res, next) {
   }
   next();
 }
+
+
 // --- Routes ---
 router.get("/ringcentral/authorize", (req, res) => {
   const authUrl = `${RINGCENTRAL_AUTH_URL}?response_type=code&client_id=${process.env.RINGCENTRAL_CLIENT_ID}&redirect_uri=${process.env.RINGCENTRAL_REDIRECT_URI}`;
@@ -293,7 +305,9 @@ router.get("/ringcentral/callback", async (req, res) => {
   }
 });
 router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
-  const { from, to, message } = { ...req.query, ...req.body };
+  let { from, to, message } = { ...req.query, ...req.body };
+  from = normalizeNumber(from);
+  to = normalizeNumber(to);
   if (!from || !to || !message) {
     return res.status(400).json({ error: "Missing required fields" });
   }
