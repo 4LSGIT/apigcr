@@ -48,8 +48,8 @@ async function sendAlert(errorType, message, extraData = {}) {
       body: JSON.stringify({
         error_type: errorType,
         alert: message,
-        environment: process.env.ENVIROMENT || "undefined",
-        timestamp: new Date().toISOString(),
+        environment: process.env.ENVIRONMENT || "undefined",
+        timestamp: new Date().toISOStrng(),
         ...extraData,
       }),
     }).catch((err) => console.error("Failed to send alert webhook:", err));
