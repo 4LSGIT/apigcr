@@ -2,12 +2,10 @@ const express = require("express");
 const router = express.Router();
 const fetch = require("node-fetch");
 require("dotenv").config();
-
 let tokenData = null;
 let cachedApiKey = null;
 let refreshTimeout;
-
-// ---  URLs ---
+// --- URLs ---
 const RINGCENTRAL_AUTH_URL =
   "https://platform.ringcentral.com/restapi/oauth/authorize";
 const RINGCENTRAL_TOKEN_URL =
@@ -28,7 +26,6 @@ async function getSetting(db, key) {
     );
   });
 }
-
 async function setSetting(db, key, value) {
   return new Promise((resolve, reject) => {
     db.query(
@@ -38,7 +35,6 @@ async function setSetting(db, key, value) {
     );
   });
 }
-
 // --- Webhook Alert Helper ---
 async function sendAlert(errorType, message, extraData = {}) {
   try {
@@ -49,7 +45,7 @@ async function sendAlert(errorType, message, extraData = {}) {
         error_type: errorType,
         alert: message,
         environment: process.env.ENVIRONMENT || "undefined",
-        timestamp: new Date().toISOStrng(),
+        timestamp: new Date().toISOString(),
         ...extraData,
       }),
     }).catch((err) => console.error("Failed to send alert webhook:", err));
@@ -57,7 +53,6 @@ async function sendAlert(errorType, message, extraData = {}) {
     console.error("Failed to send alert webhook:", err);
   }
 }
-
 // --- Retry Helper ---
 async function fetchWithRetries(url, options, retries = 3, delay = 500) {
   let lastError;
@@ -78,7 +73,6 @@ async function fetchWithRetries(url, options, retries = 3, delay = 500) {
   }
   throw lastError;
 }
-
 // --- Token Save ---
 async function saveToken(db) {
   try {
@@ -91,22 +85,27 @@ async function saveToken(db) {
     });
   }
 }
-
 // --- Token Refresh Lock ---
 let isRefreshing = false;
 let refreshPromise = null;
-
 async function refreshAccessToken(db) {
   if (!tokenData || !tokenData.refresh_token) return;
-
   if (isRefreshing) {
     console.log("Token refresh already in progress, waiting...");
     return refreshPromise;
   }
-
   isRefreshing = true;
   refreshPromise = (async () => {
     try {
+      const refreshIssuedAt = tokenData.issued_at || Date.now();
+      const refreshExpiresIn = (tokenData.refresh_token_expires_in || 0) * 1000;
+      const refreshExpiry = refreshIssuedAt + refreshExpiresIn;
+      if (Date.now() >= refreshExpiry) {
+        console.error("Refresh token expired, requiring reauthorization.");
+        sendAlert("refresh_token_expired", "Refresh token has expired, reauthorization needed");
+        tokenData = null;
+        return;
+      }
       const res = await fetchWithRetries(RINGCENTRAL_TOKEN_URL, {
         method: "POST",
         headers: {
@@ -122,7 +121,6 @@ async function refreshAccessToken(db) {
           refresh_token: tokenData.refresh_token,
         }),
       });
-
       tokenData = {
         ...(await res.json()),
         issued_at: Date.now(),
@@ -140,10 +138,8 @@ async function refreshAccessToken(db) {
       isRefreshing = false;
     }
   })();
-
   return refreshPromise;
 }
-
 // --- Schedule Refresh ---
 function scheduleRefresh(db) {
   if (!tokenData || !tokenData.expires_in) return;
@@ -151,31 +147,35 @@ function scheduleRefresh(db) {
   clearTimeout(refreshTimeout);
   refreshTimeout = setTimeout(() => refreshAccessToken(db), refreshTime);
 }
-
 // --- Token Load Lock ---
 let isLoadingToken = false;
 let loadTokenPromise = null;
-
 async function loadToken(db) {
   if (isLoadingToken) {
     console.log("Token load already in progress, waiting...");
     return loadTokenPromise;
   }
-
   isLoadingToken = true;
   loadTokenPromise = (async () => {
     try {
       const raw = await getSetting(db, "rc_token");
-
       if (raw) {
         tokenData = JSON.parse(raw);
         console.log("Loaded token from DB.");
-
         const issuedAt = tokenData.issued_at || Date.now();
         const now = Date.now();
         const expiresIn = tokenData.expires_in * 1000;
         const tokenExpiry = issuedAt + expiresIn;
-
+        // Check refresh token expiry as well
+        const refreshIssuedAt = tokenData.issued_at || Date.now();
+        const refreshExpiresIn = (tokenData.refresh_token_expires_in || 0) * 1000;
+        const refreshExpiry = refreshIssuedAt + refreshExpiresIn;
+        if (now >= refreshExpiry) {
+          console.error("Refresh token expired on load, requiring reauthorization.");
+          sendAlert("refresh_token_expired", "Refresh token expired on load, reauthorization needed");
+          tokenData = null;
+          return;
+        }
         if (now >= tokenExpiry) {
           console.log("Access token expired on load, attempting refresh...");
           try {
@@ -204,10 +204,8 @@ async function loadToken(db) {
       isLoadingToken = false;
     }
   })();
-
   return loadTokenPromise;
 }
-
 async function loadTokenWithRetries(db, retries = 3, delay = 500) {
   let lastError;
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -227,7 +225,6 @@ async function loadTokenWithRetries(db, retries = 3, delay = 500) {
     error: lastError.message,
   });
 }
-
 // --- API Key Middleware ---
 async function checkApiKey(req, res, next) {
   if (!cachedApiKey) {
@@ -239,7 +236,6 @@ async function checkApiKey(req, res, next) {
       cachedApiKey = process.env.RINGCENTRAL_API_KEY;
     }
   }
-
   const key = req.headers["x-api-key"] || req.query.key;
   if (key !== cachedApiKey) {
     sendAlert("unauthorized_access", "Invalid API key attempt", {
@@ -251,17 +247,19 @@ async function checkApiKey(req, res, next) {
   }
   next();
 }
-
 // --- Routes ---
 router.get("/ringcentral/authorize", (req, res) => {
   const authUrl = `${RINGCENTRAL_AUTH_URL}?response_type=code&client_id=${process.env.RINGCENTRAL_CLIENT_ID}&redirect_uri=${process.env.RINGCENTRAL_REDIRECT_URI}`;
   res.redirect(authUrl);
 });
-
 router.get("/ringcentral/callback", async (req, res) => {
+  if (req.query.error) {
+    console.error("OAuth error from RingCentral:", req.query.error);
+    sendAlert("oauth_error", "OAuth callback error from RingCentral", { error: req.query.error });
+    return res.status(400).send("Authorization failed.");
+  }
   const code = req.query.code;
   const db = req.db;
-
   try {
     const resToken = await fetchWithRetries(RINGCENTRAL_TOKEN_URL, {
       method: "POST",
@@ -279,7 +277,6 @@ router.get("/ringcentral/callback", async (req, res) => {
         redirect_uri: process.env.RINGCENTRAL_REDIRECT_URI,
       }),
     });
-
     tokenData = {
       ...(await resToken.json()),
       issued_at: Date.now(),
@@ -295,24 +292,19 @@ router.get("/ringcentral/callback", async (req, res) => {
     res.status(500).send("Failed to retrieve token.");
   }
 });
-
 router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
   const { from, to, message } = { ...req.query, ...req.body };
   if (!from || !to || !message) {
     return res.status(400).json({ error: "Missing required fields" });
   }
-
   const db = req.db;
-
   if (!tokenData || !tokenData.access_token) {
     return res.status(401).json({ error: "Not authorized with RingCentral" });
   }
-
   const now = Date.now();
   const issuedAt = tokenData.issued_at || now;
   const expiresIn = tokenData.expires_in * 1000;
   const tokenExpiry = issuedAt + expiresIn;
-
   if (now >= tokenExpiry) {
     console.log("Token expired during SMS send, refreshing...");
     try {
@@ -326,7 +318,6 @@ router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
       return res.status(401).json({ error: "Failed to refresh access token" });
     }
   }
-
   try {
     const smsRes = await fetchWithRetries(
       "https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/sms",
@@ -343,7 +334,6 @@ router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
         }),
       }
     );
-
     const result = await smsRes.json();
     res.json(result);
   } catch (err) {
@@ -357,16 +347,13 @@ router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
     res.status(500).send("Error sending SMS.");
   }
 });
-
 router.get("/ringcentral/status", checkApiKey, (req, res) => {
   if (!tokenData || !tokenData.access_token) {
     return res.json({ authorized: false });
   }
-
   const expiresIn = tokenData.expires_in || 0;
   const issuedAt = tokenData.issued_at || Date.now();
   const expiresAt = new Date(Number(issuedAt) + expiresIn * 1000);
-
   res.json({
     authorized: true,
     access_token_expires_at: expiresAt.toISOString(),
@@ -377,7 +364,6 @@ router.get("/ringcentral/status", checkApiKey, (req, res) => {
       : "unknown",
   });
 });
-
 // --- Initial Token Load ---
 router.use(async (req, res, next) => {
   if (!tokenData) {
@@ -390,6 +376,5 @@ router.use(async (req, res, next) => {
   }
   next();
 });
-
 module.exports = router;
 module.exports.loadTokenFromDb = loadToken;
