@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Upload File</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; }
+    input, button { display: block; margin: 10px 0; padding: 8px; width: 100%; }
+    #result { margin-top: 20px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>Upload File</h1>
+
+  <form id="uploadForm">
+    <input type="text" name="username" placeholder="Username" required>
+    <input type="password" name="password" placeholder="Password" required>
+    <input type="file" name="file" required>
+    <button type="submit">Upload</button>
+  </form>
+
+  <div id="result"></div>
+
+  <script>
+    const form = document.getElementById('uploadForm');
+    const resultDiv = document.getElementById('result');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const formData = new FormData(form);
+
+      resultDiv.textContent = 'Uploading...';
+
+      try {
+        const response = await fetch('/upload', {
+          method: 'POST',
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          resultDiv.innerHTML = `
+            <strong>Upload successful!</strong><br>
+            URL: <a href="${data.url}" target="_blank">${data.url}</a>
+          `;
+        } else {
+          resultDiv.textContent = 'Error: ' + (data.error || 'Unknown error');
+        }
+      } catch (err) {
+        console.error(err);
+        resultDiv.textContent = 'Network error: ' + err.message;
+      }
+    });
+  </script>
+</body>
+</html>
