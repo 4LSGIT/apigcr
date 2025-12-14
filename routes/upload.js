@@ -49,15 +49,23 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     const filename = randomFilename(req.file.originalname);
     const file = bucket.file(filename);
 
+    const now = new Date().toISOString();
+
     await file.save(req.file.buffer, {
       resumable: false,
       metadata: {
         contentType: req.file.mimetype,
         cacheControl: "public, max-age=31536000",
+        metadata: {
+          username,
+          originalName: req.file.originalname,
+          uploadedAt: now,
+        },
       },
     });
 
-    //await file.makePublic();
+    // Log metadata internally
+    console.log(`[UPLOAD] User: ${username}, File: ${req.file.originalname}, Saved as: ${filename}, Size: ${req.file.size} bytes, Time: ${now}`);
 
     const publicUrl = `https://storage.googleapis.com/${bucketName}/${filename}`;
 
@@ -67,6 +75,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       filename,
       size: req.file.size,
       mime: req.file.mimetype,
+      uploadedAt: now,
     });
 
   } catch (err) {
