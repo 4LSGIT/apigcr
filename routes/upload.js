@@ -57,7 +57,7 @@ router.post("/upload", upload.single("file"), async (req, res) => {
       },
     });
 
-    await file.makePublic();
+    //await file.makePublic();
 
     const publicUrl = `https://storage.googleapis.com/${bucketName}/${filename}`;
 
