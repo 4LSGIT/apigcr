@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Campaigns</title>
+  <link href="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.min.js"></script>
+  <style>
+    .quill-editor .ql-container {
+      border: 1px solid #cccccc;
+      border-radius: 3px;
+      box-sizing: border-box;
+      width: 100%;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    #campaign-email-subject-editor .ql-container {
+      height: 20px;
+      padding: 8px;
+    }
+    #campaign-email-body-editor .ql-container {
+      height: 100px;
+      padding: 8px;
+    }
+    .quill-editor .ql-toolbar {
+      border: 1px solid #cccccc;
+      border-bottom: none;
+      border-radius: 3px 3px 0 0;
+      background-color: #f2f2f2;
+    }
+    /* Assuming other styles like .tab-main, .campaign-tab-header, etc., are defined in the parent or need to be copied here if not */
+  </style>
+</head>
+<body>
+  <h2>Campaigns</h2>
+  <div id="campaign-container">
+    <!-- Tab Header -->
+    <div class="campaign-tab-header">
+      <button class="campaign-tab-button active" onclick="campaignShowTab('campaign-tab-reports')">Select Contacts</button>
+      <button class="campaign-tab-button" onclick="campaignShowTab('campaign-tab-compose')">Compose Campaign</button>
+      <button class="campaign-tab-button" onclick="campaignShowTab('campaign-tab-scheduled')">Scheduled Campaigns</button>
+    </div>
+    <!-- Tab: Select Contacts -->
+    <div id="campaign-tab-reports" class="campaign-tab-main active">
+      <div class="input-label">Tags:</div>
+      <input placeholder="enter tags, separated by a comma" id="campaign-report-tag-choose" class="input">
+      <button id="campaign-report-button" class="big-button" onclick="campaignGetForReport()">Get Contacts</button>
+      <table id="campaign-reports-table" class="logTable">
+        <tr>
+          <th>Select</th>
+          <th>ID</th>
+          <th>Name</th>
+          <th>Phone</th>
+          <th>Email</th>
+          <th>Tags</th>
+        </tr>
+      </table>
+    </div>
+    <!-- Tab: Compose Campaign -->
+    <div id="campaign-tab-compose" class="campaign-tab-main">
+      <div class="campaign-form">
+        <div class="checkbox-group">
+          <label><input type="checkbox" id="campaign-email-checkbox" checked onchange="campaignToggleFields()"> Email</label>
+          <label><input type="checkbox" id="campaign-sms-checkbox" onchange="campaignToggleFields()"> SMS</label>
+        </div>
+        <div id="campaign-email-fields">
+          <div class="input-label">Email Subject:</div>
+          <div id="campaign-email-subject-editor" class="quill-editor"></div>
+          <div class="input-label">Email Body:</div>
+          <div id="campaign-email-body-editor" class="quill-editor"></div>
+        </div>
+        <div id="campaign-sms-fields" class="campaign-hidden">
+          <div class="input-label">SMS Body:</div>
+          <textarea id="campaign-sms-body" class="input-ta" rows="3" placeholder="Enter SMS body (max 160 characters)" maxlength="160"></textarea>
+        </div>
+        <label><input type="checkbox" id="campaign-send-now" checked onchange="campaignToggleSchedule()"> Send Now</label>
+        <div id="campaign-schedule-field" class="campaign-hidden">
+          <div class="input-label">Schedule Date/Time:</div>
+          <input type="datetime-local" id="campaign-schedule" class="input">
+        </div>
+        <button class="big-button" onclick="campaignScheduleCampaign()">Schedule Campaign</button>
+      </div>
+    </div>
+    <!-- Tab: Scheduled Campaigns -->
+    <div id="campaign-tab-scheduled" class="campaign-tab-main">
+      <table id="campaign-scheduled-table" class="logTable">
+        <tr>
+          <th>ID</th>
+          <th>Type</th>
+          <th>Subject</th>
+          <th>Scheduled Time</th>
+          <th>Action</th>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    // Shorthand for local document.getElementById
+    const E = (id) => document.getElementById(id);
+
+    // Shorthand for window.parent
+    const p = window.parent;
+
+    // Initialize Quill editors
+    let quillSubject = null;
+    let quillBody = null;
+    document.addEventListener('DOMContentLoaded', () => {
+      quillSubject = new Quill('#campaign-email-subject-editor', {
+        theme: 'snow',
+        modules: {
+          toolbar: [
+            ['bold', 'italic', 'underline'],
+            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+            ['link']
+          ]
+        },
+        placeholder: 'Enter email subject'
+      });
+      quillBody = new Quill('#campaign-email-body-editor', {
+        theme: 'snow',
+        modules: {
+          toolbar: [
+            ['bold', 'italic', 'underline'],
+            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+            ['link', 'image']
+          ]
+        },
+        placeholder: 'Enter email body'
+      });
+      // Set initial field visibility
+      campaignToggleFields();
+      campaignToggleSchedule();
+    });
+
+    // Tab switching function
+    function campaignShowTab(tabId) {
+      document.querySelectorAll('.campaign-tab-button').forEach(button => {
+        button.classList.remove('active');
+      });
+      document.querySelectorAll('.campaign-tab-main').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      document.querySelector(`button[onclick="campaignShowTab('${tabId}')"]`).classList.add('active');
+      document.getElementById(tabId).classList.add('active');
+    }
+
+    // Toggle email/SMS fields based on checkboxes
+    function campaignToggleFields() {
+      const emailCheckbox = E('campaign-email-checkbox');
+      const smsCheckbox = E('campaign-sms-checkbox');
+      const emailFields = E('campaign-email-fields');
+      const smsFields = E('campaign-sms-fields');
+      emailFields.classList.toggle('campaign-hidden', !emailCheckbox.checked);
+      smsFields.classList.toggle('campaign-hidden', !smsCheckbox.checked);
+    }
+
+    // Toggle schedule field based on Send Now checkbox
+    function campaignToggleSchedule() {
+      const sendNow = E('campaign-send-now').checked;
+      const scheduleField = E('campaign-schedule-field');
+      scheduleField.classList.toggle('campaign-hidden', sendNow);
+    }
+
+    // Fetch contacts for report
+    function campaignGetForReport() {
+      const tagInput = E('campaign-report-tag-choose').value;
+      const tags = tagInput.split(',').map(tag => tag.trim()).filter(tag => tag !== '');
+      if (tags.length === 0) {
+        console.error('No valid tags provided');
+        p.Toast.fire({ icon: 'error', title: 'Please enter at least one tag.' });
+        return;
+      }
+      const likeConditions = tags.map(tag => {
+        const safeTag = tag.replace(/'/g, "''");
+        return `(contact_tags = '${safeTag}' OR contact_tags LIKE '${safeTag},%' OR contact_tags LIKE '%,${safeTag},%' OR contact_tags LIKE '%,${safeTag}')`;
+      });
+      const q = `SELECT * FROM contacts WHERE ${likeConditions.join(' OR ')}`;
+      console.log('Executing query:', q);
+      const table = E('campaign-reports-table');
+      while (table.rows.length > 1) {
+        table.deleteRow(1);
+      }
+      p.sendQuery(q)
+        .then(response => {
+          const results = response.data.query1;
+          if (!Array.isArray(results) || results.length === 0) {
+            console.warn('No results found for the query');
+            const row = table.insertRow();
+            const cell = row.insertCell();
+            cell.textContent = 'No results found';
+            cell.colSpan = 5;
+            return;
+          }
+          results.forEach((contact, index) => {
+            const row = table.insertRow();
+            const checkboxCell = row.insertCell();
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = true;
+            checkbox.id = `campaign-contact-checkbox-${index}`;
+            checkboxCell.appendChild(checkbox);
+            const fields = ['contact_id', 'contact_name', 'contact_phone', 'contact_email', 'contact_tags'];
+            fields.forEach((field, fieldIndex) => {
+              const cell = row.insertCell();
+              if (field === 'contact_id') {
+                const escapedName = contact.contact_name ? contact.contact_name.replace(/'/g, "\\'") : '';
+                cell.innerHTML = `<a href="#" onclick="window.parent.addFile('${escapedName}', 'contact', '${contact.contact_id}')">${contact.contact_id}</a>`;
+              } else {
+                cell.textContent = contact[field] || '-';
+              }
+            });
+          });
+        })
+        .catch(error => {
+          console.error('Query failed:', error);
+          p.Toast.fire({ icon: 'error', title: 'An error occurred while fetching the report. Please try again.' });
+        });
+    }
+
+    // Schedule a campaign
+    function campaignScheduleCampaign() {
+      const emailCheckbox = E('campaign-email-checkbox').checked;
+      const smsCheckbox = E('campaign-sms-checkbox').checked;
+      const emailSubject = quillSubject.root.innerHTML;
+      const emailBody = quillBody.root.innerHTML;
+      const smsBody = E('campaign-sms-body').value;
+      const sendNow = E('campaign-send-now').checked;
+      const schedule = sendNow ? new Date().toISOString() : E('campaign-schedule').value;
+      const selectedContacts = Array.from(document.querySelectorAll('#campaign-reports-table input[type="checkbox"]:checked'))
+        .map(checkbox => {
+          const row = checkbox.closest('tr');
+          const contactIdCell = row.cells[1].querySelector('a');
+          return contactIdCell.textContent;
+        });
+      // Validation
+      if (!emailCheckbox && !smsCheckbox) {
+        p.Toast.fire({ icon: 'error', title: 'Please select at least one campaign type (Email or SMS).' });
+        return;
+      }
+      if (emailCheckbox && (!quillSubject.getText().trim() || !quillBody.getText().trim())) {
+        p.Toast.fire({ icon: 'error', title: 'Please fill in both email subject and body.' });
+        return;
+      }
+      if (smsCheckbox && !smsBody) {
+        p.Toast.fire({ icon: 'error', title: 'Please fill in the SMS body.' });
+        return;
+      }
+      if (!sendNow && !schedule) {
+        p.Toast.fire({ icon: 'error', title: 'Please specify a schedule date/time or check "Send Now".' });
+        return;
+      }
+      if (selectedContacts.length === 0) {
+        p.Toast.fire({ icon: 'error', title: 'Please select at least one contact.' });
+        return;
+      }
+      // Send queries
+      const campaigns = [];
+      if (emailCheckbox) {
+        campaigns.push({
+          type: 'email',
+          subject: emailSubject.replace(/'/g, "''"),
+          body: emailBody.replace(/'/g, "''"),
+          schedule: schedule
+        });
+      }
+      if (smsCheckbox) {
+        campaigns.push({
+          type: 'sms',
+          subject: '',
+          body: smsBody.replace(/'/g, "''"),
+          schedule: schedule
+        });
+      }
+      campaigns.forEach(campaign => {
+        const q = `INSERT INTO campaigns (type, subject, body, schedule, contact_ids) VALUES ('${campaign.type}', '${campaign.subject}', '${campaign.body}', '${campaign.schedule}', '${selectedContacts.join(',')}')`;
+        console.log('Scheduling campaign with query:', q);
+        p.sendQuery(q)
+          .then(response => {
+            p.Toast.fire({ icon: 'success', title: 'Campaign scheduled successfully!' });
+          })
+          .catch(error => {
+            console.error('Failed to schedule campaign:', error);
+            p.Toast.fire({ icon: 'error', title: 'Failed to schedule campaign. Please try again.' });
+          });
+      });
+    }
+
+    // Fetch scheduled campaigns
+    function campaignLoadScheduledCampaigns() {
+      const table = E('campaign-scheduled-table');
+      while (table.rows.length > 1) {
+        table.deleteRow(1);
+      }
+      const q = `SELECT campaign_id, type, subject, scheduled_time FROM campaigns WHERE status = 'scheduled'`;
+      console.log('Fetching scheduled campaigns with query:', q);
+      p.sendQuery(q)
+        .then(response => {
+          const campaigns = response.data.query1;
+          if (!Array.isArray(campaigns) || campaigns.length === 0) {
+            const row = table.insertRow();
+            const cell = row.insertCell();
+            cell.textContent = 'No scheduled campaigns';
+            cell.colSpan = 5;
+            return;
+          }
+          campaigns.forEach(campaign => {
+            const row = table.insertRow();
+            row.insertCell().textContent = campaign.campaign_id;
+            row.insertCell().textContent = campaign.type;
+            row.insertCell().textContent = campaign.subject || '-';
+            row.insertCell().textContent = campaign.scheduled_time;
+            const actionCell = row.insertCell();
+            actionCell.innerHTML = `<button class="big-button" onclick="campaignDeleteCampaign('${campaign.campaign_id}')">Delete</button>`;
+          });
+        })
+        .catch(error => {
+          console.error('Failed to load scheduled campaigns:', error);
+          p.Toast.fire({ icon: 'error', title: 'Failed to load scheduled campaigns.' });
+        });
+    }
+
+    // Delete a campaign
+    function campaignDeleteCampaign(campaignId) {
+      const q = `DELETE FROM campaigns WHERE campaign_id = '${campaignId}'`;
+      console.log('Deleting campaign with query:', q);
+      p.sendQuery(q)
+        .then(response => {
+          p.Toast.fire({ icon: 'success', title: `Campaign ${campaignId} deleted.` });
+          campaignLoadScheduledCampaigns();
+        })
+        .catch(error => {
+          console.error('Failed to delete campaign:', error);
+          p.Toast.fire({ icon: 'error', title: 'Failed to delete campaign.' });
+        });
+    }
+
+    // Load scheduled campaigns when the tab is opened
+    document.querySelector('button[onclick="campaignShowTab(\'campaign-tab-scheduled\')"]').addEventListener('click', campaignLoadScheduledCampaigns);
+  </script>
+</body>
+</html>
