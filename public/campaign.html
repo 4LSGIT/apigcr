@@ -105,9 +105,14 @@ input, select, .input-ta, .input {
   border-radius: 3px;
   box-sizing: border-box;
 }
-.campaign-form .checkbox-group {
+.campaign-form .radio-group {
   display: flex;
   gap: 20px;
+}
+.campaign-form .schedule-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 .campaign-hidden {
   display: none;
@@ -167,26 +172,35 @@ input, select, .input-ta, .input {
     <!-- Tab: Compose Campaign -->
     <div id="campaign-tab-compose" class="campaign-tab-main">
       <div class="campaign-form">
-        <div class="checkbox-group">
-          <label><input type="checkbox" id="campaign-email-checkbox" checked onchange="campaignToggleFields()"> Email</label>
-          <label><input type="checkbox" id="campaign-sms-checkbox" onchange="campaignToggleFields()"> SMS</label>
+        <div class="radio-group">
+          <label><input type="radio" name="campaign-type" value="sms" onchange="campaignToggleFields()"> SMS</label>
+          <label><input type="radio" name="campaign-type" value="simple-email" checked onchange="campaignToggleFields()"> Simple Email</label>
+          <label><input type="radio" name="campaign-type" value="html-email" onchange="campaignToggleFields()"> HTML Email</label>
         </div>
-        <div id="campaign-email-fields">
+        <div id="campaign-subject-fields">
           <div class="input-label">Email Subject:</div>
           <div id="campaign-email-subject-editor" class="quill-editor"></div>
+        </div>
+        <div id="campaign-simple-body-fields">
           <div class="input-label">Email Body:</div>
           <div id="campaign-email-body-editor" class="quill-editor"></div>
+        </div>
+        <div id="campaign-html-body-fields" class="campaign-hidden">
+          <div class="input-label">HTML Body:</div>
+          <textarea id="campaign-html-body" class="input-ta" rows="10" placeholder="Paste HTML here"></textarea>
         </div>
         <div id="campaign-sms-fields" class="campaign-hidden">
           <div class="input-label">SMS Body:</div>
           <textarea id="campaign-sms-body" class="input-ta" rows="3" placeholder="Enter SMS body (max 160 characters)" maxlength="160"></textarea>
         </div>
-        <label><input type="checkbox" id="campaign-send-now" checked onchange="campaignToggleSchedule()"> Send Now</label>
-        <div id="campaign-schedule-field" class="campaign-hidden">
-          <div class="input-label">Schedule Date/Time:</div>
-          <input type="datetime-local" id="campaign-schedule" class="input">
+        <div class="schedule-group">
+          <label><input type="checkbox" id="campaign-send-now" checked onchange="campaignToggleSchedule()"> Send Now</label>
+          <div id="campaign-schedule-field" class="campaign-hidden">
+            <span class="input-label">Or Schedule:</span>
+            <input type="datetime-local" id="campaign-schedule" class="input">
+          </div>
         </div>
-        <button class="big-button" onclick="campaignScheduleCampaign()">Schedule Campaign</button>
+        <button class="big-button" onclick="campaignScheduleCampaign()">Create Campaign</button>
       </div>
     </div>
     <!-- Tab: Scheduled Campaigns -->
@@ -248,14 +262,29 @@ input, select, .input-ta, .input {
       document.querySelector(`button[onclick="campaignShowTab('${tabId}')"]`).classList.add('active');
       document.getElementById(tabId).classList.add('active');
     }
-    // Toggle email/SMS fields based on checkboxes
+    // Toggle fields based on selected type
     function campaignToggleFields() {
-      const emailCheckbox = E('campaign-email-checkbox');
-      const smsCheckbox = E('campaign-sms-checkbox');
-      const emailFields = E('campaign-email-fields');
+      const type = document.querySelector('input[name="campaign-type"]:checked')?.value || 'simple-email';
+      const subjectFields = E('campaign-subject-fields');
+      const simpleBodyFields = E('campaign-simple-body-fields');
+      const htmlBodyFields = E('campaign-html-body-fields');
       const smsFields = E('campaign-sms-fields');
-      emailFields.classList.toggle('campaign-hidden', !emailCheckbox.checked);
-      smsFields.classList.toggle('campaign-hidden', !smsCheckbox.checked);
+      if (type === 'sms') {
+        subjectFields.classList.add('campaign-hidden');
+        simpleBodyFields.classList.add('campaign-hidden');
+        htmlBodyFields.classList.add('campaign-hidden');
+        smsFields.classList.remove('campaign-hidden');
+      } else if (type === 'simple-email') {
+        subjectFields.classList.remove('campaign-hidden');
+        simpleBodyFields.classList.remove('campaign-hidden');
+        htmlBodyFields.classList.add('campaign-hidden');
+        smsFields.classList.add('campaign-hidden');
+      } else if (type === 'html-email') {
+        subjectFields.classList.remove('campaign-hidden');
+        simpleBodyFields.classList.add('campaign-hidden');
+        htmlBodyFields.classList.remove('campaign-hidden');
+        smsFields.classList.add('campaign-hidden');
+      }
     }
     // Toggle schedule field based on Send Now checkbox
     function campaignToggleSchedule() {
@@ -335,70 +364,67 @@ input, select, .input-ta, .input {
     }
     // Schedule a campaign
     function campaignScheduleCampaign() {
-      const emailCheckbox = E('campaign-email-checkbox').checked;
-      const smsCheckbox = E('campaign-sms-checkbox').checked;
-      const emailSubject = quillSubject.root.innerHTML;
-      const emailBody = quillBody.root.innerHTML;
-      const smsBody = E('campaign-sms-body').value;
+      const type = document.querySelector('input[name="campaign-type"]:checked')?.value;
+      if (!type) {
+        p.Toast.fire({ icon: 'error', title: 'Please select a campaign type.' });
+        return;
+      }
+      let subject = '';
+      let body = '';
+      if (type === 'sms') {
+        body = E('campaign-sms-body').value;
+        if (!body.trim()) {
+          p.Toast.fire({ icon: 'error', title: 'Please fill in the SMS body.' });
+          return;
+        }
+      } else {
+        subject = quillSubject.root.innerHTML;
+        if (!quillSubject.getText().trim()) {
+          p.Toast.fire({ icon: 'error', title: 'Please fill in the email subject.' });
+          return;
+        }
+        if (type === 'simple-email') {
+          body = quillBody.root.innerHTML;
+          if (!quillBody.getText().trim()) {
+            p.Toast.fire({ icon: 'error', title: 'Please fill in the email body.' });
+            return;
+          }
+        } else { // html-email
+          body = E('campaign-html-body').value;
+          if (!body.trim()) {
+            p.Toast.fire({ icon: 'error', title: 'Please paste the HTML body.' });
+            return;
+          }
+        }
+      }
       const sendNow = E('campaign-send-now').checked;
       const schedule = sendNow ? new Date().toISOString() : E('campaign-schedule').value;
+      if (!sendNow && !schedule) {
+        p.Toast.fire({ icon: 'error', title: 'Please specify a schedule date/time or check "Send Now".' });
+        return;
+      }
       const selectedContacts = Array.from(document.querySelectorAll('#campaign-reports-table input[type="checkbox"]:checked'))
         .map(checkbox => {
           const row = checkbox.closest('tr');
           const contactIdCell = row.cells[1].querySelector('a');
           return contactIdCell.textContent;
         });
-      // Validation
-      if (!emailCheckbox && !smsCheckbox) {
-        p.Toast.fire({ icon: 'error', title: 'Please select at least one campaign type (Email or SMS).' });
-        return;
-      }
-      if (emailCheckbox && (!quillSubject.getText().trim() || !quillBody.getText().trim())) {
-        p.Toast.fire({ icon: 'error', title: 'Please fill in both email subject and body.' });
-        return;
-      }
-      if (smsCheckbox && !smsBody) {
-        p.Toast.fire({ icon: 'error', title: 'Please fill in the SMS body.' });
-        return;
-      }
-      if (!sendNow && !schedule) {
-        p.Toast.fire({ icon: 'error', title: 'Please specify a schedule date/time or check "Send Now".' });
-        return;
-      }
       if (selectedContacts.length === 0) {
         p.Toast.fire({ icon: 'error', title: 'Please select at least one contact.' });
         return;
       }
-      // Send queries
-      const campaigns = [];
-      if (emailCheckbox) {
-        campaigns.push({
-          type: 'email',
-          subject: emailSubject.replace(/'/g, "''"),
-          body: emailBody.replace(/'/g, "''"),
-          schedule: schedule
+      // Send query
+      const campaignType = type === 'sms' ? 'sms' : 'email';
+      const q = `INSERT INTO campaigns (type, subject, body, schedule, contact_ids) VALUES ('${campaignType}', '${subject.replace(/'/g, "''")}', '${body.replace(/'/g, "''")}', '${schedule}', '${selectedContacts.join(',')}')`;
+      console.log('Scheduling campaign with query:', q);
+      p.sendQuery(q)
+        .then(response => {
+          p.Toast.fire({ icon: 'success', title: 'Campaign created successfully!' });
+        })
+        .catch(error => {
+          console.error('Failed to create campaign:', error);
+          p.Toast.fire({ icon: 'error', title: 'Failed to create campaign. Please try again.' });
         });
-      }
-      if (smsCheckbox) {
-        campaigns.push({
-          type: 'sms',
-          subject: '',
-          body: smsBody.replace(/'/g, "''"),
-          schedule: schedule
-        });
-      }
-      campaigns.forEach(campaign => {
-        const q = `INSERT INTO campaigns (type, subject, body, schedule, contact_ids) VALUES ('${campaign.type}', '${campaign.subject}', '${campaign.body}', '${campaign.schedule}', '${selectedContacts.join(',')}')`;
-        console.log('Scheduling campaign with query:', q);
-        p.sendQuery(q)
-          .then(response => {
-            p.Toast.fire({ icon: 'success', title: 'Campaign scheduled successfully!' });
-          })
-          .catch(error => {
-            console.error('Failed to schedule campaign:', error);
-            p.Toast.fire({ icon: 'error', title: 'Failed to schedule campaign. Please try again.' });
-          });
-      });
     }
     // Fetch scheduled campaigns
     function campaignLoadScheduledCampaigns() {
