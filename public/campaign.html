@@ -10,11 +10,9 @@
     body {
   font-family: Arial, Helvetica, sans-serif;
 }
-
 .active {
   background-color: #aaaaaa;
 }
-
 input, select, .input-ta, .input {
   width: 200px;
   box-sizing: border-box;
@@ -22,7 +20,6 @@ input, select, .input-ta, .input {
   border: 1px solid #cccccc;
   border-radius: 3px;
 }
-
 .input-label {
   vertical-align: top;
   margin-top: 10px;
@@ -32,7 +29,6 @@ input, select, .input-ta, .input {
   width: 150px;
   display: inline-block;
 }
-
 .big-button {
   display: inline-block;
   padding: 10px 20px;
@@ -43,35 +39,28 @@ input, select, .input-ta, .input {
   transition: background-color 0.3s ease;
   width: 170px;
 }
-
 .big-button:hover {
   background-color: #0056b3;
 }
-
 .logTable {
   font-family: Arial, Helvetica, sans-serif;
   border-collapse: collapse;
   width: 100%;
 }
-
 .logTable td, .logTable th {
   border: 1px solid #dddddd;
   padding: 8px;
 }
-
 .logTable th {
   background-color: #26abe2; /* or #04AA6D if preferred */
   color: white;
 }
-
 .logTable tr:nth-child(even) {
   background-color: #f2f2f2;
 }
-
 .logTable tr:hover {
   background-color: #dddddd;
 }
-
 /* Campaign-specific styles */
 .campaign-tab-header {
   display: flex;
@@ -79,7 +68,6 @@ input, select, .input-ta, .input {
   gap: 10px;
   margin-bottom: 20px;
 }
-
 .campaign-tab-button {
   padding: 10px 20px;
   background-color: #f2f2f2;
@@ -88,34 +76,28 @@ input, select, .input-ta, .input {
   cursor: pointer;
   font-weight: bold;
 }
-
 .campaign-tab-button.active {
   background-color: #ffffff;
   border-bottom: 2px solid #007bff;
 }
-
 .campaign-tab-main {
   display: none;
   padding: 20px;
   border: 1px solid #cccccc;
   background-color: #ffffff;
 }
-
 .campaign-tab-main.active {
   display: block;
 }
-
 .campaign-form {
   display: flex;
   flex-direction: column;
   gap: 10px;
   max-width: 800px;
 }
-
 .campaign-form .input-label {
   font-weight: bold;
 }
-
 .campaign-form input, .campaign-form textarea {
   width: 100%;
   padding: 8px;
@@ -123,12 +105,10 @@ input, select, .input-ta, .input {
   border-radius: 3px;
   box-sizing: border-box;
 }
-
 .campaign-form .checkbox-group {
   display: flex;
   gap: 20px;
 }
-
 .campaign-hidden {
   display: none;
 }
@@ -166,8 +146,12 @@ input, select, .input-ta, .input {
     </div>
     <!-- Tab: Select Contacts -->
     <div id="campaign-tab-reports" class="campaign-tab-main active">
-      <div class="input-label">Tags:</div>
-      <input placeholder="enter tags, separated by a comma" id="campaign-report-tag-choose" class="input">
+      <div class="input-label">Required Tags (all):</div>
+      <input placeholder="tags separated by comma" id="campaign-report-required-tags" class="input">
+      <div class="input-label">Any Tags (at least one):</div>
+      <input placeholder="tags separated by comma" id="campaign-report-any-tags" class="input">
+      <div class="input-label">Exclude Tags (none):</div>
+      <input placeholder="tags separated by comma" id="campaign-report-exclude-tags" class="input">
       <button id="campaign-report-button" class="big-button" onclick="campaignGetForReport()">Get Contacts</button>
       <table id="campaign-reports-table" class="logTable">
         <tr>
@@ -218,14 +202,11 @@ input, select, .input-ta, .input {
       </table>
     </div>
   </div>
-
   <script>
     // Shorthand for local document.getElementById
     const E = (id) => document.getElementById(id);
-
     // Shorthand for window.parent
     const p = window.parent;
-
     // Initialize Quill editors
     let quillSubject = null;
     let quillBody = null;
@@ -256,7 +237,6 @@ input, select, .input-ta, .input {
       campaignToggleFields();
       campaignToggleSchedule();
     });
-
     // Tab switching function
     function campaignShowTab(tabId) {
       document.querySelectorAll('.campaign-tab-button').forEach(button => {
@@ -268,7 +248,6 @@ input, select, .input-ta, .input {
       document.querySelector(`button[onclick="campaignShowTab('${tabId}')"]`).classList.add('active');
       document.getElementById(tabId).classList.add('active');
     }
-
     // Toggle email/SMS fields based on checkboxes
     function campaignToggleFields() {
       const emailCheckbox = E('campaign-email-checkbox');
@@ -278,28 +257,41 @@ input, select, .input-ta, .input {
       emailFields.classList.toggle('campaign-hidden', !emailCheckbox.checked);
       smsFields.classList.toggle('campaign-hidden', !smsCheckbox.checked);
     }
-
     // Toggle schedule field based on Send Now checkbox
     function campaignToggleSchedule() {
       const sendNow = E('campaign-send-now').checked;
       const scheduleField = E('campaign-schedule-field');
       scheduleField.classList.toggle('campaign-hidden', sendNow);
     }
-
     // Fetch contacts for report
     function campaignGetForReport() {
-      const tagInput = E('campaign-report-tag-choose').value;
-      const tags = tagInput.split(',').map(tag => tag.trim()).filter(tag => tag !== '');
-      if (tags.length === 0) {
-        console.error('No valid tags provided');
-        p.Toast.fire({ icon: 'error', title: 'Please enter at least one tag.' });
+      const requiredInput = E('campaign-report-required-tags').value;
+      const anyInput = E('campaign-report-any-tags').value;
+      const excludeInput = E('campaign-report-exclude-tags').value;
+      const required = requiredInput.split(',').map(tag => tag.trim()).filter(tag => tag !== '');
+      const any = anyInput.split(',').map(tag => tag.trim()).filter(tag => tag !== '');
+      const exclude = excludeInput.split(',').map(tag => tag.trim()).filter(tag => tag !== '');
+      if (required.length === 0 && any.length === 0) {
+        console.error('No valid include tags provided');
+        p.Toast.fire({ icon: 'error', title: 'Please enter at least one tag in Required or Any fields.' });
         return;
       }
-      const likeConditions = tags.map(tag => {
+      const makeLike = (tag) => {
         const safeTag = tag.replace(/'/g, "''");
         return `(contact_tags = '${safeTag}' OR contact_tags LIKE '${safeTag},%' OR contact_tags LIKE '%,${safeTag},%' OR contact_tags LIKE '%,${safeTag}')`;
-      });
-      const q = `SELECT * FROM contacts WHERE ${likeConditions.join(' OR ')}`;
+      };
+      let whereParts = [];
+      if (required.length > 0) {
+        whereParts.push(required.map(makeLike).join(' AND '));
+      }
+      if (any.length > 0) {
+        whereParts.push('(' + any.map(makeLike).join(' OR ') + ')');
+      }
+      if (exclude.length > 0) {
+        whereParts.push('NOT (' + exclude.map(makeLike).join(' OR ') + ')');
+      }
+      const whereClause = whereParts.join(' AND ');
+      const q = `SELECT * FROM contacts WHERE ${whereClause}`;
       console.log('Executing query:', q);
       const table = E('campaign-reports-table');
       while (table.rows.length > 1) {
@@ -341,7 +333,6 @@ input, select, .input-ta, .input {
           p.Toast.fire({ icon: 'error', title: 'An error occurred while fetching the report. Please try again.' });
         });
     }
-
     // Schedule a campaign
     function campaignScheduleCampaign() {
       const emailCheckbox = E('campaign-email-checkbox').checked;
@@ -409,7 +400,6 @@ input, select, .input-ta, .input {
           });
       });
     }
-
     // Fetch scheduled campaigns
     function campaignLoadScheduledCampaigns() {
       const table = E('campaign-scheduled-table');
@@ -443,7 +433,6 @@ input, select, .input-ta, .input {
           p.Toast.fire({ icon: 'error', title: 'Failed to load scheduled campaigns.' });
         });
     }
-
     // Delete a campaign
     function campaignDeleteCampaign(campaignId) {
       const q = `DELETE FROM campaigns WHERE campaign_id = '${campaignId}'`;
@@ -458,7 +447,6 @@ input, select, .input-ta, .input {
           p.Toast.fire({ icon: 'error', title: 'Failed to delete campaign.' });
         });
     }
-
     // Load scheduled campaigns when the tab is opened
     document.querySelector('button[onclick="campaignShowTab(\'campaign-tab-scheduled\')"]').addEventListener('click', campaignLoadScheduledCampaigns);
   </script>
