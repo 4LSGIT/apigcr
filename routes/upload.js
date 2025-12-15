@@ -67,8 +67,8 @@ router.post("/upload", upload.single("file"), async (req, res) => {
     // Log metadata internally
     console.log(`[UPLOAD] User: ${username}, File: ${req.file.originalname}, Saved as: ${filename}, Size: ${req.file.size} bytes, Time: ${now}`);
 
-    //const publicUrl = `https://storage.googleapis.com/${bucketName}/${filename}`;
-    const publicUrl = `https://uploads.4lsg.com/${filename}`;
+    const publicUrl = `https://storage.googleapis.com/${bucketName}/${filename}`;
+    //const publicUrl = `https://uploads.4lsg.com/${filename}`;
 
     return res.json({
       success: true,
