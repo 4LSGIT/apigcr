@@ -85,25 +85,16 @@ const formatDate = (value, format) => {
   if (isNaN(d)) return null;
 
   const tokens = {
-    // year
     YYYY: d.getFullYear(),
-
-    // month
     MM: pad(d.getMonth()+1),
     MMMM: MONTHS[d.getMonth()],
     MMM: MONTHS_ABBR[d.getMonth()],
-
-    // day of month
     DD: pad(d.getDate()),
     D: d.getDate(),
     Do: ordinal(d.getDate()),
     DoW: ordinalWord(d.getDate()),
-
-    // weekday
     dddd: WEEKDAYS[d.getDay()],
     ddd: WEEKDAYS_ABBR[d.getDay()],
-
-    // time
     HH: pad(d.getHours()),
     hh: pad(d.getHours()%12||12),
     mm: pad(d.getMinutes()),
@@ -118,8 +109,6 @@ const formatDate = (value, format) => {
 
   return output;
 };
-
-
 
 const logAttempt = (db, username, password, ip, userAgent, status) => {
   const q = `
@@ -145,11 +134,9 @@ router.post("/unplacehold", (req, res) => {
     strict = false,
 
     contact_id,
-
     case_id,
     case_number,
     case_number_full,
-
     appt_id,
   } = req.body;
 
@@ -181,56 +168,29 @@ router.post("/unplacehold", (req, res) => {
       const tasks = [];
 
       if (contact_id) {
-        tasks.push(
-          new Promise((resolve) => {
-            conn.query(
-              "SELECT * FROM contacts WHERE contact_id = ?",
-              [contact_id],
-              (_, r) => {
-                if (r?.length) contact = r[0];
-                resolve();
-              }
-            );
-          })
-        );
+        tasks.push(new Promise(resolve => {
+          conn.query("SELECT * FROM contacts WHERE contact_id = ?", [contact_id], (_, r) => {
+            if (r?.length) contact = r[0];
+            resolve();
+          });
+        }));
       }
 
       if (case_id || case_number || case_number_full) {
         let q, p;
-        if (case_id) {
-          q = "SELECT * FROM cases WHERE case_id = ?";
-          p = case_id;
-        } else if (case_number_full) {
-          q = "SELECT * FROM cases WHERE case_number_full = ?";
-          p = case_number_full;
-        } else {
-          q = "SELECT * FROM cases WHERE case_number = ?";
-          p = case_number;
-        }
+        if (case_id) { q="SELECT * FROM cases WHERE case_id=?"; p=case_id; }
+        else if (case_number_full) { q="SELECT * FROM cases WHERE case_number_full=?"; p=case_number_full; }
+        else { q="SELECT * FROM cases WHERE case_number=?"; p=case_number; }
 
-        tasks.push(
-          new Promise((resolve) => {
-            conn.query(q, [p], (_, r) => {
-              if (r?.length) caseData = r[0];
-              resolve();
-            });
-          })
-        );
+        tasks.push(new Promise(resolve => {
+          conn.query(q, [p], (_, r) => { if (r?.length) caseData = r[0]; resolve(); });
+        }));
       }
 
       if (appt_id) {
-        tasks.push(
-          new Promise((resolve) => {
-            conn.query(
-              "SELECT * FROM appts WHERE appt_id = ?",
-              [appt_id],
-              (_, r) => {
-                if (r?.length) appt = r[0];
-                resolve();
-              }
-            );
-          })
-        );
+        tasks.push(new Promise(resolve => {
+          conn.query("SELECT * FROM appts WHERE appt_id=?", [appt_id], (_, r) => { if (r?.length) appt = r[0]; resolve(); });
+        }));
       }
 
       Promise.all(tasks).then(() => {
@@ -240,19 +200,17 @@ router.post("/unplacehold", (req, res) => {
         let output = text;
 
         const resolveEntity = (entityName, entity) => {
-          const regex =
-            /{{(\w+)\.(\w+)(?:\|([^}]+))?}}/g;
+          const regex = /{{(\w+)\.(\w+)(?:\|([^}]+))?}}/g;
 
           output = output.replace(regex, (match, e, field, pipe) => {
             if (e !== entityName) return match;
 
             let value = entity?.[field];
-
             let format = null;
             let def = null;
 
             if (pipe) {
-              pipe.split("|").forEach((part) => {
+              pipe.split("|").forEach(part => {
                 if (part.startsWith("date:") || part.startsWith("time:") || part.startsWith("datetime:")) {
                   format = part.split(":")[1];
                 } else if (part.startsWith("default:")) {
@@ -267,6 +225,7 @@ router.post("/unplacehold", (req, res) => {
               return match;
             }
 
+            // FIX: always call formatDate for any format string (date/time/datetime)
             if (format) {
               const formatted = formatDate(value, format);
               if (formatted === null) {
@@ -297,11 +256,7 @@ router.post("/unplacehold", (req, res) => {
           });
         }
 
-        return res.json({
-          status,
-          text: output,
-          unresolved,
-        });
+        return res.json({ status, text: output, unresolved });
       });
     });
   });
