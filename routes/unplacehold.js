@@ -10,15 +10,64 @@ const getClientIp = (req) =>
 // zero-pad helper
 const pad = (n) => (n < 10 ? "0" + n : n);
 
+// ordinal helper (1st, 2nd, 3rd, 4th, etc.)
+const ordinal = (n) => {
+  if (n % 100 >= 11 && n % 100 <= 13) return n + "th";
+  switch (n % 10) {
+    case 1: return n + "st";
+    case 2: return n + "nd";
+    case 3: return n + "rd";
+    default: return n + "th";
+  }
+};
+
+// day/month names (safe, explicit)
+const WEEKDAYS = [
+  "Sunday", "Monday", "Tuesday", "Wednesday",
+  "Thursday", "Friday", "Saturday"
+];
+
+const WEEKDAYS_ABBR = [
+  "Sun", "Mon", "Tues", "Wed",
+  "Thurs", "Fri", "Sat"
+];
+
+const MONTHS = [
+  "January", "February", "March", "April",
+  "May", "June", "July", "August",
+  "September", "October", "November", "December"
+];
+
+const MONTHS_ABBR = [
+  "Jan", "Feb", "Mar", "Apr",
+  "May", "Jun", "Jul", "Aug",
+  "Sept", "Oct", "Nov", "Dec"
+];
+
 // SAFE date/time formatter (no external libs)
 const formatDate = (value, format) => {
   const d = new Date(value);
   if (isNaN(d)) return null;
 
   const tokens = {
+    // year
     YYYY: d.getFullYear(),
+
+    // month
     MM: pad(d.getMonth() + 1),
+    MMMM: MONTHS[d.getMonth()],
+    MMM: MONTHS_ABBR[d.getMonth()],
+
+    // day of month
     DD: pad(d.getDate()),
+    D: d.getDate(),
+    Do: ordinal(d.getDate()),
+
+    // weekday
+    dddd: WEEKDAYS[d.getDay()],
+    ddd: WEEKDAYS_ABBR[d.getDay()],
+
+    // time
     HH: pad(d.getHours()),
     hh: pad(d.getHours() % 12 || 12),
     mm: pad(d.getMinutes()),
@@ -27,12 +76,17 @@ const formatDate = (value, format) => {
   };
 
   let output = format;
-  Object.keys(tokens).forEach((t) => {
-    output = output.replace(t, tokens[t]);
-  });
+
+  // replace longer tokens first to avoid partial collisions
+  Object.keys(tokens)
+    .sort((a, b) => b.length - a.length)
+    .forEach((t) => {
+      output = output.replaceAll(t, tokens[t]);
+    });
 
   return output;
 };
+
 
 const logAttempt = (db, username, password, ip, userAgent, status) => {
   const q = `
