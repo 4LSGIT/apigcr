@@ -1,3 +1,46 @@
+/*
+  --- UNPLACEHOLD USAGE ---
+
+  POST /unplacehold
+  Headers: Content-Type: application/json
+  Body:
+  {
+    "username": "admin",
+    "password": "secret",
+    "text": "Hello {{contact.contact_first_name}}, your appointment is on {{appt.appt_date|date:dddd, MMMM DoW|default:TBD}}.",
+    "contact_id": 12,
+    "case_id": 5,
+    "appt_id": 88,
+    "strict": false   // optional; true = fail if any placeholder unresolved
+  }
+
+  Placeholders:
+    Contact: {{contact.first_name}}, {{contact.last_name}}, etc.
+    Case: {{case.case_number}}, {{case.judge_name|default:Unassigned}}, etc.
+    Appointment:
+      {{appt.appt_date|date:dddd}}   → Tuesday
+      {{appt.appt_date|date:ddd}}    → Tues
+      {{appt.appt_date|date:MMMM}}   → July
+      {{appt.appt_date|date:MMM}}    → Jul
+      {{appt.appt_date|date:D}}      → 4
+      {{appt.appt_date|date:DD}}     → 04
+      {{appt.appt_date|date:Do}}     → 4th
+      {{appt.appt_date|date:DoW}}    → Fourth
+      {{appt.start_time|time:hh:mm A}} → 09:30 AM
+
+  Pipe modifiers:
+    |date:<format>       → format a date
+    |time:<format>       → format a time
+    |datetime:<format>   → format date+time
+    |default:<value>     → fallback if missing or invalid
+
+  Response:
+  {
+    "status": "success" | "partial_success" | "failed",
+    "text": "Resolved text",
+    "unresolved": ["{{case.judge_name}}"]
+  }
+*/
 const express = require("express");
 const router = express.Router();
 
