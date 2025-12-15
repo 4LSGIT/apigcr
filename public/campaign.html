@@ -129,7 +129,7 @@ input, select, .input-ta, .input {
       padding: 8px;
     }
     #campaign-email-body-editor .ql-container {
-      height: 100px;
+      height: 300px;
       padding: 8px;
     }
     .quill-editor .ql-toolbar {
@@ -177,11 +177,31 @@ input, select, .input-ta, .input {
           <label><input type="radio" name="campaign-type" value="simple-email" checked onchange="campaignToggleFields()"> Simple Email</label>
           <label><input type="radio" name="campaign-type" value="html-email" onchange="campaignToggleFields()"> HTML Email</label>
         </div>
-        <div id="campaign-subject-fields">
+        <div id="campaign-sender-fields">
+          <div id="campaign-sms-sender" class="campaign-hidden">
+            <div class="input-label">From Phone:</div>
+            <select id="campaign-sms-phone" class="input">
+              <option value="">Select phone number</option>
+              <!-- Populate options dynamically or statically as needed -->
+              <option value="+1234567890">+1 (234) 567-890</option>
+              <option value="+1987654321">+1 (987) 654-321</option>
+            </select>
+          </div>
+          <div id="campaign-email-sender" class="campaign-hidden">
+            <div class="input-label">From Email:</div>
+            <select id="campaign-email-address" class="input">
+              <option value="">Select email address</option>
+              <!-- Populate options dynamically or statically as needed -->
+              <option value="info@example.com">info@example.com</option>
+              <option value="support@example.com">support@example.com</option>
+            </select>
+          </div>
+        </div>
+        <div id="campaign-subject-fields" class="campaign-hidden">
           <div class="input-label">Email Subject:</div>
           <div id="campaign-email-subject-editor" class="quill-editor"></div>
         </div>
-        <div id="campaign-simple-body-fields">
+        <div id="campaign-simple-body-fields" class="campaign-hidden">
           <div class="input-label">Email Body:</div>
           <div id="campaign-email-body-editor" class="quill-editor"></div>
         </div>
@@ -265,25 +285,29 @@ input, select, .input-ta, .input {
     // Toggle fields based on selected type
     function campaignToggleFields() {
       const type = document.querySelector('input[name="campaign-type"]:checked')?.value || 'simple-email';
+      const smsSender = E('campaign-sms-sender');
+      const emailSender = E('campaign-email-sender');
       const subjectFields = E('campaign-subject-fields');
       const simpleBodyFields = E('campaign-simple-body-fields');
       const htmlBodyFields = E('campaign-html-body-fields');
       const smsFields = E('campaign-sms-fields');
+      smsSender.classList.add('campaign-hidden');
+      emailSender.classList.add('campaign-hidden');
+      subjectFields.classList.add('campaign-hidden');
+      simpleBodyFields.classList.add('campaign-hidden');
+      htmlBodyFields.classList.add('campaign-hidden');
+      smsFields.classList.add('campaign-hidden');
       if (type === 'sms') {
-        subjectFields.classList.add('campaign-hidden');
-        simpleBodyFields.classList.add('campaign-hidden');
-        htmlBodyFields.classList.add('campaign-hidden');
+        smsSender.classList.remove('campaign-hidden');
         smsFields.classList.remove('campaign-hidden');
       } else if (type === 'simple-email') {
+        emailSender.classList.remove('campaign-hidden');
         subjectFields.classList.remove('campaign-hidden');
         simpleBodyFields.classList.remove('campaign-hidden');
-        htmlBodyFields.classList.add('campaign-hidden');
-        smsFields.classList.add('campaign-hidden');
       } else if (type === 'html-email') {
+        emailSender.classList.remove('campaign-hidden');
         subjectFields.classList.remove('campaign-hidden');
-        simpleBodyFields.classList.add('campaign-hidden');
         htmlBodyFields.classList.remove('campaign-hidden');
-        smsFields.classList.add('campaign-hidden');
       }
     }
     // Toggle schedule field based on Send Now checkbox
@@ -369,15 +393,26 @@ input, select, .input-ta, .input {
         p.Toast.fire({ icon: 'error', title: 'Please select a campaign type.' });
         return;
       }
+      let sender = '';
       let subject = '';
       let body = '';
       if (type === 'sms') {
+        sender = E('campaign-sms-phone').value;
+        if (!sender) {
+          p.Toast.fire({ icon: 'error', title: 'Please select a phone number.' });
+          return;
+        }
         body = E('campaign-sms-body').value;
         if (!body.trim()) {
           p.Toast.fire({ icon: 'error', title: 'Please fill in the SMS body.' });
           return;
         }
       } else {
+        sender = E('campaign-email-address').value;
+        if (!sender) {
+          p.Toast.fire({ icon: 'error', title: 'Please select an email address.' });
+          return;
+        }
         subject = quillSubject.root.innerHTML;
         if (!quillSubject.getText().trim()) {
           p.Toast.fire({ icon: 'error', title: 'Please fill in the email subject.' });
@@ -413,13 +448,31 @@ input, select, .input-ta, .input {
         p.Toast.fire({ icon: 'error', title: 'Please select at least one contact.' });
         return;
       }
-      // Send query
-      const campaignType = type === 'sms' ? 'sms' : 'email';
-      const q = `INSERT INTO campaigns (type, subject, body, schedule, contact_ids) VALUES ('${campaignType}', '${subject.replace(/'/g, "''")}', '${body.replace(/'/g, "''")}', '${schedule}', '${selectedContacts.join(',')}')`;
-      console.log('Scheduling campaign with query:', q);
+      const campaignType = type === 'sms' ? 'sms' : (type === 'simple-email' ? 'email' : 'html-email');
+      const q = `INSERT INTO campaigns (type, sender, subject, body, schedule, contact_ids) VALUES ('${campaignType}', '${sender.replace(/'/g, "''")}', '${subject.replace(/'/g, "''")}', '${body.replace(/'/g, "''")}', '${schedule}', '${selectedContacts.join(',')}')`;
+      console.log('Creating campaign with query:', q);
       p.sendQuery(q)
         .then(response => {
+          const insertId = response.data.query1.insertId;
+          if (!insertId) {
+            throw new Error('No insert ID returned');
+          }
           p.Toast.fire({ icon: 'success', title: 'Campaign created successfully!' });
+          // Send to Pabbly webhook
+          const pabblyUrl = 'https://your-pabbly-webhook-url-here'; // Replace with actual URL
+          fetch(pabblyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ campaign_id: insertId })
+          })
+          .then(res => {
+            if (!res.ok) throw new Error('Pabbly request failed');
+            console.log('Sent to Pabbly successfully');
+          })
+          .catch(error => {
+            console.error('Failed to send to Pabbly:', error);
+            p.Toast.fire({ icon: 'error', title: 'Failed to notify third-party. Campaign created but may not process.' });
+          });
         })
         .catch(error => {
           console.error('Failed to create campaign:', error);
