@@ -10,7 +10,15 @@ const getClientIp = (req) =>
 // zero-pad helper
 const pad = (n) => (n < 10 ? "0" + n : n);
 
-// ordinal helper (1st, 2nd, 3rd, 4th, etc.)
+// numeric to word mapping for ordinals
+const ORDINAL_WORDS = [
+  "First","Second","Third","Fourth","Fifth","Sixth","Seventh","Eighth","Ninth","Tenth",
+  "Eleventh","Twelfth","Thirteenth","Fourteenth","Fifteenth","Sixteenth","Seventeenth","Eighteenth","Nineteenth","Twentieth",
+  "Twenty-first","Twenty-second","Twenty-third","Twenty-fourth","Twenty-fifth","Twenty-sixth","Twenty-seventh","Twenty-eighth","Twenty-ninth","Thirtieth",
+  "Thirty-first"
+];
+
+// ordinal helpers
 const ordinal = (n) => {
   if (n % 100 >= 11 && n % 100 <= 13) return n + "th";
   switch (n % 10) {
@@ -20,29 +28,13 @@ const ordinal = (n) => {
     default: return n + "th";
   }
 };
+const ordinalWord = (n) => ORDINAL_WORDS[n-1] || n;
 
 // day/month names (safe, explicit)
-const WEEKDAYS = [
-  "Sunday", "Monday", "Tuesday", "Wednesday",
-  "Thursday", "Friday", "Saturday"
-];
-
-const WEEKDAYS_ABBR = [
-  "Sun", "Mon", "Tues", "Wed",
-  "Thurs", "Fri", "Sat"
-];
-
-const MONTHS = [
-  "January", "February", "March", "April",
-  "May", "June", "July", "August",
-  "September", "October", "November", "December"
-];
-
-const MONTHS_ABBR = [
-  "Jan", "Feb", "Mar", "Apr",
-  "May", "Jun", "Jul", "Aug",
-  "Sept", "Oct", "Nov", "Dec"
-];
+const WEEKDAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const WEEKDAYS_ABBR = ["Sun","Mon","Tues","Wed","Thurs","Fri","Sat"];
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const MONTHS_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sept","Oct","Nov","Dec"];
 
 // SAFE date/time formatter (no external libs)
 const formatDate = (value, format) => {
@@ -54,7 +46,7 @@ const formatDate = (value, format) => {
     YYYY: d.getFullYear(),
 
     // month
-    MM: pad(d.getMonth() + 1),
+    MM: pad(d.getMonth()+1),
     MMMM: MONTHS[d.getMonth()],
     MMM: MONTHS_ABBR[d.getMonth()],
 
@@ -62,6 +54,7 @@ const formatDate = (value, format) => {
     DD: pad(d.getDate()),
     D: d.getDate(),
     Do: ordinal(d.getDate()),
+    DoW: ordinalWord(d.getDate()),
 
     // weekday
     dddd: WEEKDAYS[d.getDay()],
@@ -69,23 +62,20 @@ const formatDate = (value, format) => {
 
     // time
     HH: pad(d.getHours()),
-    hh: pad(d.getHours() % 12 || 12),
+    hh: pad(d.getHours()%12||12),
     mm: pad(d.getMinutes()),
     ss: pad(d.getSeconds()),
-    A: d.getHours() >= 12 ? "PM" : "AM",
+    A: d.getHours()>=12?"PM":"AM",
   };
 
   let output = format;
-
-  // replace longer tokens first to avoid partial collisions
-  Object.keys(tokens)
-    .sort((a, b) => b.length - a.length)
-    .forEach((t) => {
-      output = output.replaceAll(t, tokens[t]);
-    });
+  Object.keys(tokens).sort((a,b)=>b.length-a.length).forEach(t=>{
+    output = output.replaceAll(t,tokens[t]);
+  });
 
   return output;
 };
+
 
 
 const logAttempt = (db, username, password, ip, userAgent, status) => {
