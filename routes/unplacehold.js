@@ -73,13 +73,13 @@ const ordinal = (n) => {
 };
 const ordinalWord = (n) => ORDINAL_WORDS[n-1] || n;
 
-// day/month names (safe, explicit)
+// day/month names
 const WEEKDAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const WEEKDAYS_ABBR = ["Sun","Mon","Tues","Wed","Thurs","Fri","Sat"];
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const MONTHS_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sept","Oct","Nov","Dec"];
 
-// SAFE date/time formatter (no external libs)
+// SAFE date/time formatter
 const formatDate = (value, format) => {
   const d = new Date(value);
   if (isNaN(d)) return null;
@@ -132,7 +132,6 @@ router.post("/unplacehold", (req, res) => {
     password,
     text,
     strict = false,
-
     contact_id,
     case_id,
     case_number,
@@ -147,8 +146,7 @@ router.post("/unplacehold", (req, res) => {
   const ip = getClientIp(req);
   const userAgent = req.headers["user-agent"] || "unknown";
 
-  const authQuery =
-    "SELECT user_auth FROM users WHERE username = ? AND password = ?";
+  const authQuery = "SELECT user_auth FROM users WHERE username = ? AND password = ?";
 
   req.db.getConnection((err, conn) => {
     if (err) return res.status(500).json({ error: "DB connection error" });
@@ -212,7 +210,8 @@ router.post("/unplacehold", (req, res) => {
             if (pipe) {
               pipe.split("|").forEach(part => {
                 if (part.startsWith("date:") || part.startsWith("time:") || part.startsWith("datetime:")) {
-                  format = part.split(":")[1];
+                  const idx = part.indexOf(":");
+                  format = part.slice(idx + 1); // preserve full format string
                 } else if (part.startsWith("default:")) {
                   def = part.slice(8);
                 }
@@ -225,7 +224,6 @@ router.post("/unplacehold", (req, res) => {
               return match;
             }
 
-            // FIX: always call formatDate for any format string (date/time/datetime)
             if (format) {
               const formatted = formatDate(value, format);
               if (formatted === null) {
