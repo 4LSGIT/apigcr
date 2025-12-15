@@ -1,34 +1,61 @@
 const express = require("express");
 const router = express.Router();
 
-// Helper: client IP
-const getClientIp = (req) => {
-  return (
-    req.headers["x-forwarded-for"]?.split(",").shift() ||
-    req.socket?.remoteAddress
-  );
+/* ------------------ helpers ------------------ */
+
+const getClientIp = (req) =>
+  req.headers["x-forwarded-for"]?.split(",").shift() ||
+  req.socket?.remoteAddress;
+
+// zero-pad helper
+const pad = (n) => (n < 10 ? "0" + n : n);
+
+// SAFE date/time formatter (no external libs)
+const formatDate = (value, format) => {
+  const d = new Date(value);
+  if (isNaN(d)) return null;
+
+  const tokens = {
+    YYYY: d.getFullYear(),
+    MM: pad(d.getMonth() + 1),
+    DD: pad(d.getDate()),
+    HH: pad(d.getHours()),
+    hh: pad(d.getHours() % 12 || 12),
+    mm: pad(d.getMinutes()),
+    ss: pad(d.getSeconds()),
+    A: d.getHours() >= 12 ? "PM" : "AM",
+  };
+
+  let output = format;
+  Object.keys(tokens).forEach((t) => {
+    output = output.replace(t, tokens[t]);
+  });
+
+  return output;
 };
 
-// Helper: log attempts
-const logAttempt = (db, username, password, ip, userAgent, action, status) => {
-  const logQuery = `
+const logAttempt = (db, username, password, ip, userAgent, status) => {
+  const q = `
     INSERT INTO query_log
     (username, password, ip_address, user_agent, query, auth_status)
     VALUES (?, ?, ?, ?, ?, ?)
   `;
-  const logParams = [username, password, ip, userAgent, action, status];
-
-  db.getConnection((err, conn) => {
+  db.getConnection((err, c) => {
     if (err) return;
-    conn.query(logQuery, logParams, () => conn.release());
+    c.query(q, [username, password, ip, userAgent, "unplacehold", status], () =>
+      c.release()
+    );
   });
 };
+
+/* ------------------ route ------------------ */
 
 router.post("/unplacehold", (req, res) => {
   const {
     username,
     password,
     text,
+    strict = false,
 
     contact_id,
 
@@ -46,55 +73,34 @@ router.post("/unplacehold", (req, res) => {
   const ip = getClientIp(req);
   const userAgent = req.headers["user-agent"] || "unknown";
 
-  // ---- AUTH ----
   const authQuery =
     "SELECT user_auth FROM users WHERE username = ? AND password = ?";
 
   req.db.getConnection((err, conn) => {
     if (err) return res.status(500).json({ error: "DB connection error" });
 
-    conn.query(authQuery, [username, password], (err, authRows) => {
-      if (err) {
+    conn.query(authQuery, [username, password], (err, auth) => {
+      if (err || !auth.length || !auth[0].user_auth.startsWith("authorized")) {
         conn.release();
-        logAttempt(req.db, username, password, ip, userAgent, "unplacehold", "unauthorized");
-        return res.status(500).json({ error: "Authorization error" });
-      }
-
-      const authorized =
-        authRows.length > 0 &&
-        authRows[0].user_auth.startsWith("authorized");
-
-      logAttempt(
-        req.db,
-        username,
-        password,
-        ip,
-        userAgent,
-        "unplacehold",
-        authorized ? "authorized" : "unauthorized"
-      );
-
-      if (!authorized) {
-        conn.release();
+        logAttempt(req.db, username, password, ip, userAgent, "unauthorized");
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      // ---- DATA FETCH ----
+      logAttempt(req.db, username, password, ip, userAgent, "authorized");
+
       let contact = null;
       let caseData = null;
       let appt = null;
-
       const tasks = [];
 
-      // CONTACT
       if (contact_id) {
         tasks.push(
           new Promise((resolve) => {
             conn.query(
               "SELECT * FROM contacts WHERE contact_id = ?",
               [contact_id],
-              (err, rows) => {
-                if (!err && rows.length) contact = rows[0];
+              (_, r) => {
+                if (r?.length) contact = r[0];
                 resolve();
               }
             );
@@ -102,41 +108,37 @@ router.post("/unplacehold", (req, res) => {
         );
       }
 
-      // CASE (priority order)
       if (case_id || case_number || case_number_full) {
-        let caseQuery = "";
-        let caseParam = null;
-
+        let q, p;
         if (case_id) {
-          caseQuery = "SELECT * FROM cases WHERE case_id = ?";
-          caseParam = case_id;
+          q = "SELECT * FROM cases WHERE case_id = ?";
+          p = case_id;
         } else if (case_number_full) {
-          caseQuery = "SELECT * FROM cases WHERE case_number_full = ?";
-          caseParam = case_number_full;
-        } else if (case_number) {
-          caseQuery = "SELECT * FROM cases WHERE case_number = ?";
-          caseParam = case_number;
+          q = "SELECT * FROM cases WHERE case_number_full = ?";
+          p = case_number_full;
+        } else {
+          q = "SELECT * FROM cases WHERE case_number = ?";
+          p = case_number;
         }
 
         tasks.push(
           new Promise((resolve) => {
-            conn.query(caseQuery, [caseParam], (err, rows) => {
-              if (!err && rows.length) caseData = rows[0];
+            conn.query(q, [p], (_, r) => {
+              if (r?.length) caseData = r[0];
               resolve();
             });
           })
         );
       }
 
-      // APPOINTMENT
       if (appt_id) {
         tasks.push(
           new Promise((resolve) => {
             conn.query(
               "SELECT * FROM appts WHERE appt_id = ?",
               [appt_id],
-              (err, rows) => {
-                if (!err && rows.length) appt = rows[0];
+              (_, r) => {
+                if (r?.length) appt = r[0];
                 resolve();
               }
             );
@@ -147,42 +149,71 @@ router.post("/unplacehold", (req, res) => {
       Promise.all(tasks).then(() => {
         conn.release();
 
+        const unresolved = [];
         let output = text;
 
-        // CONTACT placeholders
-        if (contact) {
-          output = output.replace(
-            /{{contact\.([a-zA-Z0-9_]+)}}/g,
-            (_, field) =>
-              contact[field] !== undefined ? contact[field] : _
-          );
-        }
+        const resolveEntity = (entityName, entity) => {
+          const regex =
+            /{{(\w+)\.(\w+)(?:\|([^}]+))?}}/g;
 
-        // CASE placeholders
-        if (caseData) {
-          output = output.replace(
-            /{{case\.([a-zA-Z0-9_]+)}}/g,
-            (_, field) =>
-              caseData[field] !== undefined ? caseData[field] : _
-          );
-        }
+          output = output.replace(regex, (match, e, field, pipe) => {
+            if (e !== entityName) return match;
 
-        // APPT placeholders
-        if (appt) {
-          output = output.replace(
-            /{{appt\.([a-zA-Z0-9_]+)}}/g,
-            (_, field) =>
-              appt[field] !== undefined ? appt[field] : _
-          );
+            let value = entity?.[field];
+
+            let format = null;
+            let def = null;
+
+            if (pipe) {
+              pipe.split("|").forEach((part) => {
+                if (part.startsWith("date:") || part.startsWith("time:") || part.startsWith("datetime:")) {
+                  format = part.split(":")[1];
+                } else if (part.startsWith("default:")) {
+                  def = part.slice(8);
+                }
+              });
+            }
+
+            if (value === undefined || value === null) {
+              if (def !== null) return def;
+              unresolved.push(match);
+              return match;
+            }
+
+            if (format) {
+              const formatted = formatDate(value, format);
+              if (formatted === null) {
+                if (def !== null) return def;
+                unresolved.push(match);
+                return match;
+              }
+              return formatted;
+            }
+
+            return value;
+          });
+        };
+
+        resolveEntity("contact", contact);
+        resolveEntity("case", caseData);
+        resolveEntity("appt", appt);
+
+        let status = "success";
+        if (unresolved.length && strict) status = "failed";
+        else if (unresolved.length) status = "partial_success";
+
+        if (status === "failed") {
+          return res.status(400).json({
+            status,
+            error: "Strict mode unresolved placeholders",
+            unresolved,
+          });
         }
 
         return res.json({
+          status,
           text: output,
-          resolved: {
-            contact: !!contact,
-            case: !!caseData,
-            appt: !!appt,
-          },
+          unresolved,
         });
       });
     });
