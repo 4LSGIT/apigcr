@@ -468,7 +468,7 @@
       LIMIT 100 OFFSET 0|||
       SELECT COUNT(contact_id) AS counter FROM ( SELECT contact_id FROM contacts c LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id WHERE c.contact_id LIKE "%${query}%" OR c.contact_name like "%${query}%" OR c.contact_phone LIKE "%${query}%" OR c.contact_email like "%${query}%" OR c.contact_dob LIKE "%${query}%" OR c.contact_ssn LIKE "%${query}%" GROUP BY c.contact_id) AS subquery`;
         fetch(
-          `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+          `/db?username=${username}&password=${password}&query=${encodeURIComponent(
             q
           )}`
         )
@@ -504,7 +504,7 @@
                          contact.contact_zip
                        : ""
                    }</td><td>`;
-                contact.cases = JSON.parse(contact.cases);
+                //contact.cases = JSON.parse(contact.cases);
                 contact.cases.forEach((contactCase) => {
                   if (contactCase.case_id) {
                     rowHTML += `<a href="#" title="${
@@ -1498,7 +1498,7 @@
       WHERE (log_type = '${type}') AND (log_date = '${time}') AND (log_data LIKE '%${query}%' OR log_from LIKE '%${query}%' OR log_to LIKE '%${query}%' OR log_subject LIKE '%${query}%' OR log_form_id LIKE "%${query}%" OR log_link LIKE "%${query}%")
      `;
         fetch(
-          `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+          `/db?username=${username}&password=${password}&query=${encodeURIComponent(
             q
           )}`
         )
