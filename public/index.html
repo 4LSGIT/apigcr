@@ -335,7 +335,7 @@
               cases = data.data.query1;
               console.log(cases);
               cases.forEach((C) => {
-                //C.contacts = JSON.parse(C.contacts);
+                C.contacts = typeof C.contacts === "string" ? JSON.parse(C.contacts) : C.contacts;
                 const row = table.insertRow();
                 rowHTML = `<td><a href="#" onclick="addFile('${
                   C.Case_number || C.case_id
@@ -504,7 +504,7 @@
                          contact.contact_zip
                        : ""
                    }</td><td>`;
-                //contact.cases = JSON.parse(contact.cases);
+                contact.cases = typeof contact.cases === "string" ? JSON.parse(contact.cases) : contact.cases;
                 contact.cases.forEach((contactCase) => {
                   if (contactCase.case_id) {
                     rowHTML += `<a href="#" title="${
@@ -698,7 +698,7 @@
        FROM appts LEFT JOIN users ON users.user = appts.appt_with LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query} /*to put current day appts first*/ /*CASE WHEN DATE(appts,appt_date) = CURDATE() THEN 0 ELSE 1 END,*/ ORDER BY appts.appt_date DESC LIMIT ${limit} OFFSET ${offset};|||
        SELECT COUNT(*) AS counter FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query}`;
         fetch(
-          `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+          `/db?username=${username}&password=${password}&query=${encodeURIComponent(
             q
           )}`
         )
@@ -1289,7 +1289,7 @@
          AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END
         `;
         fetch(
-          `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+          `/db?username=${username}&password=${password}&query=${encodeURIComponent(
             q
           )}`
         )
@@ -1791,7 +1791,7 @@
     <script>
       function mySQLquery(query) {
         fetch(
-          `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+          `/db?username=${username}&password=${password}&query=${encodeURIComponent(
             query
           )}`
         )
@@ -1891,7 +1891,7 @@
             query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}';|||
                 SELECT user_name, user FROM users WHERE user_type = true;`;
             return fetch(
-              `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${query}`
+              `/db?username=${username}&password=${password}&query=${query}`
             )
               .then((response) => response.json())
               .then((data) => {
@@ -2230,7 +2230,7 @@
           }
           console.log(query);
           fetch(
-            `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+            `/db?username=${username}&password=${password}&query=${encodeURIComponent(
               query
             )}`
           )
