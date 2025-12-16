@@ -26,7 +26,7 @@ function whenDate(date) {
   }
 }
 
-const Toast = Swal.mixin({
+window.Toast = Swal.mixin({
   toast: true,
   position: "top",
   showConfirmButton: true,
