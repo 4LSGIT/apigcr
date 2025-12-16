@@ -164,7 +164,7 @@
       </button>
       <br /><br />
       <p>
-  Ver b0.35 — if anyone actually reads this, 
+  Ver b0.36 — if anyone actually reads this, 
   <a href="#" onclick="
     fetch(`https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY0MDYzMzA0M2M1MjZlNTUzNTUxMzMi_pc?user=${encodeURIComponent(user.user_name)}`);
     Toast.fire({ title: `Wow ${user.user_name}, you actually clicked it!` });
@@ -318,8 +318,13 @@
           AND c.case_type LIKE "${type}" AND c.case_stage LIKE "${stage}" AND c.case_status LIKE "${status}" 
           ORDER BY ${order} ${order2}
           `;
-        fetch(
+        /*fetch(
           `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+            q
+          )}`
+        )*/
+        fetch(
+          `/db?username=${username}&password=${password}&query=${encodeURIComponent(
             q
           )}`
         )
@@ -330,7 +335,7 @@
               cases = data.data.query1;
               console.log(cases);
               cases.forEach((C) => {
-                C.contacts = JSON.parse(C.contacts);
+                //C.contacts = JSON.parse(C.contacts);
                 const row = table.insertRow();
                 rowHTML = `<td><a href="#" onclick="addFile('${
                   C.Case_number || C.case_id

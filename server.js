@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const mysql = require("mysql");
+const mysql = require("mysql2");
 const fetch = require("node-fetch");
 const path = require("path");
 const fs = require("fs");
