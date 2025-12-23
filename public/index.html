@@ -2105,12 +2105,12 @@
             } else if (phone.length != 10) {
               Swal.showValidationMessage("Please fill in a valid phone number");
               return false;
-            } else if (!/^\S+@\S+\.\S+$/.test(email)) {
+            } /*else if (!/^\S+@\S+\.\S+$/.test(email)) {
               Swal.showValidationMessage(
                 "Please fill in a valid email address"
               );
               return false;
-            } else if (date && whenDate(date) != "future") {
+            }*/ else if (date && whenDate(date) != "future") {
               Swal.showValidationMessage("Please select a future date");
               return false;
             } else {
@@ -2143,7 +2143,7 @@
           preDeny: () => {
             name = E("NCName").value;
             phone = E("NCPhone").value.replace(/\D/g, "");
-            email = E("NCEmail").value;
+            email = E("NCEmail").value || "";
             date = E("NCDate").value;
             type = E("NCType").value;
             duplicate = E("NCDuplicate").checked ? "duplicate" : "update";
