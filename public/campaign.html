@@ -491,7 +491,9 @@ function campaignScheduleCampaign() {
           sender: sender,
           subject: subject,
           body: body,
-          contact_ids: selectedContacts.join(',')
+          contact_ids: selectedContacts.join(','),
+          username: p.username,
+          password: p.password
         })
       })
       .then(res => {
