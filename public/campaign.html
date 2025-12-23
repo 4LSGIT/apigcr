@@ -138,6 +138,11 @@ input, select, .input-ta, .input {
       border-radius: 3px 3px 0 0;
       background-color: #f2f2f2;
     }
+    #subject-hint {
+      font-size: 12px;
+      margin-top: 4px;
+      text-align: left;
+    }
   </style>
 </head>
 <body style="text-align: center">
@@ -199,7 +204,16 @@ input, select, .input-ta, .input {
         </div>
         <div id="campaign-subject-fields" class="campaign-hidden">
           <div class="input-label">Email Subject:</div>
-          <div id="campaign-email-subject-editor" class="quill-editor"></div>
+          <div style="display:flex; justify-content:center; gap:6px;">
+            <input
+              id="campaign-email-subject"
+              type="text"
+              maxlength="150"
+              placeholder="Enter subject"
+            >
+            <button type="button" id="emoji-btn">😀</button>
+          </div>
+          <div id="subject-hint"></div>
         </div>
         <div id="campaign-simple-body-fields" class="campaign-hidden">
           <div class="input-label">Email Body:</div>
@@ -242,20 +256,8 @@ input, select, .input-ta, .input {
     // Shorthand for window.parent
     const p = window.parent;
     // Initialize Quill editors
-    let quillSubject = null;
     let quillBody = null;
     document.addEventListener('DOMContentLoaded', () => {
-      quillSubject = new Quill('#campaign-email-subject-editor', {
-        theme: 'snow',
-        modules: {
-          toolbar: [
-            ['bold', 'italic', 'underline'],
-            [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-            ['link']
-          ]
-        },
-        placeholder: 'Enter email subject'
-      });
       quillBody = new Quill('#campaign-email-body-editor', {
         theme: 'snow',
         modules: {
@@ -270,6 +272,18 @@ input, select, .input-ta, .input {
       // Set initial field visibility
       campaignToggleFields();
       campaignToggleSchedule();
+      E('campaign-email-subject').addEventListener('input', updateSubjectHint);
+      E('emoji-btn').addEventListener('click', () => {
+        const emoji = prompt('Paste an emoji 🙂');
+        if (!emoji) return;
+        const i = E('campaign-email-subject');
+        const pos = i.selectionStart || 0;
+        i.value = i.value.slice(0, pos) + emoji + i.value.slice(pos);
+        i.focus();
+        i.selectionStart = i.selectionEnd = pos + emoji.length;
+        updateSubjectHint();
+      });
+      updateSubjectHint();
     });
     // Tab switching function
     function campaignShowTab(tabId) {
@@ -300,14 +314,14 @@ input, select, .input-ta, .input {
       if (type === 'sms') {
         smsSender.classList.remove('campaign-hidden');
         smsFields.classList.remove('campaign-hidden');
-      } else if (type === 'simple-email') {
+      } else {
         emailSender.classList.remove('campaign-hidden');
         subjectFields.classList.remove('campaign-hidden');
-        simpleBodyFields.classList.remove('campaign-hidden');
-      } else if (type === 'html-email') {
-        emailSender.classList.remove('campaign-hidden');
-        subjectFields.classList.remove('campaign-hidden');
-        htmlBodyFields.classList.remove('campaign-hidden');
+        if (type === 'simple-email') {
+          simpleBodyFields.classList.remove('campaign-hidden');
+        } else if (type === 'html-email') {
+          htmlBodyFields.classList.remove('campaign-hidden');
+        }
       }
     }
     // Toggle schedule field based on Send Now checkbox
@@ -386,6 +400,20 @@ input, select, .input-ta, .input {
           try { p.Toast.fire({ icon: 'error', title: 'An error occurred while fetching the report. Please try again.' }); } catch (e) { console.error('Toast failed:', e); }
         });
     }
+    function updateSubjectHint() {
+      const len = E('campaign-email-subject').value.length;
+      const hint = E('subject-hint');
+      if (len <= 60) {
+        hint.textContent = `${len}/150 — good length`;
+        hint.style.color = 'green';
+      } else if (len <= 90) {
+        hint.textContent = `${len}/150 — may truncate on mobile`;
+        hint.style.color = 'orange';
+      } else {
+        hint.textContent = `${len}/150 — high risk of truncation`;
+        hint.style.color = 'red';
+      }
+    }
     // Schedule a campaign
     function campaignScheduleCampaign() {
       const type = document.querySelector('input[name="campaign-type"]:checked')?.value;
@@ -407,14 +435,15 @@ input, select, .input-ta, .input {
           try { p.Toast.fire({ icon: 'error', title: 'Please fill in the SMS body.' }); } catch (e) { console.error('Toast failed:', e); }
           return;
         }
+        subject = '';
       } else {
         sender = E('campaign-email-address').value;
         if (!sender) {
           try { p.Toast.fire({ icon: 'error', title: 'Please select an email address.' }); } catch (e) { console.error('Toast failed:', e); }
           return;
         }
-        subject = quillSubject.root.innerHTML;
-        if (!quillSubject.getText().trim()) {
+        subject = E('campaign-email-subject').value;
+        if (!subject.trim()) {
           try { p.Toast.fire({ icon: 'error', title: 'Please fill in the email subject.' }); } catch (e) { console.error('Toast failed:', e); }
           return;
         }
@@ -462,7 +491,7 @@ input, select, .input-ta, .input {
           fetch(pabblyUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ campaign_id: insertId })
+            body: JSON.stringify({ campaign_id: insertId, send_mode: sendNow ? 'now' : 'scheduled', scheduled_at: schedule })
           })
           .then(res => {
             if (!res.ok) throw new Error('Pabbly request failed');
