@@ -2096,7 +2096,7 @@
             date = E("NCDate").value;
             type = E("NCType").value;
             duplicate = E("NCDuplicate").checked ? "duplicate" : "update";
-            if (!name || !E("NCPhone").value || !email) {
+            if (!name || !E("NCPhone").value /*|| !email*/) {
               Swal.showValidationMessage("Please fill in all required fields");
               return false;
             } else if (name.split(" ").length == 1) {
