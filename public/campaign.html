@@ -481,9 +481,17 @@ input, select, .input-ta, .input {
           // Send to Pabbly webhook first
           const pabblyUrl = 'https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjcwNTZkMDYzMjA0MzU1MjZmNTUzYzUxM2Ei_pc'; // Replace with actual URL
           fetch(pabblyUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ campaign_id: insertId, send_mode: sendNow ? 'now' : 'scheduled', scheduled_at: schedule })
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          campaign_id: insertId,
+          send_mode: sendNow ? 'now' : 'scheduled',
+          scheduled_at: schedule,
+          type: campaignType,
+          sender: sender,
+          subject: subject,
+          body: body,
+          contact_ids: selectedContacts.join(',')
           })
           .then(res => {
             if (!res.ok) throw new Error('Pabbly request failed');
