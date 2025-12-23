@@ -211,7 +211,6 @@ input, select, .input-ta, .input {
               maxlength="150"
               placeholder="Enter subject"
             >
-            <button type="button" id="emoji-btn">😀</button>
           </div>
           <div id="subject-hint"></div>
         </div>
@@ -273,16 +272,6 @@ input, select, .input-ta, .input {
       campaignToggleFields();
       campaignToggleSchedule();
       E('campaign-email-subject').addEventListener('input', updateSubjectHint);
-      E('emoji-btn').addEventListener('click', () => {
-        const emoji = prompt('Paste an emoji 🙂');
-        if (!emoji) return;
-        const i = E('campaign-email-subject');
-        const pos = i.selectionStart || 0;
-        i.value = i.value.slice(0, pos) + emoji + i.value.slice(pos);
-        i.focus();
-        i.selectionStart = i.selectionEnd = pos + emoji.length;
-        updateSubjectHint();
-      });
       updateSubjectHint();
     });
     // Tab switching function
@@ -403,7 +392,10 @@ input, select, .input-ta, .input {
     function updateSubjectHint() {
       const len = E('campaign-email-subject').value.length;
       const hint = E('subject-hint');
-      if (len <= 60) {
+      if (len < 10) {
+        hint.textContent = `${len}/150 — too short`;
+        hint.style.color = 'red';
+      } else if (len <= 60) {
         hint.textContent = `${len}/150 — good length`;
         hint.style.color = 'green';
       } else if (len <= 90) {
