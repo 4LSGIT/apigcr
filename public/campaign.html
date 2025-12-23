@@ -406,81 +406,81 @@ input, select, .input-ta, .input {
         hint.style.color = 'red';
       }
     }
-    // Schedule a campaign
-    function campaignScheduleCampaign() {
-      const type = document.querySelector('input[name="campaign-type"]:checked')?.value;
-      if (!type) {
-        try { p.Toast.fire({ icon: 'error', title: 'Please select a campaign type.' }); } catch (e) { console.error('Toast failed:', e); }
+// Schedule a campaign
+function campaignScheduleCampaign() {
+  const type = document.querySelector('input[name="campaign-type"]:checked')?.value;
+  if (!type) {
+    try { p.Toast.fire({ icon: 'error', title: 'Please select a campaign type.' }); } catch (e) { console.error('Toast failed:', e); }
+    return;
+  }
+  let sender = '';
+  let subject = '';
+  let body = '';
+  if (type === 'sms') {
+    sender = E('campaign-sms-phone').value;
+    if (!sender) {
+      try { p.Toast.fire({ icon: 'error', title: 'Please select a phone number.' }); } catch (e) { console.error('Toast failed:', e); }
+      return;
+    }
+    body = E('campaign-sms-body').value;
+    if (!body.trim()) {
+      try { p.Toast.fire({ icon: 'error', title: 'Please fill in the SMS body.' }); } catch (e) { console.error('Toast failed:', e); }
+      return;
+    }
+    subject = '';
+  } else {
+    sender = E('campaign-email-address').value;
+    if (!sender) {
+      try { p.Toast.fire({ icon: 'error', title: 'Please select an email address.' }); } catch (e) { console.error('Toast failed:', e); }
+      return;
+    }
+    subject = E('campaign-email-subject').value;
+    if (!subject.trim()) {
+      try { p.Toast.fire({ icon: 'error', title: 'Please fill in the email subject.' }); } catch (e) { console.error('Toast failed:', e); }
+      return;
+    }
+    if (type === 'simple-email') {
+      body = quillBody.root.innerHTML;
+      if (!quillBody.getText().trim()) {
+        try { p.Toast.fire({ icon: 'error', title: 'Please fill in the email body.' }); } catch (e) { console.error('Toast failed:', e); }
         return;
       }
-      let sender = '';
-      let subject = '';
-      let body = '';
-      if (type === 'sms') {
-        sender = E('campaign-sms-phone').value;
-        if (!sender) {
-          try { p.Toast.fire({ icon: 'error', title: 'Please select a phone number.' }); } catch (e) { console.error('Toast failed:', e); }
-          return;
-        }
-        body = E('campaign-sms-body').value;
-        if (!body.trim()) {
-          try { p.Toast.fire({ icon: 'error', title: 'Please fill in the SMS body.' }); } catch (e) { console.error('Toast failed:', e); }
-          return;
-        }
-        subject = '';
-      } else {
-        sender = E('campaign-email-address').value;
-        if (!sender) {
-          try { p.Toast.fire({ icon: 'error', title: 'Please select an email address.' }); } catch (e) { console.error('Toast failed:', e); }
-          return;
-        }
-        subject = E('campaign-email-subject').value;
-        if (!subject.trim()) {
-          try { p.Toast.fire({ icon: 'error', title: 'Please fill in the email subject.' }); } catch (e) { console.error('Toast failed:', e); }
-          return;
-        }
-        if (type === 'simple-email') {
-          body = quillBody.root.innerHTML;
-          if (!quillBody.getText().trim()) {
-            try { p.Toast.fire({ icon: 'error', title: 'Please fill in the email body.' }); } catch (e) { console.error('Toast failed:', e); }
-            return;
-          }
-        } else { // html-email
-          body = E('campaign-html-body').value;
-          if (!body.trim()) {
-            try { p.Toast.fire({ icon: 'error', title: 'Please paste the HTML body.' }); } catch (e) { console.error('Toast failed:', e); }
-            return;
-          }
-        }
-      }
-      const sendNow = E('campaign-send-now').checked;
-      const schedule = sendNow ? new Date().toISOString() : E('campaign-schedule').value;
-      if (!sendNow && !schedule) {
-        try { p.Toast.fire({ icon: 'error', title: 'Please specify a schedule date/time or check "Send Now".' }); } catch (e) { console.error('Toast failed:', e); }
+    } else { // html-email
+      body = E('campaign-html-body').value;
+      if (!body.trim()) {
+        try { p.Toast.fire({ icon: 'error', title: 'Please paste the HTML body.' }); } catch (e) { console.error('Toast failed:', e); }
         return;
       }
-      const selectedContacts = Array.from(document.querySelectorAll('#campaign-reports-table input[type="checkbox"]:checked'))
-        .map(checkbox => {
-          const row = checkbox.closest('tr');
-          const contactIdCell = row.cells[1].querySelector('a');
-          return contactIdCell.textContent;
-        });
-      if (selectedContacts.length === 0) {
-        try { p.Toast.fire({ icon: 'error', title: 'Please select at least one contact.' }); } catch (e) { console.error('Toast failed:', e); }
-        return;
+    }
+  }
+  const sendNow = E('campaign-send-now').checked;
+  const schedule = sendNow ? new Date().toISOString() : E('campaign-schedule').value;
+  if (!sendNow && !schedule) {
+    try { p.Toast.fire({ icon: 'error', title: 'Please specify a schedule date/time or check "Send Now".' }); } catch (e) { console.error('Toast failed:', e); }
+    return;
+  }
+  const selectedContacts = Array.from(document.querySelectorAll('#campaign-reports-table input[type="checkbox"]:checked'))
+    .map(checkbox => {
+      const row = checkbox.closest('tr');
+      const contactIdCell = row.cells[1].querySelector('a');
+      return contactIdCell.textContent;
+    });
+  if (selectedContacts.length === 0) {
+    try { p.Toast.fire({ icon: 'error', title: 'Please select at least one contact.' }); } catch (e) { console.error('Toast failed:', e); }
+    return;
+  }
+  const campaignType = type === 'sms' ? 'sms' : (type === 'simple-email' ? 'email' : 'html-email');
+  const q = `INSERT INTO campaigns (type, sender, subject, body, schedule, contact_ids) VALUES ('${campaignType}', '${sender.replace(/'/g, "''")}', '${subject.replace(/'/g, "''")}', '${body.replace(/'/g, "''")}', '${schedule}', '${selectedContacts.join(',')}')`;
+  console.log('Creating campaign with query:', q);
+  p.sendQuery(q)
+    .then(response => {
+      const insertId = response.data.query1.insertId;
+      if (!insertId) {
+        throw new Error('No insert ID returned');
       }
-      const campaignType = type === 'sms' ? 'sms' : (type === 'simple-email' ? 'email' : 'html-email');
-      const q = `INSERT INTO campaigns (type, sender, subject, body, schedule, contact_ids) VALUES ('${campaignType}', '${sender.replace(/'/g, "''")}', '${subject.replace(/'/g, "''")}', '${body.replace(/'/g, "''")}', '${schedule}', '${selectedContacts.join(',')}')`;
-      console.log('Creating campaign with query:', q);
-      p.sendQuery(q)
-        .then(response => {
-          const insertId = response.data.query1.insertId;
-          if (!insertId) {
-            throw new Error('No insert ID returned');
-          }
-          // Send to Pabbly webhook first
-          const pabblyUrl = 'https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjcwNTZkMDYzMjA0MzU1MjZmNTUzYzUxM2Ei_pc'; // Replace with actual URL
-          fetch(pabblyUrl, {
+      // Send to Pabbly webhook first
+      const pabblyUrl = 'https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjcwNTZkMDYzMjA0MzU1MjZmNTUzYzUxM2Ei_pc'; // Replace with actual URL
+      fetch(pabblyUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -492,22 +492,23 @@ input, select, .input-ta, .input {
           subject: subject,
           body: body,
           contact_ids: selectedContacts.join(',')
-          })
-          .then(res => {
-            if (!res.ok) throw new Error('Pabbly request failed');
-            console.log('Sent to Pabbly successfully');
-          })
-          .catch(error => {
-            console.error('Failed to send to Pabbly:', error);
-            try { p.Toast.fire({ icon: 'error', title: 'Failed to notify third-party. Campaign created but may not process.' }); } catch (e) { console.error('Toast failed:', e); }
-          });
-          try { p.Toast.fire({ icon: 'success', title: 'Campaign created successfully!' }); } catch (e) { console.error('Toast failed:', e); }
         })
-        .catch(error => {
-          console.error('Failed to create campaign:', error);
-          try { p.Toast.fire({ icon: 'error', title: 'Failed to create campaign. Please try again.' }); } catch (e) { console.error('Toast failed:', e); }
-        });
-    }
+      })
+      .then(res => {
+        if (!res.ok) throw new Error('Pabbly request failed');
+        console.log('Sent to Pabbly successfully');
+      })
+      .catch(error => {
+        console.error('Failed to send to Pabbly:', error);
+        try { p.Toast.fire({ icon: 'error', title: 'Failed to notify third-party. Campaign created but may not process.' }); } catch (e) { console.error('Toast failed:', e); }
+      });
+      try { p.Toast.fire({ icon: 'success', title: 'Campaign created successfully!' }); } catch (e) { console.error('Toast failed:', e); }
+    })
+    .catch(error => {
+      console.error('Failed to create campaign:', error);
+      try { p.Toast.fire({ icon: 'error', title: 'Failed to create campaign. Please try again.' }); } catch (e) { console.error('Toast failed:', e); }
+    });
+}
     // Fetch scheduled campaigns
     function campaignLoadScheduledCampaigns() {
       const table = E('campaign-scheduled-table');
