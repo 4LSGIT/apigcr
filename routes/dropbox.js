@@ -42,49 +42,42 @@
  * - Passwords are assumed to be internal / trusted
  */
 
+
+/**
+ * ------------------------------------------------------
+ * Dropbox routes:
+ * - POST /dropbox/create-folder
+ * - POST /dropbox/delete
+ * - POST /dropbox/rename
+ * - POST /dropbox/move
+ *
+ * Authentication:
+ * - api_key in body
+ * - OR username + password (users.user_auth starts with "authorized")
+ */
+
 const express = require("express");
 const router = express.Router();
+const dropbox = require("../services/dropboxService");
 
-const DROPBOX_TOKEN = process.env.DROPBOX_ACCESS_TOKEN;
 const API_KEY = process.env.API_KEY;
 
-if (!DROPBOX_TOKEN) {
-  throw new Error("Missing DROPBOX_ACCESS_TOKEN");
-}
-
 /* ======================================================
-   AUTHENTICATION
+   AUTH
 ====================================================== */
 
 async function authenticate(req) {
   const { api_key, username, password } = req.body;
 
-  // API key auth (from request body)
-  if (api_key && api_key === API_KEY) {
-    return { method: "api_key" };
-  }
-
-  // Username + password auth
-  if (!username || !password) {
-    return null;
-  }
+  if (api_key && api_key === API_KEY) return { method: "api_key" };
+  if (!username || !password) return null;
 
   const [rows] = await req.db.query(
-    `
-    SELECT user_auth
-      FROM users
-     WHERE username = ?
-       AND password = ?
-     LIMIT 1
-    `,
+    `SELECT user_auth FROM users WHERE username = ? AND password = ? LIMIT 1`,
     [username, password]
   );
 
-  if (
-    rows.length &&
-    typeof rows[0].user_auth === "string" &&
-    rows[0].user_auth.startsWith("authorized")
-  ) {
+  if (rows.length && typeof rows[0].user_auth === "string" && rows[0].user_auth.startsWith("authorized")) {
     return { method: "user" };
   }
 
@@ -92,142 +85,78 @@ async function authenticate(req) {
 }
 
 /* ======================================================
-   DROPBOX HELPERS
+   CREATE FOLDER
 ====================================================== */
-
-async function createFolder(path) {
-  const res = await fetch(
-    "https://api.dropboxapi.com/2/files/create_folder_v2",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${DROPBOX_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        path,
-        autorename: false
-      })
-    }
-  );
-
-  // Folder already exists
-  if (res.status === 409) {
-    return;
-  }
-
-  if (!res.ok) {
-    throw new Error(await res.text());
-  }
-}
-
-async function createSubfolders(basePath, subfolders) {
-  for (const sub of subfolders) {
-    if (typeof sub !== "string" || !sub.trim()) continue;
-
-    const fullPath = `${basePath}/${sub}`
-      .replace(/\/{2,}/g, "/")
-      .replace(/\/$/, "");
-
-    await createFolder(fullPath);
-  }
-}
-
-async function getOrCreateSharedLink(path) {
-  const listRes = await fetch(
-    "https://api.dropboxapi.com/2/sharing/list_shared_links",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${DROPBOX_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        path,
-        direct_only: true
-      })
-    }
-  );
-
-  const listData = await listRes.json();
-  if (listData.links && listData.links.length) {
-    return listData.links[0].url;
-  }
-
-  const createRes = await fetch(
-    "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${DROPBOX_TOKEN}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        path,
-        settings: {
-          requested_visibility: "public"
-        }
-      })
-    }
-  );
-
-  if (!createRes.ok) {
-    throw new Error(await createRes.text());
-  }
-
-  const data = await createRes.json();
-  return data.url;
-}
-
-/* ======================================================
-   ROUTE
-====================================================== */
-
 router.post("/dropbox/create-folder", async (req, res) => {
   try {
     const auth = await authenticate(req);
-    if (!auth) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
+    if (!auth) return res.status(401).json({ error: "Unauthorized" });
 
-    let { path, share_link = false, subfolders = [] } = req.body;
+    const { path, share_link = false, subfolders = [] } = req.body;
+    if (!path) return res.status(400).json({ error: "Missing path" });
 
-    if (!path || typeof path !== "string") {
-      return res.status(400).json({ error: "Missing or invalid path" });
-    }
-
-    if (!Array.isArray(subfolders)) {
-      return res.status(400).json({ error: "subfolders must be an array" });
-    }
-
-    // Normalize base path
-    if (!path.startsWith("/")) path = `/${path}`;
-    path = path.replace(/\/{2,}/g, "/").replace(/\/$/, "");
-
-    // Create base folder
-    await createFolder(path);
-
-    // Create subfolders
-    if (subfolders.length) {
-      await createSubfolders(path, subfolders);
-    }
-
-    // Optional shared link
-    let shared_link = null;
-    if (share_link === true) {
-      shared_link = await getOrCreateSharedLink(path);
-    }
-
-    return res.json({
-      ok: true,
-      path,
-      subfolders_created: subfolders,
-      shared_link
-    });
-
+    const shared_link = await dropbox.createFolderWithOptions(path, share_link, subfolders);
+    res.json({ ok: true, path: dropbox.normalizePath(path), subfolders_created: subfolders, shared_link });
   } catch (err) {
-    console.error("Dropbox route error:", err);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error("Dropbox create-folder error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ======================================================
+   DELETE
+====================================================== */
+router.post("/dropbox/delete", async (req, res) => {
+  try {
+    const auth = await authenticate(req);
+    if (!auth) return res.status(401).json({ error: "Unauthorized" });
+
+    const { path } = req.body;
+    if (!path) return res.status(400).json({ error: "Missing path" });
+
+    await dropbox.deletePath(path);
+    res.json({ ok: true, deleted: dropbox.normalizePath(path) });
+  } catch (err) {
+    console.error("Dropbox delete error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ======================================================
+   RENAME
+====================================================== */
+router.post("/dropbox/rename", async (req, res) => {
+  try {
+    const auth = await authenticate(req);
+    if (!auth) return res.status(401).json({ error: "Unauthorized" });
+
+    const { path, newName } = req.body;
+    if (!path || !newName) return res.status(400).json({ error: "Missing path or newName" });
+
+    const result = await dropbox.renamePath(path, newName);
+    res.json({ ok: true, result });
+  } catch (err) {
+    console.error("Dropbox rename error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ======================================================
+   MOVE
+====================================================== */
+router.post("/dropbox/move", async (req, res) => {
+  try {
+    const auth = await authenticate(req);
+    if (!auth) return res.status(401).json({ error: "Unauthorized" });
+
+    const { fromPath, toPath } = req.body;
+    if (!fromPath || !toPath) return res.status(400).json({ error: "Missing fromPath or toPath" });
+
+    const result = await dropbox.movePath(fromPath, toPath);
+    res.json({ ok: true, result });
+  } catch (err) {
+    console.error("Dropbox move error:", err);
+    res.status(500).json({ error: err.message });
   }
 });
 

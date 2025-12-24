@@ -1,8 +1,8 @@
-// db.js
+// startup/db.js
 
 const mysql = require("mysql2");
 
-const db = mysql.createPool({
+const pool = mysql.createPool({
   connectionLimit: 10,
   host: process.env.host,
   user: process.env.user,
@@ -11,8 +11,8 @@ const db = mysql.createPool({
 });
 
 // Optional: centralised error listener
-db.on("error", err => {
+pool.on("error", err => {
   console.error("MySQL error:", err);
 });
 
-module.exports = db;   // ← exports ONE shared object
+module.exports = pool.promise();

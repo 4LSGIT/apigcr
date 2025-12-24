@@ -5,7 +5,7 @@ const data = await response.json();
 */
 const express = require("express");
 const router = express.Router();
-const db = require("../startup/db").promise(); // Use promise-based pool
+const db = require("../startup/db");
 // Helpers
 const getClientIp = (req) =>
   req.headers["x-forwarded-for"]?.split(",").shift() ||
