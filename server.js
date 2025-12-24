@@ -66,5 +66,5 @@ require("./startup/init")(db);
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}.`);
-  console.log(`visit http://localhost:8080/${PORT}.`);
+  console.log(`visit http://localhost:${PORT}/`);
 });

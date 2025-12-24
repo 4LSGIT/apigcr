@@ -1,11 +1,14 @@
 const express = require("express");
 const router = express.Router();
 const fetch = require("node-fetch");
+const Bottleneck = require("bottleneck");
 require("dotenv").config();
+
 let tokenData = null;
 let cachedApiKey = null;
-let refreshTimeout;
-// --- URLs ---
+let refreshTimeout = null;
+
+// -------------------- URLs --------------------
 const RINGCENTRAL_AUTH_URL =
   "https://platform.ringcentral.com/restapi/oauth/authorize";
 const RINGCENTRAL_TOKEN_URL =
@@ -13,16 +16,23 @@ const RINGCENTRAL_TOKEN_URL =
 const ALERT_URL =
   "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZhMDYzMTA0M2Q1MjY5NTUzNjUxMzUi_pc";
 
+// -------------------- SMS rate limiter --------------------
+const smsLimiter = new Bottleneck({
+  maxConcurrent: 2,
+  minTime: 200
+});
+
+// -------------------- Utils --------------------
 function normalizeNumber(num) {
   if (!num) return null;
   let cleaned = num.toString().replace(/\D/g, "");
-  if (cleaned.length === 11 && cleaned.startsWith("1")) { return `+${cleaned}`;}
-  if (cleaned.length === 10) { return `+1${cleaned}`; }
-  if (num.startsWith("+")) { return num; }
+  if (cleaned.length === 11 && cleaned.startsWith("1")) return `+${cleaned}`;
+  if (cleaned.length === 10) return `+1${cleaned}`;
+  if (num.startsWith("+")) return num;
   return null;
 }
 
-// --- DB Helpers ---
+// -------------------- DB Helpers --------------------
 async function getSetting(db, key) {
   return new Promise((resolve, reject) => {
     db.query(
@@ -30,12 +40,12 @@ async function getSetting(db, key) {
       [key],
       (err, results) => {
         if (err) return reject(err);
-        if (results.length === 0) return resolve(null);
-        resolve(results[0].value);
+        resolve(results.length ? results[0].value : null);
       }
     );
   });
 }
+
 async function setSetting(db, key, value) {
   return new Promise((resolve, reject) => {
     db.query(
@@ -45,45 +55,53 @@ async function setSetting(db, key, value) {
     );
   });
 }
-// --- Webhook Alert Helper ---
-async function sendAlert(errorType, message, extraData = {}) {
+
+// -------------------- Alerts --------------------
+async function sendAlert(type, message, extra = {}) {
   try {
-    fetch(ALERT_URL, {
+    await fetch(ALERT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        error_type: errorType,
+        error_type: type,
         alert: message,
-        environment: process.env.ENVIRONMENT || "undefined",
+        environment: process.env.ENVIRONMENT || "unknown",
         timestamp: new Date().toISOString(),
-        ...extraData,
+        ...extra,
       }),
-    }).catch((err) => console.error("Failed to send alert webhook:", err));
-  } catch (err) {
-    console.error("Failed to send alert webhook:", err);
-  }
+    });
+  } catch (_) {}
 }
-// --- Retry Helper ---
-async function fetchWithRetries(url, options, retries = 3, delay = 500) {
-  let lastError;
-  for (let attempt = 1; attempt <= retries; attempt++) {
+
+// -------------------- Fetch with retries & 429 --------------------
+async function fetchWithRetries(url, options, retries = 3) {
+  let lastErr;
+  for (let i = 1; i <= retries; i++) {
     try {
       const res = await fetch(url, options);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} - ${await res.text()}`);
+
+      if (res.status === 429) {
+        const retryAfter = parseInt(res.headers.get("Retry-After")) || i * 2;
+        console.warn(`Rate limited. Retrying after ${retryAfter}s...`);
+        await new Promise(r => setTimeout(r, retryAfter * 1000));
+        continue;
       }
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+
       return res;
     } catch (err) {
-      lastError = err;
-      console.warn(`Fetch attempt ${attempt} failed: ${err.message}`);
-      if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, delay * attempt));
-      }
+      lastErr = err;
+      if (i < retries) await new Promise(r => setTimeout(r, i * 500));
     }
   }
-  throw lastError;
+  throw lastErr;
 }
-// --- Token Save ---
+
+// -------------------- Token Persistence --------------------
 async function saveToken(db) {
   try {
     await setSetting(db, "rc_token", JSON.stringify(tokenData));
@@ -95,27 +113,32 @@ async function saveToken(db) {
     });
   }
 }
-// --- Token Refresh Lock ---
+
+// -------------------- Token Refresh --------------------
 let isRefreshing = false;
 let refreshPromise = null;
+
 async function refreshAccessToken(db) {
-  if (!tokenData || !tokenData.refresh_token) return;
-  if (isRefreshing) {
-    console.log("Token refresh already in progress, waiting...");
-    return refreshPromise;
-  }
+  if (!tokenData?.refresh_token) return;
+
+  if (isRefreshing) return refreshPromise;
+
   isRefreshing = true;
   refreshPromise = (async () => {
     try {
-      const refreshIssuedAt = tokenData.issued_at || Date.now();
-      const refreshExpiresIn = (tokenData.refresh_token_expires_in || 0) * 1000;
-      const refreshExpiry = refreshIssuedAt + refreshExpiresIn;
+      const refreshIssuedAt = tokenData.refresh_issued_at || tokenData.issued_at || Date.now();
+      const refreshExpiry =
+        refreshIssuedAt +
+        (tokenData.refresh_token_expires_in || 0) * 1000;
+
       if (Date.now() >= refreshExpiry) {
         console.error("Refresh token expired, requiring reauthorization.");
         sendAlert("refresh_token_expired", "Refresh token has expired, reauthorization needed");
         tokenData = null;
+        clearTimeout(refreshTimeout);
         return;
       }
+
       const res = await fetchWithRetries(RINGCENTRAL_TOKEN_URL, {
         method: "POST",
         headers: {
@@ -131,10 +154,14 @@ async function refreshAccessToken(db) {
           refresh_token: tokenData.refresh_token,
         }),
       });
+
+      const json = await res.json();
       tokenData = {
-        ...(await res.json()),
-        issued_at: Date.now(),
+        ...json,
+        access_issued_at: Date.now(),
+        refresh_issued_at: Date.now()
       };
+
       await saveToken(db);
       scheduleRefresh(db);
       console.log("Token refreshed successfully.");
@@ -148,104 +175,71 @@ async function refreshAccessToken(db) {
       isRefreshing = false;
     }
   })();
+
   return refreshPromise;
 }
-// --- Schedule Refresh ---
+
+// -------------------- Schedule Refresh --------------------
 function scheduleRefresh(db) {
-  if (!tokenData || !tokenData.expires_in) return;
-  const refreshTime = (tokenData.expires_in - 600) * 1000; // 10 min before expiry
+  if (!tokenData?.expires_in) return;
   clearTimeout(refreshTimeout);
-  refreshTimeout = setTimeout(() => refreshAccessToken(db), refreshTime);
+  refreshTimeout = setTimeout(
+    () => refreshAccessToken(db),
+    (tokenData.expires_in - 600) * 1000
+  );
 }
-// --- Token Load Lock ---
+
+// -------------------- Token Load --------------------
 let isLoadingToken = false;
 let loadTokenPromise = null;
+
 async function loadToken(db) {
-  if (isLoadingToken) {
-    console.log("Token load already in progress, waiting...");
-    return loadTokenPromise;
-  }
+  if (isLoadingToken) return loadTokenPromise;
+
   isLoadingToken = true;
   loadTokenPromise = (async () => {
     try {
       const raw = await getSetting(db, "rc_token");
       if (raw) {
         tokenData = JSON.parse(raw);
-        console.log("Loaded token from DB.");
-        const issuedAt = tokenData.issued_at || Date.now();
-        const now = Date.now();
-        const expiresIn = tokenData.expires_in * 1000;
-        const tokenExpiry = issuedAt + expiresIn;
-        // Check refresh token expiry as well
-        const refreshIssuedAt = tokenData.issued_at || Date.now();
-        const refreshExpiresIn = (tokenData.refresh_token_expires_in || 0) * 1000;
-        const refreshExpiry = refreshIssuedAt + refreshExpiresIn;
-        if (now >= refreshExpiry) {
-          console.error("Refresh token expired on load, requiring reauthorization.");
-          sendAlert("refresh_token_expired", "Refresh token expired on load, reauthorization needed");
-          tokenData = null;
-          return;
-        }
-        if (now >= tokenExpiry) {
-          console.log("Access token expired on load, attempting refresh...");
-          try {
-            await refreshAccessToken(db);
-          } catch (err) {
-            console.error("Could not refresh token on load:", err.message);
-            sendAlert("token_refresh_failed", "Token refresh failed on load", {
-              error: err.message,
-            });
-            // clear token so /status shows not authorized
-            tokenData = null;
-          }
+        const accessIssuedAt = tokenData.access_issued_at || tokenData.issued_at || Date.now();
+        if (!Number.isFinite(accessIssuedAt)) {
+          console.log("Invalid access_issued_at, forcing refresh...");
+          await refreshAccessToken(db);
         } else {
-          scheduleRefresh(db);
+          const accessExpiry = accessIssuedAt + (tokenData.expires_in || 0) * 1000;
+          if (Date.now() >= accessExpiry) {
+            console.log("Access token expired on load, refreshing...");
+            await refreshAccessToken(db);
+          } else {
+            scheduleRefresh(db);
+          }
         }
       } else {
         console.warn("No token found in DB.");
       }
     } catch (err) {
       console.error("Failed to load token from DB:", err);
-      sendAlert("token_load_failed", "Token load failed", {
-        error: err.message,
-      });
-      // don’t rethrow — keep server alive
+      sendAlert("token_load_failed", "Token load failed", { error: err.message });
     } finally {
       isLoadingToken = false;
     }
   })();
+
   return loadTokenPromise;
 }
-async function loadTokenWithRetries(db, retries = 3, delay = 500) {
-  let lastError;
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      await loadToken(db);
-      return; // success
-    } catch (err) {
-      lastError = err;
-      console.warn(`Token load attempt ${attempt} failed: ${err.message}`);
-      if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, delay * attempt));
-      }
-    }
-  }
-  console.error("Token load failed after retries:", lastError);
-  sendAlert("token_load_failed", "Token load failed after retries", {
-    error: lastError.message,
-  });
-}
-// --- API Key Middleware ---
+
+// -------------------- API Key Middleware --------------------
 async function checkApiKey(req, res, next) {
   if (!cachedApiKey) {
     try {
-      const dbKey = await getSetting(req.db, "api_key");
-      cachedApiKey = dbKey || process.env.RINGCENTRAL_API_KEY;
+      cachedApiKey = await getSetting(req.db, "api_key") || process.env.RINGCENTRAL_API_KEY;
     } catch (e) {
       console.error("Failed to load API key:", e);
       cachedApiKey = process.env.RINGCENTRAL_API_KEY;
     }
   }
+
   const key = req.headers["x-api-key"] || req.query.key;
   if (key !== cachedApiKey) {
     sendAlert("unauthorized_access", "Invalid API key attempt", {
@@ -258,12 +252,24 @@ async function checkApiKey(req, res, next) {
   next();
 }
 
+// ==================== LOAD TOKEN FIRST ====================
+router.use(async (req, res, next) => {
+  if (!tokenData) {
+    try {
+      await loadToken(req.db);
+    } catch (err) {
+      console.error("Skipping token load (DB unavailable):", err.message);
+    }
+  }
+  next();
+});
 
-// --- Routes ---
+// -------------------- OAuth Routes --------------------
 router.get("/ringcentral/authorize", (req, res) => {
   const authUrl = `${RINGCENTRAL_AUTH_URL}?response_type=code&client_id=${process.env.RINGCENTRAL_CLIENT_ID}&redirect_uri=${process.env.RINGCENTRAL_REDIRECT_URI}`;
   res.redirect(authUrl);
 });
+
 router.get("/ringcentral/callback", async (req, res) => {
   if (req.query.error) {
     console.error("OAuth error from RingCentral:", req.query.error);
@@ -289,106 +295,116 @@ router.get("/ringcentral/callback", async (req, res) => {
         redirect_uri: process.env.RINGCENTRAL_REDIRECT_URI,
       }),
     });
+    const json = await resToken.json();
     tokenData = {
-      ...(await resToken.json()),
-      issued_at: Date.now(),
+      ...json,
+      access_issued_at: Date.now(),
+      refresh_issued_at: Date.now()
     };
     await saveToken(db);
     scheduleRefresh(db);
     res.send("Authorization successful. You can now send SMS.");
   } catch (err) {
     console.error("OAuth error:", err);
-    sendAlert("token_load_failed", "OAuth callback failed", {
-      error: err.message,
-    });
+    sendAlert("token_load_failed", "OAuth callback failed", { error: err.message });
     res.status(500).send("Failed to retrieve token.");
   }
 });
+
+// -------------------- SEND SMS --------------------
+const sendSmsThroughLimiter = smsLimiter.wrap(async (from, to, message) => {
+  const smsRes = await fetchWithRetries(
+    "https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/sms",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: { phoneNumber: from },
+        to: [{ phoneNumber: to }],
+        text: message,
+      }),
+    }
+  );
+  return await smsRes.json();
+});
+
 router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
   let { from, to, message } = { ...req.query, ...req.body };
   from = normalizeNumber(from);
   to = normalizeNumber(to);
+
   if (!from || !to || !message) {
     return res.status(400).json({ error: "Missing required fields" });
   }
-  const db = req.db;
-  if (!tokenData || !tokenData.access_token) {
-    return res.status(401).json({ error: "Not authorized with RingCentral" });
-  }
-  const now = Date.now();
-  const issuedAt = tokenData.issued_at || now;
-  const expiresIn = tokenData.expires_in * 1000;
-  const tokenExpiry = issuedAt + expiresIn;
-  if (now >= tokenExpiry) {
-    console.log("Token expired during SMS send, refreshing...");
+
+  if (message.length > 1000) return res.status(400).json({ error: "Message too long" });
+
+  const accessIssuedAt = tokenData.access_issued_at || tokenData.issued_at || Date.now();
+  const accessExpiry = accessIssuedAt + (tokenData.expires_in || 0) * 1000;
+  if (Date.now() >= accessExpiry) {
     try {
-      await refreshAccessToken(db);
+      await refreshAccessToken(req.db);
+      if (!tokenData?.access_token) return res.status(401).json({ error: "Not authorized" });
     } catch (err) {
-      sendAlert(
-        "token_refresh_failed",
-        "Failed to refresh access token during SMS send",
-        { from, to, message, error: err.message }
-      );
-      return res.status(401).json({ error: "Failed to refresh access token" });
+      await sendAlert("token_refresh_failed", err.message, { from, to });
+      return res.status(401).json({ error: "Token refresh failed" });
     }
   }
+
   try {
-    const smsRes = await fetchWithRetries(
-      "https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/sms",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${tokenData.access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          from: { phoneNumber: from },
-          to: [{ phoneNumber: to }],
-          text: message,
-        }),
-      }
+    const result = await sendSmsThroughLimiter(from, to, message);
+
+    // Log success
+    req.db.query(
+      "INSERT INTO rc_sms_log (from_number, to_number, message, status, rc_id) VALUES (?, ?, ?, 'success', ?)",
+      [from, to, message, result.id],
+      err => { if (err) console.error("Failed to log SMS:", err); }
     );
-    const result = await smsRes.json();
+
     res.json(result);
   } catch (err) {
-    console.error("SMS send error:", err);
-    sendAlert("sms_send_failed", "SMS send failed after retries", {
-      from,
-      to,
-      message,
-      error: err.message,
-    });
-    res.status(500).send("Error sending SMS.");
+    // Log failure
+    req.db.query(
+      "INSERT INTO rc_sms_log (from_number, to_number, message, status, error) VALUES (?, ?, ?, 'failed', ?)",
+      [from, to, message, err.message],
+      logErr => { if (logErr) console.error("Failed to log SMS:", logErr); }
+    );
+
+    await sendAlert("sms_send_failed", err.message, { from, to });
+    res.status(500).json({ error: "SMS send failed" });
   }
 });
+
+// -------------------- STATUS --------------------
 router.get("/ringcentral/status", checkApiKey, (req, res) => {
-  if (!tokenData || !tokenData.access_token) {
-    return res.json({ authorized: false });
+  if (!tokenData?.access_token) return res.json({ authorized: false });
+
+  const accessIssuedAt = Number(tokenData.access_issued_at || tokenData.issued_at) || 0;
+  const accessExpiresIn = Number(tokenData.expires_in) || 0;
+  const refreshIssuedAt = Number(tokenData.refresh_issued_at || tokenData.issued_at) || 0;
+  const refreshExpiresIn = Number(tokenData.refresh_token_expires_in) || 0;
+
+  let accessExpiresAt = "unknown";
+  let refreshExpiresAt = "unknown";
+
+  if (!isNaN(accessIssuedAt) && !isNaN(accessExpiresIn)) {
+    accessExpiresAt = new Date(accessIssuedAt + accessExpiresIn * 1000).toISOString();
   }
-  const expiresIn = tokenData.expires_in || 0;
-  const issuedAt = tokenData.issued_at || Date.now();
-  const expiresAt = new Date(Number(issuedAt) + expiresIn * 1000);
+
+  if (!isNaN(refreshIssuedAt) && !isNaN(refreshExpiresIn) && refreshExpiresIn > 0) {
+    refreshExpiresAt = new Date(refreshIssuedAt + refreshExpiresIn * 1000).toISOString();
+  }
+
   res.json({
     authorized: true,
-    access_token_expires_at: expiresAt.toISOString(),
-    refresh_token_expires_at: tokenData.refresh_token_expires_in
-      ? new Date(
-          Number(issuedAt) + tokenData.refresh_token_expires_in * 1000
-        ).toISOString()
-      : "unknown",
+    access_token_expires_at: accessExpiresAt,
+    refresh_token_expires_at: refreshExpiresAt
   });
 });
-// --- Initial Token Load ---
-router.use(async (req, res, next) => {
-  if (!tokenData) {
-    try {
-      await loadTokenWithRetries(req.db);
-    } catch (err) {
-      console.error("Skipping token load (DB unavailable):", err.message);
-      // important: do not throw here, let the server keep running
-    }
-  }
-  next();
-});
+
+
 module.exports = router;
 module.exports.loadTokenFromDb = loadToken;
