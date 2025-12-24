@@ -18,7 +18,8 @@ const ALERT_URL =
 const RINGCENTRAL_TOKEN_URL =
   "https://platform.ringcentral.com/restapi/oauth/token";
 
-const smsLimiter = new Bottleneck({ maxConcurrent: 2, minTime: 200 });
+//const smsLimiter = new Bottleneck({ maxConcurrent: 2, minTime: 200 });
+const smsLimiter = new Bottleneck({ maxConcurrent: 1, minTime: 1875 });
 
 let tokenData = null;
 let refreshTimeout = null;
