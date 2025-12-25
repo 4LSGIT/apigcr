@@ -47,7 +47,7 @@ async function sendCampaign(db, campaign_id) {
 
   // Prepare SMTP transporter if email campaign
   let transporter = null;
-  if (campaign.type === "email") {
+  if (campaign.type === "email" || campaign.type === "html-email") {
     const [[smtp]] = await db.query(
       "SELECT * FROM email_credentials WHERE email=?",
       [campaign.sender]
