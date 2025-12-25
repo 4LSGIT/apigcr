@@ -200,17 +200,9 @@ input, select, .input-ta, .input {
             <option value="">— Select field —</option>
             <option value="contact_fname">First Name</option>
             <option value="contact_lname">Last Name</option>
-            <option value="contact_name">Full Name</option>
-            <option value="contact_lfm_name">Name (Last, First Middle)</option>
             <option value="contact_phone">Phone</option>
             <option value="contact_email">Email</option>
-            <option value="contact_id">Contact ID</option>
-            <option value="contact_address">Address</option>
-            <option value="contact_city">City</option>
-            <option value="contact_state">State</option>
-            <option value="contact_zip">Zip</option>
-            <option value="contact_dob||date:MMMM Do, YYYY">Birthday (formatted)</option>
-            <option value="contact_dob||date:YYYY-MM-DD">Birthday (YYYY-MM-DD)</option>
+            <option value="contact_tags">Tags</option>
             <!-- Add more hardcoded as needed -->
           </select>
           <button type="button" class="small-insert-btn" onclick="insertSelectedPlaceholder()">Insert</button>
@@ -288,8 +280,6 @@ const E = (id) => document.getElementById(id);
 const p = window.parent;
 
 let quillBody = null;
-let lastFocusedElement = null;
-
 document.addEventListener('DOMContentLoaded', () => {
   quillBody = new Quill('#campaign-email-body-editor', {
     theme: 'snow',
@@ -302,21 +292,6 @@ document.addEventListener('DOMContentLoaded', () => {
     },
     placeholder: 'Enter email body'
   });
-
-  // Track last focused editable element
-  const editableFields = [
-    E('campaign-email-subject'),
-    E('campaign-html-body'),
-    E('campaign-sms-body'),
-    document.querySelector('#campaign-email-body-editor .ql-editor') // For Quill
-  ].filter(el => el); // Filter out nulls if any
-
-  editableFields.forEach(field => {
-    field.addEventListener('focus', () => {
-      lastFocusedElement = field;
-    });
-  });
-
   campaignToggleFields();
   campaignToggleSchedule();
   E('campaign-email-subject').addEventListener('input', updateSubjectHint);
@@ -555,37 +530,31 @@ function insertSelectedPlaceholder() {
 
   const placeholder = `{{contact.${value}}}`;
 
-  if (!lastFocusedElement) {
-    navigator.clipboard.writeText(placeholder).then(() => {
-      alert(`No field focused. Copied: ${placeholder}\nPaste where you want it.`);
-    });
-    return;
-  }
+  const activeElement = document.activeElement;
 
-  // For Quill editor
-  if (lastFocusedElement.classList.contains('ql-editor')) {
-    quillBody.focus(); // Re-focus if needed
+  // 1. Quill editor (email body)
+  if (window.quillBody && activeElement.closest('#campaign-email-body-editor')) {
     const range = quillBody.getSelection(true);
     quillBody.insertText(range ? range.index : 0, placeholder);
     quillBody.setSelection(range ? range.index + placeholder.length : placeholder.length);
     return;
   }
 
-  // For regular input or textarea
-  if (lastFocusedElement.tagName === 'TEXTAREA' || lastFocusedElement.tagName === 'INPUT') {
-    const start = lastFocusedElement.selectionStart;
-    const end = lastFocusedElement.selectionEnd;
-    lastFocusedElement.value = 
-      lastFocusedElement.value.substring(0, start) +
+  // 2. Regular textarea (SMS or HTML body) or input (subject)
+  if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
+    const start = activeElement.selectionStart;
+    const end = activeElement.selectionEnd;
+    activeElement.value = 
+      activeElement.value.substring(0, start) +
       placeholder +
-      lastFocusedElement.value.substring(end);
+      activeElement.value.substring(end);
     
-    lastFocusedElement.selectionStart = lastFocusedElement.selectionEnd = start + placeholder.length;
-    lastFocusedElement.focus();
+    activeElement.selectionStart = activeElement.selectionEnd = start + placeholder.length;
+    activeElement.focus();
     return;
   }
 
-  // Fallback
+  // Fallback: just copy to clipboard
   navigator.clipboard.writeText(placeholder).then(() => {
     alert(`Copied: ${placeholder}\nPaste where you want it.`);
   });
