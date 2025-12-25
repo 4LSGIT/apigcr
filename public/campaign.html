@@ -496,10 +496,10 @@ async function campaignScheduleCampaign() {
     if (!selectedContacts.length) throw new Error('Please select at least one contact.');
 
     const campaignType = type === 'sms' ? 'sms' : (type === 'simple-email' ? 'email' : 'html-email');
-
+    const userId = p.user?.user ?? null;  // Use nullish coalescing → null if undefined/missing
     // Insert campaign into DB
-    const insertQuery = `INSERT INTO campaigns (type, sender, subject, body, schedule, contact_ids)
-                         VALUES ('${campaignType}', '${sender.replace(/'/g,"''")}', '${subject.replace(/'/g,"''")}', '${body.replace(/'/g,"''")}', '${schedule}', '${selectedContacts.join(",")}')`;
+    const insertQuery = `INSERT INTO campaigns (type, sender, subject, body, schedule, contact_ids, created_by)
+                         VALUES ('${campaignType}', '${sender.replace(/'/g,"''")}', '${subject.replace(/'/g,"''")}', '${body.replace(/'/g,"''")}', '${schedule}', '${selectedContacts.join(",")}', ${userId !== null ? userId : 'NULL'}')`;
     const response = await p.sendQuery(insertQuery);
     const insertId = response.data.query1.insertId;
     if (!insertId) throw new Error('No insert ID returned');
