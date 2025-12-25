@@ -73,7 +73,7 @@ async function sendCampaign(db, campaign_id) {
         throw new Error("Unresolved placeholders");
       }
 
-      if (campaign.type === "email") {
+      if (campaign.type === "email" || campaign.type === "html-email") {
         const [[contact]] = await db.query(
           "SELECT contact_email FROM contacts WHERE contact_id=?",
           [contact_id]
