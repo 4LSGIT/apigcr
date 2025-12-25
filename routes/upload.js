@@ -6,82 +6,114 @@ const path = require("path");
 
 const router = express.Router();
 
-// Max upload size: 25 MB
-const MAX_FILE_SIZE = 25 * 1024 * 1024;
+/* ---------------- CONFIG ---------------- */
+
+const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE },
 });
 
-// Helper: generate random filename
+/* ---------------- HELPERS ---------------- */
+
 function randomFilename(originalName) {
   const ext = path.extname(originalName);
-  const random = crypto.randomBytes(16).toString("hex");
-  return `${random}${ext}`;
+  const rand = crypto.randomBytes(16).toString("hex");
+  return `${rand}${ext}`;
 }
+
+function queryAsync(db, sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.query(sql, params, (err, results) => {
+      if (err) return reject(err);
+      resolve(results);
+    });
+  });
+}
+
+/* ---------------- ROUTE ---------------- */
 
 router.post("/upload", upload.single("file"), async (req, res) => {
   try {
+    /* ---------- ENV ---------- */
     const bucketName = process.env.GCS_BUCKET;
-    if (!bucketName) return res.status(500).json({ error: "Bucket not configured" });
+    if (!bucketName) {
+      return res.status(500).json({ error: "GCS_BUCKET not configured" });
+    }
 
+    /* ---------- INPUT ---------- */
     const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Missing username or password" });
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    // ---- AUTH CHECK ----
-    const sql = `SELECT user_auth FROM users WHERE username = ? AND password = ? LIMIT 1`;
-    const [results] = await new Promise((resolve, reject) => {
-      req.db.query(sql, [username, password], (err, results) => {
-        if (err) return reject(err);
-        resolve([results]);
-      });
-    });
+    if (!username || !password) {
+      return res.status(400).json({ error: "Missing username or password" });
+    }
 
-    if (results.length === 0 || !results[0].user_auth?.startsWith("authorized")) {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+
+    /* ---------- AUTH ---------- */
+    const authSql =
+      "SELECT user_auth FROM users WHERE username = ? AND password = ? LIMIT 1";
+
+    const authRows = await queryAsync(req.db, authSql, [
+      username,
+      password,
+    ]);
+
+    if (
+      authRows.length === 0 ||
+      typeof authRows[0].user_auth !== "string" ||
+      !authRows[0].user_auth.startsWith("authorized")
+    ) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // ---- UPLOAD TO GCS ----
+    /* ---------- GCS UPLOAD ---------- */
     const storage = new Storage();
     const bucket = storage.bucket(bucketName);
+
     const filename = randomFilename(req.file.originalname);
     const file = bucket.file(filename);
 
-    const now = new Date().toISOString();
+    const uploadedAt = new Date().toISOString();
 
     await file.save(req.file.buffer, {
       resumable: false,
+      contentType: req.file.mimetype,
       metadata: {
-        contentType: req.file.mimetype,
         cacheControl: "public, max-age=31536000",
         metadata: {
           username,
           originalName: req.file.originalname,
-          uploadedAt: now,
+          uploadedAt,
         },
       },
     });
 
-    // Log metadata internally
-    console.log(`[UPLOAD] User: ${username}, File: ${req.file.originalname}, Saved as: ${filename}, Size: ${req.file.size} bytes, Time: ${now}`);
-
     const publicUrl = `https://storage.googleapis.com/${bucketName}/${filename}`;
-    //const publicUrl = `https://uploads.4lsg.com/${filename}`;
 
+    /* ---------- LOG ---------- */
+    console.log(
+      `[UPLOAD] user=${username} file=${req.file.originalname} size=${req.file.size} saved_as=${filename}`
+    );
+
+    /* ---------- RESPONSE ---------- */
     return res.json({
       success: true,
       url: publicUrl,
       filename,
       size: req.file.size,
       mime: req.file.mimetype,
-      uploadedAt: now,
+      uploadedAt,
     });
-
   } catch (err) {
-    console.error("Upload error:", err);
-    res.status(500).json({ error: err.message || "Unexpected server error" });
+    console.error("[UPLOAD ERROR]", err);
+    return res.status(500).json({
+      error: "Upload failed",
+      details: err.message,
+    });
   }
 });
 

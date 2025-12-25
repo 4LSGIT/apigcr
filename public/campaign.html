@@ -200,17 +200,9 @@ input, select, .input-ta, .input {
             <option value="">— Select field —</option>
             <option value="contact_fname">First Name</option>
             <option value="contact_lname">Last Name</option>
-            <option value="contact_name">Full Name</option>
-            <option value="contact_lfm_name">Name (Last, First Middle)</option>
             <option value="contact_phone">Phone</option>
             <option value="contact_email">Email</option>
-            <option value="contact_id">Contact ID</option>
-            <option value="contact_address">Address</option>
-            <option value="contact_city">City</option>
-            <option value="contact_state">State</option>
-            <option value="contact_zip">Zip</option>
-            <option value="contact_dob||date:MMMM Do, YYYY">Birthday (formatted)</option>
-            <option value="contact_dob||date:YYYY-MM-DD">Birthday (YYYY-MM-DD)</option>
+            <option value="contact_tags">Tags</option>
             <!-- Add more hardcoded as needed -->
           </select>
           <button type="button" class="small-insert-btn" onclick="insertSelectedPlaceholder()">Insert</button>
@@ -301,6 +293,44 @@ document.addEventListener('DOMContentLoaded', () => {
       ]
     },
     placeholder: 'Enter email body'
+  });
+
+  // Custom image uploader handler
+  const toolbar = quillBody.getModule('toolbar');
+  toolbar.addHandler('image', function(value) {
+    if (value) {
+      const quill = this.quill;
+      const range = quill.getSelection();
+      const input = document.createElement('input');
+      input.setAttribute('type', 'file');
+      input.setAttribute('accept', 'image/*');
+      input.click();
+      input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('username', p.username);
+        formData.append('password', p.password);
+        try {
+          const response = await fetch('/upload', {
+            method: 'POST',
+            body: formData
+          });
+          if (!response.ok) throw new Error('Upload failed');
+          const data = await response.json();
+          if (!data.success) throw new Error('Upload not successful');
+          const url = data.url;
+          quill.insertEmbed(range.index, 'image', url);
+          quill.setSelection(range.index + 1);
+        } catch (err) {
+          console.error('Image upload error:', err);
+          try { p.Toast.fire({ icon: 'error', title: 'Failed to upload image.' }); } catch (_) {}
+        }
+      };
+    } else {
+      this.quill.format('image', false);
+    }
   });
 
   // Track last focused editable element
