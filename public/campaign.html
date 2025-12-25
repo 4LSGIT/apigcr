@@ -188,8 +188,9 @@ input, select, .input-ta, .input {
             <select id="campaign-sms-phone" class="input">
               <option value="">Select phone number</option>
               <!-- Populate options dynamically or statically as needed -->
-              <option value="+1234567890">+1 (234) 567-890</option>
-              <option value="+1987654321">+1 (987) 654-321</option>
+              <option value="+12485592400">+1 (248) 559-2400</option>
+              <option value="+12486213656">+1 (248) 621-3656</option>
+              <option value="+12345678910">+1 (234) 567-8910 - fail</option>
             </select>
           </div>
           <div id="campaign-email-sender" class="campaign-hidden">
@@ -198,7 +199,7 @@ input, select, .input-ta, .input {
               <option value="">Select email address</option>
               <!-- Populate options dynamically or statically as needed -->
               <option value="shoshana@metrodetroitbankruptcylaw.com">shoshana@metrodetroitbankruptcylaw.com</option>
-              <option value="support@example.com">support@example.com</option>
+              <option value="support@example.com">support@example.com - fail</option>
             </select>
           </div>
         </div>
@@ -499,6 +500,33 @@ function campaignScheduleCampaign() {
       .then(res => {
         if (!res.ok) throw new Error('Pabbly request failed');
         console.log('Sent to Pabbly successfully');
+          // 🔥 SEND NOW → trigger campaign immediately
+        if (sendNow) {
+          fetch('/campaigns/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: p.username,
+        password: p.password,
+        campaign_id: insertId
+      })
+    })
+    .then(r => r.json())
+    .then(data => {
+      console.log('Campaign triggered immediately:', data);
+    })
+    .catch(err => {
+      console.error('Immediate trigger failed:', err);
+      try {
+        p.Toast.fire({
+          icon: 'warning',
+          title: 'Campaign created, but immediate send failed'
+        });
+      } catch (_) {}
+    });
+  }
+})
+
       })
       .catch(error => {
         console.error('Failed to send to Pabbly:', error);
