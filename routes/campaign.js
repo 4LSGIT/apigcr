@@ -1,29 +1,17 @@
 /**
- * Campaign Route
+ * Campaign Route (MySQL-based background processing)
  * ------------------------------------------------------
  * - POST /campaigns/trigger
  * - Authenticates user
- * - Enqueues campaign job in Bull
- * - Returns immediately with job queued
+ * - Atomically locks campaign
+ * - Responds immediately
+ * - Processes campaign in background
  */
 
 const express = require("express");
 const router = express.Router();
-const Bull = require("bull");
 const { sendCampaign } = require("../services/campaignService");
 
-// Redis connection for Bull
-const campaignQueue = new Bull("campaignQueue", {
-  redis: { host: "127.0.0.1", port: 6379 }
-});
-
-// -------------------- Job Processor --------------------
-campaignQueue.process(async (job) => {
-  const { db, campaign_id } = job.data;
-  return sendCampaign(db, campaign_id);
-});
-
-// -------------------- POST /campaigns/trigger --------------------
 router.post("/campaigns/trigger", async (req, res) => {
   const { username, password, campaign_id } = req.body;
 
@@ -42,10 +30,44 @@ router.post("/campaigns/trigger", async (req, res) => {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // Enqueue campaign job
-    await campaignQueue.add({ db: req.db, campaign_id });
+    // Atomically lock the campaign
+    const [lock] = await req.db.query(
+      "UPDATE campaigns SET status='sending' WHERE campaign_id=? AND status='scheduled'",
+      [campaign_id]
+    );
 
+    if (!lock.affectedRows) {
+      return res.status(400).json({ error: "Campaign already processed or sending" });
+    }
+
+    // Respond immediately
     res.json({ status: "queued", campaign_id });
+
+    // Process campaign in background
+    (async () => {
+      try {
+        const result = await sendCampaign(req.db, campaign_id);
+
+        // Determine final status
+        let finalStatus = "sent";
+        if (result.failures && result.failures < result.total) finalStatus = "partial fail";
+        if (result.failures && result.failures === result.total) finalStatus = "failed";
+
+        await req.db.query(
+          "UPDATE campaigns SET status=? WHERE campaign_id=?",
+          [finalStatus, campaign_id]
+        );
+
+        console.log(`Campaign ${campaign_id} processed:`, result);
+      } catch (err) {
+        console.error("Background campaign send failed:", err);
+        // Update campaign to failed
+        await req.db.query(
+          "UPDATE campaigns SET status='failed' WHERE campaign_id=?",
+          [campaign_id]
+        );
+      }
+    })();
 
   } catch (err) {
     console.error("Campaign trigger error:", err);

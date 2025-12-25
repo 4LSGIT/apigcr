@@ -4,14 +4,14 @@
  * Handles:
  * - Sending email campaigns via SMTP
  * - Sending SMS campaigns via RingCentral
- * - Placeholder resolution
+ * - Placeholder resolution (body + subject)
  * - Logging results
- * - Rate limiting
+ * - Rate limiting (emails)
  */
 
 const nodemailer = require("nodemailer");
 const unplacehold = require("../lib/unplacehold");
-const { sendSms } = require("./ringcentralService"); // your existing RingCentral service
+const { sendSms } = require("./ringcentralService"); // existing RingCentral service
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -31,14 +31,7 @@ async function sendWithRetry(fn, retries = 2) {
 }
 
 async function sendCampaign(db, campaign_id) {
-  // 1. Lock campaign atomically
-  const [lock] = await db.query(
-    "UPDATE campaigns SET status='sending' WHERE campaign_id=? AND status='scheduled'",
-    [campaign_id]
-  );
-  if (!lock.affectedRows) throw new Error("Campaign already processed or sending");
-
-  // 2. Load campaign
+  // 1. Load campaign
   const [[campaign]] = await db.query(
     "SELECT * FROM campaigns WHERE campaign_id=?",
     [campaign_id]
@@ -69,12 +62,16 @@ async function sendCampaign(db, campaign_id) {
     });
   }
 
-  // 3. Loop through contacts
+  // 2. Loop through contacts
   for (const contact_id of contactIds) {
     try {
-      // Resolve placeholders
-      const result = await unplacehold({ db, text: campaign.body, contact_id, strict: true });
-      if (result.status === "failed") throw new Error("Unresolved placeholders");
+      // Resolve placeholders in both body and subject
+      const bodyResult = await unplacehold({ db, text: campaign.body, contact_id, strict: true });
+      const subjectResult = await unplacehold({ db, text: campaign.subject, contact_id, strict: true });
+
+      if (bodyResult.status === "failed" || subjectResult.status === "failed") {
+        throw new Error("Unresolved placeholders");
+      }
 
       if (campaign.type === "email") {
         const [[contact]] = await db.query(
@@ -87,8 +84,8 @@ async function sendCampaign(db, campaign_id) {
           transporter.sendMail({
             from: campaign.sender,
             to: contact.contact_email,
-            subject: campaign.subject,
-            html: result.text
+            subject: subjectResult.text, // resolved subject
+            html: bodyResult.text        // resolved body
           })
         );
 
@@ -106,13 +103,14 @@ async function sendCampaign(db, campaign_id) {
         );
         if (!contact?.contact_phone) throw new Error("Contact phone not found");
 
-        await sendSms(db, campaign.sender, contact.contact_phone, result.text);
+        await sendSms(db, campaign.sender, contact.contact_phone, bodyResult.text);
 
         await db.query(
           "INSERT INTO campaign_results (campaign_id, contact_id, status) VALUES (?,?,?)",
           [campaign_id, contact_id, "sent"]
         );
       }
+
     } catch (err) {
       failures++;
       await db.query(
@@ -121,12 +119,6 @@ async function sendCampaign(db, campaign_id) {
       );
     }
   }
-
-  // 4. Finalize campaign status
-  await db.query(
-    "UPDATE campaigns SET status=? WHERE campaign_id=?",
-    [failures ? "failed" : "sent", campaign_id]
-  );
 
   return { total: contactIds.length, failures };
 }

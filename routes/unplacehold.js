@@ -47,7 +47,6 @@ router.post("/unplacehold", async (req, res) => {
   try {
     // --- auth ---
     const [auth] = await req.db
-      .promise()
       .query(
         "SELECT user_auth FROM users WHERE username=? AND password=?",
         [username, password]
