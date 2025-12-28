@@ -155,6 +155,50 @@ input, select, .input-ta, .input {
     .small-insert-btn:hover {
       background: #5a6268;
     }
+    .campaign-action-btn {
+      padding: 5px 10px;
+      margin-right: 5px;
+      background-color: #28a745;
+      color: white;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+    .campaign-action-btn:hover {
+      background-color: #218838;
+    }
+    .campaign-action-btn.delete {
+      background-color: #dc3545;
+    }
+    .campaign-action-btn.delete:hover {
+      background-color: #c82333;
+    }
+    #campaign-stats-modal, #campaign-details-modal {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 20px;
+      border: 1px solid #ccc;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      max-width: 600px;
+      z-index: 1000;
+      overflow: auto;
+    }
+    #campaign-stats-modal.active, #campaign-details-modal.active {
+      display: block;
+    }
+    #stats-close-btn, #details-close-btn {
+      float: right;
+      cursor: pointer;
+    }
+    #campaign-view-filters {
+      margin-bottom: 15px;
+      display: flex;
+      gap: 10px;
+    }
   </style>
 </head>
 <body style="text-align: center">
@@ -164,7 +208,7 @@ input, select, .input-ta, .input {
     <div class="campaign-tab-header">
       <button class="campaign-tab-button active" onclick="campaignShowTab('campaign-tab-reports')">Select Contacts</button>
       <button class="campaign-tab-button" onclick="campaignShowTab('campaign-tab-compose')">Compose Campaign</button>
-      <button class="campaign-tab-button" onclick="campaignShowTab('campaign-tab-scheduled')">Scheduled Campaigns</button>
+      <button class="campaign-tab-button" onclick="campaignShowTab('campaign-tab-view')">View Campaigns</button>
     </div>
     <!-- Tab: Select Contacts -->
     <div id="campaign-tab-reports" class="campaign-tab-main active">
@@ -270,26 +314,77 @@ input, select, .input-ta, .input {
         <button class="big-button" onclick="campaignScheduleCampaign()">Create Campaign</button>
       </div>
     </div>
-    <!-- Tab: Scheduled Campaigns -->
-    <div id="campaign-tab-scheduled" class="campaign-tab-main">
-      <table id="campaign-scheduled-table" class="logTable">
+    <!-- Tab: View Campaigns -->
+    <div id="campaign-tab-view" class="campaign-tab-main">
+      <div id="campaign-view-filters">
+        <label>Status: </label>
+        <select id="filter-status" onchange="campaignLoadViewCampaigns()">
+          <option value="all">All</option>
+          <option value="scheduled">Scheduled</option>
+          <option value="sending">Sending</option>
+          <option value="sent">Sent</option>
+          <option value="failed">Failed</option>
+          <option value="partial fail">Partial Fail</option>
+          <option value="canceled">Canceled</option>
+        </select>
+        <label>Order: </label>
+        <select id="filter-order" onchange="campaignLoadViewCampaigns()">
+          <option value="DESC">Newest First</option>
+          <option value="ASC">Oldest First</option>
+        </select>
+      </div>
+      <table id="campaign-view-table" class="logTable">
         <tr>
           <th>ID</th>
           <th>Type</th>
           <th>Subject</th>
-          <th>Scheduled Time</th>
-          <th>Action</th>
+          <th>Schedule</th>
+          <th>Status</th>
+          <th>Created By</th>
+          <th>Contacts</th>
+          <th>Actions</th>
         </tr>
       </table>
     </div>
   </div>
+  <!-- Modal for Campaign Stats -->
+  <div id="campaign-stats-modal">
+    <span id="stats-close-btn" onclick="closeStatsModal()">&times;</span>
+    <h3>Campaign Stats for ID: <span id="stats-campaign-id"></span></h3>
+    <p>Total Contacts: <span id="stats-total"></span></p>
+    <p>Sent: <span id="stats-sent"></span></p>
+    <p>Failed: <span id="stats-failed"></span></p>
+    <table id="stats-results-table" class="logTable">
+      <tr>
+        <th>Contact ID</th>
+        <th>Status</th>
+        <th>Error</th>
+      </tr>
+    </table>
+  </div>
+  <!-- Modal for Campaign Details -->
+  <div id="campaign-details-modal">
+    <span id="details-close-btn" onclick="closeDetailsModal()">&times;</span>
+    <h3>Campaign Details for ID: <span id="details-campaign-id"></span></h3>
+    <p>Sender: <span id="details-sender"></span></p>
+    <p>Subject: <span id="details-subject"></span></p>
+    <p>Body:</p>
+    <div id="details-body" style="border:1px solid #ccc; padding:10px; max-height:300px; overflow:auto;"></div>
+    <p>Contacts:</p>
+    <table id="details-contacts-table" class="logTable">
+      <tr>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Phone</th>
+        <th>Email</th>
+      </tr>
+    </table>
+  </div>
  <script>
 const E = (id) => document.getElementById(id);
 const p = window.parent;
-
 let quillBody = null;
 let lastFocusedElement = null;
-
 document.addEventListener('DOMContentLoaded', () => {
   quillBody = new Quill('#campaign-email-body-editor', {
     theme: 'snow',
@@ -302,7 +397,6 @@ document.addEventListener('DOMContentLoaded', () => {
     },
     placeholder: 'Enter email body'
   });
-
   // Custom image uploader handler
   const toolbar = quillBody.getModule('toolbar');
   toolbar.addHandler('image', function(value) {
@@ -340,7 +434,6 @@ document.addEventListener('DOMContentLoaded', () => {
       this.quill.format('image', false);
     }
   });
-
   // Track last focused editable element
   const editableFields = [
     E('campaign-email-subject'),
@@ -348,47 +441,36 @@ document.addEventListener('DOMContentLoaded', () => {
     E('campaign-sms-body'),
     document.querySelector('#campaign-email-body-editor .ql-editor') // For Quill
   ].filter(el => el); // Filter out nulls if any
-
   editableFields.forEach(field => {
     field.addEventListener('focus', () => {
       lastFocusedElement = field;
     });
   });
-
   campaignToggleFields();
   campaignToggleSchedule();
   E('campaign-email-subject').addEventListener('input', updateSubjectHint);
   updateSubjectHint();
 });
-
-
 async function campaignGetForReport() {
   const requiredInput = E('campaign-report-required-tags').value;
   const anyInput = E('campaign-report-any-tags').value;
   const excludeInput = E('campaign-report-exclude-tags').value;
-
   const required = requiredInput.split(',').map(t => t.trim()).filter(t => t);
   const any = anyInput.split(',').map(t => t.trim()).filter(t => t);
   const exclude = excludeInput.split(',').map(t => t.trim()).filter(t => t);
-
   if (!required.length && !any.length) {
     try { p.Toast.fire({ icon: 'error', title: 'Please enter at least one tag in Required or Any fields.' }); } catch (_) {}
     return;
   }
-
   const makeLike = tag => `(contact_tags='${tag.replace(/'/g,"''")}' OR contact_tags LIKE '${tag},%' OR contact_tags LIKE '%,${tag},%' OR contact_tags LIKE '%,${tag}')`;
-
   const whereParts = [];
   if (required.length) whereParts.push(required.map(makeLike).join(' AND '));
   if (any.length) whereParts.push('(' + any.map(makeLike).join(' OR ') + ')');
   if (exclude.length) whereParts.push('NOT (' + exclude.map(makeLike).join(' OR ') + ')');
-
   const query = `SELECT * FROM contacts WHERE ${whereParts.join(' AND ')}`;
   console.log('Executing query:', query);
-
   const table = E('campaign-reports-table');
   while (table.rows.length > 1) table.deleteRow(1);
-
   try {
     const response = await p.sendQuery(query);
     const results = response.data.query1;
@@ -399,7 +481,6 @@ async function campaignGetForReport() {
       cell.textContent = 'No results found';
       return;
     }
-
     results.forEach((contact, index) => {
       const row = table.insertRow();
       const checkboxCell = row.insertCell();
@@ -408,7 +489,6 @@ async function campaignGetForReport() {
       checkbox.checked = true;
       checkbox.id = `campaign-contact-checkbox-${index}`;
       checkboxCell.appendChild(checkbox);
-
       ['contact_id', 'contact_name', 'contact_phone', 'contact_email', 'contact_tags'].forEach(field => {
         const cell = row.insertCell();
         if (field === 'contact_id') {
@@ -424,7 +504,6 @@ async function campaignGetForReport() {
     try { p.Toast.fire({ icon: 'error', title: 'Error fetching report.' }); } catch (_) {}
   }
 }
-
 // Tab switching
 function campaignShowTab(tabId) {
   document.querySelectorAll('.campaign-tab-button').forEach(btn => btn.classList.remove('active'));
@@ -432,16 +511,13 @@ function campaignShowTab(tabId) {
   document.querySelector(`button[onclick="campaignShowTab('${tabId}')"]`).classList.add('active');
   E(tabId).classList.add('active');
 }
-
 // Field toggling
 function campaignToggleFields() {
   const type = document.querySelector('input[name="campaign-type"]:checked')?.value || 'simple-email';
   const smsSender = E('campaign-sms-sender'), emailSender = E('campaign-email-sender');
   const subjectFields = E('campaign-subject-fields'), simpleBodyFields = E('campaign-simple-body-fields');
   const htmlBodyFields = E('campaign-html-body-fields'), smsFields = E('campaign-sms-fields');
-
   [smsSender, emailSender, subjectFields, simpleBodyFields, htmlBodyFields, smsFields].forEach(el => el.classList.add('campaign-hidden'));
-
   if (type === 'sms') {
     smsSender.classList.remove('campaign-hidden');
     smsFields.classList.remove('campaign-hidden');
@@ -452,13 +528,11 @@ function campaignToggleFields() {
     if (type === 'html-email') htmlBodyFields.classList.remove('campaign-hidden');
   }
 }
-
 // Schedule toggle
 function campaignToggleSchedule() {
   const sendNow = E('campaign-send-now').checked;
   E('campaign-schedule-field').classList.toggle('campaign-hidden', sendNow);
 }
-
 // Subject hint
 function updateSubjectHint() {
   const len = E('campaign-email-subject').value.length;
@@ -468,13 +542,11 @@ function updateSubjectHint() {
   else if (len <= 90) { hint.textContent = `${len}/150 — may truncate on mobile`; hint.style.color='orange'; }
   else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color='red'; }
 }
-
 // Schedule campaign
 async function campaignScheduleCampaign() {
   try {
     const type = document.querySelector('input[name="campaign-type"]:checked')?.value;
     if (!type) throw new Error('Please select a campaign type.');
-
     let sender = '', subject = '', body = '';
     if (type === 'sms') {
       sender = E('campaign-sms-phone').value;
@@ -494,24 +566,20 @@ async function campaignScheduleCampaign() {
         if (!body) throw new Error('Please paste the HTML body.');
       }
     }
-
     const sendNow = E('campaign-send-now').checked;
     const schedule = sendNow ? new Date().toISOString() : E('campaign-schedule').value;
     if (!sendNow && !schedule) throw new Error('Please specify a schedule date/time or check "Send Now".');
-
     const selectedContacts = Array.from(document.querySelectorAll('#campaign-reports-table input[type="checkbox"]:checked'))
                                   .map(cb => cb.closest('tr').cells[1].querySelector('a').textContent);
     if (!selectedContacts.length) throw new Error('Please select at least one contact.');
-
     const campaignType = type === 'sms' ? 'sms' : (type === 'simple-email' ? 'email' : 'html-email');
-    const userId = p.user?.user ?? null;  // Use nullish coalescing → null if undefined/missing
+    const userId = p.user?.user ?? null; // Use nullish coalescing → null if undefined/missing
     // Insert campaign into DB
     const insertQuery = `INSERT INTO campaigns (type, sender, subject, body, schedule, contact_ids, created_by)
                          VALUES ('${campaignType}', '${sender.replace(/'/g,"''")}', '${subject.replace(/'/g,"''")}', '${body.replace(/'/g,"''")}', '${schedule}', '${selectedContacts.join(",")}', ${userId !== null ? userId : 'NULL'})`;
     const response = await p.sendQuery(insertQuery);
     const insertId = response.data.query1.insertId;
     if (!insertId) throw new Error('No insert ID returned');
-
     // Pabbly webhook
     const pabblyUrl = 'https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjcwNTZkMDYzMjA0MzU1MjZmNTUzYzUxM2Ei_pc';
     const pabblyResponse = await fetch(pabblyUrl, {
@@ -531,7 +599,6 @@ async function campaignScheduleCampaign() {
       })
     });
     if (!pabblyResponse.ok) throw new Error('Pabbly request failed');
-
     // Trigger immediately if sendNow
     if (sendNow) {
       const triggerResponse = await fetch('/campaigns/trigger', {
@@ -543,63 +610,230 @@ async function campaignScheduleCampaign() {
       const triggerData = await triggerResponse.json();
       console.log('Campaign triggered immediately:', triggerData);
     }
-
     try { p.Toast.fire({ icon: 'success', title: 'Campaign created successfully!' }); } catch (_) {}
-
   } catch (err) {
     console.error('Campaign creation failed:', err);
     try { p.Toast.fire({ icon: 'error', title: err.message || 'Campaign created, but sending failed' }); } catch (_) {}
   }
 }
-
-// Scheduled campaigns
-function campaignLoadScheduledCampaigns() {
-  const table = E('campaign-scheduled-table');
+// View campaigns (formerly scheduled)
+async function campaignLoadViewCampaigns() {
+  const table = E('campaign-view-table');
   while (table.rows.length > 1) table.deleteRow(1);
-  const q = `SELECT * FROM campaigns WHERE status='scheduled'`;
-  p.sendQuery(q).then(resp => {
+  const statusFilter = E('filter-status').value;
+  const order = E('filter-order').value;
+  let where = '';
+  if (statusFilter !== 'all') where = `WHERE status='${statusFilter}'`;
+  const q = `SELECT c.*, u.user_name AS created_by_name, LENGTH(contact_ids) - LENGTH(REPLACE(contact_ids, ',', '')) + 1 AS contact_count
+             FROM campaigns c LEFT JOIN users u ON c.created_by = u.user ${where} ORDER BY schedule ${order}`;
+  try {
+    const resp = await p.sendQuery(q);
     const campaigns = resp.data.query1;
     if (!Array.isArray(campaigns) || !campaigns.length) {
-      const row = table.insertRow(); row.insertCell().colSpan=5; row.cells[0].textContent='No scheduled campaigns'; return;
+      const row = table.insertRow(); 
+      row.insertCell().colSpan=8; 
+      row.cells[0].textContent='No campaigns found'; 
+      return;
     }
     campaigns.forEach(c => {
       const row = table.insertRow();
-      row.insertCell().textContent=c.campaign_id;
-      row.insertCell().textContent=c.type;
-      row.insertCell().textContent=c.subject||'-';
-      row.insertCell().textContent=c.scheduled_time;
+      row.insertCell().textContent = c.campaign_id;
+      row.insertCell().textContent = c.type;
+      row.insertCell().textContent = c.subject || '-';
+//      row.insertCell().textContent = c.schedule;
+      row.insertCell().textContent = c.schedule ? new Date(c.schedule).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }) : '-';
+      row.insertCell().textContent = c.status || 'unknown';
+      row.insertCell().textContent = c.created_by_name || 'Unknown';
+      row.insertCell().textContent = c.contact_count || 0;
       const actionCell = row.insertCell();
-      actionCell.innerHTML=`<button class="big-button" onclick="campaignDeleteCampaign('${c.campaign_id}')">Delete</button>`;
+      let actions = `<button class="campaign-action-btn" onclick="viewCampaignDetails('${c.campaign_id}')">View Details</button>
+                     <button class="campaign-action-btn" onclick="duplicateCampaign('${c.campaign_id}')">Duplicate</button>`;
+      if (['processed', 'sent', 'failed', 'partial fail'].includes(c.status)) {
+        actions += ` <button class="campaign-action-btn" onclick="viewCampaignStats('${c.campaign_id}')">View Stats</button>`;
+      }
+      if (c.status === 'scheduled') {
+        actions += ` <button class="campaign-action-btn delete" onclick="cancelCampaign('${c.campaign_id}')">Cancel</button>`;
+      }
+      actionCell.innerHTML = actions;
     });
-  }).catch(err => { console.error(err); try { p.Toast.fire({ icon:'error', title:'Failed to load scheduled campaigns.' }); } catch(_){} });
+  } catch (err) {
+    console.error(err); 
+    try { p.Toast.fire({ icon:'error', title:'Failed to load campaigns.' }); } catch(_){} 
+  }
 }
+// Load view campaigns on tab open
+document.querySelector('button[onclick="campaignShowTab(\'campaign-tab-view\')"]')
+        .addEventListener('click', campaignLoadViewCampaigns);
+// View details modal
+async function viewCampaignDetails(id) {
+  const modal = E('campaign-details-modal');
+  E('details-campaign-id').textContent = id;
+  E('details-sender').textContent = 'Loading...';
+  E('details-subject').textContent = 'Loading...';
+  E('details-body').innerHTML = 'Loading...';
+  const table = E('details-contacts-table');
+  while (table.rows.length > 1) table.deleteRow(1);
+  modal.classList.add('active');
+  try {
+    const q = `SELECT sender, subject, body, contact_ids FROM campaigns WHERE campaign_id='${id}'`;
+    const resp = await p.sendQuery(q);
+    const campaign = resp.data.query1[0];
+    E('details-sender').textContent = campaign.sender;
+    E('details-subject').textContent = campaign.subject || '-';
+    E('details-body').innerHTML = campaign.body || '-'; // Use innerHTML for HTML body rendering
 
-// Delete campaign
-function campaignDeleteCampaign(id) {
-  p.sendQuery(`DELETE FROM campaigns WHERE campaign_id='${id}'`)
-    .then(() => { try { p.Toast.fire({icon:'success',title:`Campaign ${id} deleted.`}); } catch(_){}; campaignLoadScheduledCampaigns(); })
-    .catch(err => { console.error(err); try { p.Toast.fire({icon:'error',title:'Failed to delete campaign.'}); } catch(_){} });
+    const contactIds = campaign.contact_ids.split(',').map(id => id.trim()).filter(Boolean);
+    if (contactIds.length > 0) {
+      const contactsQ = `SELECT contact_id, contact_name, contact_phone, contact_email FROM contacts WHERE contact_id IN (${contactIds.join(',')})`;
+      const contactsResp = await p.sendQuery(contactsQ);
+      const contacts = contactsResp.data.query1 || [];
+      contacts.forEach(c => {
+        const row = table.insertRow();
+        row.insertCell().textContent = c.contact_id;
+        row.insertCell().textContent = c.contact_name || '-';
+        row.insertCell().textContent = c.contact_phone || '-';
+        row.insertCell().textContent = c.contact_email || '-';
+      });
+    } else {
+      const row = table.insertRow();
+      row.insertCell().colSpan = 4;
+      row.cells[0].textContent = 'No contacts';
+    }
+  } catch (err) {
+    console.error(err);
+    try { p.Toast.fire({ icon: 'error', title: 'Failed to load details' }); } catch (_) {}
+  }
 }
+function closeDetailsModal() {
+  E('campaign-details-modal').classList.remove('active');
+}
+// Duplicate campaign (full duplicate via contact IDs)
+async function duplicateCampaign(id) {
+  try {
+    const q = `SELECT * FROM campaigns WHERE campaign_id='${id}'`;
+    const resp = await p.sendQuery(q);
+    const campaign = resp.data.query1[0];
+    if (!campaign) throw new Error('Campaign not found');
 
-// Load scheduled campaigns on tab open
-document.querySelector('button[onclick="campaignShowTab(\'campaign-tab-scheduled\')"]')
-        .addEventListener('click', campaignLoadScheduledCampaigns);
+    // Switch to compose tab
+    campaignShowTab('campaign-tab-compose');
 
+    // Pre-fill form
+    document.querySelector(`input[name="campaign-type"][value="${campaign.type === 'email' ? 'simple-email' : (campaign.type === 'sms' ? 'sms' : 'html-email')}"]`).checked = true;
+    campaignToggleFields();
+
+    if (campaign.type === 'sms') {
+      E('campaign-sms-phone').value = campaign.sender;
+      E('campaign-sms-body').value = campaign.body;
+    } else {
+      E('campaign-email-address').value = campaign.sender;
+      E('campaign-email-subject').value = campaign.subject;
+      if (campaign.type === 'email') {
+        quillBody.root.innerHTML = campaign.body;
+      } else {
+        E('campaign-html-body').value = campaign.body;
+      }
+    }
+
+    // Reset schedule
+    E('campaign-send-now').checked = true;
+    campaignToggleSchedule();
+
+    // Duplicate contacts: fetch and populate table
+    const contactIds = campaign.contact_ids.split(',').map(id => id.trim()).filter(Boolean);
+    if (contactIds.length > 0) {
+      const contactsQ = `SELECT * FROM contacts WHERE contact_id IN (${contactIds.join(',')})`;
+      const contactsResp = await p.sendQuery(contactsQ);
+      const results = contactsResp.data.query1 || [];
+      const table = E('campaign-reports-table');
+      while (table.rows.length > 1) table.deleteRow(1);
+      results.forEach((contact, index) => {
+        const row = table.insertRow();
+        const checkboxCell = row.insertCell();
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = true;
+        checkbox.id = `campaign-contact-checkbox-${index}`;
+        checkboxCell.appendChild(checkbox);
+        ['contact_id', 'contact_name', 'contact_phone', 'contact_email', 'contact_tags'].forEach(field => {
+          const cell = row.insertCell();
+          if (field === 'contact_id') {
+            const escapedName = contact.contact_name ? contact.contact_name.replace(/'/g,"\\'") : '';
+            cell.innerHTML = `<a href="#" onclick="window.parent.addFile('${escapedName}','contact','${contact.contact_id}')">${contact.contact_id}</a>`;
+          } else {
+            cell.textContent = contact[field] || '-';
+          }
+        });
+      });
+    }
+
+    try { p.Toast.fire({ icon: 'success', title: 'Campaign duplicated - edit and create!' }); } catch (_) {}
+  } catch (err) {
+    console.error(err);
+    try { p.Toast.fire({ icon: 'error', title: 'Failed to duplicate campaign' }); } catch (_) {}
+  }
+}
+// Cancel campaign
+async function cancelCampaign(id) {
+  try {
+    await p.sendQuery(`UPDATE campaigns SET status='canceled' WHERE campaign_id='${id}' AND status='scheduled'`);
+    try { p.Toast.fire({icon:'success',title:`Campaign ${id} canceled.`}); } catch(_){}; 
+    campaignLoadViewCampaigns();
+  } catch (err) {
+    console.error(err); 
+    try { p.Toast.fire({icon:'error',title:'Failed to cancel campaign.'}); } catch(_){} 
+  }
+}
+// View stats modal
+async function viewCampaignStats(id) {
+  const modal = E('campaign-stats-modal');
+  E('stats-campaign-id').textContent = id;
+  E('stats-total').textContent = 'Loading...';
+  E('stats-sent').textContent = 'Loading...';
+  E('stats-failed').textContent = 'Loading...';
+  const table = E('stats-results-table');
+  while (table.rows.length > 1) table.deleteRow(1);
+  modal.classList.add('active');
+  try {
+    const q = `SELECT COUNT(*) AS total, 
+               SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) AS sent,
+               SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed
+               FROM campaign_results WHERE campaign_id='${id}'`;
+    const summaryResp = await p.sendQuery(q);
+    const summary = summaryResp.data.query1[0];
+    E('stats-total').textContent = summary.total || 0;
+    E('stats-sent').textContent = summary.sent || 0;
+    E('stats-failed').textContent = summary.failed || 0;
+
+    const detailsQ = `SELECT * FROM campaign_results WHERE campaign_id='${id}'`;
+    const detailsResp = await p.sendQuery(detailsQ);
+    const results = detailsResp.data.query1 || [];
+    results.forEach(r => {
+      const row = table.insertRow();
+      row.insertCell().textContent = r.contact_id;
+      row.insertCell().textContent = r.status;
+      row.insertCell().textContent = r.error || '-';
+    });
+  } catch (err) {
+    console.error(err);
+    try { p.Toast.fire({ icon: 'error', title: 'Failed to load stats' }); } catch (_) {}
+  }
+}
+function closeStatsModal() {
+  E('campaign-stats-modal').classList.remove('active');
+}
 // Placeholder insertion
 function insertSelectedPlaceholder() {
   const select = document.getElementById('placeholder-selector');
   const value = select.value;
   if (!value) return;
-
   const placeholder = `{{contact.${value}}}`;
-
   if (!lastFocusedElement) {
     navigator.clipboard.writeText(placeholder).then(() => {
       alert(`No field focused. Copied: ${placeholder}\nPaste where you want it.`);
     });
     return;
   }
-
   // For Quill editor
   if (lastFocusedElement.classList.contains('ql-editor')) {
     quillBody.focus(); // Re-focus if needed
@@ -608,27 +842,24 @@ function insertSelectedPlaceholder() {
     quillBody.setSelection(range ? range.index + placeholder.length : placeholder.length);
     return;
   }
-
   // For regular input or textarea
   if (lastFocusedElement.tagName === 'TEXTAREA' || lastFocusedElement.tagName === 'INPUT') {
     const start = lastFocusedElement.selectionStart;
     const end = lastFocusedElement.selectionEnd;
-    lastFocusedElement.value = 
+    lastFocusedElement.value =
       lastFocusedElement.value.substring(0, start) +
       placeholder +
       lastFocusedElement.value.substring(end);
-    
+   
     lastFocusedElement.selectionStart = lastFocusedElement.selectionEnd = start + placeholder.length;
     lastFocusedElement.focus();
     return;
   }
-
   // Fallback
   navigator.clipboard.writeText(placeholder).then(() => {
     alert(`Copied: ${placeholder}\nPaste where you want it.`);
   });
 }
 </script>
-
 </body>
 </html>
