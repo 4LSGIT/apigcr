@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>/unplacehold Route Tester</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+    }
+    label {
+      display: block;
+      margin-top: 12px;
+      font-weight: 600;
+    }
+    input, textarea {
+      width: 100%;
+      padding: 8px;
+      margin-top: 4px;
+      box-sizing: border-box;
+    }
+    textarea {
+      min-height: 120px;
+    }
+    button {
+      margin-top: 16px;
+      padding: 10px 16px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    pre {
+      background: #f5f5f5;
+      padding: 12px;
+      margin-top: 20px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>/unplacehold Test</h1>
+
+  <label>
+    Username
+    <input id="username" type="text" />
+  </label>
+
+  <label>
+    Password
+    <input id="password" type="password" />
+  </label>
+
+  <label>
+    Text (with placeholders)
+    <textarea id="text"></textarea>
+  </label>
+
+  <label>
+    Strict mode
+    <input id="strict" type="checkbox" />
+  </label>
+
+  <label>
+    Contact ID
+    <input id="contact_id" type="text" />
+  </label>
+
+  <label>
+    Case ID
+    <input id="case_id" type="text" />
+  </label>
+
+  <label>
+    Case Number
+    <input id="case_number" type="text" />
+  </label>
+
+  <label>
+    Full Case Number
+    <input id="case_number_full" type="text" />
+  </label>
+
+  <label>
+    Appointment ID
+    <input id="appt_id" type="text" />
+  </label>
+
+  <button onclick="sendRequest()">Send Request</button>
+
+  <h2>Response</h2>
+  <pre id="response">(waiting)</pre>
+
+  <script>
+    async function sendRequest() {
+      const payload = {
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+        text: document.getElementById("text").value,
+        strict: document.getElementById("strict").checked,
+        contact_id: document.getElementById("contact_id").value || undefined,
+        case_id: document.getElementById("case_id").value || undefined,
+        case_number: document.getElementById("case_number").value || undefined,
+        case_number_full: document.getElementById("case_number_full").value || undefined,
+        appt_id: document.getElementById("appt_id").value || undefined
+      };
+
+      try {
+        const res = await fetch("/unplacehold", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const text = await res.text();
+        let output;
+        try {
+          output = JSON.stringify(JSON.parse(text), null, 2);
+        } catch {
+          output = text;
+        }
+
+        document.getElementById("response").textContent =
+          `Status: ${res.status}\n\n${output}`;
+      } catch (err) {
+        document.getElementById("response").textContent =
+          "Request failed:\n" + err.toString();
+      }
+    }
+  </script>
+
+</body>
+</html>
