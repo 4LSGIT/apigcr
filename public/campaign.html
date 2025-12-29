@@ -366,6 +366,7 @@ input, select, .input-ta, .input {
   <div id="campaign-details-modal">
     <span id="details-close-btn" onclick="closeDetailsModal()">&times;</span>
     <h3>Campaign Details for ID: <span id="details-campaign-id"></span></h3>
+    <p>Type: <span id="details-type"></span></p>
     <p>Sender: <span id="details-sender"></span></p>
     <p>Subject: <span id="details-subject"></span></p>
     <p>Body:</p>
@@ -668,6 +669,7 @@ document.querySelector('button[onclick="campaignShowTab(\'campaign-tab-view\')"]
 async function viewCampaignDetails(id) {
   const modal = E('campaign-details-modal');
   E('details-campaign-id').textContent = id;
+  E('details-type').textContent = '...';
   E('details-sender').textContent = 'Loading...';
   E('details-subject').textContent = 'Loading...';
   E('details-body').innerHTML = 'Loading...';
@@ -675,9 +677,10 @@ async function viewCampaignDetails(id) {
   while (table.rows.length > 1) table.deleteRow(1);
   modal.classList.add('active');
   try {
-    const q = `SELECT sender, subject, body, contact_ids FROM campaigns WHERE campaign_id='${id}'`;
+    const q = `SELECT sender, subject, body, contact_ids, type FROM campaigns WHERE campaign_id='${id}'`;
     const resp = await p.sendQuery(q);
     const campaign = resp.data.query1[0];
+    E('details-type').textContent = campaign.type;
     E('details-sender').textContent = campaign.sender;
     E('details-subject').textContent = campaign.subject || '-';
     E('details-body').innerHTML = campaign.body || '-'; // Use innerHTML for HTML body rendering
