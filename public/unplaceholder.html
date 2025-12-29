@@ -2,97 +2,172 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>/unplacehold Route Tester</title>
+  <title>Unplacehold Tester</title>
+
   <style>
-    body {
-      font-family: system-ui, sans-serif;
-      max-width: 800px;
-      margin: 40px auto;
-    }
-    label {
-      display: block;
-      margin-top: 12px;
-      font-weight: 600;
-    }
-    input, textarea {
-      width: 100%;
-      padding: 8px;
-      margin-top: 4px;
+    * {
       box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+        Roboto, sans-serif;
+      background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    form {
+      background: #ffffff;
+      padding: 32px;
+      border-radius: 16px;
+      max-width: 520px;
+      width: 100%;
+      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.12);
+    }
+
+    h2 {
+      text-align: center;
+      margin-bottom: 24px;
+      font-size: 1.8rem;
+      font-weight: 600;
+      color: #1a1a1a;
+    }
+
+    label {
+      font-size: 0.9rem;
+      font-weight: 500;
+      color: #374151;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    input,
     textarea {
+      width: 100%;
+      padding: 12px 14px;
+      margin-bottom: 16px;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+      background: #f9fafb;
+      font-size: 0.95rem;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    input:focus,
+    textarea:focus {
+      outline: none;
+      border-color: #4f46e5;
+      box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.12);
+      background: #ffffff;
+    }
+
+    textarea {
+      resize: vertical;
       min-height: 120px;
     }
-    button {
-      margin-top: 16px;
-      padding: 10px 16px;
-      font-size: 15px;
-      cursor: pointer;
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      font-size: 0.9rem;
+      color: #374151;
     }
-    pre {
-      background: #f5f5f5;
-      padding: 12px;
-      margin-top: 20px;
-      overflow-x: auto;
+
+    button {
+      width: 100%;
+      padding: 14px;
+      border-radius: 8px;
+      border: none;
+      background: #4f46e5;
+      color: white;
+      font-size: 1rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.25s ease, transform 0.15s ease;
+    }
+
+    button:hover {
+      background: #4338ca;
+      transform: translateY(-1px);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    .result {
+      margin-top: 24px;
+      padding: 16px;
+      border-radius: 8px;
+      background: #f3f4f6;
+      font-size: 0.85rem;
+      color: #1f2937;
+      white-space: pre-wrap;
+      max-height: 240px;
+      overflow-y: auto;
+      border: 1px solid #e5e7eb;
+    }
+
+    @media (max-width: 480px) {
+      form {
+        padding: 24px;
+      }
     }
   </style>
 </head>
 <body>
 
-  <h1>/unplacehold Test</h1>
+<form id="unplaceholdForm">
+  <h2>Unplacehold Tester</h2>
 
-  <label>
-    Username
-    <input id="username" type="text" />
-  </label>
+  <label for="username">Username</label>
+  <input id="username" type="text" placeholder="Username" required />
 
-  <label>
-    Password
-    <input id="password" type="password" />
-  </label>
+  <label for="password">Password</label>
+  <input id="password" type="password" placeholder="Password" required />
 
-  <label>
-    Text (with placeholders)
-    <textarea id="text"></textarea>
-  </label>
+  <label for="text">Text with placeholders</label>
+  <textarea id="text" placeholder="Enter text containing placeholders..." required></textarea>
 
-  <label>
-    Strict mode
+  <div class="checkbox-row">
     <input id="strict" type="checkbox" />
-  </label>
+    <label for="strict">Strict mode</label>
+  </div>
 
-  <label>
-    Contact ID
-    <input id="contact_id" type="text" />
-  </label>
+  <label for="contact_id">Contact ID</label>
+  <input id="contact_id" type="text" placeholder="Optional" />
 
-  <label>
-    Case ID
-    <input id="case_id" type="text" />
-  </label>
+  <label for="case_id">Case ID</label>
+  <input id="case_id" type="text" placeholder="Optional" />
 
-  <label>
-    Case Number
-    <input id="case_number" type="text" />
-  </label>
+  <label for="case_number">Case Number</label>
+  <input id="case_number" type="text" placeholder="Optional" />
 
-  <label>
-    Full Case Number
-    <input id="case_number_full" type="text" />
-  </label>
+  <label for="case_number_full">Full Case Number</label>
+  <input id="case_number_full" type="text" placeholder="Optional" />
 
-  <label>
-    Appointment ID
-    <input id="appt_id" type="text" />
-  </label>
+  <label for="appt_id">Appointment ID</label>
+  <input id="appt_id" type="text" placeholder="Optional" />
 
-  <button onclick="sendRequest()">Send Request</button>
+  <button type="submit">Run Unplacehold</button>
 
-  <h2>Response</h2>
-  <pre id="response">(waiting)</pre>
+  <div class="result" id="result">(waiting)</div>
+</form>
 
-  <script>
-    async function sendRequest() {
+<script>
+  document
+    .getElementById("unplaceholdForm")
+    .addEventListener("submit", async function (e) {
+      e.preventDefault();
+
       const payload = {
         username: document.getElementById("username").value,
         password: document.getElementById("password").value,
@@ -101,35 +176,36 @@
         contact_id: document.getElementById("contact_id").value || undefined,
         case_id: document.getElementById("case_id").value || undefined,
         case_number: document.getElementById("case_number").value || undefined,
-        case_number_full: document.getElementById("case_number_full").value || undefined,
+        case_number_full:
+          document.getElementById("case_number_full").value || undefined,
         appt_id: document.getElementById("appt_id").value || undefined
       };
+
+      const resultBox = document.getElementById("result");
+      resultBox.textContent = "Sending request...";
 
       try {
         const res = await fetch("/unplacehold", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
 
         const text = await res.text();
         let output;
+
         try {
           output = JSON.stringify(JSON.parse(text), null, 2);
         } catch {
           output = text;
         }
 
-        document.getElementById("response").textContent =
-          `Status: ${res.status}\n\n${output}`;
+        resultBox.textContent = `Status: ${res.status}\n\n${output}`;
       } catch (err) {
-        document.getElementById("response").textContent =
-          "Request failed:\n" + err.toString();
+        resultBox.textContent = "Error: " + err.message;
       }
-    }
-  </script>
+    });
+</script>
 
 </body>
 </html>
