@@ -10,15 +10,19 @@
  * Exports async functions usable by routes or internally.
  */
 
+/**
+ * RingCentral Service (with logging)
+ */
+
 const fetch = require("node-fetch");
 const Bottleneck = require("bottleneck");
 
 const ALERT_URL =
   "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZhMDYzMTA0M2Q1MjY5NTUzNjUxMzUi_pc";
+
 const RINGCENTRAL_TOKEN_URL =
   "https://platform.ringcentral.com/restapi/oauth/token";
 
-//const smsLimiter = new Bottleneck({ maxConcurrent: 2, minTime: 200 });
 const smsLimiter = new Bottleneck({ maxConcurrent: 1, minTime: 1875 });
 
 let tokenData = null;
@@ -26,10 +30,11 @@ let refreshTimeout = null;
 let isRefreshing = false;
 let refreshPromise = null;
 
-// -------------------- Utils --------------------
+/* -------------------- Utils -------------------- */
+
 function normalizeNumber(num) {
   if (!num) return null;
-  let cleaned = num.toString().replace(/\D/g, "");
+  const cleaned = num.toString().replace(/\D/g, "");
   if (cleaned.length === 11 && cleaned.startsWith("1")) return `+${cleaned}`;
   if (cleaned.length === 10) return `+1${cleaned}`;
   if (num.startsWith("+")) return num;
@@ -52,9 +57,24 @@ async function sendAlert(type, message, extra = {}) {
   } catch (_) {}
 }
 
-// -------------------- DB Helpers --------------------
+async function logTemp(db, payload) {
+  try {
+    await db.query(
+      "INSERT INTO ringcentral_temp (data) VALUES (?)",
+      [JSON.stringify(payload)]
+    );
+  } catch (err) {
+    console.error("Failed to log ringcentral_temp:", err.message);
+  }
+}
+
+/* -------------------- DB Helpers -------------------- */
+
 async function getSetting(db, key) {
-  const [rows] = await db.query("SELECT value FROM app_settings WHERE `key` = ?", [key]);
+  const [rows] = await db.query(
+    "SELECT value FROM app_settings WHERE `key` = ?",
+    [key]
+  );
   return rows.length ? rows[0].value : null;
 }
 
@@ -65,33 +85,38 @@ async function setSetting(db, key, value) {
   );
 }
 
-// -------------------- TOKEN PERSISTENCE --------------------
+/* -------------------- TOKEN PERSISTENCE -------------------- */
+
 async function saveToken(db) {
   if (!tokenData) return;
-  try {
-    await setSetting(db, "rc_token", JSON.stringify(tokenData));
-  } catch (err) {
-    console.error("Failed to save token:", err);
-    sendAlert("token_save_failed", "Failed to save token to DB", { error: err.message });
-  }
+  await setSetting(db, "rc_token", JSON.stringify(tokenData));
 }
 
-// -------------------- TOKEN REFRESH --------------------
+/* -------------------- TOKEN REFRESH -------------------- */
+
 async function refreshAccessToken(db) {
   if (!tokenData?.refresh_token) return;
   if (isRefreshing) return refreshPromise;
 
   isRefreshing = true;
+
   refreshPromise = (async () => {
     try {
-      const refreshIssuedAt = tokenData.refresh_issued_at || tokenData.issued_at || Date.now();
-      const refreshExpiry = refreshIssuedAt + (tokenData.refresh_token_expires_in || 0) * 1000;
+      const refreshIssuedAt =
+        tokenData.refresh_issued_at ??
+        tokenData.issued_at ??
+        Date.now();
+
+      const refreshExpiry =
+        refreshIssuedAt +
+        (tokenData.refresh_token_expires_in || 0) * 1000;
 
       if (Date.now() >= refreshExpiry) {
-        console.error("Refresh token expired, reauthorization required.");
-        sendAlert("refresh_token_expired", "Refresh token has expired.");
-        tokenData = null;
-        clearTimeout(refreshTimeout);
+        sendAlert(
+          "refresh_token_expired",
+          "Refresh token expired; reauthorization required",
+          { refreshIssuedAt, refreshExpiry }
+        );
         return;
       }
 
@@ -112,11 +137,28 @@ async function refreshAccessToken(db) {
       });
 
       const json = await res.json();
-      tokenData = { ...json, access_issued_at: Date.now(), refresh_issued_at: Date.now() };
+
+      await logTemp(db, {
+        type: "refresh",
+        http_status: res.status,
+        response: json,
+        timestamp: new Date().toISOString(),
+      });
+
+      if (!res.ok) {
+        throw new Error(JSON.stringify(json));
+      }
+
+      tokenData = {
+        ...json,
+        access_issued_at: Date.now(),
+        refresh_issued_at: refreshIssuedAt,
+      };
+
       await saveToken(db);
       scheduleRefresh(db);
     } catch (err) {
-      console.error("Error refreshing token:", err);
+      console.error("Token refresh failed:", err.message);
       sendAlert("token_refresh_failed", err.message);
     } finally {
       isRefreshing = false;
@@ -127,103 +169,137 @@ async function refreshAccessToken(db) {
 }
 
 function scheduleRefresh(db) {
-  if (!tokenData?.expires_in) return;
+  if (!tokenData?.expires_in || !tokenData.access_issued_at) return;
   clearTimeout(refreshTimeout);
-  refreshTimeout = setTimeout(() => refreshAccessToken(db), (tokenData.expires_in - 600) * 1000);
+
+  const accessExpiryMs =
+    tokenData.access_issued_at + tokenData.expires_in * 1000;
+
+  const remainingMs = accessExpiryMs - Date.now();
+  const timeoutMs = Math.max(0, remainingMs - 600 * 1000);
+
+  refreshTimeout = setTimeout(
+    () => refreshAccessToken(db),
+    timeoutMs
+  );
 }
 
-// -------------------- LOAD TOKEN --------------------
+/* -------------------- LOAD TOKEN -------------------- */
+
 async function loadToken(db) {
   if (tokenData) return;
 
-  try {
-    const raw = await getSetting(db, "rc_token");
-    if (!raw) return;
+  const raw = await getSetting(db, "rc_token");
+  if (!raw) return;
 
-    tokenData = JSON.parse(raw);
+  tokenData = JSON.parse(raw);
 
-    const accessIssuedAt = tokenData.access_issued_at || tokenData.issued_at || Date.now();
-    const accessExpiry = accessIssuedAt + (tokenData.expires_in || 0) * 1000;
+  const issuedAt =
+    tokenData.access_issued_at ??
+    tokenData.issued_at ??
+    Date.now();
 
-    if (Date.now() >= accessExpiry) {
-      // Attempt refresh but do not throw — prevent middleware hang
-      try {
-        await refreshAccessToken(db);
-      } catch (err) {
-        console.error("Token refresh failed on load:", err.message);
-      }
-    } else {
-      scheduleRefresh(db);
-    }
-  } catch (err) {
-    console.error("Failed to load token:", err.message);
-    sendAlert("token_load_failed", err.message);
+  const expiry =
+    issuedAt + (tokenData.expires_in || 0) * 1000;
+
+  if (Date.now() >= expiry) {
+    await refreshAccessToken(db);
+  } else {
+    scheduleRefresh(db);
   }
 }
 
-// -------------------- SEND SMS --------------------
-const sendSmsThroughLimiter = smsLimiter.wrap(async (from, to, message) => {
-  const res = await fetch(
-    "https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/sms",
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${tokenData.access_token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: { phoneNumber: from }, to: [{ phoneNumber: to }], text: message }),
-    }
-  );
+/* -------------------- SEND SMS -------------------- */
 
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-});
+const sendSmsThroughLimiter = smsLimiter.wrap(
+  async (from, to, message) => {
+    const res = await fetch(
+      "https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/sms",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: { phoneNumber: from },
+          to: [{ phoneNumber: to }],
+          text: message,
+        }),
+      }
+    );
+
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+);
 
 async function sendSms(db, from, to, message) {
   from = normalizeNumber(from);
   to = normalizeNumber(to);
 
   if (!from || !to || !message) throw new Error("Missing required fields");
-  if (message.length > 1000) throw new Error("Message too long");
 
-  if (!tokenData || Date.now() >= (tokenData.access_issued_at || 0) + (tokenData.expires_in || 0) * 1000) {
+  const expiry =
+    tokenData.access_issued_at +
+    tokenData.expires_in * 1000;
+
+  if (Date.now() >= expiry) {
     await refreshAccessToken(db);
-    if (!tokenData?.access_token) throw new Error("Not authorized");
   }
 
-  const result = await sendSmsThroughLimiter(from, to, message);
-
-  // Log SMS asynchronously
-  db.query(
-    "INSERT INTO rc_sms_log (from_number, to_number, message, status, rc_id) VALUES (?, ?, ?, 'success', ?)",
-    [from, to, message, result.id],
-    err => { if (err) console.error("Failed to log SMS:", err); }
-  );
-
-  return result;
+  return sendSmsThroughLimiter(from, to, message);
 }
+
+/* -------------------- AUTH CODE EXCHANGE -------------------- */
 
 async function exchangeCodeForToken(db, code) {
   const res = await fetch(RINGCENTRAL_TOKEN_URL, {
     method: "POST",
     headers: {
-      Authorization: "Basic " + Buffer.from(`${process.env.RINGCENTRAL_CLIENT_ID}:${process.env.RINGCENTRAL_CLIENT_SECRET}`).toString("base64"),
+      Authorization:
+        "Basic " +
+        Buffer.from(
+          `${process.env.RINGCENTRAL_CLIENT_ID}:${process.env.RINGCENTRAL_CLIENT_SECRET}`
+        ).toString("base64"),
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({
       grant_type: "authorization_code",
       code,
-      redirect_uri: process.env.RINGCENTRAL_REDIRECT_URI
+      redirect_uri: process.env.RINGCENTRAL_REDIRECT_URI,
     }),
   });
+
   const json = await res.json();
-  tokenData = { ...json, access_issued_at: Date.now(), refresh_issued_at: Date.now() };
+
+  await logTemp(db, {
+    type: "authorization_code",
+    http_status: res.status,
+    response: json,
+    timestamp: new Date().toISOString(),
+  });
+
+  if (!res.ok) throw new Error(JSON.stringify(json));
+
+  tokenData = {
+    ...json,
+    access_issued_at: Date.now(),
+    refresh_issued_at: Date.now(),
+  };
+
   await saveToken(db);
   scheduleRefresh(db);
 }
 
-// -------------------- EXPORT --------------------
+/* -------------------- EXPORT -------------------- */
+
 module.exports = {
   loadToken,
   sendSms,
   refreshAccessToken,
   exchangeCodeForToken,
-  get tokenData() { return tokenData; }
+  get tokenData() {
+    return tokenData;
+  },
 };
