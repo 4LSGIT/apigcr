@@ -152,7 +152,7 @@ async function refreshAccessToken(db) {
       tokenData = {
         ...json,
         access_issued_at: Date.now(),
-        refresh_issued_at: refreshIssuedAt,
+        refresh_issued_at: Date.now(),
       };
 
       await saveToken(db);
