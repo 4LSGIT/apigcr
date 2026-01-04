@@ -2,6 +2,7 @@
  * RingCentral Routes
  * ------------------------------------------------------
  * - /ringcentral/send-sms : POST/GET
+ * - /ringcentral/send-mms : POST (with optional file attachment)
  * - /ringcentral/status   : GET
  * - /ringcentral/authorize & /callback : OAuth
  *
@@ -11,8 +12,15 @@
  */
 
 const express = require("express");
+const multer = require("multer"); // Added for file uploads in MMS
 const router = express.Router();
 const ringcentral = require("../services/ringcentralService");
+
+// Multer setup for MMS file uploads (memory storage, 1.5MB limit per RingCentral docs)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1.5 * 1024 * 1024 },
+});
 
 async function checkApiKey(req, res, next) {
   const key = req.headers["x-api-key"] || req.query.key;
@@ -39,6 +47,28 @@ router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error("SMS send failed:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -------------------- SEND MMS --------------------
+router.post("/ringcentral/send-mms", checkApiKey, upload.single("attachment"), async (req, res) => {
+  try {
+    const { from, to, text, country = "US" } = req.body;
+    const attachment = req.file;
+    const result = await ringcentral.sendMms(
+      req.db,
+      from,
+      to,
+      text,
+      country,
+      attachment?.buffer,
+      attachment?.originalname,
+      attachment?.mimetype
+    );
+    res.json(result);
+  } catch (err) {
+    console.error("MMS send failed:", err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -1,20 +1,14 @@
 /**
  * RingCentral Service
  * ------------------------------------------------------
- * Handles:
- * - Token load/save from DB
- * - Token refresh logic
- * - Sending SMS (with rate limiting)
+ * Combines:
+ * - Logging of token refreshes and auth exchanges (DB)
+ * - SMS & MMS sending (with rate limiting)
  * - Alerts
- *
- * Exports async functions usable by routes or internally.
- */
-
-/**
- * RingCentral Service (with logging)
  */
 
 const fetch = require("node-fetch");
+const FormData = require("form-data");
 const Bottleneck = require("bottleneck");
 
 const ALERT_URL =
@@ -145,9 +139,7 @@ async function refreshAccessToken(db) {
         timestamp: new Date().toISOString(),
       });
 
-      if (!res.ok) {
-        throw new Error(JSON.stringify(json));
-      }
+      if (!res.ok) throw new Error(JSON.stringify(json));
 
       tokenData = {
         ...json,
@@ -251,6 +243,52 @@ async function sendSms(db, from, to, message) {
   return sendSmsThroughLimiter(from, to, message);
 }
 
+/* -------------------- SEND MMS -------------------- */
+
+const sendMmsThroughLimiter = smsLimiter.wrap(
+  async (from, to, text, countryIso, attachmentBuffer, attachmentName, attachmentType) => {
+    const form = new FormData();
+    form.append("from", from);
+    form.append("to", to);
+    if (text) form.append("text", text);
+    form.append("country", JSON.stringify({ isoCode: countryIso }));
+    if (attachmentBuffer) {
+      form.append("attachment", attachmentBuffer, {
+        filename: attachmentName,
+        contentType: attachmentType,
+      });
+    }
+    const res = await fetch(
+      "https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/mms",
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tokenData.access_token}`, ...form.getHeaders() },
+        body: form,
+      }
+    );
+    if (!res.ok) throw new Error(await res.text());
+    return res.json();
+  }
+);
+
+async function sendMms(db, from, to, text, countryIso = "US", attachmentBuffer, attachmentName, attachmentType) {
+  from = normalizeNumber(from);
+  to = normalizeNumber(to);
+  if (!from || !to) throw new Error("Missing required fields");
+  if (text && text.length > 1000) throw new Error("Text too long");
+  if (attachmentBuffer && attachmentBuffer.length > 1.5 * 1024 * 1024) {
+    throw new Error("Attachment too large");
+  }
+
+  const expiry = tokenData?.access_issued_at + (tokenData?.expires_in || 0) * 1000;
+  if (!tokenData || Date.now() >= expiry) {
+    await refreshAccessToken(db);
+    if (!tokenData?.access_token) throw new Error("Not authorized");
+  }
+
+  return sendMmsThroughLimiter(from, to, text, countryIso, attachmentBuffer, attachmentName, attachmentType);
+}
+
 /* -------------------- AUTH CODE EXCHANGE -------------------- */
 
 async function exchangeCodeForToken(db, code) {
@@ -297,6 +335,7 @@ async function exchangeCodeForToken(db, code) {
 module.exports = {
   loadToken,
   sendSms,
+  sendMms,
   refreshAccessToken,
   exchangeCodeForToken,
   get tokenData() {
