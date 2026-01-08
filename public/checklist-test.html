@@ -121,7 +121,8 @@
   </div>
 
   <div class="section" id="itemsSection" style="display:none;">
-    <h2>Checklist Items: <span id="currentChecklistTitle"></span></h2>
+    <h2>Checklist Items: <span id="currentChecklistTitle"></span> 
+        <span id="currentChecklistStatus"></span></h2>
     <ul id="itemsList"></ul>
     <h3>Add Item</h3>
     <input type="text" id="newItemName" placeholder="Item Name">
@@ -154,7 +155,6 @@ async function apiFetch(path, options = {}) {
   options.headers = options.headers || {};
   options.headers["Content-Type"] = "application/json";
 
-  // Safely construct URL with page origin as base
   const url = new URL(path, window.location.origin);
 
   if (options.method === "GET" || options.method === "DELETE") {
@@ -183,6 +183,7 @@ async function loadChecklists() {
     ul.innerHTML = "";
     lists.forEach(list => {
       const li = document.createElement("li");
+      li.dataset.id = list.id;
       li.innerHTML = `
         <span>${list.title} [<span class="status-${list.status}">${list.status}</span>]</span>
         <div class="item-buttons">
@@ -192,8 +193,22 @@ async function loadChecklists() {
       `;
       ul.appendChild(li);
     });
+    updateCurrentChecklistStatus();
   } catch (err) {
     alert("Error loading checklists: " + err.message);
+  }
+}
+
+async function updateCurrentChecklistStatus() {
+  if (!currentChecklistId) return;
+  try {
+    const checklist = await apiFetch(`/checklists/${currentChecklistId}`);
+    document.getElementById("currentChecklistStatus").innerText = `[${checklist.status}]`;
+    // Update status in main list as well
+    const li = document.querySelector(`#checklistsList li[data-id="${currentChecklistId}"]`);
+    if (li) li.querySelector("span").innerHTML = `${checklist.title} [<span class="status-${checklist.status}">${checklist.status}</span>]`;
+  } catch (err) {
+    console.warn("Failed to update checklist status:", err.message);
   }
 }
 
@@ -228,6 +243,7 @@ async function viewItems(id, title) {
     document.getElementById("currentChecklistTitle").innerText = title;
     document.getElementById("itemsSection").style.display = "block";
     renderItems(data.items);
+    updateCurrentChecklistStatus();
   } catch (err) {
     alert("Error loading items: " + err.message);
   }
