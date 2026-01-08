@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Checklist Tester</title>
+<title>Checklist API Tester</title>
 <style>
   body {
     font-family: "Segoe UI", sans-serif;
@@ -135,10 +135,10 @@
 </main>
 
 <script>
-let API_BASE = ""; // change to your API base URL
-let auth = {}; // store username/password for simple auth
+let auth = {}; // username/password
 let currentChecklistId = null;
 
+// ===== Login =====
 function login() {
   const username = document.getElementById("username").value;
   const password = document.getElementById("password").value;
@@ -148,13 +148,26 @@ function login() {
   loadChecklists();
 }
 
+// ===== API FETCH =====
 async function apiFetch(path, options = {}) {
-  options.headers = {
-    "Content-Type": "application/json",
-    "Authorization": "Basic " + btoa(auth.username + ":" + auth.password)
-  };
-  if (options.body) options.body = JSON.stringify(options.body);
-  const res = await fetch(API_BASE + path, options);
+  options.method = options.method || "GET";
+  options.headers = options.headers || {};
+  options.headers["Content-Type"] = "application/json";
+
+  // Safely construct URL with page origin as base
+  const url = new URL(path, window.location.origin);
+
+  if (options.method === "GET" || options.method === "DELETE") {
+    url.searchParams.set("username", auth.username);
+    url.searchParams.set("password", auth.password);
+  } else {
+    options.body = options.body || {};
+    options.body.username = auth.username;
+    options.body.password = auth.password;
+    options.body = JSON.stringify(options.body);
+  }
+
+  const res = await fetch(url.toString(), options);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || "API error");
@@ -162,6 +175,7 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
+// ===== Checklist Functions =====
 async function loadChecklists() {
   try {
     const lists = await apiFetch("/checklists");
@@ -206,6 +220,7 @@ async function deleteChecklist(id) {
   }
 }
 
+// ===== Item Functions =====
 async function viewItems(id, title) {
   try {
     const data = await apiFetch(`/checklists/${id}/items`);

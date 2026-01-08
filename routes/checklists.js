@@ -1,7 +1,31 @@
 const express = require("express");
 const router = express.Router();
 
-// Helper: compute checklist status
+// ================== AUTH MIDDLEWARE ================== //
+async function authMiddleware(req, res, next) {
+  try {
+    const username = req.query.username || req.body.username;
+    const password = req.query.password || req.body.password;
+    if (!username || !password) return res.status(401).json({ error: "Username and password required" });
+
+    const [users] = await req.db.query(
+      "SELECT * FROM users WHERE username = ? AND password = ?",
+      [username, password]
+    );
+
+    if (!users.length || !users[0].user_auth.startsWith("authorized")) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    req.user = users[0]; // optionally store user info for later
+    next();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Auth check failed" });
+  }
+}
+
+// ================== HELPER ================== //
 async function computeChecklistStatus(db, checklistId) {
   const [items] = await db.query(
     "SELECT status FROM checkitems WHERE checklist_id = ?",
@@ -12,8 +36,7 @@ async function computeChecklistStatus(db, checklistId) {
 
 // ================== CHECKLIST ROUTES ================== //
 
-// GET all checklists, optionally filter by links=X,Y,Z
-router.get("/checklists", async (req, res) => {
+router.get("/checklists", authMiddleware, async (req, res) => {
   try {
     const { links } = req.query;
     let sql = "SELECT * FROM checklists";
@@ -32,8 +55,7 @@ router.get("/checklists", async (req, res) => {
   }
 });
 
-// GET basic info of a checklist
-router.get("/checklists/:id", async (req, res) => {
+router.get("/checklists/:id", authMiddleware, async (req, res) => {
   try {
     const [rows] = await req.db.query(
       "SELECT id, title, status, created_date, updated_date, link, tag FROM checklists WHERE id = ?",
@@ -47,8 +69,7 @@ router.get("/checklists/:id", async (req, res) => {
   }
 });
 
-// GET checklist details + items
-router.get("/checklists/:id/items", async (req, res) => {
+router.get("/checklists/:id/items", authMiddleware, async (req, res) => {
   try {
     const [checklists] = await req.db.query(
       "SELECT * FROM checklists WHERE id = ?",
@@ -71,13 +92,12 @@ router.get("/checklists/:id/items", async (req, res) => {
   }
 });
 
-// POST a new checklist (with optional items)
-router.post("/checklists", async (req, res) => {
+router.post("/checklists", authMiddleware, async (req, res) => {
   try {
     const { title, created_by, link, tag, items } = req.body;
     const [result] = await req.db.query(
       "INSERT INTO checklists (title, created_by, link, tag) VALUES (?, ?, ?, ?)",
-      [title, created_by, link || null, tag || null]
+      [title, created_by || req.user.id, link || null, tag || null]
     );
     const checklistId = result.insertId;
 
@@ -105,8 +125,7 @@ router.post("/checklists", async (req, res) => {
   }
 });
 
-// PATCH checklist info/status
-router.patch("/checklists/:id", async (req, res) => {
+router.patch("/checklists/:id", authMiddleware, async (req, res) => {
   try {
     const { title, status, link, tag } = req.body;
     const fields = [];
@@ -132,8 +151,7 @@ router.patch("/checklists/:id", async (req, res) => {
   }
 });
 
-// DELETE checklist
-router.delete("/checklists/:id", async (req, res) => {
+router.delete("/checklists/:id", authMiddleware, async (req, res) => {
   try {
     await req.db.query("DELETE FROM checklists WHERE id = ?", [req.params.id]);
     res.json({ message: "Checklist deleted" });
@@ -145,8 +163,7 @@ router.delete("/checklists/:id", async (req, res) => {
 
 // ================== CHECKITEM ROUTES ================== //
 
-// GET a specific checkitem
-router.get("/checkitems/:id", async (req, res) => {
+router.get("/checkitems/:id", authMiddleware, async (req, res) => {
   try {
     const [rows] = await req.db.query("SELECT * FROM checkitems WHERE id = ?", [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: "Checkitem not found" });
@@ -157,8 +174,7 @@ router.get("/checkitems/:id", async (req, res) => {
   }
 });
 
-// POST a new item to a checklist
-router.post("/checklists/:checklistId/items", async (req, res) => {
+router.post("/checklists/:checklistId/items", authMiddleware, async (req, res) => {
   try {
     const { name, status, position, tag } = req.body;
     const checklistId = req.params.checklistId;
@@ -183,8 +199,7 @@ router.post("/checklists/:checklistId/items", async (req, res) => {
   }
 });
 
-// PATCH checkitem
-router.patch("/checkitems/:id", async (req, res) => {
+router.patch("/checkitems/:id", authMiddleware, async (req, res) => {
   try {
     const { name, status, position, tag } = req.body;
     const fields = [];
@@ -213,8 +228,7 @@ router.patch("/checkitems/:id", async (req, res) => {
   }
 });
 
-// DELETE checkitem
-router.delete("/checkitems/:id", async (req, res) => {
+router.delete("/checkitems/:id", authMiddleware, async (req, res) => {
   try {
     const [itemRows] = await req.db.query("SELECT checklist_id FROM checkitems WHERE id = ?", [req.params.id]);
     if (!itemRows.length) return res.status(404).json({ error: "Checkitem not found" });
