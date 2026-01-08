@@ -25,15 +25,27 @@ async function authMiddleware(req, res, next) {
   }
 }
 
+
 // ================== HELPER ================== //
+// Computes checklist status from items and updates the checklist row in the DB
 async function computeChecklistStatus(db, checklistId) {
+  // Get all items for this checklist
   const [items] = await db.query(
     "SELECT status FROM checkitems WHERE checklist_id = ?",
     [checklistId]
   );
-  return items.every(item => item.status === "complete") ? "complete" : "incomplete";
-}
 
+  // Determine checklist status
+  const status = items.every(item => item.status === "complete") ? "complete" : "incomplete";
+
+  // Update the checklist row
+  await db.query(
+    "UPDATE checklists SET status = ? WHERE id = ?",
+    [status, checklistId]
+  );
+
+  return status;
+}
 // ================== CHECKLIST ROUTES ================== //
 
 router.get("/checklists", authMiddleware, async (req, res) => {
