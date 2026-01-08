@@ -1,15 +1,13 @@
 /**
- * RingCentral Service
- * ------------------------------------------------------
- * Combines:
- * - Logging of token refreshes and auth exchanges (DB)
- * - SMS & MMS sending (with rate limiting)
- * - Alerts
+ * RingCentral Service (clean, no logging)
  */
 
 const fetch = require("node-fetch");
-const FormData = require("form-data");
+const FormData = require("form-data"); // For MMS multipart
 const Bottleneck = require("bottleneck");
+const path = require("path");
+const crypto = require("crypto");
+const { Storage } = require("@google-cloud/storage"); // For internal GCS upload
 
 const ALERT_URL =
   "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZhMDYzMTA0M2Q1MjY5NTUzNjUxMzUi_pc";
@@ -49,17 +47,6 @@ async function sendAlert(type, message, extra = {}) {
       }),
     });
   } catch (_) {}
-}
-
-async function logTemp(db, payload) {
-  try {
-    await db.query(
-      "INSERT INTO ringcentral_temp (data) VALUES (?)",
-      [JSON.stringify(payload)]
-    );
-  } catch (err) {
-    console.error("Failed to log ringcentral_temp:", err.message);
-  }
 }
 
 /* -------------------- DB Helpers -------------------- */
@@ -108,8 +95,7 @@ async function refreshAccessToken(db) {
       if (Date.now() >= refreshExpiry) {
         sendAlert(
           "refresh_token_expired",
-          "Refresh token expired; reauthorization required",
-          { refreshIssuedAt, refreshExpiry }
+          "Refresh token expired; reauthorization required"
         );
         return;
       }
@@ -131,14 +117,6 @@ async function refreshAccessToken(db) {
       });
 
       const json = await res.json();
-
-      await logTemp(db, {
-        type: "refresh",
-        http_status: res.status,
-        response: json,
-        timestamp: new Date().toISOString(),
-      });
-
       if (!res.ok) throw new Error(JSON.stringify(json));
 
       tokenData = {
@@ -240,7 +218,28 @@ async function sendSms(db, from, to, message) {
     await refreshAccessToken(db);
   }
 
-  return sendSmsThroughLimiter(from, to, message);
+  try {
+    const result = await sendSmsThroughLimiter(from, to, message);
+    // Log to DB asynchronously
+    db.query(
+      "INSERT INTO rc_messages_log (type, from_number, to_number, message, status, rc_response) VALUES (?, ?, ?, ?, ?, ?)",
+      ["sms", from, to, message, "success", JSON.stringify(result)],
+      (err) => {
+        if (err) console.error("Failed to log SMS:", err);
+      }
+    );
+    return result;
+  } catch (err) {
+    // Log error to DB asynchronously
+    db.query(
+      "INSERT INTO rc_messages_log (type, from_number, to_number, message, status, error_message) VALUES (?, ?, ?, ?, ?, ?)",
+      ["sms", from, to, message, "error", err.message],
+      (errLog) => {
+        if (errLog) console.error("Failed to log SMS error:", errLog);
+      }
+    );
+    throw err;
+  }
 }
 
 /* -------------------- SEND MMS -------------------- */
@@ -271,13 +270,73 @@ const sendMmsThroughLimiter = smsLimiter.wrap(
   }
 );
 
-async function sendMms(db, from, to, text, countryIso = "US", attachmentBuffer, attachmentName, attachmentType) {
+// Helper: generate random filename (from upload.js)
+function randomFilename(originalName) {
+  const ext = path.extname(originalName);
+  const random = crypto.randomBytes(16).toString("hex");
+  return `${random}${ext}`;
+}
+
+// Helper: Internal upload to GCS (duplicated logic from /upload, but skips auth for internal use)
+async function internalUploadToGcs(buffer, originalName, mimeType) {
+  const bucketName = process.env.GCS_BUCKET;
+  if (!bucketName) {
+    throw new Error("Bucket not configured");
+  }
+  const storage = new Storage();
+  const bucket = storage.bucket(bucketName);
+  const filename = randomFilename(originalName);
+  const file = bucket.file(filename);
+  const now = new Date().toISOString();
+  await file.save(buffer, {
+    resumable: true,
+    timeoutMs: 300000,
+    metadata: {
+      contentType: mimeType,
+      cacheControl: "public, max-age=31536000",
+      metadata: {
+        username: "system", // Fixed for internal
+        originalName,
+        uploadedAt: now,
+      },
+    },
+  });
+  const publicUrl = `https://storage.googleapis.com/${bucketName}/${filename}`;
+  return { url: publicUrl, filename };
+}
+
+async function sendMms(db, from, to, text, countryIso = "US", attachmentBuffer, attachmentName, attachmentType, attachmentUrl, storeAttachment = false) {
   from = normalizeNumber(from);
   to = normalizeNumber(to);
   if (!from || !to) throw new Error("Missing required fields");
+  if (attachmentBuffer && attachmentUrl) {
+  throw new Error("Provide either attachment file or URL, not both");
+}
   if (text && text.length > 1000) throw new Error("Text too long");
-  if (attachmentBuffer && attachmentBuffer.length > 1.5 * 1024 * 1024) {
-    throw new Error("Attachment too large");
+
+  let finalBuffer = attachmentBuffer;
+  let finalName = attachmentName || "attachment";
+  let finalType = attachmentType || "application/octet-stream";
+  let storedUrl = null;
+  let storedFilename = null;
+
+  // If URL provided and no file, fetch the attachment
+  if (attachmentUrl && !attachmentBuffer) {
+    const res = await fetch(attachmentUrl);
+    if (!res.ok) throw new Error(`Failed to fetch attachment: ${res.statusText}`);
+    finalBuffer = Buffer.from(await res.arrayBuffer());
+    finalType = res.headers.get("content-type") || finalType;
+    finalName = path.basename(attachmentUrl) || finalName; // Infer name from URL
+    if (finalBuffer.length > 1.5 * 1024 * 1024) {
+      throw new Error("Attachment too large");
+    }
+  }
+
+  // If storeAttachment and we have a buffer (from file or URL), upload to GCS
+  if (storeAttachment && finalBuffer) {
+    const { url, filename } = await internalUploadToGcs(finalBuffer, finalName, finalType);
+    storedUrl = url;
+    storedFilename = filename;
   }
 
   const expiry = tokenData?.access_issued_at + (tokenData?.expires_in || 0) * 1000;
@@ -286,7 +345,28 @@ async function sendMms(db, from, to, text, countryIso = "US", attachmentBuffer, 
     if (!tokenData?.access_token) throw new Error("Not authorized");
   }
 
-  return sendMmsThroughLimiter(from, to, text, countryIso, attachmentBuffer, attachmentName, attachmentType);
+  try {
+    const result = await sendMmsThroughLimiter(from, to, text, countryIso, finalBuffer, finalName, finalType);
+    // Log to DB asynchronously
+    db.query(
+      "INSERT INTO rc_messages_log (type, from_number, to_number, message, attachment_filename, attachment_url, status, rc_response) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ["mms", from, to, text || null, storedFilename || finalName, storedUrl || attachmentUrl || null, "success", JSON.stringify(result)],
+      (err) => {
+        if (err) console.error("Failed to log MMS:", err);
+      }
+    );
+    return result;
+  } catch (err) {
+    // Log error to DB asynchronously
+    db.query(
+      "INSERT INTO rc_messages_log (type, from_number, to_number, message, attachment_filename, attachment_url, status, error_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ["mms", from, to, text || null, storedFilename || finalName, storedUrl || attachmentUrl || null, "error", err.message],
+      (errLog) => {
+        if (errLog) console.error("Failed to log MMS error:", errLog);
+      }
+    );
+    throw err;
+  }
 }
 
 /* -------------------- AUTH CODE EXCHANGE -------------------- */
@@ -310,14 +390,6 @@ async function exchangeCodeForToken(db, code) {
   });
 
   const json = await res.json();
-
-  await logTemp(db, {
-    type: "authorization_code",
-    http_status: res.status,
-    response: json,
-    timestamp: new Date().toISOString(),
-  });
-
   if (!res.ok) throw new Error(JSON.stringify(json));
 
   tokenData = {

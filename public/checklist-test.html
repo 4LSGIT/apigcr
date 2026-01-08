@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checklist Tester</title>
+<style>
+  body {
+    font-family: "Segoe UI", sans-serif;
+    background: #f5f6fa;
+    margin: 0;
+    padding: 0;
+  }
+
+  header {
+    background: #2f3640;
+    color: #fff;
+    padding: 1rem;
+    text-align: center;
+  }
+
+  main {
+    padding: 1rem;
+    max-width: 900px;
+    margin: auto;
+  }
+
+  input, button, select, textarea {
+    padding: 0.5rem;
+    margin: 0.25rem 0;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+    font-size: 1rem;
+  }
+
+  button {
+    cursor: pointer;
+    background: #0097e6;
+    color: white;
+    border: none;
+    transition: background 0.2s;
+  }
+
+  button:hover {
+    background: #40739e;
+  }
+
+  .section {
+    background: #fff;
+    padding: 1rem;
+    margin: 1rem 0;
+    border-radius: 8px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.1);
+  }
+
+  h2 {
+    margin-top: 0;
+  }
+
+  ul {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  li {
+    padding: 0.5rem;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .item-buttons button {
+    margin-left: 0.25rem;
+    padding: 0.25rem 0.5rem;
+  }
+
+  label {
+    display: block;
+    margin-top: 0.5rem;
+  }
+
+  .flex-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .status-complete {
+    color: green;
+    font-weight: bold;
+  }
+
+  .status-incomplete {
+    color: red;
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Checklist API Tester</h1>
+</header>
+<main>
+
+  <div class="section">
+    <h2>Login / Auth</h2>
+    <label>Username: <input type="text" id="username"></label>
+    <label>Password: <input type="password" id="password"></label>
+    <button onclick="login()">Login</button>
+    <p id="authStatus"></p>
+  </div>
+
+  <div class="section">
+    <h2>All Checklists</h2>
+    <button onclick="loadChecklists()">Refresh Lists</button>
+    <ul id="checklistsList"></ul>
+    <h3>Create New Checklist</h3>
+    <input type="text" id="newChecklistTitle" placeholder="Checklist Title">
+    <button onclick="createChecklist()">Create Checklist</button>
+  </div>
+
+  <div class="section" id="itemsSection" style="display:none;">
+    <h2>Checklist Items: <span id="currentChecklistTitle"></span></h2>
+    <ul id="itemsList"></ul>
+    <h3>Add Item</h3>
+    <input type="text" id="newItemName" placeholder="Item Name">
+    <select id="newItemStatus">
+      <option value="incomplete">Incomplete</option>
+      <option value="complete">Complete</option>
+    </select>
+    <button onclick="createItem()">Add Item</button>
+  </div>
+
+</main>
+
+<script>
+let API_BASE = ""; // change to your API base URL
+let auth = {}; // store username/password for simple auth
+let currentChecklistId = null;
+
+function login() {
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
+  if (!username || !password) return alert("Enter username and password");
+  auth = { username, password };
+  document.getElementById("authStatus").innerText = "Logged in as " + username;
+  loadChecklists();
+}
+
+async function apiFetch(path, options = {}) {
+  options.headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Basic " + btoa(auth.username + ":" + auth.password)
+  };
+  if (options.body) options.body = JSON.stringify(options.body);
+  const res = await fetch(API_BASE + path, options);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || "API error");
+  }
+  return res.json();
+}
+
+async function loadChecklists() {
+  try {
+    const lists = await apiFetch("/checklists");
+    const ul = document.getElementById("checklistsList");
+    ul.innerHTML = "";
+    lists.forEach(list => {
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <span>${list.title} [<span class="status-${list.status}">${list.status}</span>]</span>
+        <div class="item-buttons">
+          <button onclick="viewItems(${list.id}, '${list.title}')">View Items</button>
+          <button onclick="deleteChecklist(${list.id})">Delete</button>
+        </div>
+      `;
+      ul.appendChild(li);
+    });
+  } catch (err) {
+    alert("Error loading checklists: " + err.message);
+  }
+}
+
+async function createChecklist() {
+  const title = document.getElementById("newChecklistTitle").value;
+  if (!title) return alert("Enter checklist title");
+  try {
+    await apiFetch("/checklists", { method: "POST", body: { title, created_by: 1 } });
+    document.getElementById("newChecklistTitle").value = "";
+    loadChecklists();
+  } catch (err) {
+    alert("Error creating checklist: " + err.message);
+  }
+}
+
+async function deleteChecklist(id) {
+  if (!confirm("Delete this checklist?")) return;
+  try {
+    await apiFetch(`/checklists/${id}`, { method: "DELETE" });
+    loadChecklists();
+    if (currentChecklistId === id) document.getElementById("itemsSection").style.display = "none";
+  } catch (err) {
+    alert("Error deleting checklist: " + err.message);
+  }
+}
+
+async function viewItems(id, title) {
+  try {
+    const data = await apiFetch(`/checklists/${id}/items`);
+    currentChecklistId = id;
+    document.getElementById("currentChecklistTitle").innerText = title;
+    document.getElementById("itemsSection").style.display = "block";
+    renderItems(data.items);
+  } catch (err) {
+    alert("Error loading items: " + err.message);
+  }
+}
+
+function renderItems(items) {
+  const ul = document.getElementById("itemsList");
+  ul.innerHTML = "";
+  items.forEach(item => {
+    const li = document.createElement("li");
+    li.innerHTML = `
+      <span>${item.name} [<span class="status-${item.status}">${item.status}</span>]</span>
+      <div class="item-buttons">
+        <button onclick="deleteItem(${item.id})">Delete</button>
+        <button onclick="toggleItemStatus(${item.id}, '${item.status}')">Toggle Status</button>
+      </div>
+    `;
+    ul.appendChild(li);
+  });
+}
+
+async function createItem() {
+  const name = document.getElementById("newItemName").value;
+  const status = document.getElementById("newItemStatus").value;
+  if (!name || !currentChecklistId) return alert("Enter item name and select a checklist");
+  try {
+    await apiFetch(`/checklists/${currentChecklistId}/items`, { method: "POST", body: { name, status } });
+    document.getElementById("newItemName").value = "";
+    viewItems(currentChecklistId, document.getElementById("currentChecklistTitle").innerText);
+  } catch (err) {
+    alert("Error creating item: " + err.message);
+  }
+}
+
+async function deleteItem(id) {
+  if (!confirm("Delete this item?")) return;
+  try {
+    await apiFetch(`/checkitems/${id}`, { method: "DELETE" });
+    viewItems(currentChecklistId, document.getElementById("currentChecklistTitle").innerText);
+  } catch (err) {
+    alert("Error deleting item: " + err.message);
+  }
+}
+
+async function toggleItemStatus(id, currentStatus) {
+  const newStatus = currentStatus === "complete" ? "incomplete" : "complete";
+  try {
+    await apiFetch(`/checkitems/${id}`, { method: "PATCH", body: { status: newStatus } });
+    viewItems(currentChecklistId, document.getElementById("currentChecklistTitle").innerText);
+  } catch (err) {
+    alert("Error updating status: " + err.message);
+  }
+}
+</script>
+</body>
+</html>

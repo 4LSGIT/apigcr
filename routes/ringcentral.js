@@ -2,7 +2,7 @@
  * RingCentral Routes
  * ------------------------------------------------------
  * - /ringcentral/send-sms : POST/GET
- * - /ringcentral/send-mms : POST (with optional file attachment)
+ * - /ringcentral/send-mms : POST (with optional file attachment or URL)
  * - /ringcentral/status   : GET
  * - /ringcentral/authorize & /callback : OAuth
  *
@@ -12,7 +12,7 @@
  */
 
 const express = require("express");
-const multer = require("multer"); // Added for file uploads in MMS
+const multer = require("multer"); // For file uploads in MMS
 const router = express.Router();
 const ringcentral = require("../services/ringcentralService");
 
@@ -54,8 +54,9 @@ router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
 // -------------------- SEND MMS --------------------
 router.post("/ringcentral/send-mms", checkApiKey, upload.single("attachment"), async (req, res) => {
   try {
-    const { from, to, text, country = "US" } = req.body;
+    const { from, to, text, country = "US", attachment_url, store_attachment = "false" } = req.body;
     const attachment = req.file;
+    const store = store_attachment === "true"; // Convert to boolean
     const result = await ringcentral.sendMms(
       req.db,
       from,
@@ -64,7 +65,9 @@ router.post("/ringcentral/send-mms", checkApiKey, upload.single("attachment"), a
       country,
       attachment?.buffer,
       attachment?.originalname,
-      attachment?.mimetype
+      attachment?.mimetype,
+      attachment_url,
+      store
     );
     res.json(result);
   } catch (err) {

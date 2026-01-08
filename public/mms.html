@@ -91,6 +91,34 @@
       max-height: 200px;
       overflow-y: auto;
     }
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      margin: 8px 0 16px;
+      font-size: 1rem;
+      color: #1a1a1a;
+    }
+    .checkbox-label input {
+      width: auto;
+      margin-right: 8px;
+    }
+    .source-choice {
+      display: flex;
+      justify-content: space-around;
+      margin: 8px 0 16px;
+    }
+    .source-choice label {
+      display: flex;
+      align-items: center;
+      font-size: 1rem;
+      color: #1a1a1a;
+    }
+    .source-choice input {
+      margin-right: 8px;
+    }
+    .hidden {
+      display: none;
+    }
     @media (max-width: 480px) {
       form {
         padding: 24px;
@@ -111,11 +139,43 @@
   <input type="text" id="to" placeholder="To Number (e.g. +10987654321)" required />
   <textarea id="text" placeholder="Message (optional)" rows="4"></textarea>
   <input type="text" id="country" placeholder="Country ISO (default: US)" value="US" />
-  <input type="file" id="attachment" accept="image/*,application/pdf" />
+  <div class="source-choice">
+    <label><input type="radio" name="attachment_source" value="file" checked> File</label>
+    <label><input type="radio" name="attachment_source" value="url"> URL</label>
+  </div>
+  <div id="url-section" class="hidden">
+    <input type="text" id="attachment_url" placeholder="Attachment URL (optional, e.g. https://example.com/image.png)" />
+  </div>
+  <div id="file-section">
+    <input type="file" id="attachment" accept="image/*,application/pdf" />
+    <label class="checkbox-label">
+      <input type="checkbox" id="store_attachment" />
+      Store attachment in GCS
+    </label>
+  </div>
   <button type="submit">Send MMS</button>
   <div class="result" id="result"></div>
 </form>
 <script>
+const fileSection = document.getElementById("file-section");
+const urlSection = document.getElementById("url-section");
+const storeCheckbox = document.getElementById("store_attachment");
+
+document.querySelectorAll('input[name="attachment_source"]').forEach((radio) => {
+  radio.addEventListener("change", function () {
+    if (this.value === "file") {
+      fileSection.classList.remove("hidden");
+      urlSection.classList.add("hidden");
+      storeCheckbox.disabled = false; // Enable checkbox in file mode
+    } else {
+      fileSection.classList.add("hidden");
+      urlSection.classList.remove("hidden");
+      storeCheckbox.disabled = true; // Disable checkbox in URL mode (or remove if not wanted)
+      storeCheckbox.checked = false; // Reset to false
+    }
+  });
+});
+
 document.getElementById("mmsForm").addEventListener("submit", async function (e) {
   e.preventDefault();
   const apiKey = document.getElementById("apiKey").value;
@@ -123,7 +183,10 @@ document.getElementById("mmsForm").addEventListener("submit", async function (e)
   const to = document.getElementById("to").value;
   const text = document.getElementById("text").value;
   const country = document.getElementById("country").value;
-  const attachment = document.getElementById("attachment").files[0];
+  const attachmentSource = document.querySelector('input[name="attachment_source"]:checked').value;
+  const attachment_url = attachmentSource === "url" ? document.getElementById("attachment_url").value : "";
+  const attachment = attachmentSource === "file" ? document.getElementById("attachment").files[0] : null;
+  const store_attachment = (attachmentSource === "file" && storeCheckbox.checked) ? "true" : "false";
   const resultBox = document.getElementById("result");
   resultBox.textContent = "Sending...";
   try {
@@ -132,6 +195,8 @@ document.getElementById("mmsForm").addEventListener("submit", async function (e)
     formData.append("to", to);
     if (text) formData.append("text", text);
     formData.append("country", country);
+    if (attachment_url) formData.append("attachment_url", attachment_url);
+    formData.append("store_attachment", store_attachment);
     if (attachment) formData.append("attachment", attachment);
     const response = await fetch("/ringcentral/send-mms", {
       method: "POST",
