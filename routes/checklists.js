@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 
-// Helper function: compute checklist status based on items
+// Helper: compute checklist status
 async function computeChecklistStatus(db, checklistId) {
   const [items] = await db.query(
     "SELECT status FROM checkitems WHERE checklist_id = ?",
@@ -12,10 +12,10 @@ async function computeChecklistStatus(db, checklistId) {
 
 // ================== CHECKLIST ROUTES ================== //
 
-// GET all checklists (optionally filter by link(s))
-router.get("/", async (req, res) => {
+// GET all checklists, optionally filter by links=X,Y,Z
+router.get("/checklists", async (req, res) => {
   try {
-    const { links } = req.query; // links=X,Y,Z
+    const { links } = req.query;
     let sql = "SELECT * FROM checklists";
     let params = [];
     if (links) {
@@ -32,12 +32,12 @@ router.get("/", async (req, res) => {
   }
 });
 
-// GET basic info of a specific checklist
-router.get("/:checklistId", async (req, res) => {
+// GET basic info of a checklist
+router.get("/checklists/:id", async (req, res) => {
   try {
     const [rows] = await req.db.query(
       "SELECT id, title, status, created_date, updated_date, link, tag FROM checklists WHERE id = ?",
-      [req.params.checklistId]
+      [req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: "Checklist not found" });
     res.json(rows[0]);
@@ -47,19 +47,18 @@ router.get("/:checklistId", async (req, res) => {
   }
 });
 
-// GET checklist with items
-router.get("/:checklistId/items", async (req, res) => {
+// GET checklist details + items
+router.get("/checklists/:id/items", async (req, res) => {
   try {
-    const checklistId = req.params.checklistId;
     const [checklists] = await req.db.query(
       "SELECT * FROM checklists WHERE id = ?",
-      [checklistId]
+      [req.params.id]
     );
     if (!checklists.length) return res.status(404).json({ error: "Checklist not found" });
 
     const [items] = await req.db.query(
       "SELECT * FROM checkitems WHERE checklist_id = ? ORDER BY position ASC, id ASC",
-      [checklistId]
+      [req.params.id]
     );
 
     res.json({
@@ -73,18 +72,15 @@ router.get("/:checklistId/items", async (req, res) => {
 });
 
 // POST a new checklist (with optional items)
-router.post("/", async (req, res) => {
+router.post("/checklists", async (req, res) => {
   try {
     const { title, created_by, link, tag, items } = req.body;
-
     const [result] = await req.db.query(
       "INSERT INTO checklists (title, created_by, link, tag) VALUES (?, ?, ?, ?)",
       [title, created_by, link || null, tag || null]
     );
-
     const checklistId = result.insertId;
 
-    // Insert items if provided
     if (Array.isArray(items) && items.length > 0) {
       const itemValues = items.map((item, index) => [
         checklistId,
@@ -99,10 +95,7 @@ router.post("/", async (req, res) => {
       );
     }
 
-    // Compute updated checklist status
     const status = await computeChecklistStatus(req.db, checklistId);
-
-    // Return full checklist with items
     const [checklistRows] = await req.db.query("SELECT * FROM checklists WHERE id = ?", [checklistId]);
     const [itemRows] = await req.db.query("SELECT * FROM checkitems WHERE checklist_id = ? ORDER BY position ASC", [checklistId]);
     res.status(201).json({ ...checklistRows[0], status, items: itemRows });
@@ -113,7 +106,7 @@ router.post("/", async (req, res) => {
 });
 
 // PATCH checklist info/status
-router.patch("/:checklistId", async (req, res) => {
+router.patch("/checklists/:id", async (req, res) => {
   try {
     const { title, status, link, tag } = req.body;
     const fields = [];
@@ -125,14 +118,12 @@ router.patch("/:checklistId", async (req, res) => {
     if (tag) { fields.push("tag = ?"); params.push(tag); }
 
     if (!fields.length) return res.status(400).json({ error: "No fields to update" });
-
-    params.push(req.params.checklistId);
+    params.push(req.params.id);
     await req.db.query(`UPDATE checklists SET ${fields.join(", ")} WHERE id = ?`, params);
 
-    const [checklistRows] = await req.db.query("SELECT * FROM checklists WHERE id = ?", [req.params.checklistId]);
-    const statusComputed = await computeChecklistStatus(req.db, req.params.checklistId);
-
-    const [itemRows] = await req.db.query("SELECT * FROM checkitems WHERE checklist_id = ? ORDER BY position ASC", [req.params.checklistId]);
+    const [checklistRows] = await req.db.query("SELECT * FROM checklists WHERE id = ?", [req.params.id]);
+    const statusComputed = await computeChecklistStatus(req.db, req.params.id);
+    const [itemRows] = await req.db.query("SELECT * FROM checkitems WHERE checklist_id = ? ORDER BY position ASC", [req.params.id]);
 
     res.json({ ...checklistRows[0], status: statusComputed, items: itemRows });
   } catch (err) {
@@ -141,10 +132,10 @@ router.patch("/:checklistId", async (req, res) => {
   }
 });
 
-// DELETE a checklist
-router.delete("/:checklistId", async (req, res) => {
+// DELETE checklist
+router.delete("/checklists/:id", async (req, res) => {
   try {
-    await req.db.query("DELETE FROM checklists WHERE id = ?", [req.params.checklistId]);
+    await req.db.query("DELETE FROM checklists WHERE id = ?", [req.params.id]);
     res.json({ message: "Checklist deleted" });
   } catch (err) {
     console.error(err);
@@ -155,9 +146,9 @@ router.delete("/:checklistId", async (req, res) => {
 // ================== CHECKITEM ROUTES ================== //
 
 // GET a specific checkitem
-router.get("/items/:itemId", async (req, res) => {
+router.get("/checkitems/:id", async (req, res) => {
   try {
-    const [rows] = await req.db.query("SELECT * FROM checkitems WHERE id = ?", [req.params.itemId]);
+    const [rows] = await req.db.query("SELECT * FROM checkitems WHERE id = ?", [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: "Checkitem not found" });
     res.json(rows[0]);
   } catch (err) {
@@ -166,8 +157,8 @@ router.get("/items/:itemId", async (req, res) => {
   }
 });
 
-// POST a new checkitem to a checklist
-router.post("/:checklistId/items", async (req, res) => {
+// POST a new item to a checklist
+router.post("/checklists/:checklistId/items", async (req, res) => {
   try {
     const { name, status, position, tag } = req.body;
     const checklistId = req.params.checklistId;
@@ -185,7 +176,6 @@ router.post("/:checklistId/items", async (req, res) => {
 
     const [itemRows] = await req.db.query("SELECT * FROM checkitems WHERE checklist_id = ? ORDER BY position ASC", [checklistId]);
     const checklistStatus = await computeChecklistStatus(req.db, checklistId);
-
     res.status(201).json({ checklistId, status: checklistStatus, items: itemRows });
   } catch (err) {
     console.error(err);
@@ -193,8 +183,8 @@ router.post("/:checklistId/items", async (req, res) => {
   }
 });
 
-// PATCH a checkitem
-router.patch("/items/:itemId", async (req, res) => {
+// PATCH checkitem
+router.patch("/checkitems/:id", async (req, res) => {
   try {
     const { name, status, position, tag } = req.body;
     const fields = [];
@@ -206,11 +196,10 @@ router.patch("/items/:itemId", async (req, res) => {
     if (tag) { fields.push("tag = ?"); params.push(tag); }
 
     if (!fields.length) return res.status(400).json({ error: "No fields to update" });
-
-    params.push(req.params.itemId);
+    params.push(req.params.id);
     await req.db.query(`UPDATE checkitems SET ${fields.join(", ")} WHERE id = ?`, params);
 
-    const [itemRows] = await req.db.query("SELECT * FROM checkitems WHERE id = ?", [req.params.itemId]);
+    const [itemRows] = await req.db.query("SELECT * FROM checkitems WHERE id = ?", [req.params.id]);
     if (!itemRows.length) return res.status(404).json({ error: "Checkitem not found" });
 
     const checklistId = itemRows[0].checklist_id;
@@ -224,15 +213,14 @@ router.patch("/items/:itemId", async (req, res) => {
   }
 });
 
-// DELETE a checkitem
-router.delete("/items/:itemId", async (req, res) => {
+// DELETE checkitem
+router.delete("/checkitems/:id", async (req, res) => {
   try {
-    const [itemRows] = await req.db.query("SELECT checklist_id FROM checkitems WHERE id = ?", [req.params.itemId]);
+    const [itemRows] = await req.db.query("SELECT checklist_id FROM checkitems WHERE id = ?", [req.params.id]);
     if (!itemRows.length) return res.status(404).json({ error: "Checkitem not found" });
 
     const checklistId = itemRows[0].checklist_id;
-
-    await req.db.query("DELETE FROM checkitems WHERE id = ?", [req.params.itemId]);
+    await req.db.query("DELETE FROM checkitems WHERE id = ?", [req.params.id]);
 
     const [allItems] = await req.db.query("SELECT * FROM checkitems WHERE checklist_id = ? ORDER BY position ASC", [checklistId]);
     const checklistStatus = await computeChecklistStatus(req.db, checklistId);
