@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>JWT Test Page</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 700px;
+      margin: 2rem auto;
+    }
+    input, button, textarea {
+      width: 100%;
+      margin: 0.5rem 0;
+      padding: 0.5rem;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 1rem;
+      max-height: 250px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .status {
+      margin: 1rem 0;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+<h2>Login</h2>
+<input id="username" placeholder="Username" />
+<input id="password" type="password" placeholder="Password" />
+<button onclick="login()">Login</button>
+
+<div class="status" id="tokenStatus">Not logged in</div>
+
+<h2>Query</h2>
+<textarea id="query" rows="3">SELECT 5</textarea>
+<button onclick="runQuery()">Run Query</button>
+
+<h2>Output</h2>
+<pre id="output"></pre>
+
+<script>
+const TOKEN_KEY = "jwt";
+let countdownTimer = null;
+
+/* ---------- JWT helpers ---------- */
+function decodeJwt(token) {
+  const payload = token.split(".")[1];
+  return JSON.parse(atob(payload));
+}
+
+function updateExpirationCountdown() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const statusEl = document.getElementById("tokenStatus");
+
+  if (!token) {
+    statusEl.textContent = "Not logged in";
+    return;
+  }
+
+  const { exp } = decodeJwt(token);
+  const expiresAt = exp * 1000;
+
+  clearInterval(countdownTimer);
+  countdownTimer = setInterval(() => {
+    const remainingMs = expiresAt - Date.now();
+    if (remainingMs <= 0) {
+      statusEl.textContent = "Token expired — please log in again";
+      clearInterval(countdownTimer);
+      return;
+    }
+
+    const minutes = Math.floor(remainingMs / 60000);
+    const seconds = Math.floor((remainingMs % 60000) / 1000);
+    statusEl.textContent =
+      `JWT expires in ${minutes}:${seconds.toString().padStart(2, "0")}`;
+  }, 1000);
+}
+
+/* ---------- Auth fetch with sliding refresh ---------- */
+async function authFetch(url, options = {}) {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const opts = { ...options };
+  opts.headers = { ...(opts.headers || {}) };
+
+  if (token) {
+    opts.headers["Authorization"] = "Bearer " + token;
+  }
+
+  const res = await fetch(url, opts);
+  const data = await res.json();
+
+  // 🔁 Refresh token (sliding expiration)
+  if (data.token) {
+    localStorage.setItem(TOKEN_KEY, data.token);
+    updateExpirationCountdown(); // reset countdown
+  }
+
+  return data;
+}
+
+/* ---------- Login ---------- */
+async function login() {
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
+
+  const res = await fetch("/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
+  });
+
+  const data = await res.json();
+
+  if (!res.ok) {
+    output("Login failed: " + JSON.stringify(data));
+    return;
+  }
+
+  localStorage.setItem(TOKEN_KEY, data.token);
+  updateExpirationCountdown();
+  output("Login successful.\nJWT stored.");
+}
+
+/* ---------- Run DB Query ---------- */
+async function runQuery() {
+  const q = document.getElementById("query").value;
+
+  try {
+    const data = await authFetch(
+      "/db-jwt?query=" + encodeURIComponent(q)
+    );
+    output(JSON.stringify(data, null, 2));
+  } catch (err) {
+    output("Error: " + err.message);
+  }
+}
+
+/* ---------- Output helper ---------- */
+function output(text) {
+  document.getElementById("output").textContent = text;
+}
+
+/* ---------- Initialize on page load ---------- */
+if (localStorage.getItem(TOKEN_KEY)) {
+  updateExpirationCountdown();
+}
+</script>
+
+</body>
+</html>

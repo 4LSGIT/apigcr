@@ -17,7 +17,7 @@ async function authMiddleware(req, res, next) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    req.user = users[0]; // optionally store user info for later
+    req.user = users[0]; // store user info for later
     next();
   } catch (err) {
     console.error(err);
@@ -25,20 +25,17 @@ async function authMiddleware(req, res, next) {
   }
 }
 
-
 // ================== HELPER ================== //
-// Computes checklist status from items and updates the checklist row in the DB
+// Computes checklist status from items, updates the checklist row in the DB, and returns it
 async function computeChecklistStatus(db, checklistId) {
-  // Get all items for this checklist
   const [items] = await db.query(
     "SELECT status FROM checkitems WHERE checklist_id = ?",
     [checklistId]
   );
 
-  // Determine checklist status
   const status = items.every(item => item.status === "complete") ? "complete" : "incomplete";
 
-  // Update the checklist row
+  // Update the checklist status in the DB
   await db.query(
     "UPDATE checklists SET status = ? WHERE id = ?",
     [status, checklistId]
@@ -46,6 +43,7 @@ async function computeChecklistStatus(db, checklistId) {
 
   return status;
 }
+
 // ================== CHECKLIST ROUTES ================== //
 
 router.get("/checklists", authMiddleware, async (req, res) => {
@@ -94,8 +92,12 @@ router.get("/checklists/:id/items", authMiddleware, async (req, res) => {
       [req.params.id]
     );
 
+    // Update checklist status before returning
+    const status = await computeChecklistStatus(req.db, req.params.id);
+
     res.json({
       ...checklists[0],
+      status,
       items
     });
   } catch (err) {
@@ -130,6 +132,7 @@ router.post("/checklists", authMiddleware, async (req, res) => {
     const status = await computeChecklistStatus(req.db, checklistId);
     const [checklistRows] = await req.db.query("SELECT * FROM checklists WHERE id = ?", [checklistId]);
     const [itemRows] = await req.db.query("SELECT * FROM checkitems WHERE checklist_id = ? ORDER BY position ASC", [checklistId]);
+
     res.status(201).json({ ...checklistRows[0], status, items: itemRows });
   } catch (err) {
     console.error(err);
@@ -152,8 +155,9 @@ router.patch("/checklists/:id", authMiddleware, async (req, res) => {
     params.push(req.params.id);
     await req.db.query(`UPDATE checklists SET ${fields.join(", ")} WHERE id = ?`, params);
 
-    const [checklistRows] = await req.db.query("SELECT * FROM checklists WHERE id = ?", [req.params.id]);
+    // Update checklist status based on items
     const statusComputed = await computeChecklistStatus(req.db, req.params.id);
+    const [checklistRows] = await req.db.query("SELECT * FROM checklists WHERE id = ?", [req.params.id]);
     const [itemRows] = await req.db.query("SELECT * FROM checkitems WHERE checklist_id = ? ORDER BY position ASC", [req.params.id]);
 
     res.json({ ...checklistRows[0], status: statusComputed, items: itemRows });
@@ -204,6 +208,7 @@ router.post("/checklists/:checklistId/items", authMiddleware, async (req, res) =
 
     const [itemRows] = await req.db.query("SELECT * FROM checkitems WHERE checklist_id = ? ORDER BY position ASC", [checklistId]);
     const checklistStatus = await computeChecklistStatus(req.db, checklistId);
+
     res.status(201).json({ checklistId, status: checklistStatus, items: itemRows });
   } catch (err) {
     console.error(err);
