@@ -34,6 +34,20 @@ async function sendWithRetry(fn, retries = 2) {
   throw lastErr;
 }
 
+function htmlToPlainText(html) {
+  if (!html) return '';
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')       // convert <br> to newlines
+    .replace(/<\/p>/gi, '\n\n')          // paragraphs to double line breaks
+    .replace(/<\/li>/gi, '\n')           // list items to newlines
+    .replace(/<ul>|<ol>|<\/ul>|<\/ol>/gi, '') // remove list wrappers
+    .replace(/<[^>]+>/g, '')             // remove remaining tags
+    .replace(/\s+\n/g, '\n')             // clean up whitespace before line breaks
+    .replace(/\n{3,}/g, '\n\n')          // collapse multiple empty lines
+    .trim();
+}
+
+
 function fail(stage, code, err) {
   const e = new Error(err?.message || code);
   e.stage = stage;
@@ -95,7 +109,7 @@ async function sendCampaign(db, campaign_id) {
             from: campaign.sender,
             to: contact.contact_email,
             subject: subjectResult.text,
-            text: bodyResult.text.replace(/<[^>]+>/g, ''), // simple strip HTML
+            text: htmlToPlainText(bodyResult.text),
             html: bodyResult.text
           })
         );
