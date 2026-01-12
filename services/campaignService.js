@@ -68,7 +68,9 @@ async function sendCampaign(db, campaign_id) {
       host: smtp.smtp_host,
       port: smtp.smtp_port,
       secure: !!smtp.smtp_secure,
-      auth: { user: smtp.smtp_user, pass: smtp.smtp_pass }
+      auth: { user: smtp.smtp_user, pass: smtp.smtp_pass },
+      logger: true,//temp
+      debug: true//temp
     });
   }
 
