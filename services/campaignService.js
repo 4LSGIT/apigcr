@@ -93,6 +93,7 @@ async function sendCampaign(db, campaign_id) {
             from: campaign.sender,
             to: contact.contact_email,
             subject: subjectResult.text,
+            text: bodyResult.text.replace(/<[^>]+>/g, ''), // simple strip HTML
             html: bodyResult.text
           })
         );
