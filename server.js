@@ -1,7 +1,5 @@
 const express = require("express");
 const cors = require("cors");
-const mysql = require("mysql2");
-const fetch = require("node-fetch");
 const path = require("path");
 const fs = require("fs");
 require("dotenv").config();
@@ -23,30 +21,30 @@ app.use(
   })
 );
 
+const db = require("./startup/db");//and we are going to attach it to each route
 /*
-//this was moved to /startup/db.js but left here for now for reference
-const db = mysql.createPool({
+reference to startup/db.js:
+const mysql = require("mysql2");
+const pool = mysql.createPool({
   connectionLimit: 10,
   host: process.env.host,
   user: process.env.user,
   password: process.env.password,
   database: process.env.database
 });
-db.on("error", (err) => {
-  console.error("Error connecting to MySQL database: " + err.stack);
+pool.on("error", err => {
+  console.error("MySQL error:", err);
 });
+module.exports = pool.promise();
 */
-const db = require("./startup/db");
 
 const routesPath = path.join(__dirname, "routes");
 
 app.get("/:page", (req, res, next) => {
   const filePath = path.join(__dirname, "public", req.params.page + ".html");
-
   if (fs.existsSync(filePath)) {
     return res.sendFile(filePath);
   }
-
   next(); // continue to normal routes if file doesn’t exist
 });
 
@@ -66,5 +64,7 @@ require("./startup/init")(db);
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}.`);
-  console.log(`visit http://localhost:${PORT}/`);
+  if (process.env.ENVIRONMENT == "development") {
+    console.log(`visit http://localhost:${PORT}/`);
+  }
 });
