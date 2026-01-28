@@ -63,7 +63,7 @@ router.get("/renaReminder", authenticateToken, async (req, res) => {
       ) AS t;
     `;
 
-    const [rows] = await pool.query(sql);
+    const [rows] = await req.db.query(sql);
     const appointments = rows[0]?.appointments || [];
 
     // Defensive parse (mysql2 may already return JSON)
