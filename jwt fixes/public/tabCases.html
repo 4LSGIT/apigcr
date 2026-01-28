@@ -1,0 +1,184 @@
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+<link rel="stylesheet" type="text/css" href="style.css" />
+
+<body style="text-align: center;">
+<h1>This is the Cases Tab</h1>
+<span>
+    Query:
+    <input id="tabCasesQuery" type="text" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" />
+    Case Type:
+    <select id="tabCasesType" style="width: auto">
+        <option value="%">All</option>
+        <option>Bankruptcy</option>
+        <option>Bankruptcy - Ch. 7</option>
+        <option>Bankruptcy - Ch. 13</option>
+        <option value="Bankruptcy - Ch%" default>
+            Bankruptcy - all chapters
+        </option>
+        <option>Criminal</option>
+    </select>
+    Stage:
+    <select id="tabCasesStage" style="width: auto">
+        <option value="%">All</option>
+        <option>Lead</option>
+        <option>Filed</option>
+        <option>Closed</option>
+    </select>
+    Case Status:
+    <input id="tabCasesStatus" style="width: auto" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" />
+    Order By:
+    <select id="tabCasesOrder" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
+        <option value="co.contact_lname">Client Last Name</option>
+        <option value="co.contact_name">Client First Name</option>
+        <option value="c.case_number">Case Number</option>
+        <option value="c.case_id">Lead ID</option>
+        <option value="c.case_open_date">Open Date</option>
+        <option value="c.case_file_date">File Date</option>
+        <option value="c.case_close_date">Close Date</option>
+        <option value="c.case_type">Case Type</option>
+        <option value="c.case_stage">Case Stage</option>
+        <option value="c.case_status">Case Status</option>
+    </select>
+    <select id="tabCasesOrder2" style="width: auto" data-type="sortDi" onchange="sortSelect(this)">
+        <option value="ASC">Ascending</option>
+        <option value="DESC">Descending</option>
+    </select>
+    <button onclick="tabCasesGet(0)" data-type="goButton">Search</button>
+</span>
+<table id="casesTable" class="logTable">
+    <tr>
+        <th onclick="sort(this, 'c.case_id')">Lead ID</th>
+        <th onclick="sort(this, 'co.contact_lname')">Client Name</th>
+        <th onclick="sort(this, 'c.case_number')">Case Number</th>
+        <th onclick="sort(this, 'c.case_type')">Case Type</th>
+        <th onclick="sort(this, 'c.case_stage')">Case Stage</th>
+        <th onclick="sort(this, 'c.case_status')">Case Status</th>
+        <th onclick="sort(this, 'c.case_open_date')">Open Date</th>
+        <th onclick="sort(this, 'c.case_file_date')">File Date</th>
+        <th onclick="sort(this, 'c.case_close_date')">Close Date</th>
+    </tr>
+</table>
+<div id="casesTableFoot"></div>
+<div id="tabCasesLoad" style="display: none">
+    <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+</div>
+</div>
+</body>
+
+<script>
+const P = window.parent;
+const E = (id) => document.getElementById(id);
+limit = 100
+async function tabCasesGet(offset) {
+  E("tabCasesLoad").style.display = "block";
+
+  const query = E("tabCasesQuery").value;
+  const type = E("tabCasesType").value;
+  const stage = E("tabCasesStage").value;
+  let status = E("tabCasesStatus").value;
+  status = status ? `%${status}%` : "%";
+  const order = E("tabCasesOrder").value;
+  const order2 = E("tabCasesOrder2").value;
+
+  const table = E("casesTable");
+  const foot = E("casesTableFoot");
+  foot.innerHTML = "";
+
+  // clear table
+  while (table.rows.length > 1) {
+    table.deleteRow(1);
+  }
+
+  try {
+    const result = await P.apiSend("/api/cases", "GET", {
+      query,
+      type,
+      stage,
+      status,
+      order,
+      order2,
+      offset,
+      limit
+    });
+
+    const cases = result.cases;
+    const counter = result.counter;
+
+    if (!counter || !cases.length) {
+      P.Toast.fire({ icon: "error", title: "No Cases Found!" });
+      return;
+    }
+
+    P.cases = cases;
+
+    cases.forEach((C) => {
+      C.contacts =
+        typeof C.contacts === "string" ? JSON.parse(C.contacts) : C.contacts;
+
+      const row = table.insertRow();
+      let rowHTML = `<td>
+        <a href="#" onclick="P.addFile('${C.case_number || C.case_id}', 'case', '${C.case_id}')">
+          ${C.case_id}
+        </a>
+      </td><td>`;
+
+      (C.contacts||[]).forEach((client) => {
+        if (client.contact_id) {
+          rowHTML += `<a href="#" onclick="P.addFile('${client.contact_name.replace(
+            /'/g,
+            "\\'"
+          )}', 'client', '${client.contact_id}')">${client.contact_name}</a>
+          (${client.contact_relate})<br>`;
+        }
+      });
+
+      rowHTML += `
+        </td>
+        <td>${C.case_number}</td>
+        <td>${C.case_type}</td>
+        <td>${C.case_stage}</td>
+        <td>${C.case_status}</td>
+        <td>${C.open}</td>
+        <td>${C.file}</td>
+        <td>${C.close}</td>
+      `;
+
+      row.innerHTML = rowHTML;
+    });
+
+    // pagination footer
+    foot.innerHTML =
+      offset > 0
+        ? `<a href="#" onclick="tabCasesGet(${offset - limit})">&lt;</a> `
+        : "";
+
+    for (let i = 1; counter >= (i - 1) * limit; i++) {
+      foot.innerHTML +=
+        offset / limit + 1 === i
+          ? `<a href="#" onclick="tabCasesGet(${(i - 1) * limit})">[${i}]</a> `
+          : `<a href="#" onclick="tabCasesGet(${(i - 1) * limit})">${i}</a> `;
+    }
+
+    foot.innerHTML +=
+      offset + limit < counter
+        ? `<a href="#" onclick="tabCasesGet(${offset + limit})">&gt;</a> `
+        : "";
+
+    foot.innerHTML += ` | Results ${offset + 1}-${offset + cases.length} of ${counter}
+      <select style="width:auto" onchange="limit=this.value;tabCasesGet(0)">
+        <option value="50" ${limit == 50 ? "selected" : ""}>50</option>
+        <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
+        <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
+        <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
+      </select> |
+      <button onclick="window.print()">Print</button>
+    `;
+  } catch (err) {
+    console.error(err);
+    P.Toast.fire({ icon: "error", title: "Failed to load cases" });
+  } finally {
+    E("tabCasesLoad").style.display = "none";
+  }
+}
+
+</script>

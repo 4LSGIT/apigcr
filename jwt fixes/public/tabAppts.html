@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Appointments</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+
+<body style="text-align:center;">
+
+<h1>Appointments</h1>
+
+<!-- FILTERS -->
+<span>
+  Type:
+  <select id="tabApptsType">
+    <option>Default</option><option>All</option>
+    <option>Strategy Session</option>
+    <option>Strategy Session Follow Up</option>
+    <option>Pre-filing Meeting</option>
+    <option>Schedules Completion Meeting</option>
+    <option>341 Meeting</option>
+  </select>
+
+  Status:
+  <select id="tabApptsStatus">
+    <option>All</option><option>Attended</option>
+    <option>Canceled</option><option>No Show</option>
+    <option>Rescheduled</option><option selected>Scheduled</option>
+  </select>
+
+  Time:
+  <select id="tabApptsTime" onchange="tabApptsTimeChange(this.value)">
+    <option>All</option><option>Before</option>
+    <option>On</option><option>After</option>
+    <option>Between</option>
+  </select>
+
+  <input id="tabApptsDate1" type="date" style="display:none">
+  <label id="tabApptsDateLabel"></label>
+  <input id="tabApptsDate2" type="date" style="display:none">
+
+  <button id="tabApptsButton" onclick="tabApptsGet(0)">Search</button>
+</span>
+
+<!-- TABLE -->
+<table id="apptsTable" class="logTable">
+<tr>
+  <th>ID</th><th>Date</th><th>Time</th><th>Contact</th>
+  <th>Case</th><th>Type</th><th>Status</th><th>With</th><th>Update</th>
+</tr>
+</table>
+
+<div id="apptsTableFoot"></div>
+
+<div id="tabApptsLoad" style="display:none">
+  <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+</div>
+
+<script>
+const P = window.parent;
+const E = id => document.getElementById(id);
+
+window.sendQuery = P.sendQuery.bind(P);
+window.addFile = P.addFile.bind(P);
+
+let offset = 0, limit = 100, appts = [];
+
+/* ---------------- TIME FILTER ---------------- */
+function tabApptsTimeChange(v){
+  const d1=E("tabApptsDate1"), d2=E("tabApptsDate2"), l=E("tabApptsDateLabel");
+  if(v==="All"){ d1.style.display=d2.style.display="none"; l.textContent=""; }
+  else if(v==="Between"){ d1.style.display=d2.style.display="inline-block"; d2.style.display="inline-block"; l.textContent="and "; }
+  else{ d1.style.display="inline-block"; d2.style.display="none"; l.textContent=""; }
+}
+
+/* ---------------- LOAD TABLE ---------------- */
+async function tabApptsGet(start=0){
+  offset=start;
+  const table=E("apptsTable"), foot=E("apptsTableFoot");
+  E("tabApptsButton").disabled=true;
+  E("tabApptsLoad").style.display="block";
+  foot.innerHTML="";
+  while(table.rows.length>1)table.deleteRow(1);
+
+  try{
+    const r = await P.apiSend("/api/appts","GET",{
+      type:E("tabApptsType").value,
+      status:E("tabApptsStatus").value,
+      time:E("tabApptsTime").value,
+      date1:E("tabApptsDate1").value,
+      date2:E("tabApptsDate2").value,
+      offset,limit
+    });
+
+    appts = r.appts || [];
+    P.appts = appts;
+    const counter = r.counter || 0;
+
+    if(!appts.length){
+      P.Toast.fire({icon:"error",title:"No appointments found"});
+      return;
+    }
+
+    appts.forEach((a,i)=>{
+      const row=table.insertRow();
+      row.innerHTML=`
+        <td><a href="#" onclick="showAppt(${i})">${a.id}</a></td>
+        <td>${a.format_date}</td>
+        <td>${a.time}</td>
+        <td><a href="#" onclick="P.addFile('${(a.name||"").replace(/'/g,"\\'")}','client','${a.clientId}');return false">${a.name||""}</a></td>
+        <td><a href="#" onclick="P.addFile('${a.caseN||a.leadId}','case','${a.leadId}');return false">${a.caseN||a.leadId}</a></td>
+        <td>${a.type}</td>
+        <td>${a.status}</td>
+        <td>${a.user_name||""}</td>
+        <td>${actionButtons(a,i)}</td>`;
+    });
+
+    /* -------- FOOTER / PAGINATION -------- */
+    foot.innerHTML = "";
+
+    if(offset > 0)
+      foot.innerHTML += `<a href="#" onclick="tabApptsGet(${offset-limit})">&lt;</a> `;
+
+    const pages = Math.ceil(counter / limit);
+    for(let i=0;i<pages;i++){
+      foot.innerHTML += (offset/limit===i)
+        ? `[${i+1}] `
+        : `<a href="#" onclick="tabApptsGet(${i*limit})">${i+1}</a> `;
+    }
+
+    if(offset + limit < counter)
+      foot.innerHTML += `<a href="#" onclick="tabApptsGet(${offset+limit})">&gt;</a> `;
+
+    foot.innerHTML += `
+      | Results ${offset+1}-${offset+appts.length} of ${counter}
+      <select style="width:auto" onchange="limit=this.value; tabApptsGet(0)">
+        <option value="50" ${limit==50?"selected":""}>50</option>
+        <option value="100" ${limit==100?"selected":""}>100</option>
+        <option value="200" ${limit==200?"selected":""}>200</option>
+        <option value="500" ${limit==500?"selected":""}>500</option>
+      </select>
+      | <button onclick="window.print()">Print</button>
+    `;
+
+  }catch(err){
+    P.Toast.fire({icon:"error",title:"Load failed"});
+  }finally{
+    E("tabApptsLoad").style.display="none";
+    E("tabApptsButton").disabled=false;
+  }
+}
+
+/* ---------------- BUTTONS ---------------- */
+function actionButtons(a,i){
+  const b=[];
+  if(a.status==="Scheduled"){
+    b.push(`<button onclick="apptUpdate(${i},'Cancel')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
+    b.push(`<button onclick="apptUpdate(${i},'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>`);
+    b.push(`<button onclick="apptUpdate(${i},'No Show')"><i class="fa-solid fa-user-xmark"></i> No Show</button>`);
+    b.push(`<button onclick="apptUpdate(${i},'Reschedule')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+  }else if(a.status==="No Show"){
+    b.push(`<button onclick="apptUpdate(${i},'Cancel')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
+    b.push(`<button onclick="apptUpdate(${i},'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>`);
+    b.push(`<button onclick="apptUpdate(${i},'Reschedule')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+  }else if(a.status==="Canceled"){
+    b.push(`<button onclick="apptUpdate(${i},'Reschedule')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+  }
+  return b.join(" ");
+}
+
+/* ---------------- DISPATCH ---------------- */
+function apptUpdate(i,a){
+  const appt=appts[i];
+  if(a==="Cancel") cancelAppointment(appt);
+  if(a==="Attended") markAttended(appt);
+  if(a==="No Show") markNoShow(appt);
+  if(a==="Reschedule") rescheduleAppointment(appt);
+}
+
+/* ---------------- CANCEL ---------------- */
+function cancelAppointment(appt){
+  Swal.fire({
+    title:`Cancel appointment #${appt.id}?`,
+    html:`
+      <textarea id="apptNote" placeholder="Internal note (optional)" style="width:300px;height:60px;"></textarea><br>
+      <input id="apptCancelFollowUp" type="checkbox"> Follow-up sequence<br>
+      <input id="apptCancelTask" type="checkbox"> Create task<br><br>
+
+      SMS <input type="checkbox" id="cancelSMS" onchange="toggleCancelMsg()">
+      Email <input type="checkbox" id="cancelEmail" onchange="toggleCancelMsg()"><br>
+
+      <textarea id="cancelConfirmMessage" style="display:none;width:300px;height:60px;">
+This is to confirm that I canceled our appointment on ${appt.format_date} at ${appt.time}.
+      </textarea>
+    `,
+    showCancelButton:true,
+    showLoaderOnConfirm:true,
+    preConfirm:()=>{
+      const sms=E("cancelSMS").checked, email=E("cancelEmail").checked;
+      if((sms||email)&&!E("cancelConfirmMessage").value.trim()){
+        Swal.showValidationMessage("Confirmation message required");
+        return false;
+      }
+      return P.apiSend("/api/appts/cancel","POST",{
+        appt:appt.id,
+        note:E("apptNote").value,
+        sms,email,
+        apptCancelFollowUp:E("apptCancelFollowUp").checked,
+        apptCancelTask:E("apptCancelTask").checked
+      }).then(r=>{
+        P.Toast.fire({icon:r.status==="success"?"success":"error",title:r.title,text:r.message});
+        tabApptsGet(offset);
+      });
+    }
+  });
+}
+
+function toggleCancelMsg(){
+  E("cancelConfirmMessage").style.display =
+    (E("cancelSMS").checked || E("cancelEmail").checked) ? "block" : "none";
+}
+
+/* ---------------- ATTENDED ---------------- */
+function markAttended(appt){
+  Swal.fire({
+    title:`Mark appointment #${appt.id} as attended?`,
+    html:`<textarea id="apptNote" placeholder="Internal note (optional)" style="width:300px;height:60px;"></textarea>`,
+    showCancelButton:true,
+    preConfirm:()=>P.apiSend(`/api/appts/${appt.id}/attended`,"POST",{
+      note:E("apptNote").value
+    }).then(r=>{
+      P.Toast.fire({icon:r.status==="success"?"success":"error",title:r.title,text:r.message});
+      tabApptsGet(offset);
+    })
+  });
+}
+
+/* ---------------- NO SHOW ---------------- */
+function markNoShow(appt){
+  Swal.fire({
+    title:`Mark appointment #${appt.id} as No Show?`,
+    html:`<textarea id="apptNote" placeholder="Internal note (optional)" style="width:300px;height:60px;"></textarea>`,
+    showCancelButton:true,
+    showDenyButton:true,
+    confirmButtonText:"Enroll",
+    denyButtonText:"Without sequence",
+    preConfirm:()=>P.apiSend(`/api/appts/${appt.id}/no-show`,"POST",{
+      note:E("apptNote").value,
+      enroll:true
+    }).then(r=>{
+      P.Toast.fire({icon:r.status==="success"?"success":"error",title:r.title,text:r.message});
+      tabApptsGet(offset);
+    }),
+    preDeny:()=>P.apiSend(`/api/appts/${appt.id}/no-show`,"POST",{
+      note:E("apptNote").value,
+      enroll:false
+    }).then(r=>{
+      P.Toast.fire({icon:r.status==="success"?"success":"error",title:r.title,text:r.message});
+      tabApptsGet(offset);
+    })
+  });
+}
+
+/* ---------------- RESCHEDULE ---------------- */
+function rescheduleAppointment(appt){
+  Swal.fire({
+    title:`Reschedule #${appt.id}`,
+    html:`
+      <input type="datetime-local" id="newDate" onchange="updateRescheduleMsg()"><br>
+      <textarea id="apptNote" placeholder="Internal note (optional)" style="width:300px;height:60px;"></textarea><br>
+
+      SMS <input type="checkbox" id="rescSMS" onchange="toggleRescMsg()">
+      Email <input type="checkbox" id="rescEmail" onchange="toggleRescMsg()"><br>
+
+      <textarea id="rescheduleConfirmMessage" style="display:none;width:300px;height:60px;"></textarea>
+    `,
+    showCancelButton:true,
+    showDenyButton:true,
+    confirmButtonText:"Reschedule Now",
+    denyButtonText:"Reschedule Later",
+    preConfirm:()=>{
+      const nd=E("newDate").value;
+      if(!nd||nd===appt.date){
+        Swal.showValidationMessage("Select a new date");
+        return false;
+      }
+      return P.apiSend("/api/appts/reschedule","POST",{
+        appt:appt.id,
+        newDate:nd.replace("T"," ")+":00",
+        note:E("apptNote").value,
+        sms:E("rescSMS").checked,
+        email:E("rescEmail").checked,
+        msg:E("rescheduleConfirmMessage").value
+      }).then(r=>{
+        P.Toast.fire({icon:r.status==="success"?"success":"error",title:r.title,text:r.message});
+        tabApptsGet(offset);
+      });
+    },
+    preDeny:()=>P.apiSend("/api/appts/reschedule","POST",{
+      appt:appt.id,
+      note:E("apptNote").value,
+      rescheduleLater:true,
+      createTask:true
+    }).then(r=>{
+      P.Toast.fire({icon:r.status==="success"?"success":"error",title:r.title,text:r.message});
+      tabApptsGet(offset);
+    })
+  });
+}
+
+function toggleRescMsg(){
+  const show = E("rescSMS").checked || E("rescEmail").checked;
+  E("rescheduleConfirmMessage").style.display = show ? "block" : "none";
+  if(show) updateRescheduleMsg();
+}
+
+function updateRescheduleMsg(){
+  const nd=E("newDate").value;
+  if(!nd) return;
+  const d=new Date(nd);
+  E("rescheduleConfirmMessage").value =
+`This is to confirm that our appointment has been rescheduled to ${d.toLocaleDateString()} at ${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}.`;
+}
+
+/* ---------------- VIEW ---------------- */
+function showAppt(i){
+  const a=appts[i];
+  Swal.fire({
+    title:`Appointment ${a.id}`,
+    html:`<iframe src="/apptform.html?apptID=${a.id}" width="100%" height="600"></iframe>`,
+    width:"75%",showConfirmButton:false,showCloseButton:true
+  });
+}
+</script>
+
+</body>
+</html>

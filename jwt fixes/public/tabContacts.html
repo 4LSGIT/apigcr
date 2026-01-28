@@ -1,0 +1,134 @@
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+<link rel="stylesheet" type="text/css" href="style.css" />
+
+<body style="text-align: center;">
+    <h1>This is Contacts Tab</h1>
+    <span><button onclick="P.newContact()">
+            <i class="fa-solid fa-user-plus"></i> New Contact
+        </button>
+        Query:
+        <input id="tabContactsQuery" type="text" onkeypress="if (event.keyCode == 13) {tabContactsGet(0)}" />
+        filter1:
+        <select disabled>
+            <option>All</option>
+            <option>All</option>
+            <option>All</option>
+            <option>All</option>
+            <option>All</option>
+        </select>
+        Filter2:
+        <select disabled>
+            <option>All</option>
+            <option>All</option>
+            <option>All</option>
+            <option>All</option>
+        </select>
+        Sort By:
+        <select id="tabContactsSort" style="width: auto">
+            <option value="contact_lname ASC">Last Name (a&rarr;z)</option>
+            <option value="contact_lname DESC">Last Name (a&larr;z)</option>
+            <option value="contact_fname ASC">First Name (a&rarr;z)</option>
+            <option value="contact_fname DESC">First Name (a&larr;z)</option>
+        </select>
+        <button onclick="tabContactsGet(0)">Search</button>
+    </span>
+    <table id="contactsTable" class="logTable">
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Phone</th>
+            <th>Email</th>
+            <th>Address</th>
+            <th>Cases</th>
+            <th>Date of Birth</th>
+        </tr>
+    </table>
+    <div id="contactsTableFoot"></div>
+    <div id="tabContactsLoad" style="display: none">
+        <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </div>
+    </div>
+</body>
+
+<script>
+const P = window.parent;
+const E = (id) => document.getElementById(id);
+limit = 100
+ async function tabContactsGet(offset) {
+  E("tabContactsLoad").style.display = "block";
+
+  const query = E("tabContactsQuery").value;
+  const sort = E("tabContactsSort").value;
+  const table = E("contactsTable");
+  const foot = E("contactsTableFoot");
+  foot.innerHTML = "";
+
+  // clear table
+  while (table.rows.length > 1) table.deleteRow(1);
+
+  try {
+    const result = await P.apiSend("/api/contacts", "GET", {
+      query,
+      offset,
+      limit,
+      sort,
+    });
+
+    const contacts = result.contacts;
+    const counter = result.counter;
+
+    if (!counter || !contacts.length) {
+      P.Toast.fire({ icon: "error", title: "No Contacts Found!" });
+      return;
+    }
+
+    P.contacts = contacts;
+
+    contacts.forEach((contact) => {
+      contact.cases = typeof contact.cases === "string" ? JSON.parse(contact.cases) : contact.cases;
+      const row = table.insertRow();
+
+      let rowHTML = `<td>${contact.contact_id}</td>
+      <td><a href="#" onclick="P.addFile('${contact.contact_name.replace(/'/g,"\\'")}', 'contact', '${contact.contact_id}')">${contact.contact_name}</a></td>
+      <td>${contact.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3")}</td>
+      <td>${contact.contact_email}</td>
+      <td>${contact.contact_address ? `${contact.contact_address}<br>${contact.contact_city}, ${contact.contact_state} ${contact.contact_zip}` : ''}</td>
+      <td>`;
+
+      contact.cases.forEach((c) => {
+        if (c.case_id) {
+          rowHTML += `<a href="#" title="${c.case_id}" onclick="P.addFile('${c.case_number || c.case_id}', 'case', '${c.case_id}')">${c.case_number || c.case_id}</a><br>`;
+        }
+      });
+
+      rowHTML += `</td><td>${contact.DoB}</td>`;
+      row.innerHTML = rowHTML;
+    });
+
+    // Pagination footer
+    foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabContactsGet(${offset - limit})">&lt;</a> ` : "";
+
+    for (let i = 1; counter >= (i - 1) * limit; i++) {
+      foot.innerHTML += offset / limit + 1 === i
+        ? `<a href="#" onclick="tabContactsGet(${(i-1)*limit})">[${i}]</a> `
+        : `<a href="#" onclick="tabContactsGet(${(i-1)*limit})">${i}</a> `;
+    }
+
+    foot.innerHTML += offset + limit < counter ? `<a href="#" onclick="tabContactsGet(${offset + limit})">&gt;</a> ` : "";
+    foot.innerHTML += ` | Results ${offset+1}-${offset+contacts.length} of ${counter}
+      <select style="width:auto" onchange="limit=this.value;tabContactsGet(0)">
+        <option value="50" ${limit==50?'selected':''}>50</option>
+        <option value="100" ${limit==100?'selected':''}>100</option>
+        <option value="200" ${limit==200?'selected':''}>200</option>
+        <option value="500" ${limit==500?'selected':''}>500</option>
+      </select> |
+      <button onclick="window.print()">Print</button>`;
+  } catch (err) {
+    console.error(err);
+    P.Toast.fire({ icon: "error", title: "Failed to load contacts" });
+  } finally {
+    E("tabContactsLoad").style.display = "none";
+  }
+}
+
+</script>

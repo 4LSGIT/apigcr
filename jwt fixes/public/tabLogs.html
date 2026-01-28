@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Appointments</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+
+<body style="text-align:center;">
+      <span
+        >Query:
+        <input
+          id="tabLogQuery"
+          onkeypress="if (event.keyCode == 13) {tabLogGet(0)}"
+        />
+        Type:
+        <select id="tabLogType">
+          <option>All</option>
+          <option>Appt</option>
+          <option>Communication</option>
+          <option>Email</option>
+          <option>SMS</option>
+          <option>Call</option>
+          <option>Form</option>
+          <option>Status</option>
+          <option>Note</option>
+          <option>Court Email</option>
+          <option>Other</option></select
+        >Time:
+        <select
+          id="tabLogTime"
+          style="width: 150px"
+          onchange="tabLogTimeChange(this.value)"
+        >
+          <option>All</option>
+          <option>Before</option>
+          <option>On</option>
+          <option>After</option>
+          <option>Between</option>
+        </select>
+        <input
+          id="tabLogDate1"
+          type="date"
+          style="width: 150px; display: none"
+        />
+        <label id="tabLogDateLabel"></label>
+        <input
+          id="tabLogDate2"
+          type="date"
+          style="width: 150px; display: none"
+        />
+
+        <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
+      </span>
+      <table id="logTable" class="logTable" style="text-align: left">
+        <tr>
+          <th>Log ID:</th>
+          <th>Type:</th>
+          <th>Date/Time:</th>
+          <th>Link:</th>
+          <th>Data:</th>
+          <th>User:</th>
+        </tr>
+      </table>
+      <div id="logTableFoot"></div>
+      <div id="tabLogLoad" style="display: none">
+        <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+      </div>
+
+    <script>
+const P = window.parent;
+const E = id => document.getElementById(id);
+window.sendQuery = P.sendQuery.bind(P);
+window.addFile = P.addFile.bind(P);
+let offset = 0, limit = 100, logs = [];
+let username, password;
+
+      function tabLogTimeChange(time) {
+        if (time == "All") {
+          E("tabLogDate1").style.display = "none";
+          E("tabLogDateLabel").innerHTML = "";
+          E("tabLogDate2").style.display = "none";
+        } else if (time != "Between") {
+          E("tabLogDate1").style.display = "inline-block";
+          E("tabLogDateLabel").innerHTML = "";
+          E("tabLogDate2").style.display = "none";
+        } else if (time == "Between") {
+          E("tabLogDate1").style.display = "inline-block";
+          E("tabLogDateLabel").innerHTML = "and ";
+          E("tabLogDate2").style.display = "inline-block";
+        }
+      }
+
+async function tabLogGet(offset = 0) {
+  const btn = E("tabLogButton");
+  const loader = E("tabLogLoad");
+  const table = E("logTable");
+  const foot = E("logTableFoot");
+
+  btn.disabled = true;
+  loader.style.display = "block";
+
+  const query = E("tabLogQuery").value.trim();
+  const type = E("tabLogType").value;
+  const time = E("tabLogTime").value;
+  const date1 = E("tabLogDate1").value || null;
+  const date2 = E("tabLogDate2").value || null;
+
+  // clear table
+  foot.innerHTML = "";
+  table.querySelectorAll("tr:not(:first-child)").forEach(r => r.remove());
+
+  const params = {
+    query,
+    type,
+    time,
+    date1,
+    date2,
+    offset,
+    limit
+  };
+
+  try {
+    const res = await P.apiSend("/api/logs", "GET", params);
+    const logs = res.data || [];
+    const total = res.total || 0;
+
+    P.logs = logs;
+
+    if (!logs.length) {
+      P.Toast.fire({ icon: "error", title: "No Logs Found" });
+      return;
+    }
+
+    logs.forEach(log => {
+      const row = table.insertRow();
+
+      // link handling
+      let link = "";
+      if (log.log_link) {
+        if (isNaN(log.log_link)) {
+          link = `<a href="#" onclick="addFile('${log.case_number || log.case_id}', 'case', '${log.case_id}', '${log.case_type}'); return false">${log.case_number || log.case_id}</a>`;
+        } else {
+          link = `<a href="#" onclick="addFile('${(log.contact_name || "").replace(/'/g,"\\'")}', 'client', '${log.log_link}'); return false">${log.contact_name || "Name Error"}</a>`;
+        }
+      }
+
+      // user
+      const by =
+        P.userArray?.[+log.log_by - 1] !== undefined
+          ? P.userArray[+log.log_by - 1]
+          : log.log_by;
+
+      // log data (JSON-safe)
+      let cellData;
+      try {
+        let json = log.log_data
+          .replace(/\n/g, "\\n")
+          .replace(/\r/g, "\\r");
+        json = JSON.parse(json);
+        cellData = Object.keys(json)
+          .map(k => `<b>${k}:</b> ${decodeURIComponent(json[k])}`)
+          .join("<br>");
+      } catch {
+        cellData = log.log_data;
+      }
+
+      row.innerHTML = `
+        <td>${log.log_id}</td>
+        <td>${log.log_type}</td>
+        <td>${log.formatted_date}</td>
+        <td>${link}</td>
+        <td>${cellData}</td>
+        <td>${by}</td>
+      `;
+    });
+
+    // pagination
+    const pages = Math.ceil(total / limit);
+
+    if (offset > 0) {
+      foot.innerHTML += `<a href="#" onclick="tabLogGet(${Math.max(offset - limit, 0)})">&lt;</a> `;
+    }
+
+    for (let i = 0; i < pages; i++) {
+      foot.innerHTML +=
+        offset / limit === i
+          ? `<a href="#" onclick="tabLogGet(${i * limit})">[${i + 1}]</a> `
+          : `<a href="#" onclick="tabLogGet(${i * limit})">${i + 1}</a> `;
+    }
+
+    if (offset + limit < total) {
+      foot.innerHTML += `<a href="#" onclick="tabLogGet(${offset + limit})">&gt;</a> `;
+    }
+
+    foot.innerHTML += ` | Results ${offset + 1}-${Math.min(offset + logs.length, total)} of ${total}
+      <select style="width:auto" onchange="limit=this.value; tabLogGet(0)">
+        <option value="50" ${limit==50?"selected":""}>50</option>
+        <option value="100" ${limit==100?"selected":""}>100</option>
+        <option value="200" ${limit==200?"selected":""}>200</option>
+        <option value="500" ${limit==500?"selected":""}>500</option>
+      </select> | <button onclick="window.print()">Print</button>`;
+
+  } catch (err) {
+    console.error(err);
+    P.Toast.fire({ icon: "error", title: "Failed to load logs" });
+  } finally {
+    btn.disabled = false;
+    loader.style.display = "none";
+  }
+}
+
+    </script>
+    </body>
+</html>

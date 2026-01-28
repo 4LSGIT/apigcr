@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>4LSG YisraCase</title>
+    <link
+      rel="icon"
+      href="https://legalsolutions.group/wp-content/uploads/2022/06/cropped-favicon-32x32.png"
+      sizes="32x32"
+    />
+    <script
+      src="https://kit.fontawesome.com/b48f1b97af.js"
+      crossorigin="anonymous"
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="/scripts2.js"></script>
+    <link rel="stylesheet" type="text/css" href="style.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <div style="text-align: center">
+      <img
+        src="https://iili.io/Jy2nXHv.md.png"
+        width="280"
+        aria-label="Form Logo"
+      /><br />
+      <div id="loading" style="text-align: center; display: none">
+        <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i><br /><br />
+      </div>
+    </div>
+    <div id="topButtons" style="text-align: center; display: none">
+      <button style="height: 30px" onclick="openMainTab('tabHome')">
+        <i class="fa-solid fa-home"></i> Home
+      </button>
+      <button
+        style="height: 30px"
+        onclick="E('tabOpenFiles').style.display=E('tabOpenFiles').style.display=='none'?'':'none'"
+      >
+        <i class="fa-solid fa-users"></i> Current Tabs
+      </button>
+      <button
+        style="height: 30px"
+        onclick="E('tabTasksTo').value=user.user;tabTasksGet(0);openMainTab('tabTasks')"
+      >
+        <i class="fa-solid fa-list-check"></i> My Tasks
+      </button>
+      <button
+        style="height: 30px"
+        onclick="openMainTab('tabAdmin')"
+        id="adminButton"
+      >
+        <i class="fa-solid fa-crown"></i> Admin Tab
+      </button>
+      <button
+        style="height: 30px"
+        onclick="Swal.fire({ title: 'Reload Site',html: '<p>Are you sure you want to reload the site?</p><p>You will lose all unsaved data in all the open files!</p>',
+            icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
+            preConfirm: () => { location.reload();}});"
+      >
+        <i class="fa-solid fa-rotate-right"></i> Restart
+      </button>
+    </div>
+
+    <div id="tabOpenFiles" style="display: none; text-align: center">
+      <div id="noOpenFiles">There are no open files at the moment!</div>
+      <div
+        id="closeAllFiles"
+        style="display: none"
+        class="file-button"
+        onclick="closeAllFiles(this)"
+      >
+        Close All<!--<i class="file-close fa-solid fa-circle-xmark"></i>-->
+      </div>
+    </div>
+
+    <hr />
+    <!-- End of the header (requested)-->
+
+    <div id="tabHome" class="tab-main">
+      <button
+        style="width: 100px; height: 100px"
+        onclick="cases?'':E('tabCasesFrame').contentWindow.tabCasesGet(0);openMainTab('tabCases', this)"
+      >
+        <i class="fa-solid fa-landmark fa-2xl"></i><br /><br />Cases
+      </button>
+      <button
+        style="width: 100px; height: 100px"
+        onclick="contacts?'':E('tabContactsFrame').contentWindow.tabContactsGet(0);openMainTab('tabContacts', this)"
+      >
+        <i class="fa-solid fa-users fa-2xl"></i><br /><br />Contacts
+      </button>
+      <button
+        style="width: 100px; height: 100px"
+        onclick="appts?'':E('tabApptsFrame').contentWindow.tabApptsGet(0);openMainTab('tabAppts', this)"
+      >
+        <i class="fa-solid fa-calendar-days fa-2xl"></i><br /><br />Appointments
+      </button>
+      <div style="height: 5px"></div>
+      <button
+        style="width: 100px; height: 100px"
+        onclick="tasks?'':E('tabTasksFrame').contentWindow.tabTaskInit();openMainTab('tabTasks', this)"
+      >
+        <i class="fa-solid fa-list fa-2xl"></i><br /><br />Tasks
+      </button>
+      <button style="width: 100px; height: 100px" onclick="newContact()">
+        <i class="fa-solid fa-user-plus fa-2xl"></i><br /><br />New Client
+      </button>
+      <button
+        style="width: 100px; height: 100px"
+        onclick="logs?'':E('tabLogsFrame').contentWindow.tabLogGet(0);openMainTab('tabLogs', this)"
+      >
+        <i class="fa-solid fa-box-archive fa-2xl"></i><br /><br />Log
+      </button>
+      <div style="height: 5px"></div>
+      <!--<button style="width:100px;height:100px" onclick="openMainTab('tabBills')"><i class="fa-solid fa-file-invoice-dollar fa-2xl"></i><br><br>Billing</button>-->
+      <button
+        style="width: 100px; height: 100px"
+        onclick="openMainTab('tabDeadlines')"
+      >
+        <i class="fa-solid fa-clock fa-2xl"></i><br /><br />Deadlines
+      </button>
+      <button
+        style="width: 100px; height: 100px"
+        onclick="openMainTab('tabCampaigns')"
+      >
+        <i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br /><br />Campaigns
+      </button>
+      <button
+        style="width: 100px; height: 100px"
+        onclick="openMainTab('tabMyAccount')"
+      >
+        <i class="fa-solid fa-circle-user fa-2xl"></i><br /><br />My Account
+      </button>
+      <p
+        title="Enter a Contact ID, Phone Number (without spaces), Case Number or a Lead ID to directly open that Client/Case"
+      >
+        Quick Pick: (in-progress; not reliable)
+      </p>
+      <input
+        id="qpInput"
+        placeholder="Client ID, Case # or Lead ID"
+        onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value);}"
+      />
+      <button class="pop-button" onclick="quickPick(E('qpInput').value)">
+        Go
+      </button>
+      <br /><br />
+      <button
+        class="pop-button"
+        onclick="quickPick(E('qpInput').value, 'contact')"
+      >
+        Contact
+      </button>
+      <button
+        class="pop-button"
+        onclick="quickPick(E('qpInput').value, 'case')"
+      >
+        Case
+      </button>
+      <button
+        class="pop-button"
+        onclick="quickPick(E('qpInput').value, 'bill')"
+      >
+        Bill
+      </button>
+      <br /><br />
+      <p>
+  Ver b0.36 — if anyone actually reads this, 
+  <a href="#" onclick="
+    fetch(`https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY0MDYzMzA0M2M1MjZlNTUzNTUxMzMi_pc?user=${encodeURIComponent(user.user_name)}`);
+    Toast.fire({ title: `Wow ${user.user_name}, you actually clicked it!` });
+    return false;
+  ">
+    click here
+  </a>
+  and report feature requests or errors to 
+  <a href='mailto:it@4lsg.com'>it@4lsg.com</a>.
+</p>
+<!--
+      <p>
+        Ver b0.35 please report any feature requests or errors to
+        <a href="mailto:it@4lsg.com">it@4lsg.com</a>
+      </p>-->
+    </div>
+<!--tabs:-->
+    <div id="tabBills" class="tab-main">
+      <h1>Billing</h1>
+      <p>Was this page intentionally left blank?</p>
+    </div>
+
+    <div id="tabDeadlines" class="tab-main">
+      <h1>Deadlines</h1>
+      <p>lets set a deadline to complete this page</p>
+    </div>
+
+    <div id="tabCampaigns" class="tab-main">
+      <iframe src="/campaign.html"></iframe>
+    </div>
+
+    
+    <div id="tabCases" class="tab-main">
+      <iframe id="tabCasesFrame" src="/tabCases.html"></iframe>
+    </div>
+
+    <div id="tabContacts" class="tab-main">
+      <iframe id="tabContactsFrame" src="/tabContacts.html"></iframe>
+    </div>
+
+
+    <div id="tabAppts" class="tab-main">
+      <iframe id="tabApptsFrame" src="/tabAppts.html"></iframe>
+    </div>
+
+    <div id="tabTasks" class="tab-main">
+      <iframe id="tabTasksFrame" src="/tabTasks.html"></iframe>
+    </div>
+
+    <div id="tabLogs" class="tab-main">
+      <iframe id="tabLogsFrame" src="/tabLogs.html"></iframe>
+    </div>
+
+    <div id="tabMyAccount" class="tab-main">
+      <h2>My Account:</h2>
+      <p>Hello <span id="myNameIs"></span>.</p>
+      <button class="big-button" onclick="updateUserInfo()">
+        Update Information
+      </button>
+      <button class="big-button" onclick="updateUserPass()">
+        Change Password
+      </button>
+    </div>
+
+    <script>
+      function updateUserInfo() {
+        Swal.fire({
+          title: "Update User Information",
+          html: `<label class="input-label-top">First Name:*</label><span class="spacer"></span><label class="input-label-top">Last Name:*</label><br>
+              <input id="userFirstName" value="${
+                user.user_fname
+              }"><span class="spacer"></span><input id="userLastName" value="${
+            user.user_lname
+          }"><br>
+              <label class="input-label-top">Username:*</label><span class="spacer"></span><label class="input-label-top">Email:*</label><br>
+              <input id="userUsername" value="${
+                user.username
+              }"><span class="spacer"></span><input id="userEmail" value="${
+            user.email
+          }"><br>
+              <label class="input-label-top">SMS reminders:</label><span class="spacer"></span><label class="input-label-top" id="userPhoneLabel">Phone Number:${
+                user.allow_sms == "1" ? "*" : ""
+              }</label><br>
+              <span style="display:inline-block;width:200px;text-align:left">
+              <label><input style="width:auto;" type="radio" name="smsReminder" onchange="E('userPhoneLabel').innerHTML=this.checked?'Phone Number:*':'Phone Number:'" ${
+                user.allow_sms == 1 ? "checked" : ""
+              } value="yes" id="userSMSyes"> Yes</label>
+              <label><input style="width:auto;" type="radio" name="smsReminder" onchange="E('userPhoneLabel').innerHTML=this.checked?'Phone Number:':'Phone Number:*'" ${
+                user.allow_sms == 0 ? "checked" : ""
+              } value="no"> No</label>
+              </span>
+              <span class="spacer"></span><input id="userPhone" value="${
+                user.phone
+              }"><br>
+              <label class="input-label-top">Task Reminders:</label><span class="spacer"></span><label class="input-label-top"></label><br>
+              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Sunday" ${
+                user.task_remind_freq.includes("Sunday") ? "checked" : ""
+              }> Sunday</label>
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Monday" ${
+                user.task_remind_freq.includes("Monday") ? "checked" : ""
+              }> Monday</label>
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Tuesday" ${
+                user.task_remind_freq.includes("Tuesday") ? "checked" : ""
+              }> Tuesday</label></div>
+              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Wednesday" ${
+                user.task_remind_freq.includes("Wednesday") ? "checked" : ""
+              }> Wednesday</label>
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Thursday" ${
+                user.task_remind_freq.includes("Thursday") ? "checked" : ""
+              }> Thursday</label>
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Friday" ${
+                user.task_remind_freq.includes("Friday") ? "checked" : ""
+              }> Friday</label></div>
+              `, //consider adding an onchange hiddenInputOrVariable = this.value == %{user.whatever} ? hiddanInputOrValue : "changed";
+          // then just check that value in preConfirm
+          preConfirm: () => {
+            userFirstName = E("userFirstName").value;
+            userLastName = E("userLastName").value;
+            userUsername = E("userUsername").value;
+            userEmail = E("userEmail").value;
+            userPhone = E("userPhone").value || "{{blank}}";
+            smsreminder = E("userSMSyes").checked ? "1" : "0";
+            selectedDays =
+              Array.from(
+                document.querySelectorAll(
+                  'input[name="taskReminderFreq"]:checked'
+                )
+              )
+                .map((day) => day.value)
+                .join(",") || "{{blank}}";
+            if (
+              !userFirstName ||
+              !userLastName ||
+              !userUsername ||
+              !userEmail ||
+              (smsreminder == "1" && userPhone == "{{blank}}")
+            ) {
+              Swal.showValidationMessage(
+                "Please enter all the mandatory fields"
+              );
+              return false;
+            }
+            console.log(selectedDays);
+            showProcessingSwal();
+            fetch(
+              `${url}?mode=updateUser&username=${username}&password=${password}&type=updateInfo&userFirstName=${userFirstName}&userLastName=${userLastName}&userUsername=${userUsername}&userEmail=${userEmail}&userPhone=${userPhone}&smsreminder=${smsreminder}&selectedDays=${selectedDays}`
+            )
+              .then((response) => response.json())
+              .then((data) => {
+                console.log(data);
+                Toast.fire({
+                  title: data.title || "Error",
+                  text: data.message || "An unknown error occurred",
+                  icon: data.icon || "error",
+                });
+                if (data.icon == "success") {
+                  user = data.userdata;
+                  username = user.username;
+                  E("myNameIs").innerHTML = user.user_name;
+                }
+              });
+          },
+          showCancelButton: true,
+          confirmButtonText: "Update",
+        });
+      }
+
+      function updateUserPass() {
+        Swal.fire({
+          title: "Enter your password",
+          input: "password",
+          inputLabel: "Password",
+          inputPlaceholder: "Enter your password",
+          inputAttributes: {
+            maxlength: "10",
+            autocapitalize: "off",
+            autocorrect: "off",
+          },
+          preConfirm: (newPass) => {
+            if (newPass == password || !newPass) {
+              Swal.showValidationMessage("Please enter a new password");
+              return false;
+            }
+            showProcessingSwal();
+            fetch(
+              `${url}?mode=updateUser&username=${username}&password=${password}&type=updatePass&newPass=${newPass}`
+            )
+              .then((response) => response.json())
+              .then((data) => {
+                console.log(data);
+                Toast.fire({
+                  title: data.title || "Error",
+                  text: data.message || "An unknown error occurred",
+                  icon: data.icon || "error",
+                });
+                if (data.icon == "success") {
+                  password = newPass;
+                }
+              });
+          },
+        });
+      }
+
+            function testSwalPage() {
+        Swal.fire({
+          title: `test swal page iframe`,
+          html: `
+      <iframe 
+        src="/testswalpage.html" 
+        width="100%" 
+        height="600" 
+        style="border:none;">
+      </iframe>
+    `,
+          width: "75%", // relative to viewport width
+          heightAuto: true,
+          showConfirmButton: false,
+          showCloseButton: true,
+        });
+      }
+    </script>
+
+    <div id="tabAdmin" class="tab-main">
+      <h2>Admin</h2>
+      <button class="big-button" onclick="admintask1()">View/Edit Users</button>
+      <button class="big-button" onclick="testSwalPage()">Test Swal Page</button>
+      <button class="big-button" onclick="admintask2()">Sequences</button>
+      <button
+        class="big-button"
+        onclick="E('sqlQueryDiv').style.display = E('sqlQueryDiv').style.display == 'none'? '':'none'"
+      >
+        mySQL Query
+      </button>
+      <div id="sequencesDiv" style="display: none"></div>
+      <div id="sqlQueryDiv" style="display: none">
+        <h2>mySQL query</h2>
+        <p>
+          THIS IS AN ADVANCED FEATURE THAT CAN HAVE EXTREME CONSEQUENCES - DON'T
+          USE IF YOU DONT KNOW WHAT THIS IS! (that means you!)
+        </p>
+        <input />
+        <button
+          class="big-button"
+          onclick="mySQLquery(this.previousElementSibling.value)"
+        >
+          Query
+        </button>
+        <div id="sqlResult"></div>
+      </div>
+    </div>
+    <script>
+      function mySQLquery(query) {
+        fetch(
+          `/db?username=${username}&password=${password}&query=${encodeURIComponent(
+            query
+          )}`
+        )
+          .then((response) => response.json())
+          .then((data) => {
+            E("sqlResult").innerHTML = JSON.stringify(data, undefined, 2);
+          });
+      }
+    </script>
+
+    <script>
+      params = {};
+      new URL(window.location).searchParams.forEach((value, key) => {
+        params[key] = value;
+      });
+      username = params.user || "";
+      password = params.pass || "";
+      userName = "";
+      user = [];
+      userArray = "";
+      url =
+        "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc"; //FIR - DB
+      //url = "https://svpcac-ztvzsuxura-ue.a.run.app/proxy-pabbly"
+      limit = 100;
+      users = "";
+      checklists = [];
+      fileCounter = 1;
+      allow_sms = 0;
+      cases = "";
+      contacts = "";
+      appts = "";
+      tasks = "";
+      logs = "";
+      offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0 };
+
+      function openMainTab(tabName) {
+        var i, tabs;
+        tabs = document.getElementsByClassName("tab-main");
+        for (i = 0; i < tabs.length; i++) {
+          tabs[i].style.display = "none";
+        }
+        E(tabName).style.display = "block";
+      }
+
+      let temp34 = "";
+
+      //login
+function login() {
+  Swal.fire({
+    title: "Please log in",
+    html: `
+      <label class="input-label">Username: </label><input id="username" value="${username}"><br><br>
+      <label class="input-label">Password: </label><input type="password" value="${password}" id="password">
+    `,
+    confirmButtonText: "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Login&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;",
+    showLoaderOnConfirm: true,
+    reverseButtons: true,
+    showDenyButton: true,
+    confirmButtonColor: "#07ADEF",
+    denyButtonColor: "#959593",
+    denyButtonText: "Forgot Password",
+    preDeny: () => {
+      username = E("username").value;
+      if (!username) {
+        Swal.showValidationMessage("Please enter your username or email");
+        return false;
+      }
+      Swal.fire({
+        icon: "question",
+        title: `Send reset email?`,
+        text: "The system administrator will also be alerted",
+        showCancelButton: false,
+        showDenyButton: true,
+        denyButtonText: "Cancel",
+        preConfirm: () => {
+          fetch(`${url}?mode=resetPW&username=${username}&password=password`);
+          Swal.fire({
+            icon: "success",
+            text: "Please check your email for further instructions",
+          }).then(() => login());
+        },
+        preDeny: () => login(),
+      });
+    },
+    preConfirm: async () => {
+      password = E("password").value;
+      username = E("username").value;
+      if (!username || !password) {
+        Swal.showValidationMessage("Please fill in all required fields");
+        return false;
+      }
+
+      // --- Legacy login (keep working for now) ---
+      const query = `
+        SELECT * FROM users WHERE username = '${username}' AND password = '${password}'|||
+        SELECT user_name, user FROM users WHERE user_type = true;
+      `;
+
+      const legacyResp = await fetch(`/db?username=${username}&password=${password}&query=${encodeURIComponent(query)}`)
+        .then(r => r.json());
+
+      const userRow = legacyResp.data.query1[0];
+      if (!userRow || !userRow.user_auth.startsWith("authorized")) {
+        Swal.fire({
+          toast: true,
+          icon: "error",
+          title: "Login Failed!",
+          timer: 200000,
+          timerProgressBar: true,
+        }).then(() => location.reload());
+        return false;
+      }
+
+      // --- NEW: call /login to get JWT ---
+      try {
+        const jwtResp = await fetch("/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password }),
+        });
+        const jwtData = await jwtResp.json();
+        if (jwtResp.ok && jwtData.token) {
+          // Store token for future API calls
+          localStorage.setItem("jwt", jwtData.token);
+        } else {
+          console.warn("JWT login failed:", jwtData.error);
+        }
+      } catch (err) {
+        console.error("Error fetching JWT:", err);
+      }
+
+      // --- Continue with existing UI logic ---
+      user = userRow;
+      users = legacyResp.data.query2;
+
+      E("myNameIs").innerHTML = user.user_name;
+      E("topButtons").style.display = "block";
+      E("adminButton").style.display =
+        user.user_auth == "authorized - SU" || user.user_auth == "authorized - admin"
+          ? ""
+          : "none";
+      window.scrollTo(0, 0);
+
+      Toast.fire({
+        icon: "success",
+        title: `Welcome ${user.user_name}!`,
+        timer: 1000,
+      });
+
+      openMainTab(params.open || "tabHome");
+
+      // Populate quick picks, tabs, selects, etc. (existing logic)
+      if (params.qp) params.qp.split(",").forEach(q => q ? quickPick(q) : "");
+      if (params.case) quickPick(params.case.split(",")[0], "case", params.case.split(",")[1]);
+      if (params.contact) quickPick(params.contact.split(",")[0], "contact", params.contact.split(",")[1]);
+      if (params.tasks) tabTasksGet(0);
+      if (params.clients) tabClientssGet(0);
+      if (params.cases) tabCasesGet(0);
+      if (params.log) tabLogGet(0);
+      if (params.appt) showAppt(params.appt);
+
+      const selectElements = document.querySelectorAll("select.userslist");
+      let userOpts = "";
+      users.forEach(u => { userOpts += `<option value="${u.user}">${u.user_name}</option>`; });
+      selectElements.forEach(select => { select.innerHTML += userOpts; });
+    },
+    allowOutsideClick: false,
+    allowEscapeKey: false,
+  });
+}
+
+login();
+
+
+      function addFile(fileName, fileType, fileID) {
+        E("noOpenFiles").style.display = "none";
+        const fileButtonContainer = E("tabOpenFiles");
+        E("closeAllFiles").style.display =
+          fileButtonContainer.children.length > 2 ? "" : "none";
+        const fileButton = document.createElement("div");
+        const file = document.createElement("div");
+        file.innerHTML = "this is a test!";
+        if (fileType == "case") {
+          fileButton.innerHTML = `<i class="fa-solid fa-landmark"></i> ${fileName}`;
+          //file.innerHTML = `<iframe src="https://4lsg.glitch.me/fileCase.html?caseID=${fileID}"></iframe>`
+          file.innerHTML = `<iframe src="/case.html?caseID=${fileID}&fileCount=${fileCounter}"></iframe>`;
+        } else if (fileType == "client" || fileType == "contact") {
+          fileButton.innerHTML = `<i class="fa-solid fa-user"></i> ${fileName}`;
+          file.innerHTML = `<iframe src="/contact2.html?clientID=${fileID}&fileCount=${fileCounter}"></iframe>`;
+        } else if (fileType == "bill") {
+          fileButton.innerHTML = `<i class="fa-solid fa-file-invoice-dollar"></i> ${fileName}`;
+          file.innerHTML = `<h1>No bills today!</h1><p>file Count: ${fileCounter}</p>`;
+        }
+        fileButton.className = "file-button";
+        file.className = "tab-main file";
+        fileButton.id = "file-button" + fileCounter;
+        file.id = "file-div" + fileCounter;
+        fileButton.name = fileName;
+        file.name = fileName;
+        fileButton.onclick = function () {
+          openMainTab(file.id);
+        };
+
+        const closeBtn = document.createElement("i");
+        closeBtn.className = "file-close fa-solid fa-circle-xmark";
+        closeBtn.addEventListener("click", function () {
+          event.stopPropagation();
+          Swal.fire({
+            title: `Close "${fileName}"?`,
+            text: `Did you save all the forms?`,
+            showCancelButton: true,
+            confirmButtonText: "Confirm",
+          }).then((result) => {
+            if (result.isConfirmed) {
+              fileButtonContainer.removeChild(fileButton);
+              document.body.removeChild(file);
+              E("noOpenFiles").style.display =
+                fileButtonContainer.children.length == 2 ? "block" : "none";
+              E("closeAllFiles").style.display =
+                fileButtonContainer.children.length > 3 ? "" : "none";
+            }
+          });
+        });
+        fileButton.appendChild(closeBtn);
+        fileButtonContainer.appendChild(fileButton);
+        document.body.appendChild(file);
+        fileCounter++;
+        openMainTab(file.id);
+        E("tabOpenFiles").style.display =
+          E("tabOpenFiles").style.display == "none" ? "" : "none";
+      }
+
+      function closeAllFiles(button) {
+        Swal.fire({
+          title: `Close all files?`,
+          text: `Did you save all the forms?`,
+          showCancelButton: true,
+          confirmButtonText: "Confirm",
+        }).then((result) => {
+          if (result.isConfirmed) {
+            const files = document.querySelectorAll(".file");
+            const fileButtons = document.querySelectorAll(".file-button");
+            files.forEach((element) => {
+              element.parentNode.removeChild(element);
+            });
+            fileButtons.forEach((element) => {
+              element.parentNode.removeChild(element);
+            });
+            E("noOpenFiles").style.display = "block";
+          }
+        });
+      }
+
+      function newContact() {
+        Swal.fire({
+          title: "Add New Client:",
+          html: `<label class="input-label">Name:</label>
+             <input style="width:200px;" type="text" id="NCName" placeholder="Full Name"><br>
+             <label class="input-label">Phone:</label>
+             <input style="width:200px;" id="NCPhone" type="text" placeholder="(###) ###-####" title="Enter a valid phone number"><br>
+             <label class="input-label">Email:</label>
+             <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
+             <label class="input-label">Set Appointment:</label>
+             <input type="datetime-local" id="NCDate" style="width:200px;"><br>
+             <label class="sub-label">Optional, fill in to schedule.</label><br>
+             <label class="input-label">Case Type:</label>
+             <select id="NCType" style="width:200px;">
+              <option selected value="">Select a case type</option>
+              <option>Bankruptcy</option>
+              <option>Other</option>
+             </select><br>
+             <label class="sub-label">Optional, select type to create lead.</label><br>
+             <input type="checkbox" id="NCDuplicate" style="width:auto"><label for="NCDuplicate">Create new client on duplicate?</label>
+             `,
+          showCancelButton: true,
+          showConfirmButton: true,
+          cancelButtonText: "Cancel",
+          confirmButtonText: "Add & Open Client",
+          showCloseButton: true,
+          showDenyButton: true,
+          denyButtonText: "Add & Open Case",
+          denyButtonColor: "#26abe2",
+          showLoaderOnConfirm: true,
+          showLoaderOnDeny: true,
+          preConfirm: () => {
+            name = E("NCName").value;
+            phone = E("NCPhone").value.replace(/\D/g, "");
+            email = E("NCEmail").value;
+            date = E("NCDate").value;
+            type = E("NCType").value;
+            duplicate = E("NCDuplicate").checked ? "duplicate" : "update";
+            if (!name || !E("NCPhone").value /*|| !email*/) {
+              Swal.showValidationMessage("Please fill in all required fields");
+              return false;
+            } else if (name.split(" ").length == 1) {
+              Swal.showValidationMessage("Please fill in a valid full name");
+              return false;
+            } else if (phone.length != 10) {
+              Swal.showValidationMessage("Please fill in a valid phone number");
+              return false;
+            } /*else if (!/^\S+@\S+\.\S+$/.test(email)) {
+              Swal.showValidationMessage(
+                "Please fill in a valid email address"
+              );
+              return false;
+            }*/ else if (date && whenDate(date) != "future") {
+              Swal.showValidationMessage("Please select a future date");
+              return false;
+            } else {
+              [first, last] =
+                name.substring(0, name.indexOf(" ")) !== -1
+                  ? [
+                      name.substring(0, name.indexOf(" ")),
+                      name.substring(name.indexOf(" ") + 1),
+                    ]
+                  : [name, ""];
+              return fetch(
+                `${url}?mode=newClient&username=${username}&password=${password}&action=client&name=${name}&first=${first}&last=${last}&phone=${phone}&email=${email}&date=${date.replace(
+                  "T",
+                  " "
+                )}&type=${type}&duplicate=${duplicate}`
+              )
+                .then((response) => response.json())
+                .then((data) => {
+                  Toast.fire({
+                    icon: data.status || "error",
+                    title: data.title || "Error",
+                    text: data.message,
+                  });
+                  if ((data.status = "success")) {
+                    addFile(data.name, "client", data.id);
+                  }
+                });
+            }
+          },
+          preDeny: () => {
+            name = E("NCName").value;
+            phone = E("NCPhone").value.replace(/\D/g, "");
+            email = E("NCEmail").value || "";
+            date = E("NCDate").value;
+            type = E("NCType").value;
+            duplicate = E("NCDuplicate").checked ? "duplicate" : "update";
+            if (!name || !E("NCPhone").value || !email) {
+              Swal.showValidationMessage("Please fill in all required fields");
+              return false;
+            } else if (!type) {
+              Swal.showValidationMessage("Please select a case type");
+              return false;
+            } else if (name.split(" ").length == 1) {
+              Swal.showValidationMessage("Please fill in a valid full name");
+              return false;
+            } else if (phone.length != 10) {
+              Swal.showValidationMessage("Please fill in a valid phone number");
+              return false;
+            } else if (!/^\S+@\S+\.\S+$/.test(email)) {
+              Swal.showValidationMessage(
+                "Please fill in a valid email address"
+              );
+              return false;
+            } else {
+              [first, last] =
+                name.substring(0, name.indexOf(" ")) !== -1
+                  ? [
+                      name.substring(0, name.indexOf(" ")),
+                      name.substring(name.indexOf(" ") + 1),
+                    ]
+                  : [name, ""];
+              return fetch(
+                `${url}?mode=newClient&username=${username}&password=${password}&action=case&name=${name}&first=${first}&last=${last}&phone=${phone}&email=${email}&date=${date.replace(
+                  "T",
+                  " "
+                )}&type=${type}&duplicate=${duplicate}`
+              )
+                .then((response) => response.json())
+                .then((data) => {
+                  Toast.fire({
+                    icon: data.status || "error",
+                    title: data.title || "Error",
+                    text: data.message,
+                  });
+                  if ((data.status = "success")) {
+                    addFile(data.name, "case", data.id);
+                  }
+                });
+            }
+          },
+        });
+      }
+
+      quickpicktemp = "";
+      function quickPick(term, type, tab) {
+        if (!term) {
+          alert("no term entered");
+        } else if (term) {
+          showProcessingSwal();
+          terms = term.split(" ");
+          name = `%${terms.join("%")}%`;
+          phone = term.replace(/\D/g, "");
+          query = `SELECT contact_name AS name, 'client' AS type, contact_id AS id, 'success' AS message FROM contacts co
+      WHERE co.contact_id = '${term}' OR co.contact_phone = '${term}'
+      UNION ALL
+      SELECT COALESCE(case_number_full, case_number, case_id) AS name, 'case' AS type, case_id AS id, 'success' AS message FROM cases
+      WHERE case_id = '${term}'
+      UNION ALL
+      SELECT COALESCE(case_number_full, case_number) AS name, 'case' AS type, case_id AS id, 'success' AS message FROM cases
+      WHERE case_number = '${term}' OR case_number_full = '${term}'
+      UNION ALL
+      SELECT '' AS name, '' AS type, '' AS id, 'not found' AS message FROM contacts
+      LIMIT 1`;
+          if (type == "contact") {
+            query = `SELECT contact_name AS name, 'client' AS type, contact_id AS id, 'success' AS message 
+              FROM contacts co WHERE (co.contact_id = '${term}' AND co.contact_id != "") OR (co.contact_phone = '${phone}' AND co.contact_phone != "") OR contact_name LIKE '${name}'`;
+          }
+          if (type == "case") {
+            query = `SELECT COALESCE(case_number_full, case_number, case_id) AS name, 'case' AS type, case_id AS id, 'success' AS message 
+              FROM cases LEFT JOIN case_relate cr ON case_id = cr.case_relate_case_id LEFT JOIN contacts c ON cr.case_relate_client_id = c.contact_id
+              WHERE (case_id = '${term}' AND case_id != '') OR (case_number = '${term}' AND case_number != '') OR (case_number_full = '${term}' AND case_number_full != '') OR (c.contact_name LIKE '${name}' AND c.contact_name != '') OR (c.contact_id = '${term}' AND c.contact_id != '') OR (c.contact_phone = '${phone}' AND c.contact_phone != '')`;
+          }
+          if (type == "bill") {
+            alert("no bills allowed");
+            Swal.close();
+            return "no bills";
+          }
+          console.log(query);
+          fetch(
+            `/db?username=${username}&password=${password}&query=${encodeURIComponent(
+              query
+            )}`
+          )
+            .then((response) => response.json())
+            .then((data) => {
+              Swal.close();
+              console.log(data);
+              if (
+                data.data.query1[0] &&
+                data.data.query1[0].message == "success"
+              ) {
+                Toast.fire({
+                  icon: "success",
+                  title: `Opening File: ${data.data.query1[0].name}!`,
+                });
+                addFile(
+                  data.data.query1[0].name,
+                  data.data.query1[0].type,
+                  data.data.query1[0].id + (tab ? `&tab=${tab}` : ``)
+                );
+              } else {
+                alert("no file");
+              }
+            });
+        }
+      }
+    </script>
+  </body>
+</html>

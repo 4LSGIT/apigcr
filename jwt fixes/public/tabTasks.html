@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Appointments</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <link rel="stylesheet" href="style.css" />
+
+
+
+
+</head>
+
+<body style="text-align:center;">
+    <h1>Tasks</h1>
+    <span>
+        <button onclick="newTask()">Create Task</button>
+        Query:
+        <input id="tabTasksQuery" onkeypress="if (event.keyCode == 13) {tabTasksGet(0)}" />
+        Status:
+        <select id="tabTasksStatus" style="width: 150px">
+            <option>Incomplete</option>
+            <option>Pending</option>
+            <option>Completed</option>
+            <option>Due Today</option>
+            <option>Overdue</option>
+            <option>Canceled</option>
+            <option value="1' OR '1">All</option>
+        </select>
+        Assigned By:
+        <select id="tabTasksBy" class="userslist" style="width: 150px">
+            <option value="1' OR '1">All</option>
+        </select>
+        Assigned to:
+        <select id="tabTasksTo" class="userslist" style="width: 150px">
+            <option value="1' OR '1">All</option>
+        </select>
+        <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
+    </span>
+    <table id="tasksTable" class="logTable">
+        <tr>
+            <th>Action</th>
+            <th>Task ID</th>
+            <th>Status</th>
+            <th>Title</th>
+            <th>Description</th>
+            <th>Assigned By</th>
+            <th>Assigned To</th>
+            <th>Linked To</th>
+            <th>Due Date</th>
+            <th>Date Created</th>
+        </tr>
+    </table>
+    <div id="tasksTableFoot"></div>
+    <div id="tabTasksLoad" style="display: none">
+        <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </div>
+
+    <script>
+             const P = window.parent;
+        const E = id => document.getElementById(id);
+
+        window.sendQuery = P.sendQuery.bind(P);
+        window.addFile = P.addFile.bind(P);
+url = P.url
+        let offset = 0, limit = 100, appts = [];
+        let username = "", password = "", userOpts;   
+
+function esc(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")   // must be first
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/`/g, "&#96;");
+}
+function escJS(str) {
+  return String(str)
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/"/g, '\\"')
+    .replace(/`/g, "\\`")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r");
+}
+
+        function newTask(
+            taskID,
+            taskTo,
+            taskTitle,
+            taskDesc,
+            taskDue,
+            taskNotification,
+            taskLink,
+            taskStart
+        ) {
+            Swal.fire({
+                title: `${taskID ? "Update" : "New"} Task:`,
+                html: `<label class="input-label">Assign To: </label
+      ><select id="taskAssignTo" style="width:250px" value="${taskTo ? taskTo : ""
+                    }">${userOpts}</select><br>
+      <label class="input-label">Title: </label><input style="width:250px" id="taskTitle" value="${taskTitle ? taskTitle : ""
+                    }"><br>
+      <label class="input-label">Description: </label><textarea class="input-ta" rows="4" style="width:250px" id="taskDesc">${taskDesc ? taskDesc : ""
+                    }</textarea><br>
+      <label class="input-label">Start Date: </label><input type="date" style="width:250px" id="taskStart" value="${taskStart ? taskStart : ""
+                    }"><br>
+      <label class="input-label"></label><label class="sub-label">leave blank to start immediately</label><br>
+      <label class="input-label">Due Date: </label><input type="date" style="width:250px" id="taskDate" value="${taskDue ? taskDue : ""
+                    }"><br>
+      <label class="sub-label" style="width:90%">a message will be sent now and on the due date</label><br>
+      <input type="checkbox" id="taskNotify" ${taskNotification ? "checked" : ""
+                    } style="width:10px;transform: scale(1.5);"><span> Notify Assigner upon completion?</span>
+      <div style="display:${taskLink ? "" : "none"}">
+      <input type="checkbox" id="taskLink" ${taskLink ? "checked" : ""
+                    } style="width:10px;transform: scale(1.5);"><span> Link to ${isNaN(taskLink) ? "Case" : "Client"
+                    }?</span>
+      </div>`,
+                showCancelButton: true,
+                showConfirmButton: true,
+                cancelButtonText: "Cancel",
+                confirmButtonText: `${taskID ? "Update" : "Assign"}`,
+                showCloseButton: true,
+                preConfirm: () => {
+                    if (!E("taskTitle").value) {
+                        Swal.showValidationMessage("Please add a brief title");
+                        return false;
+                    } else if (!E("taskDesc").value) {
+                        Swal.showValidationMessage("Please add a clear description");
+                        return false;
+                    } else if (!E("taskDate").value) {
+                        Swal.showValidationMessage(
+                            "Without a due date it will never be done!"
+                        );
+                        return false;
+                    }
+                },
+            }).then(async (result) => {
+    if (!result.isConfirmed) return;
+
+    const assignTo = E("taskAssignTo").value;
+    const title = E("taskTitle").value;
+    const desc = E("taskDesc").value;
+    const due = E("taskDate").value;
+    const start = E("taskStart").value || null;
+    const notify = E("taskNotify").checked;
+    const link = E("taskLink")?.checked ? taskLink : null;
+
+    P.showProcessingSwal();
+
+    try {
+        // -------------------------
+        // CREATE TASK
+        // -------------------------
+        if (!taskID) {
+            const data = await P.apiSend("/api/tasks", "POST", {
+                to: assignTo,
+                title,
+                desc,
+                start,
+                due,
+                notify,
+                link
+            });
+
+            P.Toast.fire({
+                title: data.title || "Task Created",
+                text: data.message || "Task successfully created",
+                icon: "success"
+            });
+
+        // -------------------------
+        // UPDATE TASK
+        // -------------------------
+        } else {
+            const body = {};
+
+            if (assignTo !== taskTo) body.to = assignTo;
+            if (title !== taskTitle) body.title = title;
+            if (desc !== taskDesc) body.desc = desc;
+            if (due !== taskDue) body.due = due || null;
+            if (start !== taskStart) body.start = start;
+            if (notify !== taskNotification) body.notify = notify;
+            if (link !== taskLink) body.link = link;
+
+            if (!Object.keys(body).length) {
+                P.Toast.fire({ title: "No changes selected" });
+                return;
+            }
+
+            const data = await P.apiSend(`/api/tasks/${taskID}`, "PUT", body);
+
+            P.Toast.fire({
+                title: data.title || "Task Updated",
+                text: data.message || "Task successfully updated",
+                icon: "success"
+            });
+        }
+
+        tabTasksGet(0);
+
+    } catch (err) {
+        console.error(err);
+        P.Toast.fire({
+            icon: "error",
+            title: "Task operation failed"
+        });
+    }
+});
+
+        }
+
+  async function updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNotification, taskLink) {
+    const btn = E("tabTasksButton");
+    btn.disabled = true;
+
+    try {
+        if (action === "Edit") {
+            // Open the SweetAlert edit form
+            newTask(taskId, taskTo, taskTitle, taskDesc, taskDue, taskNotification, taskLink);
+            return;
+        }
+
+        let body = {};
+        let endpoint = `/api/tasks/${taskId}`;
+        let method = "PATCH"; // default to patch for status updates
+
+        switch(action) {
+            case "Mark Complete":
+                body.status = "Completed";
+                break;
+            case "Mark Incomplete":
+                body.status = "Pending";
+                break;
+            case "Cancel":
+                body.status = "Canceled";
+                break;
+            case "Uncancel":
+                body.status = "Pending";
+                break;
+            case "Delete":
+                method = "DELETE";
+                break;
+            default:
+                // fallback for future actions
+                console.warn("Unhandled action:", action);
+                btn.disabled = false;
+                return;
+        }
+
+        // Special case: if editing multiple fields, use PUT
+        if (action === "UpdateFields") {
+            method = "PUT";
+            body = {
+                to: taskTo,
+                title: taskTitle,
+                desc: taskDesc,
+                due: taskDue,
+                notify: taskNotification,
+                link: taskLink
+            };
+        }
+
+        // Call API
+        const data = await P.apiSend(endpoint, method, body);
+
+        P.Toast.fire({
+            title: data.title || "Success",
+            text: data.message || "Task updated",
+            icon: "success"
+        });
+
+        tabTasksGet(0); // refresh table
+
+    } catch (err) {
+        console.error(err);
+        P.Toast.fire({ icon: "error", title: "Failed to update task" });
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function handleTaskAction(selectEl, taskId, taskTo, taskTitle, taskDesc, taskDue, taskNotify, taskLink) {
+    const action = selectEl.value;
+    if (action === "Edit") {
+        newTask(taskId, taskTo, taskTitle, taskDesc, taskDue, taskNotify, taskLink);
+    } else {
+        updateTask(taskId, action, taskTo, taskTitle, taskDesc, taskDue, taskNotify, taskLink);
+    }
+    // Reset selection
+    selectEl.selectedIndex = 0;
+}
+
+async function tabTasksGet(offset = 0) {
+    const btn = E("tabTasksButton");
+    const loader = E("tabTasksLoad");
+    const table = E("tasksTable");
+    const foot = E("tasksTableFoot");
+
+    btn.disabled = true;
+    loader.style.display = "block";
+
+    const query = E("tabTasksQuery").value.trim();
+    const status = E("tabTasksStatus").value;
+    const assigned_by = E("tabTasksBy").value !== "1' OR '1" ? E("tabTasksBy").value : null;
+    const assigned_to = E("tabTasksTo").value !== "1' OR '1" ? E("tabTasksTo").value : null;
+
+    // Build query params
+
+const queryObj = {
+  query: query || "",
+  status: status || "Incomplete",
+  offset,
+  limit
+};
+
+// Only add assigned_by/to if they are non-empty and not "All"
+if (assigned_by && assigned_by !== "All") queryObj.assigned_by = assigned_by;
+if (assigned_to && assigned_to !== "All") queryObj.assigned_to = assigned_to;
+
+
+    try {
+const data = await P.apiSend("/api/tasks", "GET", queryObj);
+        const tasks = data.data || [];
+        const total = data.total || 0;
+
+        // Clear existing table rows except header
+        table.querySelectorAll("tr:not(:first-child)").forEach(row => row.remove());
+        foot.innerHTML = "";
+
+        if (!tasks.length) {
+            P.Toast.fire({ icon: "error", title: "No Tasks Found!" });
+            btn.disabled = false;
+            loader.style.display = "none";
+            return;
+        }
+
+        tasks.forEach(task => {
+    const row = table.insertRow();
+
+    const linkHTML = task.link
+        ? `<a href="#" onclick="addFile('${task.link.title}', '${task.link.type}', '${task.link.id}'); return false">${task.link.title}</a>`
+        : "";
+
+    // Build actions dropdown
+    let actionsHTML = `<select onchange="handleTaskAction(this, ${task.id}, '${escJS(task.to.id)}', '${escJS(task.title)}', '${escJS(task.desc)}', '${task.due}', ${task.notify}, '${task.link?.id || ''}'); this.selectedIndex=0;" style="width:150px">
+        <option value="" disabled selected>Actions</option>`;
+
+    if (["Pending", "Due Today", "Overdue"].includes(task.status)) {
+        actionsHTML += `
+            <option value="Mark Complete">Mark Complete</option>
+            <option value="Edit">Edit</option>
+            <option value="Cancel">Cancel</option>
+        `;
+    } else if (task.status === "Canceled") {
+        actionsHTML += `<option value="Uncancel">Reinstate</option>`;
+    } else if (task.status === "Completed") {
+        actionsHTML += `<option value="Mark Incomplete">Mark Incomplete</option>`;
+    }
+
+    actionsHTML += `</select>`;
+
+    row.innerHTML = `
+        <td>${actionsHTML}</td>
+        <td>${task.id}</td>
+        <td>${task.status}</td>
+        <td>${esc(task.title)}</td>
+        <td>${esc(task.desc)}</td>
+        <td>${task.from.name}</td>
+        <td>${task.to.name}</td>
+        <td>${linkHTML}</td>
+        <td>${task.due || ""}</td>
+        <td>${task.created}</td>
+    `;
+});
+
+        // Pagination
+        const pages = Math.ceil(total / limit);
+        if (offset > 0) foot.innerHTML += `<a href="#" onclick="tabTasksGet(${Math.max(offset - limit,0)})">&lt;</a> `;
+        for (let i = 0; i < pages; i++) {
+            foot.innerHTML += offset / limit === i
+                ? `<a href="#" onclick="tabTasksGet(${i*limit})">[${i+1}]</a> `
+                : `<a href="#" onclick="tabTasksGet(${i*limit})">${i+1}</a> `;
+        }
+        if (offset + limit < total) foot.innerHTML += `<a href="#" onclick="tabTasksGet(${offset + limit})">&gt;</a> `;
+        foot.innerHTML += ` | Results ${offset + 1}-${Math.min(offset + tasks.length, total)} of ${total} 
+            <select style="width:auto" onchange="limit = this.value; tabTasksGet(0)">
+                <option value="50" ${limit==50?"selected":""}>50</option>
+                <option value="100" ${limit==100?"selected":""}>100</option>
+                <option value="200" ${limit==200?"selected":""}>200</option>
+                <option value="500" ${limit==500?"selected":""}>500</option>
+            </select> | <button onclick="window.print()">Print</button>`;
+
+    } catch (err) {
+        console.error(err);
+        P.Toast.fire({ icon: "error", title: "Failed to load tasks" });
+    } finally {
+        btn.disabled = false;
+        loader.style.display = "none";
+    }
+}
+
+
+
+        function tabTaskInit(){
+        username = P.username
+        console.log(`username: ${username}, P.username: ${P.username}`);
+        password = P.password;
+        tabTasksGet(0)
+        const selectElements = document.querySelectorAll("select.userslist");
+            userOpts = "";
+            P.users.forEach(u => { userOpts += `<option value="${u.user}">${u.user_name}</option>`; });
+            selectElements.forEach(select => { select.innerHTML += userOpts; });
+}
+    </script>
+</body>
+
+</html>
