@@ -57,20 +57,92 @@
   tr:hover { background: #f1f9ff; }
   .error { color: red; font-weight: bold; }
   .user-info { margin-bottom: 0.5rem; font-style: italic; }
+
+  #history {
+  margin-top: 0.5rem;
+  font-size: 13px;
+}
+.history-item {
+  cursor: pointer;
+  color: #0077aa;
+  margin-bottom: 3px;
+}
+.history-item:hover {
+  text-decoration: underline;
+}
+#quick-queries button {
+  margin-right: 5px;
+  margin-bottom: 5px;
+  background: #eee;
+  color: #333;
+}
+#quick-queries button:hover {
+  background: #ddd;
+}
+
 </style>
 </head>
 <body>
 
 <h1>JWT DB Playground</h1>
+<div id="quick-queries">
+  <strong>Quick queries:</strong><br>
+  <button onclick="quickQuery('appt')">Appt by ID</button>
+  <button onclick="quickQuery('case')">Case by ID</button>
+  <button onclick="quickQuery('contact')">Contact by ID</button>
+</div>
 
 <label for="query">Enter your SQL query (use `|||` to separate multiple queries):</label>
-<textarea id="query">SELECT 1 AS col1|||SELECT 2 AS col2</textarea>
+<textarea
+  id="query"
+  oninput="autoResizeTextarea(this)"
+>SELECT 1 AS col1|||SELECT 2 AS col2</textarea>
 <br>
+
 <button id="btnQuery">Run Query</button>
+<div id="history"></div>
+<button id="btnCopy" style="display:none;">Copy Results</button>
 
 <div id="output" class="output-container"></div>
 
 <script>
+
+document.getElementById("query").addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key === "Enter") {
+    e.preventDefault();
+    document.getElementById("btnQuery").click();
+  }
+});
+
+
+function autoResizeTextarea(el) {
+  el.style.height = "auto";                 // reset
+  el.style.height = el.scrollHeight + "px"; // fit content
+}
+
+
+const QUERY_HISTORY_KEY = "jwt-db-query-history";
+const MAX_HISTORY = 10;
+function saveQueryToHistory(query) {
+  let history = JSON.parse(localStorage.getItem(QUERY_HISTORY_KEY) || "[]");
+  history = history.filter(q => q !== query); // dedupe
+  history.unshift(query);
+  history = history.slice(0, MAX_HISTORY);
+  localStorage.setItem(QUERY_HISTORY_KEY, JSON.stringify(history));
+  renderHistory();
+}
+function loadHistory() {
+  return JSON.parse(localStorage.getItem(QUERY_HISTORY_KEY) || "[]");
+}
+
+document.getElementById("btnCopy").addEventListener("click", async () => {
+  const text = document.getElementById("output").innerText;
+  await navigator.clipboard.writeText(text);
+  Swal.fire({ toast: true, icon: "success", title: "Copied!", timer: 800, position: "top-end", showConfirmButton: false });
+});
+
+
+
 /* --------------------- Blocking login --------------------- */
 async function login() {
   const { value: formValues } = await Swal.fire({
@@ -195,6 +267,7 @@ function renderResults(data) {
 
     container.innerHTML += table;
   }
+  document.getElementById("btnCopy").style.display = "inline-block";
 }
 
 /* --------------------- Run query --------------------- */
@@ -206,7 +279,7 @@ document.getElementById("btnQuery").addEventListener("click", async () => {
   try {
     const query = document.getElementById("query").value.trim();
     if (!query) throw new Error("Query cannot be empty");
-
+    saveQueryToHistory(query);
     const data = await apiSend(`/db-jwt?query=${encodeURIComponent(query)}`);
     renderResults(data);
   } catch (err) {
@@ -221,6 +294,51 @@ document.getElementById("btnQuery").addEventListener("click", async () => {
     await login();
   }
 })();
+
+
+
+
+function renderHistory() {
+  const historyDiv = document.getElementById("history");
+  const history = loadHistory();
+  historyDiv.innerHTML = history.length
+    ? "<strong>Recent queries:</strong>"
+    : "";
+
+  history.forEach(q => {
+    const div = document.createElement("div");
+    div.className = "history-item";
+    div.textContent = q.length > 60 ? q.slice(0, 60) + "…" : q;
+    div.onclick = () => {
+      const ta = document.getElementById("query");
+      ta.value = q;
+      autoResizeTextarea(ta);
+    };
+    historyDiv.appendChild(div);
+  });
+}
+renderHistory();
+
+function quickQuery(type) {
+  let q = "";
+  switch (type) {
+    case "appt":
+      q = "SELECT * FROM appts WHERE appt_id = 1996";
+      break;
+    case "case":
+      q = "SELECT * FROM cases WHERE case_id = \"uT7EU36v\"";
+      break;
+    case "contact":
+      q = "SELECT * FROM contacts WHERE contact_id = 1001";
+      break;
+  }
+
+  const ta = document.getElementById("query");
+  ta.value = q;
+  autoResizeTextarea(ta);
+  ta.focus();
+}
+
 </script>
 </body>
 </html>
