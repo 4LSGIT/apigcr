@@ -110,7 +110,9 @@ router.get("/renaReminder", async (req, res) => {
     res
       .status(200)
       /*.type("text/html")*/
-      .send(html.trim());
+      .json({
+        html: html.trim()
+      });
 
   } catch (err) {
     console.error("renaReminder error:", err);
