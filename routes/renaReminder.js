@@ -1,16 +1,23 @@
 // routes/renaReminder.js
 
+
+
 const express = require("express");
 const router = express.Router();
-
-// assumes pool = require("../startup/db") or global injection
-const pool = require("../startup/db");
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"] || ""; // e.g., Authorization: Bearer <token>
+  const token = authHeader.replace(/^Bearer\s+/i, ""); // remove 'Bearer ' prefix if present
+  if (!token || token !== process.env.API_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+};
 
 /**
  * GET /renaReminder
  * Returns HTML <tr>...</tr> rows for reminder email
  */
-router.get("/renaReminder", async (req, res) => {
+router.get("/renaReminder", authenticateToken, async (req, res) => {
   try {
     const sql = `
       SELECT
