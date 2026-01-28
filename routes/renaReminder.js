@@ -85,7 +85,7 @@ router.get("/renaReminder", async (req, res) => {
       html = appts
         .map(appt => {
           const caseCell = appt.case_id
-            ? `<a href="https://app.4lsg.com/?case=${appt.case_id}">
+            ? `<a href=\"https://app.4lsg.com/?case=${appt.case_id}\">
                  ${appt.case_number}
                </a>`
             : "no case";
@@ -96,7 +96,7 @@ router.get("/renaReminder", async (req, res) => {
               <td>${appt.appt_type}</td>
               <td>${appt.appt_date}</td>
               <td>
-                <a href="https://app.4lsg.com/?contact=${appt.client_id}">
+                <a href='https://app.4lsg.com/?contact=${appt.client_id}'>
                   ${appt.client_name}
                 </a>
               </td>
