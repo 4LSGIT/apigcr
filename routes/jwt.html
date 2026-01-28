@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>JWT Test Page</title>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<style>
+  body { font-family: sans-serif; padding: 2rem; }
+  pre { background: #f3f3f3; padding: 1rem; }
+</style>
+</head>
+<body>
+<h1>JWT Test Page</h1>
+
+<button id="btnQuery">Run Test Query</button>
+<pre id="output"></pre>
+
+<script>
+/* --------------------- Blocking login --------------------- */
+async function login() {
+  const { value: formValues } = await Swal.fire({
+    title: "Please log in",
+    html: `
+      <input id="username" class="swal2-input" placeholder="Username">
+      <input id="password" type="password" class="swal2-input" type="password" placeholder="Password">
+    `,
+    focusConfirm: false,
+    preConfirm: () => {
+      const username = document.getElementById("username").value;
+      const password = document.getElementById("password").value;
+      if (!username || !password) Swal.showValidationMessage("Enter both username & password");
+      return { username, password };
+    },
+    allowOutsideClick: false,
+    allowEscapeKey: false
+  });
+
+  if (!formValues) throw new Error("Login cancelled");
+
+  // Request JWT from server
+  const resp = await fetch("/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(formValues)
+  });
+  const data = await resp.json();
+  if (!resp.ok || !data.token) {
+    Swal.fire({ icon: "error", title: "Login Failed", text: data.error || "Unknown error" });
+    return login(); // retry until success
+  }
+
+  localStorage.setItem("jwt", data.token);
+}
+
+/* --------------------- JWT validity check --------------------- */
+function isJwtValid(token) {
+  if (!token) return false;
+  try {
+    const payloadBase64 = token.split(".")[1];
+    const payloadJson = atob(payloadBase64.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(payloadJson);
+    const now = Math.floor(Date.now() / 1000);
+    return payload.exp && payload.exp > now;
+  } catch (err) {
+    return false;
+  }
+}
+
+/* --------------------- API call --------------------- */
+async function apiSend(endpoint, method = "GET", payload = null) {
+  let token = localStorage.getItem("jwt");
+
+  if (!isJwtValid(token)) {
+    await login();
+    token = localStorage.getItem("jwt");
+    if (!token) throw new Error("Login required");
+  }
+
+  let url = endpoint;
+  const options = {
+    method,
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json"
+    }
+  };
+
+  if (method === "GET" && payload) {
+    url += "?" + new URLSearchParams(payload).toString();
+  } else if (payload) {
+    options.body = JSON.stringify(payload);
+  }
+
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    await login();
+    token = localStorage.getItem("jwt");
+    options.headers["Authorization"] = `Bearer ${token}`;
+    return apiSend(endpoint, method, payload); // retry once
+  }
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "API error");
+  return data;
+}
+
+/* --------------------- Test Query Button --------------------- */
+document.getElementById("btnQuery").addEventListener("click", async () => {
+  const output = document.getElementById("output");
+  output.textContent = "Loading...";
+  try {
+    const query = "SELECT 1|||SELECT 2";
+    const data = await apiSend(`/db-jwt?query=${encodeURIComponent(query)}`);
+    output.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    output.textContent = `Error: ${err.message}`;
+  }
+});
+
+/* --------------------- Page load login check --------------------- */
+(async () => {
+  const token = localStorage.getItem("jwt");
+  if (!isJwtValid(token)) {
+    await login();
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>JWT DB Playground</title>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<style>
+  body {
+    font-family: "Segoe UI", sans-serif;
+    margin: 2rem;
+    background: #f8f9fa;
+  }
+  h1 {
+    color: #222;
+  }
+  textarea {
+    width: 100%;
+    height: 80px;
+    font-family: monospace;
+    font-size: 14px;
+    padding: 0.5rem;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+    resize: vertical;
+  }
+  button {
+    padding: 0.5rem 1rem;
+    font-size: 16px;
+    margin-top: 0.5rem;
+    cursor: pointer;
+    border: none;
+    border-radius: 5px;
+    background: #07ADEF;
+    color: white;
+  }
+  button:hover { background: #0593c2; }
+  #output {
+    margin-top: 1rem;
+    background: #fff;
+    border-radius: 5px;
+    padding: 1rem;
+    box-shadow: 0 0 10px rgba(0,0,0,0.05);
+    white-space: pre-wrap;
+    font-family: monospace;
+  }
+  .error { color: red; }
+</style>
+</head>
+<body>
+
+<h1>JWT DB Playground</h1>
+
+<label for="query">Enter your SQL query (use `|||` to separate multiple queries):</label>
+<textarea id="query"></textarea>
+<br>
+<button id="btnQuery">Run Query</button>
+
+<pre id="output"></pre>
+
+<script>
+/* --------------------- Blocking login --------------------- */
+async function login() {
+  const { value: formValues } = await Swal.fire({
+    title: "Please log in",
+    html: `
+      <input id="username" class="swal2-input" placeholder="Username">
+      <input id="password" type="password" class="swal2-input" type="password" placeholder="Password">
+    `,
+    focusConfirm: false,
+    preConfirm: () => {
+      const username = document.getElementById("username").value;
+      const password = document.getElementById("password").value;
+      if (!username || !password) Swal.showValidationMessage("Enter both username & password");
+      return { username, password };
+    },
+    allowOutsideClick: false,
+    allowEscapeKey: false
+  });
+
+  if (!formValues) throw new Error("Login cancelled");
+
+  const resp = await fetch("/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(formValues)
+  });
+  const data = await resp.json();
+  if (!resp.ok || !data.token) {
+    Swal.fire({ icon: "error", title: "Login Failed", text: data.error || "Unknown error" });
+    return login(); // retry until success
+  }
+
+  localStorage.setItem("jwt", data.token);
+}
+
+/* --------------------- JWT validity check --------------------- */
+function isJwtValid(token) {
+  if (!token) return false;
+  try {
+    const payloadBase64 = token.split(".")[1];
+    const payloadJson = atob(payloadBase64.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(payloadJson);
+    const now = Math.floor(Date.now() / 1000);
+    return payload.exp && payload.exp > now;
+  } catch (err) {
+    return false;
+  }
+}
+
+/* --------------------- API call --------------------- */
+async function apiSend(endpoint, method = "GET", payload = null) {
+  let token = localStorage.getItem("jwt");
+
+  if (!isJwtValid(token)) {
+    await login();
+    token = localStorage.getItem("jwt");
+    if (!token) throw new Error("Login required");
+  }
+
+  let url = endpoint;
+  const options = {
+    method,
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json"
+    }
+  };
+
+  if (method === "GET" && payload) {
+    url += "?" + new URLSearchParams(payload).toString();
+  } else if (payload) {
+    options.body = JSON.stringify(payload);
+  }
+
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    await login();
+    token = localStorage.getItem("jwt");
+    options.headers["Authorization"] = `Bearer ${token}`;
+    return apiSend(endpoint, method, payload);
+  }
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "API error");
+  return data;
+}
+
+/* --------------------- Run query --------------------- */
+document.getElementById("btnQuery").addEventListener("click", async () => {
+  const output = document.getElementById("output");
+  output.textContent = "Loading...";
+  try {
+    const query = document.getElementById("query").value.trim();
+    if (!query) throw new Error("Query cannot be empty");
+
+    const data = await apiSend(`/db-jwt?query=${encodeURIComponent(query)}`);
+    output.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    document.getElementById("output").textContent = `Error: ${err.message}`;
+    document.getElementById("output").classList.add("error");
+  }
+});
+
+/* --------------------- Page load login check --------------------- */
+(async () => {
+  const token = localStorage.getItem("jwt");
+  if (!isJwtValid(token)) {
+    await login();
+  }
+})();
+</script>
+</body>
+</html>

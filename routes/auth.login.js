@@ -19,6 +19,7 @@ router.post("/login", async (req, res) => {
   }
 
   try {
+    // Fetch user by username
     const [rows] = await req.db.query(
       `
       SELECT user, username, user_type, user_auth, password_hash
@@ -38,22 +39,23 @@ router.post("/login", async (req, res) => {
       return res.status(403).json({ error: "Account not enabled for login" });
     }
 
+    // Check password
     const ok = await bcrypt.compare(password, user.password_hash);
-
     if (!ok || !user.user_auth.startsWith("authorized")) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // Medium-lived JWT (sliding session handled by middleware)
+    // Issue 24-hour JWT
     const token = jwt.sign(
       {
         sub: user.user,           // primary key
         username: user.username,
         user_type: user.user_type,
-        user_auth: user.user_auth
+        user_auth: user.user_auth,
+        ver: parseInt(process.env.JWT_VERSION || 1) // optional global logout
       },
       process.env.JWT_SECRET,
-      { expiresIn: "7d" }
+      { expiresIn: "24h" }
     );
 
     res.json({ token });
