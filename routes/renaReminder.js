@@ -85,7 +85,7 @@ router.get("/renaReminder", async (req, res) => {
       html = appts
         .map(appt => {
           const caseCell = appt.case_id
-            ? `<a href=\"https://app.4lsg.com/?case=${appt.case_id}\">
+            ? `<a href='https://app.4lsg.com/?case=${appt.case_id}'>
                  ${appt.case_number}
                </a>`
             : "no case";
