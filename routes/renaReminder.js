@@ -4,14 +4,27 @@
 
 const express = require("express");
 const router = express.Router();
+
+
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"] || ""; // e.g., Authorization: Bearer <token>
-  const token = authHeader.replace(/^Bearer\s+/i, ""); // remove 'Bearer ' prefix if present
+  const authHeader = req.headers["authorization"];
+  const queryToken = req.query.token;
+
+  let token = null;
+
+  if (authHeader) {
+    token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  } else if (queryToken) {
+    token = queryToken.trim();
+  }
+
   if (!token || token !== process.env.API_KEY) {
     return res.status(401).json({ error: "Unauthorized" });
   }
+
   next();
 };
+
 
 /**
  * GET /renaReminder
