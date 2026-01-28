@@ -15,13 +15,15 @@
   }
   textarea {
     width: 100%;
-    height: 80px;
+    height: 100px;
     font-family: monospace;
     font-size: 14px;
     padding: 0.5rem;
     border-radius: 5px;
     border: 1px solid #ccc;
     resize: vertical;
+    background: #1e1e1e;
+    color: #d4d4d4;
   }
   button {
     padding: 0.5rem 1rem;
@@ -41,16 +43,20 @@
     border-collapse: collapse;
     width: 100%;
     margin-bottom: 1rem;
+    box-shadow: 0 0 5px rgba(0,0,0,0.1);
   }
   th, td {
     border: 1px solid #ccc;
-    padding: 0.4rem 0.6rem;
+    padding: 0.5rem 0.7rem;
     text-align: left;
   }
   th {
     background: #f0f0f0;
   }
-  .error { color: red; }
+  tr:nth-child(even) { background: #fafafa; }
+  tr:hover { background: #f1f9ff; }
+  .error { color: red; font-weight: bold; }
+  .user-info { margin-bottom: 0.5rem; font-style: italic; }
 </style>
 </head>
 <body>
@@ -162,8 +168,9 @@ function renderResults(data) {
     return;
   }
 
-  const authInfo = data.auth ? `<div><strong>User:</strong> ${data.auth.username} (${data.auth.user_auth})</div>` : "";
-  container.innerHTML += authInfo;
+  if (data.auth) {
+    container.innerHTML += `<div class="user-info">Logged in as <strong>${data.auth.username}</strong> (${data.auth.user_auth})</div>`;
+  }
 
   for (const key in data.data) {
     const rows = data.data[key];
