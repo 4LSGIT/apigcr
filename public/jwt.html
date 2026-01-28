@@ -34,14 +34,21 @@
     color: white;
   }
   button:hover { background: #0593c2; }
-  #output {
+  .output-container {
     margin-top: 1rem;
-    background: #fff;
-    border-radius: 5px;
-    padding: 1rem;
-    box-shadow: 0 0 10px rgba(0,0,0,0.05);
-    white-space: pre-wrap;
-    font-family: monospace;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 1rem;
+  }
+  th, td {
+    border: 1px solid #ccc;
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+  }
+  th {
+    background: #f0f0f0;
   }
   .error { color: red; }
 </style>
@@ -51,11 +58,11 @@
 <h1>JWT DB Playground</h1>
 
 <label for="query">Enter your SQL query (use `|||` to separate multiple queries):</label>
-<textarea id="query"></textarea>
+<textarea id="query">SELECT 1 AS col1|||SELECT 2 AS col2</textarea>
 <br>
 <button id="btnQuery">Run Query</button>
 
-<pre id="output"></pre>
+<div id="output" class="output-container"></div>
 
 <script>
 /* --------------------- Blocking login --------------------- */
@@ -64,7 +71,7 @@ async function login() {
     title: "Please log in",
     html: `
       <input id="username" class="swal2-input" placeholder="Username">
-      <input id="password" type="password" class="swal2-input" type="password" placeholder="Password">
+      <input id="password" type="password" class="swal2-input" placeholder="Password">
     `,
     focusConfirm: false,
     preConfirm: () => {
@@ -87,7 +94,7 @@ async function login() {
   const data = await resp.json();
   if (!resp.ok || !data.token) {
     Swal.fire({ icon: "error", title: "Login Failed", text: data.error || "Unknown error" });
-    return login(); // retry until success
+    return login();
   }
 
   localStorage.setItem("jwt", data.token);
@@ -137,7 +144,7 @@ async function apiSend(endpoint, method = "GET", payload = null) {
     await login();
     token = localStorage.getItem("jwt");
     options.headers["Authorization"] = `Bearer ${token}`;
-    return apiSend(endpoint, method, payload);
+    return apiSend(endpoint, method, payload); // retry once
   }
 
   const data = await res.json();
@@ -145,19 +152,58 @@ async function apiSend(endpoint, method = "GET", payload = null) {
   return data;
 }
 
+/* --------------------- Render results as table --------------------- */
+function renderResults(data) {
+  const container = document.getElementById("output");
+  container.innerHTML = "";
+
+  if (data.error) {
+    container.innerHTML = `<div class="error">${data.error}</div>`;
+    return;
+  }
+
+  const authInfo = data.auth ? `<div><strong>User:</strong> ${data.auth.username} (${data.auth.user_auth})</div>` : "";
+  container.innerHTML += authInfo;
+
+  for (const key in data.data) {
+    const rows = data.data[key];
+    if (!Array.isArray(rows)) {
+      container.innerHTML += `<div class="error">${key}: ${rows.error || "Error"}</div>`;
+      continue;
+    }
+
+    if (rows.length === 0) {
+      container.innerHTML += `<div>${key}: No rows returned</div>`;
+      continue;
+    }
+
+    const columns = Object.keys(rows[0]);
+    let table = `<div><strong>${key}</strong><table><thead><tr>`;
+    columns.forEach(col => table += `<th>${col}</th>`);
+    table += `</tr></thead><tbody>`;
+    rows.forEach(row => {
+      table += `<tr>${columns.map(col => `<td>${row[col]}</td>`).join("")}</tr>`;
+    });
+    table += `</tbody></table></div>`;
+
+    container.innerHTML += table;
+  }
+}
+
 /* --------------------- Run query --------------------- */
 document.getElementById("btnQuery").addEventListener("click", async () => {
-  const output = document.getElementById("output");
-  output.textContent = "Loading...";
+  const container = document.getElementById("output");
+  container.textContent = "Loading...";
+  container.classList.remove("error");
+
   try {
     const query = document.getElementById("query").value.trim();
     if (!query) throw new Error("Query cannot be empty");
 
     const data = await apiSend(`/db-jwt?query=${encodeURIComponent(query)}`);
-    output.textContent = JSON.stringify(data, null, 2);
+    renderResults(data);
   } catch (err) {
-    document.getElementById("output").textContent = `Error: ${err.message}`;
-    document.getElementById("output").classList.add("error");
+    container.innerHTML = `<div class="error">Error: ${err.message}</div>`;
   }
 });
 
