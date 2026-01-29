@@ -55,8 +55,7 @@ router.post("/login", async (req, res) => {
         ver: parseInt(process.env.JWT_VERSION || 1) // optional global logout
       },
       process.env.JWT_SECRET,
-     // { expiresIn: "24h" }
-      { expiresIn: "1m" }
+      { expiresIn: "24h" }
     );
 
     res.json({ token });
