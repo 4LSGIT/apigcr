@@ -12,8 +12,8 @@ const getClientIp = (req) =>
   req.socket?.remoteAddress;
 const logAttempt = async (username, password, ip, userAgent, queries, authStatus) => {
   const logQuery = `
-    INSERT INTO query_log (username, password, ip_address, user_agent, query, auth_status)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO query_log (username, password, ip_address, user_agent, query, auth_status, auth_type)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `;
   const logParams = [
     username,
@@ -22,6 +22,7 @@ const logAttempt = async (username, password, ip, userAgent, queries, authStatus
     userAgent,
     queries.join(" ||| "),
     authStatus,
+    "password"
   ];
   try {
     await db.query(logQuery, logParams); // pool handles connection

@@ -52,11 +52,11 @@
       </button>
       <button
         style="height: 30px"
-        onclick="Swal.fire({ title: 'Reload Site',html: '<p>Are you sure you want to reload the site?</p><p>You will lose all unsaved data in all the open files!</p>',
-            icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, reload!',cancelButtonText: 'No, cancel',
-            preConfirm: () => { location.reload();}});"
+        onclick="Swal.fire({ title: 'Log Out?',html: '<p>Are you sure you want to log out?</p><p>You will lose all unsaved data in all the open files!</p>',
+            icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, goodbye!',cancelButtonText: 'No, cancel',
+            preConfirm: () => { logout();location.reload();}});"
       >
-        <i class="fa-solid fa-rotate-right"></i> Restart
+        <i class="fa-solid fa-rotate-right"></i> Log Out
       </button>
     </div>
 
@@ -1838,6 +1838,270 @@
 
       let temp34 = "";
 
+// ---- Global auth state (temporary, legacy-compatible) ----
+window.AUTH_STATE = {
+  username: null,
+  password: null,
+  jwt: null,
+  loginInProgress: null
+};
+AUTH_STATE.jwt = localStorage.getItem("jwt");
+
+
+function getJwtPayload(token) {
+  try {
+    const payload = token.split(".")[1];
+    return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/")));
+  } catch {
+    return null;
+  }
+}
+
+function isJwtExpired(token) {
+  const payload = getJwtPayload(token);
+  if (!payload || !payload.exp) return true;
+  return payload.exp < Math.floor(Date.now() / 1000);
+}
+
+
+async function apiSend(endpoint, method = "GET", payload = null, extraHeaders = {}) {
+  // Ensure JWT
+  if (
+    !window.AUTH_STATE.jwt ||
+    isJwtExpired(window.AUTH_STATE.jwt)
+  ) {
+    if (!window.AUTH_STATE.username || !window.AUTH_STATE.password) {
+      throw new Error("Not logged in");
+    }
+    await login(window.AUTH_STATE.username, window.AUTH_STATE.password);
+  }
+  let url = endpoint;
+  const options = {
+    method: method.toUpperCase(),
+    headers: {
+      "Authorization": `Bearer ${window.AUTH_STATE.jwt}`,
+      "Content-Type": "application/json",
+      ...extraHeaders
+    }
+  };
+  // Attach payload appropriately
+  if (payload != null) {
+    if (options.method === "GET" || options.method === "HEAD") {
+      url += "?" + new URLSearchParams(payload).toString();
+    } else {
+      options.body = typeof payload === "string"
+        ? payload
+        : JSON.stringify(payload);
+    }
+  }
+  let res = await fetch(url, options);
+  // Auto-relogin + retry once
+  if (res.status === 401) {
+    await login(window.AUTH_STATE.username, window.AUTH_STATE.password);
+    options.headers.Authorization = `Bearer ${window.AUTH_STATE.jwt}`;
+    res = await fetch(url, options);
+  }
+  // Handle empty responses (204, etc.)
+  if (res.status === 204) return null;
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  if (!res.ok) {
+    throw new Error(data?.error || "API error");
+  }
+  return data;
+}
+
+async function loginBlocking() {
+  if (window.AUTH_STATE.loginInProgress) {
+    return window.AUTH_STATE.loginInProgress;
+  }
+  window.AUTH_STATE.loginInProgress = new Promise((resolve, reject) => {
+    Swal.fire({
+      title: "Please log in",
+      html: `
+        <label class="input-label">Username: </label>
+        <input id="username" value="${AUTH_STATE.username || ""}">
+        <br><br>
+        <label class="input-label">Password: </label>
+        <input type="password" id="password">
+      `,
+      confirmButtonText:
+        "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Login&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;",
+      showLoaderOnConfirm: true,
+      reverseButtons: true,
+      showDenyButton: true,
+      confirmButtonColor: "#07ADEF",
+      denyButtonColor: "#959593",
+      denyButtonText: "Forgot Password",
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+
+      preDeny: () => {
+        const username = E("username").value;
+        if (!username) {
+          Swal.showValidationMessage("Please enter your username or email");
+          return false;
+        }
+
+        Swal.fire({
+          icon: "question",
+          title: `Send reset email?`,
+          text: "the system administrator will also be alerted",
+          showDenyButton: true,
+          denyButtonText: "Cancel",
+          preConfirm: () => {
+            fetch(
+              `${url}?mode=resetPW&username=${username}&password=password`
+            );
+            Swal.fire({
+              icon: "success",
+              text: "please check your email for further instructions",
+            }).then(() => loginBlocking());
+          },
+          preDeny: () => loginBlocking(),
+        });
+
+        return false;
+      },
+
+      preConfirm: async () => {
+         username = E("username").value;
+         password = E("password").value;
+
+        if (!username || !password) {
+          Swal.showValidationMessage("Please fill in all required fields");
+          return false;
+        }
+
+        try {
+          await login(username, password); // <-- JWT login
+          resolve();
+        } catch (err) {
+          Swal.showValidationMessage("Login failed");
+          reject(err);
+        }
+      }
+    });
+  });
+
+  try {
+    await window.AUTH_STATE.loginInProgress;
+  } finally {
+    window.AUTH_STATE.loginInProgress = null;
+  }
+}
+
+async function login(username, password) {
+  AUTH_STATE.username = username;
+  AUTH_STATE.password = password;
+
+  const res = await fetch("/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password })
+  });
+  const data = await res.json();
+  if (!res.ok || !data.token) {
+    throw new Error(data.error || "Login failed");
+  }
+  AUTH_STATE.jwt = data.token;
+  localStorage.setItem("jwt", data.token);
+  return data.token;
+}
+
+
+async function initAuth() {
+  const token = AUTH_STATE.jwt;
+  if (!token || isJwtExpired(token)) {
+    await loginBlocking();
+  }
+  await loadUserContext();
+}
+
+
+async function loadUserContext() {
+  const data = await apiSend(
+    "/db-jwt",
+    "GET",
+    {
+      query: `
+        SELECT * FROM users WHERE user = '${getJwtPayload(AUTH_STATE.jwt).sub}';|||
+        SELECT user_name, user FROM users WHERE user_type = true;
+      `
+    }
+  );
+
+  user = data.data.query1[0];
+  users = data.data.query2;
+//temporary and insecure!!
+username = user.username;
+password = user.password;
+  E("myNameIs").innerHTML = user.user_name;
+  E("topButtons").style.display = "block";
+  E("adminButton").style.display =
+    user.user_auth === "authorized - SU" ||
+    user.user_auth === "authorized - admin"
+      ? ""
+      : "none";
+
+  Toast.fire({
+    icon: "success",
+    title: `Welcome ${user.user_name}!`,
+    timer: 1000
+  });
+                  openMainTab(params.open || "tabHome");
+                  if (params.qp) {
+                    params.qp.split(",").forEach((q) => {
+                      q ? quickPick(q) : "";
+                    });
+                  }
+                  if (params.case) {
+                    quickPick(
+                      params.case.split(",")[0],
+                      "case",
+                      params.case.split(",")[1]
+                    );
+                  }
+                  if (params.contact) {
+                    quickPick(
+                      params.contact.split(",")[0],
+                      "contact",
+                      params.contact.split(",")[1]
+                    );
+                  }
+                  if (params.tasks) {
+                    tabTasksGet(0);
+                  }
+                  if (params.clients) {
+                    tabClientssGet(0);
+                  }
+                  if (params.cases) {
+                    tabCasesGet(0);
+                  }
+                  if (params.log) {
+                    tabLogGet(0);
+                  }
+                  if (params.appt) {
+                    showAppt(params.appt);
+                  }
+                  const selectElements =
+                    document.querySelectorAll("select.userslist");
+                  userOpts = "";
+                  users.forEach((user) => {
+                    userOpts += `<option value="${user.user}">${user.user_name}</option>`;
+                  });
+                  selectElements.forEach((select) => {
+                    select.innerHTML += userOpts;
+                  });
+}
+
+initAuth();
+/*
       //login
       function login() {
         Swal.fire({
@@ -1977,7 +2241,57 @@
         });
       }
 
-      login();
+      login();*/
+function logout() {
+  Toast.fire({
+  icon: "info",
+  title: "You have been logged out",
+  timer: 1200
+});
+  // --- Auth state ---
+  try {
+    localStorage.removeItem("jwt");
+  } catch (_) {}
+
+  if (window.AUTH_STATE) {
+    AUTH_STATE.jwt = null;
+    AUTH_STATE.username = "";
+    AUTH_STATE.password = "";
+    AUTH_STATE.loginInProgress = null;
+  }
+
+  // --- Legacy globals ---
+  username = "";
+  password = "";
+  userName = "";
+  user = [];
+  userArray = "";
+
+  users = "";
+  cases = "";
+  contacts = "";
+  appts = "";
+  tasks = "";
+  logs = "";
+
+  offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0 };
+
+  // --- UI reset (minimal, non-destructive) ---
+  try {
+    E("topButtons").style.display = "none";
+    E("adminButton").style.display = "none";
+    E("myNameIs").innerHTML = "";
+  } catch (_) {}
+
+  // Optional: scroll reset
+  window.scrollTo(0, 0);
+
+  // Optional: force re-auth immediately
+  loginBlocking();
+
+  // Optional: full reload instead (commented by default)
+  // location.reload();
+}
 
       function addFile(fileName, fileType, fileID) {
         E("noOpenFiles").style.display = "none";
