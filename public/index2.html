@@ -2304,7 +2304,7 @@ function logout() {
         if (fileType == "case") {
           fileButton.innerHTML = `<i class="fa-solid fa-landmark"></i> ${fileName}`;
           //file.innerHTML = `<iframe src="https://4lsg.glitch.me/fileCase.html?caseID=${fileID}"></iframe>`
-          file.innerHTML = `<iframe src="/case.html?caseID=${fileID}&fileCount=${fileCounter}"></iframe>`;
+          file.innerHTML = `<iframe src="/caseV2.html?caseID=${fileID}&fileCount=${fileCounter}"></iframe>`;
         } else if (fileType == "client" || fileType == "contact") {
           fileButton.innerHTML = `<i class="fa-solid fa-user"></i> ${fileName}`;
           file.innerHTML = `<iframe src="/contact.html?clientID=${fileID}&fileCount=${fileCounter}"></iframe>`;
