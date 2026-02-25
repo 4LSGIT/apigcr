@@ -560,6 +560,7 @@
     <div id="tabAppts" class="tab-main">
       <h1>Appointments</h1>
       <span>
+        <button id="tabApptsCal" onclick="tabApptsCal()">Calendar</button>
         Type:
         <select id="tabApptsType" style="width: auto">
           <option>Default</option>
@@ -624,6 +625,24 @@
       </div>
     </div>
     <script>
+      function tabApptsCal() {
+        Swal.fire({
+          title: `Calendar`,
+          html: `
+      <iframe 
+        src="/calendar.html" 
+        width="100%" 
+        height="600" 
+        style="border:none;">
+      </iframe>
+    `,
+          width: "75%",
+          heightAuto: true,
+          showConfirmButton: false,
+          showCloseButton: true,
+        });
+      }
+
       function showAppt(apptID, apptNum) {
         Swal.fire({
           title: `Appointment ${apptID}`,
@@ -1752,7 +1771,7 @@
         style="border:none;">
       </iframe>
     `,
-          width: "75%", // relative to viewport width
+          width: "75%",
           heightAuto: true,
           showConfirmButton: false,
           showCloseButton: true,

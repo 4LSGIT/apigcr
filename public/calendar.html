@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Appointments Calendar</title>
+
+  <!-- FullCalendar -->
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 10px;
+      font-family: Arial, sans-serif;
+      background: #fff;
+    }
+
+    #calendar {
+      max-width: 100%;
+    }
+
+    .fc-toolbar-title {
+      font-size: 1.2rem;
+    }
+  </style>
+</head>
+<body>
+
+<div id="calendar"></div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+
+  const calendarEl = document.getElementById('calendar');
+
+  const calendar = new FullCalendar.Calendar(calendarEl, {
+    initialView: 'timeGridWeek',
+    height: 'auto',
+    editable: false,
+    selectable: false,
+
+    headerToolbar: {
+      left: 'prev,next today',
+      center: 'title',
+      right: 'dayGridMonth,timeGridWeek,timeGridDay'
+    },
+
+    events: async function(fetchInfo, successCallback, failureCallback) {
+      try {
+        const data = await parent.window.apiSend(
+          '/api/events',
+          'GET',
+          {
+            start: fetchInfo.startStr,
+            end: fetchInfo.endStr
+          }
+        );
+
+        successCallback(data);
+      } catch (err) {
+        console.error(err);
+        failureCallback(err);
+      }
+    },
+
+    eventClick: function(info) {
+  const apptId = info.event.id;
+  parent.showAppt(apptId);
+  /*      const event = info.event;
+
+      parent.Swal.fire({
+        title: event.extendedProps.contact_name || 'Appointment',
+        html: `
+          <div style="text-align:left">
+            <b>Type:</b> ${event.title}<br><br>
+            <b>Status:</b> ${event.extendedProps.appt_status || 'N/A'}<br><br>
+            <b>Platform:</b> ${event.extendedProps.appt_platform || 'N/A'}<br><br>
+            <b>Start:</b> ${event.start.toLocaleString()}<br><br>
+            <b>End:</b> ${event.end ? event.end.toLocaleString() : 'N/A'}<br><br>
+            <b>Notes:</b><br>
+            ${event.extendedProps.appt_note || 'None'}
+          </div>
+        `,
+        width: 500
+      });*/
+    },
+
+    eventDidMount: function(info) {
+      // Simple tooltip on hover
+      info.el.title = 
+        (info.event.extendedProps.contact_name || '') +
+        " | " +
+        (info.event.extendedProps.appt_platform || '');
+    }
+
+  });
+
+  calendar.render();
+
+});
+</script>
+
+</body>
+</html>
