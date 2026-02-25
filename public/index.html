@@ -715,7 +715,7 @@
                 }</a></td>
           <td>${appt.format_date}</td>
           <td>${appt.time}</td>
-          <td><a href="#" onclick="addFile('${appt.name.replace(
+          <td><a href="#" onclick="addFile('${(appt.name || "").replace(
             /'/g,
             "\\'"
           )}', 'client', '${appt.clientId}'); return false">${
