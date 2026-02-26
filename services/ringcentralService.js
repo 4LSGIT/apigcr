@@ -83,6 +83,25 @@ async function refreshAccessToken(db) {
 
   refreshPromise = (async () => {
     try {
+      // Acquire lock (timeout 10s; adjust as needed)
+      const [[{ lockAcquired }]] = await db.query("SELECT GET_LOCK('rc_token_refresh', 10) AS lockAcquired");
+      if (lockAcquired !== 1) {
+        throw new Error("Could not acquire refresh lock; another instance may be refreshing");
+      }
+
+      // Reload token from DB to check if another instance already refreshed
+      const raw = await getSetting(db, "rc_token");
+      if (raw) {
+        const latestToken = JSON.parse(raw);
+        if (latestToken.refresh_token !== tokenData.refresh_token) {
+          // Another instance refreshed; update local and bail
+          tokenData = latestToken;
+          scheduleRefresh(db);
+          return;
+        }
+      }
+
+      // Proceed with expiry check and refresh (your existing logic)
       const refreshIssuedAt =
         tokenData.refresh_issued_at ??
         tokenData.issued_at ??
@@ -131,6 +150,8 @@ async function refreshAccessToken(db) {
       console.error("Token refresh failed:", err.message);
       sendAlert("token_refresh_failed", err.message);
     } finally {
+      // Always release lock
+      await db.query("SELECT RELEASE_LOCK('rc_token_refresh')");
       isRefreshing = false;
     }
   })();
