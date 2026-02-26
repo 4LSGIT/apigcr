@@ -7,7 +7,8 @@ const pool = mysql.createPool({
   host: process.env.host,
   user: process.env.user,
   password: process.env.password,
-  database: process.env.database
+  database: process.env.database,
+  timezone: 'Z'
 });
 
 // Optional: centralised error listener

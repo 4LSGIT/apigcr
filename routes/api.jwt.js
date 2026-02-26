@@ -3,23 +3,25 @@ const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 
 
-/*router.get('/api/events', async (req, res) => {
-  const { start, end } = req.query;
+router.get("/clio-code", jwtOrApiKey, async (req, res) => {
+  try {
+    const [rows] = await req.db.query(
+      `SELECT value, updated_at 
+       FROM app_settings 
+       WHERE \`key\` = "clio_login_code"
+       LIMIT 1`
+    );
 
-  const [rows] = await req.db.query(`
-    SELECT 
-      appt_id AS id,
-      CONCAT(appt_type, ' - ', appt_platform) AS title,
-      appt_date AS start,
-      appt_end AS end
-    FROM appts
-    WHERE appt_status = 'Scheduled'
-    AND appt_date >= ?
-    AND appt_date <= ?
-  `, [start, end]);
+    if (!rows.length) {
+      return res.status(404).json({ error: "Code not found" });
+    }
 
-  res.json(rows);
-});*/
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
 
 router.get('/api/events', jwtOrApiKey, async (req, res) => {
   const { start, end } = req.query;

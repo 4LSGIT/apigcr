@@ -347,3 +347,4 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.executeJob = executeJob;
