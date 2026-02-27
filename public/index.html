@@ -70,9 +70,13 @@
       <i class="fa-solid fa-box-archive fa-2xl"></i><br /><br />Log
     </button>
     <div style="height: 5px"></div>
-    <!--<button style="width:100px;height:100px" onclick="openMainTab('tabBills')"><i class="fa-solid fa-file-invoice-dollar fa-2xl"></i><br><br>Billing</button>-->
-    <button style="width: 100px; height: 100px" onclick="openMainTab('tabDeadlines')">
-      <i class="fa-solid fa-clock fa-2xl"></i><br /><br />Deadlines
+    <!--<button id="tabCustomButton" style="width: 100px; height: 100px" 
+      onclick="openMainTab('tabCustom', this)"
+      onclickm="cases?'':E('tabOpenCasesFrame').contentWindow.tabCasesGet(0);openMainTab('tabOpenCases', this)">
+      <i class="fa-solid fa-clock fa-2xl"></i><br /><br />Custom Tab
+    </button>-->
+    <button id="tabCustomButton" style="width: 100px; height: 100px" onclick="openMainTab('tabCustom')">
+      <i class="fa-solid fa-clock fa-2xl"></i><br /><br />Custom Tab
     </button>
     <button style="width: 100px; height: 100px" onclick="openMainTab('tabCampaigns')">
       <i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br /><br />Campaigns
@@ -124,13 +128,12 @@
     <p>Was this page intentionally left blank?</p>
   </div>
 
-  <div id="tabDeadlines" class="tab-main">
-    <h1>Deadlines</h1>
-    <p>lets set a deadline to complete this page</p>
+  <div id="tabCustom" class="tab-main">
+    <iframe id="tabCustomFrame" src="/tabOpenCases.html"></iframe>
   </div>
 
-  <div id="tabCampaigns" class="tab-main">
-    <iframe src="/campaign.html"></iframe>
+  <div id="tabCustom" class="tab-main">
+    <iframe id="tabCustomFrame" src=""></iframe>
   </div>
 
 
@@ -1701,6 +1704,7 @@
     appts = "";
     tasks = "";
     logs = "";
+    customTabVar = '';
     offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0 };
 
     function openMainTab(tabName) {
@@ -1930,6 +1934,21 @@
         title: `Welcome ${user.user_name}!`,
         timer: 1000
       });
+
+      const customConfig = user.user_custom_tab ? user.user_custom_tab : null;
+      if (customConfig && customConfig.src) {
+        E('tabCustomButton').innerHTML = `<i class="fa-solid fa-${customConfig.icon || 'bell'} fa-2xl"></i><br /><br />${customConfig.title || 'Custom Tab'}`;
+        let loadFunc = customConfig.loadFunc ? customConfig.loadFunc + "openMainTab('tabCustom')":"openMainTab('tabCustom')";
+        console.log(loadFunc);
+        E('tabCustomButton').setAttribute('onclick', loadFunc);
+        E('tabCustomFrame').src = customConfig.src;        
+      } else {
+        E('tabCustom').innerHTML = `
+        <h1>Custom Tab</h1>
+        <p style="color:#e74c3c;">Speak to IT to get this set up for you.</p>
+        `;
+      }
+
       openMainTab(params.open || "tabHome");
       if (params.qp) {
         params.qp.split(",").forEach((q) => {
@@ -1977,147 +1996,8 @@
     }
 
     initAuth();
-    /*
-          //login
-          function login() {
-            Swal.fire({
-              title: "Please log in",
-              html: `<label class="input-label">Username: </label><input id="username" value="${username}"><br><br>
-            <label class="input-label">Password: </label><input type="password" value="${password}" id="password">`,
-              confirmButtonText:
-                "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Login&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;",
-              showLoaderOnConfirm: true,
-              reverseButtons: true,
-              showDenyButton: true,
-              confirmButtonColor: "#07ADEF",
-              denyButtonColor: "#959593",
-              denyButtonText: "Forgot Password",
-              preDeny: () => {
-                username = E("username").value;
-                if (!username) {
-                  Swal.showValidationMessage("Please enter your username or email");
-                  return false;
-                }
-                Swal.fire({
-                  icon: "question",
-                  title: `Send reset email?`,
-                  text: "the system administrator will also be alerted",
-                  showCancelButton: false,
-                  showDenyButton: true,
-                  denyButtonText: "Cancel",
-                  preConfirm: () => {
-                    fetch(
-                      `${url}?mode=resetPW&username=${username}&password=password`
-                    );
-                    Swal.fire({
-                      icon: "success",
-                      text: "please check your email for further instructions",
-                    }).then(() => {
-                      login();
-                    });
-                  },
-                  preDeny: () => {
-                    login();
-                  },
-                });
-              },
-              preConfirm: () => {
-                password = E("password").value;
-                username = E("username").value;
-                if (!username || !password) {
-                  Swal.showValidationMessage("Please fill in all required fields");
-                  return false;
-                }
-                query = `SELECT * FROM users WHERE username = '${username}' AND password = '${password}';|||
-                    SELECT user_name, user FROM users WHERE user_type = true;`;
-                return fetch(
-                  `/db?username=${username}&password=${password}&query=${query}`
-                )
-                  .then((response) => response.json())
-                  .then((data) => {
-                    temp34 = data;
-                    console.log(data);
-                    if (data.data.query1[0].user_auth.startsWith("authorized")) {
-                      user = data.data.query1[0];
-                      users = data.data.query2;
-                      console.log(users);
-                      E("myNameIs").innerHTML = user.user_name;
-                      E("topButtons").style.display = "block";
-                      E("adminButton").style.display =
-                        user.user_auth == "authorized - SU" ||
-                        user.user_auth == "authorized - admin"
-                          ? ""
-                          : "none";
-                      window.scrollTo(0, 0);
-                      //if (user.ringcentral == "1") {document.head.appendChild(Object.assign(document.createElement("script"), { src: "https://ringcentral.github.io/ringcentral-embeddable/adapter.js", async: true }));}
-                      Toast.fire({
-                        icon: "success",
-                        title: `Welcome ${user.user_name}!`,
-                        timer: 1000,
-                      });
-                      openMainTab(params.open || "tabHome");
-                      if (params.qp) {
-                        params.qp.split(",").forEach((q) => {
-                          q ? quickPick(q) : "";
-                        });
-                      }
-                      if (params.case) {
-                        quickPick(
-                          params.case.split(",")[0],
-                          "case",
-                          params.case.split(",")[1]
-                        );
-                      }
-                      if (params.contact) {
-                        quickPick(
-                          params.contact.split(",")[0],
-                          "contact",
-                          params.contact.split(",")[1]
-                        );
-                      }
-                      if (params.tasks) {
-                        tabTasksGet(0);
-                      }
-                      if (params.clients) {
-                        tabClientssGet(0);
-                      }
-                      if (params.cases) {
-                        tabCasesGet(0);
-                      }
-                      if (params.log) {
-                        tabLogGet(0);
-                      }
-                      if (params.appt) {
-                        showAppt(params.appt);
-                      }
-                      const selectElements =
-                        document.querySelectorAll("select.userslist");
-                      userOpts = "";
-                      users.forEach((user) => {
-                        userOpts += `<option value="${user.user}">${user.user_name}</option>`;
-                      });
-                      selectElements.forEach((select) => {
-                        select.innerHTML += userOpts;
-                      });
-                    } else {
-                      Swal.fire({
-                        toast: true,
-                        icon: "error",
-                        title: "Login Failed!",
-                        timer: 2000,
-                        timerProgressBar: true,
-                      }).then(() => {
-                        location.reload();
-                      });
-                    }
-                  });
-              },
-              allowOutsideClick: false,
-              allowEscapeKey: false,
-            });
-          }
-    
-          login();*/
+  
+
     function logout() {
       Toast.fire({
         icon: "info",
@@ -2150,7 +2030,7 @@
       tasks = "";
       logs = "";
 
-      offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0 };
+      offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0, custom: 0,  };
 
       // --- UI reset (minimal, non-destructive) ---
       try {

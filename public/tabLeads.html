@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"/>
+  <link rel="stylesheet" type="text/css" href="style.css" />
+</head>
+<body style="text-align: center;">
+  <h1>Leads Follow Up</h1>
+  <span>
+    Query:
+    <input id="tabLeadsQuery" type="text" onkeypress="if (event.keyCode == 13) {tabLeadsGet(0)}" />
+    Case Type:
+    <select id="tabLeadsType" style="width: auto">
+      <option value="%">All</option>
+      <option value="Bankruptcy - Ch%" selected>Bankruptcy - all chapters</option>
+      <option>Bankruptcy</option>
+      <option>Bankruptcy - Ch. 7</option>
+      <option>Bankruptcy - Ch. 13</option>
+      <option>Criminal</option>
+    </select>
+    Stage:
+    <select id="tabLeadsStage" style="width: auto">
+      <option value="Lead" selected>Lead</option>
+      <option value="%">All</option>
+      <option>Filed</option>
+      <option>Closed</option>
+    </select>
+    Case Status:
+    <input id="tabLeadsStatus" style="width: auto" onkeypress="if (event.keyCode == 13) {tabLeadsGet(0)}" />
+    1st Course:
+    <select id="tabLeadsCourse" style="width: auto">
+      <option value="%">All</option>
+      <option value="">None</option>
+      <option>Sent Info</option>
+      <option>Received</option>
+      <option>Filed</option>
+    </select>
+    Pre Petition:
+    <select id="tabLeadsPre" style="width: auto">
+      <option value="%">All</option>
+      <option value="">None</option>
+      <option>Sent</option>
+      <option>Signed</option>
+    </select>
+    Order By:
+    <select id="tabLeadsOrder" style="width: auto" data-type="sortBy" onchange="sortSelect(this)">
+      <option value="co.contact_lname">Client Last Name</option>
+      <option value="co.contact_name">Client First Name</option>
+      <option value="c.case_id">Lead ID</option>
+      <option value="c.case_open_date">Open Date</option>
+      <option value="c.case_type">Case Type</option>
+      <option value="c.case_stage">Case Stage</option>
+      <option value="c.case_status">Case Status</option>
+      <option value="c.case_1st_course">1st Course</option>
+      <option value="c.case_pre_petition">Pre Petition</option>
+    </select>
+    <select id="tabLeadsOrder2" style="width: auto" data-type="sortDi" onchange="sortSelect(this)">
+      <option value="ASC">Ascending</option>
+      <option value="DESC">Descending</option>
+    </select>
+    <button onclick="tabLeadsGet(0)" data-type="goButton">Search</button>
+  </span>
+  <table id="leadsTable" class="logTable">
+    <tr>
+      <th onclick="sort(this, 'c.case_id')">Lead ID</th>
+      <th onclick="sort(this, 'co.contact_lname')">Client Name</th>
+      <th onclick="sort(this, 'c.case_type')">Case Type</th>
+      <th onclick="sort(this, 'c.case_stage')">Case Stage</th>
+      <th onclick="sort(this, 'c.case_status')">Case Status</th>
+      <th onclick="sort(this, 'c.case_open_date')">Open Date</th>
+      <th onclick="sort(this, 'c.case_1st_course')">1st Course</th>
+      <th onclick="sort(this, 'c.case_pre_petition')">Pre Petition</th>
+      <th>Notes</th>
+      <th>Actions</th>
+    </tr>
+  </table>
+  <div id="leadsTableFoot"></div>
+  <div id="tabLeadsLoad" style="display: none">
+    <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+  </div>
+</body>
+<script>
+  const P = window.parent;
+  const E = (id) => document.getElementById(id);
+  let limit = P.limit || 100;
+
+  function resizeTextarea(textarea) {
+    textarea.style.height = "auto";
+    textarea.style.height = Math.min(textarea.scrollHeight, 300) + "px";
+  }
+
+  function sort(header, sortVal) {
+    const sortBy = E("tabLeadsOrder");
+    const sortDi = E("tabLeadsOrder2");
+    const go = document.querySelector('button[data-type="goButton"]');
+    const headers = document.querySelectorAll("th");
+    sortVal = sortVal || header.innerText.replace(/ [↑↓]/g, "");
+    if (sortBy.value !== sortVal) {
+      sortBy.value = sortVal;
+    } else {
+      sortDi.value = sortDi.value === "ASC" ? "DESC" : "ASC";
+    }
+    headers.forEach((h) => (h.innerText = h.innerText.replace(/ [↑↓]/g, "")));
+    header.innerText += sortDi.value === "ASC" ? " ↑" : " ↓";
+    go.click();
+  }
+
+  function sortSelect(element) {
+    const sortBy = E("tabLeadsOrder");
+    const sortDi = E("tabLeadsOrder2");
+    const go = document.querySelector('button[data-type="goButton"]');
+    const headers = document.querySelectorAll("th");
+    headers.forEach((head) => {
+      let field = "";
+      if (head.onclick) {
+        field = head.getAttribute("onclick").toString().match(/'(.*?)'/)[1];
+      }
+      let text = head.innerText.replace(/ [↑↓]/g, "");
+      if (sortBy.value === field) {
+        head.innerText = `${text} ${sortDi.value === "ASC" ? " ↑" : " ↓"}`;
+      } else {
+        head.innerText = text;
+      }
+    });
+    go.click();
+  }
+
+  async function updateCase(case_id, field, value) {
+    try {
+      await P.apiSend("/api/updateCase", "POST", { case_id, field, value });
+      P.Toast.fire({ icon: "success", title: "Updated!" });
+    } catch (err) {
+      console.error(err);
+      P.Toast.fire({ icon: "error", title: "Update failed" });
+    }
+  }
+
+  async function sendCourseInfo(case_id) {
+    P.Swal.fire({
+      title: "Send Course Info?",
+      text: "This will send the credit counseling info and set status to 'Sent Info'",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Send",
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        P.showProcessingSwal();
+        try {
+          await P.apiSend("/api/sendCourseInfo", "POST", { case_id });
+          await updateCase(case_id, "case_1st_course", "Sent Info");
+          tabLeadsGet(P.offsets.leads || 0); // Refresh table
+          P.Toast.fire({ icon: "success", title: "Sent!" });
+        } catch (err) {
+          P.Toast.fire({ icon: "error", title: "Failed to send" });
+        } finally {
+          P.Swal.close();
+        }
+      }
+    });
+  }
+
+  async function sendContract(case_id) {
+    P.Swal.fire({
+      title: "Send Contract?",
+      text: "This will send the pre-petition contract and set status to 'Sent'",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Send",
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        P.showProcessingSwal();
+        try {
+          await P.apiSend("/api/sendContract", "POST", { case_id });
+          await updateCase(case_id, "case_pre_petition", "Sent");
+          tabLeadsGet(P.offsets.leads || 0); // Refresh table
+          P.Toast.fire({ icon: "success", title: "Sent!" });
+        } catch (err) {
+          P.Toast.fire({ icon: "error", title: "Failed to send" });
+        } finally {
+          P.Swal.close();
+        }
+      }
+    });
+  }
+
+  function createTask(case_id) {
+    P.Swal.fire({
+      title: `New Task for Case ${case_id}`,
+      html: `
+        <label class="input-label">To:</label>
+        <select id="taskTo" style="width:200px;"></select><br>
+        <label class="input-label">Title:</label>
+        <input id="taskTitle" style="width:200px;"><br>
+        <label class="input-label">Description:</label>
+        <textarea id="taskDesc" class="input-ta" style="width:200px;" oninput="resizeTextarea(this)"></textarea><br>
+        <label class="input-label">Due Date:</label>
+        <input type="datetime-local" id="taskDue" style="width:200px;"><br>
+      `,
+      showCancelButton: true,
+      confirmButtonText: "Create",
+      didOpen: () => {
+        E("taskTo").innerHTML = P.userOpts;
+        E("taskTo").value = P.user.user; // Default to self
+      },
+      preConfirm: async () => {
+        const to = E("taskTo").value;
+        const title = E("taskTitle").value;
+        const desc = E("taskDesc").value;
+        const due = E("taskDue").value ? E("taskDue").value.replace("T", " ") : null;
+        if (!title || !to) {
+          P.Swal.showValidationMessage("Title and To are required");
+          return false;
+        }
+        try {
+          await P.apiSend("/api/tasks", "POST", {
+            task_to: to,
+            task_from: P.user.user,
+            task_case: case_id,
+            task_title: title,
+            task_desc: desc,
+            task_due: due,
+          });
+          P.Toast.fire({ icon: "success", title: "Task created!" });
+        } catch (err) {
+          P.Swal.showValidationMessage("Failed to create task");
+          return false;
+        }
+      },
+    });
+  }
+
+  async function tabLeadsGet(offset) {
+    P.offsets.leads = offset;
+    E("tabLeadsLoad").style.display = "block";
+    let query = E("tabLeadsQuery").value;
+    let type = E("tabLeadsType").value;
+    let stage = E("tabLeadsStage").value;
+    let status = E("tabLeadsStatus").value ? `%${E("tabLeadsStatus").value}%` : "%";
+    let course = E("tabLeadsCourse").value;
+    let pre = E("tabLeadsPre").value;
+    let order = E("tabLeadsOrder").value;
+    let order2 = E("tabLeadsOrder2").value;
+
+    const table = E("leadsTable");
+    const foot = E("leadsTableFoot");
+    foot.innerHTML = "";
+    while (table.rows.length > 1) {
+      table.deleteRow(1);
+    }
+
+    try {
+      const result = await P.apiSend("/api/leads", "GET", {
+        query, type, stage, status, course, pre, order, order2, offset, limit
+      });
+      const leads = result.leads;
+      const counter = result.counter;
+
+      if (counter === 0 || !leads.length) {
+        P.Toast.fire({ icon: "error", title: "No Leads Found!" });
+        return;
+      }
+
+      P.leads = leads;
+
+      leads.forEach((L) => {
+        L.contacts = typeof L.contacts === "string" ? JSON.parse(L.contacts) : L.contacts;
+        const row = table.insertRow();
+        let rowHTML = `<td><a href="#" onclick="P.addFile('${L.case_id}', 'case', '${L.case_id}')">${L.case_id}</a></td><td>`;
+        (L.contacts || []).forEach((client) => {
+          if (client.contact_id) {
+            rowHTML += `<a href="#" onclick="P.addFile('${client.contact_name.replace(/'/g, "\\'")}', 'client', '${client.contact_id}')">${client.contact_name}</a> (${client.contact_relate})<br>`;
+          }
+        });
+        rowHTML += `</td><td>${L.case_type}</td><td>${L.case_stage}</td><td>${L.case_status}</td><td>${L.open}</td>`;
+        rowHTML += `<td><select onchange="updateCase('${L.case_id}', 'case_1st_course', this.value)">
+          <option value="" ${L.case_1st_course === '' ? 'selected' : ''}></option>
+          <option value="Sent Info" ${L.case_1st_course === 'Sent Info' ? 'selected' : ''}>Sent Info</option>
+          <option value="Received" ${L.case_1st_course === 'Received' ? 'selected' : ''}>Received</option>
+          <option value="Filed" ${L.case_1st_course === 'Filed' ? 'selected' : ''}>Filed</option>
+        </select></td>`;
+        rowHTML += `<td><select onchange="updateCase('${L.case_id}', 'case_pre_petition', this.value)">
+          <option value="" ${L.case_pre_petition === '' ? 'selected' : ''}></option>
+          <option value="Sent" ${L.case_pre_petition === 'Sent' ? 'selected' : ''}>Sent</option>
+          <option value="Signed" ${L.case_pre_petition === 'Signed' ? 'selected' : ''}>Signed</option>
+        </select></td>`;
+        rowHTML += `<td><textarea oninput="resizeTextarea(this)" onblur="updateCase('${L.case_id}', 'case_notes', this.value)" style="width:200px;">${L.case_notes || ''}</textarea></td>`;
+        rowHTML += `<td>
+          <button onclick="sendCourseInfo('${L.case_id}')">Send Course</button>
+          <button onclick="sendContract('${L.case_id}')">Send Contract</button>
+          <button onclick="createTask('${L.case_id}')">+ Task</button>
+        </td>`;
+        row.innerHTML = rowHTML;
+      });
+
+      // Pagination
+      foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabLeadsGet(${offset - limit})">&lt;</a> ` : "";
+      for (let i = 1; counter >= (i - 1) * limit; i++) {
+        foot.innerHTML += offset / limit + 1 === i ? `<a href="#" onclick="tabLeadsGet(${(i - 1) * limit})">[${i}]</a> ` : `<a href="#" onclick="tabLeadsGet(${(i - 1) * limit})">${i}</a> `;
+      }
+      foot.innerHTML += offset + limit < counter ? `<a href="#" onclick="tabLeadsGet(${offset + limit})">&gt;</a> ` : "";
+      foot.innerHTML += ` | Results ${offset + 1}-${offset + leads.length} of ${counter} 
+        <select style="width:auto" onchange="limit = this.value; tabLeadsGet(0)">
+          <option value="50" ${limit == 50 ? "selected" : ""}>50</option>
+          <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
+          <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
+          <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
+        </select> | <button onclick="window.print()">Print</button>`;
+    } catch (err) {
+      console.error(err);
+      P.Toast.fire({ icon: "error", title: "Failed to load leads" });
+    } finally {
+      E("tabLeadsLoad").style.display = "none";
+    }
+  }
+
+
+  function tabCustFunc(word) {alert(`tabCustFunc called with param ${word}`)}
+</script>
+</html>
