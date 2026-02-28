@@ -1932,7 +1932,7 @@
 
       const customConfig = user.user_custom_tab ? user.user_custom_tab : null;
       if (customConfig && customConfig.src) {
-        E('tabCustomButton').innerHTML = `<i class="fa-solid fa-${customConfig.icon || 'bell'} fa-2xl"></i><br /><br />${customConfig.title || 'Custom Tab'}`;
+        E('tabCustomButton').innerHTML = `<i class="fa-solid fa-${customConfig.icon || 'bug'} fa-2xl"></i><br /><br />${customConfig.title || 'Custom Tab'}`;
         let loadFunc = customConfig.loadFunc ? customConfig.loadFunc + "openMainTab('tabCustom')":"openMainTab('tabCustom')";
         console.log(loadFunc);
         E('tabCustomButton').setAttribute('onclick', loadFunc);
