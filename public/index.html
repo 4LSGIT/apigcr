@@ -42,7 +42,7 @@
 
   <div id="tabOpenFiles" style="display: none; text-align: center">
     <div id="noOpenFiles">There are no open files at the moment!</div>
-    <div id="closeAllFiles" style="display: none" class="file-button" onclick="closeAllFiles(this)">
+    <div id="closeAllFiles" style="display: none" class="file-type-button" onclick="closeAllFiles(this)">
       Close All<!--<i class="file-close fa-solid fa-circle-xmark"></i>-->
     </div>
   </div>
@@ -70,11 +70,6 @@
       <i class="fa-solid fa-box-archive fa-2xl"></i><br /><br />Log
     </button>
     <div style="height: 5px"></div>
-    <!--<button id="tabCustomButton" style="width: 100px; height: 100px" 
-      onclick="openMainTab('tabCustom', this)"
-      onclickm="cases?'':E('tabOpenCasesFrame').contentWindow.tabCasesGet(0);openMainTab('tabOpenCases', this)">
-      <i class="fa-solid fa-clock fa-2xl"></i><br /><br />Custom Tab
-    </button>-->
     <button id="tabCustomButton" style="width: 100px; height: 100px" onclick="openMainTab('tabCustom')">
       <i class="fa-solid fa-clock fa-2xl"></i><br /><br />Custom Tab
     </button>
@@ -129,7 +124,7 @@
   </div>
 
   <div id="tabCustom" class="tab-main">
-    <iframe id="tabCustomFrame" src="/tabOpenCases.html"></iframe>
+    <iframe id="tabCustomFrame" src=""></iframe>
   </div>
 
   <div id="tabCustom" class="tab-main">
@@ -2052,8 +2047,7 @@
     function addFile(fileName, fileType, fileID) {
       E("noOpenFiles").style.display = "none";
       const fileButtonContainer = E("tabOpenFiles");
-      E("closeAllFiles").style.display =
-        fileButtonContainer.children.length > 2 ? "" : "none";
+      E("closeAllFiles").style.display = fileButtonContainer.children.length > 2 ? "" : "none";
       const fileButton = document.createElement("div");
       const file = document.createElement("div");
       file.innerHTML = "this is a test!";
@@ -2123,6 +2117,7 @@
           fileButtons.forEach((element) => {
             element.parentNode.removeChild(element);
           });
+          E("closeAllFiles").style.display = "none";
           E("noOpenFiles").style.display = "block";
         }
       });
