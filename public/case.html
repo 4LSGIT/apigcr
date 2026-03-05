@@ -1174,12 +1174,28 @@
           ) {
             //bankruptcy stuff
             S("bkButtons").display = "";
-            E("ISSNinfo").src = caseData.case_ISSN_form
-              ? `https://jotform.com/edit/${caseData.case_ISSN_form}`
-              : `https://jotform.com/241676649437470?caseId=${caseData.case_id}&clientName[first]=${PC.contact_fname}&clientName[middle]=${PC.contact_mname}&clientName[last]=${PC.contact_lname}&phoneNumber[full]=${PC.contact_phone}&email=${PC.contact_email}&clientId=${PC.contact_id}`;
-            E("ISSNinfo").src += SC
-              ? `&maritalStatus=Married&isCD=Yes&CDname[first]=${SC.contact_fname}&CDname[middle]=${SC.contact_mname}&CDname[last]=${SC.contact_lname}&CDphone[full]=${SC.contact_phone}&CDDemail=${SC.contact_email}&CDid=${SC.contact_id}`
-              : "";
+if (caseData.case_ISSN_form) {
+  E("ISSNinfo").src = `https://jotform.com/edit/${caseData.case_ISSN_form}`;
+} else {
+  E("ISSNinfo").src = `https://jotform.com/241676649437470?caseId=${caseData.case_id}
+    &clientName[first]=${PC.contact_fname}
+    &clientName[middle]=${PC.contact_mname}
+    &clientName[last]=${PC.contact_lname}
+    &phoneNumber[full]=${PC.contact_phone}
+    &email=${PC.contact_email}
+    &clientId=${PC.contact_id}`;
+  if (SC) {
+    E("ISSNinfo").src += `&maritalStatus=Married
+      &isCD=Yes
+      &CDname[first]=${SC.contact_fname}
+      &CDname[middle]=${SC.contact_mname}
+      &CDname[last]=${SC.contact_lname}
+      &CDphone[full]=${SC.contact_phone}
+      &CDDemail=${SC.contact_email}
+      &CDid=${SC.contact_id}`;
+  }
+}
+
             E(
               "SendingForm"
             ).src = `https://jotform.com/241675479457472?caseId=${caseData.case_id}&contact1[first]=${PC.contact_fname}&contact1[middle]=${PC.contact_mname}&contact1[last]=${PC.contact_lname}&number1[full]=${PC.contact_phone}&email1=${PC.contact_email}&clientId1=${PC.contact_id}`;
