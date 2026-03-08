@@ -13,7 +13,8 @@ const { advanceWorkflow } = require("../lib/workflow_engine"); // adjust path
 router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id } = req.params;
-  const { init_data = {} } = req.body;
+  //const { init_data = {} } = req.body;
+  const initData = req.body.initData || req.body.init_data || {};
 
   const workflowId = parseInt(id, 10);
   if (isNaN(workflowId) || workflowId <= 0) {
