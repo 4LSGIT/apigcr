@@ -143,10 +143,7 @@ async function refreshAccessToken(db) {
         access_issued_at: Date.now(),
         refresh_issued_at: Date.now(),
       };
-        sendAlert(
-          "refresh_token_refreshed",
-          "Refresh token refreshed sucessfully;  no further action required"
-        );
+      //sendAlert("refresh_token_refreshed", "Refresh token refreshed sucessfully;  no further action required");
       await saveToken(db);
       scheduleRefresh(db);
       console.log("RC refresh token refreshed")
