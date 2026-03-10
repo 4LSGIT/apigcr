@@ -48,13 +48,15 @@ app.get("/:page", (req, res, next) => {
   next(); // continue to normal routes if file doesn’t exist
 });
 
+app.use((req, res, next) => {
+  req.db = db;
+  next();
+});
+
 fs.readdirSync(routesPath).forEach((file) => {
   if (file.endsWith(".js")) {
     const route = require(`./routes/${file}`);
-    app.use((req, res, next) => {
-      req.db = db; // Attach db to request object
-      next();
-    }, route);
+    app.use(route);
   }
 });
 
