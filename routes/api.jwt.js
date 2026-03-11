@@ -2,6 +2,10 @@ const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 
+router.get("/auth/validate", jwtOrApiKey, (req, res) => {
+  res.json({ valid: true, user: req.auth.username });
+});
+
 
 router.get("/clio-code", jwtOrApiKey, async (req, res) => {
   try {

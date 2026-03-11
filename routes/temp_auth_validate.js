@@ -3,7 +3,7 @@ const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");
 
-router.post("/auth/validate", async (req, res) => {
+router.post("/auth/P_validate", async (req, res) => {
   const { username, password, token } = req.body;
 
   try {

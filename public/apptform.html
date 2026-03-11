@@ -504,11 +504,11 @@ document.getElementById("appointmentForm").addEventListener("submit", async (e) 
 
   try {
     if (window.parent && window.parent.username && window.parent.password) {
-      data.append('username', window.parent.username.trim());//need to remove
-      data.append('password', window.parent.password.trim());//need to remove!!
+      //data.append('username', window.parent.username.trim());//need to remove
+      //data.append('password', window.parent.password.trim());//need to remove!!
       data.append('token', window.parent.AUTH_STATE.jwt);
     } else {
-      console.warn("Could not access username or password from parent window.");
+      console.warn("Could not access auth from parent window.");
     }
 
     await fetch(url, {
