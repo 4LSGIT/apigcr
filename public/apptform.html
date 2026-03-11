@@ -346,24 +346,23 @@ function clearError(input) {
 let params, apptData;
 function initForm() {
   params = getParams();
-  q = `SELECT * FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON cases.case_id = appts.appt_case_id WHERE appt_id = '${params.apptid}'`;
-  window.parent.sendQuery(q).then(data => {
-    apptData = data.data.query1[0];
+  window.parent.apiSend(`/api/appts/${params.apptid}`).then(data => {
+    apptData = data.data;
     console.log(apptData); // Verify field names
     if (!apptData) {
       console.warn("No appointment data found");
       return;
     }
-    document.querySelector("[name=caseid]").value = apptData.case_id || params.caseid || "";
+    document.querySelector("[name=caseid]").value = apptData.appt_case_id || params.caseid || "";
     document.querySelector("[name=appointmentid]").value = apptData.appt_id || params.appointmentid || "";
     document.querySelector("[name=primaryname]").value = apptData.contact_name || params.primaryname || "";
-    document.querySelector("[name=contactid]").value = apptData.contact_id || params.contactid || "";
+    document.querySelector("[name=contactid]").value = apptData.appt_client_id || params.contactid || "";
     document.querySelector("[name=email]").value = apptData.contact_email || params.email || "";
     document.querySelector("[name=phone]").value = formatPhone(apptData.contact_phone || params.phone || "");
     document.querySelector("[name=with]").value = apptData.appt_with || params.with || "";
     document.querySelector("[name=status]").value = apptData.appt_status || params.status || "Scheduled";
-    document.getElementById("caseidlabel").innerHTML = `<a href="#" onclick="window.parent.addFile('${apptData.case_id}', 'case', '${apptData.case_id}'); return false">Case ID:</a>`
-    document.getElementById("contactidlabel").innerHTML = `<a href="#" onclick="window.parent.addFile('${apptData.contact_name}', 'client', '${apptData.contact_id}'); return false">Contact ID:</a>`
+    document.getElementById("caseidlabel").innerHTML = `<a href="#" onclick="window.parent.addFile('${apptData.appt_case_id}', 'case', '${apptData.appt_case_id}'); return false">Case ID:</a>`
+    document.getElementById("contactidlabel").innerHTML = `<a href="#" onclick="window.parent.addFile('${apptData.contact_name}', 'client', '${apptData.appt_client_id}'); return false">Contact ID:</a>`
 
     const methodValue = apptData.appt_platform ? apptData.appt_platform.toLowerCase() : "";
     if (methodValue) {
@@ -505,8 +504,9 @@ document.getElementById("appointmentForm").addEventListener("submit", async (e) 
 
   try {
     if (window.parent && window.parent.username && window.parent.password) {
-      data.append('username', window.parent.username.trim());
-      data.append('password', window.parent.password.trim());
+      data.append('username', window.parent.username.trim());//need to remove
+      data.append('password', window.parent.password.trim());//need to remove!!
+      data.append('token', window.parent.AUTH_STATE.jwt);
     } else {
       console.warn("Could not access username or password from parent window.");
     }
