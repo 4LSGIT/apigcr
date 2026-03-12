@@ -13,8 +13,9 @@ const { advanceWorkflow } = require("../lib/workflow_engine"); // adjust path
 router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id } = req.params;
-  //const { init_data = {} } = req.body;
-  const initData = req.body.initData || req.body.init_data || {};
+  const { init_data = {} } = req.body;
+
+  console.log(`[START] Request for workflow ${id} with init_data:`, JSON.stringify(init_data, null, 2));
 
   const workflowId = parseInt(id, 10);
   if (isNaN(workflowId) || workflowId <= 0) {
@@ -26,7 +27,7 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     connection = await db.getConnection();
     await connection.beginTransaction();
 
-    // 1. Verify workflow exists
+    // Verify workflow exists
     const [wfRows] = await connection.query(
       `SELECT id FROM workflows WHERE id = ?`,
       [workflowId]
@@ -36,25 +37,22 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       return res.status(404).json({ error: "Workflow not found" });
     }
 
-    // 2. Create new execution
-    const [insertResult] = await connection.query(
+    // Create execution
+    const [result] = await connection.query(
       `
       INSERT INTO workflow_executions
       (workflow_id, status, init_data, variables, current_step_number)
       VALUES (?, 'active', ?, ?, 1)
       `,
-      [workflowId, JSON.stringify(init_data), JSON.stringify(init_data)] // merge init → variables
+      [workflowId, JSON.stringify(init_data), JSON.stringify(init_data)]
     );
 
-    const executionId = insertResult.insertId;
+    const executionId = result.insertId;
 
     await connection.commit();
     connection.release();
-    connection = null;
 
-    console.log(`[WORKFLOW START] Created execution ${executionId} for workflow ${workflowId}`);
-
-    // 3. Immediately advance (kick off the first step(s))
+    // Immediately advance
     const advanceResult = await advanceWorkflow(executionId, db);
 
     res.status(201).json({
@@ -62,19 +60,16 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       executionId,
       workflowId,
       status: advanceResult.status,
-      message: advanceResult.message || "Execution started and advanced",
-      advanceResult
+      advanceResult,
+      message: advanceResult.message || "Workflow execution started"
     });
   } catch (err) {
     if (connection) {
       await connection.rollback();
       connection.release();
     }
-    console.error(`[WORKFLOW START] Failed for workflow ${workflowId}:`, err);
-    res.status(500).json({
-      error: "Failed to start workflow",
-      message: err.message
-    });
+    console.error(`[START] Failed for workflow ${workflowId}:`, err);
+    res.status(500).json({ error: "Failed to start workflow", message: err.message });
   }
 });
 

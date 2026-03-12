@@ -2,7 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
-const ms = require("ms"); // npm install ms - for parsing "5m", "2h", etc.
+const ms = require("ms"); //  for parsing "5m", "2h", etc.
 
 // Helper: parse delay string to milliseconds
 function parseDelay(delayStr) {
