@@ -10,12 +10,17 @@ const { advanceWorkflow } = require("../lib/workflow_engine"); // adjust path
  * Body: { init_data?: object }
  * Returns the new execution ID and initial advance result
  */
+// routes/workflows.js
 router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id } = req.params;
-  const { init_data = {} } = req.body;
 
-  console.log(`[START] Request for workflow ${id} with init_data:`, JSON.stringify(init_data, null, 2));
+  // Accept BOTH formats from frontend:
+  // 1. { init_data: { ... } } or { initData: { ... } }
+  // 2. flat object { contactName: "...", ... } directly
+  let initData = req.body.init_data || req.body.initData || req.body || {};
+
+  console.log(`[START] Received payload:`, JSON.stringify(initData, null, 2));
 
   const workflowId = parseInt(id, 10);
   if (isNaN(workflowId) || workflowId <= 0) {
@@ -27,7 +32,6 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     connection = await db.getConnection();
     await connection.beginTransaction();
 
-    // Verify workflow exists
     const [wfRows] = await connection.query(
       `SELECT id FROM workflows WHERE id = ?`,
       [workflowId]
@@ -37,14 +41,13 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       return res.status(404).json({ error: "Workflow not found" });
     }
 
-    // Create execution
     const [result] = await connection.query(
       `
       INSERT INTO workflow_executions
       (workflow_id, status, init_data, variables, current_step_number)
       VALUES (?, 'active', ?, ?, 1)
       `,
-      [workflowId, JSON.stringify(init_data), JSON.stringify(init_data)]
+      [workflowId, JSON.stringify(initData), JSON.stringify(initData)]
     );
 
     const executionId = result.insertId;
@@ -52,23 +55,42 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     await connection.commit();
     connection.release();
 
-    // Immediately advance
-    const advanceResult = await advanceWorkflow(executionId, db);
-
-    res.status(201).json({
+    res.status(202).json({
       success: true,
       executionId,
       workflowId,
-      status: advanceResult.status,
-      advanceResult,
-      message: advanceResult.message || "Workflow execution started"
+      status: "processing",
+      message: "Workflow execution started and is now processing"
     });
+
+    // Background advance with timeout guard
+    (async () => {
+      try {
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Advance timeout")), 15000)
+        );
+
+        const advanceResult = await Promise.race([
+          advanceWorkflow(executionId, db),
+          timeoutPromise
+        ]);
+
+        console.log(`[ASYNC ADVANCE] Completed: ${advanceResult.status}`);
+      } catch (err) {
+        console.log(`[ASYNC ADVANCE] Timeout or error: ${err.message}`);
+        await db.query(
+          `UPDATE workflow_executions SET status = 'failed', updated_at = NOW() WHERE id = ?`,
+          [executionId]
+        );
+      }
+    })();
+
   } catch (err) {
     if (connection) {
       await connection.rollback();
       connection.release();
     }
-    console.error(`[START] Failed for workflow ${workflowId}:`, err);
+    console.error(`[START] Failed:`, err);
     res.status(500).json({ error: "Failed to start workflow", message: err.message });
   }
 });

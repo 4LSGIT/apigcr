@@ -6,70 +6,10 @@ const vm = require("vm");
 const { CronExpressionParser } = require("cron-parser");
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const internalFunctions = require("../lib/internal_functions");
+const { advanceWorkflow } = require("../lib/workflow_engine");
+const { executeJob } = require("../lib/job_executor");
 
-/**
- * Execute one job
- * IMPORTANT: no DB writes here
- */
-async function executeJob(job) {
-  let jobData;
-  try {
-    jobData = typeof job.data === "string" ? JSON.parse(job.data) : job.data;
-  } catch (err) {
-    throw new Error(`Invalid job.data JSON: ${err.message}`);
-  }
 
-  const { type } = jobData;
-
-  if (type === "webhook") {
-    const { url, method = "GET", headers = {}, body } = jobData;
-    if (!url) throw new Error('Webhook job missing "url"');
-
-    const response = await axios({
-      url,
-      method,
-      headers,
-      data: body,
-      timeout: 10000,
-      validateStatus: (status) => status >= 200 && status < 300,
-    });
-
-    return response.data;
-  }
-
-  if (type === "internal_function") {
-    const { function_name, params = {} } = jobData;
-    const fn = internalFunctions[function_name];
-    if (!fn) throw new Error(`Unknown internal function: ${function_name}`);
-    return await fn(params);
-  }
-
-  if (type === "custom_code") {
-    const { code, input = {} } = jobData;
-    if (!code) throw new Error('Custom code job missing "code"');
-
-    const sandbox = {
-      input,
-      console: {
-        log: (...args) => console.log(`[CUSTOM CODE ${job.id}]`, ...args),
-      },
-    };
-
-    const script = new vm.Script(code);
-    return script.runInNewContext(sandbox, { timeout: 5000 });
-  }
-
-  if (type === "workflow_resume") {
-    return { note: "Resume stub executed" };
-  }
-
-  throw new Error(`Unsupported job type: ${type}`);
-}
-
-/**
- * Record job result (success or failure)
- * MUST be called with a transaction connection
- */
 async function recordResult(
   connection,
   jobId,
@@ -143,16 +83,15 @@ async function recoverStuckJobs(db) {
 
 router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
   const db = req.db;
-  const BATCH_SIZE = 10; //lowered to fit google cloud run better
+  const BATCH_SIZE = 10;
 
   let jobs = [];
   let connection;
 
   try {
     await recoverStuckJobs(db);
-    /**
-     * STEP 1: Atomically claim jobs
-     */
+
+    // STEP 1: Atomically claim jobs
     connection = await db.getConnection();
     await connection.beginTransaction();
 
@@ -166,7 +105,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
       LIMIT ?
       FOR UPDATE SKIP LOCKED
       `,
-      [BATCH_SIZE],
+      [BATCH_SIZE]
     );
 
     if (rows.length === 0) {
@@ -177,12 +116,8 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
     const jobIds = rows.map((j) => j.id);
 
     await connection.query(
-      `
-      UPDATE scheduled_jobs
-      SET status = 'running', updated_at = NOW()
-      WHERE id IN (?)
-      `,
-      [jobIds],
+      `UPDATE scheduled_jobs SET status = 'running', updated_at = NOW() WHERE id IN (?)`,
+      [jobIds]
     );
 
     await connection.commit();
@@ -199,149 +134,165 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
     return res.status(500).json({ error: "Failed to claim jobs" });
   }
 
-  /**
-   * STEP 2: Execute jobs one by one
-   */
+  // STEP 2: Execute jobs one by one
   const results = [];
 
   for (const job of jobs) {
-  const start = Date.now();
-  const attempt = job.attempts + 1;
-  const executionNumber = job.execution_count + 1;
+    const start = Date.now();
+    const attempt = job.attempts + 1;
+    const executionNumber = job.execution_count + 1;
 
-  try {
-    const output = await executeJob(job);
+    let conn;
+    try {
+      conn = await db.getConnection();
+      await conn.beginTransaction();
 
-    const conn = await db.getConnection();
-    await conn.beginTransaction();
+      // SPECIAL CASE: workflow_resume
+      if (job.type === 'workflow_resume') {
+        const data = typeof job.data === 'string' ? JSON.parse(job.data) : job.data;
+        const { nextStep, executionId } = data || {};
 
-    // Record successful attempt
-    await recordResult(
-      conn,
-      job.id,
-      executionNumber,
-      attempt,
-      true,
-      output,
-      Date.now() - start,
-    );
+        console.log(`[RESUME] Resuming execution ${executionId} at step ${nextStep}`);
 
-    if (job.type === "recurring") {
-      /**
-       * RECURRING JOB SUCCESS
-       * - finish this run
-       * - advance to next schedule
-       * - reset attempts
-       * - increment execution_count
-       */
-      await rescheduleRecurring(conn, job);
-    } else {
-      /**
-       * ONE-TIME JOB SUCCESS
-       * - job is done forever
-       */
-      await conn.query(
-        `
-        UPDATE scheduled_jobs
-        SET status='completed', attempts=?, updated_at=NOW(), execution_count = execution_count + 1
-        WHERE id=?
-        `,
-        [attempt, job.id],
-      );
-    }
+        // Update execution
+        await conn.query(
+          `UPDATE workflow_executions 
+           SET status = 'active', current_step_number = ?, updated_at = NOW()
+           WHERE id = ?`,
+          [nextStep, executionId]
+        );
 
-    await conn.commit();
-    conn.release();
+        // Mark this resume job as completed
+        await conn.query(
+          `UPDATE scheduled_jobs SET status = 'completed', updated_at = NOW() WHERE id = ?`,
+          [job.id]
+        );
 
-    results.push({
-      id: job.id,
-      status: job.type === "recurring" ? "advanced" : "completed",
-    });
+        await conn.commit();
+        conn.release();
 
-  } catch (err) {
-    const conn = await db.getConnection();
-    await conn.beginTransaction();
-
-    // Record failed attempt
-    await recordResult(
-      conn,
-      job.id,
-      executionNumber,
-      attempt,
-      false,
-      err.message,
-      Date.now() - start,
-    );
-
-    if (attempt < job.max_attempts) {
-      /**
-       * RETRY (applies to both job types)
-       */
-      const delayMs =
-        job.backoff_seconds * Math.pow(2, attempt - 1) * 1000;
-
-      const nextTime = new Date(Date.now() + delayMs);
-
-      await conn.query(
-        `
-        UPDATE scheduled_jobs
-        SET status='pending', attempts=?, scheduled_time=?, updated_at=NOW() 
-        WHERE id=?
-        `,
-        [attempt, nextTime, job.id],
-      );
-
-      results.push({
-        id: job.id,
-        status: "retry_scheduled",
-        attempt,
-        error: err.message,
-      });
-
-    } else {
-      /**
-       * TERMINAL FAILURE
-       */
-      if (job.type === "recurring") {
-        /**
-         * RECURRING JOB TERMINAL FAILURE
-         * - this run failed permanently
-         * - BUT the job continues
-         */
-        await rescheduleRecurring(conn, job);
+        // Advance in background (non-blocking)
+        (async () => {
+          try {
+            const advanceResult = await advanceWorkflow(executionId, db);
+            console.log(`[RESUME ADVANCE] Execution ${executionId} finished with ${advanceResult.status}`);
+          } catch (err) {
+            console.error(`[RESUME ADVANCE] Failed for ${executionId}:`, err);
+          }
+        })();
 
         results.push({
           id: job.id,
-          status: "advanced_after_failure",
-          error: err.message,
+          status: 'completed',
+          note: `Resumed execution ${executionId} at step ${nextStep}`
         });
+
+        continue; // next job in the batch
+      }
+
+      // NORMAL JOB TYPES (webhook, internal_function, custom_code)
+      const output = await executeJob(job);
+
+      // Record successful attempt
+      await recordResult(
+        conn,
+        job.id,
+        executionNumber,
+        attempt,
+        true,
+        output,
+        Date.now() - start
+      );
+
+      if (job.type === "recurring") {
+        await rescheduleRecurring(conn, job);
       } else {
-        /**
-         * ONE-TIME JOB TERMINAL FAILURE
-         * - job is dead forever
-         */
         await conn.query(
           `
           UPDATE scheduled_jobs
-          SET status='failed', attempts=?, updated_at=NOW(), execution_count = execution_count + 1
+          SET status='completed', attempts=?, updated_at=NOW(), execution_count = execution_count + 1
           WHERE id=?
           `,
-          [attempt, job.id],
+          [attempt, job.id]
+        );
+      }
+
+      await conn.commit();
+      conn.release();
+
+      results.push({
+        id: job.id,
+        status: job.type === "recurring" ? "advanced" : "completed",
+      });
+
+    } catch (err) {
+      if (conn) {
+        await conn.rollback();
+        conn.release();
+      }
+
+      // Record failed attempt
+      const conn2 = await db.getConnection();
+      await conn2.beginTransaction();
+
+      await recordResult(
+        conn2,
+        job.id,
+        executionNumber,
+        attempt,
+        false,
+        err.message,
+        Date.now() - start
+      );
+
+      if (attempt < job.max_attempts) {
+        const delayMs = job.backoff_seconds * Math.pow(2, attempt - 1) * 1000;
+        const nextTime = new Date(Date.now() + delayMs);
+
+        await conn2.query(
+          `
+          UPDATE scheduled_jobs
+          SET status='pending', attempts=?, scheduled_time=?, updated_at=NOW() 
+          WHERE id=?
+          `,
+          [attempt, nextTime, job.id]
         );
 
         results.push({
           id: job.id,
-          status: "failed",
+          status: "retry_scheduled",
+          attempt,
           error: err.message,
         });
+      } else {
+        if (job.type === "recurring") {
+          await rescheduleRecurring(conn2, job);
+          results.push({
+            id: job.id,
+            status: "advanced_after_failure",
+            error: err.message,
+          });
+        } else {
+          await conn2.query(
+            `
+            UPDATE scheduled_jobs
+            SET status='failed', attempts=?, updated_at=NOW(), execution_count = execution_count + 1
+            WHERE id=?
+            `,
+            [attempt, job.id]
+          );
+          results.push({
+            id: job.id,
+            status: "failed",
+            error: err.message,
+          });
+        }
       }
+
+      await conn2.commit();
+      conn2.release();
     }
-
-    await conn.commit();
-    conn.release();
   }
-}
-
 
   res.json({ processed: jobs.length, results });
 });
