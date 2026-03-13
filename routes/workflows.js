@@ -566,13 +566,21 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
       targetStep = (maxRow[0].max || 0) + 1;
     }
 
-    // Shift existing steps down if inserting in the middle
+    // Shift existing steps up if inserting in the middle.
+    // Two-pass to avoid unique constraint collisions: first move all affected
+    // steps to a safe temp range (+10000), then set their final positions.
     if (stepNumber) {
       await connection.query(
         `UPDATE workflow_steps 
-         SET step_number = step_number + 1 
+         SET step_number = step_number + 10000 
          WHERE workflow_id = ? AND step_number >= ?`,
         [workflowId, targetStep]
+      );
+      await connection.query(
+        `UPDATE workflow_steps 
+         SET step_number = step_number - 10000 + 1 
+         WHERE workflow_id = ? AND step_number >= ?`,
+        [workflowId, targetStep + 10000]
       );
     }
 
@@ -820,12 +828,15 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
       [workflowId, stepNum]
     );
 
-    // Renumber all higher steps down by 1
+    // Renumber all higher steps down by 1.
+    // ORDER BY ASC ensures MySQL processes lowest step first, so each
+    // decrement lands in the slot just vacated — no unique constraint collision.
     await connection.query(
       `
       UPDATE workflow_steps 
       SET step_number = step_number - 1 
       WHERE workflow_id = ? AND step_number > ?
+      ORDER BY step_number ASC
       `,
       [workflowId, stepNum]
     );
@@ -899,19 +910,27 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
         return res.json({ success: true, message: "No change needed" });
       }
 
-      // Shift steps between from and to
+      // Shift steps between from and to.
+      // ORDER BY direction ensures each step moves into a slot just vacated,
+      // preventing unique constraint collisions.
       if (from < to) {
+        // Moving step forward: shift intermediate steps down — process ASC
+        // so lowest step moves first into the slot being freed by 'from'
         await connection.query(
           `UPDATE workflow_steps 
            SET step_number = step_number - 1 
-           WHERE workflow_id = ? AND step_number > ? AND step_number <= ?`,
+           WHERE workflow_id = ? AND step_number > ? AND step_number <= ?
+           ORDER BY step_number ASC`,
           [workflowId, from, to]
         );
       } else {
+        // Moving step backward: shift intermediate steps up — process DESC
+        // so highest step moves first into the slot being freed by 'from'
         await connection.query(
           `UPDATE workflow_steps 
            SET step_number = step_number + 1 
-           WHERE workflow_id = ? AND step_number >= ? AND step_number < ?`,
+           WHERE workflow_id = ? AND step_number >= ? AND step_number < ?
+           ORDER BY step_number DESC`,
           [workflowId, to, from]
         );
       }
@@ -933,16 +952,28 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
         throw new Error("Invalid step numbers in order array");
       }
 
-      // Reassign step numbers according to new order
+      // Two-pass approach to avoid unique constraint collisions.
+      // A single pass can collide: e.g. moving old step 3 → 1 then old step 1 → 2
+      // hits the row that was just renamed, not the original step 1.
+      //
+      // Pass 1: shift all steps into a safe temp range (+10000) so no final
+      //         value can collide with any in-progress temp value.
       for (let i = 0; i < order.length; i++) {
-        const oldStepNumber = order[i];
-        const newStepNumber = i + 1;
-
         await connection.query(
           `UPDATE workflow_steps 
            SET step_number = ? 
            WHERE workflow_id = ? AND step_number = ?`,
-          [newStepNumber, workflowId, oldStepNumber]
+          [order[i] + 10000, workflowId, order[i]]
+        );
+      }
+
+      // Pass 2: set final positions from the temp range.
+      for (let i = 0; i < order.length; i++) {
+        await connection.query(
+          `UPDATE workflow_steps 
+           SET step_number = ? 
+           WHERE workflow_id = ? AND step_number = ?`,
+          [i + 1, workflowId, order[i] + 10000]
         );
       }
     } 
