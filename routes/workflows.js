@@ -2,8 +2,8 @@
 const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
-const { advanceWorkflow } = require("../lib/workflow_engine"); // adjust path
-
+const { advanceWorkflow, resolvePlaceholders } = require("../lib/workflow_engine");
+const { executeJob } = require("../lib/job_executor");
 /**
  * POST /workflows/:id/start
  * Starts a new execution of the workflow
@@ -1424,6 +1424,129 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
 });
 
 
+
+/**
+ * POST /workflows/test-step
+ * Dry-run a single step in isolation — resolves placeholders against provided
+ * variables and executes the step exactly as the engine would, but writes
+ * nothing to the DB. Safe to call repeatedly during workflow development.
+ *
+ * Body:
+ *   step      { type, config }          — step definition (no id/workflow_id needed)
+ *   variables { key: value, ... }       — simulated workflow variables
+ *   env       { executionId?, stepNumber? }  — optional env overrides for {{env.*}}
+ *
+ * Returns:
+ *   { success, output, set_vars, next_step, delayed_until, error?, duration_ms }
+ */
+router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const { step, variables = {}, env = {} } = req.body;
+ 
+  if (!step || !step.type || !step.config) {
+    return res.status(400).json({ error: "step.type and step.config are required" });
+  }
+ 
+  const VALID_TYPES = ["webhook", "internal_function", "custom_code"];
+  if (!VALID_TYPES.includes(step.type)) {
+    return res.status(400).json({ error: `Invalid step type: ${step.type}` });
+  }
+ 
+  // Parse config if it arrived as a string
+  let config = step.config;
+  if (typeof config === "string") {
+    try { config = JSON.parse(config); }
+    catch { return res.status(400).json({ error: "step.config is not valid JSON" }); }
+  }
+ 
+  // Parse error_policy if present
+  let errorPolicy = step.error_policy || { strategy: "ignore" };
+  if (typeof errorPolicy === "string") {
+    try { errorPolicy = JSON.parse(errorPolicy); } catch { errorPolicy = { strategy: "ignore" }; }
+  }
+ 
+  const context = {
+    variables,
+    this: {},
+    env: {
+      executionId: env.executionId ?? "test",
+      stepNumber:  env.stepNumber  ?? 1,
+      now:         new Date().toISOString(),
+      ...env
+    }
+  };
+ 
+  // Resolve placeholders in config
+  const resolvedConfig = resolvePlaceholders(config, context);
+ 
+  // Build job data
+  const jobData = { type: step.type, ...resolvedConfig };
+ 
+  // Inject _variables for evaluate_condition
+  if (step.type === "internal_function" && resolvedConfig.params) {
+    jobData.params = { ...resolvedConfig.params, _variables: variables };
+  }
+ 
+  const strategy   = errorPolicy.strategy || "ignore";
+  const maxRetries = Number(errorPolicy.max_retries) || 0;
+  const backoffSec = Number(errorPolicy.backoff_seconds) || 5;
+ 
+  const startTime = Date.now();
+  let rawResult, success, errorMsg;
+  let attempt = 1;
+ 
+  // Execute with retry logic (mirrors executeStep in workflow_engine.js)
+  while (true) {
+    try {
+      rawResult = await executeJob({ data: jobData }, db);
+      success = true;
+      break;
+    } catch (err) {
+      if (attempt > maxRetries) {
+        success  = false;
+        errorMsg = err.message;
+        break;
+      }
+      await new Promise(r => setTimeout(r, backoffSec * 1000 * attempt));
+      attempt++;
+    }
+  }
+ 
+  const duration_ms = Date.now() - startTime;
+ 
+  if (!success) {
+    return res.json({
+      success:      false,
+      error:        errorMsg,
+      duration_ms,
+      attempts:     attempt,
+      would_abort:  strategy === "abort" || strategy === "retry_then_abort"
+    });
+  }
+ 
+  // Resolve set_vars from config (static) + function return
+  context.this = rawResult;
+  let staticSetVars = {};
+  if (config.set_vars) {
+    staticSetVars = resolvePlaceholders(config.set_vars, context);
+  }
+  const set_vars = { ...staticSetVars, ...(rawResult?.set_vars || {}) };
+ 
+  // Extract control signals
+  const next_step    = rawResult?.next_step    ?? null;
+  const delayed_until = rawResult?.delayed_until ?? null;
+ 
+  res.json({
+    success:      true,
+    output:       rawResult,
+    set_vars,
+    next_step,
+    delayed_until,
+    duration_ms,
+    attempts:     attempt,
+    resolved_config: resolvedConfig   // handy for debugging placeholder resolution
+  });
+});
 
 
 module.exports = router;
