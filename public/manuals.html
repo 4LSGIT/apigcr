@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YisraCase Docs</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:   #1a1a2e;
+      --blue:   #4f8ef7;
+      --bg:     #f8f9fc;
+      --border: #e2e6f0;
+      --muted:  #8892a4;
+      --text:   #1a1a2e;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text);
+      background: var(--bg);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────── */
+    #sidebar {
+      width: 220px;
+      min-width: 220px;
+      background: var(--navy);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .sidebar-logo {
+      color: #fff;
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 20px 18px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      cursor: pointer;
+    }
+
+    .sidebar-logo:hover { opacity: 0.8; }
+
+    .sidebar-section-label {
+      color: rgba(255,255,255,0.3);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 16px 18px 5px;
+    }
+
+    .sidebar-section {
+      display: block;
+      color: rgba(255,255,255,0.7);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 18px;
+      border-left: 3px solid transparent;
+      cursor: pointer;
+      transition: all 0.12s;
+      user-select: none;
+    }
+
+    .sidebar-section:hover { color: #fff; background: rgba(255,255,255,0.05); }
+    .sidebar-section.active { color: #fff; border-left-color: var(--blue); }
+
+    .sidebar-file {
+      display: block;
+      color: rgba(255,255,255,0.55);
+      font-size: 12px;
+      padding: 5px 18px 5px 28px;
+      border-left: 3px solid transparent;
+      cursor: pointer;
+      transition: all 0.12s;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      user-select: none;
+    }
+
+    .sidebar-file:hover { color: #fff; background: rgba(255,255,255,0.04); }
+    .sidebar-file.active { color: #fff; border-left-color: var(--blue); background: rgba(79,142,247,0.1); font-weight: 600; }
+
+    /* ── Main ────────────────────────────────────────────── */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Topbar ── */
+    #topbar {
+      background: #fff;
+      border-bottom: 1px solid var(--border);
+      padding: 0 28px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .bc-sep { color: #ccd1de; }
+    .bc-link { color: var(--blue); cursor: pointer; }
+    .bc-link:hover { text-decoration: underline; }
+    .bc-current { color: var(--text); font-weight: 500; }
+
+    /* ── Content area ── */
+    #content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 36px 52px;
+    }
+
+    /* ── Loading / error states ── */
+    .state-msg {
+      color: var(--muted);
+      font-size: 14px;
+      padding: 40px 0;
+      text-align: center;
+    }
+
+    /* ── Index grid ── */
+    .index-title {
+      font-size: 24px;
+      font-weight: 700;
+      color: #0f0f1a;
+      margin-bottom: 4px;
+    }
+
+    .index-sub {
+      color: var(--muted);
+      margin-bottom: 28px;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 22px;
+      cursor: pointer;
+      transition: box-shadow 0.15s, border-color 0.15s;
+    }
+
+    .card:hover {
+      box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+      border-color: var(--blue);
+    }
+
+    .card-title { font-size: 14px; font-weight: 650; color: #1a1a2e; margin-bottom: 5px; }
+    .card-meta  { font-size: 12px; color: var(--muted); }
+
+    /* ── File list ── */
+    .section-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: #0f0f1a;
+      margin-bottom: 20px;
+    }
+
+    .file-list {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .file-row {
+      display: flex;
+      align-items: center;
+      padding: 13px 18px;
+      border-bottom: 1px solid #f0f2f8;
+      cursor: pointer;
+      transition: background 0.1s;
+      gap: 14px;
+    }
+
+    .file-row:last-child { border-bottom: none; }
+    .file-row:hover { background: #f4f7ff; }
+
+    .file-num {
+      width: 24px; height: 24px;
+      border-radius: 50%;
+      background: var(--navy);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .file-label { flex: 1; font-size: 13px; font-weight: 500; }
+    .file-arrow { color: #c0c8d8; }
+
+    /* ── Markdown ── */
+    #md-body h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; color: #0f0f1a; }
+    #md-body h2 { font-size: 18px; font-weight: 650; margin: 36px 0 12px;
+                  padding-bottom: 7px; border-bottom: 1px solid var(--border); }
+    #md-body h3 { font-size: 15px; font-weight: 650; margin: 24px 0 8px; }
+    #md-body h4 { font-size: 13px; font-weight: 600; margin: 18px 0 6px; color: #555; }
+    #md-body p  { margin-bottom: 13px; }
+    #md-body ul, #md-body ol { margin: 0 0 13px 22px; }
+    #md-body li { margin-bottom: 3px; }
+    #md-body strong { font-weight: 650; }
+    #md-body a  { color: var(--blue); cursor: pointer; }
+    #md-body hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+
+    #md-body blockquote {
+      border-left: 4px solid var(--blue);
+      background: #eef3ff;
+      margin: 14px 0;
+      padding: 11px 15px;
+      border-radius: 0 6px 6px 0;
+      color: #2a3a5e;
+      font-size: 13px;
+    }
+
+    #md-body code {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px;
+      background: #eef0f6;
+      padding: 2px 5px;
+      border-radius: 4px;
+      color: #c7254e;
+    }
+
+    #md-body pre {
+      background: var(--navy);
+      border-radius: 8px;
+      padding: 18px 22px;
+      overflow-x: auto;
+      margin: 14px 0 18px;
+    }
+
+    #md-body pre code {
+      background: none; color: #e2e8f8; padding: 0;
+      font-size: 12px; line-height: 1.6;
+    }
+
+    #md-body table { width: 100%; border-collapse: collapse; margin: 14px 0 20px; font-size: 13px; }
+    #md-body th { background: var(--navy); color: #fff; font-weight: 600; padding: 9px 13px; text-align: left; }
+    #md-body td { padding: 8px 13px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    #md-body tr:last-child td { border-bottom: none; }
+    #md-body tr:nth-child(even) td { background: #f4f6fb; }
+
+    /* ── Prev/Next ── */
+    .prev-next {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 44px;
+      padding-top: 18px;
+      border-top: 1px solid var(--border);
+      font-size: 13px;
+    }
+
+    .prev-next span {
+      color: var(--blue);
+      cursor: pointer;
+    }
+
+    .prev-next span:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+<div id="sidebar">
+  <div class="sidebar-logo" onclick="manualsLoad()">YisraCase Docs</div>
+  <div id="sidebar-nav"></div>
+</div>
+
+<div id="main">
+  <div id="topbar"><span class="bc-current">Documentation</span></div>
+  <div id="content"><div class="state-msg">Loading…</div></div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────
+const state = {
+  sections:        [],   // [{ slug, label }]
+  currentSection:  null, // { slug, label }
+  currentFiles:    [],   // [{ slug, label }]
+  currentFile:     null  // { slug, label }
+};
+
+// ─────────────────────────────────────────────────────────────
+// API — uses parent's apiSend for auth
+// ─────────────────────────────────────────────────────────────
+async function api(path) {
+  return await window.parent.apiSend(path, 'GET');
+}
+
+// fetchMarkdown — apiSend handles auth and returns raw text for non-JSON responses
+async function fetchMarkdown(section, file) {
+  return await window.parent.apiSend(`/manual/${section}/${file}`, 'GET');
+}
+
+// ─────────────────────────────────────────────────────────────
+// DOM helpers
+// ─────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+
+function setContent(html) { $('content').innerHTML = html; }
+function setLoading()     { setContent('<div class="state-msg">Loading…</div>'); }
+function setError(msg)    { setContent(`<div class="state-msg">⚠ ${msg}</div>`); }
+
+function setBreadcrumb(parts) {
+  // parts: [{ label, onClick? }]  — last one has no onClick (current)
+  const html = parts.map((p, i) => {
+    const isLast = i === parts.length - 1;
+    if (isLast) return `<span class="bc-current">${p.label}</span>`;
+    const click = p.onClick ? `onclick="(${p.onClick})()"` : '';
+    return `<span class="bc-link" ${click}>${p.label}</span><span class="bc-sep">›</span>`;
+  }).join('');
+  $('topbar').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sidebar
+// ─────────────────────────────────────────────────────────────
+function renderSidebar() {
+  const nav = $('sidebar-nav');
+  if (!state.sections.length) { nav.innerHTML = ''; return; }
+
+  let html = '<div class="sidebar-section-label">Modules</div>';
+
+  for (const sec of state.sections) {
+    const isActive = state.currentSection?.slug === sec.slug;
+    html += `<div class="sidebar-section${isActive ? ' active' : ''}"
+               onclick="loadSection('${sec.slug}')">${sec.label}</div>`;
+
+    if (isActive && state.currentFiles.length) {
+      for (const file of state.currentFiles) {
+        const isFileActive = state.currentFile?.slug === file.slug;
+        html += `<div class="sidebar-file${isFileActive ? ' active' : ''}"
+                   onclick="loadFile('${sec.slug}','${file.slug}')"
+                   title="${file.label}">${file.label}</div>`;
+      }
+    }
+  }
+
+  nav.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Views
+// ─────────────────────────────────────────────────────────────
+
+// Index — grid of section cards
+async function showIndex() {
+  state.currentSection = null;
+  state.currentFile    = null;
+  state.currentFiles   = [];
+
+  setBreadcrumb([{ label: 'Documentation' }]);
+  setLoading();
+
+  try {
+    const data = await api('/manual');
+    state.sections = data.sections || [];
+    renderSidebar();
+
+    if (!state.sections.length) {
+      setContent('<div class="state-msg">No documentation sections found.</div>');
+      return;
+    }
+
+    const cards = state.sections.map(sec => `
+      <div class="card" onclick="loadSection('${sec.slug}')">
+        <div class="card-title">${sec.label}</div>
+        <div class="card-meta">Click to browse</div>
+      </div>`).join('');
+
+    setContent(`
+      <div class="index-title">YisraCase Documentation</div>
+      <p class="index-sub">Select a module below.</p>
+      <div class="card-grid">${cards}</div>`);
+
+  } catch {
+    setError('Could not load documentation index.');
+  }
+}
+
+// Section — file list
+async function loadSection(sectionSlug) {
+  state.currentSection = { slug: sectionSlug, label: '' };
+  state.currentFile    = null;
+  state.currentFiles   = [];
+
+  setBreadcrumb([
+    { label: 'Documentation', onClick: manualsLoad },
+    { label: '…' }
+  ]);
+  setLoading();
+
+  try {
+    const data = await api(`/manual/${sectionSlug}`);
+    state.currentSection = data.section;
+    state.currentFiles   = data.files || [];
+    renderSidebar();
+
+    setBreadcrumb([
+      { label: 'Documentation', onClick: manualsLoad },
+      { label: data.section.label }
+    ]);
+
+    if (!state.currentFiles.length) {
+      setContent('<div class="state-msg">No files in this section.</div>');
+      return;
+    }
+
+    const rows = state.currentFiles.map((f, i) => `
+      <div class="file-row" onclick="loadFile('${sectionSlug}','${f.slug}')">
+        <div class="file-num">${i + 1}</div>
+        <div class="file-label">${f.label}</div>
+        <div class="file-arrow">›</div>
+      </div>`).join('');
+
+    setContent(`
+      <div class="section-title">${data.section.label}</div>
+      <div class="file-list">${rows}</div>`);
+
+  } catch {
+    setError('Could not load section.');
+  }
+}
+
+// File — rendered markdown
+async function loadFile(sectionSlug, fileSlug) {
+  state.currentFile = { slug: fileSlug, label: '' };
+  setLoading();
+
+  // Find labels from state
+  if (!state.currentSection || state.currentSection.slug !== sectionSlug) {
+    // Navigate to section first to populate state, then load file
+    await loadSection(sectionSlug);
+  }
+
+  const secLabel  = state.currentSection?.label || sectionSlug;
+  const fileLabel = state.currentFiles.find(f => f.slug === fileSlug)?.label || fileSlug;
+  state.currentFile = { slug: fileSlug, label: fileLabel };
+  renderSidebar();
+
+  setBreadcrumb([
+    { label: 'Documentation', onClick: manualsLoad },
+    { label: secLabel, onClick: () => loadSection(sectionSlug) },
+    { label: fileLabel }
+  ]);
+
+  try {
+    const md = await fetchMarkdown(sectionSlug, fileSlug);
+
+    // Prev / next
+    const idx  = state.currentFiles.findIndex(f => f.slug === fileSlug);
+    const prev = state.currentFiles[idx - 1];
+    const next = state.currentFiles[idx + 1];
+
+    const prevNext = (prev || next) ? `
+      <div class="prev-next">
+        <div>${prev
+          ? `<span onclick="loadFile('${sectionSlug}','${prev.slug}')">← ${prev.label}</span>`
+          : ''}</div>
+        <div>${next
+          ? `<span onclick="loadFile('${sectionSlug}','${next.slug}')">${next.label} →</span>`
+          : ''}</div>
+      </div>` : '';
+
+    setContent(`<div id="md-body">${marked.parse(md)}</div>${prevNext}`);
+    $('content').scrollTop = 0;
+
+  } catch {
+    setError('Could not load file.');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Entry point — called by index.html button on first open,
+// and by the sidebar logo. Safe to call multiple times.
+// ─────────────────────────────────────────────────────────────
+async function manualsLoad(sectionSlug, fileSlug) {
+  if (fileSlug) {
+    await loadFile(sectionSlug, fileSlug);
+  } else if (sectionSlug) {
+    await loadSection(sectionSlug);
+  } else {
+    await showIndex();
+  }
+}
+
+// Auto-load on open
+manualsLoad();
+</script>
+</body>
+</html>

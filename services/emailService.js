@@ -30,6 +30,47 @@
 
 const nodemailer = require("nodemailer");
 
+// -------------------- NORMALIZERS --------------------
+// Ensures both text and html are always populated before sending.
+// - html only  → strip tags for text
+// - text only  → wrap in basic html
+// - neither    → throw
+// - both       → pass through unchanged
+
+function htmlToText(html) {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, '')     // strip all remaining tags
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/\n{3,}/g, '\n\n')  // collapse excessive blank lines
+    .trim();
+}
+
+function textToHtml(text) {
+  return '<p>' +
+    text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\n\n/g, '</p><p>')
+      .replace(/\n/g, '<br>') +
+    '</p>';
+}
+
+function normalizeBodies(text, html) {
+  if (!text && !html) throw new Error('Email requires at least one of: text, html');
+  return {
+    text: text || htmlToText(html),
+    html: html  || textToHtml(text)
+  };
+}
+
 function logEmail(db, messageId, from, to, subject, body) {
   db.query(
     `INSERT INTO email_log (message_id, from_email, to_email, subject, body, processed_at)
@@ -50,12 +91,14 @@ async function sendViaSmtp(db, creds, { from, to, subject, text, html, attachmen
     }
   });
 
+  const bodies = normalizeBodies(text, html);
+
   const mailOptions = {
     from,
     to,
     subject,
-    text,
-    ...(html && { html }),
+    text: bodies.text,
+    html: bodies.html,
     ...(attachments.length && { attachments })
   };
 
@@ -110,6 +153,7 @@ async function sendViaPabbly(db, { from, from_name, to, subject, text, html, att
   );
   if (!row?.value) throw new Error("app_settings missing key: pabbly_internal_url");
 
+  const bodies = normalizeBodies(text, html);
   const messageId = `PABBLY-${Date.now()}`;
   const { urls, names } = parseAttachments(attachment_urls, attachment_names);
 
@@ -119,14 +163,16 @@ async function sendViaPabbly(db, { from, from_name, to, subject, text, html, att
     body: JSON.stringify({
       service: "email_gmail",
       data: {
-        from, from_name, to, subject, text, html,
+        from, from_name, to, subject,
+        text: bodies.text,
+        html: bodies.html,
         ...(urls  && { attachment_urls: urls }),
         ...(names && { attachment_names: names })
       }
     })
   }).catch(err => console.error("Pabbly email call failed:", err.message));
 
-  logEmail(db, messageId, from, to, subject, text);
+  logEmail(db, messageId, from, to, subject, bodies.text);
   return { messageId, provider: "pabbly" };
 }
 
@@ -135,16 +181,20 @@ async function sendViaPabbly(db, { from, from_name, to, subject, text, html, att
  * Send a single email. Routes to smtp or pabbly based on email_credentials.provider.
  * @param {object} db
  * @param {object} opts
- * @param {string} opts.from       - must match a row in email_credentials
+ * @param {string} opts.from          - must match a row in email_credentials
  * @param {string} opts.to
  * @param {string} opts.subject
- * @param {string} opts.text       - plain text body (required even with html)
- * @param {string} [opts.html]
- * @param {Array}  [opts.attachments] - smtp only
+ * @param {string} [opts.text]        - plain text body (auto-generated from html if omitted)
+ * @param {string} [opts.html]        - html body (auto-generated from text if omitted)
+ *                                      At least one of text or html is required.
+ * @param {Array}  [opts.attachments] - smtp only, nodemailer format
  */
 async function sendEmail(db, { from, to, subject, text, html, attachments = [], attachment_urls, attachment_names }) {
-  if (!from || !to || !subject || !text) {
-    throw new Error("Missing required email fields (from, to, subject, text)");
+  if (!from || !to || !subject) {
+    throw new Error("Missing required email fields (from, to, subject)");
+  }
+  if (!text && !html) {
+    throw new Error("Email requires at least one of: text, html");
   }
 
   const [[creds]] = await db.query(

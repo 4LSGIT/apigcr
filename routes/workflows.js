@@ -62,25 +62,13 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       message: "Workflow execution started and is now processing"
     });
 
-    // Background advance with timeout guard
+    // Background advance — no timeout needed; recoverStuckJobs handles hangs
     (async () => {
       try {
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Advance timeout")), 15000)
-        );
-
-        const advanceResult = await Promise.race([
-          advanceWorkflow(executionId, db),
-          timeoutPromise
-        ]);
-
+        const advanceResult = await advanceWorkflow(executionId, db);
         console.log(`[ASYNC ADVANCE] Completed: ${advanceResult.status}`);
       } catch (err) {
-        console.log(`[ASYNC ADVANCE] Timeout or error: ${err.message}`);
-        await db.query(
-          `UPDATE workflow_executions SET status = 'failed', updated_at = NOW() WHERE id = ?`,
-          [executionId]
-        );
+        console.error(`[ASYNC ADVANCE] Failed for execution ${executionId}:`, err.message);
       }
     })();
 
@@ -140,9 +128,12 @@ router.get("/executions", jwtOrApiKey, async (req, res) => {
 
     const [rows] = await db.query(query, params);
 
-    // Total count for pagination
+    // Total count for pagination — must include the JOIN when search is active
+    // because the WHERE clause references w.name
     const [countRows] = await db.query(
-      `SELECT COUNT(*) as total FROM workflow_executions e WHERE 1=1` +
+      `SELECT COUNT(*) as total FROM workflow_executions e` +
+      (search ? ` LEFT JOIN workflows w ON e.workflow_id = w.id` : '') +
+      ` WHERE 1=1` +
       (status ? ` AND e.status = ?` : '') +
       (workflowId ? ` AND e.workflow_id = ?` : '') +
       (search ? ` AND (w.name LIKE ? OR JSON_SEARCH(e.variables, 'one', ?) IS NOT NULL)` : ''),
@@ -307,7 +298,10 @@ router.get("/workflows/:id/executions", jwtOrApiKey, async (req, res) => {
       success: true,
       executions: rows.map(row => ({
         ...row,
-        status_summary: row.failed_steps > 0 ? 'completed_with_errors' : 'completed'
+        // status_summary only meaningful once execution has finished
+        status_summary: row.status.startsWith('completed')
+          ? (row.failed_steps > 0 ? 'completed_with_errors' : 'completed')
+          : row.status
       })),
       pagination: {
         page,
@@ -617,6 +611,7 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
 
 
 
+
 /**
  * POST /workflows/bulk
  * Create a workflow template and all steps in one transaction
@@ -633,11 +628,41 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "At least one step is required" });
   }
 
+  // Validate all steps BEFORE opening a transaction — so bad input gets a
+  // clean 400 rather than a rollback + 500.
   const VALID_TYPES = new Set(["webhook", "internal_function", "custom_code"]);
   const usedNumbers = new Set();
+  const stepValues = [];
+
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+
+    if (!VALID_TYPES.has(step.type)) {
+      return res.status(400).json({ error: `Invalid step type at index ${i}` });
+    }
+
+    if (!step.config || typeof step.config !== "object") {
+      return res.status(400).json({ error: `Step ${i + 1} must contain a valid config object` });
+    }
+
+    const stepNumber = step.stepNumber ?? (i + 1);
+
+    if (usedNumbers.has(stepNumber)) {
+      return res.status(400).json({ error: `Duplicate stepNumber: ${stepNumber}` });
+    }
+
+    usedNumbers.add(stepNumber);
+
+    stepValues.push([
+      null,           // workflow_id — filled in after INSERT below
+      stepNumber,
+      step.type,
+      JSON.stringify(step.config),
+      step.error_policy ? JSON.stringify(step.error_policy) : null
+    ]);
+  }
 
   let connection;
-
   try {
     connection = await db.getConnection();
     await connection.beginTransaction();
@@ -649,35 +674,8 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
 
     const workflowId = workflowResult.insertId;
 
-    const stepValues = [];
-
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
-
-      if (!VALID_TYPES.has(step.type)) {
-        throw new Error(`Invalid step type at index ${i}`);
-      }
-
-      if (!step.config || typeof step.config !== "object") {
-        throw new Error(`Step ${i + 1} must contain a valid config object`);
-      }
-
-      const stepNumber = step.stepNumber ?? (i + 1);
-
-      if (usedNumbers.has(stepNumber)) {
-        throw new Error(`Duplicate stepNumber: ${stepNumber}`);
-      }
-
-      usedNumbers.add(stepNumber);
-
-      stepValues.push([
-        workflowId,
-        stepNumber,
-        step.type,
-        JSON.stringify(step.config),
-        step.error_policy ? JSON.stringify(step.error_policy) : null
-      ]);
-    }
+    // Patch in the real workflowId now that we have it
+    const rows = stepValues.map(row => [workflowId, row[1], row[2], row[3], row[4]]);
 
     await connection.query(
       `
@@ -685,15 +683,13 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
       (workflow_id, step_number, type, config, error_policy)
       VALUES ?
       `,
-      [stepValues]
+      [rows]
     );
 
     await connection.commit();
     connection.release();
 
-    console.log(
-      `[WORKFLOW CREATED] id=${workflowId} steps=${steps.length}`
-    );
+    console.log(`[WORKFLOW CREATED] id=${workflowId} steps=${steps.length}`);
 
     return res.status(201).json({
       success: true,
@@ -707,9 +703,7 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
       await connection.rollback();
       connection.release();
     }
-
     console.error("[WORKFLOW BULK CREATE ERROR]", err);
-
     return res.status(500).json({
       error: "Failed to create workflow",
       message: err.message

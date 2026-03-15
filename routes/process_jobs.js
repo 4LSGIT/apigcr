@@ -1,11 +1,11 @@
 // routes/process_jobs.js
 const express = require("express");
 const router = express.Router();
-const axios = require("axios");
-const vm = require("vm");
+//const axios = require("axios");
+//const vm = require("vm");
 const { CronExpressionParser } = require("cron-parser");
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
-const internalFunctions = require("../lib/internal_functions");
+//const internalFunctions = require("../lib/internal_functions");
 const { advanceWorkflow } = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
 
@@ -65,19 +65,26 @@ async function rescheduleRecurring(connection, job) {
 }
 
 async function recoverStuckJobs(db) {
-  // does not change attempts
-  const [result] = await db.query(
-    `
+  // Recover stuck scheduled jobs
+  const [jobResult] = await db.query(`
     UPDATE scheduled_jobs
     SET status = 'pending', updated_at = NOW()
     WHERE status = 'running'
       AND updated_at < NOW() - INTERVAL 10 MINUTE
-    `,
-  );
-  if (result.affectedRows > 0) {
-    console.warn(
-      `[JOB RECOVERY] Recovered ${result.affectedRows} stuck running jobs`,
-    );
+  `);
+  if (jobResult.affectedRows > 0) {
+    console.warn(`[JOB RECOVERY] Recovered ${jobResult.affectedRows} stuck running jobs`);
+  }
+
+  // Recover stuck workflow executions (e.g. server crashed mid-execution)
+  const [execResult] = await db.query(`
+    UPDATE workflow_executions
+    SET status = 'active', updated_at = NOW()
+    WHERE status = 'processing'
+      AND updated_at < NOW() - INTERVAL 10 MINUTE
+  `);
+  if (execResult.affectedRows > 0) {
+    console.warn(`[EXEC RECOVERY] Recovered ${execResult.affectedRows} stuck processing executions`);
   }
 }
 
@@ -231,66 +238,74 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
         conn.release();
       }
 
-      // Record failed attempt
+      // Record failed attempt — conn2 is in its own try/finally so the
+      // connection is always released even if recording or rescheduling throws.
       const conn2 = await db.getConnection();
-      await conn2.beginTransaction();
+      try {
+        await conn2.beginTransaction();
 
-      await recordResult(
-        conn2,
-        job.id,
-        executionNumber,
-        attempt,
-        false,
-        err.message,
-        Date.now() - start
-      );
-
-      if (attempt < job.max_attempts) {
-        const delayMs = job.backoff_seconds * Math.pow(2, attempt - 1) * 1000;
-        const nextTime = new Date(Date.now() + delayMs);
-
-        await conn2.query(
-          `
-          UPDATE scheduled_jobs
-          SET status='pending', attempts=?, scheduled_time=?, updated_at=NOW() 
-          WHERE id=?
-          `,
-          [attempt, nextTime, job.id]
+        await recordResult(
+          conn2,
+          job.id,
+          executionNumber,
+          attempt,
+          false,
+          err.message,
+          Date.now() - start
         );
 
-        results.push({
-          id: job.id,
-          status: "retry_scheduled",
-          attempt,
-          error: err.message,
-        });
-      } else {
-        if (job.type === "recurring") {
-          await rescheduleRecurring(conn2, job);
-          results.push({
-            id: job.id,
-            status: "advanced_after_failure",
-            error: err.message,
-          });
-        } else {
+        if (attempt < job.max_attempts) {
+          const delayMs = job.backoff_seconds * Math.pow(2, attempt - 1) * 1000;
+          const nextTime = new Date(Date.now() + delayMs);
+
           await conn2.query(
             `
             UPDATE scheduled_jobs
-            SET status='failed', attempts=?, updated_at=NOW(), execution_count = execution_count + 1
+            SET status='pending', attempts=?, scheduled_time=?, updated_at=NOW() 
             WHERE id=?
             `,
-            [attempt, job.id]
+            [attempt, nextTime, job.id]
           );
+
           results.push({
             id: job.id,
-            status: "failed",
+            status: "retry_scheduled",
+            attempt,
             error: err.message,
           });
+        } else {
+          if (job.type === "recurring") {
+            await rescheduleRecurring(conn2, job);
+            results.push({
+              id: job.id,
+              status: "advanced_after_failure",
+              error: err.message,
+            });
+          } else {
+            await conn2.query(
+              `
+              UPDATE scheduled_jobs
+              SET status='failed', attempts=?, updated_at=NOW(), execution_count = execution_count + 1
+              WHERE id=?
+              `,
+              [attempt, job.id]
+            );
+            results.push({
+              id: job.id,
+              status: "failed",
+              error: err.message,
+            });
+          }
         }
-      }
 
-      await conn2.commit();
-      conn2.release();
+        await conn2.commit();
+      } catch (recordErr) {
+        await conn2.rollback();
+        console.error(`[PROCESS-JOBS] Failed to record result for job ${job.id}:`, recordErr);
+        results.push({ id: job.id, status: "failed", error: err.message });
+      } finally {
+        conn2.release();
+      }
     }
   }
 
@@ -298,4 +313,3 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 });
 
 module.exports = router;
-module.exports.executeJob = executeJob;
