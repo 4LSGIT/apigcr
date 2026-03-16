@@ -1,176 +1,138 @@
-const express = require('express');
-const fetch = require('node-fetch');
-const moment = require('moment');
-const router = express.Router();
+// routes/cal.js
+// Thin route wrapper around services/calendarService.js.
+// All logic lives in the service — this file is just HTTP plumbing.
+//
+// Routes:
+//   GET  /isWorkday?date=YYYY-MM-DDTHH:mm:ss
+//   POST /nextBusinessDay
+//   POST /prevBusinessDay
 
-// Configuration for holiday and Shabbos time ranges
-const START_HOUR = 18; // 6 PM
-const END_HOUR = 22;   // 10 PM
+const express         = require('express');
+const router          = express.Router();
+const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
+const calendar        = require('../services/calendarService');
 
-// List of strict Yom Tov holidays
-const YOM_TOV_HOLIDAYS = [
-  'Rosh Hashana',
-  'Yom Kippur',
-  'Sukkot I',
-  'Sukkot II',
-  'Shmini Atzeret',
-  'Simchat Torah',
-  'Pesach I',
-  'Pesach II',
-  'Pesach VII',
-  'Pesach VIII',
-  'Shavuot I',
-  'Shavuot II'
-];
-
-// Endpoint: /isWorkday?date=YYYY-MM-DDTHH:mm:ss  OR  YYYY-MM-DD HH:mm:ss
+// ─────────────────────────────────────────────────────────────
+// GET /isWorkday?date=YYYY-MM-DDTHH:mm:ss
+// Unchanged behaviour from original cal.js — existing callers unaffected.
+// ─────────────────────────────────────────────────────────────
 router.get('/isWorkday', async (req, res) => {
-  try {
-    const { date } = req.query;
+  const { date } = req.query;
 
-    if (!date) {
-      return res.status(400).json({
-        error: 'Missing date parameter. Use format YYYY-MM-DDTHH:mm:ss or YYYY-MM-DD HH:mm:ss'
-      });
-    }
-
-    // Normalize: replace space with "T" so both formats work
-    const normalizedDate = date.replace(' ', 'T');
-    const inputDate = moment(normalizedDate, moment.ISO_8601, true);
-
-    if (!inputDate.isValid()) {
-      return res.status(400).json({
-        error: 'Invalid date parameter. Use format YYYY-MM-DDTHH:mm:ss or YYYY-MM-DD HH:mm:ss'
-      });
-    }
-
-    console.log(`Processing date: ${inputDate.format('YYYY-MM-DDTHH:mm:ss')}`);
-
-    // --- Check Shabbos (Friday after START_HOUR -> Saturday before END_HOUR) ---
-    let isShabbos = false;
-    if (inputDate.day() === 5) { // Friday
-      const shabbosStart = inputDate.clone().set({ hour: START_HOUR, minute: 0, second: 0, millisecond: 0 });
-      if (inputDate.isSameOrAfter(shabbosStart)) isShabbos = true;
-    } else if (inputDate.day() === 6) { // Saturday
-      const shabbosEnd = inputDate.clone().set({ hour: END_HOUR, minute: 0, second: 0, millisecond: 0 });
-      if (inputDate.isBefore(shabbosEnd)) isShabbos = true;
-    }
-    console.log(`Is Shabbos: ${isShabbos}`);
-
-    // --- Fetch Hebcal holidays (scan around input date) ---
-    let events = [];
-    const startDate = inputDate.clone().subtract(1, 'day').startOf('day');
-    const endDate = inputDate.clone().add(3, 'days').endOf('day');
-    const hebcalUrl = `https://www.hebcal.com/hebcal?cfg=json&v=1&maj=on&min=on&mod=on&start=${startDate.format('YYYY-MM-DD')}&end=${endDate.format('YYYY-MM-DD')}`;
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
-      const response = await fetch(hebcalUrl, { signal: controller.signal });
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const data = await response.json();
-        events = data.items || [];
-        console.log(`Hebcal events received: ${events.length}`);
-      } else {
-        console.error(`Hebcal API failed: ${response.status}`);
-      }
-    } catch (apiError) {
-      console.error('Hebcal API error:', apiError.message);
-      events = [];
-    }
-
-    // --- Build restricted days set (Shabbos + Yom Tov days) ---
-    const restricted = new Set();
-    for (let d = startDate.clone(); d.isSameOrBefore(endDate); d.add(1, 'day')) {
-      const dateStr = d.format('YYYY-MM-DD');
-      if (d.day() === 6) {
-        restricted.add(dateStr);
-        continue;
-      }
-      for (const event of events) {
-        if (event.date.startsWith(dateStr) && event.category === 'holiday' && !event.title.startsWith('Erev')) {
-          const isYomTov = YOM_TOV_HOLIDAYS.some(holiday =>
-            holiday === 'Rosh Hashana' ? event.title.includes('Rosh Hashana') : event.title === holiday
-          );
-          if (isYomTov) {
-            restricted.add(dateStr);
-            break;
-          }
-        }
-      }
-    }
-    console.log(`Restricted days: ${Array.from(restricted).join(', ')}`);
-
-    // --- Holiday check (specific window detection) ---
-    let isHoliday = false;
-    let holidayName = null;
-    if (!isShabbos) {
-      for (const event of events) {
-        if (event.category === 'holiday' && !event.title.startsWith('Erev')) {
-          const isYomTov = YOM_TOV_HOLIDAYS.some(holiday =>
-            holiday === 'Rosh Hashana' ? event.title.includes('Rosh Hashana') : event.title === holiday
-          );
-          if (!isYomTov) continue;
-          const holidayStart = moment(event.date).subtract(1, 'day').set({ hour: START_HOUR, minute: 0, second: 0, millisecond: 0 });
-          const holidayEnd = moment(event.date).set({ hour: END_HOUR, minute: 0, second: 0, millisecond: 0 });
-          if (inputDate.isSameOrAfter(holidayStart) && inputDate.isBefore(holidayEnd)) {
-            isHoliday = true;
-            holidayName = event.title;
-            break;
-          }
-        }
-      }
-    }
-    console.log(`Is Holiday: ${isHoliday}, Holiday Name: ${holidayName}`);
-
-    const workday = !isShabbos && !isHoliday;
-    console.log(`Is Workday: ${workday}`);
-
-    // --- Calculate workdayIn ---
-    let workdayIn = 0;
-    if (!workday) {
-      let coveringDay = null;
-      for (let d = startDate.clone(); d.isSameOrBefore(endDate); d.add(1, 'day')) {
-        const dateStr = d.format('YYYY-MM-DD');
-        if (!restricted.has(dateStr)) continue;
-        const periodStart = d.clone().subtract(1, 'day').set({ hour: START_HOUR, minute: 0, second: 0, millisecond: 0 });
-        const periodEnd = d.clone().set({ hour: END_HOUR, minute: 0, second: 0, millisecond: 0 });
-        if (inputDate.isSameOrAfter(periodStart) && inputDate.isBefore(periodEnd)) {
-          coveringDay = d.clone();
-        }
-      }
-      if (coveringDay) {
-        let lastRestricted = coveringDay.clone();
-        while (restricted.has(lastRestricted.clone().add(1, 'day').format('YYYY-MM-DD'))) {
-          lastRestricted.add(1, 'day');
-        }
-        const reopenTime = lastRestricted.clone().set({ hour: END_HOUR, minute: 0, second: 0, millisecond: 0 });
-        workdayIn = inputDate.isSameOrAfter(reopenTime) ? 0 : reopenTime.diff(inputDate, 'minutes');
-      }
-    }
-
-    // --- Response ---
-    const result = {
-      date: inputDate.format('YYYY-MM-DDTHH:mm:ss'),
-      isShabbos,
-      isHoliday,
-      holidayName: isHoliday ? holidayName : null,
-      workday,
-      workdayIn,
-      version: '5'
-    };
-
-    console.log(`Response: ${JSON.stringify(result)}`);
-    return res.json(result);
-
-  } catch (error) {
-    console.error('Error in /isWorkday:', error.message);
-    return res.status(500).json({
-      error: 'Internal server error',
-      details: error.message
+  if (!date) {
+    return res.status(400).json({
+      error: 'Missing date parameter. Use format YYYY-MM-DDTHH:mm:ss or YYYY-MM-DD HH:mm:ss'
     });
+  }
+
+  try {
+    const result = await calendar.isWorkday(date);
+    return res.json({ ...result, version: '6' });
+  } catch (err) {
+    if (err.message.startsWith('Invalid datetime')) {
+      return res.status(400).json({ error: err.message });
+    }
+    console.error('[GET /isWorkday]', err);
+    return res.status(500).json({ error: 'Internal server error', details: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /nextBusinessDay
+// Find the next available business day at a target time.
+//
+// Body:
+//   fromDate         {string}  ISO datetime to search from (default: now)
+//   timeOfDay        {string}  "HH:MM" target time (default "09:00")
+//   randomizeMinutes {number}  ± jitter in minutes (default 0)
+//   maxDaysAhead     {number}  give up after N days (default 30)
+//
+// Returns: { scheduledAt: ISO string, ...isWorkday result for that day }
+// ─────────────────────────────────────────────────────────────
+router.post('/nextBusinessDay', jwtOrApiKey, async (req, res) => {
+  const {
+    fromDate,
+    timeOfDay        = '09:00',
+    randomizeMinutes = 0,
+    maxDaysAhead     = 30,
+  } = req.body;
+
+  if (randomizeMinutes < 0) {
+    return res.status(400).json({ error: 'randomizeMinutes must be >= 0' });
+  }
+
+  try {
+    const scheduledAt = await calendar.nextBusinessDay(
+      fromDate ? new Date(fromDate) : new Date(),
+      { timeOfDay, randomizeMinutes, maxDaysAhead }
+    );
+
+    return res.json({
+      scheduledAt: scheduledAt.toISOString(),
+      input: { fromDate: fromDate || new Date().toISOString(), timeOfDay, randomizeMinutes }
+    });
+  } catch (err) {
+    if (err.message.startsWith('No business day found')) {
+      return res.status(422).json({ error: err.message });
+    }
+    console.error('[POST /nextBusinessDay]', err);
+    return res.status(500).json({ error: 'Internal server error', details: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /prevBusinessDay
+// Find the best business-day slot before an appointment.
+// Walks a priority-ordered attempts array, returns first valid slot.
+//
+// Body:
+//   anchorDate  {string}   ISO datetime of the appointment
+//   attempts    {object[]} ordered fallback rules — see calendarService.prevBusinessDay
+//   defaults    {object}   { minHoursBefore, maxDaysBack }
+//
+// Returns: { scheduledAt, attemptIndex } or { scheduledAt: null, reason: "all_blocked" }
+// ─────────────────────────────────────────────────────────────
+router.post('/prevBusinessDay', jwtOrApiKey, async (req, res) => {
+  const { anchorDate, attempts, defaults } = req.body;
+
+  if (!anchorDate) {
+    return res.status(400).json({ error: 'anchorDate is required' });
+  }
+
+  if (!Array.isArray(attempts) || !attempts.length) {
+    return res.status(400).json({ error: 'attempts must be a non-empty array' });
+  }
+
+  try {
+    const result = await calendar.prevBusinessDay(
+      new Date(anchorDate),
+      attempts,
+      defaults || {}
+    );
+
+    if (!result) {
+      return res.json({
+        scheduledAt: null,
+        reason: 'all_blocked',
+        message: 'All reminder attempt slots were blocked by holidays or fell in the past'
+      });
+    }
+
+    const anchor        = new Date(anchorDate);
+    const scheduled     = result.scheduledAt;
+    const actualHoursBefore = (anchor - scheduled) / (1000 * 60 * 60);
+    const requestedHoursBack = attempts[result.attemptIndex].hoursBack;
+
+    return res.json({
+      scheduledAt:      scheduled.toISOString(),
+      attemptIndex:     result.attemptIndex,
+      attemptUsed:      attempts[result.attemptIndex],
+      actualHoursBefore: Math.round(actualHoursBefore * 10) / 10,
+      walkedBack:        Math.abs(actualHoursBefore - requestedHoursBack) > 0.5
+    });
+  } catch (err) {
+    console.error('[POST /prevBusinessDay]', err);
+    return res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 });
 

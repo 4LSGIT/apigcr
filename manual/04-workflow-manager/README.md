@@ -1,50 +1,20 @@
-# 4LSG Workflow Engine — Manual
+# YisraCase — Workflow & Automation System
 
-This manual covers the workflow automation engine and standalone job scheduler built into the 4LSG API.
-
-Served via `GET /manuals/:section` — each section renders as a styled HTML page suitable for iframes.
+This manual covers the full automation system: three interconnected engines plus the shared infrastructure they run on.
 
 ---
 
 ## Contents
 
-| Section | File | Audience |
-|---------|------|----------|
-| 1 | [01-overview.md](01-overview.md) | Non-technical — what workflows are and how to use them |
-| 2 | [02-api-reference.md](02-api-reference.md) | All API endpoints for workflows, executions, and jobs |
-| 3 | [03-internal-functions.md](03-internal-functions.md) | Every built-in function with params and config examples |
-| 4 | [04-variables-templating.md](04-variables-templating.md) | The `{{variable}}` system, `this`, `env`, and `set_vars` |
-| 5 | [05-error-policies.md](05-error-policies.md) | Retry strategies, backoff, and failure handling |
-| 6 | [06-execution-lifecycle.md](06-execution-lifecycle.md) | Execution statuses, delays, recovery, and the job processor |
-| 7 | [07-scheduled-jobs.md](07-scheduled-jobs.md) | Standalone scheduled and recurring jobs |
-
----
-
-## Quick Start
-
-```js
-// 1. Create a workflow
-POST /workflows/bulk  { name, steps: [...] }
-
-// 2. Start it
-POST /workflows/:id/start  { contactId: 123, ...any init data }
-
-// 3. Check it
-GET /executions/:id?history=true
-
-// 4. Schedule a standalone job
-POST /scheduled-jobs  { type: "one_time", job_type: "webhook", delay: "10m", url: "..." }
-```
-
-## Routes
-
-```
-GET /manuals              → this index
-GET /manuals/overview     → Part 1
-GET /manuals/api          → Part 2
-GET /manuals/functions    → Part 3
-GET /manuals/variables    → Part 4
-GET /manuals/errors       → Part 5
-GET /manuals/lifecycle    → Part 6
-GET /manuals/jobs         → Part 7
-```
+| # | File | Contents |
+|---|------|----------|
+| 1 | [01-overview.md](01-overview.md) | The three engines, when to use each, how they connect |
+| 2 | [02-workflows.md](02-workflows.md) | Workflow engine — concepts, lifecycle, step types, control flow |
+| 3 | [03-sequences.md](03-sequences.md) | Sequence engine — templates, enrollment, conditions, timing |
+| 4 | [04-scheduled-jobs.md](04-scheduled-jobs.md) | Standalone job scheduler — one-time and recurring |
+| 5 | [05-internal-functions.md](05-internal-functions.md) | All built-in functions with params and examples |
+| 6 | [06-variables-templating.md](06-variables-templating.md) | Workflow variables, universal resolver, modifiers |
+| 7 | [07-calendar-service.md](07-calendar-service.md) | Jewish business calendar, timing types, holiday handling |
+| 8 | [08-error-policies.md](08-error-policies.md) | Retry strategies and backoff |
+| 9 | [09-api-reference.md](09-api-reference.md) | All API endpoints |
+| 10 | [10-database-schema.md](10-database-schema.md) | All tables and relationships |

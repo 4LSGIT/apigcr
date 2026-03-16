@@ -4,7 +4,8 @@ const router = express.Router();
 const { CronExpressionParser } = require("cron-parser");
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { advanceWorkflow } = require("../lib/workflow_engine");
-const { executeJob } = require("../lib/job_executor");
+const { executeJob }      = require("../lib/job_executor");
+const { executeStep }     = require("../lib/sequenceEngine");
 
 
 async function recordResult(
@@ -194,8 +195,42 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
         continue; // next job in the batch
       }
 
+      // SPECIAL CASE: sequence_step
+      if (job.type === 'sequence_step') {
+        const data = typeof job.data === 'string' ? JSON.parse(job.data) : job.data;
+        const { enrollmentId, stepId } = data || {};
+
+        console.log(`[SEQ STEP] enrollment=${enrollmentId} step=${stepId}`);
+
+        // Mark job completed before executing (step engine handles its own state)
+        await conn.query(
+          `UPDATE scheduled_jobs SET status = 'completed', updated_at = NOW() WHERE id = ?`,
+          [job.id]
+        );
+        await conn.commit();
+        conn.release();
+
+        // Execute in background (non-blocking) — same pattern as workflow_resume
+        (async () => {
+          try {
+            const result = await executeStep(db, enrollmentId, stepId);
+            console.log(`[SEQ STEP] enrollment=${enrollmentId} step=${stepId} → ${result.status}${result.reason ? ' ('+result.reason+')' : ''}`);
+          } catch (err) {
+            console.error(`[SEQ STEP] Failed enrollment=${enrollmentId} step=${stepId}:`, err.message);
+          }
+        })();
+
+        results.push({
+          id:     job.id,
+          status: 'completed',
+          note:   `Sequence step enrollment=${enrollmentId} step=${stepId}`
+        });
+
+        continue; // next job in the batch
+      }
+
       // NORMAL JOB TYPES (webhook, internal_function, custom_code)
-      const output = await executeJob(job, db);
+      const output = await executeJob(job);
 
       // Record successful attempt
       await recordResult(

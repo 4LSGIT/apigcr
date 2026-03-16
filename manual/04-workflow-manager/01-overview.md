@@ -1,127 +1,117 @@
-# Part 1 — Overview (Non-Technical)
+# Part 1 — Overview
 
-## What Is a Workflow?
-
-A workflow is an automated sequence of actions that runs when something happens — a new contact is created, an appointment is booked, a form is submitted, etc. Instead of manually sending follow-up emails, creating tasks, or making calls, a workflow does it automatically, in order, on a schedule.
-
-Each workflow is made up of **steps**. Each step does one thing: send a message, look something up, wait a while, make a decision. The engine runs through the steps one by one, passing information forward as it goes.
+The YisraCase automation system has three interconnected engines that share common infrastructure but serve different purposes. Understanding which to use — and why — is the starting point for everything else.
 
 ---
 
-## A Simple Example
+## The Three Engines
 
-Here is a 5-step workflow that runs when a new contact comes in:
+### Workflow Engine
+Multi-step processes where data flows between steps. Best for complex automation that needs branching logic, variable passing, and an auditable step-by-step history. Not contact-specific by default — you provide context in `init_data` when you start it.
 
-```
-Step 1 — Load the contact's name, email, and phone from the database
-Step 2 — Send a welcome email to the contact
-Step 3 — Wait 5 minutes
-Step 4 — Send a follow-up SMS to the contact
-Step 5 — Email the IT team with a summary
-```
+**Use when:** You need a sequence of actions that depend on each other, share data, or need conditional branching. Example: when a new consultation is scheduled, look up the contact, send a welcome email, create an intake task, notify the assigned attorney, and update the case status — all in one coordinated flow.
 
-This runs automatically, every time, for every contact — without anyone doing anything manually.
+### Sequence Engine
+Contact-specific drip sequences with condition gates at every step. Designed to be enrolled from outside, cancelled from outside, and automatically skip or abort when conditions change. Built around the idea that the *reason you started* may no longer apply by the time a step fires.
+
+**Use when:** You need a series of communications or tasks tied to a specific contact and a specific trigger event, where each step should check "is this still relevant?" before acting. Example: no-show follow-up — send SMS after 5 minutes, again after 2 hours, then next business day — but cancel automatically if the contact books a new appointment.
+
+### Scheduled Job Scheduler
+Single actions fired at a specific time or on a recurring schedule. No contact context, no chaining, no conditions. Pure fire-and-forget scheduling.
+
+**Use when:** You need one thing to happen at one time, or on a repeating schedule. Example: daily digest email every weekday at 9am, or a webhook ping to sync with an external CRM every 6 hours.
 
 ---
 
-## How Workflows Are Triggered
+## Choosing the Right Engine
 
-A workflow is started by calling an API endpoint from anywhere in the application:
+| Question | Workflow | Sequence | Scheduled Job |
+|----------|----------|----------|---------------|
+| Is it tied to a specific contact? | Optional | ✓ Always | ✗ |
+| Does it need to auto-cancel from outside? | ✗ | ✓ | ✗ |
+| Does each step re-check conditions? | Manual | ✓ Built-in | ✗ |
+| Does it need branching logic? | ✓ | Limited | ✗ |
+| Does it need data flow between steps? | ✓ | Via resolver | ✗ |
+| Is it recurring on a schedule? | ✗ | ✗ | ✓ |
+| Is it a single action at a future time? | Overkill | Overkill | ✓ |
 
+---
+
+## Shared Infrastructure
+
+All three engines run on the same foundation:
+
+**`scheduled_jobs` table** — the unified job queue. All three engines insert rows here; `/process-jobs` picks them up on a polling interval. Job types: `one_time`, `recurring`, `workflow_resume`, `sequence_step`.
+
+**`internal_functions.js`** — the built-in action library. Send SMS, send email, create task, lookup/update contact or appointment, wait, branch, evaluate conditions. All three engines call the same functions.
+
+**`services/resolverService.js`** — the universal placeholder resolver. Resolves `{{contacts.contact_fname}}`, `{{appts.appt_date|date:dddd MMMM Do}}`, etc. against live DB data in a single JOIN query. Used by workflows (via `resolvePlaceholders`) and sequences (via `resolve()`).
+
+**`services/calendarService.js`** — Jewish business calendar. Shabbos and Yom Tov aware. Used by sequence timing (`next_business_day`, `before_appt`) and the `/isWorkday`, `/nextBusinessDay`, `/prevBusinessDay` routes.
+
+---
+
+## How They Connect
+
+```
+                        ┌─────────────────────────────┐
+                        │      /process-jobs           │
+                        │  (polls every ~30 seconds)   │
+                        └──────────────┬──────────────┘
+                                       │
+              ┌────────────────────────┼────────────────────────┐
+              │                        │                        │
+              ▼                        ▼                        ▼
+   workflow_resume job       sequence_step job          one_time/recurring
+              │                        │                        │
+              ▼                        ▼                        ▼
+   advanceWorkflow()          executeStep()             executeJob()
+   workflow_engine.js         sequenceEngine.js         job_executor.js
+              │                        │                        │
+              └────────────────────────┴────────────────────────┘
+                                       │
+                              internal_functions.js
+                              resolverService.js
+                              calendarService.js
+```
+
+---
+
+## Quick Start Examples
+
+**Start a workflow:**
 ```js
 await apiSend("/workflows/1/start", "POST", {
   contactId: 123,
-  contactName: "Fred Smith",
-  source: "web"
+  source: "web_form"
 });
 ```
 
-Anything you pass in the body is available to every step in the workflow as a variable. So `{{contactId}}`, `{{contactName}}`, and `{{source}}` can all be used in step configs, email bodies, SMS messages, etc.
-
----
-
-## What Kinds of Steps Exist?
-
-There are three kinds of steps:
-
-**Webhook** — calls an external URL (any third-party API, Zapier, webhook.site, etc.)
-
-**Internal Function** — runs a built-in action like sending an SMS, looking up a contact, waiting a set time, or making a branching decision. This is what most steps use.
-
-**Custom Code** — runs a small JavaScript snippet for one-off logic. Useful for data transformation.
-
----
-
-## How Does Branching Work?
-
-Sometimes you need a workflow to take different paths. For example: if the contact already has an appointment, go to step 8; otherwise go to step 4.
-
-This is done with the `evaluate_condition` function. You tell it what variable to check, what to compare it to, and which step to go to for each outcome:
-
-```
-If appt_status == "confirmed" → go to step 8
-Otherwise → go to step 4
-```
-
-You can also jump unconditionally with `set_next`, which simply tells the engine "go to step N next" regardless of any condition.
-
----
-
-## How Do Delays Work?
-
-A step can pause the workflow for a set amount of time and then resume automatically. For example:
-
-- `wait_for "5m"` — resume in 5 minutes
-- `wait_for "24h"` — resume in 24 hours
-- `wait_until_time "09:00" "America/Detroit"` — resume at 9am Detroit time
-
-While the workflow is waiting, its status shows as `delayed`. When the time comes, the job processor automatically resumes it.
-
----
-
-## What Happens If a Step Fails?
-
-Each step has an **error policy** that tells the engine what to do if that step fails:
-
-- **ignore** — log the failure and continue to the next step (default)
-- **abort** — stop the entire workflow immediately
-- **retry then ignore** — try again up to N times, then continue
-- **retry then abort** — try again up to N times, then stop
-
-See [05-error-policies.md](05-error-policies.md) for full details.
-
----
-
-## How Do I Check on a Running Workflow?
-
-```
-GET /executions/:id           — current status, variables, step position
-GET /executions/:id?history=true  — full step-by-step history with outputs
-GET /executions              — list all executions (filterable by status, workflow)
-```
-
-You can also cancel a running workflow:
-
-```
-POST /executions/:id/cancel
-```
-
----
-
-## Worked Example — Contact Intake Sequence
-
-This is the canonical test workflow. It is triggered with:
-
+**Enroll a contact in a sequence:**
 ```js
-await apiSend("/workflows/1/start", "POST", { contactId: 123 });
+await apiSend("/sequences/enroll", "POST", {
+  contact_id:    123,
+  template_type: "no_show",
+  trigger_data:  { appt_id: 456, appt_time: "2026-03-20T14:00:00Z" }
+});
 ```
 
-| Step | Type | What It Does |
-|------|------|--------------|
-| 1 | `lookup_contact` | Fetches contact row; maps email, phone, name into variables |
-| 2 | `send_email` | Sends welcome email to contact from `stuart@4lsg.com` |
-| 3 | `wait_for` | Pauses 5 minutes |
-| 4 | `send_sms` | Sends follow-up SMS from `2485592400` |
-| 5 | `send_email` | Notifies `it@4lsg.com` with contact data and execution ID |
+**Cancel all no-show sequences for a contact:**
+```js
+await apiSend("/sequences/cancel", "POST", {
+  contact_id:    123,
+  template_type: "no_show",
+  reason:        "new_appointment_booked"
+});
+```
 
-Variables flow forward automatically — the email in step 2 uses `{{contact_email}}` that was set in step 1, and step 5 uses `{{env.executionId}}` which the engine provides automatically.
+**Schedule a one-time job:**
+```js
+await apiSend("/scheduled-jobs", "POST", {
+  type:          "one_time",
+  job_type:      "internal_function",
+  delay:         "10m",
+  function_name: "send_sms",
+  params:        { from: "2485592400", to: "3135551234", message: "Your reminder." }
+});
+```
