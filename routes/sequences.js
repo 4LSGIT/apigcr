@@ -94,7 +94,7 @@ router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
 
   try {
     const [result] = await db.query(
-      `INSERT INTO sequence_templates (name, type, appt_type_filter, condition, description, active)
+      `INSERT INTO sequence_templates (name, type, appt_type_filter, \`condition\`, description, active)
        VALUES (?, ?, ?, ?, ?, ?)`,
       [name.trim(), type.trim(), appt_type_filter || null,
        condition ? JSON.stringify(condition) : null,
@@ -118,7 +118,7 @@ router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
   if (name        !== undefined) { updates.push('name = ?');              params.push(name?.trim()); }
   if (type        !== undefined) { updates.push('type = ?');              params.push(type?.trim()); }
   if (appt_type_filter !== undefined) { updates.push('appt_type_filter = ?'); params.push(appt_type_filter); }
-  if (condition   !== undefined) { updates.push('condition = ?');         params.push(condition ? JSON.stringify(condition) : null); }
+  if (condition   !== undefined) { updates.push('\`condition\` = ?');         params.push(condition ? JSON.stringify(condition) : null); }
   if (description !== undefined) { updates.push('description = ?');       params.push(description); }
   if (active      !== undefined) { updates.push('active = ?');            params.push(active ? 1 : 0); }
 
@@ -198,7 +198,7 @@ router.post('/sequences/templates/:id/steps', jwtOrApiKey, async (req, res) => {
     }
 
     const [result] = await connection.query(
-      `INSERT INTO sequence_steps (template_id, step_number, action_type, action_config, timing, condition, fire_guard, error_policy)
+      `INSERT INTO sequence_steps (template_id, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [templateId, targetStep, action_type,
        JSON.stringify(action_config), JSON.stringify(timing),
@@ -234,7 +234,7 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
     if (!step) return res.status(404).json({ error: 'Step not found' });
 
     await db.query(
-      `UPDATE sequence_steps SET action_type=?, action_config=?, timing=?, condition=?, fire_guard=?, error_policy=?, updated_at=NOW()
+      `UPDATE sequence_steps SET action_type=?, action_config=?, timing=?, \`condition\`=?, fire_guard=?, error_policy=?, updated_at=NOW()
        WHERE template_id=? AND step_number=?`,
       [action_type, JSON.stringify(action_config), JSON.stringify(timing),
        condition    ? JSON.stringify(condition)   : null,
@@ -261,7 +261,7 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
   if (action_type   !== undefined) { updates.push('action_type = ?');   params.push(action_type); }
   if (action_config !== undefined) { updates.push('action_config = ?'); params.push(JSON.stringify(action_config)); }
   if (timing        !== undefined) { updates.push('timing = ?');        params.push(JSON.stringify(timing)); }
-  if (condition     !== undefined) { updates.push('condition = ?');     params.push(condition ? JSON.stringify(condition) : null); }
+  if (condition     !== undefined) { updates.push('\`condition\` = ?');     params.push(condition ? JSON.stringify(condition) : null); }
   if (fire_guard    !== undefined) { updates.push('fire_guard = ?');    params.push(fire_guard ? JSON.stringify(fire_guard) : null); }
   if (error_policy  !== undefined) { updates.push('error_policy = ?'); params.push(error_policy ? JSON.stringify(error_policy) : null); }
 
