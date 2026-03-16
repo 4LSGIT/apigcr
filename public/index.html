@@ -33,6 +33,9 @@
     <button style="height: 30px" onclick="openMainTab('tabAdmin')" id="adminButton">
       <i class="fa-solid fa-crown"></i> Admin Tab
     </button>
+    <button style="height: 30px" onclick="openMainTab('tabSettings')" id="settingsButton">
+      <i class="fa-solid fa-gear"></i> Settings
+    </button>
     <button style="height: 30px" onclick="Swal.fire({ title: 'Log Out?',html: '<p>Are you sure you want to log out?</p><p>You will lose all unsaved data in all the open files!</p>',
             icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, goodbye!',cancelButtonText: 'No, cancel',
             preConfirm: () => { logout();location.reload();}});">
@@ -1638,6 +1641,39 @@
       });
     }
   </script>
+
+
+<div id="tabSettings" class="tab-main">
+  <h2>Settings</h2>
+
+  <button class="big-button" data-target="manualsDiv">Manuals</button>
+  <button class="big-button" data-target="workflowsDiv">Workflows</button>
+
+  <div id="manualsDiv" class="settings-panel" style="display:none">
+    <iframe src="/manuals.html"></iframe>
+  </div>
+  <div id="workflowsDiv" class="settings-panel" style="display:none">
+    <iframe src="/workflowManager.html"></iframe>
+  </div>
+</div>
+<script>
+  document.querySelectorAll('#tabSettings .big-button').forEach(btn => {
+  btn.addEventListener('click', () => {
+
+    const targetId = btn.dataset.target
+    const target = document.getElementById(targetId)
+
+    const panels = document.querySelectorAll('#tabSettings .settings-panel')
+
+    const wasHidden = getComputedStyle(target).display === 'none'
+
+    panels.forEach(p => p.style.display = 'none')
+
+    if (wasHidden) target.style.display = ''
+  })
+})
+</script>
+  
 
   <div id="tabAdmin" class="tab-main">
     <h2>Admin</h2>
