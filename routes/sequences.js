@@ -459,4 +459,42 @@ router.post('/sequences/enrollments/:id/cancel', jwtOrApiKey, async (req, res) =
   }
 });
 
+// PATCH /sequences/templates/:id/steps/reorder — swap two steps
+router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, res) => {
+  const db         = req.db;
+  const templateId = parseInt(req.params.id);
+  const { fromStep, toStep } = req.body;
+
+  if (!fromStep || !toStep) return res.status(400).json({ error: 'fromStep and toStep are required' });
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // Two-pass swap via temp number
+    const temp = 99999;
+    await connection.query(
+      `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
+      [temp, templateId, fromStep]
+    );
+    await connection.query(
+      `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
+      [fromStep, templateId, toStep]
+    );
+    await connection.query(
+      `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
+      [toStep, templateId, temp]
+    );
+
+    await connection.commit();
+    connection.release();
+    res.json({ success: true });
+  } catch (err) {
+    if (connection) { await connection.rollback(); connection.release(); }
+    res.status(500).json({ error: 'Failed to reorder steps', message: err.message });
+  }
+});
+
+
 module.exports = router;

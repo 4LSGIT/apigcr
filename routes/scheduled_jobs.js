@@ -260,4 +260,136 @@ router.get("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// GET /scheduled-jobs — list jobs
+// ─────────────────────────────────────────────────────────────
+router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const { status, type, page = 1, limit = 30, search } = req.query;
+  const offset   = (Math.max(1, parseInt(page)) - 1) * Math.min(100, parseInt(limit));
+  const limitInt = Math.min(100, Math.max(1, parseInt(limit)));
+
+  try {
+    let query  = `SELECT id, type, status, name, scheduled_time, recurrence_rule,
+                    attempts, max_attempts, execution_count, created_at, updated_at
+                  FROM scheduled_jobs WHERE 1=1`;
+    const params = [];
+
+    if (status) { query += ` AND status = ?`;         params.push(status); }
+    if (type)   { query += ` AND type = ?`;           params.push(type); }
+    if (search) { query += ` AND name LIKE ?`;        params.push(`%${search}%`); }
+
+    // Hide internal workflow/sequence jobs from the list by default
+    if (!req.query.internal) {
+      query += ` AND type NOT IN ('workflow_resume', 'sequence_step')`;
+    }
+
+    query += ` ORDER BY scheduled_time DESC LIMIT ? OFFSET ?`;
+    params.push(limitInt, offset);
+
+    const [rows] = await db.query(query, params);
+
+    const countQuery  = query.replace(/SELECT .* FROM/, 'SELECT COUNT(*) as total FROM').replace(/ORDER BY.*$/, '');
+    const countParams = params.slice(0, -2);
+    const [[{ total }]] = await db.query(countQuery, countParams);
+
+    res.json({
+      success: true,
+      jobs: rows,
+      pagination: { page: parseInt(page), limit: limitInt, total, totalPages: Math.ceil(total / limitInt) }
+    });
+  } catch (err) {
+    console.error("Failed to list jobs:", err);
+    res.status(500).json({ error: "Failed to list jobs", detail: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// PATCH /scheduled-jobs/:id — edit a job
+// Only pending/failed jobs can be edited.
+// ─────────────────────────────────────────────────────────────
+router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
+  const db  = req.db;
+  const { id } = req.params;
+  const { name, scheduled_time, recurrence_rule, max_attempts, backoff_seconds, data } = req.body;
+
+  try {
+    const [[job]] = await db.query(`SELECT id, status, type FROM scheduled_jobs WHERE id = ?`, [id]);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+
+    if (!['pending', 'failed'].includes(job.status)) {
+      return res.status(409).json({
+        error: `Cannot edit a job with status '${job.status}'. Only pending or failed jobs can be edited.`
+      });
+    }
+
+    const updates = [];
+    const params  = [];
+
+    if (name             !== undefined) { updates.push("name = ?");             params.push(name); }
+    if (scheduled_time   !== undefined) {
+      const dt = new Date(scheduled_time);
+      if (isNaN(dt.getTime())) return res.status(400).json({ error: "Invalid scheduled_time" });
+      updates.push("scheduled_time = ?"); params.push(dt);
+    }
+    if (recurrence_rule  !== undefined) { updates.push("recurrence_rule = ?");  params.push(recurrence_rule); }
+    if (max_attempts     !== undefined) { updates.push("max_attempts = ?");     params.push(parseInt(max_attempts)); }
+    if (backoff_seconds  !== undefined) { updates.push("backoff_seconds = ?");  params.push(parseInt(backoff_seconds)); }
+    if (data             !== undefined) { updates.push("data = ?");             params.push(JSON.stringify(data)); }
+
+    if (!updates.length) return res.status(400).json({ error: "Nothing to update" });
+
+    // If rescheduling a failed job, reset it to pending
+    if (scheduled_time && job.status === 'failed') {
+      updates.push("status = 'pending'");
+      updates.push("attempts = 0");
+    }
+
+    params.push(id);
+    await db.query(
+      `UPDATE scheduled_jobs SET ${updates.join(", ")}, updated_at = NOW() WHERE id = ?`,
+      params
+    );
+
+    res.json({ success: true, id: parseInt(id), message: "Job updated" });
+  } catch (err) {
+    console.error("Failed to edit job:", err);
+    res.status(500).json({ error: "Failed to edit job", detail: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// DELETE /scheduled-jobs/:id — cancel/delete a job
+// Pending jobs → deleted. Running/completed/failed → marked cancelled (status update).
+// ─────────────────────────────────────────────────────────────
+router.delete("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+
+  try {
+    const [[job]] = await db.query(`SELECT id, status, type FROM scheduled_jobs WHERE id = ?`, [id]);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+
+    // Don't allow deleting internal engine jobs
+    if (['workflow_resume', 'sequence_step'].includes(job.type)) {
+      return res.status(403).json({ error: "Cannot delete internal engine jobs directly" });
+    }
+
+    if (job.status === 'pending') {
+      await db.query(`DELETE FROM scheduled_jobs WHERE id = ?`, [id]);
+      return res.json({ success: true, action: "deleted", message: "Pending job deleted" });
+    }
+
+    // For running/completed/failed — just mark as failed so it won't run again
+    await db.query(
+      `UPDATE scheduled_jobs SET status = 'failed', updated_at = NOW() WHERE id = ?`, [id]
+    );
+    res.json({ success: true, action: "cancelled", message: `Job marked as failed (was ${job.status})` });
+  } catch (err) {
+    console.error("Failed to delete job:", err);
+    res.status(500).json({ error: "Failed to delete job", detail: err.message });
+  }
+});
+
+
 module.exports = router;
