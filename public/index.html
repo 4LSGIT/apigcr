@@ -1518,72 +1518,86 @@
               <label><input style="width:auto;" type="radio" name="smsReminder" onchange="E('userPhoneLabel').innerHTML=this.checked?'Phone Number:':'Phone Number:*'" ${user.allow_sms == 0 ? "checked" : ""
           } value="no"> No</label>
               </span>
-              <span class="spacer"></span><input id="userPhone" value="${user.phone
+              <span class="spacer"></span><input id="userPhone" value="${user.phone || ""
           }"><br>
               <label class="input-label-top">Task Reminders:</label><span class="spacer"></span><label class="input-label-top"></label><br>
-              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Sunday" ${user.task_remind_freq.includes("Sunday") ? "checked" : ""
+              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Sunday" ${user.task_remind_freq?.includes("Sunday") ? "checked" : ""
           }> Sunday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Monday" ${user.task_remind_freq.includes("Monday") ? "checked" : ""
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Monday" ${user.task_remind_freq?.includes("Monday") ? "checked" : ""
           }> Monday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Tuesday" ${user.task_remind_freq.includes("Tuesday") ? "checked" : ""
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Tuesday" ${user.task_remind_freq?.includes("Tuesday") ? "checked" : ""
           }> Tuesday</label></div>
-              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Wednesday" ${user.task_remind_freq.includes("Wednesday") ? "checked" : ""
+              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Wednesday" ${user.task_remind_freq?.includes("Wednesday") ? "checked" : ""
           }> Wednesday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Thursday" ${user.task_remind_freq.includes("Thursday") ? "checked" : ""
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Thursday" ${user.task_remind_freq?.includes("Thursday") ? "checked" : ""
           }> Thursday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Friday" ${user.task_remind_freq.includes("Friday") ? "checked" : ""
+              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Friday" ${user.task_remind_freq?.includes("Friday") ? "checked" : ""
           }> Friday</label></div>
-              `, //consider adding an onchange hiddenInputOrVariable = this.value == %{user.whatever} ? hiddanInputOrValue : "changed";
-        // then just check that value in preConfirm
-        preConfirm: () => {
-          userFirstName = E("userFirstName").value;
-          userLastName = E("userLastName").value;
-          userUsername = E("userUsername").value;
-          userEmail = E("userEmail").value;
-          userPhone = E("userPhone").value || "{{blank}}";
-          smsreminder = E("userSMSyes").checked ? "1" : "0";
-          selectedDays =
-            Array.from(
-              document.querySelectorAll(
-                'input[name="taskReminderFreq"]:checked'
-              )
-            )
-              .map((day) => day.value)
-              .join(",") || "{{blank}}";
-          if (
-            !userFirstName ||
-            !userLastName ||
-            !userUsername ||
-            !userEmail ||
-            (smsreminder == "1" && userPhone == "{{blank}}")
-          ) {
-            Swal.showValidationMessage(
-              "Please enter all the mandatory fields"
-            );
-            return false;
-          }
-          console.log(selectedDays);
-          showProcessingSwal();
-          fetch(
-            `${url}?mode=updateUser&username=${username}&password=${password}&type=updateInfo&userFirstName=${userFirstName}&userLastName=${userLastName}&userUsername=${userUsername}&userEmail=${userEmail}&userPhone=${userPhone}&smsreminder=${smsreminder}&selectedDays=${selectedDays}`
-          )
-            .then((response) => response.json())
-            .then((data) => {
-              console.log(data);
-              Toast.fire({
-                title: data.title || "Error",
-                text: data.message || "An unknown error occurred",
-                icon: data.icon || "error",
-              });
-              if (data.icon == "success") {
-                user = data.userdata;
-                username = user.username;
-                E("myNameIs").innerHTML = user.user_name;
-              }
-            });
-        },
+              `,
         showCancelButton: true,
         confirmButtonText: "Update",
+        confirmButtonColor: "#07ADEF",
+        showLoaderOnConfirm: true,
+        preConfirm: async () => {
+          const userFirstName = E("userFirstName").value.trim();
+          const userLastName = E("userLastName").value.trim();
+          const userUsername = E("userUsername").value.trim();
+          const userEmail = E("userEmail").value.trim();
+          const userPhone = E("userPhone").value.replace(/\D/g, "");
+          const smsreminder = E("userSMSyes").checked ? 1 : 0;
+          const selectedDays = Array.from(
+            document.querySelectorAll('input[name="taskReminderFreq"]:checked')
+          ).map(d => d.value).join(",");
+
+          if (!userFirstName || !userLastName || !userUsername || !userEmail) {
+            Swal.showValidationMessage("Please enter all the mandatory fields");
+            return false;
+          }
+          if (smsreminder === 1 && !userPhone) {
+            Swal.showValidationMessage("Phone number is required when SMS reminders are enabled");
+            return false;
+          }
+          if (userPhone && userPhone.length !== 10) {
+            Swal.showValidationMessage("Please enter a valid 10-digit phone number");
+            return false;
+          }
+
+          try {
+            const data = await apiSend("/api/auth/update-profile", "POST", {
+              user_fname: userFirstName,
+              user_lname: userLastName,
+              username: userUsername,
+              email: userEmail,
+              phone: userPhone || null,
+              allow_sms: smsreminder,
+              task_remind_freq: selectedDays
+            });
+            return data;
+          } catch (err) {
+            Swal.showValidationMessage(err.message || "Failed to update profile");
+            return false;
+          }
+        },
+        allowOutsideClick: () => !Swal.isLoading()
+      }).then((result) => {
+        if (result.isConfirmed && result.value) {
+          const updated = result.value.user;
+
+          // Refresh in-memory user object
+          Object.assign(user, updated);
+
+          // Sync auth globals in case username changed
+          username = updated.username;
+          AUTH_STATE.username = updated.username;
+
+          E("myNameIs").innerHTML = updated.user_name;
+
+          Toast.fire({
+            icon: "success",
+            title: "Profile updated successfully",
+            timer: 2000
+          });
+        }
       });
     }
 
