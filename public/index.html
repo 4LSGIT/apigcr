@@ -1589,37 +1589,62 @@
 
     function updateUserPass() {
       Swal.fire({
-        title: "Enter your password",
-        input: "password",
-        inputLabel: "Password",
-        inputPlaceholder: "Enter your password",
-        inputAttributes: {
-          maxlength: "10",
-          autocapitalize: "off",
-          autocorrect: "off",
-        },
-        preConfirm: (newPass) => {
-          if (newPass == password || !newPass) {
-            Swal.showValidationMessage("Please enter a new password");
+        title: "Change Password",
+        html: `
+          <label class="input-label-top">Current Password:</label>
+          <input type="password" id="currentPass" class="swal2-input" placeholder="Current password">
+          <label class="input-label-top">New Password:</label>
+          <input type="password" id="newPass" class="swal2-input" placeholder="New password">
+          <label class="input-label-top">Confirm New Password:</label>
+          <input type="password" id="confirmPass" class="swal2-input" placeholder="Confirm new password">
+        `,
+        showCancelButton: true,
+        confirmButtonText: "Change Password",
+        confirmButtonColor: "#07ADEF",
+        showLoaderOnConfirm: true,
+        preConfirm: async () => {
+          const currentPass = E("currentPass").value;
+          const newPass = E("newPass").value;
+          const confirmPass = E("confirmPass").value;
+
+          if (!currentPass || !newPass || !confirmPass) {
+            Swal.showValidationMessage("Please fill in all fields");
             return false;
           }
-          showProcessingSwal();
-          fetch(
-            `${url}?mode=updateUser&username=${username}&password=${password}&type=updatePass&newPass=${newPass}`
-          )
-            .then((response) => response.json())
-            .then((data) => {
-              console.log(data);
-              Toast.fire({
-                title: data.title || "Error",
-                text: data.message || "An unknown error occurred",
-                icon: data.icon || "error",
-              });
-              if (data.icon == "success") {
-                password = newPass;
-              }
+          if (newPass.length < 4) {
+            Swal.showValidationMessage("New password must be at least 4 characters");
+            return false;
+          }
+          if (newPass !== confirmPass) {
+            Swal.showValidationMessage("New passwords do not match");
+            return false;
+          }
+
+          try {
+            const data = await apiSend("/api/auth/change-password", "POST", {
+              current_password: currentPass,
+              new_password: newPass
             });
+            return data;
+          } catch (err) {
+            Swal.showValidationMessage(err.message || "Failed to change password");
+            return false;
+          }
         },
+        allowOutsideClick: () => !Swal.isLoading()
+      }).then((result) => {
+        if (result.isConfirmed) {
+          // Update the in-memory password global so legacy routes stay in sync
+          // TODO: REMOVE when dropping plaintext password column
+          password = E("newPass")?.value || password;
+          AUTH_STATE.password = password;
+
+          Toast.fire({
+            icon: "success",
+            title: "Password changed successfully",
+            timer: 2000
+          });
+        }
       });
     }
 
@@ -1861,25 +1886,32 @@
           allowEscapeKey: false,
 
           preDeny: () => {
-            const username = E("username").value;
-            if (!username) {
+            const identifier = E("username").value;
+            if (!identifier) {
               Swal.showValidationMessage("Please enter your username or email");
               return false;
             }
 
             Swal.fire({
               icon: "question",
-              title: `Send reset email?`,
-              text: "the system administrator will also be alerted",
+              title: "Send reset email?",
+              text: "A reset link will be sent to the email on file. The system administrator will also be alerted.",
               showDenyButton: true,
               denyButtonText: "Cancel",
-              preConfirm: () => {
-                fetch(
-                  `${url}?mode=resetPW&username=${username}&password=password`
-                );
+              confirmButtonColor: "#07ADEF",
+              showLoaderOnConfirm: true,
+              preConfirm: async () => {
+                try {
+                  await fetch("/auth/forgot-password", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ identifier })
+                  });
+                } catch (_) {}
+                // Always show success (don't reveal if account exists)
                 Swal.fire({
                   icon: "success",
-                  text: "please check your email for further instructions",
+                  text: "If an account matches, a reset link has been sent. Please check your email.",
                 }).then(() => loginBlocking());
               },
               preDeny: () => loginBlocking(),
