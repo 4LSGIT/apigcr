@@ -1650,10 +1650,10 @@
   <button class="big-button" data-target="workflowsDiv">Workflows</button>
 
   <div id="manualsDiv" class="settings-panel" style="display:none">
-    <iframe src="/manuals.html"></iframe>
+    <iframe data-src="/manuals.html"></iframe>
   </div>
   <div id="workflowsDiv" class="settings-panel" style="display:none">
-    <iframe src="/workflowManager.html"></iframe>
+    <iframe data-src="/workflowManager.html"></iframe>
   </div>
 </div>
 <script>
@@ -1669,7 +1669,15 @@
 
     panels.forEach(p => p.style.display = 'none')
 
-    if (wasHidden) target.style.display = ''
+    if (wasHidden) {
+      target.style.display = ''
+      // Lazy-load: set src from data-src on first click
+      const iframe = target.querySelector('iframe[data-src]')
+      if (iframe) {
+        iframe.src = iframe.dataset.src
+        delete iframe.dataset.src
+      }
+    }
   })
 })
 </script>
