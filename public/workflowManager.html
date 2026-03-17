@@ -1376,8 +1376,9 @@ function jobCardHTML(job) {
         <div class="job-meta">
           <span><i class="fa-regular fa-clock"></i> ${esc(when)}</span>
           ${job.recurrence_rule?`<span><i class="fa-solid fa-rotate"></i> ${esc(job.recurrence_rule)}</span>`:''}
-          <span>Runs: ${job.execution_count||0}${job.attempts>0?` · Attempts: ${job.attempts}`:''}
+          <span>Runs: ${job.execution_count||0}${job.max_executions?` / ${job.max_executions}`:''}${job.attempts>0?` · Attempts: ${job.attempts}`:''}
           </span>
+          ${job.expires_at?`<span><i class="fa-solid fa-flag-checkered"></i> Expires ${new Date(job.expires_at).toLocaleDateString()}</span>`:''}
         </div>
       </div>
       <span class="status-badge ${statusClass}">${job.status}</span>
@@ -1407,7 +1408,9 @@ async function jobNew() {
       <input id="sj-delay" class="swal2-input" placeholder='Delay e.g. "10m", "2h", "1d"'>
       <input id="sj-url" class="swal2-input" placeholder="Webhook URL (if webhook)">
       <input id="sj-fn" class="swal2-input" placeholder="Function name (if internal_function)">
-      <input id="sj-cron" class="swal2-input" placeholder='Cron rule (if recurring) e.g. "0 9 * * 1-5"'>`,
+      <input id="sj-cron" class="swal2-input" placeholder='Cron rule (if recurring) e.g. "0 9 * * 1-5"'>
+      <input id="sj-max-exec" class="swal2-input" type="number" placeholder="Max executions (optional, recurring only)">
+      <input id="sj-expires" class="swal2-input" type="datetime-local" placeholder="Expires at (optional, recurring only)">`,
     showCancelButton:true,confirmButtonText:'Create',width:520,
     preConfirm:()=>{
       const type=document.getElementById('sj-type').value;
@@ -1419,7 +1422,11 @@ async function jobNew() {
       const cron=document.getElementById('sj-cron').value.trim();
       if(job_type==='webhook'&&!url){Swal.showValidationMessage('URL is required for webhook');return;}
       if(job_type==='internal_function'&&!fn){Swal.showValidationMessage('Function name is required');return;}
-      return{type,job_type,name,delay,url,function_name:fn,recurrence_rule:cron,params:{}};
+      const maxExec=document.getElementById('sj-max-exec').value;
+      const expires=document.getElementById('sj-expires').value;
+      return{type,job_type,name,delay,url,function_name:fn,recurrence_rule:cron,params:{},
+        ...(maxExec&&{max_executions:parseInt(maxExec)}),
+        ...(expires&&{expires_at:new Date(expires).toISOString()})};
     }
   });
   if(!vals)return;
@@ -1436,14 +1443,18 @@ async function jobEdit(id) {
       <input id="sje-time" class="swal2-input" type="datetime-local" value="${data.scheduled_time?new Date(data.scheduled_time).toISOString().slice(0,16):''}">
       <input id="sje-cron" class="swal2-input" placeholder="Cron rule (recurring only)" value="${esc(data.recurrence_rule||'')}">
       <input id="sje-max" class="swal2-input" type="number" placeholder="Max attempts" value="${data.max_attempts||3}">
-      <input id="sje-backoff" class="swal2-input" type="number" placeholder="Backoff seconds" value="${data.backoff_seconds||300}">`,
+      <input id="sje-backoff" class="swal2-input" type="number" placeholder="Backoff seconds" value="${data.backoff_seconds||300}">
+      <input id="sje-max-exec" class="swal2-input" type="number" placeholder="Max executions (recurring)" value="${data.max_executions||''}">
+      <input id="sje-expires" class="swal2-input" type="datetime-local" placeholder="Expires at (recurring)" value="${data.expires_at?new Date(data.expires_at).toISOString().slice(0,16):''}">`,
     showCancelButton:true,confirmButtonText:'Save',
     preConfirm:()=>({
       name:document.getElementById('sje-name').value.trim()||undefined,
       scheduled_time:document.getElementById('sje-time').value||undefined,
       recurrence_rule:document.getElementById('sje-cron').value.trim()||undefined,
       max_attempts:parseInt(document.getElementById('sje-max').value)||undefined,
-      backoff_seconds:parseInt(document.getElementById('sje-backoff').value)||undefined
+      backoff_seconds:parseInt(document.getElementById('sje-backoff').value)||undefined,
+      max_executions:document.getElementById('sje-max-exec').value?parseInt(document.getElementById('sje-max-exec').value):undefined,
+      expires_at:document.getElementById('sje-expires').value?new Date(document.getElementById('sje-expires').value).toISOString():undefined
     })
   });
   if(!vals)return;

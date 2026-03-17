@@ -25,6 +25,8 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
     recurrence_rule,    // cron string, only used if type = "recurring"
     max_attempts = 3,
     backoff_seconds = 300,
+    max_executions = null,  // optional: stop after N successful executions
+    expires_at = null,      // optional: stop after this datetime (ISO string)
 
     // job-specific payload
     url, method = "GET", headers = {}, body,           // webhook
@@ -42,6 +44,18 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
 
   if (!["webhook", "internal_function", "custom_code"].includes(job_type)) {
     return res.status(400).json({ error: "job_type must be webhook, internal_function or custom_code" });
+  }
+
+  if (max_executions !== null && (isNaN(parseInt(max_executions)) || parseInt(max_executions) < 1)) {
+    return res.status(400).json({ error: "max_executions must be a positive integer" });
+  }
+
+  let finalExpiresAt = null;
+  if (expires_at) {
+    finalExpiresAt = new Date(expires_at);
+    if (isNaN(finalExpiresAt.getTime())) {
+      return res.status(400).json({ error: "expires_at must be a valid ISO datetime" });
+    }
   }
 
   // Build job.data
@@ -93,8 +107,8 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
     const [result] = await db.query(
       `
       INSERT INTO scheduled_jobs
-      (type, scheduled_time, status, name, data, recurrence_rule, max_attempts, backoff_seconds)
-      VALUES (?, ?, 'pending', ?, ?, ?, ?, ?)
+      (type, scheduled_time, status, name, data, recurrence_rule, max_attempts, backoff_seconds, max_executions, expires_at)
+      VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         type,
@@ -104,6 +118,8 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
         type === "recurring" ? recurrence_rule : null,
         max_attempts,
         backoff_seconds,
+        max_executions ? parseInt(max_executions) : null,
+        finalExpiresAt || null,
       ]
     );
 
@@ -113,6 +129,8 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
       scheduled_time: finalScheduledTime.toISOString(),
       type,
       job_type,
+      max_executions: max_executions ? parseInt(max_executions) : null,
+      expires_at: finalExpiresAt ? finalExpiresAt.toISOString() : null,
     });
   } catch (err) {
     console.error("Failed to create job:", err);
@@ -241,6 +259,9 @@ router.get("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
 
       data: parsedData,
 
+      max_executions:  job.max_executions || null,
+      expires_at:      job.expires_at || null,
+
       stats: {
         total_runs: stats.total_runs || 0,
         total_failures: stats.total_failures || 0,
@@ -311,7 +332,7 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
 router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
   const db  = req.db;
   const { id } = req.params;
-  const { name, scheduled_time, recurrence_rule, max_attempts, backoff_seconds, data } = req.body;
+  const { name, scheduled_time, recurrence_rule, max_attempts, backoff_seconds, data, max_executions, expires_at } = req.body;
 
   try {
     const [[job]] = await db.query(`SELECT id, status, type FROM scheduled_jobs WHERE id = ?`, [id]);
@@ -336,6 +357,12 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
     if (max_attempts     !== undefined) { updates.push("max_attempts = ?");     params.push(parseInt(max_attempts)); }
     if (backoff_seconds  !== undefined) { updates.push("backoff_seconds = ?");  params.push(parseInt(backoff_seconds)); }
     if (data             !== undefined) { updates.push("data = ?");             params.push(JSON.stringify(data)); }
+    if (max_executions   !== undefined) { updates.push("max_executions = ?");   params.push(max_executions !== null ? parseInt(max_executions) : null); }
+    if (expires_at       !== undefined) {
+      const dt = expires_at ? new Date(expires_at) : null;
+      if (dt && isNaN(dt.getTime())) return res.status(400).json({ error: "Invalid expires_at" });
+      updates.push("expires_at = ?"); params.push(dt || null);
+    }
 
     if (!updates.length) return res.status(400).json({ error: "Nothing to update" });
 

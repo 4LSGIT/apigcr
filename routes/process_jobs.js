@@ -41,11 +41,33 @@ async function recordResult(
 async function rescheduleRecurring(connection, job) {
   if (job.type !== "recurring" || !job.recurrence_rule) return;
 
+  const nextExecutionCount = (job.execution_count || 0) + 1;
+
+  // Check expiry limits before rescheduling
+  if (job.max_executions && nextExecutionCount >= job.max_executions) {
+    console.log(`[RECURRING] Job ${job.id} reached max_executions (${job.max_executions}) — marking completed`);
+    await connection.query(
+      `UPDATE scheduled_jobs SET status = 'completed', execution_count = ?, updated_at = NOW() WHERE id = ?`,
+      [nextExecutionCount, job.id]
+    );
+    return;
+  }
+
   const interval = CronExpressionParser.parse(job.recurrence_rule, {
     currentDate: new Date(job.scheduled_time),
   });
 
   const nextTime = interval.next().toDate();
+
+  // Check if next scheduled time would be past the expiry
+  if (job.expires_at && nextTime > new Date(job.expires_at)) {
+    console.log(`[RECURRING] Job ${job.id} next run (${nextTime.toISOString()}) is past expires_at (${job.expires_at}) — marking completed`);
+    await connection.query(
+      `UPDATE scheduled_jobs SET status = 'completed', execution_count = ?, updated_at = NOW() WHERE id = ?`,
+      [nextExecutionCount, job.id]
+    );
+    return;
+  }
 
   await connection.query(
     `
@@ -106,6 +128,8 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
       FROM scheduled_jobs
       WHERE status = 'pending'
         AND scheduled_time <= NOW()
+        AND (expires_at IS NULL OR expires_at > NOW())
+        AND (max_executions IS NULL OR execution_count < max_executions)
       ORDER BY scheduled_time
       LIMIT ?
       FOR UPDATE SKIP LOCKED

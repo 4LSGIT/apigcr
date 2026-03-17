@@ -357,26 +357,34 @@ router.get('/sequences/enrollments', jwtOrApiKey, async (req, res) => {
   const limitInt  = Math.min(100, Math.max(1, parseInt(limit)));
 
   try {
-    let query = `
+    // Build WHERE conditions separately so the count query is clean
+    const whereClauses = ['1=1'];
+    const whereParams  = [];
+
+    if (contact_id)    { whereClauses.push('e.contact_id = ?');  whereParams.push(contact_id); }
+    if (template_type) { whereClauses.push('t.type = ?');         whereParams.push(template_type); }
+    if (status)        { whereClauses.push('e.status = ?');       whereParams.push(status); }
+
+    const whereStr = whereClauses.join(' AND ');
+
+    const query = `
       SELECT e.*, t.name AS template_name, t.type AS template_type,
              c.contact_fname, c.contact_lname
       FROM sequence_enrollments e
       JOIN sequence_templates t ON t.id = e.template_id
       JOIN contacts c ON c.contact_id = e.contact_id
-      WHERE 1=1`;
-    const params = [];
+      WHERE ${whereStr}
+      ORDER BY e.enrolled_at DESC LIMIT ? OFFSET ?`;
+    const params = [...whereParams, limitInt, offset];
 
-    if (contact_id)    { query += ` AND e.contact_id = ?`;  params.push(contact_id); }
-    if (template_type) { query += ` AND t.type = ?`;         params.push(template_type); }
-    if (status)        { query += ` AND e.status = ?`;       params.push(status); }
+    const countQuery = `
+      SELECT COUNT(*) as total
+      FROM sequence_enrollments e
+      JOIN sequence_templates t ON t.id = e.template_id
+      WHERE ${whereStr}`;
 
-    query += ` ORDER BY e.enrolled_at DESC LIMIT ? OFFSET ?`;
-    params.push(limitInt, offset);
-
-    const [rows]      = await db.query(query, params);
-    const countParams = params.slice(0, -2);
-    const countQuery  = query.replace(/SELECT .* FROM/, 'SELECT COUNT(*) as total FROM').replace(/ORDER BY.*$/, '');
-    const [[{ total }]] = await db.query(countQuery, countParams);
+    const [rows]        = await db.query(query, params);
+    const [[{ total }]] = await db.query(countQuery, whereParams);
 
     res.json({
       success: true,
