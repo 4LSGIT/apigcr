@@ -77,6 +77,22 @@ await apiSend("/scheduled-jobs", "POST", {
 });
 ```
 
+### Recurring with limits
+```js
+await apiSend("/scheduled-jobs", "POST", {
+  type:            "recurring",
+  job_type:        "webhook",
+  name:            "Daily appointment report",
+  scheduled_time:  "2026-03-18T04:00:00Z",
+  recurrence_rule: "0 4 * * 0,1,2,3,4,5",  // every day except Saturday
+  max_executions:  10,                        // stop after 10 runs
+  expires_at:      "2026-06-30T23:59:00Z",   // or stop at end of June
+  url:             "https://app.4lsg.com/workflows/5/start",
+  method:          "POST",
+  headers:         { "x-api-key": "YOUR_INTERNAL_API_KEY" }
+});
+```
+
 ---
 
 ## Scheduling Options
@@ -86,6 +102,8 @@ await apiSend("/scheduled-jobs", "POST", {
 | `delay` | Duration from now: `"30s"`, `"10m"`, `"2h"`, `"1d"` |
 | `scheduled_time` | ISO datetime — takes priority over `delay` |
 | `recurrence_rule` | Cron expression (recurring only) |
+| `max_executions` | Stop after N successful runs (recurring only, optional) |
+| `expires_at` | ISO datetime — stop scheduling after this date (recurring only, optional) |
 
 If neither `delay` nor `scheduled_time` is provided, the job fires in ~5 seconds.
 
@@ -97,6 +115,25 @@ If neither `delay` nor `scheduled_time` is provided, the job fires in ~5 seconds
 | `0 */6 * * *` | Every 6 hours |
 | `*/30 * * * *` | Every 30 minutes |
 | `0 8 1 * *` | 8:00am on the 1st of every month |
+
+---
+
+## Execution Limits (Recurring Jobs)
+
+Two optional fields control when a recurring job stops running automatically:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `max_executions` | integer | Stop after this many successful executions. `null` = no limit. |
+| `expires_at` | ISO datetime | Stop scheduling new runs after this datetime. `null` = no expiry. |
+
+Both are checked **before** a job is claimed by `/process-jobs`:
+- If `execution_count >= max_executions` → job is skipped and never picked up again
+- If `expires_at <= NOW()` → same
+
+When a recurring job hits its limit during rescheduling, it is marked `completed` rather than being rescheduled. The job row stays in the table for audit purposes.
+
+Both fields can also be set on existing jobs via `PATCH /scheduled-jobs/:id`.
 
 ---
 

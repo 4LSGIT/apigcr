@@ -273,6 +273,53 @@ Update one or more fields on an appointment.
 
 ---
 
+---
+
+## Appointments
+
+### `get_appointments`
+Query the appointments table with optional filters. Returns results formatted for email, variable storage, or counting.
+
+**Params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `status` | string | Filter by `appt_status` e.g. `'Scheduled'`, `'No Show'` |
+| `date` | string | `'today'`, `'tomorrow'`, or `'YYYY-MM-DD'` |
+| `from` | string | ISO datetime lower bound |
+| `to` | string | ISO datetime upper bound |
+| `contact_id` | number | Filter by contact |
+| `case_id` | string | Filter by case |
+| `appt_type` | string | Filter by appointment type |
+| `limit` | number | Max rows (default 200) |
+| `format` | string | `'raw'` (array), `'html_rows'` (`<tr>` rows for email), `'count'` (number only) |
+| `base_url` | string | Base URL for links in `html_rows` (default `'https://app.4lsg.com'`) |
+
+**Returns:** `{ success, output: { rows, count, html, date_formatted, has_appointments }, set_vars }`
+
+- `output.rows` — array of appointment objects with joined contact, case, and user data
+- `output.html` — ready-to-paste `<tr>` rows when `format: 'html_rows'`, includes inline styles and clickable links
+- `output.date_formatted` — e.g. `"Wednesday, March 18, 2026"` — for email headers
+- `output.has_appointments` — boolean convenience field
+
+```json
+{
+  "function_name": "get_appointments",
+  "params": {
+    "status": "Scheduled",
+    "date":   "today",
+    "format": "html_rows"
+  },
+  "set_vars": {
+    "apptRows":         "{{this.output.html}}",
+    "apptCount":        "{{this.output.count}}",
+    "todayFormatted":   "{{this.output.date_formatted}}",
+    "morningApptCount": "{{this.output.count}}"
+  }
+}
+```
+
+> Use `morningApptCount` as a second variable when you need to preserve the morning count across a workflow that later re-queries appointments at midday. Step 7 overwrites `apptCount` — `morningApptCount` is only set once and stays.
+
 ## Dev / Testing
 
 ### `set_test_var`

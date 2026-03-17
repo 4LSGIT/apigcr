@@ -157,6 +157,8 @@ Unified job queue for all three engines.
 | `max_attempts` | int | Default 3 |
 | `backoff_seconds` | int | Default 300 |
 | `execution_count` | int | Total successful completions |
+| `max_executions` | int | Stop recurring job after N successful runs. NULL = no limit. |
+| `expires_at` | datetime | Stop scheduling after this datetime. NULL = no expiry. |
 | `idempotency_key` | varchar(100) | Prevents duplicate resume/step jobs |
 | `created_at` / `updated_at` | datetime | |
 

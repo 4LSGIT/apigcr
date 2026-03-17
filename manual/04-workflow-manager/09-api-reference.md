@@ -118,9 +118,22 @@ Omit `template_type` to cancel all active sequences for the contact.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/scheduled-jobs` | Create a job |
+| `GET` | `/scheduled-jobs` | List jobs (query: `status`, `type`, `search`, `internal`) |
 | `GET` | `/scheduled-jobs/:id` | Job metadata + latest result |
 | `GET` | `/scheduled-jobs/:id?history=true` | Full attempt history |
+| `PATCH` | `/scheduled-jobs/:id` | Edit a pending or failed job |
+| `DELETE` | `/scheduled-jobs/:id` | Delete pending job or mark non-pending as failed |
 | `POST` (or any) | `/process-jobs` | Claim and execute pending jobs |
+
+**Create/edit fields for recurring limits:**
+```json
+{
+  "max_executions": 10,
+  "expires_at": "2026-06-30T23:59:00Z"
+}
+```
+
+`GET /scheduled-jobs` hides internal `workflow_resume` and `sequence_step` jobs by default. Pass `?internal=true` to include them.
 
 ---
 
