@@ -1,0 +1,1 @@
+there are appts. they are always a contact and a staff, they can also have a case
