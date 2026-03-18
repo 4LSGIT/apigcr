@@ -2223,16 +2223,16 @@
              <label class="input-label">Email:</label>
              <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
              <label class="input-label">Set Appointment:</label>
-             <input type="datetime-local" id="NCDate" style="width:200px;"><br>
-             <label class="sub-label">Optional, fill in to schedule.</label><br>
+             <input type="datetime-local" id="NCDate" style="width:200px;" disabled title="Coming soon"><br>
+             <label class="sub-label" style="color:#999;">Temporarily disabled — coming soon.</label><br>
              <label class="input-label">Case Type:</label>
-             <select id="NCType" style="width:200px;">
+             <select id="NCType" style="width:200px;" onchange="E('NCOtherType').style.display = this.value === 'Other' ? '' : 'none';">
               <option selected value="">Select a case type</option>
               <option>Bankruptcy</option>
               <option>Other</option>
              </select><br>
+             <input style="width:200px; display:none;" type="text" id="NCOtherType" placeholder="Enter case type"><br>
              <label class="sub-label">Optional, select type to create lead.</label><br>
-             <input type="checkbox" id="NCDuplicate" style="width:auto"><label for="NCDuplicate">Create new client on duplicate?</label>
              `,
         showCancelButton: true,
         showConfirmButton: true,
@@ -2244,108 +2244,151 @@
         denyButtonColor: "#26abe2",
         showLoaderOnConfirm: true,
         showLoaderOnDeny: true,
-        preConfirm: () => {
-          name = E("NCName").value;
-          phone = E("NCPhone").value.replace(/\D/g, "");
-          email = E("NCEmail").value;
-          date = E("NCDate").value;
-          type = E("NCType").value;
-          duplicate = E("NCDuplicate").checked ? "duplicate" : "update";
-          if (!name || !E("NCPhone").value /*|| !email*/) {
+
+        // ── ADD & OPEN CLIENT ──
+        preConfirm: async () => {
+          const name = E("NCName").value.trim();
+          const phone = E("NCPhone").value.replace(/\D/g, "");
+          const email = E("NCEmail").value.trim();
+          const date = E("NCDate").value;
+          const caseTypeRaw = E("NCType").value;
+          const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
+
+          if (!name || !E("NCPhone").value) {
             Swal.showValidationMessage("Please fill in all required fields");
             return false;
-          } else if (name.split(" ").length == 1) {
+          }
+          if (name.split(" ").length < 2) {
             Swal.showValidationMessage("Please fill in a valid full name");
             return false;
-          } else if (phone.length != 10) {
+          }
+          if (phone.length !== 10) {
             Swal.showValidationMessage("Please fill in a valid phone number");
             return false;
-          } /*else if (!/^\S+@\S+\.\S+$/.test(email)) {
-              Swal.showValidationMessage(
-                "Please fill in a valid email address"
-              );
-              return false;
-            }*/ else if (date && whenDate(date) != "future") {
-            Swal.showValidationMessage("Please select a future date");
+          }
+          if (caseTypeRaw === "Other" && !caseType) {
+            Swal.showValidationMessage("Please enter a case type");
             return false;
-          } else {
-            [first, last] =
-              name.substring(0, name.indexOf(" ")) !== -1
-                ? [
-                  name.substring(0, name.indexOf(" ")),
-                  name.substring(name.indexOf(" ") + 1),
-                ]
-                : [name, ""];
-            return fetch(
-              `${url}?mode=newClient&username=${username}&password=${password}&action=client&name=${name}&first=${first}&last=${last}&phone=${phone}&email=${email}&date=${date.replace(
-                "T",
-                " "
-              )}&type=${type}&duplicate=${duplicate}`
-            )
-              .then((response) => response.json())
-              .then((data) => {
-                Toast.fire({
-                  icon: data.status || "error",
-                  title: data.title || "Error",
-                  text: data.message,
-                });
-                if ((data.status = "success")) {
-                  addFile(data.name, "client", data.id);
-                }
+          }
+
+          try {
+            // 1. Create/update contact
+            const contactResult = await apiSend("/api/intake/contact", "POST", {
+              name, phone, email
+            });
+
+            // 2. If case type selected, create case too
+            let caseResult = null;
+            if (caseType) {
+              caseResult = await apiSend("/api/intake/case", "POST", {
+                contact_id: contactResult.id,
+                case_type: caseType
               });
+            }
+
+            // 3. TODO: If appointment date was set, create appointment via POST /api/appts
+            // if (date) {
+            //   await apiSend("/api/appts", "POST", {
+            //     contact_id: contactResult.id,
+            //     case_id: caseResult?.id || null,
+            //     appt_date: date,
+            //     appt_type: caseType || "General"
+            //   });
+            // }
+
+            return { type: "client", data: contactResult };
+          } catch (err) {
+            Swal.showValidationMessage(err.message || "Failed to create client");
+            return false;
           }
         },
-        preDeny: () => {
-          name = E("NCName").value;
-          phone = E("NCPhone").value.replace(/\D/g, "");
-          email = E("NCEmail").value || "";
-          date = E("NCDate").value;
-          type = E("NCType").value;
-          duplicate = E("NCDuplicate").checked ? "duplicate" : "update";
+
+        // ── ADD & OPEN CASE ──
+        preDeny: async () => {
+          const name = E("NCName").value.trim();
+          const phone = E("NCPhone").value.replace(/\D/g, "");
+          const email = E("NCEmail").value.trim();
+          const date = E("NCDate").value;
+          const caseTypeRaw = E("NCType").value;
+          const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
+
           if (!name || !E("NCPhone").value || !email) {
             Swal.showValidationMessage("Please fill in all required fields");
             return false;
-          } else if (!type) {
+          }
+          if (!caseType) {
             Swal.showValidationMessage("Please select a case type");
             return false;
-          } else if (name.split(" ").length == 1) {
+          }
+          if (caseTypeRaw === "Other" && !caseType) {
+            Swal.showValidationMessage("Please enter a case type");
+            return false;
+          }
+          if (name.split(" ").length < 2) {
             Swal.showValidationMessage("Please fill in a valid full name");
             return false;
-          } else if (phone.length != 10) {
+          }
+          if (phone.length !== 10) {
             Swal.showValidationMessage("Please fill in a valid phone number");
             return false;
-          } else if (!/^\S+@\S+\.\S+$/.test(email)) {
-            Swal.showValidationMessage(
-              "Please fill in a valid email address"
-            );
+          }
+          if (!/^\S+@\S+\.\S+$/.test(email)) {
+            Swal.showValidationMessage("Please fill in a valid email address");
             return false;
-          } else {
-            [first, last] =
-              name.substring(0, name.indexOf(" ")) !== -1
-                ? [
-                  name.substring(0, name.indexOf(" ")),
-                  name.substring(name.indexOf(" ") + 1),
-                ]
-                : [name, ""];
-            return fetch(
-              `${url}?mode=newClient&username=${username}&password=${password}&action=case&name=${name}&first=${first}&last=${last}&phone=${phone}&email=${email}&date=${date.replace(
-                "T",
-                " "
-              )}&type=${type}&duplicate=${duplicate}`
-            )
-              .then((response) => response.json())
-              .then((data) => {
-                Toast.fire({
-                  icon: data.status || "error",
-                  title: data.title || "Error",
-                  text: data.message,
-                });
-                if ((data.status = "success")) {
-                  addFile(data.name, "case", data.id);
-                }
-              });
+          }
+
+          try {
+            // 1. Create/update contact
+            const contactResult = await apiSend("/api/intake/contact", "POST", {
+              name, phone, email
+            });
+
+            // 2. Create case
+            const caseResult = await apiSend("/api/intake/case", "POST", {
+              contact_id: contactResult.id,
+              case_type: caseType
+            });
+
+            // 3. TODO: If appointment date was set, create appointment via POST /api/appts
+            // if (date) {
+            //   await apiSend("/api/appts", "POST", {
+            //     contact_id: contactResult.id,
+            //     case_id: caseResult.id,
+            //     appt_date: date,
+            //     appt_type: caseType
+            //   });
+            // }
+
+            return { type: "case", data: caseResult, contactData: contactResult };
+          } catch (err) {
+            Swal.showValidationMessage(err.message || "Failed to create case");
+            return false;
           }
         },
+
+        allowOutsideClick: () => !Swal.isLoading()
+
+      }).then((result) => {
+        // preConfirm result → result.isConfirmed + result.value
+        // preDeny result    → result.isDenied + result.value
+        if (!result.isConfirmed && !result.isDenied) return; // cancelled
+        if (!result.value) return;
+
+        const { type, data } = result.value;
+
+        Toast.fire({
+          icon: data.status || "success",
+          title: data.status === "success" ? "Success" : "Error",
+          text: data.message
+        });
+
+        if (data.status === "success") {
+          if (type === "client") {
+            addFile(data.name, "client", data.id);
+          } else if (type === "case") {
+            addFile(data.id, "case", data.id);
+          }
+        }
       });
     }
 

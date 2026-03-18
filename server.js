@@ -22,21 +22,7 @@ app.use(
 );
 
 const db = require("./startup/db");//and we are going to attach it to each route
-/*
-reference to startup/db.js:
-const mysql = require("mysql2");
-const pool = mysql.createPool({
-  connectionLimit: 10,
-  host: process.env.host,
-  user: process.env.user,
-  password: process.env.password,
-  database: process.env.database
-});
-pool.on("error", err => {
-  console.error("MySQL error:", err);
-});
-module.exports = pool.promise();
-*/
+
 
 const routesPath = path.join(__dirname, "routes");
 
@@ -61,6 +47,28 @@ fs.readdirSync(routesPath).forEach((file) => {
 });
 
 require("./startup/init")(db);
+console.log("db ready");
+
+
+function listRoutes(app) {
+  function walk(stack, prefix = '') {
+    stack.forEach(layer => {
+      if (layer.route) {
+        const methods = Object.keys(layer.route.methods)
+          .map(m => m.toUpperCase())
+          .join(', ');
+        console.log(`${methods.padEnd(10)} ${prefix}${layer.route.path}`);
+      } 
+      else if (layer.name === 'router' && layer.handle.stack) {
+        walk(layer.handle.stack, prefix);
+      }
+    });
+  }
+  walk(app._router.stack);
+}
+if (process.env.ENVIRONMENT == "development") {
+  listRoutes(app);
+}
 
 // Set port and start the server
 const PORT = process.env.PORT || 8080;
