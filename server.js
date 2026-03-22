@@ -49,7 +49,7 @@ fs.readdirSync(routesPath).forEach((file) => {
 require("./startup/init")(db);
 console.log("db ready");
 
-
+/*
 function listRoutes(app) {
   function walk(stack, prefix = '') {
     stack.forEach(layer => {
@@ -68,7 +68,7 @@ function listRoutes(app) {
 }
 if (process.env.ENVIRONMENT == "development") {
   listRoutes(app);
-}
+}*/
 
 // Set port and start the server
 const PORT = process.env.PORT || 8080;
