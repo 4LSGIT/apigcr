@@ -326,7 +326,7 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
   if (!template_type) return res.status(400).json({ error: 'template_type is required' });
 
   try {
-    const result = await enrollContact(db, contact_id, template_type, trigger_data);
+    const result = await enrollContact(db, contact_id, template_type, trigger_data, { appt_type, appt_with });
     res.status(201).json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ error: 'Failed to enroll contact', message: err.message });

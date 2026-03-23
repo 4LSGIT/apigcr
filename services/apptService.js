@@ -318,7 +318,7 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
   if (!appt_id) throw new Error('markNoShow requires appt_id');
 
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id, appt_case_id, appt_date FROM appts WHERE appt_id = ?',
+    'SELECT appt_id, appt_client_id, appt_case_id, appt_date, appt_type, appt_with FROM appts WHERE appt_id = ?',
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
@@ -353,6 +353,9 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
           appt_time:   appt.appt_date,
           case_id:     appt.appt_case_id,
           enrolled_by: 'no_show_handler'
+        }, {
+          appt_type: appt.appt_type,
+          appt_with: appt.appt_with
         });
         enrolled = true;
       } catch (err) {
