@@ -2006,6 +2006,8 @@
       //temporary and insecure!!
       username = user.username;
       password = user.password;
+      AUTH_STATE.username = user.username;
+      AUTH_STATE.password = user.password;
       E("myNameIs").innerHTML = user.user_name;
       E("topButtons").style.display = "block";
       E("adminButton").style.display =
