@@ -148,6 +148,8 @@ async function createAppt(db, {
   appt_date,
   appt_with       = 1,
   note            = '',
+  confirm_sms     = false,
+  confirm_email   = false,
   confirm_message = '',
   actingUserId    = 0
 }) {
@@ -195,17 +197,25 @@ async function createAppt(db, {
   }
 
   // 5) Confirmation SMS (immediate, if provided)
-  if (confirm_message && confirm_message.trim()) {
+  if ((confirm_sms || confirm_email) && confirm_message && confirm_message.trim()) {
     const settings = await getSettings(db, ['sms_default_from', 'email_default_from']);
-
     const [[contact]] = await db.query(
       'SELECT contact_phone, contact_email FROM contacts WHERE contact_id = ?',
       [contact_id]
     );
 
-    if (contact?.contact_phone && settings.sms_default_from) {
+    if (confirm_sms && contact?.contact_phone && settings.sms_default_from) {
       smsService.sendSms(db, settings.sms_default_from, contact.contact_phone, confirm_message)
         .catch(err => console.error('[APPT SERVICE] Confirm SMS failed:', err.message));
+    }
+
+    if (confirm_email && contact?.contact_email && settings.email_default_from) {
+      emailService.sendEmail(db, {
+        from:    settings.email_default_from,
+        to:      contact.contact_email,
+        subject: 'Appointment Confirmation',
+        text:    confirm_message
+      }).catch(err => console.error('[APPT SERVICE] Confirm email failed:', err.message));
     }
   }
 
@@ -622,6 +632,8 @@ async function rescheduleAppt(db, {
     appt_date:       newDate,
     appt_with:       oldAppt.appt_with,
     note,
+    confirm_sms:     sms,
+    confirm_email:   email,
     confirm_message: (sms || email) ? confirm_message : '',
     actingUserId
   });
