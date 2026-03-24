@@ -12,11 +12,14 @@
  */
 
 const { getSetting, getSettings } = require('./settingsService');
-const { localToUTC }              = require('./timezoneService');
 const smsService   = require('./smsService');
 const emailService = require('./emailService');
 const pabbly       = require('./pabblyService');
 const taskService  = require('./taskService');
+const { localToUTC, FIRM_TZ } = require('./timezoneService');
+const { DateTime } = require('luxon');
+const { advanceWorkflow } = require('../lib/workflow_engine');
+const calendar = require('./calendarService');
 
 // Lazy-require to avoid circular dependency (sequenceEngine → job_executor → internal_functions)
 function getSequenceEngine() {
@@ -178,8 +181,8 @@ async function createAppt(db, {
   // 3) If 341 Meeting, update case
   if (appt_type === '341 Meeting' && case_id) {
     await db.query(
-      'UPDATE cases SET case_341_current = ? WHERE case_id = ?',
-      [appt_date, case_id]
+      'UPDATE cases SET case_341_current = ?, `341_appt_id` = ? WHERE case_id = ?',
+      [appt_date, apptId, case_id]
     ).catch(err => console.error('[APPT SERVICE] 341 case update failed:', err.message));
   }
 
@@ -220,23 +223,100 @@ async function createAppt(db, {
   });
 
   // 7) Start reminder workflow
-  //    TODO: Wire in Phase 3 once the reminder workflow template exists.
-  //
-  //    IMPORTANT — Past-timestamp safety:
-  //    When computing resume timestamps from apptDateUTC, any timestamp
-  //    that falls in the past should be set to null. Workflow steps should
-  //    check for null and skip the corresponding reminder block.
-  //
-  //    Example of what the Phase 3 code will look like:
-  //
-  //    const now = Date.now();
-  //    const resume_3m  = apptDateUTC - 3*60*1000  > now ? new Date(apptDateUTC - 3*60*1000)  : null;
-  //    const resume_10m = apptDateUTC - 10*60*1000 > now ? new Date(apptDateUTC - 10*60*1000) : null;
-  //    const resume_2h  = apptDateUTC - 2*3600000  > now ? new Date(apptDateUTC - 2*3600000)  : null;
-  //    // resume_24h uses prevBusinessDay — also null if in the past
-  //
   let workflowExecutionId = null;
-  console.log(`[APPT SERVICE] TODO: Start reminder workflow for appt ${apptId}`);
+  try {
+    const wfId = await getSetting(db, 'appt_reminder_workflow_id');
+    if (wfId) {
+      // Build display strings in firm timezone from the local appt_date
+      // (appt_date is firm-local stored as fake UTC by mysql2)
+      const apptLocal = DateTime.fromISO(
+        new Date(appt_date).toISOString().slice(0, 19),
+        { zone: FIRM_TZ }
+      );
+ 
+      // Pre-compute resume timestamps from real UTC
+      // Any timestamp already in the past → null (schedule_resume will skip)
+      const now = Date.now();
+      const utcMs = apptDateUTC.getTime();
+ 
+      // 341: day before at 6 PM firm time
+      let resume_day_before = null;
+      if (appt_type === '341 Meeting') {
+        const dayBefore = apptLocal.minus({ days: 1 }).set({ hour: 18, minute: 0, second: 0 });
+        const dayBeforeUTC = dayBefore.toUTC().toJSDate();
+        resume_day_before = dayBeforeUTC.getTime() > now ? dayBeforeUTC.toISOString() : null;
+      }
+ 
+      // Non-341: 24h before using prevBusinessDay for business-day awareness
+      let resume_24h = null;
+      if (appt_type !== '341 Meeting') {
+        try {
+          const prevBiz = await calendar.prevBusinessDay(apptDateUTC, [
+            { hoursBack: 24, timeOfDay: '10:00', minHoursBefore: 4 }
+          ], { minHoursBefore: 4 });
+          if (prevBiz?.scheduledAt && prevBiz.scheduledAt.getTime() > now) {
+            resume_24h = prevBiz.scheduledAt.toISOString();
+          }
+        } catch (err) {
+          console.error('[APPT SERVICE] prevBusinessDay failed:', err.message);
+        }
+      }
+ 
+      // Simple offsets from real UTC
+      const resume_2h  = (utcMs - 2 * 3600000)  > now ? new Date(utcMs - 2 * 3600000).toISOString()  : null;
+      const resume_10m = (utcMs - 10 * 60000)    > now ? new Date(utcMs - 10 * 60000).toISOString()   : null;
+      const resume_3m  = (utcMs - 3 * 60000)     > now ? new Date(utcMs - 3 * 60000).toISOString()    : null;
+ 
+      // Start the workflow
+      const initData = {
+        appt_id:           apptId,
+        appt_type,
+        appt_platform,
+        case_id:           case_id || '',
+        case_tab:          determineCaseTab(appt_type),
+        appt_with,
+        sms_staff_from:    await getSetting(db, 'sms_staff_from') || '2486213656',
+        sms_client_from:   await getSetting(db, 'sms_default_from') || '2485592400',
+        // Display strings (pre-formatted, frozen at creation time)
+        appt_time_display: apptLocal.toFormat('h:mm a'),       // "2:30 PM"
+        appt_day_name:     apptLocal.toFormat('cccc'),          // "Wednesday"
+        appt_date_display: apptLocal.toFormat('LLL. d'),        // "Mar. 19"
+        // Resume timestamps (real UTC, null if already past)
+        resume_day_before,
+        resume_24h,
+        resume_2h,
+        resume_10m,
+        resume_3m,
+      };
+ 
+      // Create execution row
+      const [execResult] = await db.query(
+        `INSERT INTO workflow_executions (workflow_id, status, init_data, variables, current_step_number)
+         VALUES (?, 'active', ?, ?, 1)`,
+        [parseInt(wfId), JSON.stringify(initData), JSON.stringify(initData)]
+      );
+      workflowExecutionId = execResult.insertId;
+ 
+      // Store execution ID on the appointment
+      await db.query(
+        'UPDATE appts SET appt_workflow_execution_id = ? WHERE appt_id = ?',
+        [workflowExecutionId, apptId]
+      );
+ 
+      // Advance in background (non-blocking)
+      advanceWorkflow(workflowExecutionId, db)
+        .then(r => console.log(`[APPT SERVICE] Reminder workflow ${workflowExecutionId} started: ${r.status}`))
+        .catch(err => console.error(`[APPT SERVICE] Reminder workflow failed:`, err.message));
+ 
+      console.log(`[APPT SERVICE] Started reminder workflow ${workflowExecutionId} for appt ${apptId} (${appt_type})`);
+    } else {
+      console.log('[APPT SERVICE] appt_reminder_workflow_id not set in app_settings — skipping workflow');
+    }
+  } catch (err) {
+    // Workflow failure should never block appointment creation
+    console.error('[APPT SERVICE] Failed to start reminder workflow:', err.message);
+  }
+
 
   // 8) Re-fetch the created appointment
   const [[appt]] = await db.query('SELECT * FROM appts WHERE appt_id = ?', [apptId]);

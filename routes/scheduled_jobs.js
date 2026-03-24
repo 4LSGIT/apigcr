@@ -22,6 +22,7 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
     name,               // optional but recommended
     delay,              // string e.g. "10m", "1h", "30s" - from now
     scheduled_time,     // ISO string e.g. "2026-02-15T14:30:00Z"
+    timezone,
     recurrence_rule,    // cron string, only used if type = "recurring"
     max_attempts = 3,
     backoff_seconds = 300,
@@ -84,12 +85,24 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
   let finalScheduledTime;
 
   if (scheduled_time) {
-    // Prefer explicit datetime
-    const dt = new Date(scheduled_time);
-    if (isNaN(dt.getTime())) {
-      return res.status(400).json({ error: "Invalid scheduled_time format (use ISO)" });
+    // If timezone is provided, interpret scheduled_time in that timezone and convert to UTC.
+    // If no timezone, assume the value is already UTC (backward compatible).
+    if (timezone) {
+      const { DateTime } = require('luxon');
+      const naive = scheduled_time.replace('T', ' ').replace('Z', '').slice(0, 19);
+      const localDt = DateTime.fromSQL(naive, { zone: timezone });
+      if (!localDt.isValid) {
+        return res.status(400).json({ error: `Invalid scheduled_time or timezone: "${scheduled_time}" in "${timezone}"` });
+      }
+      finalScheduledTime = localDt.toUTC().toJSDate();
+      console.log(`[SCHEDULED-JOBS] Converted ${naive} ${timezone} → ${finalScheduledTime.toISOString()} UTC`);
+    } else {
+      const dt = new Date(scheduled_time);
+      if (isNaN(dt.getTime())) {
+        return res.status(400).json({ error: "Invalid scheduled_time format (use ISO)" });
+      }
+      finalScheduledTime = dt;
     }
-    finalScheduledTime = dt;
   } else if (delay) {
     // Parse human duration
     const msDelay = parseDelay(delay);
@@ -332,7 +345,7 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
 router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
   const db  = req.db;
   const { id } = req.params;
-  const { name, scheduled_time, recurrence_rule, max_attempts, backoff_seconds, data, max_executions, expires_at } = req.body;
+  const { name, scheduled_time, timezone, recurrence_rule, max_attempts, backoff_seconds, data, max_executions, expires_at } = req.body;
 
   try {
     const [[job]] = await db.query(`SELECT id, status, type FROM scheduled_jobs WHERE id = ?`, [id]);
@@ -349,8 +362,17 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
 
     if (name             !== undefined) { updates.push("name = ?");             params.push(name); }
     if (scheduled_time   !== undefined) {
-      const dt = new Date(scheduled_time);
-      if (isNaN(dt.getTime())) return res.status(400).json({ error: "Invalid scheduled_time" });
+      let dt;
+      if (timezone) {
+        const { DateTime } = require('luxon');
+        const naive = scheduled_time.replace('T', ' ').replace('Z', '').slice(0, 19);
+        const localDt = DateTime.fromSQL(naive, { zone: timezone });
+        if (!localDt.isValid) return res.status(400).json({ error: `Invalid scheduled_time or timezone` });
+        dt = localDt.toUTC().toJSDate();
+      } else {
+        dt = new Date(scheduled_time);
+        if (isNaN(dt.getTime())) return res.status(400).json({ error: "Invalid scheduled_time" });
+      }
       updates.push("scheduled_time = ?"); params.push(dt);
     }
     if (recurrence_rule  !== undefined) { updates.push("recurrence_rule = ?");  params.push(recurrence_rule); }

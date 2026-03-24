@@ -21,7 +21,8 @@
 //   isDayRestricted(dateStr, restrictedSet)
 
 const moment = require('moment');
-
+const { DateTime } = require('luxon');
+const DEFAULT_TZ = process.env.FIRM_TIMEZONE || 'America/Detroit';
 // ─────────────────────────────────────────────────────────────
 // Configuration
 // ─────────────────────────────────────────────────────────────
@@ -247,13 +248,17 @@ async function isWorkday(datetime) {
  * Find the next available business day at a target time of day,
  * optionally with a random jitter window.
  *
+ * timeOfDay is interpreted in the given timezone (default: FIRM_TIMEZONE).
+ * The returned Date is real UTC — ready for scheduled_jobs.
+ *
  * @param {Date|string|moment} fromDate — start searching from this point
  * @param {object} options
- *   timeOfDay        {string}  "HH:MM" in 24h — target time on the business day (default "09:00")
+ *   timeOfDay        {string}  "HH:MM" in 24h — in the specified timezone (default "09:00")
  *   randomizeMinutes {number}  ± minutes of random jitter around timeOfDay (default 0)
  *   maxDaysAhead     {number}  give up after this many days (default 30)
+ *   timezone         {string}  IANA timezone for timeOfDay (default: FIRM_TIMEZONE env)
  *
- * @returns {Date} — the scheduled datetime
+ * @returns {Date} — the scheduled datetime in UTC
  * @throws  if no business day found within maxDaysAhead
  */
 async function nextBusinessDay(fromDate, options = {}) {
@@ -261,46 +266,53 @@ async function nextBusinessDay(fromDate, options = {}) {
     timeOfDay        = '09:00',
     randomizeMinutes = 0,
     maxDaysAhead     = 30,
+    timezone         = DEFAULT_TZ,
   } = options;
-
+ 
   const from = moment.isMoment(fromDate) ? fromDate.clone() : moment(fromDate);
-
+ 
   // Fetch a wide range so we only call Hebcal once
   const rangeEnd  = from.clone().add(maxDaysAhead + 7, 'days');
   const events    = await fetchHebcalEvents(from.clone().subtract(1, 'day'), rangeEnd);
   const restricted = buildRestrictedSet(from.clone().subtract(1, 'day'), rangeEnd, events);
-
+ 
   const [targetHour, targetMin] = timeOfDay.split(':').map(Number);
-
+ 
   // Start from tomorrow (or today if from is before target time today)
   let candidate = from.clone().startOf('day');
   if (from.hour() >= targetHour && from.minute() >= targetMin) {
     candidate.add(1, 'day');
   }
-
+ 
   for (let i = 0; i < maxDaysAhead; i++) {
     const dateStr = candidate.format('YYYY-MM-DD');
     const dayOfWeek = candidate.day();
-
-    // Skip Sunday (0) as non-business day — adjust if needed
-    // Skip Saturday (always Shabbos)
-    // Skip restricted (Yom Tov)
+ 
+    // Skip Sunday (0), Saturday (Shabbos), restricted (Yom Tov)
     if (dayOfWeek !== 0 && !isDayRestricted(dateStr, restricted)) {
-      // Found a valid day — apply time + jitter
+      // Found a valid day — apply time + jitter in firm timezone, return UTC
       const jitter = randomizeMinutes > 0
         ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
         : 0;
-
-      const result = candidate.clone()
-        .set({ hour: targetHour, minute: targetMin, second: 0, millisecond: 0 })
-        .add(jitter, 'minutes');
-
-      return result.toDate();
+ 
+      const localDt = DateTime.fromObject(
+        {
+          year:   candidate.year(),
+          month:  candidate.month() + 1,  // moment is 0-based, luxon is 1-based
+          day:    candidate.date(),
+          hour:   targetHour,
+          minute: targetMin + jitter,
+          second: 0,
+        },
+        { zone: timezone }
+      );
+ 
+      return localDt.toUTC().toJSDate();
     }
-
+ 
     candidate.add(1, 'day');
   }
-
+ 
   throw new Error(`No business day found within ${maxDaysAhead} days of ${from.format('YYYY-MM-DD')}`);
 }
 
@@ -312,25 +324,13 @@ async function nextBusinessDay(fromDate, options = {}) {
  * Find the latest valid business-day slot that is at least `hoursBack`
  * hours before anchorDate (the appointment time).
  *
- * Walks the `attempts` array in order, returns the first candidate
- * that is:
- *   - On a business day (not restricted)
- *   - At least minHoursBefore hours before the anchor
- *   - In the past relative to now (i.e. not already missed — optional)
- *
- * If all attempts are blocked, returns null (caller decides: skip or fallback).
+ * timeOfDay in attempts is interpreted in the given timezone.
+ * The returned scheduledAt Date is real UTC.
  *
  * @param {Date|string|moment} anchorDate — the appointment datetime
- * @param {object[]} attempts — ordered list of fallback rules:
- *   {
- *     hoursBack:        {number}  hours before anchorDate to target
- *     sameTimeAsAnchor: {boolean} use anchorDate's clock time instead of timeOfDay
- *     timeOfDay:        {string}  "HH:MM" — ignored if sameTimeAsAnchor
- *     randomizeMinutes: {number}  ± jitter
- *     minHoursBefore:   {number}  minimum hours before anchor (skip if too close)
- *   }
- * @param {object} defaults — fallback values for all attempts
- *   { minHoursBefore, maxDaysBack }
+ * @param {object[]} attempts — ordered list of fallback rules
+ * @param {object} defaults
+ *   { minHoursBefore, maxDaysBack, timezone }
  *
  * @returns {{ scheduledAt: Date, attemptIndex: number } | null}
  */
@@ -338,20 +338,21 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
   const {
     minHoursBefore = 2,
     maxDaysBack    = 14,
+    timezone       = DEFAULT_TZ,
   } = defaults;
-
+ 
   if (!attempts.length) {
     throw new Error('prevBusinessDay requires at least one attempt rule');
   }
-
+ 
   const anchor = moment.isMoment(anchorDate) ? anchorDate.clone() : moment(anchorDate);
   const now    = moment();
-
+ 
   // Fetch a wide range once
   const rangeStart = anchor.clone().subtract(maxDaysBack + 7, 'days');
   const events     = await fetchHebcalEvents(rangeStart, anchor.clone().add(1, 'day'));
   const restricted  = buildRestrictedSet(rangeStart, anchor.clone().add(1, 'day'), events);
-
+ 
   for (let ai = 0; ai < attempts.length; ai++) {
     const attempt = attempts[ai];
     const {
@@ -361,92 +362,118 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
       randomizeMinutes = 0,
       minHoursBefore:  attemptMin,
     } = attempt;
-
+ 
     const effectiveMin = attemptMin ?? minHoursBefore;
-
+ 
     if (hoursBack == null) continue;
-
+ 
     // Calculate raw candidate time
     let candidate;
     if (sameTimeAsAnchor) {
-      // Same clock time N calendar days before
       const daysBack = Math.ceil(hoursBack / 24);
       candidate = anchor.clone().subtract(daysBack, 'days');
     } else {
-      // N hours before anchor, then snap to timeOfDay
       candidate = anchor.clone().subtract(hoursBack, 'hours');
       if (timeOfDay) {
         const [h, m] = timeOfDay.split(':').map(Number);
-        candidate.set({ hour: h, minute: m, second: 0, millisecond: 0 });
+        // Build in firm timezone, then convert candidate to moment for comparison
+        const localDt = DateTime.fromObject(
+          {
+            year:   candidate.year(),
+            month:  candidate.month() + 1,
+            day:    candidate.date(),
+            hour:   h,
+            minute: m,
+            second: 0,
+          },
+          { zone: timezone }
+        );
+        // Convert back to moment-UTC for the rest of the logic
+        candidate = moment(localDt.toUTC().toJSDate());
       }
     }
-
+ 
     // Apply jitter
     if (randomizeMinutes > 0) {
       const jitter = Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes;
       candidate.add(jitter, 'minutes');
     }
-
+ 
     // Too close to appointment?
     const hoursUntilAnchor = anchor.diff(candidate, 'hours', true);
     if (hoursUntilAnchor < effectiveMin) {
       console.log(`[calendar] Attempt ${ai + 1}: too close (${hoursUntilAnchor.toFixed(1)}h < ${effectiveMin}h min) — trying next`);
       continue;
     }
-
+ 
     // Already passed?
     if (candidate.isBefore(now)) {
       console.log(`[calendar] Attempt ${ai + 1}: already in the past — trying next`);
       continue;
     }
-
+ 
     // Is the candidate day restricted?
     const dayOfWeek = candidate.day();
     const dateStr   = candidate.format('YYYY-MM-DD');
-
+ 
     if (dayOfWeek === 0 || isDayRestricted(dateStr, restricted)) {
-      // Walk backward to the nearest available business day
       let walkBack = candidate.clone().subtract(1, 'day');
       let found = false;
       for (let d = 0; d < maxDaysBack; d++) {
         const wStr  = walkBack.format('YYYY-MM-DD');
         const wDay  = walkBack.day();
         if (wDay !== 0 && !isDayRestricted(wStr, restricted)) {
-          // Preserve the time from the original candidate
-          walkBack.set({
-            hour:        candidate.hour(),
-            minute:      candidate.minute(),
-            second:      0,
-            millisecond: 0
-          });
-
-          // Re-check min hours before
+          // Preserve the time — rebuild in timezone then convert to UTC
+          if (timeOfDay && !sameTimeAsAnchor) {
+            const [h, m] = timeOfDay.split(':').map(Number);
+            const localDt = DateTime.fromObject(
+              {
+                year:   walkBack.year(),
+                month:  walkBack.month() + 1,
+                day:    walkBack.date(),
+                hour:   h,
+                minute: m + (randomizeMinutes > 0
+                  ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
+                  : 0),
+                second: 0,
+              },
+              { zone: timezone }
+            );
+            walkBack = moment(localDt.toUTC().toJSDate());
+          } else {
+            walkBack.set({
+              hour:        candidate.hour(),
+              minute:      candidate.minute(),
+              second:      0,
+              millisecond: 0
+            });
+          }
+ 
           const hoursCheck = anchor.diff(walkBack, 'hours', true);
           if (hoursCheck < effectiveMin) {
             console.log(`[calendar] Attempt ${ai + 1} walked back: still too close — trying next attempt`);
             break;
           }
-
+ 
           if (walkBack.isBefore(now)) {
             console.log(`[calendar] Attempt ${ai + 1} walked back: in the past — trying next attempt`);
             break;
           }
-
+ 
           candidate = walkBack;
           found = true;
           break;
         }
         walkBack.subtract(1, 'day');
       }
-
+ 
       if (!found) continue;
     }
-
-    console.log(`[calendar] Attempt ${ai + 1}: scheduled at ${candidate.format('YYYY-MM-DDTHH:mm:ss')}`);
+ 
+    console.log(`[calendar] Attempt ${ai + 1}: scheduled at ${candidate.toISOString()}`);
     return { scheduledAt: candidate.toDate(), attemptIndex: ai };
   }
-
-  // All attempts exhausted
+ 
   console.log('[calendar] All reminder attempts blocked or in the past — returning null');
   return null;
 }
