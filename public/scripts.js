@@ -2,11 +2,9 @@ const E = (id) => document.getElementById(id);
 const V = (id) => document.getElementById(id).value;
 const S = (id) => document.getElementById(id).style;
 const D = (id) => document.getElementById(id).style.display;
-const U = (str) =>
-  encodeURIComponent(
-    str.replace(/(["'`\\])/g, "\\\\$1").replace(/\n/g, "\\\\n")
-  );
+const U = (str) => encodeURIComponent( str.replace(/(["'`\\])/g, "\\\\$1").replace(/\n/g, "\\\\n"));
 const X = (str) => str.replace(/(["'`\\])/g, "\\$1").replace(/\n/g, "\\n");
+const P = window.parent;
 
 function resizeTextarea(textarea) {
   textarea.style.height = "auto"; // Reset height

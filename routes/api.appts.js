@@ -20,7 +20,7 @@ const apptService  = require('../services/apptService');
 router.get('/api/appts', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const {
-    contact_id, case_id, status, from, to,
+    contact_id, case_id, status, type, exclude_type, from, to,
     limit = 50, offset = 0
   } = req.query;
 
@@ -30,8 +30,10 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
   if (contact_id) { conditions.push('appts.appt_client_id = ?'); params.push(contact_id); }
   if (case_id)    { conditions.push('appts.appt_case_id = ?');   params.push(case_id); }
   if (status)     { conditions.push('appts.appt_status = ?');    params.push(status); }
-  if (from)       { conditions.push('appts.appt_date >= ?');     params.push(from); }
-  if (to)         { conditions.push('appts.appt_date <= ?');     params.push(to); }
+  if (from)       { conditions.push('appts.appt_date >= ?');     params.push(`${from} 00:00:00`); }
+  if (to)         { conditions.push('appts.appt_date < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(to);} 
+  if (type)         { conditions.push('appts.appt_type = ?');  params.push(type); }
+  if (exclude_type) { conditions.push('appts.appt_type != ?'); params.push(exclude_type); }
 
   const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -54,7 +56,9 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
          DATE_FORMAT(appts.appt_date, '%h:%i %p')   AS time,
          contacts.contact_name,
          contacts.contact_id,
-         users.user_name
+         users.user_name,
+         cases.case_number,
+         DATE_FORMAT(appts.appt_date, '%Y-%m-%dT%H:%i') AS appt_datetime_local
        FROM appts
        LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id
        LEFT JOIN users    ON users.user = appts.appt_with
