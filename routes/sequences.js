@@ -320,7 +320,7 @@ router.delete('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (
 // POST /sequences/enroll
 router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
   const db = req.db;
-  const { contact_id, template_type, trigger_data = {} } = req.body;
+  const { contact_id, template_type, trigger_data = {}, appt_type = null, appt_with = null } = req.body;
 
   if (!contact_id)    return res.status(400).json({ error: 'contact_id is required' });
   if (!template_type) return res.status(400).json({ error: 'template_type is required' });
