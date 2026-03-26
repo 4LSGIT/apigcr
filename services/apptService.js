@@ -429,13 +429,16 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
   // Sequence enrollment
   let enrolled = false;
   if (enroll) {
-    const [[{ priorCount }]] = await db.query(
-      `SELECT COUNT(*) AS priorCount FROM appts
-       WHERE appt_client_id = ? AND appt_status = 'No Show' AND appt_id != ?`,
-      [appt.appt_client_id, appt_id]
+    const [[{ activeEnrollments }]] = await db.query(
+      `SELECT COUNT(*) AS activeEnrollments
+      FROM sequence_enrollments se
+      JOIN sequence_templates st ON se.template_id = st.id
+      WHERE se.contact_id = ?
+      AND se.status = 'active'
+      AND st.type = 'no_show'`,
+      [appt.appt_client_id]
     );
-
-    if (priorCount === 0) {
+    if (activeEnrollments === 0) {
       try {
         const seq = getSequenceEngine();
         await seq.enrollContact(db, appt.appt_client_id, 'no_show', {
@@ -481,7 +484,7 @@ async function cancelAppt(db, {
   sms             = false,
   email           = false,
   confirm_message = '',
-  cancel_gcal     = false,
+  cancel_gcal     = true,
   create_task     = false,
   actingUserId    = 0
 }) {
@@ -569,7 +572,10 @@ async function cancelAppt(db, {
   }
 
   // 9) GCal delete
+  console.log(cancel_gcal);
+  console.log(appt.appt_gcal);
   if (cancel_gcal && appt.appt_gcal) {
+    console.log("sending gcal_delete");
     pabbly.send(db, 'gcal_delete', { appt_gcal: appt.appt_gcal, appt_id });
   }
 
@@ -622,6 +628,12 @@ async function rescheduleAppt(db, {
   // 3) Cancel old reminder workflow
   await cancelApptWorkflow(db, appt_id);
 
+  // 3b) GCal delete for old appt (non-blocking)
+  if (oldAppt.appt_gcal) {
+    pabbly.send(db, 'gcal_delete', { appt_gcal: oldAppt.appt_gcal, appt_id })
+      .catch(err => console.error('[APPT SERVICE] GCal delete (reschedule) failed:', err.message));
+  }
+
   // 4) Create new appointment (handles workflow, GCal, sequences, etc.)
   const newAppt = await createAppt(db, {
     contact_id:      oldAppt.appt_client_id,
@@ -673,7 +685,7 @@ async function rescheduleLater(db, {
   if (!appt_id) throw new Error('rescheduleLater requires appt_id');
 
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id FROM appts WHERE appt_id = ?',
+    'SELECT appt_id, appt_client_id, appt_gcal FROM appts WHERE appt_id = ?',
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
@@ -689,6 +701,12 @@ async function rescheduleLater(db, {
 
   // 2) Cancel reminder workflow
   await cancelApptWorkflow(db, appt_id);
+
+  // 2b) GCal delete (non-blocking)
+  if (appt.appt_gcal) {
+    pabbly.send(db, 'gcal_delete', { appt_gcal: appt.appt_gcal, appt_id })
+      .catch(err => console.error('[APPT SERVICE] GCal delete (rescheduleLater) failed:', err.message));
+  }
 
   // 3) Optional task
   let taskId = null;

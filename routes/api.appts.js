@@ -193,7 +193,7 @@ router.post('/api/appts/cancel', jwtOrApiKey, async (req, res) => {
     sms           = false,
     email         = false,
     confirm_message = '',
-    cancel_gcal   = false,
+    cancel_gcal   = true,
     create_task   = false
   } = req.body;
 
