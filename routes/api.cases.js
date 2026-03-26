@@ -21,12 +21,14 @@ const caseService = require('../services/caseService');
 router.get('/api/cases', jwtOrApiKey, async (req, res) => {
   try {
     const result = await caseService.listCases(req.db, {
-      query:  req.query.q || req.query.query || '',
-      type:   req.query.type   || '%',
-      stage:  req.query.stage  || '%',
-      status: req.query.status || '%',
-      limit:  req.query.limit  || 50,
-      offset: req.query.offset || 0
+      query: req.query.q || req.query.query || "",
+      type: req.query.type || "%",
+      stage: req.query.stage || "%",
+      status: req.query.status || "%",
+      sort_by: req.query.sort_by || "c.case_open_date",
+      sort_dir: req.query.sort_dir || "DESC",
+      limit: req.query.limit || 50,
+      offset: req.query.offset || 0,
     });
     res.json(result);
   } catch (err) {

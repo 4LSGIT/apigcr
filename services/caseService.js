@@ -49,6 +49,8 @@ async function listCases(db, {
   type   = '%',
   stage  = '%',
   status = '%',
+  sort_by  = 'c.case_open_date',
+  sort_dir = 'DESC',
   limit  = 50,
   offset = 0
 } = {}) {
@@ -75,24 +77,45 @@ async function listCases(db, {
   where.push('c.case_status LIKE ?');
   params.push(status);
 
-  const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const SORT_WHITELIST = {
+    "c.case_id": "c.case_id",
+    "co.contact_lname": "co.contact_lname",
+    "co.contact_name": "co.contact_name",
+    "c.case_number": "c.case_number",
+    "c.case_open_date": "c.case_open_date",
+    "c.case_file_date": "c.case_file_date",
+    "c.case_close_date": "c.case_close_date",
+    "c.case_type": "c.case_type",
+    "c.case_stage": "c.case_stage",
+    "c.case_status": "c.case_status",
+  };
+  const orderBy = SORT_WHITELIST[sort_by] || "c.case_open_date";
+  const orderDir = sort_dir === "ASC" ? "ASC" : "DESC";
 
   const [cases] = await db.query(
     `SELECT
-       c.case_id, c.case_number, c.case_number_full,
-       c.case_type, c.case_stage, c.case_status,
-       c.case_open_date, c.case_file_date, c.case_close_date,
-       c.case_judge, c.case_trustee, c.case_chapter,
-       co.contact_name AS primary_client_name,
-       co.contact_id   AS primary_client_id
-     FROM cases c
-     LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
-       AND cr.case_relate_type = 'Primary'
-     LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
-     ${whereSQL}
-     ORDER BY c.case_open_date DESC
-     LIMIT ? OFFSET ?`,
-    [...params, parseInt(limit), parseInt(offset)]
+     c.case_id,
+     COALESCE(c.case_number_full, c.case_number, c.case_id) AS case_number,
+     c.case_type, c.case_stage, c.case_status,
+     c.case_judge, c.case_trustee, c.case_chapter,
+     IFNULL(DATE_FORMAT(c.case_open_date,  '%b. %e, %Y'), '') AS open,
+     IFNULL(DATE_FORMAT(c.case_file_date,  '%b. %e, %Y'), '') AS file,
+     IFNULL(DATE_FORMAT(c.case_close_date, '%b. %e, %Y'), '') AS close,
+     JSON_ARRAYAGG(JSON_OBJECT(
+       'contact_name',    co.contact_name,
+       'contact_id',      co.contact_id,
+       'contact_relate',  cr.case_relate_type
+     )) AS contacts
+   FROM cases c
+   LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
+   LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
+   ${whereSQL}
+   GROUP BY c.case_id
+   ORDER BY ${orderBy} ${orderDir}
+   LIMIT ? OFFSET ?`,
+    [...params, parseInt(limit), parseInt(offset)],
   );
 
   const [[{ total }]] = await db.query(
@@ -102,7 +125,7 @@ async function listCases(db, {
        AND cr.case_relate_type = 'Primary'
      LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
      ${whereSQL}`,
-    params
+    params,
   );
 
   return { cases, total };

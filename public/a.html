@@ -199,110 +199,80 @@
   </div>
 
   <script>
-    function tabCasesGet(offset) {
+    async function tabCasesGet(offset) {
       offsets.cases = offset;
       E("tabCasesLoad").style.display = "block";
-      let query = E("tabCasesQuery").value;
-      let type = E("tabCasesType").value;
-      let stage = E("tabCasesStage").value;
-      let status = E("tabCasesStatus").value;
-      status = status ? `%${status}%` : "%";
-      let order = E("tabCasesOrder").value;
-      let order2 = E("tabCasesOrder2").value;
+
+      const q = E("tabCasesQuery").value;
+      const type = E("tabCasesType").value;
+      const stage = E("tabCasesStage").value;
+      const status = E("tabCasesStatus").value;
+      const sort_by = E("tabCasesOrder").value;
+      const sort_dir = E("tabCasesOrder2").value;
 
       const table = E("casesTable");
       const foot = E("casesTableFoot");
       foot.innerHTML = "";
-      var rows = table.getElementsByTagName("tr");
-      for (var i = rows.length - 1; i > 0; i--) {
-        table.deleteRow(i);
-      }
-      q = `SELECT c.case_id, COALESCE(c.case_number_full, c.case_number, "") AS case_number, c.case_type, c.case_stage,
-          c.case_status, JSON_ARRAYAGG(JSON_OBJECT('contact_name', co.contact_name, 'contact_id', co.contact_id, 'contact_relate',
-          cr.case_relate_type)) as contacts,
-          IFNULL(DATE_FORMAT(c.case_open_date, '%M %e, %Y'), '') as open,
-          IFNULL(DATE_FORMAT(c.case_file_date, '%M %e, %Y'), '') as file,
-          IFNULL(DATE_FORMAT(c.case_close_date, '%M %e, %Y'), '') as close
-          FROM cases c
-          LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
-          LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
-          WHERE (co.contact_id like "%${query}%" OR co.contact_name like "%${query}%" OR c.case_id LIKE "%${query}%" OR c.case_number LIKE "%${query}%" OR c.case_number_full LIKE "%${query}%" OR c.case_notes LIKE "%${query}%")
-          AND c.case_type LIKE "${type}" AND c.case_stage LIKE "${stage}" AND c.case_status LIKE "${status}" 
-          GROUP BY c.case_id
-          ORDER BY ${order} ${order2}
-          LIMIT ${limit} OFFSET ${offset}|||
-          SELECT COUNT( DISTINCT c.case_id) AS counter 
-          FROM cases c LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
-          LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
-          WHERE (co.contact_id like "%${query}%" OR co.contact_name like "%${query}%" OR c.case_id LIKE "%${query}%" OR c.case_number LIKE "%${query}%" OR c.case_number_full LIKE "%${query}%" OR c.case_notes LIKE "%${query}%")
-          AND c.case_type LIKE "${type}" AND c.case_stage LIKE "${stage}" AND c.case_status LIKE "${status}" 
-          ORDER BY ${order} ${order2}
-          `;
-      /*fetch(
-        `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          q
-        )}`
-      )*/
-      fetch(
-        `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          q
-        )}`
-      )
-        .then((response) => response.json())
-        .then((data) => {
-          console.log(data);
-          if (data.data.query2[0].counter > 0) {
-            cases = data.data.query1;
-            console.log(cases);
-            cases.forEach((C) => {
-              C.contacts = typeof C.contacts === "string" ? JSON.parse(C.contacts) : C.contacts;
-              const row = table.insertRow();
-              rowHTML = `<td><a href="#" onclick="addFile('${C.Case_number || C.case_id
-                }', 'case', '${C.case_id}')">${C.case_id}</a></td><td>`;
-              C.contacts.forEach((client) => {
-                if (client.contact_id) {
-                  rowHTML += `<a href="#" onclick="addFile('${client.contact_name.replace(
-                    /'/g,
-                    "\\'"
-                  )}', 'client', '${client.contact_id}')">${client.contact_name
-                    }</a> (${client.contact_relate})<br>`;
-                }
-              });
-              rowHTML += `</td><td>${C.case_number}</td><td>${C.case_type}</td><td>${C.case_stage}</td><td>${C.case_status}</td><td>${C.open}</td><td>${C.file}</td><td>${C.close}</td>`;
-              row.innerHTML = rowHTML;
-            });
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
 
-            foot.innerHTML =
-              offset > 0
-                ? `<a href="#" onclick="tabCasesGet(${offset - 100
-                })"">&lt;</a> `
-                : "";
-            for (i = 1; data.data.query2[0].counter >= (i - 1) * limit; i++) {
-              foot.innerHTML +=
-                offset / limit + 1 == i
-                  ? `<a href="#" onclick="tabCasesGet(${(i - 1) * limit
-                  })">[${i}]</a> `
-                  : `<a href="#" onclick="tabCasesGet(${(i - 1) * limit
-                  })">${i}</a> `;
-            }
-            foot.innerHTML +=
-              offset + limit < data.data.query2[0].counter
-                ? `<a href="#" onclick="tabCasesGet(${offset + limit
-                })"">&gt;</a> `
-                : "";
-            foot.innerHTML += ` | Results ${offset + 1}-${offset + data.data.query1.length
-              } of ${data.data.query2[0].counter} 
-        <select style="width:auto" onchange="limit = this.value;tabCasesGet(0)">
-        <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
-        <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
-        <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
-        <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
-        </select> | <button onclick="window.print()">Print</button>`;
-          } else {
-            Toast.fire({ icon: "error", title: `No Cases Found!` });
+      const params = { limit, offset, sort_by, sort_dir };
+      if (q) params.q = q;
+      if (type !== '%') params.type = type;
+      if (stage !== '%') params.stage = stage;
+      if (status) params.status = `%${status}%`;
+
+      try {
+        const data = await apiSend("/api/cases", "GET", params);
+        cases = data.cases;
+
+        if (data.total > 0) {
+          cases.forEach((C) => {
+            C.contacts = typeof C.contacts === "string" ? JSON.parse(C.contacts) : C.contacts;
+            const row = table.insertRow();
+            let clientsHTML = "";
+            C.contacts.forEach((client) => {
+              if (client.contact_id) {
+                clientsHTML += `<a href="#" onclick="addFile('${(client.contact_name || '').replace(/'/g, "\\'")}','client','${client.contact_id}')">${client.contact_name}</a> (${client.contact_relate})<br>`;
+              }
+            });
+            row.innerHTML = `
+        <td><a href="#" onclick="addFile('${C.case_number || C.case_id}','case','${C.case_id}')">${C.case_id}</a></td>
+        <td>${clientsHTML}</td>
+        <td>${C.case_number}</td>
+        <td>${C.case_type}</td>
+        <td>${C.case_stage}</td>
+        <td>${C.case_status}</td>
+        <td>${C.open}</td>
+        <td>${C.file}</td>
+        <td>${C.close}</td>`;
+          });
+
+          // Pagination
+          foot.innerHTML = offset > 0
+            ? `<a href="#" onclick="tabCasesGet(${offset - limit})">&lt;</a> ` : "";
+          for (let i = 1; data.total >= (i - 1) * limit; i++) {
+            foot.innerHTML += offset / limit + 1 == i
+              ? `<a href="#" onclick="tabCasesGet(${(i - 1) * limit})">[${i}]</a> `
+              : `<a href="#" onclick="tabCasesGet(${(i - 1) * limit})">${i}</a> `;
           }
-          E("tabCasesLoad").style.display = "none";
-        });
+          foot.innerHTML += offset + limit < data.total
+            ? `<a href="#" onclick="tabCasesGet(${offset + limit})">&gt;</a> ` : "";
+          foot.innerHTML += ` | Results ${offset + 1}–${offset + cases.length} of ${data.total}
+              <select style="width:auto" onchange="limit=this.value;tabCasesGet(0)">
+                <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
+                <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
+                <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
+                <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
+              </select> | <button onclick="window.print()">Print</button>`;
+        } else {
+          Toast.fire({ icon: "error", title: "No cases found!" });
+        }
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error loading cases", text: err.message });
+      }
+
+      E("tabCasesLoad").style.display = "none";
     }
   </script>
 
