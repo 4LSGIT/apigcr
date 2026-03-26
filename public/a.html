@@ -325,104 +325,78 @@
   </div>
 
   <script>
-    function tabContactsGet(offset) {
+    async function tabContactsGet(offset) {
       offsets.contacts = offset;
       E("tabContactsLoad").style.display = "block";
-      let query = E("tabContactsQuery").value;
+
+      const q = E("tabContactsQuery").value;
+      const sortVal = E("tabContactsSort").value;  // e.g. "contact_lname ASC"
+      const [sort_by, sort_dir] = sortVal.split(" ");
 
       const table = E("contactsTable");
       const foot = E("contactsTableFoot");
       foot.innerHTML = "";
-      var rows = table.getElementsByTagName("tr");
-      for (var i = rows.length - 1; i > 0; i--) {
-        table.deleteRow(i);
-      }
-      q = `SELECT c.*,
-      JSON_ARRAYAGG(JSON_OBJECT('case_number', COALESCE(ca.case_number_full, ca.case_number, ca.case_id), 'case_id', ca.case_id, 'case_type', ca.case_type)) as cases,
-      IFNULL(DATE_FORMAT(c.contact_dob, '%M %e, %Y'), '') as DoB
-      FROM contacts c LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id
-      WHERE c.contact_id LIKE "%${query}%" OR c.contact_name like "%${query}%" OR c.contact_phone LIKE "%${query}%" OR c.contact_email like "%${query}%" OR c.contact_dob LIKE "%${query}%" OR c.contact_ssn LIKE "%${query}%" GROUP BY c.contact_id
-      ORDER BY ${E("tabContactsSort").value}
-      LIMIT 100 OFFSET 0|||
-      SELECT COUNT(contact_id) AS counter FROM ( SELECT contact_id FROM contacts c LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id WHERE c.contact_id LIKE "%${query}%" OR c.contact_name like "%${query}%" OR c.contact_phone LIKE "%${query}%" OR c.contact_email like "%${query}%" OR c.contact_dob LIKE "%${query}%" OR c.contact_ssn LIKE "%${query}%" GROUP BY c.contact_id) AS subquery`;
-      fetch(
-        `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          q
-        )}`
-      )
-        .then((response) => response.json())
-        .then((data) => {
-          console.log(data);
-          if (data.data.query2[0].counter > 0) {
-            contacts = data.data.query1;
-            //Toast.fire({ icon: "success", title: `Returned ${data.data.query2[0].counter} results!` });
-            console.log(data);
-            contacts.forEach((contact) => {
-              const row = table.insertRow();
-              rowHTML = `<td>${contact.contact_id}</td>
-                   <td><a href="#" onclick="addFile('${contact.contact_name.replace(
-                /'/g,
-                "\\'"
-              )}', 'contact', '${contact.contact_id}')">${contact.contact_name
-                }</a></td>
-                   <td>${contact.contact_phone.replace(
-                  /(\d{3})(\d{3})(\d{4})/,
-                  "$1-$2-$3"
-                )}</td>
-                   <td>${contact.contact_email}</td>
-                   <td>${contact.contact_address
-                  ? contact.contact_address +
-                  "<br>" +
-                  contact.contact_city +
-                  ", " +
-                  contact.contact_state +
-                  " " +
-                  contact.contact_zip
-                  : ""
-                }</td><td>`;
-              contact.cases = typeof contact.cases === "string" ? JSON.parse(contact.cases) : contact.cases;
-              contact.cases.forEach((contactCase) => {
-                if (contactCase.case_id) {
-                  rowHTML += `<a href="#" title="${contactCase.case_id
-                    }" onclick="addFile('${contactCase.case_number || contactCase.case_id
-                    }', 'case', '${contactCase.case_id}')">${contactCase.case_number || contactCase.case_id
-                    }</a><br>`;
-                }
-              });
-              rowHTML += `</td><td>${contact.DoB}</td>`;
-              row.innerHTML = rowHTML;
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
+
+      const params = { limit, offset, sort_by, sort_dir };
+      if (q) params.q = q;
+
+      try {
+        const data = await apiSend("/api/contacts", "GET", params);
+        contacts = data.contacts;
+
+        if (data.total > 0) {
+          contacts.forEach((contact) => {
+            const row = table.insertRow();
+            const phone = (contact.contact_phone || "").replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3");
+            const address = contact.contact_address
+              ? `${contact.contact_address}<br>${contact.contact_city}, ${contact.contact_state} ${contact.contact_zip}`
+              : "";
+
+            let casesHTML = "";
+            const caseList = typeof contact.cases === "string" ? JSON.parse(contact.cases) : contact.cases;
+            caseList.forEach((c) => {
+              if (c.case_id) {
+                casesHTML += `<a href="#" title="${c.case_id}" onclick="addFile('${c.case_number || c.case_id}','case','${c.case_id}')">${c.case_number || c.case_id}</a><br>`;
+              }
             });
-            foot.innerHTML =
-              offset > 0
-                ? `<a href="#" onclick="tabContactsGet(${offset - limit
-                })"">&lt;</a> `
-                : "";
-            for (i = 1; data.data.query2[0].counter >= (i - 1) * limit; i++) {
-              foot.innerHTML +=
-                offset / limit + 1 == i
-                  ? `<a href="#" onclick="tabContactsGet(${(i - 1) * limit
-                  })">[${i}]</a> `
-                  : `<a href="#" onclick="tabContactsGet(${(i - 1) * limit
-                  })">${i}</a> `;
-            }
-            foot.innerHTML +=
-              offset + limit < data.data.query2[0].counter
-                ? `<a href="#" onclick="tabContactsGet(${offset + limit
-                })"">&gt;</a> `
-                : "";
-            foot.innerHTML += ` | Results ${offset + 1}-${offset + contacts.length
-              } of ${data.data.query2[0].counter}
-        <select style="width:auto" onchange="limit = this.value;tabContactsGet(0)">
-        <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
-        <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
-        <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
-        <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
-        </select> | <button onclick="window.print()">Print</button>`;
-          } else {
-            Toast.fire({ icon: "error", title: `No Contacts Found!` });
+
+            row.innerHTML = `
+            <td>${contact.contact_id}</td>
+            <td><a href="#" onclick="addFile('${(contact.contact_name || '').replace(/'/g, "\\'")}','contact','${contact.contact_id}')">${contact.contact_name}</a></td>
+            <td>${phone}</td>
+            <td>${contact.contact_email || ""}</td>
+            <td>${address}</td>
+            <td>${casesHTML}</td>
+            <td>${contact.dob || ""}</td>`;
+          });
+
+          // Pagination
+          foot.innerHTML = offset > 0
+            ? `<a href="#" onclick="tabContactsGet(${offset - limit})">&lt;</a> ` : "";
+          for (let i = 1; data.total >= (i - 1) * limit; i++) {
+            foot.innerHTML += offset / limit + 1 == i
+              ? `<a href="#" onclick="tabContactsGet(${(i - 1) * limit})">[${i}]</a> `
+              : `<a href="#" onclick="tabContactsGet(${(i - 1) * limit})">${i}</a> `;
           }
-          E("tabContactsLoad").style.display = "none";
-        });
+          foot.innerHTML += offset + limit < data.total
+            ? `<a href="#" onclick="tabContactsGet(${offset + limit})">&gt;</a> ` : "";
+          foot.innerHTML += ` | Results ${offset + 1}–${offset + contacts.length} of ${data.total}
+          <select style="width:auto" onchange="limit=this.value;tabContactsGet(0)">
+            <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
+            <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
+            <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
+            <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
+          </select> | <button onclick="window.print()">Print</button>`;
+        } else {
+          Toast.fire({ icon: "error", title: "No contacts found!" });
+        }
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error loading contacts", text: err.message });
+      }
+
+      E("tabContactsLoad").style.display = "none";
     }
   </script>
 

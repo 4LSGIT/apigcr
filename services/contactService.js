@@ -63,6 +63,8 @@ async function listContacts(db, {
   query  = '',
   type   = null,
   tags   = null,
+  sort_by  = 'c.contact_lname',
+  sort_dir = 'ASC',
   limit  = 50,
   offset = 0
 } = {}) {
@@ -103,25 +105,51 @@ async function listContacts(db, {
     params.push(`%${tags}%`);
   }
 
-  const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  const SORT_WHITELIST = {
+    "contact_lname ASC": "c.contact_lname ASC",
+    "contact_lname DESC": "c.contact_lname DESC",
+    "contact_fname ASC": "c.contact_fname ASC",
+    "contact_fname DESC": "c.contact_fname DESC",
+  };
+  const orderClause =
+    SORT_WHITELIST[`${sort_by} ${sort_dir}`] ||
+    SORT_WHITELIST[sort_by] || // if sort_dir already embedded in sort_by (legacy dropdown value)
+    "c.contact_lname ASC";
 
   const [contacts] = await db.query(
     `SELECT
-       c.contact_id, c.contact_type, c.contact_name, c.contact_lfm_name,
-       c.contact_fname, c.contact_mname, c.contact_lname, c.contact_pname,
-       c.contact_phone, c.contact_email, c.contact_phone2, c.contact_email2,
-       c.contact_city, c.contact_state, c.contact_tags,
-       c.contact_created
-     FROM contacts c
-     ${whereSQL}
-     ORDER BY c.contact_name ASC
-     LIMIT ? OFFSET ?`,
-    [...params, parseInt(limit), parseInt(offset)]
+     c.contact_id, c.contact_type, c.contact_name,
+     c.contact_fname, c.contact_mname, c.contact_lname,
+     c.contact_phone, c.contact_email,
+     c.contact_address, c.contact_city, c.contact_state, c.contact_zip,
+     c.contact_tags,
+     IFNULL(DATE_FORMAT(c.contact_dob, '%M %e, %Y'), '') AS dob,
+     JSON_ARRAYAGG(
+       JSON_OBJECT(
+         'case_number', COALESCE(ca.case_number_full, ca.case_number, ca.case_id),
+         'case_id',     ca.case_id,
+         'case_type',   ca.case_type
+       )
+     ) AS cases
+   FROM contacts c
+   LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id
+   LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id
+   ${whereSQL}
+   GROUP BY c.contact_id
+   ORDER BY ${orderClause}
+   LIMIT ? OFFSET ?`,
+    [...params, parseInt(limit), parseInt(offset)],
   );
 
   const [[{ total }]] = await db.query(
-    `SELECT COUNT(*) AS total FROM contacts c ${whereSQL}`,
-    params
+    `SELECT COUNT(DISTINCT c.contact_id) AS total
+   FROM contacts c
+   LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id
+   LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id
+   ${whereSQL}`,
+    params,
   );
 
   return { contacts, total };
