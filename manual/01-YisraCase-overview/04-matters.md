@@ -1,1 +1,0 @@
-these are cases. they always have at least one contact, "primary"
