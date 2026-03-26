@@ -15,13 +15,29 @@ const logService = require('../services/logService');
 // ─── LIST ───
 router.get('/api/log', jwtOrApiKey, async (req, res) => {
   try {
+    const { type, q, from_date, to_date } = req.query;
+    // Map 'Communication' → types array; 'All' → no filter
+    let typeParam  = null;
+    let typesParam = null;
+    if (type && type !== 'All') {
+      if (type === 'Communication') {
+        typesParam = ['sms', 'email', 'call'];
+      } else {
+        typeParam = type;
+      }
+    }
+    // Apply same day-boundary fix as appts
+    const fromDate = from_date ? `${from_date} 00:00:00` : null;
+    const toDate   = to_date   ? to_date : null; // service uses < DATE_ADD logic belo
     const result = await logService.listLog(req.db, {
       link_type: req.query.link_type,
       link_id:   req.query.link_id,
-      type:      req.query.type,
+      type:      typeParam,
+      types:     typesParam,
+      q:         q || null,
       direction: req.query.direction,
-      from_date: req.query.from_date,
-      to_date:   req.query.to_date,
+      from_date: fromDate,
+      to_date:   toDate,
       limit:     req.query.limit  || 50,
       offset:    req.query.offset || 0
     });

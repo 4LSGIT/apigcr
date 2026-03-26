@@ -35,15 +35,11 @@
  * @returns {{ entries: object[], total: number }}
  */
 async function listLog(db, {
-  link_type = null,
-  link_id   = null,
-  type      = null,
-  direction = null,
-  from_date = null,
-  to_date   = null,
-  limit     = 50,
-  offset    = 0
+  link_type = null, link_id = null, type = null, types = null,
+  q = null, direction = null, from_date = null, to_date = null,
+  limit = 50, offset = 0
 } = {}) {
+
   const where = [];
   const params = [];
 
@@ -56,7 +52,10 @@ async function listLog(db, {
     params.push(link_type, String(link_id), String(link_id));
   }
 
-  if (type) {
+  if (types && types.length) {
+    where.push(`l.log_type IN (${types.map(() => '?').join(',')})`);
+    params.push(...types);
+  } else if (type) {
     where.push('l.log_type = ?');
     params.push(type);
   }
@@ -72,33 +71,40 @@ async function listLog(db, {
   }
 
   if (to_date) {
-    where.push('l.log_date <= ?');
+    where.push('l.log_date < DATE_ADD(?, INTERVAL 1 DAY)');
     params.push(to_date);
+  }
+
+  if (q) {
+    const like = `%${q}%`;
+    where.push(`(l.log_data LIKE ? OR l.log_from LIKE ? OR l.log_to LIKE ?
+                 OR l.log_subject LIKE ? OR CAST(l.log_link AS CHAR) LIKE ?)`);
+    params.push(like, like, like, like, like);
   }
 
   const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
   const [entries] = await db.query(
     `SELECT
-       l.log_id,
-       l.log_type,
-       l.log_date,
-       l.log_link,
-       l.log_link_type,
-       l.log_link_id,
-       l.log_by,
-       l.log_data,
-       l.log_from,
-       l.log_to,
-       l.log_subject,
-       l.log_direction,
-       u.user_name AS by_name
-     FROM log l
-     LEFT JOIN users u ON l.log_by = u.user
-     ${whereSQL}
-     ORDER BY l.log_date DESC
-     LIMIT ? OFFSET ?`,
-    [...params, parseInt(limit), parseInt(offset)]
+     l.log_id, l.log_type, l.log_date, l.log_link,
+     l.log_link_type, l.log_link_id, l.log_by, l.log_data,
+     l.log_from, l.log_to, l.log_subject, l.log_direction,
+     u.user_name AS by_name,
+     DATE_FORMAT(l.log_date, '%M %e, %Y at %h:%i %p') AS formatted_date,
+     c.contact_name, c.contact_id,
+     ca.case_id,
+     COALESCE(ca.case_number_full, ca.case_number) AS case_number
+   FROM log l
+   LEFT JOIN users    u  ON l.log_by = u.user
+   LEFT JOIN contacts c  ON l.log_link = c.contact_id
+   LEFT JOIN cases    ca ON (l.log_link = ca.case_id
+                             OR l.log_link = ca.case_number
+                             OR l.log_link = ca.case_number_full)
+                         AND l.log_link != ''
+   ${whereSQL}
+   ORDER BY l.log_date DESC
+   LIMIT ? OFFSET ?`,
+    [...params, parseInt(limit), parseInt(offset)],
   );
 
   const [[{ total }]] = await db.query(

@@ -886,25 +886,25 @@
       Swal.fire({
         title: `${taskID ? "Update" : "New"} Task:`,
         html: `<label class="input-label">Assign To: </label
-      ><select id="taskAssignTo" style="width:250px" value="${taskTo ? taskTo : ""
+          ><select id="taskAssignTo" style="width:250px" value="${taskTo ? taskTo : ""
           }">${userOpts}</select><br>
-      <label class="input-label">Title: </label><input style="width:250px" id="taskTitle" value="${taskTitle ? taskTitle : ""
+          <label class="input-label">Title: </label><input style="width:250px" id="taskTitle" value="${taskTitle ? taskTitle : ""
           }"><br>
-      <label class="input-label">Description: </label><textarea class="input-ta" rows="4" style="width:250px" id="taskDesc">${taskDesc ? taskDesc : ""
+          <label class="input-label">Description: </label><textarea class="input-ta" rows="4" style="width:250px" id="taskDesc">${taskDesc ? taskDesc : ""
           }</textarea><br>
-      <label class="input-label">Start Date: </label><input type="date" style="width:250px" id="taskStart" value="${taskStart ? taskStart : ""
+          <label class="input-label">Start Date: </label><input type="date" style="width:250px" id="taskStart" value="${taskStart ? taskStart : ""
           }"><br>
-      <label class="input-label"></label><label class="sub-label">leave blank to start immediately</label><br>
-      <label class="input-label">Due Date: </label><input type="date" style="width:250px" id="taskDate" value="${taskDue ? taskDue : ""
+          <label class="input-label"></label><label class="sub-label">leave blank to start immediately</label><br>
+          <label class="input-label">Due Date: </label><input type="date" style="width:250px" id="taskDate" value="${taskDue ? taskDue : ""
           }"><br>
-      <label class="sub-label" style="width:90%">a message will be sent now and on the due date</label><br>
-      <input type="checkbox" id="taskNotify" ${taskNotification ? "checked" : ""
+          <label class="sub-label" style="width:90%">a message will be sent now and on the due date</label><br>
+          <input type="checkbox" id="taskNotify" ${taskNotification ? "checked" : ""
           } style="width:10px;transform: scale(1.5);"><span> Notify Assigner upon completion?</span>
-      <div style="display:${taskLink ? "" : "none"}">
-      <input type="checkbox" id="taskLink" ${taskLink ? "checked" : ""
+          <div style="display:${taskLink ? "" : "none"}">
+          <input type="checkbox" id="taskLink" ${taskLink ? "checked" : ""
           } style="width:10px;transform: scale(1.5);"><span> Link to ${isNaN(taskLink) ? "Case" : "Client"
           }?</span>
-      </div>`,
+          </div>`,
         showCancelButton: true,
         showConfirmButton: true,
         cancelButtonText: "Cancel",
@@ -1063,21 +1063,21 @@
         table.deleteRow(i);
       }
       q = `SELECT t.*, u.user_name AS task_from_name, u2.user_name AS task_to_name, DATE_FORMAT(t.task_due, '%b. %e, %Y') AS due, DATE_FORMAT(t.task_date, '%b. %e, %Y at %l:%i %p') AS date,
-       contacts.contact_name, contacts.contact_id, cases.case_id,
-    CASE WHEN contacts.contact_id IS NOT NULL THEN 'contact' WHEN cases.case_id IS NOT NULL THEN 'case' ELSE NULL END AS link_type,
-    CASE 
-        WHEN cases.case_number_full IS NOT NULL THEN cases.case_number_full
-        WHEN cases.case_number IS NOT NULL THEN cases.case_number
-        WHEN cases.case_id IS NOT NULL THEN cases.case_id
-        WHEN contacts.contact_name IS NOT NULL THEN contacts.contact_name
-    END AS link_title
-       FROM tasks t LEFT JOIN users u ON t.task_from = u.user LEFT JOIN users u2 ON t.task_to = u2.user LEFT JOIN contacts ON t.task_link = contacts.contact_id LEFT JOIN cases ON t.task_link != "" AND (t.task_link = cases.case_number OR t.task_link = cases.case_number_full OR t.task_link = cases.case_id) 
-       WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%" OR contacts.contact_name LIKE "%${query}%" OR cases.case_number LIKE "%${query}%" OR cases.case_number_full LIKE "%${query}%" OR cases.case_id LIKE "%${query}%" OR contacts.contact_name LIKE "%${query}%")
-         AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END LIMIT ${limit} OFFSET ${offset};|||
-       SELECT COUNT(*) AS counter FROM tasks t LEFT JOIN users u ON t.task_from = u.user LEFT JOIN users u2 ON t.task_to = u2.user LEFT JOIN contacts ON t.task_link = contacts.contact_id LEFT JOIN cases ON t.task_link != "" AND (t.task_link = cases.case_number OR t.task_link = cases.case_number_full OR t.task_link = cases.case_id) 
-       WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%" OR contacts.contact_name LIKE "%${query}%" OR cases.case_number LIKE "%${query}%" OR cases.case_number_full LIKE "%${query}%" OR cases.case_id LIKE "%${query}%" OR contacts.contact_name LIKE "%${query}%")
-         AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END
-        `;
+           contacts.contact_name, contacts.contact_id, cases.case_id,
+        CASE WHEN contacts.contact_id IS NOT NULL THEN 'contact' WHEN cases.case_id IS NOT NULL THEN 'case' ELSE NULL END AS link_type,
+        CASE 
+            WHEN cases.case_number_full IS NOT NULL THEN cases.case_number_full
+            WHEN cases.case_number IS NOT NULL THEN cases.case_number
+            WHEN cases.case_id IS NOT NULL THEN cases.case_id
+            WHEN contacts.contact_name IS NOT NULL THEN contacts.contact_name
+        END AS link_title
+           FROM tasks t LEFT JOIN users u ON t.task_from = u.user LEFT JOIN users u2 ON t.task_to = u2.user LEFT JOIN contacts ON t.task_link = contacts.contact_id LEFT JOIN cases ON t.task_link != "" AND (t.task_link = cases.case_number OR t.task_link = cases.case_number_full OR t.task_link = cases.case_id) 
+           WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%" OR contacts.contact_name LIKE "%${query}%" OR cases.case_number LIKE "%${query}%" OR cases.case_number_full LIKE "%${query}%" OR cases.case_id LIKE "%${query}%" OR contacts.contact_name LIKE "%${query}%")
+             AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END LIMIT ${limit} OFFSET ${offset};|||
+           SELECT COUNT(*) AS counter FROM tasks t LEFT JOIN users u ON t.task_from = u.user LEFT JOIN users u2 ON t.task_to = u2.user LEFT JOIN contacts ON t.task_link = contacts.contact_id LEFT JOIN cases ON t.task_link != "" AND (t.task_link = cases.case_number OR t.task_link = cases.case_number_full OR t.task_link = cases.case_id) 
+           WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%" OR contacts.contact_name LIKE "%${query}%" OR cases.case_number LIKE "%${query}%" OR cases.case_number_full LIKE "%${query}%" OR cases.case_id LIKE "%${query}%" OR contacts.contact_name LIKE "%${query}%")
+             AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END
+            `;
       fetch(
         `/db?username=${username}&password=${password}&query=${encodeURIComponent(
           q
@@ -1093,23 +1093,23 @@
               const row = table.insertRow();
               //taskTo, taskTitle, taskDesc, taskDue, taskNotification
               rowHTML = `<td><select 
-        onchange="updateTask(${task.task_id}, this.value, ${task.task_to}, '${task.task_title}', '${task.task_desc}', '${task.task_due}', ${task.task_notification}, '${task.task_link}');this.selectedIndex=0;" 
-        style="width:150px"><option value="" disabled selected>Actions</option>`;
+            onchange="updateTask(${task.task_id}, this.value, ${task.task_to}, '${task.task_title}', '${task.task_desc}', '${task.task_due}', ${task.task_notification}, '${task.task_link}');this.selectedIndex=0;" 
+            style="width:150px"><option value="" disabled selected>Actions</option>`;
               if (
                 task.task_status == "Pending" ||
                 task.task_status == "Due Today" ||
                 task.task_status == "Overdue"
               ) {
                 rowHTML += `<option value="Mark Complete">Mark Complete</option>
-            <option value="Edit">Edit</option>
-            <option value="Cancel">Cancel</option>  
-          </select>`;
+                <option value="Edit">Edit</option>
+                <option value="Cancel">Cancel</option>  
+              </select>`;
               } else if (task.task_status == "Canceled") {
                 rowHTML += `<option value="Uncancel">Reinstate</option>  
-          </select>`;
+              </select>`;
               } else if (task.task_status == "Completed") {
                 rowHTML += `<option value="Mark Incomplete">Mark Incomplete</option>
-          </select>`;
+              </select>`;
               } else {
                 rowHTML += `<td>`;
               }
@@ -1117,16 +1117,16 @@
                 ? `<a href="#" onclick="addFile('${task.link_title}', '${task.link_type}', '${task.task_link}'); return false">${task.link_title}</a>`
                 : "";
               row.innerHTML = `
-          ${rowHTML}</td>
-          <td>${task.task_id}</td>
-          <td>${task.task_status}</td>
-          <td>${task.task_title}</td>
-          <td>${task.task_desc}</td>
-          <td>${task.task_from_name}</td>
-          <td>${task.task_to_name}</td>
-          <td>${taskLink}</td>
-          <td>${task.due || ""}</td>
-          <td>${task.date}</td>`;
+              ${rowHTML}</td>
+              <td>${task.task_id}</td>
+              <td>${task.task_status}</td>
+              <td>${task.task_title}</td>
+              <td>${task.task_desc}</td>
+              <td>${task.task_from_name}</td>
+              <td>${task.task_to_name}</td>
+              <td>${taskLink}</td>
+              <td>${task.due || ""}</td>
+              <td>${task.date}</td>`;
             });
             foot.innerHTML =
               offset > 0
@@ -1148,12 +1148,12 @@
                 : "";
             foot.innerHTML += ` | Results ${offset + 1}-${offset + tasks.length
               } of ${data.data.query2[0].counter} 
-        <select style="width:auto" onchange="limit = this.value;tabTasksGet(0)">
-        <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
-        <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
-        <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
-        <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
-        </select> | <button onclick="window.print()">Print</button>`;
+            <select style="width:auto" onchange="limit = this.value;tabTasksGet(0)">
+            <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
+            <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
+            <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
+            <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
+            </select> | <button onclick="window.print()">Print</button>`;
           } else {
             Toast.fire({ icon: "error", title: `No Tasks Found!` });
           }
@@ -1162,7 +1162,7 @@
         });
     }
   </script>
-
+  
   <div id="tabLogs" class="tab-main">
     <span>Query:
       <input id="tabLogQuery" onkeypress="if (event.keyCode == 13) {tabLogGet(0)}" />
@@ -1190,7 +1190,7 @@
       <input id="tabLogDate1" type="date" style="width: 150px; display: none" />
       <label id="tabLogDateLabel"></label>
       <input id="tabLogDate2" type="date" style="width: 150px; display: none" />
-
+  
       <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
     </span>
     <table id="logTable" class="logTable" style="text-align: left">
@@ -1208,147 +1208,114 @@
       <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
     </div>
   </div>
-
+  
   <script>
     function tabLogTimeChange(time) {
-      if (time == "All") {
+      if (time === "All") {
         E("tabLogDate1").style.display = "none";
         E("tabLogDateLabel").innerHTML = "";
         E("tabLogDate2").style.display = "none";
-      } else if (time != "Between") {
+      } else if (time !== "Between") {
         E("tabLogDate1").style.display = "inline-block";
         E("tabLogDateLabel").innerHTML = "";
         E("tabLogDate2").style.display = "none";
-      } else if (time == "Between") {
+      } else {
         E("tabLogDate1").style.display = "inline-block";
         E("tabLogDateLabel").innerHTML = "and ";
         E("tabLogDate2").style.display = "inline-block";
       }
     }
 
-    function tabLogGet(offset) {
+    async function tabLogGet(offset) {
+      offsets.logs = offset;
       E("tabLogButton").disabled = true;
       E("tabLogLoad").style.display = "block";
-      query = E("tabLogQuery").value;
-      type = E("tabLogType").value;
-      type1 = E("tabLogType").value;
-      time = E("tabLogTime").value;
-      date1 = E("tabLogDate1").value;
-      date2 = E("tabLogDate2").value;
+
+      const q = E("tabLogQuery").value;
+      const type = E("tabLogType").value;
+      const time = E("tabLogTime").value;
+      const date1 = E("tabLogDate1").value;
+      const date2 = E("tabLogDate2").value;
+
       const table = E("logTable");
       const foot = E("logTableFoot");
       foot.innerHTML = "";
-      var rows = table.getElementsByTagName("tr");
-      for (var i = rows.length - 1; i > 0; i--) {
-        table.deleteRow(i);
-      }
-      if (type == "All") {
-        type = "1' OR '1";
-      } else if (type == "Communication") {
-        type = "sms' OR log_type = 'email' OR log_type = 'call";
-      }
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
 
-      if (time == "All") {
-        time = "1000-10-01' OR '1";
-      } else if (time == "Defore") {
-        time = `1000-10-01' OR DATE(log_date) < ${date1}`;
-      } else if (time == "On ") {
-        time = date1;
-      } else if (time == "After") {
-        time = `1000-10-01' OR DATE(log_date) > ${date1}`;
-      } else if (time == "Between") {
-        time = `1000-10-01' OR (DATE(log_date) < ${date1} AND DATE(log_date) > ${date2})`;
-      }
-      q = `SELECT log.*, DATE_FORMAT(log_date, '%M %e, %Y at %h:%i %p') AS formatted_date, contacts.contact_name, contacts.contact_id, COALESCE(cases.case_number_full, cases.case_number) AS case_number, cases.case_id, cases.case_type
-      FROM log LEFT JOIN contacts ON log.log_link = contacts.contact_id LEFT JOIN cases ON (log.log_link = cases.case_id OR log.log_link = cases.case_number OR log.log_link = cases.case_number_full) AND log.log_link != "" 
-      WHERE (log_type = '${type}') AND (log_date = '${time}') AND (log_data LIKE '%${query}%' OR log_from LIKE '%${query}%' OR log_to LIKE '%${query}%' OR log_subject LIKE '%${query}%' OR log_form_id LIKE "%${query}%" OR log_link LIKE "%${query}%")
-      ORDER BY log_date DESC, log_id DESC LIMIT ${limit} OFFSET ${offset};|||
-      SELECT COUNT(*) AS counter FROM log
-      WHERE (log_type = '${type}') AND (log_date = '${time}') AND (log_data LIKE '%${query}%' OR log_from LIKE '%${query}%' OR log_to LIKE '%${query}%' OR log_subject LIKE '%${query}%' OR log_form_id LIKE "%${query}%" OR log_link LIKE "%${query}%")
-     `;
-      fetch(
-        `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          q
-        )}`
-      )
-        .then((response) => response.json())
-        .then((data) => {
-          console.log(data);
-          logs = data.data.query1;
-          if (data.data.query2[0].counter > 0) {
-            logs.forEach((log) => {
-              const row = table.insertRow();
-              logdata = "";
-              link = isNaN(log.log_link)
-                ? `<a href="#" onclick="addFile('${log.case_number || log.case_id
-                }', 'case', '${log.case_id}', '${log.case_type
-                }'); return false">${log.case_number || log.case_id}</a>`
-                : log.log_link
-                  ? `<a href="#" onclick="addFile('${log.contact_name.replace(
-                    /'/g,
-                    "\\'"
-                  )}', 'client', '${log.log_link}'); return false">${log.contact_name || "Name Error"
-                  }</a>`
-                  : "";
-              by =
-                userArray[+log.log_by - 1] !== undefined
-                  ? userArray[+log.log_by - 1]
-                  : log.log_by;
-              let cell_data;
-              try {
-                let jsonData = log.log_data
-                  .replace(/\n/g, "\\n")
-                  .replace(/\r/g, "\\r");
-                jsonData = JSON.parse(jsonData);
-                cell_data = Object.keys(jsonData)
-                  .map(
-                    (key) =>
-                      `<b>${key}:</b> ${decodeURIComponent(jsonData[key])}`
-                  )
-                  .join("<br>");
-                //does this help??!!
-              } catch (error) {
-                cell_data = log.log_data;
-              }
-              rowHTML = `<td>${log.log_id}</td><td>${log.log_type}</td><td>${log.formatted_date}</td><td>${link}</td><td>${cell_data}</td><td>${by}</td>`;
+      const params = { limit, offset };
+      if (q) params.q = q;
+      if (type !== "All") params.type = type;  // route handles 'Communication' mapping
 
-              row.innerHTML = rowHTML;
-            });
-            foot.innerHTML =
-              offset > 0
-                ? `<a href="#" onclick="tabLogGet(${offset - limit
-                })"">&lt;</a> `
-                : "";
-            for (i = 1; data.data.query2[0].counter >= (i - 1) * limit; i++) {
-              foot.innerHTML +=
-                offset / limit + 1 == i
-                  ? `<a href="#" onclick="tabLogGet(${(i - 1) * limit
-                  })">[${i}]</a> `
-                  : `<a href="#" onclick="tabLogGet(${(i - 1) * limit
-                  })">${i}</a> `;
+      if (time === "Before") { params.to_date = date1; }
+      if (time === "After") { params.from_date = date1; }
+      if (time === "On") { params.from_date = date1; params.to_date = date1; }
+      if (time === "Between") { params.from_date = date1; params.to_date = date2; }
+
+      try {
+        const data = await apiSend("/api/log", "GET", params);
+        logs = data.entries;
+
+        if (data.total > 0) {
+          logs.forEach((entry) => {
+            const row = table.insertRow();
+
+            // Link cell — numeric log_link = contact, string = case
+            let link = "";
+            if (entry.case_id && isNaN(entry.log_link)) {
+              const caseName = entry.case_number || entry.case_id;
+              link = `<a href="#" onclick="addFile('${caseName}','case','${entry.case_id}');return false">${caseName}</a>`;
+            } else if (entry.contact_id) {
+              const cname = (entry.contact_name || "").replace(/'/g, "\\'");
+              link = `<a href="#" onclick="addFile('${cname}','client','${entry.contact_id}');return false">${entry.contact_name || "Name Error"}</a>`;
             }
-            foot.innerHTML +=
-              offset + limit < data.data.query2[0].counter
-                ? `<a href="#" onclick="tabLogGet(${offset + limit
-                })"">&gt;</a> `
-                : "";
-            foot.innerHTML += ` | Results ${offset + 1}-${offset + logs.length
-              } of ${data.data.query2[0].counter} 
-        <select style="width:auto" onchange="limit = this.value;tabLogGet(0)">
-        <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
-        <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
-        <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
-        <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
-        </select> | <button onclick="window.print()">Print</button>`;
-          } else {
-            Toast.fire({
-              icon: data.icon || "error",
-              title: data.title || `an error has occured!`,
-            });
+
+            // Data cell — try to parse JSON, fall back to raw string
+            let cell_data;
+            try {
+              const jsonData = JSON.parse(entry.log_data.replace(/\n/g, "\\n").replace(/\r/g, "\\r"));
+              cell_data = Object.keys(jsonData)
+                .map(key => `<b>${key}:</b> ${decodeURIComponent(jsonData[key])}`)
+                .join("<br>");
+            } catch (_) {
+              cell_data = entry.log_data || "";
+            }
+
+            row.innerHTML = `
+              <td>${entry.log_id}</td>
+              <td>${entry.log_type}</td>
+              <td>${entry.formatted_date}</td>
+              <td>${link}</td>
+              <td>${cell_data}</td>
+              <td>${entry.by_name || entry.log_by || ""}</td>`;
+          });
+
+          // Pagination
+          foot.innerHTML = offset > 0
+            ? `<a href="#" onclick="tabLogGet(${offset - limit})">&lt;</a> ` : "";
+          for (let i = 1; data.total >= (i - 1) * limit; i++) {
+            foot.innerHTML += offset / limit + 1 == i
+              ? `<a href="#" onclick="tabLogGet(${(i - 1) * limit})">[${i}]</a> `
+              : `<a href="#" onclick="tabLogGet(${(i - 1) * limit})">${i}</a> `;
           }
-          E("tabLogButton").disabled = false;
-          E("tabLogLoad").style.display = "none";
-        });
+          foot.innerHTML += offset + limit < data.total
+            ? `<a href="#" onclick="tabLogGet(${offset + limit})">&gt;</a> ` : "";
+          foot.innerHTML += ` | Results ${offset + 1}–${offset + logs.length} of ${data.total}
+            <select style="width:auto" onchange="limit=this.value;tabLogGet(0)">
+              <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
+              <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
+              <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
+              <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
+            </select> | <button onclick="window.print()">Print</button>`;
+        } else {
+          Toast.fire({ icon: "error", title: "No log entries found!" });
+        }
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error loading log", text: err.message });
+      }
+
+      E("tabLogButton").disabled = false;
+      E("tabLogLoad").style.display = "none";
     }
   </script>
 
