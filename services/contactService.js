@@ -177,20 +177,22 @@ async function getContact(db, contactId) {
     [contactId]
   );
   if (!raw) return null;
-  const contact = stripSsn(raw);
+  const contact = { ...raw };  // SSN exposed — authenticated staff only
 
   // 2) Cases via case_relate
   const [cases] = await db.query(
     `SELECT
-       ca.case_id, ca.case_number, ca.case_number_full,
-       ca.case_type, ca.case_stage, ca.case_status,
-       ca.case_open_date, ca.case_file_date,
-       cr.case_relate_type AS relate_type
-     FROM case_relate cr
-     JOIN cases ca ON cr.case_relate_case_id = ca.case_id
-     WHERE cr.case_relate_client_id = ?
-     ORDER BY ca.case_open_date DESC`,
-    [contactId]
+   ca.case_id, ca.case_number, ca.case_number_full,
+   ca.case_type, ca.case_stage, ca.case_status,
+   cr.case_relate_type AS relate_type,
+   IFNULL(DATE_FORMAT(ca.case_open_date,  '%b. %e, %Y'), '') AS open,
+   IFNULL(DATE_FORMAT(ca.case_file_date,  '%b. %e, %Y'), '') AS file,
+   IFNULL(DATE_FORMAT(ca.case_close_date, '%b. %e, %Y'), '') AS close
+    FROM case_relate cr
+    JOIN cases ca ON cr.case_relate_case_id = ca.case_id
+    WHERE cr.case_relate_client_id = ?
+    ORDER BY ca.case_open_date DESC`,
+    [contactId],
   );
 
   // 3) Appointments
@@ -199,6 +201,7 @@ async function getContact(db, contactId) {
        a.appt_id, a.appt_type, a.appt_status, a.appt_date, a.appt_end,
        a.appt_length, a.appt_platform, a.appt_case_id, a.appt_note,
        a.appt_with,
+       DATE_FORMAT(a.appt_date, '%Y-%m-%dT%H:%i') AS appt_datetime_local,
        DATE_FORMAT(a.appt_date, '%b. %e, %Y') AS format_date,
        DATE_FORMAT(a.appt_date, '%h:%i %p')   AS time,
        u.user_name AS with_name
@@ -206,7 +209,7 @@ async function getContact(db, contactId) {
      LEFT JOIN users u ON a.appt_with = u.user
      WHERE a.appt_client_id = ?
      ORDER BY a.appt_date DESC`,
-    [contactId]
+    [contactId],
   );
 
   // 4) Tasks linked to this contact
