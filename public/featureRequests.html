@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feature Requests</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<style>
+  :root {
+    --bg:        #f4f6f9;
+    --card:      #ffffff;
+    --border:    #e2e8f0;
+    --accent:    #0071e3;
+    --accent2:   #5856d6;
+    --text:      #1a202c;
+    --muted:     #718096;
+    --admin-bg:  #fff8e1;
+    --admin-bdr: #f6cc2f;
+    --tag-bug:   #fff0f0;
+    --tag-bug-c: #c53030;
+    --tag-feat:  #f0f7ff;
+    --tag-feat-c:#2b6cb0;
+    --radius:    10px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 1.5rem;
+    min-height: 100vh;
+  }
+
+  /* ── HEADER ── */
+  .page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+    flex-wrap: wrap;
+    gap: .75rem;
+  }
+  .page-header h1 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .page-header h1 span {
+    color: var(--accent);
+  }
+
+  /* ── FILTERS ── */
+  .filters {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.25rem;
+  }
+  .filter-btn {
+    padding: .35rem .85rem;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: var(--card);
+    font-size: .8rem;
+    cursor: pointer;
+    transition: all .15s;
+    color: var(--muted);
+  }
+  .filter-btn.active, .filter-btn:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+
+  /* ── CARDS ── */
+  #requestList { display: flex; flex-direction: column; gap: .85rem; }
+
+  .req-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.1rem;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: .75rem;
+    align-items: start;
+    transition: box-shadow .15s;
+  }
+  .req-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.08); }
+
+  /* Vote column */
+  .vote-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .2rem;
+    min-width: 40px;
+  }
+  .vote-btn {
+    background: none;
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    cursor: pointer;
+    font-size: 1rem;
+    color: var(--muted);
+    transition: all .15s;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .vote-btn.voted {
+    background: #fff3cd;
+    border-color: #f6cc2f;
+    color: #b7791f;
+  }
+  .vote-btn:hover:not(.voted) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .vote-count { font-size: .8rem; font-weight: 600; color: var(--muted); }
+
+  /* Main content */
+  .req-main { min-width: 0; }
+  .req-top {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    flex-wrap: wrap;
+    margin-bottom: .35rem;
+  }
+  .req-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .tag {
+    font-size: .7rem;
+    font-weight: 600;
+    padding: .15rem .55rem;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .tag-bug     { background: var(--tag-bug);  color: var(--tag-bug-c); }
+  .tag-feature { background: var(--tag-feat); color: var(--tag-feat-c); }
+
+  .stage-badge {
+    font-size: .7rem;
+    padding: .15rem .55rem;
+    border-radius: 20px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .stage-considering  { background:#e9ecef; color:#495057; }
+  .stage-planning     { background:#d0ebff; color:#1864ab; }
+  .stage-working_on_it{ background:#d3f9d8; color:#2b8a3e; }
+  .stage-implemented  { background:#b2f2bb; color:#1b5e20; }
+  .stage-future_thought{ background:#fff0f6; color:#862e9c; }
+  .stage-rejected     { background:#ffe3e3; color:#c92a2a; }
+
+  .req-desc {
+    font-size: .875rem;
+    color: #4a5568;
+    line-height: 1.5;
+    margin-bottom: .5rem;
+  }
+
+  /* Progress bar */
+  .progress-wrap {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin-bottom: .45rem;
+  }
+  .progress-bar {
+    flex: 1;
+    height: 5px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 4px;
+    transition: width .4s ease;
+  }
+  .progress-label { font-size: .75rem; color: var(--muted); white-space: nowrap; }
+
+  .status-note {
+    font-size: .78rem;
+    color: var(--muted);
+    font-style: italic;
+    margin-bottom: .4rem;
+  }
+
+  .req-meta {
+    font-size: .75rem;
+    color: var(--muted);
+    display: flex;
+    gap: .85rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .req-meta button {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: .75rem;
+    cursor: pointer;
+    padding: 0;
+  }
+  .req-meta button:hover { text-decoration: underline; }
+
+  /* Actions column (admin) */
+  .req-actions { display: flex; flex-direction: column; gap: .4rem; align-items: flex-end; }
+  .admin-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .3rem .6rem;
+    font-size: .75rem;
+    cursor: pointer;
+    color: var(--muted);
+    white-space: nowrap;
+    transition: all .15s;
+  }
+  .admin-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── COMMENTS ── */
+  .comments-section {
+    display: none;
+    margin-top: .85rem;
+    border-top: 1px solid var(--border);
+    padding-top: .85rem;
+  }
+  .comments-section.open { display: block; }
+
+  .comment-item {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: .65rem .85rem;
+    margin-bottom: .5rem;
+    font-size: .85rem;
+  }
+  .comment-item.is-admin {
+    background: var(--admin-bg);
+    border-color: var(--admin-bdr);
+  }
+  .comment-item.is-reply { margin-left: 1.5rem; }
+  .comment-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: .3rem;
+  }
+  .comment-author { font-weight: 600; font-size: .78rem; }
+  .comment-author .admin-tag {
+    background: #f6cc2f;
+    color: #7a5700;
+    font-size: .65rem;
+    padding: .1rem .4rem;
+    border-radius: 4px;
+    margin-left: .4rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .comment-date { font-size: .72rem; color: var(--muted); }
+  .comment-text { color: #2d3748; line-height: 1.5; }
+  .reply-btn {
+    background: none; border: none; color: var(--accent);
+    font-size: .72rem; cursor: pointer; padding: .2rem 0 0 0;
+  }
+  .reply-btn:hover { text-decoration: underline; }
+
+  .comment-form {
+    display: flex;
+    gap: .5rem;
+    margin-top: .6rem;
+    align-items: flex-start;
+  }
+  .comment-form textarea {
+    flex: 1;
+    resize: vertical;
+    min-height: 60px;
+    padding: .55rem .75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: .85rem;
+    font-family: inherit;
+    width: 200px; /* will be overridden by flex: 1 */
+  }
+  .comment-form textarea:focus { outline: none; border-color: var(--accent); }
+  .comment-form button {
+    padding: .55rem 1rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: .85rem;
+    white-space: nowrap;
+  }
+  .comment-form button:hover { background: #0056b3; }
+
+  /* ── SUBMIT FORM ── */
+  .submit-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  .submit-card h2 { font-size: 1rem; margin-bottom: .9rem; font-weight: 600; }
+  .form-row { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: .75rem; }
+  .form-row input, .form-row select, .form-row textarea {
+    padding: .55rem .75rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: .875rem;
+    font-family: inherit;
+  }
+  .form-row input:focus, .form-row select:focus, .form-row textarea:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .form-row input.title-input { flex: 1; min-width: 200px; }
+  .form-row select { width: 130px; }
+  .form-row textarea { flex: 1; min-height: 70px; resize: vertical; min-width: 100%; }
+  .submit-btn {
+    padding: .6rem 1.4rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: .9rem;
+    font-weight: 600;
+    transition: background .15s;
+  }
+  .submit-btn:hover { background: #0056b3; }
+
+  /* ── EMPTY ── */
+  .empty { text-align: center; color: var(--muted); padding: 3rem 1rem; }
+  .empty i { font-size: 2rem; margin-bottom: .75rem; display: block; }
+
+  /* ── HIDDEN ADMIN ONLY ── */
+  .admin-only { display: none; }
+  body.is-admin .admin-only { display: initial; }
+  body.is-admin .admin-block { display: block; }
+  .admin-block { display: none; }
+
+  .hidden-badge {
+    font-size: .68rem;
+    background: #e2e8f0;
+    color: #718096;
+    padding: .1rem .4rem;
+    border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1><i class="fa-solid fa-lightbulb" style="color:var(--accent)"></i> Feature &amp; Bug <span>Requests</span></h1>
+  <button class="submit-btn" onclick="toggleSubmitForm()">
+    <i class="fa-solid fa-plus"></i> New Request
+  </button>
+</div>
+
+<!-- Submit form (collapsed by default) -->
+<div class="submit-card" id="submitCard" style="display:none">
+  <h2><i class="fa-solid fa-pen-to-square"></i> Submit a Request</h2>
+  <div class="form-row">
+    <input type="text" class="title-input" id="newTitle" placeholder="Short title…" maxlength="120">
+    <select id="newType">
+      <option value="feature">✨ Feature</option>
+      <option value="bug">🐛 Bug</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <textarea id="newDesc" placeholder="Describe the feature or bug in detail…"></textarea>
+  </div>
+  <button class="submit-btn" onclick="submitRequest()">
+    <i class="fa-solid fa-paper-plane"></i> Submit
+  </button>
+  <button class="submit-btn" style="background:#6c757d;margin-left:.5rem" onclick="toggleSubmitForm()">
+    Cancel
+  </button>
+</div>
+
+<!-- Filters -->
+<div class="filters">
+  <button class="filter-btn active" data-filter="all" onclick="setFilter(this,'all')">All</button>
+  <button class="filter-btn" data-filter="feature" onclick="setFilter(this,'feature')">✨ Features</button>
+  <button class="filter-btn" data-filter="bug" onclick="setFilter(this,'bug')">🐛 Bugs</button>
+  <button class="filter-btn" data-filter="working_on_it" onclick="setFilter(this,'working_on_it')">🔨 In Progress</button>
+  <button class="filter-btn" data-filter="implemented" onclick="setFilter(this,'implemented')">✅ Done</button>
+</div>
+
+<div id="requestList">
+  <div class="empty"><i class="fa-solid fa-circle-notch fa-spin"></i>Loading…</div>
+</div>
+
+<script>
+// ── bootstrap ─────────────────────────────────────────────────────────────────
+const P = window.parent;
+let currentFilter = 'all';
+let allRequests   = [];
+let isAdmin       = false;
+
+async function init() {
+  // Detect admin from parent JWT payload
+  try {
+    const token = localStorage.getItem('jwt') || P?.AUTH_STATE?.jwt;
+    if (token) {
+      const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+      if (['authorized - SU','authorized - admin'].includes(payload.user_auth)) {
+        document.body.classList.add('is-admin');
+        isAdmin = true;
+      }
+    }
+  } catch(e) { /* not admin */ }
+
+  await loadRequests();
+}
+
+// ── API wrapper (delegates to parent) ────────────────────────────────────────
+function api(endpoint, method = 'GET', payload = null) {
+  return P.apiSend(endpoint, method, payload);
+}
+
+// ── Load & render ─────────────────────────────────────────────────────────────
+async function loadRequests() {
+  try {
+    const res = await api('/api/feature-requests');
+    allRequests = res.data || [];
+    renderList();
+  } catch(e) {
+    document.getElementById('requestList').innerHTML =
+      `<div class="empty"><i class="fa-solid fa-triangle-exclamation"></i>Failed to load requests</div>`;
+  }
+}
+
+function setFilter(btn, filter) {
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentFilter = filter;
+  renderList();
+}
+
+function renderList() {
+  const list = document.getElementById('requestList');
+  let items = allRequests;
+
+  if (currentFilter !== 'all') {
+    items = items.filter(r =>
+      currentFilter === r.type || currentFilter === r.stage
+    );
+  }
+
+  if (!items.length) {
+    list.innerHTML = `<div class="empty"><i class="fa-solid fa-inbox"></i>No requests found</div>`;
+    return;
+  }
+
+  list.innerHTML = items.map(r => renderCard(r)).join('');
+}
+
+const STAGE_LABELS = {
+  considering:   'Considering',
+  planning:      'Planning',
+  working_on_it: 'Working on it',
+  implemented:   'Implemented',
+  future_thought:'Future thought',
+  rejected:      'Rejected'
+};
+
+function renderCard(r) {
+  const progressBar = r.progress > 0 ? `
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" style="width:${r.progress}%"></div></div>
+      <span class="progress-label">${r.progress}%</span>
+    </div>` : '';
+
+  const statusNote = r.status_note
+    ? `<div class="status-note"><i class="fa-solid fa-circle-info" style="font-size:.7rem"></i> ${escHtml(r.status_note)}</div>`
+    : '';
+
+  const hiddenBadge = !r.is_public
+    ? `<span class="hidden-badge admin-only"><i class="fa-solid fa-eye-slash"></i> Hidden</span>` : '';
+
+  const adminActions = isAdmin ? `
+    <div class="req-actions admin-only">
+      <button class="admin-btn" onclick="adminEdit(event, ${r.id})"><i class="fa-solid fa-sliders"></i> Edit</button>
+    </div>` : '';
+
+  return `
+  <div class="req-card" id="card-${r.id}">
+    <div class="vote-col">
+      <button class="vote-btn ${r.my_vote ? 'voted' : ''}"
+              onclick="toggleVote(${r.id})"
+              title="${r.my_vote ? 'Remove vote' : 'Vote for this'}">
+        <i class="fa-${r.my_vote ? 'solid' : 'regular'} fa-thumbs-up"></i>
+      </button>
+      <span class="vote-count" id="vc-${r.id}">${r.vote_count}</span>
+    </div>
+
+    <div class="req-main">
+      <div class="req-top">
+        <span class="req-title">${escHtml(r.title)}</span>
+        <span class="tag tag-${r.type}">${r.type === 'bug' ? '🐛 Bug' : '✨ Feature'}</span>
+        <span class="stage-badge stage-${r.stage}">${STAGE_LABELS[r.stage] || r.stage}</span>
+        ${hiddenBadge}
+      </div>
+      <div class="req-desc">${escHtml(r.description)}</div>
+      ${progressBar}
+      ${statusNote}
+      <div class="req-meta">
+        <span><i class="fa-regular fa-user"></i> ${escHtml(r.submitter_name || 'Unknown')}</span>
+        <span><i class="fa-regular fa-clock"></i> ${fmtDate(r.created_at)}</span>
+        <button onclick="toggleComments(${r.id})">
+          <i class="fa-regular fa-comment"></i>
+          <span id="cc-${r.id}">${r.comment_count}</span> comment${r.comment_count !== 1 ? 's' : ''}
+        </button>
+      </div>
+
+      <!-- Comments section -->
+      <div class="comments-section" id="comments-${r.id}">
+        <div id="commentsList-${r.id}"><em style="font-size:.8rem;color:var(--muted)">Loading…</em></div>
+        <div class="comment-form" id="replyTarget-${r.id}">
+          <textarea id="commentText-${r.id}" placeholder="Add a comment…"></textarea>
+          <button onclick="submitComment(${r.id})"><i class="fa-solid fa-paper-plane"></i></button>
+        </div>
+      </div>
+    </div>
+
+    ${adminActions}
+  </div>`;
+}
+
+// ── Vote ──────────────────────────────────────────────────────────────────────
+async function toggleVote(id) {
+  try {
+    const res = await api(`/api/feature-requests/${id}/vote`, 'POST');
+    // Refresh just this card's data
+    const dataRes = await api('/api/feature-requests');
+    allRequests = dataRes.data || [];
+    const r = allRequests.find(x => x.id === id);
+    if (!r) return;
+    // Update vote button + count without full re-render
+    const btn = document.querySelector(`#card-${id} .vote-btn`);
+    const vc  = document.getElementById(`vc-${id}`);
+    btn.className = `vote-btn ${r.my_vote ? 'voted' : ''}`;
+    btn.innerHTML = `<i class="fa-${r.my_vote ? 'solid' : 'regular'} fa-thumbs-up"></i>`;
+    vc.textContent = r.vote_count;
+  } catch(e) {
+    Swal.fire({ icon:'error', title:'Oops', text: e.message, toast:true, position:'top-end', timer:3000, showConfirmButton:false });
+  }
+}
+
+// ── Comments ──────────────────────────────────────────────────────────────────
+async function toggleComments(id) {
+  const sec = document.getElementById(`comments-${id}`);
+  if (sec.classList.toggle('open')) {
+    await loadComments(id);
+  }
+}
+
+async function loadComments(requestId) {
+  const container = document.getElementById(`commentsList-${requestId}`);
+  try {
+    const res = await api(`/api/feature-requests/${requestId}/comments`);
+    const comments = res.data || [];
+
+    if (!comments.length) {
+      container.innerHTML = `<p style="font-size:.8rem;color:var(--muted)">No comments yet.</p>`;
+      return;
+    }
+
+    // Build threaded view (top-level + replies)
+    const topLevel = comments.filter(c => !c.parent_comment_id);
+    const replies  = comments.filter(c =>  c.parent_comment_id);
+
+    container.innerHTML = topLevel.map(c => {
+      const reps = replies.filter(r => r.parent_comment_id === c.id);
+      return renderComment(c) + reps.map(r => renderComment(r, true)).join('');
+    }).join('');
+  } catch(e) {
+    container.innerHTML = `<p style="font-size:.8rem;color:red">Failed to load comments</p>`;
+  }
+}
+
+function renderComment(c, isReply = false) {
+  const adminTag = c.is_admin ? `<span class="admin-tag"><i class="fa-solid fa-star"></i> Staff</span>` : '';
+  return `
+  <div class="comment-item ${c.is_admin ? 'is-admin' : ''} ${isReply ? 'is-reply' : ''}">
+    <div class="comment-header">
+      <span class="comment-author">${escHtml(c.author_name || 'User')}${adminTag}</span>
+      <span class="comment-date">${fmtDate(c.created_at)}</span>
+    </div>
+    <div class="comment-text">${escHtml(c.comment)}</div>
+    ${!isReply ? `<button class="reply-btn" onclick="setReplyTarget(${c.request_id}, ${c.id})">↩ Reply</button>` : ''}
+  </div>`;
+}
+
+let activeReplyParent = {};
+
+function setReplyTarget(requestId, parentId) {
+  activeReplyParent[requestId] = parentId;
+  const form = document.getElementById(`replyTarget-${requestId}`);
+  const ta   = document.getElementById(`commentText-${requestId}`);
+  ta.placeholder = 'Replying to comment…';
+  ta.focus();
+  // Add a cancel if not already there
+  if (!form.querySelector('.cancel-reply')) {
+    const btn = document.createElement('button');
+    btn.textContent = '✕';
+    btn.className = 'cancel-reply';
+    btn.style.cssText = 'background:#6c757d;padding:.55rem .7rem';
+    btn.onclick = () => cancelReply(requestId);
+    form.appendChild(btn);
+  }
+}
+
+function cancelReply(requestId) {
+  delete activeReplyParent[requestId];
+  document.getElementById(`commentText-${requestId}`).placeholder = 'Add a comment…';
+  const cancel = document.querySelector(`#replyTarget-${requestId} .cancel-reply`);
+  if (cancel) cancel.remove();
+}
+
+async function submitComment(requestId) {
+  const ta      = document.getElementById(`commentText-${requestId}`);
+  const comment = ta.value.trim();
+  if (!comment) return;
+
+  const parentId = activeReplyParent[requestId] || null;
+
+  try {
+    await api(`/api/feature-requests/${requestId}/comments`, 'POST', { comment, parent_comment_id: parentId });
+    ta.value = '';
+    cancelReply(requestId);
+    await loadComments(requestId);
+    // Update comment count
+    const dataRes = await api('/api/feature-requests');
+    allRequests = dataRes.data || [];
+    const r = allRequests.find(x => x.id === requestId);
+    if (r) document.getElementById(`cc-${requestId}`).textContent = r.comment_count;
+  } catch(e) {
+    Swal.fire({ icon:'error', title:'Error', text: e.message, toast:true, position:'top-end', timer:3000, showConfirmButton:false });
+  }
+}
+
+// ── Submit new request ────────────────────────────────────────────────────────
+function toggleSubmitForm() {
+  const c = document.getElementById('submitCard');
+  c.style.display = c.style.display === 'none' ? 'block' : 'none';
+}
+
+async function submitRequest() {
+  const title = document.getElementById('newTitle').value.trim();
+  const desc  = document.getElementById('newDesc').value.trim();
+  const type  = document.getElementById('newType').value;
+
+  if (!title || !desc) {
+    Swal.fire({ icon:'warning', title:'Missing fields', text:'Please fill in title and description.' });
+    return;
+  }
+
+  try {
+    await api('/api/feature-requests', 'POST', { title, description: desc, type });
+    document.getElementById('newTitle').value = '';
+    document.getElementById('newDesc').value  = '';
+    toggleSubmitForm();
+    Swal.fire({ icon:'success', title:'Submitted!', text:'Thanks for your feedback.', timer:2000, showConfirmButton:false });
+    await loadRequests();
+  } catch(e) {
+    Swal.fire({ icon:'error', title:'Error', text: e.message });
+  }
+}
+
+// ── Admin edit modal ──────────────────────────────────────────────────────────
+async function adminEdit(e, id) {
+  e.stopPropagation();
+  const r = allRequests.find(x => x.id === id);
+  if (!r) return;
+
+  const { value: vals } = await Swal.fire({
+    title: 'Edit Request',
+    width: 520,
+    html: `
+      <div style="text-align:left">
+        <label style="display:block;margin-bottom:.4rem;font-weight:600;font-size:.85rem">Stage</label>
+        <select id="swalStage" style="width:100%;padding:.5rem;border:1px solid #ccc;border-radius:6px;margin-bottom:.85rem">
+          ${['considering','planning','working_on_it','implemented','future_thought','rejected'].map(s =>
+            `<option value="${s}" ${r.stage===s?'selected':''}>${STAGE_LABELS[s]}</option>`
+          ).join('')}
+        </select>
+
+        <label style="display:block;margin-bottom:.4rem;font-weight:600;font-size:.85rem">Status note <span style="font-weight:400;color:#718096">(max 64 chars)</span></label>
+        <input id="swalNote" type="text" maxlength="64"
+               value="${escHtml(r.status_note || '')}"
+               style="width:100%;padding:.5rem;border:1px solid #ccc;border-radius:6px;margin-bottom:.85rem">
+
+        <label style="display:block;margin-bottom:.4rem;font-weight:600;font-size:.85rem">Progress: <span id="swalProgLabel">${r.progress}%</span></label>
+        <input id="swalProg" type="range" min="0" max="100" value="${r.progress}"
+               oninput="document.getElementById('swalProgLabel').textContent=this.value+'%'"
+               style="width:100%;margin-bottom:.85rem">
+
+        <label style="display:flex;align-items:center;gap:.5rem;font-size:.85rem">
+          <input id="swalPublic" type="checkbox" ${r.is_public?'checked':''}>
+          Visible to all users (public)
+        </label>
+      </div>`,
+    focusConfirm: false,
+    showCancelButton: true,
+    confirmButtonText: 'Save',
+    preConfirm: () => ({
+      stage:       document.getElementById('swalStage').value,
+      status_note: document.getElementById('swalNote').value.trim() || null,
+      progress:    parseInt(document.getElementById('swalProg').value),
+      is_public:   document.getElementById('swalPublic').checked ? 1 : 0
+    })
+  });
+
+  if (!vals) return;
+
+  try {
+    await api(`/api/feature-requests/${id}`, 'PATCH', vals);
+    Swal.fire({ icon:'success', title:'Updated', timer:1500, showConfirmButton:false });
+    await loadRequests();
+  } catch(e) {
+    Swal.fire({ icon:'error', title:'Error', text: e.message });
+  }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function escHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtDate(dt) {
+  if (!dt) return '';
+  return new Date(dt).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+}
+
+// ── Go ────────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
