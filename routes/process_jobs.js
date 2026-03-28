@@ -254,7 +254,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
       }
 
       // NORMAL JOB TYPES (webhook, internal_function, custom_code)
-      const output = await executeJob(job);
+      const output = await executeJob(job, db);
 
       // Record successful attempt
       await recordResult(
