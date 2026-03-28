@@ -57,7 +57,13 @@ function fmtDate(d) {
     return DateTime.fromISO(iso).toFormat('cccc, MMMM d');
   } catch { return String(d).slice(0, 10); }
 }
-
+function fmtDateShort(d) {
+  if (!d) return '—';
+  try {
+    const iso = (d instanceof Date ? d.toISOString() : String(d)).slice(0, 10);
+    return DateTime.fromISO(iso).toFormat('MMM d');
+  } catch { return '—'; }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EMAIL HTML BUILDERS
@@ -252,14 +258,22 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
   const total = overdue.length + dueToday.length + pending.length;
 
   function taskRow(t, color) {
-    const link = t.contact_name || t.case_number_full || t.case_number || '';
+    const APP_URL = process.env.APP_URL || 'https://app.4lsg.com';
+    let linkHtml = '';
+    const linkName = t.contact_name || t.case_number_full || t.case_number || '';
+    if (linkName) {
+      let href = APP_URL;
+      if (t.contact_name) href += `?contact=${t.contact_id || ''}`;
+      else if (t.case_number_full || t.case_number) href += `?case=${t.case_id || ''}`;
+      linkHtml = `<a href="${href}" style="color:#4f46e5;text-decoration:none">${linkName}</a>`;
+    }
     return `<tr style="border-bottom:1px solid #f3f4f6">
       <td style="padding:8px 4px 8px 0;font-size:13px;color:#111827;font-weight:500;
                  max-width:300px">${t.task_title}</td>
       <td style="padding:8px 6px;font-size:12px;color:#6b7280;white-space:nowrap">
-        ${t.task_due ? DateTime.fromISO(String(t.task_due).slice(0,10)).toFormat('MMM d') : '—'}
+        ${fmtDateShort(t.task_due)}
       </td>
-      <td style="padding:8px 0 8px 4px;font-size:12px;color:#6b7280">${link}</td>
+      <td style="padding:8px 0 8px 4px;font-size:12px;color:#6b7280">${linkHtml}</td>
     </tr>`;
   }
 
@@ -291,18 +305,18 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
     <h2 style="margin:0 0 2px;font-size:22px;color:#111827">Good morning, ${user.user_fname || user.user_name}!</h2>
     <p style="margin:0 0 20px;font-size:14px;color:#6b7280">Here's your task summary for ${dayName}, ${today}.</p>
 
-    <div style="margin-bottom:20px;padding:14px 18px;background:#f5f3ff;border-radius:8px;
-                display:flex;gap:24px">
-      <span style="font-size:13px;color:#374151">
-        <strong style="color:#dc2626;font-size:16px">${overdue.length}</strong> overdue
-      </span>
-      <span style="font-size:13px;color:#374151">
-        <strong style="color:#d97706;font-size:16px">${dueToday.length}</strong> due today
-      </span>
-      <span style="font-size:13px;color:#374151">
-        <strong style="color:#4f46e5;font-size:16px">${pending.length}</strong> pending
-      </span>
-    </div>
+    <table cellpadding="0" cellspacing="0" width="100%"
+           style="margin-bottom:20px;background:#f5f3ff;border-radius:8px">
+      <tr>
+        <td style="padding:14px 18px;font-size:13px;color:#374151;text-align:center">
+          <strong style="color:#dc2626;font-size:16px">${overdue.length}</strong> overdue
+          <span style="color:#d1d5db;padding:0 10px">·</span>
+          <strong style="color:#d97706;font-size:16px">${dueToday.length}</strong> due today
+          <span style="color:#d1d5db;padding:0 10px">·</span>
+          <strong style="color:#4f46e5;font-size:16px">${pending.length}</strong> pending
+        </td>
+      </tr>
+    </table>
 
     ${section('Overdue',   '#dc2626', '🔴', overdue)}
     ${section('Due Today', '#d97706', '🟡', dueToday)}
