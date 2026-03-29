@@ -615,7 +615,7 @@
       }
     }
 
-    function apptUpdate(appt, action, date) {
+    function apptUpdate(appt, action, date, onSuccess) {
 
       if (action === "Cancel") {
         Swal.fire({
@@ -656,6 +656,7 @@
               Toast.fire({ icon: "error", title: "Error", text: err.message });
             }
             tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
         });
 
@@ -674,6 +675,7 @@
               Toast.fire({ icon: "error", title: "Error", text: err.message });
             }
             tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
         });
 
@@ -724,6 +726,7 @@
               Toast.fire({ icon: "error", title: "Error", text: err.message });
             }
             tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
           preDeny: async () => {
             try {
@@ -734,6 +737,7 @@
               Toast.fire({ icon: "error", title: "Error", text: err.message });
             }
             tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
         });
 
@@ -756,6 +760,7 @@
               Toast.fire({ icon: "error", title: "Error", text: err.message });
             }
             tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
           preDeny: async () => {
             try {
@@ -765,6 +770,7 @@
               Toast.fire({ icon: "error", title: "Error", text: err.message });
             }
             tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
         });
       }

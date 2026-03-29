@@ -551,16 +551,16 @@ function putAppt() {
     let rowHTML = "";
     if (appt.appt_status === "No Show") {
       rowHTML = `<td>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Cancel','${appt.format_date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Reschedule','${appt.appt_datetime_local}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
+        <button onclick="P.apptUpdate(${appt.appt_id},'Cancel','${appt.format_date} at ${appt.time}',refreshAppts)"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
+        <button onclick="P.apptUpdate(${appt.appt_id},'Attended',refreshAppts)"><i class="fa-solid fa-user-check"></i> Attended</button>
+        <button onclick="P.apptUpdate(${appt.appt_id},'Reschedule','${appt.appt_datetime_local}',refreshAppts)"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
       </td>`;
     } else if (appt.appt_status === "Scheduled") {
       rowHTML = `<td>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Cancel','${appt.format_date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'No Show')"><i class="fa-solid fa-user-xmark"></i> No Show</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Reschedule','${appt.appt_datetime_local}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
+        <button onclick="P.apptUpdate(${appt.appt_id},'Cancel','${appt.format_date} at ${appt.time}',refreshAppts)"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
+        <button onclick="P.apptUpdate(${appt.appt_id},'Attended',refreshAppts)"><i class="fa-solid fa-user-check"></i> Attended</button>
+        <button onclick="P.apptUpdate(${appt.appt_id},'No Show',refreshAppts)"><i class="fa-solid fa-user-xmark"></i> No Show</button>
+        <button onclick="P.apptUpdate(${appt.appt_id},'Reschedule','${appt.appt_datetime_local}',refreshAppts)"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
       </td>`;
     } else {
       rowHTML = `<td></td>`;
