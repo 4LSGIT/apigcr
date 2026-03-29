@@ -159,18 +159,20 @@ async function getCase(db, caseId) {
     `SELECT
        co.*,
        IFNULL(DATE_FORMAT(co.contact_dob, '%b. %e, %Y'), '') AS dob,
-       cr.case_relate_type AS relate_type
+       cr.case_relate_id AS relate_id, cr.case_relate_type AS relate_type
      FROM contacts co
      JOIN case_relate cr ON co.contact_id = cr.case_relate_client_id
      WHERE cr.case_relate_case_id = ?`,
     [caseId]
   );
-  const clients = stripSsn(clientsRaw);
-
+  //const clients = stripSsn(clientsRaw);
+  const clients = clientsRaw; //return ssn
+  
   // 3) Appointments
   const [appts] = await db.query(
     `SELECT
        a.*,
+       DATE_FORMAT(a.appt_date, '%Y-%m-%dT%H:%i') AS appt_datetime_local,
        DATE_FORMAT(a.appt_date, '%b. %e, %Y') AS format_date,
        DATE_FORMAT(a.appt_date, '%l:%i %p')    AS time,
        co.contact_name,

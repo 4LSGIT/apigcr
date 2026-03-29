@@ -124,4 +124,20 @@ router.get('/api/cases/:id/log', jwtOrApiKey, async (req, res) => {
   }
 });
 
+router.patch('/api/cases/:id/contacts/:contactId', jwtOrApiKey, async (req, res) => {
+  const { relate_type } = req.body;
+  if (!relate_type) return res.status(400).json({ status: 'error', message: 'relate_type required' });
+  try {
+    const [result] = await req.db.query(
+      `UPDATE case_relate SET case_relate_type = ?
+       WHERE case_relate_case_id = ? AND case_relate_client_id = ?`,
+      [relate_type, req.params.id, req.params.contactId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ status: 'error', message: 'Relationship not found' });
+    res.json({ status: 'success', message: `Relation updated to ${relate_type}` });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 module.exports = router;
