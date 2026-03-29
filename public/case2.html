@@ -1112,7 +1112,7 @@
       try {
         await P.apiSend('/internal/dropbox/create-folder', 'POST', {
           case_id:      caseID,
-          contact_name: PC?.contact_name || '',
+          contact_name: PC?.contact_lfm_name || '',
           case_number:  caseData.case_number_full || caseData.case_number || caseID
         });
         Toast.fire({ icon: 'success', title: 'Folder creation queued', text: 'Refresh in a moment to see the Dropbox embed' });

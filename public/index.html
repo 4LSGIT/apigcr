@@ -187,6 +187,7 @@
         <th onclick="sort(this, 'c.case_type')">Case Type</th>
         <th onclick="sort(this, 'c.case_stage')">Case Stage</th>
         <th onclick="sort(this, 'c.case_status')">Case Status</th>
+        <th onclick="sort(this, 'c.case_rec')">Recommendation</th>
         <th onclick="sort(this, 'c.case_open_date')">Open Date</th>
         <th onclick="sort(this, 'c.case_file_date')">File Date</th>
         <th onclick="sort(this, 'c.case_close_date')">Close Date</th>
@@ -222,7 +223,8 @@
           cr.case_relate_type)) as contacts,
           IFNULL(DATE_FORMAT(c.case_open_date, '%M %e, %Y'), '') as open,
           IFNULL(DATE_FORMAT(c.case_file_date, '%M %e, %Y'), '') as file,
-          IFNULL(DATE_FORMAT(c.case_close_date, '%M %e, %Y'), '') as close
+          IFNULL(DATE_FORMAT(c.case_close_date, '%M %e, %Y'), '') as close,
+          case_rec
           FROM cases c
           LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
           LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
@@ -268,7 +270,7 @@
                     }</a> (${client.contact_relate})<br>`;
                 }
               });
-              rowHTML += `</td><td>${C.case_number}</td><td>${C.case_type}</td><td>${C.case_stage}</td><td>${C.case_status}</td><td>${C.open}</td><td>${C.file}</td><td>${C.close}</td>`;
+              rowHTML += `</td><td>${C.case_number}</td><td>${C.case_type}</td><td>${C.case_stage}</td><td>${C.case_status}</td><td>${C.case_rec}</td><td>${C.open}</td><td>${C.file}</td><td>${C.close}</td>`;
               row.innerHTML = rowHTML;
             });
 
