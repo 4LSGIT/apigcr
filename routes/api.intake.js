@@ -41,11 +41,19 @@ const pabbly = require("../services/pabblyService");
 /**
  * Generate an 8-char alphanumeric case ID using crypto.
  * Replaces the old Math.random() version in create-case.js.
- */
+ 
 function generateCaseId() {
   // 6 random bytes → base64url → take first 8 chars
   // Gives ~48 bits of entropy, plenty for this use case
   return crypto.randomBytes(6).toString("base64url").slice(0, 8);
+}*/
+function generateCaseId() {
+  let id;
+  do {
+    // 6 random bytes → base64url → take first 8 chars
+    id = crypto.randomBytes(6).toString("base64url").slice(0, 8);
+  } while (id.includes('-') || id.includes('_')); // retry if '-' or '_'
+  return id;
 }
 
 /**
