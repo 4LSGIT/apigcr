@@ -264,7 +264,7 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
     if (linkName) {
       let href = APP_URL;
       if (t.contact_name) href += `?contact=${t.contact_id || ''}`;
-      else if (t.case_number_full || t.case_number) href += `?case=${t.case_id || ''}`;
+      else if (t.case_number_full || t.case_number|| t.case_id) href += `?case=${t.case_id || ''}`;
       linkHtml = `<a href="${href}" style="color:#4f46e5;text-decoration:none">${linkName}</a>`;
     }
     return `<tr style="border-bottom:1px solid #f3f4f6">
@@ -323,7 +323,7 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
     ${section('Pending',   '#4f46e5', '⚪', pending)}
 
     <p style="margin:20px 0 0;font-size:13px;color:#9ca3af">
-      Log in to YisraCase to manage your tasks.
+      Log in to YisraCase to manage your tasks reminder preferences.
     </p>
   `;
 
