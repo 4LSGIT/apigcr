@@ -193,34 +193,7 @@ async function abortSeq(enrollmentId, templateName) {
       <tr><th>Lead ID:</th><th>Relation</th><th>Case Number:</th><th>Case Type:</th><th>Stage:</th><th>Status:</th><th>Open Date:</th><th>File Date:</th><th>Close Date:</th></tr>
     </table>
   </div>
-  <script>
-    function newCase() {
-      Swal.fire({
-        title: "Create New Case:",
-        html: `<label class="input-label">Case Type:</label>
-              <select id="newCaseType"><option>Bankruptcy - Ch</option><option>Other</option></select>`,
-    showCancelButton: true,
-    confirmButtonText: 'Create',
-    showLoaderOnConfirm: true,
-    preConfirm: () => {
-      type=E("newCaseType").value
-      if (!type) {
-        Swal.showValidationMessage("Please select a case type");
-        return false;
-      } else {
-        return fetch(`${url}?mode=clientAction&action=newCase&username=${username}&password=${password}&client=${clientData.contact_id}&type=${encodeURIComponent(type)}`)
-          .then(response => response.json())
-          .then(data => {
-          console.log(data)
-          Toast.fire({icon: data.status, title: data.title, text: data.message})
-          if (data.status == "success") {window.parent.addFile(data.name, 'case', data.id, data.case_type)}
-        })
-      }
-    }
-  });
-}
 
-  </script>
 
   <div id="tabBills" class="tab-content">
     Everything you want?!
@@ -387,7 +360,7 @@ async function addLog() {
 <div id="tabTasks" class="tab-content">
 <h1>Tasks</h1>
     <span>
-      <button onclick="window.parent.newTask(null,null,null,null,null,null,clientID)">Create Task</button>
+      <button onclick="P.newTask(null,'contact',clientID,refreshTasks)">Create Task</button>
       Query:
       <input id="tabTasksQuery">
       Status: 
@@ -397,16 +370,16 @@ async function addLog() {
         <option>Completed</option>
         <option>Due Today</option>
         <option>Overdue</option>
-        <option>Canceled</option>
-        <option value="1' OR '1">All</option>
+        <option>Deleted</option>
+        <option value="All">All</option>
       </select>
       Assigned By: 
       <select id="tabTasksBy" class="userslist" style="width:150px">
-        <option value="1' OR '1">All</option>
+        <option value="">All</option>
       </select>
       Assigned to: 
       <select id="tabTasksTo" class="userslist" style="width:150px">
-        <option value="1' OR '1">All</option>
+        <option value="">All</option>
       </select>
       <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
     </span>
@@ -431,65 +404,78 @@ async function addLog() {
   </div>
   
   <script>
-    temptask = ""
-    function tabTasksGet(offset) {
+    let temptask = "";
+
+    async function refreshTasks() {
+      await tabTasksGet(0);
+    }
+
+    async function tabTasksGet(offset) {
       E('tabTasksButton').disabled = true;
       E('tabTasksLoad').style.display = 'block';
-      query = E("tabTasksQuery").value
-      status = E("tabTasksStatus").value
-      by = E("tabTasksBy").value
-      to = E("tabTasksTo").value
+
+      const q = E("tabTasksQuery").value;
+      const status = E("tabTasksStatus").value;
+      const by = E("tabTasksBy").value;
+      const to = E("tabTasksTo").value;
+
       const table = E('tasksTable');
       const foot = E('tasksTableFoot');
-      foot.innerHTML = ""
-      var rows = table.getElementsByTagName("tr");
-      for (var i = rows.length - 1; i > 0; i--) {
-        table.deleteRow(i);
-      }
-      fetch(`${url}?mode=getClientTasks&username=${username}&password=${password}&client=${clientID}&query=${query}&status=${status}&by=${by}&to=${to}&offset=${offset}&limit=${limit}&link=${clientID}`)
-        .then(response => response.json())
-        .then(data => {
-        temptask = data
-        tasks = data.data;
-        console.log(data);
-        if (data.message == "tasks retrieved"){
-          Toast.fire({ title: "success", text: `${data.results} tasks retrieved`, icon: "success"});
-          tasks.forEach(task => {
+      foot.innerHTML = "";
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
+
+      const params = { link_type: "contact", link_id: clientID, limit, offset };
+      if (q) params.q = q;
+      if (status !== "All") params.status = status;
+      if (by) params.assigned_by = by;
+      if (to) params.assigned_to = to;
+
+      try {
+        const data = await P.apiSend("/api/tasks", "GET", params);
+        const taskList = data.data || [];
+
+        if (data.total > 0) {
+          taskList.forEach(task => {
             const row = table.insertRow();
-            rowHTML = `<td><select 
-              onchange="window.parent.updateTask(${task.task_id}, this.value, ${task.task_to}, '${task.task_title}', '${task.task_desc}', '${task.task_due}', ${task.task_notification}, '${task.task_link}');this.selectedIndex=0;" 
-              style="width:150px"><option value="" disabled selected>Actions</option>`;
-            if (task.task_status == "Pending" || task.task_status =="Due Today" || task.task_status == "Overdue") {rowHTML +=
-              `<option value="Mark Complete">Mark Complete</option><option value="Edit">Edit</option>
-              <option value="Cancel">Cancel</option></select>`}
-            else if (task.task_status == "Canceled") {rowHTML += 
-              `<option value="Uncancel">Reinstate</option></select>`}
-            else if (task.task_status == "Completed") {rowHTML +=
-              `<option value="Mark Incomplete">Mark Incomplete</option></select>`}
-            else {rowHTML += `<td>`}
+            let opts = "";
+            if (["Pending", "Due Today", "Overdue"].includes(task.status)) {
+              opts = `<option value="Mark Complete">Mark Complete</option>
+                    <option value="Edit">Edit</option>
+                    <option value="Cancel">Delete</option>`;
+            } else if (task.status === "Deleted") {
+              opts = `<option value="Uncancel">Reinstate</option>`;
+            } else if (task.status === "Completed") {
+              opts = `<option value="Mark Incomplete">Mark Incomplete</option>`;
+            }
+            const created = task.created
+              ? new Date(task.created).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+              : "";
             row.innerHTML = `
-              ${rowHTML}</td><td>${task.task_id}</td><td>${task.task_status}</td><td>${task.task_title}</td><td>${task.task_desc}</td>
-              <td>${task.task_from_name||"TASKMASTER"}</td><td>${task.task_to_name}</td><td><a href="#" onclick="window.parent.addFile('${task.case_number||task.case_id||task.contact_name}', '${isNaN(task.task_link)? "case":"client"}', '${task.task_link}')">${task.case_number||task.case_id||task.contact_name}</a></td><td>${task.due||task.task_due||""}</td><td>${task.date||task.task_date}</td>`;
+            <td><select onchange="P.updateTask(${task.id},this.value,refreshTasks);this.selectedIndex=0;" style="width:150px">
+              <option value="" disabled selected>Actions</option>${opts}
+            </select></td>
+            <td>${task.id}</td>
+            <td>${task.status}</td>
+            <td>${task.title}</td>
+            <td>${task.desc || ""}</td>
+            <td>${task.from?.name || ""}</td>
+            <td>${task.to?.name || ""}</td>
+            <td></td>
+            <td>${task.due || ""}</td>
+            <td>${created}</td>`;
           });
-          foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabTasksGet(${offset-limit})"">&lt;</a> `: "";
-          for (i=1; data.results >= (i-1)*limit; i++) {
-            foot.innerHTML += (offset/limit + 1 == i)?
-              `<a href="#" onclick="tabTasksGet(${(i-1)*limit})">[${i}]</a> `:
-              `<a href="#" onclick="tabTasksGet(${(i-1)*limit})">${i}</a> `;
-          }
-          foot.innerHTML += (offset+limit < data.results) ? `<a href="#" onclick="tabTasksGet(${offset+limit})"">&gt;</a> `: "";
-          foot.innerHTML += ` | Results ${offset+1}-${offset+data.data.length} of ${data.results}
-          <select style="width:auto" onchange="limit = this.value;tabTasksGet(0)">
-          <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
-          <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
-          <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
-          <option value="500" ${limit === 500 ? 'selected' : ''}>500</option>
-          </select> | <button onclick="window.print()">Print</button>`;
+          foot.innerHTML = ` | ${data.total} task${data.total === 1 ? '' : 's'}`;
+        } else {
+          foot.innerHTML = "No tasks linked to this contact";
         }
-        else {Toast.fire({ icon: "error", title: `No Tasks Found!` }); foot.innerHTML = "No Tasks Related to Client"}
-        E('tabTasksButton').disabled = false;
-        E('tabTasksLoad').style.display = 'none';
-      });
+      } catch (err) {
+        foot.innerHTML = "Error loading tasks";
+        console.error(err);
+      }
+
+      E('tabTasksButton').disabled = false;
+      E('tabTasksLoad').style.display = 'none';
     }
   </script>
 
@@ -619,49 +605,6 @@ async function newCase() {
       }
     }
   });
-}
-
-// Tasks tab (legacy stub - migrated in step 4.7)
-let temptask = "";
-function tabTasksGet(offset) {
-  E('tabTasksButton').disabled = true;
-  E('tabTasksLoad').style.display = 'block';
-  const query  = E("tabTasksQuery").value;
-  const status = E("tabTasksStatus").value;
-  const by     = E("tabTasksBy").value;
-  const to     = E("tabTasksTo").value;
-  const table  = E('tasksTable');
-  const foot   = E('tasksTableFoot');
-  foot.innerHTML = "";
-  const rows = table.getElementsByTagName("tr");
-  for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
-  fetch(`${P.url}?mode=getClientTasks&username=${P.username}&password=${P.password}&client=${clientID}&query=${query}&status=${status}&by=${by}&to=${to}&offset=${offset}&limit=${limit}&link=${clientID}`)
-    .then(r => r.json())
-    .then(data => {
-      temptask = data;
-      tasks = data.data;
-      if (data.message === "tasks retrieved") {
-        tasks.forEach(task => {
-          const row = table.insertRow();
-          let rowHTML = `<td><select onchange="P.updateTask(${task.task_id},this.value,${task.task_to},'${task.task_title}','${task.task_desc}','${task.task_due}',${task.task_notification},'${task.task_link}');this.selectedIndex=0;" style="width:150px"><option value="" disabled selected>Actions</option>`;
-          if (["Pending","Due Today","Overdue"].includes(task.task_status)) {
-            rowHTML += `<option value="Mark Complete">Mark Complete</option><option value="Edit">Edit</option><option value="Cancel">Cancel</option></select>`;
-          } else if (task.task_status === "Canceled") {
-            rowHTML += `<option value="Uncancel">Reinstate</option></select>`;
-          } else if (task.task_status === "Completed") {
-            rowHTML += `<option value="Mark Incomplete">Mark Incomplete</option></select>`;
-          } else { rowHTML += `</select>`; }
-          row.innerHTML = `${rowHTML}</td><td>${task.task_id}</td><td>${task.task_status}</td><td>${task.task_title}</td><td>${task.task_desc}</td>
-            <td>${task.task_from_name||""}</td><td>${task.task_to_name}</td>
-            <td>${task.case_number||task.contact_name||""}</td><td>${task.due||""}</td><td>${task.date||""}</td>`;
-        });
-        foot.innerHTML = ` | ${data.results} results`;
-      } else {
-        foot.innerHTML = "No tasks found";
-      }
-      E('tabTasksButton').disabled = false;
-      E('tabTasksLoad').style.display = 'none';
-    });
 }
 
 // Appts tab
