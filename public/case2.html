@@ -1100,5 +1100,27 @@
       checklistDiv.appendChild(newButton);
       Swal.close();
     }
+
+    async function newDB() {
+  Swal.fire({
+    title: 'Create Dropbox Folder?',
+    text: `This will create a Dropbox folder for case ${caseID}.`,
+    showCancelButton: true,
+    confirmButtonText: 'Create',
+    showLoaderOnConfirm: true,
+    preConfirm: async () => {
+      try {
+        await P.apiSend('/internal/dropbox/create-folder', 'POST', {
+          case_id:      caseID,
+          contact_name: PC?.contact_name || '',
+          case_number:  caseData.case_number_full || caseData.case_number || caseID
+        });
+        Toast.fire({ icon: 'success', title: 'Folder creation queued', text: 'Refresh in a moment to see the Dropbox embed' });
+      } catch (err) {
+        Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+      }
+    }
+  });
+}
   </script>
 </div>
