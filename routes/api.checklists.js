@@ -234,7 +234,7 @@ router.post('/checklists/upsert-items', jwtOrApiKey, async (req, res) => {
     if (!checklist) {
       const [result] = await req.db.query(
         `INSERT INTO checklists (title, created_by, link, link_type) VALUES ('Docs Needed', ?, ?, 'case')`,
-        [req.auth.userId, case_id]
+        [req.auth.userId || 0, case_id]
       );
       checklist = { id: result.insertId };
     }
