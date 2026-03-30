@@ -1,86 +1,211 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Documents Needed</title>
+  <title>Documents Needed | Legal Solutions Group</title>
+  <link rel="icon" href="https://legalsolutions.group/wp-content/uploads/2022/06/cropped-favicon-32x32.png" sizes="32x32">
   <style>
-    body { font-family: Arial, sans-serif; max-width: 650px; margin: 0 auto; padding: 20px; }
-    h1 { color: #07ADEF; }
-    .item { border: 1px solid #ddd; border-radius: 5px; padding: 12px; margin: 10px 0; }
-    .item.complete { opacity: 0.5; }
-    .item h3 { margin: 0 0 8px 0; font-size: 15px; }
-    .comment-toggle { font-size: 12px; color: #666; cursor: pointer; text-decoration: underline; }
-    .comment-box { display: none; margin-top: 8px; }
-    .comment-box textarea { width: 100%; box-sizing: border-box; padding: 6px; border: 1px solid #ccc; border-radius: 3px; }
-    .upload-btn { display: inline-block; margin-top: 8px; padding: 6px 14px; background: #007bff; color: white; border-radius: 3px; cursor: pointer; font-size: 13px; }
-    .complete-badge { color: green; font-size: 12px; font-weight: bold; }
-    #loading { text-align: center; padding: 40px; color: #666; }
-    #error   { text-align: center; padding: 40px; color: red; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f5f5f5;
+      color: #333;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+    }
+
+    .logo {
+      display: block;
+      margin: 0 auto 20px;
+      max-width: 220px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 6px;
+      border: 1px solid #ddd;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      font-size: 22px;
+      color: #07ADEF;
+      margin-bottom: 6px;
+    }
+
+    .intro {
+      font-size: 15px;
+      color: #555;
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+
+    h2 {
+      font-size: 17px;
+      margin-bottom: 14px;
+      color: #333;
+      border-bottom: 2px solid #07ADEF;
+      padding-bottom: 6px;
+    }
+
+    .doc-list {
+      list-style: none;
+    }
+
+    .doc-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .doc-list li:last-child {
+      border-bottom: none;
+    }
+
+    .doc-num {
+      flex-shrink: 0;
+      width: 24px;
+      height: 24px;
+      background: #07ADEF;
+      color: white;
+      border-radius: 50%;
+      font-size: 12px;
+      font-weight: bold;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 1px;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 30px;
+      color: #4CAF50;
+      font-size: 16px;
+    }
+
+    .empty-state i { font-size: 40px; margin-bottom: 10px; display: block; }
+
+    .jotform-wrap iframe {
+      width: 100%;
+      border: none;
+      min-height: 600px;
+    }
+
+    .footer-note {
+      text-align: center;
+      font-size: 12px;
+      color: #999;
+      margin-top: 10px;
+    }
+
+    /* Loading / error states */
+    #loading { text-align: center; padding: 60px 20px; color: #666; font-size: 15px; }
+    #error-msg { text-align: center; padding: 40px 20px; color: #c0392b; font-size: 15px; }
+    #main { display: none; }
   </style>
 </head>
 <body>
+<div class="container">
 
-<div id="loading">Loading your document list...</div>
-<div id="error" style="display:none"></div>
+  <img class="logo" src="https://iili.io/Jy2nXHv.md.png" alt="Legal Solutions Group">
 
-<div id="content" style="display:none">
-  <img src="https://iili.io/Jy2nXHv.md.png" width="200"><br><br>
-  <h1>Hi <span id="clientName"></span>,</h1>
-  <p>Please provide the following documents. Use the upload button next to each item.</p>
-  <div id="itemList"></div>
-  <br>
-  <p style="font-size:12px;color:#999">
-    Questions? Call our office at <a href="tel:2484944394">248-494-4394</a>.
-  </p>
+  <div id="loading">Loading your document list&hellip;</div>
+  <div id="error-msg"></div>
+
+  <div id="main">
+    <!-- Greeting + doc list -->
+    <div class="card">
+      <h1 id="greeting"></h1>
+      <p class="intro" id="intro-text"></p>
+      <h2>Documents Needed</h2>
+      <ul class="doc-list" id="doc-list"></ul>
+      <div class="empty-state" id="all-clear" style="display:none">
+        <i>&#10003;</i>
+        All documents have been received. Thank you!
+      </div>
+    </div>
+
+    <!-- Upload form -->
+    <div class="card" id="upload-card">
+      <h2>Upload Your Documents</h2>
+      <p class="intro">Use the form below to upload any of the documents listed above. You can upload multiple files at once.</p>
+      <div class="jotform-wrap">
+        <iframe id="jotform-frame" src="" title="Document Upload"></iframe>
+      </div>
+    </div>
+
+    <p class="footer-note">
+      Questions? Call our office at <a href="tel:2485592400">248-559-2400</a> or email <a href="mailto:info@4lsg.com">info@4lsg.com</a>
+    </p>
+  </div>
+
 </div>
 
 <script>
-  const caseId = new URLSearchParams(window.location.search).get('case');
+  // ── Init ──────────────────────────────────────────────────────
+  const params  = new URLSearchParams(window.location.search);
+  const caseId  = params.get('case');
 
   if (!caseId) {
-    document.getElementById('loading').style.display = 'none';
-    document.getElementById('error').style.display = 'block';
-    document.getElementById('error').textContent = 'Invalid link. Please contact our office.';
+    showError('Invalid link. Please contact our office.');
   } else {
     fetch(`/api/public/docs/${caseId}`)
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error('Not found');
+        return r.json();
+      })
       .then(data => {
         document.getElementById('loading').style.display = 'none';
-        if (!data.items || !data.items.length) {
-          document.getElementById('error').style.display = 'block';
-          document.getElementById('error').textContent = 'No documents needed at this time!';
-          return;
-        }
-        document.getElementById('clientName').textContent = data.name;
-        document.getElementById('content').style.display = 'block';
+        document.getElementById('main').style.display = 'block';
 
-        const list = document.getElementById('itemList');
-        data.items.forEach((item, i) => {
-          list.innerHTML += `
-            <div class="item" id="item-${i}">
-              <h3>${item}</h3>
-              <span class="comment-toggle" onclick="toggleComment(${i})">+ Add a comment</span>
-              <div class="comment-box" id="comment-${i}">
-                <textarea rows="2" placeholder="Optional note about this document..."></textarea>
-              </div>
-              <br>
-              <!-- TODO: replace with dropboxService upload once integrated -->
-              <a class="upload-btn" href="https://form.jotform.com/JOTFORM_ID?case=${caseId}&doc=${encodeURIComponent(item)}" target="_blank">
-                Upload Document
-              </a>
-            </div>`;
-        });
+        const name  = data.name  || 'there';
+        const items = data.items || [];
+
+        document.getElementById('greeting').textContent   = `Hi ${name}!`;
+        document.getElementById('intro-text').textContent =
+          items.length > 0
+            ? `Please provide the following ${items.length} document${items.length > 1 ? 's' : ''}. ` +
+              `Upload them using the form below, you can send multiple files at once.`
+            : '';
+
+        const list = document.getElementById('doc-list');
+        if (items.length === 0) {
+          list.style.display = 'none';
+          document.getElementById('all-clear').style.display = 'block';
+          document.getElementById('upload-card').style.display = 'none';
+        } else {
+          items.forEach((item, i) => {
+            const li  = document.createElement('li');
+            li.innerHTML = `
+              <span class="doc-num">${i + 1}</span>
+              <span>${item}</span>`;
+            list.appendChild(li);
+          });
+
+          // Load JotForm with case_id pre-filled
+          document.getElementById('jotform-frame').src =
+            `https://form.jotform.com/260882970196065?case_id=${encodeURIComponent(caseId)}`;
+        }
       })
-      .catch(() => {
-        document.getElementById('loading').style.display = 'none';
-        document.getElementById('error').style.display = 'block';
-        document.getElementById('error').textContent = 'Error loading your document list. Please try again or contact our office.';
-      });
+      .catch(() => showError('We couldn\'t load your document list. Please try again or contact our office.'));
   }
 
-  function toggleComment(i) {
-    const box = document.getElementById(`comment-${i}`);
-    box.style.display = box.style.display === 'none' || !box.style.display ? 'block' : 'none';
+  function showError(msg) {
+    document.getElementById('loading').style.display  = 'none';
+    document.getElementById('error-msg').style.display = 'block';
+    document.getElementById('error-msg').textContent   = msg;
   }
 </script>
 </body>
