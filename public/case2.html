@@ -1001,105 +1001,136 @@
       }
     })();
 
-    function getChecklists() {
-      processing();
-      fetch(`${url}?mode=getChecklists&username=${P.username}&password=${P.password}&trello=${caseID}`)
-        .then(r => r.json())
-        .then(data => { checklists = data.checklists; displayCheck(); });
-    }
+    async function getChecklists() {
+  processing();
+  try {
+    const data = await P.apiSend('/checklists', 'GET', { link_type: 'case', link: caseID });
+    checklists = data.checklists;
+    displayCheck();
+  } catch (err) {
+    Swal.close();
+    Toast.fire({ icon: 'error', title: 'Error loading checklists', text: err.message });
+  }
+}
 
-    function checkDelete(list, item, itemId) {
-      if (confirm(`Are you sure you want to delete the item "${checklists[list].checkItems[item].name}" from checklist "${checklists[list].name}"?\nThere is no undo!`) == true) {
-        processing();
-        fetch(`${url}?mode=updateChecklists&username=${P.username}&password=${P.password}&trello=${caseID}&item=${itemId}&action=deleteItem`);
-        checklists[list].checkItems.splice(item, 1);
-        displayCheck();
-      }
-    }
+async function checkDelete(checklistIdx, itemIdx, itemId) {
+  if (!confirm(`Delete "${checklists[checklistIdx].items[itemIdx].name}"?`)) return;
+  processing();
+  try {
+    await P.apiSend(`/checkitems/${itemId}`, 'DELETE');
+    checklists[checklistIdx].items.splice(itemIdx, 1);
+    displayCheck();
+  } catch (err) {
+    Swal.close();
+    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+  }
+}
 
-    function checklistDelete(list, listId) {
-      if (confirm(`Are you sure you want to delete the "${checklists[list].name}" checklist?\nThere is no undo!`) == true) {
-        processing();
-        fetch(`${url}?mode=updateChecklists&username=${P.username}&password=${P.password}&trello=${caseID}&item=${listId}&action=deleteList`);
-        checklists.splice(list, 1);
-        displayCheck();
-      }
-    }
+async function checklistDelete(checklistIdx, checklistId) {
+  if (!confirm(`Delete checklist "${checklists[checklistIdx].title}"?`)) return;
+  processing();
+  try {
+    await P.apiSend(`/checklists/${checklistId}`, 'DELETE');
+    checklists.splice(checklistIdx, 1);
+    displayCheck();
+  } catch (err) {
+    Swal.close();
+    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+  }
+}
 
-    function checkItem(itemId, state) {
-      fetch(`${url}?mode=updateChecklists&username=${P.username}&password=${P.password}&trello=${caseID}&item=${itemId}&action=${state}`);
+async function checkItem(itemId, checklistId, complete) {
+  try {
+    await P.apiSend(`/checkitems/${itemId}`, 'PATCH', {
+      status: complete ? 'complete' : 'incomplete'
+    });
+    // Update local state
+    for (const cl of checklists) {
+      const item = cl.items.find(i => i.id === itemId);
+      if (item) { item.status = complete ? 'complete' : 'incomplete'; break; }
     }
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+  }
+}
 
-    function addCheckItem(list, listName) {
-      const name = prompt(`Add item to the "${listName}" checklist:`);
-      if (name) {
-        processing();
-        fetch(`${url}?mode=updateChecklists&username=${P.username}&password=${P.password}&trello=${caseID}&item=${list}&action=addCheckItem&name=${name}`)
-          .then(r => r.json())
-          .then(data => { checklists = data.checklists; displayCheck(); });
-      } else {
-        alert("No Item Added");
-      }
-    }
+async function addCheckItem(checklistId, checklistName, checklistIdx) {
+  const name = prompt(`Add item to "${checklistName}":`);
+  if (!name?.trim()) return;
+  processing();
+  try {
+    const updated = await P.apiSend(`/checklists/${checklistId}/items`, 'POST',
+      { name: name.trim() });
+    checklists[checklistIdx] = updated;
+    displayCheck();
+  } catch (err) {
+    Swal.close();
+    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+  }
+}
 
-    function addChecklist() {
-      const name = prompt(`Add checklist:`);
-      if (name) {
-        processing();
-        fetch(`${url}?mode=updateChecklists&username=${P.username}&password=${P.password}&trello=${caseID}&action=addChecklist&name=${name}`)
-          .then(r => r.json())
-          .then(data => { checklists = data.checklists; displayCheck(); });
-      } else {
-        alert("No Checklist Added");
-      }
-    }
+async function addChecklist() {
+  const name = prompt('New checklist name:');
+  if (!name?.trim()) return;
+  processing();
+  try {
+    const newChecklist = await P.apiSend('/checklists', 'POST', {
+      title: name.trim(),
+      link: caseID,
+      link_type: 'case'
+    });
+    newChecklist.items = newChecklist.items || [];
+    checklists.push(newChecklist);
+    displayCheck();
+  } catch (err) {
+    Swal.close();
+    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+  }
+}
 
-    function displayCheck() {
-      const checklistDiv = E("checklistDiv");
-      checklistDiv.innerHTML = "";
-      if (checklists) {
-        for (let i = 0; i < checklists.length; i++) {
-          const head = document.createElement("h3");
-          head.innerHTML = `${checklists[i].name}  <button onclick="checklistDelete('${i}', '${checklists[i].id}')"><i class="fa-solid fa-trash-can"></i></button>`;
-          checklistDiv.appendChild(head);
-          if (checklists[i].checkItems) {
-            for (let j = 0; j < checklists[i].checkItems.length; j++) {
-              const checkbox = document.createElement("input");
-              checkbox.type = "checkbox";
-              checkbox.checked = checklists[i].checkItems[j].state;
-              checkbox.style.width = "5%";
-              checkbox.style.transform = "scale(1.4)";
-              checkbox.onchange = function () {
-                checkItem(checklists[i].checkItems[j].id, this.checked ? "checked" : "unchecked");
-              };
-              const label = document.createElement("span");
-              label.innerHTML = `${checklists[i].checkItems[j].name} <a href="#" onclick="checkDelete('${i}', '${j}', '${checklists[i].checkItems[j].id}')">&#x2716;</a>`;
-              label.style.paddingLeft = "5px";
-              label.style.width = "95%";
-              label.style.fontSize = "18px";
-              const container = document.createElement("div");
-              container.appendChild(checkbox);
-              container.appendChild(label);
-              container.style.marginBottom = "2px";
-              container.style.display = "flex";
-              container.style.alignItems = "baseline";
-              checklistDiv.appendChild(container);
-            }
-          }
-          let newCheckItem = document.createElement("span");
-          newCheckItem.innerHTML = `<a href='#' onclick="addCheckItem('${checklists[i].id}', '${checklists[i].name}')">&#43; New Item</a>`;
-          newCheckItem.style.paddingLeft = "10px";
-          checklistDiv.appendChild(newCheckItem);
-        }
-      }
-      let newButton = document.createElement("button");
-      newButton.innerHTML = "New Checklist";
-      newButton.onclick = function () { addChecklist(); };
-      checklistDiv.appendChild(document.createElement("br"));
-      checklistDiv.appendChild(document.createElement("br"));
-      checklistDiv.appendChild(newButton);
-      Swal.close();
-    }
+function displayCheck() {
+  const div = E('checklistDiv');
+  div.innerHTML = '';
+  if (checklists && checklists.length) {
+    checklists.forEach((cl, clIdx) => {
+      const head = document.createElement('h3');
+      head.innerHTML = `${cl.title} <span style="font-size:12px;color:${cl.status==='complete'?'green':'#999'}">${cl.status}</span>
+        <button onclick="checklistDelete(${clIdx},${cl.id})"><i class="fa-solid fa-trash-can"></i></button>`;
+      div.appendChild(head);
+
+      (cl.items || []).forEach((item, itemIdx) => {
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = item.status === 'complete';
+        checkbox.style.cssText = 'width:5%;transform:scale(1.4)';
+        checkbox.onchange = () => checkItem(item.id, cl.id, checkbox.checked);
+
+        const label = document.createElement('span');
+        label.innerHTML = `${item.name} <a href="#" onclick="checkDelete(${clIdx},${itemIdx},${item.id})">&#x2716;</a>`;
+        label.style.cssText = 'padding-left:5px;width:95%;font-size:18px';
+
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:baseline;margin-bottom:2px';
+        row.appendChild(checkbox);
+        row.appendChild(label);
+        div.appendChild(row);
+      });
+
+      const addLink = document.createElement('span');
+      addLink.innerHTML = `<a href="#" onclick="addCheckItem(${cl.id},'${cl.title.replace(/'/g,"\\'")}',${clIdx})">&#43; New Item</a>`;
+      addLink.style.paddingLeft = '10px';
+      div.appendChild(addLink);
+    });
+  }
+
+  const newBtn = document.createElement('button');
+  newBtn.textContent = 'New Checklist';
+  newBtn.onclick = addChecklist;
+  div.appendChild(document.createElement('br'));
+  div.appendChild(document.createElement('br'));
+  div.appendChild(newBtn);
+  Swal.close();
+}
 
     async function newDB() {
   Swal.fire({

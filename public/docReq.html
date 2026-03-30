@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Documents Needed</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 650px; margin: 0 auto; padding: 20px; }
+    h1 { color: #07ADEF; }
+    .item { border: 1px solid #ddd; border-radius: 5px; padding: 12px; margin: 10px 0; }
+    .item.complete { opacity: 0.5; }
+    .item h3 { margin: 0 0 8px 0; font-size: 15px; }
+    .comment-toggle { font-size: 12px; color: #666; cursor: pointer; text-decoration: underline; }
+    .comment-box { display: none; margin-top: 8px; }
+    .comment-box textarea { width: 100%; box-sizing: border-box; padding: 6px; border: 1px solid #ccc; border-radius: 3px; }
+    .upload-btn { display: inline-block; margin-top: 8px; padding: 6px 14px; background: #007bff; color: white; border-radius: 3px; cursor: pointer; font-size: 13px; }
+    .complete-badge { color: green; font-size: 12px; font-weight: bold; }
+    #loading { text-align: center; padding: 40px; color: #666; }
+    #error   { text-align: center; padding: 40px; color: red; }
+  </style>
+</head>
+<body>
+
+<div id="loading">Loading your document list...</div>
+<div id="error" style="display:none"></div>
+
+<div id="content" style="display:none">
+  <img src="https://iili.io/Jy2nXHv.md.png" width="200"><br><br>
+  <h1>Hi <span id="clientName"></span>,</h1>
+  <p>Please provide the following documents. Use the upload button next to each item.</p>
+  <div id="itemList"></div>
+  <br>
+  <p style="font-size:12px;color:#999">
+    Questions? Call our office at <a href="tel:2484944394">248-494-4394</a>.
+  </p>
+</div>
+
+<script>
+  const caseId = new URLSearchParams(window.location.search).get('case');
+
+  if (!caseId) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('error').style.display = 'block';
+    document.getElementById('error').textContent = 'Invalid link. Please contact our office.';
+  } else {
+    fetch(`/api/public/docs/${caseId}`)
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('loading').style.display = 'none';
+        if (!data.items || !data.items.length) {
+          document.getElementById('error').style.display = 'block';
+          document.getElementById('error').textContent = 'No documents needed at this time!';
+          return;
+        }
+        document.getElementById('clientName').textContent = data.name;
+        document.getElementById('content').style.display = 'block';
+
+        const list = document.getElementById('itemList');
+        data.items.forEach((item, i) => {
+          list.innerHTML += `
+            <div class="item" id="item-${i}">
+              <h3>${item}</h3>
+              <span class="comment-toggle" onclick="toggleComment(${i})">+ Add a comment</span>
+              <div class="comment-box" id="comment-${i}">
+                <textarea rows="2" placeholder="Optional note about this document..."></textarea>
+              </div>
+              <br>
+              <!-- TODO: replace with dropboxService upload once integrated -->
+              <a class="upload-btn" href="https://form.jotform.com/JOTFORM_ID?case=${caseId}&doc=${encodeURIComponent(item)}" target="_blank">
+                Upload Document
+              </a>
+            </div>`;
+        });
+      })
+      .catch(() => {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('error').textContent = 'Error loading your document list. Please try again or contact our office.';
+      });
+  }
+
+  function toggleComment(i) {
+    const box = document.getElementById(`comment-${i}`);
+    box.style.display = box.style.display === 'none' || !box.style.display ? 'block' : 'none';
+  }
+</script>
+</body>
+</html>
