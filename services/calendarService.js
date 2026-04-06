@@ -229,6 +229,14 @@ async function isWorkday(datetime) {
       workdayIn = input.isSameOrAfter(reopenTime) ? 0 : reopenTime.diff(input, 'minutes');
     }
   }
+  // Calculate nextDay (minimal add-on)
+  let nextDay = input.format('YYYY-MM-DDTHH:mm:ss');
+  if (workdayIn !== 0) {
+    nextDay = input.clone()
+      .add(workdayIn, 'minutes')
+      .set({ hour: 9, minute: 0, second: 0, millisecond: 0 })
+      .format('YYYY-MM-DDTHH:mm:ss');
+}
 
   return {
     date:        input.format('YYYY-MM-DDTHH:mm:ss'),
@@ -236,7 +244,8 @@ async function isWorkday(datetime) {
     isHoliday,
     holidayName: isHoliday ? holidayName : null,
     workday,
-    workdayIn
+    workdayIn,
+    nextDay
   };
 }
 
