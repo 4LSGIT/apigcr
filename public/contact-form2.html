@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contact Info</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="/css/yc-forms.css" rel="stylesheet">
+</head>
+<body>
+
+<div class="yc-form-header">
+  <div class="yc-toggle">
+    <input class="form-check-input" type="checkbox" id="toggleBtn">
+    <label class="form-check-label" for="toggleBtn" id="toggleLabel">View Mode</label>
+  </div>
+  <span class="yc-save-status" id="saveStatus"></span>
+  <span class="yc-warning" id="warning">You must press SAVE to keep changes!</span>
+</div>
+
+<div class="yc-draft-banner" id="draftBanner" style="display:none;">
+  <span>Unsaved draft from <strong id="draftTimestamp"></strong></span>
+  <button class="yc-btn yc-btn-sm yc-btn-primary" id="draftRestore">Restore</button>
+  <button class="yc-btn yc-btn-sm yc-btn-secondary" id="draftDiscard">Discard</button>
+</div>
+
+<form id="contactForm" class="yc-form">
+
+  <!-- Locked header info -->
+  <div class="yc-tab-sticky">
+    <div class="yc-row">
+      <div class="yc-field yc-field-locked">
+        <label class="yc-label">Contact ID</label>
+        <input type="text" name="contactid" readonly>
+      </div>
+    </div>
+  </div>
+
+  <div class="yc-section">
+    <div class="yc-section-title">Basic Information</div>
+    <div class="yc-row">
+      <div class="yc-field">
+        <label class="yc-label">Preferred Name</label>
+        <input type="text" name="preferredname">
+      </div>
+    </div>
+
+    <div class="yc-row">
+      <div class="yc-field">
+        <label class="yc-label">First Name</label>
+        <input type="text" name="firstname">
+      </div>
+      <div class="yc-field">
+        <label class="yc-label">Middle Name</label>
+        <input type="text" name="middlename">
+      </div>
+      <div class="yc-field">
+        <label class="yc-label">Last Name</label>
+        <input type="text" name="lastname">
+      </div>
+    </div>
+  </div>
+
+  <div class="yc-section">
+    <div class="yc-section-title">Contact Details</div>
+    <div class="yc-row">
+      <div class="yc-field">
+        <label class="yc-label">Phone <span class="yc-required">*</span></label>
+        <input type="text" name="phone" data-yc-mask="phone">
+        <small class="yc-error"></small>
+      </div>
+      <div class="yc-field">
+        <label class="yc-label">Email</label>
+        <input type="email" name="email">
+        <small class="yc-error"></small>
+      </div>
+    </div>
+
+    <div class="yc-row">
+      <div class="yc-field">
+        <label class="yc-label">Secondary Phone</label>
+        <input type="text" name="secondaryphone" data-yc-mask="phone">
+        <small class="yc-error"></small>
+      </div>
+      <div class="yc-field">
+        <label class="yc-label">Secondary Email</label>
+        <input type="email" name="secondaryemail">
+        <small class="yc-error"></small>
+      </div>
+    </div>
+  </div>
+
+  <div class="yc-section">
+    <div class="yc-section-title">Personal Info</div>
+    <div class="yc-row">
+      <div class="yc-field">
+        <label class="yc-label">Date of Birth</label>
+        <input type="date" name="dob">
+        <small class="yc-error"></small>
+      </div>
+      <div class="yc-field">
+        <label class="yc-label">SSN</label>
+        <input type="text" name="ssn" data-yc-mask="ssn">
+        <small class="yc-error"></small>
+      </div>
+    </div>
+  </div>
+
+  <div class="yc-section">
+    <div class="yc-section-title">Address</div>
+    <div class="yc-row">
+      <div class="yc-field yc-3x">
+        <label class="yc-label">Street Address</label>
+        <input type="text" name="address">
+      </div>
+    </div>
+    <div class="yc-row">
+      <div class="yc-field">
+        <label class="yc-label">City</label>
+        <input type="text" name="city">
+      </div>
+      <div class="yc-field yc-fixed-sm">
+        <label class="yc-label">State</label>
+        <input type="text" name="state" maxlength="2">
+      </div>
+      <div class="yc-field yc-fixed-md">
+        <label class="yc-label">ZIP</label>
+        <input type="text" name="zip" data-yc-mask="zip">
+      </div>
+    </div>
+  </div>
+
+  <div class="yc-section">
+    <div class="yc-section-title">Tags & Notes</div>
+    <div class="yc-row">
+      <div class="yc-field">
+        <label class="yc-label">Tags (comma separated)</label>
+        <textarea name="tags" rows="3"></textarea>
+      </div>
+      <div class="yc-field">
+        <label class="yc-label">Notes</label>
+        <textarea name="notes" rows="5" maxlength="1000"></textarea>
+        <!-- Counter auto-injected by yc-forms.js -->
+      </div>
+    </div>
+  </div>
+
+  <button type="button" class="yc-btn yc-btn-primary yc-btn-block" id="saveBtn" style="display:none;">
+    Save Changes
+  </button>
+</form>
+
+<script src="/js/yc-forms.js"></script>
+<script>
+  const P = window.parent;
+  const params = new URLSearchParams(location.search);
+
+  const form = new YCForm({
+    formKey:       'contact_info',
+    schemaVersion: 1,
+    linkType:      'contact',
+    linkId:        params.get('contact_id') || params.get('id') || params.get('clientid'),
+    container:     '#contactForm',
+    autosave:      true,
+    readonly:      true,
+
+    fields: {
+      contactid:       { el: '[name="contactid"]',       type: 'text',     readonly: true },
+      preferredname:   { el: '[name="preferredname"]',   type: 'text' },
+      firstname:       { el: '[name="firstname"]',       type: 'text' },
+      middlename:      { el: '[name="middlename"]',      type: 'text' },
+      lastname:        { el: '[name="lastname"]',        type: 'text' },
+      phone:           { el: '[name="phone"]',           type: 'text' },
+      email:           { el: '[name="email"]',           type: 'text' },
+      secondaryphone:  { el: '[name="secondaryphone"]',  type: 'text' },
+      secondaryemail:  { el: '[name="secondaryemail"]',  type: 'text' },
+      dob:             { el: '[name="dob"]',             type: 'text' },
+      ssn:             { el: '[name="ssn"]',             type: 'text' },
+      address:         { el: '[name="address"]',         type: 'text' },
+      city:            { el: '[name="city"]',            type: 'text' },
+      state:           { el: '[name="state"]',           type: 'text' },
+      zip:             { el: '[name="zip"]',             type: 'text' },
+      tags:            { el: '[name="tags"]',            type: 'textarea' },
+      notes:           { el: '[name="notes"]',           type: 'textarea' },
+    },
+
+    validation: {
+      phone:          { required: true, mask: 'phone' },
+      email:          { email: true },
+      secondaryemail: { email: true },
+      ssn:            { mask: 'ssn' },
+      dob:            { pattern: /^\d{4}-\d{2}-\d{2}$/ }
+    },
+
+    endpoints: {
+      load: { method: 'GET', url: '/api/contacts/{linkId}' },
+    },
+
+    // Map API response keys → form field names (adjust if your /api/contacts returns different names)
+    apiMap: {
+      // Example if your API uses contact_ prefix:
+      // 'contact_firstname': 'firstname',
+       'contact_phone':     'phone',
+    },
+
+    onSubmit: {
+      patch: { method: 'PATCH', url: '/api/contacts/{linkId}' },
+    },
+
+    onSave: () => {
+      P.postMessage({ type: 'form-saved', form: 'contact_info' }, '*');
+    }
+  });
+
+  form.init();
+</script>
+</body>
+</html>

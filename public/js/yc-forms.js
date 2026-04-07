@@ -20,6 +20,7 @@ class YCForm {
       linkType:      '',
       linkId:        '',
       container:     '',
+      dataMode:      'live',             // 'live' = always from entity table; 'snapshot' = from latest submission once one exists
       autosave:      false,
       autosaveMs:    3000,
       readonly:      true,
@@ -92,7 +93,15 @@ class YCForm {
             this.config.endpoints.load.url,
             this.config.endpoints.load.method || 'GET'
           );
-          this._liveData = loadResult.data || loadResult;
+          // Extract nested entity data if a path is specified
+          // e.g., GET /api/contacts/:id returns { contact: {...}, cases: [...] }
+          //        path: 'contact' → extracts just the contact object
+          const path = this.config.endpoints.load.path;
+          if (path && loadResult[path]) {
+            this._liveData = loadResult[path];
+          } else {
+            this._liveData = loadResult.data || loadResult;
+          }
         } catch (err) {
           console.warn('[YCForm] Could not load live data:', err);
           this._liveData = null;
@@ -145,25 +154,35 @@ class YCForm {
   _resolveDataSource() {
     const draft = this._draftData;
     const submitted = this._submittedData;
-    const live = this._liveData;
+    const live = this._mergeApiData(this._liveData);
+    const submittedData = submitted ? (typeof submitted.data === 'string' ? JSON.parse(submitted.data) : submitted.data) : null;
+    const isSnapshot = this.config.dataMode === 'snapshot';
 
-    // No draft → use live data (or submitted data, or empty)
-    if (!draft) {
-      return this._mergeApiData(live) || (submitted ? submitted.data : {});
+    // Determine the "base" data (what we show if there's no draft to recover)
+    let base;
+    if (isSnapshot) {
+      // Snapshot mode: once a submission exists, it IS the truth.
+      // Only use live data as pre-fill when no submission exists yet.
+      base = submittedData || live || {};
+    } else {
+      // Live mode: always start from the entity table.
+      // Submissions are just history.
+      base = live || {};
     }
 
-    const draftTime = new Date(draft.updated_at).getTime();
-    const submittedTime = submitted ? new Date(submitted.updated_at).getTime() : 0;
+    // Draft recovery check
+    if (draft) {
+      const draftTime = new Date(draft.updated_at).getTime();
+      const submittedTime = submitted ? new Date(submitted.updated_at).getTime() : 0;
 
-    // Draft is newer (or no submission exists) → offer recovery
-    if (draftTime > submittedTime) {
-      this._showDraftBanner(draft, submitted);
-      // Default to live/submitted data; user can click Restore
-      return this._mergeApiData(live) || (submitted ? submitted.data : {});
+      if (draftTime > submittedTime) {
+        // Draft is newer than latest submission (or no submission exists)
+        this._showDraftBanner(draft, submitted);
+      }
+      // Either way, default to base data — user clicks "Restore" to load draft
     }
 
-    // Draft is stale → ignore it, use live data
-    return this._mergeApiData(live) || (submitted ? submitted.data : {});
+    return base;
   }
 
   /**
@@ -549,7 +568,7 @@ class YCForm {
             form_key: this.config.formKey,
             action:   'form_submit',
             version:  submitResult.version,
-            changes:  diff,
+            changes:  JSON.stringify(diff),
           }),
         });
       } catch (err) {
@@ -565,7 +584,10 @@ class YCForm {
       // 8. Update status
       this._showStatus('Saved just now');
 
-      // 9. Callback & parent notification
+      // 9. Return to view mode
+      this.setReadonly(true);
+
+      // 10. Callback & parent notification
       if (this.config.onSave) this.config.onSave(submitResult);
       if (!this.config.external) {
         try {
@@ -901,6 +923,20 @@ class YCForm {
 
   _formatForDisplay(value, fieldConfig) {
     if (value === null || value === undefined) return '';
+
+    // Date fields: normalize to YYYY-MM-DD for <input type="date">
+    if (fieldConfig.type === 'date') {
+      if (!value) return '';
+      // Handle Date objects, ISO strings, and YYYY-MM-DD strings
+      const str = (value instanceof Date) ? value.toISOString() : String(value);
+      const dateOnly = str.split('T')[0]; // "1993-01-23"
+      // Validate it's a real date
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly) && !isNaN(new Date(dateOnly))) {
+        return dateOnly;
+      }
+      return '';
+    }
+
     const v = String(value);
 
     // Check for mask

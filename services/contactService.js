@@ -157,21 +157,31 @@ async function listContacts(db, {
 
 
 // ─────────────────────────────────────────────────────────────
-// getContact
+// getContact — UPDATED to respect `include` parameter
 // ─────────────────────────────────────────────────────────────
+//
+// Replace the existing getContact function in services/contactService.js
+// with this version.
+//
+// CHANGE: The `include` parameter now controls which sub-entities are fetched.
+//   - If omitted/empty → returns ONLY the contact row (no sub-entities)
+//   - If provided → comma-separated list: 'cases,appts,tasks,log,sequences'
+//
+// This means GET /api/contacts/123 returns just { contact: {...} }
+// and GET /api/contacts/123?include=cases,appts returns { contact, cases, appts }
+//
+// Previously: always fetched ALL sub-entities regardless of include param.
 
 /**
- * Fetch a single contact with all related entities.
- *
- * Returns: { contact, cases, appts, tasks, log, sequences }
- * SSN is always stripped.
+ * Fetch a single contact, optionally with related entities.
  *
  * @param {object} db
  * @param {number} contactId
+ * @param {string} [include] — comma-separated: 'cases,appts,tasks,log,sequences'
  * @returns {object|null} null if contact not found
  */
-async function getContact(db, contactId) {
-  // 1) Contact record
+async function getContact(db, contactId, include = '') {
+  // 1) Contact record (always fetched)
   const [[raw]] = await db.query(
     'SELECT * FROM contacts WHERE contact_id = ?',
     [contactId]
@@ -179,85 +189,106 @@ async function getContact(db, contactId) {
   if (!raw) return null;
   const contact = { ...raw };  // SSN exposed — authenticated staff only
 
+  const result = { contact };
+
+  // Parse include param
+  const parts = include
+    ? include.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    : [];
+
   // 2) Cases via case_relate
-  const [cases] = await db.query(
-    `SELECT
-   ca.case_id, ca.case_number, ca.case_number_full,
-   ca.case_type, ca.case_stage, ca.case_status,
-   cr.case_relate_type AS relate_type,
-   IFNULL(DATE_FORMAT(ca.case_open_date,  '%b. %e, %Y'), '') AS open,
-   IFNULL(DATE_FORMAT(ca.case_file_date,  '%b. %e, %Y'), '') AS file,
-   IFNULL(DATE_FORMAT(ca.case_close_date, '%b. %e, %Y'), '') AS close
-    FROM case_relate cr
-    JOIN cases ca ON cr.case_relate_case_id = ca.case_id
-    WHERE cr.case_relate_client_id = ?
-    ORDER BY ca.case_open_date DESC`,
-    [contactId],
-  );
+  if (parts.includes('cases')) {
+    const [cases] = await db.query(
+      `SELECT
+       ca.case_id, ca.case_number, ca.case_number_full,
+       ca.case_type, ca.case_stage, ca.case_status,
+       cr.case_relate_type AS relate_type,
+       IFNULL(DATE_FORMAT(ca.case_open_date,  '%b. %e, %Y'), '') AS open,
+       IFNULL(DATE_FORMAT(ca.case_file_date,  '%b. %e, %Y'), '') AS file,
+       IFNULL(DATE_FORMAT(ca.case_close_date, '%b. %e, %Y'), '') AS close
+      FROM case_relate cr
+      JOIN cases ca ON cr.case_relate_case_id = ca.case_id
+      WHERE cr.case_relate_client_id = ?
+      ORDER BY ca.case_open_date DESC`,
+      [contactId],
+    );
+    result.cases = cases;
+  }
 
   // 3) Appointments
-  const [appts] = await db.query(
-    `SELECT
-       a.appt_id, a.appt_type, a.appt_status, a.appt_date, a.appt_end,
-       a.appt_length, a.appt_platform, a.appt_case_id, a.appt_note,
-       a.appt_with,
-       DATE_FORMAT(a.appt_date, '%Y-%m-%dT%H:%i') AS appt_datetime_local,
-       DATE_FORMAT(a.appt_date, '%b. %e, %Y') AS format_date,
-       DATE_FORMAT(a.appt_date, '%h:%i %p')   AS time,
-       u.user_name AS with_name
-     FROM appts a
-     LEFT JOIN users u ON a.appt_with = u.user
-     WHERE a.appt_client_id = ?
-     ORDER BY a.appt_date DESC`,
-    [contactId],
-  );
+  if (parts.includes('appts')) {
+    const [appts] = await db.query(
+      `SELECT
+         a.appt_id, a.appt_type, a.appt_status, a.appt_date, a.appt_end,
+         a.appt_length, a.appt_platform, a.appt_case_id, a.appt_note,
+         a.appt_with,
+         DATE_FORMAT(a.appt_date, '%Y-%m-%dT%H:%i') AS appt_datetime_local,
+         DATE_FORMAT(a.appt_date, '%b. %e, %Y') AS format_date,
+         DATE_FORMAT(a.appt_date, '%h:%i %p')   AS time,
+         u.user_name AS with_name
+       FROM appts a
+       LEFT JOIN users u ON a.appt_with = u.user
+       WHERE a.appt_client_id = ?
+       ORDER BY a.appt_date DESC`,
+      [contactId],
+    );
+    result.appts = appts;
+  }
 
   // 4) Tasks linked to this contact
-  const [tasks] = await db.query(
-    `SELECT
-       t.task_id, t.task_status, t.task_title, t.task_desc,
-       t.task_due, t.task_date,
-       uf.user_name AS from_name,
-       ut.user_name AS to_name
-     FROM tasks t
-     LEFT JOIN users uf ON t.task_from = uf.user
-     LEFT JOIN users ut ON t.task_to   = ut.user
-     WHERE (t.task_link_type = 'contact' AND t.task_link_id = ?)
-        OR (t.task_link_type IS NULL AND t.task_link = ?)
-     ORDER BY t.task_date DESC`,
-    [String(contactId), String(contactId)]
-  );
+  if (parts.includes('tasks')) {
+    const [tasks] = await db.query(
+      `SELECT
+         t.task_id, t.task_status, t.task_title, t.task_desc,
+         t.task_due, t.task_date,
+         uf.user_name AS from_name,
+         ut.user_name AS to_name
+       FROM tasks t
+       LEFT JOIN users uf ON t.task_from = uf.user
+       LEFT JOIN users ut ON t.task_to   = ut.user
+       WHERE (t.task_link_type = 'contact' AND t.task_link_id = ?)
+          OR (t.task_link_type IS NULL AND t.task_link = ?)
+       ORDER BY t.task_date DESC`,
+      [String(contactId), String(contactId)]
+    );
+    result.tasks = tasks;
+  }
 
   // 5) Log entries
-  const [log] = await db.query(
-    `SELECT
-       l.log_id, l.log_type, l.log_date, l.log_data,
-       l.log_from, l.log_to, l.log_subject, l.log_direction,
-       u.user_name AS by_name
-     FROM log l
-     LEFT JOIN users u ON l.log_by = u.user
-     WHERE (l.log_link_type = 'contact' AND l.log_link_id = ?)
-        OR (l.log_link_type IS NULL AND l.log_link = ?)
-     ORDER BY l.log_date DESC
-     LIMIT 100`,
-    [String(contactId), String(contactId)]
-  );
+  if (parts.includes('log')) {
+    const [log] = await db.query(
+      `SELECT
+         l.log_id, l.log_type, l.log_date, l.log_data,
+         l.log_from, l.log_to, l.log_subject, l.log_direction,
+         u.user_name AS by_name
+       FROM log l
+       LEFT JOIN users u ON l.log_by = u.user
+       WHERE (l.log_link_type = 'contact' AND l.log_link_id = ?)
+          OR (l.log_link_type IS NULL AND l.log_link = ?)
+       ORDER BY l.log_date DESC
+       LIMIT 200`,
+      [String(contactId), String(contactId)]
+    );
+    result.log = log;
+  }
 
   // 6) Sequence enrollments
-  const [sequences] = await db.query(
-    `SELECT
-       se.id AS enrollment_id, se.status, se.current_step, se.total_steps,
-       se.enrolled_at, se.cancel_reason,
-       st.name AS template_name, st.type AS template_type
-     FROM sequence_enrollments se
-     JOIN sequence_templates st ON se.template_id = st.id
-     WHERE se.contact_id = ?
-     ORDER BY se.enrolled_at DESC
-     LIMIT 20`,
-    [contactId]
-  );
+  if (parts.includes('sequences')) {
+    const [sequences] = await db.query(
+      `SELECT
+         se.id, se.status, se.current_step, se.total_steps,
+         se.cancel_reason, se.enrolled_at, se.completed_at,
+         st.name AS template_name, st.type AS template_type
+       FROM sequence_enrollments se
+       JOIN sequence_templates st ON se.template_id = st.id
+       WHERE se.contact_id = ?
+       ORDER BY se.enrolled_at DESC`,
+      [contactId]
+    );
+    result.sequences = sequences;
+  }
 
-  return { contact, cases, appts, tasks, log, sequences };
+  return result;
 }
 
 
@@ -355,7 +386,7 @@ async function updateContact(db, contactId, fields) {
     'contact_type', 'contact_fname', 'contact_mname', 'contact_lname',
     'contact_pname', 'contact_phone', 'contact_email',
     'contact_address', 'contact_city', 'contact_state', 'contact_zip',
-    'contact_dob', 'contact_marital_status',
+    'contact_dob', 'contact_marital_status', 'contact_ssn',
     'contact_tags', 'contact_notes', 'contact_clio_id',
     'contact_phone2', 'contact_email2'
   ]);

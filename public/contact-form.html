@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contact Information</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <link href="/css/yc-forms.css" rel="stylesheet">
+</head>
+<body>
+
+<div class="yc-form-header">
+  <div class="yc-toggle">
+    <input class="form-check-input" type="checkbox" id="toggleBtn">
+    <label class="form-check-label" for="toggleBtn" id="toggleLabel">View Mode</label>
+  </div>
+  <span class="yc-save-status" id="saveStatus"></span>
+  <span class="yc-warning" id="warning">You must press SAVE to keep changes!</span>
+</div>
+
+<div class="yc-draft-banner" id="draftBanner" style="display:none;">
+  <span>You have unsaved changes from <strong id="draftTimestamp"></strong></span>
+  <button class="yc-btn yc-btn-sm yc-btn-primary" id="draftRestore">Restore</button>
+  <button class="yc-btn yc-btn-sm yc-btn-secondary" id="draftDiscard">Discard</button>
+</div>
+
+<form id="contactForm" class="yc-form">
+
+  <!-- ── Row 1: Preferred Name + Contact ID ── -->
+  <div class="yc-row">
+    <div class="yc-field">
+      <label class="yc-label">Preferred Name</label>
+      <input type="text" name="pname" placeholder="Preferred name">
+    </div>
+    <div class="yc-field yc-field-locked">
+      <label class="yc-label">Contact ID</label>
+      <input type="text" name="contact_id" placeholder="Contact ID">
+    </div>
+  </div>
+
+  <!-- ── Row 2: Name (first / middle / last) ── -->
+  <div class="yc-row">
+    <div class="yc-field">
+      <label class="yc-label">First Name</label>
+      <input type="text" name="fname" placeholder="First name">
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">Middle Name</label>
+      <input type="text" name="mname" placeholder="Middle name">
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">Last Name</label>
+      <input type="text" name="lname" placeholder="Last name">
+    </div>
+  </div>
+
+  <!-- ── Row 3: Phone + Email ── -->
+  <div class="yc-row">
+    <div class="yc-field">
+      <label class="yc-label">Phone Number</label>
+      <input type="text" name="phone" placeholder="(000) 000-0000" data-yc-mask="phone">
+      <small class="yc-error"></small>
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">Email</label>
+      <input type="email" name="email" placeholder="Email">
+      <small class="yc-error"></small>
+    </div>
+  </div>
+
+  <!-- ── Row 4: Secondary Phone + Email ── -->
+  <div class="yc-row">
+    <div class="yc-field">
+      <label class="yc-label">Secondary Phone</label>
+      <input type="text" name="phone2" placeholder="(000) 000-0000" data-yc-mask="phone">
+      <small class="yc-error"></small>
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">Secondary Email</label>
+      <input type="email" name="email2" placeholder="Secondary email">
+      <small class="yc-error"></small>
+    </div>
+  </div>
+
+  <!-- ── Row 5: DOB + SSN ── -->
+  <div class="yc-row">
+    <div class="yc-field">
+      <label class="yc-label">Date of Birth</label>
+      <input type="date" name="dob">
+      <small class="yc-error"></small>
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">SSN</label>
+      <input type="text" name="ssn" placeholder="###-##-####" data-yc-mask="ssn">
+      <small class="yc-error"></small>
+    </div>
+  </div>
+
+  <!-- ── Address section ── -->
+  <div class="yc-section">
+    <div class="yc-section-title">Address</div>
+    <div class="yc-row">
+      <div class="yc-field yc-3x">
+        <input type="text" name="address" placeholder="Street address">
+      </div>
+    </div>
+    <div class="yc-row">
+      <div class="yc-field yc-2x">
+        <input type="text" name="city" placeholder="City">
+      </div>
+      <div class="yc-field yc-fixed-sm">
+        <input type="text" name="state" placeholder="State">
+      </div>
+      <div class="yc-field yc-fixed-md">
+        <input type="text" name="zip" placeholder="ZIP code">
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tags + Notes ── -->
+  <div class="yc-row">
+    <div class="yc-field">
+      <label class="yc-label">Tags</label>
+      <textarea name="tags" rows="4" placeholder="Enter tags separated by a comma"></textarea>
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">Notes</label>
+      <textarea name="notes" rows="4" placeholder="Notes" maxlength="1000"></textarea>
+      <!-- Counter auto-injected by yc-forms.js -->
+    </div>
+  </div>
+
+  <button type="button" class="yc-btn yc-btn-primary yc-btn-block" id="saveBtn" style="display:none;">
+    Save
+  </button>
+</form>
+
+<script src="/js/yc-forms.js"></script>
+<script>
+  const P = window.parent;
+  const params = new URLSearchParams(location.search);
+  const contactId = params.get('contact_id');
+
+  if (!contactId) {
+    document.body.innerHTML = '<p style="color:red;padding:20px;">Missing contact_id parameter.</p>';
+  } else {
+
+    const form = new YCForm({
+      formKey:       'contact_info',
+      schemaVersion: 1,
+      linkType:      'contact',
+      linkId:        contactId,
+      container:     '#contactForm',
+      dataMode:      'live',
+      autosave:      true,
+      autosaveMs:    3000,
+      readonly:      true,
+
+      fields: {
+        contact_id:    { el: '[name="contact_id"]',  type: 'text',     readonly: true },
+        pname:         { el: '[name="pname"]',        type: 'text' },
+        fname:         { el: '[name="fname"]',        type: 'text' },
+        mname:         { el: '[name="mname"]',        type: 'text' },
+        lname:         { el: '[name="lname"]',        type: 'text' },
+        phone:         { el: '[name="phone"]',        type: 'text' },
+        email:         { el: '[name="email"]',        type: 'text' },
+        phone2:        { el: '[name="phone2"]',       type: 'text' },
+        email2:        { el: '[name="email2"]',       type: 'text' },
+        dob:           { el: '[name="dob"]',          type: 'date' },
+        ssn:           { el: '[name="ssn"]',          type: 'text' },
+        address:       { el: '[name="address"]',      type: 'text' },
+        city:          { el: '[name="city"]',         type: 'text' },
+        state:         { el: '[name="state"]',        type: 'text' },
+        zip:           { el: '[name="zip"]',          type: 'text' },
+        tags:          { el: '[name="tags"]',         type: 'textarea' },
+        notes:         { el: '[name="notes"]',        type: 'textarea' },
+      },
+
+      validation: {
+        phone:  { mask: 'phone' },
+        email:  { email: true },
+        phone2: { mask: 'phone' },
+        email2: { email: true },
+        ssn:    { mask: 'ssn' },
+      },
+
+      endpoints: {
+        load: { method: 'GET', url: '/api/contacts/{linkId}', path: 'contact' },
+      },
+
+      // API returns contact_fname, form uses fname — map them
+      apiMap: {
+        'contact_id':     'contact_id',
+        'contact_pname':  'pname',
+        'contact_fname':  'fname',
+        'contact_mname':  'mname',
+        'contact_lname':  'lname',
+        'contact_phone':  'phone',
+        'contact_email':  'email',
+        'contact_phone2': 'phone2',
+        'contact_email2': 'email2',
+        'contact_dob':    'dob',
+        'contact_ssn':    'ssn',
+        'contact_address':'address',
+        'contact_city':   'city',
+        'contact_state':  'state',
+        'contact_zip':    'zip',
+        'contact_tags':   'tags',
+        'contact_notes':  'notes',
+      },
+
+      onSubmit: {
+        patch: { method: 'PATCH', url: '/api/contacts/{linkId}' },
+      },
+
+      onSave: () => {
+        // Tell parent to refresh contact header (name, phone, etc.)
+        try {
+          P.postMessage({ type: 'form-saved', form: 'contact_info' }, '*');
+        } catch (_) {}
+      },
+    });
+
+    form.init();
+  }
+</script>
+</body>
+</html>
