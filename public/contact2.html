@@ -695,6 +695,27 @@ async function newAppt() {
   });
 }
 
+window.addEventListener('message', async (e) => {
+  if (e.data?.type === 'form-saved' && e.data.form === 'contact_info') {
+    try {
+      const refreshed = await P.apiSend(`/api/contacts/${clientID}`, 'GET');
+      clientData = refreshed.contact;
+      E('fname').innerHTML = clientData.contact_fname || "";
+      E('lname').innerHTML = clientData.contact_lname || "";
+      E('phone').innerHTML = clientData.contact_phone
+        ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
+      E('sendEmailTo').value = clientData.contact_email || "";
+      const phoneFmt = clientData.contact_phone
+        ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3') : "";
+      E('sendSMSTo').value = phoneFmt;
+      E('logCallTo').value = phoneFmt;
+    } catch (err) {
+      console.warn('Failed to refresh after form save:', err);
+    }
+  }
+});
+
+
 // Initial load
 processing();
 (async () => {
@@ -722,16 +743,8 @@ processing();
     E('logCallTo').value   = phoneFmt;
 
     document.getElementById("tabInfoIframe").src =
-      `contact-form.html?contact_id=${clientID}`;
+      `contact-form.html?contact_id=${clientID}`; //moved to a yc-form!
 
-/*
-    document.getElementById("tabInfoIframe").src =
-      `contactform.html?firstname=${clientData.contact_fname}&middlename=${clientData.contact_mname||""}&lastname=${clientData.contact_lname}&preferredname=${clientData.contact_pname||""}` +
-      `&email=${clientData.contact_email||""}&phone=${clientData.contact_phone||""}&secondaryemail=${clientData.contact_email2||""}&secondaryphone=${clientData.contact_phone2||""}` +
-      `&dob=${clientData.contact_dob||""}&ssn=${clientData.contact_ssn||""}` +
-      `&address=${clientData.contact_address||""}&city=${clientData.contact_city||""}&state=${clientData.contact_state||""}&zip=${clientData.contact_zip||""}` +
-      `&clientid=${clientID}&tags=${clientData.contact_tags||""}&notes=${encodeURIComponent(clientData.contact_notes||"")}`;
-*/
     document.getElementById("tabViewClient").style.display = "block";
     openTab(null, 'tabInfo');
     Swal.close();

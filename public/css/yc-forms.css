@@ -633,3 +633,70 @@ body {
     align-items: flex-start;
   }
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LOADING OVERLAY
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-loading-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(248, 249, 250, 0.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  z-index: 100;
+  border-radius: 8px;
+}
+
+.yc-loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #dee2e6;
+  border-top-color: #0d6efd;
+  border-radius: 50%;
+  animation: yc-spin 0.6s linear infinite;
+}
+
+.yc-loading-text {
+  font-size: 0.9rem;
+  color: #6c757d;
+  font-weight: 500;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   FALLBACK TOAST (used when SweetAlert2 is not available)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #fff;
+  z-index: 9999;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.25s, transform 0.25s;
+  pointer-events: none;
+}
+
+.yc-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.yc-toast-success {
+  background: #28a745;
+}
+
+.yc-toast-error {
+  background: #dc3545;
+}

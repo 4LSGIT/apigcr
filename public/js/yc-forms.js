@@ -68,6 +68,9 @@ class YCForm {
 
   async init() {
     try {
+      // 0. Show loading overlay
+      this._showLoading(true);
+
       // 1. Set up toggle
       this._setupToggle();
 
@@ -140,8 +143,12 @@ class YCForm {
         this.config.onLoad(dataSource);
       }
 
+      // 14. Hide loading
+      this._showLoading(false);
+
     } catch (err) {
       console.error('[YCForm] init error:', err);
+      this._showLoading(false);
       if (this.config.onError) this.config.onError(err);
     }
   }
@@ -508,15 +515,21 @@ class YCForm {
   // ═══════════════════════════════════════════════════════════════════════════
 
   async save() {
+    // Guard against double-click
+    if (this._saving) return;
+
     // 1. Validate
     if (!this.validate()) return;
 
     // 2. Check for changes
     const diff = this.getDiff();
     if (Object.keys(diff).length === 0) {
-      this._showStatus('No changes to save');
+      this._toast('success', 'No changes to save');
       return;
     }
+
+    this._saving = true;
+    this._showLoading(true);
 
     try {
       this._showStatus('Saving...', true);
@@ -563,7 +576,7 @@ class YCForm {
           type:      'form',
           link_type: this.config.linkType,
           link_id:   this.config.linkId,
-          by:        0,   // will be set server-side from auth in most cases
+          by:        0,
           data: JSON.stringify({
             form_key: this.config.formKey,
             action:   'form_submit',
@@ -587,7 +600,10 @@ class YCForm {
       // 9. Return to view mode
       this.setReadonly(true);
 
-      // 10. Callback & parent notification
+      // 10. Success toast
+      this._toast('success', 'Saved successfully');
+
+      // 11. Callback & parent notification
       if (this.config.onSave) this.config.onSave(submitResult);
       if (!this.config.external) {
         try {
@@ -603,10 +619,11 @@ class YCForm {
     } catch (err) {
       console.error('[YCForm] Save error:', err);
       this._showStatus('Save failed!');
+      this._toast('error', 'Save failed', err.message);
       if (this.config.onError) this.config.onError(err);
-      if (typeof Swal !== 'undefined') {
-        Swal.fire({ icon: 'error', title: 'Save failed', text: err.message, timer: 3000 });
-      }
+    } finally {
+      this._saving = false;
+      this._showLoading(false);
     }
   }
 
@@ -1056,7 +1073,7 @@ class YCForm {
 
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STATUS DISPLAY
+  // STATUS DISPLAY, LOADING & TOASTS
   // ═══════════════════════════════════════════════════════════════════════════
 
   _showStatus(text, showSpinner = false) {
@@ -1075,6 +1092,54 @@ class YCForm {
     const timeStr = dt.toLocaleString();
     const name = user_name || 'Unknown';
     this._showStatus(`Last saved by ${name} at ${timeStr}`);
+  }
+
+  /**
+   * Show/hide a loading overlay on the form.
+   * Creates the overlay element on first call.
+   */
+  _showLoading(on) {
+    if (!this._loadingEl) {
+      this._loadingEl = document.createElement('div');
+      this._loadingEl.className = 'yc-loading-overlay';
+      this._loadingEl.innerHTML = '<div class="yc-loading-spinner"></div><div class="yc-loading-text">Loading...</div>';
+      this.el.style.position = 'relative';
+      this.el.appendChild(this._loadingEl);
+    }
+    this._loadingEl.style.display = on ? 'flex' : 'none';
+  }
+
+  /**
+   * Show a brief toast notification inside the form.
+   * Uses SweetAlert2 Toast if available, otherwise a built-in mini-toast.
+   */
+  _toast(icon, title, text = '') {
+    // Try SweetAlert2 Toast (matches rest of app)
+    if (typeof Swal !== 'undefined') {
+      const Toast = Swal.mixin({
+        toast: true,
+        position: 'top-end',
+        showConfirmButton: false,
+        timer: 2500,
+        timerProgressBar: true,
+      });
+      Toast.fire({ icon, title, text: text || undefined });
+      return;
+    }
+
+    // Fallback: built-in mini-toast
+    let toastEl = document.querySelector('.yc-toast');
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.className = 'yc-toast';
+      document.body.appendChild(toastEl);
+    }
+    toastEl.textContent = text ? `${title}: ${text}` : title;
+    toastEl.className = `yc-toast yc-toast-${icon} visible`;
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      toastEl.classList.remove('visible');
+    }, 2500);
   }
 
 
