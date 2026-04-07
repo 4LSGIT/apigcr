@@ -135,6 +135,11 @@
       <input
         id="caseStatusInput"
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_status:this.value}).then(()=>Toast.fire({icon:'success',title:'Status updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
+      /><br>
+      <label class="input-label">Recommendation:</label>
+      <input
+        id="caseRecInput"
+        onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_Rec:this.value}).then(()=>Toast.fire({icon:'success',title:'Recommendation updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
       /><br><br>
     </div><br><div style="margin:0 auto;max-width:650px;border:3px solid black;">
       <h3 style="color: red">Alerts:</h3>
@@ -933,6 +938,7 @@
         E("caseTypeSelect").value  = caseData.case_type  || "";
         E("caseStageSelect").value = caseData.case_stage || "";
         E("caseStatusInput").value = caseData.case_status || "N/A";
+        E("caseRecInput").value = caseData.case_rec || "N/A";
         E("overviewCaseNotes").value = caseData.case_notes || "";
         resizeTextarea(E("overviewCaseNotes"));
 
