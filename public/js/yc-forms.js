@@ -1295,10 +1295,14 @@ class YCForm {
     if (typeof Swal !== 'undefined') {
       const Toast = Swal.mixin({
         toast: true,
-        position: 'top-end',
+        position: 'top',
         showConfirmButton: false,
         timer: 2500,
         timerProgressBar: true,
+        didOpen: (toast) => {
+          toast.onmouseenter = Swal.stopTimer;
+          toast.onmouseleave = Swal.resumeTimer;
+        },
       });
       Toast.fire({ icon, title, text: text || undefined });
       return;
