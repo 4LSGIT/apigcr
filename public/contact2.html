@@ -500,6 +500,7 @@ async function addLog() {
 
 
 <script>
+window.apiSend = P.apiSend;
 const clientID = new URLSearchParams(window.location.search).get('clientID');
 let clientData = null;
 let appts = [], cases = [], seq = [], tasks = [], logs = [];

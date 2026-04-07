@@ -1,0 +1,635 @@
+/**
+ * yc-forms.css — YisraCase Forms Component Library
+ *
+ * Built on Bootstrap 5. All classes prefixed with yc- to avoid collisions.
+ * Mobile-first: stacks to single column below 600px.
+ *
+ * Include after Bootstrap CSS:
+ *   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+ *   <link href="/css/yc-forms.css" rel="stylesheet">
+ */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   FORM WRAPPER
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-form {
+  background: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  background: #f8f9fa;
+  padding: 16px;
+  margin: 0;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HEADER — toggle, save status, warning
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.yc-warning {
+  color: #dc3545;
+  font-weight: bold;
+  display: none;
+  font-size: 0.9rem;
+}
+
+.yc-form.yc-dirty .yc-warning,
+.yc-form:not(.yc-readonly) ~ .yc-form-header .yc-warning {
+  /* Warning visibility is managed by JS */
+}
+
+.yc-save-status {
+  font-size: 0.82rem;
+  color: #6c757d;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.yc-save-status .spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #dee2e6;
+  border-top-color: #0d6efd;
+  border-radius: 50%;
+  animation: yc-spin 0.6s linear infinite;
+}
+
+@keyframes yc-spin {
+  to { transform: rotate(360deg); }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TOGGLE — Bootstrap 5 form-switch (View / Edit Mode)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.yc-toggle .form-check-input {
+  cursor: pointer;
+  width: 3em;
+  height: 1.5em;
+}
+
+.yc-toggle .form-check-label {
+  margin-left: 12px;
+  font-weight: bold;
+  color: #495057;
+  font-size: 1.1rem;
+  padding-top: 2px;
+  cursor: pointer;
+  user-select: none;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DRAFT RECOVERY BANNER
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-draft-banner {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 6px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+
+.yc-draft-banner .yc-draft-warning {
+  color: #856404;
+  font-style: italic;
+  font-size: 0.82rem;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LAYOUT — rows, fields, sizing
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 0;
+}
+
+.yc-field {
+  flex: 1;
+  position: relative;
+  margin-bottom: 12px;
+}
+
+/* Width modifiers */
+.yc-field.yc-2x { flex: 2; }
+.yc-field.yc-3x { flex: 3; }
+.yc-field.yc-fixed-sm { flex: 0 0 120px; }
+.yc-field.yc-fixed-md { flex: 0 0 200px; }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SECTIONS — grouped fields with optional title
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-section {
+  margin-bottom: 8px;
+}
+
+.yc-section-title {
+  font-weight: bold;
+  color: #343a40;
+  font-size: 1.05rem;
+  margin-top: 20px;
+  margin-bottom: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.yc-section-subtitle {
+  font-size: 0.85rem;
+  color: #6c757d;
+  margin-top: -6px;
+  margin-bottom: 10px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LABELS & HELPERS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-label {
+  display: block;
+  font-weight: bold;
+  color: #495057;
+  margin-bottom: 5px;
+  font-size: 0.92rem;
+}
+
+.yc-required {
+  color: #dc3545;
+  margin-left: 2px;
+}
+
+.yc-sublabel {
+  display: block;
+  color: #6c757d;
+  margin-top: 4px;
+  font-size: 0.8rem;
+}
+
+.yc-error {
+  display: none;
+  color: #dc3545;
+  font-weight: bold;
+  font-size: 0.8rem;
+  margin-top: 4px;
+}
+
+.yc-error.visible {
+  display: block;
+}
+
+.yc-char-counter {
+  display: block;
+  text-align: right;
+  color: #6c757d;
+  font-size: 0.75rem;
+  margin-top: 2px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   INPUTS — text, select, textarea, date
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-field input,
+.yc-field select,
+.yc-field textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  box-sizing: border-box;
+  background-color: #f1f3f5;
+  font-family: inherit;
+  font-size: 0.92rem;
+  color: #212529;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.yc-field input:focus,
+.yc-field select:focus,
+.yc-field textarea:focus {
+  border-color: #86b7fe;
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+  outline: none;
+}
+
+.yc-field input:disabled,
+.yc-field select:disabled,
+.yc-field textarea:disabled {
+  background-color: #e9ecef;
+  color: #495057;
+}
+
+.yc-field textarea {
+  resize: vertical;
+  min-height: 70px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   READONLY STATES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Form-level readonly: entire form in view mode */
+.yc-readonly .yc-field input,
+.yc-readonly .yc-field select,
+.yc-readonly .yc-field textarea {
+  pointer-events: none;
+  background-color: #f1f3f5;
+}
+
+/* Date inputs keep pointer-events for scroll UX even when readonly */
+.yc-readonly .yc-field input[type="date"],
+.yc-readonly .yc-field input[type="datetime-local"] {
+  pointer-events: auto;
+}
+
+/* Hide validation errors in view mode */
+.yc-readonly .yc-error {
+  display: none !important;
+}
+
+/* Field-level locked: always non-interactive, even in edit mode */
+.yc-field-locked input,
+.yc-field-locked select,
+.yc-field-locked textarea {
+  pointer-events: none;
+  background-color: #e9ecef;
+  color: #495057;
+}
+
+/* Changed field indicator — subtle left border accent */
+.yc-field.yc-changed {
+  border-left: 3px solid #0d6efd;
+  padding-left: 7px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RADIO BUTTONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-radio-group {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.yc-radio-group.yc-vertical {
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.yc-radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 0.92rem;
+  color: #495057;
+}
+
+.yc-radio-group input[type="radio"] {
+  width: 1.2em;
+  height: 1.2em;
+  margin: 0;
+  cursor: pointer;
+  appearance: radio;
+  -webkit-appearance: radio;
+  -moz-appearance: radio;
+}
+
+.yc-radio-group input[type="radio"]:checked {
+  accent-color: #0d6efd;
+}
+
+/* Readonly: radios non-interactive */
+.yc-readonly .yc-radio-group input[type="radio"] {
+  pointer-events: none;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CHECKBOXES
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.yc-check input[type="checkbox"] {
+  width: 1.2em;
+  height: 1.2em;
+  cursor: pointer;
+}
+
+.yc-check label {
+  cursor: pointer;
+  font-size: 0.92rem;
+  color: #495057;
+}
+
+.yc-check-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.yc-readonly .yc-check input[type="checkbox"] {
+  pointer-events: none;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TAGS INPUT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-tags textarea {
+  min-height: 60px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TABS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-tabs {
+  margin-bottom: 16px;
+}
+
+.yc-tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid #dee2e6;
+  margin-bottom: 16px;
+}
+
+.yc-tab-bar button {
+  padding: 8px 16px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #6c757d;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.yc-tab-bar button:hover {
+  color: #495057;
+}
+
+.yc-tab-bar button.active {
+  color: #0d6efd;
+  border-bottom-color: #0d6efd;
+}
+
+.yc-tab-panel {
+  display: none;
+}
+
+.yc-tab-panel.active {
+  display: block;
+}
+
+/* Sticky content visible regardless of tab */
+.yc-tab-sticky {
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e9ecef;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REPEATER SECTIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-repeater {
+  margin-bottom: 16px;
+}
+
+.yc-repeater-item {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 8px;
+  position: relative;
+}
+
+.yc-repeater-item .yc-row {
+  align-items: flex-end;
+}
+
+.yc-repeater-remove {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  color: #dc3545;
+  cursor: pointer;
+  font-size: 1rem;
+  margin-bottom: 12px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.yc-repeater-remove:hover {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+/* Hide remove buttons in view mode */
+.yc-readonly .yc-repeater-remove {
+  display: none;
+}
+
+.yc-repeater-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  border: 2px dashed #dee2e6;
+  border-radius: 6px;
+  background: none;
+  color: #6c757d;
+  cursor: pointer;
+  font-size: 0.88rem;
+  width: 100%;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.yc-repeater-add:hover {
+  border-color: #0d6efd;
+  color: #0d6efd;
+}
+
+/* Hide add button in view mode */
+.yc-readonly .yc-repeater-add {
+  display: none;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BUTTONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.yc-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.yc-btn-primary {
+  background: #28a745;
+  color: #fff;
+  border-color: #28a745;
+}
+
+.yc-btn-primary:hover:not(:disabled) {
+  background: #218838;
+  border-color: #1e7e34;
+}
+
+.yc-btn-secondary {
+  background: #fff;
+  color: #495057;
+  border-color: #ced4da;
+}
+
+.yc-btn-secondary:hover:not(:disabled) {
+  background: #e9ecef;
+}
+
+.yc-btn-danger {
+  background: #dc3545;
+  color: #fff;
+  border-color: #dc3545;
+}
+
+.yc-btn-danger:hover:not(:disabled) {
+  background: #c82333;
+  border-color: #bd2130;
+}
+
+.yc-btn-sm {
+  padding: 4px 10px;
+  font-size: 0.82rem;
+}
+
+.yc-btn-block {
+  width: 100%;
+  margin-top: 16px;
+  padding: 10px 20px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 600px) {
+  .yc-row {
+    flex-direction: column;
+  }
+
+  .yc-field.yc-2x,
+  .yc-field.yc-3x,
+  .yc-field.yc-fixed-sm,
+  .yc-field.yc-fixed-md {
+    flex: unset;
+    width: 100%;
+  }
+
+  .yc-radio-group {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .yc-toggle .form-check-label {
+    font-size: 1rem;
+  }
+
+  .yc-form {
+    padding: 14px;
+  }
+
+  .yc-tab-bar {
+    overflow-x: auto;
+  }
+
+  .yc-tab-bar button {
+    white-space: nowrap;
+    font-size: 0.82rem;
+    padding: 6px 12px;
+  }
+
+  .yc-draft-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

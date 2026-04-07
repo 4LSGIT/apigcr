@@ -230,13 +230,6 @@ async function isWorkday(datetime) {
     }
   }
   // Calculate nextDay (minimal add-on)
-  /*let nextDay = input.format('YYYY-MM-DDTHH:mm:ss');
-  if (workdayIn !== 0) {
-    nextDay = input.clone()
-      .add(workdayIn, 'minutes')
-      .set({ hour: 9, minute: 0, second: 0, millisecond: 0 })
-      .format('YYYY-MM-DDTHH:mm:ss');
-    }*/
   let nextDay = input.format('YYYY-MM-DDTHH:mm:ss');
   if (workdayIn !== 0) {
     let temp = input.clone().add(workdayIn, 'minutes');

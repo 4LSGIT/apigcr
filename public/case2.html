@@ -18,7 +18,6 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css" />
-  <!--<button onclick="sendQuery('select * from users').then( result => {console.log(result.data.query1)})">Click</button>-->
 </head>
 <div
   id="tabViewCase"
@@ -818,6 +817,7 @@
   </div>
 
   <script>
+    window.apiSend = P.apiSend;     // relay for form iframes
     const caseID = new URLSearchParams(window.location.search).get("caseID") || prompt("case id");
     const tab    = new URLSearchParams(window.location.search).get("tab") || "";
     let limit  = P.limit || 100;
