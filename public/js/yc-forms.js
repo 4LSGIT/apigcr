@@ -86,6 +86,9 @@ class YCForm {
       // 5. Set up conditional logic
       this._setupConditionals();
 
+      // 5b. Set up tag inputs
+      this._setupTagInputs();
+
       // 6. Apply initial readonly state
       this.setReadonly(this.config.readonly);
 
@@ -300,6 +303,9 @@ class YCForm {
         radios.forEach(r => { r.checked = r.value === String(value); });
       } else if (fieldConfig.type === 'checkbox') {
         el.checked = !!value;
+      } else if (fieldConfig.type === 'tags') {
+        // Tags: populate pills in the wrapper
+        this._setTags(fieldName, String(value));
       } else {
         el.value = value;
       }
@@ -348,6 +354,8 @@ class YCForm {
       } else if (fieldConfig.type === 'radio') {
         const checked = this.el.querySelector(`input[name="${el.getAttribute('name')}"]:checked`);
         data[fieldName] = checked ? checked.value : '';
+      } else if (fieldConfig.type === 'tags') {
+        data[fieldName] = this._getTags(fieldName);
       } else {
         let val = el.value;
         // Strip mask formatting for raw value
@@ -661,7 +669,14 @@ class YCForm {
       const wrapper = el.closest('.yc-field');
       if (!wrapper) continue;
 
-      let currentVal = fieldConfig.type === 'checkbox' ? el.checked : el.value;
+      let currentVal;
+      if (fieldConfig.type === 'checkbox') {
+        currentVal = el.checked;
+      } else if (fieldConfig.type === 'tags') {
+        currentVal = this._getTags(fieldName);
+      } else {
+        currentVal = el.value;
+      }
       currentVal = this._stripMask(String(currentVal), fieldConfig);
 
       let origVal = this._original[fieldName];
@@ -1043,6 +1058,168 @@ class YCForm {
 
       el.style.display = show ? '' : 'none';
     });
+  }
+
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TAGS INPUT — pill-based tag editor
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Transform fields with type 'tags' from a plain textarea/input into
+   * a pill-based tag editor. The original element is hidden; a wrapper
+   * with pills + text input is created in its place.
+   */
+  _setupTagInputs() {
+    for (const [fieldName, fieldConfig] of Object.entries(this.config.fields)) {
+      if (fieldConfig.type !== 'tags') continue;
+
+      const origEl = this.el.querySelector(fieldConfig.el);
+      if (!origEl) continue;
+
+      // Hide the original element
+      origEl.style.display = 'none';
+
+      // Create wrapper
+      const wrap = document.createElement('div');
+      wrap.className = 'yc-tags-wrap';
+      wrap.dataset.ycTagField = fieldName;
+
+      // Create text input for adding tags
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'yc-tags-input';
+      input.placeholder = 'Type and press Enter...';
+      wrap.appendChild(input);
+
+      // Insert after the original element
+      origEl.parentNode.insertBefore(wrap, origEl.nextSibling);
+
+      // Click on wrapper focuses the input
+      wrap.addEventListener('click', () => input.focus());
+
+      // Key handlers
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ',') {
+          e.preventDefault();
+          this._addTagFromInput(fieldName, input);
+        }
+        // Backspace on empty input removes last tag
+        if (e.key === 'Backspace' && !input.value) {
+          const pills = wrap.querySelectorAll('.yc-tag-pill');
+          if (pills.length) {
+            pills[pills.length - 1].remove();
+            this._onFieldChange();
+          }
+        }
+      });
+
+      // Also add on blur (if there's text)
+      input.addEventListener('blur', () => {
+        this._addTagFromInput(fieldName, input);
+      });
+    }
+  }
+
+  /**
+   * Add a tag pill from the text input value.
+   */
+  _addTagFromInput(fieldName, input) {
+    const raw = input.value.trim().replace(/,/g, '');
+    if (!raw) return;
+
+    // Don't add duplicates
+    const existing = this._getTagsArray(fieldName);
+    if (existing.map(t => t.toLowerCase()).includes(raw.toLowerCase())) {
+      input.value = '';
+      return;
+    }
+
+    const wrap = this.el.querySelector(`[data-yc-tag-field="${fieldName}"]`);
+    if (!wrap) return;
+
+    this._createPill(wrap, raw, input);
+    input.value = '';
+    this._onFieldChange();
+  }
+
+  /**
+   * Create a single tag pill element and insert it before the input.
+   */
+  _createPill(wrap, text, beforeEl) {
+    const pill = document.createElement('span');
+    const colorIndex = this._tagColorIndex(text);
+    pill.className = `yc-tag-pill yc-tag-color-${colorIndex}`;
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'yc-tag-text';
+    textSpan.textContent = text;
+    pill.appendChild(textSpan);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'yc-tag-remove';
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pill.remove();
+      this._onFieldChange();
+    });
+    pill.appendChild(removeBtn);
+
+    // Insert before the text input
+    const input = beforeEl || wrap.querySelector('.yc-tags-input');
+    wrap.insertBefore(pill, input);
+  }
+
+  /**
+   * Set tags on a field by clearing existing pills and creating new ones.
+   * Called by populate().
+   */
+  _setTags(fieldName, commaString) {
+    const wrap = this.el.querySelector(`[data-yc-tag-field="${fieldName}"]`);
+    if (!wrap) return;
+
+    // Remove existing pills
+    wrap.querySelectorAll('.yc-tag-pill').forEach(p => p.remove());
+
+    // Parse and create pills
+    if (!commaString) return;
+    const tags = commaString.split(',').map(t => t.trim()).filter(Boolean);
+    const input = wrap.querySelector('.yc-tags-input');
+    tags.forEach(tag => this._createPill(wrap, tag, input));
+  }
+
+  /**
+   * Get tags from a field as a comma-separated string.
+   * Called by collect().
+   */
+  _getTags(fieldName) {
+    return this._getTagsArray(fieldName).join(',');
+  }
+
+  /**
+   * Get tags from a field as an array.
+   */
+  _getTagsArray(fieldName) {
+    const wrap = this.el.querySelector(`[data-yc-tag-field="${fieldName}"]`);
+    if (!wrap) return [];
+    return Array.from(wrap.querySelectorAll('.yc-tag-pill .yc-tag-text'))
+      .map(el => el.textContent.trim())
+      .filter(Boolean);
+  }
+
+  /**
+   * Deterministic color index from tag text (0-9).
+   * Same tag always gets the same color.
+   */
+  _tagColorIndex(text) {
+    let hash = 0;
+    for (let i = 0; i < text.length; i++) {
+      hash = ((hash << 5) - hash) + text.charCodeAt(i);
+      hash |= 0; // Convert to 32bit integer
+    }
+    return Math.abs(hash) % 10;
   }
 
 
