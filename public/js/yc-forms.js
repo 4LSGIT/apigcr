@@ -108,6 +108,8 @@ class YCForm {
           } else {
             this._liveData = loadResult.data || loadResult;
           }
+          // Store full result so onLoad can access extra data (e.g., contacts)
+          this._loadResult = loadResult;
         } catch (err) {
           console.warn('[YCForm] Could not load live data:', err);
           this._liveData = null;
@@ -135,6 +137,9 @@ class YCForm {
 
       // 11. Show save status from latest submission
       this._showLastSaved();
+
+      // 11b. Show snapshot banner (persistent for snapshot-mode forms)
+      this._showSnapshotBanner();
 
       // 12. Start autosave listener if enabled
       if (this.config.autosave) {
@@ -304,8 +309,9 @@ class YCForm {
       } else if (fieldConfig.type === 'checkbox') {
         el.checked = !!value;
       } else if (fieldConfig.type === 'tags') {
-        // Tags: populate pills in the wrapper
         this._setTags(fieldName, String(value));
+      } else if (fieldConfig.type === 'checkgroup') {
+        this._setCheckgroup(el, String(value));
       } else {
         el.value = value;
       }
@@ -356,6 +362,8 @@ class YCForm {
         data[fieldName] = checked ? checked.value : '';
       } else if (fieldConfig.type === 'tags') {
         data[fieldName] = this._getTags(fieldName);
+      } else if (fieldConfig.type === 'checkgroup') {
+        data[fieldName] = this._getCheckgroup(el);
       } else {
         let val = el.value;
         // Strip mask formatting for raw value
@@ -605,6 +613,15 @@ class YCForm {
       // 8. Update status
       this._showStatus('Saved just now');
 
+      // 8b. Update submission metadata for snapshot banner
+      this._submittedData = {
+        version: submitResult.version,
+        updated_at: submitResult.updated_at,
+        user_name: null,  // we don't know our own name client-side
+        submitted_by: null,
+      };
+      this._showSnapshotBanner();
+
       // 9. Return to view mode
       this.setReadonly(true);
 
@@ -674,6 +691,8 @@ class YCForm {
         currentVal = el.checked;
       } else if (fieldConfig.type === 'tags') {
         currentVal = this._getTags(fieldName);
+      } else if (fieldConfig.type === 'checkgroup') {
+        currentVal = this._getCheckgroup(el);
       } else {
         currentVal = el.value;
       }
@@ -1224,6 +1243,106 @@ class YCForm {
 
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // CHECKGROUP — multi-select checkbox groups collected as comma-separated string
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Get checked values from a checkgroup container as a comma-separated string.
+   * Handles "Other" checkbox: if checked and a text input with data-yc-other exists,
+   * its value is appended.
+   */
+  _getCheckgroup(containerEl) {
+    const values = [];
+    containerEl.querySelectorAll('input[type="checkbox"]:checked').forEach(cb => {
+      if (cb.dataset.ycOther !== undefined) {
+        // "Other" checkbox — get the associated text input value
+        const otherInput = containerEl.querySelector('[data-yc-other-text]');
+        if (otherInput && otherInput.value.trim()) {
+          values.push(otherInput.value.trim());
+        }
+      } else {
+        values.push(cb.value);
+      }
+    });
+    return values.join(',');
+  }
+
+  /**
+   * Set checkgroup state from a comma-separated string.
+   * Checks matching checkboxes, fills "Other" text if a value doesn't match any checkbox.
+   */
+  _setCheckgroup(containerEl, commaString) {
+    if (!commaString) {
+      containerEl.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+      const otherInput = containerEl.querySelector('[data-yc-other-text]');
+      if (otherInput) otherInput.value = '';
+      return;
+    }
+
+    const values = commaString.split(',').map(v => v.trim()).filter(Boolean);
+    const checkboxValues = new Set();
+
+    // Collect all known checkbox values (excluding "Other")
+    containerEl.querySelectorAll('input[type="checkbox"]:not([data-yc-other])').forEach(cb => {
+      checkboxValues.add(cb.value);
+    });
+
+    // Check matching checkboxes
+    const otherValues = [];
+    containerEl.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+
+    values.forEach(val => {
+      const matchingCb = containerEl.querySelector(`input[type="checkbox"][value="${CSS.escape(val)}"]`);
+      if (matchingCb) {
+        matchingCb.checked = true;
+      } else {
+        otherValues.push(val);
+      }
+    });
+
+    // If there are unmatched values, check the "Other" checkbox and fill the text
+    if (otherValues.length > 0) {
+      const otherCb = containerEl.querySelector('input[type="checkbox"][data-yc-other]');
+      const otherInput = containerEl.querySelector('[data-yc-other-text]');
+      if (otherCb) otherCb.checked = true;
+      if (otherInput) otherInput.value = otherValues.join(', ');
+    }
+  }
+
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SNAPSHOT BANNER — persistent "submitted by" bar for snapshot-mode forms
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * For snapshot-mode forms, show a persistent info banner when a submission exists.
+   * Different from the draft recovery banner — this is always visible, not dismissable.
+   */
+  _showSnapshotBanner() {
+    if (this.config.dataMode !== 'snapshot' || !this._submittedData) return;
+
+    let banner = document.querySelector('.yc-snapshot-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.className = 'yc-snapshot-banner';
+      // Insert after the form header, before the draft banner
+      const header = document.querySelector('.yc-form-header');
+      if (header && header.nextSibling) {
+        header.parentNode.insertBefore(banner, header.nextSibling);
+      } else {
+        document.body.prepend(banner);
+      }
+    }
+
+    const { version, user_name, updated_at } = this._submittedData;
+    const dt = new Date(updated_at);
+    const name = user_name || 'Unknown';
+    banner.innerHTML = `<span class="yc-snapshot-icon">📋</span> Version ${version} — Submitted by ${name} on ${dt.toLocaleDateString()} at ${dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+    banner.style.display = 'flex';
+  }
+
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // TABS
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1295,14 +1414,10 @@ class YCForm {
     if (typeof Swal !== 'undefined') {
       const Toast = Swal.mixin({
         toast: true,
-        position: 'top',
+        position: 'top-end',
         showConfirmButton: false,
         timer: 2500,
         timerProgressBar: true,
-        didOpen: (toast) => {
-          toast.onmouseenter = Swal.stopTimer;
-          toast.onmouseleave = Swal.resumeTimer;
-        },
       });
       Toast.fire({ icon, title, text: text || undefined });
       return;
