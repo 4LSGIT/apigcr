@@ -63,3 +63,15 @@ Each form declares a `schemaVersion` integer. Bump it when you add, remove, or r
 | `formService.js` | `services/` | Database operations |
 | `form_submissions` | Database table | Drafts and submissions storage |
 | `forms/*.html` | `public/forms/` | Individual form files |
+
+---
+
+## Future: Form Builder / Schema-Driven Rendering
+
+The current system requires writing an HTML file per form. A future extension could make forms schema-driven:
+
+**Tier 1 — Config-driven renderer.** Store form definitions in a `form_templates` table (field list, layout, validation, endpoints). A single generic page like `forms/render.html?form=341_notes` fetches the template and builds the DOM dynamically. The `YCForm` config is already structured like a template — this just moves it from inline JS to a database record. Non-developers could then create simple forms by editing template records without touching code.
+
+**Tier 2 — Visual drag-and-drop builder.** A dedicated page for dragging field types into rows, setting properties in a sidebar, live preview, and export. Builds on Tier 1 — the builder would be an editor for the template record, not a separate system.
+
+**Recommendation:** Build Tier 1 first if/when the need arises. The CSS classes are a finite set, the config structure is predictable, and most forms follow the same patterns. Tier 2 is a nice-to-have on top.
