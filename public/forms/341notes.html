@@ -254,10 +254,12 @@
       },
 
       onSubmit: {
-        // Write docs_missing to cases table for use elsewhere in the system
+        // Synchronous: update docs_missing, 341_status, docs_due on cases table
         patch: { method: 'PATCH', url: '/api/cases/{linkId}' },
-        // TODO: wire up workflow to create new 341 appt if appearance_required=YES
-        // workflow: { id: TBD, initData: { source: '341_form' } },
+        // Async: create follow-up 341 appt (if needed) + send summary email
+        // ⚠️ SET THIS: run `SELECT id FROM workflows WHERE name='341 Form Post-Submit'`
+        //    and replace the 0 below with the result
+        workflow: { id: 0, initData: { source: '341_form' } },
       },
 
       onLoad: (data) => {

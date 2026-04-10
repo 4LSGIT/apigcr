@@ -574,13 +574,19 @@ class YCForm {
       // 5. Trigger workflow (if configured, fire-and-forget)
       if (this.config.onSubmit.workflow) {
         const wfConfig = this.config.onSubmit.workflow;
-        const initData = Object.assign({}, wfConfig.initData || {}, {
-          form_key:      this.config.formKey,
-          link_type:     this.config.linkType,
-          link_id:       this.config.linkId,
-          submission_id: submitResult.id,
-          data:          this.collect(),
-        });
+        // Spread form data as top-level vars so workflow can use {{fieldName}} directly.
+        // System fields override any collisions. Custom initData overrides form data.
+        const initData = Object.assign(
+          {},
+          this.collect(),                // form field values as base
+          wfConfig.initData || {},       // custom overrides from config
+          {                              // system fields always win
+            form_key:      this.config.formKey,
+            link_type:     this.config.linkType,
+            link_id:       this.config.linkId,
+            submission_id: submitResult.id,
+          }
+        );
         this._api(`/workflows/${wfConfig.id}/start`, 'POST', initData).catch(err => {
           console.warn('[YCForm] Workflow trigger failed (non-blocking):', err);
         });
