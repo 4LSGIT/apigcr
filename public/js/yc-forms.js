@@ -622,8 +622,10 @@ class YCForm {
       };
       this._showSnapshotBanner();
 
-      // 9. Return to view mode
-      this.setReadonly(true);
+      // 9. Return to view mode (only if the form uses view/edit toggle)
+      if (this.config.readonly) {
+        this.setReadonly(true);
+      }
 
       // 10. Success toast
       this._toast('success', 'Saved successfully');

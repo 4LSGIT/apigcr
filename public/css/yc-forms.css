@@ -358,15 +358,25 @@ body {
 /* Form-level readonly: entire form in view mode */
 .yc-readonly .yc-field input,
 .yc-readonly .yc-field select,
-.yc-readonly .yc-field textarea {
+.yc-readonly .yc-field textarea,
+.yc-readonly .yc-radio-group input,
+.yc-readonly .yc-radio-group label,
+.yc-readonly .yc-check input,
+.yc-readonly .yc-check label,
+.yc-readonly .yc-check-grid input,
+.yc-readonly .yc-check-grid label {
   pointer-events: none;
   background-color: #f1f3f5;
 }
 
-/* Date inputs keep pointer-events for scroll UX even when readonly */
-.yc-readonly .yc-field input[type="date"],
-.yc-readonly .yc-field input[type="datetime-local"] {
-  pointer-events: auto;
+/* Override for elements that don't have a visible background */
+.yc-readonly .yc-radio-group input,
+.yc-readonly .yc-radio-group label,
+.yc-readonly .yc-check input,
+.yc-readonly .yc-check label,
+.yc-readonly .yc-check-grid input,
+.yc-readonly .yc-check-grid label {
+  background-color: transparent;
 }
 
 /* Hide validation errors in view mode */
@@ -381,6 +391,12 @@ body {
   pointer-events: none;
   background-color: #e9ecef;
   color: #495057;
+}
+
+/* Date/datetime locked fields */
+.yc-field-locked input[type="date"],
+.yc-field-locked input[type="datetime-local"] {
+  pointer-events: none;
 }
 
 /* Changed field indicator — subtle left border accent */

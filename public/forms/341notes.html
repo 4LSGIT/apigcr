@@ -12,12 +12,12 @@
 <body>
 
 <div class="yc-form-header">
-  <div class="yc-toggle">
+  <div class="yc-toggle" style="display:none;">
     <input class="form-check-input" type="checkbox" id="toggleBtn">
     <label class="form-check-label" for="toggleBtn" id="toggleLabel">View Mode</label>
   </div>
   <span class="yc-save-status" id="saveStatus"></span>
-  <span class="yc-warning" id="warning">You must press SAVE to keep changes!</span>
+  <span class="yc-warning" id="warning" style="display:none;"></span>
 </div>
 
 <div class="yc-draft-banner" id="draftBanner" style="display:none;">
@@ -191,7 +191,7 @@
 
   </div><!-- /continuedSection -->
 
-  <button type="button" class="yc-btn yc-btn-primary yc-btn-block" id="saveBtn" style="display:none;">
+  <button type="button" class="yc-btn yc-btn-primary yc-btn-block" id="saveBtn">
     Save
   </button>
 </form>
@@ -215,7 +215,7 @@
       dataMode:      'snapshot',
       autosave:      true,
       autosaveMs:    3000,
-      readonly:      true,
+      readonly:      false,          // always in edit mode — no toggle needed
 
       fields: {
         case_id:           { el: '[name="case_id"]',           type: 'text',     readonly: true },
@@ -244,7 +244,7 @@
       },
 
       endpoints: {
-        load: { method: 'GET', url: '/api/cases/{linkId}?include=contacts', path: 'case' },
+        load: { method: 'GET', url: '/api/cases/{linkId}?include=clients', path: 'case' },
       },
 
       apiMap: {
@@ -261,31 +261,62 @@
       },
 
       onLoad: (data) => {
-        // Populate contact names from the full load result
-        const contacts = form._loadResult?.contacts || [];
-        const PC = contacts.find(c => c.relate_type === 'Primary' || c.case_relate_type === 'Primary');
-        const SC = contacts.find(c => c.relate_type === 'Secondary' || c.case_relate_type === 'Secondary');
+        // In snapshot mode, after first submission, data comes from submission
+        // and already contains the header fields. Only need to prefill from
+        // live data on first load (no submission yet).
+        const loadResult = form._loadResult || {};
+        const caseData = loadResult.case || {};
+        const clients = loadResult.clients || [];
 
-        if (PC) {
-          document.querySelector('[name="debtor_fname"]').value = PC.contact_fname || '';
+        // Only prefill header fields if they're empty (first load / no submission)
+        const caseIdEl = document.querySelector('[name="case_id"]');
+        if (!caseIdEl.value) {
+          caseIdEl.value = caseData.case_id || '';
+        }
+
+        const caseNumEl = document.querySelector('[name="case_number"]');
+        if (!caseNumEl.value) {
+          caseNumEl.value = caseData.case_number_full || caseData.case_number || '';
+        }
+
+        const trusteeEl = document.querySelector('[name="trustee"]');
+        if (!trusteeEl.value) {
+          trusteeEl.value = caseData.case_trustee || '';
+        }
+
+        // Primary contact
+        const PC = clients.find(c => c.relate_type === 'Primary');
+        const debtorFname = document.querySelector('[name="debtor_fname"]');
+        if (PC && !debtorFname.value) {
+          debtorFname.value = PC.contact_fname || '';
           document.querySelector('[name="debtor_mname"]').value = PC.contact_mname || '';
           document.querySelector('[name="debtor_lname"]').value = PC.contact_lname || '';
         }
 
+        // Secondary contact (co-debtor)
+        const SC = clients.find(c => c.relate_type === 'Secondary');
         if (SC) {
-          document.querySelector('[name="codebtor_fname"]').value = SC.contact_fname || '';
-          document.querySelector('[name="codebtor_mname"]').value = SC.contact_mname || '';
-          document.querySelector('[name="codebtor_lname"]').value = SC.contact_lname || '';
+          const coFname = document.querySelector('[name="codebtor_fname"]');
+          if (!coFname.value) {
+            coFname.value = SC.contact_fname || '';
+            document.querySelector('[name="codebtor_mname"]').value = SC.contact_mname || '';
+            document.querySelector('[name="codebtor_lname"]').value = SC.contact_lname || '';
+          }
+          document.getElementById('codebtorSection').style.display = '';
+        } else if (document.querySelector('[name="codebtor_fname"]').value) {
+          // Restoring from submission that had a co-debtor
           document.getElementById('codebtorSection').style.display = '';
         }
 
-        // Format 341 meeting datetime for the locked field
-        const caseData = form._loadResult?.case || form._loadResult || {};
-        const dt341 = caseData.case_341_current;
-        if (dt341) {
-          const dtStr = (dt341 instanceof Date) ? dt341.toISOString() : String(dt341);
-          const local = dtStr.replace('Z', '').split('.')[0].slice(0, 16); // "YYYY-MM-DDTHH:MM"
-          document.querySelector('[name="meeting_datetime"]').value = local;
+        // 341 meeting datetime
+        const meetEl = document.querySelector('[name="meeting_datetime"]');
+        if (!meetEl.value && caseData.case_341_current) {
+          const dtStr = (caseData.case_341_current instanceof Date)
+            ? caseData.case_341_current.toISOString()
+            : String(caseData.case_341_current);
+          // Normalize to "YYYY-MM-DDTHH:MM" for datetime-local input
+          const local = dtStr.replace('Z', '').split('.')[0].slice(0, 16);
+          if (local.length === 16) meetEl.value = local;
         }
       },
 
