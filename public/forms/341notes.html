@@ -28,6 +28,12 @@
 
 <form id="form341" class="yc-form">
 
+  <!-- Hidden fields: workflow data passed through collect() → workflow variables -->
+  <input type="hidden" name="primary_contact_id">
+  <input type="hidden" name="attorney_user_id">
+  <input type="hidden" name="attorney_email">
+  <input type="hidden" name="attorney_name">
+
   <!-- ═══ HEADER INFO (locked, pre-filled) ═══ -->
   <div class="yc-row">
     <div class="yc-field yc-field-locked">
@@ -218,6 +224,12 @@
       readonly:      false,          // always in edit mode — no toggle needed
 
       fields: {
+        // Hidden fields for workflow
+        primary_contact_id: { el: '[name="primary_contact_id"]', type: 'text', readonly: true },
+        attorney_user_id:   { el: '[name="attorney_user_id"]',   type: 'text', readonly: true },
+        attorney_email:     { el: '[name="attorney_email"]',     type: 'text', readonly: true },
+        attorney_name:      { el: '[name="attorney_name"]',      type: 'text', readonly: true },
+        // Visible locked fields
         case_id:           { el: '[name="case_id"]',           type: 'text',     readonly: true },
         case_number:       { el: '[name="case_number"]',       type: 'text',     readonly: true },
         debtor_fname:      { el: '[name="debtor_fname"]',      type: 'text',     readonly: true },
@@ -257,34 +269,24 @@
         // Synchronous: update docs_missing, 341_status, docs_due on cases table
         patch: { method: 'PATCH', url: '/api/cases/{linkId}' },
         // Async: create follow-up 341 appt (if needed) + send summary email
-        // ⚠️ SET THIS: run `SELECT id FROM workflows WHERE name='341 Form Post-Submit'`
-        //    and replace the 0 below with the result
         workflow: { id: 7, initData: { source: '341_form' } },
       },
 
-      onLoad: (data) => {
-        // In snapshot mode, after first submission, data comes from submission
-        // and already contains the header fields. Only need to prefill from
-        // live data on first load (no submission yet).
+      onLoad: async (data) => {
         const loadResult = form._loadResult || {};
         const caseData = loadResult.case || {};
         const clients = loadResult.clients || [];
+        const appts = loadResult.appts || [];
 
-        // Only prefill header fields if they're empty (first load / no submission)
+        // ── Prefill visible header fields (only if empty — snapshot guard) ──
         const caseIdEl = document.querySelector('[name="case_id"]');
-        if (!caseIdEl.value) {
-          caseIdEl.value = caseData.case_id || '';
-        }
+        if (!caseIdEl.value) caseIdEl.value = caseData.case_id || '';
 
         const caseNumEl = document.querySelector('[name="case_number"]');
-        if (!caseNumEl.value) {
-          caseNumEl.value = caseData.case_number_full || caseData.case_number || '';
-        }
+        if (!caseNumEl.value) caseNumEl.value = caseData.case_number_full || caseData.case_number || '';
 
         const trusteeEl = document.querySelector('[name="trustee"]');
-        if (!trusteeEl.value) {
-          trusteeEl.value = caseData.case_trustee || '';
-        }
+        if (!trusteeEl.value) trusteeEl.value = caseData.case_trustee || '';
 
         // Primary contact
         const PC = clients.find(c => c.relate_type === 'Primary');
@@ -306,7 +308,6 @@
           }
           document.getElementById('codebtorSection').style.display = '';
         } else if (document.querySelector('[name="codebtor_fname"]').value) {
-          // Restoring from submission that had a co-debtor
           document.getElementById('codebtorSection').style.display = '';
         }
 
@@ -316,9 +317,40 @@
           const dtStr = (caseData.case_341_current instanceof Date)
             ? caseData.case_341_current.toISOString()
             : String(caseData.case_341_current);
-          // Normalize to "YYYY-MM-DDTHH:MM" for datetime-local input
           const local = dtStr.replace('Z', '').split('.')[0].slice(0, 16);
           if (local.length === 16) meetEl.value = local;
+        }
+
+        // ── Hidden fields for workflow (always set from live data) ──
+
+        // Primary contact ID
+        const pcIdEl = document.querySelector('[name="primary_contact_id"]');
+        if (PC && !pcIdEl.value) pcIdEl.value = PC.contact_id || '';
+
+        // Attorney: find from 341 appt → appt_with, then resolve email
+        const apptId341 = caseData['341_appt_id'];
+        const appt341 = apptId341 ? appts.find(a => a.appt_id == apptId341) : null;
+        const attorneyIdEl = document.querySelector('[name="attorney_user_id"]');
+        const attorneyEmailEl = document.querySelector('[name="attorney_email"]');
+        const attorneyNameEl = document.querySelector('[name="attorney_name"]');
+
+        if (appt341 && appt341.appt_with && !attorneyIdEl.value) {
+          attorneyIdEl.value = appt341.appt_with;
+
+          // Look up attorney email + name via resolver
+          try {
+            const resolved = await P.apiSend('/resolve', 'POST', {
+              text: '{{users.email}}|||{{users.user_name}}',
+              refs: { users: { user: appt341.appt_with } }
+            });
+            if (resolved.status === 'success' && resolved.text) {
+              const [email, name] = resolved.text.split('|||');
+              attorneyEmailEl.value = email || '';
+              attorneyNameEl.value = name || '';
+            }
+          } catch (err) {
+            console.warn('[341] Could not resolve attorney info:', err);
+          }
         }
       },
 

@@ -146,9 +146,9 @@ class YCForm {
         this._startAutosave();
       }
 
-      // 13. Callback
+      // 13. Callback (may be async — e.g., resolver calls for extra data)
       if (this.config.onLoad) {
-        this.config.onLoad(dataSource);
+        await this.config.onLoad(dataSource);
       }
 
       // 14. Hide loading
