@@ -743,7 +743,7 @@ processing();
     E('logCallTo').value   = phoneFmt;
 
     document.getElementById("tabInfoIframe").src =
-      `contact-form.html?contact_id=${clientID}`; //moved to a yc-form!
+      `/forms/contact-form.html?contact_id=${clientID}`; //moved to a yc-form!
 
     document.getElementById("tabViewClient").style.display = "block";
     openTab(null, 'tabInfo');
