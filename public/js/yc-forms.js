@@ -1463,6 +1463,10 @@ class YCForm {
         showConfirmButton: false,
         timer: 2500,
         timerProgressBar: true,
+        didOpen: (toast) => {
+          toast.onmouseenter = Swal.stopTimer;
+          toast.onmouseleave = Swal.resumeTimer;
+        },
       });
       Toast.fire({ icon, title, text: text || undefined });
       return;
