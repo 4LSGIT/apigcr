@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bankruptcy Case Details</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <link href="/css/yc-forms.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* Compact overrides for this dense form */
+    .yc-section-title { font-size: 1rem; margin-top: 14px; margin-bottom: 6px; }
+    .yc-field { margin-bottom: 8px; }
+    .yc-label { font-size: 0.84rem; margin-bottom: 3px; }
+    .yc-check-grid { gap: 4px 12px; }
+    .yc-check-grid label { font-size: 0.84rem; }
+    /* Side-by-side section pairs */
+    .yc-section-pair { display: flex; gap: 20px; }
+    .yc-section-pair > .yc-section { flex: 1; }
+    @media (max-width: 600px) { .yc-section-pair { flex-direction: column; } }
+    /* Sublabel hints */
+    .yc-hint { font-size: 0.75rem; color: #6c757d; margin-top: 2px; }
+  </style>
+</head>
+<body>
+
+<div class="yc-form-header">
+  <div class="yc-toggle" style="display:none;">
+    <input class="form-check-input" type="checkbox" id="toggleBtn">
+    <label class="form-check-label" for="toggleBtn" id="toggleLabel">Edit Mode</label>
+  </div>
+  <span class="yc-save-status" id="saveStatus"></span>
+  <span class="yc-warning" id="warning" style="display:none;"></span>
+</div>
+
+<div class="yc-draft-banner" id="draftBanner" style="display:none;">
+  <span>You have unsaved changes from <strong id="draftTimestamp"></strong></span>
+  <button class="yc-btn yc-btn-sm yc-btn-primary" id="draftRestore">Restore</button>
+  <button class="yc-btn yc-btn-sm yc-btn-secondary" id="draftDiscard">Discard</button>
+</div>
+
+<form id="caseDetailsForm" class="yc-form">
+
+  <!-- ═══ HEADER ═══ -->
+  <div class="yc-section-title" style="font-size:1.15rem; margin-top:0;">Case Details</div>
+
+  <div class="yc-row">
+    <div class="yc-field yc-2x yc-field-locked">
+      <label class="yc-label">Debtor</label>
+      <input type="text" name="debtor_name" data-yc-locked-msg="Edit the client name from the Contact page">
+    </div>
+    <div class="yc-field yc-2x yc-field-locked" id="codebtorField" style="display:none;">
+      <label class="yc-label">Co-Debtor</label>
+      <input type="text" name="codebtor_name" data-yc-locked-msg="Edit the co-debtor name from the Contact page">
+    </div>
+  </div>
+
+  <div class="yc-row">
+    <div class="yc-field yc-2x">
+      <label class="yc-label">Case Number</label>
+      <input type="text" name="case_number">
+    </div>
+    <div class="yc-field yc-fixed-sm">
+      <label class="yc-label">Chapter</label>
+      <input type="text" name="case_chapter" maxlength="2" placeholder="7">
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">Trustee</label>
+      <input type="text" name="case_trustee">
+    </div>
+    <div class="yc-field yc-field-locked">
+      <label class="yc-label">Case ID</label>
+      <input type="text" name="case_id" data-yc-locked-msg="The Case ID cannot be changed">
+    </div>
+  </div>
+
+  <div class="yc-row">
+    <div class="yc-field">
+      <label class="yc-label">Filed</label>
+      <input type="date" name="case_file_date">
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">Initial 341</label>
+      <input type="date" name="case_341_initial">
+    </div>
+    <div class="yc-field yc-2x yc-field-locked">
+      <label class="yc-label">Current 341</label>
+      <input type="datetime-local" name="case_341_current" data-yc-locked-msg="The 341 date is managed via the 341 Notes form">
+    </div>
+  </div>
+
+  <div class="yc-row">
+    <div class="yc-field">
+      <label class="yc-label">Objection Deadline</label>
+      <input type="date" name="case_objection">
+      <div class="yc-hint">+60 days from initial 341</div>
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">180 Days</label>
+      <input type="date" name="case_180">
+      <div class="yc-hint">+180 days from file date</div>
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">90 Day Preference</label>
+      <input type="date" name="case_preference">
+      <div class="yc-hint">file date − 90 days</div>
+    </div>
+  </div>
+
+  <!-- ═══ CASE ISSUES ═══ -->
+  <div class="yc-section">
+    <div class="yc-section-title">Case Issues</div>
+    <div class="yc-row">
+      <div class="yc-field">
+        <label class="yc-label">Vehicle</label>
+        <div class="yc-check-grid" data-yc-checkgroup="vehicle" style="grid-template-columns:1fr;">
+          <label><input type="checkbox" value="Reaffirmation"> Reaffirmation</label>
+          <label><input type="checkbox" value="Redemption"> Redemption</label>
+          <label><input type="checkbox" value="Replacement"> Replacement</label>
+        </div>
+      </div>
+      <div class="yc-field">
+        <label class="yc-label">Garnishment</label>
+        <div class="yc-check-grid" data-yc-checkgroup="garnishment" style="grid-template-columns:1fr;">
+          <label><input type="checkbox" value="Pre-Petition"> Pre-Petition</label>
+          <label><input type="checkbox" value="Post-Petition"> Post-Petition</label>
+        </div>
+      </div>
+      <div class="yc-field">
+        <label class="yc-label">Other</label>
+        <div class="yc-check-grid" data-yc-checkgroup="other_issues" style="grid-template-columns:1fr;">
+          <label><input type="checkbox" value="Automatic Stay Violation"> Automatic Stay Violation</label>
+          <label><input type="checkbox" value="Student Loans"> Student Loans</label>
+          <label><input type="checkbox" value="Confirmation Objections"> Confirmation Objections</label>
+          <label><input type="checkbox" value="Other"> Other</label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ FEE AGREEMENTS + CREDIT COUNSELING (side by side) ═══ -->
+  <div class="yc-section-pair">
+    <div class="yc-section">
+      <div class="yc-section-title">Fee Agreement(s)</div>
+      <div class="yc-row">
+        <div class="yc-field">
+          <label class="yc-label">Pre-Petition</label>
+          <div class="yc-check-grid" data-yc-checkgroup="pre_petition" style="grid-template-columns:1fr;">
+            <label><input type="checkbox" value="Sent"> Sent</label>
+            <label><input type="checkbox" value="Signed"> Signed</label>
+          </div>
+        </div>
+        <div class="yc-field">
+          <label class="yc-label">Post-Petition</label>
+          <div class="yc-check-grid" data-yc-checkgroup="post_petition" style="grid-template-columns:1fr;">
+            <label><input type="checkbox" value="Sent"> Sent</label>
+            <label><input type="checkbox" value="Signed"> Signed</label>
+            <label><input type="checkbox" value="N/A"> N/A</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="yc-section">
+      <div class="yc-section-title">Credit Counseling</div>
+      <div class="yc-row">
+        <div class="yc-field">
+          <label class="yc-label">1st Course</label>
+          <div class="yc-check-grid" data-yc-checkgroup="first_course" style="grid-template-columns:1fr;">
+            <label><input type="checkbox" value="Sent Info"> Sent Info</label>
+            <label><input type="checkbox" value="Received"> Received</label>
+            <label><input type="checkbox" value="Filed"> Filed</label>
+          </div>
+        </div>
+        <div class="yc-field">
+          <label class="yc-label">2nd Course</label>
+          <div class="yc-check-grid" data-yc-checkgroup="second_course" style="grid-template-columns:1fr;">
+            <label><input type="checkbox" value="Sent Info"> Sent Info</label>
+            <label><input type="checkbox" value="Received"> Received</label>
+            <label><input type="checkbox" value="Filed"> Filed</label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ MATRIX + SCHEDULES (side by side) ═══ -->
+  <div class="yc-section-pair">
+    <div class="yc-section">
+      <div class="yc-section-title">Matrix</div>
+      <div class="yc-check-grid" data-yc-checkgroup="matrix" style="grid-template-columns:1fr 1fr;">
+        <label><input type="checkbox" value="Extension Motion"> Extension Motion</label>
+        <label><input type="checkbox" value="Uploaded"> Uploaded</label>
+      </div>
+      <div class="yc-row" style="margin-top:6px;">
+        <div class="yc-field">
+          <label class="yc-label">Original Due</label>
+          <input type="date" name="matrix_date_original">
+        </div>
+        <div class="yc-field">
+          <label class="yc-label">Proposed Due</label>
+          <input type="date" name="matrix_date_proposed">
+        </div>
+      </div>
+    </div>
+
+    <div class="yc-section">
+      <div class="yc-section-title">Schedules</div>
+      <div class="yc-check-grid" data-yc-checkgroup="schedules" style="grid-template-columns:1fr 1fr;">
+        <label><input type="checkbox" value="Extension Motion"> Extension Motion</label>
+        <label><input type="checkbox" value="Filed"> Filed</label>
+      </div>
+      <div class="yc-row" style="margin-top:6px;">
+        <div class="yc-field">
+          <label class="yc-label">Original Due</label>
+          <input type="date" name="schedules_due_original">
+        </div>
+        <div class="yc-field">
+          <label class="yc-label">Proposed Due</label>
+          <input type="date" name="schedules_due_proposed">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ FILING FEE ═══ -->
+  <div class="yc-section">
+    <div class="yc-section-title">Filing Fee</div>
+    <div class="yc-check-grid" data-yc-checkgroup="filing_fee">
+      <label><input type="checkbox" value="Order Uploaded"> Order Uploaded</label>
+      <label><input type="checkbox" value="Show Cause"> Show Cause</label>
+      <label><input type="checkbox" value="Fee Paid"> Fee Paid</label>
+      <label><input type="checkbox" value="Order Issued"> Order Issued</label>
+      <label><input type="checkbox" value="Deadline Extended"> Deadline Extended</label>
+      <label><input type="checkbox" value="Fee Waived"> Fee Waived</label>
+    </div>
+    <div class="yc-row" style="margin-top:6px;">
+      <div class="yc-field">
+        <label class="yc-label">Final Installment Due</label>
+        <input type="date" name="final_installment">
+      </div>
+      <div class="yc-field yc-2x">
+        <label class="yc-label">Show Cause Date</label>
+        <input type="datetime-local" name="show_cause">
+      </div>
+      <div class="yc-field">
+        <label class="yc-label">Extended Deadline</label>
+        <input type="date" name="filing_fee_extended_deadline">
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ DOCUMENTS FOR TRUSTEE ═══ -->
+  <div class="yc-section">
+    <div class="yc-section-title">Documents for Trustee</div>
+    <div class="yc-row">
+      <div class="yc-field">
+        <label class="yc-label">Documents Due</label>
+        <input type="date" name="docs_due">
+        <div class="yc-hint">14 days before current 341</div>
+      </div>
+      <div class="yc-field">
+        <label class="yc-label">Documents</label>
+        <div class="yc-check-grid" data-yc-checkgroup="docs" style="grid-template-columns:1fr;">
+          <label><input type="checkbox" value="Uploaded"> Uploaded</label>
+          <label><input type="checkbox" value="Missing"> Missing</label>
+        </div>
+      </div>
+      <div class="yc-field yc-2x">
+        <label class="yc-label">Documents Missing for Trustee</label>
+        <textarea name="docs_missing" rows="3" maxlength="2000"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ NOTES + ALERTS ═══ -->
+  <div class="yc-row">
+    <div class="yc-field">
+      <label class="yc-label">Notes</label>
+      <textarea name="case_notes" rows="4" maxlength="5000"></textarea>
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">Alerts</label>
+      <textarea name="case_alerts" rows="4" maxlength="5000"></textarea>
+    </div>
+  </div>
+
+  <button type="button" class="yc-btn yc-btn-primary yc-btn-block" id="saveBtn">
+    Save
+  </button>
+</form>
+
+<script src="/js/yc-forms.js"></script>
+<script>
+  const P = window.parent;
+  const params = new URLSearchParams(location.search);
+  const caseId = params.get('case_id');
+
+  if (!caseId) {
+    document.body.innerHTML = '<p style="color:red;padding:20px;">Missing case_id parameter.</p>';
+  } else {
+
+    const form = new YCForm({
+      formKey:       'case_details',
+      schemaVersion: 1,
+      linkType:      'case',
+      linkId:        caseId,
+      container:     '#caseDetailsForm',
+      dataMode:      'live',
+      autosave:      true,
+      autosaveMs:    3000,
+      readonly:      false,
+
+      fields: {
+        // Hidden / locked display fields
+        debtor_name:      { el: '[name="debtor_name"]',    type: 'text', readonly: true },
+        codebtor_name:    { el: '[name="codebtor_name"]',  type: 'text', readonly: true },
+        case_id:          { el: '[name="case_id"]',        type: 'text', readonly: true },
+
+        // Case details
+        case_number:      { el: '[name="case_number"]',    type: 'text' },
+        case_chapter:     { el: '[name="case_chapter"]',   type: 'text' },
+        case_trustee:     { el: '[name="case_trustee"]',   type: 'text' },
+        case_file_date:   { el: '[name="case_file_date"]', type: 'date' },
+        case_341_initial: { el: '[name="case_341_initial"]', type: 'date' },
+        case_341_current: { el: '[name="case_341_current"]', type: 'text', readonly: true },
+        case_objection:   { el: '[name="case_objection"]',   type: 'date' },
+        case_180:         { el: '[name="case_180"]',         type: 'date' },
+        case_preference:  { el: '[name="case_preference"]',  type: 'date' },
+
+        // Case issues (SET columns → checkgroup)
+        vehicle:       { el: '[data-yc-checkgroup="vehicle"]',       type: 'checkgroup' },
+        garnishment:   { el: '[data-yc-checkgroup="garnishment"]',   type: 'checkgroup' },
+        other_issues:  { el: '[data-yc-checkgroup="other_issues"]',  type: 'checkgroup' },
+
+        // Fee agreements
+        pre_petition:  { el: '[data-yc-checkgroup="pre_petition"]',  type: 'checkgroup' },
+        post_petition: { el: '[data-yc-checkgroup="post_petition"]', type: 'checkgroup' },
+
+        // Credit counseling
+        first_course:  { el: '[data-yc-checkgroup="first_course"]',  type: 'checkgroup' },
+        second_course: { el: '[data-yc-checkgroup="second_course"]', type: 'checkgroup' },
+
+        // Matrix
+        matrix:               { el: '[data-yc-checkgroup="matrix"]', type: 'checkgroup' },
+        matrix_date_original: { el: '[name="matrix_date_original"]', type: 'date' },
+        matrix_date_proposed: { el: '[name="matrix_date_proposed"]', type: 'date' },
+
+        // Schedules
+        schedules:              { el: '[data-yc-checkgroup="schedules"]', type: 'checkgroup' },
+        schedules_due_original: { el: '[name="schedules_due_original"]', type: 'date' },
+        schedules_due_proposed: { el: '[name="schedules_due_proposed"]', type: 'date' },
+
+        // Filing fee
+        filing_fee:                  { el: '[data-yc-checkgroup="filing_fee"]', type: 'checkgroup' },
+        final_installment:           { el: '[name="final_installment"]',        type: 'date' },
+        show_cause:                  { el: '[name="show_cause"]',               type: 'text' }, // datetime-local
+        filing_fee_extended_deadline:{ el: '[name="filing_fee_extended_deadline"]', type: 'date' },
+
+        // Documents
+        docs:         { el: '[data-yc-checkgroup="docs"]',  type: 'checkgroup' },
+        docs_due:     { el: '[name="docs_due"]',            type: 'date' },
+        docs_missing: { el: '[name="docs_missing"]',        type: 'textarea' },
+
+        // Notes
+        case_notes:  { el: '[name="case_notes"]',  type: 'textarea' },
+        case_alerts: { el: '[name="case_alerts"]', type: 'textarea' },
+      },
+
+      endpoints: {
+        load: { method: 'GET', url: '/api/cases/{linkId}?include=clients', path: 'case' },
+      },
+
+      // Map DB column names that differ from form field names
+      apiMap: {
+        'case_number_full':      'case_number',
+        'case_issues_bk_vehicle':'vehicle',
+        'case_garnish':          'garnishment',
+        'case_issues_bk_other':  'other_issues',
+        'case_pre_petition':     'pre_petition',
+        'case_post_petition':    'post_petition',
+        'case_1st_course':       'first_course',
+        'case_2nd_course':       'second_course',
+      },
+
+      onSubmit: {
+        patch: { method: 'PATCH', url: '/api/cases/{linkId}' },
+      },
+
+      onLoad: async (data) => {
+        const loadResult = form._loadResult || {};
+        const caseData = loadResult.case || {};
+        const clients = loadResult.clients || [];
+
+        // Debtor name (locked display)
+        const PC = clients.find(c => c.relate_type === 'Primary');
+        if (PC) {
+          document.querySelector('[name="debtor_name"]').value = PC.contact_name || '';
+        }
+
+        // Co-debtor (show section if exists)
+        const SC = clients.find(c => c.relate_type === 'Secondary');
+        if (SC) {
+          document.querySelector('[name="codebtor_name"]').value = SC.contact_name || '';
+          document.getElementById('codebtorField').style.display = '';
+        }
+
+        // Case number fallback: if case_number_full was empty, try case_number
+        const cnEl = document.querySelector('[name="case_number"]');
+        if (!cnEl.value) cnEl.value = caseData.case_number || '';
+      },
+
+      onSave: () => {
+        try { P.postMessage({ type: 'form-saved', form: 'case_details' }, '*'); } catch (_) {}
+      },
+    });
+
+    // Custom PATCH payload: map form field names back to DB column names
+    form._buildPatchPayload = function() {
+      const diff = this.getDiff();
+      const payload = {};
+
+      // Reverse map: form field name → DB column name
+      const reverseApiMap = {
+        'case_number':   'case_number_full',
+        'vehicle':       'case_issues_bk_vehicle',
+        'garnishment':   'case_garnish',
+        'other_issues':  'case_issues_bk_other',
+        'pre_petition':  'case_pre_petition',
+        'post_petition': 'case_post_petition',
+        'first_course':  'case_1st_course',
+        'second_course': 'case_2nd_course',
+      };
+
+      for (const [fieldName, [_oldVal, newVal]] of Object.entries(diff)) {
+        const fieldConfig = this.config.fields[fieldName];
+        if (fieldConfig && fieldConfig.readonly) continue;
+
+        const dbCol = reverseApiMap[fieldName] || fieldName;
+        payload[dbCol] = newVal;
+      }
+
+      return payload;
+    };
+
+    form.init().then(() => {
+      // ── Auto-calculate derived date fields ──
+
+      function addDays(dateStr, days) {
+        if (!dateStr) return '';
+        const d = new Date(dateStr);
+        if (isNaN(d)) return '';
+        d.setDate(d.getDate() + days);
+        return d.toISOString().split('T')[0];
+      }
+
+      function subtractDays(dateStr, days) {
+        return addDays(dateStr, -days);
+      }
+
+      // Subtract 14 days from a datetime-local value, return date only
+      function dateFromDatetime(dtStr, offsetDays) {
+        if (!dtStr) return '';
+        const d = new Date(dtStr);
+        if (isNaN(d)) return '';
+        d.setDate(d.getDate() + offsetDays);
+        return d.toISOString().split('T')[0];
+      }
+
+      const rules = [
+        // { source, target, calc }
+        { source: '[name="case_341_initial"]',  target: '[name="case_objection"]',  calc: v => addDays(v, 60) },
+        { source: '[name="case_file_date"]',    target: '[name="case_180"]',        calc: v => addDays(v, 180) },
+        { source: '[name="case_file_date"]',    target: '[name="case_preference"]', calc: v => subtractDays(v, 90) },
+        { source: '[name="case_341_current"]',  target: '[name="docs_due"]',        calc: v => dateFromDatetime(v, -14) },
+      ];
+
+      // Run on load: fill empty target fields
+      rules.forEach(({ source, target, calc }) => {
+        const srcEl = document.querySelector(source);
+        const tgtEl = document.querySelector(target);
+        if (!srcEl || !tgtEl) return;
+        if (!tgtEl.value && srcEl.value) {
+          tgtEl.value = calc(srcEl.value);
+        }
+      });
+
+      // Recalculate live when source changes
+      rules.forEach(({ source, target, calc }) => {
+        const srcEl = document.querySelector(source);
+        const tgtEl = document.querySelector(target);
+        if (!srcEl || !tgtEl) return;
+        srcEl.addEventListener('change', () => {
+          tgtEl.value = calc(srcEl.value);
+        });
+      });
+    });
+  }
+</script>
+</body>
+</html>

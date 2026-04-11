@@ -89,6 +89,9 @@ class YCForm {
       // 5b. Set up tag inputs
       this._setupTagInputs();
 
+      // 5c. Set up locked field click messages
+      this._setupLockedFieldMessages();
+
       // 6. Apply initial readonly state
       this.setReadonly(this.config.readonly);
 
@@ -745,6 +748,34 @@ class YCForm {
 
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // LOCKED FIELD CLICK MESSAGES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * When a user clicks a locked field that has a data-yc-locked-msg attribute,
+   * show a brief informational toast explaining why the field can't be edited.
+   */
+  _setupLockedFieldMessages() {
+    this.el.querySelectorAll('.yc-field-locked').forEach(field => {
+      field.addEventListener('click', (e) => {
+        // Only fire when the form is NOT in full readonly mode
+        // (in readonly mode everything is locked, no need to explain individual fields)
+        if (this.el.classList.contains('yc-readonly')) return;
+
+        // Find the input/select/textarea inside this field
+        const input = field.querySelector('input, select, textarea');
+        if (!input) return;
+
+        const msg = input.dataset.ycLockedMsg;
+        if (!msg) return;
+
+        this._toast('info', msg);
+      });
+    });
+  }
+
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // READONLY TOGGLE
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -986,10 +1017,8 @@ class YCForm {
     // Date fields: normalize to YYYY-MM-DD for <input type="date">
     if (fieldConfig.type === 'date') {
       if (!value) return '';
-      // Handle Date objects, ISO strings, and YYYY-MM-DD strings
       const str = (value instanceof Date) ? value.toISOString() : String(value);
-      const dateOnly = str.split('T')[0]; // "1993-01-23"
-      // Validate it's a real date
+      const dateOnly = str.split('T')[0];
       if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly) && !isNaN(new Date(dateOnly))) {
         return dateOnly;
       }
@@ -998,8 +1027,16 @@ class YCForm {
 
     const v = String(value);
 
-    // Check for mask
+    // Auto-detect datetime-local inputs and normalize to YYYY-MM-DDTHH:MM
     const el = this.el.querySelector(fieldConfig.el);
+    if (el && el.type === 'datetime-local' && v) {
+      const str = (value instanceof Date) ? value.toISOString() : v;
+      const local = str.replace('Z', '').split('.')[0].slice(0, 16);
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local)) return local;
+      return '';
+    }
+
+    // Check for mask
     const maskType = (el && el.dataset.ycMask) || null;
     if (maskType) return this._formatMask(v, maskType);
 

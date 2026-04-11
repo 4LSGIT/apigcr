@@ -833,7 +833,6 @@
     let caseData = null;
     let appts = [], clients = [], logs = [], tasks = [];
     let PC = null, SC = null;
-    let caseFiled = [], caseOpen = [], caseClosed = [], case341_i = [], case341_c = [];
     let newApptTemp = "";
 
     function openTab(tab, tabName) {
@@ -908,6 +907,27 @@
       });
     }
 
+window.addEventListener('message', async (e) => {
+  if (e.data?.type === 'form-saved') {
+    // Refresh case data for header/overview
+    try {
+      const refreshed = await P.apiSend(`/api/cases/${caseID}`, 'GET', { include: 'clients' });
+      caseData = refreshed.case;
+      clients = refreshed.clients;
+      // Update header displays (case number, stage, status, etc.)
+      E("case").innerHTML = caseData.case_number_full || caseData.case_number || "Not Filed";
+      E("type").innerHTML = caseData.case_type || "N/A";
+      E("caseStageSelect").value = caseData.case_stage || "";
+      E("caseStatusInput").value = caseData.case_status || "";
+      E("overviewCaseNotes").value = caseData.case_notes || "";
+      E("alertsDiv").textContent = caseData.case_alerts || "";
+      resizeTextarea(E("overviewCaseNotes"));
+    } catch (err) {
+      console.warn('Failed to refresh case data after form save:', err);
+    }
+  }
+});
+
     // ── Initial load ──────────────────────────────────────────────
     processing();
     (async () => {
@@ -940,6 +960,7 @@
         E("caseStatusInput").value = caseData.case_status || "N/A";
         E("caseRecInput").value = caseData.case_rec || "N/A";
         E("overviewCaseNotes").value = caseData.case_notes || "";
+        E("alertsDiv").textContent = caseData.case_alerts || "";
         resizeTextarea(E("overviewCaseNotes"));
 
         if (caseData.case_type === "Bankruptcy" ||
@@ -965,31 +986,11 @@
           if (SC) {
             E("SendingForm").src += `&contact2[first]=${SC.contact_fname}&contact2[middle]=${SC.contact_mname||""}&contact2[last]=${SC.contact_lname}&number2[full]=${SC.contact_phone}&email2=${SC.contact_email}&clientId2=${SC.contact_id}`;
           }
+          E("caseForm").src = `forms/casedetails.html?case_id=${caseData.case_id}`;
 
-          E("caseForm").src = `https://form.jotform.com/240882429837064?name[first]=${PC?.contact_fname||""}&name[middle]=${PC?.contact_mname||""}&name[last]=${PC?.contact_lname||""}&case_id=${caseData.case_id}`;
-          if (SC) {
-            E("caseForm").src += `&codebtor=Co-Debtor&codebtorName[first]=${SC.contact_fname}&codebtorName[middle]=${SC.contact_mname||""}&codebtorName[last]=${SC.contact_lname}`;
-          }
 
-          const caseFiledParts = dateParts(caseData.case_file_date);
-          E("caseForm").src += `&caseNumber=${caseData.case_number_full || caseData.case_number || ""}&fillingDate[month]=${caseFiledParts[1]}&fillingDate[day]=${caseFiledParts[2]}&fillingDate[year]=${caseFiledParts[0]}`;
-          E("caseForm").src += `&judge=${caseData.case_judge||""}&trustee=${caseData.case_trustee||""}&chapter=${caseData.case_chapter||""}`;
+          E("341").src = `/forms/341notes.html?case_id=${caseData.case_id}`
 
-          const case341cParts = dateTimeParts(caseData.case_341_current);
-          E("caseForm").src += `&341meeting[month]=${case341cParts[1]}&341meeting[day]=${case341cParts[2]}&341meeting[year]=${case341cParts[0]}&341meeting[ampm]=${case341cParts[5]}&341meeting[timeInput]=${case341cParts[3] > 12 ? case341cParts[3] - 12 : case341cParts[3]}:${case341cParts[4]}`;
-
-          const finalInstall   = dateParts(caseData.final_installment_date);
-          const showCause      = dateTimeParts(caseData.show_cause_date);
-          const FFExtDeadline  = dateParts(caseData.filing_fee_extended_deadline);
-          E("caseForm").src += `&finalInstallment[month]=${finalInstall[1]}&finalInstallment[day]=${finalInstall[2]}&finalInstallment[year]=${finalInstall[0]}&filingFee=${caseData.filing_fee||""}&showCause[month]=${showCause[1]}&showCause[day]=${showCause[2]}&showCause[year]=${showCause[0]}&showCause[ampm]=${showCause[5]}&showCause[timeInput]=${showCause[3]}${showCause[4] ? ":" : ""}${showCause[4]}&FFExtDeadline[month]=${FFExtDeadline[1]}&FFExtDeadline[day]=${FFExtDeadline[2]}&FFExtDeadline[year]=${FFExtDeadline[0]}`;
-
-          const docsDue = dateParts(caseData.docs_due);
-          E("caseForm").src += `&docsMissing=${encodeURIComponent(caseData.docs_missing||"")}&notes=${encodeURIComponent(caseData.case_notes||"")}&alerts=${encodeURIComponent(caseData.case_alerts||"")}&docsDue[month]=${docsDue[1]}&docsDue[day]=${docsDue[2]}&docsDue[year]=${docsDue[0]}&docs=${caseData.docs||""}`;
-
-          E("341").src = `/forms/341notes.html?case_id=${caseData.case_id}`/*caseData.case_341_form
-            ? `https://jotform.com/edit/${caseData.case_341_form}`
-            : `https://jotform.com/241702405563450?debtors_name[first]=${PC?.contact_fname||""}&debtors_name[middle]=${PC?.contact_mname||""}&debtors_name[last]=${PC?.contact_lname||""}&341meeting[month]=${case341cParts[1]}&341meeting[day]=${case341cParts[2]}&341meeting[year]=${case341cParts[0]}&341meeting[ampm]=${case341cParts[5]}&341meeting[timeInput]=${case341cParts[3] > 12 ? case341cParts[3] - 12 : case341cParts[3]}:${case341cParts[4]}&trustee_name=${caseData.case_trustee||""}&caseNumber=${caseData.case_number_full || caseData.case_number || ""}&newControl[ampm]=PM&caseId=${caseData.case_id}&codebtorsName[first]=${SC ? SC.contact_fname : ""}&codebtorsName[middle]=${SC ? SC.contact_mname || "" : ""}&codebtorsName[last]=${SC ? SC.contact_lname : ""}`;
-*/
           E("det").src = caseData.case_detailed_link || "";
         }
 

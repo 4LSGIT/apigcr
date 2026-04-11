@@ -908,3 +908,7 @@ body {
 .yc-toast-error {
   background: #dc3545;
 }
+
+.yc-toast-info {
+  background: #495057;
+}
