@@ -28,7 +28,7 @@ const DEFAULT_TZ = process.env.FIRM_TIMEZONE || 'America/Detroit';
 // ─────────────────────────────────────────────────────────────
 
 // Shabbos/holiday transition window: Fri 6pm → Sat 10pm
-const START_HOUR = 18; // 6 PM — Shabbos/Yom Tov begins (prev day evening)
+const START_HOUR = 22; // 6 PM — Shabbos/Yom Tov begins (prev day evening)
 const END_HOUR   = 22; // 10 PM — Shabbos/Yom Tov ends
 
 const YOM_TOV_HOLIDAYS = [

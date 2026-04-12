@@ -87,11 +87,12 @@ async function listContacts(db, {
       where.push(`(
         MATCH(c.contact_name) AGAINST(? IN BOOLEAN MODE)
         OR c.contact_name LIKE ?
+        OR CONCAT(c.contact_fname, ' ', c.contact_lname) LIKE ?
         OR c.contact_fname LIKE ?
         OR c.contact_lname LIKE ?
       )`);
       const q = `%${query}%`;
-      params.push(`${query}*`, q, q, q);
+      params.push(`${query}*`, q,q, q, q);
     }
   }
 
