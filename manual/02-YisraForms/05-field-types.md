@@ -84,6 +84,23 @@ Pill-based tag editor. Replaces a hidden input with colored pills and a text inp
 tags: { el: '[name="tags"]', type: 'tags' }
 ```
 
+### `checkgroup`
+Multi-select checkbox group. Collected as a comma-separated string — maps directly to MySQL SET columns. See [09-advanced-features.md](09-advanced-features.md) for full details including the "Other" checkbox pattern.
+```html
+<div class="yc-check-grid" data-yc-checkgroup="missing_docs">
+  <label><input type="checkbox" value="Bank Statements"> Bank Statements</label>
+  <label><input type="checkbox" value="Pay Stubs"> Pay Stubs</label>
+  <label><input type="checkbox" data-yc-other value="Other"> Other</label>
+  <div class="yc-other-text" style="display:none;">
+    <input type="text" data-yc-other-text placeholder="Specify other">
+  </div>
+</div>
+```
+```js
+missing_docs: { el: '[data-yc-checkgroup="missing_docs"]', type: 'checkgroup' }
+```
+Collected as `"Bank Statements,Pay Stubs"`. The `el` selector points to the container `div`, not individual checkboxes.
+
 ---
 
 ## Input Masks

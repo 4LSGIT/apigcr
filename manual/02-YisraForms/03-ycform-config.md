@@ -31,15 +31,16 @@ Maps form field names to DOM elements and behavior.
 
 ```js
 fields: {
-  fname:   { el: '[name="fname"]',   type: 'text' },
-  phone:   { el: '[name="phone"]',   type: 'text' },
-  status:  { el: '[name="status"]',  type: 'select' },
-  dob:     { el: '[name="dob"]',     type: 'date' },
-  notes:   { el: '[name="notes"]',   type: 'textarea' },
-  tags:    { el: '[name="tags"]',    type: 'tags' },
-  married: { el: '[name="married"]', type: 'checkbox' },
-  method:  { el: '[name="method"]',  type: 'radio' },
-  case_id: { el: '[name="case_id"]', type: 'text', readonly: true },
+  fname:        { el: '[name="fname"]',   type: 'text' },
+  phone:        { el: '[name="phone"]',   type: 'text' },
+  status:       { el: '[name="status"]',  type: 'select' },
+  dob:          { el: '[name="dob"]',     type: 'date' },
+  notes:        { el: '[name="notes"]',   type: 'textarea' },
+  tags:         { el: '[name="tags"]',    type: 'tags' },
+  married:      { el: '[name="married"]', type: 'checkbox' },
+  method:       { el: '[name="method"]',  type: 'radio' },
+  missing_docs: { el: '[data-yc-checkgroup="missing_docs"]', type: 'checkgroup' },
+  case_id:      { el: '[name="case_id"]', type: 'text', readonly: true },
 }
 ```
 
@@ -119,14 +120,44 @@ onSubmit: {
 
 Both are optional and can be combined. The form_submissions insert always happens regardless.
 
-Workflow receives: `form_key`, `link_type`, `link_id`, `submission_id`, `data`, plus anything in `initData`.
+Workflow receives all `collect()` values as top-level variables (e.g., `{{outcome}}`, `{{missing_docs}}`), plus `form_key`, `link_type`, `link_id`, `submission_id`, plus anything in `initData`.
 
 ## Callbacks
 
 ```js
-onLoad:  (data) => { },       // after form is populated
-onSave:  (result) => { },     // after successful save; result = { id, version, updated_at }
-onError: (err) => { },        // on any init or save error
+onLoad:  async (data) => { },  // after form is populated (can be async)
+onSave:  (result) => { },      // after successful save; result = { id, version, updated_at }
+onError: (err) => { },         // on any init or save error
 ```
 
+`onLoad` is `await`ed — async operations (like resolver calls) complete before the loading overlay dismisses.
+
 `onSave` is commonly used for `P.postMessage({ type: 'form-saved', form: 'my_form' }, '*')`.
+
+`onLoad` can access the full API response via `form._loadResult` for extra data beyond what `path` extracts (e.g., clients array, appointments).
+
+---
+
+## Behavior Notes
+
+### Always-edit forms (no toggle)
+Set `readonly: false`. Hide the toggle div in HTML with `style="display:none;"`. Make the save button always visible (remove `style="display:none;"` from it). After save, the form stays in edit mode.
+
+### Custom PATCH payloads
+Override `form._buildPatchPayload` after creating the YCForm instance to control exactly which fields and column names go to the PATCH endpoint. Used when form field names don't match DB columns or when only some fields should be PATCHed:
+
+```js
+form._buildPatchPayload = function() {
+  const diff = this.getDiff();
+  const payload = {};
+  const map = { 'vehicle': 'case_issues_bk_vehicle', 'first_course': 'case_1st_course' };
+  for (const [fieldName, [_old, newVal]] of Object.entries(diff)) {
+    if (this.config.fields[fieldName]?.readonly) continue;
+    payload[map[fieldName] || fieldName] = newVal;
+  }
+  return payload;
+};
+```
+
+### Hidden fields for workflow data
+Use `<input type="hidden">` fields with `readonly: true` to pass data to workflows without displaying it. Populate in `onLoad`. The values flow through `collect()` into workflow variables automatically.
