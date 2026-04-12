@@ -18,8 +18,8 @@ const emailService = require('../services/emailService');
 // ── constants ─────────────────────────────────────────────────────────────────
 
 const ADMIN_AUTH  = ['authorized - SU', 'authorized - admin'];
-const FROM_ADDR   = 'automations@4lsg.com';
-const ADMIN_EMAIL = 'IT@4lsg.com';
+const FROM_ADDR   = process.env.AUTO_EMAIL || 'automations@4lsg.com';
+const ADMIN_EMAIL = process.env.IT_EMAIL || 'IT@4lsg.com';
 
 const STAGE_LABELS = {
   considering:    'Considering',

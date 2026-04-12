@@ -44,9 +44,9 @@ router.post("/logEmail", async (req, res) => {
     if (existing.length > 0) {
       return res.status(200).json({ message: "Email already processed" });
     }
-
+    const EMAIL_DOMAIN = process.env.EMAIL_DOMAIN || "@4lsg.com"
     // internal email skip
-    if (from.endsWith("@4lsg.com") && to.endsWith("@4lsg.com")) {
+    if (from.endsWith(EMAIL_DOMAIN) && to.endsWith(EMAIL_DOMAIN)) {
       return res.status(200).json({ message: "Internal Email not logged" });
     }
 
@@ -65,7 +65,7 @@ router.post("/logEmail", async (req, res) => {
       [messageID, from, to, subject, body_plain, attachmentsStr, currentDate]
     );
 
-    const contactEmail = from.toLowerCase().endsWith("@4lsg.com") ? to : from;
+    const contactEmail = from.toLowerCase().endsWith(EMAIL_DOMAIN) ? to : from;
 
     // build message
     let message = body_plain || "";

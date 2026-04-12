@@ -28,9 +28,9 @@ const emailService = require("../services/emailService");
 
 const BCRYPT_ROUNDS = 12;
 const RESET_EXPIRY_MINUTES = 60;
-const FROM_EMAIL = "it@4lsg.com";
-const IT_EMAIL = "IT@4lsg.com";
-const BASE_URL = "https://app.4lsg.com";
+const FROM_EMAIL = process.env.AUTO_EMAIL || "automations@4lsg.com";
+const IT_EMAIL = process.env.IT_EMAIL || "IT@4lsg.com";
+const BASE_URL = process.env.APP_URL || "https://app.4lsg.com";
 
 // ─────────────────────────────────────────
 // POST /auth/forgot-password  (public)
