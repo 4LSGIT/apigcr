@@ -72,11 +72,18 @@ async function listContacts(db, {
   const params = [];
 
   if (query) {
-    const digits = query.replace(/\D/g, '');
-    if (digits.length >= 7) {
-      // Phone search
-      where.push(`(c.contact_phone LIKE ? OR c.contact_phone2 LIKE ?)`);
-      params.push(`%${digits}%`, `%${digits}%`);
+    if (/^\d+$/.test(query)) {
+      // Numeric — could be contact_id or phone
+      const digits = query.replace(/\D/g, '');
+      if (digits.length >= 7) {
+        // Long enough to be a phone
+        where.push(`(c.contact_phone LIKE ? OR c.contact_phone2 LIKE ?)`);
+        params.push(`%${digits}%`, `%${digits}%`);
+      } else {
+        // Short numeric — treat as contact_id
+        where.push(`c.contact_id = ?`);
+        params.push(parseInt(query, 10));
+      }
     } else if (query.includes('@')) {
       // Email search
       where.push(`(c.contact_email LIKE ? OR c.contact_email2 LIKE ?)`);
