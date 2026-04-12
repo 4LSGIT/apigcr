@@ -780,18 +780,22 @@ class YCForm {
   // ═══════════════════════════════════════════════════════════════════════════
 
   setReadonly(on) {
+    const toggleWrap = this._toggleInput ? this._toggleInput.closest('.yc-toggle') : null;
+
     if (on) {
       this.el.classList.add('yc-readonly');
       if (this._saveBtnEl) this._saveBtnEl.style.display = 'none';
       if (this._warningEl) this._warningEl.style.display = 'none';
       if (this._toggleInput) this._toggleInput.checked = false;
       if (this._toggleLabel) this._toggleLabel.textContent = 'View Mode';
+      if (toggleWrap) toggleWrap.classList.remove('yc-toggle-edit');
     } else {
       this.el.classList.remove('yc-readonly');
       if (this._saveBtnEl) this._saveBtnEl.style.display = 'block';
       if (this._warningEl) this._warningEl.style.display = 'block';
       if (this._toggleInput) this._toggleInput.checked = true;
       if (this._toggleLabel) this._toggleLabel.textContent = 'Edit Mode';
+      if (toggleWrap) toggleWrap.classList.add('yc-toggle-edit');
 
       // Re-apply field-level locks
       for (const [fieldName, fieldConfig] of Object.entries(this.config.fields)) {
@@ -810,6 +814,15 @@ class YCForm {
     this._toggleInput.addEventListener('change', () => {
       this.setReadonly(!this._toggleInput.checked);
     });
+
+    // Clicking the side labels also toggles
+    const toggleWrap = this._toggleInput.closest('.yc-toggle');
+    if (toggleWrap) {
+      const viewLabel = toggleWrap.querySelector('.yc-toggle-label-view');
+      const editLabel = toggleWrap.querySelector('.yc-toggle-label-edit');
+      if (viewLabel) viewLabel.addEventListener('click', () => this.setReadonly(true));
+      if (editLabel) editLabel.addEventListener('click', () => this.setReadonly(false));
+    }
 
     // Save button
     if (this._saveBtnEl) {
@@ -1321,6 +1334,8 @@ class YCForm {
       containerEl.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
       const otherInput = containerEl.querySelector('[data-yc-other-text]');
       if (otherInput) otherInput.value = '';
+      const otherDiv = containerEl.querySelector('.yc-other-text');
+      if (otherDiv) otherDiv.style.display = 'none';
       return;
     }
 
@@ -1346,11 +1361,16 @@ class YCForm {
     });
 
     // If there are unmatched values, check the "Other" checkbox and fill the text
+    const otherCb = containerEl.querySelector('input[type="checkbox"][data-yc-other]');
+    const otherDiv = otherCb ? otherCb.closest('.yc-check-grid').querySelector('.yc-other-text') : null;
+
     if (otherValues.length > 0) {
-      const otherCb = containerEl.querySelector('input[type="checkbox"][data-yc-other]');
       const otherInput = containerEl.querySelector('[data-yc-other-text]');
       if (otherCb) otherCb.checked = true;
       if (otherInput) otherInput.value = otherValues.join(', ');
+      if (otherDiv) otherDiv.style.display = '';
+    } else {
+      if (otherDiv) otherDiv.style.display = 'none';
     }
   }
 

@@ -109,9 +109,9 @@
     <div class="yc-section">
       <div class="yc-section-title">Missing Documents</div>
       <div class="yc-check-grid" data-yc-checkgroup="missing_docs">
-        <label><input type="checkbox" value="2022 Tax Return"> 2022 Tax Return</label>
         <label><input type="checkbox" value="2023 Tax Return"> 2023 Tax Return</label>
         <label><input type="checkbox" value="2024 Tax Return"> 2024 Tax Return</label>
+        <label><input type="checkbox" value="2025 Tax Return"> 2025 Tax Return</label>
         <label><input type="checkbox" value="Bank Statements"> Bank Statements</label>
         <label><input type="checkbox" value="Pay Stubs"> Pay Stubs</label>
         <label><input type="checkbox" value="Vehicle Title(s)"> Vehicle Title(s)</label>
@@ -214,7 +214,7 @@
 
     const form = new YCForm({
       formKey:       '341_notes',
-      schemaVersion: 1,
+      schemaVersion: 2,
       linkType:      'case',
       linkId:        caseId,
       container:     '#form341',
