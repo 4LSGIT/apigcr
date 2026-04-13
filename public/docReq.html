@@ -9,6 +9,7 @@
 
   <!-- SweetAlert2 CDN -->
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
 
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -110,7 +111,7 @@
 <div class="container">
   <img class="logo" src="https://iili.io/Jy2nXHv.md.png" alt="Legal Solutions Group">
 
-  <div id="loading">Loading your document list…</div>
+  <div id="loading"><i class="fa-solid fa-spinner fa-spin-pulse fa-10x"></i><br><br>Loading your document list…</div>
   <div id="error-msg"></div>
 
   <div id="main">
@@ -166,7 +167,7 @@
 const params = new URLSearchParams(window.location.search);
 const caseId = params.get('case');
 
-let uploadedFiles = [];   // All files uploaded in this session
+let uploadedFiles = [];
 
 if (!caseId) {
   showError('Invalid link. Please contact our office.');
@@ -185,7 +186,6 @@ if (!caseId) {
         items.length ? `Please provide the following ${items.length} document${items.length > 1 ? 's' : ''}.` : '';
 
       const list = document.getElementById('doc-list');
-
       if (items.length === 0) {
         list.style.display = 'none';
         document.getElementById('all-clear').style.display = 'block';
@@ -207,129 +207,179 @@ const fileInput = document.getElementById('files');
 const commentTextarea = document.getElementById('client-comment');
 const mainButton = document.getElementById('main-upload-btn');
 
-// ── Upload Handler ───────────────────────────────────
+// ── Main Upload Handler ──────────────────────────────
 uploadForm.addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const files = fileInput.files;
   if (!files.length) {
-    Swal.fire({ icon: 'warning', title: 'No files selected', text: 'Please choose at least one file.' });
+    Swal.fire({ icon: 'warning', title: 'No files', text: 'Please select at least one file.' });
     return;
   }
 
   const comment = commentTextarea.value.trim();
 
-  // Open Swal2 popup for upload progress
-  const progressSwal = Swal.fire({
+  Swal.fire({
     title: 'Uploading Documents',
     html: `
-      <div style="margin:20px 0;">
-        <div id="swal-progress-bar" style="height:10px; background:#eee; border-radius:5px; overflow:hidden;">
-          <div id="swal-progress-inner" style="width:0%; height:100%; background:#07ADEF; transition:width 0.3s ease;"></div>
+      <div style="margin-bottom:20px;">
+        <strong>Overall Progress</strong>
+        <div style="height:10px; background:#eee; border-radius:5px; overflow:hidden; margin-top:8px;">
+          <div id="overall-progress-bar" style="width:0%; height:100%; background:#07ADEF; transition:width 0.4s;"></div>
         </div>
-        <div id="swal-progress-text" style="margin-top:8px; font-size:14px; color:#555;">Preparing upload...</div>
+        <div id="overall-progress-text" style="font-size:13px; margin-top:6px; color:#555;">0% • Starting...</div>
       </div>
-      <div id="swal-upload-list" style="text-align:left; max-height:200px; overflow-y:auto; font-size:13px;"></div>
+
+      <div id="file-list" style="max-height:280px; overflow-y:auto; text-align:left;"></div>
     `,
     showConfirmButton: false,
     showCancelButton: false,
     allowOutsideClick: false,
     allowEscapeKey: false,
     didOpen: () => {
-      uploadFilesWithSwal(files, comment, progressSwal);
+      startUploadWithPerFileProgress(files, comment);
     }
   });
 });
 
-async function uploadFilesWithSwal(files, comment, swalInstance) {
+async function startUploadWithPerFileProgress(files, comment) {
   const currentBatch = [];
   let completed = 0;
 
-  const progressInner = document.getElementById('swal-progress-inner');
-  const progressText = document.getElementById('swal-progress-text');
-  const uploadList = document.getElementById('swal-upload-list');
+  const overallBar = document.getElementById('overall-progress-bar');
+  const overallText = document.getElementById('overall-progress-text');
+  const fileListDiv = document.getElementById('file-list');
+
+  // Create a row for each file
+  const fileRows = [];
 
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    const row = document.createElement('div');
-    row.textContent = `Uploading ${file.name}...`;
-    uploadList.appendChild(row);
+
+    const rowHTML = `
+      <div style="margin-bottom:12px; padding:8px; background:#f8f9fa; border-radius:4px;">
+        <div style="display:flex; justify-content:space-between; font-size:14px; margin-bottom:4px;">
+          <span id="name-${i}">${file.name}</span>
+          <span id="percent-${i}" style="color:#666;">0%</span>
+        </div>
+        <div style="height:6px; background:#eee; border-radius:3px; overflow:hidden;">
+          <div id="bar-${i}" style="width:0%; height:100%; background:#07ADEF; transition:width 0.3s;"></div>
+        </div>
+      </div>
+    `;
+    fileListDiv.insertAdjacentHTML('beforeend', rowHTML);
+
+    fileRows.push({
+      nameEl: document.getElementById(`name-${i}`),
+      percentEl: document.getElementById(`percent-${i}`),
+      barEl: document.getElementById(`bar-${i}`)
+    });
+  }
+
+  // Upload each file one by one
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const row = fileRows[i];
 
     try {
+      // Get Dropbox temp link
       const linkRes = await fetch('/api/public/get-upload-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ case_id: caseId, filename: file.name })
       });
 
-      if (!linkRes.ok) throw new Error('Link failed');
+      if (!linkRes.ok) throw new Error('Failed to get link');
       const { link } = await linkRes.json();
 
-      await uploadWithProgress(link, file);
+      // Upload with real progress
+      await uploadWithRealProgress(link, file, (percent) => {
+        row.barEl.style.width = percent + '%';
+        row.percentEl.textContent = percent + '%';
+      });
 
-      row.textContent = `✓ ${file.name}`;
-      row.style.color = '#2e7d32';
+      // Success
+      row.nameEl.innerHTML = `✓ ${file.name}`;
+      row.nameEl.style.color = '#2e7d32';
+      row.percentEl.textContent = '100%';
+      row.barEl.style.background = '#4caf50';
+
       currentBatch.push(file.name);
       uploadedFiles.push(file.name);
 
     } catch (err) {
       console.error(err);
-      row.textContent = `✗ ${file.name} (failed)`;
-      row.style.color = '#c62828';
+      row.nameEl.innerHTML = `✗ ${file.name}`;
+      row.nameEl.style.color = '#c62828';
+      row.percentEl.textContent = 'Failed';
+      row.barEl.style.background = '#ef5350';
     }
 
     completed++;
-    const percent = Math.round((completed / files.length) * 100);
-    if (progressInner) progressInner.style.width = percent + '%';
-    if (progressText) progressText.textContent = `${percent}% • ${completed} of ${files.length} files`;
+    const overallPercent = Math.round((completed / files.length) * 100);
+    overallBar.style.width = overallPercent + '%';
+    overallText.textContent = `${overallPercent}% • ${completed} of ${files.length} files`;
   }
 
-  // Notify team
+  // All done → Notify team
   await notifyTeam(caseId, currentBatch, comment);
 
-  // Update Swal to success state with "Upload More" button
+  // Show final success popup with option to upload more
   Swal.fire({
     icon: 'success',
     title: 'Upload Complete!',
-    html: `All selected documents have been uploaded successfully.<br><br>Our team has been notified.`,
+    html: `All documents have been uploaded successfully.<br><br>Our team has been notified.`,
     confirmButtonText: 'Upload More Documents',
     showCancelButton: true,
-    cancelButtonText: 'Close',
+    cancelButtonText: 'Done',
     allowOutsideClick: false
   }).then((result) => {
     if (result.isConfirmed) {
-      // Reset form for new upload
+      // Reset main form for another upload
       fileInput.value = '';
       commentTextarea.value = '';
-      // Re-open the main form (user can click Upload again)
     }
-    // If they click Close, nothing happens – they can always click the main button again
   });
 }
 
-// ── Simple XHR Upload ────────────────────────────────
-function uploadWithProgress(url, file) {
+// ── Upload with REAL per-file progress ─────────────────
+function uploadWithRealProgress(url, file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
 
-    xhr.onload = () => xhr.status === 200 ? resolve() : reject(new Error(`Failed (${xhr.status})`));
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const percent = Math.round((e.loaded / e.total) * 100);
+        onProgress(percent);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status === 200) resolve();
+      else reject(new Error(`Upload failed (${xhr.status})`));
+    };
+
     xhr.onerror = () => reject(new Error('Network error'));
     xhr.send(file);
   });
 }
 
-// ── Notify Team ──────────────────────────────────────
+// ── Notify Legal Team ───────────────────────────────────
 async function notifyTeam(caseId, files, comment) {
   try {
     await fetch('/api/public/upload-complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ case_id: caseId, files, comment: comment || null })
+      body: JSON.stringify({
+        case_id: caseId,
+        files: files,
+        comment: comment || null
+      })
     });
   } catch (e) {
-    console.error('Notification failed', e);
+    console.error('Failed to notify team', e);
   }
 }
 
