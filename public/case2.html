@@ -982,10 +982,12 @@ window.addEventListener('message', async (e) => {
             }
           }
 
-          E("SendingForm").src = `https://jotform.com/241675479457472?caseId=${caseData.case_id}&contact1[first]=${PC?.contact_fname||""}&contact1[middle]=${PC?.contact_mname||""}&contact1[last]=${PC?.contact_lname||""}&number1[full]=${PC?.contact_phone||""}&email1=${PC?.contact_email||""}&clientId1=${PC?.contact_id||""}`;
+          E("SendingForm").src = `forms/sendingform.html?case_id=${caseData.case_id}`;
+          /*
+          E("SendingForm").src =*`https://jotform.com/241675479457472?caseId=${caseData.case_id}&contact1[first]=${PC?.contact_fname||""}&contact1[middle]=${PC?.contact_mname||""}&contact1[last]=${PC?.contact_lname||""}&number1[full]=${PC?.contact_phone||""}&email1=${PC?.contact_email||""}&clientId1=${PC?.contact_id||""}`;
           if (SC) {
             E("SendingForm").src += `&contact2[first]=${SC.contact_fname}&contact2[middle]=${SC.contact_mname||""}&contact2[last]=${SC.contact_lname}&number2[full]=${SC.contact_phone}&email2=${SC.contact_email}&clientId2=${SC.contact_id}`;
-          }
+          }*/
           E("caseForm").src = `forms/casedetails.html?case_id=${caseData.case_id}`;
 
 
