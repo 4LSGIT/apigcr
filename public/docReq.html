@@ -1,10 +1,13 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Documents Needed | Legal Solutions Group</title>
+
   <link rel="icon" href="https://legalsolutions.group/wp-content/uploads/2022/06/cropped-favicon-32x32.png" sizes="32x32">
+
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -97,10 +100,42 @@
 
     .empty-state i { font-size: 40px; margin-bottom: 10px; display: block; }
 
-    .jotform-wrap iframe {
-      width: 100%;
+    #loading { text-align: center; padding: 60px 20px; color: #666; font-size: 15px; }
+    #error-msg { text-align: center; padding: 40px 20px; color: #c0392b; font-size: 15px; }
+    #main { display: none; }
+
+    /* Upload UI */
+    #upload-form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    #upload-form input[type="file"] {
+      padding: 6px;
+    }
+
+    #upload-form button {
+      background: #07ADEF;
+      color: white;
       border: none;
-      min-height: 600px;
+      padding: 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    #upload-form button:disabled {
+      background: #999;
+      cursor: not-allowed;
+    }
+
+    #upload-status {
+      margin-top: 10px;
+    }
+
+    .upload-row {
+      font-size: 13px;
+      margin-top: 6px;
     }
 
     .footer-note {
@@ -109,54 +144,65 @@
       color: #999;
       margin-top: 10px;
     }
-
-    /* Loading / error states */
-    #loading { text-align: center; padding: 60px 20px; color: #666; font-size: 15px; }
-    #error-msg { text-align: center; padding: 40px 20px; color: #c0392b; font-size: 15px; }
-    #main { display: none; }
   </style>
+
 </head>
 <body>
+
 <div class="container">
 
   <img class="logo" src="https://iili.io/Jy2nXHv.md.png" alt="Legal Solutions Group">
 
-  <div id="loading">Loading your document list&hellip;</div>
+  <div id="loading">Loading your document list…</div>
   <div id="error-msg"></div>
 
   <div id="main">
-    <!-- Greeting + doc list -->
-    <div class="card">
-      <h1 id="greeting"></h1>
-      <p class="intro" id="intro-text"></p>
-      <h2>Documents Needed</h2>
-      <ul class="doc-list" id="doc-list"></ul>
-      <div class="empty-state" id="all-clear" style="display:none">
-        <i>&#10003;</i>
-        All documents have been received. Thank you!
-      </div>
-    </div>
 
-    <!-- Upload form -->
-    <div class="card" id="upload-card">
-      <h2>Upload Your Documents</h2>
-      <p class="intro">Use the form below to upload any of the documents listed above. You can upload multiple files at once.</p>
-      <div class="jotform-wrap">
-        <iframe id="jotform-frame" src="" title="Document Upload"></iframe>
-      </div>
-    </div>
+```
+<!-- Greeting + doc list -->
+<div class="card">
+  <h1 id="greeting"></h1>
+  <p class="intro" id="intro-text"></p>
 
-    <p class="footer-note">
-      Questions? Call our office at <a href="tel:2485592400">248-559-2400</a> or email <a href="mailto:info@4lsg.com">info@4lsg.com</a>
-    </p>
+  <h2>Documents Needed</h2>
+  <ul class="doc-list" id="doc-list"></ul>
+
+  <div class="empty-state" id="all-clear" style="display:none">
+    <i>✓</i>
+    All documents have been received. Thank you!
   </div>
+</div>
 
+<!-- Upload -->
+<div class="card" id="upload-card">
+  <h2>Upload Your Documents</h2>
+  <p class="intro">
+    Upload the requested documents below. You can upload multiple files at once.
+  </p>
+
+  <form id="upload-form">
+    <input type="file" id="files" multiple required />
+    <button type="submit">Upload Files</button>
+  </form>
+
+  <div id="upload-status"></div>
+</div>
+
+<p class="footer-note">
+  Questions? Call our office at
+  <a href="tel:2485592400">248-559-2400</a>
+  or email
+  <a href="mailto:info@4lsg.com">info@4lsg.com</a>
+</p>
+```
+
+  </div>
 </div>
 
 <script>
-  // ── Init ──────────────────────────────────────────────────────
-  const params  = new URLSearchParams(window.location.search);
-  const caseId  = params.get('case');
+  // ── Init ─────────────────────────────────────────────
+  const params = new URLSearchParams(window.location.search);
+  const caseId = params.get('case');
 
   if (!caseId) {
     showError('Invalid link. Please contact our office.');
@@ -173,40 +219,124 @@
         const name  = data.name  || 'there';
         const items = data.items || [];
 
-        document.getElementById('greeting').textContent   = `Hi ${name}!`;
+        document.getElementById('greeting').textContent = `Hi ${name}!`;
+
         document.getElementById('intro-text').textContent =
           items.length > 0
-            ? `Please provide the following ${items.length} document${items.length > 1 ? 's' : ''}. ` +
-              `Upload them using the form below, you can send multiple files at once.`
+            ? `Please provide the following ${items.length} document${items.length > 1 ? 's' : ''}. Upload them below.`
             : '';
 
         const list = document.getElementById('doc-list');
+
         if (items.length === 0) {
           list.style.display = 'none';
           document.getElementById('all-clear').style.display = 'block';
           document.getElementById('upload-card').style.display = 'none';
         } else {
           items.forEach((item, i) => {
-            const li  = document.createElement('li');
+            const li = document.createElement('li');
             li.innerHTML = `
               <span class="doc-num">${i + 1}</span>
               <span>${item}</span>`;
             list.appendChild(li);
           });
-
-          // Load JotForm with case_id pre-filled
-          document.getElementById('jotform-frame').src =
-            `https://form.jotform.com/260882970196065?case_id=${encodeURIComponent(caseId)}`;
         }
       })
-      .catch(() => showError('We couldn\'t load your document list. Please try again or contact our office.'));
+      .catch(() => showError('We couldn\'t load your document list.'));
   }
 
   function showError(msg) {
-    document.getElementById('loading').style.display  = 'none';
-    document.getElementById('error-msg').style.display = 'block';
-    document.getElementById('error-msg').textContent   = msg;
+    document.getElementById('loading').style.display = 'none';
+    const err = document.getElementById('error-msg');
+    err.style.display = 'block';
+    err.textContent = msg;
   }
+
+  // ── Upload logic ─────────────────────────────────────
+  const uploadForm = document.getElementById('upload-form');
+  const statusDiv  = document.getElementById('upload-status');
+  const button     = uploadForm.querySelector('button');
+
+  uploadForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const files = document.getElementById('files').files;
+    if (!files.length) return;
+
+    button.disabled = true;
+    statusDiv.innerHTML = '';
+
+    for (const file of files) {
+      const row = document.createElement('div');
+      row.className = 'upload-row';
+      row.textContent = `Uploading ${file.name}...`;
+      statusDiv.appendChild(row);
+
+      try {
+        // 1. Get temp upload link
+        const res = await fetch('/api/public/get-upload-link', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            case_id: caseId,
+            filename: file.name
+          })
+        });
+
+        if (!res.ok) throw new Error('Link failed');
+
+        const { link } = await res.json();
+
+        // 2. Upload with progress
+        await uploadWithProgress(link, file, (percent) => {
+          row.textContent = `${file.name} – ${percent}%`;
+        });
+
+        row.textContent = `${file.name} ✓ uploaded`;
+
+      } catch (err) {
+        console.error(err);
+        row.textContent = `${file.name} ✗ failed`;
+      }
+    }
+
+    button.disabled = false;
+  });
+
+function uploadWithProgress(url, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.open('POST', url);   // Note: Dropbox temp links usually expect POST, but confirm with your backend
+
+    // CRITICAL: Add this
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const percent = Math.round((e.loaded / e.total) * 100);
+        onProgress(percent);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        resolve();
+      } else {
+        console.error('Upload failed with status:', xhr.status, xhr.responseText);
+        reject(new Error(`Upload failed: ${xhr.status} - ${xhr.responseText}`));
+      }
+    };
+
+    xhr.onerror = () => {
+      console.error('Network error during upload');
+      reject(new Error('Network error'));
+    };
+
+    xhr.send(file);   // Send the raw File object (this is correct)
+  });
+}
 </script>
+
 </body>
 </html>
