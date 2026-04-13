@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -7,6 +6,9 @@
   <title>Documents Needed | Legal Solutions Group</title>
 
   <link rel="icon" href="https://legalsolutions.group/wp-content/uploads/2022/06/cropped-favicon-32x32.png" sizes="32x32">
+
+  <!-- SweetAlert2 CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -18,16 +20,9 @@
       padding: 20px;
     }
 
-    .container {
-      max-width: 680px;
-      margin: 0 auto;
-    }
+    .container { max-width: 680px; margin: 0 auto; }
 
-    .logo {
-      display: block;
-      margin: 0 auto 20px;
-      max-width: 220px;
-    }
+    .logo { display: block; margin: 0 auto 20px; max-width: 220px; }
 
     .card {
       background: #fff;
@@ -37,18 +32,9 @@
       margin-bottom: 20px;
     }
 
-    h1 {
-      font-size: 22px;
-      color: #07ADEF;
-      margin-bottom: 6px;
-    }
+    h1 { font-size: 22px; color: #07ADEF; margin-bottom: 6px; }
 
-    .intro {
-      font-size: 15px;
-      color: #555;
-      margin-bottom: 20px;
-      line-height: 1.5;
-    }
+    .intro { font-size: 15px; color: #555; margin-bottom: 20px; line-height: 1.5; }
 
     h2 {
       font-size: 17px;
@@ -58,9 +44,7 @@
       padding-bottom: 6px;
     }
 
-    .doc-list {
-      list-style: none;
-    }
+    .doc-list { list-style: none; }
 
     .doc-list li {
       display: flex;
@@ -72,14 +56,11 @@
       line-height: 1.5;
     }
 
-    .doc-list li:last-child {
-      border-bottom: none;
-    }
+    .doc-list li:last-child { border-bottom: none; }
 
     .doc-num {
       flex-shrink: 0;
-      width: 24px;
-      height: 24px;
+      width: 24px; height: 24px;
       background: #07ADEF;
       color: white;
       border-radius: 50%;
@@ -91,51 +72,29 @@
       margin-top: 1px;
     }
 
-    .empty-state {
-      text-align: center;
-      padding: 30px;
-      color: #4CAF50;
-      font-size: 16px;
-    }
-
+    .empty-state { text-align: center; padding: 30px; color: #4CAF50; font-size: 16px; }
     .empty-state i { font-size: 40px; margin-bottom: 10px; display: block; }
 
     #loading { text-align: center; padding: 60px 20px; color: #666; font-size: 15px; }
     #error-msg { text-align: center; padding: 40px 20px; color: #c0392b; font-size: 15px; }
     #main { display: none; }
 
-    /* Upload UI */
-    #upload-form {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    #upload-form input[type="file"] {
-      padding: 6px;
-    }
+    #upload-form { display: flex; flex-direction: column; gap: 12px; }
+    #upload-form input[type="file"] { padding: 6px; }
 
     #upload-form button {
       background: #07ADEF;
       color: white;
       border: none;
-      padding: 10px;
+      padding: 12px;
       border-radius: 4px;
       cursor: pointer;
+      font-size: 15px;
     }
 
     #upload-form button:disabled {
       background: #999;
       cursor: not-allowed;
-    }
-
-    #upload-status {
-      margin-top: 10px;
-    }
-
-    .upload-row {
-      font-size: 13px;
-      margin-top: 6px;
     }
 
     .footer-note {
@@ -145,196 +104,240 @@
       margin-top: 10px;
     }
   </style>
-
 </head>
 <body>
 
 <div class="container">
-
   <img class="logo" src="https://iili.io/Jy2nXHv.md.png" alt="Legal Solutions Group">
 
   <div id="loading">Loading your document list…</div>
   <div id="error-msg"></div>
 
   <div id="main">
+    <!-- Greeting + doc list -->
+    <div class="card">
+      <h1 id="greeting"></h1>
+      <p class="intro" id="intro-text"></p>
 
-```
-<!-- Greeting + doc list -->
-<div class="card">
-  <h1 id="greeting"></h1>
-  <p class="intro" id="intro-text"></p>
+      <h2>Documents Needed</h2>
+      <ul class="doc-list" id="doc-list"></ul>
 
-  <h2>Documents Needed</h2>
-  <ul class="doc-list" id="doc-list"></ul>
+      <div class="empty-state" id="all-clear" style="display:none">
+        <i>✓</i> All documents have been received. Thank you!
+      </div>
+    </div>
 
-  <div class="empty-state" id="all-clear" style="display:none">
-    <i>✓</i>
-    All documents have been received. Thank you!
-  </div>
-</div>
+    <!-- Upload Form -->
+    <div class="card" id="upload-card">
+      <h2>Upload Your Documents</h2>
+      <p class="intro">
+        Upload the requested documents below. You can upload multiple files at once.
+      </p>
 
-<!-- Upload -->
-<div class="card" id="upload-card">
-  <h2>Upload Your Documents</h2>
-  <p class="intro">
-    Upload the requested documents below. You can upload multiple files at once.
-  </p>
+      <form id="upload-form">
+        <input type="file" id="files" multiple />
 
-  <form id="upload-form">
-    <input type="file" id="files" multiple required />
-    <button type="submit">Upload Files</button>
-  </form>
+        <div style="margin-top:20px;">
+          <p style="margin-bottom:8px; font-size:14px; color:#555;">
+            Optional: Add any comments or notes about these documents
+          </p>
+          <textarea id="client-comment" rows="3" 
+            style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px; font-family:inherit;"
+            placeholder="Any additional information..."></textarea>
+        </div>
 
-  <div id="upload-status"></div>
-</div>
+        <button type="submit" id="main-upload-btn">Upload Documents & Notify Team</button>
+      </form>
 
-<p class="footer-note">
-  Questions? Call our office at
-  <a href="tel:2485592400">248-559-2400</a>
-  or email
-  <a href="mailto:info@4lsg.com">info@4lsg.com</a>
-</p>
-```
+      <div id="upload-status"></div>
+    </div>
 
+    <p class="footer-note">
+      Questions? Call our office at
+      <a href="tel:2485592400">248-559-2400</a>
+      or email
+      <a href="mailto:info@4lsg.com">info@4lsg.com</a>
+    </p>
   </div>
 </div>
 
 <script>
-  // ── Init ─────────────────────────────────────────────
-  const params = new URLSearchParams(window.location.search);
-  const caseId = params.get('case');
+// ── Init ─────────────────────────────────────────────
+const params = new URLSearchParams(window.location.search);
+const caseId = params.get('case');
 
-  if (!caseId) {
-    showError('Invalid link. Please contact our office.');
-  } else {
-    fetch(`/api/public/docs/${caseId}`)
-      .then(r => {
-        if (!r.ok) throw new Error('Not found');
-        return r.json();
-      })
-      .then(data => {
-        document.getElementById('loading').style.display = 'none';
-        document.getElementById('main').style.display = 'block';
+let uploadedFiles = [];   // All files uploaded in this session
 
-        const name  = data.name  || 'there';
-        const items = data.items || [];
+if (!caseId) {
+  showError('Invalid link. Please contact our office.');
+} else {
+  fetch(`/api/public/docs/${caseId}`)
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(data => {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main').style.display = 'block';
 
-        document.getElementById('greeting').textContent = `Hi ${name}!`;
+      const name = data.name || 'there';
+      const items = data.items || [];
 
-        document.getElementById('intro-text').textContent =
-          items.length > 0
-            ? `Please provide the following ${items.length} document${items.length > 1 ? 's' : ''}. Upload them below.`
-            : '';
+      document.getElementById('greeting').textContent = `Hi ${name}!`;
+      document.getElementById('intro-text').textContent = 
+        items.length ? `Please provide the following ${items.length} document${items.length > 1 ? 's' : ''}.` : '';
 
-        const list = document.getElementById('doc-list');
+      const list = document.getElementById('doc-list');
 
-        if (items.length === 0) {
-          list.style.display = 'none';
-          document.getElementById('all-clear').style.display = 'block';
-          document.getElementById('upload-card').style.display = 'none';
-        } else {
-          items.forEach((item, i) => {
-            const li = document.createElement('li');
-            li.innerHTML = `
-              <span class="doc-num">${i + 1}</span>
-              <span>${item}</span>`;
-            list.appendChild(li);
-          });
-        }
-      })
-      .catch(() => showError('We couldn\'t load your document list.'));
-  }
-
-  function showError(msg) {
-    document.getElementById('loading').style.display = 'none';
-    const err = document.getElementById('error-msg');
-    err.style.display = 'block';
-    err.textContent = msg;
-  }
-
-  // ── Upload logic ─────────────────────────────────────
-  const uploadForm = document.getElementById('upload-form');
-  const statusDiv  = document.getElementById('upload-status');
-  const button     = uploadForm.querySelector('button');
-
-  uploadForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const files = document.getElementById('files').files;
-    if (!files.length) return;
-
-    button.disabled = true;
-    statusDiv.innerHTML = '';
-
-    for (const file of files) {
-      const row = document.createElement('div');
-      row.className = 'upload-row';
-      row.textContent = `Uploading ${file.name}...`;
-      statusDiv.appendChild(row);
-
-      try {
-        // 1. Get temp upload link
-        const res = await fetch('/api/public/get-upload-link', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            case_id: caseId,
-            filename: file.name
-          })
+      if (items.length === 0) {
+        list.style.display = 'none';
+        document.getElementById('all-clear').style.display = 'block';
+        document.getElementById('upload-card').style.display = 'none';
+      } else {
+        items.forEach((item, i) => {
+          const li = document.createElement('li');
+          li.innerHTML = `<span class="doc-num">${i+1}</span><span>${item}</span>`;
+          list.appendChild(li);
         });
-
-        if (!res.ok) throw new Error('Link failed');
-
-        const { link } = await res.json();
-
-        // 2. Upload with progress
-        await uploadWithProgress(link, file, (percent) => {
-          row.textContent = `${file.name} – ${percent}%`;
-        });
-
-        row.textContent = `${file.name} ✓ uploaded`;
-
-      } catch (err) {
-        console.error(err);
-        row.textContent = `${file.name} ✗ failed`;
       }
+    })
+    .catch(() => showError('We couldn\'t load your document list.'));
+}
+
+// ── Elements ─────────────────────────────────────────
+const uploadForm = document.getElementById('upload-form');
+const fileInput = document.getElementById('files');
+const commentTextarea = document.getElementById('client-comment');
+const mainButton = document.getElementById('main-upload-btn');
+
+// ── Upload Handler ───────────────────────────────────
+uploadForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+
+  const files = fileInput.files;
+  if (!files.length) {
+    Swal.fire({ icon: 'warning', title: 'No files selected', text: 'Please choose at least one file.' });
+    return;
+  }
+
+  const comment = commentTextarea.value.trim();
+
+  // Open Swal2 popup for upload progress
+  const progressSwal = Swal.fire({
+    title: 'Uploading Documents',
+    html: `
+      <div style="margin:20px 0;">
+        <div id="swal-progress-bar" style="height:10px; background:#eee; border-radius:5px; overflow:hidden;">
+          <div id="swal-progress-inner" style="width:0%; height:100%; background:#07ADEF; transition:width 0.3s ease;"></div>
+        </div>
+        <div id="swal-progress-text" style="margin-top:8px; font-size:14px; color:#555;">Preparing upload...</div>
+      </div>
+      <div id="swal-upload-list" style="text-align:left; max-height:200px; overflow-y:auto; font-size:13px;"></div>
+    `,
+    showConfirmButton: false,
+    showCancelButton: false,
+    allowOutsideClick: false,
+    allowEscapeKey: false,
+    didOpen: () => {
+      uploadFilesWithSwal(files, comment, progressSwal);
+    }
+  });
+});
+
+async function uploadFilesWithSwal(files, comment, swalInstance) {
+  const currentBatch = [];
+  let completed = 0;
+
+  const progressInner = document.getElementById('swal-progress-inner');
+  const progressText = document.getElementById('swal-progress-text');
+  const uploadList = document.getElementById('swal-upload-list');
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const row = document.createElement('div');
+    row.textContent = `Uploading ${file.name}...`;
+    uploadList.appendChild(row);
+
+    try {
+      const linkRes = await fetch('/api/public/get-upload-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ case_id: caseId, filename: file.name })
+      });
+
+      if (!linkRes.ok) throw new Error('Link failed');
+      const { link } = await linkRes.json();
+
+      await uploadWithProgress(link, file);
+
+      row.textContent = `✓ ${file.name}`;
+      row.style.color = '#2e7d32';
+      currentBatch.push(file.name);
+      uploadedFiles.push(file.name);
+
+    } catch (err) {
+      console.error(err);
+      row.textContent = `✗ ${file.name} (failed)`;
+      row.style.color = '#c62828';
     }
 
-    button.disabled = false;
-  });
+    completed++;
+    const percent = Math.round((completed / files.length) * 100);
+    if (progressInner) progressInner.style.width = percent + '%';
+    if (progressText) progressText.textContent = `${percent}% • ${completed} of ${files.length} files`;
+  }
 
-function uploadWithProgress(url, file, onProgress) {
+  // Notify team
+  await notifyTeam(caseId, currentBatch, comment);
+
+  // Update Swal to success state with "Upload More" button
+  Swal.fire({
+    icon: 'success',
+    title: 'Upload Complete!',
+    html: `All selected documents have been uploaded successfully.<br><br>Our team has been notified.`,
+    confirmButtonText: 'Upload More Documents',
+    showCancelButton: true,
+    cancelButtonText: 'Close',
+    allowOutsideClick: false
+  }).then((result) => {
+    if (result.isConfirmed) {
+      // Reset form for new upload
+      fileInput.value = '';
+      commentTextarea.value = '';
+      // Re-open the main form (user can click Upload again)
+    }
+    // If they click Close, nothing happens – they can always click the main button again
+  });
+}
+
+// ── Simple XHR Upload ────────────────────────────────
+function uploadWithProgress(url, file) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-
-    xhr.open('POST', url);   // Note: Dropbox temp links usually expect POST, but confirm with your backend
-
-    // CRITICAL: Add this
+    xhr.open('POST', url);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
 
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) {
-        const percent = Math.round((e.loaded / e.total) * 100);
-        onProgress(percent);
-      }
-    };
-
-    xhr.onload = () => {
-      if (xhr.status === 200) {
-        resolve();
-      } else {
-        console.error('Upload failed with status:', xhr.status, xhr.responseText);
-        reject(new Error(`Upload failed: ${xhr.status} - ${xhr.responseText}`));
-      }
-    };
-
-    xhr.onerror = () => {
-      console.error('Network error during upload');
-      reject(new Error('Network error'));
-    };
-
-    xhr.send(file);   // Send the raw File object (this is correct)
+    xhr.onload = () => xhr.status === 200 ? resolve() : reject(new Error(`Failed (${xhr.status})`));
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.send(file);
   });
+}
+
+// ── Notify Team ──────────────────────────────────────
+async function notifyTeam(caseId, files, comment) {
+  try {
+    await fetch('/api/public/upload-complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ case_id: caseId, files, comment: comment || null })
+    });
+  } catch (e) {
+    console.error('Notification failed', e);
+  }
+}
+
+function showError(msg) {
+  document.getElementById('loading').style.display = 'none';
+  const err = document.getElementById('error-msg');
+  err.style.display = 'block';
+  err.textContent = msg;
 }
 </script>
 

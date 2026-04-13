@@ -10,6 +10,10 @@ router.post('/api/public/get-upload-link', async (req, res) => {
   try {
     const { case_id, filename } = req.body;
 
+    if (!case_id || !filename) {
+      return res.status(400).json({ error: 'case_id and filename are required' });
+    }
+
     const [rows] = await req.db.query(
       'SELECT case_dropbox FROM cases WHERE case_id = ?',
       [case_id]
@@ -20,38 +24,64 @@ router.post('/api/public/get-upload-link', async (req, res) => {
     }
 
     const sharedLink = rows[0].case_dropbox;
-
-    // 🔥 1. Resolve shared link → metadata
-    const meta = await dbx.sharingGetSharedLinkMetadata({
-      url: sharedLink
-    });
-
-    if (meta.result['.tag'] !== 'folder') {
-      return res.status(400).json({ error: 'Not a folder link' });
+    if (!sharedLink) {
+      return res.status(400).json({ error: 'No Dropbox folder linked to this case' });
     }
 
-    const folderId = meta.result.id; // <-- THIS is key
+    // Get folder metadata
+    const meta = await dbx.sharingGetSharedLinkMetadata({ url: sharedLink });
 
-    // 🔥 2. Build path using ID
-    const dropboxPath = `${folderId}/client_uploads/${filename}`;
+    if (meta.result['.tag'] !== 'folder') {
+      return res.status(400).json({ error: 'Shared link is not a folder' });
+    }
 
-    // 🔥 3. Create temp upload link
+    const folderId = meta.result.id;
+    const dropboxPath = `${folderId}/Client Uploads/${filename}`;
+
     const response = await dbx.filesGetTemporaryUploadLink({
       commit_info: {
         path: dropboxPath,
         mode: { ".tag": "add" },
         autorename: true
       },
-      duration: 3600
+      duration: 7200   // Increased to 2 hours (better UX)
     });
 
-    res.json({
-      link: response.result.link
+    res.json({ link: response.result.link });
+
+  } catch (err) {
+    console.error('Get upload link error:', err);
+    res.status(500).json({ 
+      error: 'Failed to create upload link',
+      message: err.message 
+    });
+  }
+});
+
+// NEW: Alert us when client finishes uploading
+router.post('/api/public/upload-complete', async (req, res) => {
+  try {
+    const { case_id, files, comment } = req.body;
+
+    if (!case_id || !files || !Array.isArray(files)) {
+      return res.status(400).json({ error: 'case_id and files array are required' });
+    }
+
+    // Optional: You can save this to database, send email, Slack, etc.
+    console.log(`📨 Upload complete notification - Case: ${case_id}`);
+    console.log(`Files uploaded:`, files);
+    if (comment) console.log(`Client comment: ${comment}`);
+
+    // TODO: Add your notification logic here (email, SMS, database log, etc.)
+
+    res.json({ 
+      success: true, 
+      message: 'Notification received. Thank you!' 
     });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to create upload link' });
+    console.error('Upload complete error:', err);
+    res.status(500).json({ error: 'Failed to process notification' });
   }
 });
 
