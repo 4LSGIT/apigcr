@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sending Form</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <link href="/css/yc-forms.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    .sf-form { max-width: 950px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .sf-contact-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+    .sf-contact-card { flex: 1; min-width: 280px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 12px 16px; }
+    .sf-contact-card h4 { font-size: 0.95rem; font-weight: 700; color: #495057; margin: 0 0 6px 0; }
+    .sf-contact-card .sf-detail { font-size: 0.88rem; color: #6c757d; margin: 2px 0; }
+    .sf-send-settings { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 12px 16px; background: #f1f3f5; border-radius: 6px; margin-bottom: 16px; font-size: 0.9rem; }
+    .sf-send-settings label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+    .sf-send-settings select { padding: 4px 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.85rem; }
+    .sf-section { border: 1px solid #e9ecef; border-radius: 6px; padding: 14px 16px; margin-bottom: 12px; }
+    .sf-section-title { font-weight: 700; font-size: 0.95rem; color: #495057; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .sf-section-title input[type="checkbox"] { width: 1.1em; height: 1.1em; }
+    .sf-sub { padding-left: 28px; margin-top: 8px; }
+    .sf-sub-item { display: flex; align-items: flex-start; gap: 6px; margin-bottom: 6px; font-size: 0.88rem; }
+    .sf-sub-item input[type="checkbox"] { margin-top: 3px; flex-shrink: 0; }
+    .sf-sub-selector { margin-left: 28px; margin-top: 4px; margin-bottom: 8px; padding: 8px 12px; background: #f8f9fa; border-radius: 4px; font-size: 0.85rem; }
+    .sf-sub-selector select { padding: 3px 6px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.85rem; }
+    .sf-tax-grid { display: grid; grid-template-columns: auto repeat(5, 1fr); gap: 4px; align-items: center; margin: 6px 0; }
+    .sf-tax-grid .sf-tax-label { font-weight: 600; font-size: 0.82rem; color: #495057; }
+    .sf-tax-grid .sf-tax-year { text-align: center; font-weight: 600; font-size: 0.82rem; color: #6c757d; }
+    .sf-tax-grid input[type="checkbox"] { justify-self: center; }
+    .sf-bank-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 12px; margin: 6px 0; }
+    .sf-bank-grid label { display: flex; align-items: center; gap: 5px; font-size: 0.84rem; }
+    .sf-irs-grid { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0; }
+    .sf-irs-grid label { display: flex; align-items: center; gap: 4px; font-size: 0.84rem; }
+    .sf-other-area { margin-top: 8px; padding-left: 28px; }
+    .sf-other-area textarea { width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.88rem; resize: vertical; }
+    .sf-other-area input[type="text"] { width: 100%; padding: 6px 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.88rem; margin-bottom: 6px; }
+    .sf-preview { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 16px; margin: 16px 0; white-space: pre-wrap; font-size: 0.88rem; font-family: monospace; max-height: 400px; overflow-y: auto; display: none; }
+    .sf-preview h4 { font-family: Arial, sans-serif; font-size: 0.95rem; font-weight: 700; margin: 0 0 8px 0; }
+    .sf-actions { display: flex; gap: 10px; margin-top: 16px; }
+    .sf-actions button { flex: 1; }
+    .sf-disabled { opacity: 0.4; pointer-events: none; }
+    .sf-badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+    .sf-badge-future { background: #e9ecef; color: #6c757d; }
+    @media (max-width: 600px) {
+      .sf-bank-grid { grid-template-columns: 1fr 1fr; }
+      .sf-tax-grid { grid-template-columns: auto repeat(3, 1fr); }
+      .sf-send-settings { flex-direction: column; align-items: flex-start; }
+    }
+  </style>
+</head>
+<body style="font-family: Arial, sans-serif; background: #f8f9fa; padding: 16px; margin: 0;">
+
+<div class="sf-form" id="sendingForm">
+
+  <!-- ═══ CONTACT INFO ═══ -->
+  <div class="yc-section-title" style="font-size:1.1rem; margin-top:0;">Sending Form</div>
+
+  <div class="sf-contact-row" id="contactCards">
+    <!-- Populated by JS -->
+  </div>
+
+  <!-- ═══ SEND SETTINGS ═══ -->
+  <div class="sf-send-settings">
+    <strong>Send to:</strong>
+    <label><input type="checkbox" id="sendToPrimary" checked> Primary</label>
+    <label id="sendToSecondaryLabel" style="display:none;"><input type="checkbox" id="sendToSecondary" checked> Secondary</label>
+    <span style="margin-left:8px;"><strong>Method:</strong></span>
+    <label><input type="checkbox" id="methodSms" checked> SMS</label>
+    <label><input type="checkbox" id="methodEmail" checked> Email</label>
+    <span style="margin-left:8px;">SMS from:</span>
+    <select id="smsFrom"></select>
+    <span>Email from:</span>
+    <select id="emailFrom"></select>
+  </div>
+
+  <!-- ═══ ACTIONS ═══ -->
+
+  <!-- Credit Counseling -->
+  <div class="sf-section">
+    <div class="sf-section-title">
+      <input type="checkbox" id="chkCreditCounseling"> Credit Counseling Info
+    </div>
+  </div>
+
+  <!-- Contract -->
+  <div class="sf-section sf-disabled">
+    <div class="sf-section-title">
+      <input type="checkbox" disabled> Contract <span class="sf-badge sf-badge-future">Coming Soon</span>
+    </div>
+  </div>
+
+  <!-- Documents Needed -->
+  <div class="sf-section">
+    <div class="sf-section-title">
+      <input type="checkbox" id="chkDocsNeeded"> Documents Needed
+    </div>
+    <div class="sf-sub" id="docsSection" style="display:none;">
+
+      <!-- Plain doc items + items with sub-selectors -->
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="Photo of government issued ID and Social Security Card" checked> Photo of government issued ID and Social Security Card</div>
+
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copies of pay stubs / proof of all income" checked> PDF copies of pay stubs / proof of all income</div>
+      <div class="sf-sub-selector" id="incomeFromDiv" style="display:none;">
+        From: <select id="incomeFrom"></select> to present
+      </div>
+
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copies of your spouse's pay stubs / proof of all income"> PDF copies of your spouse's pay stubs / proof of all income</div>
+      <div class="sf-sub-selector" id="spouseIncomeFromDiv" style="display:none;">
+        From: <select id="spouseIncomeFrom"></select> to present
+      </div>
+
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="Tax Returns"> Tax Returns</div>
+      <div class="sf-sub-selector" id="taxDiv" style="display:none;">
+        <div class="sf-tax-grid" id="taxGrid">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="IRS.GOV"> PDF copies of documents from IRS.GOV</div>
+      <div class="sf-sub-selector" id="irsDiv" style="display:none;">
+        <div class="sf-irs-grid" id="irsGrid">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copies of bank statements"> PDF copies of bank statements</div>
+      <div class="sf-sub-selector" id="bankDiv" style="display:none;">
+        From: <select id="bankFrom"></select> to present
+        <div class="sf-bank-grid" id="bankGrid">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="Photo of title to vehicle"> Photo of title to vehicle</div>
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copy of vehicle payoff statement"> PDF copy of vehicle payoff statement</div>
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copy of title loan documents"> PDF copy of title loan documents</div>
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copy of retirement statement(s)"> PDF copy of retirement statement(s)</div>
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copy of life insurance information"> PDF copy of life insurance information</div>
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copy of current mortgage statement"> PDF copy of current mortgage statement</div>
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copy of divorce judgment"> PDF copy of divorce judgment</div>
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copy of the deed to your real estate"> PDF copy of the deed to your real estate</div>
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="PDF copy of your mortgage payoff statement(s)"> PDF copy of your mortgage payoff statement(s)</div>
+      <div class="sf-sub-item"><input type="checkbox" class="doc-item" value="Email with names and addresses of creditors"> Email with names and addresses of creditors (and amounts if you have them)</div>
+
+      <hr style="margin:10px 0; border-color:#dee2e6;">
+      <div class="sf-sub-item"><input type="checkbox" class="doc-append" id="appendPortal" checked> Please send the documents to DOCS@4LSG or use our secure portal</div>
+      <div class="sf-sub-item"><input type="checkbox" class="doc-append" id="appendPdf"> Please send the .PDF documents to DOCS@4LSG</div>
+    </div>
+  </div>
+
+  <!-- Call Allan Anchill -->
+  <div class="sf-section">
+    <div class="sf-section-title">
+      <input type="checkbox" id="chkAllan"> Please call Allan Anchill (248-320-3119) to set up an appointment to get your taxes done.
+    </div>
+  </div>
+
+  <!-- Detailed BK Questionnaire -->
+  <div class="sf-section">
+    <div class="sf-section-title">
+      <input type="checkbox" id="chkQuestionnaire"> Detailed BK Questionnaire
+      <label style="margin-left:20px; font-weight:400; font-size:0.88rem;">
+        <input type="checkbox" id="chkEnrollReminders"> Enroll in reminders
+      </label>
+    </div>
+  </div>
+
+  <!-- Other Message -->
+  <div class="sf-section">
+    <div class="sf-section-title">
+      <input type="checkbox" id="chkOther"> Other Message
+    </div>
+    <div class="sf-other-area" id="otherSection" style="display:none;">
+      <label style="font-size:0.85rem; font-weight:600;">SMS Message:</label>
+      <textarea id="otherSms" rows="3" placeholder="Free text SMS message"></textarea>
+      <label style="font-size:0.85rem; font-weight:600; margin-top:8px; display:block;">Email Subject:</label>
+      <input type="text" id="otherEmailSubject" placeholder="Email subject">
+      <label style="font-size:0.85rem; font-weight:600; margin-top:4px; display:block;">Email Body:</label>
+      <textarea id="otherEmailBody" rows="5" placeholder="Email body (HTML supported)"></textarea>
+    </div>
+  </div>
+
+  <!-- ═══ PREVIEW ═══ -->
+  <div id="previewArea" class="sf-preview">
+    <h4>Preview</h4>
+    <div id="previewContent"></div>
+  </div>
+
+  <!-- ═══ BUTTONS ═══ -->
+  <div class="sf-actions">
+    <button class="yc-btn yc-btn-secondary" id="previewBtn">Preview Message</button>
+    <button class="yc-btn yc-btn-primary" id="sendBtn">Send</button>
+  </div>
+
+</div>
+
+<script>
+const P = window.parent;
+const params = new URLSearchParams(location.search);
+const caseId = params.get('case_id');
+
+if (!caseId) {
+  document.body.innerHTML = '<p style="color:red;padding:20px;">Missing case_id parameter.</p>';
+} else {
+  init();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════════
+
+let caseData = {};
+let primaryContact = null;
+let secondaryContact = null;
+let phoneLines = [];
+let emailAddresses = [];
+
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const CURRENT_YEAR = new Date().getFullYear();
+const TAX_YEARS = [CURRENT_YEAR - 4, CURRENT_YEAR - 3, CURRENT_YEAR - 2, CURRENT_YEAR - 1, CURRENT_YEAR];
+const IRS_YEARS = [];
+for (let y = CURRENT_YEAR; y >= 2015; y--) IRS_YEARS.push(y);
+
+const BANKS = [
+  'Bank of America','Bank One','Bestbank','Chase','Citizens','Comerica',
+  'Dearborn FCU','Fifth Third','Flagstar','Huntington','Independent','Key',
+  'Michigan First CU','Navy Federal CU','National City','PNC','TCF','USAA',
+  'Wells Fargo','Zeal','CashApp','Chime','Netspend','PayPal','Varo','VenMo'
+];
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function init() {
+  try {
+    // Load data in parallel
+    const [caseResult, linesResult, emailsResult] = await Promise.all([
+      P.apiSend(`/api/cases/${caseId}`, 'GET'),
+      P.apiSend('/api/phone-lines', 'GET'),
+      P.apiSend('/api/email-from', 'GET'),
+    ]);
+
+    caseData = caseResult.case || {};
+    const clients = caseResult.clients || [];
+    primaryContact = clients.find(c => c.relate_type === 'Primary') || null;
+    secondaryContact = clients.find(c => c.relate_type === 'Secondary') || null;
+    phoneLines = linesResult.lines || [];
+    emailAddresses = emailsResult.emails || [];
+
+    renderContactCards();
+    renderDropdowns();
+    buildDynamicGrids();
+    setupToggles();
+    setupButtons();
+
+  } catch (err) {
+    console.error('Sending form init error:', err);
+    document.getElementById('sendingForm').innerHTML =
+      `<p style="color:red;padding:20px;">Failed to load: ${err.message}</p>`;
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════════════════════
+
+function renderContactCards() {
+  const container = document.getElementById('contactCards');
+  let html = '';
+
+  if (primaryContact) {
+    const pc = primaryContact;
+    html += `<div class="sf-contact-card">
+      <h4>Primary Contact</h4>
+      <div class="sf-detail"><strong>${pc.contact_name || ''}</strong></div>
+      <div class="sf-detail">📱 ${formatPhone(pc.contact_phone) || 'No phone'}</div>
+      <div class="sf-detail">📧 ${pc.contact_email || 'No email'}</div>
+    </div>`;
+  }
+
+  if (secondaryContact) {
+    const sc = secondaryContact;
+    html += `<div class="sf-contact-card">
+      <h4>Secondary Contact (Co-Debtor)</h4>
+      <div class="sf-detail"><strong>${sc.contact_name || ''}</strong></div>
+      <div class="sf-detail">📱 ${formatPhone(sc.contact_phone) || 'No phone'}</div>
+      <div class="sf-detail">📧 ${sc.contact_email || 'No email'}</div>
+    </div>`;
+    document.getElementById('sendToSecondaryLabel').style.display = '';
+  }
+
+  container.innerHTML = html;
+}
+
+function renderDropdowns() {
+  // SMS from
+  const smsSelect = document.getElementById('smsFrom');
+  phoneLines.forEach(line => {
+    const opt = document.createElement('option');
+    opt.value = line.phone_number;
+    opt.textContent = `${line.display_name || formatPhone(line.phone_number)}`;
+    smsSelect.appendChild(opt);
+  });
+
+  // Email from
+  const emailSelect = document.getElementById('emailFrom');
+  emailAddresses.forEach(em => {
+    const opt = document.createElement('option');
+    opt.value = em.email;
+    opt.textContent = em.from_name ? `${em.from_name} <${em.email}>` : em.email;
+    emailSelect.appendChild(opt);
+  });
+
+  // Month dropdowns
+  ['incomeFrom', 'spouseIncomeFrom', 'bankFrom'].forEach(id => {
+    const sel = document.getElementById(id);
+    MONTHS.forEach(m => {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m;
+      sel.appendChild(opt);
+    });
+  });
+}
+
+function buildDynamicGrids() {
+  // Tax returns grid: years as columns, Federal/State as rows
+  const taxGrid = document.getElementById('taxGrid');
+  let html = '<div></div>'; // empty corner
+  TAX_YEARS.forEach(y => { html += `<div class="sf-tax-year">${y}</div>`; });
+  ['Federal Tax Return', 'State Tax Return'].forEach(type => {
+    html += `<div class="sf-tax-label">${type}</div>`;
+    TAX_YEARS.forEach(y => {
+      html += `<input type="checkbox" class="tax-cb" data-type="${type}" data-year="${y}">`;
+    });
+  });
+  taxGrid.innerHTML = html;
+
+  // IRS years
+  const irsGrid = document.getElementById('irsGrid');
+  irsGrid.innerHTML = IRS_YEARS.map(y =>
+    `<label><input type="checkbox" class="irs-cb" value="${y}"> ${y}</label>`
+  ).join('');
+
+  // Banks
+  const bankGrid = document.getElementById('bankGrid');
+  bankGrid.innerHTML = BANKS.map(b =>
+    `<label><input type="checkbox" class="bank-cb" value="${b}"> ${b}</label>`
+  ).join('') +
+  `<label style="grid-column:1/-1; margin-top:4px;">
+    <input type="checkbox" class="bank-cb" value="__other"> Other:
+    <input type="text" id="bankOther" placeholder="separated by comma" style="width:200px; padding:3px 6px; border:1px solid #ced4da; border-radius:4px; font-size:0.84rem;">
+  </label>`;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TOGGLES
+// ═══════════════════════════════════════════════════════════════════════════
+
+function setupToggles() {
+  // Docs needed → show/hide sub-section
+  document.getElementById('chkDocsNeeded').addEventListener('change', (e) => {
+    document.getElementById('docsSection').style.display = e.target.checked ? '' : 'none';
+  });
+
+  // Other → show/hide text areas
+  document.getElementById('chkOther').addEventListener('change', (e) => {
+    document.getElementById('otherSection').style.display = e.target.checked ? '' : 'none';
+  });
+
+  // Doc items with sub-selectors
+  const subMap = {
+    'PDF copies of pay stubs / proof of all income': 'incomeFromDiv',
+    "PDF copies of your spouse's pay stubs / proof of all income": 'spouseIncomeFromDiv',
+    'Tax Returns': 'taxDiv',
+    'IRS.GOV': 'irsDiv',
+    'PDF copies of bank statements': 'bankDiv',
+  };
+
+  document.querySelectorAll('.doc-item').forEach(cb => {
+    const subId = subMap[cb.value];
+    if (!subId) return;
+    cb.addEventListener('change', () => {
+      document.getElementById(subId).style.display = cb.checked ? '' : 'none';
+    });
+    // Show sub-selector if default checked
+    if (cb.checked && subId) {
+      document.getElementById(subId).style.display = '';
+    }
+  });
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COLLECT
+// ═══════════════════════════════════════════════════════════════════════════
+
+function collectSelections() {
+  const result = {
+    sendTo: [],
+    methodSms: document.getElementById('methodSms').checked,
+    methodEmail: document.getElementById('methodEmail').checked,
+    smsFrom: document.getElementById('smsFrom').value,
+    emailFrom: document.getElementById('emailFrom').value,
+    actions: [],
+  };
+
+  if (document.getElementById('sendToPrimary').checked && primaryContact) result.sendTo.push(primaryContact);
+  if (document.getElementById('sendToSecondary')?.checked && secondaryContact) result.sendTo.push(secondaryContact);
+
+  // Credit Counseling
+  if (document.getElementById('chkCreditCounseling').checked) {
+    result.actions.push({ type: 'credit_counseling' });
+  }
+
+  // Documents Needed
+  if (document.getElementById('chkDocsNeeded').checked) {
+    const docs = [];
+    document.querySelectorAll('.doc-item:checked').forEach(cb => docs.push(cb.value));
+
+    result.actions.push({
+      type: 'docs_needed',
+      docs,
+      income_from: document.getElementById('incomeFrom').value,
+      spouse_income_from: document.getElementById('spouseIncomeFrom').value,
+      tax_federal: getCheckedTaxYears('Federal Tax Return'),
+      tax_state: getCheckedTaxYears('State Tax Return'),
+      irs_years: getCheckedValues('.irs-cb'),
+      bank_from: document.getElementById('bankFrom').value,
+      banks: getSelectedBanks(),
+      append_portal: document.getElementById('appendPortal').checked,
+      append_pdf_docs: document.getElementById('appendPdf').checked,
+    });
+  }
+
+  // Allan Anchill
+  if (document.getElementById('chkAllan').checked) {
+    result.actions.push({ type: 'allan_anchill' });
+  }
+
+  // Questionnaire
+  if (document.getElementById('chkQuestionnaire').checked) {
+    result.actions.push({
+      type: 'questionnaire',
+      enroll: document.getElementById('chkEnrollReminders').checked,
+    });
+  }
+
+  // Other
+  if (document.getElementById('chkOther').checked) {
+    result.actions.push({
+      type: 'other',
+      sms_text: document.getElementById('otherSms').value.trim(),
+      email_subject: document.getElementById('otherEmailSubject').value.trim(),
+      email_body: document.getElementById('otherEmailBody').value.trim(),
+    });
+  }
+
+  return result;
+}
+
+function getCheckedTaxYears(type) {
+  const years = [];
+  document.querySelectorAll(`.tax-cb[data-type="${type}"]:checked`).forEach(cb => {
+    years.push(cb.dataset.year);
+  });
+  return years;
+}
+
+function getCheckedValues(selector) {
+  return Array.from(document.querySelectorAll(`${selector}:checked`))
+    .map(cb => cb.value)
+    .filter(v => v !== '__other');
+}
+
+function getSelectedBanks() {
+  const banks = getCheckedValues('.bank-cb');
+  const otherCb = document.querySelector('.bank-cb[value="__other"]');
+  if (otherCb?.checked) {
+    const otherText = document.getElementById('bankOther').value.trim();
+    if (otherText) {
+      otherText.split(',').forEach(b => { if (b.trim()) banks.push(b.trim()); });
+    }
+  }
+  return banks;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PREVIEW & SEND
+// ═══════════════════════════════════════════════════════════════════════════
+
+function setupButtons() {
+  document.getElementById('previewBtn').addEventListener('click', preview);
+  document.getElementById('sendBtn').addEventListener('click', send);
+}
+
+async function preview() {
+  const sel = collectSelections();
+  if (sel.actions.length === 0) {
+    return Swal.fire({ icon: 'warning', title: 'Nothing selected', text: 'Please select at least one action.', timer: 2500 });
+  }
+
+  const lines = [];
+
+  for (const action of sel.actions) {
+    if (action.type === 'credit_counseling') {
+      lines.push('── CREDIT COUNSELING INFO ──\n[MMS with credit counseling document link]');
+    }
+
+    if (action.type === 'docs_needed') {
+      try {
+        const composed = await P.apiSend('/api/compose-docs-message', 'POST', {
+          docs: action.docs,
+          income_from: action.income_from,
+          spouse_income_from: action.spouse_income_from,
+          tax_federal: action.tax_federal,
+          tax_state: action.tax_state,
+          irs_years: action.irs_years,
+          bank_from: action.bank_from,
+          banks: action.banks,
+          append_portal: action.append_portal,
+          append_pdf_docs: action.append_pdf_docs,
+        });
+        lines.push('── DOCUMENTS NEEDED ──\n' + composed.sms);
+      } catch (err) {
+        lines.push('── DOCUMENTS NEEDED ──\n[Error composing message: ' + err.message + ']');
+      }
+    }
+
+    if (action.type === 'allan_anchill') {
+      lines.push('── TAX APPOINTMENT ──\nPlease call Allan Anchill at (248) 320-3119 to set up an appointment to get your taxes done.');
+    }
+
+    if (action.type === 'questionnaire') {
+      lines.push('── DETAILED BK QUESTIONNAIRE ──\n[Link to questionnaire will be sent]' +
+        (action.enroll ? '\n[Will enroll in reminder sequence]' : ''));
+    }
+
+    if (action.type === 'other') {
+      if (action.sms_text) lines.push('── OTHER (SMS) ──\n' + action.sms_text);
+      if (action.email_body) lines.push('── OTHER (EMAIL) ──\nSubject: ' + action.email_subject + '\n' + action.email_body);
+    }
+  }
+
+  lines.push('\n── RECIPIENTS ──');
+  sel.sendTo.forEach(c => {
+    lines.push(`${c.contact_name}: ${sel.methodSms ? formatPhone(c.contact_phone) + ' (SMS)' : ''} ${sel.methodEmail ? c.contact_email + ' (Email)' : ''}`);
+  });
+
+  const previewArea = document.getElementById('previewArea');
+  document.getElementById('previewContent').textContent = lines.join('\n\n');
+  previewArea.style.display = 'block';
+  previewArea.scrollIntoView({ behavior: 'smooth' });
+}
+
+async function send() {
+  const sel = collectSelections();
+  if (sel.actions.length === 0) {
+    return Swal.fire({ icon: 'warning', title: 'Nothing selected', text: 'Please select at least one action.', timer: 2500 });
+  }
+  if (sel.sendTo.length === 0) {
+    return Swal.fire({ icon: 'warning', title: 'No recipients', text: 'Please select who to send to.', timer: 2500 });
+  }
+  if (!sel.methodSms && !sel.methodEmail) {
+    return Swal.fire({ icon: 'warning', title: 'No method', text: 'Please select SMS and/or Email.', timer: 2500 });
+  }
+
+  const confirm = await Swal.fire({
+    icon: 'question',
+    title: 'Send messages?',
+    text: `Send to ${sel.sendTo.length} contact(s) via ${[sel.methodSms ? 'SMS' : '', sel.methodEmail ? 'Email' : ''].filter(Boolean).join(' + ')}?`,
+    showCancelButton: true,
+    confirmButtonText: 'Send',
+  });
+  if (!confirm.isConfirmed) return;
+
+  Swal.fire({ title: 'Sending...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+
+  const errors = [];
+  const successes = [];
+
+  for (const action of sel.actions) {
+    try {
+      if (action.type === 'credit_counseling') {
+        // MMS with attachment URL
+        for (const contact of sel.sendTo) {
+          if (sel.methodSms && contact.contact_phone) {
+            await P.apiSend('/ringcentral/send-mms', 'POST', {
+              from: sel.smsFrom,
+              to: contact.contact_phone,
+              text: 'Here is information about the credit counseling course:',
+              attachment_url: 'https://app.4lsg.com/files/credit-counseling-info.pdf', // UPDATE with actual URL
+            });
+            successes.push(`Credit Counseling MMS → ${contact.contact_name}`);
+          }
+          if (sel.methodEmail && contact.contact_email) {
+            await P.apiSend('/internal/email/send', 'POST', {
+              from: sel.emailFrom,
+              to: contact.contact_email,
+              subject: 'Credit Counseling Information',
+              text: 'Please find attached information about the required credit counseling course.',
+              // TODO: add attachment support or link in body
+            });
+            successes.push(`Credit Counseling Email → ${contact.contact_name}`);
+          }
+        }
+      }
+
+      if (action.type === 'docs_needed') {
+        const composed = await P.apiSend('/api/compose-docs-message', 'POST', {
+          docs: action.docs,
+          income_from: action.income_from,
+          spouse_income_from: action.spouse_income_from,
+          tax_federal: action.tax_federal,
+          tax_state: action.tax_state,
+          irs_years: action.irs_years,
+          bank_from: action.bank_from,
+          banks: action.banks,
+          append_portal: action.append_portal,
+          append_pdf_docs: action.append_pdf_docs,
+        });
+
+        // Upsert checklist
+        await P.apiSend('/checklists/upsert-items', 'POST', {
+          case_id: caseId,
+          items: composed.checklist_items,
+        });
+        successes.push('Docs checklist updated');
+
+        // Send to each contact
+        for (const contact of sel.sendTo) {
+          if (sel.methodSms && contact.contact_phone) {
+            // Split SMS if over 600 chars
+            const chunks = splitSms(composed.sms, 600);
+            for (const chunk of chunks) {
+              await P.apiSend('/internal/sms/send', 'POST', {
+                from: sel.smsFrom, to: contact.contact_phone, message: chunk,
+              });
+            }
+            successes.push(`Docs SMS → ${contact.contact_name} (${chunks.length} msg)`);
+          }
+          if (sel.methodEmail && contact.contact_email) {
+            await P.apiSend('/internal/email/send', 'POST', {
+              from: sel.emailFrom,
+              to: contact.contact_email,
+              subject: 'Documents Needed — ' + (caseData.case_number_full || caseData.case_number || caseId),
+              html: composed.email_html,
+              text: composed.email_text,
+            });
+            successes.push(`Docs Email → ${contact.contact_name}`);
+          }
+        }
+      }
+
+      if (action.type === 'allan_anchill') {
+        const msg = 'Please call Allan Anchill at (248) 320-3119 to set up an appointment to get your taxes done.';
+        for (const contact of sel.sendTo) {
+          if (sel.methodSms && contact.contact_phone) {
+            await P.apiSend('/internal/sms/send', 'POST', { from: sel.smsFrom, to: contact.contact_phone, message: msg });
+            successes.push(`Allan SMS → ${contact.contact_name}`);
+          }
+          if (sel.methodEmail && contact.contact_email) {
+            await P.apiSend('/internal/email/send', 'POST', {
+              from: sel.emailFrom, to: contact.contact_email,
+              subject: 'Tax Preparation Appointment', text: msg,
+            });
+            successes.push(`Allan Email → ${contact.contact_name}`);
+          }
+        }
+      }
+
+      if (action.type === 'questionnaire') {
+        const qLink = `https://app.4lsg.com/questionnaire?case_id=${caseId}`;
+        const msg = `Please fill out the Detailed Bankruptcy Questionnaire: ${qLink}`;
+        for (const contact of sel.sendTo) {
+          if (sel.methodSms && contact.contact_phone) {
+            await P.apiSend('/internal/sms/send', 'POST', { from: sel.smsFrom, to: contact.contact_phone, message: msg });
+            successes.push(`Questionnaire SMS → ${contact.contact_name}`);
+          }
+          if (sel.methodEmail && contact.contact_email) {
+            await P.apiSend('/internal/email/send', 'POST', {
+              from: sel.emailFrom, to: contact.contact_email,
+              subject: 'Detailed Bankruptcy Questionnaire',
+              html: `<p>Please fill out the Detailed Bankruptcy Questionnaire:</p><p><a href="${qLink}">${qLink}</a></p>`,
+              text: msg,
+            });
+            successes.push(`Questionnaire Email → ${contact.contact_name}`);
+          }
+        }
+        if (action.enroll && primaryContact) {
+          try {
+            await P.apiSend('/internal/sequence/enroll', 'POST', {
+              contact_id: primaryContact.contact_id,
+              sequence_type: 'questionnaire_reminder',
+            });
+            successes.push('Enrolled in questionnaire reminders');
+          } catch (err) {
+            errors.push('Sequence enrollment failed: ' + err.message);
+          }
+        }
+      }
+
+      if (action.type === 'other') {
+        for (const contact of sel.sendTo) {
+          if (sel.methodSms && action.sms_text && contact.contact_phone) {
+            await P.apiSend('/internal/sms/send', 'POST', { from: sel.smsFrom, to: contact.contact_phone, message: action.sms_text });
+            successes.push(`Other SMS → ${contact.contact_name}`);
+          }
+          if (sel.methodEmail && action.email_body && contact.contact_email) {
+            await P.apiSend('/internal/email/send', 'POST', {
+              from: sel.emailFrom, to: contact.contact_email,
+              subject: action.email_subject || 'Message from 4LSG',
+              html: action.email_body, text: action.email_body.replace(/<[^>]+>/g, ''),
+            });
+            successes.push(`Other Email → ${contact.contact_name}`);
+          }
+        }
+      }
+
+    } catch (err) {
+      errors.push(`${action.type}: ${err.message}`);
+    }
+  }
+
+  Swal.close();
+
+  if (errors.length === 0) {
+    Swal.fire({
+      icon: 'success',
+      title: 'Sent!',
+      html: successes.map(s => `✅ ${s}`).join('<br>'),
+      timer: 5000,
+      timerProgressBar: true,
+    });
+  } else {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Sent with errors',
+      html: successes.map(s => `✅ ${s}`).join('<br>') + '<br><br>' + errors.map(e => `❌ ${e}`).join('<br>'),
+    });
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════
+
+function formatPhone(phone) {
+  if (!phone) return '';
+  const d = phone.replace(/\D/g, '').slice(-10);
+  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  return phone;
+}
+
+function splitSms(text, maxLen) {
+  if (text.length <= maxLen) return [text];
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > maxLen) {
+    let splitAt = remaining.lastIndexOf('\n', maxLen);
+    if (splitAt < maxLen * 0.3) splitAt = remaining.lastIndexOf(' ', maxLen);
+    if (splitAt < maxLen * 0.3) splitAt = maxLen;
+    chunks.push(remaining.slice(0, splitAt).trim());
+    remaining = remaining.slice(splitAt).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+</script>
+</body>
+</html>

@@ -53,16 +53,33 @@ async function getChecklistWithItems(db, checklistId) {
 
 // ─── Authenticated routes ────────────────────────────────────────
 
-// GET /checklists?link_type=case&link=uT7EU36v
+// GET /checklists?link_type=case&link=uT7EU36v&include=items
 router.get('/checklists', jwtOrApiKey, async (req, res) => {
   try {
-    const { link_type, link } = req.query;
+    const { link_type, link, include } = req.query;
     const where = [];
     const params = [];
     if (link_type) { where.push('link_type = ?'); params.push(link_type); }
     if (link)      { where.push('link = ?');      params.push(link); }
     const sql = `SELECT * FROM checklists${where.length ? ' WHERE ' + where.join(' AND ') : ''} ORDER BY created_date ASC`;
     const [rows] = await req.db.query(sql, params);
+
+    // Optionally bulk-load items (single query, no N+1)
+    if (include === 'items' && rows.length) {
+      const ids = rows.map(r => r.id);
+      const [allItems] = await req.db.query(
+        `SELECT * FROM checkitems WHERE checklist_id IN (?) ORDER BY position ASC, id ASC`,
+        [ids]
+      );
+      const grouped = {};
+      for (const item of allItems) {
+        (grouped[item.checklist_id] ||= []).push(item);
+      }
+      for (const cl of rows) {
+        cl.items = grouped[cl.id] || [];
+      }
+    }
+
     res.json({ checklists: rows });
   } catch (err) {
     console.error('GET /checklists error:', err);

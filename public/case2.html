@@ -1011,7 +1011,7 @@ window.addEventListener('message', async (e) => {
     async function getChecklists() {
   processing();
   try {
-    const data = await P.apiSend('/checklists', 'GET', { link_type: 'case', link: caseID });
+    const data = await P.apiSend('/checklists', 'GET', { link_type: 'case', link: caseID, include: 'items' });
     checklists = data.checklists;
     displayCheck();
   } catch (err) {
