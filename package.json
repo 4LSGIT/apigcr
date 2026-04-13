@@ -26,7 +26,6 @@
     "cors": "^2.8.5",
     "cron-parser": "^5.5.0",
     "dotenv": "^16.5.0",
-    "dropbox": "^10.34.0",
     "express": "^4.21.2",
     "express-rate-limit": "^8.3.1",
     "form-data": "^4.0.5",

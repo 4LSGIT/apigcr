@@ -19,6 +19,9 @@ const express      = require('express');
 const router       = express.Router();
 const rateLimit    = require('express-rate-limit');
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
+const dropbox      = require('../services/dropboxService');
+const emailService = require('../services/emailService');
+const logService   = require('../services/logService');
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -317,4 +320,153 @@ router.get('/api/public/docs/:caseId', docsRateLimit, async (req, res) => {
   }
 });
 
+// ─── Public upload routes ────────────────────────────────────────
+ 
+const uploadRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,   // higher than docs GET — each file needs a link
+  message: { status: 'error', message: 'Too many requests, please try again shortly.' }
+});
+ 
+const notifyRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { status: 'error', message: 'Too many requests, please try again shortly.' }
+});
+ 
+/**
+ * POST /api/public/get-upload-link
+ * Body: { case_id, filename }
+ *
+ * Returns a Dropbox temporary upload link so the client browser
+ * can upload directly — file bytes never touch our server.
+ */
+router.post('/api/public/get-upload-link', uploadRateLimit, async (req, res) => {
+  try {
+    const { case_id, filename } = req.body;
+ 
+    if (!case_id || !filename) {
+      return res.status(400).json({ status: 'error', message: 'case_id and filename are required' });
+    }
+ 
+    // Look up the case's Dropbox shared link
+    const [[caseRow]] = await req.db.query(
+      'SELECT case_dropbox FROM cases WHERE case_id = ?',
+      [case_id]
+    );
+ 
+    if (!caseRow) {
+      return res.status(404).json({ status: 'error', message: 'Case not found' });
+    }
+ 
+    const sharedLink = caseRow.case_dropbox;
+    if (!sharedLink) {
+      return res.status(400).json({ status: 'error', message: 'No Dropbox folder linked to this case' });
+    }
+ 
+    // Resolve the shared link to get the actual Dropbox path
+    const meta = await dropbox.getSharedLinkMetadata(sharedLink);
+    if (meta['.tag'] !== 'folder') {
+      return res.status(400).json({ status: 'error', message: 'Shared link is not a folder' });
+    }
+
+    const folderPath = meta.path_lower;
+    const link = await dropbox.getTemporaryUploadLink(folderPath, filename);
+ 
+    res.json({ link });
+  } catch (err) {
+    console.error('POST /api/public/get-upload-link error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to create upload link' });
+  }
+});
+ 
+ 
+/**
+ * POST /api/public/upload-complete
+ * Body: { case_id, files: string[], comment?: string }
+ *
+ * Called after client finishes uploading. Logs the event
+ * and emails the team with the file list + Dropbox link.
+ */
+router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => {
+  try {
+    const { case_id, files, comment } = req.body;
+ 
+    if (!case_id || !files || !Array.isArray(files) || !files.length) {
+      return res.status(400).json({ status: 'error', message: 'case_id and files array are required' });
+    }
+ 
+    // Respond first, then handle side effects
+    res.json({ status: 'success', message: 'Notification received. Thank you!' });
+ 
+    // ── Side effects (non-blocking) ──────────────────────
+ 
+    // Fetch case info for the email
+    const [[caseRow]] = await req.db.query(
+      `SELECT c.case_id, c.case_dropbox,
+              COALESCE(c.case_number_full, c.case_number, c.case_id) AS case_display
+       FROM cases c
+       WHERE c.case_id = ?`,
+      [case_id]
+    );
+    if (!caseRow) return; // case vanished — nothing to notify about
+ 
+    // Get primary client name
+    const [[primary]] = await req.db.query(
+      `SELECT co.contact_fname, co.contact_lname, co.contact_name
+       FROM contacts co
+       JOIN case_relate cr ON co.contact_id = cr.case_relate_client_id
+       WHERE cr.case_relate_case_id = ? AND cr.case_relate_type = 'Primary'
+       LIMIT 1`,
+      [case_id]
+    );
+    const clientName = primary?.contact_name || 'Unknown client';
+ 
+    // Build file list for email
+    const fileListHtml = files.map(f => `<li>${f}</li>`).join('\n');
+    const dropboxLink = caseRow.case_dropbox || '';
+    const commentBlock = comment
+      ? `<p><strong>Client comment:</strong> ${comment}</p>`
+      : '';
+ 
+    const subject = `New Documents Uploaded — ${clientName} (${caseRow.case_display})`;
+    const html = `
+      <p><strong>${clientName}</strong> uploaded <strong>${files.length}</strong> document${files.length > 1 ? 's' : ''} to case <strong>${caseRow.case_display}</strong>.</p>
+ 
+      <p><strong>Files:</strong></p>
+      <ul>
+        ${fileListHtml}
+      </ul>
+ 
+      ${commentBlock}
+ 
+      ${dropboxLink
+        ? `<p><a href="${dropboxLink}">Open Dropbox Folder</a> — review, rename, and move files from the "Client Uploads" subfolder.</p>`
+        : '<p><em>No Dropbox link on file for this case.</em></p>'}
+    `.trim();
+ 
+    // Send notification email
+    emailService.sendEmail(req.db, {
+      from: 'automations@4lsg.com',
+      to:   'rena@4lsg.com',
+      subject,
+      html
+    }).catch(err => console.error('Upload notification email failed:', err.message));
+ 
+    // Log the upload event on the case
+    logService.createLogEntry(req.db, {
+      type:      'docs',
+      link_type: 'case',
+      link_id:   case_id,
+      by:        0,  // system / client action
+      data:      JSON.stringify({ action: 'client_upload', files, comment: comment || null }),
+      subject:   `Client uploaded ${files.length} document${files.length > 1 ? 's' : ''}`,
+      direction: 'incoming'
+    }).catch(err => console.error('Upload log entry failed:', err.message));
+ 
+  } catch (err) {
+    console.error('POST /api/public/upload-complete error:', err);
+    // Response already sent — just log
+  }
+});
 module.exports = router;

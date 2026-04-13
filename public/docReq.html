@@ -77,7 +77,7 @@
     .empty-state i { font-size: 40px; margin-bottom: 10px; display: block; }
 
     #loading { text-align: center; padding: 60px 20px; color: #666; font-size: 15px; }
-    #error-msg { text-align: center; padding: 40px 20px; color: #c0392b; font-size: 15px; }
+    #error-msg { text-align: center; padding: 40px 20px; color: #c0392b; font-size: 15px; display: none; }
     #main { display: none; }
 
     #upload-form { display: flex; flex-direction: column; gap: 12px; }
@@ -96,6 +96,12 @@
     #upload-form button:disabled {
       background: #999;
       cursor: not-allowed;
+    }
+
+    .file-hint {
+      font-size: 12px;
+      color: #888;
+      margin-top: 2px;
     }
 
     .footer-note {
@@ -136,21 +142,23 @@
       </p>
 
       <form id="upload-form">
-        <input type="file" id="files" multiple />
+        <input type="file" id="files" multiple
+               accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.gif,.tif,.tiff,.bmp,.heic,.webp,.rtf,.odt,.ods" />
+        <p class="file-hint">
+          Accepted: PDF, Word, Excel, images, and text files. Max 50 MB per file.
+        </p>
 
         <div style="margin-top:20px;">
           <p style="margin-bottom:8px; font-size:14px; color:#555;">
             Optional: Add any comments or notes about these documents
           </p>
-          <textarea id="client-comment" rows="3" 
+          <textarea id="client-comment" rows="3"
             style="width:100%; padding:10px; border:1px solid #ddd; border-radius:4px; font-family:inherit;"
             placeholder="Any additional information..."></textarea>
         </div>
 
         <button type="submit" id="main-upload-btn">Upload Documents & Notify Team</button>
       </form>
-
-      <div id="upload-status"></div>
     </div>
 
     <p class="footer-note">
@@ -163,11 +171,18 @@
 </div>
 
 <script>
-// ── Init ─────────────────────────────────────────────
+// ── Config ──────────────────────────────────────────
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+
+const ALLOWED_EXTENSIONS = new Set([
+  'pdf','doc','docx','xls','xlsx','csv','txt',
+  'jpg','jpeg','png','gif','tif','tiff','bmp','heic','webp',
+  'rtf','odt','ods'
+]);
+
+// ── Init ────────────────────────────────────────────
 const params = new URLSearchParams(window.location.search);
 const caseId = params.get('case');
-
-let uploadedFiles = [];
 
 if (!caseId) {
   showError('Invalid link. Please contact our office.');
@@ -182,7 +197,7 @@ if (!caseId) {
       const items = data.items || [];
 
       document.getElementById('greeting').textContent = `Hi ${name}!`;
-      document.getElementById('intro-text').textContent = 
+      document.getElementById('intro-text').textContent =
         items.length ? `Please provide the following ${items.length} document${items.length > 1 ? 's' : ''}.` : '';
 
       const list = document.getElementById('doc-list');
@@ -193,7 +208,7 @@ if (!caseId) {
       } else {
         items.forEach((item, i) => {
           const li = document.createElement('li');
-          li.innerHTML = `<span class="doc-num">${i+1}</span><span>${item}</span>`;
+          li.innerHTML = `<span class="doc-num">${i + 1}</span><span>${escapeHtml(item)}</span>`;
           list.appendChild(li);
         });
       }
@@ -201,19 +216,47 @@ if (!caseId) {
     .catch(() => showError('We couldn\'t load your document list.'));
 }
 
-// ── Elements ─────────────────────────────────────────
-const uploadForm = document.getElementById('upload-form');
-const fileInput = document.getElementById('files');
+// ── Elements ────────────────────────────────────────
+const uploadForm      = document.getElementById('upload-form');
+const fileInput       = document.getElementById('files');
 const commentTextarea = document.getElementById('client-comment');
-const mainButton = document.getElementById('main-upload-btn');
 
-// ── Main Upload Handler ──────────────────────────────
+// ── Validation ──────────────────────────────────────
+function validateFiles(files) {
+  const errors = [];
+  for (const file of files) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      errors.push(`"${file.name}" — file type .${ext} is not accepted.`);
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      errors.push(`"${file.name}" — exceeds 50 MB limit.`);
+    }
+    if (file.size === 0) {
+      errors.push(`"${file.name}" — file is empty.`);
+    }
+  }
+  return errors;
+}
+
+// ── Main Upload Handler ─────────────────────────────
 uploadForm.addEventListener('submit', async (e) => {
   e.preventDefault();
 
   const files = fileInput.files;
   if (!files.length) {
     Swal.fire({ icon: 'warning', title: 'No files', text: 'Please select at least one file.' });
+    return;
+  }
+
+  // Client-side validation
+  const errors = validateFiles(files);
+  if (errors.length) {
+    Swal.fire({
+      icon: 'error',
+      title: 'Some files can\'t be uploaded',
+      html: errors.map(e => `<div style="text-align:left;font-size:14px;margin-bottom:6px;">• ${escapeHtml(e)}</div>`).join('')
+    });
     return;
   }
 
@@ -237,79 +280,77 @@ uploadForm.addEventListener('submit', async (e) => {
     allowOutsideClick: false,
     allowEscapeKey: false,
     didOpen: () => {
-      startUploadWithPerFileProgress(files, comment);
+      startUpload(files, comment);
     }
   });
 });
 
-async function startUploadWithPerFileProgress(files, comment) {
-  const currentBatch = [];
+async function startUpload(files, comment) {
+  const successFiles = [];
   let completed = 0;
 
-  const overallBar = document.getElementById('overall-progress-bar');
+  const overallBar  = document.getElementById('overall-progress-bar');
   const overallText = document.getElementById('overall-progress-text');
   const fileListDiv = document.getElementById('file-list');
 
   // Create a row for each file
   const fileRows = [];
-
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-
-    const rowHTML = `
+    fileListDiv.insertAdjacentHTML('beforeend', `
       <div style="margin-bottom:12px; padding:8px; background:#f8f9fa; border-radius:4px;">
         <div style="display:flex; justify-content:space-between; font-size:14px; margin-bottom:4px;">
-          <span id="name-${i}">${file.name}</span>
-          <span id="percent-${i}" style="color:#666;">0%</span>
+          <span id="name-${i}" style="word-break:break-all;">${escapeHtml(file.name)}</span>
+          <span id="percent-${i}" style="color:#666; flex-shrink:0; margin-left:8px;">0%</span>
         </div>
         <div style="height:6px; background:#eee; border-radius:3px; overflow:hidden;">
           <div id="bar-${i}" style="width:0%; height:100%; background:#07ADEF; transition:width 0.3s;"></div>
         </div>
       </div>
-    `;
-    fileListDiv.insertAdjacentHTML('beforeend', rowHTML);
-
+    `);
     fileRows.push({
-      nameEl: document.getElementById(`name-${i}`),
+      nameEl:    document.getElementById(`name-${i}`),
       percentEl: document.getElementById(`percent-${i}`),
-      barEl: document.getElementById(`bar-${i}`)
+      barEl:     document.getElementById(`bar-${i}`)
     });
   }
 
-  // Upload each file one by one
+  // Upload each file sequentially
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    const row = fileRows[i];
+    const row  = fileRows[i];
 
     try {
-      // Get Dropbox temp link
+      // Get temporary upload link from our server
       const linkRes = await fetch('/api/public/get-upload-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ case_id: caseId, filename: file.name })
       });
 
-      if (!linkRes.ok) throw new Error('Failed to get link');
+      if (!linkRes.ok) {
+        const errData = await linkRes.json().catch(() => ({}));
+        throw new Error(errData.message || 'Failed to get upload link');
+      }
+
       const { link } = await linkRes.json();
 
-      // Upload with real progress
-      await uploadWithRealProgress(link, file, (percent) => {
+      // Upload directly to Dropbox with real progress
+      await uploadWithProgress(link, file, (percent) => {
         row.barEl.style.width = percent + '%';
         row.percentEl.textContent = percent + '%';
       });
 
       // Success
-      row.nameEl.innerHTML = `✓ ${file.name}`;
+      row.nameEl.innerHTML = `✓ ${escapeHtml(file.name)}`;
       row.nameEl.style.color = '#2e7d32';
       row.percentEl.textContent = '100%';
       row.barEl.style.background = '#4caf50';
-
-      currentBatch.push(file.name);
-      uploadedFiles.push(file.name);
+      successFiles.push(file.name);
 
     } catch (err) {
-      console.error(err);
-      row.nameEl.innerHTML = `✗ ${file.name}`;
+      console.error(`Upload failed for ${file.name}:`, err);
+      row.nameEl.innerHTML = `✗ ${escapeHtml(file.name)}`;
       row.nameEl.style.color = '#c62828';
       row.percentEl.textContent = 'Failed';
       row.barEl.style.background = '#ef5350';
@@ -321,29 +362,33 @@ async function startUploadWithPerFileProgress(files, comment) {
     overallText.textContent = `${overallPercent}% • ${completed} of ${files.length} files`;
   }
 
-  // All done → Notify team
-  await notifyTeam(caseId, currentBatch, comment);
+  // Notify team (only for successfully uploaded files)
+  if (successFiles.length) {
+    await notifyTeam(caseId, successFiles, comment);
+  }
 
-  // Show final success popup with option to upload more
+  // Final result
+  const allSucceeded = successFiles.length === files.length;
   Swal.fire({
-    icon: 'success',
-    title: 'Upload Complete!',
-    html: `All documents have been uploaded successfully.<br><br>Our team has been notified.`,
+    icon: allSucceeded ? 'success' : (successFiles.length ? 'warning' : 'error'),
+    title: allSucceeded ? 'Upload Complete!' : 'Upload Finished',
+    html: allSucceeded
+      ? 'All documents have been uploaded successfully.<br><br>Our team has been notified.'
+      : `${successFiles.length} of ${files.length} files uploaded successfully.${successFiles.length ? '<br><br>Our team has been notified of the successful uploads.' : ''}`,
     confirmButtonText: 'Upload More Documents',
     showCancelButton: true,
     cancelButtonText: 'Done',
     allowOutsideClick: false
   }).then((result) => {
     if (result.isConfirmed) {
-      // Reset main form for another upload
       fileInput.value = '';
       commentTextarea.value = '';
     }
   });
 }
 
-// ── Upload with REAL per-file progress ─────────────────
-function uploadWithRealProgress(url, file, onProgress) {
+// ── Upload with real per-file progress ──────────────
+function uploadWithProgress(url, file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url);
@@ -351,8 +396,7 @@ function uploadWithRealProgress(url, file, onProgress) {
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) {
-        const percent = Math.round((e.loaded / e.total) * 100);
-        onProgress(percent);
+        onProgress(Math.round((e.loaded / e.total) * 100));
       }
     };
 
@@ -366,7 +410,7 @@ function uploadWithRealProgress(url, file, onProgress) {
   });
 }
 
-// ── Notify Legal Team ───────────────────────────────────
+// ── Notify Team ─────────────────────────────────────
 async function notifyTeam(caseId, files, comment) {
   try {
     await fetch('/api/public/upload-complete', {
@@ -374,13 +418,20 @@ async function notifyTeam(caseId, files, comment) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         case_id: caseId,
-        files: files,
+        files,
         comment: comment || null
       })
     });
   } catch (e) {
-    console.error('Failed to notify team', e);
+    console.error('Failed to notify team:', e);
   }
+}
+
+// ── Helpers ─────────────────────────────────────────
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
 
 function showError(msg) {

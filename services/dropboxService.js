@@ -16,7 +16,7 @@
 
 const fetch = require("node-fetch");
 
-const DROPBOX_TOKEN = process.env.DROPBOX_ACCESS_TOKEN;
+const DROPBOX_TOKEN = process.env.DROPBOX_TOKEN;
 
 if (!DROPBOX_TOKEN) {
   throw new Error("Missing DROPBOX_ACCESS_TOKEN");
@@ -164,6 +164,69 @@ async function renamePath(oldPath, newName) {
   return movePath(normalizedOld, newPath);
 }
 
+
+/**
+ * Get a temporary upload link for a file.
+ *
+ * Used by the public docReq page so clients can upload directly
+ * to Dropbox without routing file bytes through our server.
+ *
+ * @param {string} folderPath  - Full Dropbox path to the target folder (e.g. "/Cases/Smith")
+ * @param {string} filename    - The filename to upload as
+ * @param {number} [duration=7200] - Link validity in seconds (default 2 hours)
+ * @returns {string} The temporary upload URL
+ */
+async function getTemporaryUploadLink(folderPath, filename, duration = 7200) {
+  const fullPath = normalizePath(`${folderPath}/Client Uploads/${filename}`);
+ 
+  const res = await fetch(
+    "https://api.dropboxapi.com/2/files/get_temporary_upload_link",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${DROPBOX_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        commit_info: {
+          path: fullPath,
+          mode: { ".tag": "add" },
+          autorename: true
+        },
+        duration
+      })
+    }
+  );
+ 
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Dropbox getTemporaryUploadLink failed: ${errText}`);
+  }
+ 
+  const data = await res.json();
+  return data.link;
+}
+
+async function getSharedLinkMetadata(url) {
+  const res = await fetch(
+    "https://api.dropboxapi.com/2/sharing/get_shared_link_metadata",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${DROPBOX_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ url })
+    }
+  );
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Dropbox getSharedLinkMetadata failed: ${errText}`);
+  }
+
+  return res.json();
+}
 /* ======================================================
    EXPORTS
 ====================================================== */
@@ -173,5 +236,7 @@ module.exports = {
   deletePath,
   renamePath,
   movePath,
-  normalizePath
+  normalizePath,
+  getTemporaryUploadLink,
+  getSharedLinkMetadata
 };

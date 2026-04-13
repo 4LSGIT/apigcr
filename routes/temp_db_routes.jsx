@@ -73,7 +73,17 @@ router.post('/api/public/upload-complete', async (req, res) => {
     if (comment) console.log(`Client comment: ${comment}`);
 
     // TODO: Add your notification logic here (email, SMS, database log, etc.)
-
+ /* Usage:
+    const emailService = require('./emailService');
+    await emailService.sendEmail(db, {
+      from: 'automations@4lsg.com',
+      to: 'rena@4lsg.com',
+      subject: 'Docs uploaded for case',
+      text: 'Plain text fallback',
+      html: '<p>HTML version</p>',   // optional
+      attachments: []                // optional, nodemailer format (smtp only)
+    });
+ /*
     res.json({ 
       success: true, 
       message: 'Notification received. Thank you!' 
