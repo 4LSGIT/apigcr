@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BK Initial Strategy Session Notes</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <link href="/css/yc-forms.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    .yc-section-title { font-size: 1rem; margin-top: 14px; margin-bottom: 6px; }
+    .yc-field { margin-bottom: 8px; }
+    .yc-label { font-size: 0.84rem; margin-bottom: 3px; }
+    .yc-check-grid { gap: 4px 12px; }
+    .yc-check-grid label { font-size: 0.84rem; }
+    .yc-section-pair { display: flex; gap: 20px; }
+    .yc-section-pair > .yc-section { flex: 1; }
+    @media (max-width: 600px) { .yc-section-pair { flex-direction: column; } }
+    .yc-hint { font-size: 0.75rem; color: #6c757d; margin-top: 2px; }
+  </style>
+</head>
+<body>
+
+<div class="yc-form-header">
+  <div class="yc-toggle" style="display:none;">
+    <input class="form-check-input" type="checkbox" id="toggleBtn">
+    <label class="form-check-label" for="toggleBtn" id="toggleLabel">Edit Mode</label>
+  </div>
+  <span class="yc-save-status" id="saveStatus"></span>
+  <span class="yc-warning" id="warning" style="display:none;"></span>
+</div>
+
+<div class="yc-draft-banner" id="draftBanner" style="display:none;">
+  <span>You have unsaved changes from <strong id="draftTimestamp"></strong></span>
+  <button class="yc-btn yc-btn-sm yc-btn-primary" id="draftRestore">Restore</button>
+  <button class="yc-btn yc-btn-sm yc-btn-secondary" id="draftDiscard">Discard</button>
+</div>
+
+<form id="issnForm" class="yc-form">
+
+  <!-- Hidden fields -->
+  <input type="hidden" name="case_id">
+  <input type="hidden" name="client_id">
+  <input type="hidden" name="cd_id">
+
+  <!-- ═══ TAB-STICKY: Case header + Intake Notes (visible on all tabs) ═══ -->
+  <div class="yc-tab-sticky">
+    <div class="yc-row">
+      <div class="yc-field yc-field-locked">
+        <label class="yc-label">Client</label>
+        <input type="text" name="client_name" data-yc-locked-msg="Edit from the Contact page">
+      </div>
+      <div class="yc-field yc-field-locked" id="cdNameField" style="display:none;">
+        <label class="yc-label">Co-Debtor</label>
+        <input type="text" name="cd_name" data-yc-locked-msg="Edit from the Contact page">
+      </div>
+      <div class="yc-field yc-field-locked yc-fixed-md">
+        <label class="yc-label">Case Number</label>
+        <input type="text" name="case_number" data-yc-locked-msg="Edit from the Case Details form">
+      </div>
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">Intake Notes — Client Details</label>
+      <textarea name="intake_notes" rows="3" maxlength="5000" placeholder="Running intake notes visible on all tabs"></textarea>
+    </div>
+  </div>
+
+  <!-- ═══ TAB BAR ═══ -->
+  <div class="yc-tabs">
+    <div class="yc-tab-bar">
+      <button type="button" class="active">Client Info</button>
+      <button type="button">Housing / Auto / Assets</button>
+      <button type="button">Employment</button>
+      <button type="button">Issues &amp; Student Loans</button>
+      <button type="button">Taxes</button>
+      <button type="button">Ash Auto</button>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 1: CLIENT INFO                                                -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="yc-tab-panel active">
+      <div class="yc-section-pair">
+        <div class="yc-section">
+          <div class="yc-section-title">Client Information</div>
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">First Name</label><input type="text" name="client_fname"></div>
+            <div class="yc-field"><label class="yc-label">Middle</label><input type="text" name="client_mname"></div>
+            <div class="yc-field"><label class="yc-label">Last Name</label><input type="text" name="client_lname"></div>
+          </div>
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">Phone</label><input type="text" name="client_phone" data-yc-mask="phone"></div>
+            <div class="yc-field"><label class="yc-label">Email</label><input type="email" name="client_email"></div>
+          </div>
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">DOB</label><input type="date" name="client_dob"></div>
+            <div class="yc-field"><label class="yc-label">SSN</label><input type="text" name="client_ssn" data-yc-mask="ssn"></div>
+          </div>
+        </div>
+        <div class="yc-section">
+          <div class="yc-section-title">Address</div>
+          <div class="yc-row"><div class="yc-field"><input type="text" name="client_address" placeholder="Street address"></div></div>
+          <div class="yc-row">
+            <div class="yc-field yc-2x"><input type="text" name="client_city" placeholder="City"></div>
+            <div class="yc-field yc-fixed-sm"><input type="text" name="client_state" placeholder="State"></div>
+            <div class="yc-field yc-fixed-md"><input type="text" name="client_zip" placeholder="ZIP"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Marital Status -->
+      <div class="yc-section">
+        <div class="yc-row">
+          <div class="yc-field">
+            <label class="yc-label">Marital Status</label>
+            <div class="yc-radio-group">
+              <label><input type="radio" name="marital_status" value="Single"> Single</label>
+              <label><input type="radio" name="marital_status" value="Married"> Married</label>
+              <label><input type="radio" name="marital_status" value="Separated"> Separated</label>
+              <label><input type="radio" name="marital_status" value="Divorced"> Divorced</label>
+              <label><input type="radio" name="marital_status" value="Widowed"> Widowed</label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Divorce fields (conditional: Divorced) -->
+        <div class="yc-row" data-yc-show-when="marital_status" data-yc-show-value="Divorced">
+          <div class="yc-field"><label class="yc-label">When was the Divorce?</label><input type="text" name="divorce_when"></div>
+          <div class="yc-field"><label class="yc-label">Court / Case Number</label><input type="text" name="divorce_court"></div>
+        </div>
+
+        <!-- Dependents -->
+        <div class="yc-row">
+          <div class="yc-field">
+            <div class="yc-check" style="margin-top:8px;">
+              <input type="checkbox" name="has_dependents" id="hasDep" value="Yes">
+              <label for="hasDep">Do you have any dependents?</label>
+            </div>
+          </div>
+          <div class="yc-field" id="dependentInfoField" style="display:none;">
+            <label class="yc-label">Dependent Information</label>
+            <input type="text" name="dependent_info">
+          </div>
+        </div>
+
+        <div class="yc-row">
+          <div class="yc-field"><label class="yc-label">Household Size</label><input type="text" name="household_size"></div>
+        </div>
+        <div class="yc-field"><label class="yc-label">Notes — Basic Information</label><textarea name="basic_info_notes" rows="3" maxlength="3000"></textarea></div>
+      </div>
+
+      <!-- Co-Debtor Section (conditional: Married or Separated) -->
+      <div id="codebtorOuterSection" data-yc-show-when="marital_status" data-yc-show-values="Married,Separated">
+        <div class="yc-section">
+          <div class="yc-section-title">Co-Debtor</div>
+          <div class="yc-row">
+            <div class="yc-field">
+              <label class="yc-label">Is There a Co-Debtor?</label>
+              <div class="yc-radio-group">
+                <label><input type="radio" name="is_codebtor" value="Yes"> Yes</label>
+                <label><input type="radio" name="is_codebtor" value="No"> No</label>
+              </div>
+            </div>
+            <div class="yc-field" data-yc-show-when="is_codebtor" data-yc-show-value="Yes">
+              <label class="yc-label">Co-Debtor Address</label>
+              <div class="yc-radio-group">
+                <label><input type="radio" name="cd_address_type" value="Same as Debtor"> Same as Debtor</label>
+                <label><input type="radio" name="cd_address_type" value="Different"> Different</label>
+              </div>
+            </div>
+          </div>
+
+          <div id="codebtorFields" data-yc-show-when="is_codebtor" data-yc-show-value="Yes">
+            <div class="yc-section-pair">
+              <div class="yc-section">
+                <div class="yc-row">
+                  <div class="yc-field"><label class="yc-label">First Name</label><input type="text" name="cd_fname"></div>
+                  <div class="yc-field"><label class="yc-label">Middle</label><input type="text" name="cd_mname"></div>
+                  <div class="yc-field"><label class="yc-label">Last Name</label><input type="text" name="cd_lname"></div>
+                </div>
+                <div class="yc-row">
+                  <div class="yc-field"><label class="yc-label">Phone</label><input type="text" name="cd_phone" data-yc-mask="phone"></div>
+                  <div class="yc-field"><label class="yc-label">Email</label><input type="email" name="cd_email"></div>
+                </div>
+                <div class="yc-row">
+                  <div class="yc-field"><label class="yc-label">DOB</label><input type="date" name="cd_dob"></div>
+                  <div class="yc-field"><label class="yc-label">SSN</label><input type="text" name="cd_ssn" data-yc-mask="ssn"></div>
+                </div>
+              </div>
+              <div class="yc-section" id="cdAddressSection" data-yc-show-when="cd_address_type" data-yc-show-value="Different">
+                <div class="yc-section-title">Co-Debtor Address</div>
+                <div class="yc-row"><div class="yc-field"><input type="text" name="cd_address" placeholder="Street address"></div></div>
+                <div class="yc-row">
+                  <div class="yc-field yc-2x"><input type="text" name="cd_city" placeholder="City"></div>
+                  <div class="yc-field yc-fixed-sm"><input type="text" name="cd_state" placeholder="State"></div>
+                  <div class="yc-field yc-fixed-md"><input type="text" name="cd_zip" placeholder="ZIP"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Prior Bankruptcy -->
+      <div class="yc-section">
+        <div class="yc-field">
+          <label class="yc-label">Prior Bankruptcy?</label>
+          <div class="yc-radio-group">
+            <label><input type="radio" name="prior_bankruptcy" value="Yes"> Yes</label>
+            <label><input type="radio" name="prior_bankruptcy" value="No"> No</label>
+            <label><input type="radio" name="prior_bankruptcy" value="Unknown"> Unknown</label>
+          </div>
+        </div>
+        <div class="yc-repeater" id="priorBkRepeater" data-yc-show-when="prior_bankruptcy" data-yc-show-value="Yes">
+          <div class="yc-section-title">Prior Bankruptcies</div>
+          <button type="button" class="yc-repeater-add" data-repeater="prior_bankruptcies">+ Add Prior Bankruptcy</button>
+        </div>
+      </div>
+
+      <!-- Reasons / Client Wants -->
+      <div class="yc-row">
+        <div class="yc-field"><label class="yc-label">Reasons for Bankruptcy (from Client)</label><textarea name="reasons_for_bk" rows="4" maxlength="3000"></textarea></div>
+        <div class="yc-field"><label class="yc-label">Client Wants Us To Know (from Client)</label><textarea name="client_wants" rows="4" maxlength="3000"></textarea></div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 2: HOUSING / AUTO / ASSETS                                    -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="yc-tab-panel">
+      <!-- Housing -->
+      <div class="yc-section">
+        <div class="yc-section-title">Housing</div>
+        <div class="yc-row">
+          <div class="yc-field">
+            <div class="yc-radio-group">
+              <label><input type="radio" name="housing" value="Own"> Own</label>
+              <label><input type="radio" name="housing" value="Renting"> Renting</label>
+              <label><input type="radio" name="housing" value="Other"> Other</label>
+            </div>
+          </div>
+          <div class="yc-field yc-2x"><label class="yc-label">Housing Notes</label><textarea name="housing_notes" rows="2" maxlength="2000"></textarea></div>
+        </div>
+
+        <!-- Own section -->
+        <div data-yc-show-when="housing" data-yc-show-value="Own">
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">Mortgage Company</label><input type="text" name="mortgage_company"></div>
+            <div class="yc-field"><label class="yc-label">Monthly Payment</label><input type="text" name="monthly_payment"></div>
+          </div>
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">House Value (Assessed)</label><input type="text" name="house_value_assessed"></div>
+            <div class="yc-field"><label class="yc-label">House Value (Zillow)</label><input type="text" name="house_value_zillow"></div>
+            <div class="yc-field"><label class="yc-label">Amount Owed</label><input type="text" name="amount_owed_house"></div>
+            <div class="yc-field"><label class="yc-label">Property Taxes Owed</label><input type="text" name="property_taxes"></div>
+          </div>
+          <div class="yc-row">
+            <div class="yc-field">
+              <label class="yc-label">Current on Payments?</label>
+              <div class="yc-radio-group">
+                <label><input type="radio" name="current_on_payments" value="Yes"> Yes</label>
+                <label><input type="radio" name="current_on_payments" value="No"> No</label>
+              </div>
+            </div>
+            <div class="yc-field" data-yc-show-when="current_on_payments" data-yc-show-value="No">
+              <label class="yc-label">Arrearage Amount</label><input type="text" name="arrearage_amount">
+            </div>
+            <div class="yc-field">
+              <label class="yc-label">Foreclosure Pending?</label>
+              <div class="yc-radio-group">
+                <label><input type="radio" name="foreclosure_pending" value="Yes"> Yes</label>
+                <label><input type="radio" name="foreclosure_pending" value="No"> No</label>
+              </div>
+            </div>
+            <div class="yc-field" data-yc-show-when="foreclosure_pending" data-yc-show-value="Yes">
+              <label class="yc-label">Foreclosure Sale Date</label><input type="text" name="foreclosure_sale_date">
+            </div>
+          </div>
+        </div>
+
+        <!-- Renting section -->
+        <div data-yc-show-when="housing" data-yc-show-value="Renting">
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">Monthly Rent</label><input type="text" name="monthly_payment_rent"></div>
+            <div class="yc-field">
+              <label class="yc-label">Eviction Case Pending?</label>
+              <div class="yc-radio-group">
+                <label><input type="radio" name="eviction_case" value="Yes"> Yes</label>
+                <label><input type="radio" name="eviction_case" value="No"> No</label>
+              </div>
+            </div>
+            <div class="yc-field" data-yc-show-when="eviction_case" data-yc-show-value="Yes">
+              <label class="yc-label">Eviction Hearing Date</label><input type="text" name="eviction_hearing_date">
+            </div>
+            <div class="yc-field">
+              <label class="yc-label">L/T Judgment?</label>
+              <div class="yc-radio-group">
+                <label><input type="radio" name="lt_judgment" value="Yes"> Yes</label>
+                <label><input type="radio" name="lt_judgment" value="No"> No</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vehicles -->
+      <div class="yc-section">
+        <div class="yc-section-title">Vehicle(s)</div>
+        <div class="yc-repeater" id="vehiclesRepeater">
+          <button type="button" class="yc-repeater-add" data-repeater="vehicles">+ Add Vehicle</button>
+        </div>
+      </div>
+
+      <!-- Major Assets -->
+      <div class="yc-section">
+        <div class="yc-section-title">Major Assets (worth more than $500)</div>
+        <div class="yc-row">
+          <div class="yc-field">
+            <div class="yc-radio-group">
+              <label><input type="radio" name="has_major_assets" value="Yes"> Yes</label>
+              <label><input type="radio" name="has_major_assets" value="No"> No</label>
+            </div>
+          </div>
+        </div>
+        <div data-yc-show-when="has_major_assets" data-yc-show-value="Yes">
+          <div class="yc-check-grid" data-yc-checkgroup="major_assets">
+            <label><input type="checkbox" value="Motorcycle"> Motorcycle</label>
+            <label><input type="checkbox" value="Car"> Car</label>
+            <label><input type="checkbox" value="Truck"> Truck</label>
+            <label><input type="checkbox" value="Trailer"> Trailer</label>
+            <label><input type="checkbox" value="Camper"> Camper</label>
+            <label><input type="checkbox" value="Boat"> Boat</label>
+            <label><input type="checkbox" value="Jet Ski"> Jet Ski</label>
+            <label><input type="checkbox" value="Artwork"> Artwork</label>
+            <label><input type="checkbox" value="Jewelry"> Jewelry</label>
+            <label><input type="checkbox" value="Coin collection"> Coin collection</label>
+            <label><input type="checkbox" value="Stamp collection"> Stamp collection</label>
+            <label><input type="checkbox" data-yc-other value="Other"> Other</label>
+            <div class="yc-other-text" style="display:none;"><input type="text" data-yc-other-text placeholder="Specify other assets"></div>
+          </div>
+          <div class="yc-field"><label class="yc-label">Major Assets Notes</label><textarea name="major_assets_notes" rows="3" maxlength="3000"></textarea></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 3: EMPLOYMENT                                                 -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="yc-tab-panel">
+      <div class="yc-section">
+        <div class="yc-section-title">Employment</div>
+        <div class="yc-field">
+          <label class="yc-label">Employed?</label>
+          <div class="yc-check-grid" data-yc-checkgroup="employed" style="grid-template-columns:1fr 1fr;">
+            <label><input type="checkbox" value="Debtor" id="empDebtor"> Debtor</label>
+            <label><input type="checkbox" value="Spouse" id="empSpouse"> Spouse</label>
+            <label><input type="checkbox" value="Debtor 2nd Job" id="empDebtor2"> Debtor 2nd Job</label>
+            <label><input type="checkbox" value="Spouse 2nd Job" id="empSpouse2"> Spouse 2nd Job</label>
+          </div>
+        </div>
+
+        <!-- Debtor job fields -->
+        <div id="debtorJobSection" style="display:none;">
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">Debtor Job</label><input type="text" name="debtor_job"></div>
+            <div class="yc-field"><label class="yc-label">Place of Employment</label><input type="text" name="debtor_employer"></div>
+            <div class="yc-field"><label class="yc-label">Total Income</label><input type="text" name="debtor_income"></div>
+          </div>
+        </div>
+        <!-- Spouse job fields -->
+        <div id="spouseJobSection" style="display:none;">
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">Spouse Job</label><input type="text" name="spouse_job"></div>
+            <div class="yc-field"><label class="yc-label">Place of Employment</label><input type="text" name="spouse_employer"></div>
+            <div class="yc-field"><label class="yc-label">Total Income</label><input type="text" name="spouse_income"></div>
+          </div>
+        </div>
+        <!-- Debtor 2nd job -->
+        <div id="debtor2ndSection" style="display:none;">
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">Debtor 2nd Job</label><input type="text" name="debtor_2nd_job"></div>
+            <div class="yc-field"><label class="yc-label">2nd Place of Employment</label><input type="text" name="debtor_2nd_employer"></div>
+          </div>
+        </div>
+        <!-- Spouse 2nd job -->
+        <div id="spouse2ndSection" style="display:none;">
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">Spouse 2nd Job</label><input type="text" name="spouse_2nd_job"></div>
+            <div class="yc-field"><label class="yc-label">2nd Place of Employment</label><input type="text" name="spouse_2nd_employer"></div>
+          </div>
+        </div>
+
+        <!-- Other Income -->
+        <div class="yc-section-pair">
+          <div class="yc-section">
+            <div class="yc-section-title">Debtor — Other Income</div>
+            <div class="yc-check-grid" data-yc-checkgroup="debtor_other_income" style="grid-template-columns:1fr;">
+              <label><input type="checkbox" value="Social Security - Retirement"> Social Security — Retirement</label>
+              <label><input type="checkbox" value="SSDI"> SSDI</label>
+              <label><input type="checkbox" value="Pension"> Pension</label>
+              <label><input type="checkbox" value="Unemployment"> Unemployment</label>
+              <label><input type="checkbox" value="Food stamps"> Food stamps</label>
+              <label><input type="checkbox" value="Gov't support"> Gov't support</label>
+              <label><input type="checkbox" data-yc-other value="Other"> Other</label>
+              <div class="yc-other-text" style="display:none;"><input type="text" data-yc-other-text placeholder="Specify"></div>
+            </div>
+          </div>
+          <div class="yc-section">
+            <div class="yc-section-title">Spouse — Other Income</div>
+            <div class="yc-check-grid" data-yc-checkgroup="spouse_other_income" style="grid-template-columns:1fr;">
+              <label><input type="checkbox" value="Social Security - Retirement"> Social Security — Retirement</label>
+              <label><input type="checkbox" value="SSDI"> SSDI</label>
+              <label><input type="checkbox" value="Pension"> Pension</label>
+              <label><input type="checkbox" value="Unemployment"> Unemployment</label>
+              <label><input type="checkbox" value="Food stamps"> Food stamps</label>
+              <label><input type="checkbox" value="Gov't support"> Gov't support</label>
+              <label><input type="checkbox" data-yc-other value="Other"> Other</label>
+              <div class="yc-other-text" style="display:none;"><input type="text" data-yc-other-text placeholder="Specify"></div>
+            </div>
+          </div>
+        </div>
+        <div class="yc-field"><label class="yc-label">Employment Notes</label><textarea name="employment_notes" rows="3" maxlength="3000"></textarea></div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 4: ISSUES & STUDENT LOANS                                     -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="yc-tab-panel">
+      <div class="yc-section">
+        <div class="yc-section-title">Debt</div>
+        <div class="yc-row"><div class="yc-field"><label class="yc-label">Total Debt</label><input type="text" name="total_debt"></div></div>
+        <div class="yc-field">
+          <label class="yc-label">Type (check all that apply)</label>
+          <div class="yc-check-grid" data-yc-checkgroup="debt_type" style="grid-template-columns:1fr 1fr 1fr 1fr;">
+            <label><input type="checkbox" value="Wage Garnishment - Active" class="debt-garnish"> Wage Garnishment</label>
+            <label><input type="checkbox" value="State Tax Garnishment - Active" class="debt-garnish"> State Tax Garnish</label>
+            <label><input type="checkbox" value="Lawsuit pending (pre-judgment)" class="debt-lawsuit"> Lawsuit pending</label>
+            <label><input type="checkbox" value="Judgment (pre-garnishment)"> Judgment (pre-garn)</label>
+            <label><input type="checkbox" value="Mortgage"> Mortgage</label>
+            <label><input type="checkbox" value="Pre-Foreclosure" class="debt-lawsuit"> Pre-Foreclosure</label>
+            <label><input type="checkbox" value="Post-Foreclosure" class="debt-lawsuit"> Post-Foreclosure</label>
+            <label><input type="checkbox" value="HELOC?" class="debt-loan"> HELOC?</label>
+            <label><input type="checkbox" value="Eviction Threatened"> Eviction Threatened</label>
+            <label><input type="checkbox" value="L/T Judgment" class="debt-lawsuit"> L/T Judgment</label>
+            <label><input type="checkbox" value="Vehicle - currently due"> Vehicle — due</label>
+            <label><input type="checkbox" value="Recent Repo"> Recent Repo</label>
+            <label><input type="checkbox" value="Old Repo"> Old Repo</label>
+            <label><input type="checkbox" value="Credit card"> Credit card</label>
+            <label><input type="checkbox" value="Utilities"> Utilities</label>
+            <label><input type="checkbox" value="Medical"> Medical</label>
+            <label><input type="checkbox" value="Payday Loans" class="debt-loan"> Payday Loans</label>
+            <label><input type="checkbox" value="Student Loans" class="debt-loan"> Student Loans</label>
+            <label><input type="checkbox" data-yc-other value="Other"> Other</label>
+            <div class="yc-other-text" style="display:none;"><input type="text" data-yc-other-text placeholder="Specify other debt type"></div>
+          </div>
+        </div>
+
+        <!-- Garnishment details (conditional) -->
+        <div id="garnishmentSection" style="display:none;">
+          <div class="yc-row">
+            <div class="yc-field"><label class="yc-label">Garnishment Start Date</label><input type="date" name="garnishment_start"></div>
+            <div class="yc-field yc-2x"><label class="yc-label">Garnishment Court / Case No / Notes</label><input type="text" name="garnishment_court"></div>
+          </div>
+        </div>
+
+        <!-- Lawsuits repeater (conditional) -->
+        <div id="lawsuitsSection" style="display:none;">
+          <div class="yc-repeater" id="lawsuitsRepeater">
+            <div class="yc-section-title">Lawsuits</div>
+            <button type="button" class="yc-repeater-add" data-repeater="lawsuits">+ Add Lawsuit</button>
+          </div>
+        </div>
+
+        <!-- Loan date (conditional) -->
+        <div id="loanDateSection" style="display:none;">
+          <div class="yc-row"><div class="yc-field"><label class="yc-label">Loan Date</label><input type="text" name="loan_date"></div></div>
+        </div>
+
+        <div class="yc-field"><label class="yc-label">Debt Notes</label><textarea name="debt_notes" rows="3" maxlength="3000"></textarea></div>
+      </div>
+
+      <!-- Student Loans -->
+      <div class="yc-section">
+        <div class="yc-section-title">Student Loans</div>
+        <div class="yc-row">
+          <div class="yc-field">
+            <div class="yc-check-grid" data-yc-checkgroup="student_loans" style="grid-template-columns:1fr;">
+              <label><input type="checkbox" value="Needs Student Loans Assistance"> Needs Student Loans Assistance</label>
+              <label><input type="checkbox" value="Student Loans Appointment Set"> Student Loans Appointment Set</label>
+              <label><input type="checkbox" value="Already enrolled in IDR Plan (eg. SAVE)"> Already enrolled in IDR Plan</label>
+            </div>
+          </div>
+          <div class="yc-field"><label class="yc-label">Notes — Student Loans</label><textarea name="student_loan_notes" rows="3" maxlength="3000"></textarea></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 5: TAXES                                                      -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="yc-tab-panel">
+      <div class="yc-section">
+        <div class="yc-section-title">Taxes</div>
+        <div class="yc-field">
+          <label class="yc-label">Current on Tax Returns?</label>
+          <div class="yc-radio-group">
+            <label><input type="radio" name="current_on_returns" value="Yes"> Yes</label>
+            <label><input type="radio" name="current_on_returns" value="No"> No</label>
+            <label><input type="radio" name="current_on_returns" value="Unknown"> Unknown</label>
+          </div>
+        </div>
+
+        <div class="yc-row">
+          <div class="yc-field">
+            <label class="yc-label">Federal Tax Status</label>
+            <div class="yc-radio-group">
+              <label><input type="radio" name="federal_tax" value="Refund expected"> Refund</label>
+              <label><input type="radio" name="federal_tax" value="Owe taxes"> Owe</label>
+              <label><input type="radio" name="federal_tax" value="Neither"> Neither</label>
+              <label><input type="radio" name="federal_tax" value="Unknown"> Unknown</label>
+            </div>
+          </div>
+          <div class="yc-field" data-yc-show-when="federal_tax" data-yc-show-value="Refund expected">
+            <label class="yc-label">Refund Amount (Federal)</label><input type="text" name="federal_refund">
+          </div>
+        </div>
+
+        <div class="yc-row">
+          <div class="yc-field">
+            <label class="yc-label">State Tax Status</label>
+            <div class="yc-radio-group">
+              <label><input type="radio" name="state_tax" value="Refund expected"> Refund</label>
+              <label><input type="radio" name="state_tax" value="Owe taxes"> Owe</label>
+              <label><input type="radio" name="state_tax" value="Neither"> Neither</label>
+              <label><input type="radio" name="state_tax" value="Unknown"> Unknown</label>
+            </div>
+          </div>
+          <div class="yc-field" data-yc-show-when="state_tax" data-yc-show-value="Refund expected">
+            <label class="yc-label">Refund Amount (State)</label><input type="text" name="state_refund">
+          </div>
+        </div>
+
+        <div data-yc-show-when="current_on_returns" data-yc-show-value="!Yes">
+          <div class="yc-field">
+            <label class="yc-label">Tax Follow Up</label>
+            <div class="yc-radio-group">
+              <label><input type="radio" name="tax_follow_up" value="Client Has Preparer"> Client Has Preparer</label>
+              <label><input type="radio" name="tax_follow_up" value="Need to Contact Allan"> Need to Contact Allan</label>
+              <label><input type="radio" name="tax_follow_up" value="Sent Email to Allan"> Sent Email to Allan</label>
+              <label><input type="radio" name="tax_follow_up" value="Unknown"> Unknown</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="yc-field"><label class="yc-label">Notes — Taxes</label><textarea name="tax_notes" rows="3" maxlength="3000"></textarea></div>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <!-- TAB 6: ASH AUTO                                                   -->
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <div class="yc-tab-panel">
+      <div class="yc-section">
+        <div class="yc-section-title">Ash Auto Scheduling</div>
+        <iframe id="ashAutoCalendly"
+          src="https://calendly.com/theashautogroup/bankruptcy-car-consultation?a2=Stuart%20Sandweiss"
+          style="width:100%;height:600px;border:none;" loading="lazy"></iframe>
+      </div>
+    </div>
+
+  </div><!-- /yc-tabs -->
+
+  <button type="button" class="yc-btn yc-btn-primary yc-btn-block" id="saveBtn">Save</button>
+</form>
+
+<!-- ═══ REPEATER TEMPLATES ═══ -->
+<template id="priorBkTemplate">
+  <div class="yc-repeater-item">
+    <div class="yc-row">
+      <div class="yc-field"><label class="yc-label">Case No.</label><input type="text" name="case_no"></div>
+      <div class="yc-field"><label class="yc-label">Date Filed</label><input type="date" name="date_filed"></div>
+      <div class="yc-field yc-2x"><label class="yc-label">Note</label><input type="text" name="note"></div>
+      <button type="button" class="yc-repeater-remove" title="Remove">✕</button>
+    </div>
+  </div>
+</template>
+
+<template id="vehicleTemplate">
+  <div class="yc-repeater-item">
+    <div class="yc-row">
+      <div class="yc-field yc-fixed-sm">
+        <label class="yc-label">Ownership</label>
+        <select name="ownership"><option value="">—</option><option>Own</option><option>Lease</option><option>None</option><option>Other</option></select>
+      </div>
+      <div class="yc-field"><label class="yc-label">Make / Model</label><input type="text" name="make_model"></div>
+      <div class="yc-field yc-fixed-sm"><label class="yc-label">Mileage</label><input type="text" name="mileage"></div>
+      <div class="yc-field yc-fixed-sm"><label class="yc-label">Value (KBB)</label><input type="text" name="value_kbb"></div>
+    </div>
+    <div class="yc-row">
+      <div class="yc-field yc-fixed-sm"><label class="yc-label">Monthly Pmt</label><input type="text" name="monthly_pmt"></div>
+      <div class="yc-field yc-fixed-sm"><label class="yc-label">Total Owed</label><input type="text" name="total_owed"></div>
+      <div class="yc-field yc-fixed-md">
+        <label class="yc-label">R⁴ Preference</label>
+        <select name="r4_preference"><option value="">—</option><option>Return</option><option>Replace (Ash)</option><option>Redemption (Hatfield)</option><option>Reaffirm</option></select>
+      </div>
+      <div class="yc-field yc-fixed-md">
+        <label class="yc-label">R⁴ Status</label>
+        <select name="r4_status"><option value="">—</option><option>Yes</option><option>Set Appt.</option><option>Sent Email</option></select>
+      </div>
+      <div class="yc-field"><label class="yc-label">Notes</label><input type="text" name="vehicle_note"></div>
+      <button type="button" class="yc-repeater-remove" title="Remove">✕</button>
+    </div>
+  </div>
+</template>
+
+<template id="lawsuitTemplate">
+  <div class="yc-repeater-item">
+    <div class="yc-row">
+      <div class="yc-field"><label class="yc-label">Name of Court</label><input type="text" name="court_name"></div>
+      <div class="yc-field"><label class="yc-label">Case Number</label><input type="text" name="case_number_lawsuit"></div>
+      <div class="yc-field yc-2x"><label class="yc-label">Note</label><input type="text" name="note"></div>
+      <button type="button" class="yc-repeater-remove" title="Remove">✕</button>
+    </div>
+  </div>
+</template>
+
+<script src="/js/yc-forms.js"></script>
+<script>
+  const P = window.parent;
+  const params = new URLSearchParams(location.search);
+  const caseId = params.get('case_id');
+
+  if (!caseId) {
+    document.body.innerHTML = '<p style="color:red;padding:20px;">Missing case_id parameter.</p>';
+  } else {
+
+    const form = new YCForm({
+      formKey:       'issn',
+      schemaVersion: 1,
+      linkType:      'case',
+      linkId:        caseId,
+      container:     '#issnForm',
+      dataMode:      'snapshot',
+      autosave:      true,
+      autosaveMs:    3000,
+      readonly:      false,
+
+      fields: {
+        // Hidden
+        case_id:      { el: '[name="case_id"]',      type: 'text', readonly: true },
+        client_id:    { el: '[name="client_id"]',     type: 'text', readonly: true },
+        cd_id:        { el: '[name="cd_id"]',         type: 'text', readonly: true },
+        // Sticky header
+        client_name:  { el: '[name="client_name"]',   type: 'text', readonly: true },
+        cd_name:      { el: '[name="cd_name"]',       type: 'text', readonly: true },
+        case_number:  { el: '[name="case_number"]',   type: 'text', readonly: true },
+        intake_notes: { el: '[name="intake_notes"]',  type: 'textarea' },
+        // Tab 1: Client Info
+        client_fname: { el: '[name="client_fname"]',  type: 'text' },
+        client_mname: { el: '[name="client_mname"]',  type: 'text' },
+        client_lname: { el: '[name="client_lname"]',  type: 'text' },
+        client_phone: { el: '[name="client_phone"]',  type: 'text' },
+        client_email: { el: '[name="client_email"]',  type: 'text' },
+        client_dob:   { el: '[name="client_dob"]',    type: 'date' },
+        client_ssn:   { el: '[name="client_ssn"]',    type: 'text' },
+        client_address: { el: '[name="client_address"]', type: 'text' },
+        client_city:  { el: '[name="client_city"]',   type: 'text' },
+        client_state: { el: '[name="client_state"]',  type: 'text' },
+        client_zip:   { el: '[name="client_zip"]',    type: 'text' },
+        marital_status: { el: '[name="marital_status"]', type: 'radio' },
+        divorce_when: { el: '[name="divorce_when"]',  type: 'text' },
+        divorce_court:{ el: '[name="divorce_court"]', type: 'text' },
+        has_dependents: { el: '[name="has_dependents"]', type: 'checkbox' },
+        dependent_info: { el: '[name="dependent_info"]', type: 'text' },
+        household_size: { el: '[name="household_size"]', type: 'text' },
+        basic_info_notes: { el: '[name="basic_info_notes"]', type: 'textarea' },
+        is_codebtor:  { el: '[name="is_codebtor"]',   type: 'radio' },
+        cd_address_type: { el: '[name="cd_address_type"]', type: 'radio' },
+        cd_fname:     { el: '[name="cd_fname"]',      type: 'text' },
+        cd_mname:     { el: '[name="cd_mname"]',      type: 'text' },
+        cd_lname:     { el: '[name="cd_lname"]',      type: 'text' },
+        cd_phone:     { el: '[name="cd_phone"]',      type: 'text' },
+        cd_email:     { el: '[name="cd_email"]',      type: 'text' },
+        cd_dob:       { el: '[name="cd_dob"]',        type: 'date' },
+        cd_ssn:       { el: '[name="cd_ssn"]',        type: 'text' },
+        cd_address:   { el: '[name="cd_address"]',    type: 'text' },
+        cd_city:      { el: '[name="cd_city"]',       type: 'text' },
+        cd_state:     { el: '[name="cd_state"]',      type: 'text' },
+        cd_zip:       { el: '[name="cd_zip"]',        type: 'text' },
+        prior_bankruptcy: { el: '[name="prior_bankruptcy"]', type: 'radio' },
+        reasons_for_bk:  { el: '[name="reasons_for_bk"]', type: 'textarea' },
+        client_wants:    { el: '[name="client_wants"]', type: 'textarea' },
+        // Tab 2: Housing / Auto / Assets
+        housing:      { el: '[name="housing"]',       type: 'radio' },
+        housing_notes:{ el: '[name="housing_notes"]', type: 'textarea' },
+        mortgage_company: { el: '[name="mortgage_company"]', type: 'text' },
+        monthly_payment:  { el: '[name="monthly_payment"]', type: 'text' },
+        house_value_assessed: { el: '[name="house_value_assessed"]', type: 'text' },
+        house_value_zillow:   { el: '[name="house_value_zillow"]', type: 'text' },
+        amount_owed_house:    { el: '[name="amount_owed_house"]', type: 'text' },
+        property_taxes: { el: '[name="property_taxes"]', type: 'text' },
+        current_on_payments: { el: '[name="current_on_payments"]', type: 'radio' },
+        arrearage_amount:    { el: '[name="arrearage_amount"]', type: 'text' },
+        foreclosure_pending: { el: '[name="foreclosure_pending"]', type: 'radio' },
+        foreclosure_sale_date: { el: '[name="foreclosure_sale_date"]', type: 'text' },
+        monthly_payment_rent: { el: '[name="monthly_payment_rent"]', type: 'text' },
+        eviction_case:   { el: '[name="eviction_case"]', type: 'radio' },
+        eviction_hearing_date: { el: '[name="eviction_hearing_date"]', type: 'text' },
+        lt_judgment:     { el: '[name="lt_judgment"]', type: 'radio' },
+        has_major_assets: { el: '[name="has_major_assets"]', type: 'radio' },
+        major_assets:    { el: '[data-yc-checkgroup="major_assets"]', type: 'checkgroup' },
+        major_assets_notes: { el: '[name="major_assets_notes"]', type: 'textarea' },
+        // Tab 3: Employment
+        employed:     { el: '[data-yc-checkgroup="employed"]', type: 'checkgroup' },
+        debtor_job:   { el: '[name="debtor_job"]',    type: 'text' },
+        debtor_employer: { el: '[name="debtor_employer"]', type: 'text' },
+        debtor_income:{ el: '[name="debtor_income"]', type: 'text' },
+        spouse_job:   { el: '[name="spouse_job"]',    type: 'text' },
+        spouse_employer: { el: '[name="spouse_employer"]', type: 'text' },
+        spouse_income:{ el: '[name="spouse_income"]', type: 'text' },
+        debtor_2nd_job: { el: '[name="debtor_2nd_job"]', type: 'text' },
+        debtor_2nd_employer: { el: '[name="debtor_2nd_employer"]', type: 'text' },
+        spouse_2nd_job: { el: '[name="spouse_2nd_job"]', type: 'text' },
+        spouse_2nd_employer: { el: '[name="spouse_2nd_employer"]', type: 'text' },
+        debtor_other_income: { el: '[data-yc-checkgroup="debtor_other_income"]', type: 'checkgroup' },
+        spouse_other_income: { el: '[data-yc-checkgroup="spouse_other_income"]', type: 'checkgroup' },
+        employment_notes: { el: '[name="employment_notes"]', type: 'textarea' },
+        // Tab 4: Issues & Student Loans
+        total_debt:   { el: '[name="total_debt"]',    type: 'text' },
+        debt_type:    { el: '[data-yc-checkgroup="debt_type"]', type: 'checkgroup' },
+        garnishment_start: { el: '[name="garnishment_start"]', type: 'date' },
+        garnishment_court: { el: '[name="garnishment_court"]', type: 'text' },
+        loan_date:    { el: '[name="loan_date"]',     type: 'text' },
+        debt_notes:   { el: '[name="debt_notes"]',    type: 'textarea' },
+        student_loans: { el: '[data-yc-checkgroup="student_loans"]', type: 'checkgroup' },
+        student_loan_notes: { el: '[name="student_loan_notes"]', type: 'textarea' },
+        // Tab 5: Taxes
+        current_on_returns: { el: '[name="current_on_returns"]', type: 'radio' },
+        federal_tax:  { el: '[name="federal_tax"]',   type: 'radio' },
+        federal_refund: { el: '[name="federal_refund"]', type: 'text' },
+        state_tax:    { el: '[name="state_tax"]',     type: 'radio' },
+        state_refund: { el: '[name="state_refund"]',  type: 'text' },
+        tax_follow_up: { el: '[name="tax_follow_up"]', type: 'radio' },
+        tax_notes:    { el: '[name="tax_notes"]',     type: 'textarea' },
+      },
+
+      repeaters: {
+        prior_bankruptcies: {
+          container: '#priorBkRepeater',
+          template:  '#priorBkTemplate',
+          fields: { case_no: { type: 'text' }, date_filed: { type: 'date' }, note: { type: 'text' } }
+        },
+        vehicles: {
+          container: '#vehiclesRepeater',
+          template:  '#vehicleTemplate',
+          fields: {
+            ownership: { type: 'select' }, make_model: { type: 'text' },
+            mileage: { type: 'text' }, value_kbb: { type: 'text' },
+            monthly_pmt: { type: 'text' }, total_owed: { type: 'text' },
+            r4_preference: { type: 'select' }, r4_status: { type: 'select' },
+            vehicle_note: { type: 'text' }
+          }
+        },
+        lawsuits: {
+          container: '#lawsuitsRepeater',
+          template:  '#lawsuitTemplate',
+          fields: { court_name: { type: 'text' }, case_number_lawsuit: { type: 'text' }, note: { type: 'text' } }
+        },
+      },
+
+      endpoints: {
+        load: { method: 'GET', url: '/api/cases/{linkId}?include=clients', path: 'case' },
+      },
+
+      onSubmit: {
+        // Snapshot only — no PATCH to cases. All data lives in form_submissions.
+      },
+
+      onLoad: async (data) => {
+        const loadResult = form._loadResult || {};
+        const caseData = loadResult.case || {};
+        const clients = loadResult.clients || [];
+        const PC = clients.find(c => c.relate_type === 'Primary');
+        const SC = clients.find(c => c.relate_type === 'Secondary');
+
+        // Prefill only if fields are empty (snapshot guard)
+        function prefill(name, val) {
+          const el = document.querySelector(`[name="${name}"]`);
+          if (el && !el.value && val) {
+            // Normalize dates for date inputs
+            if (el.type === 'date' && val) {
+              const str = (val instanceof Date) ? val.toISOString() : String(val);
+              const dateOnly = str.split('T')[0];
+              if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) { el.value = dateOnly; return; }
+            }
+            el.value = val;
+          }
+        }
+
+        prefill('case_id', caseData.case_id);
+        prefill('case_number', caseData.case_number_full || caseData.case_number);
+
+        if (PC) {
+          prefill('client_id', PC.contact_id);
+          prefill('client_name', PC.contact_name);
+          prefill('client_fname', PC.contact_fname);
+          prefill('client_mname', PC.contact_mname);
+          prefill('client_lname', PC.contact_lname);
+          prefill('client_phone', PC.contact_phone);
+          prefill('client_email', PC.contact_email);
+          prefill('client_dob', PC.contact_dob);
+          prefill('client_ssn', PC.contact_ssn);
+          prefill('client_address', PC.contact_address);
+          prefill('client_city', PC.contact_city);
+          prefill('client_state', PC.contact_state);
+          prefill('client_zip', PC.contact_zip);
+        }
+
+        if (SC) {
+          prefill('cd_id', SC.contact_id);
+          prefill('cd_name', SC.contact_name);
+          prefill('cd_fname', SC.contact_fname);
+          prefill('cd_mname', SC.contact_mname);
+          prefill('cd_lname', SC.contact_lname);
+          prefill('cd_phone', SC.contact_phone);
+          prefill('cd_email', SC.contact_email);
+          prefill('cd_dob', SC.contact_dob);
+          prefill('cd_ssn', SC.contact_ssn);
+          document.getElementById('cdNameField').style.display = '';
+        }
+      },
+
+      onSave: () => {
+        try { P.postMessage({ type: 'form-saved', form: 'issn' }, '*'); } catch (_) {}
+      },
+    });
+
+    form.init().then(() => {
+      form.setupTabs('.yc-tab-bar', '.yc-tab-panel');
+
+      // ── Custom conditional: Dependents checkbox ──
+      const depCb = document.getElementById('hasDep');
+      const depField = document.getElementById('dependentInfoField');
+      function toggleDep() { depField.style.display = depCb.checked ? '' : 'none'; }
+      depCb.addEventListener('change', toggleDep);
+      toggleDep();
+
+      // ── Custom conditional: Employment checkboxes ──
+      function setupEmploymentToggle(cbId, sectionId) {
+        const cb = document.getElementById(cbId);
+        const section = document.getElementById(sectionId);
+        if (!cb || !section) return;
+        function toggle() { section.style.display = cb.checked ? '' : 'none'; }
+        cb.addEventListener('change', toggle);
+        toggle();
+      }
+      setupEmploymentToggle('empDebtor', 'debtorJobSection');
+      setupEmploymentToggle('empSpouse', 'spouseJobSection');
+      setupEmploymentToggle('empDebtor2', 'debtor2ndSection');
+      setupEmploymentToggle('empSpouse2', 'spouse2ndSection');
+
+      // ── Custom conditional: Debt type checkboxes ──
+      function setupDebtTypeToggle(cssClass, sectionId) {
+        const section = document.getElementById(sectionId);
+        if (!section) return;
+        const cbs = document.querySelectorAll(`.${cssClass}`);
+        function toggle() { section.style.display = Array.from(cbs).some(c => c.checked) ? '' : 'none'; }
+        cbs.forEach(cb => cb.addEventListener('change', toggle));
+        toggle();
+      }
+      setupDebtTypeToggle('debt-garnish', 'garnishmentSection');
+      setupDebtTypeToggle('debt-lawsuit', 'lawsuitsSection');
+      setupDebtTypeToggle('debt-loan', 'loanDateSection');
+
+      // ── Other checkbox toggles ──
+      document.querySelectorAll('[data-yc-other]').forEach(otherCb => {
+        const grid = otherCb.closest('.yc-check-grid');
+        const otherDiv = grid ? grid.querySelector('.yc-other-text') : null;
+        if (otherCb && otherDiv) {
+          otherCb.addEventListener('change', () => {
+            otherDiv.style.display = otherCb.checked ? '' : 'none';
+          });
+        }
+      });
+
+      // ── Co-debtor name in sticky header ──
+      const cdNameEl = document.querySelector('[name="cd_name"]');
+      if (cdNameEl && cdNameEl.value) {
+        document.getElementById('cdNameField').style.display = '';
+      }
+
+      // ── Calendly: pass client name ──
+      const nameEl = document.querySelector('[name="client_name"]');
+      if (nameEl && nameEl.value) {
+        const frame = document.getElementById('ashAutoCalendly');
+        if (frame) {
+          const url = new URL(frame.src);
+          url.searchParams.set('name', nameEl.value);
+          frame.src = url.toString();
+        }
+      }
+    });
+  }
+</script>
+</body>
+</html>
