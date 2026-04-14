@@ -7,6 +7,7 @@ require("dotenv").config();
 const app = express();
 var corsOptions = { origin: "*" };
 app.use(cors(corsOptions));
+app.set('trust proxy', 1);//google cloud run
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(
