@@ -982,7 +982,7 @@ window.addEventListener('message', async (e) => {
             }
           }
 
-          E("SendingForm").src = `forms/sendingform.html?case_id=${caseData.case_id}`;
+          E("SendingForm").src = `sendingform.html?case_id=${caseData.case_id}`;
           /*
           E("SendingForm").src =*`https://jotform.com/241675479457472?caseId=${caseData.case_id}&contact1[first]=${PC?.contact_fname||""}&contact1[middle]=${PC?.contact_mname||""}&contact1[last]=${PC?.contact_lname||""}&number1[full]=${PC?.contact_phone||""}&email1=${PC?.contact_email||""}&clientId1=${PC?.contact_id||""}`;
           if (SC) {

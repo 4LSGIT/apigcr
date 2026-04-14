@@ -70,6 +70,9 @@
       <button class="tab" onclick="openTab(this, 'tabSend')">
         <i class="fa-solid fa-comments"></i> Sending Form
       </button>
+      <button class="tab" onclick="openTab(this, 'tabSendPre')">
+        <i class="fa-solid fa-comments"></i> New Sending Form Preview
+      </button>
       <button class="tab" onclick="openTab(this, 'tabCase')">
         <i class="fa-solid fa-landmark"></i> Case Details
       </button>
@@ -967,7 +970,9 @@
         Clear Form
       </button>
     </div>
-
+    <div id="tabSendPre" class="tab-content">
+      <iframe id="SendingFormPreview"></iframe>
+    </div>
     <div id="tabSend" class="tab-content">
       <iframe id="SendingForm"></iframe>
     </div>
@@ -994,6 +999,8 @@
   </div>
 
   <script>
+    window.apiSend = P.apiSend;     // relay for form iframes
+
     function openTab(tab, tabName) {
       var i, tabContent, tabLinks;
       if (tab) {
@@ -1188,6 +1195,7 @@
                 E("ISSNinfo").src  += `&maritalStatus=Married&isCD=Yes&CDname[first]=${SC.contact_fname}&CDname[middle]=${SC.contact_mname}&CDname[last]=${SC.contact_lname}&CDphone[full]=${SC.contact_phone}&CDDemail=${SC.contact_email}&CDid=${SC.contact_id}`;
               }
             }
+          E("SendingFormPreview").src = `sendingform.html?case_id=${caseData.case_id}`;
 
             E(
               "SendingForm"
