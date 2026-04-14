@@ -99,8 +99,10 @@
           <div class="yc-row"><div class="yc-field"><input type="text" name="client_address" placeholder="Street address"></div></div>
           <div class="yc-row">
             <div class="yc-field yc-2x"><input type="text" name="client_city" placeholder="City"></div>
-            <div class="yc-field yc-fixed-sm"><input type="text" name="client_state" placeholder="State"></div>
-            <div class="yc-field yc-fixed-md"><input type="text" name="client_zip" placeholder="ZIP"></div>
+            <div class="yc-field yc-fixed-sm"><input type="text" name="client_state" placeholder="State" maxlength="2"></div>
+          </div>
+          <div class="yc-row">
+            <div class="yc-field yc-fixed-md"><input type="text" name="client_zip" placeholder="ZIP code"></div>
           </div>
         </div>
       </div>
@@ -174,6 +176,7 @@
                   <div class="yc-field"><label class="yc-label">First Name</label><input type="text" name="cd_fname"></div>
                   <div class="yc-field"><label class="yc-label">Middle</label><input type="text" name="cd_mname"></div>
                   <div class="yc-field"><label class="yc-label">Last Name</label><input type="text" name="cd_lname"></div>
+                  <div class="yc-field yc-fixed-sm yc-field-locked"><label class="yc-label">ID</label><input type="text" name="cd_contact_id" data-yc-locked-msg="Auto-assigned on save if new"></div>
                 </div>
                 <div class="yc-row">
                   <div class="yc-field"><label class="yc-label">Phone</label><input type="text" name="cd_phone" data-yc-mask="phone"></div>
@@ -189,8 +192,10 @@
                 <div class="yc-row"><div class="yc-field"><input type="text" name="cd_address" placeholder="Street address"></div></div>
                 <div class="yc-row">
                   <div class="yc-field yc-2x"><input type="text" name="cd_city" placeholder="City"></div>
-                  <div class="yc-field yc-fixed-sm"><input type="text" name="cd_state" placeholder="State"></div>
-                  <div class="yc-field yc-fixed-md"><input type="text" name="cd_zip" placeholder="ZIP"></div>
+                  <div class="yc-field yc-fixed-sm"><input type="text" name="cd_state" placeholder="State" maxlength="2"></div>
+                </div>
+                <div class="yc-row">
+                  <div class="yc-field yc-fixed-md"><input type="text" name="cd_zip" placeholder="ZIP code"></div>
                 </div>
               </div>
             </div>
@@ -610,7 +615,7 @@
     <div class="yc-row">
       <div class="yc-field yc-fixed-sm"><label class="yc-label">Value (KBB)</label><input type="text" name="value_kbb"></div>
       <div class="yc-field yc-fixed-sm"><label class="yc-label">Monthly Pmt</label><input type="text" name="monthly_pmt"></div>
-      <div class="yc-field yc-fixed-sm"><label class="yc-label">Total Owed</label><input type="text" name="total_owed"></div>
+      <div class="yc-field yc-fixed-sm vehicle-total-owed"><label class="yc-label">Total Owed</label><input type="text" name="total_owed"></div>
       <div class="yc-field yc-fixed-md vehicle-lease-end" style="display:none;">
         <label class="yc-label">Lease End Date</label><input type="date" name="lease_end_date">
       </div>
@@ -693,6 +698,7 @@
         basic_info_notes: { el: '[name="basic_info_notes"]', type: 'textarea' },
         is_codebtor:  { el: '[name="is_codebtor"]',   type: 'radio' },
         cd_address_type: { el: '[name="cd_address_type"]', type: 'radio' },
+        cd_contact_id: { el: '[name="cd_contact_id"]', type: 'text', readonly: true },
         cd_fname:     { el: '[name="cd_fname"]',      type: 'text' },
         cd_mname:     { el: '[name="cd_mname"]',      type: 'text' },
         cd_lname:     { el: '[name="cd_lname"]',      type: 'text' },
@@ -791,7 +797,9 @@
       },
 
       onSubmit: {
-        // Snapshot only — no PATCH to cases. All data lives in form_submissions.
+        // Snapshot — no PATCH to cases. All data lives in form_submissions.
+        // Workflow for conditional automations (tax filing, Allan referral, etc.):
+        // workflow: { id: 0, initData: { source: 'issn' } },
       },
 
       onLoad: async (data) => {
@@ -836,6 +844,7 @@
 
         if (SC) {
           prefill('cd_id', SC.contact_id);
+          prefill('cd_contact_id', SC.contact_id);
           prefill('cd_name', SC.contact_name);
           prefill('cd_fname', SC.contact_fname);
           prefill('cd_mname', SC.contact_mname);
@@ -846,32 +855,125 @@
           prefill('cd_ssn', SC.contact_ssn);
           document.getElementById('cdNameField').style.display = '';
         }
+
+        // Trigger mask formatting on prefilled masked fields
+        document.querySelectorAll('[data-yc-mask]').forEach(el => {
+          if (el.value) el.dispatchEvent(new Event('blur'));
+        });
       },
 
-      onSave: () => {
+      onSave: async (result) => {
         try { P.postMessage({ type: 'form-saved', form: 'issn' }, '*'); } catch (_) {}
+
+        // ── Update contacts with info captured during the session ──
+        const d = form.collect();
+
+        // 1) Update primary contact
+        if (d.client_id) {
+          const pcPatch = {};
+          if (d.client_fname) pcPatch.contact_fname = d.client_fname;
+          if (d.client_mname !== undefined) pcPatch.contact_mname = d.client_mname;
+          if (d.client_lname) pcPatch.contact_lname = d.client_lname;
+          if (d.client_phone) pcPatch.contact_phone = d.client_phone;
+          if (d.client_email) pcPatch.contact_email = d.client_email;
+          if (d.client_dob)   pcPatch.contact_dob   = d.client_dob;
+          if (d.client_ssn)   pcPatch.contact_ssn   = d.client_ssn;
+          if (d.client_address) pcPatch.contact_address = d.client_address;
+          if (d.client_city)  pcPatch.contact_city  = d.client_city;
+          if (d.client_state) pcPatch.contact_state = d.client_state;
+          if (d.client_zip)   pcPatch.contact_zip   = d.client_zip;
+          if (Object.keys(pcPatch).length) {
+            P.apiSend(`/api/contacts/${d.client_id}`, 'PATCH', pcPatch).catch(err =>
+              console.warn('[ISSN] Primary contact update failed:', err));
+          }
+        }
+
+        // 2) Co-debtor: update existing or create new
+        if (d.is_codebtor === 'Yes' && d.cd_fname) {
+          const cdPatch = {};
+          cdPatch.contact_fname = d.cd_fname;
+          if (d.cd_mname !== undefined) cdPatch.contact_mname = d.cd_mname;
+          cdPatch.contact_lname = d.cd_lname;
+          if (d.cd_phone) cdPatch.contact_phone = d.cd_phone;
+          if (d.cd_email) cdPatch.contact_email = d.cd_email;
+          if (d.cd_dob)   cdPatch.contact_dob   = d.cd_dob;
+          if (d.cd_ssn)   cdPatch.contact_ssn   = d.cd_ssn;
+
+          // Address: copy from primary if "Same as Debtor"
+          if (d.cd_address_type === 'Same as Debtor') {
+            cdPatch.contact_address = d.client_address;
+            cdPatch.contact_city    = d.client_city;
+            cdPatch.contact_state   = d.client_state;
+            cdPatch.contact_zip     = d.client_zip;
+          } else if (d.cd_address_type === 'Different') {
+            if (d.cd_address) cdPatch.contact_address = d.cd_address;
+            if (d.cd_city)    cdPatch.contact_city    = d.cd_city;
+            if (d.cd_state)   cdPatch.contact_state   = d.cd_state;
+            if (d.cd_zip)     cdPatch.contact_zip     = d.cd_zip;
+          }
+
+          if (d.cd_contact_id) {
+            // Existing co-debtor: update
+            P.apiSend(`/api/contacts/${d.cd_contact_id}`, 'PATCH', cdPatch).catch(err =>
+              console.warn('[ISSN] Co-debtor update failed:', err));
+          } else {
+            // New co-debtor: create via intake route with all fields
+            try {
+              const intakeBody = {
+                firstName: d.cd_fname,
+                middleName: d.cd_mname || '',
+                lastName: d.cd_lname,
+                phone: d.cd_phone || '',
+                email: d.cd_email || '',
+              };
+              // Optional contact_* fields for the intake route
+              if (cdPatch.contact_dob)     intakeBody.contact_dob     = cdPatch.contact_dob;
+              if (cdPatch.contact_ssn)     intakeBody.contact_ssn     = cdPatch.contact_ssn;
+              if (cdPatch.contact_address) intakeBody.contact_address = cdPatch.contact_address;
+              if (cdPatch.contact_city)    intakeBody.contact_city    = cdPatch.contact_city;
+              if (cdPatch.contact_state)   intakeBody.contact_state   = cdPatch.contact_state;
+              if (cdPatch.contact_zip)     intakeBody.contact_zip     = cdPatch.contact_zip;
+
+              const created = await P.apiSend('/api/intake/contact', 'POST', intakeBody);
+              const newId = created.contact_id || created.id;
+              if (newId) {
+                await P.apiSend(`/api/cases/${d.case_id}/contacts`, 'POST', {
+                  contact_id: newId,
+                  relate_type: 'Secondary'
+                });
+                document.querySelector('[name="cd_contact_id"]').value = newId;
+                document.querySelector('[name="cd_id"]').value = newId;
+              }
+            } catch (err) {
+              console.warn('[ISSN] Co-debtor create failed:', err);
+            }
+          }
+        }
       },
     });
 
     form.init().then(() => {
       form.setupTabs('.yc-tab-bar', '.yc-tab-panel');
 
-      // ── Vehicle lease end date: show only when ownership = "Lease" ──
+      // ── Vehicle ownership conditional: Lease shows lease end, hides total owed ──
       const vehiclesContainer = document.getElementById('vehiclesRepeater');
       if (vehiclesContainer) {
+        function applyVehicleOwnership(item) {
+          const sel = item.querySelector('.vehicle-ownership');
+          if (!sel) return;
+          const isLease = sel.value === 'Lease';
+          const leaseField = item.querySelector('.vehicle-lease-end');
+          const owedField = item.querySelector('.vehicle-total-owed');
+          if (leaseField) leaseField.style.display = isLease ? '' : 'none';
+          if (owedField) owedField.style.display = isLease ? 'none' : '';
+        }
         vehiclesContainer.addEventListener('change', (e) => {
           if (!e.target.classList.contains('vehicle-ownership')) return;
           const item = e.target.closest('.yc-repeater-item');
-          if (!item) return;
-          const leaseField = item.querySelector('.vehicle-lease-end');
-          if (leaseField) leaseField.style.display = e.target.value === 'Lease' ? '' : 'none';
+          if (item) applyVehicleOwnership(item);
         });
-        // Apply to any pre-populated vehicles on load
-        vehiclesContainer.querySelectorAll('.vehicle-ownership').forEach(sel => {
-          const item = sel.closest('.yc-repeater-item');
-          const leaseField = item?.querySelector('.vehicle-lease-end');
-          if (leaseField) leaseField.style.display = sel.value === 'Lease' ? '' : 'none';
-        });
+        // Apply on load
+        vehiclesContainer.querySelectorAll('.yc-repeater-item').forEach(applyVehicleOwnership);
       }
 
       // ── Custom conditional: Dependents checkbox ──

@@ -33,6 +33,7 @@ const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { parseName } = require("../lib/parseName");
 const pabbly = require("../services/pabblyService");
+const contactService = require('../services/contactService');
 
 // ─────────────────────────────────────────
 // HELPERS
@@ -80,46 +81,88 @@ function normalizePhone(raw) {
 //   phone      string   required — phone number
 //   email      string   optional
 //   duplicate  string   "duplicate" to force new, otherwise "update" (default)
-// ─────────────────────────────────────────
-router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
-  const { name, phone, email, duplicate = "update" } = req.body;
+// ─────────────────────────────────────────────────────────────────
+// PATCH: routes/api.intake.js — POST /api/intake/contact
+//
+// Changes:
+//   1. Accept firstName/middleName/lastName as alternative to name
+//   2. Make phone optional (co-debtors may not have one yet)
+//   3. Accept all optional contact_* fields for both create and update
+//   4. Use contactService.createContact() for inserts
+//   5. Return contact_id consistently
+// ─────────────────────────────────────────────────────────────────
 
-  if (!name || !phone) {
-    return res.status(400).json({ status: "error", message: "Name and phone are required" });
+router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
+  const { name, firstName, middleName, lastName, phone, email, duplicate = "update" } = req.body;
+
+  // Parse name: accept either full name string or separate parts
+  let parsed;
+  if (firstName || lastName) {
+    parsed = {
+      firstName: firstName || '',
+      middleName: middleName || '',
+      lastName: lastName || '',
+    };
+  } else if (name) {
+    parsed = parseName(name);
+  } else {
+    return res.status(400).json({ status: "error", message: "Name is required (provide name, or firstName + lastName)" });
   }
 
-  const normalizedPhone = normalizePhone(phone);
-  if (!normalizedPhone) {
+  if (!parsed.firstName && !parsed.lastName) {
+    return res.status(400).json({ status: "error", message: "At least firstName or lastName is required" });
+  }
+
+  // Phone is optional (co-debtors may not have one)
+  const normalizedPhone = phone ? normalizePhone(phone) : null;
+  if (phone && normalizedPhone === false) {
     return res.status(400).json({ status: "error", message: "Invalid phone number" });
   }
 
-  const parsed = parseName(name);
-
   try {
-    // Look up existing contact by phone
-    const [existing] = await req.db.query(
-      "SELECT contact_id, contact_name FROM contacts WHERE contact_phone = ? LIMIT 1",
-      [normalizedPhone]
-    );
+    // Look up existing contact by phone (only if phone provided)
+    let existing = [];
+    if (normalizedPhone && duplicate !== "duplicate") {
+      [existing] = await req.db.query(
+        "SELECT contact_id, contact_name, contact_email FROM contacts WHERE contact_phone = ? LIMIT 1",
+        [normalizedPhone]
+      );
+    }
 
     if (existing.length && duplicate !== "duplicate") {
       // ── UPDATE existing contact ──
       const contact = existing[0];
 
-      await req.db.query(
-        `UPDATE contacts
-         SET contact_fname = ?,
-             contact_mname = ?,
-             contact_lname = ?,
-             contact_phone = ?,
-             contact_email = COALESCE(NULLIF(?, ''), contact_email)
-         WHERE contact_id = ?`,
-        [parsed.firstName, parsed.middleName, parsed.lastName, normalizedPhone, email || "", contact.contact_id]
-      );
+      const updateFields = {
+        contact_fname: parsed.firstName,
+        contact_mname: parsed.middleName,
+        contact_lname: parsed.lastName,
+      };
+      if (normalizedPhone) updateFields.contact_phone = normalizedPhone;
+      if (email) updateFields.contact_email = email;
 
-      // Re-fetch to get trigger-derived name fields
+      // Optional fields — only include if provided
+      const optionals = {
+        contact_address: req.body.contact_address,
+        contact_city:    req.body.contact_city,
+        contact_state:   req.body.contact_state,
+        contact_zip:     req.body.contact_zip,
+        contact_dob:     req.body.contact_dob,
+        contact_ssn:     req.body.contact_ssn,
+        contact_phone2:  req.body.contact_phone2,
+        contact_email2:  req.body.contact_email2,
+        contact_pname:   req.body.contact_pname,
+      };
+      for (const [col, val] of Object.entries(optionals)) {
+        if (val !== undefined && val !== null && val !== '') {
+          updateFields[col] = val;
+        }
+      }
+
+      await contactService.updateContact(req.db, contact.contact_id, updateFields);
+
       const [[updated]] = await req.db.query(
-        "SELECT contact_id, contact_name FROM contacts WHERE contact_id = ?",
+        "SELECT contact_name FROM contacts WHERE contact_id = ?",
         [contact.contact_id]
       );
 
@@ -128,35 +171,48 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
         message: `client ${contact.contact_id} found and updated`,
         action: "updated",
         id: contact.contact_id,
+        contact_id: contact.contact_id,
         name: updated.contact_name
       });
     }
 
     // ── INSERT new contact ──
-    const [result] = await req.db.query(
-      `INSERT INTO contacts (contact_fname, contact_mname, contact_lname, contact_phone, contact_email)
-       VALUES (?, ?, ?, ?, ?)`,
-      [parsed.firstName, parsed.middleName, parsed.lastName, normalizedPhone, email || null]
-    );
+    const created = await contactService.createContact(req.db, {
+      fname:   parsed.firstName,
+      mname:   parsed.middleName,
+      lname:   parsed.lastName,
+      phone:   normalizedPhone || '',
+      email:   email || '',
+      address: req.body.contact_address || '',
+      city:    req.body.contact_city    || '',
+      state:   req.body.contact_state   || '',
+      zip:     req.body.contact_zip     || '',
+      dob:     req.body.contact_dob     || null,
+      phone2:  req.body.contact_phone2  || '',
+      email2:  req.body.contact_email2  || '',
+      pname:   req.body.contact_pname   || '',
+      tags:    req.body.contact_tags    || '',
+      notes:   req.body.contact_notes   || '',
+      type:    req.body.contact_type    || 'Client',
+    });
 
-    const newId = result.insertId;
+    // SSN handled separately (createContact doesn't include it)
+    if (req.body.contact_ssn) {
+      await contactService.updateContact(req.db, created.contact_id, {
+        contact_ssn: req.body.contact_ssn
+      });
+    }
 
-    // Re-fetch for trigger-derived name
-    const [[newContact]] = await req.db.query(
-      "SELECT contact_id, contact_name FROM contacts WHERE contact_id = ?",
-      [newId]
-    );
-
-    // Log new contact creation
+    // Log
     await req.db.query(
       `INSERT INTO log (log_type, log_date, log_link, log_by, log_data)
        VALUES ('update', CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?, 0, ?)`,
       [
-        newId,
+        created.contact_id,
         JSON.stringify({
-          contact_id: newId,
+          contact_id: created.contact_id,
           action: "created",
-          contact_name: newContact.contact_name,
+          contact_name: created.contact_name,
           contact_phone: normalizedPhone,
           contact_email: email || null
         })
@@ -165,10 +221,11 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
 
     return res.json({
       status: "success",
-      message: `client ${newId} added`,
+      message: `client ${created.contact_id} added`,
       action: "created",
-      id: newId,
-      name: newContact.contact_name
+      id: created.contact_id,
+      contact_id: created.contact_id,
+      name: created.contact_name
     });
 
   } catch (err) {
