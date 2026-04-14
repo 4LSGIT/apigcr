@@ -854,6 +854,28 @@
           prefill('cd_dob', SC.contact_dob);
           prefill('cd_ssn', SC.contact_ssn);
           document.getElementById('cdNameField').style.display = '';
+
+          // If co-debtor exists, auto-set the radios that control visibility
+          const mRadio = document.querySelector('input[name="marital_status"]:checked');
+          if (!mRadio) {
+            // Default to Married if there's a co-debtor and marital status isn't set
+            const marriedRadio = document.querySelector('input[name="marital_status"][value="Married"]');
+            if (marriedRadio) marriedRadio.checked = true;
+          }
+          const cdRadio = document.querySelector('input[name="is_codebtor"]:checked');
+          if (!cdRadio) {
+            const yesRadio = document.querySelector('input[name="is_codebtor"][value="Yes"]');
+            if (yesRadio) yesRadio.checked = true;
+          }
+        }
+
+        // Prefill marital status from primary contact if available
+        if (PC && PC.contact_marital_status) {
+          prefill('marital_status', '');  // prefill won't work for radios, set manually
+          const msRadio = document.querySelector(`input[name="marital_status"][value="${PC.contact_marital_status}"]`);
+          if (msRadio && !document.querySelector('input[name="marital_status"]:checked')) {
+            msRadio.checked = true;
+          }
         }
 
         // Trigger mask formatting on prefilled masked fields

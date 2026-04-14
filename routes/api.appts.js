@@ -2,13 +2,14 @@
  * Appointments API
  * routes/api.appts.js
  *
- * GET  /api/appts              list with filters
- * GET  /api/appts/:id          single appointment
- * POST /api/appts              create
- * POST /api/appts/:id/attended mark attended
- * POST /api/appts/:id/no-show  mark no show
- * POST /api/appts/cancel       cancel
- * POST /api/appts/reschedule   reschedule (now or later)
+ * GET    /api/appts              list with filters
+ * GET    /api/appts/:id          single appointment (with contact, case, user)
+ * PATCH  /api/appts/:id          update fields (note, case_id, etc.)
+ * POST   /api/appts              create
+ * POST   /api/appts/:id/attended mark attended
+ * POST   /api/appts/:id/no-show  mark no show
+ * POST   /api/appts/cancel       cancel
+ * POST   /api/appts/reschedule   reschedule (now or later)
  */
 
 const express      = require('express');
@@ -104,11 +105,15 @@ router.get('/api/appts/:id', jwtOrApiKey, async (req, res) => {
          cases.case_type,
          cases.case_status,
          cases.case_stage,
+         cases.case_number,
+         COALESCE(cases.case_number_full, cases.case_number) AS case_number_display,
+         users.user_name,
          DATE_FORMAT(appts.appt_date, '%Y-%m-%dT%H:%i') AS appt_date_local,
          DATE_FORMAT(appts.appt_end,  '%Y-%m-%dT%H:%i') AS appt_end_local
        FROM appts
        LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id
        LEFT JOIN cases    ON appts.appt_case_id   = cases.case_id
+       LEFT JOIN users    ON users.user = appts.appt_with
        WHERE appts.appt_id = ?`,
       [apptId]
     );
@@ -119,6 +124,49 @@ router.get('/api/appts/:id', jwtOrApiKey, async (req, res) => {
   } catch (err) {
     console.error('GET /api/appts/:id error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch appointment' });
+  }
+});
+
+// ─── PATCH (update fields) ───
+router.patch('/api/appts/:id', jwtOrApiKey, async (req, res) => {
+  const apptId = parseInt(req.params.id);
+  if (!apptId) return res.status(400).json({ status: 'error', message: 'Invalid appointment ID' });
+
+  const fields = req.body;
+  if (!fields || !Object.keys(fields).length) {
+    return res.status(400).json({ status: 'error', message: 'No fields to update' });
+  }
+
+  // Whitelist — matches update_appointment internal function
+  const ALLOWED = new Set([
+    'appt_client_id', 'appt_case_id', 'appt_type', 'appt_length',
+    'appt_form', 'appt_status', 'appt_date', 'appt_gcal',
+    'appt_ref_id', 'appt_note', 'appt_platform', 'appt_with'
+  ]);
+
+  const keys = Object.keys(fields);
+  const blocked = keys.filter(k => !ALLOWED.has(k));
+  if (blocked.length) {
+    return res.status(400).json({ status: 'error', message: `Blocked columns: ${blocked.join(', ')}` });
+  }
+
+  try {
+    const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');
+    const values = [...keys.map(k => fields[k]), apptId];
+
+    const [result] = await req.db.query(
+      `UPDATE appts SET ${setClauses} WHERE appt_id = ?`,
+      values
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ status: 'error', message: 'Appointment not found' });
+    }
+
+    res.json({ status: 'success', message: 'Appointment updated', updated_fields: keys });
+  } catch (err) {
+    console.error('PATCH /api/appts/:id error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to update appointment' });
   }
 });
 

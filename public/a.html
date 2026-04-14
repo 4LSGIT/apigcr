@@ -103,22 +103,8 @@
     </button>
     <br /><br />
     <p>
-      Ver b0.40 — if anyone actually reads this,
-      <a href="#" onclick="
-    fetch(`https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY0MDYzMzA0M2M1MjZlNTUzNTUxMzMi_pc?user=${encodeURIComponent(user.user_name)}`);
-    Toast.fire({ title: `Wow ${user.user_name}, you actually clicked it!` });
-    return false;
-  ">
-        click here
-      </a>
-      and report feature requests or errors to
-      <a href='mailto:it@4lsg.com'>it@4lsg.com</a>.
+      Ver b0.50
     </p>
-    <!--
-      <p>
-        Ver b0.35 please report any feature requests or errors to
-        <a href="mailto:it@4lsg.com">it@4lsg.com</a>
-      </p>-->
   </div>
 
   <div id="tabBills" class="tab-main">
@@ -467,16 +453,40 @@
       });
     }
 
-    function showAppt(apptID, apptNum) {
-      Swal.fire({
-        title: `Appointment ${apptID}`,
-        html: `<iframe src="/apptform.html?apptID=${apptID}&apptNum=${apptNum}" width="100%" height="600" style="border:none;"></iframe>`,
-        width: "75%",
-        heightAuto: true,
-        showConfirmButton: false,
-        showCloseButton: true,
+
+    // Refresh any visible appointment lists
+    // tabAppts, case2 appts tab, contact2 appts tab will pick this up
+window.addEventListener('message', (e) => {
+  if (e.data?.type === 'appt-updated') {
+    try {
+      document.querySelectorAll('iframe').forEach(frame => {
+        try {
+          if (frame.contentWindow.refreshAppts) frame.contentWindow.refreshAppts();
+        } catch (_) {}
       });
+    } catch (_) {}
+  }
+});
+function showAppt(apptID) {
+  Swal.fire({
+    title: `Appointment ${apptID}`,
+    html: `<iframe src="/apptform2.html?apptID=${apptID}" width="100%"  style="border:none;height:650px;"></iframe>`,
+    width: "75%",
+    heightAuto: true,
+    showConfirmButton: false,
+    showCloseButton: true,
+    didClose: () => {
+      // Notify the active tab to refresh (if it has a refresh function)
+      // This catches any changes made inside the appointment form
+      try {
+        const activeIframe = document.querySelector('.tab-content[style*="block"] iframe');
+        if (activeIframe && activeIframe.contentWindow.refresh) {
+          activeIframe.contentWindow.refresh();
+        }
+      } catch (_) {}
     }
+  });
+}
 
     function tabApptsTimeChange(time) {
       if (time == "All") {
@@ -540,7 +550,7 @@
             const caseId = appt.appt_case_id || "";
             const name = appt.contact_name || "";
             row.innerHTML = `
-            <td><a href="#" onclick="showAppt(${appt.id}, ${apptNum})">${appt.id}</a></td>
+            <td><a href="#" onclick="showAppt(${appt.id})">${appt.id}</a></td>
             <td>${appt.format_date}</td>
             <td>${appt.time}</td>
             <td><a href="#" onclick="addFile('${name.replace(/'/g, "\\'")}','client','${appt.appt_client_id}');return false">${name}</a></td>
@@ -908,7 +918,6 @@
     }
 
     async function updateTask(taskId, action, onSuccess) {
-      // Find in current array first, fall back to API fetch
       let task = Array.isArray(tasks) ? tasks.find(t => +t.id === +taskId) : null;
       if (!task) {
         try {

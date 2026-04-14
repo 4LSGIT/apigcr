@@ -79,6 +79,7 @@
       <button class="tab" onclick="openTab(this, 'tabDet')">
         <i class="fa-brands fa-wpforms"></i> Detailed Questionaire
       </button>
+      <!--Temp section begin-->
       <br>Previews &rArr;
       <button class="tab" onclick="openTab(this, 'tabISSNPre')">
         <i class="fa-solid fa-comments"></i> New ISSN Preview
@@ -89,6 +90,7 @@
       <button class="tab" onclick="openTab(this, 'tabCasePre')">
         <i class="fa-solid fa-comments"></i> New Case Details Form Preview
       </button>&lArr; Previews
+      <!--Temp section end-->
     </div>
     <h4 style="color: #000">
       Primary Client Name:
@@ -978,7 +980,7 @@
       </button>
     </div>
 
-    <!--TEMP AREA-->
+    <!--Temp section begin-->
     <div id="tabSendPre" class="tab-content">
       <iframe id="SendingFormPreview"></iframe>
     </div>
@@ -988,7 +990,7 @@
     <div id="tabISSNPre" class="tab-content">
       <iframe id="ISSNPreview"></iframe>
     </div>
-
+    <!--Temp section end-->
 
     <div id="tabSend" class="tab-content">
       <iframe id="SendingForm"></iframe>
@@ -1212,10 +1214,11 @@
                 E("ISSNinfo").src  += `&maritalStatus=Married&isCD=Yes&CDname[first]=${SC.contact_fname}&CDname[middle]=${SC.contact_mname}&CDname[last]=${SC.contact_lname}&CDphone[full]=${SC.contact_phone}&CDDemail=${SC.contact_email}&CDid=${SC.contact_id}`;
               }
             }
+//Temp section begin
           E("SendingFormPreview").src = `sendingform.html?case_id=${caseData.case_id}`;
           E("CaseFormPreview").src = `/forms/caseform.html?case_id=${caseData.case_id}`;
           E("ISSNPreview").src = `/forms/issn.html?case_id=${caseData.case_id}`;
-
+//Temp section end
             E(
               "SendingForm"
             ).src = `https://jotform.com/241675479457472?caseId=${caseData.case_id}&contact1[first]=${PC.contact_fname}&contact1[middle]=${PC.contact_mname}&contact1[last]=${PC.contact_lname}&number1[full]=${PC.contact_phone}&email1=${PC.contact_email}&clientId1=${PC.contact_id}`;

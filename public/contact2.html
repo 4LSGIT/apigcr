@@ -552,7 +552,7 @@ function putAppt() {
     } else {
       rowHTML = `<td></td>`;
     }
-    row.innerHTML = `<td>${appt.appt_id}</td><td>${appt.appt_type}</td><td>${appt.format_date}</td><td>${appt.time}</td><td>${appt.appt_length}</td><td>${appt.appt_status}</td><td>${appt.appt_note||""}</td>${rowHTML}`;
+    row.innerHTML = `<td><a href="#" onclick="P.showAppt(${appt.appt_id})">${appt.appt_id}</a></td><td>${appt.appt_type}</td><td>${appt.format_date}</td><td>${appt.time}</td><td>${appt.appt_length}</td><td>${appt.appt_status}</td><td>${appt.appt_note||""}</td>${rowHTML}`;
   });
 }
 

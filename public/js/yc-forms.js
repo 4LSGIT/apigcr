@@ -154,6 +154,10 @@ class YCForm {
         await this.config.onLoad(dataSource);
       }
 
+      // 13b. Re-evaluate conditionals now that data is populated
+      //      (initial evaluation in _setupConditionals ran before populate)
+      this._evaluateConditionals();
+
       // 14. Hide loading
       this._showLoading(false);
 

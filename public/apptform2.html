@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Appointment Details</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link href="/css/yc-forms.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    body { padding: 12px; }
+    .yc-form { padding: 16px; }
+
+    /* Status badge */
+    .status-badge {
+      display: inline-block; padding: 4px 12px; border-radius: 12px;
+      font-size: 0.85rem; font-weight: 600; color: #fff;
+    }
+    .status-Scheduled    { background: #28a745; }
+    .status-Attended     { background: #0d6efd; }
+    .status-No-Show      { background: #dc3545; }
+    .status-Canceled     { background: #6c757d; }
+    .status-Rescheduled  { background: #ffc107; color: #333; }
+
+    /* Action buttons */
+    .action-bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+    .action-bar button {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 14px; border: none; border-radius: 6px;
+      font-size: 0.88rem; font-weight: 500; cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .action-bar button:hover { opacity: 0.85; }
+    .btn-attended  { background: #0d6efd; color: #fff; }
+    .btn-noshow    { background: #dc3545; color: #fff; }
+    .btn-cancel    { background: #6c757d; color: #fff; }
+    .btn-reschedule { background: #ffc107; color: #333; }
+    .btn-add-case  { background: #198754; color: #fff; }
+
+    /* Info grid */
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-bottom: 12px; }
+    .info-item label { font-size: 0.78rem; color: #6c757d; display: block; margin-bottom: 1px; }
+    .info-item span { font-size: 0.92rem; font-weight: 500; color: #212529; }
+    .info-item a { color: #0d6efd; text-decoration: none; font-weight: 500; }
+    .info-item a:hover { text-decoration: underline; }
+
+    /* Sections */
+    .appt-section { border-top: 1px solid #dee2e6; padding-top: 12px; margin-top: 12px; }
+    .appt-section-title { font-weight: 600; font-size: 0.92rem; color: #495057; margin-bottom: 8px; }
+
+    /* Reschedule panel */
+    .reschedule-panel { background: #fff8e1; border: 1px solid #ffc107; border-radius: 6px; padding: 12px; margin-top: 8px; display: none; }
+    .reschedule-panel label { font-size: 0.84rem; font-weight: 500; }
+    .reschedule-panel input, .reschedule-panel textarea { margin-top: 4px; }
+
+    /* Cancel panel */
+    .cancel-panel { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 12px; margin-top: 8px; display: none; }
+
+    @media (max-width: 500px) {
+      .info-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="loading" style="text-align:center;padding:40px;color:#6c757d;">Loading appointment...</div>
+
+<div id="apptView" class="yc-form" style="display:none;">
+
+  <!-- ═══ HEADER ═══ -->
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div style="font-size:1.1rem;font-weight:700;color:#212529;">
+      Appointment #<span id="apptId"></span>
+    </div>
+    <span id="statusBadge" class="status-badge"></span>
+  </div>
+
+  <!-- ═══ INFO GRID ═══ -->
+  <div class="info-grid">
+    <div class="info-item">
+      <label>Contact</label>
+      <span><a href="#" id="contactLink"></a></span>
+    </div>
+    <div class="info-item">
+      <label>Phone</label>
+      <span id="phone"></span>
+    </div>
+    <div class="info-item">
+      <label>Email</label>
+      <span id="email"></span>
+    </div>
+    <div class="info-item">
+      <label>Case</label>
+      <span id="caseInfo"></span>
+    </div>
+    <div class="info-item">
+      <label>Type</label>
+      <span id="apptType"></span>
+    </div>
+    <div class="info-item">
+      <label>Platform</label>
+      <span id="platform"></span>
+    </div>
+    <div class="info-item">
+      <label>Date & Time</label>
+      <span id="datetime"></span>
+    </div>
+    <div class="info-item">
+      <label>Length</label>
+      <span id="length"></span>
+    </div>
+    <div class="info-item">
+      <label>With</label>
+      <span id="withUser"></span>
+    </div>
+  </div>
+
+  <!-- ═══ ACTION BUTTONS ═══ -->
+  <div class="action-bar" id="actionBar"></div>
+
+  <!-- ═══ CANCEL PANEL ═══ -->
+  <div class="cancel-panel" id="cancelPanel">
+    <div class="appt-section-title">Cancel Appointment</div>
+    <div class="yc-field"><textarea id="cancelNote" rows="2" placeholder="Internal note (optional)" style="width:100%;"></textarea></div>
+    <div style="margin:8px 0;">
+      <label style="font-size:0.84rem;margin-right:12px;"><input type="checkbox" id="cancelFollowUp"> Follow-up sequence</label>
+      <label style="font-size:0.84rem;margin-right:12px;"><input type="checkbox" id="cancelTask"> Create task</label>
+    </div>
+    <div style="margin:8px 0;">
+      <label style="font-size:0.84rem;margin-right:12px;"><input type="checkbox" id="cancelSMS" onchange="toggleCancelMsg()"> SMS</label>
+      <label style="font-size:0.84rem;"><input type="checkbox" id="cancelEmail" onchange="toggleCancelMsg()"> Email</label>
+    </div>
+    <div class="yc-field" id="cancelMsgWrap" style="display:none;">
+      <textarea id="cancelMsg" rows="3" style="width:100%;"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="yc-btn yc-btn-danger yc-btn-sm" onclick="doCancel()">Confirm Cancel</button>
+      <button class="yc-btn yc-btn-secondary yc-btn-sm" onclick="hidePanel('cancelPanel')">Back</button>
+    </div>
+  </div>
+
+  <!-- ═══ RESCHEDULE PANEL ═══ -->
+  <div class="reschedule-panel" id="reschedulePanel">
+    <div class="appt-section-title">Reschedule Appointment</div>
+    <div class="yc-field">
+      <label class="yc-label">New Date & Time</label>
+      <input type="datetime-local" id="rescheduleDate" style="width:100%;" onchange="updateRescheduleMsg()">
+    </div>
+    <div class="yc-field"><textarea id="rescheduleNote" rows="2" placeholder="Internal note (optional)" style="width:100%;"></textarea></div>
+    <div style="margin:8px 0;">
+      <label style="font-size:0.84rem;margin-right:12px;"><input type="checkbox" id="rescSMS" onchange="toggleRescMsg()"> SMS</label>
+      <label style="font-size:0.84rem;"><input type="checkbox" id="rescEmail" onchange="toggleRescMsg()"> Email</label>
+    </div>
+    <div class="yc-field" id="rescMsgWrap" style="display:none;">
+      <textarea id="rescMsg" rows="3" style="width:100%;"></textarea>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="yc-btn yc-btn-primary yc-btn-sm" onclick="doRescheduleNow()">Reschedule Now</button>
+      <button class="yc-btn yc-btn-secondary yc-btn-sm" onclick="doRescheduleLater()">Reschedule Later (create task)</button>
+      <button class="yc-btn yc-btn-secondary yc-btn-sm" onclick="hidePanel('reschedulePanel')">Back</button>
+    </div>
+  </div>
+
+  <!-- ═══ NOTES ═══ -->
+  <div class="appt-section">
+    <div class="appt-section-title">Notes</div>
+    <div class="yc-field">
+      <textarea id="noteField" rows="3" maxlength="3000" placeholder="Appointment notes" style="width:100%;"></textarea>
+    </div>
+    <button class="yc-btn yc-btn-primary yc-btn-sm" onclick="updateNote()" style="margin-top:4px;">
+      <i class="fa-solid fa-floppy-disk"></i> Update Note
+    </button>
+  </div>
+
+  <!-- ═══ CASE ═══ -->
+  <div class="appt-section" id="caseSection">
+    <div class="appt-section-title">Case</div>
+    <div id="caseDisplay"></div>
+    <div id="addCasePanel" style="display:none;margin-top:8px;">
+      <div class="yc-row">
+        <div class="yc-field">
+          <label class="yc-label">Link Existing Case</label>
+          <input type="text" id="linkCaseId" placeholder="Case ID">
+        </div>
+        <div class="yc-field" style="flex:0;align-self:flex-end;">
+          <button class="yc-btn yc-btn-primary yc-btn-sm" onclick="linkCase()">Link</button>
+        </div>
+      </div>
+      <div style="text-align:center;color:#6c757d;font-size:0.84rem;margin:6px 0;">— or —</div>
+      <div class="yc-row">
+        <div class="yc-field">
+          <label class="yc-label">Create New Case</label>
+          <select id="newCaseType">
+            <option value="">Select type...</option>
+            <option>Bankruptcy</option>
+            <option>Debt Settlement</option>
+            <option>Student Loan</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="yc-field" style="flex:0;align-self:flex-end;">
+          <button class="yc-btn yc-btn-primary yc-btn-sm" onclick="createCase()">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const P = window.parent;
+const params = new URLSearchParams(location.search);
+const apptId = params.get('apptID') || params.get('apptid');
+
+const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500, timerProgressBar: true });
+let apptData = null;
+
+// ─── HELPERS ───
+
+function formatPhone(phone) {
+  if (!phone) return '—';
+  const d = phone.replace(/\D/g, '');
+  if (d.length === 10) return d.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3');
+  return phone;
+}
+
+function formatDateTime(dt) {
+  if (!dt) return '—';
+  const d = new Date(dt);
+  if (isNaN(d)) return dt;
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
+    ' at ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+}
+
+function statusClass(s) {
+  return 'status-' + (s || 'Scheduled').replace(/\s/g, '-');
+}
+
+function hidePanel(id) {
+  document.getElementById(id).style.display = 'none';
+}
+
+function showPanel(id) {
+  // Hide other panels first
+  document.querySelectorAll('.cancel-panel, .reschedule-panel').forEach(p => p.style.display = 'none');
+  document.getElementById(id).style.display = 'block';
+}
+
+// ─── LOAD ───
+
+async function loadAppt() {
+  try {
+    const resp = await P.apiSend(`/api/appts/${apptId}`, 'GET');
+    apptData = resp.data;
+    if (!apptData) throw new Error('Not found');
+    render();
+  } catch (err) {
+    document.getElementById('loading').innerHTML = `<span style="color:red;">Failed to load appointment: ${err.message}</span>`;
+  }
+}
+
+function render() {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('apptView').style.display = 'block';
+
+  const a = apptData;
+  document.getElementById('apptId').textContent = a.appt_id;
+
+  // Status
+  const badge = document.getElementById('statusBadge');
+  badge.textContent = a.appt_status;
+  badge.className = 'status-badge ' + statusClass(a.appt_status);
+
+  // Info grid
+  const contactLink = document.getElementById('contactLink');
+  contactLink.textContent = a.contact_name || 'Unknown';
+  contactLink.onclick = (e) => { e.preventDefault(); P.addFile(a.contact_name, 'client', a.appt_client_id); };
+
+  document.getElementById('phone').textContent = formatPhone(a.contact_phone);
+  document.getElementById('email').textContent = a.client_email || a.contact_email || '—';
+  document.getElementById('apptType').textContent = a.appt_type || '—';
+  document.getElementById('platform').textContent = a.appt_platform || '—';
+  document.getElementById('datetime').textContent = formatDateTime(a.appt_date);
+  document.getElementById('length').textContent = a.appt_length ? `${a.appt_length} min` : '—';
+  document.getElementById('withUser').textContent = a.user_name || `User #${a.appt_with}`;
+
+  // Notes
+  document.getElementById('noteField').value = a.appt_note || '';
+
+  // Case
+  renderCase();
+
+  // Actions
+  renderActions();
+}
+
+function renderCase() {
+  const a = apptData;
+  const display = document.getElementById('caseDisplay');
+  const addPanel = document.getElementById('addCasePanel');
+
+  if (a.appt_case_id) {
+    const caseNum = a.case_number_display || a.case_number || a.appt_case_id;
+    display.innerHTML = `<a href="#" onclick="P.addFile('${caseNum}', 'case', '${a.appt_case_id}'); return false;">${caseNum}</a>` +
+      ` <span style="color:#6c757d;font-size:0.84rem;">(${a.appt_case_id})</span>`;
+    document.getElementById('caseInfo').innerHTML = `<a href="#" onclick="P.addFile('${caseNum}', 'case', '${a.appt_case_id}'); return false;">${caseNum}</a>`;
+    addPanel.style.display = 'none';
+  } else {
+    display.innerHTML = '<span style="color:#6c757d;">No case linked</span>';
+    document.getElementById('caseInfo').innerHTML = '<span style="color:#6c757d;">None</span>';
+    addPanel.style.display = 'block';
+  }
+}
+
+function renderActions() {
+  const bar = document.getElementById('actionBar');
+  bar.innerHTML = '';
+  const s = apptData.appt_status;
+
+  if (s === 'Scheduled') {
+    bar.innerHTML = `
+      <button class="btn-attended" onclick="doAttended()"><i class="fa-solid fa-user-check"></i> Attended</button>
+      <button class="btn-noshow" onclick="doNoShow()"><i class="fa-solid fa-user-xmark"></i> No Show</button>
+      <button class="btn-cancel" onclick="showPanel('cancelPanel')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
+      <button class="btn-reschedule" onclick="showPanel('reschedulePanel')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
+    `;
+  } else if (s === 'No Show') {
+    bar.innerHTML = `
+      <button class="btn-attended" onclick="doAttended()"><i class="fa-solid fa-user-check"></i> Attended</button>
+      <button class="btn-cancel" onclick="showPanel('cancelPanel')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
+      <button class="btn-reschedule" onclick="showPanel('reschedulePanel')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
+    `;
+  } else if (s === 'Canceled') {
+    bar.innerHTML = `
+      <button class="btn-reschedule" onclick="showPanel('reschedulePanel')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
+    `;
+  }
+  // Attended and Rescheduled: no action buttons (read-only)
+}
+
+// ─── ACTIONS ───
+
+async function doAttended() {
+  try {
+    const r = await P.apiSend(`/api/appts/${apptData.appt_id}/attended`, 'POST', {});
+    Toast.fire({ icon: 'success', title: r.message || 'Marked Attended' });
+    await loadAppt();
+    notifyParent();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
+  }
+}
+
+async function doNoShow() {
+  const { value } = await Swal.fire({
+    title: 'Mark No Show?',
+    html: '<label style="font-size:0.9rem;"><input type="checkbox" id="enrollNoShow" checked> Enroll in no-show follow-up sequence</label>',
+    showCancelButton: true,
+    confirmButtonText: 'Mark No Show',
+    preConfirm: () => ({ enroll: document.getElementById('enrollNoShow').checked })
+  });
+  if (!value) return;
+
+  try {
+    const r = await P.apiSend(`/api/appts/${apptData.appt_id}/no-show`, 'POST', { enroll: value.enroll });
+    Toast.fire({ icon: 'success', title: r.message || 'Marked No Show' });
+    await loadAppt();
+    notifyParent();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
+  }
+}
+
+// Cancel
+function toggleCancelMsg() {
+  const show = document.getElementById('cancelSMS').checked || document.getElementById('cancelEmail').checked;
+  document.getElementById('cancelMsgWrap').style.display = show ? '' : 'none';
+  if (show && !document.getElementById('cancelMsg').value) {
+    document.getElementById('cancelMsg').value =
+      `This is to confirm that I canceled our appointment on ${formatDateTime(apptData.appt_date)}.`;
+  }
+}
+
+async function doCancel() {
+  try {
+    const r = await P.apiSend('/api/appts/cancel', 'POST', {
+      appt: apptData.appt_id,
+      note: document.getElementById('cancelNote').value,
+      sms: document.getElementById('cancelSMS').checked,
+      email: document.getElementById('cancelEmail').checked,
+      confirm_message: document.getElementById('cancelMsg').value,
+      create_task: document.getElementById('cancelTask').checked,
+    });
+    Toast.fire({ icon: 'success', title: r.message || 'Canceled' });
+    hidePanel('cancelPanel');
+    await loadAppt();
+    notifyParent();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
+  }
+}
+
+// Reschedule
+function toggleRescMsg() {
+  const show = document.getElementById('rescSMS').checked || document.getElementById('rescEmail').checked;
+  document.getElementById('rescMsgWrap').style.display = show ? '' : 'none';
+  if (show) updateRescheduleMsg();
+}
+
+function updateRescheduleMsg() {
+  const nd = document.getElementById('rescheduleDate').value;
+  if (!nd) return;
+  const d = new Date(nd);
+  document.getElementById('rescMsg').value =
+    `This is to confirm that our appointment has been rescheduled to ${d.toLocaleDateString()} at ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+}
+
+async function doRescheduleNow() {
+  const nd = document.getElementById('rescheduleDate').value;
+  if (!nd) { Toast.fire({ icon: 'warning', title: 'Select a new date' }); return; }
+
+  try {
+    const r = await P.apiSend('/api/appts/reschedule', 'POST', {
+      appt: apptData.appt_id,
+      newDate: nd.replace('T', ' ') + ':00',
+      note: document.getElementById('rescheduleNote').value,
+      sms: document.getElementById('rescSMS').checked,
+      email: document.getElementById('rescEmail').checked,
+      msg: document.getElementById('rescMsg').value,
+    });
+    Toast.fire({ icon: 'success', title: r.message || 'Rescheduled' });
+    hidePanel('reschedulePanel');
+    await loadAppt();
+    notifyParent();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
+  }
+}
+
+async function doRescheduleLater() {
+  try {
+    const r = await P.apiSend('/api/appts/reschedule', 'POST', {
+      appt: apptData.appt_id,
+      note: document.getElementById('rescheduleNote').value,
+      rescheduleLater: true,
+      createTask: true,
+    });
+    Toast.fire({ icon: 'success', title: r.message || 'Marked for rescheduling' });
+    hidePanel('reschedulePanel');
+    await loadAppt();
+    notifyParent();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
+  }
+}
+
+// ─── NOTE UPDATE ───
+
+async function updateNote() {
+  try {
+    await P.apiSend(`/api/appts/${apptData.appt_id}`, 'PATCH', {
+      appt_note: document.getElementById('noteField').value
+    });
+    Toast.fire({ icon: 'success', title: 'Note updated' });
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
+  }
+}
+
+// ─── CASE LINKING ───
+
+async function linkCase() {
+  const caseId = document.getElementById('linkCaseId').value.trim();
+  if (!caseId) { Toast.fire({ icon: 'warning', title: 'Enter a Case ID' }); return; }
+
+  try {
+    await P.apiSend(`/api/appts/${apptData.appt_id}`, 'PATCH', { appt_case_id: caseId });
+    Toast.fire({ icon: 'success', title: 'Case linked' });
+    await loadAppt();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
+  }
+}
+
+async function createCase() {
+  const caseType = document.getElementById('newCaseType').value;
+  if (!caseType) { Toast.fire({ icon: 'warning', title: 'Select a case type' }); return; }
+
+  try {
+    const r = await P.apiSend('/api/intake/case', 'POST', {
+      contact_id: apptData.appt_client_id,
+      case_type: caseType,
+    });
+    if (r.id || r.case_id) {
+      const newCaseId = r.case_id || r.id;
+      await P.apiSend(`/api/appts/${apptData.appt_id}`, 'PATCH', { appt_case_id: newCaseId });
+      Toast.fire({ icon: 'success', title: `Case ${newCaseId} created and linked` });
+      await loadAppt();
+    }
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
+  }
+}
+
+// ─── PARENT NOTIFICATION ───
+
+function notifyParent() {
+  try {
+    P.postMessage({ type: 'appt-updated', apptId: apptData.appt_id }, '*');
+  } catch (_) {}
+  // Also try callback if parent passed one
+  if (typeof P.onApptUpdate === 'function') P.onApptUpdate();
+}
+
+// ─── INIT ───
+if (!apptId) {
+  document.getElementById('loading').innerHTML = '<span style="color:red;">Missing appointment ID.</span>';
+} else {
+  loadAppt();
+}
+</script>
+</body>
+</html>
