@@ -44,7 +44,7 @@
   <input type="hidden" name="client_id">
   <input type="hidden" name="cd_id">
 
-  <!-- ═══ TAB-STICKY: Case header + Intake Notes (visible on all tabs) ═══ -->
+  <!-- ═══ TAB-STICKY TOP: Case header (visible on all tabs) ═══ -->
   <div class="yc-tab-sticky">
     <div class="yc-row">
       <div class="yc-field yc-field-locked">
@@ -59,10 +59,6 @@
         <label class="yc-label">Case Number</label>
         <input type="text" name="case_number" data-yc-locked-msg="Edit from the Case Details form">
       </div>
-    </div>
-    <div class="yc-field">
-      <label class="yc-label">Intake Notes — Client Details</label>
-      <textarea name="intake_notes" rows="3" maxlength="5000" placeholder="Running intake notes visible on all tabs"></textarea>
     </div>
   </div>
 
@@ -237,6 +233,7 @@
             <div class="yc-radio-group">
               <label><input type="radio" name="housing" value="Own"> Own</label>
               <label><input type="radio" name="housing" value="Renting"> Renting</label>
+              <label><input type="radio" name="housing" value="Live with Family"> Live with Family</label>
               <label><input type="radio" name="housing" value="Other"> Other</label>
             </div>
           </div>
@@ -310,6 +307,10 @@
         <div class="yc-repeater" id="vehiclesRepeater">
           <button type="button" class="yc-repeater-add" data-repeater="vehicles">+ Add Vehicle</button>
         </div>
+        <a href="https://www.kbb.com/whats-my-car-worth/" target="_blank" rel="noopener"
+           style="display:inline-block;margin-top:8px;padding:6px 14px;background:#0d6efd;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85rem;font-weight:500;">
+          KBB — What's My Car Worth?
+        </a>
       </div>
 
       <!-- Major Assets -->
@@ -572,6 +573,14 @@
 
   </div><!-- /yc-tabs -->
 
+  <!-- ═══ TAB-STICKY BOTTOM: Intake Notes (visible on all tabs) ═══ -->
+  <div class="yc-tab-sticky">
+    <div class="yc-field">
+      <label class="yc-label">Intake Notes — Client Details</label>
+      <textarea name="intake_notes" rows="3" maxlength="5000" placeholder="Running intake notes visible on all tabs"></textarea>
+    </div>
+  </div>
+
   <button type="button" class="yc-btn yc-btn-primary yc-btn-block" id="saveBtn">Save</button>
 </form>
 
@@ -592,15 +601,19 @@
     <div class="yc-row">
       <div class="yc-field yc-fixed-sm">
         <label class="yc-label">Ownership</label>
-        <select name="ownership"><option value="">—</option><option>Own</option><option>Lease</option><option>None</option><option>Other</option></select>
+        <select name="ownership" class="vehicle-ownership"><option value="">—</option><option>Own</option><option>Lease</option><option>None</option><option>Other</option></select>
       </div>
       <div class="yc-field"><label class="yc-label">Make / Model</label><input type="text" name="make_model"></div>
+      <div class="yc-field"><label class="yc-label">VIN / License Plate</label><input type="text" name="vin_plate"></div>
       <div class="yc-field yc-fixed-sm"><label class="yc-label">Mileage</label><input type="text" name="mileage"></div>
-      <div class="yc-field yc-fixed-sm"><label class="yc-label">Value (KBB)</label><input type="text" name="value_kbb"></div>
     </div>
     <div class="yc-row">
+      <div class="yc-field yc-fixed-sm"><label class="yc-label">Value (KBB)</label><input type="text" name="value_kbb"></div>
       <div class="yc-field yc-fixed-sm"><label class="yc-label">Monthly Pmt</label><input type="text" name="monthly_pmt"></div>
       <div class="yc-field yc-fixed-sm"><label class="yc-label">Total Owed</label><input type="text" name="total_owed"></div>
+      <div class="yc-field yc-fixed-md vehicle-lease-end" style="display:none;">
+        <label class="yc-label">Lease End Date</label><input type="date" name="lease_end_date">
+      </div>
       <div class="yc-field yc-fixed-md">
         <label class="yc-label">R⁴ Preference</label>
         <select name="r4_preference"><option value="">—</option><option>Return</option><option>Replace (Ash)</option><option>Redemption (Hatfield)</option><option>Reaffirm</option></select>
@@ -609,6 +622,8 @@
         <label class="yc-label">R⁴ Status</label>
         <select name="r4_status"><option value="">—</option><option>Yes</option><option>Set Appt.</option><option>Sent Email</option></select>
       </div>
+    </div>
+    <div class="yc-row">
       <div class="yc-field"><label class="yc-label">Notes</label><input type="text" name="vehicle_note"></div>
       <button type="button" class="yc-repeater-remove" title="Remove">✕</button>
     </div>
@@ -757,8 +772,9 @@
           template:  '#vehicleTemplate',
           fields: {
             ownership: { type: 'select' }, make_model: { type: 'text' },
-            mileage: { type: 'text' }, value_kbb: { type: 'text' },
-            monthly_pmt: { type: 'text' }, total_owed: { type: 'text' },
+            vin_plate: { type: 'text' }, mileage: { type: 'text' },
+            value_kbb: { type: 'text' }, monthly_pmt: { type: 'text' },
+            total_owed: { type: 'text' }, lease_end_date: { type: 'date' },
             r4_preference: { type: 'select' }, r4_status: { type: 'select' },
             vehicle_note: { type: 'text' }
           }
@@ -839,6 +855,24 @@
 
     form.init().then(() => {
       form.setupTabs('.yc-tab-bar', '.yc-tab-panel');
+
+      // ── Vehicle lease end date: show only when ownership = "Lease" ──
+      const vehiclesContainer = document.getElementById('vehiclesRepeater');
+      if (vehiclesContainer) {
+        vehiclesContainer.addEventListener('change', (e) => {
+          if (!e.target.classList.contains('vehicle-ownership')) return;
+          const item = e.target.closest('.yc-repeater-item');
+          if (!item) return;
+          const leaseField = item.querySelector('.vehicle-lease-end');
+          if (leaseField) leaseField.style.display = e.target.value === 'Lease' ? '' : 'none';
+        });
+        // Apply to any pre-populated vehicles on load
+        vehiclesContainer.querySelectorAll('.vehicle-ownership').forEach(sel => {
+          const item = sel.closest('.yc-repeater-item');
+          const leaseField = item?.querySelector('.vehicle-lease-end');
+          if (leaseField) leaseField.style.display = sel.value === 'Lease' ? '' : 'none';
+        });
+      }
 
       // ── Custom conditional: Dependents checkbox ──
       const depCb = document.getElementById('hasDep');
