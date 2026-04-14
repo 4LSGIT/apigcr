@@ -70,9 +70,6 @@
       <button class="tab" onclick="openTab(this, 'tabSend')">
         <i class="fa-solid fa-comments"></i> Sending Form
       </button>
-      <button class="tab" onclick="openTab(this, 'tabSendPre')">
-        <i class="fa-solid fa-comments"></i> New Sending Form Preview
-      </button>
       <button class="tab" onclick="openTab(this, 'tabCase')">
         <i class="fa-solid fa-landmark"></i> Case Details
       </button>
@@ -82,6 +79,16 @@
       <button class="tab" onclick="openTab(this, 'tabDet')">
         <i class="fa-brands fa-wpforms"></i> Detailed Questionaire
       </button>
+      <br>Previews &rArr;
+      <button class="tab" onclick="openTab(this, 'tabISSNPre')">
+        <i class="fa-solid fa-comments"></i> New ISSN Preview
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabSendPre')">
+        <i class="fa-solid fa-comments"></i> New Sending Form Preview
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabCasePre')">
+        <i class="fa-solid fa-comments"></i> New Case Details Form Preview
+      </button>&lArr; Previews
     </div>
     <h4 style="color: #000">
       Primary Client Name:
@@ -970,9 +977,19 @@
         Clear Form
       </button>
     </div>
+
+    <!--TEMP AREA-->
     <div id="tabSendPre" class="tab-content">
       <iframe id="SendingFormPreview"></iframe>
     </div>
+    <div id="tabCasePre" class="tab-content">
+      <iframe id="CaseFormPreview"></iframe>
+    </div>
+    <div id="tabISSNPre" class="tab-content">
+      <iframe id="ISSNPreview"></iframe>
+    </div>
+
+
     <div id="tabSend" class="tab-content">
       <iframe id="SendingForm"></iframe>
     </div>
@@ -1196,6 +1213,8 @@
               }
             }
           E("SendingFormPreview").src = `sendingform.html?case_id=${caseData.case_id}`;
+          E("CaseFormPreview").src = `/forms/caseform.html?case_id=${caseData.case_id}`;
+          E("ISSNPreview").src = `/forms/issn.html?case_id=${caseData.case_id}`;
 
             E(
               "SendingForm"
