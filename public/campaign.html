@@ -590,6 +590,10 @@ async function quillImageHandler() {
         <p style="font-weight:600; margin-bottom:6px;">Upload a file:</p>
         <input type="file" id="swal-file" accept="image/png,image/jpeg,image/gif,image/webp"
                style="margin-bottom:14px; font-size:13px;">
+        <label style="display:flex; align-items:center; gap:6px; margin-bottom:14px; font-size:13px; cursor:pointer;">
+          <input type="checkbox" id="swal-save-library" checked>
+          Save to image library for reuse
+        </label>
         <hr style="margin:10px 0;">
         <p style="font-weight:600; margin-bottom:6px;">Or enter image URL:</p>
         <input type="text" id="swal-url" class="swal2-input" placeholder="https://..."
@@ -605,6 +609,7 @@ async function quillImageHandler() {
       const popup = Swal.getPopup();
       const file = popup.querySelector('#swal-file').files[0];
       const url  = popup.querySelector('#swal-url').value.trim();
+      const saveToLibrary = popup.querySelector('#swal-save-library').checked;
       if (!file && !url) {
         Swal.showValidationMessage('Upload a file or enter a URL');
         return false;
@@ -644,7 +649,7 @@ async function quillImageHandler() {
         image: base64,
         filename: file.name,
         contentType: file.type,
-        addToLibrary: true
+        addToLibrary: formValues.saveToLibrary
       });
 
       imageUrl = res.url;
@@ -907,6 +912,10 @@ async function attachMmsImage() {
         <p style="font-weight:600; margin-bottom:6px;">Upload a file:</p>
         <input type="file" id="swal-file" accept="image/png,image/jpeg,image/gif,image/webp"
                style="margin-bottom:14px; font-size:13px;">
+        <label style="display:flex; align-items:center; gap:6px; margin-bottom:14px; font-size:13px; cursor:pointer;">
+          <input type="checkbox" id="swal-save-library" checked>
+          Save to image library for reuse
+        </label>
         <hr style="margin:10px 0;">
         <p style="font-weight:600; margin-bottom:6px;">Or enter image URL:</p>
         <input type="text" id="swal-url" class="swal2-input" placeholder="https://..."
@@ -922,6 +931,7 @@ async function attachMmsImage() {
       const popup = Swal.getPopup();
       const file = popup.querySelector('#swal-file').files[0];
       const url  = popup.querySelector('#swal-url').value.trim();
+      const saveToLibrary = popup.querySelector('#swal-save-library').checked;
       if (!file && !url) {
         Swal.showValidationMessage('Upload a file or enter a URL');
         return false;
@@ -955,7 +965,7 @@ async function attachMmsImage() {
         reader.readAsDataURL(file);
       });
       const res = await P.apiSend('/api/upload', 'POST', {
-        image: base64, filename: file.name, contentType: file.type, addToLibrary: true
+        image: base64, filename: file.name, contentType: file.type, addToLibrary: formValues.saveToLibrary
       });
       imageUrl = res.url;
     } catch (err) {
@@ -1013,6 +1023,10 @@ async function attachEmailFile() {
         <p style="font-weight:600; margin-bottom:6px;">Upload a file:</p>
         <input type="file" id="swal-file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
                style="margin-bottom:14px; font-size:13px;">
+        <label style="display:flex; align-items:center; gap:6px; margin-bottom:14px; font-size:13px; cursor:pointer;">
+          <input type="checkbox" id="swal-save-library" checked>
+          Save to image library for reuse
+        </label>
         <hr style="margin:10px 0;">
         <p style="font-weight:600; margin-bottom:6px;">Or enter file URL:</p>
         <input type="text" id="swal-url" class="swal2-input" placeholder="https://..."
@@ -1028,6 +1042,7 @@ async function attachEmailFile() {
       const popup = Swal.getPopup();
       const file = popup.querySelector('#swal-file').files[0];
       const url  = popup.querySelector('#swal-url').value.trim();
+      const saveToLibrary = popup.querySelector('#swal-save-library').checked;
       if (!file && !url) {
         Swal.showValidationMessage('Upload a file or enter a URL');
         return false;
@@ -1060,7 +1075,7 @@ async function attachEmailFile() {
         reader.readAsDataURL(file);
       });
       const res = await P.apiSend('/api/upload', 'POST', {
-        image: base64, filename: file.name, contentType: file.type, addToLibrary: true
+        image: base64, filename: file.name, contentType: file.type, addToLibrary: formValues.saveToLibrary
       });
       fileUrl = res.url;
     } catch (err) {

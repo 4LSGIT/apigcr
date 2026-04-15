@@ -116,7 +116,8 @@ router.post('/api/upload', jwtOrApiKey, upload.single('file'), async (req, res) 
     const result = await uploadToGcs(buffer, originalName, mimeType, req.auth.userId);
 
     // Optionally add to image library for reuse
-    if (req.body.addToLibrary || req.file?.fieldname === 'file') {
+    //if (req.body.addToLibrary || req.file?.fieldname === 'file') {
+    if (req.body.addToLibrary) {
       try {
         await req.db.query(
           `INSERT IGNORE INTO image_library (url, filename, original_name, mime, uploaded_by)

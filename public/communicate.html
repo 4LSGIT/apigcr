@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Communicate</title>
+  <link href="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      margin: 0;
+      padding: 10px;
+      background: transparent;
+    }
+
+    /* ── Tab bar ─────────────────────────────────────────── */
+    .comm-tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 2px solid #07ADEF;
+      margin-bottom: 16px;
+    }
+    .comm-tab {
+      padding: 10px 24px;
+      background: #f2f2f2;
+      border: 1px solid #ccc;
+      border-bottom: none;
+      cursor: pointer;
+      font-weight: bold;
+      font-size: 14px;
+      border-radius: 6px 6px 0 0;
+      margin-right: 2px;
+      color: #333;
+      transition: background .15s;
+    }
+    .comm-tab:hover { background: #e0e0e0; }
+    .comm-tab.active {
+      background: #07ADEF;
+      color: #fff;
+      border-color: #07ADEF;
+    }
+    .comm-tab i { margin-right: 6px; }
+
+    /* ── Panels ──────────────────────────────────────────── */
+    .comm-panel { display: none; }
+    .comm-panel.active { display: block; }
+
+    /* ── Form layout ─────────────────────────────────────── */
+    .comm-form {
+      max-width: 700px;
+      margin: 0 auto;
+    }
+    .comm-row {
+      display: flex;
+      align-items: center;
+      margin-bottom: 10px;
+      gap: 10px;
+    }
+    .comm-row label {
+      font-weight: bold;
+      min-width: 80px;
+      text-align: right;
+      font-size: 14px;
+    }
+    .comm-row select,
+    .comm-row input[type="text"],
+    .comm-row input[type="email"] {
+      flex: 1;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .comm-row textarea {
+      flex: 1;
+      padding: 8px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: Arial, Helvetica, sans-serif;
+      resize: vertical;
+    }
+    .char-count {
+      font-size: 12px;
+      color: #888;
+      text-align: right;
+      margin-top: -6px;
+      margin-bottom: 8px;
+    }
+
+    /* ── Buttons ──────────────────────────────────────────── */
+    .comm-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 14px;
+      justify-content: center;
+    }
+    .btn {
+      padding: 10px 22px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: bold;
+      transition: background .15s;
+    }
+    .btn-send {
+      background: #28a745;
+      color: #fff;
+    }
+    .btn-send:hover { background: #218838; }
+    .btn-log {
+      background: #6c757d;
+      color: #fff;
+    }
+    .btn-log:hover { background: #5a6268; }
+    .btn-outline {
+      background: #fff;
+      color: #333;
+      border: 1px solid #ccc;
+      padding: 6px 14px;
+      font-size: 13px;
+    }
+    .btn-outline:hover { background: #f2f2f2; }
+    .btn-danger-sm {
+      background: #dc3545;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    .btn-danger-sm:hover { background: #c82333; }
+
+    /* ── Quill ────────────────────────────────────────────── */
+    #quill-wrap {
+      margin-bottom: 10px;
+    }
+    #quill-wrap .ql-toolbar {
+      border: 1px solid #ccc;
+      border-bottom: none;
+      border-radius: 4px 4px 0 0;
+      background: #f9f9f9;
+    }
+    #quill-wrap .ql-container {
+      border: 1px solid #ccc;
+      border-radius: 0 0 4px 4px;
+      min-height: 180px;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 14px;
+    }
+
+    /* ── Attachment previews ──────────────────────────────── */
+    .attach-preview {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 13px;
+      padding: 6px 10px;
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+    }
+    .attach-preview.visible {
+      display: inline-flex;
+    }
+    .attach-preview img {
+      max-width: 80px;
+      max-height: 60px;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+    }
+
+    /* ── MMS section ──────────────────────────────────────── */
+    #mms-section { margin-top: 10px; }
+    .text-muted { color: #888; font-size: 13px; }
+
+    /* ── Subject hint ─────────────────────────────────────── */
+    #subject-hint {
+      font-size: 12px;
+      margin-top: 2px;
+      margin-bottom: 6px;
+      text-align: right;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══ TAB BAR ═══════════════════════════════════════════════ -->
+<div class="comm-tabs">
+  <div class="comm-tab active" onclick="showTab('sms')" id="tab-btn-sms">
+    <i class="fa-solid fa-comment-sms"></i>Text Message
+  </div>
+  <div class="comm-tab" onclick="showTab('email')" id="tab-btn-email">
+    <i class="fa-solid fa-envelope"></i>Email
+  </div>
+  <div class="comm-tab" onclick="showTab('call')" id="tab-btn-call">
+    <i class="fa-solid fa-phone"></i>Log Call
+  </div>
+</div>
+
+<!-- ═══ SMS PANEL ═════════════════════════════════════════════ -->
+<div class="comm-panel active" id="panel-sms">
+  <div class="comm-form">
+    <div class="comm-row">
+      <label>From:</label>
+      <select id="sms-from"></select>
+    </div>
+    <div class="comm-row">
+      <label>To:</label>
+      <input type="text" id="sms-to" maxlength="14" placeholder="(000) 000-0000">
+    </div>
+    <div class="comm-row">
+      <label>Message:</label>
+      <textarea id="sms-body" rows="4" maxlength="1000"
+                oninput="E('sms-chars').textContent = this.value.length + '/1000'"></textarea>
+    </div>
+    <div class="char-count" id="sms-chars">0/1000</div>
+
+    <!-- MMS attachment (RC lines only) -->
+    <div id="mms-section" style="display:none;">
+      <button class="btn-outline" onclick="attachMmsImage()">
+        <i class="fa-solid fa-image"></i> Attach Image (MMS)
+      </button>
+      <span class="text-muted" id="mms-hint" style="margin-left:8px;"></span>
+      <div class="attach-preview" id="mms-preview">
+        <img id="mms-preview-img" src="">
+        <span id="mms-preview-name"></span>
+        <button class="btn-danger-sm" onclick="removeMmsAttachment()">&times;</button>
+      </div>
+    </div>
+
+    <div class="comm-actions">
+      <button class="btn btn-send" onclick="send('sms')">
+        <i class="fa-solid fa-paper-plane"></i> Send
+      </button>
+      <button class="btn btn-log" onclick="send('logSms')">
+        <i class="fa-solid fa-book"></i> Log Without Sending
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ EMAIL PANEL ═══════════════════════════════════════════ -->
+<div class="comm-panel" id="panel-email">
+  <div class="comm-form">
+    <div class="comm-row">
+      <label>From:</label>
+      <select id="email-from"></select>
+    </div>
+    <div class="comm-row">
+      <label>To:</label>
+      <input type="email" id="email-to" placeholder="email@example.com">
+    </div>
+    <div class="comm-row">
+      <label>Subject:</label>
+      <input type="text" id="email-subject" maxlength="150" placeholder="Subject"
+             oninput="updateSubjectHint()">
+    </div>
+    <div id="subject-hint"></div>
+
+    <div id="quill-wrap">
+      <div id="quill-editor"></div>
+    </div>
+
+    <!-- Email attachment -->
+    <div style="margin-top:6px;">
+      <button class="btn-outline" onclick="attachEmailFile()">
+        <i class="fa-solid fa-paperclip"></i> Attach File
+      </button>
+      <span class="text-muted" style="margin-left:8px;">File will be sent as an email attachment</span>
+    </div>
+    <div class="attach-preview" id="email-attach-preview">
+      <i class="fa-solid fa-file"></i>
+      <span id="email-attach-name"></span>
+      <button class="btn-danger-sm" onclick="removeEmailAttachment()">&times;</button>
+    </div>
+
+    <div class="comm-actions">
+      <button class="btn btn-send" onclick="send('email')">
+        <i class="fa-solid fa-paper-plane"></i> Send
+      </button>
+      <button class="btn btn-log" onclick="send('logEmail')">
+        <i class="fa-solid fa-book"></i> Log Without Sending
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ LOG CALL PANEL ════════════════════════════════════════ -->
+<div class="comm-panel" id="panel-call">
+  <div class="comm-form">
+    <div class="comm-row">
+      <label>From:</label>
+      <select id="call-from"></select>
+    </div>
+    <div class="comm-row">
+      <label>To:</label>
+      <input type="text" id="call-to" maxlength="14" placeholder="(000) 000-0000">
+    </div>
+    <div class="comm-row">
+      <label>Note:</label>
+      <textarea id="call-note" rows="3" placeholder="Call notes..."></textarea>
+    </div>
+    <div class="comm-actions">
+      <button class="btn btn-send" onclick="send('call')">
+        <i class="fa-solid fa-phone"></i> Log Call
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// CONSTANTS & STATE
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const E = (id) => document.getElementById(id);
+const Toast = Swal.mixin({
+  toast: true, position: 'top-end', showConfirmButton: false,
+  timer: 2500, timerProgressBar: true
+});
+
+let quill = null;
+let mmsAttachmentUrl = null;
+let emailAttachmentUrl = null;
+let contactId = null;
+
+// ═══════════════════════════════════════════════════════════════
+// QUILL — EmailImage BLOT (from campaign.html)
+// ═══════════════════════════════════════════════════════════════
+
+const BaseImage = Quill.import('formats/image');
+class EmailImage extends BaseImage {
+  static create(value) {
+    let node;
+    if (typeof value === 'string') {
+      node = super.create(value);
+    } else {
+      node = super.create(value.src || value.url || '');
+      if (value.width) node.setAttribute('width', value.width);
+      if (value.alt) node.setAttribute('alt', value.alt);
+      node.setAttribute('style',
+        value.style || 'display:block; max-width:100%; height:auto; border:0; outline:none;'
+      );
+    }
+    return node;
+  }
+  static value(node) {
+    return {
+      src: node.getAttribute('src'),
+      width: node.getAttribute('width'),
+      style: node.getAttribute('style'),
+      alt: node.getAttribute('alt')
+    };
+  }
+}
+EmailImage.blotName = 'image';
+EmailImage.tagName = 'IMG';
+Quill.register(EmailImage, true);
+
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+
+async function init() {
+  const contact = P.entityData?.contact;
+  const firmData = P.firmData;
+
+  if (!contact || !firmData) {
+    document.body.innerHTML = '<p style="color:red;text-align:center;margin-top:40px;">Missing parent data. Please reload the page.</p>';
+    return;
+  }
+
+  contactId = contact.contact_id;
+  const phoneLines = firmData.phoneLines || [];
+  const emailFrom = firmData.emailFrom || [];
+  const currentUser = firmData.currentUser || {};
+
+  // ── Populate SMS "From" ──
+  const smsSel = E('sms-from');
+  phoneLines.forEach(l => {
+    const suffix = l.provider !== 'ringcentral' ? ' (SMS only)' : '';
+    const label = l.display_name
+      ? `${l.display_name} (${fmtPhone(l.phone_number)})${suffix}`
+      : `${fmtPhone(l.phone_number)}${suffix}`;
+    const opt = new Option(label, l.phone_number);
+    opt.dataset.provider = l.provider;
+    smsSel.add(opt);
+  });
+  if (currentUser.default_phone) smsSel.value = currentUser.default_phone;
+
+  // ── Populate Call "From" (same lines) ──
+  const callSel = E('call-from');
+  phoneLines.forEach(l => {
+    const label = l.display_name
+      ? `${l.display_name} (${fmtPhone(l.phone_number)})`
+      : fmtPhone(l.phone_number);
+    callSel.add(new Option(label, l.phone_number));
+  });
+  if (currentUser.default_phone) callSel.value = currentUser.default_phone;
+
+  // ── Populate Email "From" ──
+  const emailSel = E('email-from');
+  emailFrom.forEach(em => {
+    const label = em.from_name ? `${em.from_name} <${em.email}>` : em.email;
+    emailSel.add(new Option(label, em.email));
+  });
+  if (currentUser.default_email) emailSel.value = currentUser.default_email;
+
+  // ── Prefill "To" fields ──
+  const phoneFmt = contact.contact_phone
+    ? contact.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3')
+    : '';
+  E('sms-to').value = phoneFmt;
+  E('call-to').value = phoneFmt;
+  E('email-to').value = contact.contact_email || '';
+
+  // ── SMS sender change → MMS visibility ──
+  smsSel.addEventListener('change', updateMmsVisibility);
+  updateMmsVisibility();
+
+  // ── Init Quill ──
+  quill = new Quill('#quill-editor', {
+    theme: 'snow',
+    modules: {
+      toolbar: {
+        container: [
+          ['bold', 'italic', 'underline'],
+          [{ list: 'ordered' }, { list: 'bullet' }],
+          ['link', 'image', 'clean']
+        ],
+        handlers: { image: quillImageHandler }
+      }
+    },
+    placeholder: 'Compose email body...'
+  });
+
+  // Click-to-resize images in Quill
+  quill.root.addEventListener('click', async (e) => {
+    if (e.target.tagName !== 'IMG') return;
+    const img = e.target;
+    const current = img.getAttribute('width') || '';
+    const { value: width, isConfirmed } = await Swal.fire({
+      title: 'Resize Image',
+      input: 'select',
+      inputOptions: {
+        '600': 'Full width (600px)',
+        '400': 'Medium (400px)',
+        '200': 'Small (200px)',
+        '': 'Original size'
+      },
+      inputValue: current,
+      showCancelButton: true,
+      confirmButtonText: 'Apply'
+    });
+    if (!isConfirmed) return;
+    if (width) { img.setAttribute('width', width); }
+    else { img.removeAttribute('width'); }
+    img.setAttribute('style', 'display:block; max-width:100%; height:auto; border:0; outline:none; text-decoration:none;');
+  });
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// TABS
+// ═══════════════════════════════════════════════════════════════
+
+function showTab(tab) {
+  document.querySelectorAll('.comm-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.comm-panel').forEach(p => p.classList.remove('active'));
+  E('tab-btn-' + tab).classList.add('active');
+  E('panel-' + tab).classList.add('active');
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// IMAGE LIBRARY (from campaign.html)
+// ═══════════════════════════════════════════════════════════════
+
+async function showLibraryPicker() {
+  let images;
+  try {
+    const res = await P.apiSend('/api/image-library', 'GET');
+    images = res.images || [];
+  } catch (err) {
+    Swal.fire('Error', 'Failed to load image library', 'error');
+    return null;
+  }
+  if (!images.length) {
+    await Swal.fire('Empty', 'No images in library yet. Upload one first!', 'info');
+    return null;
+  }
+  return new Promise(resolve => {
+    Swal.fire({
+      title: 'Image Library',
+      html: `
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px,1fr)); gap:10px; max-height:400px; overflow-y:auto; padding:4px;">
+          ${images.map(img => `
+            <div style="position:relative; border:2px solid transparent; border-radius:6px; cursor:pointer; transition:border-color .15s;"
+                 class="lib-img-wrap"
+                 onmouseover="this.style.borderColor='#07ADEF'"
+                 onmouseout="this.style.borderColor='transparent'"
+                 data-url="${esc(img.url)}" data-id="${img.id}">
+              <img src="${esc(img.url)}" alt="${esc(img.original_name || '')}"
+                   style="width:100%; height:90px; object-fit:cover; border-radius:4px; display:block;">
+              <div style="font-size:10px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:2px 4px;">
+                ${esc(img.original_name || img.filename)}
+              </div>
+              <button onclick="event.stopPropagation(); deleteLibraryImage(${img.id}, this.closest('.lib-img-wrap'))"
+                      style="position:absolute; top:2px; right:2px; background:rgba(220,53,69,.85); color:#fff;
+                             border:none; border-radius:50%; width:20px; height:20px; font-size:12px;
+                             cursor:pointer; line-height:20px; padding:0;"
+                      title="Remove from library">&times;</button>
+            </div>
+          `).join('')}
+        </div>
+      `,
+      showConfirmButton: false,
+      showCancelButton: true,
+      cancelButtonText: 'Cancel',
+      width: 600,
+      didOpen: () => {
+        Swal.getPopup().querySelectorAll('.lib-img-wrap').forEach(wrap => {
+          wrap.addEventListener('click', () => {
+            resolve(wrap.dataset.url);
+            Swal.close();
+          });
+        });
+      },
+      willClose: () => resolve(null)
+    });
+  });
+}
+
+async function deleteLibraryImage(id, wrapEl) {
+  const r = await Swal.fire({
+    title: 'Remove from library?',
+    text: 'The image will remain hosted but won\'t appear in the library.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Remove',
+    confirmButtonColor: '#dc3545'
+  });
+  if (!r.isConfirmed) return;
+  try {
+    await P.apiSend(`/api/image-library/${id}`, 'DELETE');
+    if (wrapEl) wrapEl.remove();
+    Toast.fire({ icon: 'success', title: 'Removed from library' });
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Failed to remove' });
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// UPLOAD HELPER (shared by image/MMS/email attachment flows)
+// ═══════════════════════════════════════════════════════════════
+
+async function uploadFile(file, maxMB = 5, saveToLibrary = true) {
+  if (file.size > maxMB * 1024 * 1024) {
+    throw new Error(`File must be under ${maxMB} MB`);
+  }
+  Toast.fire({ icon: 'info', title: 'Uploading...' });
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+  const res = await P.apiSend('/api/upload', 'POST', {
+    image: base64,
+    filename: file.name,
+    contentType: file.type,
+    addToLibrary: saveToLibrary
+  });
+  return res.url;
+}
+
+/**
+ * Universal attach dialog: upload / URL / library.
+ * Returns URL string or null if canceled.
+ */
+async function attachDialog(title, acceptTypes) {
+  const { value: formValues, isConfirmed, isDenied } = await Swal.fire({
+    title,
+    html: `
+      <div style="text-align:left;">
+        <p style="font-weight:600; margin-bottom:6px;">Upload a file:</p>
+        <input type="file" id="swal-file" accept="${acceptTypes}"
+               style="margin-bottom:14px; font-size:13px;">
+        <label style="display:flex; align-items:center; gap:6px; margin-bottom:14px; font-size:13px; cursor:pointer;">
+          <input type="checkbox" id="swal-save-library" checked>
+          Save to image library for reuse
+        </label>
+        <hr style="margin:10px 0;">
+        <p style="font-weight:600; margin-bottom:6px;">Or enter file URL:</p>
+        <input type="text" id="swal-url" class="swal2-input" placeholder="https://..."
+               style="margin:0; width:100%;">
+      </div>
+    `,
+    showCancelButton: true,
+    showDenyButton: true,
+    confirmButtonText: 'Attach',
+    denyButtonText: 'Browse Library',
+    denyButtonColor: '#6c757d',
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const file = popup.querySelector('#swal-file').files[0];
+      const url = popup.querySelector('#swal-url').value.trim();
+      const saveToLibrary = popup.querySelector('#swal-save-library').checked;
+      if (!file && !url) {
+        Swal.showValidationMessage('Upload a file or enter a URL');
+        return false;
+      }
+      return { file, url, saveToLibrary };
+    }
+  });
+
+  // Library path
+  if (isDenied) {
+    return await showLibraryPicker();
+  }
+  if (!isConfirmed) return null;
+
+  if (formValues.file) {
+    try {
+      return await uploadFile(formValues.file, title.includes('MMS') ? 5 : 10, formValues.saveToLibrary);
+    } catch (err) {
+      Swal.fire('Upload Failed', err.message, 'error');
+      return null;
+    }
+  }
+  return formValues.url;
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// QUILL IMAGE HANDLER
+// ═══════════════════════════════════════════════════════════════
+
+async function quillImageHandler() {
+  const url = await attachDialog('Insert Image', 'image/png,image/jpeg,image/gif,image/webp');
+  if (url) await insertImageAtCursor(url);
+}
+
+async function insertImageAtCursor(url) {
+  const { value: width, isConfirmed } = await Swal.fire({
+    title: 'Image Size',
+    input: 'select',
+    inputOptions: {
+      '600': 'Full width (600px)',
+      '400': 'Medium (400px)',
+      '200': 'Small (200px)',
+      '': 'Original size'
+    },
+    inputValue: '600',
+    showCancelButton: true,
+    confirmButtonText: 'Insert'
+  });
+  if (!isConfirmed) return;
+
+  quill.focus();
+  const range = quill.getSelection(true);
+  const idx = range ? range.index : quill.getLength();
+  quill.insertEmbed(idx, 'image', {
+    src: url,
+    width: width || undefined,
+    style: 'display:block; max-width:100%; height:auto; border:0; outline:none; text-decoration:none;'
+  });
+  quill.setSelection(idx + 1);
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// MMS ATTACHMENT
+// ═══════════════════════════════════════════════════════════════
+
+async function attachMmsImage() {
+  const senderOpt = E('sms-from').selectedOptions[0];
+  if (senderOpt?.dataset.provider !== 'ringcentral') {
+    return Swal.fire('SMS Only', 'The selected phone line does not support MMS. Choose a RingCentral line.', 'warning');
+  }
+  const url = await attachDialog('Attach Image (MMS)', 'image/png,image/jpeg,image/gif,image/webp');
+  if (url) setMmsAttachment(url);
+}
+
+function setMmsAttachment(url) {
+  mmsAttachmentUrl = url;
+  E('mms-preview-img').src = url;
+  E('mms-preview-name').textContent = url.split('/').pop().split('?')[0] || 'image';
+  E('mms-preview').classList.add('visible');
+  Toast.fire({ icon: 'success', title: 'Image attached' });
+}
+
+function removeMmsAttachment() {
+  mmsAttachmentUrl = null;
+  E('mms-preview-img').src = '';
+  E('mms-preview-name').textContent = '';
+  E('mms-preview').classList.remove('visible');
+}
+
+function updateMmsVisibility() {
+  const senderOpt = E('sms-from').selectedOptions[0];
+  const isRc = senderOpt?.dataset.provider === 'ringcentral';
+  E('mms-section').style.display = isRc ? '' : 'none';
+  E('mms-hint').textContent = isRc ? '' : '';
+  // If switching away from RC with attachment, clear it
+  if (!isRc && mmsAttachmentUrl) removeMmsAttachment();
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// EMAIL ATTACHMENT
+// ═══════════════════════════════════════════════════════════════
+
+async function attachEmailFile() {
+  const url = await attachDialog('Attach File', 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt');
+  if (url) setEmailAttachment(url);
+}
+
+function setEmailAttachment(url) {
+  emailAttachmentUrl = url;
+  E('email-attach-name').textContent = url.split('/').pop().split('?')[0] || 'file';
+  E('email-attach-preview').classList.add('visible');
+}
+
+function removeEmailAttachment() {
+  emailAttachmentUrl = null;
+  E('email-attach-name').textContent = '';
+  E('email-attach-preview').classList.remove('visible');
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SUBJECT HINT
+// ═══════════════════════════════════════════════════════════════
+
+function updateSubjectHint() {
+  const len = E('email-subject').value.length;
+  const hint = E('subject-hint');
+  if (len === 0) { hint.textContent = ''; return; }
+  if (len <= 60) { hint.textContent = `${len}/150 — good length`; hint.style.color = 'green'; }
+  else if (len <= 90) { hint.textContent = `${len}/150 — may truncate on mobile`; hint.style.color = 'orange'; }
+  else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color = 'red'; }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// SEND / LOG
+// ═══════════════════════════════════════════════════════════════
+
+function processing() {
+  Swal.fire({
+    title: 'Processing...',
+    html: '<div style="text-align:center; padding:20px;"><i class="fa-solid fa-spinner fa-spin-pulse fa-5x" style="color:#07ADEF;"></i></div>',
+    showConfirmButton: false,
+    allowOutsideClick: false,
+    allowEscapeKey: false
+  });
+}
+
+async function send(action) {
+  try {
+    if (action === 'sms' || action === 'logSms') {
+      const from = E('sms-from').value;
+      const to = E('sms-to').value.replace(/\D/g, '');
+      const body = E('sms-body').value.trim();
+
+      if (!from) return Toast.fire({ icon: 'warning', title: 'Select a sender' });
+      if (to.length !== 10) return Toast.fire({ icon: 'warning', title: 'Enter a valid 10-digit phone number' });
+      if (!body && !mmsAttachmentUrl) return Toast.fire({ icon: 'warning', title: 'Enter a message or attach an image' });
+
+      processing();
+
+      // Send
+      if (action === 'sms') {
+        const senderOpt = E('sms-from').selectedOptions[0];
+        const isRc = senderOpt?.dataset.provider === 'ringcentral';
+
+        if (mmsAttachmentUrl && isRc) {
+          await P.apiSend('/internal/mms/send', 'POST', {
+            from, to, text: body, attachment_url: mmsAttachmentUrl
+          });
+        } else {
+          await P.apiSend('/internal/sms/send', 'POST', { from, to, message: body });
+        }
+      }
+
+      // Log
+      const smsLogData = { from, to, message: body };
+      if (mmsAttachmentUrl) smsLogData.attachment = mmsAttachmentUrl;
+      if (action === 'logSms') smsLogData.note = 'Logged without sending';
+
+      await P.apiSend('/api/log', 'POST', {
+        type: mmsAttachmentUrl ? 'mms' : 'sms',
+        link_type: 'contact', link_id: contactId,
+        data: JSON.stringify(smsLogData), direction: 'outgoing'
+      });
+
+      Swal.close();
+      Toast.fire({ icon: 'success', title: action === 'sms' ? 'Message sent!' : 'Message logged!' });
+      E('sms-body').value = '';
+      E('sms-chars').textContent = '0/1000';
+      removeMmsAttachment();
+
+    } else if (action === 'email' || action === 'logEmail') {
+      const from = E('email-from').value;
+      const to = E('email-to').value.trim();
+      const subject = E('email-subject').value.trim();
+      const htmlBody = quill.root.innerHTML;
+      const textBody = quill.getText().trim();
+
+      if (!from) return Toast.fire({ icon: 'warning', title: 'Select a sender' });
+      if (!to) return Toast.fire({ icon: 'warning', title: 'Enter a recipient email' });
+      if (!subject) return Toast.fire({ icon: 'warning', title: 'Enter a subject' });
+      if (!textBody) return Toast.fire({ icon: 'warning', title: 'Enter a message body' });
+
+      processing();
+
+      // Send
+      if (action === 'email') {
+        const emailPayload = { from, to, subject, text: textBody, html: htmlBody };
+        if (emailAttachmentUrl) {
+          const name = emailAttachmentUrl.split('/').pop().split('?')[0] || 'attachment';
+          emailPayload.attachment_urls = [{ url: emailAttachmentUrl, name }];
+        }
+        await P.apiSend('/internal/email/send', 'POST', emailPayload);
+      }
+
+      // Log
+      const emailLogData = { from, to, subject, body: textBody };
+      if (emailAttachmentUrl) emailLogData.attachment = emailAttachmentUrl;
+      if (action === 'logEmail') emailLogData.note = 'Logged without sending';
+
+      await P.apiSend('/api/log', 'POST', {
+        type: 'email', link_type: 'contact', link_id: contactId,
+        data: JSON.stringify(emailLogData), direction: 'outgoing'
+      });
+
+      Swal.close();
+      Toast.fire({ icon: 'success', title: action === 'email' ? 'Email sent!' : 'Email logged!' });
+      quill.setContents([]);
+      E('email-subject').value = '';
+      E('subject-hint').textContent = '';
+      removeEmailAttachment();
+
+    } else if (action === 'call') {
+      const from = E('call-from').value;
+      const to = E('call-to').value.replace(/\D/g, '');
+      const note = E('call-note').value.trim();
+
+      if (!from) return Toast.fire({ icon: 'warning', title: 'Select a phone line' });
+      if (to.length !== 10) return Toast.fire({ icon: 'warning', title: 'Enter a valid 10-digit phone number' });
+      if (!note) return Toast.fire({ icon: 'warning', title: 'Enter a call note' });
+
+      processing();
+
+      await P.apiSend('/api/log', 'POST', {
+        type: 'call', link_type: 'contact', link_id: contactId,
+        data: JSON.stringify({ from, to, note }), direction: 'outgoing'
+      });
+
+      Swal.close();
+      Toast.fire({ icon: 'success', title: 'Call logged!' });
+      E('call-note').value = '';
+    }
+  } catch (err) {
+    Swal.close();
+    console.error('Send error:', err);
+    Swal.fire({ icon: 'error', title: 'Error', text: err.message });
+  }
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════════
+
+function fmtPhone(n) {
+  if (!n) return '';
+  const d = String(n).replace(/\D/g, '');
+  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+  return n;
+}
+
+function esc(str) {
+  if (!str) return '';
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════════════════
+
+(function waitForParent() {
+  if (P.apiSend && P.firmData?.phoneLines && P.entityData?.contact) return init();
+  setTimeout(waitForParent, 100);
+})();
+</script>
+</body>
+</html>

@@ -27,7 +27,19 @@
  * To migrate a Gmail address from pabbly to smtp later:
  *   UPDATE email_credentials SET provider='smtp', smtp_host=..., ... WHERE email='addr@gmail.com';
  */
+/*
+* Array of objects (preferred — from communicate.html, campaign.html)
+attachment_urls: [{ url: "https://...", name: "report.pdf" }]
 
+* Single object
+attachment_urls: { url: "https://...", name: "report.pdf" }
+
+* Array of strings
+attachment_urls: ["https://...", "https://..."]
+
+* Legacy comma-separated string (Pabbly path only, unchanged)
+attachment_urls: "https://...,https://..."
+*/
 const nodemailer = require("nodemailer");
 
 // -------------------- NORMALIZERS --------------------
@@ -206,9 +218,30 @@ async function sendEmail(db, { from, to, subject, text, html, attachments = [], 
     throw new Error(`No credentials found for sender: ${from}`);
   }
 
+  // Convert attachment_urls to nodemailer format for SMTP
+  // Nodemailer supports `path` as a remote URL — it fetches the file on send.
+  // This ensures callers can pass attachment_urls regardless of provider.
+  const mergedAttachments = [...attachments];
+  if (attachment_urls) {
+    const items = Array.isArray(attachment_urls) ? attachment_urls : [attachment_urls];
+    for (const item of items) {
+      if (typeof item === 'string' && item) {
+        mergedAttachments.push({
+          filename: item.split('/').pop().split('?')[0] || 'attachment',
+          path: item
+        });
+      } else if (item?.url) {
+        mergedAttachments.push({
+          filename: item.name || item.url.split('/').pop().split('?')[0] || 'attachment',
+          path: item.url
+        });
+      }
+    }
+  }
+
   switch (creds.provider) {
     case "smtp":
-      return sendViaSmtp(db, creds, { from, to, subject, text, html, attachments });
+      return sendViaSmtp(db, creds, { from, to, subject, text, html, attachments: mergedAttachments });
 
     case "pabbly":
       return sendViaPabbly(db, { from, from_name: creds.from_name, to, subject, text, html, attachment_urls, attachment_names });
