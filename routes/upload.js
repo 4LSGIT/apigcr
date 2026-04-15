@@ -1,8 +1,38 @@
-const express = require("express");
-const { Storage } = require("@google-cloud/storage");
-const multer = require("multer");
-const crypto = require("crypto");
-const path = require("path");
+/**
+ * Upload Route (modernized)
+ * routes/upload.js
+ *
+ * Single upload endpoint supporting two input formats:
+ *   1. Multipart file upload (via multer) — for general file uploads
+ *   2. Base64 JSON body — for iframe/apiSend contexts (campaign image editor)
+ *
+ * Auth: jwtOrApiKey (replaces legacy username/password)
+ *
+ * POST /api/upload
+ *
+ * Multipart body:
+ *   file  {File}   — the file to upload
+ *
+ * JSON body:
+ *   image       {string}  — base64-encoded file content
+ *   filename    {string}  — original filename (for extension detection)
+ *   contentType {string}  — MIME type (e.g. "image/png")
+ *
+ * Response:
+ *   { success, url, filename, size, mime, uploadedAt }
+ *
+ * Environment:
+ *   GCS_BUCKET — Google Cloud Storage bucket name (e.g. "uploads.4lsg.com")
+ *
+ * Mount: app.use('/', require('./routes/upload'));
+ */
+
+const express     = require('express');
+const { Storage } = require('@google-cloud/storage');
+const multer      = require('multer');
+const crypto      = require('crypto');
+const path        = require('path');
+const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 
 const router = express.Router();
 
@@ -14,72 +44,81 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_SIZE },
 });
 
-// Helper: generate random filename
 function randomFilename(originalName) {
-  const ext = path.extname(originalName);
-  const random = crypto.randomBytes(16).toString("hex");
+  const ext = path.extname(originalName || '.bin');
+  const random = crypto.randomBytes(16).toString('hex');
   return `${random}${ext}`;
 }
 
-router.post("/upload", upload.single("file"), async (req, res) => {
-  try {
-    const bucketName = process.env.GCS_BUCKET;
-    if (!bucketName) {
-      return res.status(500).json({ error: "Bucket not configured" });
-    }
+async function uploadToGcs(buffer, originalName, mimeType, userId) {
+  const bucketName = process.env.GCS_BUCKET;
+  if (!bucketName) throw new Error('GCS_BUCKET not configured');
 
-    const { username, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ error: "Missing username or password" });
-    }
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
-    }
+  const storage = new Storage();
+  const bucket  = storage.bucket(bucketName);
+  const gcsName = randomFilename(originalName);
+  const file    = bucket.file(gcsName);
+  const now     = new Date().toISOString();
 
-    // ---- AUTH CHECK (using mysql2 promise interface) ----
-    const sql = `SELECT user_auth FROM users WHERE username = ? AND password = ? LIMIT 1`;
-    const [results] = await req.db.query(sql, [username, password]);
-
-    if (results.length === 0 || !results[0].user_auth?.startsWith("authorized")) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-
-    // ---- UPLOAD TO GCS ----
-    const storage = new Storage();
-    const bucket = storage.bucket(bucketName);
-    const filename = randomFilename(req.file.originalname);
-    const file = bucket.file(filename);
-
-    const now = new Date().toISOString();
-
-    await file.save(req.file.buffer, {
-      resumable: true,              // Better reliability on slow networks
-      timeoutMs: 300000,            // 5 min timeout per operation
+  await file.save(buffer, {
+    resumable: true,
+    timeoutMs: 300000,
+    metadata: {
+      contentType: mimeType,
+      cacheControl: 'public, max-age=31536000',
       metadata: {
-        contentType: req.file.mimetype,
-        cacheControl: "public, max-age=31536000",
-        metadata: {
-          username,
-          originalName: req.file.originalname,
-          uploadedAt: now,
-        },
+        uploadedBy: String(userId || 'unknown'),
+        originalName: originalName || 'upload',
+        uploadedAt: now,
       },
-    });
+    },
+  });
 
-    const publicUrl = `https://storage.googleapis.com/${bucketName}/${filename}`;
+  return {
+    url:        `https://storage.googleapis.com/${bucketName}/${gcsName}`,
+    filename:   gcsName,
+    size:       buffer.length,
+    mime:       mimeType,
+    uploadedAt: now,
+  };
+}
 
-    return res.json({
-      success: true,
-      url: publicUrl,
-      filename,
-      size: req.file.size,
-      mime: req.file.mimetype,
-      uploadedAt: now,
-    });
+// ─────────────────────────────────────────────────────────────
+// POST /api/upload — accepts multipart OR base64 JSON
+// ─────────────────────────────────────────────────────────────
+// multer.single('file') only processes multipart requests.
+// For JSON requests it passes through with req.file = undefined.
+
+router.post('/api/upload', jwtOrApiKey, upload.single('file'), async (req, res) => {
+  try {
+    let buffer, originalName, mimeType;
+
+    if (req.file) {
+      // ── Multipart upload (multer processed it) ──
+      buffer       = req.file.buffer;
+      originalName = req.file.originalname;
+      mimeType     = req.file.mimetype;
+
+    } else if (req.body.image) {
+      // ── Base64 JSON upload ──
+      buffer       = Buffer.from(req.body.image, 'base64');
+      originalName = req.body.filename || 'upload.png';
+      mimeType     = req.body.contentType || 'image/png';
+
+      if (buffer.length > MAX_FILE_SIZE) {
+        return res.status(400).json({ error: `File exceeds ${MAX_FILE_SIZE / 1024 / 1024} MB limit` });
+      }
+
+    } else {
+      return res.status(400).json({ error: 'No file provided. Send multipart "file" or JSON "image" (base64)' });
+    }
+
+    const result = await uploadToGcs(buffer, originalName, mimeType, req.auth.userId);
+    res.json({ success: true, ...result });
 
   } catch (err) {
-    console.error("Upload error:", err);
-    res.status(500).json({ error: err.message || "Unexpected server error" });
+    console.error('[UPLOAD]', err);
+    res.status(500).json({ error: err.message || 'Upload failed' });
   }
 });
 

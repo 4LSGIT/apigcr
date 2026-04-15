@@ -14,8 +14,7 @@
   <h1>Upload File</h1>
 
   <form id="uploadForm">
-    <input type="text" name="username" placeholder="Username" required>
-    <input type="password" name="password" placeholder="Password" required>
+    <input type="text" name="apiKey" placeholder="API Key" required>
     <input type="file" name="file" required>
     <button type="submit">Upload</button>
   </form>
@@ -29,13 +28,18 @@
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
 
+      const apiKey = form.elements['apiKey'].value;
       const formData = new FormData(form);
+      formData.delete('apiKey');
 
       resultDiv.textContent = 'Uploading...';
 
       try {
-        const response = await fetch('/upload', {
+        const response = await fetch('/api/upload', {
           method: 'POST',
+          headers: {
+            'x-api-key': apiKey
+          },
           body: formData
         });
 

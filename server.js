@@ -8,7 +8,7 @@ const app = express();
 var corsOptions = { origin: "*" };
 app.use(cors(corsOptions));
 app.set('trust proxy', 1);//google cloud run
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(
   express.static(path.join(__dirname, "public"), {

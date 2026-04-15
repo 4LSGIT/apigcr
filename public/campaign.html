@@ -295,6 +295,39 @@ let emailAddresses = [];
 let quill = null;
 let pollTimer = null;
 
+// ─── CUSTOM QUILL IMAGE BLOT ──────────────────────────────────
+// Quill's default Image blot only keeps src. This extends it to
+// preserve width, style, and alt — essential for email-safe images.
+const BaseImage = Quill.import('formats/image');
+class EmailImage extends BaseImage {
+  static create(value) {
+    let node;
+    if (typeof value === 'string') {
+      node = super.create(value);
+    } else {
+      node = super.create(value.src || value.url || '');
+      if (value.width) node.setAttribute('width', value.width);
+      if (value.alt)   node.setAttribute('alt', value.alt);
+      // Email-safe inline styles
+      node.setAttribute('style',
+        value.style || 'display:block; max-width:100%; height:auto; border:0; outline:none;'
+      );
+    }
+    return node;
+  }
+  static value(node) {
+    return {
+      src:   node.getAttribute('src'),
+      width: node.getAttribute('width'),
+      style: node.getAttribute('style'),
+      alt:   node.getAttribute('alt')
+    };
+  }
+}
+EmailImage.blotName = 'image';
+EmailImage.tagName  = 'IMG';
+Quill.register(EmailImage, true);
+
 // ─── INIT ─────────────────────────────────────────────────────
 async function init() {
   try {
@@ -308,16 +341,21 @@ async function init() {
     console.error('Init failed:', err);
   }
 
-  // Quill
+  // Quill — custom image handler uploads to GCS instead of base64 embed
   quill = new Quill('#quill-editor', {
     theme: 'snow',
-    modules: { toolbar: [
-      [{ header: [1, 2, 3, false] }],
-      ['bold', 'italic', 'underline', 'strike'],
-      [{ color: [] }, { background: [] }],
-      [{ list: 'ordered' }, { list: 'bullet' }],
-      ['link', 'clean']
-    ]}
+    modules: { toolbar: {
+      container: [
+        [{ header: [1, 2, 3, false] }],
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ color: [] }, { background: [] }],
+        [{ list: 'ordered' }, { list: 'bullet' }],
+        ['link', 'image', 'clean']
+      ],
+      handlers: {
+        image: quillImageHandler
+      }
+    }}
   });
 
   // Sync Quill → hidden textarea on every change
@@ -473,6 +511,107 @@ function clearFilters() {
 
 
 // ─── TAB 2: COMPOSE ──────────────────────────────────────────
+
+/**
+ * Custom Quill image handler — Swal dialog with two options:
+ *   1. Upload a file → GCS → insert URL
+ *   2. Paste an image URL → insert directly
+ * After getting the URL, shows a size picker, then inserts with email-safe styling.
+ */
+async function quillImageHandler() {
+  // ── Step 1: Get the image URL (upload or paste) ──
+  const { value: formValues, isConfirmed } = await Swal.fire({
+    title: 'Insert Image',
+    html: `
+      <div style="text-align:left;">
+        <p style="font-weight:600; margin-bottom:6px;">Upload a file:</p>
+        <input type="file" id="swal-file" accept="image/png,image/jpeg,image/gif,image/webp"
+               style="margin-bottom:14px; font-size:13px;">
+        <hr style="margin:10px 0;">
+        <p style="font-weight:600; margin-bottom:6px;">Or enter image URL:</p>
+        <input type="text" id="swal-url" class="swal2-input" placeholder="https://..."
+               style="margin:0; width:100%;">
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: 'Next',
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const file = popup.querySelector('#swal-file').files[0];
+      const url  = popup.querySelector('#swal-url').value.trim();
+      if (!file && !url) {
+        Swal.showValidationMessage('Upload a file or enter a URL');
+        return false;
+      }
+      return { file, url };
+    }
+  });
+
+  if (!isConfirmed) return;
+
+  let imageUrl;
+
+  if (formValues.file) {
+    // ── Upload file to GCS ──
+    const file = formValues.file;
+    if (file.size > 5 * 1024 * 1024) {
+      return Swal.fire('Too Large', 'Image must be under 5 MB', 'warning');
+    }
+
+    try {
+      Toast.fire({ icon: 'info', title: 'Uploading image...' });
+
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+
+      const res = await P.apiSend('/api/upload', 'POST', {
+        image: base64,
+        filename: file.name,
+        contentType: file.type
+      });
+
+      imageUrl = res.url;
+    } catch (err) {
+      console.error('Image upload failed:', err);
+      return Swal.fire('Upload Failed', err.message || 'Could not upload image', 'error');
+    }
+  } else {
+    // ── Direct URL ──
+    imageUrl = formValues.url;
+  }
+
+  // ── Step 2: Size picker ──
+  const { value: width, isConfirmed: sizeConfirmed } = await Swal.fire({
+    title: 'Image Size',
+    input: 'select',
+    inputOptions: {
+      '600': 'Full width (600px)',
+      '400': 'Medium (400px)',
+      '200': 'Small (200px)',
+      '':    'Original size'
+    },
+    inputValue: '600',
+    showCancelButton: true,
+    confirmButtonText: 'Insert'
+  });
+
+  if (!sizeConfirmed) return;
+
+  // ── Step 3: Insert into Quill with email-safe attributes ──
+  const range = quill.getSelection(true);
+  quill.insertEmbed(range.index, 'image', {
+    src:   imageUrl,
+    width: width || undefined,
+    alt:   'Image',
+    style: 'display:block; max-width:100%; height:auto; border:0; outline:none; text-decoration:none;'
+  });
+  quill.setSelection(range.index + 1);
+  Toast.fire({ icon: 'success', title: 'Image inserted' });
+}
 
 function onOpenCompose() {
   const banner = document.getElementById('compose-banner');
