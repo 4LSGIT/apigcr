@@ -117,7 +117,7 @@
   </div>
 
   <div id="tabCampaigns" class="tab-main">
-    <iframe id="tabCampFrame" src=""></iframe>
+    <iframe id="tabCampFrame" src="/campaign.html"></iframe>
   </div>
 
 
@@ -1636,8 +1636,8 @@ function showAppt(apptID) {
       }
       return data;
     }
-    E("tabCampFrame").src="/campaign.html";
-    
+    //E("tabCampFrame").src="/campaign.html";
+
     async function loginBlocking() {
       if (window.AUTH_STATE.loginInProgress) {
         return window.AUTH_STATE.loginInProgress;

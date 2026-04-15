@@ -1347,7 +1347,10 @@ function fmtPhone(n) {
 }
 
 // ─── BOOT ─────────────────────────────────────────────────────
-init();
+(function waitForParent() {
+  if (P.apiSend) return init();
+  setTimeout(waitForParent, 100);
+})();
 </script>
 </body>
 </html>
