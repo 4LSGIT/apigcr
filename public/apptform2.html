@@ -10,56 +10,161 @@
   <link href="/css/yc-forms.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <style>
-    body { padding: 12px; }
-    .yc-form { padding: 16px; }
+    body { padding: 16px; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .yc-form { padding: 0; box-shadow: none; border: none; background: transparent; }
 
-    /* Status badge */
+    /* ── Loading ── */
+    #loading {
+      display: flex; align-items: center; justify-content: center;
+      gap: 10px; padding: 60px 20px; color: #6c757d; font-size: 0.9rem;
+    }
+    #loading::before {
+      content: ''; width: 20px; height: 20px;
+      border: 2.5px solid #dee2e6; border-top-color: #0d6efd;
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Header ── */
+    .appt-header {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-bottom: 14px; margin-bottom: 16px;
+      border-bottom: 2px solid #e9ecef;
+    }
+    .appt-title { font-size: 1.15rem; font-weight: 700; color: #1a1a2e; letter-spacing: -0.01em; }
+    .appt-title span { color: #495057; }
+
+    /* ── Status badge ── */
     .status-badge {
-      display: inline-block; padding: 4px 12px; border-radius: 12px;
-      font-size: 0.85rem; font-weight: 600; color: #fff;
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 14px; border-radius: 20px;
+      font-size: 0.8rem; font-weight: 600; letter-spacing: 0.02em;
+      text-transform: uppercase; color: #fff;
     }
-    .status-Scheduled    { background: #28a745; }
-    .status-Attended     { background: #0d6efd; }
-    .status-No-Show      { background: #dc3545; }
-    .status-Canceled     { background: #6c757d; }
-    .status-Rescheduled  { background: #ffc107; color: #333; }
+    .status-Scheduled    { background: linear-gradient(135deg, #28a745, #20c040); }
+    .status-Attended     { background: linear-gradient(135deg, #0d6efd, #4990ff); }
+    .status-No-Show      { background: linear-gradient(135deg, #dc3545, #e85d6a); }
+    .status-Canceled     { background: linear-gradient(135deg, #6c757d, #8a939c); }
+    .status-Rescheduled  { background: linear-gradient(135deg, #e6a800, #ffc107); color: #2d2200; }
 
-    /* Action buttons */
-    .action-bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
-    .action-bar button {
-      display: inline-flex; align-items: center; gap: 6px;
-      padding: 8px 14px; border: none; border-radius: 6px;
-      font-size: 0.88rem; font-weight: 500; cursor: pointer;
-      transition: opacity 0.15s;
+    /* ── Info grid ── */
+    .info-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 1px; background: #e9ecef; border-radius: 8px; overflow: hidden;
+      margin-bottom: 16px;
     }
-    .action-bar button:hover { opacity: 0.85; }
+    .info-item {
+      background: #fff; padding: 10px 14px;
+    }
+    .info-item label {
+      display: block; font-size: 0.7rem; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      color: #8a939c; margin-bottom: 3px;
+    }
+    .info-item span { font-size: 0.88rem; font-weight: 500; color: #212529; }
+    .info-item a { color: #0d6efd; text-decoration: none; font-weight: 600; }
+    .info-item a:hover { text-decoration: underline; }
+
+    /* ── Action buttons ── */
+    .action-bar {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      padding: 14px 0; border-bottom: 1px solid #e9ecef;
+    }
+    .action-bar button {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 9px 16px; border: none; border-radius: 8px;
+      font-size: 0.84rem; font-weight: 600; cursor: pointer;
+      transition: all 0.15s ease; box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .action-bar button:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.12); }
+    .action-bar button:active { transform: translateY(0); }
+    .action-bar button i { font-size: 0.9rem; }
     .btn-attended  { background: #0d6efd; color: #fff; }
     .btn-noshow    { background: #dc3545; color: #fff; }
     .btn-cancel    { background: #6c757d; color: #fff; }
-    .btn-reschedule { background: #ffc107; color: #333; }
-    .btn-add-case  { background: #198754; color: #fff; }
+    .btn-reschedule { background: #f0ad00; color: #2d2200; }
 
-    /* Info grid */
-    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; margin-bottom: 12px; }
-    .info-item label { font-size: 0.78rem; color: #6c757d; display: block; margin-bottom: 1px; }
-    .info-item span { font-size: 0.92rem; font-weight: 500; color: #212529; }
-    .info-item a { color: #0d6efd; text-decoration: none; font-weight: 500; }
-    .info-item a:hover { text-decoration: underline; }
+    /* ── Sections ── */
+    .appt-section { padding-top: 16px; margin-top: 16px; border-top: 1px solid #e9ecef; }
+    .appt-section-title {
+      font-weight: 700; font-size: 0.82rem; color: #495057;
+      text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 10px;
+    }
 
-    /* Sections */
-    .appt-section { border-top: 1px solid #dee2e6; padding-top: 12px; margin-top: 12px; }
-    .appt-section-title { font-weight: 600; font-size: 0.92rem; color: #495057; margin-bottom: 8px; }
+    /* ── Cancel panel ── */
+    .cancel-panel {
+      background: #fafafa; border: 1px solid #e0e0e0; border-left: 3px solid #dc3545;
+      border-radius: 0 8px 8px 0; padding: 16px; margin-top: 12px; display: none;
+    }
+    .cancel-panel .appt-section-title { color: #dc3545; }
 
-    /* Reschedule panel */
-    .reschedule-panel { background: #fff8e1; border: 1px solid #ffc107; border-radius: 6px; padding: 12px; margin-top: 8px; display: none; }
-    .reschedule-panel label { font-size: 0.84rem; font-weight: 500; }
-    .reschedule-panel input, .reschedule-panel textarea { margin-top: 4px; }
+    /* ── Reschedule panel ── */
+    .reschedule-panel {
+      background: #fffcf0; border: 1px solid #f0dfa0; border-left: 3px solid #f0ad00;
+      border-radius: 0 8px 8px 0; padding: 16px; margin-top: 12px; display: none;
+    }
+    .reschedule-panel .appt-section-title { color: #a07800; }
+    .reschedule-panel label,
+    .cancel-panel label { font-size: 0.84rem; }
 
-    /* Cancel panel */
-    .cancel-panel { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 12px; margin-top: 8px; display: none; }
+    /* ── Panel checkboxes ── */
+    .panel-options { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 10px 0; }
+    .panel-options label {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 0.84rem; color: #495057; cursor: pointer;
+    }
+    .panel-options input[type="checkbox"] {
+      width: 15px; height: 15px; accent-color: #0d6efd; cursor: pointer;
+    }
 
-    @media (max-width: 500px) {
+    /* ── Panel textareas ── */
+    .cancel-panel textarea,
+    .reschedule-panel textarea {
+      width: 100%; border: 1px solid #d0d0d0; border-radius: 6px;
+      padding: 8px 10px; font-size: 0.88rem; resize: vertical;
+      font-family: inherit; margin-top: 4px;
+    }
+    .cancel-panel textarea:focus,
+    .reschedule-panel textarea:focus { outline: none; border-color: #86b7fe; box-shadow: 0 0 0 3px rgba(13,110,253,0.12); }
+    .reschedule-panel input[type="datetime-local"] {
+      width: 100%; border: 1px solid #d0d0d0; border-radius: 6px;
+      padding: 8px 10px; font-size: 0.88rem; font-family: inherit;
+    }
+
+    /* ── Panel buttons ── */
+    .panel-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+    /* ── Notes ── */
+    #noteField {
+      width: 100%; border: 1px solid #d5d9de; border-radius: 6px;
+      padding: 10px 12px; font-size: 0.88rem; resize: vertical;
+      font-family: inherit; min-height: 70px;
+    }
+    #noteField:focus { outline: none; border-color: #86b7fe; box-shadow: 0 0 0 3px rgba(13,110,253,0.12); }
+
+    /* ── Case section ── */
+    #caseDisplay a { font-weight: 600; font-size: 0.95rem; }
+    #addCasePanel {
+      background: #f8f9fa; border-radius: 8px; padding: 14px; margin-top: 10px;
+    }
+    .or-divider {
+      text-align: center; color: #adb5bd; font-size: 0.82rem;
+      margin: 8px 0; position: relative;
+    }
+    .or-divider::before, .or-divider::after {
+      content: ''; position: absolute; top: 50%;
+      width: calc(50% - 20px); height: 1px; background: #dee2e6;
+    }
+    .or-divider::before { left: 0; }
+    .or-divider::after { right: 0; }
+
+    @media (max-width: 600px) {
+      .info-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 400px) {
       .info-grid { grid-template-columns: 1fr; }
+      .action-bar { flex-direction: column; }
+      .action-bar button { justify-content: center; }
     }
   </style>
 </head>
@@ -70,9 +175,9 @@
 <div id="apptView" class="yc-form" style="display:none;">
 
   <!-- ═══ HEADER ═══ -->
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <div style="font-size:1.1rem;font-weight:700;color:#212529;">
-      Appointment #<span id="apptId"></span>
+  <div class="appt-header">
+    <div class="appt-title">
+      Appointment <span>#<span id="apptId"></span></span>
     </div>
     <span id="statusBadge" class="status-badge"></span>
   </div>
@@ -123,19 +228,19 @@
   <!-- ═══ CANCEL PANEL ═══ -->
   <div class="cancel-panel" id="cancelPanel">
     <div class="appt-section-title">Cancel Appointment</div>
-    <div class="yc-field"><textarea id="cancelNote" rows="2" placeholder="Internal note (optional)" style="width:100%;"></textarea></div>
-    <div style="margin:8px 0;">
-      <label style="font-size:0.84rem;margin-right:12px;"><input type="checkbox" id="cancelFollowUp"> Follow-up sequence</label>
-      <label style="font-size:0.84rem;margin-right:12px;"><input type="checkbox" id="cancelTask"> Create task</label>
+    <div class="yc-field"><textarea id="cancelNote" rows="2" placeholder="Internal note (optional)"></textarea></div>
+    <div class="panel-options">
+      <label><input type="checkbox" id="cancelFollowUp"> Follow-up sequence</label>
+      <label><input type="checkbox" id="cancelTask"> Create task</label>
     </div>
-    <div style="margin:8px 0;">
-      <label style="font-size:0.84rem;margin-right:12px;"><input type="checkbox" id="cancelSMS" onchange="toggleCancelMsg()"> SMS</label>
-      <label style="font-size:0.84rem;"><input type="checkbox" id="cancelEmail" onchange="toggleCancelMsg()"> Email</label>
+    <div class="panel-options">
+      <label><input type="checkbox" id="cancelSMS" onchange="toggleCancelMsg()"> SMS</label>
+      <label><input type="checkbox" id="cancelEmail" onchange="toggleCancelMsg()"> Email</label>
     </div>
     <div class="yc-field" id="cancelMsgWrap" style="display:none;">
-      <textarea id="cancelMsg" rows="3" style="width:100%;"></textarea>
+      <textarea id="cancelMsg" rows="3"></textarea>
     </div>
-    <div style="display:flex;gap:8px;margin-top:8px;">
+    <div class="panel-actions">
       <button class="yc-btn yc-btn-danger yc-btn-sm" onclick="doCancel()">Confirm Cancel</button>
       <button class="yc-btn yc-btn-secondary yc-btn-sm" onclick="hidePanel('cancelPanel')">Back</button>
     </div>
@@ -146,17 +251,17 @@
     <div class="appt-section-title">Reschedule Appointment</div>
     <div class="yc-field">
       <label class="yc-label">New Date & Time</label>
-      <input type="datetime-local" id="rescheduleDate" style="width:100%;" onchange="updateRescheduleMsg()">
+      <input type="datetime-local" id="rescheduleDate" onchange="updateRescheduleMsg()">
     </div>
-    <div class="yc-field"><textarea id="rescheduleNote" rows="2" placeholder="Internal note (optional)" style="width:100%;"></textarea></div>
-    <div style="margin:8px 0;">
-      <label style="font-size:0.84rem;margin-right:12px;"><input type="checkbox" id="rescSMS" onchange="toggleRescMsg()"> SMS</label>
-      <label style="font-size:0.84rem;"><input type="checkbox" id="rescEmail" onchange="toggleRescMsg()"> Email</label>
+    <div class="yc-field"><textarea id="rescheduleNote" rows="2" placeholder="Internal note (optional)"></textarea></div>
+    <div class="panel-options">
+      <label><input type="checkbox" id="rescSMS" onchange="toggleRescMsg()"> SMS</label>
+      <label><input type="checkbox" id="rescEmail" onchange="toggleRescMsg()"> Email</label>
     </div>
     <div class="yc-field" id="rescMsgWrap" style="display:none;">
-      <textarea id="rescMsg" rows="3" style="width:100%;"></textarea>
+      <textarea id="rescMsg" rows="3"></textarea>
     </div>
-    <div style="display:flex;gap:8px;margin-top:8px;">
+    <div class="panel-actions">
       <button class="yc-btn yc-btn-primary yc-btn-sm" onclick="doRescheduleNow()">Reschedule Now</button>
       <button class="yc-btn yc-btn-secondary yc-btn-sm" onclick="doRescheduleLater()">Reschedule Later (create task)</button>
       <button class="yc-btn yc-btn-secondary yc-btn-sm" onclick="hidePanel('reschedulePanel')">Back</button>
@@ -167,9 +272,9 @@
   <div class="appt-section">
     <div class="appt-section-title">Notes</div>
     <div class="yc-field">
-      <textarea id="noteField" rows="3" maxlength="3000" placeholder="Appointment notes" style="width:100%;"></textarea>
+      <textarea id="noteField" rows="3" maxlength="3000" placeholder="Appointment notes"></textarea>
     </div>
-    <button class="yc-btn yc-btn-primary yc-btn-sm" onclick="updateNote()" style="margin-top:4px;">
+    <button class="yc-btn yc-btn-primary yc-btn-sm" onclick="updateNote()" style="margin-top:6px;">
       <i class="fa-solid fa-floppy-disk"></i> Update Note
     </button>
   </div>
@@ -178,7 +283,7 @@
   <div class="appt-section" id="caseSection">
     <div class="appt-section-title">Case</div>
     <div id="caseDisplay"></div>
-    <div id="addCasePanel" style="display:none;margin-top:8px;">
+    <div id="addCasePanel" style="display:none;">
       <div class="yc-row">
         <div class="yc-field">
           <label class="yc-label">Link Existing Case</label>
@@ -188,7 +293,7 @@
           <button class="yc-btn yc-btn-primary yc-btn-sm" onclick="linkCase()">Link</button>
         </div>
       </div>
-      <div style="text-align:center;color:#6c757d;font-size:0.84rem;margin:6px 0;">— or —</div>
+      <div class="or-divider">or</div>
       <div class="yc-row">
         <div class="yc-field">
           <label class="yc-label">Create New Case</label>
