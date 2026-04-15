@@ -114,11 +114,82 @@ router.post('/api/upload', jwtOrApiKey, upload.single('file'), async (req, res) 
     }
 
     const result = await uploadToGcs(buffer, originalName, mimeType, req.auth.userId);
+
+    // Optionally add to image library for reuse
+    if (req.body.addToLibrary || req.file?.fieldname === 'file') {
+      try {
+        await req.db.query(
+          `INSERT IGNORE INTO image_library (url, filename, original_name, mime, uploaded_by)
+           VALUES (?, ?, ?, ?, ?)`,
+          [result.url, result.filename, originalName, mimeType, req.auth.userId]
+        );
+      } catch (libErr) {
+        console.error('[UPLOAD] Library insert failed (non-fatal):', libErr.message);
+      }
+    }
+
     res.json({ success: true, ...result });
 
   } catch (err) {
     console.error('[UPLOAD]', err);
     res.status(500).json({ error: err.message || 'Upload failed' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/image-library — list all saved images
+// ─────────────────────────────────────────────────────────────
+router.get('/api/image-library', jwtOrApiKey, async (req, res) => {
+  try {
+    const [rows] = await req.db.query(
+      `SELECT il.id, il.url, il.filename, il.original_name, il.mime, il.created_at,
+              u.user_name AS uploaded_by_name
+       FROM image_library il
+       LEFT JOIN users u ON il.uploaded_by = u.user
+       ORDER BY il.created_at DESC`
+    );
+    res.json({ images: rows });
+  } catch (err) {
+    console.error('[GET /api/image-library]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/image-library — add a URL to the library manually
+// ─────────────────────────────────────────────────────────────
+router.post('/api/image-library', jwtOrApiKey, async (req, res) => {
+  const { url, original_name } = req.body;
+  if (!url) return res.status(400).json({ error: 'url is required' });
+
+  try {
+    const filename = url.split('/').pop() || 'image';
+    const [result] = await req.db.query(
+      `INSERT IGNORE INTO image_library (url, filename, original_name, uploaded_by)
+       VALUES (?, ?, ?, ?)`,
+      [url, filename, original_name || filename, req.auth.userId]
+    );
+    res.json({ success: true, id: result.insertId });
+  } catch (err) {
+    console.error('[POST /api/image-library]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// DELETE /api/image-library/:id — remove from library (keeps file in bucket)
+// ─────────────────────────────────────────────────────────────
+router.delete('/api/image-library/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const [result] = await req.db.query(
+      'DELETE FROM image_library WHERE id = ?',
+      [parseInt(req.params.id)]
+    );
+    if (!result.affectedRows) return res.status(404).json({ error: 'Image not found' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[DELETE /api/image-library]', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
