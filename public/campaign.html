@@ -1214,7 +1214,7 @@ function renderCampaignList(campaigns) {
       progressHtml = `${total} contact${total !== 1 ? 's' : ''}`;
     }
 
-    const schedDisplay = c.scheduled_time ? new Date(c.scheduled_time).toLocaleString() : '-';
+    const schedDisplay = c.scheduled_time  ? new Date(c.scheduled_time.replace('Z', '')).toLocaleString() : '-';
 
     let actions = `<button class="btn btn-outline btn-sm" onclick="viewStats(${c.campaign_id})">Stats</button> `;
     if (['scheduled', 'sending'].includes(c.status)) {
