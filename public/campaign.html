@@ -69,6 +69,8 @@
     .compose-section > label { font-weight: 600; display: block; margin-bottom: 4px; }
     .editor-wrap { border: 1px solid #ccc; border-radius: 3px; min-height: 200px; }
     .editor-wrap .ql-container { min-height: 160px; font-size: 14px; }
+    .editor-wrap .ql-editor img { cursor: pointer; transition: outline .15s; }
+    .editor-wrap .ql-editor img:hover { outline: 2px solid #007bff; outline-offset: 2px; }
     #html-editor { width: 100%; min-height: 200px; font-family: 'Courier New', monospace; font-size: 13px; display: none; }
     .compose-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
     .compose-row .filter-group { flex: 1; min-width: 180px; }
@@ -360,6 +362,39 @@ async function init() {
 
   // Sync Quill → hidden textarea on every change
   quill.on('text-change', () => {
+    document.getElementById('html-editor').value = quill.root.innerHTML;
+  });
+
+  // Click-to-resize: click any image in Quill to change its size
+  quill.root.addEventListener('click', async (e) => {
+    if (e.target.tagName !== 'IMG') return;
+    const img = e.target;
+    const current = img.getAttribute('width') || '';
+
+    const { value: width, isConfirmed } = await Swal.fire({
+      title: 'Resize Image',
+      input: 'select',
+      inputOptions: {
+        '600': 'Full width (600px)',
+        '400': 'Medium (400px)',
+        '200': 'Small (200px)',
+        '':    'Original size'
+      },
+      inputValue: current,
+      showCancelButton: true,
+      confirmButtonText: 'Apply'
+    });
+
+    if (!isConfirmed) return;
+
+    if (width) {
+      img.setAttribute('width', width);
+    } else {
+      img.removeAttribute('width');
+    }
+    img.setAttribute('style', 'display:block; max-width:100%; height:auto; border:0; outline:none; text-decoration:none;');
+
+    // Sync change to HTML textarea
     document.getElementById('html-editor').value = quill.root.innerHTML;
   });
 
