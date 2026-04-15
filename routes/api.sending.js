@@ -22,7 +22,7 @@ router.get('/api/phone-lines', jwtOrApiKey, async (req, res) => {
       `SELECT id, phone_number, display_name, provider
        FROM phone_lines
        WHERE active = 1
-       ORDER BY display_name`
+       ORDER BY display_name DESC`
     );
     res.json({ status: 'success', lines });
   } catch (err) {
@@ -38,7 +38,7 @@ router.get('/api/email-from', jwtOrApiKey, async (req, res) => {
     const [emails] = await req.db.query(
       `SELECT id, email, from_name, provider
        FROM email_credentials
-       ORDER BY from_name, email`
+       ORDER BY id --from_name, email`
     );
     res.json({ status: 'success', emails });
   } catch (err) {

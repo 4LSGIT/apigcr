@@ -131,7 +131,7 @@
   </div>
 
   <div id="tabCampaigns" class="tab-main">
-    <iframe id="tabCustomFrame" src="/campaign.html"></iframe>
+    <iframe id="tabCampFrame" src=""></iframe>
   </div>
 
 
@@ -1879,6 +1879,7 @@
       }
       return data;
     }
+    E("tabCampFrame").src="/campaign.html";
 
     async function loginBlocking() {
       if (window.AUTH_STATE.loginInProgress) {
