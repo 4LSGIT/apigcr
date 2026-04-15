@@ -7,6 +7,7 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <link href="/css/yc-forms.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
   <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
@@ -46,6 +47,15 @@
     .sf-other-area textarea { width: 100%; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.88rem; resize: vertical; }
     .sf-other-area input[type="text"] { width: 100%; padding: 6px 8px; border: 1px solid #ced4da; border-radius: 4px; font-size: 0.88rem; margin-bottom: 6px; }
     #otherEmailEditor { height: 120px; }
+    #otherEmailEditor .ql-toolbar { border: 1px solid #ced4da; border-bottom: none; border-radius: 4px 4px 0 0; background: #f9f9f9; }
+    #otherEmailEditor .ql-container { border: 1px solid #ced4da; border-radius: 0 0 4px 4px; min-height: 150px; font-family: Arial, Helvetica, sans-serif; font-size: 14px; }
+    /* ── Toggle switch ─── */
+    .sf-toggle-switch { position: relative; display: inline-block; width: 44px; height: 24px; }
+    .sf-toggle-switch input { opacity: 0; width: 0; height: 0; }
+    .sf-toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #07ADEF; transition: .3s; border-radius: 24px; }
+    .sf-toggle-slider:before { content: ""; position: absolute; height: 18px; width: 18px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; }
+    .sf-toggle-switch input:checked + .sf-toggle-slider { background-color: #28a745; }
+    .sf-toggle-switch input:checked + .sf-toggle-slider:before { transform: translateX(20px); }
     .sf-preview { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 16px; margin: 16px 0; white-space: pre-wrap; font-size: 0.88rem; font-family: monospace; max-height: 400px; overflow-y: auto; display: none; }
     .sf-preview h4 { font-family: Arial, sans-serif; font-size: 0.95rem; font-weight: 700; margin: 0 0 8px 0; }
     .sf-actions { display: flex; gap: 10px; margin-top: 16px; }
@@ -183,12 +193,61 @@
   <div class="sf-section">
     <div class="sf-section-title"><input type="checkbox" id="chkOther"> Other Message</div>
     <div class="sf-other-area" id="otherSection" style="display:none;">
-      <label>SMS Message:</label>
-      <textarea id="otherSms" rows="3" placeholder="Free text SMS message"></textarea>
-      <label>Email Subject:</label>
-      <input type="text" id="otherEmailSubject" placeholder="Email subject">
-      <label>Email Body:</label>
-      <div id="otherEmailEditor"></div>
+
+      <!-- SMS / Email toggle -->
+      <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:8px 0; border-bottom:1px solid #e0e0e0;">
+        <span id="otherToggleSmsLabel" style="font-weight:bold; color:#07ADEF;">SMS</span>
+        <label class="sf-toggle-switch">
+          <input type="checkbox" id="otherModeToggle" onchange="toggleOtherMode()">
+          <span class="sf-toggle-slider"></span>
+        </label>
+        <span id="otherToggleEmailLabel" style="font-weight:normal; color:#888;">Email</span>
+      </div>
+
+      <!-- SMS fields -->
+      <div id="otherSmsFields">
+        <label>Message:</label>
+        <textarea id="otherSms" rows="4" maxlength="1000" placeholder="Free text SMS message"
+                  oninput="document.getElementById('otherSmsChars').textContent = this.value.length + '/1000'"></textarea>
+        <div style="font-size:12px; color:#888; text-align:right; margin-top:-4px; margin-bottom:6px;" id="otherSmsChars">0/1000</div>
+
+        <!-- MMS attachment (RC lines only) -->
+        <div id="otherMmsSection" style="display:none; margin-bottom:8px;">
+          <button class="yc-btn yc-btn-secondary" onclick="otherAttachMmsImage()" style="padding:6px 14px; font-size:13px;">
+            <i class="fa-solid fa-image"></i> Attach Image (MMS)
+          </button>
+          <span style="color:#888; font-size:13px;" id="otherMmsHint"></span>
+          <div id="otherMmsPreview" style="display:none; margin-top:8px; align-items:center; gap:8px; font-size:13px; padding:6px 10px; background:#f8f9fa; border:1px solid #e0e0e0; border-radius:4px;">
+            <img id="otherMmsPreviewImg" src="" style="max-width:80px; max-height:60px; border-radius:4px; border:1px solid #ddd;">
+            <span id="otherMmsPreviewName"></span>
+            <button onclick="otherRemoveMmsAttachment()" style="background:#dc3545; color:#fff; border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:13px;">&times;</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Email fields -->
+      <div id="otherEmailFields" style="display:none;">
+        <label>Subject:</label>
+        <input type="text" id="otherEmailSubject" placeholder="Email subject" maxlength="150"
+               oninput="otherUpdateSubjectHint()" style="width:100%; margin-bottom:4px;">
+        <div id="otherSubjectHint" style="font-size:12px; margin-bottom:8px;"></div>
+        <label>Body:</label>
+        <div id="otherEmailEditor"></div>
+
+        <!-- Email attachment -->
+        <div style="margin-top:8px;">
+          <button class="yc-btn yc-btn-secondary" onclick="otherAttachEmailFile()" style="padding:6px 14px; font-size:13px;">
+            <i class="fa-solid fa-paperclip"></i> Attach File
+          </button>
+          <span style="color:#888; font-size:13px; margin-left:8px;">File will be sent as an email attachment</span>
+        </div>
+        <div id="otherEmailAttachPreview" style="display:none; margin-top:8px; align-items:center; gap:8px; font-size:13px; padding:6px 10px; background:#f8f9fa; border:1px solid #e0e0e0; border-radius:4px;">
+          <i class="fa-solid fa-file"></i>
+          <span id="otherEmailAttachName"></span>
+          <button onclick="otherRemoveEmailAttachment()" style="background:#dc3545; color:#fff; border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:13px;">&times;</button>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -213,7 +272,10 @@ const caseId = params.get('case_id');
 if (!caseId) {
   document.body.innerHTML = '<p style="color:red;padding:20px;">Missing case_id parameter.</p>';
 } else {
-  initSendingForm();
+  (function waitForParent() {
+    if (P.apiSend && P.firmData?.phoneLines) return initSendingForm();
+    setTimeout(waitForParent, 100);
+  })();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -227,6 +289,13 @@ let phoneLines = [];
 let emailAddresses = [];
 let currentUser = {};
 let quillEditor = null;
+let otherMmsAttachmentUrl = null;
+let otherEmailAttachmentUrl = null;
+
+const Toast = Swal.mixin({
+  toast: true, position: 'top-end', showConfirmButton: false,
+  timer: 2500, timerProgressBar: true
+});
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const CURRENT_YEAR = new Date().getFullYear();
@@ -244,25 +313,58 @@ const BANKS = [
 
 
 // ═══════════════════════════════════════════════════════════════════════════
+// QUILL — EmailImage blot (preserves width/style/alt for email-safe images)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const BaseImage = Quill.import('formats/image');
+class EmailImage extends BaseImage {
+  static create(value) {
+    let node;
+    if (typeof value === 'string') {
+      node = super.create(value);
+    } else {
+      node = super.create(value.src || value.url || '');
+      if (value.width) node.setAttribute('width', value.width);
+      if (value.alt) node.setAttribute('alt', value.alt);
+      node.setAttribute('style',
+        value.style || 'display:block; max-width:100%; height:auto; border:0; outline:none;'
+      );
+    }
+    return node;
+  }
+  static value(node) {
+    return {
+      src: node.getAttribute('src'),
+      width: node.getAttribute('width'),
+      style: node.getAttribute('style'),
+      alt: node.getAttribute('alt')
+    };
+  }
+}
+EmailImage.blotName = 'image';
+EmailImage.tagName = 'IMG';
+Quill.register(EmailImage, true);
+
+
+// ═══════════════════════════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function initSendingForm() {
   try {
-    const [caseResult, linesResult, emailsResult, meResult] = await Promise.all([
-      P.apiSend(`/api/cases/${caseId}`, 'GET', { include: "contacts" }),
-      P.apiSend('/api/phone-lines', 'GET'),
-      P.apiSend('/api/email-from', 'GET'),
-      P.apiSend('/api/users/me', 'GET'),
-    ]);
+    // Case data still needs its own fetch (not in firmData)
+    const caseResult = await P.apiSend(`/api/cases/${caseId}`, 'GET', { include: "contacts" });
 
     caseData = caseResult.case || {};
     const clients = caseResult.clients || [];
     primaryContact = clients.find(c => c.relate_type === 'Primary') || null;
     secondaryContact = clients.find(c => c.relate_type === 'Secondary') || null;
-    phoneLines = linesResult.lines || [];
-    emailAddresses = emailsResult.emails || [];
-    currentUser = meResult.user || {};
+
+    // Read firm-wide data from parent instead of 3 API calls
+    const firmData = P.firmData || {};
+    phoneLines = firmData.phoneLines || [];
+    emailAddresses = firmData.emailFrom || [];
+    currentUser = firmData.currentUser || {};
 
     renderContactCards();
     renderDropdowns();
@@ -317,7 +419,9 @@ function renderDropdowns() {
   phoneLines.forEach(line => {
     const opt = document.createElement('option');
     opt.value = line.phone_number;
-    opt.textContent = `${line.display_name} - ${formatPhone(line.phone_number)}`;
+    opt.dataset.provider = line.provider;
+    const suffix = line.provider !== 'ringcentral' ? ' (SMS only)' : '';
+    opt.textContent = `${line.display_name} - ${formatPhone(line.phone_number)}${suffix}`;
     if (currentUser.default_phone && line.phone_number === currentUser.default_phone) opt.selected = true;
     smsSelect.appendChild(opt);
   });
@@ -378,13 +482,39 @@ function initQuill() {
     theme: 'snow',
     placeholder: 'Compose email body...',
     modules: {
-      toolbar: [
-        ['bold', 'italic', 'underline'],
-        [{ 'list': 'ordered' }, { 'list': 'bullet' }],
-        ['link'],
-        ['clean']
-      ]
+      toolbar: {
+        container: [
+          ['bold', 'italic', 'underline'],
+          [{ list: 'ordered' }, { list: 'bullet' }],
+          ['link', 'image', 'clean']
+        ],
+        handlers: { image: otherQuillImageHandler }
+      }
     }
+  });
+
+  // Click-to-resize images in Quill
+  quillEditor.root.addEventListener('click', async (e) => {
+    if (e.target.tagName !== 'IMG') return;
+    const img = e.target;
+    const current = img.getAttribute('width') || '';
+    const { value: width, isConfirmed } = await Swal.fire({
+      title: 'Resize Image',
+      input: 'select',
+      inputOptions: {
+        '600': 'Full width (600px)',
+        '400': 'Medium (400px)',
+        '200': 'Small (200px)',
+        '': 'Original size'
+      },
+      inputValue: current,
+      showCancelButton: true,
+      confirmButtonText: 'Apply'
+    });
+    if (!isConfirmed) return;
+    if (width) { img.setAttribute('width', width); }
+    else { img.removeAttribute('width'); }
+    img.setAttribute('style', 'display:block; max-width:100%; height:auto; border:0; outline:none; text-decoration:none;');
   });
 }
 
@@ -421,6 +551,10 @@ function setupToggles() {
     });
     if (cb.checked && subId) document.getElementById(subId).style.display = '';
   });
+
+  // SMS From change → update MMS visibility in Other section
+  document.getElementById('smsFrom').addEventListener('change', updateOtherMmsVisibility);
+  updateOtherMmsVisibility();
 }
 
 
@@ -484,13 +618,18 @@ function collectActions() {
     actions.push({ type: 'questionnaire', enroll: document.getElementById('chkEnrollReminders').checked });
   }
   if (document.getElementById('chkOther').checked) {
-    actions.push({
-      type: 'other',
-      sms_text: document.getElementById('otherSms').value.trim(),
-      email_subject: document.getElementById('otherEmailSubject').value.trim(),
-      email_html: quillEditor ? quillEditor.root.innerHTML : '',
-      email_text: quillEditor ? quillEditor.getText().trim() : '',
-    });
+    const isEmailMode = document.getElementById('otherModeToggle').checked;
+    const otherAction = { type: 'other', mode: isEmailMode ? 'email' : 'sms' };
+    if (!isEmailMode) {
+      otherAction.sms_text = document.getElementById('otherSms').value.trim();
+      if (otherMmsAttachmentUrl) otherAction.mms_attachment = otherMmsAttachmentUrl;
+    } else {
+      otherAction.email_subject = document.getElementById('otherEmailSubject').value.trim();
+      otherAction.email_html = quillEditor ? quillEditor.root.innerHTML : '';
+      otherAction.email_text = quillEditor ? quillEditor.getText().trim() : '';
+      if (otherEmailAttachmentUrl) otherAction.email_attachment = otherEmailAttachmentUrl;
+    }
+    actions.push(otherAction);
   }
   return actions;
 }
@@ -560,8 +699,15 @@ async function preview() {
       lines.push('── DETAILED BK QUESTIONNAIRE ──\n[Link to questionnaire]' + (action.enroll ? '\n[Will enroll in reminder sequence]' : ''));
     }
     if (action.type === 'other') {
-      if (action.sms_text) lines.push('── OTHER (SMS) ──\n' + action.sms_text);
-      if (action.email_text) lines.push('── OTHER (EMAIL) ──\nSubject: ' + action.email_subject + '\n' + action.email_text);
+      if (action.mode === 'sms') {
+        let otherPrev = '── OTHER (SMS) ──\n' + (action.sms_text || '(empty)');
+        if (action.mms_attachment) otherPrev += '\n📎 MMS Image: ' + action.mms_attachment.split('/').pop().split('?')[0];
+        lines.push(otherPrev);
+      } else {
+        let otherPrev = '── OTHER (EMAIL) ──\nSubject: ' + (action.email_subject || '(none)') + '\n' + (action.email_text || '(empty)');
+        if (action.email_attachment) otherPrev += '\n📎 Attachment: ' + action.email_attachment.split('/').pop().split('?')[0];
+        lines.push(otherPrev);
+      }
     }
   }
 
@@ -756,13 +902,34 @@ async function send() {
       // ── OTHER ──
       if (action.type === 'other') {
         for (const r of recipients) {
-          if (smsOn && action.sms_text && r.phone) { await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: action.sms_text }); successes.push(`Other SMS → ${r.name}`); }
-          if (emailOn && action.email_html && r.email) {
-            await P.apiSend('/internal/email/send', 'POST', {
+          if (action.mode === 'sms' && smsOn && r.phone) {
+            if (action.mms_attachment) {
+              const smsOpt = document.getElementById('smsFrom').selectedOptions[0];
+              if (smsOpt?.dataset.provider === 'ringcentral') {
+                await P.apiSend('/internal/mms/send', 'POST', {
+                  from: smsFrom, to: r.phone, text: action.sms_text || '', attachment_url: action.mms_attachment
+                });
+                successes.push(`Other MMS → ${r.name}`);
+              } else if (action.sms_text) {
+                await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: action.sms_text });
+                successes.push(`Other SMS → ${r.name} (image skipped — not RC)`);
+              }
+            } else if (action.sms_text) {
+              await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: action.sms_text });
+              successes.push(`Other SMS → ${r.name}`);
+            }
+          }
+          if (action.mode === 'email' && emailOn && r.email && action.email_html) {
+            const emailPayload = {
               from: emailFrom, to: r.email,
               subject: action.email_subject || 'Message from 4LSG',
               html: action.email_html, text: action.email_text,
-            });
+            };
+            if (action.email_attachment) {
+              const name = action.email_attachment.split('/').pop().split('?')[0] || 'attachment';
+              emailPayload.attachment_urls = [{ url: action.email_attachment, name }];
+            }
+            await P.apiSend('/internal/email/send', 'POST', emailPayload);
             successes.push(`Other Email → ${r.name}`);
           }
         }
@@ -808,6 +975,226 @@ function splitSms(text, maxLen) {
   }
   if (remaining) chunks.push(remaining);
   return chunks;
+}
+
+function escHtml(str) {
+  if (!str) return '';
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// OTHER MESSAGE — Toggle, Upload, Library, MMS, Email Attachments
+// ═══════════════════════════════════════════════════════════════════════════
+
+function toggleOtherMode() {
+  const isEmail = document.getElementById('otherModeToggle').checked;
+  document.getElementById('otherSmsFields').style.display = isEmail ? 'none' : '';
+  document.getElementById('otherEmailFields').style.display = isEmail ? '' : 'none';
+  document.getElementById('otherToggleSmsLabel').style.fontWeight = isEmail ? 'normal' : 'bold';
+  document.getElementById('otherToggleSmsLabel').style.color = isEmail ? '#888' : '#07ADEF';
+  document.getElementById('otherToggleEmailLabel').style.fontWeight = isEmail ? 'bold' : 'normal';
+  document.getElementById('otherToggleEmailLabel').style.color = isEmail ? '#28a745' : '#888';
+}
+
+function otherUpdateSubjectHint() {
+  const len = document.getElementById('otherEmailSubject').value.length;
+  const hint = document.getElementById('otherSubjectHint');
+  if (len === 0) { hint.textContent = ''; return; }
+  if (len <= 60) { hint.textContent = `${len}/150 — good length`; hint.style.color = 'green'; }
+  else if (len <= 90) { hint.textContent = `${len}/150 — may truncate on mobile`; hint.style.color = 'orange'; }
+  else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color = 'red'; }
+}
+
+// ── Upload helper ──
+
+async function sfUploadFile(file, maxMB = 5, saveToLibrary = true) {
+  if (file.size > maxMB * 1024 * 1024) throw new Error(`File must be under ${maxMB} MB`);
+  Toast.fire({ icon: 'info', title: 'Uploading...' });
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+  const res = await P.apiSend('/api/upload', 'POST', {
+    image: base64, filename: file.name, contentType: file.type, addToLibrary: saveToLibrary
+  });
+  return res.url;
+}
+
+async function sfAttachDialog(title, acceptTypes) {
+  const { value: formValues, isConfirmed, isDenied } = await Swal.fire({
+    title,
+    html: `
+      <div style="text-align:left;">
+        <p style="font-weight:600; margin-bottom:6px;">Upload a file:</p>
+        <input type="file" id="swal-file" accept="${acceptTypes}"
+               style="margin-bottom:14px; font-size:13px;">
+        <label style="display:flex; align-items:center; gap:6px; margin-bottom:14px; font-size:13px; cursor:pointer;">
+          <input type="checkbox" id="swal-save-library" checked>
+          Save to image library for reuse
+        </label>
+        <hr style="margin:10px 0;">
+        <p style="font-weight:600; margin-bottom:6px;">Or enter file URL:</p>
+        <input type="text" id="swal-url" class="swal2-input" placeholder="https://..."
+               style="margin:0; width:100%;">
+      </div>
+    `,
+    showCancelButton: true,
+    showDenyButton: true,
+    confirmButtonText: 'Attach',
+    denyButtonText: 'Browse Library',
+    denyButtonColor: '#6c757d',
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const file = popup.querySelector('#swal-file').files[0];
+      const url = popup.querySelector('#swal-url').value.trim();
+      const saveToLibrary = popup.querySelector('#swal-save-library').checked;
+      if (!file && !url) { Swal.showValidationMessage('Upload a file or enter a URL'); return false; }
+      return { file, url, saveToLibrary };
+    }
+  });
+  if (isDenied) return await sfShowLibraryPicker();
+  if (!isConfirmed) return null;
+  if (formValues.file) {
+    try { return await sfUploadFile(formValues.file, title.includes('MMS') ? 5 : 10, formValues.saveToLibrary); }
+    catch (err) { Swal.fire('Upload Failed', err.message, 'error'); return null; }
+  }
+  return formValues.url;
+}
+
+// ── Image Library ──
+
+async function sfShowLibraryPicker() {
+  let images;
+  try {
+    const res = await P.apiSend('/api/image-library', 'GET');
+    images = res.images || [];
+  } catch (err) { Swal.fire('Error', 'Failed to load image library', 'error'); return null; }
+  if (!images.length) { await Swal.fire('Empty', 'No images in library yet. Upload one first!', 'info'); return null; }
+  return new Promise(resolve => {
+    Swal.fire({
+      title: 'Image Library',
+      html: `
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px,1fr)); gap:10px; max-height:400px; overflow-y:auto; padding:4px;">
+          ${images.map(img => `
+            <div style="position:relative; border:2px solid transparent; border-radius:6px; cursor:pointer; transition:border-color .15s;"
+                 class="lib-img-wrap"
+                 onmouseover="this.style.borderColor='#07ADEF'"
+                 onmouseout="this.style.borderColor='transparent'"
+                 data-url="${escHtml(img.url)}" data-id="${img.id}">
+              <img src="${escHtml(img.url)}" alt="${escHtml(img.original_name || '')}"
+                   style="width:100%; height:90px; object-fit:cover; border-radius:4px; display:block;">
+              <div style="font-size:10px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:2px 4px;">
+                ${escHtml(img.original_name || img.filename)}
+              </div>
+              <button onclick="event.stopPropagation(); sfDeleteLibraryImage(${img.id}, this.closest('.lib-img-wrap'))"
+                      style="position:absolute; top:2px; right:2px; background:rgba(220,53,69,.85); color:#fff;
+                             border:none; border-radius:50%; width:20px; height:20px; font-size:12px;
+                             cursor:pointer; line-height:20px; padding:0;"
+                      title="Remove from library">&times;</button>
+            </div>
+          `).join('')}
+        </div>
+      `,
+      showConfirmButton: false, showCancelButton: true, cancelButtonText: 'Cancel', width: 600,
+      didOpen: () => {
+        Swal.getPopup().querySelectorAll('.lib-img-wrap').forEach(wrap => {
+          wrap.addEventListener('click', () => { resolve(wrap.dataset.url); Swal.close(); });
+        });
+      },
+      willClose: () => resolve(null)
+    });
+  });
+}
+
+async function sfDeleteLibraryImage(id, wrapEl) {
+  const r = await Swal.fire({
+    title: 'Remove from library?', text: 'The image will remain hosted but won\'t appear in the library.',
+    icon: 'warning', showCancelButton: true, confirmButtonText: 'Remove', confirmButtonColor: '#dc3545'
+  });
+  if (!r.isConfirmed) return;
+  try { await P.apiSend(`/api/image-library/${id}`, 'DELETE'); if (wrapEl) wrapEl.remove(); Toast.fire({ icon: 'success', title: 'Removed from library' }); }
+  catch (err) { Toast.fire({ icon: 'error', title: 'Failed to remove' }); }
+}
+
+// ── Quill image handler ──
+
+async function otherQuillImageHandler() {
+  const url = await sfAttachDialog('Insert Image', 'image/png,image/jpeg,image/gif,image/webp');
+  if (!url) return;
+  const { value: width, isConfirmed } = await Swal.fire({
+    title: 'Image Size',
+    input: 'select',
+    inputOptions: { '600': 'Full width (600px)', '400': 'Medium (400px)', '200': 'Small (200px)', '': 'Original size' },
+    inputValue: '600', showCancelButton: true, confirmButtonText: 'Insert'
+  });
+  if (!isConfirmed) return;
+  quillEditor.focus();
+  const range = quillEditor.getSelection(true);
+  const idx = range ? range.index : quillEditor.getLength();
+  quillEditor.insertEmbed(idx, 'image', {
+    src: url, width: width || undefined,
+    style: 'display:block; max-width:100%; height:auto; border:0; outline:none; text-decoration:none;'
+  });
+  quillEditor.setSelection(idx + 1);
+}
+
+// ── MMS attachment (Other section) ──
+
+async function otherAttachMmsImage() {
+  const smsSelect = document.getElementById('smsFrom');
+  const senderOpt = smsSelect.selectedOptions[0];
+  if (senderOpt?.dataset.provider !== 'ringcentral') {
+    return Swal.fire('SMS Only', 'The selected phone line does not support MMS. Choose a RingCentral line.', 'warning');
+  }
+  const url = await sfAttachDialog('Attach Image (MMS)', 'image/png,image/jpeg,image/gif,image/webp');
+  if (url) otherSetMmsAttachment(url);
+}
+
+function otherSetMmsAttachment(url) {
+  otherMmsAttachmentUrl = url;
+  document.getElementById('otherMmsPreviewImg').src = url;
+  document.getElementById('otherMmsPreviewName').textContent = url.split('/').pop().split('?')[0] || 'image';
+  document.getElementById('otherMmsPreview').style.display = 'inline-flex';
+  Toast.fire({ icon: 'success', title: 'Image attached' });
+}
+
+function otherRemoveMmsAttachment() {
+  otherMmsAttachmentUrl = null;
+  document.getElementById('otherMmsPreviewImg').src = '';
+  document.getElementById('otherMmsPreviewName').textContent = '';
+  document.getElementById('otherMmsPreview').style.display = 'none';
+}
+
+function updateOtherMmsVisibility() {
+  const smsSelect = document.getElementById('smsFrom');
+  const senderOpt = smsSelect.selectedOptions[0];
+  const isRc = senderOpt?.dataset.provider === 'ringcentral';
+  document.getElementById('otherMmsSection').style.display = isRc ? '' : 'none';
+  if (!isRc && otherMmsAttachmentUrl) otherRemoveMmsAttachment();
+}
+
+// ── Email attachment (Other section) ──
+
+async function otherAttachEmailFile() {
+  const url = await sfAttachDialog('Attach File', 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt');
+  if (url) otherSetEmailAttachment(url);
+}
+
+function otherSetEmailAttachment(url) {
+  otherEmailAttachmentUrl = url;
+  document.getElementById('otherEmailAttachName').textContent = url.split('/').pop().split('?')[0] || 'file';
+  document.getElementById('otherEmailAttachPreview').style.display = 'inline-flex';
+}
+
+function otherRemoveEmailAttachment() {
+  otherEmailAttachmentUrl = null;
+  document.getElementById('otherEmailAttachName').textContent = '';
+  document.getElementById('otherEmailAttachPreview').style.display = 'none';
 }
 </script>
 </body>

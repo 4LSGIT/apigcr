@@ -35,101 +35,8 @@
   </div>
   
   <div id="tabSend" class="tab-content">
-    <div>
-      <button class="big-button" onclick="E('sendSMSDiv').style.display='block';E('sendEmailDiv').style.display='none';E('logCallDiv').style.display='none';">Send Text Message</button>
-      <button class="big-button" onclick="E('sendSMSDiv').style.display='none';E('sendEmailDiv').style.display='block';E('logCallDiv').style.display='none';">Send Email</button>
-      <button class="big-button" onclick="E('sendSMSDiv').style.display='none';E('sendEmailDiv').style.display='none';E('logCallDiv').style.display='block';">Log Call</button>
-      <div id="sendSMSDiv" style="width:500px;border:1px solid black;margin: 5 auto;position:relative;display:none;">
-        <button onclick="this.parentNode.style.display='none'" style="position: absolute; top: 0; right: 0;">X</button>
-        <h3>Send Text Message:</h3>
-        <label class="input-label">Send From:</label>
-        <select id="sendSMSFrom" style="width:300px;">
-          <option value="2485592400">S. Sandweiss 248-559-2400</option>
-        </select><br>
-        <label class="input-label">Send To:</label>
-        <input id="sendSMSTo" style="width:300px;" type="text" maxlength="10" placeholder="(###) ###-####" title="Enter a valid phone number" 
-               oninput="this.value=this.value.replace(/\D/g, ''); if (this.value.length === 7) {this.value = this.value.replace(/(\d{3})(\d{4})/, '$1-$2');} else if (this.value.length === 10) {this.value = this.value.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3');}"><br>
-        <label class="input-label">Message:</label>
-        <textarea id="sendSMSMessage" maxlength="1000" style="width: 300px; height: 75px;" onkeyup="this.nextElementSibling.innerHTML=`${this.value.length}/1000`"></textarea>
-        <div style="text-align:right"></div>
-        <br><button onclick="comm('sendSMS')">Send Message</button>&nbsp;<button onclick="comm('logSMS')">Log Without Sending</button>&nbsp;<button onclick="this.parentNode.style.display='none'">Cancel</button>
-      </div>
-      <div id="sendEmailDiv" style="width:500px;border:1px solid black;margin: 5 auto;position:relative;display:none;">
-        <button onclick="this.parentNode.style.display='none'" style="position: absolute; top: 0; right: 0;">X</button>
-        <h3>Send Email:</h3>
-        <label class="input-label">Send From:</label>
-        <select id="sendEmailFrom" style="width:300px;">
-          <option value="stuart@4lsg.com">S. Sandweiss Stuart@4lsg.com</option>
-        </select><br>
-        <label class="input-label">Send To:</label>
-        <input id="sendEmailTo" style="width:300px;" type="text"><br>
-        <label class="input-label">Subject:</label>
-        <input id="sendEmailSubject" style="width:300px;"><br>
-        <label class="input-label">Message:</label>
-        <textarea id="sendEmailMessage" style="width: 300px; height: 150px;"></textarea>
-        <br><button onclick="comm('sendEmail')">Send Email</button>&nbsp;<button onclick="comm('logEmail')">Log Without Sending</button>&nbsp;<button onclick="this.parentNode.style.display='none'">Cancel</button>
-      </div>
-      <div id="logCallDiv" style="width:500px;border:1px solid black;margin: 5 auto;position:relative;display:none;">
-        <button onclick="this.parentNode.style.display='none'" style="position: absolute; top: 0; right: 0;">X</button>
-        <h3>Log Phone Call:</h3>
-        <label class="input-label">Send From:</label>
-        <select id="logCallFrom" style="width:300px;">
-          <option value="2485592400">Stuart Sandweiss 248-559-2400</option>
-        </select><br>
-        <label class="input-label">Send To:</label>
-        <input id="logCallTo" type="text" style="width:300px;" maxlength="10" placeholder="(###) ###-####" title="Enter a valid phone number" 
-               oninput="this.value=this.value.replace(/\D/g, ''); if (this.value.length === 7) {this.value = this.value.replace(/(\d{3})(\d{4})/, '$1-$2');} else if (this.value.length === 10) {this.value = this.value.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3');}"><br>
-        <label class="input-label">Note:</label>
-        <textarea id="logCallNote" style="width: 300px; height: 75px;"></textarea>
-        <br><button  onclick="comm('logCall')">Log Call</button>&nbsp;<button onclick="this.parentNode.style.display='none'">Cancel</button>
-      </div>
-    </div>
+    <iframe id="tabSendIframe"></iframe>
   </div>
-  <script>
-    function comm(act){
-      commStr = ""
-      if (act == "sendSMS" || act == "logSMS") {
-        from = E("sendSMSFrom").value
-        to   = E("sendSMSTo").value.match(/\d+/g).join("")
-        msg  = E("sendSMSMessage").value
-        if (!from || !to || to.length != 10 || !msg) {
-          Swal.fire({title:"Please fill out all the fields!", icon:"error"})
-      } else {
-        commStr = `action=${act}&from=${from}&to=${to}&msg=${encodeURIComponent(msg)}`
-      }
-      } else if (act == "sendEmail" || act == "logEmail") {
-        from = E("sendEmailFrom").value
-        to   = E("sendEmailTo").value
-        sub  = E("sendEmailSubject").value
-        msg  = E("sendEmailMessage").value
-        if (!from || !to || !sub || !msg) {
-          Swal.fire({title:"Please fill out all the fields!", icon:"error"})
-        } else {
-        commStr = `action=${act}&from=${from}&to=${to}&subject=${encodeURIComponent(sub)}&msg=${encodeURIComponent(msg)}`
-        }
-      } else if (act == "logCall") {
-        from = E("logCallFrom").value
-        to   = E("logCallTo").value.match(/\d+/g).join("")
-        note  = E("logCallNote").value
-        if (!from || !to || to.length != 10 || !note) {
-          Swal.fire({title:"Please fill out all the fields!", icon:"error"})
-        } else {
-          commStr = `action=logCall&from=${from}&to=${to}&msg=${encodeURIComponent(note)}`
-        }
-      }
-      if (commStr) {
-        processing()
-        fetch(`${url}?mode=clientAction&username=${username}&password=${password}&link=${clientID}&${commStr}`)
-          .then(response => response.json())
-          .then(data => {
-          Swal.close()
-          console.log(data)
-          if (data.status == "success"){Toast.fire({ title: data.title, icon: data.status, text: data.message});}
-          else {Toast.fire({ title: "Unknown Error", icon: "error", text: "An unknown error has occured. If the error persists, please don't contact your System Administrator."});}
-        })
-      }
-    }
-  </script>
   
   <div id="tabSeq" class="tab-content">
     <h1>Sequences:</h1>
@@ -519,6 +426,8 @@ function addLog() {
 
 
 <script>
+window.apiSend = P.apiSend;     // relay for form iframes
+window.firmData = P.firmData;
 function openTab(tab, tabName) {
   var i, tabContent, tabLinks;
     if (tab){
@@ -606,7 +515,30 @@ url = window.parent.url
 clientID = new URLSearchParams(window.location.search).get('clientID');
 seq = ""
   temp11 = ""
-
+  //temp stuff to make communication.html work!
+  window.entityData = {
+  contact:   null,
+  cases:     [],
+  appts:     [],
+  tasks:     [],
+  log:       [],
+  sequences: []
+};
+  async function loadEntityData() {
+  const data = await P.apiSend(
+    `/api/contacts/${clientID}`, 'GET',
+    { include: 'cases,appts,tasks,log,sequences' }
+  );
+    const ed       = window.entityData;
+  ed.contact     = data.contact;
+  ed.cases       = data.cases     || [];
+  ed.appts       = data.appts     || [];
+  ed.tasks       = data.tasks     || [];
+  ed.log         = data.log       || [];
+  ed.sequences   = data.sequences || [];
+}
+  loadEntityData()
+  //end temp
 processing()
   query = `SELECT co.*  FROM contacts co WHERE co.contact_id = '${clientID}';|||
   SELECT *, IFNULL(DATE_FORMAT(seq.seq_start_date, '%b. %e, %Y at %l:%i %p'), '') as start_date FROM sequences seq WHERE seq.seq_client = '${clientID}';|||
@@ -629,9 +561,11 @@ fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=$
   E('phone').innerHTML = clientData.contact_phone ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
   E('fname').innerHTML = clientData.contact_fname || "";
   E('lname').innerHTML = clientData.contact_lname || "";
-  E('sendEmailTo').value = clientData.contact_email || "";
+  /*E('sendEmailTo').value = clientData.contact_email || "";
   E('sendSMSTo').value = clientData.contact_phone ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
   E('logCallTo').value = clientData.contact_phone ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
+  */
+ E("tabSendIframe").src="/communicate.html"
   document.getElementById("tabInfoIframe").src =
       `contactform.html?firstname=${clientData.contact_fname}&middlename=${clientData.contact_mname}&lastname=${clientData.contact_lname}&preferredname=${clientData.contact_pname}
       &email=${clientData.contact_email}&phone=${clientData.contact_phone}&secondaryemail=${clientData.contact_email2}&secondaryphone=${clientData.contact_phone2}

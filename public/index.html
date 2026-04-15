@@ -1879,8 +1879,22 @@
       }
       return data;
     }
-    //E("tabCampFrame").src="/campaign.html";
-
+window.firmData = { phoneLines: [], emailFrom: [], currentUser: null };
+async function loadFirmData() {
+  try {
+    const [lines, emails, me] = await Promise.all([
+      apiSend('/api/phone-lines', 'GET'),
+      apiSend('/api/email-from', 'GET'),
+      apiSend('/api/users/me', 'GET')
+    ]);
+    window.firmData.phoneLines  = lines.lines   || [];
+    window.firmData.emailFrom   = emails.emails  || [];
+    window.firmData.currentUser = me.user        || null;
+  } catch (err) {
+    console.error('loadFirmData failed:', err);
+    // Non-fatal — iframes can still fetch their own if needed
+  }
+}
     async function loginBlocking() {
       if (window.AUTH_STATE.loginInProgress) {
         return window.AUTH_STATE.loginInProgress;
@@ -1993,6 +2007,7 @@
         await loginBlocking();
       }
       await loadUserContext();
+      await loadFirmData();
     }
 
 
