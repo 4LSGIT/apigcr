@@ -369,7 +369,7 @@ async function init() {
   quill.root.addEventListener('click', async (e) => {
     if (e.target.tagName !== 'IMG') return;
     const img = e.target;
-    const current = img.getAttribute('width') || '';
+    const current = img.getAttribute('width')||"x";
 
     const { value: width, isConfirmed } = await Swal.fire({
       title: 'Resize Image',
@@ -378,7 +378,7 @@ async function init() {
         '600': 'Full width (600px)',
         '400': 'Medium (400px)',
         '200': 'Small (200px)',
-        '':    'Original size'
+        'x':    'Original size'
       },
       inputValue: current,
       showCancelButton: true,
@@ -388,7 +388,7 @@ async function init() {
     if (!isConfirmed) return;
 
     if (width) {
-      img.setAttribute('width', width);
+      img.setAttribute('width', width=="x"?'':width);
     } else {
       img.removeAttribute('width');
     }
