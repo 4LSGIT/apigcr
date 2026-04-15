@@ -601,23 +601,30 @@ async function checkCompletion(db, campaignId) {
     [campaignId]
   );
 
+  // Coerce to Number — mysql2 may return SUM() as string or Decimal
+  const sent    = Number(summary.sent    || 0);
+  const failed  = Number(summary.failed  || 0);
+  const skipped = Number(summary.skipped || 0);
+
   let finalStatus;
-  if ((summary.failed || 0) === 0 && (summary.skipped || 0) === 0) {
+  if (failed === 0 && skipped === 0) {
     finalStatus = 'sent';
-  } else if ((summary.sent || 0) === 0) {
+  } else if (sent === 0) {
     finalStatus = 'failed';
   } else {
     finalStatus = 'partial_fail';
   }
 
+  const summaryObj = { sent, failed, skipped };
+
   await db.query(
     `UPDATE campaigns
      SET status = ?, result_summary = ?, updated_at = NOW()
      WHERE campaign_id = ? AND status IN ('sending', 'scheduled')`,
-    [finalStatus, JSON.stringify(summary), campaignId]
+    [finalStatus, JSON.stringify(summaryObj), campaignId]
   );
 
-  console.log(`[CAMPAIGN] Campaign ${campaignId} complete: ${finalStatus} (sent=${summary.sent}, failed=${summary.failed}, skipped=${summary.skipped})`);
+  console.log(`[CAMPAIGN] Campaign ${campaignId} complete: ${finalStatus} (sent=${sent}, failed=${failed}, skipped=${skipped})`);
 }
 
 
