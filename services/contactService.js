@@ -16,7 +16,7 @@
  *   const contactService = require('../services/contactService');
  *   const { contact, cases, appts, tasks, log } = await contactService.getContact(db, 123);
  */
-
+const DEFAULT_LOG_LIMIT = 200;
 const SSN_COLUMN = 'contact_ssn';
 
 /**
@@ -188,7 +188,7 @@ async function listContacts(db, {
  * @param {string} [include] — comma-separated: 'cases,appts,tasks,log,sequences'
  * @returns {object|null} null if contact not found
  */
-async function getContact(db, contactId, include = '') {
+async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_LIMIT } = {}) {
   // 1) Contact record (always fetched)
   const [[raw]] = await db.query(
     'SELECT * FROM contacts WHERE contact_id = ?',
@@ -274,8 +274,8 @@ async function getContact(db, contactId, include = '') {
        WHERE (l.log_link_type = 'contact' AND l.log_link_id = ?)
           OR (l.log_link_type IS NULL AND l.log_link = ?)
        ORDER BY l.log_date DESC
-       LIMIT 200`,
-      [String(contactId), String(contactId)]
+       LIMIT ?`,
+      [String(contactId), String(contactId), logLimit]
     );
     result.log = log;
   }

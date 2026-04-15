@@ -250,7 +250,7 @@ const BANKS = [
 async function initSendingForm() {
   try {
     const [caseResult, linesResult, emailsResult, meResult] = await Promise.all([
-      P.apiSend(`/api/cases/${caseId}`, 'GET'),
+      P.apiSend(`/api/cases/${caseId}`, 'GET', { include: "contacts" }),
       P.apiSend('/api/phone-lines', 'GET'),
       P.apiSend('/api/email-from', 'GET'),
       P.apiSend('/api/users/me', 'GET'),

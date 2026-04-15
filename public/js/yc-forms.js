@@ -59,6 +59,9 @@ class YCForm {
     this._saveStatusEl = document.getElementById('saveStatus');
     this._saveBtnEl = document.getElementById('saveBtn');
     this._draftBannerEl = document.getElementById('draftBanner');
+    
+    // Expose for parent page access (dirty-check, populate push)
+    window.ycForm = this;
   }
 
 
@@ -95,29 +98,41 @@ class YCForm {
       // 6. Apply initial readonly state
       this.setReadonly(this.config.readonly);
 
-      // 7. Fetch live data from source table
-      if (this.config.endpoints.load) {
-        try {
-          const loadResult = await this._api(
-            this.config.endpoints.load.url,
-            this.config.endpoints.load.method || 'GET'
-          );
-          // Extract nested entity data if a path is specified
-          // e.g., GET /api/contacts/:id returns { contact: {...}, cases: [...] }
-          //        path: 'contact' → extracts just the contact object
-          const path = this.config.endpoints.load.path;
-          if (path && loadResult[path]) {
-            this._liveData = loadResult[path];
-          } else {
-            this._liveData = loadResult.data || loadResult;
-          }
-          // Store full result so onLoad can access extra data (e.g., contacts)
-          this._loadResult = loadResult;
-        } catch (err) {
-          console.warn('[YCForm] Could not load live data:', err);
-          this._liveData = null;
+// 7. Fetch live data — prefer parent's entityData, fall back to API
+if (this.config.endpoints.load) {
+  try {
+    let loadResult = null;
+
+    // Check parent for pre-fetched entity data
+    if (!this.config.external) {
+      try {
+        const P = window.parent;
+        if (P.entityData && this.config.endpoints.load.path) {
+          loadResult = P.entityData;
         }
-      }
+      } catch (_) { /* cross-origin or no parent */ }
+    }
+
+    // Fall back to API call if parent data wasn't available
+    if (!loadResult) {
+      loadResult = await this._api(
+        this.config.endpoints.load.url,
+        this.config.endpoints.load.method || 'GET'
+      );
+    }
+
+    const path = this.config.endpoints.load.path;
+    if (path && loadResult[path]) {
+      this._liveData = loadResult[path];
+    } else {
+      this._liveData = loadResult.data || loadResult;
+    }
+    this._loadResult = loadResult;
+  } catch (err) {
+    console.warn('[YCForm] Could not load live data:', err);
+    this._liveData = null;
+  }
+}
 
       // 8. Fetch latest draft + submission
       let latest = { submitted: null, draft: null };
@@ -153,7 +168,9 @@ class YCForm {
       if (this.config.onLoad) {
         await this.config.onLoad(dataSource);
       }
-
+// 13c. Re-snapshot after onLoad (it may have modified field values)
+this._original = JSON.parse(JSON.stringify(this.collect()));
+this._lastAutosaveJson = JSON.stringify(this._original);
       // 13b. Re-evaluate conditionals now that data is populated
       //      (initial evaluation in _setupConditionals ran before populate)
       this._evaluateConditionals();

@@ -136,114 +136,142 @@ async function listCases(db, {
 // getCase
 // ─────────────────────────────────────────────────────────────
 
+const DEFAULT_LOG_LIMIT = 200;
+
 /**
- * Fetch a single case with all related entities.
- *
- * Returns: { case, clients, appts, tasks, log }
- * Follows the existing pattern from GET /api/cases/:caseId.
+ * Fetch a single case, optionally with related entities.
  *
  * @param {object} db
  * @param {string} caseId
- * @returns {object|null}
+ * @param {string} [include] — comma-separated: 'contacts,appts,tasks,log'
+ *                              If omitted/empty → returns ONLY the case row
+ * @param {object} [opts]
+ * @param {number} [opts.logLimit] — max log rows to return (default: DEFAULT_LOG_LIMIT)
+ * @returns {object|null} null if case not found
  */
-async function getCase(db, caseId) {
-  // 1) Case record
+async function getCase(db, caseId, include = '', { logLimit = DEFAULT_LOG_LIMIT } = {}) {
+  // 1) Case record (always fetched)
   const [[caseRow]] = await db.query(
     'SELECT * FROM cases WHERE case_id = ?',
     [caseId]
   );
   if (!caseRow) return null;
 
-  // 2) Clients via case_relate (strip SSN)
-  const [clientsRaw] = await db.query(
-    `SELECT
-       co.*,
-       IFNULL(DATE_FORMAT(co.contact_dob, '%b. %e, %Y'), '') AS dob,
-       cr.case_relate_id AS relate_id, cr.case_relate_type AS relate_type
-     FROM contacts co
-     JOIN case_relate cr ON co.contact_id = cr.case_relate_client_id
-     WHERE cr.case_relate_case_id = ?`,
-    [caseId]
-  );
-  //const clients = stripSsn(clientsRaw);
-  const clients = clientsRaw; //return ssn
-  
-  // 3) Appointments
-  const [appts] = await db.query(
-    `SELECT
-       a.*,
-       DATE_FORMAT(a.appt_date, '%Y-%m-%dT%H:%i') AS appt_datetime_local,
-       DATE_FORMAT(a.appt_date, '%b. %e, %Y') AS format_date,
-       DATE_FORMAT(a.appt_date, '%l:%i %p')    AS time,
-       co.contact_name,
-       co.contact_id
-     FROM appts a
-     LEFT JOIN contacts co ON a.appt_client_id = co.contact_id
-     WHERE a.appt_case_id = ?
-     ORDER BY a.appt_date DESC`,
-    [caseId]
-  );
+  const result = { case: caseRow };
 
-  // 4) Tasks linked to this case OR to any of its clients
-  const clientIds = clients.map(c => c.contact_id);
-  let tasks = [];
-  if (clientIds.length) {
-    const [taskRows] = await db.query(
+  // Parse include param
+  const parts = include
+    ? include.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    : [];
+
+  // 2) Clients via case_relate
+  //    Also fetched silently when tasks are requested (need clientIds for task lookup)
+  const needClients = parts.includes('contacts') || parts.includes('clients');
+  const needTasks   = parts.includes('tasks');
+
+  let clients = [];
+  if (needClients || needTasks) {
+    const [clientsRaw] = await db.query(
       `SELECT
-         t.task_id, t.task_status, t.task_title, t.task_desc,
-         t.task_due, t.task_date,
-         uf.user_name AS from_name,
-         ut.user_name AS to_name
-       FROM tasks t
-       LEFT JOIN users uf ON t.task_from = uf.user
-       LEFT JOIN users ut ON t.task_to   = ut.user
-       WHERE
-         (t.task_link_type = 'case' AND t.task_link_id = ?)
-         OR (t.task_link_type = 'contact' AND t.task_link_id IN (?))
-         OR (t.task_link_type IS NULL AND (
-           t.task_link = ?
-           OR t.task_link IN (?)
-         ))
-       ORDER BY t.task_date DESC`,
-      [caseId, clientIds, caseId, clientIds]
+         co.*,
+         IFNULL(DATE_FORMAT(co.contact_dob, '%b. %e, %Y'), '') AS dob,
+         cr.case_relate_id AS relate_id, cr.case_relate_type AS relate_type
+       FROM contacts co
+       JOIN case_relate cr ON co.contact_id = cr.case_relate_client_id
+       WHERE cr.case_relate_case_id = ?`,
+      [caseId]
     );
-    tasks = taskRows;
-  } else {
-    // No clients — just look for case-linked tasks
-    const [taskRows] = await db.query(
-      `SELECT
-         t.task_id, t.task_status, t.task_title, t.task_desc,
-         t.task_due, t.task_date,
-         uf.user_name AS from_name,
-         ut.user_name AS to_name
-       FROM tasks t
-       LEFT JOIN users uf ON t.task_from = uf.user
-       LEFT JOIN users ut ON t.task_to   = ut.user
-       WHERE (t.task_link_type = 'case' AND t.task_link_id = ?)
-          OR (t.task_link_type IS NULL AND t.task_link = ?)
-       ORDER BY t.task_date DESC`,
-      [caseId, caseId]
-    );
-    tasks = taskRows;
+    clients = clientsRaw;
+    // Only include in response if explicitly requested
+    if (needClients) {
+      result.clients = clients;
+    }
   }
 
-  // 5) Log entries linked to this case
-  const [log] = await db.query(
-    `SELECT
-       l.log_id, l.log_type, l.log_date, l.log_data,
-       l.log_from, l.log_to, l.log_subject, l.log_direction,
-       u.user_name AS by_name
-     FROM log l
-     LEFT JOIN users u ON l.log_by = u.user
-     WHERE (l.log_link_type = 'case' AND l.log_link_id = ?)
-        OR (l.log_link_type IS NULL AND l.log_link = ?)
-     ORDER BY l.log_date DESC
-     LIMIT 200`,
-    [caseId, caseId]
-  );
+  // 3) Appointments
+  if (parts.includes('appts')) {
+    const [appts] = await db.query(
+      `SELECT
+         a.*,
+         DATE_FORMAT(a.appt_date, '%Y-%m-%dT%H:%i') AS appt_datetime_local,
+         DATE_FORMAT(a.appt_date, '%b. %e, %Y') AS format_date,
+         DATE_FORMAT(a.appt_date, '%l:%i %p')    AS time,
+         co.contact_name,
+         co.contact_id
+       FROM appts a
+       LEFT JOIN contacts co ON a.appt_client_id = co.contact_id
+       WHERE a.appt_case_id = ?
+       ORDER BY a.appt_date DESC`,
+      [caseId]
+    );
+    result.appts = appts;
+  }
 
-  return { case: caseRow, clients, appts, tasks, log };
+  // 4) Tasks linked to this case OR to any of its clients
+  if (needTasks) {
+    const clientIds = clients.map(c => c.contact_id);
+
+    if (clientIds.length) {
+      const [taskRows] = await db.query(
+        `SELECT
+           t.task_id, t.task_status, t.task_title, t.task_desc,
+           t.task_due, t.task_date,
+           uf.user_name AS from_name,
+           ut.user_name AS to_name
+         FROM tasks t
+         LEFT JOIN users uf ON t.task_from = uf.user
+         LEFT JOIN users ut ON t.task_to   = ut.user
+         WHERE
+           (t.task_link_type = 'case' AND t.task_link_id = ?)
+           OR (t.task_link_type = 'contact' AND t.task_link_id IN (?))
+           OR (t.task_link_type IS NULL AND (
+             t.task_link = ?
+             OR t.task_link IN (?)
+           ))
+         ORDER BY t.task_date DESC`,
+        [caseId, clientIds, caseId, clientIds]
+      );
+      result.tasks = taskRows;
+    } else {
+      const [taskRows] = await db.query(
+        `SELECT
+           t.task_id, t.task_status, t.task_title, t.task_desc,
+           t.task_due, t.task_date,
+           uf.user_name AS from_name,
+           ut.user_name AS to_name
+         FROM tasks t
+         LEFT JOIN users uf ON t.task_from = uf.user
+         LEFT JOIN users ut ON t.task_to   = ut.user
+         WHERE (t.task_link_type = 'case' AND t.task_link_id = ?)
+            OR (t.task_link_type IS NULL AND t.task_link = ?)
+         ORDER BY t.task_date DESC`,
+        [caseId, caseId]
+      );
+      result.tasks = taskRows;
+    }
+  }
+
+  // 5) Log entries
+  if (parts.includes('log')) {
+    const [log] = await db.query(
+      `SELECT
+         l.log_id, l.log_type, l.log_date, l.log_data,
+         l.log_from, l.log_to, l.log_subject, l.log_direction,
+         u.user_name AS by_name
+       FROM log l
+       LEFT JOIN users u ON l.log_by = u.user
+       WHERE (l.log_link_type = 'case' AND l.log_link_id = ?)
+          OR (l.log_link_type IS NULL AND l.log_link = ?)
+       ORDER BY l.log_date DESC
+       LIMIT ?`,
+      [caseId, caseId, logLimit]
+    );
+    result.log = log;
+  }
+
+  return result;
 }
+
 
 
 // ─────────────────────────────────────────────────────────────

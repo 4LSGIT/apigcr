@@ -42,7 +42,8 @@ router.get("/api/contacts", jwtOrApiKey, async (req, res) => {
 // ─── GET ONE ───
 router.get('/api/contacts/:id', jwtOrApiKey, async (req, res) => {
   try {
-    const result = await contactService.getContact(req.db, req.params.id, req.query.include);
+    const logLimit = req.query.log_limit ? parseInt(req.query.log_limit, 10) : undefined;
+    const result = await contactService.getContact(req.db, req.params.id, req.query.include, { logLimit });
     if (!result) return res.status(404).json({ status: 'error', message: 'Contact not found' });
     res.json(result);
   } catch (err) {

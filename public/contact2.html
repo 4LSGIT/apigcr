@@ -167,8 +167,8 @@ async function abortSeq(enrollmentId, templateName) {
                 await P.apiSend(`/sequences/enrollments/${enrollmentId}/cancel`, "POST",
                     { reason: "manual_staff_cancel" });
                 const data = await P.apiSend(`/api/contacts/${clientID}`, "GET",
-                    { include: "sequences" });
-                seq = data.sequences || [];
+                  { include: "sequences" });
+                window.entityData.sequences = data.sequences || [];
                 putSeq();
                 Toast.fire({ icon: "success", title: "Sequence cancelled" });
             } catch (err) {
@@ -482,44 +482,73 @@ async function addLog() {
 </div>
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 <script>
-window.apiSend = P.apiSend;
-const clientID = new URLSearchParams(window.location.search).get('clientID');
-let clientData = null;
-let appts = [], cases = [], seq = [], tasks = [], logs = [];
-let limit = P.limit || 100;
 
-function openTab(tab, tabName) {
-  if (tab) {
-    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-    tab.classList.add("active");
-  }
-  document.querySelectorAll(".tab-content").forEach(t => t.style.display = "none");
-  E(tabName).style.display = "block";
+// ── Constants ────────────────────────────────────────────────
+//const P        = window.parent;
+const clientID = new URLSearchParams(window.location.search).get('clientID');
+let limit      = P.limit || 100;
+
+window.apiSend = P.apiSend;   // relay for child form iframes
+
+// ── State (single source of truth) ──────────────────────────
+window.entityData = {
+  contact:   null,
+  cases:     [],
+  appts:     [],
+  tasks:     [],
+  log:       [],
+  sequences: []
+};
+
+// ── Data loading ────────────────────────────────────────────
+async function loadEntityData() {
+  const data = await P.apiSend(
+    `/api/contacts/${clientID}`, 'GET',
+    { include: 'cases,appts,tasks,log,sequences' }
+  );
+  const ed       = window.entityData;
+  ed.contact     = data.contact;
+  ed.cases       = data.cases     || [];
+  ed.appts       = data.appts     || [];
+  ed.tasks       = data.tasks     || [];
+  ed.log         = data.log       || [];
+  ed.sequences   = data.sequences || [];
 }
+
+// ── Header & prefill updates ────────────────────────────────
+function updateHeader() {
+  const c = window.entityData.contact;
+  if (!c) return;
+
+  E('fname').innerHTML = c.contact_fname || "";
+  E('lname').innerHTML = c.contact_lname || "";
+  E('phone').innerHTML = c.contact_phone
+    ? c.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
+
+  // Prefill communication fields
+  E('sendEmailTo').value = c.contact_email || "";
+  const phoneFmt = c.contact_phone
+    ? c.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3') : "";
+  E('sendSMSTo').value = phoneFmt;
+  E('logCallTo').value = phoneFmt;
+}
+
+// ── Iframe loading (called once on initial load) ────────────
+function loadIframes() {
+  E('tabInfoIframe').src = `/forms/contact-form.html?contact_id=${clientID}`;
+}
+
+// ── Table render functions ──────────────────────────────────
+//    All read from window.entityData
 
 function putCases() {
   const table = E("casesTable");
   table.style.display = "";
   table.previousElementSibling.style.display = "none";
-  cases.forEach(C => {
+  // Clear existing rows (keep header)
+  while (table.rows.length > 1) table.deleteRow(-1);
+  window.entityData.cases.forEach(C => {
     const row = table.insertRow();
     row.innerHTML = `<td><a href="#" onclick="P.addFile('${C.case_id}','case','${C.case_id}');return false">${C.case_id}</a></td>
       <td>${C.relate_type}</td>
@@ -533,20 +562,22 @@ function putAppt() {
   const table = E("apptsTable");
   table.style.display = "";
   table.previousElementSibling.style.display = "none";
-  appts.forEach(appt => {
+  // Clear existing rows (keep header)
+  while (table.rows.length > 1) table.deleteRow(-1);
+  window.entityData.appts.forEach(appt => {
     const row = table.insertRow();
     let rowHTML = "";
     if (appt.appt_status === "No Show") {
       rowHTML = `<td>
         <button onclick="P.apptUpdate(${appt.appt_id},'Cancel','${appt.format_date} at ${appt.time}',refreshAppts)"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Attended',refreshAppts)"><i class="fa-solid fa-user-check"></i> Attended</button>
+        <button onclick="P.apptUpdate(${appt.appt_id},'Attended',null,refreshAppts)"><i class="fa-solid fa-user-check"></i> Attended</button>
         <button onclick="P.apptUpdate(${appt.appt_id},'Reschedule','${appt.appt_datetime_local}',refreshAppts)"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
       </td>`;
     } else if (appt.appt_status === "Scheduled") {
       rowHTML = `<td>
         <button onclick="P.apptUpdate(${appt.appt_id},'Cancel','${appt.format_date} at ${appt.time}',refreshAppts)"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Attended',refreshAppts)"><i class="fa-solid fa-user-check"></i> Attended</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'No Show',refreshAppts)"><i class="fa-solid fa-user-xmark"></i> No Show</button>
+        <button onclick="P.apptUpdate(${appt.appt_id},'Attended',null,refreshAppts)"><i class="fa-solid fa-user-check"></i> Attended</button>
+        <button onclick="P.apptUpdate(${appt.appt_id},'No Show',null,refreshAppts)"><i class="fa-solid fa-user-xmark"></i> No Show</button>
         <button onclick="P.apptUpdate(${appt.appt_id},'Reschedule','${appt.appt_datetime_local}',refreshAppts)"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
       </td>`;
     } else {
@@ -561,7 +592,7 @@ function putSeq() {
   table.style.display = "";
   table.previousElementSibling.style.display = "none";
   table.innerHTML = `<tr><th>ID</th><th>Template</th><th>Type</th><th>Status</th><th>Step</th><th>Enrolled</th><th></th></tr>`;
-  seq.forEach(s => {
+  window.entityData.sequences.forEach(s => {
     const enrolled = s.enrolled_at
       ? new Date(s.enrolled_at).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "";
     const row = table.insertRow();
@@ -571,6 +602,17 @@ function putSeq() {
   });
 }
 
+// ── Tab switching ───────────────────────────────────────────
+function openTab(tab, tabName) {
+  if (tab) {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+  }
+  document.querySelectorAll(".tab-content").forEach(t => t.style.display = "none");
+  E(tabName).style.display = "block";
+}
+
+// ── Utilities ───────────────────────────────────────────────
 function processing() {
   Swal.fire({
     title: 'Processing...',
@@ -580,7 +622,57 @@ function processing() {
   });
 }
 
-// Cases tab
+// ── onSuccess callbacks for parent actions ───────────────────
+async function refreshAppts() {
+  const data = await P.apiSend(`/api/contacts/${clientID}`, 'GET', { include: 'appts' });
+  window.entityData.appts = data.appts || [];
+  putAppt();
+}
+
+function refreshTasks() { tabTasksGet(0); }
+
+// ── Refresh after form save ─────────────────────────────────
+async function refreshEntityData(sourceFormKey) {
+  await loadEntityData();
+  updateHeader();
+
+  // Re-render tables
+  putCases();
+  putAppt();
+  putSeq();
+
+// Push to all non-dirty child YCForm iframes
+document.querySelectorAll('iframe').forEach(iframe => {
+  try {
+    const form = iframe.contentWindow?.ycForm;
+    if (!form) return;
+    if (form.config.formKey === sourceFormKey) return;
+    if (!form.isDirty()) {
+      // Push fresh parent data into the form's internal state
+      const path = form.config.endpoints?.load?.path;
+      if (path && window.entityData[path]) {
+        form._liveData   = window.entityData[path];
+        form._loadResult = window.entityData;
+      }
+      // Re-populate from resolved data source
+      form.populate(form._resolveDataSource());
+      // Re-run onLoad for computed fields (debtor name, co-debtor, etc.)
+      if (form.config.onLoad) {
+        form.config.onLoad(form._resolveDataSource());
+      }
+    }
+  } catch (_) { /* not loaded yet or cross-origin */ }
+});
+}
+
+// ── Message listener (centralized) ──────────────────────────
+window.addEventListener('message', async (e) => {
+  if (e.data?.type === 'form-saved') {
+    await refreshEntityData(e.data.form);
+  }
+});
+
+// ── Cases tab — create new case ─────────────────────────────
 async function newCase() {
   Swal.fire({
     title: "Create New Case:",
@@ -598,7 +690,7 @@ async function newCase() {
       if (!type) { Swal.showValidationMessage("Please select a case type"); return false; }
       try {
         const data = await P.apiSend("/api/intake/case", "POST",
-          { contact_id: clientData.contact_id, case_type: type });
+          { contact_id: window.entityData.contact.contact_id, case_type: type });
         Toast.fire({ icon: "success", title: "Case Created!", text: `Case ID: ${data.id}` });
         P.addFile(data.id, 'case', data.id);
       } catch (err) {
@@ -608,7 +700,7 @@ async function newCase() {
   });
 }
 
-// Appts tab
+// ── Appointments tab — confirmation message builder ─────────
 function conMsg() {
   const dt  = E('scheduleDateTime').value;
   const date = new Date(dt).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).replace(',', ' at');
@@ -674,19 +766,14 @@ async function newAppt() {
       }
       try {
         const data = await P.apiSend("/api/appts", "POST", {
-          contact_id: clientData.contact_id,
+          contact_id: window.entityData.contact.contact_id,
           appt_type, appt_length, appt_date, appt_platform,
           note, confirm_sms, confirm_email, confirm_message
         });
         newApptTemp = data;
         Toast.fire({ icon: data.status, title: data.title, text: data.message });
         if (data.status === "success") {
-          const refresh = await P.apiSend(`/api/contacts/${clientID}`, "GET", { include: "appts" });
-          appts = refresh.appts || [];
-          const table = E("apptsTable");
-          const rows = table.getElementsByTagName("tr");
-          for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
-          putAppt();
+          await refreshAppts();
         }
       } catch (err) {
         Toast.fire({ icon: "error", title: "Error", text: err.message });
@@ -695,63 +782,21 @@ async function newAppt() {
   });
 }
 
-window.addEventListener('message', async (e) => {
-  if (e.data?.type === 'form-saved' && e.data.form === 'contact_info') {
-    try {
-      const refreshed = await P.apiSend(`/api/contacts/${clientID}`, 'GET');
-      clientData = refreshed.contact;
-      E('fname').innerHTML = clientData.contact_fname || "";
-      E('lname').innerHTML = clientData.contact_lname || "";
-      E('phone').innerHTML = clientData.contact_phone
-        ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
-      E('sendEmailTo').value = clientData.contact_email || "";
-      const phoneFmt = clientData.contact_phone
-        ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3') : "";
-      E('sendSMSTo').value = phoneFmt;
-      E('logCallTo').value = phoneFmt;
-    } catch (err) {
-      console.warn('Failed to refresh after form save:', err);
-    }
-  }
-});
-
-
-// Initial load
+// ── Initial load ────────────────────────────────────────────
 processing();
 (async () => {
   try {
-    const data = await P.apiSend(
-      `/api/contacts/${clientID}`,
-      "GET",
-      { include: "cases,appts,sequences" }
-    );
+    await loadEntityData();
+    updateHeader();
+    loadIframes();
 
-    clientData = data.contact;
-    cases      = data.cases     || [];
-    appts      = data.appts     || [];
-    seq        = data.sequences || [];
-
-    E('fname').innerHTML = clientData.contact_fname || "";
-    E('lname').innerHTML = clientData.contact_lname || "";
-    E('phone').innerHTML = clientData.contact_phone
-      ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
-
-    const phoneFmt = clientData.contact_phone
-      ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '($1) $2-$3') : "";
-    E('sendEmailTo').value = clientData.contact_email || "";
-    E('sendSMSTo').value   = phoneFmt;
-    E('logCallTo').value   = phoneFmt;
-
-    document.getElementById("tabInfoIframe").src =
-      `/forms/contact-form.html?contact_id=${clientID}`; //moved to a yc-form!
-
-    document.getElementById("tabViewClient").style.display = "block";
+    E('tabViewClient').style.display = 'block';
     openTab(null, 'tabInfo');
     Swal.close();
 
-    if (cases.length)  putCases();
-    if (seq.length)    putSeq();
-    if (appts.length)  putAppt();
+    if (window.entityData.cases.length)     putCases();
+    if (window.entityData.sequences.length) putSeq();
+    if (window.entityData.appts.length)     putAppt();
 
     tabLogGet(0);
 
@@ -760,4 +805,5 @@ processing();
     P.Toast.fire({ icon: "error", title: "Error loading contact", text: err.message });
   }
 })();
+
 </script>
