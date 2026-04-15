@@ -28,6 +28,7 @@
 const { resolve }    = require('./resolverService');
 const smsService     = require('./smsService');
 const emailService   = require('./emailService');
+const ringcentralService = require('./ringcentralService');
 const { localToUTC } = require('./timezoneService');
 
 // ─────────────────────────────────────────────────────────────
@@ -149,7 +150,7 @@ async function getFilteredContacts(db, filters = {}) {
  *
  * @returns {{ campaignId, contactCount, jobsCreated, status }}
  */
-async function createCampaign(db, { type, sender, subject, body, contactIds, scheduledTime, createdBy }) {
+async function createCampaign(db, { type, sender, subject, body, contactIds, scheduledTime, createdBy, attachmentUrl }) {
   if (!type || !sender || !body) {
     throw new Error('Missing required fields: type, sender, body');
   }
@@ -158,6 +159,21 @@ async function createCampaign(db, { type, sender, subject, body, contactIds, sch
   }
   if (type === 'email' && !subject) {
     throw new Error('Subject is required for email campaigns');
+  }
+
+  // MMS validation: attachment requires a RingCentral sender
+  if (attachmentUrl && type === 'sms') {
+    const fromClean = sender.toString().replace(/\D/g, '').slice(-10);
+    const [[line]] = await db.query(
+      'SELECT provider FROM phone_lines WHERE phone_number = ? AND active = 1 LIMIT 1',
+      [fromClean]
+    );
+    if (!line) {
+      throw new Error(`Sender ${sender} not found in phone_lines`);
+    }
+    if (line.provider !== 'ringcentral') {
+      throw new Error(`MMS requires a RingCentral line. ${sender} uses ${line.provider}.`);
+    }
   }
 
   // Deduplicate contact IDs
@@ -179,9 +195,9 @@ async function createCampaign(db, { type, sender, subject, body, contactIds, sch
   try {
     // 1. INSERT campaign
     const [campaignResult] = await conn.query(
-      `INSERT INTO campaigns (type, sender, subject, body, status, scheduled_time, contact_count, created_by, created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [type, sender, subject || null, body, initialStatus, scheduledTime || null, uniqueIds.length, createdBy]
+      `INSERT INTO campaigns (type, sender, subject, body, attachment_url, status, scheduled_time, contact_count, created_by, created)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [type, sender, subject || null, body, attachmentUrl || null, initialStatus, scheduledTime || null, uniqueIds.length, createdBy]
     );
     const campaignId = campaignResult.insertId;
 
@@ -446,7 +462,7 @@ async function executeSend(db, campaignId, contactId) {
   // ── 1. Load campaign ──
 
   const [[campaign]] = await db.query(
-    'SELECT campaign_id, type, sender, subject, body, status FROM campaigns WHERE campaign_id = ?',
+    'SELECT campaign_id, type, sender, subject, body, attachment_url, status FROM campaigns WHERE campaign_id = ?',
     [campaignId]
   );
 
@@ -522,19 +538,42 @@ async function executeSend(db, campaignId, contactId) {
     let sendResult;
 
     if (campaign.type === 'sms') {
-      sendResult = await smsService.sendSms(
-        db,
-        campaign.sender,
-        contact.contact_phone,
-        resolvedBody.text
-      );
+      if (campaign.attachment_url) {
+        // MMS — RingCentral only (validated at campaign creation)
+        sendResult = await ringcentralService.sendMms(
+          db,
+          campaign.sender,
+          contact.contact_phone,
+          resolvedBody.text,
+          'US',
+          null, null, null,       // no buffer/filename/mimetype
+          campaign.attachment_url, // URL attachment
+          false                   // don't re-store in GCS
+        );
+      } else {
+        sendResult = await smsService.sendSms(
+          db,
+          campaign.sender,
+          contact.contact_phone,
+          resolvedBody.text
+        );
+      }
     } else {
-      sendResult = await emailService.sendEmail(db, {
+      const emailOpts = {
         from:    campaign.sender,
         to:      contact.contact_email,
         subject: resolvedSubject ? resolvedSubject.text : campaign.subject,
         html:    resolvedBody.text
-      });
+      };
+
+      // Email attachment — pass in both formats so emailService routes correctly
+      if (campaign.attachment_url) {
+        const fname = campaign.attachment_url.split('/').pop().split('?')[0] || 'attachment';
+        emailOpts.attachments     = [{ filename: fname, path: campaign.attachment_url }];  // SMTP (nodemailer)
+        emailOpts.attachment_urls = campaign.attachment_url;                                 // Pabbly/Gmail
+      }
+
+      sendResult = await emailService.sendEmail(db, emailOpts);
     }
 
     // ── 8. Record success ──

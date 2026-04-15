@@ -53,7 +53,7 @@ router.post('/internal/mms/send', jwtOrApiKey, async (req, res) => {
       return res.status(400).json({ status: 'error', message: `Phone line ${from} is inactive` });
     }
     if (line.provider !== 'ringcentral') {
-      return res.status(400).json({ status: 'error', message: `MMS only supported for RingCentral lines (${from} is ${line.provider})` });
+      return res.status(400).json({ status: 'error', message: `MMS not supported for ${line.provider} lines` });
     }
 
     const result = await ringcentral.sendMms(

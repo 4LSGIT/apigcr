@@ -170,7 +170,7 @@
   <!-- Sender row -->
   <div class="compose-section">
     <label>Sender</label>
-    <select id="c-sender" style="min-width:280px;"><option value="">Loading...</option></select>
+    <select id="c-sender" onchange="updateMmsVisibility()" style="min-width:280px;"><option value="">Loading...</option></select>
   </div>
 
   <!-- Subject row (email only) -->
@@ -215,6 +215,16 @@
     </div>
     <div id="quill-wrap" class="editor-wrap"><div id="quill-editor"></div></div>
     <textarea id="html-editor" placeholder="Paste or type HTML here..."></textarea>
+
+    <!-- Email attachment -->
+    <div style="margin-top:10px;">
+      <button class="btn btn-outline btn-sm" onclick="attachEmailFile()">Attach File</button>
+      <span class="text-muted" style="margin-left:8px;">File will be sent as an email attachment</span>
+    </div>
+    <div id="email-attach-preview" class="hidden" style="margin-top:8px; font-size:13px; display:flex; align-items:center; gap:8px;">
+      <span id="email-attach-name"></span>
+      <button class="btn btn-danger btn-sm" onclick="removeEmailAttachment()">&times;</button>
+    </div>
   </div>
 
   <!-- Body: SMS mode (plain textarea) -->
@@ -233,6 +243,16 @@
     </div>
     <textarea id="c-sms-body" rows="4" placeholder="Type your SMS message..." style="width:100%;"></textarea>
     <span class="text-muted">SMS messages over 160 characters may be split into multiple segments.</span>
+
+    <!-- MMS attachment (visible only when RingCentral sender selected) -->
+    <div id="mms-section" style="margin-top:10px;">
+      <button class="btn btn-outline btn-sm" onclick="attachMmsImage()">Attach Image (MMS)</button>
+      <span id="mms-rc-hint" class="text-muted" style="margin-left:8px;"></span>
+    </div>
+    <div id="mms-preview" class="hidden" style="margin-top:8px; display:inline-flex; align-items:flex-start; gap:8px;">
+      <img id="mms-preview-img" src="" style="max-width:120px; max-height:90px; border-radius:4px; border:1px solid #ddd;">
+      <button class="btn btn-danger btn-sm" onclick="removeMmsAttachment()">&times; Remove</button>
+    </div>
   </div>
 
   <div class="schedule-row">
@@ -296,6 +316,8 @@ let phoneLines = [];
 let emailAddresses = [];
 let quill = null;
 let pollTimer = null;
+let mmsAttachmentUrl = null;
+let emailAttachmentUrl = null;
 
 // ─── CUSTOM QUILL IMAGE BLOT ──────────────────────────────────
 // Quill's default Image blot only keeps src. This extends it to
@@ -430,8 +452,9 @@ function onChannelChange() {
   sel.innerHTML = '';
   if (isSms) {
     phoneLines.forEach(l => {
-      const label = l.display_name ? `${l.display_name} (${fmtPhone(l.phone_number)})` : fmtPhone(l.phone_number);
-      sel.innerHTML += `<option value="${esc(l.phone_number)}">${esc(label)}</option>`;
+      const suffix = l.provider !== 'ringcentral' ? ' (SMS only)' : '';
+      const label = l.display_name ? `${l.display_name} (${fmtPhone(l.phone_number)})${suffix}` : `${fmtPhone(l.phone_number)}${suffix}`;
+      sel.innerHTML += `<option value="${esc(l.phone_number)}" data-provider="${esc(l.provider)}">${esc(label)}</option>`;
     });
   } else {
     emailAddresses.forEach(e => {
@@ -444,6 +467,11 @@ function onChannelChange() {
   document.getElementById('subject-group').classList.toggle('hidden', isSms);
   document.getElementById('email-body-group').classList.toggle('hidden', isSms);
   document.getElementById('sms-body-group').classList.toggle('hidden', !isSms);
+
+  // Clear attachments on channel switch and update MMS button visibility
+  removeMmsAttachment();
+  removeEmailAttachment();
+  updateMmsVisibility();
 }
 
 async function searchContacts() {
@@ -859,6 +887,210 @@ function getBody() {
   return document.getElementById('html-editor').value;
 }
 
+// ─── MMS ATTACHMENT ───────────────────────────────────────────
+
+/**
+ * Attach an image for MMS. Uses the same upload/URL/library flow as email images
+ * but stores the URL instead of inserting into an editor.
+ */
+async function attachMmsImage() {
+  // Check sender supports MMS
+  const senderOpt = document.getElementById('c-sender').selectedOptions[0];
+  if (senderOpt && senderOpt.dataset.provider && senderOpt.dataset.provider !== 'ringcentral') {
+    return Swal.fire('SMS Only', 'The selected phone line does not support MMS. Choose a RingCentral line.', 'warning');
+  }
+
+  const { value: formValues, isConfirmed, isDenied } = await Swal.fire({
+    title: 'Attach Image (MMS)',
+    html: `
+      <div style="text-align:left;">
+        <p style="font-weight:600; margin-bottom:6px;">Upload a file:</p>
+        <input type="file" id="swal-file" accept="image/png,image/jpeg,image/gif,image/webp"
+               style="margin-bottom:14px; font-size:13px;">
+        <hr style="margin:10px 0;">
+        <p style="font-weight:600; margin-bottom:6px;">Or enter image URL:</p>
+        <input type="text" id="swal-url" class="swal2-input" placeholder="https://..."
+               style="margin:0; width:100%;">
+      </div>
+    `,
+    showCancelButton: true,
+    showDenyButton: true,
+    confirmButtonText: 'Attach',
+    denyButtonText: 'Browse Library',
+    denyButtonColor: '#6c757d',
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const file = popup.querySelector('#swal-file').files[0];
+      const url  = popup.querySelector('#swal-url').value.trim();
+      if (!file && !url) {
+        Swal.showValidationMessage('Upload a file or enter a URL');
+        return false;
+      }
+      return { file, url };
+    }
+  });
+
+  // Library path
+  if (isDenied) {
+    const libUrl = await showLibraryPicker();
+    if (libUrl) setMmsAttachment(libUrl);
+    return;
+  }
+
+  if (!isConfirmed) return;
+
+  let imageUrl;
+
+  if (formValues.file) {
+    const file = formValues.file;
+    if (file.size > 5 * 1024 * 1024) {
+      return Swal.fire('Too Large', 'Image must be under 5 MB', 'warning');
+    }
+    try {
+      Toast.fire({ icon: 'info', title: 'Uploading image...' });
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+      const res = await P.apiSend('/api/upload', 'POST', {
+        image: base64, filename: file.name, contentType: file.type, addToLibrary: true
+      });
+      imageUrl = res.url;
+    } catch (err) {
+      return Swal.fire('Upload Failed', err.message || 'Could not upload image', 'error');
+    }
+  } else {
+    imageUrl = formValues.url;
+  }
+
+  setMmsAttachment(imageUrl);
+}
+
+function setMmsAttachment(url) {
+  mmsAttachmentUrl = url;
+  document.getElementById('mms-preview-img').src = url;
+  const preview = document.getElementById('mms-preview');
+  preview.classList.remove('hidden');
+  preview.style.display = 'inline-flex';
+  Toast.fire({ icon: 'success', title: 'Image attached' });
+}
+
+function removeMmsAttachment() {
+  mmsAttachmentUrl = null;
+  document.getElementById('mms-preview-img').src = '';
+  const preview = document.getElementById('mms-preview');
+  preview.classList.add('hidden');
+  preview.style.display = '';
+}
+
+function updateMmsVisibility() {
+  const section = document.getElementById('mms-section');
+  const hint = document.getElementById('mms-rc-hint');
+  if (!section) return;
+
+  const senderOpt = document.getElementById('c-sender').selectedOptions[0];
+  const provider = senderOpt?.dataset?.provider;
+  const isRc = provider === 'ringcentral';
+
+  section.style.display = isRc ? '' : 'none';
+  hint.textContent = '';
+
+  // If switching away from RC with an attachment, clear it
+  if (!isRc && mmsAttachmentUrl) {
+    removeMmsAttachment();
+  }
+}
+
+// ─── EMAIL ATTACHMENT ─────────────────────────────────────────
+
+async function attachEmailFile() {
+  const { value: formValues, isConfirmed, isDenied } = await Swal.fire({
+    title: 'Attach File',
+    html: `
+      <div style="text-align:left;">
+        <p style="font-weight:600; margin-bottom:6px;">Upload a file:</p>
+        <input type="file" id="swal-file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+               style="margin-bottom:14px; font-size:13px;">
+        <hr style="margin:10px 0;">
+        <p style="font-weight:600; margin-bottom:6px;">Or enter file URL:</p>
+        <input type="text" id="swal-url" class="swal2-input" placeholder="https://..."
+               style="margin:0; width:100%;">
+      </div>
+    `,
+    showCancelButton: true,
+    showDenyButton: true,
+    confirmButtonText: 'Attach',
+    denyButtonText: 'Browse Library',
+    denyButtonColor: '#6c757d',
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const file = popup.querySelector('#swal-file').files[0];
+      const url  = popup.querySelector('#swal-url').value.trim();
+      if (!file && !url) {
+        Swal.showValidationMessage('Upload a file or enter a URL');
+        return false;
+      }
+      return { file, url };
+    }
+  });
+
+  if (isDenied) {
+    const libUrl = await showLibraryPicker();
+    if (libUrl) setEmailAttachment(libUrl);
+    return;
+  }
+
+  if (!isConfirmed) return;
+
+  let fileUrl;
+
+  if (formValues.file) {
+    const file = formValues.file;
+    if (file.size > 10 * 1024 * 1024) {
+      return Swal.fire('Too Large', 'File must be under 10 MB', 'warning');
+    }
+    try {
+      Toast.fire({ icon: 'info', title: 'Uploading file...' });
+      const base64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+      const res = await P.apiSend('/api/upload', 'POST', {
+        image: base64, filename: file.name, contentType: file.type, addToLibrary: true
+      });
+      fileUrl = res.url;
+    } catch (err) {
+      return Swal.fire('Upload Failed', err.message || 'Could not upload file', 'error');
+    }
+  } else {
+    fileUrl = formValues.url;
+  }
+
+  setEmailAttachment(fileUrl);
+}
+
+function setEmailAttachment(url) {
+  emailAttachmentUrl = url;
+  const name = url.split('/').pop().split('?')[0] || 'attachment';
+  document.getElementById('email-attach-name').textContent = name;
+  const preview = document.getElementById('email-attach-preview');
+  preview.classList.remove('hidden');
+  preview.style.display = 'flex';
+  Toast.fire({ icon: 'success', title: 'File attached' });
+}
+
+function removeEmailAttachment() {
+  emailAttachmentUrl = null;
+  document.getElementById('email-attach-name').textContent = '';
+  const preview = document.getElementById('email-attach-preview');
+  preview.classList.add('hidden');
+  preview.style.display = '';
+}
+
 async function previewCampaign() {
   if (!selectedContacts.length) return Toast.fire({ icon: 'warning', title: 'No contacts selected' });
 
@@ -909,7 +1141,7 @@ async function createCampaign() {
 
   const confirm = await Swal.fire({
     title: 'Send Campaign?',
-    html: `<strong>${channel.toUpperCase()}</strong> to <strong>${selectedContacts.length}</strong> contact${selectedContacts.length !== 1 ? 's' : ''}${sendNow ? ' <em>immediately</em>' : ` on <em>${schedule}</em>`}`,
+    html: `<strong>${channel.toUpperCase()}${mmsAttachmentUrl ? ' (MMS)' : emailAttachmentUrl ? ' + attachment' : ''}</strong> to <strong>${selectedContacts.length}</strong> contact${selectedContacts.length !== 1 ? 's' : ''}${sendNow ? ' <em>immediately</em>' : ` on <em>${schedule}</em>`}`,
     icon: 'question',
     showCancelButton: true,
     confirmButtonText: sendNow ? 'Send Now' : 'Schedule',
@@ -919,16 +1151,22 @@ async function createCampaign() {
   if (!confirm.isConfirmed) return;
 
   try {
-    const res = await P.apiSend('/api/campaigns', 'POST', {
+    const payload = {
       type: channel,
       sender,
       subject: channel === 'email' ? subject : undefined,
       body,
       contactIds: selectedContacts.map(c => c.contact_id),
       scheduledTime: sendNow ? null : schedule
-    });
+    };
+    const attachment = channel === 'sms' ? mmsAttachmentUrl : emailAttachmentUrl;
+    if (attachment) payload.attachmentUrl = attachment;
+
+    const res = await P.apiSend('/api/campaigns', 'POST', payload);
 
     Toast.fire({ icon: 'success', title: `Campaign #${res.campaignId} created — ${res.status}` });
+    removeMmsAttachment();
+    removeEmailAttachment();
     showTab('tab-view');
   } catch (err) {
     Swal.fire('Error', err.message || 'Failed to create campaign', 'error');
@@ -1070,6 +1308,11 @@ async function duplicateCampaign(id) {
     if (campaign.type === 'sms') {
       // SMS: populate plain textarea
       document.getElementById('c-sms-body').value = campaign.body || '';
+      // Restore MMS attachment if present
+      updateMmsVisibility();
+      if (campaign.attachment_url) {
+        setMmsAttachment(campaign.attachment_url);
+      }
     } else {
       // Email: populate subject + both editors
       if (campaign.subject) document.getElementById('c-subject').value = campaign.subject;
@@ -1078,6 +1321,10 @@ async function duplicateCampaign(id) {
       document.getElementById('c-editor-mode').value = 'richtext';
       document.getElementById('quill-wrap').style.display = '';
       document.getElementById('html-editor').style.display = 'none';
+      // Restore email attachment if present
+      if (campaign.attachment_url) {
+        setEmailAttachment(campaign.attachment_url);
+      }
     }
 
     // Reset schedule

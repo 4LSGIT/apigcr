@@ -5,16 +5,16 @@
  * Thin HTTP wrappers around campaignService.
  * All routes use JWT auth via jwtOrApiKey.
  *
- * Replaces the old POST /api/campaigns/trigger route entirely.
+ * Replaces the old POST /campaigns/trigger route entirely.
  *
  * Routes:
- *   GET    /api/campaigns/contacts      — filter contacts for selection
- *   POST   /api/campaigns/preview       — resolve placeholders for preview
- *   POST   /api/campaigns               — create campaign + jobs
- *   GET    /api/campaigns               — list campaigns (paginated)
- *   GET    /api/campaigns/:id           — single campaign with results summary
- *   GET    /api/campaigns/:id/results   — per-contact result details
- *   PATCH  /api/campaigns/:id           — cancel a campaign
+ *   GET    /campaigns/contacts      — filter contacts for selection
+ *   POST   /campaigns/preview       — resolve placeholders for preview
+ *   POST   /campaigns               — create campaign + jobs
+ *   GET    /campaigns               — list campaigns (paginated)
+ *   GET    /campaigns/:id           — single campaign with results summary
+ *   GET    /campaigns/:id/results   — per-contact result details
+ *   PATCH  /campaigns/:id           — cancel a campaign
  */
 
 const express       = require('express');
@@ -23,7 +23,7 @@ const jwtOrApiKey   = require('../lib/auth.jwtOrApiKey');
 const campaignService = require('../services/campaignService');
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/campaigns/contacts — filter contacts for campaign selection
+// GET /campaigns/contacts — filter contacts for campaign selection
 // ─────────────────────────────────────────────────────────────
 router.get('/api/campaigns/contacts', jwtOrApiKey, async (req, res) => {
   try {
@@ -41,13 +41,13 @@ router.get('/api/campaigns/contacts', jwtOrApiKey, async (req, res) => {
     const result = await campaignService.getFilteredContacts(req.db, filters);
     res.json(result);
   } catch (err) {
-    console.error('[GET /api/campaigns/contacts]', err);
+    console.error('[GET /campaigns/contacts]', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
-// POST /api/campaigns/preview — resolve placeholders for one contact
+// POST /campaigns/preview — resolve placeholders for one contact
 // ─────────────────────────────────────────────────────────────
 router.post('/api/campaigns/preview', jwtOrApiKey, async (req, res) => {
   const { body, subject, contactId } = req.body;
@@ -60,16 +60,16 @@ router.post('/api/campaigns/preview', jwtOrApiKey, async (req, res) => {
     const result = await campaignService.previewCampaign(req.db, { body, subject, contactId });
     res.json(result);
   } catch (err) {
-    console.error('[POST /api/campaigns/preview]', err);
+    console.error('[POST /campaigns/preview]', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
-// POST /api/campaigns — create a new campaign
+// POST /campaigns — create a new campaign
 // ─────────────────────────────────────────────────────────────
 router.post('/api/campaigns', jwtOrApiKey, async (req, res) => {
-  const { type, sender, subject, body, contactIds, scheduledTime } = req.body;
+  const { type, sender, subject, body, contactIds, scheduledTime, attachmentUrl } = req.body;
 
   if (!type || !sender || !body) {
     return res.status(400).json({ error: 'type, sender, and body are required' });
@@ -86,17 +86,18 @@ router.post('/api/campaigns', jwtOrApiKey, async (req, res) => {
       body,
       contactIds,
       scheduledTime: scheduledTime || null,
-      createdBy: req.auth.userId
+      createdBy: req.auth.userId,
+      attachmentUrl: attachmentUrl || null
     });
     res.json(result);
   } catch (err) {
-    console.error('[POST /api/campaigns]', err);
+    console.error('[POST /campaigns]', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/campaigns — list campaigns (paginated)
+// GET /campaigns — list campaigns (paginated)
 // ─────────────────────────────────────────────────────────────
 router.get('/api/campaigns', jwtOrApiKey, async (req, res) => {
   try {
@@ -107,13 +108,13 @@ router.get('/api/campaigns', jwtOrApiKey, async (req, res) => {
     });
     res.json(result);
   } catch (err) {
-    console.error('[GET /api/campaigns]', err);
+    console.error('[GET /campaigns]', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/campaigns/:id — single campaign with results summary
+// GET /campaigns/:id — single campaign with results summary
 // ─────────────────────────────────────────────────────────────
 router.get('/api/campaigns/:id', jwtOrApiKey, async (req, res) => {
   try {
@@ -121,26 +122,26 @@ router.get('/api/campaigns/:id', jwtOrApiKey, async (req, res) => {
     if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
     res.json(campaign);
   } catch (err) {
-    console.error('[GET /api/campaigns/:id]', err);
+    console.error('[GET /campaigns/:id]', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/campaigns/:id/results — per-contact result details
+// GET /campaigns/:id/results — per-contact result details
 // ─────────────────────────────────────────────────────────────
 router.get('/api/campaigns/:id/results', jwtOrApiKey, async (req, res) => {
   try {
     const results = await campaignService.getCampaignResults(req.db, parseInt(req.params.id));
     res.json(results);
   } catch (err) {
-    console.error('[GET /api/campaigns/:id/results]', err);
+    console.error('[GET /campaigns/:id/results]', err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
-// PATCH /api/campaigns/:id — cancel a campaign
+// PATCH /campaigns/:id — cancel a campaign
 // ─────────────────────────────────────────────────────────────
 router.patch('/api/campaigns/:id', jwtOrApiKey, async (req, res) => {
   const { status } = req.body;
@@ -153,7 +154,7 @@ router.patch('/api/campaigns/:id', jwtOrApiKey, async (req, res) => {
     const result = await campaignService.cancelCampaign(req.db, parseInt(req.params.id));
     res.json(result);
   } catch (err) {
-    console.error('[PATCH /api/campaigns/:id]', err);
+    console.error('[PATCH /campaigns/:id]', err);
 
     const code = err.message.includes('not found') ? 404
                : err.message.includes('Cannot cancel') ? 409
