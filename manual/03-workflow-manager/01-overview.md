@@ -41,7 +41,7 @@ Single actions fired at a specific time or on a recurring schedule. No contact c
 
 All three engines run on the same foundation:
 
-**`scheduled_jobs` table** - the unified job queue. All three engines insert rows here; `/process-jobs` picks them up on a polling interval. Job types: `one_time`, `recurring`, `workflow_resume`, `sequence_step`.
+**`scheduled_jobs` table** - the unified job queue. All three engines insert rows here; `/process-jobs` picks them up on a polling interval. Job types: `one_time`, `recurring`, `workflow_resume`, `sequence_step`, `task_due_reminder`, `task_daily_digest`, `hook_retry`, `campaign_send`.
 
 **`internal_functions.js`** - the built-in action library. Send SMS, send email, create task, lookup/update contact or appointment, wait, branch, evaluate conditions. All three engines call the same functions.
 

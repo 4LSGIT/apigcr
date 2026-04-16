@@ -111,14 +111,30 @@
     .tab-panel.active { display: flex; }
 
     /* ── Three-panel layout (shared by Workflows + Sequences) ── */
-    .three-panel { display: flex; flex: 1; overflow: hidden; }
+    /* display:flex comes from .tab-panel.active — do NOT set it here
+       or it overrides .tab-panel's display:none on inactive tabs */
+    .three-panel { flex: 1; overflow: hidden; }
 
     .panel-left {
       width: 220px; min-width: 220px;
       background: var(--navy2);
       display: flex; flex-direction: column;
       border-right: 1px solid rgba(255,255,255,0.06);
+      transition: width 0.15s, min-width 0.15s;
     }
+
+    .panel-left.collapsed { width: 40px; min-width: 40px; }
+    .panel-left.collapsed .panel-left-search,
+    .panel-left.collapsed .panel-left-list,
+    .panel-left.collapsed .panel-left-foot { display: none; }
+    .panel-left.collapsed .panel-left-head { justify-content: center; }
+
+    .panel-collapse-btn {
+      background: none; border: none; color: rgba(255,255,255,0.4);
+      cursor: pointer; padding: 2px 4px; font-size: 12px; flex-shrink: 0;
+      transition: color 0.12s;
+    }
+    .panel-collapse-btn:hover { color: #fff; }
 
     .panel-left-head {
       padding: 10px 12px;
@@ -186,9 +202,18 @@
     .canvas-body { flex: 1; overflow-y: auto; padding: 20px; }
 
     .panel-right {
-      width: 380px; min-width: 380px;
+      width: 380px; min-width: 280px; max-width: 600px;
       background: var(--surface); border-left: 1px solid var(--border);
       display: flex; flex-direction: column; overflow: hidden;
+      position: relative;
+    }
+
+    .panel-resize-handle {
+      position: absolute; left: -3px; top: 0; bottom: 0; width: 6px;
+      cursor: col-resize; z-index: 10;
+    }
+    .panel-resize-handle:hover, .panel-resize-handle.dragging {
+      background: var(--blue); opacity: 0.3;
     }
 
     .editor-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
@@ -453,6 +478,7 @@
   <div class="panel-left">
     <div class="panel-left-head">
       <input class="panel-left-search" id="wf-search" placeholder="Search…" oninput="wfFilter(this.value)">
+      <button class="panel-collapse-btn" onclick="togglePanelLeft(this)" title="Collapse"><i class="fa-solid fa-angles-left"></i></button>
     </div>
     <div class="panel-left-list" id="wf-list">
       <div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">Loading…</div>
@@ -482,6 +508,7 @@
   </div>
 
   <div class="panel-right">
+    <div class="panel-resize-handle"></div>
     <div class="editor-tabs">
       <button class="editor-tab active" id="wf-tab-edit" onclick="wfSwitchEditorTab('edit')">
         <i class="fa-solid fa-pencil"></i> Edit Step
@@ -510,6 +537,7 @@
   <div class="panel-left">
     <div class="panel-left-head">
       <input class="panel-left-search" id="seq-search" placeholder="Search…" oninput="seqFilter(this.value)">
+      <button class="panel-collapse-btn" onclick="togglePanelLeft(this)" title="Collapse"><i class="fa-solid fa-angles-left"></i></button>
     </div>
     <div class="panel-left-list" id="seq-list">
       <div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">Loading…</div>
@@ -538,6 +566,7 @@
   </div>
 
   <div class="panel-right">
+    <div class="panel-resize-handle"></div>
     <div class="editor-tabs">
       <button class="editor-tab active" id="seq-tab-edit" onclick="seqSwitchEditorTab('edit')">
         <i class="fa-solid fa-pencil"></i> Edit Step
@@ -577,7 +606,14 @@
       <option value="">All types</option>
       <option value="one_time">One-time</option>
       <option value="recurring">Recurring</option>
+      <option value="task_due_reminder">Task Due Reminder</option>
+      <option value="task_daily_digest">Task Daily Digest</option>
+      <option value="hook_retry">Hook Retry</option>
+      <option value="campaign_send">Campaign Send</option>
     </select>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text2);cursor:pointer;white-space:nowrap">
+      <input type="checkbox" id="jobs-show-internal" onchange="loadJobs()"> Internal
+    </label>
     <input class="jobs-search" id="jobs-search" placeholder="Search by name…" oninput="loadJobsDebounced()">
     <button class="btn btn-primary" onclick="jobNew()">
       <i class="fa-solid fa-plus"></i> New Job
@@ -606,6 +642,13 @@ function trimUrl(url) {
   try { const u = new URL(url); return u.hostname + u.pathname; } catch { return url.length > 38 ? url.slice(0,38)+'…' : url; }
 }
 
+function togglePanelLeft(btn) {
+  const panel = btn.closest('.panel-left');
+  const collapsed = panel.classList.toggle('collapsed');
+  btn.innerHTML = collapsed ? '<i class="fa-solid fa-angles-right"></i>' : '<i class="fa-solid fa-angles-left"></i>';
+  btn.title = collapsed ? 'Expand' : 'Collapse';
+}
+
 // ── Main tab switching ──
 const TABS = { workflows: 'Workflow', sequences: 'Sequence Template', jobs: 'Scheduled Job' };
 let currentMainTab = 'workflows';
@@ -632,8 +675,24 @@ function newInCurrentTab() {
   if (currentMainTab === 'jobs')      jobNew();
 }
 
+// Internal function list (fetched once, used by both dropdowns)
+const FUNCTIONS = { workflow: [], sequence: [] };
+
+async function loadFunctions() {
+  try {
+    const data = await api('/workflows/functions');
+    FUNCTIONS.workflow = data.workflow || [];
+    FUNCTIONS.sequence = data.sequence || [];
+  } catch(e) {
+    console.warn('Failed to load function list, using fallback:', e.message);
+    FUNCTIONS.workflow = ['set_next','evaluate_condition','noop','set_var','format_string','schedule_resume','wait_for','wait_until_time','send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','set_test_var'];
+    FUNCTIONS.sequence = ['send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','noop','set_var'];
+  }
+}
+
 // Entry point called by parent
-function workflowManagerLoad() {
+async function workflowManagerLoad() {
+  await loadFunctions();
   loadWorkflows();
   loadSequences();
 }
@@ -819,7 +878,7 @@ function wfRenderConfigFields(type, cfg) {
     <div class="field"><label>Headers (JSON)</label><textarea id="e-headers" rows="3">${cfg.headers?JSON.stringify(cfg.headers,null,2):''}</textarea></div>
     <div class="field"><label>set_vars (JSON)</label><textarea id="e-setvars" rows="3">${cfg.set_vars?JSON.stringify(cfg.set_vars,null,2):''}</textarea></div>`;
   if (type==='internal_function') return `${toggle}
-    <div class="field"><label>Function</label><select id="e-fn">${['set_next','evaluate_condition','noop','set_var','format_string','schedule_resume','wait_for','wait_until_time','send_sms','send_email','create_task','lookup_contact','update_contact','lookup_appointment','update_appointment','set_test_var'].map(f=>`<option ${cfg.function_name===f?'selected':''}>${f}</option>`).join('')}</select></div>
+    <div class="field"><label>Function</label><select id="e-fn">${(FUNCTIONS.workflow.length?FUNCTIONS.workflow:['noop']).map(f=>`<option ${cfg.function_name===f?'selected':''}>${f}</option>`).join('')}</select></div>
     <div class="field"><label>Params (JSON)</label><textarea id="e-params">${cfg.params?JSON.stringify(cfg.params,null,2):'{}'}</textarea></div>
     <div class="field"><label>set_vars (JSON)</label><textarea id="e-setvars" rows="3">${cfg.set_vars?JSON.stringify(cfg.set_vars,null,2):''}</textarea></div>`;
   if (type==='custom_code') return `${toggle}
@@ -993,7 +1052,7 @@ function renderSeqList() {
   el.innerHTML = SEQ.filtered.map(t => `
     <div class="left-item${t.id===SEQ.activeTemplateId?' active':''}" onclick="selectSeqTemplate(${t.id})">
       <div class="left-item-name">${esc(t.name)}</div>
-      <div class="left-item-meta">${t.type} · ${t.step_count||0} step${t.step_count!==1?'s':''} ${t.active?'':'· <span style="color:#f87171">inactive</span>'}</div>
+      <div class="left-item-meta">${t.type} · ${t.step_count||0} step${t.step_count!==1?'s':''} ${t.appt_type_filter?'· <span style="color:#60a5fa">'+esc(t.appt_type_filter)+'</span>':''}${t.appt_with_filter?'· <span style="color:#a78bfa">user:'+esc(t.appt_with_filter)+'</span>':''}${t.active?'':'· <span style="color:#f87171">inactive</span>'}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();seqEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act danger" onclick="event.stopPropagation();seqDelete()"><i class="fa-solid fa-trash"></i></button>
@@ -1003,11 +1062,18 @@ function renderSeqList() {
 
 function seqFilter(q) { SEQ.filtered=SEQ.templates.filter(t=>t.name.toLowerCase().includes(q.toLowerCase())||t.type.toLowerCase().includes(q.toLowerCase())); renderSeqList(); }
 
+function seqTitleText(t) {
+  let s=`${t.name} (${t.type})`;
+  if(t.appt_type_filter) s+=` · appt: ${t.appt_type_filter}`;
+  if(t.appt_with_filter) s+=` · with: ${t.appt_with_filter}`;
+  return s;
+}
+
 async function selectSeqTemplate(id) {
   SEQ.activeTemplateId=id; SEQ.activeTemplate=SEQ.templates.find(t=>t.id===id); SEQ.activeStepIdx=null;
   renderSeqList();
   const t=document.getElementById('seq-canvas-title');
-  t.textContent=`${SEQ.activeTemplate.name} (${SEQ.activeTemplate.type})`; t.classList.remove('placeholder');
+  t.textContent=seqTitleText(SEQ.activeTemplate); t.classList.remove('placeholder');
   document.getElementById('seq-canvas-actions').style.display='flex';
   seqClearEditor();
   await loadSeqSteps(id);
@@ -1149,7 +1215,7 @@ function seqRenderActionConfig(type, cfg) {
     <div class="field"><label>Description</label><textarea id="se-desc" rows="3">${esc(cfg.params?.description||'')}</textarea></div>`;
   // internal_function
   return `
-    <div class="field"><label>Function</label><select id="se-fn">${['send_sms','send_email','create_task','lookup_contact','update_contact','lookup_appointment','update_appointment','noop','set_var'].map(f=>`<option ${cfg.function_name===f?'selected':''}>${f}</option>`).join('')}</select></div>
+    <div class="field"><label>Function</label><select id="se-fn">${(FUNCTIONS.sequence.length?FUNCTIONS.sequence:['noop']).map(f=>`<option ${cfg.function_name===f?'selected':''}>${f}</option>`).join('')}</select></div>
     <div class="field"><label>Params (JSON)</label><textarea id="se-params" rows="6">${cfg.params?JSON.stringify(cfg.params,null,2):'{}'}</textarea></div>
     <div class="field"><label>set_vars (JSON)</label><textarea id="se-setvars" rows="3">${cfg.set_vars?JSON.stringify(cfg.set_vars,null,2):''}</textarea></div>`;
 }
@@ -1293,15 +1359,26 @@ async function seqStepMove(idx,dir) {
   catch(e){Swal.fire('Error',e.message,'error');}
 }
 
-// WAIT — sequences don't have a reorder endpoint yet. Let me use delete+re-insert for now.
-// Actually let's add it to the sequences route — for now just use up/down with PATCH step numbers
-
 async function seqNew() {
-  const{value:name}=await Swal.fire({title:'New Sequence Template',input:'text',inputPlaceholder:'Template name…',showCancelButton:true,confirmButtonText:'Next',inputValidator:v=>!v.trim()&&'Name required'});
-  if(!name)return;
-  const{value:type}=await Swal.fire({title:'Sequence Type',input:'text',inputPlaceholder:'e.g. no_show, lead_drip, pre_appt',showCancelButton:true,confirmButtonText:'Create',inputValidator:v=>!v.trim()&&'Type required'});
-  if(!type)return;
-  try{const r=await api('/sequences/templates','POST',{name:name.trim(),type:type.trim()});await loadSequences();selectSeqTemplate(r.templateId);}catch(e){Swal.fire('Error',e.message,'error');}
+  const{value:vals}=await Swal.fire({
+    title:'New Sequence Template',
+    html:`<input id="swal-name" class="swal2-input" placeholder="Name">
+          <input id="swal-type" class="swal2-input" placeholder="Type (e.g. no_show, lead_drip, pre_appt)">
+          <input id="swal-appt-type" class="swal2-input" placeholder="Appt Type Filter (optional)">
+          <input id="swal-appt-with" class="swal2-input" placeholder="Appt With Filter (user ID, optional)">`,
+    showCancelButton:true,confirmButtonText:'Create',
+    preConfirm:()=>{
+      const name=document.getElementById('swal-name').value.trim();
+      const type=document.getElementById('swal-type').value.trim();
+      if(!name){Swal.showValidationMessage('Name is required');return false;}
+      if(!type){Swal.showValidationMessage('Type is required');return false;}
+      return{name,type,
+        appt_type_filter:document.getElementById('swal-appt-type').value.trim()||null,
+        appt_with_filter:document.getElementById('swal-appt-with').value.trim()||null};
+    }
+  });
+  if(!vals)return;
+  try{const r=await api('/sequences/templates','POST',vals);await loadSequences();selectSeqTemplate(r.templateId);}catch(e){Swal.fire('Error',e.message,'error');}
 }
 
 async function seqEdit() {
@@ -1309,7 +1386,9 @@ async function seqEdit() {
   const{value:vals}=await Swal.fire({
     title:'Edit Template',
     html:`<input id="swal-name" class="swal2-input" placeholder="Name" value="${esc(SEQ.activeTemplate.name)}">
-          <input id="swal-type" class="swal2-input" placeholder="Type" value="${esc(SEQ.activeTemplate.type)}">
+          <input id="swal-type" class="swal2-input" placeholder="Type (e.g. no_show, lead_drip)" value="${esc(SEQ.activeTemplate.type)}">
+          <input id="swal-appt-type" class="swal2-input" placeholder="Appt Type Filter (optional)" value="${esc(SEQ.activeTemplate.appt_type_filter||'')}">
+          <input id="swal-appt-with" class="swal2-input" placeholder="Appt With Filter (user ID, optional)" value="${esc(SEQ.activeTemplate.appt_with_filter||'')}">
           <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px">
             <input type="checkbox" id="swal-active" ${SEQ.activeTemplate.active?'checked':''}> Active
           </label>`,
@@ -1317,11 +1396,13 @@ async function seqEdit() {
     preConfirm:()=>({
       name:document.getElementById('swal-name').value.trim(),
       type:document.getElementById('swal-type').value.trim(),
+      appt_type_filter:document.getElementById('swal-appt-type').value.trim()||null,
+      appt_with_filter:document.getElementById('swal-appt-with').value.trim()||null,
       active:document.getElementById('swal-active').checked
     })
   });
   if(!vals)return;
-  try{await api(`/sequences/templates/${SEQ.activeTemplateId}`,'PUT',vals);await loadSequences();SEQ.activeTemplate=SEQ.templates.find(t=>t.id===SEQ.activeTemplateId);document.getElementById('seq-canvas-title').textContent=`${SEQ.activeTemplate.name} (${SEQ.activeTemplate.type})`;}catch(e){Swal.fire('Error',e.message,'error');}
+  try{await api(`/sequences/templates/${SEQ.activeTemplateId}`,'PUT',vals);await loadSequences();SEQ.activeTemplate=SEQ.templates.find(t=>t.id===SEQ.activeTemplateId);document.getElementById('seq-canvas-title').textContent=seqTitleText(SEQ.activeTemplate);}catch(e){Swal.fire('Error',e.message,'error');}
 }
 
 async function seqDelete() {
@@ -1354,6 +1435,7 @@ async function loadJobs() {
   list.innerHTML = '<div class="empty-state" style="height:200px"><i class="fa-solid fa-spinner spin"></i><p>Loading…</p></div>';
   try {
     const params={limit:50,...(status&&{status}),...(type&&{type}),...(search&&{search})};
+    if(document.getElementById('jobs-show-internal')?.checked) params.internal='true';
     const data=await api('/scheduled-jobs','GET',params);
     const jobs=data.jobs||[];
     if(!jobs.length){list.innerHTML='<div class="empty-state" style="height:200px"><i class="fa-solid fa-clock"></i><p>No jobs found.</p></div>';return;}
@@ -1482,19 +1564,21 @@ async function jobView(id) {
   }catch(e){Swal.fire('Error',e.message,'error');}
 }
 
-// ── Sequence step reorder (add to sequences route) ──
-// For now, use move up/down via PATCH on the step endpoint with swapped step numbers
-async function seqStepMove(idx, dir) {
-  const a=SEQ.steps[idx],b=SEQ.steps[idx+dir];
-  // Swap via temp number to avoid unique constraint
-  try {
-    const tempNum = 9999;
-    await api(`/sequences/templates/${SEQ.activeTemplateId}/steps/${a.step_number}`,'PATCH',{step_number_swap:b.step_number});
-    // The route doesn't support step_number changes — use delete+reinsert pattern
-    // For now just show a message
-    Swal.fire({toast:true,position:'top-end',icon:'info',title:'Reorder: save both steps first, then delete and re-add in order',timer:3000,showConfirmButton:false});
-  }catch(e){Swal.fire('Error',e.message,'error');}
-}
+// ── Panel resize handles ──
+document.querySelectorAll('.panel-resize-handle').forEach(handle => {
+  handle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    const panel = handle.parentElement;
+    const startX = e.clientX;
+    const startW = panel.offsetWidth;
+    handle.classList.add('dragging');
+    const onMove = ev => { const w = startW - (ev.clientX - startX); panel.style.width = Math.max(280, Math.min(600, w)) + 'px'; panel.style.minWidth = 'auto'; };
+    const onUp = () => { handle.classList.remove('dragging'); document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+});
+
 </script>
 </body>
 </html>

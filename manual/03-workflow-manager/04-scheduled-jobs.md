@@ -168,14 +168,18 @@ Returns metadata, execution stats, latest result, and optionally the full attemp
 
 ## Internal Job Types (system use)
 
-The scheduler also handles two internal job types that you should not create manually:
+The scheduler also handles internal job types that you should not create manually:
 
 | Type | Created by | Purpose |
 |------|-----------|---------|
 | `workflow_resume` | `workflow_engine.js` | Resume a delayed workflow execution |
 | `sequence_step` | `sequenceEngine.js` | Fire the next step of an enrollment |
+| `task_due_reminder` | `taskService.scheduleDueReminder()` | Send email/SMS to assignee on task due date |
+| `task_daily_digest` | Seeded as recurring job | Refresh task statuses + send digest emails per user schedule |
+| `hook_retry` | `hookService.js` | Retry a failed webhook delivery target |
+| `campaign_send` | `campaignService.createCampaign()` | Send one campaign message to one contact |
 
-These appear in `scheduled_jobs` and are processed by `/process-jobs` alongside regular jobs.
+These appear in `scheduled_jobs` and are processed by `/process-jobs` alongside regular jobs. The jobs list API hides `workflow_resume` and `sequence_step` by default — pass `?internal=true` to include them.
 
 ---
 

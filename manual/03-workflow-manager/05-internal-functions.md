@@ -243,6 +243,43 @@ Update one or more fields on a contact.
 
 ## Appointments
 
+### `create_appointment`
+Create a new appointment with full side effects — log entry, 341 case update, sequence cancellation, GCal creation, and reminder workflow start. Delegates to `apptService.createAppt()`.
+
+**Params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `contact_id` | number | Required |
+| `appt_date` | string | Required — datetime in firm local time |
+| `appt_type` | string | Required — e.g. `"341 Meeting"`, `"Strategy Session"` |
+| `appt_length` | number | Required — minutes |
+| `appt_platform` | string | Required — `"Telephone"` `"Zoom"` `"In-person"` |
+| `case_id` | string | Optional |
+| `appt_with` | number | User ID, default 1 |
+| `note` | string | Optional |
+| `confirm_sms` | boolean | Send confirmation SMS |
+| `confirm_email` | boolean | Send confirmation email |
+| `confirm_message` | string | Required if sms/email true |
+| `acting_user_id` | number | User ID for log entry, default 0 (system) |
+
+**Returns:** `{ appt_id, appt_date_utc, workflow_execution_id }`
+
+```json
+{
+  "function_name": "create_appointment",
+  "params": {
+    "contact_id":    "{{primary_contact_id}}",
+    "case_id":       "{{link_id}}",
+    "appt_date":     "{{new_control_datetime}}",
+    "appt_type":     "341 Meeting",
+    "appt_length":   15,
+    "appt_platform": "Telephone",
+    "appt_with":     "{{attorney_user_id}}"
+  },
+  "set_vars": { "new_appt_id": "{{this.output.appt_id}}" }
+}
+```
+
 ### `lookup_appointment`
 Fetch an appointment row. Same pattern as `lookup_contact`.
 
@@ -272,10 +309,6 @@ Update one or more fields on an appointment.
 ```
 
 ---
-
----
-
-## Appointments
 
 ### `get_appointments`
 Query the appointments table with optional filters. Returns results formatted for email, variable storage, or counting.

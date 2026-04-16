@@ -87,16 +87,17 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
 // POST /sequences/templates
 router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
   const db = req.db;
-  const { name, type, appt_type_filter, condition, description, active = true } = req.body;
+  const { name, type, appt_type_filter, appt_with_filter, condition, description, active = true } = req.body;
 
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
   if (!type?.trim()) return res.status(400).json({ error: 'type is required' });
 
   try {
     const [result] = await db.query(
-      `INSERT INTO sequence_templates (name, type, appt_type_filter, \`condition\`, description, active)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sequence_templates (name, type, appt_type_filter, appt_with_filter, \`condition\`, description, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [name.trim(), type.trim(), appt_type_filter || null,
+       appt_with_filter != null ? parseInt(appt_with_filter) : null,
        condition ? JSON.stringify(condition) : null,
        description || null, active ? 1 : 0]
     );
@@ -110,7 +111,7 @@ router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
 router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const id = parseInt(req.params.id);
-  const { name, type, appt_type_filter, condition, description, active } = req.body;
+  const { name, type, appt_type_filter, appt_with_filter, condition, description, active } = req.body;
 
   const updates = [];
   const params  = [];
@@ -118,6 +119,7 @@ router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
   if (name        !== undefined) { updates.push('name = ?');              params.push(name?.trim()); }
   if (type        !== undefined) { updates.push('type = ?');              params.push(type?.trim()); }
   if (appt_type_filter !== undefined) { updates.push('appt_type_filter = ?'); params.push(appt_type_filter); }
+  if (appt_with_filter !== undefined) { updates.push('appt_with_filter = ?'); params.push(appt_with_filter != null ? parseInt(appt_with_filter) : null); }
   if (condition   !== undefined) { updates.push('\`condition\` = ?');         params.push(condition ? JSON.stringify(condition) : null); }
   if (description !== undefined) { updates.push('description = ?');       params.push(description); }
   if (active      !== undefined) { updates.push('active = ?');            params.push(active ? 1 : 0); }
@@ -457,7 +459,8 @@ router.post('/sequences/enrollments/:id/cancel', jwtOrApiKey, async (req, res) =
       [reason, id]
     );
     await db.query(
-      `DELETE FROM scheduled_jobs WHERE sequence_enrollment_id=? AND status IN ('pending','running')`,
+      `UPDATE scheduled_jobs SET status = 'failed', updated_at = NOW()
+       WHERE sequence_enrollment_id = ? AND status IN ('pending', 'running')`,
       [id]
     );
 

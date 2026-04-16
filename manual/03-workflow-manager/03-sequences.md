@@ -185,15 +185,47 @@ POST /sequences/enrollments/:id/cancel
 ```
 GET    /sequences/templates
 GET    /sequences/templates/:id          (includes steps)
-POST   /sequences/templates
-PUT    /sequences/templates/:id
+POST   /sequences/templates              { name, type, appt_type_filter?, appt_with_filter?, condition?, description? }
+PUT    /sequences/templates/:id          (same fields, all optional)
 DELETE /sequences/templates/:id          (blocked if active enrollments exist)
 
 POST   /sequences/templates/:id/steps
 PUT    /sequences/templates/:id/steps/:stepNumber
 PATCH  /sequences/templates/:id/steps/:stepNumber
 DELETE /sequences/templates/:id/steps/:stepNumber  (renumbers subsequent steps)
+PATCH  /sequences/templates/:id/steps/reorder      { fromStep, toStep } — atomic swap
 ```
+
+### Template Filter Fields
+
+`appt_type_filter` (varchar 50) — when set, this template only matches enrollments where the appointment type matches (e.g. `"Strategy Session"`). NULL matches all appointment types.
+
+`appt_with_filter` (tinyint) — when set, this template only matches enrollments where the staff member matches (`users.user` ID). NULL matches all staff. Used for cascading template selection — see [Cascading Template Match](#cascading-template-match) below.
+
+---
+
+## Cascading Template Match
+
+When enrolling via `POST /sequences/enroll`, the engine finds the most specific matching template using `appt_type_filter` and `appt_with_filter`:
+
+1. type + `appt_type_filter` match + `appt_with_filter` match (most specific)
+2. type + `appt_type_filter` match + `appt_with_filter` NULL
+3. type + `appt_type_filter` NULL + `appt_with_filter` match
+4. type + both filters NULL (generic fallback)
+
+Pass `appt_type` and `appt_with` in the enroll body or in the `filters` param of `enrollContact()`:
+
+```js
+await apiSend("/sequences/enroll", "POST", {
+  contact_id:    456,
+  template_type: "pre_appt",
+  trigger_data:  { appt_id: 123, appt_time: "2026-03-20T14:00:00Z" },
+  appt_type:     "Strategy Session",
+  appt_with:     2
+});
+```
+
+This allows multiple templates of the same `type` with different behaviors per appointment type or staff member.
 
 ---
 

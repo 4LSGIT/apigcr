@@ -11,12 +11,22 @@ All endpoints require JWT or API key authentication unless noted. Authentication
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/workflows` | List all workflows |
+| `GET` | `/workflows/functions` | List available internal functions (categorized) |
 | `GET` | `/workflows/:id` | Get workflow + steps |
 | `POST` | `/workflows` | Create workflow |
 | `POST` | `/workflows/bulk` | Create workflow + all steps in one call |
 | `PUT` | `/workflows/:id` | Update name/description |
 | `DELETE` | `/workflows/:id` | Delete workflow + steps |
 | `POST` | `/workflows/:id/duplicate` | Duplicate workflow + steps |
+
+**`GET /workflows/functions` response:**
+```json
+{
+  "workflow": ["set_next", "evaluate_condition", "noop", "...all 22"],
+  "sequence": ["send_sms", "send_email", "...15 (excludes workflow-only)"]
+}
+```
+Sequence list excludes: `set_next`, `evaluate_condition`, `schedule_resume`, `wait_for`, `wait_until_time`, `format_string`, `set_test_var`.
 
 ### Workflow Steps
 
@@ -81,6 +91,12 @@ All endpoints require JWT or API key authentication unless noted. Authentication
 | `PUT` | `/sequences/templates/:id/steps/:stepNumber` | Full replace |
 | `PATCH` | `/sequences/templates/:id/steps/:stepNumber` | Partial update |
 | `DELETE` | `/sequences/templates/:id/steps/:stepNumber` | Delete + renumber |
+| `PATCH` | `/sequences/templates/:id/steps/reorder` | Swap two steps |
+
+**Reorder body:**
+```json
+{ "fromStep": 2, "toStep": 4 }
+```
 
 ### Enrollments
 

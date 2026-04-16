@@ -77,6 +77,7 @@ Template definitions.
 | `name` | varchar(100) | |
 | `type` | varchar(50) | e.g. `no_show`, `lead_drip` — open string |
 | `appt_type_filter` | varchar(50) | NULL = all appt types |
+| `appt_with_filter` | tinyint | NULL = all staff. Matches `users.user` for cascading template selection |
 | `condition` | json | Template-level condition — cancel enrollment if fails. See [03-sequences.md](03-sequences.md) |
 | `description` | text | |
 | `active` | tinyint(1) | 1 = active |
@@ -145,7 +146,7 @@ Unified job queue for all three engines.
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | bigint AUTO_INCREMENT | PK |
-| `type` | enum | `one_time` `recurring` `workflow_resume` `sequence_step` |
+| `type` | enum | `one_time` `recurring` `workflow_resume` `sequence_step` `task_due_reminder` `task_daily_digest` `hook_retry` `campaign_send` |
 | `scheduled_time` | datetime | When to fire |
 | `status` | enum | `pending` `running` `completed` `failed` |
 | `name` | varchar(200) | Human-readable label |

@@ -4,6 +4,29 @@ const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { advanceWorkflow, resolvePlaceholders } = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
+
+// ─────────────────────────────────────────────────────────────
+// GET /workflows/functions — list available internal functions
+// Used by workflowManager.html to populate dropdowns dynamically
+// MUST be defined before any /:id routes to avoid param capture
+// ─────────────────────────────────────────────────────────────
+
+const SEQUENCE_EXCLUDED = new Set([
+  'set_next', 'evaluate_condition',     // workflow control flow only
+  'schedule_resume', 'wait_for', 'wait_until_time', // sequences have own timing
+  'format_string',                      // workflow variable manipulation
+  'set_test_var'                        // dev only
+]);
+
+router.get('/workflows/functions', jwtOrApiKey, (req, res) => {
+  const allFunctions = Object.keys(require('../lib/internal_functions'));
+  res.json({
+    success: true,
+    workflow: allFunctions,
+    sequence: allFunctions.filter(f => !SEQUENCE_EXCLUDED.has(f))
+  });
+});
+
 /**
  * POST /workflows/:id/start
  * Starts a new execution of the workflow
