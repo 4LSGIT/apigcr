@@ -1363,7 +1363,7 @@ function fmtPhone(n) {
 
 // ─── BOOT ─────────────────────────────────────────────────────
 (function waitForParent() {
-  if (P.apiSend) return init();
+  if (P.apiSend && P.username) return init();
   setTimeout(waitForParent, 100);
 })();
 </script>

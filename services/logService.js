@@ -36,13 +36,17 @@
  */
 async function listLog(db, {
   link_type = null, link_id = null, type = null, types = null,
-  q = null, direction = null, from_date = null, to_date = null,
+  q = null, direction = null, from_date = null, to_date = null, by=null,
   limit = 50, offset = 0
 } = {}) {
 
   const where = [];
   const params = [];
 
+if (by) {
+  where.push('l.log_by = ?');
+  params.push(by);
+}
   if (link_type && link_id) {
     // Match on new columns OR legacy column for backward compat
     where.push(`(

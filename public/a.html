@@ -83,23 +83,20 @@
       <i class="fa-solid fa-circle-user fa-2xl"></i><br /><br />My Account
     </button>
     <p
-      title="Enter a Contact ID, Phone Number (without spaces), Case Number or a Lead ID to directly open that Client/Case">
-      Quick Pick: (in-progress; not reliable)
+      title="Search by name, phone, Contact ID, Case Number, or Lead ID">
+      Quick Pick:
     </p>
-    <input id="qpInput" placeholder="Client ID, Case # or Lead ID"
-      onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value);}" />
-    <button class="pop-button" onclick="quickPick(E('qpInput').value)">
+    <input id="qpInput" placeholder="Name, Phone, Case # or ID"
+      onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value, null, null, 10);}" />
+    <button class="pop-button" onclick="quickPick(E('qpInput').value, null, null, 10)">
       Go
     </button>
     <br /><br />
-    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'contact')">
+    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'contact', null, 10)">
       Contact
     </button>
-    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'case')">
+    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'case', null, 10)">
       Case
-    </button>
-    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'bill')">
-      Bill
     </button>
     <br /><br />
     <p>
@@ -410,6 +407,10 @@
         <option>Rescheduled</option>
         <option selected>Scheduled</option>
       </select>
+      With: 
+      <select id="tabApptsWith" class="userslist" style="width: auto">
+        <option value="">All</option>
+      </select>
       Time:
       <select id="tabApptsTime" style="width: auto" onchange="tabApptsTimeChange(this.value)">
         <option>All</option>
@@ -514,6 +515,7 @@ function showAppt(apptID) {
       const time = E("tabApptsTime").value;
       const date1 = E("tabApptsDate1").value;
       const date2 = E("tabApptsDate2").value;
+      const withUser = E("tabApptsWith").value;
 
       const params = { limit, offset };
 
@@ -523,6 +525,9 @@ function showAppt(apptID) {
       } else if (typeVal !== "All") {
         params.type = typeVal;
       }
+
+      if (withUser) params.appt_with = withUser;
+
 
       // Status filter
       if (status !== "All") params.status = status;
@@ -1059,7 +1064,12 @@ function showAppt(apptID) {
         <option>Note</option>
         <option>Court Email</option>
         <option>Other</option>
-      </select>Time:
+      </select>
+      By: 
+      <select id="tabLogBy" class="userslist" style="width: auto">
+        <option value="">All</option>
+      </select>
+      Time:
       <select id="tabLogTime" style="width: 150px" onchange="tabLogTimeChange(this.value)">
         <option>All</option>
         <option>Before</option>
@@ -1116,6 +1126,7 @@ function showAppt(apptID) {
       const time = E("tabLogTime").value;
       const date1 = E("tabLogDate1").value;
       const date2 = E("tabLogDate2").value;
+      const by = E("tabLogBy").value;
 
       const table = E("logTable");
       const foot = E("logTableFoot");
@@ -1126,6 +1137,8 @@ function showAppt(apptID) {
       const params = { limit, offset };
       if (q) params.q = q;
       if (type !== "All") params.type = type;  // route handles 'Communication' mapping
+
+      if (by) params.by = by;
 
       if (time === "Before") { params.to_date = date1; }
       if (time === "After") { params.from_date = date1; }
@@ -1513,16 +1526,13 @@ function showAppt(apptID) {
     </div>
   </div>
   <script>
-    function mySQLquery(query) {
-      fetch(
-        `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          query
-        )}`
-      )
-        .then((response) => response.json())
-        .then((data) => {
-          E("sqlResult").innerHTML = JSON.stringify(data, undefined, 2);
-        });
+    async function mySQLquery(query) {
+      try {
+        const data = await apiSend('/db-jwt', 'GET', { query });
+        E('sqlResult').innerHTML = JSON.stringify(data, undefined, 2);
+      } catch (err) {
+        E('sqlResult').innerHTML = '<span style="color:red">Error: ' + err.message + '</span>';
+      }
     }
   </script>
 
@@ -1531,10 +1541,12 @@ function showAppt(apptID) {
     new URL(window.location).searchParams.forEach((value, key) => {
       params[key] = value;
     });
-    username = params.user || "";
-    password = params.pass || "";
+    // Legacy globals — kept declared to avoid reference errors from straggling code.
+    // username/password are no longer read from URL params (JWT auth handles everything).
+    username = "";
+    password = "";
     userName = "";
-    user = [];
+    user = {};
     userArray = "";
     url =
       "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc"; //FIR - DB
@@ -1641,24 +1653,56 @@ function showAppt(apptID) {
       return data;
     }
 
-    // ── Firm-wide data (phone lines, email senders, current user) ──
-// Loaded once after auth, available to all child iframes via window.firmData
-window.firmData = { phoneLines: [], emailFrom: [], currentUser: null };
-async function loadFirmData() {
-  try {
-    const [lines, emails, me] = await Promise.all([
-      apiSend('/api/phone-lines', 'GET'),
-      apiSend('/api/email-from', 'GET'),
-      apiSend('/api/users/me', 'GET')
-    ]);
-    window.firmData.phoneLines  = lines.lines   || [];
-    window.firmData.emailFrom   = emails.emails  || [];
-    window.firmData.currentUser = me.user        || null;
-  } catch (err) {
-    console.error('loadFirmData failed:', err);
-    // Non-fatal — iframes can still fetch their own if needed
-  }
-}
+    // ── Firm-wide data — loaded once after auth, available to all child iframes ──
+    window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [] };
+
+    async function loadFirmData() {
+      try {
+        const data = await apiSend('/api/firm-data', 'GET');
+        window.firmData.phoneLines  = data.phoneLines  || [];
+        window.firmData.emailFrom   = data.emailFrom   || [];
+        window.firmData.currentUser = data.currentUser  || null;
+        window.firmData.users       = data.users        || [];
+      } catch (err) {
+        console.error('loadFirmData failed:', err);
+      }
+    }
+
+    /**
+     * Populate a <select> with the active users list from firmData.
+     * Parent tabs call directly; iframes call via P.populateUserSelect().
+     *
+     * @param {HTMLSelectElement} selectEl
+     * @param {Object} [opts]
+     * @param {boolean} [opts.includeBlank=true]  prepend a blank option
+     * @param {string}  [opts.blankLabel='']      label for the blank option
+     * @param {*}       [opts.value]              pre-select this value
+     * @param {string}  [opts.valueField='user']       option value field
+     * @param {string}  [opts.labelField='user_name']  option label field
+     */
+    window.populateUserSelect = function(selectEl, opts = {}) {
+      const {
+        includeBlank = true,
+        blankLabel   = '',
+        value        = undefined,
+        valueField   = 'user',
+        labelField   = 'user_name'
+      } = opts;
+      selectEl.innerHTML = '';
+      if (includeBlank) {
+        const blank = document.createElement('option');
+        blank.value = '';
+        blank.textContent = blankLabel;
+        selectEl.appendChild(blank);
+      }
+      (window.firmData.users || []).forEach(u => {
+        const opt = document.createElement('option');
+        opt.value = u[valueField];
+        opt.textContent = u[labelField];
+        selectEl.appendChild(opt);
+      });
+      if (value !== undefined) selectEl.value = value;
+    };
 
     async function loginBlocking() {
       if (window.AUTH_STATE.loginInProgress) {
@@ -1771,31 +1815,20 @@ async function loadFirmData() {
       if (!token || isJwtExpired(token)) {
         await loginBlocking();
       }
-      await loadUserContext();
       await loadFirmData();
+
+      // Aliases — downstream code reads `user` and `users` globals everywhere
+      user  = window.firmData.currentUser || {};
+      users = window.firmData.users       || [];
+
+      // UI setup (header, admin button, custom tab, open tabs, populate selects)
+      loadUserContext();
     }
 
 
     async function loadUserContext() {
-      const data = await apiSend(
-        "/db-jwt",
-        "GET",
-        {
-          query: `
-        SELECT * FROM users WHERE user = '${getJwtPayload(AUTH_STATE.jwt).sub}';|||
-        SELECT user_name, user FROM users WHERE user_type = true;
-      `
-        }
-      );
-
-      user = data.data.query1[0];
-      users = data.data.query2;
-      //temporary and insecure!!
-      username = user.username;
-      password = user.password;
-      AUTH_STATE.username = user.username;
-      AUTH_STATE.password = user.password;
-      E("myNameIs").innerHTML = user.user_name;
+      // user and users are already set as aliases to firmData by initAuth()
+      E("myNameIs").innerHTML = user.user_name || "";
       E("topButtons").style.display = "block";
       E("adminButton").style.display =
         user.user_auth === "authorized - SU" ||
@@ -1858,14 +1891,9 @@ async function loadFirmData() {
       if (params.appt) {
         showAppt(params.appt);
       }
-      const selectElements =
-        document.querySelectorAll("select.userslist");
-      userOpts = "";
-      users.forEach((user) => {
-        userOpts += `<option value="${user.user}">${user.user_name}</option>`;
-      });
-      selectElements.forEach((select) => {
-        select.innerHTML += userOpts;
+      // Populate all user-list selects in the parent shell
+      document.querySelectorAll('select.userslist').forEach(sel => {
+        populateUserSelect(sel, { includeBlank: true });
       });
     }
 
@@ -1894,10 +1922,10 @@ async function loadFirmData() {
       username = "";
       password = "";
       userName = "";
-      user = [];
+      user = {};
       userArray = "";
 
-      users = "";
+      users = [];
       cases = "";
       contacts = "";
       appts = "";
@@ -2181,67 +2209,76 @@ async function loadFirmData() {
     }
 
     quickpicktemp = "";
-    function quickPick(term, type, tab) {
+    /**
+     * quickPick — unified search + open
+     * @param {string} term   — search query
+     * @param {string} [type] — 'contact', 'case', or null/undefined for all
+     * @param {string} [tab]  — tab to open after file loads (e.g. 'tabSend')
+     * @param {number} [limit=1] — 1 for best-match (URL params), 10+ for picker (search box)
+     */
+    async function quickPick(term, type, tab, limit = 1) {
       if (!term) {
-        alert("no term entered");
-      } else if (term) {
-        showProcessingSwal();
-        terms = term.split(" ");
-        name = `%${terms.join("%")}%`;
-        phone = term.replace(/\D/g, "");
-        query = `SELECT contact_name AS name, 'client' AS type, contact_id AS id, 'success' AS message FROM contacts co
-      WHERE co.contact_id = '${term}' OR co.contact_phone = '${term}'
-      UNION ALL
-      SELECT COALESCE(case_number_full, case_number, case_id) AS name, 'case' AS type, case_id AS id, 'success' AS message FROM cases
-      WHERE case_id = '${term}'
-      UNION ALL
-      SELECT COALESCE(case_number_full, case_number) AS name, 'case' AS type, case_id AS id, 'success' AS message FROM cases
-      WHERE case_number = '${term}' OR case_number_full = '${term}'
-      UNION ALL
-      SELECT '' AS name, '' AS type, '' AS id, 'not found' AS message FROM contacts
-      LIMIT 1`;
-        if (type == "contact") {
-          query = `SELECT contact_name AS name, 'client' AS type, contact_id AS id, 'success' AS message 
-              FROM contacts co WHERE (co.contact_id = '${term}' AND co.contact_id != "") OR (co.contact_phone = '${phone}' AND co.contact_phone != "") OR contact_name LIKE '${name}'`;
-        }
-        if (type == "case") {
-          query = `SELECT COALESCE(case_number_full, case_number, case_id) AS name, 'case' AS type, case_id AS id, 'success' AS message 
-              FROM cases LEFT JOIN case_relate cr ON case_id = cr.case_relate_case_id LEFT JOIN contacts c ON cr.case_relate_client_id = c.contact_id
-              WHERE (case_id = '${term}' AND case_id != '') OR (case_number = '${term}' AND case_number != '') OR (case_number_full = '${term}' AND case_number_full != '') OR (c.contact_name LIKE '${name}' AND c.contact_name != '') OR (c.contact_id = '${term}' AND c.contact_id != '') OR (c.contact_phone = '${phone}' AND c.contact_phone != '')`;
-        }
-        if (type == "bill") {
-          alert("no bills allowed");
-          Swal.close();
-          return "no bills";
-        }
-        console.log(query);
-        fetch(
-          `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-            query
-          )}`
-        )
-          .then((response) => response.json())
-          .then((data) => {
-            Swal.close();
-            console.log(data);
-            if (
-              data.data.query1[0] &&
-              data.data.query1[0].message == "success"
-            ) {
-              Toast.fire({
-                icon: "success",
-                title: `Opening File: ${data.data.query1[0].name}!`,
-              });
-              addFile(
-                data.data.query1[0].name,
-                data.data.query1[0].type,
-                data.data.query1[0].id + (tab ? `&tab=${tab}` : ``)
-              );
-            } else {
-              alert("no file");
-            }
-          });
+        Toast.fire({ icon: 'warning', title: 'Enter a search term' });
+        return;
       }
+
+      const searchType = type === 'contact' ? 'contact'
+                       : type === 'case' ? 'case'
+                       : 'all';
+
+      showProcessingSwal();
+
+      try {
+        const data = await apiSend('/api/search', 'GET', {
+          q: term, type: searchType, limit
+        });
+        Swal.close();
+
+        if (!data.results || data.results.length === 0) {
+          Toast.fire({ icon: 'error', title: 'No results found' });
+        } else if (data.results.length === 1) {
+          const r = data.results[0];
+          Toast.fire({ icon: 'success', title: `Opening: ${r.name}`, timer: 1000 });
+          addFile(
+            r.name,
+            r.type === 'contact' ? 'client' : r.type,
+            r.id + (tab ? `&tab=${tab}` : '')
+          );
+        } else {
+          showSearchPicker(data.results, tab);
+        }
+      } catch (err) {
+        Swal.close();
+        Toast.fire({ icon: 'error', title: 'Search failed', text: err.message });
+      }
+    }
+
+    function showSearchPicker(results, tab) {
+      const rows = results.map(r => {
+        const icon = r.type === 'contact' ? 'fa-user' : 'fa-landmark';
+        const label = r.type === 'contact' ? 'Contact' : 'Case';
+        const safeName = (r.name || '').replace(/'/g, "\\'");
+        const fileType = r.type === 'contact' ? 'client' : r.type;
+        const fileId = r.id + (tab ? `&tab=${tab}` : '');
+        return `<div class="qp-row" onclick="Swal.close();addFile('${safeName}','${fileType}','${fileId}')"
+                     style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #eee;text-align:left;display:flex;align-items:center;gap:8px;"
+                     onmouseover="this.style.background='#f0f7ff'" onmouseout="this.style.background=''">
+          <i class="fa-solid ${icon}" style="color:#07ADEF;width:20px;text-align:center"></i>
+          <div>
+            <b>${r.name || 'Unknown'}</b>
+            <span style="color:#888;font-size:0.85em;margin-left:6px">${label}</span>
+            ${r.detail ? `<br><span style="color:#666;font-size:0.85em">${r.detail}</span>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+
+      Swal.fire({
+        title: `${results.length} results found`,
+        html: `<div style="max-height:400px;overflow-y:auto;border:1px solid #eee;border-radius:6px">${rows}</div>`,
+        showConfirmButton: false,
+        showCloseButton: true,
+        width: '450px'
+      });
     }
   </script>
 </body>

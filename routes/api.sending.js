@@ -48,23 +48,6 @@ router.get('/api/email-from', jwtOrApiKey, async (req, res) => {
 });
 
 
-// ─── CURRENT USER DEFAULTS ───
-router.get('/api/users/me', jwtOrApiKey, async (req, res) => {
-  try {
-    const userId = req.auth.userId;
-    const [[user]] = await req.db.query(
-      `SELECT user, user_name, email, default_phone, default_email
-       FROM users WHERE user = ?`,
-      [userId]
-    );
-    if (!user) return res.status(404).json({ status: 'error', message: 'User not found' });
-    res.json({ status: 'success', user });
-  } catch (err) {
-    console.error('GET /api/users/me error:', err);
-    res.status(500).json({ status: 'error', message: 'Failed to fetch user' });
-  }
-});
-
 
 // ─── COMPOSE DOCUMENT REQUEST MESSAGE ───
 // Takes the raw checkbox selections and assembles a coherent message.

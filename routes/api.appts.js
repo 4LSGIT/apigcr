@@ -21,7 +21,7 @@ const apptService  = require('../services/apptService');
 router.get('/api/appts', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const {
-    contact_id, case_id, status, type, exclude_type, from, to,
+    contact_id, case_id, status, type, exclude_type, from, to, appt_with,
     limit = 50, offset = 0
   } = req.query;
 
@@ -35,6 +35,7 @@ router.get('/api/appts', jwtOrApiKey, async (req, res) => {
   if (to)         { conditions.push('appts.appt_date < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(to);} 
   if (type)         { conditions.push('appts.appt_type = ?');  params.push(type); }
   if (exclude_type) { conditions.push('appts.appt_type != ?'); params.push(exclude_type); }
+  if (appt_with) { conditions.push('appts.appt_with = ?'); params.push(appt_with); }
 
   const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 

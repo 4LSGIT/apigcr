@@ -16,6 +16,7 @@ const logService = require('../services/logService');
 router.get('/api/log', jwtOrApiKey, async (req, res) => {
   try {
     const { type, q, from_date, to_date } = req.query;
+    
     // Map 'Communication' → types array; 'All' → no filter
     let typeParam  = null;
     let typesParam = null;
@@ -38,6 +39,7 @@ router.get('/api/log', jwtOrApiKey, async (req, res) => {
       direction: req.query.direction,
       from_date: fromDate,
       to_date:   toDate,
+      by: req.query.by || null,
       limit:     req.query.limit  || 50,
       offset:    req.query.offset || 0
     });
