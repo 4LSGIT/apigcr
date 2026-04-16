@@ -1,6 +1,5 @@
-# YisraHook — Complete Design Document
-
-## One-line Definition
+# YisraHook — Design & Implementation Document
+# v1.0 Complete — April 2026
 
 YisraHook is a configurable webhook receiver that normalizes, filters, transforms, and routes incoming events to multiple targets — replacing per-integration Express routes with per-hook configuration.
 
@@ -21,6 +20,7 @@ services/hookMapper.js         — mapper engine (path resolution, template expr
 services/hookFilter.js         — condition evaluator (recursive AND/OR)
 routes/api.hooks.js            — POST /hooks/:slug (receiver) + CRUD for management UI
 public/hookManager.html        — config UI
+migrations/yisrahook_schema.sql — 5 tables + scheduled_jobs enum expansion
 ```
 
 ### Core Principle
@@ -36,9 +36,10 @@ External event hits POST /hooks/:slug
   → Look up hook by slug (404 if not found or inactive)
   → Authenticate request (per-hook config: none / api_key / hmac)
   → Normalize into unified event shape
+  → Return 200 immediately (async from here)
   → Insert hook_execution row (status: 'received')
   → Run hook-level filter
-      → If false: mark 'filtered', return 200, done
+      → If false: mark 'filtered', done
   → Run hook-level transform
   → For each active target (ordered by position):
       → Evaluate target conditions (skip if false)
@@ -46,16 +47,17 @@ External event hits POST /hooks/:slug
       → Build delivery request (URL, method, headers, auth injection, body)
       → Attempt delivery synchronously
           → Success: log to hook_delivery_logs
-          → Failure: log failure, queue retry job in scheduled_jobs
+          → Failure: log failure, queue hook_retry job in scheduled_jobs
   → Update execution status based on results
-  → Return 200 (always — webhook senders just need acknowledgment)
 ```
 
 ### Execution Model
 
-- **Processing (filter + transform):** Always synchronous. Pure in-memory computation.
-- **Delivery:** Synchronous on first attempt. Failed deliveries queue a `hook_retry` job in `scheduled_jobs` with existing retry/backoff logic.
-- **Response:** Always 200. The webhook sender's retry logic should not be triggered by our downstream failures.
+- **Processing (filter + transform):** Synchronous. Pure in-memory computation.
+- **Delivery:** Synchronous on first attempt. Failed deliveries queue a `hook_retry` job in `scheduled_jobs` with existing retry/backoff logic (3 max attempts, 120s backoff).
+- **Response:** Always 200 immediately. Pipeline runs fire-and-forget after response.
+- **Payload guard:** Raw input truncated at 512KB before DB storage.
+- **Rate limit:** 120 req/min per slug+IP on the receiver endpoint.
 
 ---
 
@@ -78,134 +80,91 @@ All inputs are normalized before processing:
 }
 ```
 
-For email-sourced events (arriving via Apps Script or other adapter), `meta.source` is `"email"` and the body contains the parsed email fields. The hook itself is agnostic to source — it processes the same unified shape regardless.
-
 ---
 
 ## 4. AUTHENTICATION (Inbound)
 
 Per-hook `auth_type` and `auth_config`:
 
-### None
-No authentication. Open endpoint. Use for sources that don't support signing.
+| Type | Config | Behavior |
+|------|--------|----------|
+| `none` | — | Open endpoint |
+| `api_key` | `{ key, header }` | Checks header matches stored key |
+| `hmac` | `{ secret, header, algorithm }` | Verifies HMAC signature of raw body. Strips `sha256=` / `v1=` prefixes. Constant-time comparison. |
 
-### API Key
-```json
-{ "auth_type": "api_key", "auth_config": { "key": "abc123", "header": "x-hook-key" } }
-```
-Checks that the specified header matches the stored key.
-
-### HMAC
-```json
-{ "auth_type": "hmac", "auth_config": { "secret": "...", "header": "x-signature", "algorithm": "sha256" } }
-```
-Verifies HMAC signature of the raw request body. Used by services like GitHub, Stripe, Calendly.
+HMAC requires `rawBody` middleware in server.js (captures raw bytes before JSON parsing).
 
 ---
 
 ## 5. FILTER ENGINE
 
-Two modes, selected per hook via `filter_mode`:
+Two modes via `filter_mode`:
 
-### Mode: `none`
-All events pass through. No filtering.
+### `none` — all events pass through
 
-### Mode: `conditions`
-Declarative AND/OR condition groups:
-
+### `conditions` — declarative AND/OR groups
 ```json
 {
   "operator": "and",
   "conditions": [
     { "path": "body.event", "op": "equals", "value": "invitee.created" },
-    {
-      "operator": "or",
-      "conditions": [
-        { "path": "body.payload.status", "op": "equals", "value": "active" },
-        { "path": "body.payload.status", "op": "equals", "value": "pending" }
-      ]
-    }
+    { "operator": "or", "conditions": [
+      { "path": "body.payload.status", "op": "equals", "value": "active" },
+      { "path": "body.payload.status", "op": "equals", "value": "pending" }
+    ]}
   ]
 }
 ```
 
-Condition operators:
-- Equality: `equals`, `not_equals`
-- String: `contains`, `not_contains`, `starts_with`, `ends_with`, `matches` (regex)
-- Numeric: `gt`, `gte`, `lt`, `lte`
-- Existence: `exists`, `not_exists`
-- Set: `in` (value is array), `not_in`
+Operators: `equals`, `not_equals`, `contains`, `not_contains`, `starts_with`, `ends_with`, `gt`, `gte`, `lt`, `lte`, `exists`, `not_exists`, `in`, `not_in`, `matches` (regex).
 
-Groups nest arbitrarily. The evaluator is a recursive function.
-
-### Mode: `code`
-Advanced escape hatch. User-written JavaScript:
-
+### `code` — advanced escape hatch
 ```js
-return input.body.event === 'invitee.created' && input.body.payload.guests.length > 0;
+return input.body.event === 'invitee.created';
 ```
 
-Executed via `new Function('input', code)` in a try/catch. Trusted-user context only.
-
-### Target-Level Conditions
-Each target can also have its own `conditions` field (same structure as hook-level filter). If null/absent, the target always fires when the hook-level filter passes. If present, evaluated against the **hook-level transform output** (not raw input).
+### Target-level conditions
+Each target can have its own `conditions` field (same evaluator). Evaluated against the **hook-level transform output**, not raw input.
 
 ---
 
 ## 6. TRANSFORM ENGINE
 
-Two modes, selected per hook (and optionally per target) via `transform_mode`:
+Two modes via `transform_mode`:
 
-### Mode: `passthrough`
-No transformation. The unified event input passes directly to delivery.
+### `passthrough` — no transformation
 
-### Mode: `mapper`
-Declarative mapping rules. Each rule has one of three source modes:
+### `mapper` — declarative rules
 
-#### Source: `from` (single path)
+Three source modes per rule (mutually exclusive):
+
+**`from`** — single dot-path with transforms:
 ```json
 { "from": "body.payload.email", "to": "contact_email", "transforms": ["lowercase", "trim"] }
 ```
-Resolves a dot-notation path from the input, applies transforms in order.
 
-#### Source: `template` (multi-path composition)
+**`template`** — multi-path composition with inline pipes:
 ```json
-{ "template": "{{body.payload.f_name|capitalize}} {{body.payload.l_name|uppercase}}", "to": "contact_name" }
+{ "template": "{{body.payload.f_name|trim|capitalize}} {{body.payload.l_name|trim|uppercase}}", "to": "contact_name" }
 ```
-Resolves `{{path}}` or `{{path|transform|transform}}` tokens. Each token is resolved and transformed independently. The full string is the output value.
 
-#### Source: `value` (static literal)
+**`value`** — static literal:
 ```json
 { "to": "source", "value": "calendly" }
 ```
-Injects a hardcoded value. No resolution needed.
 
-### Nested Output
-The `to` field supports dot notation for building nested objects:
-```json
-{ "from": "body.payload.name", "to": "contact.name" }
-{ "from": "body.payload.email", "to": "contact.email" }
-```
-Produces: `{ "contact": { "name": "...", "email": "..." } }`
+**Nested output:** `to` supports dot notation — `"to": "contact.name"` produces `{ contact: { name: "..." } }`.
 
-Numeric path segments create arrays: `"to": "phones.0"` → `{ "phones": ["..."] }`
+**Important:** Template transforms are explicit. `{{path|uppercase}}` applies only `uppercase`. If the source has leading spaces, add `|trim` explicitly — transforms are never implicit.
 
-### Mode: `code`
-Advanced escape hatch:
+### `code` — advanced escape hatch
 ```js
 const p = input.body.payload;
-return {
-  contact_name: p.name,
-  contact_email: p.email,
-  appt_date: p.start_time,
-  source: 'calendly'
-};
+return { contact_name: p.name, contact_email: p.email };
 ```
 
-### Target-Level Transforms
-Each target can have its own `transform_mode` / `transform_config`. If `passthrough`, it receives the hook-level transform output as-is. If mapper/code, it further refines the hook output for that specific target's needs.
-
-Pipeline: `raw input → hook transform → target transform → delivery body`
+### Target-level transforms
+Each target can override with its own `transform_mode`/`transform_config`, refining the hook-level output for that specific target.
 
 ---
 
@@ -213,337 +172,109 @@ Pipeline: `raw input → hook transform → target transform → delivery body`
 
 All transforms are pure functions: `(value, ...args) => newValue`
 
-### Text
-| Function | Description | Example |
-|----------|-------------|---------|
-| `lowercase` | Lowercase entire string | `"HELLO"` → `"hello"` |
-| `uppercase` | Uppercase entire string | `"hello"` → `"HELLO"` |
-| `capitalize` | Capitalize each word | `"john doe"` → `"John Doe"` |
-| `cap_first` | Capitalize first word only | `"hello world"` → `"Hello world"` |
-| `trim` | Trim whitespace | `" hi "` → `"hi"` |
-| `slug` | Kebab-case | `"Hello World"` → `"hello-world"` |
+**Text:** `lowercase`, `uppercase`, `capitalize` (each word), `cap_first`, `trim`, `slug`
 
-### Extraction
-| Function | Description | Example |
-|----------|-------------|---------|
-| `between:<start>:<end>` | Substring between delimiters | `"Name: John; Age: 30"` with `between:Name\\::;` → `" John"` |
-| `before:<delimiter>` | Everything before first occurrence | `"user@email.com"` with `before:@` → `"user"` |
-| `after:<delimiter>` | Everything after first occurrence | `"user@email.com"` with `after:@` → `"email.com"` |
-| `regex:<pattern>` | First capture group match | `"ID-12345-X"` with `regex:ID-(\\d+)` → `"12345"` |
+**Extraction:** `between:<start>:<end>`, `before:<delimiter>`, `after:<delimiter>`, `regex:<pattern>` (first capture group)
 
-### Manipulation
-| Function | Description | Example |
-|----------|-------------|---------|
-| `split:<delim>:<index>` | Split and take nth element | `"a,b,c"` with `split:,:1` → `"b"` |
-| `replace:<find>:<replace>` | String replacement | |
-| `prefix:<str>` | Prepend string | |
-| `suffix:<str>` | Append string | |
-| `join:<delimiter>` | Join array to string | `["a","b"]` with `join:, ` → `"a, b"` |
-| `at:<index>` | Array index access | `["a","b","c"]` with `at:1` → `"b"` |
+**Manipulation:** `split:<delim>:<index>`, `replace:<find>:<replace>`, `prefix:<str>`, `suffix:<str>`, `join:<delimiter>`, `at:<index>`
 
-### Formatting
-| Function | Description | Example |
-|----------|-------------|---------|
-| `digits_only` | Strip non-digits | `"(248) 555-1234"` → `"2485551234"` |
-| `phone` | Format as phone | `"2485551234"` → `"(248) 555-1234"` |
-| `date:<format>` | Reformat date string | Uses luxon format tokens |
-| `tz:<zone>` | Timezone conversion | `tz:America/Detroit` (use before `date`) |
-| `number` | Parse to number | `"42.5"` → `42.5` |
-| `boolean` | Parse to boolean | `"true"` → `true` |
+**Formatting:** `digits_only`, `phone`, `date:<format>` (luxon), `tz:<zone>`, `number`, `boolean`
 
-### Fallbacks
-| Function | Description | Example |
-|----------|-------------|---------|
-| `default:<value>` | Use if null/undefined/empty | `null` with `default:unknown` → `"unknown"` |
-| `required` | Fail transform if missing | Throws error, marks execution failed |
+**Fallbacks:** `default:<value>`, `required` (throws on null/empty)
+
+Colon args can be escaped with backslash: `between:Name\\::;`
 
 ---
 
 ## 8. CREDENTIAL STORE & AUTH INJECTION (Outbound)
 
-### credentials Table
-Shared credential store for delivery target authentication. Designed to grow into a full auth manager.
+### credentials table
+Shared credential store. Designed to grow into a full auth manager.
 
-```
-id, name, type, config (JSON), allowed_urls (JSON array), created_at, updated_at
-```
-
-### Credential Types
-
-#### `internal`
-Auto-injects `x-api-key` header with `process.env.INTERNAL_API_KEY`. No config needed — the system knows the key. `allowed_urls` defaults to the app's own domain.
-
-#### `bearer`
-```json
-{ "config": { "token": "..." }, "allowed_urls": ["https://api.calendly.com/*"] }
-```
-Injects `Authorization: Bearer <token>` header.
-
-#### `api_key`
-```json
-{ "config": { "key": "...", "header": "x-api-key" }, "allowed_urls": ["https://api.example.com/*"] }
-```
-Injects the key into the specified header.
-
-#### `basic`
-```json
-{ "config": { "username": "...", "password": "..." }, "allowed_urls": ["https://api.example.com/*"] }
-```
-Injects `Authorization: Basic <base64>` header.
+| Type | Behavior |
+|------|----------|
+| `internal` | Auto-injects `x-api-key` with `process.env.INTERNAL_API_KEY`. No config needed. |
+| `bearer` | Injects `Authorization: Bearer <token>` |
+| `api_key` | Injects key into specified header |
+| `basic` | Injects `Authorization: Basic <base64>` |
 
 ### URL Scoping
-The delivery layer checks that the target URL matches at least one pattern in `allowed_urls` before injecting credentials. Prevents credential leakage to unintended destinations. Patterns support `*` wildcard for path matching.
-
-### Future: OAuth
-The `type` enum can expand to include `'oauth'` with refresh token logic. The hook system doesn't change — it just looks up the credential and gets a valid token.
+`allowed_urls` (JSON array) restricts which target URLs a credential can be injected into. Supports `*` wildcard. The `internal` type skips URL checking (always allowed for own server).
 
 ---
 
 ## 9. DELIVERY
 
 ### Target Configuration
-
-Each target defines:
-- `method`: GET / POST / PUT / PATCH / DELETE
-- `url`: The delivery endpoint
-- `headers`: Additional static headers (JSON object)
-- `credential_id`: FK to credentials table (nullable)
-- `body_mode`: How to construct the request body
-- `conditions`: Per-target filter (nullable, same evaluator as hook filter)
-- `transform_mode` / `transform_config`: Per-target transform (optional refinement)
+Each target: `method`, `url`, `headers` (JSON), `credential_id` (FK), `body_mode`, `conditions`, `transform_mode`/`transform_config`.
 
 ### Body Modes
-
-#### `transform_output`
-Sends the full transform output (or target-level transform output if configured) as JSON body.
-
-#### `template`
-Uses a template string with `{{path|transforms}}` syntax, resolved against the transform output:
-```json
-{ "text": "New lead: {{contact_name}} from {{source|uppercase}}" }
-```
-Same template engine as the mapper — one implementation, two uses.
+- `transform_output` — sends full transform output as JSON
+- `template` — resolves `{{path|transforms}}` against transform output: `{"text": "New lead: {{contact_name}}"}`
 
 ### Retry on Failure
-If delivery returns a non-2xx status or times out:
-1. Log the failure in `hook_delivery_logs`
-2. Queue a `hook_retry` job in `scheduled_jobs` with `{ execution_id, target_id }`
-3. Uses existing retry/backoff logic from `scheduled_jobs`
+Non-2xx or timeout → log failure → queue `hook_retry` job in `scheduled_jobs` (3 max attempts, 120s exponential backoff).
 
 ---
 
 ## 10. DATABASE SCHEMA
 
-```sql
--- Shared credential store
-CREATE TABLE credentials (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  type ENUM('internal','bearer','api_key','basic') DEFAULT 'internal',
-  config JSON,
-  allowed_urls JSON,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
+### `credentials`
+`id`, `name`, `type` (enum: internal/bearer/api_key/basic), `config` (JSON), `allowed_urls` (JSON), `created_at`, `updated_at`
 
--- Hook definitions
-CREATE TABLE hooks (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  slug VARCHAR(100) NOT NULL UNIQUE,
-  name VARCHAR(255) NOT NULL,
-  description TEXT,
-  auth_type ENUM('none','api_key','hmac') DEFAULT 'none',
-  auth_config JSON,
-  filter_mode ENUM('none','conditions','code') DEFAULT 'none',
-  filter_config JSON,
-  transform_mode ENUM('passthrough','mapper','code') DEFAULT 'passthrough',
-  transform_config JSON,
-  active TINYINT(1) DEFAULT 1,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-);
+### `hooks`
+`id`, `slug` (unique), `name`, `description`, `auth_type`, `auth_config` (JSON), `filter_mode`, `filter_config` (JSON), `transform_mode`, `transform_config` (JSON), `active`, `version` (auto-increments on update), `last_modified_by` (FK → users), `created_at`, `updated_at`
 
--- Delivery targets (multiple per hook)
-CREATE TABLE hook_targets (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  hook_id INT NOT NULL,
-  name VARCHAR(255) NOT NULL,
-  position INT DEFAULT 0,
-  method ENUM('GET','POST','PUT','PATCH','DELETE') DEFAULT 'POST',
-  url VARCHAR(2048) NOT NULL,
-  headers JSON,
-  credential_id INT,
-  body_mode ENUM('transform_output','template') DEFAULT 'transform_output',
-  body_template TEXT,
-  conditions JSON,
-  transform_mode ENUM('passthrough','mapper','code') DEFAULT 'passthrough',
-  transform_config JSON,
-  active TINYINT(1) DEFAULT 1,
-  FOREIGN KEY (hook_id) REFERENCES hooks(id) ON DELETE CASCADE,
-  FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE SET NULL
-);
+### `hook_targets`
+`id`, `hook_id` (FK CASCADE), `name`, `position`, `method`, `url`, `headers` (JSON), `credential_id` (FK SET NULL), `body_mode`, `body_template`, `conditions` (JSON), `transform_mode`, `transform_config` (JSON), `active`
 
--- Execution log
-CREATE TABLE hook_executions (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  hook_id INT NOT NULL,
-  slug VARCHAR(100),
-  raw_input JSON,
-  filter_passed TINYINT(1),
-  transform_output JSON,
-  status ENUM('received','filtered','processing','delivered','partial','failed') DEFAULT 'received',
-  error TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_hook_created (hook_id, created_at),
-  INDEX idx_status (status)
-);
+### `hook_executions`
+`id` (BIGINT), `hook_id`, `slug`, `raw_input` (JSON, max 512KB), `filter_passed`, `transform_output` (JSON), `status` (enum: received/filtered/processing/delivered/partial/failed), `error`, `created_at`
 
--- Per-target delivery results
-CREATE TABLE hook_delivery_logs (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  execution_id INT NOT NULL,
-  target_id INT NOT NULL,
-  request_url VARCHAR(2048),
-  request_method VARCHAR(10),
-  request_body JSON,
-  response_status INT,
-  response_body TEXT,
-  status ENUM('success','failed') DEFAULT 'failed',
-  error TEXT,
-  attempts INT DEFAULT 1,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (execution_id) REFERENCES hook_executions(id) ON DELETE CASCADE,
-  INDEX idx_exec (execution_id)
-);
-```
+### `hook_delivery_logs`
+`id` (BIGINT), `execution_id` (FK CASCADE), `target_id`, `request_url`, `request_method`, `request_body` (JSON), `response_status`, `response_body`, `status` (enum: success/failed), `error`, `attempts`, `created_at`
+
+### `scheduled_jobs` expansion
+Enum expanded to include `hook_retry`.
 
 ---
 
 ## 11. EMAIL ADAPTER
 
-### Current State
-A Google Apps Script watches a Gmail label and POSTs parsed email data to `/logEmail`. This is proven infrastructure.
+### Current approach
+Google Apps Script watches a Gmail label and POSTs parsed email data. For YisraHook email ingestion, a separate alias (e.g., `hooks@4lsg.com`) routes via `+` subaddressing:
 
-### YisraHook Integration
-A separate email alias (e.g., `hooks@4lsg.com` or `yisrahook@4lsg.com`) receives emails intended for hook processing. The Apps Script (or a small addition to the existing one) watches this alias and POSTs to `/hooks/:slug`.
-
-**Routing via subaddressing:** Gmail supports `+` subaddressing natively.
 - `hooks+calendly@4lsg.com` → `/hooks/calendly-email`
 - `hooks+leads@4lsg.com` → `/hooks/lead-intake`
 
-The script extracts the slug from the `+` portion:
-```js
-if (payload.to.startsWith('hooks+')) {
-  var slug = payload.to.split('+')[1].split('@')[0];
-  sendToWebhook('https://your-domain/hooks/' + slug, payload);
-}
-```
-
-### Payload Shape (Email)
-```json
-{
-  "from": "sender@example.com",
-  "from_raw": "Sender Name <sender@example.com>",
-  "to": "hooks+leads@4lsg.com",
-  "to_raw": "hooks+leads@4lsg.com",
-  "subject": "New Lead: John Doe",
-  "date": "2026-04-14T12:00:00.000Z",
-  "body_plain": "...",
-  "body_html": "...",
-  "attachments": [{ "name": "file.pdf", "type": "application/pdf", "size": 12345 }],
-  "message_id": "...",
-  "thread_id": "...",
-  "thread_count": 1,
-  "labels": ["hooks"]
-}
-```
-
-### Existing email logging stays untouched
-The existing `/logEmail` endpoint and its Apps Script continue handling firm-wide email logging. YisraHook email is a separate, opt-in path.
-
-### Provider Independence
-The hook endpoint receives a normalized payload. If the firm switches from Gmail to another provider:
-- If the new provider offers inbound parse webhooks: point directly at `/hooks/:slug`, update the hook's mapper to match the new field names
-- If the new provider uses IMAP: build an adapter (future) or use Pabbly as a bridge
-- The hooks, transforms, and targets don't change — only the adapter layer
+### Provider independence
+The hook endpoint is provider-agnostic. Switching from Gmail to another provider only requires changing the adapter (Apps Script → new script or inbound parse webhook). Hooks, transforms, and targets don't change.
 
 ---
 
-## 12. TESTING
+## 12. MANAGEMENT API
 
-### Dry Run (UI)
-Endpoint: `POST /api/hooks/:id/test` (JWT-protected, by internal ID)
-
-Accepts sample JSON input. Runs the full pipeline without delivery. Returns:
-```json
-{
-  "filter": { "passed": true, "mode": "conditions" },
-  "transform": { "output": { "contact_name": "John Doe", "..." }, "mode": "mapper" },
-  "targets": [
-    {
-      "id": 1, "name": "Create Contact",
-      "conditions_passed": true,
-      "transform_output": { "..." },
-      "would_send": { "method": "POST", "url": "/api/contacts", "headers": {}, "body": {} }
-    },
-    {
-      "id": 2, "name": "Slack Notification",
-      "conditions_passed": false,
-      "skip_reason": "condition not met"
-    }
-  ]
-}
-```
-
-### Live Test
-The UI's test panel can also fire a real POST to `/hooks/:slug` with the sample data. The execution appears in the logs tab with real delivery results.
-
-### Sample Data Sources
-- Paste raw JSON manually
-- Load from a previous execution in `hook_executions`
-- Some webhook providers publish sample payloads in their docs
-
----
-
-## 13. MANAGEMENT UI (hookManager.html)
-
-### Layout
-Left sidebar: list of hooks (name, slug, active status)
-Main area: tabbed editor for selected hook
-
-### Tabs
-1. **General** — name, slug, description, active toggle
-2. **Authentication** — auth_type selector, config fields
-3. **Filter** — mode selector (none/conditions/code), condition builder or code editor
-4. **Transform** — mode selector (passthrough/mapper/code), mapping rule builder or code editor
-5. **Targets** — list of targets with inline editing, each expandable to show conditions/transform/delivery config
-6. **Logs** — execution history with expandable delivery details
-7. **Test** — sample input textarea, dry run / live test buttons, result preview
-
----
-
-## 14. MANAGEMENT API ROUTES
-
-All behind `jwtOrApiKey` middleware.
+All behind `jwtOrApiKey` except the receiver.
 
 ```
+POST   /hooks/:slug                  — public receiver (per-hook auth)
+
 GET    /api/hooks                    — list all hooks
 GET    /api/hooks/:id                — get hook with targets
 POST   /api/hooks                    — create hook
-PUT    /api/hooks/:id                — update hook
+PUT    /api/hooks/:id                — update hook (auto-increments version)
 DELETE /api/hooks/:id                — delete hook (cascades targets)
 
-GET    /api/hooks/:id/targets        — list targets for hook
 POST   /api/hooks/:id/targets        — create target
 PUT    /api/hooks/targets/:id        — update target
 DELETE /api/hooks/targets/:id        — delete target
 
-POST   /api/hooks/:id/test           — dry run test
-
+POST   /api/hooks/:id/test           — dry run test (no delivery)
 GET    /api/hooks/:id/executions     — execution log (paginated)
 GET    /api/hooks/executions/:id     — single execution with delivery logs
+GET    /api/hooks/meta               — available transforms + operators (for UI)
 
-GET    /api/credentials              — list credentials (config values masked)
+GET    /api/credentials              — list credentials (config masked)
 POST   /api/credentials              — create credential
 PUT    /api/credentials/:id          — update credential
 DELETE /api/credentials/:id          — delete credential
@@ -551,64 +282,71 @@ DELETE /api/credentials/:id          — delete credential
 
 ---
 
-## 15. EXAMPLE: CALENDLY LEAD INTAKE
+## 13. MANAGEMENT UI (hookManager.html)
 
-### Hook
-```
-slug: calendly-new-lead
-auth_type: hmac
-auth_config: { secret: "calendly-signing-secret", header: "Calendly-Webhook-Signature", algorithm: "sha256" }
-filter_mode: conditions
-filter_config: { operator: "and", conditions: [{ path: "body.event", op: "equals", value: "invitee.created" }] }
-transform_mode: mapper
-transform_config: [
-  { "from": "body.payload.name", "to": "contact_name", "transforms": ["capitalize", "trim"] },
-  { "from": "body.payload.email", "to": "contact_email", "transforms": ["lowercase", "trim"] },
-  { "from": "body.payload.questions_and_answers", "to": "contact_phone", "transforms": ["at:0", "default:"] },
-  { "from": "body.payload.event.start_time", "to": "appt_date", "transforms": ["tz:America/Detroit", "date:yyyy-MM-dd HH:mm:ss"] },
-  { "to": "source", "value": "calendly" }
-]
-```
+Two-panel layout: left sidebar (hook list + search), right side (tabbed editor).
 
-### Target: Create Contact
-```
-name: Create Contact
-method: POST
-url: https://your-domain/api/contacts
-credential_id: 1 (internal)
-body_mode: transform_output
-```
+**Tabs:** General, Auth (with key/secret generation), Filter (condition builder or code), Transform (mapper rule builder or code), Targets (SweetAlert2 modals for CRUD), Logs (execution table with drill-down), Test (dry run + live test).
 
-### Target: Slack Notification
-```
-name: Slack Alert
-method: POST
-url: https://hooks.slack.com/services/...
-body_mode: template
-body_template: { "text": "New Calendly lead: {{contact_name}} ({{contact_email}})" }
-```
+**Top bar:** Save, Delete, and New Hook buttons. Save/Delete context-sensitive (only visible when editing).
 
 ---
 
-## 16. LOG RETENTION (Future)
+## 14. INTEGRATION POINTS
 
-`hook_executions` and `hook_delivery_logs` will grow. Future retention strategy:
-- Archive to a `hook_executions_archive` / `hook_delivery_logs_archive` table after N days
-- Or physical backup + purge via scheduled job
-- Not urgent at current scale but needs addressing as volume grows
-- Applies to all YisraCase log tables (log, email_log, job_results, etc.) — should be a unified retention strategy
+Three wiring steps required when deploying:
+
+1. **server.js** — rawBody middleware for HMAC: `app.use('/hooks', express.json({ verify: (req, res, buf) => { req.rawBody = buf.toString(); } }))`
+2. **process_jobs.js** — add `hook_retry` if-block (same pattern as `sequence_step`)
+3. **Migration** — run `yisrahook_schema.sql` (creates 5 tables + expands `scheduled_jobs.type` enum)
+
+Route auto-loading handles `api.hooks.js`. Credential seeding creates one "YisraCase Internal" row.
 
 ---
 
-## 17. BUILD ORDER
+## 15. TESTED & VALIDATED (v1.0)
 
-Bottom-up, matching established YisraCase patterns:
+All 13 test cases passed:
 
-1. **Schema** — migrations for all 5 tables
-2. **hookTransforms.js** — pure transform function library, individually testable
-3. **hookMapper.js** — path resolution, template expressions, nested output builder
-4. **hookFilter.js** — recursive condition evaluator
-5. **hookService.js** — core engine wiring filter → transform → deliver
-6. **routes/api.hooks.js** — receiver endpoint + management CRUD
-7. **hookManager.html** — config UI
-8. **Apps Script update** — add hooks@4lsg.com routing
+| # | Test | Result |
+|---|------|--------|
+| 1 | Basic passthrough (no auth, no filter, no transform) | ✅ |
+| 2 | Filter conditions — pass and reject | ✅ |
+| 3 | Mapper transform (capitalize, lowercase, digits_only, template, static) | ✅ |
+| 4 | Code transform (complex JS logic) | ✅ |
+| 5 | API key auth (reject no key, wrong key, accept correct key) | ✅ |
+| 6 | Multiple targets with per-target conditions + body template | ✅ |
+| 7 | Internal credential injection (auto-injected API key) | ✅ |
+| 8 | Nested output + extraction transforms (between, after, phone) | ✅ |
+| 9 | OR filter groups | ✅ |
+| 10 | Failed delivery + retry job queuing | ✅ |
+| 11 | 404 for unknown slug | ✅ |
+| 12 | Inactive hook invisibility | ✅ |
+| 13 | CRUD + version increment + meta endpoint | ✅ |
+
+---
+
+## 16. v1.1 ROADMAP
+
+### Sync Response Mode (API Gateway Pattern)
+Allow hooks to return the target's response to the caller instead of the default `{"status":"received"}`.
+
+**Use case:** External partner needs read-only access to internal data. Hook authenticates with hook-specific API key, transforms the request, calls internal API with real credential, and returns a transformed response — scoped, controlled proxy.
+
+**Schema additions:**
+- `hooks.response_mode` ENUM('async','sync') DEFAULT 'async'
+- `hook_targets.response_transform_mode` / `response_transform_config`
+
+**Behavior:** In sync mode, pipeline runs in the request lifecycle. One target is designated primary (lowest position). Its HTTP response is piped back through an optional response transform before returning to the caller.
+
+### Custom Static Response
+For async mode, allow customizing the immediate response body/status. Two columns on `hooks`: `response_status` (INT DEFAULT 200), `response_body` (JSON DEFAULT NULL). Useful for providers that expect specific confirmation formats.
+
+### Log Retention
+Automated cleanup for `hook_executions` and `hook_delivery_logs`. Archive to separate tables or physical backup + purge via scheduled job. Part of a broader unified retention strategy for all YisraCase log tables.
+
+### Auth Manager
+Expand `credentials` table to support OAuth with refresh token management. Hook system unchanged — credential lookup returns a valid token regardless of type.
+
+### Additional Transform Functions
+As use cases emerge, add to the `hookTransforms.js` registry. Each is a pure function — easy to add without touching the engine.

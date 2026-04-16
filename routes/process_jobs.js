@@ -252,7 +252,37 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
         continue; // next job in the batch
       }
+// SPECIAL CASE: hook_retry
+      if (job.type === 'hook_retry') {
+        const data = typeof job.data === 'string' ? JSON.parse(job.data) : job.data;
 
+        console.log(`[HOOK RETRY] execution=${data.execution_id} target=${data.target_id}`);
+
+        await conn.query(
+          `UPDATE scheduled_jobs SET status = 'completed', updated_at = NOW() WHERE id = ?`,
+          [job.id]
+        );
+        await conn.commit();
+        conn.release();
+
+        (async () => {
+          try {
+            const hookService = require('../services/hookService');
+            await hookService.executeRetry(db, data);
+            console.log(`[HOOK RETRY] execution=${data.execution_id} target=${data.target_id} → done`);
+          } catch (err) {
+            console.error(`[HOOK RETRY] Failed execution=${data.execution_id}:`, err.message);
+          }
+        })();
+
+        results.push({
+          id:     job.id,
+          status: 'completed',
+          note:   `Hook retry execution=${data.execution_id} target=${data.target_id}`
+        });
+
+        continue;
+      }
       // NORMAL JOB TYPES (webhook, internal_function, custom_code)
       const output = await executeJob(job, db);
 

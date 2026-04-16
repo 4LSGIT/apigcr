@@ -1,0 +1,1157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hook Manager</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+<style>
+  :root {
+    --navy:    #0f172a;
+    --navy2:   #1e293b;
+    --surface: #ffffff;
+    --bg:      #f1f5f9;
+    --border:  #e2e8f0;
+    --blue:    #3b82f6;
+    --blue2:   #2563eb;
+    --green:   #22c55e;
+    --red:     #ef4444;
+    --amber:   #f59e0b;
+    --text:    #1e293b;
+    --text2:   #475569;
+    --muted:   #94a3b8;
+    --radius:  8px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+
+  /* ── Top bar ── */
+  .top-bar { background: var(--navy); color: #fff; padding: 0 16px; height: 46px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .top-bar h1 { font-size: 15px; font-weight: 600; }
+  .top-bar h1 i { color: var(--blue); margin-right: 6px; }
+  .top-bar .spacer { flex: 1; }
+  .top-bar .btn { padding: 5px 12px; font-size: 12px; border: none; border-radius: 5px; font-weight: 500; cursor: pointer; }
+  .btn-primary { background: var(--blue); color: #fff; }
+  .btn-primary:hover { background: var(--blue2); }
+
+  /* ── Main layout ── */
+  .layout { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Left panel ── */
+  .panel-left { width: 240px; min-width: 240px; background: var(--navy2); display: flex; flex-direction: column; border-right: 1px solid rgba(255,255,255,0.06); }
+  .panel-left-head { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .panel-left-search { width: 100%; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); border-radius: 5px; padding: 6px 10px; color: #fff; font-size: 12px; outline: none; }
+  .panel-left-search::placeholder { color: rgba(255,255,255,0.3); }
+  .panel-left-search:focus { border-color: var(--blue); }
+  .panel-left-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+
+  .left-item { padding: 9px 12px; cursor: pointer; border-left: 3px solid transparent; transition: all 0.12s; border-bottom: 1px solid rgba(255,255,255,0.03); }
+  .left-item:hover { background: rgba(255,255,255,0.05); }
+  .left-item.active { border-left-color: var(--blue); background: rgba(59,130,246,0.1); }
+  .left-item-name { color: rgba(255,255,255,0.85); font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .left-item.active .left-item-name { color: #fff; }
+  .left-item-meta { color: rgba(255,255,255,0.35); font-size: 11px; margin-top: 2px; display: flex; gap: 8px; }
+  .left-item-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; }
+  .badge-active { background: rgba(34,197,94,0.15); color: #4ade80; }
+  .badge-inactive { background: rgba(239,68,68,0.15); color: #f87171; }
+
+  .panel-left-foot { padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.06); }
+
+  /* ── Right panel (editor) ── */
+  .panel-right { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+
+  .editor-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: var(--muted); gap: 10px; }
+  .editor-placeholder i { font-size: 42px; opacity: 0.2; }
+
+  /* ── Tab navigation ── */
+  .editor-head { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 16px; display: flex; align-items: center; flex-shrink: 0; gap: 6px; }
+  .editor-title { font-size: 15px; font-weight: 700; margin-right: 16px; white-space: nowrap; }
+  .editor-tabs { display: flex; flex: 1; overflow-x: auto; }
+  .editor-tab { padding: 12px 14px; border: none; background: none; font-size: 12px; font-weight: 500; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.12s; white-space: nowrap; }
+  .editor-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+  .editor-tab:hover:not(.active) { color: var(--text); }
+
+  .editor-body { flex: 1; overflow-y: auto; padding: 20px; min-height: 0; }
+
+  .editor-foot { padding: 12px 16px; border-top: 1px solid var(--border); background: var(--surface); display: flex; gap: 8px; flex-shrink: 0; justify-content: flex-end; }
+  .editor-foot .btn { padding: 7px 18px; font-size: 13px; border: none; border-radius: 6px; font-weight: 500; cursor: pointer; transition: all 0.12s; }
+  .btn-danger { background: var(--red); color: #fff; }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-outline { background: var(--surface); border: 1px solid var(--border); color: var(--text2); }
+  .btn-outline:hover { background: var(--bg); }
+  .btn-save { background: var(--blue); color: #fff; }
+  .btn-save:hover { background: var(--blue2); }
+
+  /* ── Tab content panels ── */
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ── Form elements ── */
+  .fg { margin-bottom: 16px; }
+  .fg label { display: block; font-size: 12px; font-weight: 600; color: var(--text2); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .fg input, .fg select, .fg textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: inherit; background: #fff; color: var(--text); }
+  .fg input:focus, .fg select:focus, .fg textarea:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+  .fg textarea { resize: vertical; min-height: 80px; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; font-size: 12px; }
+  .fg .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+  .fg-row { display: flex; gap: 12px; }
+  .fg-row .fg { flex: 1; }
+
+  .toggle-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .toggle-row label { margin: 0; text-transform: none; font-size: 13px; font-weight: 500; }
+
+  /* ── Cards (for targets, rules, conditions) ── */
+  .card { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-bottom: 10px; }
+  .card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .card-title { font-size: 13px; font-weight: 600; }
+  .card-actions { display: flex; gap: 4px; }
+  .card-actions button { background: none; border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; color: var(--text2); transition: all 0.1s; }
+  .card-actions button:hover { background: var(--bg); }
+  .card-actions .danger:hover { background: #fef2f2; color: var(--red); border-color: var(--red); }
+
+  .add-btn { display: flex; align-items: center; gap: 6px; padding: 8px 14px; border: 1px dashed var(--border); border-radius: var(--radius); background: none; cursor: pointer; font-size: 12px; color: var(--muted); width: 100%; justify-content: center; transition: all 0.12s; margin-top: 8px; }
+  .add-btn:hover { border-color: var(--blue); color: var(--blue); background: rgba(59,130,246,0.04); }
+
+  /* ── Rule builder ── */
+  .rule-row { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 8px; flex-wrap: wrap; }
+  .rule-row input, .rule-row select { padding: 6px 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; }
+  .rule-row .rule-from { flex: 2; min-width: 120px; }
+  .rule-row .rule-to { flex: 2; min-width: 120px; }
+  .rule-row .rule-transforms { flex: 3; min-width: 160px; }
+  .rule-remove { background: none; border: none; color: var(--muted); cursor: pointer; padding: 6px; font-size: 13px; }
+  .rule-remove:hover { color: var(--red); }
+
+  /* ── Condition builder ── */
+  .cond-group { border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 8px; background: #fafbfc; }
+  .cond-group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .cond-group-head select { padding: 4px 8px; font-size: 11px; border: 1px solid var(--border); border-radius: 4px; font-weight: 600; }
+  .cond-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .cond-row input, .cond-row select { padding: 5px 8px; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; }
+  .cond-path { flex: 2; }
+  .cond-op { width: 120px; }
+  .cond-value { flex: 2; }
+
+  /* ── Log table ── */
+  .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .log-table th { text-align: left; padding: 8px 10px; background: var(--bg); font-weight: 600; color: var(--text2); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }
+  .log-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .log-table tr:hover { background: #f8fafc; }
+  .status-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; }
+  .status-delivered { background: #dcfce7; color: #166534; }
+  .status-filtered { background: #f1f5f9; color: #475569; }
+  .status-failed { background: #fef2f2; color: #991b1b; }
+  .status-partial { background: #fef9c3; color: #854d0e; }
+  .status-received { background: #dbeafe; color: #1e40af; }
+  .status-processing { background: #e0e7ff; color: #3730a3; }
+
+  /* ── Test panel ── */
+  .test-panel { display: flex; gap: 16px; height: 100%; }
+  .test-input { flex: 1; display: flex; flex-direction: column; }
+  .test-output { flex: 1; display: flex; flex-direction: column; }
+  .test-output pre { flex: 1; background: var(--navy); color: #e2e8f0; padding: 12px; border-radius: 6px; font-size: 12px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+
+  /* ── Utility ── */
+  .mono { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; }
+  .text-muted { color: var(--muted); }
+  .text-sm { font-size: 12px; }
+  .mb-0 { margin-bottom: 0; }
+  .mt-8 { margin-top: 8px; }
+  .mt-12 { margin-top: 12px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- ════════════════ TOP BAR ════════════════ -->
+<div class="top-bar">
+  <h1><i class="fa-solid fa-webhook"></i> Hook Manager</h1>
+  <div class="spacer"></div>
+  <button class="btn" id="btn-delete" style="display:none;background:var(--red);color:#fff" onclick="deleteHook()"><i class="fa-solid fa-trash"></i> Delete</button>
+  <button class="btn" id="btn-save" style="display:none;background:var(--green);color:#fff" onclick="saveHook()"><i class="fa-solid fa-check"></i> Save</button>
+  <button class="btn btn-primary" onclick="newHook()"><i class="fa-solid fa-plus"></i> New Hook</button>
+</div>
+
+<!-- ════════════════ MAIN LAYOUT ════════════════ -->
+<div class="layout">
+
+  <!-- ── LEFT: Hook list ── -->
+  <div class="panel-left">
+    <div class="panel-left-head">
+      <input class="panel-left-search" placeholder="Search hooks…" oninput="filterHookList(this.value)">
+    </div>
+    <div class="panel-left-list" id="hook-list">
+      <div class="editor-placeholder" style="height:auto;padding:30px 12px">
+        <i class="fa-solid fa-spinner fa-pulse" style="font-size:18px"></i>
+        <span style="font-size:12px">Loading…</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── RIGHT: Editor ── -->
+  <div class="panel-right" id="editor-area">
+    <div class="editor-placeholder" id="no-selection">
+      <i class="fa-solid fa-bolt"></i>
+      <div style="font-size:14px;font-weight:500">Select a hook or create a new one</div>
+      <div style="font-size:12px">Configure webhook receivers, transforms, and delivery targets</div>
+    </div>
+
+    <div id="editor-wrap" class="hidden" style="display:none;flex-direction:column;flex:1;min-height:0">
+      <!-- Tab bar -->
+      <div class="editor-head">
+        <div class="editor-title" id="editor-title">—</div>
+        <div class="editor-tabs">
+          <button class="editor-tab active" data-tab="general" onclick="switchTab('general')">General</button>
+          <button class="editor-tab" data-tab="auth" onclick="switchTab('auth')">Auth</button>
+          <button class="editor-tab" data-tab="filter" onclick="switchTab('filter')">Filter</button>
+          <button class="editor-tab" data-tab="transform" onclick="switchTab('transform')">Transform</button>
+          <button class="editor-tab" data-tab="targets" onclick="switchTab('targets')">Targets</button>
+          <button class="editor-tab" data-tab="logs" onclick="switchTab('logs')">Logs</button>
+          <button class="editor-tab" data-tab="test" onclick="switchTab('test')">Test</button>
+        </div>
+      </div>
+
+      <!-- Tab bodies -->
+      <div class="editor-body" id="editor-body">
+
+        <!-- ══ GENERAL ══ -->
+        <div class="tab-content active" id="tab-general">
+          <div class="fg-row">
+            <div class="fg">
+              <label>Name</label>
+              <input id="f-name" placeholder="e.g. Calendly New Lead">
+            </div>
+            <div class="fg">
+              <label>Slug</label>
+              <input id="f-slug" placeholder="e.g. calendly-new-lead" class="mono">
+              <div class="hint">URL path: /hooks/<span id="slug-preview">…</span></div>
+            </div>
+          </div>
+          <div class="fg">
+            <label>Description</label>
+            <textarea id="f-description" rows="2" style="font-family:inherit;font-size:13px;min-height:50px" placeholder="What does this hook do?"></textarea>
+          </div>
+          <div class="toggle-row">
+            <input type="checkbox" id="f-active" checked>
+            <label for="f-active">Active</label>
+          </div>
+          <div id="hook-meta" class="text-sm text-muted mt-12" style="display:none"></div>
+        </div>
+
+        <!-- ══ AUTH ══ -->
+        <div class="tab-content" id="tab-auth">
+          <div class="fg">
+            <label>Authentication Type</label>
+            <select id="f-auth-type" onchange="toggleAuthFields()">
+              <option value="none">None (open endpoint)</option>
+              <option value="api_key">API Key</option>
+              <option value="hmac">HMAC Signature</option>
+            </select>
+          </div>
+          <div id="auth-fields-api-key" class="hidden">
+            <div class="fg">
+              <label>Expected Key</label>
+              <input id="f-auth-key" class="mono" placeholder="abc123…">
+            </div>
+            <div class="fg">
+              <label>Header Name</label>
+              <input id="f-auth-header" value="x-hook-key" class="mono">
+            </div>
+            <button class="btn btn-outline mt-8" onclick="generateApiKey()" style="font-size:12px"><i class="fa-solid fa-rotate"></i> Generate Key</button>
+          </div>
+          <div id="auth-fields-hmac" class="hidden">
+            <div class="fg">
+              <label>Signing Secret</label>
+              <input id="f-hmac-secret" class="mono" placeholder="webhook-signing-secret">
+            </div>
+            <div class="fg-row">
+              <div class="fg">
+                <label>Signature Header</label>
+                <input id="f-hmac-header" value="x-signature" class="mono">
+              </div>
+              <div class="fg">
+                <label>Algorithm</label>
+                <select id="f-hmac-algorithm">
+                  <option value="sha256">SHA-256</option>
+                  <option value="sha1">SHA-1</option>
+                  <option value="sha512">SHA-512</option>
+                </select>
+              </div>
+            </div>
+            <button class="btn btn-outline mt-8" onclick="generateHmacSecret()" style="font-size:12px"><i class="fa-solid fa-rotate"></i> Generate Secret</button>
+          </div>
+        </div>
+
+        <!-- ══ FILTER ══ -->
+        <div class="tab-content" id="tab-filter">
+          <div class="fg">
+            <label>Filter Mode</label>
+            <select id="f-filter-mode" onchange="toggleFilterMode()">
+              <option value="none">None (all events pass)</option>
+              <option value="conditions">Conditions</option>
+              <option value="code">Code (advanced)</option>
+            </select>
+          </div>
+          <div id="filter-conditions" class="hidden">
+            <div id="filter-conditions-root"></div>
+            <button class="add-btn mt-8" onclick="addFilterCondition()"><i class="fa-solid fa-plus"></i> Add Condition</button>
+          </div>
+          <div id="filter-code" class="hidden">
+            <div class="fg">
+              <label>Filter Code</label>
+              <textarea id="f-filter-code" rows="8" placeholder="return input.body.event === 'invitee.created';" class="mono"></textarea>
+              <div class="hint">Return true to pass, false to filter out. Variable: <code>input</code></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══ TRANSFORM ══ -->
+        <div class="tab-content" id="tab-transform">
+          <div class="fg">
+            <label>Transform Mode</label>
+            <select id="f-transform-mode" onchange="toggleTransformMode()">
+              <option value="passthrough">Passthrough (no transform)</option>
+              <option value="mapper">Mapper (declarative rules)</option>
+              <option value="code">Code (advanced)</option>
+            </select>
+          </div>
+          <div id="transform-mapper" class="hidden">
+            <div id="mapper-rules"></div>
+            <button class="add-btn mt-8" onclick="addMapperRule()"><i class="fa-solid fa-plus"></i> Add Mapping Rule</button>
+          </div>
+          <div id="transform-code" class="hidden">
+            <div class="fg">
+              <label>Transform Code</label>
+              <textarea id="f-transform-code" rows="12" class="mono" placeholder="const p = input.body.payload;&#10;return {&#10;  contact_name: p.name,&#10;  contact_email: p.email&#10;};"></textarea>
+              <div class="hint">Return an object. Variable: <code>input</code></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══ TARGETS ══ -->
+        <div class="tab-content" id="tab-targets">
+          <div id="targets-list"></div>
+          <button class="add-btn mt-8" onclick="addTarget()"><i class="fa-solid fa-plus"></i> Add Delivery Target</button>
+        </div>
+
+        <!-- ══ LOGS ══ -->
+        <div class="tab-content" id="tab-logs">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <span class="text-sm text-muted" id="log-count"></span>
+            <button class="btn btn-outline" onclick="loadExecutions()" style="font-size:12px"><i class="fa-solid fa-rotate"></i> Refresh</button>
+          </div>
+          <table class="log-table">
+            <thead><tr><th>ID</th><th>Status</th><th>Targets</th><th>Time</th><th></th></tr></thead>
+            <tbody id="log-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- ══ TEST ══ -->
+        <div class="tab-content" id="tab-test">
+          <div class="fg">
+            <label>Sample Input (JSON)</label>
+            <textarea id="f-test-input" rows="12" class="mono" placeholder='{"event":"invitee.created","payload":{"name":"John Doe","email":"john@example.com"}}'></textarea>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:16px">
+            <button class="btn btn-primary" onclick="runDryTest()"><i class="fa-solid fa-flask"></i> Dry Run</button>
+            <button class="btn btn-outline" onclick="runLiveTest()"><i class="fa-solid fa-paper-plane"></i> Live Test</button>
+          </div>
+          <div class="fg mb-0">
+            <label>Result</label>
+            <pre id="test-result" style="background:var(--navy);color:#e2e8f0;padding:14px;border-radius:6px;font-size:12px;min-height:120px;overflow:auto;white-space:pre-wrap;word-break:break-word">Run a test to see results…</pre>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const P = window.parent;
+const api = (path, method, body) => P.apiSend(path, method, body);
+const esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const E = id => document.getElementById(id);
+const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
+
+// ═══════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════
+
+let hooks = [];
+let filtered = [];
+let activeHookId = null;
+let activeHook = null;
+let credentials = [];
+let meta = {};   // available transforms + operators
+let mapperRules = [];
+let filterConditions = { operator: 'and', conditions: [] };
+let targets = [];
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════════════
+
+async function init() {
+  try {
+    const [hooksData, credsData, metaData] = await Promise.all([
+      api('/api/hooks'),
+      api('/api/credentials'),
+      api('/api/hooks/meta'),
+    ]);
+    hooks = hooksData.hooks || [];
+    filtered = hooks;
+    credentials = credsData.credentials || [];
+    meta = metaData;
+    renderHookList();
+  } catch (e) {
+    E('hook-list').innerHTML = `<div style="padding:16px;color:#f87171;font-size:12px">${e.message}</div>`;
+  }
+}
+init();
+
+// ═══════════════════════════════════════════════════════════════
+// HOOK LIST
+// ═══════════════════════════════════════════════════════════════
+
+function renderHookList() {
+  const el = E('hook-list');
+  if (!filtered.length) {
+    el.innerHTML = '<div style="padding:20px 12px;color:rgba(255,255,255,0.3);font-size:12px;text-align:center">No hooks yet.</div>';
+    return;
+  }
+  el.innerHTML = filtered.map(h => `
+    <div class="left-item${h.id === activeHookId ? ' active' : ''}" onclick="selectHook(${h.id})">
+      <div class="left-item-name">${esc(h.name)}</div>
+      <div class="left-item-meta">
+        <span>/hooks/${esc(h.slug)}</span>
+        <span class="left-item-badge ${h.active ? 'badge-active' : 'badge-inactive'}">${h.active ? 'ON' : 'OFF'}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function filterHookList(q) {
+  const lower = q.toLowerCase();
+  filtered = hooks.filter(h => h.name.toLowerCase().includes(lower) || h.slug.toLowerCase().includes(lower));
+  renderHookList();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SELECT / LOAD HOOK
+// ═══════════════════════════════════════════════════════════════
+
+async function selectHook(id) {
+  try {
+    const data = await api(`/api/hooks/${id}`);
+    activeHook = data.hook;
+    activeHookId = id;
+    targets = activeHook.targets || [];
+    renderHookList();
+    populateEditor();
+    showEditor();
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+
+function showEditor() {
+  E('no-selection').style.display = 'none';
+  const wrap = E('editor-wrap');
+  wrap.classList.remove('hidden');
+  wrap.style.display = 'flex';
+  E('btn-save').style.display = '';
+}
+
+function hideEditor() {
+  E('no-selection').style.display = '';
+  const wrap = E('editor-wrap');
+  wrap.classList.add('hidden');
+  wrap.style.display = 'none';
+  activeHookId = null;
+  activeHook = null;
+  E('btn-save').style.display = 'none';
+  E('btn-delete').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// POPULATE EDITOR FROM HOOK DATA
+// ═══════════════════════════════════════════════════════════════
+
+function populateEditor() {
+  const h = activeHook;
+  E('editor-title').textContent = h.name;
+  E('btn-delete').style.display = '';
+
+  // General
+  E('f-name').value = h.name || '';
+  E('f-slug').value = h.slug || '';
+  E('slug-preview').textContent = h.slug || '…';
+  E('f-description').value = h.description || '';
+  E('f-active').checked = !!h.active;
+
+  // Meta
+  const metaEl = E('hook-meta');
+  if (h.version || h.modified_by_name || h.updated_at) {
+    metaEl.style.display = '';
+    const parts = [];
+    if (h.version) parts.push(`v${h.version}`);
+    if (h.modified_by_name) parts.push(`Last modified by ${h.modified_by_name}`);
+    if (h.updated_at) parts.push(new Date(h.updated_at).toLocaleString());
+    metaEl.textContent = parts.join(' • ');
+  } else { metaEl.style.display = 'none'; }
+
+  // Auth
+  E('f-auth-type').value = h.auth_type || 'none';
+  const ac = parseJson(h.auth_config);
+  E('f-auth-key').value = ac?.key || '';
+  E('f-auth-header').value = ac?.header || 'x-hook-key';
+  E('f-hmac-secret').value = ac?.secret || '';
+  E('f-hmac-header').value = ac?.header || 'x-signature';
+  E('f-hmac-algorithm').value = ac?.algorithm || 'sha256';
+  toggleAuthFields();
+
+  // Filter
+  E('f-filter-mode').value = h.filter_mode || 'none';
+  const fc = parseJson(h.filter_config);
+  if (h.filter_mode === 'conditions' && fc) {
+    filterConditions = fc;
+  } else {
+    filterConditions = { operator: 'and', conditions: [] };
+  }
+  if (h.filter_mode === 'code' && fc) {
+    E('f-filter-code').value = typeof fc === 'string' ? fc : (fc?.code || '');
+  } else {
+    E('f-filter-code').value = '';
+  }
+  toggleFilterMode();
+
+  // Transform
+  E('f-transform-mode').value = h.transform_mode || 'passthrough';
+  const tc = parseJson(h.transform_config);
+  if (h.transform_mode === 'mapper' && tc) {
+    mapperRules = Array.isArray(tc) ? tc : (tc?.rules || []);
+  } else {
+    mapperRules = [];
+  }
+  if (h.transform_mode === 'code' && tc) {
+    E('f-transform-code').value = typeof tc === 'string' ? tc : (tc?.code || '');
+  } else {
+    E('f-transform-code').value = '';
+  }
+  toggleTransformMode();
+
+  // Targets
+  renderTargets();
+
+  // Reset to general tab
+  switchTab('general');
+
+  // Slug preview binding
+  E('f-slug').oninput = () => { E('slug-preview').textContent = E('f-slug').value || '…'; };
+}
+
+function parseJson(val) {
+  if (!val) return null;
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return null; }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TABS
+// ═══════════════════════════════════════════════════════════════
+
+function switchTab(tab) {
+  document.querySelectorAll('.editor-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === `tab-${tab}`));
+  if (tab === 'logs') loadExecutions();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AUTH TAB
+// ═══════════════════════════════════════════════════════════════
+
+function toggleAuthFields() {
+  const t = E('f-auth-type').value;
+  E('auth-fields-api-key').classList.toggle('hidden', t !== 'api_key');
+  E('auth-fields-hmac').classList.toggle('hidden', t !== 'hmac');
+}
+
+function generateApiKey() {
+  const arr = new Uint8Array(24);
+  crypto.getRandomValues(arr);
+  E('f-auth-key').value = Array.from(arr, b => b.toString(16).padStart(2,'0')).join('');
+}
+
+function generateHmacSecret() {
+  const arr = new Uint8Array(32);
+  crypto.getRandomValues(arr);
+  E('f-hmac-secret').value = Array.from(arr, b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FILTER TAB
+// ═══════════════════════════════════════════════════════════════
+
+function toggleFilterMode() {
+  const m = E('f-filter-mode').value;
+  E('filter-conditions').classList.toggle('hidden', m !== 'conditions');
+  E('filter-code').classList.toggle('hidden', m !== 'code');
+  if (m === 'conditions') renderFilterConditions();
+}
+
+function renderFilterConditions() {
+  const root = E('filter-conditions-root');
+  root.innerHTML = '';
+  const group = filterConditions;
+  root.appendChild(buildConditionGroupEl(group, true));
+}
+
+function buildConditionGroupEl(group, isRoot) {
+  const div = document.createElement('div');
+  div.className = 'cond-group';
+
+  const head = document.createElement('div');
+  head.className = 'cond-group-head';
+  head.innerHTML = `
+    <select onchange="this._group.operator=this.value">
+      <option value="and" ${group.operator==='and'?'selected':''}>AND</option>
+      <option value="or" ${group.operator==='or'?'selected':''}>OR</option>
+    </select>
+    <span class="text-sm text-muted">All${group.operator==='or'?' any':''} conditions must match</span>
+    ${!isRoot ? '<button class="rule-remove" onclick="this.closest(\'.cond-group\').remove()" title="Remove group"><i class="fa-solid fa-times"></i></button>' : ''}
+  `;
+  head.querySelector('select')._group = group;
+  div.appendChild(head);
+
+  const body = document.createElement('div');
+  body.className = 'cond-group-body';
+
+  (group.conditions || []).forEach((cond, i) => {
+    if (cond.operator) {
+      body.appendChild(buildConditionGroupEl(cond, false));
+    } else {
+      body.appendChild(buildConditionLeafEl(cond, group, i));
+    }
+  });
+  div.appendChild(body);
+
+  const foot = document.createElement('div');
+  foot.style.cssText = 'display:flex;gap:6px;margin-top:6px';
+  foot.innerHTML = `
+    <button class="add-btn" style="flex:1;margin:0;padding:5px" onclick="addCondToGroup(this)"><i class="fa-solid fa-plus"></i> Condition</button>
+    <button class="add-btn" style="flex:1;margin:0;padding:5px" onclick="addSubgroup(this)"><i class="fa-solid fa-layer-group"></i> Group</button>
+  `;
+  foot._group = group;
+  div.appendChild(foot);
+  div._group = group;
+  return div;
+}
+
+function buildConditionLeafEl(cond) {
+  const row = document.createElement('div');
+  row.className = 'cond-row';
+  row.innerHTML = `
+    <input class="cond-path" placeholder="body.event" value="${esc(cond.path || '')}">
+    <select class="cond-op">
+      ${['equals','not_equals','contains','not_contains','starts_with','ends_with','gt','gte','lt','lte','exists','not_exists','in','not_in','matches']
+        .map(o => `<option value="${o}" ${cond.op===o?'selected':''}>${o.replace(/_/g,' ')}</option>`).join('')}
+    </select>
+    <input class="cond-value" placeholder="value" value="${esc(cond.value ?? '')}">
+    <button class="rule-remove" title="Remove"><i class="fa-solid fa-times"></i></button>
+  `;
+  row._cond = cond;
+  row.querySelector('.cond-path').oninput = e => { cond.path = e.target.value; };
+  row.querySelector('.cond-op').onchange = e => { cond.op = e.target.value; };
+  row.querySelector('.cond-value').oninput = e => { cond.value = e.target.value; };
+  row.querySelector('.rule-remove').onclick = () => row.remove();
+  return row;
+}
+
+function addCondToGroup(btn) {
+  const group = btn.closest('div[style]')._group || btn.closest('.cond-group')._group;
+  const cond = { path: '', op: 'equals', value: '' };
+  group.conditions.push(cond);
+  renderFilterConditions();
+}
+
+function addSubgroup(btn) {
+  const group = btn.closest('div[style]')._group || btn.closest('.cond-group')._group;
+  group.conditions.push({ operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] });
+  renderFilterConditions();
+}
+
+function addFilterCondition() {
+  filterConditions.conditions.push({ path: '', op: 'equals', value: '' });
+  renderFilterConditions();
+}
+
+function collectFilterConditions() {
+  // Rebuild from the DOM — walk the condition group tree
+  return collectGroupFromDom(E('filter-conditions-root').querySelector('.cond-group'));
+}
+
+function collectGroupFromDom(groupEl) {
+  if (!groupEl) return { operator: 'and', conditions: [] };
+  const operator = groupEl.querySelector(':scope > .cond-group-head select')?.value || 'and';
+  const body = groupEl.querySelector(':scope > .cond-group-body');
+  const conditions = [];
+  if (body) {
+    for (const child of body.children) {
+      if (child.classList.contains('cond-group')) {
+        conditions.push(collectGroupFromDom(child));
+      } else if (child.classList.contains('cond-row')) {
+        const path = child.querySelector('.cond-path')?.value?.trim();
+        const op = child.querySelector('.cond-op')?.value;
+        const value = child.querySelector('.cond-value')?.value;
+        if (path && op) conditions.push({ path, op, value });
+      }
+    }
+  }
+  return { operator, conditions };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TRANSFORM TAB — MAPPER RULES
+// ═══════════════════════════════════════════════════════════════
+
+function toggleTransformMode() {
+  const m = E('f-transform-mode').value;
+  E('transform-mapper').classList.toggle('hidden', m !== 'mapper');
+  E('transform-code').classList.toggle('hidden', m !== 'code');
+  if (m === 'mapper') renderMapperRules();
+}
+
+function renderMapperRules() {
+  const el = E('mapper-rules');
+  if (!mapperRules.length) {
+    el.innerHTML = '<div class="text-sm text-muted" style="text-align:center;padding:12px">No mapping rules. Add one below.</div>';
+    return;
+  }
+  el.innerHTML = mapperRules.map((r, i) => `
+    <div class="card" data-idx="${i}">
+      <div class="rule-row">
+        <select class="rule-type" style="width:100px" onchange="ruleTypeChanged(${i}, this.value)">
+          <option value="from" ${r.from !== undefined ? 'selected' : ''}>Path</option>
+          <option value="template" ${r.template !== undefined ? 'selected' : ''}>Template</option>
+          <option value="value" ${r.value !== undefined ? 'selected' : ''}>Static</option>
+        </select>
+        <input class="rule-from" placeholder="${r.template !== undefined ? '{{path|transform}} text' : r.value !== undefined ? 'static value' : 'body.payload.name'}"
+               value="${esc(r.from ?? r.template ?? (r.value !== undefined ? String(r.value) : ''))}"
+               data-field="${r.from !== undefined ? 'from' : r.template !== undefined ? 'template' : 'value'}">
+        <span style="color:var(--muted);font-size:16px;padding:4px">→</span>
+        <input class="rule-to" placeholder="contact_name" value="${esc(r.to || '')}">
+        <button class="rule-remove" onclick="removeMapperRule(${i})" title="Remove"><i class="fa-solid fa-times"></i></button>
+      </div>
+      ${r.from !== undefined ? `
+      <div style="margin-top:6px">
+        <input style="width:100%;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px" class="mono"
+               placeholder="transforms: lowercase, trim, date:yyyy-MM-dd …" value="${esc((r.transforms || []).join(', '))}">
+        <div class="hint">Comma-separated transform functions</div>
+      </div>` : ''}
+    </div>
+  `).join('');
+}
+
+function addMapperRule() {
+  mapperRules.push({ from: '', to: '' });
+  renderMapperRules();
+}
+
+function removeMapperRule(i) {
+  mapperRules.splice(i, 1);
+  renderMapperRules();
+}
+
+function ruleTypeChanged(i, type) {
+  const old = mapperRules[i];
+  const to = old.to;
+  if (type === 'from') mapperRules[i] = { from: '', to, transforms: [] };
+  else if (type === 'template') mapperRules[i] = { template: '', to };
+  else mapperRules[i] = { value: '', to };
+  renderMapperRules();
+}
+
+function collectMapperRules() {
+  const cards = E('mapper-rules').querySelectorAll('.card');
+  return Array.from(cards).map(card => {
+    const type = card.querySelector('.rule-type').value;
+    const source = card.querySelector('.rule-from').value;
+    const to = card.querySelector('.rule-to').value;
+    const rule = { to };
+    if (type === 'from') {
+      rule.from = source;
+      const tfInput = card.querySelector('input.mono');
+      if (tfInput && tfInput.value.trim()) {
+        rule.transforms = tfInput.value.split(',').map(s => s.trim()).filter(Boolean);
+      }
+    } else if (type === 'template') {
+      rule.template = source;
+    } else {
+      rule.value = source;
+    }
+    return rule;
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TARGETS TAB
+// ═══════════════════════════════════════════════════════════════
+
+function renderTargets() {
+  const el = E('targets-list');
+  if (!targets.length) {
+    el.innerHTML = '<div class="text-sm text-muted" style="text-align:center;padding:20px">No delivery targets. Add one below.</div>';
+    return;
+  }
+  el.innerHTML = targets.map((t, i) => `
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title"><i class="fa-solid fa-bullseye" style="color:var(--blue);margin-right:6px"></i>${esc(t.name || 'Unnamed target')}</div>
+        <div class="card-actions">
+          <button onclick="editTarget(${i})" title="Edit"><i class="fa-solid fa-pen"></i></button>
+          <button class="danger" onclick="removeTarget(${i})" title="Delete"><i class="fa-solid fa-trash"></i></button>
+        </div>
+      </div>
+      <div class="text-sm">
+        <span style="font-weight:600;color:var(--text2)">${t.method || 'POST'}</span>
+        <span class="mono" style="color:var(--muted);margin-left:6px">${esc(t.url || '—')}</span>
+      </div>
+      <div class="text-sm text-muted" style="margin-top:4px">
+        ${t.credential_id ? `<i class="fa-solid fa-lock" style="margin-right:4px"></i>Credential #${t.credential_id}` : '<i class="fa-solid fa-lock-open" style="margin-right:4px"></i>No auth'}
+        ${t.conditions ? ' • <i class="fa-solid fa-filter"></i> Conditional' : ''}
+        ${t.transform_mode && t.transform_mode !== 'passthrough' ? ' • <i class="fa-solid fa-shuffle"></i> Custom transform' : ''}
+        • ${t.active ? '<span style="color:var(--green)">Active</span>' : '<span style="color:var(--red)">Inactive</span>'}
+      </div>
+    </div>
+  `).join('');
+}
+
+async function addTarget() {
+  const { value } = await Swal.fire({
+    title: 'New Delivery Target',
+    html: buildTargetForm({}),
+    width: 560,
+    showCancelButton: true,
+    confirmButtonText: 'Add Target',
+    preConfirm: () => collectTargetForm(),
+  });
+  if (!value) return;
+
+  if (activeHookId) {
+    try {
+      const result = await api(`/api/hooks/${activeHookId}/targets`, 'POST', value);
+      value.id = result.id;
+      targets.push(value);
+      renderTargets();
+      Toast.fire({ icon: 'success', title: 'Target added' });
+    } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
+  } else {
+    targets.push(value);
+    renderTargets();
+  }
+}
+
+async function editTarget(i) {
+  const t = targets[i];
+  const { value } = await Swal.fire({
+    title: 'Edit Target',
+    html: buildTargetForm(t),
+    width: 560,
+    showCancelButton: true,
+    confirmButtonText: 'Update',
+    preConfirm: () => collectTargetForm(),
+  });
+  if (!value) return;
+
+  if (t.id) {
+    try {
+      await api(`/api/hooks/targets/${t.id}`, 'PUT', value);
+      Object.assign(targets[i], value);
+      renderTargets();
+      Toast.fire({ icon: 'success', title: 'Target updated' });
+    } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
+  } else {
+    Object.assign(targets[i], value);
+    renderTargets();
+  }
+}
+
+async function removeTarget(i) {
+  const { isConfirmed } = await Swal.fire({ title: 'Delete target?', text: targets[i].name, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444' });
+  if (!isConfirmed) return;
+
+  if (targets[i].id) {
+    try {
+      await api(`/api/hooks/targets/${targets[i].id}`, 'DELETE');
+    } catch (e) { Toast.fire({ icon: 'error', title: e.message }); return; }
+  }
+  targets.splice(i, 1);
+  renderTargets();
+}
+
+function buildTargetForm(t) {
+  const credOpts = credentials.map(c => `<option value="${c.id}" ${t.credential_id==c.id?'selected':''}>${esc(c.name)} (${c.type})</option>`).join('');
+  return `
+    <div style="text-align:left;font-size:13px">
+      <div class="fg"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Name</label>
+        <input id="swal-t-name" class="swal2-input" style="margin:0;width:100%" value="${esc(t.name || '')}"></div>
+      <div style="display:flex;gap:8px">
+        <div class="fg" style="width:100px"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Method</label>
+          <select id="swal-t-method" class="swal2-select" style="margin:0;width:100%">
+            ${['POST','GET','PUT','PATCH','DELETE'].map(m => `<option ${t.method===m?'selected':''}>${m}</option>`).join('')}
+          </select></div>
+        <div class="fg" style="flex:1"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">URL</label>
+          <input id="swal-t-url" class="swal2-input" style="margin:0;width:100%" value="${esc(t.url || '')}" placeholder="https://..."></div>
+      </div>
+      <div class="fg"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Credential</label>
+        <select id="swal-t-cred" class="swal2-select" style="margin:0;width:100%">
+          <option value="">None</option>${credOpts}
+        </select></div>
+      <div class="fg"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Mode</label>
+        <select id="swal-t-bodymode" class="swal2-select" style="margin:0;width:100%">
+          <option value="transform_output" ${t.body_mode!=='template'?'selected':''}>Full transform output</option>
+          <option value="template" ${t.body_mode==='template'?'selected':''}>Template</option>
+        </select></div>
+      <div class="fg"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Template (if template mode)</label>
+        <textarea id="swal-t-template" class="swal2-textarea" style="margin:0;width:100%;font-family:monospace;font-size:12px;min-height:60px">${esc(t.body_template || '')}</textarea></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+        <input type="checkbox" id="swal-t-active" ${t.active !== false ? 'checked' : ''}>
+        <label for="swal-t-active" style="font-size:13px">Active</label>
+      </div>
+    </div>`;
+}
+
+function collectTargetForm() {
+  const name = document.getElementById('swal-t-name').value.trim();
+  const url = document.getElementById('swal-t-url').value.trim();
+  if (!name || !url) { Swal.showValidationMessage('Name and URL are required'); return false; }
+  return {
+    name,
+    method: document.getElementById('swal-t-method').value,
+    url,
+    credential_id: document.getElementById('swal-t-cred').value || null,
+    body_mode: document.getElementById('swal-t-bodymode').value,
+    body_template: document.getElementById('swal-t-template').value || null,
+    active: document.getElementById('swal-t-active').checked ? 1 : 0,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// LOGS TAB
+// ═══════════════════════════════════════════════════════════════
+
+async function loadExecutions() {
+  if (!activeHookId) return;
+  const tbody = E('log-tbody');
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)"><i class="fa-solid fa-spinner fa-pulse"></i></td></tr>';
+  try {
+    const data = await api(`/api/hooks/${activeHookId}/executions?limit=50`);
+    E('log-count').textContent = `${data.total} total execution${data.total !== 1 ? 's' : ''}`;
+    if (!data.executions.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted)">No executions yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.executions.map(ex => `
+      <tr>
+        <td class="mono">${ex.id}</td>
+        <td><span class="status-badge status-${ex.status}">${ex.status}</span></td>
+        <td>${ex.delivery_count || 0}</td>
+        <td class="text-sm">${new Date(ex.created_at).toLocaleString()}</td>
+        <td><button class="btn btn-outline" style="padding:3px 8px;font-size:11px" onclick="viewExecution(${ex.id})"><i class="fa-solid fa-eye"></i></button></td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" style="color:var(--red);padding:12px">${e.message}</td></tr>`;
+  }
+}
+
+async function viewExecution(id) {
+  try {
+    const data = await api(`/api/hooks/executions/${id}`);
+    const ex = data.execution;
+    Swal.fire({
+      title: `Execution #${id}`,
+      width: 700,
+      html: `
+        <div style="text-align:left;font-size:12px;max-height:60vh;overflow:auto">
+          <p><b>Status:</b> <span class="status-badge status-${ex.status}">${ex.status}</span></p>
+          <p style="margin-top:8px"><b>Filter passed:</b> ${ex.filter_passed === null ? '—' : ex.filter_passed ? 'Yes' : 'No'}</p>
+          ${ex.error ? `<p style="margin-top:8px;color:var(--red)"><b>Error:</b> ${esc(ex.error)}</p>` : ''}
+          <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Raw Input</summary>
+            <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.raw_input), null, 2))}</pre>
+          </details>
+          <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Transform Output</summary>
+            <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.transform_output), null, 2))}</pre>
+          </details>
+          ${(ex.delivery_logs || []).length ? `
+            <h4 style="margin-top:14px;font-size:13px">Delivery Logs</h4>
+            ${ex.delivery_logs.map(dl => `
+              <div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:8px">
+                <div><b>${esc(dl.target_name || 'Target #' + dl.target_id)}</b>
+                  <span class="status-badge status-${dl.status === 'success' ? 'delivered' : 'failed'}" style="margin-left:6px">${dl.status}</span>
+                  ${dl.response_status ? `<span style="margin-left:8px;color:var(--muted)">HTTP ${dl.response_status}</span>` : ''}
+                </div>
+                <div class="mono text-sm" style="margin-top:4px;color:var(--muted)">${esc(dl.request_method)} ${esc(dl.request_url)}</div>
+                ${dl.error ? `<div style="color:var(--red);margin-top:4px;font-size:12px">${esc(dl.error)}</div>` : ''}
+              </div>
+            `).join('')}
+          ` : ''}
+        </div>
+      `,
+    });
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TEST TAB
+// ═══════════════════════════════════════════════════════════════
+
+async function runDryTest() {
+  if (!activeHookId) { Toast.fire({ icon: 'warning', title: 'Save the hook first' }); return; }
+  const raw = E('f-test-input').value.trim();
+  if (!raw) { Toast.fire({ icon: 'warning', title: 'Paste sample JSON first' }); return; }
+  let input;
+  try { input = JSON.parse(raw); } catch { Toast.fire({ icon: 'error', title: 'Invalid JSON' }); return; }
+
+  E('test-result').textContent = 'Running dry test…';
+  try {
+    const data = await api(`/api/hooks/${activeHookId}/test`, 'POST', { input });
+    E('test-result').textContent = JSON.stringify(data.result, null, 2);
+  } catch (e) {
+    E('test-result').textContent = `Error: ${e.message}`;
+  }
+}
+
+async function runLiveTest() {
+  if (!activeHookId) { Toast.fire({ icon: 'warning', title: 'Save the hook first' }); return; }
+  const slug = E('f-slug').value.trim();
+  if (!slug) { Toast.fire({ icon: 'warning', title: 'Slug is required' }); return; }
+  const raw = E('f-test-input').value.trim();
+  if (!raw) { Toast.fire({ icon: 'warning', title: 'Paste sample JSON first' }); return; }
+  let body;
+  try { body = JSON.parse(raw); } catch { Toast.fire({ icon: 'error', title: 'Invalid JSON' }); return; }
+
+  E('test-result').textContent = 'Sending live test…';
+  try {
+    // Post directly to the hook endpoint
+    const resp = await fetch(`/hooks/${slug}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    E('test-result').textContent = JSON.stringify(data, null, 2) + '\n\n(Check Logs tab for full execution details)';
+  } catch (e) {
+    E('test-result').textContent = `Error: ${e.message}`;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SAVE / NEW / DELETE
+// ═══════════════════════════════════════════════════════════════
+
+async function saveHook() {
+  const name = E('f-name').value.trim();
+  const slug = E('f-slug').value.trim();
+  if (!name) { Toast.fire({ icon: 'warning', title: 'Name is required' }); switchTab('general'); return; }
+  if (!slug) { Toast.fire({ icon: 'warning', title: 'Slug is required' }); switchTab('general'); return; }
+
+  // Build auth_config
+  let auth_config = null;
+  const auth_type = E('f-auth-type').value;
+  if (auth_type === 'api_key') {
+    auth_config = { key: E('f-auth-key').value, header: E('f-auth-header').value };
+  } else if (auth_type === 'hmac') {
+    auth_config = { secret: E('f-hmac-secret').value, header: E('f-hmac-header').value, algorithm: E('f-hmac-algorithm').value };
+  }
+
+  // Build filter_config
+  const filter_mode = E('f-filter-mode').value;
+  let filter_config = null;
+  if (filter_mode === 'conditions') {
+    filter_config = collectFilterConditions();
+  } else if (filter_mode === 'code') {
+    filter_config = { code: E('f-filter-code').value };
+  }
+
+  // Build transform_config
+  const transform_mode = E('f-transform-mode').value;
+  let transform_config = null;
+  if (transform_mode === 'mapper') {
+    transform_config = collectMapperRules();
+  } else if (transform_mode === 'code') {
+    transform_config = { code: E('f-transform-code').value };
+  }
+
+  const payload = {
+    name, slug,
+    description: E('f-description').value,
+    active: E('f-active').checked ? 1 : 0,
+    auth_type, auth_config,
+    filter_mode, filter_config,
+    transform_mode, transform_config,
+  };
+
+  try {
+    if (activeHookId) {
+      await api(`/api/hooks/${activeHookId}`, 'PUT', payload);
+      Toast.fire({ icon: 'success', title: 'Hook saved' });
+    } else {
+      const data = await api('/api/hooks', 'POST', payload);
+      activeHookId = data.id;
+      Toast.fire({ icon: 'success', title: 'Hook created' });
+    }
+    // Reload list and re-select
+    const hooksData = await api('/api/hooks');
+    hooks = hooksData.hooks || [];
+    filtered = hooks;
+    renderHookList();
+    if (activeHookId) selectHook(activeHookId);
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+
+async function newHook() {
+  activeHookId = null;
+  activeHook = { name: '', slug: '', description: '', active: 1, auth_type: 'none', filter_mode: 'none', transform_mode: 'passthrough', targets: [] };
+  targets = [];
+  mapperRules = [];
+  filterConditions = { operator: 'and', conditions: [] };
+  populateEditor();
+  showEditor();
+  E('editor-title').textContent = 'New Hook';
+  E('btn-delete').style.display = 'none';
+  switchTab('general');
+  E('f-name').focus();
+}
+
+async function deleteHook() {
+  if (!activeHookId) return;
+  const { isConfirmed } = await Swal.fire({
+    title: 'Delete this hook?',
+    text: `"${activeHook?.name}" and all its targets will be permanently deleted.`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#ef4444',
+    confirmButtonText: 'Delete',
+  });
+  if (!isConfirmed) return;
+
+  try {
+    await api(`/api/hooks/${activeHookId}`, 'DELETE');
+    Toast.fire({ icon: 'success', title: 'Hook deleted' });
+    hideEditor();
+    const hooksData = await api('/api/hooks');
+    hooks = hooksData.hooks || [];
+    filtered = hooks;
+    renderHookList();
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+</script>
+</body>
+</html>

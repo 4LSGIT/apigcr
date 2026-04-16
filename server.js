@@ -8,7 +8,11 @@ const app = express();
 var corsOptions = { origin: "*" };
 app.use(cors(corsOptions));
 app.set('trust proxy', 1);//google cloud run
-app.use(express.json({ limit: '10mb' }));
+// Capture raw body for webhook HMAC verification
+app.use('/hooks', express.json({
+  verify: (req, res, buf) => { req.rawBody = buf.toString(); }
+}));
+app.use(express.json({ limit: '10mb' }));//maybe limit to /upload?
 app.use(express.urlencoded({ extended: true }));
 app.use(
   express.static(path.join(__dirname, "public"), {
