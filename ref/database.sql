@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost
--- Generation Time: Mar 24, 2026 at 02:16 PM
+-- Generation Time: Apr 16, 2026 at 04:12 PM
 -- Server version: 8.4.6-6
 -- PHP Version: 8.2.30
 
@@ -18,7 +18,7 @@ SET time_zone = "+00:00";
 /*!40101 SET NAMES utf8mb4 */;
 
 --
--- Database: `database_name`
+-- Database: `database`
 --
 
 -- --------------------------------------------------------
@@ -67,17 +67,31 @@ CREATE TABLE `app_settings` (
 
 CREATE TABLE `campaigns` (
   `campaign_id` int NOT NULL,
-  `type` enum('sms','email','html-email') COLLATE utf8mb4_general_ci NOT NULL,
+  `type` enum('sms','email') COLLATE utf8mb4_general_ci NOT NULL,
   `sender` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
   `subject` text COLLATE utf8mb4_general_ci,
   `body` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
+  `attachment_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `schedule` datetime NOT NULL,
-  `contact_ids` text COLLATE utf8mb4_general_ci NOT NULL,
-  `status` enum('scheduled','sending','sent','failed','partial fail','canceled') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT 'scheduled',
+  `status` enum('draft','scheduled','sending','sent','failed','partial_fail','canceled') COLLATE utf8mb4_general_ci DEFAULT 'draft',
+  `scheduled_time` datetime DEFAULT NULL,
   `created_by` tinyint UNSIGNED DEFAULT NULL,
-  `result_summary` json DEFAULT NULL
+  `result_summary` json DEFAULT NULL,
+  `contact_count` int UNSIGNED NOT NULL DEFAULT '0',
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `campaign_contacts`
+--
+
+CREATE TABLE `campaign_contacts` (
+  `id` int UNSIGNED NOT NULL,
+  `campaign_id` int NOT NULL,
+  `contact_id` int UNSIGNED NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -89,28 +103,10 @@ CREATE TABLE `campaign_results` (
   `result_id` int NOT NULL,
   `campaign_id` int NOT NULL,
   `contact_id` int NOT NULL,
-  `status` enum('sent','failed') COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('sent','failed','skipped') COLLATE utf8mb4_general_ci NOT NULL,
   `error` text COLLATE utf8mb4_general_ci,
   `sent_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `result_meta` json DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `camp_temp`
---
-
-CREATE TABLE `camp_temp` (
-  `campaign_id` int NOT NULL,
-  `type` enum('sms','email','html-email') COLLATE utf8mb4_general_ci NOT NULL,
-  `sender` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `subject` text COLLATE utf8mb4_general_ci,
-  `body` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
-  `created` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-  `schedule` datetime NOT NULL,
-  `contact_ids` text COLLATE utf8mb4_general_ci NOT NULL,
-  `status` enum('scheduled','sent','failed') COLLATE utf8mb4_general_ci DEFAULT 'scheduled'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -126,6 +122,7 @@ CREATE TABLE `cases` (
   `case_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_stage` enum('Open','Pending','Filed','Concluded','Closed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Open',
   `case_status` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `case_rec` varchar(128) COLLATE utf8mb4_general_ci NOT NULL,
   `case_open_date` date DEFAULT NULL,
   `case_file_date` date DEFAULT NULL,
   `case_close_date` date DEFAULT NULL,
@@ -309,7 +306,8 @@ CREATE TABLE `checklists` (
   `created_date` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_date` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `created_by` tinyint NOT NULL,
-  `link` varchar(8) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `link` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `link_type` enum('contact','case','bill','appt','task','user') COLLATE utf8mb4_general_ci DEFAULT NULL,
   `tag` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -357,7 +355,9 @@ CREATE TABLE `contacts` (
   `contact_phone2` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_email2` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_created` datetime DEFAULT NULL,
-  `contact_updated` timestamp NULL DEFAULT NULL
+  `contact_updated` timestamp NULL DEFAULT NULL,
+  `contact_sms_optout` tinyint(1) NOT NULL DEFAULT '0',
+  `contact_email_optout` tinyint(1) NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -563,6 +563,22 @@ CREATE TABLE `court_emails2` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `credentials`
+--
+
+CREATE TABLE `credentials` (
+  `id` int NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `type` enum('internal','bearer','api_key','basic') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'internal',
+  `config` json DEFAULT NULL,
+  `allowed_urls` json DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `default`
 --
 
@@ -578,6 +594,7 @@ CREATE TABLE `default` (
 --
 
 CREATE TABLE `email_credentials` (
+  `id` int UNSIGNED NOT NULL,
   `email` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
   `smtp_host` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
   `smtp_port` int NOT NULL,
@@ -608,6 +625,76 @@ CREATE TABLE `email_log` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `feature_requests`
+--
+
+CREATE TABLE `feature_requests` (
+  `id` int UNSIGNED NOT NULL,
+  `title` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text COLLATE utf8mb4_general_ci NOT NULL,
+  `type` enum('bug','feature') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'feature',
+  `stage` enum('considering','planning','working_on_it','implemented','future_thought','rejected') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'considering',
+  `status_note` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `progress` tinyint UNSIGNED NOT NULL DEFAULT '0',
+  `is_public` tinyint(1) NOT NULL DEFAULT '1',
+  `submitted_by` int NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `feature_request_comments`
+--
+
+CREATE TABLE `feature_request_comments` (
+  `id` int UNSIGNED NOT NULL,
+  `request_id` int UNSIGNED NOT NULL,
+  `user_id` int NOT NULL,
+  `parent_comment_id` int UNSIGNED DEFAULT NULL,
+  `comment` text COLLATE utf8mb4_general_ci NOT NULL,
+  `is_admin` tinyint(1) NOT NULL DEFAULT '0',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `feature_request_votes`
+--
+
+CREATE TABLE `feature_request_votes` (
+  `id` int UNSIGNED NOT NULL,
+  `request_id` int UNSIGNED NOT NULL,
+  `user_id` int NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `form_submissions`
+--
+
+CREATE TABLE `form_submissions` (
+  `id` bigint UNSIGNED NOT NULL,
+  `form_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
+  `link_type` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `link_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('draft','submitted') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft',
+  `version` int UNSIGNED NOT NULL DEFAULT '0',
+  `schema_version` int UNSIGNED NOT NULL DEFAULT '1',
+  `data` json NOT NULL,
+  `submitted_by` int UNSIGNED DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `draft_key` varchar(100) COLLATE utf8mb4_general_ci GENERATED ALWAYS AS ((case when (`status` = _utf8mb4'draft') then concat(`form_key`,_utf8mb4':',`link_type`,_utf8mb4':',`link_id`) else NULL end)) STORED
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `holidays`
 --
 
@@ -619,6 +706,108 @@ CREATE TABLE `holidays` (
   `end_time` time DEFAULT '21:00:00',
   `is_two_day` tinyint(1) DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `hooks`
+--
+
+CREATE TABLE `hooks` (
+  `id` int NOT NULL,
+  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text COLLATE utf8mb4_general_ci,
+  `auth_type` enum('none','api_key','hmac') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'none',
+  `auth_config` json DEFAULT NULL,
+  `filter_mode` enum('none','conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'none',
+  `filter_config` json DEFAULT NULL,
+  `transform_mode` enum('passthrough','mapper','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
+  `transform_config` json DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `version` int NOT NULL DEFAULT '1',
+  `last_modified_by` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `hook_delivery_logs`
+--
+
+CREATE TABLE `hook_delivery_logs` (
+  `id` bigint NOT NULL,
+  `execution_id` bigint NOT NULL,
+  `target_id` int NOT NULL,
+  `request_url` varchar(2048) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `request_method` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `request_body` json DEFAULT NULL,
+  `response_status` int DEFAULT NULL,
+  `response_body` text COLLATE utf8mb4_general_ci,
+  `status` enum('success','failed') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'failed',
+  `error` text COLLATE utf8mb4_general_ci,
+  `attempts` int NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `hook_executions`
+--
+
+CREATE TABLE `hook_executions` (
+  `id` bigint NOT NULL,
+  `hook_id` int NOT NULL,
+  `slug` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `raw_input` json DEFAULT NULL,
+  `filter_passed` tinyint(1) DEFAULT NULL,
+  `transform_output` json DEFAULT NULL,
+  `status` enum('received','filtered','processing','delivered','partial','failed') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'received',
+  `error` text COLLATE utf8mb4_general_ci,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `hook_targets`
+--
+
+CREATE TABLE `hook_targets` (
+  `id` int NOT NULL,
+  `hook_id` int NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `position` int NOT NULL DEFAULT '0',
+  `method` enum('GET','POST','PUT','PATCH','DELETE') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'POST',
+  `url` varchar(2048) COLLATE utf8mb4_general_ci NOT NULL,
+  `headers` json DEFAULT NULL,
+  `credential_id` int DEFAULT NULL,
+  `body_mode` enum('transform_output','template') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'transform_output',
+  `body_template` text COLLATE utf8mb4_general_ci,
+  `conditions` json DEFAULT NULL,
+  `transform_mode` enum('passthrough','mapper','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
+  `transform_config` json DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `image_library`
+--
+
+CREATE TABLE `image_library` (
+  `id` int UNSIGNED NOT NULL,
+  `url` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `filename` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `original_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `mime` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `uploaded_by` tinyint UNSIGNED DEFAULT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -679,7 +868,7 @@ CREATE TABLE `jwt_api_audit_log` (
 
 CREATE TABLE `log` (
   `log_id` int NOT NULL,
-  `log_type` enum('email','sms','call','other','form','status','note','court email','docs','appt','update') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `log_type` enum('email','sms','call','other','form','status','note','court email','docs','appt','update','task') COLLATE utf8mb4_general_ci NOT NULL,
   `log_date` datetime NOT NULL,
   `log_link` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_link_type` enum('contact','case','appt','bill') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -873,7 +1062,7 @@ CREATE TABLE `ringcentral_temp` (
 
 CREATE TABLE `scheduled_jobs` (
   `id` bigint NOT NULL,
-  `type` enum('one_time','recurring','workflow_resume','sequence_step') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `type` enum('one_time','recurring','workflow_resume','sequence_step','hook_retry') COLLATE utf8mb4_general_ci NOT NULL,
   `scheduled_time` datetime NOT NULL,
   `status` enum('pending','running','completed','failed') COLLATE utf8mb4_general_ci DEFAULT 'pending',
   `name` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -1071,7 +1260,7 @@ CREATE TABLE `settings` (
 
 CREATE TABLE `tasks` (
   `task_id` int UNSIGNED NOT NULL,
-  `task_status` enum('Pending','Completed','Canceled','Due Today','Overdue') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Pending',
+  `task_status` enum('Pending','Due Today','Overdue','Completed','Canceled','Deleted') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Pending',
   `task_from` tinyint UNSIGNED NOT NULL,
   `task_to` tinyint UNSIGNED NOT NULL,
   `task_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -1083,7 +1272,8 @@ CREATE TABLE `tasks` (
   `task_title` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_desc` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_notification` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'notify task assigner upon completion?',
-  `task_last_update` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+  `task_last_update` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `task_due_job_id` bigint DEFAULT NULL
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -1261,6 +1451,7 @@ CREATE TABLE `trustees` (
 CREATE TABLE `users` (
   `username` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `user_type` tinyint(1) NOT NULL DEFAULT '1',
+  `user_real_name` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `user_name` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `user_fname` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `user_lname` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -1268,11 +1459,13 @@ CREATE TABLE `users` (
   `user_auth` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `user` tinyint NOT NULL,
   `email` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `default_phone` char(10) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `default_email` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `phone` char(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `allow_sms` tinyint(1) NOT NULL DEFAULT '0',
   `password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `ringcentral` tinyint(1) NOT NULL,
-  `task_remind_freq` set('Sunday','Monday','Tuesday','Wednesday','Thursday','Friday') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `task_remind_freq` set('Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `password_hash` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `reset_token` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `reset_expires` datetime DEFAULT NULL,
@@ -1373,16 +1566,18 @@ ALTER TABLE `campaigns`
   ADD PRIMARY KEY (`campaign_id`);
 
 --
+-- Indexes for table `campaign_contacts`
+--
+ALTER TABLE `campaign_contacts`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_campaign_contact` (`campaign_id`,`contact_id`),
+  ADD KEY `idx_contact_campaigns` (`contact_id`);
+
+--
 -- Indexes for table `campaign_results`
 --
 ALTER TABLE `campaign_results`
   ADD PRIMARY KEY (`result_id`);
-
---
--- Indexes for table `camp_temp`
---
-ALTER TABLE `camp_temp`
-  ADD PRIMARY KEY (`campaign_id`);
 
 --
 -- Indexes for table `cases`
@@ -1416,7 +1611,8 @@ ALTER TABLE `checkitems1`
 --
 ALTER TABLE `checklists`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `link` (`link`);
+  ADD UNIQUE KEY `link` (`link`),
+  ADD KEY `idx_link` (`link_type`,`link`);
 
 --
 -- Indexes for table `checklists1`
@@ -1446,6 +1642,12 @@ ALTER TABLE `court_emails2`
   ADD UNIQUE KEY `subject` (`subject`);
 
 --
+-- Indexes for table `credentials`
+--
+ALTER TABLE `credentials`
+  ADD PRIMARY KEY (`id`);
+
+--
 -- Indexes for table `default`
 --
 ALTER TABLE `default`
@@ -1455,7 +1657,8 @@ ALTER TABLE `default`
 -- Indexes for table `email_credentials`
 --
 ALTER TABLE `email_credentials`
-  ADD PRIMARY KEY (`email`);
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `idx_email` (`email`);
 
 --
 -- Indexes for table `email_log`
@@ -1466,10 +1669,77 @@ ALTER TABLE `email_log`
   ADD KEY `idx_message_id` (`message_id`);
 
 --
+-- Indexes for table `feature_requests`
+--
+ALTER TABLE `feature_requests`
+  ADD PRIMARY KEY (`id`);
+
+--
+-- Indexes for table `feature_request_comments`
+--
+ALTER TABLE `feature_request_comments`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `request_id` (`request_id`),
+  ADD KEY `parent_comment_id` (`parent_comment_id`);
+
+--
+-- Indexes for table `feature_request_votes`
+--
+ALTER TABLE `feature_request_votes`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_vote` (`request_id`,`user_id`);
+
+--
+-- Indexes for table `form_submissions`
+--
+ALTER TABLE `form_submissions`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `idx_draft_unique` (`draft_key`),
+  ADD KEY `idx_form_entity` (`form_key`,`link_type`,`link_id`,`status`),
+  ADD KEY `idx_updated` (`updated_at`);
+
+--
 -- Indexes for table `holidays`
 --
 ALTER TABLE `holidays`
   ADD PRIMARY KEY (`holiday_id`);
+
+--
+-- Indexes for table `hooks`
+--
+ALTER TABLE `hooks`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_slug` (`slug`);
+
+--
+-- Indexes for table `hook_delivery_logs`
+--
+ALTER TABLE `hook_delivery_logs`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_exec` (`execution_id`);
+
+--
+-- Indexes for table `hook_executions`
+--
+ALTER TABLE `hook_executions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_hook_created` (`hook_id`,`created_at`),
+  ADD KEY `idx_status` (`status`);
+
+--
+-- Indexes for table `hook_targets`
+--
+ALTER TABLE `hook_targets`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_hook_position` (`hook_id`,`position`),
+  ADD KEY `fk_hook_targets_cred` (`credential_id`);
+
+--
+-- Indexes for table `image_library`
+--
+ALTER TABLE `image_library`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_url` (`url`(400));
 
 --
 -- Indexes for table `job_results`
@@ -1705,16 +1975,16 @@ ALTER TABLE `campaigns`
   MODIFY `campaign_id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `campaign_contacts`
+--
+ALTER TABLE `campaign_contacts`
+  MODIFY `id` int UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `campaign_results`
 --
 ALTER TABLE `campaign_results`
   MODIFY `result_id` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT for table `camp_temp`
---
-ALTER TABLE `camp_temp`
-  MODIFY `campaign_id` int NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `case_relate`
@@ -1759,10 +2029,22 @@ ALTER TABLE `court_emails2`
   MODIFY `id` int UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `credentials`
+--
+ALTER TABLE `credentials`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `default`
 --
 ALTER TABLE `default`
   MODIFY `default_id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `email_credentials`
+--
+ALTER TABLE `email_credentials`
+  MODIFY `id` int UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `email_log`
@@ -1771,10 +2053,64 @@ ALTER TABLE `email_log`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `feature_requests`
+--
+ALTER TABLE `feature_requests`
+  MODIFY `id` int UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `feature_request_comments`
+--
+ALTER TABLE `feature_request_comments`
+  MODIFY `id` int UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `feature_request_votes`
+--
+ALTER TABLE `feature_request_votes`
+  MODIFY `id` int UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `form_submissions`
+--
+ALTER TABLE `form_submissions`
+  MODIFY `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `holidays`
 --
 ALTER TABLE `holidays`
   MODIFY `holiday_id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `hooks`
+--
+ALTER TABLE `hooks`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `hook_delivery_logs`
+--
+ALTER TABLE `hook_delivery_logs`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `hook_executions`
+--
+ALTER TABLE `hook_executions`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `hook_targets`
+--
+ALTER TABLE `hook_targets`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `image_library`
+--
+ALTER TABLE `image_library`
+  MODIFY `id` int UNSIGNED NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `job_results`
@@ -1967,10 +2303,43 @@ ALTER TABLE `workflow_steps`
 --
 
 --
+-- Constraints for table `campaign_contacts`
+--
+ALTER TABLE `campaign_contacts`
+  ADD CONSTRAINT `fk_cc_campaign` FOREIGN KEY (`campaign_id`) REFERENCES `campaigns` (`campaign_id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_cc_contact` FOREIGN KEY (`contact_id`) REFERENCES `contacts` (`contact_id`) ON DELETE CASCADE;
+
+--
 -- Constraints for table `checkitems`
 --
 ALTER TABLE `checkitems`
   ADD CONSTRAINT `checkitems_ibfk_1` FOREIGN KEY (`checklist_id`) REFERENCES `checklists` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `feature_request_comments`
+--
+ALTER TABLE `feature_request_comments`
+  ADD CONSTRAINT `feature_request_comments_ibfk_1` FOREIGN KEY (`request_id`) REFERENCES `feature_requests` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `feature_request_comments_ibfk_2` FOREIGN KEY (`parent_comment_id`) REFERENCES `feature_request_comments` (`id`) ON DELETE SET NULL;
+
+--
+-- Constraints for table `feature_request_votes`
+--
+ALTER TABLE `feature_request_votes`
+  ADD CONSTRAINT `feature_request_votes_ibfk_1` FOREIGN KEY (`request_id`) REFERENCES `feature_requests` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `hook_delivery_logs`
+--
+ALTER TABLE `hook_delivery_logs`
+  ADD CONSTRAINT `fk_delivery_execution` FOREIGN KEY (`execution_id`) REFERENCES `hook_executions` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `hook_targets`
+--
+ALTER TABLE `hook_targets`
+  ADD CONSTRAINT `fk_hook_targets_cred` FOREIGN KEY (`credential_id`) REFERENCES `credentials` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_hook_targets_hook` FOREIGN KEY (`hook_id`) REFERENCES `hooks` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `sequence_enrollments`
