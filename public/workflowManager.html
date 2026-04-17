@@ -1475,40 +1475,118 @@ function jobCardHTML(job) {
 }
 
 async function jobNew() {
+  const fnOpts = (FUNCTIONS.workflow.length?FUNCTIONS.workflow:['noop']).map(f=>`<option value="${f}">${f}</option>`).join('');
   const{value:vals}=await Swal.fire({
     title:'New Scheduled Job',
     html:`
-      <select id="sj-type" class="swal2-select" style="width:100%;margin-bottom:8px">
-        <option value="one_time">One-time</option><option value="recurring">Recurring</option>
-      </select>
-      <select id="sj-job-type" class="swal2-select" style="width:100%;margin-bottom:8px">
-        <option value="webhook">Webhook</option>
-        <option value="internal_function">Internal Function</option>
-        <option value="custom_code">Custom Code</option>
-      </select>
-      <input id="sj-name" class="swal2-input" placeholder="Name (optional)">
-      <input id="sj-delay" class="swal2-input" placeholder='Delay e.g. "10m", "2h", "1d"'>
-      <input id="sj-url" class="swal2-input" placeholder="Webhook URL (if webhook)">
-      <input id="sj-fn" class="swal2-input" placeholder="Function name (if internal_function)">
-      <input id="sj-cron" class="swal2-input" placeholder='Cron rule (if recurring) e.g. "0 9 * * 1-5"'>
-      <input id="sj-max-exec" class="swal2-input" type="number" placeholder="Max executions (optional, recurring only)">
-      <input id="sj-expires" class="swal2-input" type="datetime-local" placeholder="Expires at (optional, recurring only)">`,
-    showCancelButton:true,confirmButtonText:'Create',width:520,
+      <style>
+        .sj-form{text-align:left;font-size:13px}
+        .sj-field{margin-bottom:12px}
+        .sj-label{display:block;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+        .sj-row{display:flex;gap:10px}
+        .sj-row>.sj-field{flex:1;margin-bottom:12px}
+        .sj-note{font-size:11px;color:#94a3b8;margin-top:3px}
+        .sj-el{display:block;width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;color:#1e293b;background:#fff;outline:none;box-sizing:border-box;height:36px}
+        .sj-el:focus{border-color:#4f8ef7;box-shadow:0 0 0 3px rgba(79,142,247,.12)}
+        select.sj-el{cursor:pointer}
+        textarea.sj-el{height:auto;min-height:64px;resize:vertical;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.5}
+        .sj-divider{border:none;border-top:1px solid #e5e7eb;margin:14px 0 12px}
+        .sj-readonly{background:#f8fafc;color:#475569;padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;height:36px;display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      </style>
+      <div class="sj-form">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Schedule Type</span>
+            <select id="sj-type" class="sj-el" onchange="sjToggleFields()">
+              <option value="one_time">One-time</option><option value="recurring">Recurring</option>
+            </select></div>
+          <div class="sj-field"><span class="sj-label">Job Type</span>
+            <select id="sj-job-type" class="sj-el" onchange="sjToggleFields()">
+              <option value="internal_function">Internal Function</option>
+              <option value="webhook">Webhook</option>
+              <option value="custom_code">Custom Code</option>
+            </select></div>
+        </div>
+        <div class="sj-field"><span class="sj-label">Name</span>
+          <input id="sj-name" class="sj-el" placeholder="e.g. Daily digest, Reminder SMS"></div>
+        <hr class="sj-divider">
+        <div id="sj-fn-wrap" class="sj-field"><span class="sj-label">Function</span>
+          <select id="sj-fn" class="sj-el">${fnOpts}</select></div>
+        <div id="sj-params-wrap" class="sj-field"><span class="sj-label">Params (JSON)</span>
+          <textarea id="sj-params" class="sj-el" placeholder='{ "from": "2485592400", "to": "...", "message": "..." }'>{}</textarea></div>
+        <div id="sj-url-wrap" class="sj-field" style="display:none"><span class="sj-label">Webhook URL</span>
+          <input id="sj-url" class="sj-el" placeholder="https://..."></div>
+        <div id="sj-method-wrap" class="sj-field" style="display:none"><span class="sj-label">HTTP Method</span>
+          <select id="sj-method" class="sj-el"><option>GET</option><option selected>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></div>
+        <div id="sj-code-wrap" class="sj-field" style="display:none"><span class="sj-label">Code</span>
+          <textarea id="sj-code" class="sj-el" style="min-height:80px" placeholder="const result = input.x + input.y; result;"></textarea></div>
+        <hr class="sj-divider">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Delay from now</span>
+            <input id="sj-delay" class="sj-el" placeholder='e.g. 10m, 2h, 1d'>
+            <div class="sj-note">Or set an exact time →</div></div>
+          <div class="sj-field"><span class="sj-label">Scheduled Time (UTC)</span>
+            <input id="sj-time" class="sj-el" type="datetime-local">
+            <div class="sj-note">Firm local = UTC−4 / UTC−5</div></div>
+        </div>
+        <div id="sj-recurring-fields" style="display:none">
+          <div class="sj-field"><span class="sj-label">Cron Rule</span>
+            <input id="sj-cron" class="sj-el" placeholder='e.g. 0 9 * * 1-5 (weekdays 9am UTC)'>
+            <div class="sj-note">minute hour day month weekday</div></div>
+          <div class="sj-row">
+            <div class="sj-field"><span class="sj-label">Max Executions</span>
+              <input id="sj-max-exec" class="sj-el" type="number" min="1" placeholder="unlimited"></div>
+            <div class="sj-field"><span class="sj-label">Expires At (UTC)</span>
+              <input id="sj-expires" class="sj-el" type="datetime-local"></div>
+          </div>
+        </div>
+        <hr class="sj-divider">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Max Attempts</span>
+            <input id="sj-max-att" class="sj-el" type="number" min="1" value="3"></div>
+          <div class="sj-field"><span class="sj-label">Backoff Seconds</span>
+            <input id="sj-backoff" class="sj-el" type="number" min="0" value="300"></div>
+        </div>
+      </div>`,
+    showCancelButton:true,confirmButtonText:'Create',width:560,
+    didOpen:()=>sjToggleFields(),
     preConfirm:()=>{
       const type=document.getElementById('sj-type').value;
       const job_type=document.getElementById('sj-job-type').value;
       const name=document.getElementById('sj-name').value.trim();
       const delay=document.getElementById('sj-delay').value.trim();
-      const url=document.getElementById('sj-url').value.trim();
-      const fn=document.getElementById('sj-fn').value.trim();
-      const cron=document.getElementById('sj-cron').value.trim();
-      if(job_type==='webhook'&&!url){Swal.showValidationMessage('URL is required for webhook');return;}
-      if(job_type==='internal_function'&&!fn){Swal.showValidationMessage('Function name is required');return;}
-      const maxExec=document.getElementById('sj-max-exec').value;
-      const expires=document.getElementById('sj-expires').value;
-      return{type,job_type,name,delay,url,function_name:fn,recurrence_rule:cron,params:{},
-        ...(maxExec&&{max_executions:parseInt(maxExec)}),
-        ...(expires&&{expires_at:new Date(expires).toISOString()})};
+      const scheduledTime=document.getElementById('sj-time').value;
+
+      // Validation
+      if(job_type==='webhook'&&!document.getElementById('sj-url').value.trim()){Swal.showValidationMessage('URL is required for webhook');return false;}
+      if(job_type==='custom_code'&&!document.getElementById('sj-code').value.trim()){Swal.showValidationMessage('Code is required');return false;}
+
+      // Build payload
+      const payload = { type, job_type, max_attempts:parseInt(document.getElementById('sj-max-att').value)||3, backoff_seconds:parseInt(document.getElementById('sj-backoff').value)||300 };
+      if(name) payload.name = name;
+      if(delay) payload.delay = delay;
+      if(scheduledTime) payload.scheduled_time = new Date(scheduledTime+'Z').toISOString();
+
+      if(job_type==='internal_function') {
+        payload.function_name = document.getElementById('sj-fn').value;
+        const p = document.getElementById('sj-params').value.trim();
+        if(p) { try { payload.params = JSON.parse(p); } catch { Swal.showValidationMessage('Params is not valid JSON'); return false; } }
+      } else if(job_type==='webhook') {
+        payload.url = document.getElementById('sj-url').value.trim();
+        payload.method = document.getElementById('sj-method').value;
+      } else if(job_type==='custom_code') {
+        payload.code = document.getElementById('sj-code').value;
+      }
+
+      if(type==='recurring') {
+        const cron=document.getElementById('sj-cron').value.trim();
+        if(!cron){Swal.showValidationMessage('Cron rule is required for recurring jobs');return false;}
+        payload.recurrence_rule = cron;
+        const maxExec=document.getElementById('sj-max-exec').value;
+        const expires=document.getElementById('sj-expires').value;
+        if(maxExec) payload.max_executions = parseInt(maxExec);
+        if(expires) payload.expires_at = new Date(expires+'Z').toISOString();
+      }
+      return payload;
     }
   });
   if(!vals)return;
@@ -1516,28 +1594,82 @@ async function jobNew() {
   catch(e){Swal.fire('Error',e.message,'error');}
 }
 
+function sjToggleFields() {
+  const jobType = document.getElementById('sj-job-type')?.value||'internal_function';
+  const schedType = document.getElementById('sj-type')?.value||'one_time';
+  const show = (id,v) => { const el=document.getElementById(id); if(el) el.style.display=v?'':'none'; };
+  show('sj-fn-wrap', jobType==='internal_function');
+  show('sj-params-wrap', jobType==='internal_function');
+  show('sj-url-wrap', jobType==='webhook');
+  show('sj-method-wrap', jobType==='webhook');
+  show('sj-code-wrap', jobType==='custom_code');
+  show('sj-recurring-fields', schedType==='recurring');
+}
+
 async function jobEdit(id) {
   const data=await api(`/scheduled-jobs/${id}`);
+  const jobData = typeof data.data==='string' ? JSON.parse(data.data||'{}') : (data.data||{});
+  const jobType = jobData.type || data.job_type || '—';
+  const fnName = jobData.function_name||'';
+  const jobUrl = jobData.url||'';
+
   const{value:vals}=await Swal.fire({
     title:`Edit Job #${id}`,
     html:`
-      <input id="sje-name" class="swal2-input" placeholder="Name" value="${esc(data.name||'')}">
-      <input id="sje-time" class="swal2-input" type="datetime-local" value="${data.scheduled_time?new Date(data.scheduled_time).toISOString().slice(0,16):''}">
-      <input id="sje-cron" class="swal2-input" placeholder="Cron rule (recurring only)" value="${esc(data.recurrence_rule||'')}">
-      <input id="sje-max" class="swal2-input" type="number" placeholder="Max attempts" value="${data.max_attempts||3}">
-      <input id="sje-backoff" class="swal2-input" type="number" placeholder="Backoff seconds" value="${data.backoff_seconds||300}">
-      <input id="sje-max-exec" class="swal2-input" type="number" placeholder="Max executions (recurring)" value="${data.max_executions||''}">
-      <input id="sje-expires" class="swal2-input" type="datetime-local" placeholder="Expires at (recurring)" value="${data.expires_at?new Date(data.expires_at).toISOString().slice(0,16):''}">`,
-    showCancelButton:true,confirmButtonText:'Save',
-    preConfirm:()=>({
-      name:document.getElementById('sje-name').value.trim()||undefined,
-      scheduled_time:document.getElementById('sje-time').value||undefined,
-      recurrence_rule:document.getElementById('sje-cron').value.trim()||undefined,
-      max_attempts:parseInt(document.getElementById('sje-max').value)||undefined,
-      backoff_seconds:parseInt(document.getElementById('sje-backoff').value)||undefined,
-      max_executions:document.getElementById('sje-max-exec').value?parseInt(document.getElementById('sje-max-exec').value):undefined,
-      expires_at:document.getElementById('sje-expires').value?new Date(document.getElementById('sje-expires').value).toISOString():undefined
-    })
+      <div class="sj-form">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Type</span>
+            <div class="sj-readonly">${esc(data.type)} · ${esc(jobType)}</div></div>
+          <div class="sj-field"><span class="sj-label">${jobType==='internal_function'?'Function':jobType==='webhook'?'URL':'Details'}</span>
+            <div class="sj-readonly">${esc(fnName||jobUrl||'—')}</div></div>
+        </div>
+        <div class="sj-field"><span class="sj-label">Name</span>
+          <input id="sje-name" class="sj-el" value="${esc(data.name||'')}"></div>
+        <hr class="sj-divider">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Scheduled Time (UTC)</span>
+            <input id="sje-time" class="sj-el" type="datetime-local" value="${data.scheduled_time?new Date(data.scheduled_time).toISOString().slice(0,16):''}">
+            <div class="sj-note">Firm local = UTC−4 / UTC−5</div></div>
+          <div class="sj-field"><span class="sj-label">Status</span>
+            <div class="sj-readonly">${esc(data.status)} · ${data.execution_count||0} runs · ${data.attempts||0} attempts</div></div>
+        </div>
+        ${data.type==='recurring'?`
+        <div class="sj-field"><span class="sj-label">Cron Rule</span>
+          <input id="sje-cron" class="sj-el" value="${esc(data.recurrence_rule||'')}">
+          <div class="sj-note">minute hour day month weekday</div></div>
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Max Executions</span>
+            <input id="sje-max-exec" class="sj-el" type="number" min="1" placeholder="unlimited" value="${data.max_executions||''}"></div>
+          <div class="sj-field"><span class="sj-label">Expires At (UTC)</span>
+            <input id="sje-expires" class="sj-el" type="datetime-local" value="${data.expires_at?new Date(data.expires_at).toISOString().slice(0,16):''}"></div>
+        </div>`:''}
+        <hr class="sj-divider">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Max Attempts</span>
+            <input id="sje-max" class="sj-el" type="number" min="1" value="${data.max_attempts||3}"></div>
+          <div class="sj-field"><span class="sj-label">Backoff Seconds</span>
+            <input id="sje-backoff" class="sj-el" type="number" min="0" value="${data.backoff_seconds||300}"></div>
+        </div>
+      </div>`,
+    showCancelButton:true,confirmButtonText:'Save',width:560,
+    preConfirm:()=>{
+      const payload = {};
+      const name=document.getElementById('sje-name').value.trim();
+      const time=document.getElementById('sje-time').value;
+      if(name!==data.name) payload.name = name||undefined;
+      if(time) payload.scheduled_time = new Date(time+'Z').toISOString();
+      payload.max_attempts = parseInt(document.getElementById('sje-max').value)||3;
+      payload.backoff_seconds = parseInt(document.getElementById('sje-backoff').value)||300;
+      if(data.type==='recurring') {
+        const cron=document.getElementById('sje-cron')?.value.trim();
+        if(cron) payload.recurrence_rule = cron;
+        const maxExec=document.getElementById('sje-max-exec')?.value;
+        const expires=document.getElementById('sje-expires')?.value;
+        payload.max_executions = maxExec?parseInt(maxExec):undefined;
+        payload.expires_at = expires?new Date(expires+'Z').toISOString():undefined;
+      }
+      return payload;
+    }
   });
   if(!vals)return;
   try{await api(`/scheduled-jobs/${id}`,'PATCH',vals);await loadJobs();}catch(e){Swal.fire('Error',e.message,'error');}
@@ -1557,10 +1689,41 @@ async function jobDelete(id) {
 async function jobView(id) {
   try {
     const data=await api(`/scheduled-jobs/${id}?history=true`);
-    let body=`<strong>${esc(data.name||'Job #'+id)}</strong><br>Status: ${data.status} · Runs: ${data.execution_count}<br><br>`;
-    if(data.latest_execution) body+=`<strong>Latest:</strong> ${data.latest_execution.status} in ${data.latest_execution.duration_ms}ms<br>`;
-    if(data.history?.length) body+=`<br><strong>History (${data.history.length} entries)</strong><br>${data.history.slice(0,5).map(h=>`#${h.execution_number} attempt ${h.attempt}: ${h.status} ${h.error_message?'— '+h.error_message:''}`).join('<br>')}`;
-    Swal.fire({title:`Job #${id}`,html:body,width:520});
+    const jobData = typeof data.data==='string' ? JSON.parse(data.data||'{}') : (data.data||{});
+    const jobType = jobData.type||'—';
+    const when = data.scheduled_time ? new Date(data.scheduled_time).toLocaleString()+' (UTC)' : '—';
+
+    let config = '';
+    if(jobType==='internal_function') config=`<strong>Function:</strong> ${esc(jobData.function_name||'—')}<br><strong>Params:</strong> <pre style="background:#f1f5f9;padding:6px 8px;border-radius:4px;font-size:11px;margin:4px 0;max-height:120px;overflow:auto">${esc(JSON.stringify(jobData.params||{},null,2))}</pre>`;
+    else if(jobType==='webhook') config=`<strong>URL:</strong> ${esc(jobData.url||'—')}<br><strong>Method:</strong> ${esc(jobData.method||'GET')}`;
+    else if(jobType==='custom_code') config=`<strong>Code:</strong> <pre style="background:#f1f5f9;padding:6px 8px;border-radius:4px;font-size:11px;margin:4px 0;max-height:120px;overflow:auto">${esc((jobData.code||'').slice(0,500))}</pre>`;
+
+    let body=`<div style="text-align:left;font-size:13px;line-height:1.7">
+      <strong>Name:</strong> ${esc(data.name||'(unnamed)')}<br>
+      <strong>Type:</strong> ${esc(data.type)} · ${esc(jobType)}<br>
+      <strong>Status:</strong> ${esc(data.status)}<br>
+      <strong>Scheduled:</strong> ${esc(when)}<br>
+      <strong>Runs:</strong> ${data.execution_count||0}${data.max_executions?' / '+data.max_executions:''}
+      · <strong>Attempts:</strong> ${data.attempts||0} / ${data.max_attempts||3}<br>
+      ${data.recurrence_rule?`<strong>Cron:</strong> ${esc(data.recurrence_rule)}<br>`:''}
+      ${data.expires_at?`<strong>Expires:</strong> ${new Date(data.expires_at).toLocaleString()} (UTC)<br>`:''}
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:8px 0">
+      ${config}`;
+
+    if(data.latest_execution) {
+      body+=`<hr style="border:none;border-top:1px solid #e2e8f0;margin:8px 0">
+      <strong>Latest Result:</strong> ${data.latest_execution.status} in ${data.latest_execution.duration_ms}ms`;
+      if(data.latest_execution.error_message) body+=`<br><span style="color:#ef4444">${esc(data.latest_execution.error_message)}</span>`;
+    }
+
+    if(data.history?.length) {
+      body+=`<hr style="border:none;border-top:1px solid #e2e8f0;margin:8px 0"><strong>History (${data.history.length})</strong><div style="font-size:12px;margin-top:4px;max-height:150px;overflow:auto">`;
+      body+=data.history.slice(0,10).map(h=>`<div style="padding:2px 0;border-bottom:1px solid #f1f5f9">#${h.execution_number}.${h.attempt} — <span style="color:${h.status==='success'?'#16a34a':'#ef4444'}">${h.status}</span> ${h.duration_ms}ms${h.error_message?' — '+esc(h.error_message):''}</div>`).join('');
+      body+=`</div>`;
+    }
+    body+=`</div>`;
+
+    Swal.fire({title:`Job #${id}`,html:body,width:560});
   }catch(e){Swal.fire('Error',e.message,'error');}
 }
 
