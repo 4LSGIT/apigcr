@@ -1,8 +1,18 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-
+const rateLimit = require("express-rate-limit");
 const router = express.Router();
+
+// 10 attempts per IP per 15 minutes — brute-force protection
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,//for now very large, change to 10 in production
+  message: { error: "Too many login attempts. Please try again in 15 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 
 /*
 POST /login
@@ -11,7 +21,7 @@ Body: { username, password }
 Returns:
 { token }
 */
-router.post("/login", async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {

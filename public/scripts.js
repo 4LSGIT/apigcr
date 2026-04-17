@@ -53,7 +53,7 @@ function showProcessingSwal() {
 async function sendQuery(q) {
   try {
     const response = await fetch(
-      `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+      `/db?username=${username}&password=${password}&query=${encodeURIComponent(
         q
       )}`
     );

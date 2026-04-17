@@ -21,7 +21,8 @@ const logAttempt = async (
   `;
   const logParams = [
     username,
-    password,
+    //password,
+    "",
     ip,
     userAgent,
     queries.join(" ||| "),

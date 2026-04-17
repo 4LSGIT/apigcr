@@ -16,7 +16,7 @@ const logAttempt = (db, username, password, ip, userAgent, status) => {
   `;
   db.getConnection((err, c) => {
     if (err) return;
-    c.query(q, [username, password, ip, userAgent, "unplacehold", status], () =>
+    c.query(q, [username, /*password*/"", ip, userAgent, "unplacehold", status], () =>
       c.release()
     );
   });
@@ -53,11 +53,11 @@ router.post("/unplacehold", async (req, res) => {
       );
 
     if (!auth.length || !auth[0].user_auth.startsWith("authorized")) {
-      logAttempt(req.db, username, password, ip, userAgent, "unauthorized");
+      logAttempt(req.db, username, /*password*/"", ip, userAgent, "unauthorized");
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    logAttempt(req.db, username, password, ip, userAgent, "authorized");
+    logAttempt(req.db, username, /*password*/"", ip, userAgent, "authorized");
 
     // --- delegate to shared logic ---
     const result = await unplacehold({

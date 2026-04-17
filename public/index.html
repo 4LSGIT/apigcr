@@ -240,11 +240,6 @@
           AND c.case_type LIKE "${type}" AND c.case_stage LIKE "${stage}" AND c.case_status LIKE "${status}" 
           ORDER BY ${order} ${order2}
           `;
-      /*fetch(
-        `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          q
-        )}`
-      )*/
       fetch(
         `/db?username=${username}&password=${password}&query=${encodeURIComponent(
           q
@@ -1777,7 +1772,6 @@
     userArray = "";
     url =
       "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc"; //FIR - DB
-    //url = "https://svpcac-ztvzsuxura-ue.a.run.app/proxy-pabbly"
     limit = 100;
     users = "";
     checklists = [];

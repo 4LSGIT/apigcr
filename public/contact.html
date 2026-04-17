@@ -222,7 +222,7 @@ function tabLogGet(offset) {
       log.log_link IN (SELECT case_id FROM cases WHERE case_id IN (SELECT case_relate_case_id FROM case_relate WHERE case_relate_client_id = '${clientID}'))
       AND (log_type = '${type}') AND (log_date = '${time}') AND (log_data LIKE '%${query}%' OR log_from LIKE '%${query}%' OR log_to LIKE '%${query}%' OR log_subject LIKE '%${query}%' OR log_form_id LIKE "%${query}%" OR log_link LIKE "%${query}%")
      `
-  fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
+  fetch(`/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`)
     .then(response => response.json())
     .then(data => {
     console.log(data)
@@ -550,7 +550,7 @@ processing()
     appt_type AS type, appt_length AS length, appt_note AS note, appt_status AS status
     FROM appts WHERE appt_client_id = "${clientID}" ORDER BY raw_date DESC`
   query = encodeURIComponent(query)
-fetch(`https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${query}`)
+fetch(`/db?username=${username}&password=${password}&query=${query}`)
   .then(response => response.json())
   .then(data => {
   console.log(data)

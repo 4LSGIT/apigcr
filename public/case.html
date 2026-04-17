@@ -711,7 +711,7 @@
       AND (log_type = '${type}') AND (log_date = '${time}') AND (log_data LIKE '%${query}%' OR log_from LIKE '%${query}%' OR log_to LIKE '%${query}%' OR log_subject LIKE '%${query}%' OR log_form_id LIKE "%${query}%" OR log_link LIKE "%${query}%")
      `;
         fetch(
-          `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+          `/db?username=${username}&password=${password}&query=${encodeURIComponent(
             q
           )}`
         )
@@ -1162,7 +1162,7 @@ window.firmData = P.firmData;
       LEFT JOIN cases ON appts.appt_case_id = cases.case_id OR appts.appt_case_id = cases.case_number OR appts.appt_case_id = cases.case_number_full
       WHERE appt_case_id = "${caseID}" ORDER BY appts.appt_date DESC`;
     fetch(
-      `https://svpcac-ztvzsuxura-ue.a.run.app/db?username=${username}&password=${password}&query=${encodeURIComponent(
+      `/db?username=${username}&password=${password}&query=${encodeURIComponent(
         q
       )}`
     )

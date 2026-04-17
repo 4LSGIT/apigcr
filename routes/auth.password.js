@@ -22,6 +22,7 @@
 const express = require("express");
 const crypto = require("crypto");
 const bcrypt = require("bcrypt");
+const rateLimit = require("express-rate-limit");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const emailService = require("../services/emailService");
@@ -32,11 +33,20 @@ const FROM_EMAIL = process.env.AUTO_EMAIL || "automations@4lsg.com";
 const IT_EMAIL = process.env.IT_EMAIL || "IT@4lsg.com";
 const BASE_URL = process.env.APP_URL || "https://app.4lsg.com";
 
+// 5 requests per IP per 15 minutes — prevent reset-email spam and token brute-forcing
+const resetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  message: { error: "Too many requests. Please try again in 15 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // ─────────────────────────────────────────
 // POST /auth/forgot-password  (public)
 // Body: { identifier }  — username or email
 // ─────────────────────────────────────────
-router.post("/auth/forgot-password", async (req, res) => {
+router.post("/auth/forgot-password", resetLimiter, async (req, res) => {
   const { identifier } = req.body;
 
   if (!identifier) {
@@ -111,7 +121,7 @@ router.post("/auth/forgot-password", async (req, res) => {
 // POST /auth/reset-password  (public)
 // Body: { token, new_password }
 // ─────────────────────────────────────────
-router.post("/auth/reset-password", async (req, res) => {
+router.post("/auth/reset-password", resetLimiter, async (req, res) => {
   const { token, new_password } = req.body;
 
   if (!token || !new_password) {

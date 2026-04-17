@@ -2,19 +2,6 @@ const express = require("express");
 const router = express.Router();
 const path = require("path");
 
-router.get('/delay', (req, res) => {
-  const { value, delay, callback} = req.query
-    // Do something
-    console.log('Received GET request at /');
-    let v = parseInt(value, 10) + 1;
-    res.json({message: "success", value:v})
-    setTimeout(() => {
-        fetch(`${callback}?message=delayed&value=${delay} ms`);
-    }, delay); 
-});
-
-
-
 
 function dateNow(){
 const now = new Date();
