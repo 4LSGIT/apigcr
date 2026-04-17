@@ -33,8 +33,8 @@
     <button style="height: 30px" onclick="openMainTab('tabAdmin')" id="adminButton">
       <i class="fa-solid fa-crown"></i> Admin Tab
     </button>
-    <button style="height: 30px" onclick="openMainTab('tabSettings')" id="settingsButton">
-      <i class="fa-solid fa-gear"></i> Settings
+    <button style="height: 30px" onclick="openMainTab('tabMore')" id="moreButton">
+      <i class="fa-solid fa-gear"></i> More Features
     </button>
     <button style="height: 30px" onclick="Swal.fire({ title: 'Log Out?',html: '<p>Are you sure you want to log out?</p><p>You will lose all unsaved data in all the open files!</p>',
             icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, goodbye!',cancelButtonText: 'No, cancel',
@@ -1454,35 +1454,35 @@ function showAppt(apptID) {
   </script>
 
 
-<div id="tabSettings" class="tab-main">
-  <h2>Settings</h2>
+<div id="tabMore" class="tab-main">
+  <h2>More Features</h2>
 
   <button class="big-button" data-target="manualsDiv">Manuals</button>
-  <button class="big-button" data-target="workflowsDiv">Workflows</button>
+  <button class="big-button" data-target="automationsDiv">Automations</button>
   <button class="big-button" data-target="featureRequestsDiv">Feature Requests</button>
-  <button class="big-button" data-target="hooksDiv">YisraHooks</button>
+  <!--<button class="big-button" data-target="hooksDiv">YisraHooks</button>-->
 
-  <div id="manualsDiv" class="settings-panel" style="display:none">
+  <div id="manualsDiv" class="more-panel" style="display:none">
     <iframe data-src="/manuals.html"></iframe>
   </div>
-  <div id="workflowsDiv" class="settings-panel" style="display:none">
-    <iframe data-src="/workflowManager.html"></iframe>
+  <div id="automationsDiv" class="more-panel" style="display:none">
+    <iframe data-src="/AutomationManager.html"></iframe>
   </div>
-  <div id="featureRequestsDiv" class="settings-panel" style="display:none">
+  <div id="featureRequestsDiv" class="more-panel" style="display:none">
     <iframe data-src="/featureRequests.html"></iframe>
   </div>
-  <div id="hooksDiv" class="settings-panel" style="display:none">
+  <!--<div id="hooksDiv" class="more-panel" style="display:none">
     <iframe data-src="/YisraHook.html"></iframe>
-  </div>
+  </div>-->
 </div>
 <script>
-  document.querySelectorAll('#tabSettings .big-button').forEach(btn => {
+  document.querySelectorAll('#tabMore .big-button').forEach(btn => {
   btn.addEventListener('click', () => {
 
     const targetId = btn.dataset.target
     const target = document.getElementById(targetId)
 
-    const panels = document.querySelectorAll('#tabSettings .settings-panel')
+    const panels = document.querySelectorAll('#tabMore .more-panel')
 
     const wasHidden = getComputedStyle(target).display === 'none'
 
