@@ -134,6 +134,15 @@
     /* ── Panel buttons ── */
     .panel-actions { display: flex; gap: 8px; margin-top: 12px; }
 
+    /* ── Correction warning banner (shown when acting on non-Scheduled appt) ── */
+    .correction-banner {
+      background: #fff8e1; border: 1px solid #f0d878; border-left: 3px solid #e6a800;
+      border-radius: 6px; padding: 10px 12px; margin-bottom: 12px;
+      font-size: 0.84rem; color: #6d4c00; display: none;
+    }
+    .correction-banner i { color: #e6a800; margin-right: 6px; }
+    .correction-banner strong { color: #4d3500; }
+
     /* ── Notes ── */
     #noteField {
       width: 100%; border: 1px solid #d5d9de; border-radius: 6px;
@@ -228,6 +237,11 @@
   <!-- ═══ CANCEL PANEL ═══ -->
   <div class="cancel-panel" id="cancelPanel">
     <div class="appt-section-title">Cancel Appointment</div>
+    <div class="correction-banner" id="cancelCorrectionBanner">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      This appointment is currently marked <strong id="cancelCorrectionStatus"></strong>.
+      Canceling will change its status.
+    </div>
     <div class="yc-field"><textarea id="cancelNote" rows="2" placeholder="Internal note (optional)"></textarea></div>
     <div class="panel-options">
       <label><input type="checkbox" id="cancelFollowUp"> Follow-up sequence</label>
@@ -249,6 +263,11 @@
   <!-- ═══ RESCHEDULE PANEL ═══ -->
   <div class="reschedule-panel" id="reschedulePanel">
     <div class="appt-section-title">Reschedule Appointment</div>
+    <div class="correction-banner" id="rescCorrectionBanner">
+      <i class="fa-solid fa-triangle-exclamation"></i>
+      This appointment is currently marked <strong id="rescCorrectionStatus"></strong>.
+      Rescheduling will create a new appointment and mark this one as Rescheduled.
+    </div>
     <div class="yc-field">
       <label class="yc-label">New Date & Time</label>
       <input type="datetime-local" id="rescheduleDate" onchange="updateRescheduleMsg()">
@@ -350,6 +369,22 @@ function showPanel(id) {
   // Hide other panels first
   document.querySelectorAll('.cancel-panel, .reschedule-panel').forEach(p => p.style.display = 'none');
   document.getElementById(id).style.display = 'block';
+
+  // Toggle correction banner if current status is non-Scheduled
+  const isCorrection = apptData && apptData.appt_status !== 'Scheduled';
+  if (id === 'cancelPanel') {
+    const banner = document.getElementById('cancelCorrectionBanner');
+    banner.style.display = isCorrection ? 'block' : 'none';
+    if (isCorrection) {
+      document.getElementById('cancelCorrectionStatus').textContent = apptData.appt_status;
+    }
+  } else if (id === 'reschedulePanel') {
+    const banner = document.getElementById('rescCorrectionBanner');
+    banner.style.display = isCorrection ? 'block' : 'none';
+    if (isCorrection) {
+      document.getElementById('rescCorrectionStatus').textContent = apptData.appt_status;
+    }
+  }
 }
 
 // ─── LOAD ───
@@ -420,33 +455,52 @@ function renderCase() {
 
 function renderActions() {
   const bar = document.getElementById('actionBar');
-  bar.innerHTML = '';
   const s = apptData.appt_status;
 
-  if (s === 'Scheduled') {
-    bar.innerHTML = `
-      <button class="btn-attended" onclick="doAttended()"><i class="fa-solid fa-user-check"></i> Attended</button>
-      <button class="btn-noshow" onclick="doNoShow()"><i class="fa-solid fa-user-xmark"></i> No Show</button>
-      <button class="btn-cancel" onclick="showPanel('cancelPanel')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-      <button class="btn-reschedule" onclick="showPanel('reschedulePanel')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
-    `;
-  } else if (s === 'No Show') {
-    bar.innerHTML = `
-      <button class="btn-attended" onclick="doAttended()"><i class="fa-solid fa-user-check"></i> Attended</button>
-      <button class="btn-cancel" onclick="showPanel('cancelPanel')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-      <button class="btn-reschedule" onclick="showPanel('reschedulePanel')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
-    `;
-  } else if (s === 'Canceled') {
-    bar.innerHTML = `
-      <button class="btn-reschedule" onclick="showPanel('reschedulePanel')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
-    `;
+  // Always show all actions except the button matching current status.
+  // Backend blocks same-state transitions; UI omits the button for clarity.
+  const buttons = [];
+  if (s !== 'Attended') {
+    buttons.push(`<button class="btn-attended" onclick="doAttended()"><i class="fa-solid fa-user-check"></i> Attended</button>`);
   }
-  // Attended and Rescheduled: no action buttons (read-only)
+  if (s !== 'No Show') {
+    buttons.push(`<button class="btn-noshow" onclick="doNoShow()"><i class="fa-solid fa-user-xmark"></i> No Show</button>`);
+  }
+  if (s !== 'Canceled') {
+    buttons.push(`<button class="btn-cancel" onclick="showPanel('cancelPanel')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
+  }
+  // Reschedule is always shown — creates a new appt; old one becomes Rescheduled
+  if (s !== 'Rescheduled') {
+    buttons.push(`<button class="btn-reschedule" onclick="showPanel('reschedulePanel')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+  }
+
+  bar.innerHTML = buttons.join('');
+}
+
+// ─── CORRECTION WARNING ───
+
+/**
+ * Show a confirmation dialog when changing an appt's status from a non-Scheduled state.
+ * Returns true if the user confirms (or no warning needed); false if they back out.
+ */
+async function confirmCorrection(newAction) {
+  if (apptData.appt_status === 'Scheduled') return true;
+  const result = await Swal.fire({
+    title: 'Status Correction',
+    html: `This appointment is currently marked <strong>${apptData.appt_status}</strong>.<br><br>
+           Are you sure you want to change it to <strong>${newAction}</strong>?`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: `Yes, mark as ${newAction}`,
+    cancelButtonText: 'Never mind',
+  });
+  return result.isConfirmed;
 }
 
 // ─── ACTIONS ───
 
 async function doAttended() {
+  if (!(await confirmCorrection('Attended'))) return;
   try {
     const r = await P.apiSend(`/api/appts/${apptData.appt_id}/attended`, 'POST', {});
     Toast.fire({ icon: 'success', title: r.message || 'Marked Attended' });
@@ -458,6 +512,7 @@ async function doAttended() {
 }
 
 async function doNoShow() {
+  if (!(await confirmCorrection('No Show'))) return;
   const { value } = await Swal.fire({
     title: 'Mark No Show?',
     html: '<label style="font-size:0.9rem;"><input type="checkbox" id="enrollNoShow" checked> Enroll in no-show follow-up sequence</label>',

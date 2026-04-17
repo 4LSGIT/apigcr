@@ -16,6 +16,7 @@ const smsService   = require('./smsService');
 const emailService = require('./emailService');
 const pabbly       = require('./pabblyService');
 const taskService  = require('./taskService');
+const logService   = require('./logService');
 const { localToUTC, FIRM_TZ } = require('./timezoneService');
 const { DateTime } = require('luxon');
 const { advanceWorkflow } = require('../lib/workflow_engine');
@@ -32,32 +33,71 @@ function getSequenceEngine() {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Insert a log entry tied to an appointment row.
- * Builds log_data as JSON in SQL from the appt row itself.
+ * Format a DATETIME value (Date or string) as 'YYYY-MM-DD HH:MM:SS'.
+ * Matches the format MySQL produces when CONCAT-ing a DATETIME column.
  */
-async function insertApptLog(db, apptId, actingUserId, extraJson) {
-  await db.query(
-    `INSERT INTO log (log_type, log_date, log_link, log_by, log_data)
-     SELECT
-       'appt',
-       CONVERT_TZ(NOW(), @@session.time_zone, 'EST5EDT'),
-       CASE WHEN appt_case_id IS NOT NULL AND appt_case_id != ''
-            THEN appt_case_id
-            ELSE appt_client_id
-       END,
-       ?,
-       CONCAT(
-         '{',
-           '"Appt ID":"', appt_id, '",',
-           '"Appt Type":"', REPLACE(IFNULL(appt_type,''), '"', '\\\\"'), '",',
-           '"Appt Time":"', appt_date, '",',
-           ?
-         '}'
-       )
-     FROM appts
-     WHERE appt_id = ?`,
-    [actingUserId, extraJson, apptId]
+function formatApptDate(dt) {
+  if (!dt) return '';
+  if (dt instanceof Date) {
+    // mysql2 returns DATETIME as Date interpreted as UTC; toISOString preserves
+    // the YYYY-MM-DDTHH:MM:SS portion exactly as stored.
+    return dt.toISOString().slice(0, 19).replace('T', ' ');
+  }
+  return String(dt);
+}
+
+/**
+ * Insert a log entry tied to an appointment row.
+ *
+ * Delegates to logService.createLogEntry for proper JSON.stringify of log_data
+ * (avoids escape bugs when notes contain backslashes, newlines, or quotes) and
+ * for correct population of log_link_type / log_link_id columns.
+ *
+ * @param {object} db            - pool or connection (both have .query)
+ * @param {number} apptId
+ * @param {number} actingUserId
+ * @param {object} [extraFields] - additional key/value pairs to merge into log_data.
+ *                                 All values are coerced to strings for backward
+ *                                 compatibility with existing log_data consumers.
+ *                                 Keys with null/undefined values are dropped.
+ */
+async function insertApptLog(db, apptId, actingUserId, extraFields = {}) {
+  // Fetch the appt row — we need type/date/link info for the log payload.
+  const [[appt]] = await db.query(
+    'SELECT appt_client_id, appt_case_id, appt_type, appt_date FROM appts WHERE appt_id = ?',
+    [apptId]
   );
+  if (!appt) {
+    // Appt was deleted between action and log — nothing sensible to write.
+    console.warn(`[APPT SERVICE] insertApptLog: appt ${apptId} not found, skipping log`);
+    return;
+  }
+
+  // Build base fields (all stringified for backward compat with existing consumers)
+  const data = {
+    'Appt ID':   String(apptId),
+    'Appt Type': appt.appt_type || '',
+    'Appt Time': formatApptDate(appt.appt_date),
+  };
+
+  // Merge extras, dropping null/undefined and coercing everything else to string
+  for (const [key, value] of Object.entries(extraFields)) {
+    if (value === null || value === undefined) continue;
+    data[key] = String(value);
+  }
+
+  // Determine link columns
+  const hasCase = appt.appt_case_id && appt.appt_case_id !== '';
+  const linkType = hasCase ? 'case' : 'contact';
+  const linkId   = hasCase ? appt.appt_case_id : (appt.appt_client_id ?? '');
+
+  await logService.createLogEntry(db, {
+    type:      'appt',
+    link_type: linkType,
+    link_id:   linkId,
+    by:        actingUserId,
+    data,  // createLogEntry handles JSON.stringify internally
+  });
 }
 
 /**
@@ -163,29 +203,50 @@ async function createAppt(db, {
   // Compute real UTC from local firm time
   const apptDateUTC = localToUTC(new Date(appt_date));
 
-  // 1) INSERT appointment — includes both local and UTC times
-  const [result] = await db.query(
-    `INSERT INTO appts
-       (appt_client_id, appt_case_id, appt_type, appt_length,
-        appt_platform, appt_date, appt_date_utc, appt_status, appt_with,
-        appt_note, appt_create_date)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, NOW())`,
-    [contact_id, case_id, appt_type, appt_length,
-     appt_platform, appt_date, apptDateUTC, appt_with, note]
-  );
-  const apptId = result.insertId;
+  // ────────────────────────────────────────────────────────────
+  // Atomic core writes (transaction): INSERT appt + log + 341 pointer
+  // If any of these fail, we don't want the appt to exist.
+  // Everything after this runs on the pool and is fire-and-forget.
+  // ────────────────────────────────────────────────────────────
+  const conn = await db.getConnection();
+  let apptId;
+  try {
+    await conn.beginTransaction();
 
-  // 2) Log entry
-  await insertApptLog(db, apptId, actingUserId,
-    `"Status":"Created"${note ? `,"Note":"${note.replace(/"/g, '\\"')}"` : ''}`
-  );
+    // 1) INSERT appointment — includes both local and UTC times
+    const [result] = await conn.query(
+      `INSERT INTO appts
+         (appt_client_id, appt_case_id, appt_type, appt_length,
+          appt_platform, appt_date, appt_date_utc, appt_status, appt_with,
+          appt_note, appt_create_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, NOW())`,
+      [contact_id, case_id, appt_type, appt_length,
+       appt_platform, appt_date, apptDateUTC, appt_with, note]
+    );
+    apptId = result.insertId;
 
-  // 3) If 341 Meeting, update case
-  if (appt_type === '341 Meeting' && case_id) {
-    await db.query(
-      'UPDATE cases SET case_341_current = ?, `341_appt_id` = ? WHERE case_id = ?',
-      [appt_date, apptId, case_id]
-    ).catch(err => console.error('[APPT SERVICE] 341 case update failed:', err.message));
+    // 2) Log entry
+    const logExtras = { Status: 'Created' };
+    if (note) logExtras.Note = note;
+    await insertApptLog(conn, apptId, actingUserId, logExtras);
+
+    // 3) If 341 Meeting, update case pointer — MUST succeed or we roll back
+    if (appt_type === '341 Meeting' && case_id) {
+      await conn.query(
+        'UPDATE cases SET case_341_current = ?, `341_appt_id` = ? WHERE case_id = ?',
+        [appt_date, apptId, case_id]
+      );
+    }
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback().catch(rbErr =>
+      console.error('[APPT SERVICE] Rollback failed:', rbErr.message)
+    );
+    console.error('[APPT SERVICE] createAppt core writes failed:', err.message);
+    throw err;
+  } finally {
+    conn.release();
   }
 
   // 4) Cancel active no_show sequences for this contact
@@ -196,27 +257,33 @@ async function createAppt(db, {
     console.error('[APPT SERVICE] Cancel no_show sequences failed:', err.message);
   }
 
-  // 5) Confirmation SMS (immediate, if provided)
+  // 5) Confirmation SMS / email (fully non-blocking — consistent with cancelAppt)
   if ((confirm_sms || confirm_email) && confirm_message && confirm_message.trim()) {
-    const settings = await getSettings(db, ['sms_default_from', 'email_default_from']);
-    const [[contact]] = await db.query(
-      'SELECT contact_phone, contact_email FROM contacts WHERE contact_id = ?',
-      [contact_id]
-    );
+    (async () => {
+      try {
+        const settings = await getSettings(db, ['sms_default_from', 'email_default_from']);
+        const [[contact]] = await db.query(
+          'SELECT contact_phone, contact_email FROM contacts WHERE contact_id = ?',
+          [contact_id]
+        );
 
-    if (confirm_sms && contact?.contact_phone && settings.sms_default_from) {
-      smsService.sendSms(db, settings.sms_default_from, contact.contact_phone, confirm_message)
-        .catch(err => console.error('[APPT SERVICE] Confirm SMS failed:', err.message));
-    }
+        if (confirm_sms && contact?.contact_phone && settings.sms_default_from) {
+          smsService.sendSms(db, settings.sms_default_from, contact.contact_phone, confirm_message)
+            .catch(err => console.error('[APPT SERVICE] Confirm SMS failed:', err.message));
+        }
 
-    if (confirm_email && contact?.contact_email && settings.email_default_from) {
-      emailService.sendEmail(db, {
-        from:    settings.email_default_from,
-        to:      contact.contact_email,
-        subject: 'Appointment Confirmation',
-        text:    confirm_message
-      }).catch(err => console.error('[APPT SERVICE] Confirm email failed:', err.message));
-    }
+        if (confirm_email && contact?.contact_email && settings.email_default_from) {
+          emailService.sendEmail(db, {
+            from:    settings.email_default_from,
+            to:      contact.contact_email,
+            subject: 'Appointment Confirmation',
+            text:    confirm_message
+          }).catch(err => console.error('[APPT SERVICE] Confirm email failed:', err.message));
+        }
+      } catch (err) {
+        console.error('[APPT SERVICE] Confirm SMS/email settings lookup failed:', err.message);
+      }
+    })();
   }
 
   // 6) GCal create via Pabbly (fire-and-forget)
@@ -356,10 +423,13 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0 }) {
   if (!appt_id) throw new Error('markAttended requires appt_id');
 
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id FROM appts WHERE appt_id = ?',
+    'SELECT appt_id, appt_client_id, appt_status FROM appts WHERE appt_id = ?',
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
+  if (appt.appt_status === 'Attended') {
+    throw new Error('Appointment is already marked Attended');
+  }
 
   // Update status
   await db.query(
@@ -370,10 +440,11 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0 }) {
     [note ? ` ${note}` : '', appt_id]
   );
 
-  // Log
-  await insertApptLog(db, appt_id, actingUserId,
-    `"Status":"Attended"${note ? `,"Note":"${note.replace(/"/g, '\\"')}"` : ''}`
-  );
+  // Log (include From when this is a correction from a non-Scheduled state)
+  const logExtras = { Status: 'Attended' };
+  if (appt.appt_status !== 'Scheduled') logExtras.From = appt.appt_status;
+  if (note) logExtras.Note = note;
+  await insertApptLog(db, appt_id, actingUserId, logExtras);
 
   // Cancel reminder workflow (non-blocking)
   cancelApptWorkflow(db, appt_id)
@@ -408,10 +479,16 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
   if (!appt_id) throw new Error('markNoShow requires appt_id');
 
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id, appt_case_id, appt_date, appt_type, appt_with FROM appts WHERE appt_id = ?',
+    'SELECT appt_id, appt_client_id, appt_case_id, appt_date, appt_type, appt_with, appt_status FROM appts WHERE appt_id = ?',
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
+  if (appt.appt_status === 'No Show') {
+    throw new Error('Appointment is already marked No Show');
+  }
+
+  // Capture prior status before we flip it — used for the log's From field
+  const priorStatus = appt.appt_status;
 
   // Update status
   await db.query(
@@ -458,9 +535,10 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
   }
 
   // Log
-  await insertApptLog(db, appt_id, actingUserId,
-    `"Status":"No Show","Enrolled":"${enrolled}"`
-  );
+  const logExtras = { Status: 'No Show', Enrolled: String(enrolled) };
+  if (priorStatus !== 'Scheduled') logExtras.From = priorStatus;
+  if (note) logExtras.Note = note;
+  await insertApptLog(db, appt_id, actingUserId, logExtras);
 
   return { appt_id, enrolled };
 }
@@ -495,6 +573,12 @@ async function cancelAppt(db, {
 
   const appt = await fetchApptWithContact(db, appt_id);
   if (!appt) throw new Error('Appointment not found');
+  if (appt.appt_status === 'Canceled') {
+    throw new Error('Appointment is already Canceled');
+  }
+
+  // Capture prior status for the log's From field
+  const priorStatus = appt.appt_status;
 
   // 1) Update status
   await db.query(
@@ -536,39 +620,44 @@ async function cancelAppt(db, {
   }
 
   // 5) Log entry
-  await insertApptLog(db, appt_id, actingUserId,
-    `"Status":"Canceled"` +
-    (taskId ? `,"Task":"${taskId}"` : '') +
-    (note   ? `,"Note":"${note.replace(/"/g, '\\"')}"` : '')
-  );
+  const logExtras = { Status: 'Canceled' };
+  if (priorStatus !== 'Scheduled') logExtras.From = priorStatus;
+  if (taskId) logExtras.Task = taskId;
+  if (note)   logExtras.Note = note;
+  await insertApptLog(db, appt_id, actingUserId, logExtras);
 
   // 6) Return result (before non-blocking side effects)
   const result = { appt_id, taskId };
 
   // ---- Non-blocking side effects below ----
 
-  // 7) SMS confirmation
+  // 7) SMS confirmation — outer .catch guards against unhandled rejection
+  //    if getSetting itself throws (e.g., DB error on app_settings).
   if (sms && appt.contact_phone) {
-    getSetting(db, 'sms_default_from').then(fromNumber => {
-      if (fromNumber) {
-        smsService.sendSms(db, fromNumber, appt.contact_phone, confirm_message)
-          .catch(err => console.error('[APPT SERVICE] Cancel SMS failed:', err.message));
-      }
-    });
+    getSetting(db, 'sms_default_from')
+      .then(fromNumber => {
+        if (fromNumber) {
+          smsService.sendSms(db, fromNumber, appt.contact_phone, confirm_message)
+            .catch(err => console.error('[APPT SERVICE] Cancel SMS failed:', err.message));
+        }
+      })
+      .catch(err => console.error('[APPT SERVICE] Cancel SMS settings lookup failed:', err.message));
   }
 
   // 8) Email confirmation
   if (email && appt.client_email) {
-    getSetting(db, 'email_default_from').then(fromEmail => {
-      if (fromEmail) {
-        emailService.sendEmail(db, {
-          from:    fromEmail,
-          to:      appt.client_email,
-          subject: 'Appointment Cancellation Confirmation',
-          text:    confirm_message
-        }).catch(err => console.error('[APPT SERVICE] Cancel email failed:', err.message));
-      }
-    });
+    getSetting(db, 'email_default_from')
+      .then(fromEmail => {
+        if (fromEmail) {
+          emailService.sendEmail(db, {
+            from:    fromEmail,
+            to:      appt.client_email,
+            subject: 'Appointment Cancellation Confirmation',
+            text:    confirm_message
+          }).catch(err => console.error('[APPT SERVICE] Cancel email failed:', err.message));
+        }
+      })
+      .catch(err => console.error('[APPT SERVICE] Cancel email settings lookup failed:', err.message));
   }
 
   // 9) GCal delete
@@ -651,10 +740,13 @@ async function rescheduleAppt(db, {
   });
 
   // 5) Log on old appointment
-  await insertApptLog(db, appt_id, actingUserId,
-    `"Status":"Rescheduled","New Appt":"${newAppt.appt_id}","New Time":"${newDate}"` +
-    (note ? `,"Note":"${note.replace(/"/g, '\\"')}"` : '')
-  );
+  const logExtras = {
+    Status:     'Rescheduled',
+    'New Appt': newAppt.appt_id,
+    'New Time': newDate,
+  };
+  if (note) logExtras.Note = note;
+  await insertApptLog(db, appt_id, actingUserId, logExtras);
 
   return { old_appt_id: appt_id, new_appt_id: newAppt.appt_id };
 }
@@ -727,11 +819,10 @@ async function rescheduleLater(db, {
   }
 
   // 4) Log
-  await insertApptLog(db, appt_id, actingUserId,
-    `"Status":"Rescheduled"` +
-    (taskId ? `,"Task":"${taskId}"` : '') +
-    (note   ? `,"Note":"${note.replace(/"/g, '\\"')}"` : '')
-  );
+  const logExtras = { Status: 'Rescheduled' };
+  if (taskId) logExtras.Task = taskId;
+  if (note)   logExtras.Note = note;
+  await insertApptLog(db, appt_id, actingUserId, logExtras);
 
   return { appt_id, taskId };
 }

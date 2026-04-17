@@ -383,7 +383,7 @@
     }
   </script>
 
-  <div id="tabAppts" class="tab-main">
+<div id="tabAppts" class="tab-main">
     <h1>Appointments</h1>
     <span>
       <button id="tabApptsCal" onclick="tabApptsCal()">Calendar</button>
@@ -407,7 +407,7 @@
         <option>Rescheduled</option>
         <option selected>Scheduled</option>
       </select>
-      With: 
+      With:
       <select id="tabApptsWith" class="userslist" style="width: auto">
         <option value="">All</option>
       </select>
@@ -457,37 +457,37 @@
 
     // Refresh any visible appointment lists
     // tabAppts, case2 appts tab, contact2 appts tab will pick this up
-window.addEventListener('message', (e) => {
-  if (e.data?.type === 'appt-updated') {
-    try {
-      document.querySelectorAll('iframe').forEach(frame => {
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'appt-updated') {
         try {
-          if (frame.contentWindow.refreshAppts) frame.contentWindow.refreshAppts();
-        } catch (_) {}
-      });
-    } catch (_) {}
-  }
-});
-function showAppt(apptID) {
-  Swal.fire({
-    title: `Appointment ${apptID}`,
-    html: `<iframe src="/apptform2.html?apptID=${apptID}" width="100%"  style="border:none;height:650px;"></iframe>`,
-    width: "75%",
-    heightAuto: true,
-    showConfirmButton: false,
-    showCloseButton: true,
-    didClose: () => {
-      // Notify the active tab to refresh (if it has a refresh function)
-      // This catches any changes made inside the appointment form
-      try {
-        const activeIframe = document.querySelector('.tab-content[style*="block"] iframe');
-        if (activeIframe && activeIframe.contentWindow.refresh) {
-          activeIframe.contentWindow.refresh();
+          document.querySelectorAll('iframe').forEach(frame => {
+            try {
+              if (frame.contentWindow.refreshAppts) frame.contentWindow.refreshAppts();
+            } catch (_) { }
+          });
+        } catch (_) { }
+      }
+    });
+    function showAppt(apptID) {
+      Swal.fire({
+        title: `Appointment ${apptID}`,
+        html: `<iframe src="/apptform2.html?apptID=${apptID}" width="100%"  style="border:none;height:650px;"></iframe>`,
+        width: "75%",
+        heightAuto: true,
+        showConfirmButton: false,
+        showCloseButton: true,
+        didClose: () => {
+          // Notify the active tab to refresh (if it has a refresh function)
+          // This catches any changes made inside the appointment form
+          try {
+            const activeIframe = document.querySelector('.tab-content[style*="block"] iframe');
+            if (activeIframe && activeIframe.contentWindow.refresh) {
+              activeIframe.contentWindow.refresh();
+            }
+          } catch (_) { }
         }
-      } catch (_) {}
+      });
     }
-  });
-}
 
     function tabApptsTimeChange(time) {
       if (time == "All") {
@@ -564,26 +564,25 @@ function showAppt(apptID) {
             <td>${appt.status}</td>
             <td>${appt.user_name}</td>`;
 
-            if (appt.status === "No Show") {
-              row.innerHTML += `<td>
-              <button onclick="apptUpdate(${appt.id},'Cancel','${appt.format_date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-              <button onclick="apptUpdate(${appt.id},'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-              <button onclick="apptUpdate(${appt.id},'Reschedule','${appt.appt_datetime_local}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
-            </td>`;
-            } else if (appt.status === "Scheduled") {
-              row.innerHTML += `<td>
-              <button onclick="apptUpdate(${appt.id},'Cancel','${appt.format_date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-              <button onclick="apptUpdate(${appt.id},'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-              <button onclick="apptUpdate(${appt.id},'No Show')"><i class="fa-solid fa-user-xmark"></i> No Show</button>
-              <button onclick="apptUpdate(${appt.id},'Reschedule','${appt.appt_datetime_local}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
-            </td>`;
-            } else if (appt.status === "Canceled") {
-              row.innerHTML += `<td>
-              <button onclick="apptUpdate(${appt.id},'Reschedule','${appt.appt_datetime_local}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
-            </td>`;
-            } else {
-              row.innerHTML += `<td></td>`;
+            // Always show all 4 action buttons except the one matching the current status.
+            // Backend blocks same-state transitions; user gets a correction warning on
+            // non-Scheduled transitions via apptUpdate's confirmCorrection() helper.
+            const apptDateTime = `${appt.format_date} at ${appt.time}`;
+            const s = appt.status;
+            const buttons = [];
+            if (s !== "Attended") {
+              buttons.push(`<button onclick="apptUpdate(${appt.id},'Attended',null,null,'${s}')"><i class="fa-solid fa-user-check"></i> Attended</button>`);
             }
+            if (s !== "No Show") {
+              buttons.push(`<button onclick="apptUpdate(${appt.id},'No Show',null,null,'${s}')"><i class="fa-solid fa-user-xmark"></i> No Show</button>`);
+            }
+            if (s !== "Canceled") {
+              buttons.push(`<button onclick="apptUpdate(${appt.id},'Cancel','${apptDateTime}',null,'${s}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
+            }
+            if (s !== "Rescheduled") {
+              buttons.push(`<button onclick="apptUpdate(${appt.id},'Reschedule','${appt.appt_datetime_local}',null,'${s}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+            }
+            row.innerHTML += `<td>${buttons.join(" ")}</td>`;
           });
 
           // Pagination
@@ -630,12 +629,46 @@ function showAppt(apptID) {
       }
     }
 
-    function apptUpdate(appt, action, date, onSuccess) {
+    /**
+     * Show a confirmation when changing an appt from a non-Scheduled status.
+     * Returns true if user confirmed (or no warning needed).
+     */
+    async function confirmCorrection(newAction, currentStatus) {
+      if (!currentStatus || currentStatus === "Scheduled") return true;
+      const result = await Swal.fire({
+        title: "Status Correction",
+        html: `This appointment is currently marked <strong>${currentStatus}</strong>.<br><br>
+               Are you sure you want to change it to <strong>${newAction}</strong>?`,
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: `Yes, change to ${newAction}`,
+        cancelButtonText: "Never mind",
+      });
+      return result.isConfirmed;
+    }
+
+    /**
+     * Build a correction-warning banner HTML to prepend inside the Swal body.
+     * Returns empty string if no warning is needed.
+     */
+    function correctionBannerHtml(currentStatus, action) {
+      if (!currentStatus || currentStatus === "Scheduled") return "";
+      const verb = action === "Cancel" ? "Canceling" : "Rescheduling";
+      return `<div style="background:#fff8e1;border:1px solid #f0d878;border-left:3px solid #e6a800;
+              border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:0.85rem;color:#6d4c00;text-align:left;">
+              <i class="fa-solid fa-triangle-exclamation" style="color:#e6a800;margin-right:6px;"></i>
+              This appointment is currently marked <strong>${currentStatus}</strong>.
+              ${verb} will change its status.
+              </div>`;
+    }
+
+    async function apptUpdate(appt, action, date, onSuccess, currentStatus) {
 
       if (action === "Cancel") {
         Swal.fire({
           title: `Cancel appointment #${appt}?`,
           html: `
+          ${correctionBannerHtml(currentStatus, "Cancel")}
           <textarea id="cancelNote" placeholder="Cancelation note (optional):" style="height:60px;width:300px;resize:none;"></textarea><br>
           <input id="apptCancelTask" type="checkbox" style="width:10px;transform:scale(1.5);"> <span>Create follow-up task?</span><br>
           <label>Confirmation:</label>
@@ -676,6 +709,7 @@ function showAppt(apptID) {
         });
 
       } else if (action === "Attended") {
+        if (!(await confirmCorrection("Attended", currentStatus))) return;
         Swal.fire({
           title: `Mark appointment #${appt} as attended?`,
           confirmButtonText: "Yes, they attended",
@@ -698,6 +732,7 @@ function showAppt(apptID) {
         Swal.fire({
           title: "Reschedule",
           html: `
+          ${correctionBannerHtml(currentStatus, "Reschedule")}
           <label>Select a date and time to reschedule to</label><br>
           <input class="swal2-input" value="${date}" type="datetime-local" id="apptRescDate"
             onchange="rescheduledConfMsg('${date}', this.value)"><br><br>
@@ -757,6 +792,7 @@ function showAppt(apptID) {
         });
 
       } else if (action === "No Show") {
+        if (!(await confirmCorrection("No Show", currentStatus))) return;
         Swal.fire({
           title: `Mark appointment #${appt} as No-Show?`,
           text: "This will enroll the client in the no-show sequence",
