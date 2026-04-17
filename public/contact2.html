@@ -452,23 +452,25 @@ function putAppt() {
   while (table.rows.length > 1) table.deleteRow(-1);
   window.entityData.appts.forEach(appt => {
     const row = table.insertRow();
-    let rowHTML = "";
-    if (appt.appt_status === "No Show") {
-      rowHTML = `<td>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Cancel','${appt.format_date} at ${appt.time}',refreshAppts)"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Attended',null,refreshAppts)"><i class="fa-solid fa-user-check"></i> Attended</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Reschedule','${appt.appt_datetime_local}',refreshAppts)"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
-      </td>`;
-    } else if (appt.appt_status === "Scheduled") {
-      rowHTML = `<td>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Cancel','${appt.format_date} at ${appt.time}',refreshAppts)"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Attended',null,refreshAppts)"><i class="fa-solid fa-user-check"></i> Attended</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'No Show',null,refreshAppts)"><i class="fa-solid fa-user-xmark"></i> No Show</button>
-        <button onclick="P.apptUpdate(${appt.appt_id},'Reschedule','${appt.appt_datetime_local}',refreshAppts)"><i class="fa-solid fa-user-clock"></i> Reschedule</button>
-      </td>`;
-    } else {
-      rowHTML = `<td></td>`;
+    // Always show all 4 action buttons except the one matching current status.
+    // Backend blocks same-state transitions; parent's apptUpdate() warns the user
+    // when currentStatus is non-Scheduled (5th arg).
+    const apptDateTime = `${appt.format_date} at ${appt.time}`;
+    const s = appt.appt_status;
+    const buttons = [];
+    if (s !== "Attended") {
+      buttons.push(`<button onclick="P.apptUpdate(${appt.appt_id},'Attended',null,refreshAppts,'${s}')"><i class="fa-solid fa-user-check"></i> Attended</button>`);
     }
+    if (s !== "No Show") {
+      buttons.push(`<button onclick="P.apptUpdate(${appt.appt_id},'No Show',null,refreshAppts,'${s}')"><i class="fa-solid fa-user-xmark"></i> No Show</button>`);
+    }
+    if (s !== "Canceled") {
+      buttons.push(`<button onclick="P.apptUpdate(${appt.appt_id},'Cancel','${apptDateTime}',refreshAppts,'${s}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
+    }
+    if (s !== "Rescheduled") {
+      buttons.push(`<button onclick="P.apptUpdate(${appt.appt_id},'Reschedule','${appt.appt_datetime_local}',refreshAppts,'${s}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+    }
+    const rowHTML = `<td>${buttons.join(" ")}</td>`;
     row.innerHTML = `<td><a href="#" onclick="P.showAppt(${appt.appt_id})">${appt.appt_id}</a></td><td>${appt.appt_type}</td><td>${appt.format_date}</td><td>${appt.time}</td><td>${appt.appt_length}</td><td>${appt.appt_status}</td><td>${appt.appt_note||""}</td>${rowHTML}`;
   });
 }
