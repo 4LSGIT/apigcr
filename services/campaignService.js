@@ -179,6 +179,14 @@ async function createCampaign(db, { type, sender, subject, body, contactIds, sch
   // Deduplicate contact IDs
   const uniqueIds = [...new Set(contactIds.map(Number).filter(id => id > 0))];
 
+  // Upstream (the route) validates that contactIds is a non-empty array, but
+  // values like [0], [-1], ['abc'], [null] pass that check and become [] after
+  // the Number/filter above. An empty VALUES clause in the batch INSERT below
+  // would throw a cryptic mysql2 error — fail here with a clear message.
+  if (!uniqueIds.length) {
+    throw new Error('No valid contact IDs after filtering (all IDs were zero, negative, or non-numeric)');
+  }
+
   // Determine initial status and job scheduled time
   const isScheduled = !!scheduledTime;
   const initialStatus = isScheduled ? 'scheduled' : 'sending';
@@ -522,14 +530,42 @@ async function executeSend(db, campaignId, contactId) {
   }
 
   // ── 6. Resolve placeholders ──
+  //
+  // We require FULL resolution before sending: any unresolved placeholder
+  // (or missing-ref / security failure) means the customer would receive
+  // literal `{{...}}` in the body — unacceptable.
+  //
+  // Note on strict: the resolver's `strict` flag only changes the returned
+  // `status` label — it does NOT throw or strip unresolved tokens. So we
+  // rely on an explicit `status !== 'success'` check below, which also
+  // catches failure modes with empty `unresolved` arrays (e.g. missing_refs,
+  // where the returned `text` is the original unchanged string).
 
   const refs = { contacts: { contact_id: contactId } };
 
-  const resolvedBody = await resolve({ db, text: campaign.body, refs });
+  const resolvedBody = await resolve({ db, text: campaign.body, refs, strict: true });
+
+  if (resolvedBody.status !== 'success') {
+    const errDetail = resolvedBody.unresolved?.length
+      ? `Unresolved placeholders: ${resolvedBody.unresolved.join(', ')}`
+      : (resolvedBody.errors?.join('; ') || 'Body placeholder resolution failed');
+    await recordResult(db, campaignId, contactId, 'failed', errDetail, null);
+    await checkCompletion(db, campaignId);
+    return { failed: true, reason: 'body_unresolved', detail: errDetail };
+  }
 
   let resolvedSubject = null;
   if (campaign.type === 'email' && campaign.subject) {
-    resolvedSubject = await resolve({ db, text: campaign.subject, refs });
+    resolvedSubject = await resolve({ db, text: campaign.subject, refs, strict: true });
+
+    if (resolvedSubject.status !== 'success') {
+      const errDetail = resolvedSubject.unresolved?.length
+        ? `Unresolved placeholders in subject: ${resolvedSubject.unresolved.join(', ')}`
+        : (resolvedSubject.errors?.join('; ') || 'Subject placeholder resolution failed');
+      await recordResult(db, campaignId, contactId, 'failed', errDetail, null);
+      await checkCompletion(db, campaignId);
+      return { failed: true, reason: 'subject_unresolved', detail: errDetail };
+    }
   }
 
   // ── 7. Send ──
