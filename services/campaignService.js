@@ -5,13 +5,14 @@
  * All campaign business logic. Routes are thin HTTP wrappers.
  *
  * ┌──────────────────────────────────────────────────────────────────────┐
- * │  MIGRATION NOTE                                                     │
- * │  Before deploying, add to the Phase 1 migration:                    │
- * │                                                                     │
- * │  ALTER TABLE campaign_results                                       │
- * │    ADD UNIQUE KEY uq_campaign_contact (campaign_id, contact_id);    │
- * │                                                                     │
- * │  This enables INSERT IGNORE dedup in executeSend for job retries.   │
+ * │  REQUIRED MIGRATION (run before deploy):                             │
+ * │                                                                      │
+ * │  ALTER TABLE campaign_results                                        │
+ * │    ADD UNIQUE KEY uq_campaign_contact (campaign_id, contact_id);     │
+ * │                                                                      │
+ * │  This is required for the ON DUPLICATE KEY UPDATE in recordResult().  │
+ * │  See migrations/2026XX_campaign_results_uq.sql for the full migration │
+ * │  including a pre-check for any existing duplicate rows.              │
  * └──────────────────────────────────────────────────────────────────────┘
  *
  * Functions:
@@ -455,122 +456,139 @@ async function previewCampaign(db, { body, subject, contactId }) {
  * Core send logic for one contact in a campaign.
  * Called by job_executor when processing a campaign_send job.
  *
- * Error handling strategy:
- *   - Infrastructure errors (DB down) → THROW → job system retries
- *   - Send errors (SMTP fail, bad number) → CATCH → record 'failed', return normally
- *   - Skips (canceled, opted out, missing phone/email) → record 'skipped', return normally
+ * Error handling strategy (revised):
+ *   - Skips (campaign deleted/canceled, opted out, missing phone/email,
+ *     resolver semantic failure) → record + return normally. Never retried.
+ *   - Permanent send errors (hard SMTP bounce, invalid number, auth failure)
+ *     → record 'failed' + return normally. Never retried.
+ *   - Transient send/infra errors (SMTP timeout, RC/Quo 5xx/429, DB blip,
+ *     resolver DB throw) → THROW so the job system retries with backoff.
+ *     On the FINAL attempt, transient is treated as permanent — record 'failed'
+ *     and return normally so the campaign_results row exists and
+ *     checkCompletion can finalize.
+ *
+ * jobMeta is supplied by job_executor.js. If executeSend is called outside the
+ * job system (e.g. tests, manual invocation), defaults treat the call as a
+ * single-attempt with no retry budget — every error is recorded.
  *
  * @param {object} db
  * @param {number} campaignId
  * @param {number} contactId
+ * @param {object} [jobMeta]
+ * @param {number} [jobMeta.attempt=1]      — 1-indexed current attempt
+ * @param {number} [jobMeta.maxAttempts=1]  — total attempts allowed
  * @returns {object} { sent, skipped, failed, reason, messageId }
  */
-async function executeSend(db, campaignId, contactId) {
-
-  // ── 1. Load campaign ──
-
-  const [[campaign]] = await db.query(
-    'SELECT campaign_id, type, sender, subject, body, attachment_url, status FROM campaigns WHERE campaign_id = ?',
-    [campaignId]
-  );
-
-  if (!campaign) {
-    // Campaign deleted — record and move on
-    await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'campaign_not_found' });
-    return { skipped: true, reason: 'campaign_not_found' };
-  }
-
-  // ── 2. Check campaign status ──
-
-  if (campaign.status === 'canceled') {
-    await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'campaign_canceled' });
-    await checkCompletion(db, campaignId);
-    return { skipped: true, reason: 'campaign_canceled' };
-  }
-
-  // ── 3. Load contact ──
-
-  const [[contact]] = await db.query(
-    'SELECT contact_id, contact_name, contact_phone, contact_email, contact_sms_optout, contact_email_optout FROM contacts WHERE contact_id = ?',
-    [contactId]
-  );
-
-  if (!contact) {
-    await recordResult(db, campaignId, contactId, 'failed', 'Contact not found', null);
-    await checkCompletion(db, campaignId);
-    return { failed: true, reason: 'contact_not_found' };
-  }
-
-  // ── 4. Check opt-out ──
-
-  if (campaign.type === 'sms' && contact.contact_sms_optout) {
-    await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'sms_optout' });
-    await checkCompletion(db, campaignId);
-    return { skipped: true, reason: 'sms_optout' };
-  }
-
-  if (campaign.type === 'email' && contact.contact_email_optout) {
-    await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'email_optout' });
-    await checkCompletion(db, campaignId);
-    return { skipped: true, reason: 'email_optout' };
-  }
-
-  // ── 5. Check required channel info ──
-
-  if (campaign.type === 'sms' && !contact.contact_phone) {
-    await recordResult(db, campaignId, contactId, 'failed', 'No phone number', null);
-    await checkCompletion(db, campaignId);
-    return { failed: true, reason: 'no_phone' };
-  }
-
-  if (campaign.type === 'email' && !contact.contact_email) {
-    await recordResult(db, campaignId, contactId, 'failed', 'No email address', null);
-    await checkCompletion(db, campaignId);
-    return { failed: true, reason: 'no_email' };
-  }
-
-  // ── 6. Resolve placeholders ──
-  //
-  // We require FULL resolution before sending: any unresolved placeholder
-  // (or missing-ref / security failure) means the customer would receive
-  // literal `{{...}}` in the body — unacceptable.
-  //
-  // Note on strict: the resolver's `strict` flag only changes the returned
-  // `status` label — it does NOT throw or strip unresolved tokens. So we
-  // rely on an explicit `status !== 'success'` check below, which also
-  // catches failure modes with empty `unresolved` arrays (e.g. missing_refs,
-  // where the returned `text` is the original unchanged string).
-
-  const refs = { contacts: { contact_id: contactId } };
-
-  const resolvedBody = await resolve({ db, text: campaign.body, refs, strict: true });
-
-  if (resolvedBody.status !== 'success') {
-    const errDetail = resolvedBody.unresolved?.length
-      ? `Unresolved placeholders: ${resolvedBody.unresolved.join(', ')}`
-      : (resolvedBody.errors?.join('; ') || 'Body placeholder resolution failed');
-    await recordResult(db, campaignId, contactId, 'failed', errDetail, null);
-    await checkCompletion(db, campaignId);
-    return { failed: true, reason: 'body_unresolved', detail: errDetail };
-  }
-
-  let resolvedSubject = null;
-  if (campaign.type === 'email' && campaign.subject) {
-    resolvedSubject = await resolve({ db, text: campaign.subject, refs, strict: true });
-
-    if (resolvedSubject.status !== 'success') {
-      const errDetail = resolvedSubject.unresolved?.length
-        ? `Unresolved placeholders in subject: ${resolvedSubject.unresolved.join(', ')}`
-        : (resolvedSubject.errors?.join('; ') || 'Subject placeholder resolution failed');
-      await recordResult(db, campaignId, contactId, 'failed', errDetail, null);
-      await checkCompletion(db, campaignId);
-      return { failed: true, reason: 'subject_unresolved', detail: errDetail };
-    }
-  }
-
-  // ── 7. Send ──
+async function executeSend(db, campaignId, contactId, jobMeta = {}) {
+  const { attempt = 1, maxAttempts = 1 } = jobMeta;
+  const isFinalAttempt = attempt >= maxAttempts;
 
   try {
+    // ── 1. Load campaign ──
+
+    const [[campaign]] = await db.query(
+      'SELECT campaign_id, type, sender, subject, body, attachment_url, status FROM campaigns WHERE campaign_id = ?',
+      [campaignId]
+    );
+
+    if (!campaign) {
+      // Campaign deleted — record skip but DON'T call checkCompletion (the
+      // campaign row is gone, so the UPDATE inside checkCompletion would
+      // be a no-op anyway). Treat as permanent: no retry.
+      await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'campaign_not_found' });
+      return { skipped: true, reason: 'campaign_not_found' };
+    }
+
+    // ── 2. Check campaign status ──
+
+    if (campaign.status === 'canceled') {
+      await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'campaign_canceled' });
+      await checkCompletion(db, campaignId);
+      return { skipped: true, reason: 'campaign_canceled' };
+    }
+
+    // ── 3. Load contact ──
+
+    const [[contact]] = await db.query(
+      'SELECT contact_id, contact_name, contact_phone, contact_email, contact_sms_optout, contact_email_optout FROM contacts WHERE contact_id = ?',
+      [contactId]
+    );
+
+    if (!contact) {
+      await recordResult(db, campaignId, contactId, 'failed', 'Contact not found', null);
+      await checkCompletion(db, campaignId);
+      return { failed: true, reason: 'contact_not_found' };
+    }
+
+    // ── 4. Check opt-out ──
+
+    if (campaign.type === 'sms' && contact.contact_sms_optout) {
+      await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'sms_optout' });
+      await checkCompletion(db, campaignId);
+      return { skipped: true, reason: 'sms_optout' };
+    }
+
+    if (campaign.type === 'email' && contact.contact_email_optout) {
+      await recordResult(db, campaignId, contactId, 'skipped', null, { reason: 'email_optout' });
+      await checkCompletion(db, campaignId);
+      return { skipped: true, reason: 'email_optout' };
+    }
+
+    // ── 5. Check required channel info ──
+
+    if (campaign.type === 'sms' && !contact.contact_phone) {
+      await recordResult(db, campaignId, contactId, 'failed', 'No phone number', null);
+      await checkCompletion(db, campaignId);
+      return { failed: true, reason: 'no_phone' };
+    }
+
+    if (campaign.type === 'email' && !contact.contact_email) {
+      await recordResult(db, campaignId, contactId, 'failed', 'No email address', null);
+      await checkCompletion(db, campaignId);
+      return { failed: true, reason: 'no_email' };
+    }
+
+    // ── 6. Resolve placeholders ──
+    //
+    // We require FULL resolution before sending: any unresolved placeholder
+    // (or missing-ref / security failure) means the customer would receive
+    // literal `{{...}}` in the body — unacceptable.
+    //
+    // Note: a DB error inside the resolver now propagates as a thrown error
+    // (we removed the catch-and-return-failed pattern in resolverService).
+    // It will be caught by the outer try/catch below and classified as
+    // transient → retry-able.
+
+    const refs = { contacts: { contact_id: contactId } };
+
+    const resolvedBody = await resolve({ db, text: campaign.body, refs, strict: true });
+
+    if (resolvedBody.status !== 'success') {
+      // Semantic resolver failure — permanent.
+      const errDetail = resolvedBody.unresolved?.length
+        ? `Unresolved placeholders: ${resolvedBody.unresolved.join(', ')}`
+        : (resolvedBody.errors?.join('; ') || 'Body placeholder resolution failed');
+      await recordResult(db, campaignId, contactId, 'failed', errDetail, null);
+      await checkCompletion(db, campaignId);
+      return { failed: true, reason: 'body_unresolved', detail: errDetail };
+    }
+
+    let resolvedSubject = null;
+    if (campaign.type === 'email' && campaign.subject) {
+      resolvedSubject = await resolve({ db, text: campaign.subject, refs, strict: true });
+
+      if (resolvedSubject.status !== 'success') {
+        const errDetail = resolvedSubject.unresolved?.length
+          ? `Unresolved placeholders in subject: ${resolvedSubject.unresolved.join(', ')}`
+          : (resolvedSubject.errors?.join('; ') || 'Subject placeholder resolution failed');
+        await recordResult(db, campaignId, contactId, 'failed', errDetail, null);
+        await checkCompletion(db, campaignId);
+        return { failed: true, reason: 'subject_unresolved', detail: errDetail };
+      }
+    }
+
+    // ── 7. Send ──
+
     let sendResult;
 
     if (campaign.type === 'sms') {
@@ -582,9 +600,9 @@ async function executeSend(db, campaignId, contactId) {
           contact.contact_phone,
           resolvedBody.text,
           'US',
-          null, null, null,       // no buffer/filename/mimetype
+          null, null, null,        // no buffer/filename/mimetype
           campaign.attachment_url, // URL attachment
-          false                   // don't re-store in GCS
+          false                    // don't re-store in GCS
         );
       } else {
         sendResult = await smsService.sendSms(
@@ -605,8 +623,8 @@ async function executeSend(db, campaignId, contactId) {
       // Email attachment — pass in both formats so emailService routes correctly
       if (campaign.attachment_url) {
         const fname = campaign.attachment_url.split('/').pop().split('?')[0] || 'attachment';
-        emailOpts.attachments     = [{ filename: fname, path: campaign.attachment_url }];  // SMTP (nodemailer)
-        emailOpts.attachment_urls = campaign.attachment_url;                                 // Pabbly/Gmail
+        emailOpts.attachments     = [{ filename: fname, path: campaign.attachment_url }]; // SMTP (nodemailer)
+        emailOpts.attachment_urls = campaign.attachment_url;                              // Pabbly/Gmail
       }
 
       sendResult = await emailService.sendEmail(db, emailOpts);
@@ -623,15 +641,53 @@ async function executeSend(db, campaignId, contactId) {
 
     return { sent: true, messageId: sendResult?.messageId };
 
-  } catch (sendErr) {
-    // Send failed — record and return normally (don't throw).
-    // Job system treats this as a successful execution.
-    console.error(`[CAMPAIGN SEND] campaign=${campaignId} contact=${contactId} error:`, sendErr.message);
+  } catch (err) {
+    // Outer catch — any throw from anywhere above lands here.
+    // Possible sources:
+    //   - DB query throws (load campaign, load contact, recordResult itself)
+    //   - Resolver DB throw (now propagates after resolverService fix)
+    //   - Send service throws (SMTP timeout, RC 5xx, Quo 429, etc.)
 
-    await recordResult(db, campaignId, contactId, 'failed', sendErr.message, null);
-    await checkCompletion(db, campaignId);
+    const transient = isTransientError(err);
 
-    return { failed: true, reason: sendErr.message };
+    if (transient && !isFinalAttempt) {
+      // Let the job system retry. Don't record — sibling jobs' checkCompletion
+      // calls would otherwise see a 'failed' row and prematurely finalize the
+      // campaign as partial_fail.
+      console.warn(
+        `[CAMPAIGN SEND] campaign=${campaignId} contact=${contactId} ` +
+        `transient (attempt ${attempt}/${maxAttempts}): ${err.message}`
+      );
+      throw err;
+    }
+
+    // Permanent error OR final transient attempt — record and return normally.
+    const reason = transient
+      ? `Transient failure persisted across ${attempt} attempts: ${err.message}`
+      : err.message;
+
+    console.error(
+      `[CAMPAIGN SEND] campaign=${campaignId} contact=${contactId} ` +
+      `${transient ? 'final-attempt' : 'permanent'} (attempt ${attempt}/${maxAttempts}): ${err.message}`
+    );
+
+    try {
+      await recordResult(db, campaignId, contactId, 'failed', reason, null);
+      await checkCompletion(db, campaignId);
+    } catch (recordErr) {
+      // Even recordResult is throwing. Surface the original error to the job
+      // system; it will mark the job failed and we lose the campaign_results
+      // row for this contact (campaign stays 'sending' forever for them).
+      // This is bad but rare (recordResult is a single-row INSERT) — we'd
+      // rather see the original error in logs than mask it.
+      console.error(
+        `[CAMPAIGN SEND] failed to record result for campaign=${campaignId} ` +
+        `contact=${contactId}: ${recordErr.message}`
+      );
+      throw err;
+    }
+
+    return { failed: true, reason };
   }
 }
 
@@ -642,14 +698,99 @@ async function executeSend(db, campaignId, contactId) {
 
 /**
  * Record a per-contact result.
- * INSERT IGNORE prevents duplicates on job retry (requires UNIQUE on campaign_id + contact_id).
+ *
+ * Uses INSERT ... ON DUPLICATE KEY UPDATE on the (campaign_id, contact_id)
+ * unique constraint. On retry — e.g. attempt 1 succeeded recordResult but
+ * checkCompletion threw and triggered a job retry, then attempt 2 sent again
+ * and re-recorded — the latest attempt's outcome wins, including its
+ * sent_at timestamp. That's the right semantics for "what is the most
+ * recent recorded outcome for this contact?"
+ *
+ * Requires: ALTER TABLE campaign_results ADD UNIQUE KEY uq_campaign_contact
+ * (campaign_id, contact_id). Without that index, this falls back to plain
+ * INSERT (no dedup), creating duplicate rows.
  */
 async function recordResult(db, campaignId, contactId, status, error, meta) {
   await db.query(
-    `INSERT IGNORE INTO campaign_results (campaign_id, contact_id, status, error, result_meta, sent_at)
-     VALUES (?, ?, ?, ?, ?, NOW())`,
+    `INSERT INTO campaign_results (campaign_id, contact_id, status, error, result_meta, sent_at)
+     VALUES (?, ?, ?, ?, ?, NOW())
+     ON DUPLICATE KEY UPDATE
+       status      = VALUES(status),
+       error       = VALUES(error),
+       result_meta = VALUES(result_meta),
+       sent_at     = VALUES(sent_at)`,
     [campaignId, contactId, status, error || null, meta ? JSON.stringify(meta) : null]
   );
+}
+
+/**
+ * Classify an error as transient (retry-able) or permanent.
+ *
+ * Transient: temporary infra / provider failures. Worth retrying.
+ *   - Node/nodemailer network error codes (ESOCKET, ETIMEDOUT, ECONNRESET, ...)
+ *   - mysql2 connection / lock errors
+ *   - SMTP 4xx response codes (transient negative reply by spec)
+ *   - HTTP 429 (rate limit) and 5xx (server error) from providers
+ *
+ * Permanent: hard failures. Retrying would not help and may cause harm
+ * (duplicate sends to a flaky-but-eventually-bouncing recipient, sender
+ * reputation damage, SMS cost waste).
+ *   - SMTP 5xx response codes (permanent negative reply by spec)
+ *   - Auth failures (bad credentials)
+ *   - Invalid recipient / sender envelope errors
+ *
+ * Default for unrecognized errors: PERMANENT. Rationale: better to surface
+ * a one-attempt 'failed' row that staff can investigate than to retry an
+ * unclassified error 3 times and possibly trigger duplicate sends.
+ */
+function isTransientError(err) {
+  if (!err) return false;
+
+  // Node / nodemailer error codes (network-layer failures)
+  const TRANSIENT_CODES = new Set([
+    'ESOCKET', 'ETIMEDOUT', 'ETIME', 'ECONNRESET', 'ECONNREFUSED',
+    'EHOSTUNREACH', 'ENETUNREACH', 'ECONNECTION', 'EAI_AGAIN', 'EPIPE'
+  ]);
+
+  // mysql2 transient error codes
+  const TRANSIENT_MYSQL_CODES = new Set([
+    'PROTOCOL_CONNECTION_LOST', 'PROTOCOL_SEQUENCE_TIMEOUT',
+    'ER_LOCK_DEADLOCK', 'ER_LOCK_WAIT_TIMEOUT', 'ER_QUERY_INTERRUPTED'
+  ]);
+
+  if (err.code && TRANSIENT_CODES.has(err.code)) return true;
+  if (err.code && TRANSIENT_MYSQL_CODES.has(err.code)) return true;
+
+  // SMTP response codes (nodemailer surfaces these on err.responseCode).
+  // 4xx = transient negative; 5xx = permanent negative.
+  if (typeof err.responseCode === 'number') {
+    if (err.responseCode >= 400 && err.responseCode < 500) return true;
+    if (err.responseCode >= 500 && err.responseCode < 600) return false;
+  }
+
+  // Provider HTTP errors come through as plain Error objects with the status
+  // baked into the message (ringcentralService throws `new Error(text)`,
+  // quoService throws `new Error(\`Quo API error ${status}: ...\`)`).
+  // Best-effort pattern matching as a fallback.
+  const msg = (err.message || '').toLowerCase();
+
+  // Explicit network words in the message
+  if (/\b(etimedout|econnreset|econnrefused|ehostunreach|enotfound|timeout)\b/.test(msg)) return true;
+
+  // Rate limit
+  if (/\b429\b/.test(err.message || '') || /rate ?limit|too many requests/.test(msg)) return true;
+
+  // 5xx in HTTP context (NOT SMTP — SMTP 5xx already handled above and is permanent)
+  // Match a standalone 5xx number near "api error", "status", or at start of message.
+  if (/\b(50\d|51\d|52\d|53\d|54\d|55\d|56\d|57\d|58\d|59\d)\b/.test(err.message || '')) {
+    // Heuristic: if the message contains "smtp" we leave it as permanent
+    // (SMTP 5xx is permanent and would have been caught by responseCode above
+    // in the well-formed case; this guard catches the ill-formed case).
+    if (!/smtp/i.test(err.message || '')) return true;
+  }
+
+  // Default: permanent.
+  return false;
 }
 
 /**

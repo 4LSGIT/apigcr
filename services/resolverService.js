@@ -379,13 +379,20 @@ async function resolve({ db, text, refs = {}, strict = false }) {
 
   // ── Step 4: Execute ──
 
+  // Note on error handling: we deliberately do NOT catch DB errors here.
+  // A DB connection blip / deadlock during placeholder resolution is an
+  // infrastructure failure, not a semantic resolver failure. Returning
+  // status='failed' would mask it as permanent (e.g. campaignService would
+  // record the contact as permanently failed and the job system would not
+  // retry). Letting the error propagate lets the caller / job system decide
+  // whether to retry. We still log here so the SQL is captured for debugging.
   let row;
   try {
     const [rows] = await db.query(sql, params);
     row = rows[0] || null;
   } catch (err) {
     console.error('[resolver] Query failed:', err.message, '\nSQL:', sql);
-    return { status: 'failed', text, unresolved: [], errors: [`Query failed: ${err.message}`] };
+    throw err;
   }
 
   if (!row) {
