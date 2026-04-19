@@ -7,6 +7,10 @@ router.get("/auth/validate", jwtOrApiKey, (req, res) => {
 });
 
 
+router.get('/api/cause_error', jwtOrApiKey, (req, res, next) => {
+  next(new Error('Intentional test error'));
+});
+
 router.get("/clio-code", jwtOrApiKey, async (req, res) => {
   try {
     const [rows] = await req.db.query(

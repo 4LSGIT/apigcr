@@ -2,9 +2,6 @@ const express = require("express");
 const router = express.Router();
 const path = require("path");
 
-router.get('/api/cause_error', jwtOrApiKey, (req, res, next) => {
-  next(new Error('Intentional test error'));
-});
 
 function dateNow(){
 const now = new Date();
