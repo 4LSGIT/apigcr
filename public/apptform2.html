@@ -391,6 +391,7 @@ function showPanel(id) {
     if (isCorrection) {
       document.getElementById('rescCorrectionStatus').textContent = apptData.appt_status;
     }
+    document.getElementById('rescheduleDate').value = apptData.appt_date.split(".")[0]
   }
 }
 

@@ -885,7 +885,7 @@
       },
 
       onSave: async (result) => {
-        try { P.postMessage({ type: 'form-saved', form: 'issn' }, '*'); } catch (_) {}
+        //try { P.postMessage({ type: 'form-saved', form: 'issn' }, '*'); } catch (_) {}
 
         // ── Update contacts with info captured during the session ──
         const d = form.collect();
@@ -1053,10 +1053,12 @@
       const nameEl = document.querySelector('[name="client_name"]');
       if (nameEl && nameEl.value) {
         const frame = document.getElementById('ashAutoCalendly');
-        if (frame) {
-          const url = new URL(frame.src);
-          url.searchParams.set('name', nameEl.value);
-          frame.src = url.toString();
+        if (frame && frame.src) {
+          try {
+            const url = new URL(frame.src);
+            url.searchParams.set('name', nameEl.value);
+            frame.src = url.toString();
+          } catch (_) { /* invalid URL, skip */ }
         }
       }
     });

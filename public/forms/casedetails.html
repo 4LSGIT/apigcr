@@ -412,7 +412,7 @@
       },
 
       onSave: () => {
-        try { P.postMessage({ type: 'form-saved', form: 'case_details' }, '*'); } catch (_) {}
+        //try { P.postMessage({ type: 'form-saved', form: 'case_details' }, '*'); } catch (_) {}
       },
     });
 
@@ -447,26 +447,38 @@
     form.init().then(() => {
       // ── Auto-calculate derived date fields ──
 
-      function addDays(dateStr, days) {
-        if (!dateStr) return '';
-        const d = new Date(dateStr);
-        if (isNaN(d)) return '';
-        d.setDate(d.getDate() + days);
-        return d.toISOString().split('T')[0];
-      }
+function addDays(dateStr, days) {
+  if (!dateStr) return '';
+  // Parse YYYY-MM-DD as LOCAL date to avoid UTC/TZ drift
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+  if (!m) return '';
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  if (isNaN(d)) return '';
+  d.setDate(d.getDate() + days);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
 
-      function subtractDays(dateStr, days) {
-        return addDays(dateStr, -days);
-      }
+function subtractDays(dateStr, days) {
+  return addDays(dateStr, -days);
+}
 
       // Subtract 14 days from a datetime-local value, return date only
-      function dateFromDatetime(dtStr, offsetDays) {
-        if (!dtStr) return '';
-        const d = new Date(dtStr);
-        if (isNaN(d)) return '';
-        d.setDate(d.getDate() + offsetDays);
-        return d.toISOString().split('T')[0];
-      }
+function dateFromDatetime(dtStr, offsetDays) {
+  if (!dtStr) return '';
+  // datetime-local: "YYYY-MM-DDTHH:mm" — parse LOCAL, not UTC
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(dtStr);
+  if (!m) return '';
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+  if (isNaN(d)) return '';
+  d.setDate(d.getDate() + offsetDays);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
 
       const rules = [
         // { source, target, calc }

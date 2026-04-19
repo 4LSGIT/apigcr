@@ -355,7 +355,7 @@
       },
 
       onSave: (result) => {
-        P.postMessage({ type: 'form-saved', form: '341_notes' }, '*');
+        //P.postMessage({ type: 'form-saved', form: '341_notes' }, '*');//duplicated - reference here
       },
     });
 
@@ -385,31 +385,24 @@
       });
     }
 
-    // ── Build PATCH payload override ──
-    // The standard PATCH would try to send form field names to /api/cases/:id
-    // But this form mostly stores in form_submissions. We only PATCH docs_missing.
-    const originalBuildPatch = form._buildPatchPayload.bind(form);
-    form._buildPatchPayload = function() {
-      const collected = this.collect();
-      const payload = {};
+    // Custom PATCH payload: only send columns that actually changed
+// Maps form field names to cases table column names
+form._buildPatchPayload = function() {
+  const diff = this.getDiff();
+  const payload = {};
 
-      // Only send docs_missing to the cases table
-      if (collected.missing_docs) {
-        payload.docs_missing = collected.missing_docs;
-      }
+  if ('missing_docs' in diff) {
+    payload.docs_missing = diff.missing_docs[1];
+  }
+  if ('outcome' in diff) {
+    payload['341_status'] = diff.outcome[1];
+  }
+  if ('docs_due_by' in diff) {
+    payload.docs_due = diff.docs_due_by[1];
+  }
 
-      // Update 341_status if outcome changed
-      if (collected.outcome) {
-        payload['341_status'] = collected.outcome;
-      }
-
-      // Update docs_due if set
-      if (collected.docs_due_by) {
-        payload.docs_due = collected.docs_due_by;
-      }
-
-      return payload;
-    };
+  return payload;
+};
 
     form.init().then(() => {
       setupOtherToggle('[data-yc-checkgroup="missing_docs"]', 'missingDocsOther');

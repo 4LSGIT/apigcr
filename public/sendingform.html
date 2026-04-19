@@ -752,28 +752,41 @@ async function send() {
     try {
       // ── CREDIT COUNSELING (MMS + email) ──
       if (action.type === 'credit_counseling') {
-        for (const r of recipients) {
-          const mmsText = `Hi ${r.fname}! Here is information about the credit counseling course that we discussed. Just go to EVERGREENCLASS.COM. If you use the code LSG, you will get a $25 discount and they will automatically send us your certificate!`;
-          if (smsOn && r.phone) {
-            await P.apiSend('/internal/mms/send', 'POST', {
-              from: smsFrom, to: r.phone, text: mmsText,
-              attachment_url: 'https://storage.googleapis.com/uploads.4lsg.com/be38469da984371bdb8b18905abc113a.png',
-            });
-            successes.push(`Credit Counseling MMS → ${r.name}`);
-          }
-          if (emailOn && r.email) {
-            await P.apiSend('/internal/email/send', 'POST', {
-              from: emailFrom, to: r.email,
-              subject: 'Credit Counseling Information',
-              text: mmsText,
-              attachment_names: 'Evergreen Credit Counseling.png',
-              attachment_urls: 'https://storage.googleapis.com/uploads.4lsg.com/be38469da984371bdb8b18905abc113a.png',
-              attachments: [{ filename: 'Evergreen Credit Counseling.png', path: 'https://storage.googleapis.com/uploads.4lsg.com/be38469da984371bdb8b18905abc113a.png' }],
-            });
-            successes.push(`Credit Counseling Email → ${r.name}`);
-          }
-        }
+  const smsOpt = document.getElementById('smsFrom').selectedOptions[0];
+  const isRc = smsOpt?.dataset.provider === 'ringcentral';
+  const ccImgUrl = 'https://storage.googleapis.com/uploads.4lsg.com/be38469da984371bdb8b18905abc113a.png';
+
+  for (const r of recipients) {
+    const mmsText = `Hi ${r.fname}! Here is information about the credit counseling course that we discussed. Just go to EVERGREENCLASS.COM. If you use the code LSG, you will get a $25 discount and they will automatically send us your certificate!`;
+
+    if (smsOn && r.phone) {
+      if (isRc) {
+        await P.apiSend('/internal/mms/send', 'POST', {
+          from: smsFrom, to: r.phone, text: mmsText,
+          attachment_url: ccImgUrl,
+        });
+        successes.push(`Credit Counseling MMS → ${r.name}`);
+      } else {
+        await P.apiSend('/internal/sms/send', 'POST', {
+          from: smsFrom, to: r.phone,
+          message: `${mmsText}\n\n${ccImgUrl}`,
+        });
+        successes.push(`Credit Counseling SMS → ${r.name}`);
       }
+    }
+    if (emailOn && r.email) {
+      await P.apiSend('/internal/email/send', 'POST', {
+        from: emailFrom, to: r.email,
+        subject: 'Credit Counseling Information',
+        text: mmsText,
+        attachment_names: 'Evergreen Credit Counseling.png',
+        attachment_urls: ccImgUrl,
+        attachments: [{ filename: 'Evergreen Credit Counseling.png', path: ccImgUrl }],
+      });
+      successes.push(`Credit Counseling Email → ${r.name}`);
+    }
+  }
+}
 
       // ── SOS TITLE INSTRUCTIONS (MMS + email with PDF) ──
       if (action.type === 'sos_title') {
@@ -800,18 +813,30 @@ async function send() {
 
       // ── IRS.GOV / ID.ME INSTRUCTIONS (MMS video + email with video + PDF) ──
       if (action.type === 'irs_idme') {
-        const irsVideo = 'https://storage.googleapis.com/uploads.4lsg.com/f90893673d9f2e3869c8fb02e3410631.mp4';
-        const irsPdf = 'https://storage.googleapis.com/uploads.4lsg.com/f7cdbf587e6b80018b5e819c0ee54635.pdf';
-        const smsMsg = `Hi ${recipients.map(r => r.fname).join(' and ')}! Here is an instruction video for setting up your IRS.GOV account through ID.ME:\n\nVideo: ${irsVideo}\nInstructions: ${irsPdf}`;
-        for (const r of recipients) {
-          if (smsOn && r.phone) {
-            await P.apiSend('/internal/mms/send', 'POST', {
-              from: smsFrom, to: r.phone, text: `Hi ${r.fname}! Here is instructions for setting up your IRS.GOV account through ID.ME. See the attached PDF or for video instructions click here: ${irsVideo}`,
-              attachment_url: irsPdf,
-            });
-            successes.push(`IRS/ID.ME MMS → ${r.name}`);
-          }
-          if (emailOn && r.email) {
+  const irsVideo = 'https://storage.googleapis.com/uploads.4lsg.com/f90893673d9f2e3869c8fb02e3410631.mp4';
+  const irsPdf = 'https://storage.googleapis.com/uploads.4lsg.com/f7cdbf587e6b80018b5e819c0ee54635.pdf';
+  const smsOpt = document.getElementById('smsFrom').selectedOptions[0];
+  const isRc = smsOpt?.dataset.provider === 'ringcentral';
+
+  for (const r of recipients) {
+    if (smsOn && r.phone) {
+      if (isRc) {
+        await P.apiSend('/internal/mms/send', 'POST', {
+          from: smsFrom, to: r.phone,
+          text: `Hi ${r.fname}! Here is instructions for setting up your IRS.GOV account through ID.ME. See the attached PDF or for video instructions click here: ${irsVideo}`,
+          attachment_url: irsPdf,
+        });
+        successes.push(`IRS/ID.ME MMS → ${r.name}`);
+      } else {
+        await P.apiSend('/internal/sms/send', 'POST', {
+          from: smsFrom, to: r.phone,
+          message: `Hi ${r.fname}! Here is information for setting up your IRS.GOV account through ID.ME.\n\nVideo: ${irsVideo}\nInstructions: ${irsPdf}`,
+        });
+        successes.push(`IRS/ID.ME SMS → ${r.name}`);
+      }
+    }
+    if (emailOn && r.email) {
+
             await P.apiSend('/internal/email/send', 'POST', {
               from: emailFrom, to: r.email,
               subject: 'Instructions for Setting Up Your IRS.GOV / ID.ME Account',

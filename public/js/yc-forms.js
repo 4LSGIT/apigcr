@@ -107,7 +107,8 @@ if (this.config.endpoints.load) {
     if (!this.config.external) {
       try {
         const P = window.parent;
-        if (P.entityData && this.config.endpoints.load.path) {
+        const path = this.config.endpoints.load.path;
+        if (P.entityData && path && P.entityData[path]) {
           loadResult = P.entityData;
         }
       } catch (_) { /* cross-origin or no parent */ }
@@ -120,6 +121,7 @@ if (this.config.endpoints.load) {
         this.config.endpoints.load.method || 'GET'
       );
     }
+    
 
     const path = this.config.endpoints.load.path;
     if (path && loadResult[path]) {
@@ -565,6 +567,7 @@ this._lastAutosaveJson = JSON.stringify(this._original);
     const diff = this.getDiff();
     if (Object.keys(diff).length === 0) {
       this._toast('success', 'No changes to save');
+      if (this.config.readonly) this.setReadonly(true);
       return;
     }
 
@@ -644,10 +647,15 @@ this._lastAutosaveJson = JSON.stringify(this._original);
       this._showStatus('Saved just now');
 
       // 8b. Update submission metadata for snapshot banner
+      let currentUserName = null;
+      try {
+        currentUserName = window.parent.firmData?.currentUser?.user_name || null;
+      } catch (_) { /* cross-origin */ }
+
       this._submittedData = {
         version: submitResult.version,
         updated_at: submitResult.updated_at,
-        user_name: null,  // we don't know our own name client-side
+        user_name: currentUserName,
         submitted_by: null,
       };
       this._showSnapshotBanner();
@@ -1004,19 +1012,18 @@ this._lastAutosaveJson = JSON.stringify(this._original);
   }
 
   _stripMask(value, fieldConfig) {
-    if (!fieldConfig) return value;
-    const maskType = fieldConfig.mask || (this.config.validation[fieldConfig.el] || {}).mask;
-
-    // Also check the element for data-yc-mask
-    if (!maskType) {
-      const el = this.el.querySelector(fieldConfig.el);
-      if (el && el.dataset.ycMask) {
-        return this._stripMaskByType(value, el.dataset.ycMask);
-      }
-      return value;
-    }
-    return this._stripMaskByType(value, maskType);
+  if (!fieldConfig) return value;
+  // Check fieldConfig.mask first (if explicitly set)
+  if (fieldConfig.mask) {
+    return this._stripMaskByType(value, fieldConfig.mask);
   }
+  // Fall back to element's data-yc-mask attribute
+  const el = this.el.querySelector(fieldConfig.el);
+  if (el && el.dataset.ycMask) {
+    return this._stripMaskByType(value, el.dataset.ycMask);
+  }
+  return value;
+}
 
   _stripMaskByType(value, maskType) {
     if (!value) return value;
