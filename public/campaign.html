@@ -1112,7 +1112,7 @@ async function previewCampaign() {
   const body = getBody();
   const channel = document.getElementById('f-channel').value;
   const subject = channel === 'email' ? document.getElementById('c-subject').value.trim() : null;
-  const bodyEmpty = channel === 'sms' ? !body.trim() : !body.replace(/<[^>]*>/g, '').trim();
+  const bodyEmpty = channel === 'sms' ? !body.trim() : !body.replace(/<[^>]*>/g, '').trim() && !/<img\b/i.test(body);
   if (bodyEmpty) return Toast.fire({ icon: 'warning', title: 'Message body is empty' });
 
   try {
@@ -1151,7 +1151,7 @@ async function createCampaign() {
   if (!sender) return Toast.fire({ icon: 'warning', title: 'Select a sender' });
   if (channel === 'email' && !subject) return Toast.fire({ icon: 'warning', title: 'Subject is required for email' });
   if (channel === 'sms' && !body.trim()) return Toast.fire({ icon: 'warning', title: 'Message body is empty' });
-  if (channel === 'email' && !body.replace(/<[^>]*>/g, '').trim()) return Toast.fire({ icon: 'warning', title: 'Message body is empty' });
+  if (channel === 'email' && !body.replace(/<[^>]*>/g, '').trim() && !/<img\b/i.test(body)) return Toast.fire({ icon: 'warning', title: 'Message body is empty' });
   if (!sendNow && !schedule) return Toast.fire({ icon: 'warning', title: 'Select a schedule date or check Send Now' });
 
   const confirm = await Swal.fire({
@@ -1363,7 +1363,7 @@ function fmtPhone(n) {
 
 // ─── BOOT ─────────────────────────────────────────────────────
 (function waitForParent() {
-  if (P.apiSend && P.username) return init();
+  if (P.apiSend && P.firmData?.currentUser) return init();
   setTimeout(waitForParent, 100);
 })();
 </script>

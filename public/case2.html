@@ -62,7 +62,6 @@
       </button>
     </div>
     <div id="bkButtons" style="display: none">
-      <!--<button class="tab" onclick="openTab(this, 'tabStatus')"><i class="fa-solid fa-chart-simple fa-rotate-180"></i> Set Status</button>-->
       <button class="tab" id="ISSNButton" onclick="openTab(this, 'tabInfo')">
         <i class="fa-solid fa-circle-info"></i> Initial Strategy Session Notes
       </button>
@@ -76,7 +75,7 @@
         <i class="fa-solid fa-gavel"></i> 341 Notes
       </button>
       <button class="tab" onclick="openTab(this, 'tabDet')">
-        <i class="fa-brands fa-wpforms"></i> Detailed Questionaire
+        <i class="fa-brands fa-wpforms"></i> Detailed Questionnaire
       </button>
     </div>
     <h4 style="color: #000">
@@ -165,7 +164,7 @@
         <button
           class="big-button"
           onclick="Swal.fire({ title: 'Delete Case Page',
-                                              html: `<p>Are you sure you want to delete case ${caseID}?</p><p>There is no way to restore thhe data!</p>`,
+                                              html: `<p>Are you sure you want to delete case ${caseID}?</p><p>There is no way to restore the data!</p><p>also, this doesnt work yet!</p>`,
                                               icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, Delete!',cancelButtonText: 'No, cancel',
                                               preConfirm: () => { document.write(`<h1 style='text-align:center'>Case Deleted! You may close the tab.</h1>`);}});"
           style="background-color: red"
@@ -202,18 +201,6 @@
       }
     }
   </script>
-
-
-    <div id="tabStatus" class="tab-content">
-      <iframe id="status"></iframe>
-      <button
-        onclick="newStatus(trello)"
-        style="background-color: red; color: white; font-weight: bold"
-      >
-        Clear Form
-      </button>
-    </div>
-
     <div id="tabAppts" class="tab-content">
       <h1>Appointments connected to this case:</h1>
       <button class="file-button" onclick="newAppt()">
@@ -806,12 +793,6 @@
 
     <div id="tab341" class="tab-content">
       <iframe id="341"></iframe>
-      <button
-        onclick="new341(trello)"
-        style="background-color: red; color: white; font-weight: bold"
-      >
-        Clear Form
-      </button>
     </div>
 
     <div id="tabDet" class="tab-content">
@@ -830,8 +811,6 @@
 const caseID = new URLSearchParams(window.location.search).get("caseID") || prompt("case id");
 const tab    = new URLSearchParams(window.location.search).get("tab") || "";
 let limit    = P.limit || 100;
-// url kept for checklists (legacy Trello system)
-const url    = P.url || "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc";
 
 window.apiSend = P.apiSend;   // relay for child form iframes
 window.firmData = P.firmData;
@@ -908,7 +887,7 @@ function loadIframes() {
     E("SendingForm").src = `sendingform.html?case_id=${c.case_id}`;
     E("caseForm").src    = `forms/casedetails.html?case_id=${c.case_id}`;
     E("341").src         = `/forms/341notes.html?case_id=${c.case_id}`;
-    E("det").src         = c.case_detailed_link || "";
+    E("det").src         = c.case_detailed_link || "about:blank";
   }
 
   // Dropbox

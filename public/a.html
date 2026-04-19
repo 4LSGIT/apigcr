@@ -1496,20 +1496,16 @@
   <button class="big-button" data-target="manualsDiv">Manuals</button>
   <button class="big-button" data-target="automationsDiv">Automations</button>
   <button class="big-button" data-target="featureRequestsDiv">Feature Requests</button>
-  <!--<button class="big-button" data-target="hooksDiv">YisraHooks</button>-->
 
   <div id="manualsDiv" class="more-panel" style="display:none">
     <iframe data-src="/manuals.html"></iframe>
   </div>
   <div id="automationsDiv" class="more-panel" style="display:none">
-    <iframe data-src="/AutomationManager.html"></iframe>
+    <iframe data-src="/automationManager.html"></iframe>
   </div>
   <div id="featureRequestsDiv" class="more-panel" style="display:none">
     <iframe data-src="/featureRequests.html"></iframe>
   </div>
-  <!--<div id="hooksDiv" class="more-panel" style="display:none">
-    <iframe data-src="/YisraHook.html"></iframe>
-  </div>-->
 </div>
 <script>
   document.querySelectorAll('#tabMore .big-button').forEach(btn => {
@@ -1689,17 +1685,14 @@
     // ── Firm-wide data — loaded once after auth, available to all child iframes ──
     window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [] };
 
-    async function loadFirmData() {
-      try {
-        const data = await apiSend('/api/firm-data', 'GET');
-        window.firmData.phoneLines  = data.phoneLines  || [];
-        window.firmData.emailFrom   = data.emailFrom   || [];
-        window.firmData.currentUser = data.currentUser  || null;
-        window.firmData.users       = data.users        || [];
-      } catch (err) {
-        console.error('loadFirmData failed:', err);
-      }
-    }
+async function loadFirmData() {
+  const data = await apiSend('/api/firm-data', 'GET');  // let it throw
+  window.firmData.phoneLines  = data.phoneLines  || [];
+  window.firmData.emailFrom   = data.emailFrom   || [];
+  window.firmData.currentUser = data.currentUser || null;
+  window.firmData.users       = data.users       || [];
+  if (!window.firmData.currentUser) throw new Error("No user data returned");
+}
 
     /**
      * Populate a <select> with the active users list from firmData.
@@ -1737,14 +1730,10 @@
       if (value !== undefined) selectEl.value = value;
     };
 
-    async function loginBlocking() {
-      if (window.AUTH_STATE.loginInProgress) {
-        return window.AUTH_STATE.loginInProgress;
-      }
-      window.AUTH_STATE.loginInProgress = new Promise((resolve, reject) => {
-        Swal.fire({
-          title: "Please log in",
-          html: `
+ async function loginBlocking() {
+  await Swal.fire({
+    title: "Please log in",
+    html: `
         <label class="input-label">Username: </label>
         <input id="username" value="${AUTH_STATE.username || ""}">
         <br><br>
@@ -1796,38 +1785,31 @@
 
             return false;
           },
-
-          preConfirm: async () => {
-            username = E("username").value;
-            password = E("password").value;
-
-            if (!username || !password) {
-              Swal.showValidationMessage("Please fill in all required fields");
-              return false;
-            }
-
-            try {
-              await login(username, password); // <-- JWT login
-              resolve();
-            } catch (err) {
-              Swal.showValidationMessage("Login failed");
-              reject(err);
-            }
-          }
-        });
-      });
-
+    preConfirm: async () => {
+      const u = E("username").value;
+      const p = E("password").value;
+      if (!u || !p) {
+        Swal.showValidationMessage("Please fill in all required fields");
+        return false;
+      }
       try {
-        await window.AUTH_STATE.loginInProgress;
-      } finally {
-        window.AUTH_STATE.loginInProgress = null;
+        await login(u, p);
+      } catch (err) {
+        Swal.showValidationMessage("Login failed");
+        return false;   // keeps the modal open on failure
       }
     }
+  });
+}
 
-    async function login(username, password) {
-      AUTH_STATE.username = username;
-      AUTH_STATE.password = password;
+async function login(username, password) {
+  // Coalesce: if a login is already running, everyone awaits the same fetch.
+  if (window.AUTH_STATE.loginInProgress) {
+    return window.AUTH_STATE.loginInProgress;
+  }
 
+  window.AUTH_STATE.loginInProgress = (async () => {
+    try {
       const res = await fetch("/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1837,27 +1819,39 @@
       if (!res.ok || !data.token) {
         throw new Error(data.error || "Login failed");
       }
+
+      // Only cache creds AFTER the server confirms they work.
+      AUTH_STATE.username = username;
+      AUTH_STATE.password = password;//need to stop and switch to refresh token!
       AUTH_STATE.jwt = data.token;
       localStorage.setItem("jwt", data.token);
       return data.token;
+    } finally {
+      // Clear the flag whether we succeeded or threw — next caller gets a fresh attempt.
+      window.AUTH_STATE.loginInProgress = null;
     }
+  })();
+
+  return window.AUTH_STATE.loginInProgress;
+}
 
 
-    async function initAuth() {
-      const token = AUTH_STATE.jwt;
-      if (!token || isJwtExpired(token)) {
-        await loginBlocking();
-      }
-      await loadFirmData();
-
-      // Aliases — downstream code reads `user` and `users` globals everywhere
-      user  = window.firmData.currentUser || {};
-      users = window.firmData.users       || [];
-
-      // UI setup (header, admin button, custom tab, open tabs, populate selects)
-      loadUserContext();
-    }
-
+async function initAuth() {
+  let token = AUTH_STATE.jwt;
+  if (!token || isJwtExpired(token)) await loginBlocking();
+  try {
+    await loadFirmData();
+  } catch (err) {
+    Toast.fire({ icon: 'warning', title: 'Session expired, please log in again', timer: 2000 });
+    localStorage.removeItem("jwt");
+    AUTH_STATE.jwt = null;
+    await loginBlocking();
+    await loadFirmData();
+  }
+  user  = window.firmData.currentUser || {};
+  users = window.firmData.users       || [];
+  loadUserContext();
+}
 
     async function loadUserContext() {
       // user and users are already set as aliases to firmData by initAuth()
@@ -1913,7 +1907,7 @@
         tabTasksGet(0);
       }
       if (params.clients) {
-        tabClientssGet(0);
+        tabContactsGet(0);
       }
       if (params.cases) {
         tabCasesGet(0);
@@ -2013,8 +2007,8 @@
 
       const closeBtn = document.createElement("i");
       closeBtn.className = "file-close fa-solid fa-circle-xmark";
-      closeBtn.addEventListener("click", function () {
-        event.stopPropagation();
+      closeBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
         Swal.fire({
           title: `Close "${fileName}"?`,
           text: `Did you save all the forms?`,
@@ -2241,7 +2235,6 @@
       });
     }
 
-    quickpicktemp = "";
     /**
      * quickPick — unified search + open
      * @param {string} term   — search query

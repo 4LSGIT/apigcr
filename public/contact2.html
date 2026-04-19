@@ -1,5 +1,4 @@
-<xscript type="text/javascript" src="https://www.dropbox.com/static/api/2/dropins.js" id="dropboxjs" data-app-key="ubgcneqmlvas3rc"></xscript>
-  <script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
+<script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css">
@@ -89,17 +88,6 @@ async function abortSeq(enrollmentId, templateName) {
   <div id="tabBills" class="tab-content">
     Everything you want?!
   </div>
-
-
-      
-      
-    
-      
-    
-    
-      
-    
-    
 
   <div id="tabLog" class="tab-content"> 
     <h1>Client Log</h1>
@@ -430,10 +418,16 @@ function loadIframes() {
 
 function putCases() {
   const table = E("casesTable");
-  table.style.display = "";
-  table.previousElementSibling.style.display = "none";
-  // Clear existing rows (keep header)
+  const emptyHeader = table.previousElementSibling;
+  // Clear existing rows (keep header) before re-rendering either state
   while (table.rows.length > 1) table.deleteRow(-1);
+  if (!window.entityData.cases.length) {
+    table.style.display = "none";
+    emptyHeader.style.display = "";
+    return;
+  }
+  table.style.display = "";
+  emptyHeader.style.display = "none";
   window.entityData.cases.forEach(C => {
     const row = table.insertRow();
     row.innerHTML = `<td><a href="#" onclick="P.addFile('${C.case_id}','case','${C.case_id}');return false">${C.case_id}</a></td>
@@ -446,10 +440,16 @@ function putCases() {
 
 function putAppt() {
   const table = E("apptsTable");
-  table.style.display = "";
-  table.previousElementSibling.style.display = "none";
-  // Clear existing rows (keep header)
+  const emptyHeader = table.previousElementSibling;
+  // Clear existing rows (keep header) before re-rendering either state
   while (table.rows.length > 1) table.deleteRow(-1);
+  if (!window.entityData.appts.length) {
+    table.style.display = "none";
+    emptyHeader.style.display = "";
+    return;
+  }
+  table.style.display = "";
+  emptyHeader.style.display = "none";
   window.entityData.appts.forEach(appt => {
     const row = table.insertRow();
     // Always show all 4 action buttons except the one matching current status.
@@ -477,8 +477,15 @@ function putAppt() {
 
 function putSeq() {
   const table = E("seqTable");
+  const emptyHeader = table.previousElementSibling;
+  if (!window.entityData.sequences.length) {
+    table.innerHTML = "";
+    table.style.display = "none";
+    emptyHeader.style.display = "";
+    return;
+  }
   table.style.display = "";
-  table.previousElementSibling.style.display = "none";
+  emptyHeader.style.display = "none";
   table.innerHTML = `<tr><th>ID</th><th>Template</th><th>Type</th><th>Status</th><th>Step</th><th>Enrolled</th><th></th></tr>`;
   window.entityData.sequences.forEach(s => {
     const enrolled = s.enrolled_at

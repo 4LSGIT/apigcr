@@ -66,6 +66,7 @@ router.post("/login", loginLimiter, async (req, res) => {
       },
       process.env.JWT_SECRET,
       { expiresIn: "24h" }
+      //{ expiresIn: "1m" }
     );
 
     res.json({ token });

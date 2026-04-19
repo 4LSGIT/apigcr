@@ -351,8 +351,15 @@ function formatPhone(phone) {
 
 function formatDateTime(dt) {
   if (!dt) return '—';
-  const d = new Date(dt);
-  if (isNaN(d)) return dt;
+  // Treat the DB value as wall-clock time — ignore any TZ suffix.
+  // Handles "2026-04-20T14:30:00.000Z", "2026-04-20T14:30:00", "2026-04-20 14:30:00"
+  const s = String(dt);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!m) {
+    const d = new Date(dt);
+    return isNaN(d) ? s : d.toLocaleString();
+  }
+  const d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
     ' at ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
@@ -657,6 +664,8 @@ async function createCase() {
       await P.apiSend(`/api/appts/${apptData.appt_id}`, 'PATCH', { appt_case_id: newCaseId });
       Toast.fire({ icon: 'success', title: `Case ${newCaseId} created and linked` });
       await loadAppt();
+    } else {
+      Toast.fire({ icon: 'error', title: 'Case creation failed', text: 'No case ID returned' });
     }
   } catch (err) {
     Toast.fire({ icon: 'error', title: 'Failed', text: err.message });
