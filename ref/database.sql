@@ -1577,7 +1577,8 @@ ALTER TABLE `campaign_contacts`
 -- Indexes for table `campaign_results`
 --
 ALTER TABLE `campaign_results`
-  ADD PRIMARY KEY (`result_id`);
+  ADD PRIMARY KEY (`result_id`),
+  ADD UNIQUE KEY `uq_campaign_contact` (`campaign_id`,`contact_id`);
 
 --
 -- Indexes for table `cases`
