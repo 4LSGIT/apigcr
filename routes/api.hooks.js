@@ -5,6 +5,10 @@
  * POST /hooks/:slug         — public receiver endpoint (auth per-hook config)
  * GET/POST/PUT/DELETE /api/hooks/*      — management CRUD (JWT protected)
  * GET/POST/PUT/DELETE /api/credentials/* — credential management (JWT protected)
+ *
+ * v1.2 — target CRUD now accepts `target_type` and `config` for internal
+ * automation targets (workflow / sequence / internal_function). HTTP targets
+ * continue to work exactly as before (target_type defaults to 'http').
  */
 
 const express = require('express');
@@ -25,6 +29,10 @@ const hookReceiveLimiter = rateLimit({
   message: { status: 'error', message: 'Too many requests' },
   validate: false,
 });
+
+// Allowed target types — kept in one place so we can validate and expose
+// them via /api/hooks/meta for the UI.
+const VALID_TARGET_TYPES = ['http', 'workflow', 'sequence', 'internal_function'];
 
 // ─────────────────────────────────────────────────────────────
 // RECEIVER — the catch-all webhook endpoint
@@ -98,11 +106,12 @@ router.get('/api/hooks', jwtOrApiKey, async (req, res) => {
 });
 
 router.get('/api/hooks/meta', jwtOrApiKey, async (req, res) => {
-  // Return available transforms and operators for the UI
+  // Return available transforms, operators, and target types for the UI
   res.json({
     status: 'success',
     transforms: listTransforms(),
     operators: listOperators(),
+    target_types: VALID_TARGET_TYPES,
   });
 });
 
@@ -188,6 +197,69 @@ router.delete('/api/hooks/:id', jwtOrApiKey, async (req, res) => {
 // MANAGEMENT API — Targets
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Validate a target payload based on its target_type.
+ * @returns {string|null} error message, or null if valid
+ */
+function validateTargetPayload(body, { isUpdate = false } = {}) {
+  const type = body.target_type || 'http';
+
+  if (!VALID_TARGET_TYPES.includes(type)) {
+    return `Unknown target_type: "${type}" (allowed: ${VALID_TARGET_TYPES.join(', ')})`;
+  }
+
+  // On create, name is required. On update, only validate if provided.
+  if (!isUpdate && !body.name) return 'name is required';
+
+  if (type === 'http') {
+    // HTTP targets require a URL (on create; on update only if the type is being set)
+    if (!isUpdate && !body.url) {
+      return 'HTTP targets require url';
+    }
+    return null;
+  }
+
+  // Internal target types require config with type-specific fields
+  const cfg = body.config;
+  const missingConfig = !cfg || typeof cfg !== 'object';
+
+  if (type === 'workflow') {
+    if (!isUpdate && (missingConfig || cfg.workflow_id == null || cfg.workflow_id === '')) {
+      return 'workflow targets require config.workflow_id (number)';
+    }
+    if (cfg && cfg.workflow_id !== undefined && cfg.workflow_id !== null && cfg.workflow_id !== '') {
+      const wfId = Number(cfg.workflow_id);
+      if (!Number.isInteger(wfId) || wfId <= 0) {
+        return 'config.workflow_id must be a positive integer';
+      }
+    }
+    return null;
+  }
+
+  if (type === 'sequence') {
+    if (!isUpdate && (missingConfig || !cfg.template_type)) {
+      return 'sequence targets require config.template_type (string)';
+    }
+    if (cfg && cfg.trigger_data_fields !== undefined && !Array.isArray(cfg.trigger_data_fields)) {
+      return 'config.trigger_data_fields must be an array of field names';
+    }
+    return null;
+  }
+
+  if (type === 'internal_function') {
+    if (!isUpdate && (missingConfig || !cfg.function_name)) {
+      return 'internal_function targets require config.function_name (string)';
+    }
+    if (cfg && cfg.params_mapping !== undefined
+        && (typeof cfg.params_mapping !== 'object' || Array.isArray(cfg.params_mapping))) {
+      return 'config.params_mapping must be an object of { paramName: "source" }';
+    }
+    return null;
+  }
+
+  return null;
+}
+
 router.get('/api/hooks/:hookId/targets', jwtOrApiKey, async (req, res) => {
   try {
     const hook = await hookService.getHookById(req.db, req.params.hookId);
@@ -201,23 +273,39 @@ router.get('/api/hooks/:hookId/targets', jwtOrApiKey, async (req, res) => {
 
 router.post('/api/hooks/:hookId/targets', jwtOrApiKey, async (req, res) => {
   try {
-    const { name, position, method, url, headers, credential_id,
-            body_mode, body_template, conditions,
-            transform_mode, transform_config } = req.body;
-    if (!name || !url) {
-      return res.status(400).json({ status: 'error', message: 'name and url are required' });
+    const validationError = validateTargetPayload(req.body, { isUpdate: false });
+    if (validationError) {
+      return res.status(400).json({ status: 'error', message: validationError });
     }
 
-    const data = { name, url };
-    if (position !== undefined) data.position = position;
+    const { name, position, target_type, method, url, headers, credential_id,
+            body_mode, body_template, config, conditions,
+            transform_mode, transform_config, active } = req.body;
+
+    const data = { name };
+    data.target_type = target_type || 'http';
+
+    // HTTP fields
+    if (url !== undefined && url !== null && url !== '') data.url = url;
     if (method) data.method = method;
     if (headers !== undefined) data.headers = JSON.stringify(headers);
-    if (credential_id !== undefined) data.credential_id = credential_id;
+    if (credential_id !== undefined && credential_id !== null && credential_id !== '') {
+      data.credential_id = credential_id;
+    }
     if (body_mode) data.body_mode = body_mode;
     if (body_template !== undefined) data.body_template = body_template;
+
+    // Internal-target config (single JSON column)
+    if (config !== undefined) {
+      data.config = config == null ? null : JSON.stringify(config);
+    }
+
+    // Shared fields
+    if (position !== undefined) data.position = position;
     if (conditions !== undefined) data.conditions = JSON.stringify(conditions);
     if (transform_mode) data.transform_mode = transform_mode;
     if (transform_config !== undefined) data.transform_config = JSON.stringify(transform_config);
+    if (active !== undefined) data.active = active ? 1 : 0;
 
     const id = await hookService.createTarget(req.db, req.params.hookId, data);
     res.json({ status: 'success', id });
@@ -229,19 +317,31 @@ router.post('/api/hooks/:hookId/targets', jwtOrApiKey, async (req, res) => {
 
 router.put('/api/hooks/targets/:id', jwtOrApiKey, async (req, res) => {
   try {
+    const validationError = validateTargetPayload(req.body, { isUpdate: true });
+    if (validationError) {
+      return res.status(400).json({ status: 'error', message: validationError });
+    }
+
     const data = {};
-    const allowed = ['name', 'position', 'method', 'url', 'headers', 'credential_id',
-                     'body_mode', 'body_template', 'conditions',
+    const allowed = ['name', 'position', 'target_type', 'method', 'url', 'headers', 'credential_id',
+                     'body_mode', 'body_template', 'config', 'conditions',
                      'transform_mode', 'transform_config', 'active'];
+    const jsonFields = new Set(['headers', 'conditions', 'transform_config', 'config']);
+
     for (const key of allowed) {
       if (req.body[key] !== undefined) {
-        if (['headers', 'conditions', 'transform_config'].includes(key) && typeof req.body[key] === 'object') {
-          data[key] = JSON.stringify(req.body[key]);
+        const val = req.body[key];
+        if (jsonFields.has(key)) {
+          // Allow explicit null to clear the column
+          data[key] = val == null ? null : JSON.stringify(val);
         } else {
-          data[key] = req.body[key];
+          data[key] = val;
         }
       }
     }
+
+    if (data.active !== undefined) data.active = data.active ? 1 : 0;
+
     await hookService.updateTarget(req.db, req.params.id, data);
     res.json({ status: 'success' });
   } catch (err) {

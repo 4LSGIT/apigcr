@@ -2159,8 +2159,16 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
 });
 
 // ═══════════════════════════════════════════════════════════════════
-// HOOKS TAB  —  IIFE-scoped module
+// HOOKS TAB — IIFE-scoped module
+// v1.2 — Adds support for internal automation targets (workflow,
+//        sequence, internal_function) alongside the existing HTTP type.
+//
 // Uses outer-scope `api` and `esc` from the WM script.
+//
+// DROP-IN REPLACEMENT: Replace the existing `(function hooksModule() { ... })()`
+// block in public/automationManager.html with this entire file's contents.
+// No changes to the static HTML are required — target-type UI renders
+// inside the existing Swal target-edit modal.
 // ═══════════════════════════════════════════════════════════════════
 (function hooksModule() {
   const E = id => document.getElementById(id);
@@ -2178,20 +2186,34 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
   let targets = [];
   let hooksLoaded = false;
 
+  // ── Internal-target reference data (fetched on init, cached for session) ──
+  let workflowsList = [];           // [{ id, name, ... }]
+  let sequenceTemplatesList = [];   // [{ id, name, type, ... }]
+  let internalFunctionsList = [];   // ['send_sms', 'create_log', ...]
+
   // ── Init (lazy, runs on first tab open) ──
   async function hooksInit() {
     if (hooksLoaded) return;
     hooksLoaded = true;
     try {
-      const [hooksData, credsData, metaData] = await Promise.all([
+      // Fetch the hooks data plus everything needed by the target editor.
+      // Each internal-target ref list is wrapped in its own try — if one
+      // endpoint is missing the hooks tab still works for the others.
+      const [hooksData, credsData, metaData, wfData, seqData, fnData] = await Promise.all([
         api('/api/hooks'),
         api('/api/credentials'),
         api('/api/hooks/meta'),
+        api('/workflows').catch(() => ({ workflows: [] })),
+        api('/sequences/templates').catch(() => ({ templates: [] })),
+        api('/workflows/functions').catch(() => ({ workflow: [] })),
       ]);
       hooks = hooksData.hooks || [];
       filtered = hooks;
       credentials = credsData.credentials || [];
       meta = metaData;
+      workflowsList = wfData.workflows || wfData || [];
+      sequenceTemplatesList = seqData.templates || seqData || [];
+      internalFunctionsList = fnData.workflow || fnData.functions || fnData || [];
       renderHookList();
     } catch (e) {
       E('hook-list').innerHTML = `<div style="padding:16px;color:#f87171;font-size:12px">${e.message}</div>`;
@@ -2261,9 +2283,6 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     updateTopbarButtons();
   }
 
-  // Shows/hides the topbar Save and Delete buttons based on current state.
-  // Save: visible when Hooks tab is active AND the editor is open.
-  // Delete: same conditions AND a saved hook is loaded (not a new-unsaved one).
   function updateTopbarButtons() {
     const onHooksTab = (typeof currentMainTab !== 'undefined') && currentMainTab === 'hooks';
     const wrap = E('hook-editor-wrap');
@@ -2559,43 +2578,79 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     });
   }
 
-  // ── Targets tab ──
+  // ══════════════════════════════════════════════════════════════════
+  // TARGETS TAB
+  // ══════════════════════════════════════════════════════════════════
+
+  // Human-readable labels for each target type
+  const TARGET_TYPE_LABELS = {
+    http:              { label: 'HTTP',              icon: 'fa-globe',        color: 'var(--blue)'  },
+    workflow:          { label: 'Workflow',          icon: 'fa-diagram-project', color: '#8b5cf6'   },
+    sequence:          { label: 'Sequence',          icon: 'fa-list-ol',      color: '#f97316'      },
+    internal_function: { label: 'Function',          icon: 'fa-code',         color: '#10b981'      },
+  };
+
   function renderTargets() {
     const el = E('targets-list');
     if (!targets.length) {
       el.innerHTML = '<div class="text-sm text-muted" style="text-align:center;padding:20px">No delivery targets. Add one below.</div>';
       return;
     }
-    el.innerHTML = targets.map((t, i) => `
+    el.innerHTML = targets.map((t, i) => {
+      const type = t.target_type || 'http';
+      const info = TARGET_TYPE_LABELS[type] || TARGET_TYPE_LABELS.http;
+      const summary = summarizeTargetAction(t);
+      return `
       <div class="card">
         <div class="card-head">
-          <div class="card-title"><i class="fa-solid fa-bullseye" style="color:var(--blue);margin-right:6px"></i>${esc(t.name || 'Unnamed target')}</div>
+          <div class="card-title">
+            <i class="fa-solid ${info.icon}" style="color:${info.color};margin-right:6px"></i>${esc(t.name || 'Unnamed target')}
+            <span style="font-size:10px;font-weight:600;background:#f1f5f9;color:#475569;padding:2px 6px;border-radius:4px;margin-left:6px;text-transform:uppercase">${info.label}</span>
+          </div>
           <div class="card-actions">
             <button onclick="editTarget(${i})" title="Edit"><i class="fa-solid fa-pen"></i></button>
             <button class="danger" onclick="removeTarget(${i})" title="Delete"><i class="fa-solid fa-trash"></i></button>
           </div>
         </div>
-        <div class="text-sm">
-          <span style="font-weight:600;color:var(--text2)">${t.method || 'POST'}</span>
-          <span class="mono" style="color:var(--muted);margin-left:6px">${esc(t.url || '—')}</span>
-        </div>
+        <div class="text-sm mono" style="color:var(--muted)">${esc(summary)}</div>
         <div class="text-sm text-muted" style="margin-top:4px">
-          ${t.credential_id ? `<i class="fa-solid fa-lock" style="margin-right:4px"></i>Credential #${t.credential_id}` : '<i class="fa-solid fa-lock-open" style="margin-right:4px"></i>No auth'}
+          ${type === 'http'
+            ? (t.credential_id ? `<i class="fa-solid fa-lock" style="margin-right:4px"></i>Credential #${t.credential_id}` : '<i class="fa-solid fa-lock-open" style="margin-right:4px"></i>No auth')
+            : '<i class="fa-solid fa-bolt" style="margin-right:4px"></i>Internal (no HTTP)'}
           ${t.conditions ? ' • <i class="fa-solid fa-filter"></i> Conditional' : ''}
           ${t.transform_mode && t.transform_mode !== 'passthrough' ? ' • <i class="fa-solid fa-shuffle"></i> Custom transform' : ''}
           • ${t.active ? '<span style="color:var(--green)">Active</span>' : '<span style="color:var(--red)">Inactive</span>'}
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
+  }
+
+  function summarizeTargetAction(t) {
+    const type = t.target_type || 'http';
+    if (type === 'http') {
+      return `${t.method || 'POST'} ${t.url || '—'}`;
+    }
+    const cfg = parseJson(t.config) || {};
+    if (type === 'workflow') {
+      return `Start workflow #${cfg.workflow_id || '?'}`;
+    }
+    if (type === 'sequence') {
+      return `Enroll in sequence "${cfg.template_type || '?'}"`;
+    }
+    if (type === 'internal_function') {
+      return `Call ${cfg.function_name || '?'}()`;
+    }
+    return `(${type})`;
   }
 
   async function addTarget() {
     const { value } = await Swal.fire({
       title: 'New Delivery Target',
       html: buildTargetForm({}),
-      width: 560,
+      width: 620,
       showCancelButton: true,
       confirmButtonText: 'Add Target',
+      didOpen: () => initTargetFormHandlers({}),
       preConfirm: () => collectTargetForm(),
     });
     if (!value) return;
@@ -2618,9 +2673,10 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     const { value } = await Swal.fire({
       title: 'Edit Target',
       html: buildTargetForm(t),
-      width: 560,
+      width: 620,
       showCancelButton: true,
       confirmButtonText: 'Update',
+      didOpen: () => initTargetFormHandlers(t),
       preConfirm: () => collectTargetForm(),
     });
     if (!value) return;
@@ -2649,54 +2705,319 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     renderTargets();
   }
 
+  // ── Target form — HTML builder ──
   function buildTargetForm(t) {
+    const type = t.target_type || 'http';
+    const cfg = parseJson(t.config) || {};
     const credOpts = credentials.map(c => `<option value="${c.id}" ${t.credential_id==c.id?'selected':''}>${esc(c.name)} (${c.type})</option>`).join('');
+    const wfOpts = workflowsList.map(w => `<option value="${w.id}" ${cfg.workflow_id==w.id?'selected':''}>${esc(w.name || 'Workflow #' + w.id)} (id: ${w.id})</option>`).join('');
+    const seqTypes = [...new Set(sequenceTemplatesList.map(s => s.type).filter(Boolean))];
+    const seqOpts = seqTypes.map(t => `<option value="${esc(t)}" ${cfg.template_type===t?'selected':''}>${esc(t)}</option>`).join('');
+    const fnOpts = internalFunctionsList.map(fn => `<option value="${esc(fn)}" ${cfg.function_name===fn?'selected':''}>${esc(fn)}</option>`).join('');
+
     return `
       <div style="text-align:left;font-size:13px">
-        <div class="fg"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Name</label>
-          <input id="swal-t-name" class="swal2-input" style="margin:0;width:100%" value="${esc(t.name || '')}"></div>
-        <div style="display:flex;gap:8px">
-          <div class="fg" style="width:100px"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Method</label>
-            <select id="swal-t-method" class="swal2-select" style="margin:0;width:100%">
-              ${['POST','GET','PUT','PATCH','DELETE'].map(m => `<option ${t.method===m?'selected':''}>${m}</option>`).join('')}
-            </select></div>
-          <div class="fg" style="flex:1"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">URL</label>
-            <input id="swal-t-url" class="swal2-input" style="margin:0;width:100%" value="${esc(t.url || '')}" placeholder="https://..."></div>
+
+        <div class="fg">
+          <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Name</label>
+          <input id="swal-t-name" class="swal2-input" style="margin:0;width:100%" value="${esc(t.name || '')}">
         </div>
-        <div class="fg"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Credential</label>
-          <select id="swal-t-cred" class="swal2-select" style="margin:0;width:100%">
-            <option value="">None</option>${credOpts}
-          </select></div>
-        <div class="fg"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Mode</label>
-          <select id="swal-t-bodymode" class="swal2-select" style="margin:0;width:100%">
-            <option value="transform_output" ${t.body_mode!=='template'?'selected':''}>Full transform output</option>
-            <option value="template" ${t.body_mode==='template'?'selected':''}>Template</option>
-          </select></div>
-        <div class="fg"><label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Template (if template mode)</label>
-          <textarea id="swal-t-template" class="swal2-textarea" style="margin:0;width:100%;font-family:monospace;font-size:12px;min-height:60px">${esc(t.body_template || '')}</textarea></div>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+
+        <div class="fg">
+          <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Target Type</label>
+          <select id="swal-t-type" class="swal2-select" style="margin:0;width:100%">
+            <option value="http" ${type==='http'?'selected':''}>HTTP — external URL</option>
+            <option value="workflow" ${type==='workflow'?'selected':''}>Workflow — start execution</option>
+            <option value="sequence" ${type==='sequence'?'selected':''}>Sequence — enroll contact</option>
+            <option value="internal_function" ${type==='internal_function'?'selected':''}>Internal Function — call directly</option>
+          </select>
+          <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Internal targets skip the HTTP round-trip and call the engine directly.</div>
+        </div>
+
+        <!-- ═══ HTTP section ═══ -->
+        <div id="swal-sec-http" class="swal-t-section">
+          <div style="display:flex;gap:8px">
+            <div class="fg" style="width:100px">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Method</label>
+              <select id="swal-t-method" class="swal2-select" style="margin:0;width:100%">
+                ${['POST','GET','PUT','PATCH','DELETE'].map(m => `<option ${t.method===m?'selected':''}>${m}</option>`).join('')}
+              </select>
+            </div>
+            <div class="fg" style="flex:1">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">URL</label>
+              <input id="swal-t-url" class="swal2-input" style="margin:0;width:100%" value="${esc(t.url || '')}" placeholder="https://...">
+            </div>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Credential</label>
+            <select id="swal-t-cred" class="swal2-select" style="margin:0;width:100%">
+              <option value="">None</option>${credOpts}
+            </select>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Mode</label>
+            <select id="swal-t-bodymode" class="swal2-select" style="margin:0;width:100%">
+              <option value="transform_output" ${t.body_mode!=='template'?'selected':''}>Full transform output</option>
+              <option value="template" ${t.body_mode==='template'?'selected':''}>Template</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Template (if template mode)</label>
+            <textarea id="swal-t-template" class="swal2-textarea" style="margin:0;width:100%;font-family:monospace;font-size:12px;min-height:60px">${esc(t.body_template || '')}</textarea>
+          </div>
+        </div>
+
+        <!-- ═══ WORKFLOW section ═══ -->
+        <div id="swal-sec-workflow" class="swal-t-section" style="display:none">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Workflow</label>
+            <select id="swal-t-wf" class="swal2-select" style="margin:0;width:100%">
+              <option value="">— select a workflow —</option>
+              ${wfOpts}
+            </select>
+            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
+              The full transform output becomes <code>init_data</code> AND the initial variables.
+              Advance runs in the background — hook delivery does not wait.
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ SEQUENCE section ═══ -->
+        <div id="swal-sec-sequence" class="swal-t-section" style="display:none">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Template Type</label>
+            <select id="swal-t-seq-type" class="swal2-select" style="margin:0;width:100%">
+              <option value="">— select a template type —</option>
+              ${seqOpts}
+            </select>
+            ${seqTypes.length === 0 ? '<div class="hint" style="color:#ef4444;font-size:11px;margin-top:3px">No sequence templates loaded. Check /sequences/templates.</div>' : ''}
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">contact_id field name</label>
+            <input id="swal-t-seq-cid" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.contact_id_field || 'contact_id')}" placeholder="contact_id">
+            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Name of the field in the transform output containing the contact ID.</div>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">trigger_data fields (comma-separated)</label>
+            <input id="swal-t-seq-td" class="swal2-input mono" style="margin:0;width:100%" value="${esc((cfg.trigger_data_fields || []).join(', '))}" placeholder="appt_id, appt_time, case_id">
+            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Transform fields to pass through as <code>trigger_data</code> to the sequence.</div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <div class="fg" style="flex:1">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">appt_type filter (optional)</label>
+              <input id="swal-t-seq-appttype" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.appt_type_filter || '')}" placeholder="Strategy Session">
+            </div>
+            <div class="fg" style="flex:1">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">appt_with filter (user ID)</label>
+              <input id="swal-t-seq-apptwith" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.appt_with_filter != null ? cfg.appt_with_filter : '')}" placeholder="2">
+            </div>
+          </div>
+          <div class="hint" style="font-size:11px;color:var(--muted);margin-top:-6px">Cascading template match — both filters are optional.</div>
+        </div>
+
+        <!-- ═══ INTERNAL FUNCTION section ═══ -->
+        <div id="swal-sec-internal_function" class="swal-t-section" style="display:none">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Function</label>
+            <select id="swal-t-fn" class="swal2-select" style="margin:0;width:100%">
+              <option value="">— select a function —</option>
+              ${fnOpts}
+            </select>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Params Mapping</label>
+            <div id="swal-t-fn-params" style="border:1px solid var(--border);border-radius:6px;padding:8px;background:#f8fafc"></div>
+            <button type="button" id="swal-t-fn-add" class="btn btn-outline" style="margin-top:6px;padding:4px 10px;font-size:12px">
+              <i class="fa-solid fa-plus"></i> Add param
+            </button>
+            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:4px">
+              Map function params to transform output fields. Supports dot-paths
+              (e.g. <code>contact.id</code>). Wrap literal strings in single quotes:
+              <code>'SMS'</code>. Numbers and booleans go as-is.
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ Shared: Active toggle ═══ -->
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
           <input type="checkbox" id="swal-t-active" ${t.active !== false ? 'checked' : ''}>
           <label for="swal-t-active" style="font-size:13px">Active</label>
         </div>
+
       </div>`;
   }
 
-  function collectTargetForm() {
-    const name = document.getElementById('swal-t-name').value.trim();
-    const url = document.getElementById('swal-t-url').value.trim();
-    if (!name || !url) { Swal.showValidationMessage('Name and URL are required'); return false; }
-    return {
-      name,
-      method: document.getElementById('swal-t-method').value,
-      url,
-      credential_id: document.getElementById('swal-t-cred').value || null,
-      body_mode: document.getElementById('swal-t-bodymode').value,
-      body_template: document.getElementById('swal-t-template').value || null,
-      active: document.getElementById('swal-t-active').checked ? 1 : 0,
+  // ── Target form — handlers (wired after Swal opens) ──
+  function initTargetFormHandlers(t) {
+    const typeEl = document.getElementById('swal-t-type');
+    if (!typeEl) return;
+
+    // Toggle section visibility based on target_type
+    const updateSections = () => {
+      const type = typeEl.value;
+      document.querySelectorAll('.swal-t-section').forEach(sec => {
+        sec.style.display = sec.id === `swal-sec-${type}` ? '' : 'none';
+      });
     };
+    typeEl.addEventListener('change', updateSections);
+    updateSections();
+
+    // Initialize params mapping rows for internal_function
+    const cfg = parseJson(t.config) || {};
+    renderParamsMapping(cfg.params_mapping || {});
+    const addBtn = document.getElementById('swal-t-fn-add');
+    if (addBtn) {
+      addBtn.addEventListener('click', () => {
+        const rows = document.getElementById('swal-t-fn-params');
+        rows.appendChild(buildParamMappingRow('', ''));
+      });
+    }
   }
 
-  // ── Logs tab ──
+  function renderParamsMapping(mapping) {
+    const el = document.getElementById('swal-t-fn-params');
+    if (!el) return;
+    el.innerHTML = '';
+    const entries = Object.entries(mapping || {});
+    if (entries.length === 0) {
+      // Start with one empty row so the UI isn't a void
+      el.appendChild(buildParamMappingRow('', ''));
+    } else {
+      for (const [k, v] of entries) {
+        el.appendChild(buildParamMappingRow(k, v));
+      }
+    }
+  }
+
+  function buildParamMappingRow(key, value) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
+    // Convert non-string values to JSON representation for editing
+    const displayValue = (typeof value === 'string') ? value : (value == null ? '' : JSON.stringify(value));
+    row.innerHTML = `
+      <input class="swal-pm-key" placeholder="param name" value="${esc(key)}" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+      <span style="color:var(--muted);font-size:14px">=</span>
+      <input class="swal-pm-val mono" placeholder="field  or  a.b.c  or  'literal'" value="${esc(displayValue)}" style="flex:2;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+      <button type="button" class="swal-pm-del" style="padding:4px 8px;font-size:11px;background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:#ef4444" title="Remove">
+        <i class="fa-solid fa-times"></i>
+      </button>
+    `;
+    row.querySelector('.swal-pm-del').addEventListener('click', () => row.remove());
+    return row;
+  }
+
+  function collectParamsMapping() {
+    const rows = document.querySelectorAll('#swal-t-fn-params > div');
+    const mapping = {};
+    rows.forEach(row => {
+      const key = row.querySelector('.swal-pm-key')?.value?.trim();
+      const val = row.querySelector('.swal-pm-val')?.value;
+      if (!key) return;
+      // val is always stored as a string here — the backend interprets
+      // single-quote-wrapped strings as literals, everything else as a
+      // field lookup on the transform output.
+      mapping[key] = val == null ? '' : val;
+    });
+    return mapping;
+  }
+
+  // ── Target form — collect on submit ──
+  function collectTargetForm() {
+    const name = document.getElementById('swal-t-name').value.trim();
+    const type = document.getElementById('swal-t-type').value;
+    if (!name) { Swal.showValidationMessage('Name is required'); return false; }
+
+    const active = document.getElementById('swal-t-active').checked ? 1 : 0;
+
+    // HTTP branch — original behavior
+    if (type === 'http') {
+      const url = document.getElementById('swal-t-url').value.trim();
+      if (!url) { Swal.showValidationMessage('HTTP targets require a URL'); return false; }
+      return {
+        name,
+        target_type: 'http',
+        method: document.getElementById('swal-t-method').value,
+        url,
+        credential_id: document.getElementById('swal-t-cred').value || null,
+        body_mode: document.getElementById('swal-t-bodymode').value,
+        body_template: document.getElementById('swal-t-template').value || null,
+        config: null,
+        active,
+      };
+    }
+
+    // Workflow branch
+    if (type === 'workflow') {
+      const wfVal = document.getElementById('swal-t-wf').value;
+      if (!wfVal) { Swal.showValidationMessage('Select a workflow'); return false; }
+      const workflowId = parseInt(wfVal, 10);
+      if (!Number.isInteger(workflowId) || workflowId <= 0) {
+        Swal.showValidationMessage('Invalid workflow ID');
+        return false;
+      }
+      return {
+        name,
+        target_type: 'workflow',
+        url: null,
+        config: { workflow_id: workflowId },
+        active,
+      };
+    }
+
+    // Sequence branch
+    if (type === 'sequence') {
+      const tt = document.getElementById('swal-t-seq-type').value.trim();
+      if (!tt) { Swal.showValidationMessage('Select a template type'); return false; }
+      const cidField = document.getElementById('swal-t-seq-cid').value.trim() || 'contact_id';
+      const tdRaw = document.getElementById('swal-t-seq-td').value.trim();
+      const triggerDataFields = tdRaw ? tdRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      const apptTypeFilter = document.getElementById('swal-t-seq-appttype').value.trim() || null;
+      const apptWithRaw = document.getElementById('swal-t-seq-apptwith').value.trim();
+      const apptWithFilter = apptWithRaw ? parseInt(apptWithRaw, 10) : null;
+      if (apptWithRaw && !Number.isInteger(apptWithFilter)) {
+        Swal.showValidationMessage('appt_with filter must be a user ID (integer)');
+        return false;
+      }
+      return {
+        name,
+        target_type: 'sequence',
+        url: null,
+        config: {
+          template_type: tt,
+          contact_id_field: cidField,
+          trigger_data_fields: triggerDataFields,
+          appt_type_filter: apptTypeFilter,
+          appt_with_filter: apptWithFilter,
+        },
+        active,
+      };
+    }
+
+    // Internal function branch
+    if (type === 'internal_function') {
+      const fn = document.getElementById('swal-t-fn').value.trim();
+      if (!fn) { Swal.showValidationMessage('Select a function'); return false; }
+      const paramsMapping = collectParamsMapping();
+      return {
+        name,
+        target_type: 'internal_function',
+        url: null,
+        config: {
+          function_name: fn,
+          params_mapping: paramsMapping,
+        },
+        active,
+      };
+    }
+
+    Swal.showValidationMessage(`Unknown target type: ${type}`);
+    return false;
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // LOGS TAB
+  // ══════════════════════════════════════════════════════════════════
+
   async function loadExecutions() {
     if (!activeHookId) return;
     const tbody = E('log-tbody');
@@ -2742,16 +3063,20 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
             </details>
             ${(ex.delivery_logs || []).length ? `
               <h4 style="margin-top:14px;font-size:13px">Delivery Logs</h4>
-              ${ex.delivery_logs.map(dl => `
+              ${ex.delivery_logs.map(dl => {
+                const dlType = dl.target_type || 'http';
+                const isInternal = dlType !== 'http';
+                return `
                 <div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-top:8px">
                   <div><b>${esc(dl.target_name || 'Target #' + dl.target_id)}</b>
+                    <span style="font-size:10px;font-weight:600;background:#f1f5f9;color:#475569;padding:2px 6px;border-radius:4px;margin-left:6px;text-transform:uppercase">${esc(dlType)}</span>
                     <span class="hook-status-badge hook-status-${dl.status === 'success' ? 'delivered' : 'failed'}" style="margin-left:6px">${dl.status}</span>
-                    ${dl.response_status ? `<span style="margin-left:8px;color:var(--muted)">HTTP ${dl.response_status}</span>` : ''}
+                    ${dl.response_status ? `<span style="margin-left:8px;color:var(--muted)">${isInternal ? 'result' : 'HTTP'} ${dl.response_status}</span>` : ''}
                   </div>
                   <div class="mono text-sm" style="margin-top:4px;color:var(--muted)">${esc(dl.request_method)} ${esc(dl.request_url)}</div>
                   ${dl.error ? `<div style="color:var(--red);margin-top:4px;font-size:12px">${esc(dl.error)}</div>` : ''}
-                </div>
-              `).join('')}
+                </div>`;
+              }).join('')}
             ` : ''}
           </div>
         `,
@@ -2761,7 +3086,10 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     }
   }
 
-  // ── Test tab ──
+  // ══════════════════════════════════════════════════════════════════
+  // TEST TAB
+  // ══════════════════════════════════════════════════════════════════
+
   async function runDryTest() {
     if (!activeHookId) { Toast.fire({ icon: 'warning', title: 'Save the hook first' }); return; }
     const raw = E('f-test-input').value.trim();
@@ -2799,7 +3127,10 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     }
   }
 
-  // ── Save / new / delete ──
+  // ══════════════════════════════════════════════════════════════════
+  // SAVE / NEW / DELETE
+  // ══════════════════════════════════════════════════════════════════
+
   async function saveHook() {
     const name = E('f-name').value.trim();
     const slug = E('f-slug').value.trim();
@@ -2853,9 +3184,7 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
   }
 
   async function hooksNew() {
-    // Make sure the hooks tab is active
     if (currentMainTab !== 'hooks') switchMainTab('hooks');
-    // Ensure initial load has happened
     if (!hooksLoaded) await hooksInit();
 
     activeHookId = null;
@@ -2895,14 +3224,12 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     }
   }
 
-  // ── Expose to window so inline onclick handlers and the parent shell can call in ──
-  // Bridge hooks used by the shared topbar / parent
+  // ── Expose to window ──
   window.hooksInit               = hooksInit;
   window.hooksRefresh            = hooksRefresh;
   window.hooksNew                = hooksNew;
   window.hooksUpdateTopbarButtons = updateTopbarButtons;
 
-  // Inline handlers from the hook panel's static HTML
   window.hookSwitchTab            = hookSwitchTab;
   window.hookToggleAuthFields     = toggleAuthFields;
   window.hookGenerateApiKey       = generateApiKey;
@@ -2919,7 +3246,6 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
   window.hookDelete               = deleteHook;
   window.hookFilterList           = hookFilterList;
 
-  // Dynamic handlers embedded in innerHTML strings (names match the onclick text)
   window.selectHook        = selectHook;
   window.addCondToGroup    = addCondToGroup;
   window.addSubgroup       = addSubgroup;

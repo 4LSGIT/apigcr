@@ -5,6 +5,16 @@
  * Orchestrates the full pipeline: authenticate → filter → transform → deliver.
  * Also provides CRUD helpers for hooks, targets, and credentials.
  *
+ * v1.2 — Internal Automation Targets
+ *   Targets can now be one of four types:
+ *     • http               — fetch() to a URL (legacy behavior, default)
+ *     • workflow           — start a workflow execution
+ *     • sequence           — enroll a contact in a sequence
+ *     • internal_function  — call a registered internal function
+ *   All internal types still log to hook_delivery_logs using synthetic URLs
+ *   (internal://workflow/N, internal://function/name, etc.) and share the
+ *   same filter/transform/condition/retry pipeline as HTTP targets.
+ *
  * Usage:
  *   const hookService = require('./hookService');
  *   await hookService.executeHook(db, 'calendly-new-lead', input);
@@ -17,12 +27,17 @@ const { evaluateConditions } = require('./hookFilter');
 const { executeMapper, resolveBodyTemplate } = require('./hookMapper');
 const { applyChain } = require('./hookTransforms');
 
+// Lazy requires for the three delivery engines. These modules transitively
+// require hookService in rare paths (e.g. an internal function that itself
+// emits a webhook), so keep the require() calls inside the handlers.
+
 // ─────────────────────────────────────────────────────────────
 // HOOK LOOKUP
 // ─────────────────────────────────────────────────────────────
 
 /**
  * Look up a hook by slug, including its active targets (ordered by position).
+ * `ht.*` pulls in target_type and config automatically — no query changes needed.
  */
 async function getHookBySlug(db, slug) {
   const [[hook]] = await db.query(
@@ -187,9 +202,7 @@ function runTransform(mode, config, input) {
 /**
  * Build auth headers for a delivery target.
  * Validates that the target URL matches the credential's allowed_urls.
- *
- * @param {object} target - target row with cred_type, cred_config, cred_allowed_urls joined
- * @returns {object} headers to inject
+ * Only used by HTTP targets.
  */
 function buildAuthHeaders(target) {
   if (!target.credential_id) return {};
@@ -236,20 +249,82 @@ function buildAuthHeaders(target) {
 
 
 // ─────────────────────────────────────────────────────────────
-// DELIVERY
+// HELPERS FOR INTERNAL TARGETS
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Deliver to a single target. Returns the delivery log data.
+ * Parse the target.config JSON column into an object.
+ * Returns {} (not null) so downstream code can safely read properties.
  */
-async function deliverToTarget(target, hookTransformOutput) {
-  // Run target-level transform if configured
-  const { output: targetOutput } = runTransform(
-    target.transform_mode,
-    target.transform_config,
-    hookTransformOutput
-  );
+function parseTargetConfig(target) {
+  if (target.config == null) return {};
+  if (typeof target.config === 'object') return target.config;
+  try {
+    return JSON.parse(target.config) || {};
+  } catch (err) {
+    return {};
+  }
+}
 
+/**
+ * Resolve a dot-path against an object. Returns undefined for any missing
+ * segment or null traversal. Top-level (no dot) is a plain property lookup.
+ *
+ *   getByPath({contact: {id: 123}}, 'contact.id')     // → 123
+ *   getByPath({contact: {id: 123}}, 'contact')        // → {id: 123}
+ *   getByPath({contact: {id: 123}}, 'contact.missing') // → undefined
+ *   getByPath(null, 'anything')                       // → undefined
+ *
+ * Consistent with how hookMapper resolves `from` paths and `{{template}}`
+ * expressions — the whole pipeline uses dot-paths, so params_mapping does too.
+ */
+function getByPath(obj, path) {
+  if (obj == null || typeof path !== 'string' || path.length === 0) return undefined;
+  if (!path.includes('.')) return obj[path];
+  return path.split('.').reduce((cur, p) => (cur == null ? undefined : cur[p]), obj);
+}
+
+/**
+ * Resolve a params_mapping into actual param values.
+ *
+ * Mapping rules:
+ *   • String wrapped in single quotes: literal value (quotes stripped)
+ *       "log_type": "'SMS'"          → params.log_type = "SMS"
+ *   • Plain string: dot-path lookup on targetOutput
+ *       "contact_id": "contact_id"    → targetOutput.contact_id
+ *       "contact_id": "contact.id"    → targetOutput.contact.id
+ *       "contact_obj": "contact"      → targetOutput.contact  (whole object)
+ *   • Any non-string value: passed through as-is (number, bool, null, object)
+ *       "enabled": true              → params.enabled = true
+ *       "timeout_ms": 5000           → params.timeout_ms = 5000
+ *
+ * Array-index syntax ("items[0].name") is NOT supported — use a transform
+ * rule or a code transform to pull array elements into flat fields first.
+ */
+function resolveParamsMapping(paramsMapping, targetOutput) {
+  const params = {};
+  for (const [paramName, source] of Object.entries(paramsMapping || {})) {
+    if (typeof source === 'string' && source.length >= 2
+        && source.startsWith("'") && source.endsWith("'")) {
+      // Literal — strip surrounding single quotes
+      params[paramName] = source.slice(1, -1);
+    } else if (typeof source === 'string') {
+      // Dot-path lookup on targetOutput
+      params[paramName] = getByPath(targetOutput, source);
+    } else {
+      // Non-string: use as-is (number, bool, object, null)
+      params[paramName] = source;
+    }
+  }
+  return params;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// DELIVERY — HTTP (the original behavior)
+// ─────────────────────────────────────────────────────────────
+
+async function deliverHttp(target, targetOutput) {
   // Build request body
   let requestBody;
   if (target.body_mode === 'template' && target.body_template) {
@@ -305,6 +380,370 @@ async function deliverToTarget(target, hookTransformOutput) {
   }
 
   return logData;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// DELIVERY — WORKFLOW
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Start a workflow execution. Transform output becomes both init_data and
+ * the initial variables. Advance is fire-and-forget — hook delivery doesn't
+ * wait for the workflow to complete. Mirrors apptService.createAppt step 7.
+ */
+async function deliverWorkflow(target, targetConfig, targetOutput, db) {
+  const workflowId = targetConfig.workflow_id;
+  const initData = targetOutput;
+
+  const logData = {
+    target_id: target.id,
+    request_url: `internal://workflow/${workflowId != null ? workflowId : '?'}`,
+    request_method: 'INTERNAL',
+    request_body: JSON.stringify(initData),
+  };
+
+  if (workflowId == null) {
+    logData.response_status = 500;
+    logData.response_body = null;
+    logData.status = 'failed';
+    logData.error = 'workflow target missing config.workflow_id';
+    return logData;
+  }
+
+  try {
+    const { advanceWorkflow } = require('../lib/workflow_engine');
+
+    const [result] = await db.query(
+      `INSERT INTO workflow_executions
+       (workflow_id, status, init_data, variables, current_step_number)
+       VALUES (?, 'active', ?, ?, 1)`,
+      [workflowId, JSON.stringify(initData), JSON.stringify(initData)]
+    );
+    const executionId = result.insertId;
+
+    // Non-blocking advance — mirrors apptService.createAppt pattern.
+    // A background failure here does NOT cause the hook delivery to retry;
+    // the execution row itself will be marked 'failed' by markExecutionCompleted.
+    advanceWorkflow(executionId, db)
+      .then((r) => console.log(`[HOOK→WF] execution ${executionId}: ${r?.status || 'unknown'}`))
+      .catch((err) => console.error(`[HOOK→WF] execution ${executionId} failed:`, err.message));
+
+    logData.request_url = `internal://workflow/${workflowId}/execution/${executionId}`;
+    logData.response_status = 200;
+    logData.response_body = JSON.stringify({ executionId, workflowId, status: 'started' });
+    logData.status = 'success';
+    return logData;
+  } catch (err) {
+    logData.response_status = 500;
+    logData.response_body = null;
+    logData.status = 'failed';
+    logData.error = `workflow delivery failed: ${err.message}`;
+    return logData;
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// DELIVERY — SEQUENCE
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Enroll a contact in a sequence. Synchronous — enrollContact just inserts
+ * the enrollment row and schedules the first step job.
+ */
+async function deliverSequence(target, targetConfig, targetOutput, db) {
+  const templateType = targetConfig.template_type;
+  const contactIdField = targetConfig.contact_id_field || 'contact_id';
+  const triggerDataFields = Array.isArray(targetConfig.trigger_data_fields)
+    ? targetConfig.trigger_data_fields : [];
+
+  const contactId = targetOutput == null ? undefined : targetOutput[contactIdField];
+
+  // Build trigger_data from specified fields
+  const triggerData = {};
+  for (const field of triggerDataFields) {
+    if (targetOutput != null && targetOutput[field] !== undefined) {
+      triggerData[field] = targetOutput[field];
+    }
+  }
+
+  const callPayload = {
+    contact_id: contactId,
+    template_type: templateType,
+    trigger_data: triggerData,
+    appt_type: targetConfig.appt_type_filter || null,
+    appt_with: targetConfig.appt_with_filter || null,
+  };
+
+  const logData = {
+    target_id: target.id,
+    request_url: `internal://sequence/${templateType || '?'}`,
+    request_method: 'INTERNAL',
+    request_body: JSON.stringify(callPayload),
+  };
+
+  if (!templateType) {
+    logData.response_status = 500;
+    logData.response_body = null;
+    logData.status = 'failed';
+    logData.error = 'sequence target missing config.template_type';
+    return logData;
+  }
+
+  if (contactId == null || contactId === '') {
+    logData.response_status = 500;
+    logData.response_body = null;
+    logData.status = 'failed';
+    logData.error = `sequence target: missing contact_id from transform field "${contactIdField}"`;
+    return logData;
+  }
+
+  try {
+    const sequenceEngine = require('../lib/sequenceEngine');
+    const result = await sequenceEngine.enrollContact(
+      db,
+      contactId,
+      templateType,
+      triggerData,
+      { appt_type: callPayload.appt_type, appt_with: callPayload.appt_with }
+    );
+
+    logData.response_status = 200;
+    logData.response_body = JSON.stringify(result);
+    logData.status = 'success';
+    return logData;
+  } catch (err) {
+    logData.response_status = 500;
+    logData.response_body = null;
+    logData.status = 'failed';
+    logData.error = `sequence delivery failed: ${err.message}`;
+    return logData;
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// DELIVERY — INTERNAL FUNCTION
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Call a registered internal function directly. Synchronous — await the
+ * function and capture its return value as the delivery response.
+ */
+async function deliverInternalFunction(target, targetConfig, targetOutput, db) {
+  const functionName = targetConfig.function_name;
+  const paramsMapping = targetConfig.params_mapping || {};
+
+  const logData = {
+    target_id: target.id,
+    request_url: `internal://function/${functionName || '?'}`,
+    request_method: 'INTERNAL',
+    request_body: null,
+  };
+
+  if (!functionName) {
+    logData.request_body = JSON.stringify(targetOutput);
+    logData.response_status = 500;
+    logData.response_body = null;
+    logData.status = 'failed';
+    logData.error = 'internal_function target missing config.function_name';
+    return logData;
+  }
+
+  // Resolve params_mapping against targetOutput
+  const params = resolveParamsMapping(paramsMapping, targetOutput);
+  logData.request_body = JSON.stringify(params);
+
+  try {
+    const internalFunctions = require('../lib/internal_functions');
+    const fn = internalFunctions[functionName];
+    if (typeof fn !== 'function') {
+      logData.response_status = 500;
+      logData.response_body = null;
+      logData.status = 'failed';
+      logData.error = `Unknown internal function: ${functionName}`;
+      return logData;
+    }
+
+    const result = await fn(params, db);
+
+    logData.response_status = 200;
+    logData.response_body = JSON.stringify(result).slice(0, 10000);
+    logData.status = 'success';
+    return logData;
+  } catch (err) {
+    logData.response_status = 500;
+    logData.response_body = null;
+    logData.status = 'failed';
+    logData.error = `internal_function delivery failed: ${err.message}`;
+    return logData;
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// DELIVERY — DISPATCHER
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Deliver to a single target. Returns the delivery log data.
+ *
+ * Routes on target.target_type:
+ *   • http (default)      → HTTP fetch
+ *   • workflow            → start a workflow execution
+ *   • sequence            → enroll a contact in a sequence
+ *   • internal_function   → call a registered internal function
+ *
+ * @param {object} target                 - hook_targets row (with joined cred_* fields)
+ * @param {object} hookTransformOutput    - output of the hook-level transform
+ * @param {object} db                     - DB pool / req.db (required for internal targets)
+ */
+async function deliverToTarget(target, hookTransformOutput, db) {
+  // Target-level transform applies to ALL target types — refines the data
+  // before it's shaped for the specific delivery mechanism.
+  const { output: targetOutput } = runTransform(
+    target.transform_mode,
+    target.transform_config,
+    hookTransformOutput
+  );
+
+  const targetType = target.target_type || 'http';
+
+  if (targetType === 'http') {
+    return deliverHttp(target, targetOutput);
+  }
+
+  const targetConfig = parseTargetConfig(target);
+
+  if (targetType === 'workflow') {
+    return deliverWorkflow(target, targetConfig, targetOutput, db);
+  }
+
+  if (targetType === 'sequence') {
+    return deliverSequence(target, targetConfig, targetOutput, db);
+  }
+
+  if (targetType === 'internal_function') {
+    return deliverInternalFunction(target, targetConfig, targetOutput, db);
+  }
+
+  // Unknown type — fail explicitly so the operator sees it in the logs
+  return {
+    target_id: target.id,
+    request_url: `unknown://${targetType}`,
+    request_method: 'UNKNOWN',
+    request_body: JSON.stringify(targetOutput),
+    response_status: 500,
+    response_body: null,
+    status: 'failed',
+    error: `Unknown target_type: ${targetType}`,
+  };
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// DRY-RUN PREVIEW
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Build a non-executing preview of what a target WOULD do.
+ * Returned under `would_send` in the dry-run target result.
+ * Handles all four target types.
+ */
+function buildDryRunPreview(target, hookTransformOutput) {
+  const { output: targetOutput } = runTransform(
+    target.transform_mode, target.transform_config, hookTransformOutput
+  );
+  const targetType = target.target_type || 'http';
+  const targetConfig = parseTargetConfig(target);
+
+  if (targetType === 'http') {
+    let previewBody;
+    if (target.body_mode === 'template' && target.body_template) {
+      previewBody = resolveBodyTemplate(target.body_template, targetOutput);
+    } else {
+      previewBody = targetOutput;
+    }
+    return {
+      target_type: 'http',
+      transform_output: targetOutput,
+      would_send: {
+        method: target.method || 'POST',
+        url: target.url,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(typeof target.headers === 'string' ? JSON.parse(target.headers) : (target.headers || {})),
+          ...(target.credential_id
+            ? { '(auth)': `credential #${target.credential_id} (${target.cred_type})` }
+            : {}),
+        },
+        body: previewBody,
+      },
+    };
+  }
+
+  if (targetType === 'workflow') {
+    const workflowId = targetConfig.workflow_id;
+    return {
+      target_type: 'workflow',
+      transform_output: targetOutput,
+      would_send: {
+        method: 'INTERNAL',
+        url: `internal://workflow/${workflowId != null ? workflowId : '?'}`,
+        action: 'start_workflow',
+        workflow_id: workflowId != null ? workflowId : null,
+        init_data: targetOutput,
+      },
+    };
+  }
+
+  if (targetType === 'sequence') {
+    const contactIdField = targetConfig.contact_id_field || 'contact_id';
+    const contactId = targetOutput == null ? undefined : targetOutput[contactIdField];
+    const triggerData = {};
+    for (const field of (targetConfig.trigger_data_fields || [])) {
+      if (targetOutput != null && targetOutput[field] !== undefined) {
+        triggerData[field] = targetOutput[field];
+      }
+    }
+    return {
+      target_type: 'sequence',
+      transform_output: targetOutput,
+      would_send: {
+        method: 'INTERNAL',
+        url: `internal://sequence/${targetConfig.template_type || '?'}`,
+        action: 'enroll_contact',
+        contact_id: contactId == null ? null : contactId,
+        contact_id_field: contactIdField,
+        template_type: targetConfig.template_type || null,
+        trigger_data: triggerData,
+        appt_type: targetConfig.appt_type_filter || null,
+        appt_with: targetConfig.appt_with_filter || null,
+      },
+    };
+  }
+
+  if (targetType === 'internal_function') {
+    const params = resolveParamsMapping(targetConfig.params_mapping || {}, targetOutput);
+    return {
+      target_type: 'internal_function',
+      transform_output: targetOutput,
+      would_send: {
+        method: 'INTERNAL',
+        url: `internal://function/${targetConfig.function_name || '?'}`,
+        action: 'call_function',
+        function_name: targetConfig.function_name || null,
+        params,
+      },
+    };
+  }
+
+  return {
+    target_type: targetType,
+    transform_output: targetOutput,
+    would_send: { error: `Unknown target_type: ${targetType}` },
+  };
 }
 
 
@@ -378,7 +817,8 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
   let failCount = 0;
 
   for (const target of hook.targets) {
-    // Evaluate target-level conditions (against transform output, not raw input)
+    // Evaluate target-level conditions (against transform output, not raw input).
+    // Applies equally to all target types.
     const targetConditions = typeof target.conditions === 'string'
       ? JSON.parse(target.conditions) : target.conditions;
     const conditionsPassed = evaluateConditions(targetConditions, transformResult.output);
@@ -387,6 +827,7 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
       targetResults.push({
         target_id: target.id,
         name: target.name,
+        target_type: target.target_type || 'http',
         conditions_passed: false,
         skip_reason: 'condition not met',
       });
@@ -394,40 +835,18 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
     }
 
     if (dryRun) {
-      // Preview what would be sent without actually sending
-      const { output: targetOutput } = runTransform(
-        target.transform_mode, target.transform_config, transformResult.output
-      );
-
-      let previewBody;
-      if (target.body_mode === 'template' && target.body_template) {
-        previewBody = resolveBodyTemplate(target.body_template, targetOutput);
-      } else {
-        previewBody = targetOutput;
-      }
-
+      const preview = buildDryRunPreview(target, transformResult.output);
       targetResults.push({
         target_id: target.id,
         name: target.name,
         conditions_passed: true,
-        transform_output: targetOutput,
-        would_send: {
-          method: target.method || 'POST',
-          url: target.url,
-          headers: {
-            'Content-Type': 'application/json',
-            ...(typeof target.headers === 'string' ? JSON.parse(target.headers) : (target.headers || {})),
-            // Show that auth would be injected, but don't reveal the actual credential
-            ...(target.credential_id ? { '(auth)': `credential #${target.credential_id} (${target.cred_type})` } : {}),
-          },
-          body: previewBody,
-        },
+        ...preview,
       });
       continue;
     }
 
-    // Live delivery
-    const deliveryLog = await deliverToTarget(target, transformResult.output);
+    // Live delivery — pass db so internal targets can reach their engines
+    const deliveryLog = await deliverToTarget(target, transformResult.output, db);
 
     // Log the delivery
     await db.query(
@@ -452,13 +871,14 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
       successCount++;
     } else {
       failCount++;
-      // Queue retry job
+      // Queue retry job (applies to all target types, including internal)
       await queueRetryJob(db, executionId, target.id);
     }
 
     targetResults.push({
       target_id: target.id,
       name: target.name,
+      target_type: target.target_type || 'http',
       conditions_passed: true,
       delivery: deliveryLog,
     });
@@ -527,6 +947,18 @@ async function queueRetryJob(db, executionId, targetId) {
 
 /**
  * Execute a retry delivery (called by process_jobs.js).
+ *
+ * NOTE on retry semantics for internal targets:
+ *   • workflow  — INSERT failure retries cleanly. Async advance failures do
+ *                 NOT trigger hook retries (we already returned success); the
+ *                 workflow_executions row gets marked 'failed' instead.
+ *   • sequence  — enrollContact is guarded against duplicate active enrollments,
+ *                 so retries on a previously-successful enrollment will throw
+ *                 "already enrolled" (captured as failure, bounded by max_attempts).
+ *   • internal_function — NOT inherently idempotent. Functions with side effects
+ *                 (create_task, send_sms) will be invoked again on retry.
+ *                 Design internal-function hooks to be safe-to-retry, or accept
+ *                 that transient failures may cause duplicate actions.
  */
 async function executeRetry(db, { execution_id, target_id }) {
   // Fetch execution and target
@@ -554,7 +986,8 @@ async function executeRetry(db, { execution_id, target_id }) {
   const transformOutput = typeof execution.transform_output === 'string'
     ? JSON.parse(execution.transform_output) : execution.transform_output;
 
-  const deliveryLog = await deliverToTarget(target, transformOutput);
+  // Pass db so internal targets can route correctly
+  const deliveryLog = await deliverToTarget(target, transformOutput, db);
 
   // Update existing delivery log (increment attempts) or insert new
   const [existing] = await db.query(
@@ -728,7 +1161,7 @@ async function getExecution(db, executionId) {
   if (!execution) return null;
 
   const [deliveryLogs] = await db.query(
-    `SELECT hdl.*, ht.name AS target_name
+    `SELECT hdl.*, ht.name AS target_name, ht.target_type AS target_type
      FROM hook_delivery_logs hdl
      LEFT JOIN hook_targets ht ON hdl.target_id = ht.id
      WHERE hdl.execution_id = ?
@@ -770,4 +1203,12 @@ module.exports = {
   runFilter,
   runTransform,
   buildAuthHeaders,
+  buildDryRunPreview,
+  parseTargetConfig,
+  resolveParamsMapping,
+  getByPath,
+  deliverHttp,
+  deliverWorkflow,
+  deliverSequence,
+  deliverInternalFunction,
 };

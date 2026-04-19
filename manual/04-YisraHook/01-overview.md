@@ -1,7 +1,9 @@
 # YisraHook — Design & Implementation Document
-# v1.0 Complete — April 2026
+# v1.2 — Internal Automation Targets (April 2026)
 
 YisraHook is a configurable webhook receiver that normalizes, filters, transforms, and routes incoming events to multiple targets — replacing per-integration Express routes with per-hook configuration.
+
+**v1.2 adds internal automation targets:** targets can now route directly into the workflow engine, sequence engine, or internal function registry without an HTTP round-trip. HTTP targets are unchanged.
 
 ---
 
@@ -21,7 +23,8 @@ services/hookFilter.js           — condition evaluator (recursive AND/OR)
 routes/api.hooks.js              — POST /hooks/:slug (receiver) + CRUD for management UI
 public/automationManager.html    — primary config UI (Hooks tab alongside Workflows, Sequences, Jobs)
 public/yisraHook.html            — standalone hook manager UI (parallel, same backend)
-migrations/yisrahook_schema.sql  — 5 tables + scheduled_jobs enum expansion
+migrations/yisrahook_schema.sql            — initial 5 tables + scheduled_jobs enum
+migrations/2026XX_hook_internal_targets.sql — v1.2: target_type + config columns
 ```
 
 There are two UIs driving the same `/api/hooks/*` backend. The integrated tab inside `automationManager.html` is the primary path — hooks were merged into the automation manager alongside workflows and sequences so all automation configuration lives in one place. `yisraHook.html` remains as a standalone UI.
@@ -47,10 +50,13 @@ External event hits POST /hooks/:slug
   → For each active target (ordered by position):
       → Evaluate target conditions (skip if false)
       → Run target-level transform (if any, refines hook output)
-      → Build delivery request (URL, method, headers, auth injection, body)
-      → Attempt delivery synchronously
-          → Success: log to hook_delivery_logs
-          → Failure: log failure, queue hook_retry job in scheduled_jobs
+      → Dispatch by target_type:
+          • http              → fetch() with injected auth
+          • workflow          → INSERT workflow_executions + fire-and-forget advance
+          • sequence          → sequenceEngine.enrollContact()
+          • internal_function → internalFunctions[name](params, db)
+      → Log delivery (HTTP and internal targets share hook_delivery_logs)
+      → On failure: queue hook_retry job in scheduled_jobs
   → Update execution status based on results
 ```
 
@@ -127,7 +133,7 @@ return input.body.event === 'invitee.created';
 ```
 
 ### Target-level conditions
-Each target can have its own `conditions` field (same evaluator). Evaluated against the **hook-level transform output**, not raw input.
+Each target can have its own `conditions` field (same evaluator). Evaluated against the **hook-level transform output**, not raw input. Applies equally to HTTP and internal targets.
 
 ---
 
@@ -167,7 +173,7 @@ return { contact_name: p.name, contact_email: p.email };
 ```
 
 ### Target-level transforms
-Each target can override with its own `transform_mode`/`transform_config`, refining the hook-level output for that specific target.
+Each target can override with its own `transform_mode`/`transform_config`, refining the hook-level output for that specific target. Applies equally to HTTP and internal targets.
 
 ---
 
@@ -189,7 +195,9 @@ Colon args can be escaped with backslash: `between:Name\\::;`
 
 ---
 
-## 8. CREDENTIAL STORE & AUTH INJECTION (Outbound)
+## 8. CREDENTIAL STORE & AUTH INJECTION (Outbound HTTP only)
+
+Credentials apply only to HTTP targets. Internal targets run in-process and authenticate via the Node.js runtime itself.
 
 ### credentials table
 Shared credential store. Designed to grow into a full auth manager.
@@ -208,15 +216,128 @@ Shared credential store. Designed to grow into a full auth manager.
 
 ## 9. DELIVERY
 
-### Target Configuration
-Each target: `method`, `url`, `headers` (JSON), `credential_id` (FK), `body_mode`, `conditions`, `transform_mode`/`transform_config`.
+### Target Types
 
-### Body Modes
+Each target has a `target_type` that determines how it's delivered. The default is `http` — all existing targets created before v1.2 behave exactly as before.
+
+| Type | Config fields | Engine | Sync? |
+|------|---------------|--------|-------|
+| `http` | method, url, headers, credential_id, body_mode, body_template | `fetch()` | Sync on first attempt |
+| `workflow` | config.workflow_id | `workflow_engine.advanceWorkflow()` | Async (fire-and-forget after INSERT) |
+| `sequence` | config.template_type, contact_id_field, trigger_data_fields, appt_type_filter, appt_with_filter | `sequenceEngine.enrollContact()` | Sync |
+| `internal_function` | config.function_name, config.params_mapping | `internalFunctions[name]()` | Sync |
+
+All four types share:
+- The hook-level filter and transform pipeline (upstream)
+- Target-level conditions and transform (per-target)
+- `hook_delivery_logs` entries (synthetic URLs for internal targets)
+- The `hook_retry` job queue on failure (see retry notes below)
+
+### HTTP Targets
+
+Each HTTP target: `method`, `url`, `headers` (JSON), `credential_id` (FK), `body_mode`, `conditions`, `transform_mode`/`transform_config`.
+
+**Body Modes**
 - `transform_output` — sends full transform output as JSON
 - `template` — resolves `{{path|transforms}}` against transform output: `{"text": "New lead: {{contact_name}}"}`
 
+### Workflow Targets
+
+Starts a workflow execution. The full transform output becomes both the `init_data` and the initial `variables`.
+
+**Config:**
+```json
+{ "workflow_id": 4 }
+```
+
+**What happens on delivery:**
+1. `INSERT INTO workflow_executions (workflow_id, status='active', init_data, variables, current_step_number=1)`
+2. `advanceWorkflow(executionId, db)` is called without `await` — delivery returns success as soon as the execution row exists
+3. Any background failure during advance is logged but doesn't retry the hook delivery (the execution row itself will be marked `failed` by `markExecutionCompleted`)
+
+**Delivery log shape:**
+- `request_url` = `internal://workflow/{workflow_id}/execution/{execution_id}`
+- `request_method` = `INTERNAL`
+- `request_body` = JSON of `init_data`
+- `response_status` = `200` on successful INSERT, `500` on failure
+- `response_body` = `{ "executionId": N, "workflowId": M, "status": "started" }`
+
+### Sequence Targets
+
+Enrolls a contact in a sequence.
+
+**Config:**
+```json
+{
+  "template_type": "no_show",
+  "contact_id_field": "contact_id",
+  "trigger_data_fields": ["appt_id", "appt_time"],
+  "appt_type_filter": "Strategy Session",
+  "appt_with_filter": 2
+}
+```
+
+**Behavior:**
+1. Reads `contact_id` from the field named by `contact_id_field` (default: `"contact_id"`) in the transform output
+2. Builds `trigger_data` by picking the fields listed in `trigger_data_fields` from the transform output
+3. Calls `sequenceEngine.enrollContact(db, contactId, templateType, triggerData, { appt_type, appt_with })`
+4. Applies cascading template matching — `appt_type_filter` and `appt_with_filter` are both optional
+
+**Delivery log shape:**
+- `request_url` = `internal://sequence/{template_type}`
+- `request_method` = `INTERNAL`
+- `request_body` = `{ contact_id, template_type, trigger_data, appt_type, appt_with }`
+- `response_status` = `200` / `500`
+- `response_body` = `{ enrollmentId, templateName, totalSteps, firstJobScheduledAt }`
+
+### Internal Function Targets
+
+Calls a function from `lib/internal_functions.js` directly — the same registry used by workflows and sequences.
+
+**Config:**
+```json
+{
+  "function_name": "create_log",
+  "params_mapping": {
+    "contact_id": "contact_id",
+    "log_type": "'SMS'",
+    "subject": "'New lead received'",
+    "content": "lead_summary"
+  }
+}
+```
+
+**`params_mapping` convention:**
+
+| Source value | Meaning |
+|--------------|---------|
+| `"contact_id"` | Flat lookup — reads `transformOutput.contact_id` |
+| `"contact.id"` | Dot-path lookup — reads `transformOutput.contact.id` |
+| `"contact"` | Whole object — reads `transformOutput.contact` (pass nested object to function) |
+| `"'SMS'"` | Literal string — quotes stripped, becomes `"SMS"` |
+| `42`, `true`, `null` | Non-string value — passed through as-is |
+
+Dot-paths use the same resolver as the hook-level transform (`from` and `{{template}}` expressions), so the whole pipeline is consistent. Missing segments resolve to `undefined` — there's no error on bad paths.
+
+Array-index syntax (`"items[0].name"`) is NOT supported. If you need to pull array elements, flatten them via a transform rule or code transform first.
+
+**Delivery log shape:**
+- `request_url` = `internal://function/{function_name}`
+- `request_method` = `INTERNAL`
+- `request_body` = resolved params
+- `response_status` = `200` / `500`
+- `response_body` = JSON of function return value (truncated to 10KB)
+
 ### Retry on Failure
-Non-2xx or timeout → log failure → queue `hook_retry` job in `scheduled_jobs` (3 max attempts, 120s exponential backoff).
+
+All target types queue a `hook_retry` job on failure (3 max attempts, 120s backoff). The retry calls `deliverToTarget(target, transformOutput, db)` — the same code path as the initial attempt.
+
+**Idempotency notes by target type:**
+
+- **`http`** — Idempotency depends on the endpoint. Same as v1.0.
+- **`workflow`** — INSERT failures retry cleanly. Async advance failures do NOT trigger hook retries (delivery already returned success); the execution row is marked `failed` instead.
+- **`sequence`** — `enrollContact` throws "already enrolled" on duplicates. If the first attempt actually enrolled but the log write failed, the retry will fail cleanly and hit max_attempts.
+- **`internal_function`** — Functions with side effects (`create_task`, `send_sms`, `create_log`) are NOT inherently idempotent. Retries will invoke the function again. Design internal-function hooks to be safe-to-retry, or accept the small risk of duplicate actions on transient failures.
 
 ---
 
@@ -228,17 +349,22 @@ Non-2xx or timeout → log failure → queue `hook_retry` job in `scheduled_jobs
 ### `hooks`
 `id`, `slug` (unique), `name`, `description`, `auth_type`, `auth_config` (JSON), `filter_mode`, `filter_config` (JSON), `transform_mode`, `transform_config` (JSON), `active`, `version` (auto-increments on update), `last_modified_by` (FK → users), `created_at`, `updated_at`
 
-### `hook_targets`
-`id`, `hook_id` (FK CASCADE), `name`, `position`, `method`, `url`, `headers` (JSON), `credential_id` (FK SET NULL), `body_mode`, `body_template`, `conditions` (JSON), `transform_mode`, `transform_config` (JSON), `active`
+### `hook_targets` (v1.2)
+`id`, `hook_id` (FK CASCADE), `target_type` (enum: http/workflow/sequence/internal_function, default 'http'), `name`, `position`, `method`, `url` (nullable in v1.2), `headers` (JSON), `credential_id` (FK SET NULL), `body_mode`, `body_template`, `config` (JSON, **new in v1.2**), `conditions` (JSON), `transform_mode`, `transform_config` (JSON), `active`
+
+**v1.2 migration** (`migrations/2026XX_hook_internal_targets.sql`):
+- Adds `target_type` ENUM column with default `'http'` (existing rows get `'http'`)
+- Adds `config` JSON column
+- Makes `url` nullable (internal targets don't have URLs)
 
 ### `hook_executions`
 `id` (BIGINT), `hook_id`, `slug`, `raw_input` (JSON, max 512KB), `filter_passed`, `transform_output` (JSON), `status` (enum: received/filtered/processing/delivered/partial/failed), `error`, `created_at`
 
 ### `hook_delivery_logs`
-`id` (BIGINT), `execution_id` (FK CASCADE), `target_id`, `request_url`, `request_method`, `request_body` (JSON), `response_status`, `response_body`, `status` (enum: success/failed), `error`, `attempts`, `created_at`
+`id` (BIGINT), `execution_id` (FK CASCADE), `target_id`, `request_url` (varchar 2048 — fits `internal://...` URLs), `request_method` (`INTERNAL` for internal targets), `request_body` (JSON), `response_status`, `response_body`, `status` (enum: success/failed), `error`, `attempts`, `created_at`
 
 ### `scheduled_jobs` expansion
-Enum expanded to include `hook_retry`.
+Enum expanded to include `hook_retry` (v1.0). No further changes in v1.2.
 
 ---
 
@@ -268,19 +394,99 @@ POST   /api/hooks                    — create hook
 PUT    /api/hooks/:id                — update hook (auto-increments version)
 DELETE /api/hooks/:id                — delete hook (cascades targets)
 
-POST   /api/hooks/:id/targets        — create target
+POST   /api/hooks/:id/targets        — create target (accepts target_type + config)
 PUT    /api/hooks/targets/:id        — update target
 DELETE /api/hooks/targets/:id        — delete target
 
-POST   /api/hooks/:id/test           — dry run test (no delivery)
+POST   /api/hooks/:id/test           — dry run test (no delivery; preview for all types)
 GET    /api/hooks/:id/executions     — execution log (paginated)
 GET    /api/hooks/executions/:id     — single execution with delivery logs
-GET    /api/hooks/meta               — available transforms + operators (for UI)
+GET    /api/hooks/meta               — transforms, operators, target_types (for UI)
 
 GET    /api/credentials              — list credentials (config masked)
 POST   /api/credentials              — create credential
 PUT    /api/credentials/:id          — update credential
 DELETE /api/credentials/:id          — delete credential
+```
+
+### Target CRUD payload shape (v1.2)
+
+**HTTP (existing, unchanged):**
+```json
+{
+  "name": "Slack alert",
+  "target_type": "http",
+  "method": "POST",
+  "url": "https://hooks.slack.com/...",
+  "credential_id": 3,
+  "body_mode": "template",
+  "body_template": "{\"text\": \"{{contact_name}}\"}",
+  "active": 1
+}
+```
+
+**Workflow:**
+```json
+{
+  "name": "Start intake workflow",
+  "target_type": "workflow",
+  "config": { "workflow_id": 4 },
+  "active": 1
+}
+```
+
+**Sequence:**
+```json
+{
+  "name": "Enroll in no-show sequence",
+  "target_type": "sequence",
+  "config": {
+    "template_type": "no_show",
+    "contact_id_field": "contact_id",
+    "trigger_data_fields": ["appt_id", "appt_time"],
+    "appt_type_filter": null,
+    "appt_with_filter": null
+  },
+  "active": 1
+}
+```
+
+**Internal function:**
+```json
+{
+  "name": "Log new lead",
+  "target_type": "internal_function",
+  "config": {
+    "function_name": "create_log",
+    "params_mapping": {
+      "contact_id": "contact_id",
+      "log_type": "'SMS'",
+      "content": "message_summary"
+    }
+  },
+  "active": 1
+}
+```
+
+### Dry-run preview shape (v1.2)
+
+The `/api/hooks/:id/test` endpoint returns a `would_send` preview for every target. For internal targets this is not an HTTP payload but a description of the internal call that would be made:
+
+```json
+{
+  "target_id": 7,
+  "name": "Start intake workflow",
+  "target_type": "workflow",
+  "conditions_passed": true,
+  "transform_output": { "contact_id": 123, "source": "calendly" },
+  "would_send": {
+    "method": "INTERNAL",
+    "url": "internal://workflow/4",
+    "action": "start_workflow",
+    "workflow_id": 4,
+    "init_data": { "contact_id": 123, "source": "calendly" }
+  }
+}
 ```
 
 ---
@@ -300,23 +506,38 @@ Two-panel: left sidebar (hook list + search), right side (tabbed editor).
 
 **Top bar buttons:** Save, Delete, and New Hook. Save/Delete are context-sensitive — only visible when a hook is selected or being edited.
 
+### Target editor (v1.2)
+
+The target-edit modal now starts with a Target Type selector. Based on the selection, the modal reveals one of four sections:
+
+- **HTTP** — method, URL, credential, body mode, body template (same as v1.0)
+- **Workflow** — workflow dropdown (fetched from `/workflows`)
+- **Sequence** — template type dropdown (fetched from `/sequences/templates`), contact ID field name, trigger data field list (comma-separated), appt_type/appt_with filters
+- **Internal Function** — function dropdown (fetched from `/workflows/functions`), params mapping builder (key=value rows; wrap literal strings in single quotes)
+
+The Hooks tab fetches workflows, sequence templates, and the internal function registry on first open. Each fetch is wrapped in its own try/catch — if one reference endpoint is unreachable, the other target types still work.
+
+Target cards in the list show a type badge (HTTP / WORKFLOW / SEQUENCE / FUNCTION) and a human-readable summary of what the target will do (e.g., "Start workflow #4", "Enroll in sequence 'no_show'", "Call create_log()").
+
 ---
 
 ## 14. INTEGRATION POINTS
 
-Three wiring steps required when deploying:
+Three wiring steps from v1.0 are unchanged. v1.2 adds no new integration steps beyond running the migration:
 
 1. **server.js** — rawBody middleware for HMAC: `app.use('/hooks', express.json({ verify: (req, res, buf) => { req.rawBody = buf.toString(); } }))`
-2. **process_jobs.js** — add `hook_retry` if-block (same pattern as `sequence_step`)
-3. **Migration** — run `yisrahook_schema.sql` (creates 5 tables + expands `scheduled_jobs.type` enum)
+2. **process_jobs.js** — add `hook_retry` if-block (same pattern as `sequence_step`) — **unchanged in v1.2**; the existing `hookService.executeRetry(db, data)` call handles all four target types
+3. **Migrations (in order):**
+    - `yisrahook_schema.sql` — v1.0 initial schema
+    - `2026XX_hook_internal_targets.sql` — v1.2 target_type + config columns
 
 Route auto-loading handles `api.hooks.js`. Credential seeding creates one "YisraCase Internal" row.
 
 ---
 
-## 15. TESTED & VALIDATED (v1.0)
+## 15. TESTED & VALIDATED
 
-All 13 test cases passed:
+### v1.0 — 13 test cases passed
 
 | # | Test | Result |
 |---|------|--------|
@@ -334,9 +555,26 @@ All 13 test cases passed:
 | 12 | Inactive hook invisibility | ✅ |
 | 13 | CRUD + version increment + meta endpoint | ✅ |
 
+### v1.2 — additional test plan
+
+| # | Test | Expected |
+|---|------|----------|
+| 14 | HTTP target unchanged after migration | Existing hooks run without modification |
+| 15 | Create workflow target via API | POST succeeds, config persisted, dry-run previews `internal://workflow/N` |
+| 16 | Live workflow delivery | `workflow_executions` row created with status='active', advance called in background, delivery log shows status=success |
+| 17 | Create sequence target via API | POST succeeds, config persisted, dry-run shows expected enrollment shape |
+| 18 | Live sequence delivery | enrollment row created, first step job scheduled, delivery log shows enrollmentId in response_body |
+| 19 | Create internal_function target | POST succeeds, params_mapping persisted |
+| 20 | Live internal_function delivery | Function invoked with resolved params, return value captured in response_body |
+| 21 | params_mapping literal parsing | `"'SMS'"` becomes `"SMS"`, `"contact_id"` resolves to field value |
+| 22 | Target validation errors | Missing workflow_id / template_type / function_name returns 400 with clear message |
+| 23 | Retry after workflow INSERT failure | hook_retry job fires; second attempt succeeds if underlying issue resolved |
+| 24 | Target-level transform on internal target | Transform applied before routing (workflow init_data reflects transform) |
+| 25 | Target-level conditions on internal target | False condition skips internal target delivery |
+
 ---
 
-## 16. v1.1 ROADMAP
+## 16. v1.3 ROADMAP
 
 ### Sync Response Mode (API Gateway Pattern)
 Allow hooks to return the target's response to the caller instead of the default `{"status":"received"}`.
@@ -360,3 +598,6 @@ Expand `credentials` table to support OAuth with refresh token management. Hook 
 
 ### Additional Transform Functions
 As use cases emerge, add to the `hookTransforms.js` registry. Each is a pure function — easy to add without touching the engine.
+
+### Per-target retry policy
+Let individual targets opt out of retries via a `no_retry: true` flag on config, useful for non-idempotent internal_function calls where duplicate invocations are worse than a missed call.
