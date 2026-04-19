@@ -55,6 +55,19 @@ Create a file in `public/forms/`. Every form uses this skeleton:
 
 **Required element IDs:** `toggleBtn`, `toggleLabel`, `saveStatus`, `warning`, `draftBanner`, `draftTimestamp`, `draftRestore`, `draftDiscard`, `saveBtn`. These are hardcoded in `yc-forms.js`.
 
+### Optional: waitForParent boot pattern
+
+If the form reads from `P.firmData` or `P.entityData` during init, wrap `form.init()` in a boot loop so it waits for the parent to finish populating those:
+
+```js
+(function waitForParent() {
+  if (P.apiSend && P.firmData && P.entityData) return form.init();
+  setTimeout(waitForParent, 100);
+})();
+```
+
+If the form only uses `P.apiSend`, calling `form.init()` directly is fine — `apiSend` is relayed before any iframe `src` is set by the parent.
+
 ---
 
 ## Step 2: Add Fields
@@ -109,35 +122,29 @@ const form = new YCForm({
   onSubmit: {
     patch: { method: 'PATCH', url: '/api/cases/{linkId}' },
   },
-
-  onSave: () => {
-    P.postMessage({ type: 'form-saved', form: 'case_basic' }, '*');
-  },
 });
 form.init();
 ```
 
 See [03-ycform-config.md](03-ycform-config.md) for every option.
 
+> **Do not add** `onSave: () => P.postMessage({ type: 'form-saved', ... })`. The framework sends this automatically at the end of every save. Adding it here causes the parent to refresh twice, which can overwrite unrelated unsaved state in sibling forms. Only use `onSave` for form-specific custom logic (analytics, UI reactions) — not for parent notifications.
+
 ---
 
 ## Step 4: Wire Into Parent Page
 
-In the parent (e.g., `case.html`):
+In the parent (e.g., `case2.html`):
 
 ```js
-// Relay apiSend (add near top of script)
-window.apiSend = P.apiSend;
+// Relay apiSend and firmData from a.html (near top of script)
+window.apiSend  = P.apiSend;
+window.firmData = P.firmData;
 
 // Load the form
 document.getElementById("myIframe").src = `forms/casebasic.html?case_id=${caseId}`;
-
-// Listen for saves (optional)
-window.addEventListener('message', (e) => {
-  if (e.data?.type === 'form-saved' && e.data.form === 'case_basic') {
-    // refresh parent data
-  }
-});
 ```
+
+The parent doesn't need to add its own `message` listener for `form-saved` — `case2.html` and `contact2.html` already have a centralized listener that calls `refreshEntityData()` on any save, which updates `window.entityData` and pushes fresh data into all non-dirty sibling form iframes.
 
 See [10-hosting-and-wiring.md](10-hosting-and-wiring.md) for full details.

@@ -14,14 +14,17 @@ YisraHook is a module within the existing Express app — not a separate service
 ### File Structure
 
 ```
-services/hookService.js        — core engine: receive, filter, transform, deliver
-services/hookTransforms.js     — transform function library (pure functions)
-services/hookMapper.js         — mapper engine (path resolution, template expressions)
-services/hookFilter.js         — condition evaluator (recursive AND/OR)
-routes/api.hooks.js            — POST /hooks/:slug (receiver) + CRUD for management UI
-public/hookManager.html        — config UI
-migrations/yisrahook_schema.sql — 5 tables + scheduled_jobs enum expansion
+services/hookService.js          — core engine: receive, filter, transform, deliver
+services/hookTransforms.js       — transform function library (pure functions)
+services/hookMapper.js           — mapper engine (path resolution, template expressions)
+services/hookFilter.js           — condition evaluator (recursive AND/OR)
+routes/api.hooks.js              — POST /hooks/:slug (receiver) + CRUD for management UI
+public/automationManager.html    — primary config UI (Hooks tab alongside Workflows, Sequences, Jobs)
+public/yisraHook.html            — standalone hook manager UI (parallel, same backend)
+migrations/yisrahook_schema.sql  — 5 tables + scheduled_jobs enum expansion
 ```
+
+There are two UIs driving the same `/api/hooks/*` backend. The integrated tab inside `automationManager.html` is the primary path — hooks were merged into the automation manager alongside workflows and sequences so all automation configuration lives in one place. `yisraHook.html` remains as a standalone UI.
 
 ### Core Principle
 
@@ -282,13 +285,20 @@ DELETE /api/credentials/:id          — delete credential
 
 ---
 
-## 13. MANAGEMENT UI (hookManager.html)
+## 13. MANAGEMENT UI
 
-Two-panel layout: left sidebar (hook list + search), right side (tabbed editor).
+Two UIs drive the same `/api/hooks/*` backend:
+
+- **`public/automationManager.html`** — primary UI. Hooks live here as one of four tabs alongside Workflows, Sequences, and Scheduled Jobs. All automation configuration in one place.
+- **`public/yisraHook.html`** — standalone Hook Manager UI. Same features, different entry point.
+
+### Layout
+
+Two-panel: left sidebar (hook list + search), right side (tabbed editor).
 
 **Tabs:** General, Auth (with key/secret generation), Filter (condition builder or code), Transform (mapper rule builder or code), Targets (SweetAlert2 modals for CRUD), Logs (execution table with drill-down), Test (dry run + live test).
 
-**Top bar:** Save, Delete, and New Hook buttons. Save/Delete context-sensitive (only visible when editing).
+**Top bar buttons:** Save, Delete, and New Hook. Save/Delete are context-sensitive — only visible when a hook is selected or being edited.
 
 ---
 

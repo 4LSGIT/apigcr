@@ -54,27 +54,33 @@ Hidden by default, gets `.visible` class on failure. Always hidden in view mode.
 When the user clicks Save, `form.save()` runs:
 
 ```
-1.  Guard check — if already saving, return (prevents double-click)
-2.  Validate — if fails, show errors, return
-3.  getDiff() — if no changes, toast "No changes to save", return
-4.  Show loading overlay (blocks UI, gives visual feedback)
-5.  PATCH to entity table (if onSubmit.patch configured)
+ 1. Guard check — if already saving, return (prevents double-click)
+ 2. Validate — if fails, show errors, return
+ 3. getDiff() — if no changes, toast "No changes to save", return
+ 4. Show loading overlay (blocks UI, gives visual feedback)
+ 5. PATCH to entity table (if onSubmit.patch configured)
       → only changed fields, excluding readonly fields
-      → field names mapped back via apiMap
-6.  POST /api/forms/submit — record in form_submissions
+      → field names mapped back via apiMap or _buildPatchPayload
+ 6. POST /api/forms/submit — record in form_submissions
       → always happens; version auto-increments
-7.  Trigger workflow (if onSubmit.workflow configured)
+ 7. Trigger workflow (if onSubmit.workflow configured)
       → fire-and-forget — doesn't block the save
-8.  POST /api/log — audit entry with change diff
+ 8. POST /api/log — audit entry with change diff
       → non-blocking — failure doesn't fail the save
-9.  Reset state — update snapshot, clear dirty markers
-10. Return to view mode
+ 9. Reset state — update snapshot, clear dirty markers
+10. Return to view mode (if form uses the view/edit toggle)
 11. Success toast
-12. onSave callback + postMessage to parent
+12. Framework side-effects (fires last):
+      a. Call user's onSave(submitResult) callback — for form-specific logic only
+      b. Send postMessage({ type: 'form-saved', form, linkType, linkId }) to parent
+         — unless external mode
+         — this is the ONLY place this postMessage is sent
 13. finally: clear loading overlay and saving guard
 ```
 
-If steps 5-6 fail: error toast, loading dismissed, guard cleared.
+If steps 5–6 fail: error toast, loading dismissed, guard cleared.
+
+**Important — postMessage ownership.** Step 12b is the framework's job. Forms must not send their own `form-saved` postMessage from within `onSave` — doing so causes the parent to run `refreshEntityData` twice in quick succession, which can clobber sibling forms' unsaved state during the push-back phase.
 
 ---
 
@@ -134,4 +140,4 @@ The `changes` field contains only modified fields as `{ fieldName: [oldValue, ne
 - [ ] Log entry created with change diff
 - [ ] Form returns to view mode after save
 - [ ] Success toast on success, error toast on failure
-- [ ] Parent page receives postMessage
+- [ ] Parent page receives exactly ONE `form-saved` postMessage (not two)

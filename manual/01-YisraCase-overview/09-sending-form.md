@@ -2,7 +2,7 @@
 
 ## What It Is
 
-The Sending Form is a standalone action UI for composing and sending messages to case contacts. It lives at `public/sendingform.html` and is loaded in an iframe inside `case.html`.
+The Sending Form is a standalone action UI for composing and sending messages to case contacts. It lives at `public/sendingform.html` and is loaded in an iframe inside `case2.html`.
 
 **This is NOT a YisraForm.** It does not use the `YCForm` class, `form_submissions` table, drafts, autosave, or schema versioning. It uses `yc-forms.css` for visual consistency but is otherwise a custom page. There is nothing to save — you check options, preview, send, and it's done. The log entries and checklist records are the history.
 
@@ -10,7 +10,7 @@ The Sending Form is a standalone action UI for composing and sending messages to
 
 ## How to Load It
 
-In `case.html`:
+In `case2.html`:
 ```js
 E("SendingForm").src = `sendingform.html?case_id=${caseData.case_id}`;
 ```
@@ -27,8 +27,10 @@ Pre-filled from the case's Primary and Secondary contacts. Phone and email field
 ### Send Settings Bar
 - **Send to:** checkboxes for Primary and Secondary (Secondary only visible if one exists)
 - **Method:** SMS and/or Email checkboxes (both default on)
-- **SMS from:** dropdown populated from `phone_lines` table, preselects current user's `default_phone`
-- **Email from:** dropdown populated from `email_credentials` table, preselects current user's `default_email`
+- **SMS from:** dropdown populated from `window.parent.firmData.phoneLines` (loaded once by the shell from `/api/firm-data`), preselects the current user's `default_phone`
+- **Email from:** dropdown populated from `window.parent.firmData.emailFrom`, preselects the current user's `default_email`
+
+The form reads these from the parent's `firmData` object — it does not make its own API calls for phone lines, email senders, or user info. Providers other than RingCentral are labeled "(SMS only)" in the dropdown because MMS is RingCentral-only.
 
 ### Action Items
 Each is a checkbox section. Checking it enables that action on send. Multiple can be selected simultaneously — they send independently.
@@ -73,13 +75,15 @@ Confirmation dialog → sends each action type to each selected recipient via se
 
 All in `routes/api.sending.js`. Mount with `app.use('/', require('./routes/api.sending'))`.
 
-### GET /api/phone-lines
+> **Note on data loading:** The sending form reads phone lines, email senders, and current user defaults from `window.parent.firmData` (populated by the shell from `/api/firm-data`). The three legacy lookup routes below remain available for any consumer that hasn't migrated.
+
+### GET /api/phone-lines *(legacy)*
 Returns active phone lines from `phone_lines` table: `{ lines: [{ id, phone_number, display_name, provider }] }`.
 
-### GET /api/email-from
+### GET /api/email-from *(legacy)*
 Returns email sender addresses from `email_credentials` table: `{ emails: [{ id, email, from_name, provider }] }`.
 
-### GET /api/users/me
+### GET /api/users/me *(legacy)*
 Returns current user's defaults based on JWT: `{ user: { user, user_name, email, default_phone, default_email } }`.
 
 ### POST /api/compose-docs-message
@@ -144,7 +148,7 @@ Migration: `migrations/sending_form_setup.sql`
 6. **Questionnaire** → SMS + email with link; optionally enrolls in reminder sequence via `/internal/sequence/enroll`
 7. **Other** → SMS from textarea + email from Quill editor
 
-SMS sends are logged automatically by the SMS service. Emails are logged by the email service. The checklist upsert creates trackable items for the docs request.
+SMS sends are logged automatically by the SMS service. Emails are logged by the email service. The Documents Needed checklist upsert creates trackable items that appear on the public `docReq.html` page at `/api/public/docs/:caseId` — clients can check off items as they upload docs.
 
 ---
 

@@ -21,12 +21,12 @@ Every form uses two shared files — `yc-forms.css` for styling and `yc-forms.js
 
 ## How It Fits Into YisraCase
 
-Forms are loaded as iframes inside parent pages like `contact.html`, `case.html`, or any other page that needs an editable form.
+Forms are loaded as iframes inside parent pages like `contact2.html`, `case2.html`, or any other page that needs an editable form.
 
 ```
-index.html  (has apiSend)
-  └─ contact.html  (window.apiSend = P.apiSend)
-       └─ forms/contact.html  (uses P.apiSend for all API calls)
+a.html  (has apiSend, firmData, entityData relay)
+  └─ contact2.html  (window.apiSend = P.apiSend; window.firmData = P.firmData)
+       └─ forms/contact-form.html  (uses P.apiSend for all API calls)
 ```
 
 The form always looks one level up for `apiSend` — calling `window.parent.apiSend()`. This works at any nesting depth because each host page relays `apiSend` from its own parent.
@@ -51,6 +51,9 @@ Each form declares a `schemaVersion` integer. Bump it when you add, remove, or r
 **Draft** — autosaved periodically while the user edits. One per form+entity (DB constraint enforced). Overwritten on each autosave. Version always 0.
 **Submission** — created on explicit save. Append-only. Version increments (1, 2, 3...).
 
+### Parent-as-Data-Source
+Parent pages (`case2.html`, `contact2.html`) fetch entity data once and expose it on `window.entityData`. Forms read from there on init instead of making their own API calls. On save, the parent re-fetches and pushes refreshed data into all non-dirty sibling forms. See [10-hosting-and-wiring.md](10-hosting-and-wiring.md).
+
 ---
 
 ## Files Reference
@@ -62,7 +65,7 @@ Each form declares a `schemaVersion` integer. Bump it when you add, remove, or r
 | `api.forms.js` | `routes/` | REST endpoints |
 | `formService.js` | `services/` | Database operations |
 | `form_submissions` | Database table | Drafts and submissions storage |
-| `forms/*.html` | `public/forms/` | Individual form files |
+| `forms/*.html` | `public/forms/` | Individual form files (e.g., `contact-form.html`, `341notes.html`, `casedetails.html`, `issn.html`) |
 
 ---
 

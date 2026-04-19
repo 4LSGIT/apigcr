@@ -179,6 +179,45 @@ At least one of `text` or `html` is required. If only one is provided, the other
   }
 }
 ```
+---
+
+## Log
+
+### `create_log`
+Insert a log entry. Used by workflows and sequences to record events.
+
+**Params:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `type` | string | Required — `log_type` enum: `email`, `sms`, `call`, `other`, `form`, `status`, `note`, `court email`, `docs`, `appt`, `update`, `task` |
+| `link_type` | string | Optional — `contact`, `case`, `appt`, `bill` |
+| `link_id` | string\|number | Optional — the linked entity ID |
+| `by` | number | User ID (0 for system/automation) |
+| `data` | string\|object | `log_data` content — auto-stringified if object |
+| `from` | string | Optional |
+| `to` | string | Optional |
+| `subject` | string | Optional |
+| `message` | string | Optional |
+| `direction` | string | `incoming` or `outgoing` |
+
+**Returns:** `{ log_id }` as `output`.
+
+```json
+{
+  "function_name": "create_log",
+  "params": {
+    "type":      "note",
+    "link_type": "contact",
+    "link_id":   "{{contactId}}",
+    "by":        0,
+    "data":      { "source": "workflow", "note": "Auto follow-up sent" }
+  },
+  "set_vars": { "logId": "{{this.output.log_id}}" }
+}
+```
+
+> Note: contact field updates are logged automatically by a DB trigger. Do not call `create_log` for those — it will create duplicates.
 
 ---
 
@@ -203,7 +242,66 @@ Insert a task row.
   "set_vars": { "newTaskId": "{{this.output.task_id}}" }
 }
 ```
+---
 
+## Sequences
+
+Programmatic control over sequence enrollments from inside workflows and jobs. Prefer these over calling the `/sequences/*` HTTP routes from a `webhook` step — same work, one fewer hop.
+
+### `cancel_sequences`
+Cancel active enrollments for a contact. Wraps `sequenceEngine.cancelSequences()`.
+
+**Params:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `contact_id` | number | Required |
+| `template_type` | string\|null | e.g. `'no_show'`. Omit or null to cancel ALL types for this contact. |
+| `reason` | string | Logged in `cancel_reason` column. Default `'internal_function'`. |
+
+**Returns:** `{ cancelled }` — count of enrollments cancelled.
+
+```json
+{
+  "function_name": "cancel_sequences",
+  "params": {
+    "contact_id":    "{{contactId}}",
+    "template_type": "no_show",
+    "reason":        "new_appointment_booked"
+  }
+}
+```
+
+### `enroll_sequence`
+Enroll a contact in a sequence template. Wraps `sequenceEngine.enrollContact()`.
+
+**Params:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `contact_id` | number | Required |
+| `template_type` | string | Required — e.g. `'no_show'`, `'appt_reminder'`. Combined with the cascading template match (see [03-sequences.md](03-sequences.md)) to pick the most specific template. |
+| `trigger_data` | object | Optional — context passed to the sequence (appt_id, appt_time, case_id, enrolled_by, etc.) |
+| `appt_type` | string | Optional — feeds cascading template match on `appt_type_filter` |
+| `appt_with` | number | Optional — feeds cascading template match on `appt_with_filter` (user ID) |
+
+**Returns:** `{ enrollmentId, templateName, totalSteps, firstJobScheduledAt }`
+
+```json
+{
+  "function_name": "enroll_sequence",
+  "params": {
+    "contact_id":    "{{contactId}}",
+    "template_type": "no_show",
+    "trigger_data": {
+      "appt_id":     "{{apptId}}",
+      "appt_time":   "{{apptDate}}",
+      "enrolled_by": "workflow"
+    }
+  },
+  "set_vars": { "enrollmentId": "{{this.output.enrollmentId}}" }
+}
+```
 ---
 
 ## Contacts
@@ -734,3 +832,30 @@ If you need aggregates (`COUNT(*)`, `SUM`, `AVG`), `GROUP BY`, `HAVING`, subquer
 
 ### `set_test_var`
 Sets `testKey = "hello"`. Used to verify the engine works end to end. Remove or restrict in production.
+
+
+### `run_task_digest`
+Trigger the daily task digest on demand. Identical behavior to the scheduled `task_daily_digest` job when called with no params — same Shabbos/Yom Tov gate, same `task_remind_freq` day-of-week filter.
+
+**Params:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `user` | number | Optional — send only to this user ID. Omit to send to all eligible users. |
+| `force` | boolean | Optional — skip the Shabbos/Yom Tov gate AND ignore the `task_remind_freq` day-of-week filter. Use for testing or a manual weekend send. |
+
+**Behavior:**
+- Step 0 (always runs): refresh task statuses — `Pending → Overdue / Due Today` based on `task_due`.
+- Step 1: Shabbos/Yom Tov gate (unless `force: true`).
+- Step 2+: for each user whose `task_remind_freq` includes today's day name (unless `force: true`), query their Overdue / Due Today / Pending tasks and send digest email + short SMS summary (if `allow_sms=1`).
+
+**Returns:** `{ skipped_reason?, overdue_moved, due_today_moved, users_notified }`.
+
+```json
+{
+  "function_name": "run_task_digest",
+  "params": { "user": 2, "force": true }
+}
+```
+
+Use this as a one-off trigger (via a webhook workflow or a scheduled job with `"delay":"5s"`) — not as a replacement for the scheduled `task_daily_digest` recurring job.

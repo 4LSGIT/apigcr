@@ -64,19 +64,21 @@ Used in both `sequence_templates.condition` (cancel-level) and `sequence_steps.c
 {
   "query":       "SELECT appt_status FROM appts WHERE appt_id = :appt_id",
   "params":      { "appt_id": "trigger_data.appt_id" },
-  "assert":      { "appt_status": { "in": ["no_show", "cancelled"] } },
+  "assert":      { "appt_status": { "in": ["No Show", "Canceled"] } },
   "assert_mode": "all"
 }
 ```
 
 **Param paths** are dot-notation into `trigger_data`. `:appt_id` resolves to `trigger_data.appt_id`.
 
+**Assert values must match the actual DB values.** `appt_status` is a Title Case enum with spaces — valid values are `Scheduled`, `Attended`, `No Show`, `Canceled` (single L), `Rescheduled`. Using `no_show` or `cancelled` will never match a real row.
+
 **Assert operators:**
 
 | Operator | Example |
 |----------|---------|
-| Scalar (equality) | `"appt_status": "no_show"` |
-| In array | `"appt_status": { "in": ["no_show", "cancelled"] }` |
+| Scalar (equality) | `"appt_status": "No Show"` |
+| In array | `"appt_status": { "in": ["No Show", "Canceled"] }` |
 | Is null | `"case_intake": { "is_null": true }` |
 | Is not null | `"case_intake": { "is_null": false }` |
 
@@ -106,10 +108,12 @@ Requires `trigger_data.appt_time`. Skips the step if the appointment is fewer th
   "condition": {
     "query":  "SELECT appt_status FROM appts WHERE appt_id = :appt_id",
     "params": { "appt_id": "trigger_data.appt_id" },
-    "assert": { "appt_status": { "in": ["no_show", "cancelled"] } }
+    "assert": { "appt_status": { "in": ["No Show", "Canceled"] } }
   }
 }
 ```
+
+The `type` column (`no_show`) is the template identifier used for enrollment lookup — that's an internal string, not a DB value. The `appt_status` values inside the condition's `assert` clause are real DB values, so they must match the exact enum casing and spelling.
 
 **Steps:**
 

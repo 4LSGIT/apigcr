@@ -36,6 +36,35 @@ Forms operate in one of two modes, set by the `dataMode` config option.
 
 **Example:** Stuart fills out the ISSN during a strategy session with the client's phone as 313-555-1234. The client later changes their phone to 248-555-9999. Next time anyone opens the ISSN, it still shows 313-555-1234 — that's what was true during the session.
 
+### Prefilling from entity data — what the framework does and doesn't do
+
+In snapshot mode, the framework does **not** automatically merge live entity data with submission data. Once a submission exists, `populate()` is called with the submission's `data` JSON — fields that were never part of the original submission (e.g., a new field added in a later schema version) load as empty.
+
+If you need specific fields to show current entity data even on submitted snapshots — typically identifying information like client name, case number, or attorney — prefill those fields manually in `onLoad`. Pattern:
+
+```js
+onLoad: async (data) => {
+  const caseData = form._loadResult?.case || {};
+  const clients  = form._loadResult?.clients || [];
+
+  const PC = clients.find(c => c.relate_type === 'Primary');
+  if (PC) {
+    const nameEl = document.querySelector('[name="debtor_name"]');
+    if (nameEl) nameEl.value = PC.contact_name || '';
+  }
+
+  const cnEl = document.querySelector('[name="case_number"]');
+  if (cnEl && !cnEl.value) {
+    cnEl.value = caseData.case_number_full || caseData.case_number || '';
+  }
+}
+```
+
+Two things to note about this pattern:
+
+1. **Only overwrite fields that should track the entity.** Guarding with `if (!element.value)` prevents overwriting a user's intentional correction captured during the original session. For fields where the entity value should always win (e.g., a read-only header display), skip the guard.
+2. **`_original` is re-snapshotted after `onLoad`.** Values set in `onLoad` are considered the baseline — they won't register as a dirty edit. This is why forms with computed fields in `onLoad` don't falsely flag themselves as having unsaved changes on first load.
+
 ---
 
 ## Comparison
@@ -47,6 +76,7 @@ Forms operate in one of two modes, set by the `dataMode` config option.
 | Reflects external changes | Yes | No |
 | Typical `onSubmit.patch` | Yes | Sometimes / No |
 | Use case | Edit forms | Event capture |
+| Identifying-info prefill | Automatic | Manual in `onLoad` |
 
 ---
 

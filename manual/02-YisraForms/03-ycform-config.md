@@ -96,6 +96,8 @@ endpoints: {
 
 `path` is optional — extracts a nested key from the API response (e.g., `GET /api/contacts/:id` returns `{ contact: {...}, cases: [...] }`, `path: 'contact'` extracts the contact object). URL placeholders: `{linkId}`, `{linkType}`, `{formKey}`.
 
+**The `path` key doubles as the `window.parent.entityData` lookup key.** When a form is hosted inside `case2.html` or `contact2.html`, `yc-forms.js` first checks `window.parent.entityData[endpoints.load.path]` — if present, it uses that data without making an API call. This is how the parent-as-data-source pattern works. See [10-hosting-and-wiring.md](10-hosting-and-wiring.md).
+
 ## apiMap
 
 Maps API response keys to form field names (bidirectional).
@@ -132,9 +134,9 @@ onError: (err) => { },         // on any init or save error
 
 `onLoad` is `await`ed — async operations (like resolver calls) complete before the loading overlay dismisses.
 
-`onSave` is commonly used for `P.postMessage({ type: 'form-saved', form: 'my_form' }, '*')`.
-
 `onLoad` can access the full API response via `form._loadResult` for extra data beyond what `path` extracts (e.g., clients array, appointments).
+
+**`onSave` is for form-specific custom logic only.** The framework has already sent the `form-saved` postMessage to the parent by the time `onSave` fires. Do NOT add `P.postMessage({ type: 'form-saved', ... })` here — it causes the parent to run `refreshEntityData` twice, which can clobber unsaved state in sibling form iframes. Use `onSave` for things like analytics events, triggering a local UI reaction, or calling another form's refresh — not for parent notifications.
 
 ---
 
@@ -161,3 +163,6 @@ form._buildPatchPayload = function() {
 
 ### Hidden fields for workflow data
 Use `<input type="hidden">` fields with `readonly: true` to pass data to workflows without displaying it. Populate in `onLoad`. The values flow through `collect()` into workflow variables automatically.
+
+### Accessing the form instance from the parent
+`yc-forms.js` assigns `window.ycForm = this` in the YCForm constructor. Scope is per-iframe (no cross-iframe collision — each iframe has its own `window`). Parent pages use this to check `isDirty()` and push fresh data into non-dirty forms during the refresh-after-save flow.
