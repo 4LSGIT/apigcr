@@ -426,12 +426,96 @@ async function updateContact(db, contactId, fields) {
   return { contact_id: contactId, updated_fields: finalKeys };
 }
 
-
+/**
+ * List sequence enrollments for a contact with pagination, status filter,
+ * and active/all scope. Envelope-parity with Slices 1–2 ({success, ...}),
+ * plus `active_total` so the UI header can read "N active of M total"
+ * when `?scope=all`.
+ *
+ * @param {object} db
+ * @param {number|string} contactId
+ * @param {object}  [opts]
+ * @param {number}  [opts.limit=50]      max 200
+ * @param {number}  [opts.offset=0]
+ * @param {string|null} [opts.status=null]  'active' | 'completed' | 'cancelled'
+ * @param {string}  [opts.scope='active']  'active' (filter to active) or 'all'
+ *                                         Ignored when `status` is supplied —
+ *                                         explicit > defaulted.
+ * @returns {Promise<{sequences, total, active_total} | null>}
+ *          Returns null when the contact doesn't exist (route → 404).
+ */
+async function listContactSequences(db, contactId, {
+  limit  = 50,
+  offset = 0,
+  status = null,
+  scope  = 'active',
+} = {}) {
+  // Confirm the contact exists so the route can 404 vs returning an empty
+  // list (which would mask "no such contact" as "no enrollments").
+  const [[row]] = await db.query(
+    `SELECT contact_id FROM contacts WHERE contact_id = ?`,
+    [contactId]
+  );
+  if (!row) return null;
+ 
+  // Explicit status overrides scope. scope='active' is the default filter.
+  const effectiveStatus = status || (scope === 'active' ? 'active' : null);
+ 
+  const whereParts  = ['se.contact_id = ?'];
+  const whereParams = [contactId];
+  if (effectiveStatus) {
+    whereParts.push('se.status = ?');
+    whereParams.push(effectiveStatus);
+  }
+  const whereSQL = whereParts.join(' AND ');
+ 
+  // `se.id AS enrollment_id` — frontend reads enrollment_id; aliasing here
+  // keeps the UI self-documenting and matches the label the old (broken)
+  // putSeq was already reading.
+  const [sequences] = await db.query(
+    `SELECT
+       se.id           AS enrollment_id,
+       se.template_id,
+       se.status,
+       se.current_step,
+       se.total_steps,
+       se.cancel_reason,
+       se.enrolled_at,
+       se.completed_at,
+       se.updated_at,
+       st.name         AS template_name,
+       st.type         AS template_type
+     FROM sequence_enrollments se
+     JOIN sequence_templates st ON st.id = se.template_id
+     WHERE ${whereSQL}
+     ORDER BY se.enrolled_at DESC
+     LIMIT ? OFFSET ?`,
+    [...whereParams, parseInt(limit, 10), parseInt(offset, 10)]
+  );
+ 
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM sequence_enrollments se WHERE ${whereSQL}`,
+    whereParams
+  );
+ 
+  // Always compute active_total (regardless of current filter) so the UI
+  // can render "N active of M total" when ?scope=all.
+  const [[{ active_total }]] = await db.query(
+    `SELECT COUNT(*) AS active_total
+       FROM sequence_enrollments
+      WHERE contact_id = ? AND status = 'active'`,
+    [contactId]
+  );
+ 
+  return { sequences, total, active_total };
+}
+ 
 module.exports = {
   listContacts,
   getContact,
   createContact,
   updateContact,
   normalizePhone,
+  listContactSequences,
   stripSsn
 };

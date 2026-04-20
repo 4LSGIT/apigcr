@@ -216,3 +216,8 @@ if (result.errorType === 'missing_refs') { /* fix your refs */ }
 if (result.status === 'partial_success') { /* use result.text, check result.unresolved */ }
 if (result.status === 'success')         { /* result.text is fully resolved */ }
 ```
+
+###this doesnt belong here, but has no home!
+| Method | Path | Query | Response |
+|---|---|---|---|
+| `GET` | `/api/contacts/:id/sequences` | `?limit` (default 50, max 200), `?offset`, `?status=active\|completed\|cancelled`, `?scope=active\|all` (default `active`; ignored when `?status` is set) | `{ success, sequences, total, active_total }` — row shape: `enrollment_id, template_id, template_name, template_type, status, current_step, total_steps, cancel_reason, enrolled_at, completed_at, updated_at`. `active_total` is always the unfiltered count of `status='active'` for this contact, so the UI can render "N active of M total" when `?scope=all`. |

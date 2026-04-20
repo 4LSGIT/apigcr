@@ -128,14 +128,59 @@ router.get('/api/contacts/:id/log', jwtOrApiKey, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/contacts/:id/sequences
+ *
+ * Query params:
+ *   ?limit   (default 50, max 200)
+ *   ?offset  (default 0)
+ *   ?status  optional — 'active' | 'completed' | 'cancelled'
+ *   ?scope   'active' (default, filters to status='active') or 'all'
+ *            If ?status is also supplied, it wins (explicit > defaulted).
+ *
+ * Response: { success: true, sequences: [...], total, active_total }
+ *   - total         — total rows matching the current filter
+ *   - active_total  — unfiltered count of status='active' for this contact
+ *                     (lets the header read "N active of M total" on scope=all)
+ *
+ * Row shape: enrollment_id, template_id, template_name, template_type,
+ *            status, current_step, total_steps, cancel_reason,
+ *            enrolled_at, completed_at, updated_at.
+ *   trigger_data is intentionally excluded from the list — drill down via
+ *   GET /sequences/enrollments/:id for per-enrollment detail.
+ */
 router.get('/api/contacts/:id/sequences', jwtOrApiKey, async (req, res) => {
   try {
-    const result = await contactService.getContact(req.db, req.params.id, 'sequences');
-    if (!result) return res.status(404).json({ status: 'error', message: 'Contact not found' });
-    res.json({ sequences: result.sequences });
+    const contactId = req.params.id;
+ 
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit)  || 50));
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+ 
+    const status = req.query.status || null;
+    if (status && !['active', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid status. Must be one of: active, completed, cancelled',
+      });
+    }
+ 
+    const scope = req.query.scope === 'all' ? 'all' : 'active';
+ 
+    const result = await contactService.listContactSequences(req.db, contactId, {
+      limit, offset, status, scope,
+    });
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Contact not found' });
+    }
+ 
+    res.json({ success: true, ...result });
   } catch (err) {
     console.error('GET /api/contacts/:id/sequences error:', err);
-    res.status(500).json({ status: 'error', message: 'Failed to fetch sequences' });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch sequences',
+      message: err.message,
+    });
   }
 });
 

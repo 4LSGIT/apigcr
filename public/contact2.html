@@ -2,7 +2,154 @@
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css">
-  
+<style>
+  /* ── Sequences tab (slice 4.3) — all classes prefixed .cseq- for scoping ── */
+ 
+.cseq-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px 14px;
+  flex-wrap: wrap;
+}
+.cseq-count {
+  font-weight: 600;
+  color: #0f172a;
+  min-width: 140px;
+}
+.cseq-scope-toggle {
+  display: inline-flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cseq-scope-btn {
+  background: #fff;
+  border: none;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #334155;
+}
+.cseq-scope-btn.active { background: #2563eb; color: #fff; }
+.cseq-scope-btn:not(.active):hover { background: #f1f5f9; }
+ 
+.cseq-refresh-btn {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: #334155;
+}
+.cseq-refresh-btn:hover { background: #f1f5f9; }
+ 
+.cseq-table th, .cseq-table td { text-align: left; padding: 6px 8px; vertical-align: top; }
+.cseq-template-name { font-weight: 600; color: #0f172a; }
+.cseq-template-type { font-size: 11px; color: #64748b; }
+.cseq-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #475569; }
+ 
+.cseq-empty {
+  color: #94a3b8;
+  font-weight: 400;
+  padding: 24px;
+  text-align: center;
+}
+ 
+.cseq-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0 4px;
+  font-size: 12px;
+  color: #475569;
+}
+.cseq-pagination button {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  color: #334155;
+}
+.cseq-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+ 
+/* Status badges — enrollment.status (primary) */
+.cseq-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.cseq-status-active    { background: #dbeafe; color: #1e40af; }
+.cseq-status-completed { background: #dcfce7; color: #166534; }
+.cseq-status-cancelled { background: #fee2e2; color: #991b1b; }
+ 
+/* Step-history badges (drill-down modal) */
+.cseq-job-badge, .cseq-log-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.cseq-job-pending    { background: #fef3c7; color: #92400e; }
+.cseq-job-running    { background: #dbeafe; color: #1e40af; }
+.cseq-job-completed  { background: #dcfce7; color: #166534; }
+.cseq-job-failed     { background: #fee2e2; color: #991b1b; }
+.cseq-log-sent       { background: #dcfce7; color: #166534; }
+.cseq-log-skipped    { background: #e5e7eb; color: #374151; }
+.cseq-log-failed     { background: #fee2e2; color: #991b1b; }
+ 
+/* Row buttons */
+.cseq-view-btn, .cseq-cancel-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 4px;
+}
+.cseq-view-btn {
+  background: #fff;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+.cseq-view-btn:hover { background: #f1f5f9; }
+.cseq-cancel-btn {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+.cseq-cancel-btn:hover { background: #fecaca; }
+ 
+/* Drill-down step-history table (rendered inside a Swal modal; styles
+   are global because Swal renders into document.body, not a shadow DOM). */
+.cseq-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-top: 6px;
+}
+.cseq-history-table th,
+.cseq-history-table td {
+  border: 1px solid #e2e8f0;
+  padding: 4px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+.cseq-history-table th { background: #f1f5f9; font-weight: 600; }
+.cseq-history-table tr.cseq-row-muted td { color: #94a3b8; background: #f8fafc; }
+.cseq-history-table .cseq-error-cell {
+  max-width: 260px;
+  word-break: break-word;
+  color: #991b1b;
+}
+</style>  
 
 
 <div id="tabViewClient" class="tab-main" style="text-align: center;display:none">
@@ -38,36 +185,43 @@
   </div>
 
   
-  <div id="tabSeq" class="tab-content">
-    <h1>Sequences:</h1>
-    <h2>No Sequences</h2>
-    <table id="seqTable" class="logTable" style="display:none">
-    </table>
+<div id="tabSeq" class="tab-content">
+  <div class="cseq-header">
+    <span id="cseq-count" class="cseq-count">—</span>
+    <div class="cseq-scope-toggle" role="tablist" aria-label="Sequence scope">
+      <button type="button" class="cseq-scope-btn active"
+              data-scope="active"
+              onclick="contactSequencesSetScope('active')">Active only</button>
+      <button type="button" class="cseq-scope-btn"
+              data-scope="all"
+              onclick="contactSequencesSetScope('all')">Show all</button>
+    </div>
+    <button type="button" class="cseq-refresh-btn"
+            onclick="loadContactSequences()" title="Refresh">
+      <i class="fa-solid fa-arrows-rotate"></i>
+    </button>
   </div>
-<script>
-async function abortSeq(enrollmentId, templateName) {
-    Swal.fire({
-        title: "Cancel Sequence?",
-        text: `Are you sure you want to cancel the "${templateName}" sequence?`,
-        showCancelButton: true,
-        confirmButtonText: 'Confirm',
-        showLoaderOnConfirm: true,
-        preConfirm: async () => {
-            try {
-                await P.apiSend(`/sequences/enrollments/${enrollmentId}/cancel`, "POST",
-                    { reason: "manual_staff_cancel" });
-                const data = await P.apiSend(`/api/contacts/${clientID}`, "GET",
-                  { include: "sequences" });
-                window.entityData.sequences = data.sequences || [];
-                putSeq();
-                Toast.fire({ icon: "success", title: "Sequence cancelled" });
-            } catch (err) {
-                Toast.fire({ icon: "error", title: "Error", text: err.message });
-            }
-        }
-    });
-}
-</script>
+  <table id="cseq-table" class="logTable cseq-table" style="display:none">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Template</th>
+        <th>Status</th>
+        <th>Step</th>
+        <th>Enrolled</th>
+        <th>Completed</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="cseq-tbody"></tbody>
+  </table>
+  <h2 id="cseq-empty" class="cseq-empty" style="display:none">No active sequences.</h2>
+ 
+  <div id="cseq-pagination" class="cseq-pagination"></div>
+</div>
+
+
+
   <div id="tabAppts" class="tab-content">
     <h1>Appointments:</h1>
     <button class="file-button" onclick="newAppt()"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button>
@@ -377,15 +531,14 @@ window.entityData = {
   cases:     [],
   appts:     [],
   tasks:     [],
-  log:       [],
-  sequences: []
+  log:       []
 };
 
 // ── Data loading ────────────────────────────────────────────
 async function loadEntityData() {
   const data = await P.apiSend(
     `/api/contacts/${clientID}`, 'GET',
-    { include: 'cases,appts,tasks,log,sequences' }
+    { include: 'cases,appts,tasks,log' }
   );
   const ed       = window.entityData;
   ed.contact     = data.contact;
@@ -393,7 +546,6 @@ async function loadEntityData() {
   ed.appts       = data.appts     || [];
   ed.tasks       = data.tasks     || [];
   ed.log         = data.log       || [];
-  ed.sequences   = data.sequences || [];
 }
 
 // ── Header & prefill updates ────────────────────────────────
@@ -475,27 +627,7 @@ function putAppt() {
   });
 }
 
-function putSeq() {
-  const table = E("seqTable");
-  const emptyHeader = table.previousElementSibling;
-  if (!window.entityData.sequences.length) {
-    table.innerHTML = "";
-    table.style.display = "none";
-    emptyHeader.style.display = "";
-    return;
-  }
-  table.style.display = "";
-  emptyHeader.style.display = "none";
-  table.innerHTML = `<tr><th>ID</th><th>Template</th><th>Type</th><th>Status</th><th>Step</th><th>Enrolled</th><th></th></tr>`;
-  window.entityData.sequences.forEach(s => {
-    const enrolled = s.enrolled_at
-      ? new Date(s.enrolled_at).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "";
-    const row = table.insertRow();
-    row.innerHTML = s.status === "active"
-      ? `<td>${s.enrollment_id}</td><td>${s.template_name}</td><td>${s.template_type}</td><td>${s.status}</td><td>${s.current_step}/${s.total_steps}</td><td>${enrolled}</td><td><button onclick="abortSeq('${s.enrollment_id}','${s.template_name}')">Cancel</button></td>`
-      : `<td>${s.enrollment_id}</td><td>${s.template_name}</td><td>${s.template_type}</td><td>${s.status}${s.cancel_reason?` (${s.cancel_reason})`:""}</td><td>${s.current_step}/${s.total_steps}</td><td>${enrolled}</td><td></td>`;
-  });
-}
+
 
 // ── Tab switching ───────────────────────────────────────────
 function openTab(tab, tabName) {
@@ -505,6 +637,12 @@ function openTab(tab, tabName) {
   }
   document.querySelectorAll(".tab-content").forEach(t => t.style.display = "none");
   E(tabName).style.display = "block";
+  // Sequences tab: load on entry, stop polling on exit. I dont like this!
+  if (tabName === 'tabSeq') {
+    loadContactSequences();
+  } else {
+    stopContactSeqPolling();
+  }
 }
 
 // ── Utilities ───────────────────────────────────────────────
@@ -534,7 +672,6 @@ async function refreshEntityData(sourceFormKey) {
   // Re-render tables
   putCases();
   putAppt();
-  putSeq();
 
 // Push to all non-dirty child YCForm iframes
 document.querySelectorAll('iframe').forEach(iframe => {
@@ -677,6 +814,465 @@ async function newAppt() {
   });
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// SEQUENCES TAB (slice 4.3)
+// Contact-scoped enrollments: list + pagination + drill-down modal with
+// step history + 5s polling with three-way stop.
+//
+// Row shape from /api/contacts/:id/sequences:
+//   { enrollment_id, template_id, template_name, template_type, status,
+//     current_step, total_steps, cancel_reason,
+//     enrolled_at, completed_at, updated_at }
+//
+// Uses P.apiSend (no local api() helper on contact2.html).
+// ═════════════════════════════════════════════════════════════════════════
+ 
+const CSEQ = {
+  offset:          0,
+  limit:           50,
+  total:           0,
+  activeTotal:     0,
+  scope:           'active',   // 'active' | 'all'
+  pollTimer:       null,
+  // Snapshot of last rendered rows so the row-level Cancel helper can look
+  // up template_name by enrollment_id without squeezing it through an
+  // inline onclick attribute (quote-escaping nightmare).
+  lastRows:        [],
+  // Guard against a rare race where contact2.html stays alive while
+  // clientID changes (SPA reuse). Today contact2 is reloaded per contact,
+  // so this is belt-and-suspenders; still cheap to check.
+  targetContactId: null,
+};
+ 
+const CSEQ_TERMINAL = new Set(['completed', 'cancelled']);
+ 
+function cseqEsc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function cseqFmtDate(d) {
+  if (!d) return '—';
+  try { return new Date(d).toLocaleString(); } catch { return String(d); }
+}
+function cseqFmtDateShort(d) {
+  if (!d) return '—';
+  try {
+    return new Date(d).toLocaleDateString('en-US',
+      { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return String(d); }
+}
+function cseqStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cseq-status-badge cseq-status-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cseqJobBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cseq-job-badge cseq-job-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cseqLogBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cseq-log-badge cseq-log-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cseqParseJson(v) {
+  if (v == null) return null;
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch { return null; }
+}
+function cseqToast(icon, title, text) {
+  const T = (typeof Toast !== 'undefined') ? Toast : (P && P.Toast);
+  if (T && typeof T.fire === 'function') T.fire({ icon, title, text });
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────
+// List load — fetches, renders, decides polling.
+// Called from openTab('tabSeq') and from the Refresh button.
+// ─────────────────────────────────────────────────────────────────────────
+async function loadContactSequences() {
+  const contactAtCall = clientID;
+ 
+  const tbody = E('cseq-tbody');
+  const empty = E('cseq-empty');
+  const table = E('cseq-table');
+  const count = E('cseq-count');
+  const pager = E('cseq-pagination');
+  if (!tbody || !empty || !table || !count || !pager) return;
+ 
+  // Inline spinner; tab is already visible so the table row swap is fine.
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>';
+  table.style.display = '';
+  empty.style.display = 'none';
+ 
+  try {
+    const data = await P.apiSend(
+      `/api/contacts/${contactAtCall}/sequences`, 'GET',
+      { limit: CSEQ.limit, offset: CSEQ.offset, scope: CSEQ.scope }
+    );
+ 
+    // Race guard: if the contact changed while we were waiting, drop result.
+    if (clientID !== contactAtCall) return;
+ 
+    CSEQ.total       = data.total        || 0;
+    CSEQ.activeTotal = data.active_total || 0;
+    const rows = data.sequences || [];
+ 
+    count.textContent = CSEQ.scope === 'active'
+      ? `${CSEQ.activeTotal} active`
+      : `${CSEQ.activeTotal} active of ${CSEQ.total} total`;
+ 
+    if (!rows.length) {
+      table.style.display = 'none';
+      empty.style.display = '';
+      empty.textContent   = CSEQ.scope === 'active'
+        ? 'No active sequences.'
+        : 'No sequences yet.';
+      pager.innerHTML = '';
+      CSEQ.lastRows   = [];
+      stopContactSeqPolling();
+      return;
+    }
+ 
+    tbody.innerHTML = renderContactSequenceRows(rows);
+    pager.innerHTML = renderContactSeqPager(rows.length);
+ 
+    const anyActive = rows.some(r =>
+      !CSEQ_TERMINAL.has(String(r.status).toLowerCase())
+    );
+    if (anyActive) startContactSeqPolling();
+    else           stopContactSeqPolling();
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" style="color:#991b1b;padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
+    pager.innerHTML = '';
+    stopContactSeqPolling();
+  }
+}
+ 
+function renderContactSequenceRows(rows) {
+  CSEQ.lastRows = rows;  // cached for cancelContactEnrollment lookup
+  return rows.map(r => {
+    const typeLabel = (r.template_type && String(r.template_type).trim())
+      ? cseqEsc(r.template_type) : '—';
+    const isActive  = String(r.status).toLowerCase() === 'active';
+    const stepCell  = (r.current_step != null && r.total_steps != null)
+      ? `${cseqEsc(r.current_step)}/${cseqEsc(r.total_steps)}` : '—';
+    const cancelBtn = isActive
+      ? `<button type="button" class="cseq-cancel-btn"
+                 onclick="cancelContactEnrollment(${r.enrollment_id})">
+           <i class="fa-solid fa-ban"></i> Cancel
+         </button>`
+      : '';
+    const cancelReasonLine = r.cancel_reason
+      ? `<div style="font-size:10px;color:#991b1b;margin-top:2px">${cseqEsc(r.cancel_reason)}</div>`
+      : '';
+    return `
+      <tr>
+        <td class="cseq-id">#${cseqEsc(r.enrollment_id)}</td>
+        <td>
+          <div class="cseq-template-name">${cseqEsc(r.template_name || '—')}</div>
+          <div class="cseq-template-type">${typeLabel}</div>
+        </td>
+        <td>${cseqStatusBadge(r.status)}${cancelReasonLine}</td>
+        <td>${stepCell}</td>
+        <td>${cseqFmtDateShort(r.enrolled_at)}</td>
+        <td>${cseqFmtDateShort(r.completed_at)}</td>
+        <td>
+          <button type="button" class="cseq-view-btn"
+                  onclick="viewContactEnrollment(${r.enrollment_id})">
+            <i class="fa-solid fa-eye"></i> View
+          </button>
+          ${cancelBtn}
+        </td>
+      </tr>`;
+  }).join('');
+}
+ 
+function renderContactSeqPager(visibleCount) {
+  if (CSEQ.total <= CSEQ.limit && CSEQ.offset === 0) return '';
+  const from    = CSEQ.offset + 1;
+  const to      = CSEQ.offset + visibleCount;
+  const hasPrev = CSEQ.offset > 0;
+  const hasNext = CSEQ.offset + CSEQ.limit < CSEQ.total;
+  return `
+    <button type="button" ${hasPrev ? '' : 'disabled'} onclick="contactSequencesPrevPage()">‹ Previous</button>
+    <span>Showing ${from}–${to} of ${CSEQ.total}</span>
+    <button type="button" ${hasNext ? '' : 'disabled'} onclick="contactSequencesNextPage()">Next ›</button>
+  `;
+}
+ 
+function contactSequencesPrevPage() {
+  CSEQ.offset = Math.max(0, CSEQ.offset - CSEQ.limit);
+  loadContactSequences();
+}
+function contactSequencesNextPage() {
+  if (CSEQ.offset + CSEQ.limit >= CSEQ.total) return;
+  CSEQ.offset += CSEQ.limit;
+  loadContactSequences();
+}
+ 
+function contactSequencesSetScope(scope) {
+  if (scope !== 'active' && scope !== 'all') return;
+  if (CSEQ.scope === scope) return;
+  CSEQ.scope  = scope;
+  CSEQ.offset = 0;
+  document.querySelectorAll('.cseq-scope-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.scope === scope);
+  });
+  stopContactSeqPolling();  // fresh load decides whether to restart it
+  loadContactSequences();
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────
+// Drill-down modal — mirrors viewSequenceEnrollment from automationManager,
+// with an inline Cancel action when enrollment.status === 'active'.
+// ─────────────────────────────────────────────────────────────────────────
+async function viewContactEnrollment(id) {
+  try {
+    const data = await P.apiSend(
+      `/sequences/enrollments/${id}`, 'GET',
+      { history: 'true', log: 'false' }
+    );
+    const en      = data.enrollment;
+    const history = data.history || [];
+    const trig    = cseqParseJson(en.trigger_data);
+ 
+    const historyRows = history.length
+      ? history.map(h => {
+          const hasLog    = h.log_id != null;
+          const rowCls    = hasLog ? '' : 'cseq-row-muted';
+          const stepCell  = h.step_number != null ? cseqEsc(h.step_number) : '—';
+          const actCell   = h.action_type ? cseqEsc(h.action_type) : '—';
+          // If a log row exists: primary badge = log_status; show job_status as
+          // a small secondary. If not: primary = job_status; row is muted.
+          const primary   = hasLog
+            ? cseqLogBadge(h.log_status || '—')
+            : cseqJobBadge(h.job_status || '—');
+          const secondary = hasLog
+            ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">job: ${cseqEsc(h.job_status || '—')}</div>`
+            : '';
+          const attempts  = (h.attempts != null && h.max_attempts != null)
+            ? `${cseqEsc(h.attempts)}/${cseqEsc(h.max_attempts)}` : '—';
+          const duration  = (h.duration_ms != null) ? `${cseqEsc(h.duration_ms)} ms` : '—';
+          const detail    = h.error_message
+            ? cseqEsc(h.error_message)
+            : (h.skip_reason ? `skipped: ${cseqEsc(h.skip_reason)}` : '');
+          return `
+            <tr class="${rowCls}">
+              <td>${stepCell}</td>
+              <td>${actCell}</td>
+              <td>${primary}${secondary}</td>
+              <td>${cseqFmtDate(h.scheduled_time)}</td>
+              <td>${hasLog ? cseqFmtDate(h.executed_at) : '—'}</td>
+              <td>${attempts}</td>
+              <td>${duration}</td>
+              <td class="cseq-error-cell">${detail}</td>
+            </tr>`;
+        }).join('')
+      : '<tr><td colspan="8" style="text-align:center;padding:12px;color:#94a3b8">No step history.</td></tr>';
+ 
+    const cancelReasonBlock = (String(en.status).toLowerCase() === 'cancelled' && en.cancel_reason)
+      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+           <b>Cancel reason:</b> ${cseqEsc(en.cancel_reason)}
+         </div>`
+      : '';
+ 
+    const isActive = String(en.status).toLowerCase() === 'active';
+    const typeLabel = (en.template_type && String(en.template_type).trim())
+      ? cseqEsc(en.template_type) : '—';
+    const stepCell  = (en.current_step != null && en.total_steps != null)
+      ? `${cseqEsc(en.current_step)}/${cseqEsc(en.total_steps)}` : '—';
+ 
+    const res = await Swal.fire({
+      title: `Enrollment #${id}`,
+      width: 820,
+      html: `
+        <div style="text-align:left;font-size:12px;max-height:65vh;overflow:auto">
+          <p><b>Status:</b> ${cseqStatusBadge(en.status)}</p>
+          <p style="margin-top:6px"><b>Template:</b>
+             ${cseqEsc(en.template_name || '—')}
+             <span style="color:#64748b">(${typeLabel})</span>
+          </p>
+          <p style="margin-top:6px"><b>Enrolled:</b> ${cseqFmtDate(en.enrolled_at)}</p>
+          <p style="margin-top:6px"><b>Completed:</b> ${cseqFmtDate(en.completed_at)}</p>
+          <p style="margin-top:6px"><b>Step:</b> ${stepCell}</p>
+          ${cancelReasonBlock}
+ 
+          ${trig ? `
+            <details style="margin-top:12px">
+              <summary style="cursor:pointer;font-weight:600">Trigger Data</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(trig, null, 2))}</pre>
+            </details>` : ''}
+ 
+          <h4 style="margin-top:14px;font-size:13px">Step History</h4>
+          <table class="cseq-history-table">
+            <thead>
+              <tr>
+                <th>Step</th><th>Action</th><th>Status</th>
+                <th>Scheduled</th><th>Executed</th>
+                <th>Attempts</th><th>Duration</th><th>Error / Detail</th>
+              </tr>
+            </thead>
+            <tbody>${historyRows}</tbody>
+          </table>
+        </div>`,
+      showCancelButton: true,
+      cancelButtonText:  'Close',
+      showConfirmButton: isActive,
+      confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel enrollment',
+      confirmButtonColor: '#dc2626',
+      reverseButtons: true,   // [Cancel enrollment] [Close]
+    });
+ 
+    if (res.isConfirmed && isActive) {
+      // Fire the shared cancel helper, explicitly passing the template_name
+      // so we don't need to look it up from the list cache (which may be on
+      // a different page of the paginated list).
+      cancelContactEnrollment(id, en.template_name || '');
+    }
+  } catch (err) {
+    Swal.fire({ icon: 'error', title: 'Failed to load enrollment',
+                text: err.message || String(err) });
+  }
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────
+// Shared cancel helper — used by both row-level and drill-down entry points.
+// Reason is required (min 3 chars). On success: toast + reload list.
+// ─────────────────────────────────────────────────────────────────────────
+async function cancelContactEnrollment(enrollmentId, templateNameOverride) {
+  // Row-level callers don't know the template_name inline (avoids quote-
+  // escaping nightmares), so look it up from the cached rows. Drill-down
+  // callers pass it explicitly.
+  const templateName = (templateNameOverride != null && templateNameOverride !== '')
+    ? templateNameOverride
+    : (CSEQ.lastRows.find(r => r.enrollment_id === enrollmentId)?.template_name || '');
+ 
+  // If the drill-down modal was left open, close it before opening confirm.
+  if (Swal.isVisible()) Swal.close();
+ 
+  const result = await Swal.fire({
+    title: `Cancel enrollment #${enrollmentId}?`,
+    html: templateName
+      ? `<div style="color:#64748b;margin-bottom:4px">Template: <b>${cseqEsc(templateName)}</b></div>`
+      : '',
+    input: 'text',
+    inputLabel: 'Reason (required, min 3 characters)',
+    inputPlaceholder: 'e.g. client asked to stop, duplicate enrollment',
+    inputValidator: (v) => {
+      if (!v || v.trim().length < 3) return 'Please enter a reason (min 3 characters).';
+    },
+    showCancelButton: true,
+    confirmButtonText: 'Confirm Cancel',
+    confirmButtonColor: '#dc2626',
+    reverseButtons: true,
+    showLoaderOnConfirm: true,
+    preConfirm: async (reason) => {
+      try {
+        await P.apiSend(`/sequences/enrollments/${enrollmentId}/cancel`, 'POST',
+                        { reason: reason.trim() });
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    },
+  });
+ 
+  if (result.isConfirmed && result.value === true) {
+    cseqToast('success', 'Enrollment cancelled');
+    await loadContactSequences();
+  }
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────
+// Polling — 5s cadence. Three stop triggers:
+//   (1) user switched to a different tab (display !== 'block')
+//   (2) contact changed mid-poll (natural via iframe reload; guard here too)
+//   (3) no rows in the visible scope are non-terminal
+// ─────────────────────────────────────────────────────────────────────────
+function startContactSeqPolling() {
+  stopContactSeqPolling();
+  CSEQ.targetContactId = clientID;
+  CSEQ.pollTimer = setInterval(async () => {
+    // Stop (1): tab switched away.
+    const tabEl = E('tabSeq');
+    if (!tabEl || tabEl.style.display !== 'block') {
+      stopContactSeqPolling();
+      return;
+    }
+    // Stop (2): contact changed.
+    if (CSEQ.targetContactId !== clientID) {
+      stopContactSeqPolling();
+      return;
+    }
+ 
+    try {
+      const data = await P.apiSend(
+        `/api/contacts/${CSEQ.targetContactId}/sequences`, 'GET',
+        { limit: CSEQ.limit, offset: CSEQ.offset, scope: CSEQ.scope }
+      );
+      // Re-check after the await, just in case.
+      if (!tabEl.isConnected || tabEl.style.display !== 'block') {
+        stopContactSeqPolling(); return;
+      }
+      if (CSEQ.targetContactId !== clientID) {
+        stopContactSeqPolling(); return;
+      }
+ 
+      const rows = data.sequences || [];
+      CSEQ.total       = data.total        || 0;
+      CSEQ.activeTotal = data.active_total || 0;
+ 
+      const count = E('cseq-count');
+      if (count) {
+        count.textContent = CSEQ.scope === 'active'
+          ? `${CSEQ.activeTotal} active`
+          : `${CSEQ.activeTotal} active of ${CSEQ.total} total`;
+      }
+ 
+      const tbody = E('cseq-tbody');
+      const empty = E('cseq-empty');
+      const table = E('cseq-table');
+      const pager = E('cseq-pagination');
+      if (!tbody || !empty || !table || !pager) { stopContactSeqPolling(); return; }
+ 
+      if (!rows.length) {
+        table.style.display = 'none';
+        empty.style.display = '';
+        empty.textContent = CSEQ.scope === 'active'
+          ? 'No active sequences.'
+          : 'No sequences yet.';
+        pager.innerHTML = '';
+        CSEQ.lastRows   = [];
+        stopContactSeqPolling();
+        return;
+      }
+ 
+      table.style.display = '';
+      empty.style.display = 'none';
+      tbody.innerHTML = renderContactSequenceRows(rows);
+      pager.innerHTML = renderContactSeqPager(rows.length);
+ 
+      // Stop (3): nothing active in this page anymore.
+      const anyActive = rows.some(r =>
+        !CSEQ_TERMINAL.has(String(r.status).toLowerCase())
+      );
+      if (!anyActive) stopContactSeqPolling();
+    } catch (err) {
+      // Swallow transient errors; let the loop continue until a real stop.
+      console.warn('[cseq] poll error:', err.message || err);
+    }
+  }, 5000);
+}
+ 
+function stopContactSeqPolling() {
+  if (CSEQ.pollTimer) {
+    clearInterval(CSEQ.pollTimer);
+    CSEQ.pollTimer = null;
+  }
+  CSEQ.targetContactId = null;
+}
+
 // ── Initial load ────────────────────────────────────────────
 processing();
 (async () => {
@@ -690,7 +1286,6 @@ processing();
     Swal.close();
 
     if (window.entityData.cases.length)     putCases();
-    if (window.entityData.sequences.length) putSeq();
     if (window.entityData.appts.length)     putAppt();
 
     tabLogGet(0);
