@@ -236,10 +236,43 @@ function validateTargetPayload(body, { isUpdate = false } = {}) {
     return null;
   }
 
-  if (type === 'sequence') {
-    if (!isUpdate && (missingConfig || !cfg.template_type)) {
-      return 'sequence targets require config.template_type (string)';
+if (type === 'sequence') {
+    // Exactly one of template_type or template_id must be present.
+    const hasType = cfg && cfg.template_type !== undefined && cfg.template_type !== null && cfg.template_type !== '';
+    const hasId   = cfg && cfg.template_id   !== undefined && cfg.template_id   !== null && cfg.template_id   !== '';
+
+    if (!isUpdate) {
+      if (missingConfig) {
+        return 'sequence targets require config with template_type or template_id';
+      }
+      if (hasType && hasId) {
+        return 'sequence targets must set exactly one of config.template_type or config.template_id, not both';
+      }
+      if (!hasType && !hasId) {
+        return 'sequence targets require config.template_type (string) or config.template_id (positive integer)';
+      }
+    } else if (cfg) {
+      // On update, if config is provided, still enforce "not both" (but don't
+      // require one of them to be set — matches the existing lenient update
+      // policy for sequence/template_type-only updates).
+      if (hasType && hasId) {
+        return 'sequence targets must set exactly one of config.template_type or config.template_id, not both';
+      }
     }
+
+    // Type checks on whichever value is present
+    if (hasId) {
+      const idInt = Number(cfg.template_id);
+      if (!Number.isInteger(idInt) || idInt <= 0) {
+        return 'config.template_id must be a positive integer';
+      }
+      // Cascade filters are cascade-mode only
+      if ((cfg.appt_type_filter != null && cfg.appt_type_filter !== '') ||
+          (cfg.appt_with_filter != null && cfg.appt_with_filter !== '')) {
+        return 'config.appt_type_filter and config.appt_with_filter are only valid alongside config.template_type (cascade mode); omit them when using config.template_id';
+      }
+    }
+
     if (cfg && cfg.trigger_data_fields !== undefined && !Array.isArray(cfg.trigger_data_fields)) {
       return 'config.trigger_data_fields must be an array of field names';
     }

@@ -449,45 +449,77 @@ async function deliverWorkflow(target, targetConfig, targetOutput, db) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Enroll a contact in a sequence. Synchronous — enrollContact just inserts
+ * Enroll a contact in a sequence. Synchronous — enrollContact* just inserts
  * the enrollment row and schedules the first step job.
+ *
+ * Two modes, determined by targetConfig:
+ *   - template_id set → enrollContactByTemplateId (direct), no cascade filters
+ *   - template_type set → enrollContact (cascade), honors appt_type/appt_with filters
+ *
+ * contact_id_field and trigger_data_fields entries support dot-paths — e.g.
+ * "body.contactId" on a passthrough hook — so users don't need a mapper just
+ * to flatten the shape. Consistent with how internal_function params_mapping
+ * resolves sources.
  */
 async function deliverSequence(target, targetConfig, targetOutput, db) {
+  const templateId = targetConfig.template_id;
   const templateType = targetConfig.template_type;
   const contactIdField = targetConfig.contact_id_field || 'contact_id';
   const triggerDataFields = Array.isArray(targetConfig.trigger_data_fields)
     ? targetConfig.trigger_data_fields : [];
 
-  const contactId = targetOutput == null ? undefined : targetOutput[contactIdField];
+  // Dot-path aware — handles both flat keys ("contactId") and nested paths
+  // ("body.contactId"), matching how hookMapper and resolveParamsMapping work.
+  const contactId = targetOutput == null ? undefined : getByPath(targetOutput, contactIdField);
 
-  // Build trigger_data from specified fields
+  // Build trigger_data from specified fields. Each field is resolved via
+  // getByPath and stored under the last path segment — so "body.appt_id"
+  // becomes triggerData.appt_id, which is what sequenceEngine expects.
   const triggerData = {};
   for (const field of triggerDataFields) {
-    if (targetOutput != null && targetOutput[field] !== undefined) {
-      triggerData[field] = targetOutput[field];
+    const val = targetOutput == null ? undefined : getByPath(targetOutput, field);
+    if (val !== undefined) {
+      const key = field.includes('.') ? field.split('.').pop() : field;
+      triggerData[key] = val;
     }
   }
 
-  const callPayload = {
-    contact_id: contactId,
-    template_type: templateType,
-    trigger_data: triggerData,
-    appt_type: targetConfig.appt_type_filter || null,
-    appt_with: targetConfig.appt_with_filter || null,
-  };
+  // Determine mode. Validation (api.hooks validateTargetPayload) already
+  // rejects "both set" at save time, so at delivery time at most one is live.
+  const useById = templateId !== undefined && templateId !== null && templateId !== '';
+
+  let callPayload;
+  let requestUrl;
+  if (useById) {
+    callPayload = {
+      contact_id: contactId,
+      template_id: templateId,
+      trigger_data: triggerData,
+    };
+    requestUrl = `internal://sequence/id/${templateId}`;
+  } else {
+    callPayload = {
+      contact_id: contactId,
+      template_type: templateType,
+      trigger_data: triggerData,
+      appt_type: targetConfig.appt_type_filter || null,
+      appt_with: targetConfig.appt_with_filter || null,
+    };
+    requestUrl = `internal://sequence/${templateType || '?'}`;
+  }
 
   const logData = {
     target_id: target.id,
-    request_url: `internal://sequence/${templateType || '?'}`,
+    request_url: requestUrl,
     request_method: 'INTERNAL',
     request_body: JSON.stringify(callPayload),
   };
 
-  if (!templateType) {
+  if (!useById && !templateType) {
     logData.response_status = 500;
     logData.response_body = null;
     logData.status = 'failed';
-    logData.error = 'sequence target missing config.template_type';
+    logData.error = 'sequence target missing config.template_type or config.template_id';
     return logData;
   }
 
@@ -501,13 +533,27 @@ async function deliverSequence(target, targetConfig, targetOutput, db) {
 
   try {
     const sequenceEngine = require('../lib/sequenceEngine');
-    const result = await sequenceEngine.enrollContact(
-      db,
-      contactId,
-      templateType,
-      triggerData,
-      { appt_type: callPayload.appt_type, appt_with: callPayload.appt_with }
-    );
+    let result;
+    if (useById) {
+      const idInt = parseInt(templateId, 10);
+      if (!Number.isInteger(idInt) || idInt <= 0) {
+        throw new Error(`config.template_id must be a positive integer (got ${templateId})`);
+      }
+      result = await sequenceEngine.enrollContactByTemplateId(
+        db,
+        contactId,
+        idInt,
+        triggerData
+      );
+    } else {
+      result = await sequenceEngine.enrollContact(
+        db,
+        contactId,
+        templateType,
+        triggerData,
+        { appt_type: callPayload.appt_type, appt_with: callPayload.appt_with }
+      );
+    }
 
     logData.response_status = 200;
     logData.response_body = JSON.stringify(result);
@@ -697,16 +743,37 @@ function buildDryRunPreview(target, hookTransformOutput) {
       },
     };
   }
-
   if (targetType === 'sequence') {
     const contactIdField = targetConfig.contact_id_field || 'contact_id';
-    const contactId = targetOutput == null ? undefined : targetOutput[contactIdField];
+    const contactId = targetOutput == null ? undefined : getByPath(targetOutput, contactIdField);
     const triggerData = {};
     for (const field of (targetConfig.trigger_data_fields || [])) {
-      if (targetOutput != null && targetOutput[field] !== undefined) {
-        triggerData[field] = targetOutput[field];
+      const val = targetOutput == null ? undefined : getByPath(targetOutput, field);
+      if (val !== undefined) {
+        const key = field.includes('.') ? field.split('.').pop() : field;
+        triggerData[key] = val;
       }
     }
+
+    const templateId = targetConfig.template_id;
+    const useById = templateId !== undefined && templateId !== null && templateId !== '';
+
+    if (useById) {
+      return {
+        target_type: 'sequence',
+        transform_output: targetOutput,
+        would_send: {
+          method: 'INTERNAL',
+          url: `internal://sequence/id/${templateId}`,
+          action: 'enroll_contact_by_id',
+          contact_id: contactId == null ? null : contactId,
+          contact_id_field: contactIdField,
+          template_id: templateId,
+          trigger_data: triggerData,
+        },
+      };
+    }
+
     return {
       target_type: 'sequence',
       transform_output: targetOutput,

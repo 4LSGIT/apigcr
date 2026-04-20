@@ -118,6 +118,18 @@ Sequence list excludes: `set_next`, `evaluate_condition`, `schedule_resume`, `wa
 }
 ```
 
+Alternative — target a specific template directly by ID (skips type-cascade matching; `appt_type` / `appt_with` are not accepted in this mode):
+
+```json
+{
+  "contact_id":  123,
+  "template_id": 42,
+  "trigger_data": { "appt_id": 456 }
+}
+```
+
+Exactly one of `template_type` or `template_id` must be provided.
+
 **Cancel body:**
 ```json
 {

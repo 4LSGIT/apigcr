@@ -24,7 +24,7 @@
 const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
-const { enrollContact, cancelSequences } = require('../lib/sequenceEngine');
+const { enrollContact, enrollContactByTemplateId, cancelSequences } = require('../lib/sequenceEngine');
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // ─────────────────────────────────────────────────────────────
@@ -424,14 +424,56 @@ router.delete('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (
 // ─────────────────────────────────────────────────────────────
 
 // POST /sequences/enroll
+//
+// Two modes — pass exactly one of:
+//   template_type  (+ optional appt_type, appt_with) — cascade match
+//   template_id    — target a specific template directly (no cascade filters)
 router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
   const db = req.db;
-  const { contact_id, template_type, trigger_data = {}, appt_type = null, appt_with = null } = req.body;
+  const {
+    contact_id,
+    template_type,
+    template_id,
+    trigger_data = {},
+    appt_type = null,
+    appt_with = null,
+  } = req.body;
 
-  if (!contact_id)    return res.status(400).json({ error: 'contact_id is required' });
-  if (!template_type) return res.status(400).json({ error: 'template_type is required' });
+  if (!contact_id) {
+    return res.status(400).json({ error: 'contact_id is required' });
+  }
+
+  const hasType = template_type !== undefined && template_type !== null && template_type !== '';
+  const hasId   = template_id   !== undefined && template_id   !== null && template_id   !== '';
+
+  if (hasType && hasId) {
+    return res.status(400).json({
+      error: 'Provide exactly one of template_type or template_id, not both',
+    });
+  }
+  if (!hasType && !hasId) {
+    return res.status(400).json({
+      error: 'One of template_type or template_id is required',
+    });
+  }
 
   try {
+    if (hasId) {
+      // By-ID mode — cascade filters are not allowed
+      if (appt_type !== null || appt_with !== null) {
+        return res.status(400).json({
+          error: 'appt_type and appt_with are only valid with template_type (cascade mode); omit them when using template_id',
+        });
+      }
+      const idInt = parseInt(template_id, 10);
+      if (!Number.isInteger(idInt) || idInt <= 0) {
+        return res.status(400).json({ error: 'template_id must be a positive integer' });
+      }
+      const result = await enrollContactByTemplateId(db, contact_id, idInt, trigger_data);
+      return res.status(201).json({ success: true, ...result });
+    }
+
+    // By-type (cascade) mode — original behavior, unchanged
     const result = await enrollContact(db, contact_id, template_type, trigger_data, { appt_type, appt_with });
     res.status(201).json({ success: true, ...result });
   } catch (err) {

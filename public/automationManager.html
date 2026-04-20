@@ -2644,6 +2644,13 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
       return `Start workflow #${cfg.workflow_id || '?'}`;
     }
     if (type === 'sequence') {
+      // By-ID mode: resolve name from loaded templates list if possible
+      if (cfg.template_id != null && cfg.template_id !== '') {
+        const tpl = sequenceTemplatesList.find(s => s.id == cfg.template_id);
+        if (tpl) return `Enroll in template #${cfg.template_id} "${tpl.name}"`;
+        return `Enroll in template #${cfg.template_id}`;
+      }
+      // By-type (cascade) — existing behavior
       return `Enroll in sequence "${cfg.template_type || '?'}"`;
     }
     if (type === 'internal_function') {
@@ -2722,6 +2729,11 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     const wfOpts = workflowsList.map(w => `<option value="${w.id}" ${cfg.workflow_id==w.id?'selected':''}>${esc(w.name || 'Workflow #' + w.id)} (id: ${w.id})</option>`).join('');
     const seqTypes = [...new Set(sequenceTemplatesList.map(s => s.type).filter(Boolean))];
     const seqOpts = seqTypes.map(t => `<option value="${esc(t)}" ${cfg.template_type===t?'selected':''}>${esc(t)}</option>`).join('');
+    const seqTemplatesActive = sequenceTemplatesList.filter(s => s.active == 1);
+    const seqIdOpts = seqTemplatesActive.map(s =>
+      `<option value="${s.id}" ${cfg.template_id == s.id ? 'selected' : ''}>${esc(s.name)} (${esc(s.type)})</option>`
+    ).join('');
+    const seqModeInit = (cfg.template_id != null && cfg.template_id !== '') ? 'id' : 'type';
     const fnOpts = internalFunctionsList.map(fn => `<option value="${esc(fn)}" ${cfg.function_name===fn?'selected':''}>${esc(fn)}</option>`).join('');
 
     return `
@@ -2791,37 +2803,75 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
           </div>
         </div>
 
-        <!-- ═══ SEQUENCE section ═══ -->
+<!-- ═══ SEQUENCE section ═══ -->
         <div id="swal-sec-sequence" class="swal-t-section" style="display:none">
+
+          <!-- Mode selector -->
           <div class="fg">
-            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Template Type</label>
-            <select id="swal-t-seq-type" class="swal2-select" style="margin:0;width:100%">
-              <option value="">— select a template type —</option>
-              ${seqOpts}
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Enrollment mode</label>
+            <select id="swal-t-seq-mode" class="swal2-select" style="margin:0;width:100%">
+              <option value="type" ${seqModeInit==='type'?'selected':''}>By type (cascade match)</option>
+              <option value="id"   ${seqModeInit==='id'  ?'selected':''}>By specific template</option>
             </select>
-            ${seqTypes.length === 0 ? '<div class="hint" style="color:#ef4444;font-size:11px;margin-top:3px">No sequence templates loaded. Check /sequences/templates.</div>' : ''}
+            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
+              <strong>By type</strong> picks the most-specific active template matching the type (+ optional appt filters).
+              <strong>By specific template</strong> targets one template directly — no filters, no cascade.
+            </div>
           </div>
+
+          <!-- By-type sub-block: type dropdown + appt filters -->
+          <div id="swal-sec-seq-by-type">
+            <div class="fg">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Template Type</label>
+              <select id="swal-t-seq-type" class="swal2-select" style="margin:0;width:100%">
+                <option value="">— select a template type —</option>
+                ${seqOpts}
+              </select>
+              ${seqTypes.length === 0 ? '<div class="hint" style="color:#ef4444;font-size:11px;margin-top:3px">No sequence templates loaded. Check /sequences/templates.</div>' : ''}
+            </div>
+            <div style="display:flex;gap:8px">
+              <div class="fg" style="flex:1">
+                <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">appt_type filter (optional)</label>
+                <input id="swal-t-seq-appttype" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.appt_type_filter || '')}" placeholder="Strategy Session">
+              </div>
+              <div class="fg" style="flex:1">
+                <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">appt_with filter (user ID)</label>
+                <input id="swal-t-seq-apptwith" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.appt_with_filter != null ? cfg.appt_with_filter : '')}" placeholder="2">
+              </div>
+            </div>
+            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:-6px">Cascading template match — both filters are optional.</div>
+          </div>
+
+          <!-- By-id sub-block: specific template dropdown (active only) -->
+          <div id="swal-sec-seq-by-id" style="display:none">
+            <div class="fg">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Template</label>
+              <select id="swal-t-seq-id" class="swal2-select" style="margin:0;width:100%">
+                <option value="">— select a template —</option>
+                ${seqIdOpts}
+              </select>
+              ${seqIdOpts === '' ? '<div class="hint" style="color:#ef4444;font-size:11px;margin-top:3px">No active sequence templates loaded. Check /sequences/templates.</div>' : ''}
+              <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Only active templates shown. Name is followed by the template&rsquo;s type in parens.</div>
+            </div>
+          </div>
+
+          <!-- Shared: contact_id + trigger_data (applies to both modes) -->
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">contact_id field name</label>
             <input id="swal-t-seq-cid" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.contact_id_field || 'contact_id')}" placeholder="contact_id">
-            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Name of the field in the transform output containing the contact ID.</div>
+            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
+              Name of the field in the transform output containing the contact ID.
+              Dot-paths supported for nested/passthrough shapes — e.g. <code>body.contactId</code>.
+            </div>
           </div>
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">trigger_data fields (comma-separated)</label>
             <input id="swal-t-seq-td" class="swal2-input mono" style="margin:0;width:100%" value="${esc((cfg.trigger_data_fields || []).join(', '))}" placeholder="appt_id, appt_time, case_id">
-            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Transform fields to pass through as <code>trigger_data</code> to the sequence.</div>
-          </div>
-          <div style="display:flex;gap:8px">
-            <div class="fg" style="flex:1">
-              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">appt_type filter (optional)</label>
-              <input id="swal-t-seq-appttype" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.appt_type_filter || '')}" placeholder="Strategy Session">
-            </div>
-            <div class="fg" style="flex:1">
-              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">appt_with filter (user ID)</label>
-              <input id="swal-t-seq-apptwith" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.appt_with_filter != null ? cfg.appt_with_filter : '')}" placeholder="2">
+            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
+              Transform fields to pass through as <code>trigger_data</code> to the sequence.
+              Dot-paths supported — <code>body.appt_id</code> is stored as <code>appt_id</code>.
             </div>
           </div>
-          <div class="hint" style="font-size:11px;color:var(--muted);margin-top:-6px">Cascading template match — both filters are optional.</div>
         </div>
 
         <!-- ═══ INTERNAL FUNCTION section ═══ -->
@@ -2870,6 +2920,21 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     };
     typeEl.addEventListener('change', updateSections);
     updateSections();
+    
+    // Sequence mode: toggle by-type vs by-id sub-blocks.
+    // We do NOT wipe values on toggle — operator may be comparing approaches.
+    const seqModeEl = document.getElementById('swal-t-seq-mode');
+    if (seqModeEl) {
+      const updateSeqMode = () => {
+        const mode = seqModeEl.value;
+        const byType = document.getElementById('swal-sec-seq-by-type');
+        const byId   = document.getElementById('swal-sec-seq-by-id');
+        if (byType) byType.style.display = mode === 'type' ? '' : 'none';
+        if (byId)   byId.style.display   = mode === 'id'   ? '' : 'none';
+      };
+      seqModeEl.addEventListener('change', updateSeqMode);
+      updateSeqMode();
+    }
 
     // Initialize params mapping rows for internal_function
     const cfg = parseJson(t.config) || {};
@@ -2975,11 +3040,35 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
 
     // Sequence branch
     if (type === 'sequence') {
-      const tt = document.getElementById('swal-t-seq-type').value.trim();
-      if (!tt) { Swal.showValidationMessage('Select a template type'); return false; }
+      const modeEl = document.getElementById('swal-t-seq-mode');
+      const mode = modeEl ? modeEl.value : 'type';
       const cidField = document.getElementById('swal-t-seq-cid').value.trim() || 'contact_id';
       const tdRaw = document.getElementById('swal-t-seq-td').value.trim();
       const triggerDataFields = tdRaw ? tdRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+      if (mode === 'id') {
+        const idRaw = document.getElementById('swal-t-seq-id').value;
+        const templateId = parseInt(idRaw, 10);
+        if (!Number.isInteger(templateId) || templateId <= 0) {
+          Swal.showValidationMessage('Select a template');
+          return false;
+        }
+        return {
+          name,
+          target_type: 'sequence',
+          url: null,
+          config: {
+            template_id: templateId,
+            contact_id_field: cidField,
+            trigger_data_fields: triggerDataFields,
+          },
+          active,
+        };
+      }
+
+      // By-type (cascade) — existing behavior
+      const tt = document.getElementById('swal-t-seq-type').value.trim();
+      if (!tt) { Swal.showValidationMessage('Select a template type'); return false; }
       const apptTypeFilter = document.getElementById('swal-t-seq-appttype').value.trim() || null;
       const apptWithRaw = document.getElementById('swal-t-seq-apptwith').value.trim();
       const apptWithFilter = apptWithRaw ? parseInt(apptWithRaw, 10) : null;
