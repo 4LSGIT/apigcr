@@ -344,7 +344,7 @@ async function createAppt(db, {
       const resume_10m = (utcMs - 10 * 60000)    > now ? new Date(utcMs - 10 * 60000).toISOString()   : null;
       const resume_3m  = (utcMs - 3 * 60000)     > now ? new Date(utcMs - 3 * 60000).toISOString()    : null;
  
-      // Start the workflow
+// Start the workflow
       const initData = {
         appt_id:           apptId,
         appt_type,
@@ -352,6 +352,15 @@ async function createAppt(db, {
         case_id:           case_id || '',
         case_tab:          determineCaseTab(appt_type),
         appt_with,
+        // Slice 4.3 Part B — surface contact_id in init_data so workflow
+        // steps can reference {{contact_id}} directly, AND so the template
+        // default mechanism (workflows.default_contact_id_from = 'contact_id')
+        // works for any future non-appt caller that routes through
+        // POST /workflows/:id/start. This path (apptService direct INSERT)
+        // populates the column explicitly in the INSERT below, so it doesn't
+        // depend on the default mechanism — both paths now produce the same
+        // wiring.
+        contact_id,
         sms_staff_from:    await getSetting(db, 'sms_staff_from') || '2486213656',
         sms_client_from:   await getSetting(db, 'sms_default_from') || '2485592400',
         // Display strings (pre-formatted, frozen at creation time)
@@ -366,11 +375,16 @@ async function createAppt(db, {
         resume_3m,
       };
  
-      // Create execution row
+      // Create execution row. Populates the new contact_id column directly
+      // — this path bypasses POST /workflows/:id/start (and therefore the
+      // shared resolveExecutionContactId helper), but the caller always
+      // knows contact_id at this point, so using it directly is simpler
+      // and doesn't require re-reading the workflows row.
       const [execResult] = await db.query(
-        `INSERT INTO workflow_executions (workflow_id, status, init_data, variables, current_step_number)
-         VALUES (?, 'active', ?, ?, 1)`,
-        [parseInt(wfId), JSON.stringify(initData), JSON.stringify(initData)]
+        `INSERT INTO workflow_executions
+           (workflow_id, contact_id, status, init_data, variables, current_step_number)
+         VALUES (?, ?, 'active', ?, ?, 1)`,
+        [parseInt(wfId), contact_id, JSON.stringify(initData), JSON.stringify(initData)]
       );
       workflowExecutionId = execResult.insertId;
  

@@ -184,4 +184,75 @@ router.get('/api/contacts/:id/sequences', jwtOrApiKey, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/contacts/:id/workflows
+ *
+ * Slice 4.3 Part B. Mirror of /sequences but for workflow_executions rows
+ * tied to this contact via the new `workflow_executions.contact_id` column
+ * (populated by the template-default or explicit-override mechanism from
+ * Part B — see lib/workflow_engine.js resolveExecutionContactId).
+ *
+ * Workflows that were never contact-tied at execution-start time have
+ * `contact_id` NULL and do not appear here (by design).
+ *
+ * Query params:
+ *   ?limit   (default 50, max 200)
+ *   ?offset  (default 0)
+ *   ?status  optional — full workflow status enum, validated against:
+ *            active | processing | delayed
+ *            | completed | completed_with_errors | failed | cancelled
+ *   ?scope   'active' (default, returns non-terminal: active|processing|delayed)
+ *            or 'all'. Ignored if ?status is also supplied (explicit wins).
+ *
+ * Response: { success: true, workflows: [...], total, active_total }
+ *   - total         — total rows matching the current filter
+ *   - active_total  — unfiltered count of non-terminal executions for this
+ *                     contact (lets the header read "N active of M total"
+ *                     on scope=all)
+ *
+ * Row shape: execution_id, workflow_id, workflow_name, status,
+ *            current_step_number, steps_executed_count, cancel_reason,
+ *            created_at, updated_at, completed_at.
+ *   init_data and variables are intentionally excluded from the list —
+ *   drill down via GET /executions/:id?history=true for per-execution detail.
+ */
+router.get('/api/contacts/:id/workflows', jwtOrApiKey, async (req, res) => {
+  try {
+    const contactId = req.params.id;
+
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit)  || 50));
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+
+    const VALID_STATUSES = [
+      'active', 'processing', 'delayed',
+      'completed', 'completed_with_errors', 'failed', 'cancelled',
+    ];
+    const status = req.query.status || null;
+    if (status && !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
+      });
+    }
+
+    const scope = req.query.scope === 'all' ? 'all' : 'active';
+
+    const result = await contactService.listContactWorkflows(req.db, contactId, {
+      limit, offset, status, scope,
+    });
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Contact not found' });
+    }
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('GET /api/contacts/:id/workflows error:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch workflows',
+      message: err.message,
+    });
+  }
+});
+
 module.exports = router;

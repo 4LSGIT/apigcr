@@ -391,6 +391,18 @@ async function deliverHttp(target, targetOutput) {
  * Start a workflow execution. Transform output becomes both init_data and
  * the initial variables. Advance is fire-and-forget — hook delivery doesn't
  * wait for the workflow to complete. Mirrors apptService.createAppt step 7.
+ *
+ * Slice 4.3 Part B: if the target workflow has `default_contact_id_from` set,
+ * we look that key up on the transform output (init_data) and stamp
+ * contact_id onto the new execution row. Explicit override is NOT supported
+ * on this path — hook config already has the full transform pipeline to
+ * shape the payload; a second "top-level override" would just add another
+ * thing to reason about. If a hook needs to contact-tie a non-default key,
+ * the hook's mapper transforms the value into the template's expected key.
+ *
+ * Invalid values at the default key (non-integer, not positive) fall through
+ * to NULL silently — matches the behaviour of the /start route's template-
+ * default branch; a bad value shouldn't break hook delivery.
  */
 async function deliverWorkflow(target, targetConfig, targetOutput, db) {
   const workflowId = targetConfig.workflow_id;
@@ -412,13 +424,39 @@ async function deliverWorkflow(target, targetConfig, targetOutput, db) {
   }
 
   try {
-    const { advanceWorkflow } = require('../lib/workflow_engine');
+    const { advanceWorkflow, resolveExecutionContactId } = require('../lib/workflow_engine');
+
+    // Look up the template default. One extra tiny SELECT per hook-started
+    // execution — acceptable overhead, and keeps the contact-tie wiring in
+    // one place (the workflow row) rather than duplicating it in hook config.
+    const [[wfRow]] = await db.query(
+      `SELECT default_contact_id_from FROM workflows WHERE id = ?`,
+      [workflowId]
+    );
+    const defaultKey = wfRow ? wfRow.default_contact_id_from : null;
+
+    // Resolve via the shared helper. No explicit override on this path
+    // (see JSDoc above). Errors are swallowed to NULL — hook config authors
+    // don't need their delivery pipeline to blow up over a bad payload.
+    let contactId = null;
+    try {
+      contactId = resolveExecutionContactId({
+        explicitContactId: undefined,
+        initData,
+        defaultKey,
+      });
+    } catch (e) {
+      // InvalidContactIdError can't happen here (we pass explicitContactId=undefined),
+      // but be defensive in case the helper changes in a future slice.
+      console.warn(`[HOOK→WF] contact_id resolution error, falling back to NULL:`, e.message);
+      contactId = null;
+    }
 
     const [result] = await db.query(
       `INSERT INTO workflow_executions
-       (workflow_id, status, init_data, variables, current_step_number)
-       VALUES (?, 'active', ?, ?, 1)`,
-      [workflowId, JSON.stringify(initData), JSON.stringify(initData)]
+       (workflow_id, contact_id, status, init_data, variables, current_step_number)
+       VALUES (?, ?, 'active', ?, ?, 1)`,
+      [workflowId, contactId, JSON.stringify(initData), JSON.stringify(initData)]
     );
     const executionId = result.insertId;
 
@@ -431,7 +469,12 @@ async function deliverWorkflow(target, targetConfig, targetOutput, db) {
 
     logData.request_url = `internal://workflow/${workflowId}/execution/${executionId}`;
     logData.response_status = 200;
-    logData.response_body = JSON.stringify({ executionId, workflowId, status: 'started' });
+    logData.response_body = JSON.stringify({
+      executionId,
+      workflowId,
+      contactId,
+      status: 'started',
+    });
     logData.status = 'success';
     return logData;
   } catch (err) {

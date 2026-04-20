@@ -43,17 +43,33 @@ Sequence list excludes: `set_next`, `evaluate_condition`, `schedule_resume`, `wa
 { "fromStep": 5, "toStep": 2 }
 { "order": [3, 1, 4, 2, 5] }
 ```
+### Contact-tying executions (Slice 4.3 Part B)
+
+Workflow executions can carry an optional `contact_id`, populated at start time. Contact-tied executions surface on `contact2.html`'s Automations tab; untied ones (NULL) don't appear on any contact page.
+
+**Two mechanisms:**
+
+1. **Template-level default** — set `workflows.default_contact_id_from` to the name of an init_data key (e.g. `'contact_id'`). On every start of that workflow, the engine reads `init_data[that_key]`; if it's a positive integer, it stamps `workflow_executions.contact_id`.
+
+2. **Execution-level override** — on `POST /workflows/:id/start`, pass a top-level `contact_id` in a **wrapped** body: `{ init_data: {...}, contact_id: 123 }`. This overrides the template default for this one execution. Wrapped-only by design — extracting `contact_id` from flat bodies would silently strip it from init_data for legacy callers.
+
+**Precedence:** explicit body `contact_id` > template default > NULL.
+
+Both mechanisms call the same shared helper (`resolveExecutionContactId` in `lib/workflow_engine.js`), which is also invoked by the two direct-INSERT creation sites (`services/apptService.js` and `services/hookService.js`'s `deliverWorkflow`). `apptService` populates the column directly since it already knows the value; `hookService` uses the template-default mechanism (no explicit override on the hook path).
+
+**Cancel reason.** `POST /executions/:id/cancel` now requires `{ reason: string }` (min 3 chars). No existing callers — `contact2.html` Part B is the first — so this is a hard 400 with no back-compat shim.
 
 ### Workflow Execution
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/workflows/:id/start` | Start an execution |
+| `POST` | `/workflows/:id/start` | Start an execution. Body: `{ init_data?, contact_id? }` — `contact_id` is an optional positive integer honored **only** when the body is wrapped (`{ init_data: {...}, contact_id: N }`). Flat-body callers (`{ anyField: val }`) are backward-compatible and rely on the template's `default_contact_id_from` instead. Precedence: explicit body `contact_id` > `workflows.default_contact_id_from` init_data lookup > NULL. |
 | `GET` | `/executions` | List all executions |
 | `GET` | `/executions/:id` | Single execution |
 | `GET` | `/executions/:id?history=true` | Execution + step history |
-| GET | /workflows/:id/executions | Paginated executions for a workflow. Query: ?limit (default 50, max 200), ?offset (default 0), ?status. Response: { success, executions, total }. |
-| `POST` | `/executions/:id/cancel` | Cancel a running execution |
+| `GET` | `/workflows/:id/executions` | Paginated executions for a workflow. Query: `?limit` (default 50, max 200), `?offset` (default 0), `?status`. Response: `{ success, executions, total }`. |
+| `POST` | `/executions/:id/cancel` | Cancel a running execution. **Body required**: `{ reason: string }` (min 3 chars after trim, max 500; rejected with 400 otherwise). Reason is stored in `workflow_executions.cancel_reason`. Sets status=cancelled and deletes pending `workflow_resume` jobs for the execution. |
+| `GET` | `/api/contacts/:id/workflows` | Slice 4.3 Part B. Paginated workflow executions tied to a contact via `workflow_executions.contact_id`. Query: `?limit` (default 50, max 200), `?offset` (default 0), `?status` (full workflow enum), `?scope` (`active` default — returns non-terminal: active/processing/delayed — or `all`). Response: `{ success, workflows, total, active_total }`. 404 if contact not found. |
 
 ### Test
 

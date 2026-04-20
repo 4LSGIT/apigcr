@@ -54,6 +54,44 @@ POST /workflows/:id/start
               ├─ 20 steps reached? → schedule self-continue → status: 'active'
               └─ no more steps? → markCompleted → status: 'completed'
 ```
+## Contact-tying a workflow (optional)
+
+A workflow execution can optionally be tied to a contact via the `workflow_executions.contact_id` column. Contact-tied executions show up on the contact's Automations tab in `contact2.html`; untied executions don't appear on any contact page (this is the default and historical behaviour).
+
+There are two ways to set `contact_id` on a new execution:
+
+### 1. Template-level default
+
+Set `workflows.default_contact_id_from` to an init_data key name:
+
+```sql
+UPDATE workflows
+   SET default_contact_id_from = 'contact_id'
+ WHERE id = 5;  -- your workflow id
+```
+
+From then on, every start of that workflow reads `init_data['contact_id']`. If it's a positive integer, the engine stamps it onto the new `workflow_executions.contact_id`. Non-integer / missing values fall through to NULL silently — the template author owns the type contract for the init_data key they picked.
+
+This is the right default for workflows that are *conceptually* per-contact (appt reminders, onboarding drips, intake follow-ups). Once set, every caller — the `/start` route, hook → workflow targets, direct-INSERT code paths that update to use the new INSERT shape — produces contact-tied executions automatically.
+
+### 2. Execution-level override
+
+On `POST /workflows/:id/start`, callers can pass a top-level `contact_id` in a **wrapped** body:
+
+```json
+{
+  "init_data": { "campaignId": 42, "message": "..." },
+  "contact_id": 123
+}
+```
+
+Precedence: this explicit `contact_id` wins over the template default for this one execution.
+
+**Only wrapped bodies count.** The start route also accepts flat-body payloads (`{ anyField: value }`) where the entire body is treated as init_data — those have existed since before Part B. Extracting `contact_id` from flat bodies would silently strip it from init_data for legacy callers, so the override is wrapped-only. Flat callers can still contact-tie via the template default.
+
+### NULL is the legitimate default
+
+Not every workflow is contact-tied. Workflows that operate on a case, a campaign, or nothing in particular leave `contact_id` NULL — and that's correct. The Automations tab simply doesn't surface them, which is the intended behaviour.
 
 ### Execution Statuses
 

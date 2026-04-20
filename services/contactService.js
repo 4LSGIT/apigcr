@@ -510,6 +510,113 @@ async function listContactSequences(db, contactId, {
   return { sequences, total, active_total };
 }
  
+/**
+ * List workflow executions tied to a contact. Envelope parity with
+ * listContactSequences: `{ workflows, total, active_total }`, returning
+ * null when the contact doesn't exist so the route can 404.
+ *
+ * Row contents (per spec): execution_id, workflow_id, workflow_name,
+ * status, current_step_number, steps_executed_count, cancel_reason,
+ * created_at, updated_at, completed_at. `workflow_name` comes from a
+ * LEFT JOIN to workflows (handles the edge case of a template that was
+ * deleted while old executions remain; LEFT JOIN yields NULL rather
+ * than dropping the row).
+ *
+ * Scope semantics mirror sequences but with the workflow status enum:
+ *   - Non-terminal statuses (the "active" set): active, processing, delayed
+ *   - Terminal statuses: completed, completed_with_errors, failed, cancelled
+ * Explicit `status` filter (if supplied) wins over scope; route validates
+ * allowed values and 400s otherwise.
+ *
+ * `delayed_until` is intentionally NOT joined from scheduled_jobs here —
+ * execution-level delayed timestamps don't exist as a column today, only
+ * per-resume-job in scheduled_jobs. Keeping this query single-table simple
+ * and punting that tooltip to a later slice if it proves useful.
+ *
+ * @param {object} db
+ * @param {number|string} contactId
+ * @param {object}  [opts]
+ * @param {number}  [opts.limit=50]      max 200
+ * @param {number}  [opts.offset=0]
+ * @param {string|null} [opts.status=null]
+ *        One of: 'active' | 'processing' | 'delayed' | 'completed'
+ *              | 'completed_with_errors' | 'failed' | 'cancelled'
+ * @param {string}  [opts.scope='active']  'active' (filter to non-terminal)
+ *                                         or 'all'. Ignored when `status`
+ *                                         is supplied.
+ * @returns {Promise<{workflows, total, active_total} | null>}
+ */
+async function listContactWorkflows(db, contactId, {
+  limit  = 50,
+  offset = 0,
+  status = null,
+  scope  = 'active',
+} = {}) {
+  // 404-support: confirm the contact exists (mirrors listContactSequences).
+  const [[row]] = await db.query(
+    `SELECT contact_id FROM contacts WHERE contact_id = ?`,
+    [contactId]
+  );
+  if (!row) return null;
+
+  // The "active" set for workflow executions — non-terminal statuses.
+  // Kept as an array so we can splice into `?` placeholders rather than
+  // inlining an SQL fragment.
+  const NON_TERMINAL = ['active', 'processing', 'delayed'];
+
+  // Build WHERE. Explicit status wins; otherwise scope='active' narrows to
+  // non-terminal rows; scope='all' imposes no status filter.
+  const whereParts  = ['we.contact_id = ?'];
+  const whereParams = [contactId];
+  if (status) {
+    whereParts.push('we.status = ?');
+    whereParams.push(status);
+  } else if (scope === 'active') {
+    whereParts.push(`we.status IN (${NON_TERMINAL.map(() => '?').join(',')})`);
+    whereParams.push(...NON_TERMINAL);
+  }
+  const whereSQL = whereParts.join(' AND ');
+
+  const [workflows] = await db.query(
+    `SELECT
+       we.id                     AS execution_id,
+       we.workflow_id,
+       we.status,
+       we.current_step_number,
+       we.steps_executed_count,
+       we.cancel_reason,
+       we.created_at,
+       we.updated_at,
+       we.completed_at,
+       w.name                    AS workflow_name
+     FROM workflow_executions we
+     LEFT JOIN workflows w ON w.id = we.workflow_id
+     WHERE ${whereSQL}
+     ORDER BY we.created_at DESC
+     LIMIT ? OFFSET ?`,
+    [...whereParams, parseInt(limit, 10), parseInt(offset, 10)]
+  );
+
+  // Total matching the current filter — same whereParams.
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM workflow_executions we WHERE ${whereSQL}`,
+    whereParams
+  );
+
+  // Unfiltered "active" count for the header "N active of M total" readout
+  // when scope='all'. Computed regardless of current filter so the UI can
+  // flip scope without a second round-trip.
+  const placeholders = NON_TERMINAL.map(() => '?').join(',');
+  const [[{ active_total }]] = await db.query(
+    `SELECT COUNT(*) AS active_total
+       FROM workflow_executions
+      WHERE contact_id = ? AND status IN (${placeholders})`,
+    [contactId, ...NON_TERMINAL]
+  );
+
+  return { workflows, total, active_total };
+}
+
 module.exports = {
   listContacts,
   getContact,
@@ -517,5 +624,6 @@ module.exports = {
   updateContact,
   normalizePhone,
   listContactSequences,
+  listContactWorkflows,
   stripSsn
 };

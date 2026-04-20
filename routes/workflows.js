@@ -2,7 +2,12 @@
 const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
-const { advanceWorkflow, resolvePlaceholders } = require("../lib/workflow_engine");
+const {
+  advanceWorkflow,
+  resolvePlaceholders,
+  resolveExecutionContactId,
+  InvalidContactIdError,
+} = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
 // JSON columns may come back from mysql2 as either a string (unparsed)
 // or a parsed object depending on driver version/config. Normalize to a
@@ -33,20 +38,47 @@ router.get('/workflows/functions', jwtOrApiKey, (req, res) => {
 
 /**
  * POST /workflows/:id/start
- * Starts a new execution of the workflow
- * Body: { init_data?: object }
- * Returns the new execution ID and initial advance result
+ * Starts a new execution of the workflow.
+ *
+ * Body shapes accepted:
+ *   1. Wrapped:  { init_data: { ... }, contact_id?: N }
+ *               ─ initData = body.init_data (or body.initData)
+ *               ─ body.contact_id at TOP LEVEL is the explicit contact-id
+ *                 override (Slice 4.3 Part B). Only honored in wrapped form;
+ *                 see (2) for why.
+ *   2. Flat:     { contactName: "...", anyOtherField: ... }
+ *               ─ the entire body IS the init_data (backward-compat shape).
+ *               ─ contact_id is NOT extracted from flat bodies — doing so
+ *                 would silently strip it from init_data for legacy callers.
+ *                 Flat callers can still contact-tie via the template's
+ *                 `default_contact_id_from` (set on the workflow row).
+ *
+ * contact_id precedence (handled by resolveExecutionContactId):
+ *   explicit wrapped body.contact_id > workflow.default_contact_id_from > NULL
+ *
+ * Returns the new execution ID and kicks off advanceWorkflow in the background.
  */
 router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id } = req.params;
 
-  // Accept BOTH formats from frontend:
-  // 1. { init_data: { ... } } or { initData: { ... } }
-  // 2. flat object { contactName: "...", ... } directly
-  let initData = req.body.init_data || req.body.initData || req.body || {};
+  // Detect wrapped body. A body with either `init_data` or `initData` at the
+  // top level is treated as wrapped; the rest of the top-level keys are
+  // out-of-band (and only `contact_id` is interpreted there).
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const isWrapped = Object.prototype.hasOwnProperty.call(body, 'init_data') ||
+                    Object.prototype.hasOwnProperty.call(body, 'initData');
 
-  console.log(`[START] Received payload:`, JSON.stringify(initData, null, 2));
+  const initData = isWrapped
+    ? (body.init_data || body.initData || {})
+    : body;
+
+  // Explicit contact_id override — wrapped-body only. Flat bodies never
+  // produce an explicit override; they can still be contact-tied via the
+  // template default.
+  const explicitContactId = isWrapped ? body.contact_id : undefined;
+
+  console.log(`[START] Received payload (wrapped=${isWrapped}):`, JSON.stringify(initData, null, 2));
 
   const workflowId = parseInt(id, 10);
   if (isNaN(workflowId) || workflowId <= 0) {
@@ -58,22 +90,43 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     connection = await db.getConnection();
     await connection.beginTransaction();
 
+    // Load id + default_contact_id_from in one shot. Adding the column to the
+    // SELECT is cheap; skipping it would force a separate round-trip.
     const [wfRows] = await connection.query(
-      `SELECT id FROM workflows WHERE id = ?`,
+      `SELECT id, default_contact_id_from FROM workflows WHERE id = ?`,
       [workflowId]
     );
     if (wfRows.length === 0) {
       await connection.commit();
       return res.status(404).json({ error: "Workflow not found" });
     }
+    const workflow = wfRows[0];
+
+    // Resolve contact_id via the shared helper. Throws on invalid explicit
+    // override; we translate to a 400 below.
+    let contactId;
+    try {
+      contactId = resolveExecutionContactId({
+        explicitContactId,
+        initData,
+        defaultKey: workflow.default_contact_id_from,
+      });
+    } catch (e) {
+      if (e instanceof InvalidContactIdError) {
+        await connection.rollback();
+        connection.release();
+        return res.status(400).json({ error: "Invalid contact_id", message: e.message });
+      }
+      throw e;
+    }
 
     const [result] = await connection.query(
       `
       INSERT INTO workflow_executions
-      (workflow_id, status, init_data, variables, current_step_number)
-      VALUES (?, 'active', ?, ?, 1)
+      (workflow_id, contact_id, status, init_data, variables, current_step_number)
+      VALUES (?, ?, 'active', ?, ?, 1)
       `,
-      [workflowId, JSON.stringify(initData), JSON.stringify(initData)]
+      [workflowId, contactId, JSON.stringify(initData), JSON.stringify(initData)]
     );
 
     const executionId = result.insertId;
@@ -85,6 +138,7 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       success: true,
       executionId,
       workflowId,
+      contactId,     // echo back so callers can verify the resolved value
       status: "processing",
       message: "Workflow execution started and is now processing"
     });
@@ -1361,8 +1415,23 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
 
 /**
  * POST /executions/:id/cancel
- * Emergency cancel of a running workflow execution
- * Cancels the execution and deletes any pending resume jobs
+ * Emergency cancel of a running workflow execution.
+ *
+ * Body: { reason: string }  — REQUIRED, min 3 chars after trim. Stored in
+ *                             the new workflow_executions.cancel_reason column
+ *                             (Slice 4.3 Part B). Mirrors the sequence-cancel
+ *                             pattern — honest audit trail for manual stops.
+ *
+ * Side effects:
+ *   - workflow_executions: status → 'cancelled', cancel_reason set,
+ *     updated_at + completed_at = NOW()
+ *   - scheduled_jobs: any pending/running 'workflow_resume' for this
+ *     execution is deleted (not "failed" — deletion matches the legacy
+ *     behaviour of this route, and cancelled resumes have no audit value).
+ *
+ * Note: apptService.cancelApptWorkflow bypasses this route and writes
+ *       directly (it's the lifecycle-driven cancel path — no user-facing
+ *       reason applies). That path intentionally leaves cancel_reason NULL.
  */
 router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
   const db = req.db;
@@ -1373,12 +1442,26 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "Invalid execution ID" });
   }
 
+  // Validate reason — required, min 3 chars after trim.
+  const rawReason = (req.body && typeof req.body.reason === 'string') ? req.body.reason : '';
+  const reason = rawReason.trim();
+  if (reason.length < 3) {
+    return res.status(400).json({
+      error: "Reason required",
+      message: "reason is required and must be at least 3 characters after trim",
+    });
+  }
+  // Hard cap at the column width (500) — truncate rather than 400 here.
+  // A 500-char reason is already aggressive; silently trimming is kinder
+  // than refusing the cancel over overflow.
+  const reasonStored = reason.length > 500 ? reason.slice(0, 500) : reason;
+
   let connection;
   try {
     connection = await db.getConnection();
     await connection.beginTransaction();
 
-    // Verify execution exists and is still running
+    // Verify execution exists and is still cancellable.
     const [execRows] = await connection.query(
       `
       SELECT status 
@@ -1391,25 +1474,26 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
 
     if (execRows.length === 0) {
       await connection.commit();
-      return res.status(400).json({ 
-        error: "Cannot cancel", 
-        message: "Execution not found or already finished" 
+      return res.status(400).json({
+        error: "Cannot cancel",
+        message: "Execution not found or already finished",
       });
     }
 
-    // Mark as cancelled
+    // Mark as cancelled (with reason).
     await connection.query(
       `
       UPDATE workflow_executions 
-      SET status = 'cancelled', 
-          updated_at = NOW(),
-          completed_at = NOW()
+      SET status        = 'cancelled', 
+          cancel_reason = ?,
+          updated_at    = NOW(),
+          completed_at  = NOW()
       WHERE id = ?
       `,
-      [executionId]
+      [reasonStored, executionId]
     );
 
-    // Delete any pending resume jobs for this execution
+    // Delete any pending resume jobs for this execution.
     await connection.query(
       `
       DELETE FROM scheduled_jobs 
@@ -1423,12 +1507,13 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
     await connection.commit();
     connection.release();
 
-    console.log(`[CANCEL] Execution ${executionId} cancelled by user`);
+    console.log(`[CANCEL] Execution ${executionId} cancelled by user — reason: ${reasonStored}`);
 
     res.json({
       success: true,
       executionId,
-      message: "Workflow execution cancelled successfully"
+      cancel_reason: reasonStored,
+      message: "Workflow execution cancelled successfully",
     });
   } catch (err) {
     if (connection) {
@@ -1436,9 +1521,9 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
       connection.release();
     }
     console.error("[CANCEL EXECUTION] Failed:", err);
-    res.status(500).json({ 
-      error: "Failed to cancel execution", 
-      message: err.message 
+    res.status(500).json({
+      error: "Failed to cancel execution",
+      message: err.message,
     });
   }
 });
