@@ -693,6 +693,72 @@
     .wf-step-history-table .step-error-cell {
       color: #991b1b; font-size: 11px; max-width: 280px; overflow-wrap: break-word;
     }
+
+    /* ══════════════════════════════════════════════
+       SEQUENCE ENROLLMENTS TAB (Slice 1.2)
+       Scoped under #tab-sequences. Reuses .exec-status-badge sizing with
+       sequence-specific colours (enum: active, completed, cancelled).
+    ══════════════════════════════════════════════ */
+    #tab-sequences .exec-status-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      white-space: nowrap;
+    }
+    #tab-sequences .exec-status-active    { background: #dbeafe; color: #1e40af; }
+    #tab-sequences .exec-status-completed { background: #dcfce7; color: #166534; }
+    #tab-sequences .exec-status-cancelled { background: #e2e8f0; color: #475569; }
+
+    /* Enrollments list table */
+    #tab-sequences .seq-enroll-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    #tab-sequences .seq-enroll-table th {
+      text-align: left; padding: 8px 10px;
+      background: var(--bg); font-weight: 600; color: var(--text2);
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+    }
+    #tab-sequences .seq-enroll-table td {
+      padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top;
+    }
+    #tab-sequences .seq-enroll-table tr:hover { background: #f8fafc; }
+
+    /* Step-history table inside the drill-down modal (sequence version). */
+    .seq-step-history-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
+    .seq-step-history-table th {
+      text-align: left; padding: 6px 8px; background: #f1f5f9;
+      font-weight: 600; color: #475569; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.4px;
+      border-bottom: 1px solid #cbd5e1;
+    }
+    .seq-step-history-table td {
+      padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top;
+    }
+    .seq-step-history-table .step-error-cell {
+      color: #991b1b; font-size: 11px; max-width: 240px; overflow-wrap: break-word;
+    }
+    /* Greyed row for scheduled-but-never-executed jobs (no log_id). */
+    .seq-step-history-table tr.row-muted td { color: #94a3b8; }
+    .seq-step-history-table tr.row-muted td.step-error-cell { color: #cbd5e1; }
+
+    /* Job-status badge (scheduled_jobs.status: pending|running|completed|failed). */
+    .job-status-badge {
+      display: inline-block; padding: 1px 6px; border-radius: 8px;
+      font-size: 9px; font-weight: 600; text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .job-status-pending   { background: #fef3c7; color: #92400e; }
+    .job-status-running   { background: #dbeafe; color: #1e40af; }
+    .job-status-completed { background: #dcfce7; color: #166534; }
+    .job-status-failed    { background: #fee2e2; color: #991b1b; }
+
+    /* Log-status badge (sequence_step_log.status: sent|skipped|failed). */
+    .log-status-badge {
+      display: inline-block; padding: 1px 6px; border-radius: 8px;
+      font-size: 9px; font-weight: 600; text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .log-status-sent    { background: #dcfce7; color: #166534; }
+    .log-status-skipped { background: #e2e8f0; color: #475569; }
+    .log-status-failed  { background: #fee2e2; color: #991b1b; }
   </style>
 </head>
 <body>
@@ -863,9 +929,35 @@
       <button class="editor-tab" id="seq-tab-conditions" onclick="seqSwitchEditorTab('conditions')">
         <i class="fa-solid fa-filter"></i> Conditions
       </button>
+      <button class="editor-tab" id="seq-tab-enrollments" onclick="seqSwitchEditorTab('enrollments')">
+        <i class="fa-solid fa-clock-rotate-left"></i> Enrollments
+      </button>
     </div>
     <div class="editor-body" id="seq-editor-body">
       <div class="editor-placeholder"><i class="fa-regular fa-hand-pointer"></i><p>Click a step to edit it.</p></div>
+    </div>
+    <div class="editor-body" id="seq-tab-enrollments-body" style="display:none;padding:12px 16px;overflow:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span class="text-sm text-muted" id="seq-enroll-count">—</span>
+        <button class="btn btn-outline" onclick="loadSequenceEnrollments()" style="font-size:12px">
+          <i class="fa-solid fa-rotate"></i> Refresh
+        </button>
+      </div>
+      <table class="seq-enroll-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Contact</th>
+            <th>Status</th>
+            <th>Step</th>
+            <th>Enrolled</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="seq-enroll-tbody"></tbody>
+      </table>
+      <div id="seq-enroll-pagination"
+           style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--muted)"></div>
     </div>
     <div class="editor-foot" id="seq-editor-foot" style="display:none">
       <button class="btn btn-primary" style="flex:1" onclick="seqStepSave()">
@@ -1189,6 +1281,10 @@ function switchMainTab(tab) {
   // If leaving the Workflows main tab, stop executions polling.
   if (currentMainTab === 'workflows' && tab !== 'workflows') {
     if (typeof stopWfExecPolling === 'function') stopWfExecPolling();
+  }
+  // If leaving the Sequences main tab, stop enrollment polling.
+  if (currentMainTab === 'sequences' && tab !== 'sequences') {
+    if (typeof stopSeqEnrollPolling === 'function') stopSeqEnrollPolling();
   }
   currentMainTab = tab;
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -1847,6 +1943,291 @@ function stopWfExecPolling() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// SEQUENCE ENROLLMENTS TAB (Slice 1.2)
+// Mirrors the WORKFLOW EXECUTIONS TAB pattern: paginated list +
+// drill-down modal + 5s polling while any row is non-terminal.
+//
+// Derived step history: each row is a scheduled_jobs entry for this
+// enrollment, LEFT JOINed with sequence_step_log. The job carries
+// "was it scheduled / is it pending / did it fire" info; the log carries
+// "what happened when it fired". Rows with no log entry are visually
+// muted (CSS .row-muted) and log columns render as "—".
+// ═══════════════════════════════════════════════════════════════
+
+const SEQENROLL = {
+  offset:     0,
+  limit:      50,
+  total:      0,
+  pollTimer:  null,
+  // Template id this polling loop was started for. If the user switches
+  // templates mid-poll, tick functions compare and bail.
+  targetTemplateId: null,
+};
+
+const SEQENROLL_TERMINAL = new Set(['completed', 'cancelled']);
+
+function seqEnrollFmtDate(d) {
+  if (!d) return '—';
+  try { return new Date(d).toLocaleString(); } catch { return String(d); }
+}
+
+function seqEnrollStatusBadge(status) {
+  return `<span class="exec-status-badge exec-status-${esc(status)}">${esc(status)}</span>`;
+}
+
+function seqJobStatusBadge(status) {
+  return `<span class="job-status-badge job-status-${esc(status)}">${esc(status)}</span>`;
+}
+
+function seqLogStatusBadge(status) {
+  return `<span class="log-status-badge log-status-${esc(status)}">${esc(status)}</span>`;
+}
+
+async function loadSequenceEnrollments() {
+  if (!SEQ.activeTemplateId) return;
+  const templateIdAtCall = SEQ.activeTemplateId;
+
+  const tbody = document.getElementById('seq-enroll-tbody');
+  const count = document.getElementById('seq-enroll-count');
+  const pager = document.getElementById('seq-enroll-pagination');
+
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)"><i class="fa-solid fa-spinner fa-pulse"></i></td></tr>';
+
+  try {
+    const url  = `/sequences/templates/${templateIdAtCall}/enrollments?limit=${SEQENROLL.limit}&offset=${SEQENROLL.offset}`;
+    const data = await api(url);
+
+    // If user navigated away while we were waiting, drop the result.
+    if (SEQ.activeTemplateId !== templateIdAtCall) return;
+
+    SEQENROLL.total = data.total || 0;
+    const rows = data.enrollments || [];
+
+    count.textContent = `${SEQENROLL.total} total enrollment${SEQENROLL.total === 1 ? '' : 's'}`;
+
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">No enrollments yet.</td></tr>';
+      pager.innerHTML = '';
+      stopSeqEnrollPolling();
+      return;
+    }
+
+    tbody.innerHTML = renderSeqEnrollRows(rows);
+    pager.innerHTML = renderSeqEnrollPager(rows.length);
+
+    // Polling decision: if any visible row is non-terminal (status === 'active'), poll.
+    const anyActive = rows.some(en => !SEQENROLL_TERMINAL.has(en.status));
+    if (anyActive) startSeqEnrollPolling();
+    else           stopSeqEnrollPolling();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--red);padding:12px">${esc(e.message)}</td></tr>`;
+    pager.innerHTML = '';
+    stopSeqEnrollPolling();
+  }
+}
+
+function renderSeqEnrollRows(rows) {
+  return rows.map(en => {
+    const nameCell = en.contact_name && en.contact_name.trim() ? en.contact_name : `#${en.contact_id}`;
+    const stepCell = (en.current_step != null && en.total_steps != null)
+      ? `${en.current_step}/${en.total_steps}`
+      : '—';
+    return `
+      <tr>
+        <td class="mono">${en.id}</td>
+        <td>${esc(nameCell)}</td>
+        <td>${seqEnrollStatusBadge(en.status)}</td>
+        <td>${stepCell}</td>
+        <td class="text-sm">${seqEnrollFmtDate(en.enrolled_at)}</td>
+        <td><button class="btn btn-outline" style="padding:3px 8px;font-size:11px" onclick="viewSequenceEnrollment(${en.id})"><i class="fa-solid fa-eye"></i></button></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderSeqEnrollPager(visibleCount) {
+  const from = SEQENROLL.offset + 1;
+  const to   = SEQENROLL.offset + visibleCount;
+  const hasPrev = SEQENROLL.offset > 0;
+  const hasNext = SEQENROLL.offset + SEQENROLL.limit < SEQENROLL.total;
+  return `
+    <button class="btn btn-outline" style="font-size:11px;padding:3px 10px" ${hasPrev ? '' : 'disabled'} onclick="seqEnrollPrevPage()">‹ Previous</button>
+    <span>Showing ${from}–${to} of ${SEQENROLL.total}</span>
+    <button class="btn btn-outline" style="font-size:11px;padding:3px 10px" ${hasNext ? '' : 'disabled'} onclick="seqEnrollNextPage()">Next ›</button>
+  `;
+}
+
+function seqEnrollPrevPage() {
+  SEQENROLL.offset = Math.max(0, SEQENROLL.offset - SEQENROLL.limit);
+  loadSequenceEnrollments();
+}
+
+function seqEnrollNextPage() {
+  if (SEQENROLL.offset + SEQENROLL.limit >= SEQENROLL.total) return;
+  SEQENROLL.offset += SEQENROLL.limit;
+  loadSequenceEnrollments();
+}
+
+async function viewSequenceEnrollment(id) {
+  try {
+    // ?log=false — we don't need the legacy joined step-log; ?history=true
+    // gives us the scheduled_jobs-derived view joined with sequence_step_log.
+    const data = await api(`/sequences/enrollments/${id}?history=true&log=false`);
+    const en      = data.enrollment;
+    const history = data.history || [];
+
+    const triggerObj = parseJson(en.trigger_data);
+
+    // Display-status decision per row:
+    //   - If a log row exists: primary = log_status (sent/skipped/failed).
+    //     Secondary = job_status as a small faded badge (useful when retries differed).
+    //   - If no log row exists: primary = job_status (pending/running/completed/failed).
+    //     Row is CSS-greyed via .row-muted.
+    const historyRowsHtml = history.length
+      ? history.map(h => {
+          const hasLog    = h.log_id != null;
+          const rowCls    = hasLog ? '' : 'row-muted';
+          const primary   = hasLog ? seqLogStatusBadge(h.log_status) : seqJobStatusBadge(h.job_status);
+          const secondary = hasLog
+            ? `<span style="margin-left:4px;opacity:0.75">${seqJobStatusBadge(h.job_status)}</span>`
+            : '';
+          const errText = h.error_message || h.skip_reason || '';
+          const attemptsCell = (h.attempts != null && h.max_attempts != null)
+            ? `${h.attempts}/${h.max_attempts}`
+            : '—';
+          const durationCell = h.duration_ms != null ? `${h.duration_ms}ms` : '—';
+
+          // action_config_resolved — collapsible inside the Error/Detail column.
+          let detailCell = '—';
+          if (errText) detailCell = `<span>${esc(errText)}</span>`;
+          if (h.action_config_resolved) {
+            const cfgJson = JSON.stringify(h.action_config_resolved, null, 2);
+            const prefix = (detailCell === '—') ? '' : detailCell;
+            detailCell = prefix + `
+              <details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;color:#64748b">resolved config</summary>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:6px 8px;border-radius:4px;font-size:10px;overflow:auto;max-height:160px;margin-top:4px">${esc(cfgJson)}</pre>
+              </details>`;
+          }
+
+          return `
+            <tr class="${rowCls}">
+              <td>${h.step_number ?? '—'}</td>
+              <td>${esc(h.action_type || '—')}</td>
+              <td>${primary}${secondary}</td>
+              <td class="text-sm">${seqEnrollFmtDate(h.scheduled_time)}</td>
+              <td class="text-sm">${hasLog ? seqEnrollFmtDate(h.executed_at) : '—'}</td>
+              <td>${attemptsCell}</td>
+              <td class="text-sm">${durationCell}</td>
+              <td class="step-error-cell">${detailCell}</td>
+            </tr>`;
+        }).join('')
+      : '<tr><td colspan="8" style="text-align:center;padding:12px;color:#94a3b8">No step history.</td></tr>';
+
+    const cancelReasonBlock = (en.status === 'cancelled' && en.cancel_reason)
+      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+           <b>Cancel reason:</b> ${esc(en.cancel_reason)}
+         </div>`
+      : '';
+
+    Swal.fire({
+      title: `Enrollment #${id}`,
+      width: 820,
+      html: `
+        <div style="text-align:left;font-size:12px;max-height:65vh;overflow:auto">
+          <p><b>Status:</b> ${seqEnrollStatusBadge(en.status)}</p>
+          <p style="margin-top:6px"><b>Template:</b> ${esc(en.template_name || '—')}${en.template_type ? ` (${esc(en.template_type)})` : ''}</p>
+          <p style="margin-top:6px"><b>Contact:</b> #${en.contact_id}</p>
+          <p style="margin-top:6px"><b>Enrolled:</b> ${seqEnrollFmtDate(en.enrolled_at)}</p>
+          <p style="margin-top:6px"><b>Completed:</b> ${seqEnrollFmtDate(en.completed_at)}</p>
+          <p style="margin-top:6px"><b>Step:</b> ${en.current_step ?? '—'}/${en.total_steps ?? '—'}</p>
+          ${cancelReasonBlock}
+
+          ${triggerObj ? `
+            <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Trigger Data</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(triggerObj, null, 2))}</pre>
+            </details>
+          ` : ''}
+
+          <h4 style="margin-top:14px;font-size:13px">Step History</h4>
+          <table class="seq-step-history-table">
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th>Action</th>
+                <th>Status</th>
+                <th>Scheduled</th>
+                <th>Executed</th>
+                <th>Attempts</th>
+                <th>Duration</th>
+                <th>Error / Detail</th>
+              </tr>
+            </thead>
+            <tbody>${historyRowsHtml}</tbody>
+          </table>
+        </div>
+      `,
+    });
+  } catch (e) {
+    Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: e.message, timer: 2500, showConfirmButton: false });
+  }
+}
+
+function startSeqEnrollPolling() {
+  stopSeqEnrollPolling();
+  if (!SEQ.activeTemplateId) return;
+  SEQENROLL.targetTemplateId = SEQ.activeTemplateId;
+  SEQENROLL.pollTimer = setInterval(async () => {
+    // Bail if user switched templates or tabs.
+    if (SEQENROLL.targetTemplateId !== SEQ.activeTemplateId || SEQ.tab !== 'enrollments') {
+      stopSeqEnrollPolling();
+      return;
+    }
+    try {
+      const url  = `/sequences/templates/${SEQENROLL.targetTemplateId}/enrollments?limit=${SEQENROLL.limit}&offset=${SEQENROLL.offset}`;
+      const data = await api(url);
+      if (SEQENROLL.targetTemplateId !== SEQ.activeTemplateId || SEQ.tab !== 'enrollments') {
+        stopSeqEnrollPolling();
+        return;
+      }
+
+      const rows = data.enrollments || [];
+      SEQENROLL.total = data.total || 0;
+
+      const tbody = document.getElementById('seq-enroll-tbody');
+      const count = document.getElementById('seq-enroll-count');
+      const pager = document.getElementById('seq-enroll-pagination');
+      if (!tbody || !count || !pager) { stopSeqEnrollPolling(); return; }
+
+      count.textContent = `${SEQENROLL.total} total enrollment${SEQENROLL.total === 1 ? '' : 's'}`;
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">No enrollments yet.</td></tr>';
+        pager.innerHTML = '';
+        stopSeqEnrollPolling();
+        return;
+      }
+
+      tbody.innerHTML = renderSeqEnrollRows(rows);
+      pager.innerHTML = renderSeqEnrollPager(rows.length);
+
+      // Stop if nothing is active anymore.
+      const anyActive = rows.some(en => !SEQENROLL_TERMINAL.has(en.status));
+      if (!anyActive) stopSeqEnrollPolling();
+    } catch (e) {
+      // Swallow transient errors; keep the loop going.
+      console.warn('[seq-enroll] poll error:', e.message);
+    }
+  }, 5000);
+}
+
+function stopSeqEnrollPolling() {
+  if (SEQENROLL.pollTimer) {
+    clearInterval(SEQENROLL.pollTimer);
+    SEQENROLL.pollTimer = null;
+  }
+  SEQENROLL.targetTemplateId = null;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // SEQUENCES TAB
 // ═══════════════════════════════════════════════════════════════
 
@@ -1902,6 +2283,11 @@ function seqTitleText(t) {
 }
 
 async function selectSeqTemplate(id) {
+  // Reset enrollments state for the new template.
+  stopSeqEnrollPolling();
+  SEQENROLL.offset = 0;
+  SEQENROLL.total  = 0;
+
   SEQ.activeTemplateId=id; SEQ.activeTemplate=SEQ.templates.find(t=>t.id===id); SEQ.activeStepIdx=null;
   renderSeqList();
   const t=document.getElementById('seq-canvas-title');
@@ -1909,6 +2295,11 @@ async function selectSeqTemplate(id) {
   document.getElementById('seq-canvas-actions').style.display='flex';
   seqClearEditor();
   await loadSeqSteps(id);
+
+  // If the Enrollments tab is the active editor tab, reload for the new template.
+  if (SEQ.tab === 'enrollments') {
+    loadSequenceEnrollments();
+  }
 }
 
 async function loadSeqSteps(id) {
@@ -1991,10 +2382,33 @@ function seqClearEditor() {
 }
 
 function seqSwitchEditorTab(tab) {
-  SEQ.tab=tab;
-  ['edit','timing','conditions'].forEach(t=>{
-    document.getElementById(`seq-tab-${t}`).classList.toggle('active',t===tab);
+  // Leaving enrollments → stop polling.
+  if (SEQ.tab === 'enrollments' && tab !== 'enrollments') {
+    stopSeqEnrollPolling();
+  }
+
+  SEQ.tab = tab;
+  ['edit','timing','conditions','enrollments'].forEach(t => {
+    document.getElementById(`seq-tab-${t}`).classList.toggle('active', t === tab);
   });
+
+  const editorBody = document.getElementById('seq-editor-body');
+  const editorFoot = document.getElementById('seq-editor-foot');
+  const enrollBody = document.getElementById('seq-tab-enrollments-body');
+
+  if (tab === 'enrollments') {
+    editorBody.style.display = 'none';
+    editorFoot.style.display = 'none';
+    enrollBody.style.display = '';
+    loadSequenceEnrollments();
+    return;
+  }
+
+  // edit / timing / conditions — restore editor-body; foot visibility is
+  // managed by the step-edit render functions (seqRenderActiveTab / seqStepNew).
+  enrollBody.style.display = 'none';
+  editorBody.style.display = '';
+
   seqRenderActiveTab();
 }
 
@@ -2288,16 +2702,26 @@ async function seqDuplicate() {
 
 async function seqDelete() {
   if(!SEQ.activeTemplate)return;
+  // Stop polling before the confirm dialog — we don't want a tick firing
+  // against a template the user is about to delete.
+  stopSeqEnrollPolling();
+
   const r=await Swal.fire({title:`Delete "${SEQ.activeTemplate.name}"?`,text:'All steps will be deleted.',icon:'warning',showCancelButton:true,confirmButtonColor:'#ef4444',confirmButtonText:'Delete'});
   if(!r.isConfirmed)return;
   try{
     await api(`/sequences/templates/${SEQ.activeTemplateId}`,'DELETE');
     SEQ.activeTemplateId=null;SEQ.activeTemplate=null;SEQ.steps=[];SEQ.activeStepIdx=null;
+    SEQENROLL.offset = 0; SEQENROLL.total = 0;
     const t=document.getElementById('seq-canvas-title');t.textContent='← Select a sequence template';t.classList.add('placeholder');
     document.getElementById('seq-canvas-actions').style.display='none';
     document.getElementById('seq-canvas-body').innerHTML='<div class="empty-state"><i class="fa-solid fa-list-ol"></i><p>Select a template.</p></div>';
     seqClearEditor();await loadSequences();
-  }catch(e){Swal.fire('Error',e.message,'error');}
+  }catch(e){
+    // Delete failed (most commonly: active enrollments exist). The template
+    // is still selected; surface the error as before. Polling stays stopped
+    // for this tick — it'll restart on the next list refresh if needed.
+    Swal.fire('Error',e.message,'error');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════

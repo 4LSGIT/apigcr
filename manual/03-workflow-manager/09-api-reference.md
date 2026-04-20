@@ -102,12 +102,15 @@ Sequence list excludes: `set_next`, `evaluate_condition`, `schedule_resume`, `wa
 
 ### Enrollments
 
+### Enrollments
+ 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/sequences/enroll` | Enroll a contact |
 | `POST` | `/sequences/cancel` | Cancel sequences for a contact |
 | `GET` | `/sequences/enrollments` | List enrollments (query: `contact_id`, `template_type`, `status`) |
-| `GET` | `/sequences/enrollments/:id` | Single enrollment + step log |
+| `GET` | `/sequences/enrollments/:id` | Single enrollment + step log. Add `?history=true` for a scheduled_jobs-derived step history joined with `sequence_step_log`. |
+| `GET` | `/sequences/templates/:id/enrollments` | Paginated enrollments for a template. Query: `?limit` (default 50, max 200), `?offset` (default 0), `?status`. Response: `{ success, enrollments, total }`. |
 | `POST` | `/sequences/enrollments/:id/cancel` | Cancel one enrollment |
 
 **Enroll body:**

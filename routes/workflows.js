@@ -257,27 +257,33 @@ router.get("/executions/:id", jwtOrApiKey, async (req, res) => {
  * GET /workflows/:id/executions
  * List all executions for a specific workflow
  * Query params (optional):
- *   - page: number (default 1)
- *   - limit: number (default 20, max 100)
+ *   - limit: number (default 50, max 200)
+ *   - offset: number (default 0)  — preferred for paging; if omitted, derived from `page`
+ *   - page: number (default 1)    — legacy; offset wins when present
  *   - status: string (e.g. active, completed, failed)
  *   - sort: string (created_at:desc or created_at:asc)
+ * Response: { success, executions, total }
  */
 router.get("/workflows/:id/executions", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id } = req.params;
-
+ 
   const workflowId = parseInt(id, 10);
   if (isNaN(workflowId) || workflowId <= 0) {
     return res.status(400).json({ error: "Invalid workflow ID" });
   }
-
-  const page = Math.max(1, parseInt(req.query.page) || 1);
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
-  const offset = (page - 1) * limit;
-
+ 
+  // Accept either ?limit/?offset (Slice 1 frontend idiom) or legacy ?page/?limit.
+  // If ?offset is passed, it wins; otherwise derive offset from ?page.
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+  const page  = Math.max(1, parseInt(req.query.page) || 1);
+  const offset = req.query.offset !== undefined
+    ? Math.max(0, parseInt(req.query.offset) || 0)
+    : (page - 1) * limit;
+ 
   const statusFilter = req.query.status || null;
   const sort = req.query.sort === 'created_at:asc' ? 'ASC' : 'DESC';
-
+ 
   try {
     let query = `
       SELECT 
@@ -300,7 +306,7 @@ router.get("/workflows/:id/executions", jwtOrApiKey, async (req, res) => {
     query += ` ORDER BY e.created_at ${sort} LIMIT ? OFFSET ?`;
     params.push(limit, offset);
     const [rows] = await db.query(query, params);
-
+ 
     const countQuery = `
       SELECT COUNT(*) as total 
       FROM workflow_executions e 
@@ -311,7 +317,12 @@ router.get("/workflows/:id/executions", jwtOrApiKey, async (req, res) => {
     if (statusFilter) countParams.push(statusFilter);
     const [countRows] = await db.query(countQuery, countParams);
     const total = countRows[0].total;
-
+ 
+    // Flat envelope: { success, executions, total }.
+    // Prior version nested { pagination: { total } } but the Slice 1 frontend
+    // read data.total directly → always undefined → pagination permanently broken.
+    // Docs (09-api-reference.md) already describe the flat shape. No other
+    // caller of this endpoint was found in a grep of the codebase.
     res.json({
       success: true,
       executions: rows.map(row => ({
@@ -320,14 +331,7 @@ router.get("/workflows/:id/executions", jwtOrApiKey, async (req, res) => {
           ? (row.failed_steps > 0 ? 'completed_with_errors' : 'completed')
           : row.status
       })),
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-        hasNext: offset + limit < total,
-        hasPrev: page > 1
-      }
+      total,
     });
   } catch (err) {
     console.error("[GET WORKFLOW EXECUTIONS] Failed:", err);

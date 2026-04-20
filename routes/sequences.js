@@ -15,11 +15,12 @@
 //   DELETE /sequences/templates/:id/steps/:stepNumber   delete + renumber
 //
 // Enrollments:
-//   POST   /sequences/enroll                 enroll a contact
-//   POST   /sequences/cancel                 cancel sequences for a contact
-//   GET    /sequences/enrollments            list enrollments (filterable)
-//   GET    /sequences/enrollments/:id        single enrollment + step log
-//   POST   /sequences/enrollments/:id/cancel cancel one enrollment
+//   POST   /sequences/enroll                           enroll a contact
+//   POST   /sequences/cancel                           cancel sequences for a contact
+//   GET    /sequences/enrollments                      list enrollments (filterable by contact/type/status)
+//   GET    /sequences/enrollments/:id                  single enrollment + step log (?history=true for scheduled-jobs-derived history)
+//   GET    /sequences/templates/:id/enrollments        list enrollments scoped to a template (paginated)
+//   POST   /sequences/enrollments/:id/cancel           cancel one enrollment
 
 const express         = require('express');
 const router          = express.Router();
@@ -531,6 +532,84 @@ router.post('/sequences/cancel', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// GET /sequences/templates/:id/enrollments
+//
+// Template-scoped paginated enrollments list. Parallel to GET /workflows/:id/executions.
+// Query: ?limit (default 50, max 200), ?offset (default 0), ?status
+// Response: { success, enrollments, total }
+// Row shape: id, template_id, contact_id, status, current_step, total_steps,
+//            enrolled_at, completed_at, updated_at, cancel_reason, contact_name.
+// trigger_data is intentionally excluded from list rows (can be large);
+// drill-down via GET /sequences/enrollments/:id fetches it.
+router.get('/sequences/templates/:id/enrollments', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+
+  const templateId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(templateId) || templateId <= 0) {
+    return res.status(400).json({ error: 'Invalid template ID' });
+  }
+
+  const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+  const offset = Math.max(0, parseInt(req.query.offset) || 0);
+  const statusFilter = req.query.status || null;
+
+  // Validate status against the actual enum so typos 400 instead of silently
+  // returning an empty list (MySQL would match nothing).
+  if (statusFilter && !['active', 'completed', 'cancelled'].includes(statusFilter)) {
+    return res.status(400).json({
+      error: 'Invalid status. Must be one of: active, completed, cancelled',
+    });
+  }
+
+  try {
+    // Confirm the template exists so the client gets 404 vs an empty list when
+    // they mistype an id. Cheap single-row lookup.
+    const [[tpl]] = await db.query(
+      `SELECT id FROM sequence_templates WHERE id = ?`, [templateId]
+    );
+    if (!tpl) return res.status(404).json({ error: 'Template not found' });
+
+    let query = `
+      SELECT
+        e.id,
+        e.template_id,
+        e.contact_id,
+        e.status,
+        e.current_step,
+        e.total_steps,
+        e.enrolled_at,
+        e.completed_at,
+        e.updated_at,
+        e.cancel_reason,
+        TRIM(CONCAT(COALESCE(c.contact_fname,''), ' ', COALESCE(c.contact_lname,''))) AS contact_name
+      FROM sequence_enrollments e
+      LEFT JOIN contacts c ON c.contact_id = e.contact_id
+      WHERE e.template_id = ?
+    `;
+    const params = [templateId];
+
+    if (statusFilter) { query += ` AND e.status = ?`; params.push(statusFilter); }
+
+    query += ` ORDER BY e.enrolled_at DESC LIMIT ? OFFSET ?`;
+    params.push(limit, offset);
+
+    const [rows] = await db.query(query, params);
+
+    const countQuery = `
+      SELECT COUNT(*) AS total FROM sequence_enrollments e
+      WHERE e.template_id = ?${statusFilter ? ' AND e.status = ?' : ''}
+    `;
+    const countParams = [templateId];
+    if (statusFilter) countParams.push(statusFilter);
+    const [[{ total }]] = await db.query(countQuery, countParams);
+
+    res.json({ success: true, enrollments: rows, total });
+  } catch (err) {
+    console.error('[GET TEMPLATE ENROLLMENTS] Failed:', err);
+    res.status(500).json({ error: 'Failed to list enrollments', message: err.message });
+  }
+});
+
 // GET /sequences/enrollments
 router.get('/sequences/enrollments', jwtOrApiKey, async (req, res) => {
   const db = req.db;
@@ -580,10 +659,22 @@ router.get('/sequences/enrollments', jwtOrApiKey, async (req, res) => {
 });
 
 // GET /sequences/enrollments/:id
+//
+// Returns the enrollment, plus:
+//   - `log`     — legacy sequence_step_log array (unchanged behavior; default on, ?log=false to skip)
+//   - `history` — NEW, opt-in via ?history=true. Scheduled-jobs-derived step timeline:
+//                 one row per scheduled_jobs entry for this enrollment, LEFT JOINed with
+//                 sequence_step_log. Rows that never executed have null log fields.
+//                 step_number is read from sj.data JSON (no dedicated column on scheduled_jobs).
 router.get('/sequences/enrollments/:id', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const id = parseInt(req.params.id);
-  const includeLog = req.query.log !== 'false'; // default true
+  const includeLog     = req.query.log !== 'false';       // legacy param, default true
+  const includeHistory = req.query.history === 'true';    // new param, opt-in (mirrors workflow)
+
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid enrollment ID' });
+  }
 
   try {
     const [[enrollment]] = await db.query(
@@ -614,8 +705,61 @@ router.get('/sequences/enrollments/:id', jwtOrApiKey, async (req, res) => {
       });
     }
 
-    res.json({ success: true, enrollment, log });
+    // ── NEW: derived step history from scheduled_jobs LEFT JOIN sequence_step_log ──
+    // One row per scheduled_jobs entry for this enrollment, scheduled_time ASC.
+    // Log fields are NULL for rows that never executed (pending, or cancelled-before-fire).
+    // step_number is read from sj.data JSON — scheduled_jobs has no dedicated column.
+    let history;
+    if (includeHistory) {
+      const [histRows] = await db.query(
+        `SELECT
+           sj.id                      AS job_id,
+           sj.scheduled_time,
+           sj.status                  AS job_status,
+           sj.attempts,
+           sj.max_attempts,
+           sj.updated_at              AS job_updated_at,
+           sj.data                    AS job_data,
+           CAST(JSON_UNQUOTE(JSON_EXTRACT(sj.data, '$.stepNumber')) AS UNSIGNED) AS step_number,
+           l.id                       AS log_id,
+           l.status                   AS log_status,
+           l.skip_reason,
+           l.error_message,
+           l.duration_ms,
+           l.executed_at,
+           l.action_config_resolved,
+           l.output_data,
+           l.step_id                  AS log_step_id,
+           s.action_type
+         FROM scheduled_jobs sj
+         LEFT JOIN sequence_step_log l
+           ON l.enrollment_id = sj.sequence_enrollment_id
+          AND l.step_number   = CAST(JSON_UNQUOTE(JSON_EXTRACT(sj.data, '$.stepNumber')) AS UNSIGNED)
+         LEFT JOIN sequence_steps s ON s.id = l.step_id
+         WHERE sj.type = 'sequence_step' AND sj.sequence_enrollment_id = ?
+         ORDER BY sj.scheduled_time ASC, sj.id ASC`,
+        [id]
+      );
+
+      history = histRows.map(r => {
+        // Defensively parse JSON columns (mysql2 may return object or string).
+        ['job_data','action_config_resolved','output_data'].forEach(col => {
+          if (typeof r[col] === 'string') {
+            try { r[col] = JSON.parse(r[col]); } catch {}
+          }
+        });
+        return r;
+      });
+    }
+
+    res.json({
+      success: true,
+      enrollment,
+      log,
+      ...(includeHistory && { history }),
+    });
   } catch (err) {
+    console.error('[GET ENROLLMENT] Failed:', err);
     res.status(500).json({ error: 'Failed to fetch enrollment', message: err.message });
   }
 });
