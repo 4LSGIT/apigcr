@@ -1079,6 +1079,21 @@
 const api = (path, method = 'GET', payload = null) =>
   window.parent.apiSend(path, method, payload);
 
+const apiSend = (path, method = 'GET', payload = null) =>
+  window.parent.apiSend(path, method, payload);
+
+function parseJson(val) {
+  if (!val) return null;
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return null; }
+}
+
+function parseJson(val) {
+  if (!val) return null;
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return null; }
+}
+
 function esc(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
