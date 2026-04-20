@@ -271,13 +271,12 @@ router.get("/workflows/:id/executions", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "Invalid workflow ID" });
   }
 
-  // Query params with sane defaults
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
   const offset = (page - 1) * limit;
 
   const statusFilter = req.query.status || null;
-  const sort = req.query.sort === 'created_at:asc' ? 'ASC' : 'DESC'; // default DESC
+  const sort = req.query.sort === 'created_at:asc' ? 'ASC' : 'DESC';
 
   try {
     let query = `
@@ -297,18 +296,11 @@ router.get("/workflows/:id/executions", jwtOrApiKey, async (req, res) => {
       WHERE e.workflow_id = ?
     `;
     const params = [workflowId];
-
-    if (statusFilter) {
-      query += ` AND e.status = ?`;
-      params.push(statusFilter);
-    }
-
+    if (statusFilter) { query += ` AND e.status = ?`; params.push(statusFilter); }
     query += ` ORDER BY e.created_at ${sort} LIMIT ? OFFSET ?`;
     params.push(limit, offset);
-
     const [rows] = await db.query(query, params);
 
-    // Total count for pagination
     const countQuery = `
       SELECT COUNT(*) as total 
       FROM workflow_executions e 
@@ -317,7 +309,6 @@ router.get("/workflows/:id/executions", jwtOrApiKey, async (req, res) => {
     `;
     const countParams = [workflowId];
     if (statusFilter) countParams.push(statusFilter);
-
     const [countRows] = await db.query(countQuery, countParams);
     const total = countRows[0].total;
 
@@ -325,7 +316,6 @@ router.get("/workflows/:id/executions", jwtOrApiKey, async (req, res) => {
       success: true,
       executions: rows.map(row => ({
         ...row,
-        // status_summary only meaningful once execution has finished
         status_summary: row.status.startsWith('completed')
           ? (row.failed_steps > 0 ? 'completed_with_errors' : 'completed')
           : row.status
@@ -344,7 +334,6 @@ router.get("/workflows/:id/executions", jwtOrApiKey, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch executions", message: err.message });
   }
 });
-
 
 
 /**

@@ -52,7 +52,7 @@ Sequence list excludes: `set_next`, `evaluate_condition`, `schedule_resume`, `wa
 | `GET` | `/executions` | List all executions |
 | `GET` | `/executions/:id` | Single execution |
 | `GET` | `/executions/:id?history=true` | Execution + step history |
-| `GET` | `/workflows/:id/executions` | All executions for a workflow |
+| GET | /workflows/:id/executions | Paginated executions for a workflow. Query: ?limit (default 50, max 200), ?offset (default 0), ?status. Response: { success, executions, total }. |
 | `POST` | `/executions/:id/cancel` | Cancel a running execution |
 
 ### Test

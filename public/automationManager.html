@@ -646,6 +646,53 @@
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ══════════════════════════════════════════════
+       WORKFLOW EXECUTIONS TAB (Slice 1.1)
+       Scoped to avoid collision with .status-pending/running/completed/failed
+       used by the Jobs tab.
+    ══════════════════════════════════════════════ */
+    #tab-workflows .exec-status-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      white-space: nowrap;
+    }
+    #tab-workflows .exec-status-pending               { background: #fef3c7; color: #92400e; }
+    #tab-workflows .exec-status-active                { background: #dbeafe; color: #1e40af; }
+    #tab-workflows .exec-status-processing            { background: #e0e7ff; color: #3730a3; }
+    #tab-workflows .exec-status-delayed               { background: #fef9c3; color: #854d0e; }
+    #tab-workflows .exec-status-completed             { background: #dcfce7; color: #166534; }
+    #tab-workflows .exec-status-completed_with_errors { background: #fed7aa; color: #9a3412; }
+    #tab-workflows .exec-status-failed                { background: #fee2e2; color: #991b1b; }
+    #tab-workflows .exec-status-cancelled             { background: #e2e8f0; color: #475569; }
+
+    /* Executions list table (mirrors hook log-table treatment) */
+    #tab-workflows .wf-exec-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    #tab-workflows .wf-exec-table th {
+      text-align: left; padding: 8px 10px;
+      background: var(--bg); font-weight: 600; color: var(--text2);
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+    }
+    #tab-workflows .wf-exec-table td {
+      padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top;
+    }
+    #tab-workflows .wf-exec-table tr:hover { background: #f8fafc; }
+
+    /* Step-history table inside the drill-down modal */
+    .wf-step-history-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 8px; }
+    .wf-step-history-table th {
+      text-align: left; padding: 6px 8px; background: #f1f5f9;
+      font-weight: 600; color: #475569; font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.4px;
+      border-bottom: 1px solid #cbd5e1;
+    }
+    .wf-step-history-table td {
+      padding: 6px 8px; border-bottom: 1px solid #e2e8f0; vertical-align: top;
+    }
+    .wf-step-history-table .step-error-cell {
+      color: #991b1b; font-size: 11px; max-width: 280px; overflow-wrap: break-word;
+    }
   </style>
 </head>
 <body>
@@ -729,9 +776,34 @@
       <button class="editor-tab" id="wf-tab-test" onclick="wfSwitchEditorTab('test')">
         <i class="fa-solid fa-flask"></i> Test Step
       </button>
+      <button class="editor-tab" id="wf-tab-executions" onclick="wfSwitchEditorTab('executions')">
+        <i class="fa-solid fa-clock-rotate-left"></i> Executions
+      </button>
     </div>
     <div class="editor-body" id="wf-editor-body">
       <div class="editor-placeholder"><i class="fa-regular fa-hand-pointer"></i><p>Click a step to edit it.</p></div>
+    </div>
+    <div class="editor-body" id="wf-tab-executions-body" style="display:none;padding:12px 16px;overflow:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <span class="text-sm text-muted" id="wf-exec-count">—</span>
+        <button class="btn btn-outline" onclick="loadWorkflowExecutions()" style="font-size:12px">
+          <i class="fa-solid fa-rotate"></i> Refresh
+        </button>
+      </div>
+      <table class="wf-exec-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Status</th>
+            <th>Step</th>
+            <th>Started</th>
+            <th>Completed</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="wf-exec-tbody"></tbody>
+      </table>
+      <div id="wf-exec-pagination" style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:12px;color:var(--muted)"></div>
     </div>
     <div class="editor-foot" id="wf-editor-foot" style="display:none">
       <button class="btn btn-primary" style="flex:1" onclick="wfStepSave()">
@@ -1114,6 +1186,10 @@ const TABS = { workflows: 'Workflow', sequences: 'Sequence Template', jobs: 'Sch
 let currentMainTab = 'workflows';
 
 function switchMainTab(tab) {
+  // If leaving the Workflows main tab, stop executions polling.
+  if (currentMainTab === 'workflows' && tab !== 'workflows') {
+    if (typeof stopWfExecPolling === 'function') stopWfExecPolling();
+  }
   currentMainTab = tab;
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-nav-btn').forEach(b => b.classList.remove('active'));
@@ -1203,6 +1279,11 @@ function renderWfList() {
 function wfFilter(q) { WF.filtered = WF.workflows.filter(w => w.name.toLowerCase().includes(q.toLowerCase())); renderWfList(); }
 
 async function selectWorkflow(id) {
+  // Reset executions state for the new workflow
+  stopWfExecPolling();
+  WFEX.offset = 0;
+  WFEX.total  = 0;
+
   WF.activeWfId = id; WF.activeWf = WF.workflows.find(w=>w.id===id); WF.activeStepIdx = null;
   renderWfList();
   const t = document.getElementById('wf-canvas-title');
@@ -1210,6 +1291,11 @@ async function selectWorkflow(id) {
   document.getElementById('wf-canvas-actions').style.display = 'flex';
   wfClearEditor();
   await loadWfSteps(id);
+
+  // If the Executions tab is the active editor tab, reload for the new workflow.
+  if (WF.tab === 'executions') {
+    loadWorkflowExecutions();
+  }
 }
 
 async function loadWfSteps(id) {
@@ -1293,12 +1379,35 @@ function wfClearEditor() {
 }
 
 function wfSwitchEditorTab(tab) {
+  // Leaving executions → stop polling
+  if (WF.tab === 'executions' && tab !== 'executions') {
+    stopWfExecPolling();
+  }
+
   WF.tab = tab;
-  document.getElementById('wf-tab-edit').classList.toggle('active', tab==='edit');
-  document.getElementById('wf-tab-test').classList.toggle('active', tab==='test');
+  document.getElementById('wf-tab-edit').classList.toggle('active', tab === 'edit');
+  document.getElementById('wf-tab-test').classList.toggle('active', tab === 'test');
+  document.getElementById('wf-tab-executions').classList.toggle('active', tab === 'executions');
+
+  const editorBody = document.getElementById('wf-editor-body');
+  const editorFoot = document.getElementById('wf-editor-foot');
+  const execBody   = document.getElementById('wf-tab-executions-body');
+
+  if (tab === 'executions') {
+    editorBody.style.display = 'none';
+    editorFoot.style.display = 'none';
+    execBody.style.display   = '';
+    loadWorkflowExecutions();
+    return;
+  }
+
+  // edit / test — restore editor-body; foot visibility is managed by the render fns.
+  execBody.style.display   = 'none';
+  editorBody.style.display = '';
+
   if (WF.activeStepIdx !== null) {
-    if (tab==='edit') wfRenderEditor(WF.steps[WF.activeStepIdx]);
-    else wfRenderTester(WF.steps[WF.activeStepIdx]);
+    if (tab === 'edit') wfRenderEditor(WF.steps[WF.activeStepIdx]);
+    else                wfRenderTester(WF.steps[WF.activeStepIdx]);
   }
 }
 
@@ -1438,6 +1547,8 @@ async function wfDelete() {
   if(!r.isConfirmed)return;
   try{
     await api(`/workflows/${WF.activeWfId}`,'DELETE');
+    stopWfExecPolling();
+    WFEX.offset=0; WFEX.total=0;
     WF.activeWfId=null;WF.activeWf=null;WF.steps=[];WF.activeStepIdx=null;
     const t=document.getElementById('wf-canvas-title');t.textContent='← Select a workflow';t.classList.add('placeholder');
     document.getElementById('wf-canvas-actions').style.display='none';
@@ -1487,6 +1598,252 @@ async function wfRunTest() {
     const html=sections.map(s=>`<div class="test-section"><div class="test-section-label">${s.label}</div><pre style="padding:8px 10px;font-size:11px;color:#e2e8f8">${esc(typeof s.content==='object'?JSON.stringify(s.content,null,2):String(s.content))}</pre></div>`).join('');
     res_el.innerHTML=`<div class="test-result" style="margin-top:14px"><div class="test-result-head ${ok?'success':'error'}"><i class="fa-solid ${ok?'fa-circle-check':'fa-circle-xmark'}"></i> ${ok?'Success':'Failed'} · ${res.duration_ms}ms${res.attempts>1?` · ${res.attempts} attempts`:''}</div><div class="test-result-body">${html}</div></div>`;
   }catch(e){res_el.innerHTML=`<div class="test-result" style="margin-top:14px"><div class="test-result-head error"><i class="fa-solid fa-circle-xmark"></i> Request failed</div><div class="test-result-body"><pre>${esc(e.message)}</pre></div></div>`;}
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WORKFLOW EXECUTIONS TAB (Slice 1.1)
+// Mirrors the hook Logs tab pattern: paginated list + drill-down
+// modal + 5s polling while any row is in a non-terminal status.
+// ═══════════════════════════════════════════════════════════════
+
+const WFEX = {
+  offset:     0,
+  limit:      50,
+  total:      0,
+  pollTimer:  null,
+  // Workflow id this polling loop was started for. If the user switches
+  // workflows mid-poll, tick functions compare and bail.
+  targetWfId: null,
+};
+
+const WFEX_TERMINAL = new Set(['completed', 'completed_with_errors', 'failed', 'cancelled']);
+
+function wfExecFmtDate(d) {
+  if (!d) return '—';
+  try { return new Date(d).toLocaleString(); } catch { return String(d); }
+}
+
+function wfExecStatusBadge(status) {
+  return `<span class="exec-status-badge exec-status-${esc(status)}">${esc(status)}</span>`;
+}
+
+async function loadWorkflowExecutions() {
+  if (!WF.activeWfId) return;
+  const wfIdAtCall = WF.activeWfId;
+
+  const tbody = document.getElementById('wf-exec-tbody');
+  const count = document.getElementById('wf-exec-count');
+  const pager = document.getElementById('wf-exec-pagination');
+
+  tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)"><i class="fa-solid fa-spinner fa-pulse"></i></td></tr>';
+
+  try {
+    const url  = `/workflows/${wfIdAtCall}/executions?limit=${WFEX.limit}&offset=${WFEX.offset}`;
+    const data = await api(url);
+
+    // If user navigated away while we were waiting, drop the result.
+    if (WF.activeWfId !== wfIdAtCall) return;
+
+    WFEX.total = data.total || 0;
+    const rows = data.executions || [];
+
+    count.textContent = `${WFEX.total} total execution${WFEX.total === 1 ? '' : 's'}`;
+
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">No executions yet.</td></tr>';
+      pager.innerHTML = '';
+      stopWfExecPolling();
+      return;
+    }
+
+    tbody.innerHTML = renderWfExecRows(rows);
+
+    // Pagination footer
+    pager.innerHTML = renderWfExecPager(rows.length);
+
+    // Polling decision: if any visible row is non-terminal, poll.
+    const anyActive = rows.some(ex => !WFEX_TERMINAL.has(ex.status));
+    if (anyActive) startWfExecPolling();
+    else           stopWfExecPolling();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" style="color:var(--red);padding:12px">${esc(e.message)}</td></tr>`;
+    pager.innerHTML = '';
+    stopWfExecPolling();
+  }
+}
+
+function renderWfExecRows(rows) {
+  return rows.map(ex => {
+    const displayStatus = ex.status_summary || ex.status;
+    const stepCell = ex.current_step_number != null ? `${ex.current_step_number}` : '—';
+    return `
+      <tr>
+        <td class="mono">${ex.id}</td>
+        <td>${wfExecStatusBadge(displayStatus)}</td>
+        <td>${stepCell}</td>
+        <td class="text-sm">${wfExecFmtDate(ex.created_at)}</td>
+        <td class="text-sm">${wfExecFmtDate(ex.completed_at)}</td>
+        <td><button class="btn btn-outline" style="padding:3px 8px;font-size:11px" onclick="viewWorkflowExecution(${ex.id})"><i class="fa-solid fa-eye"></i></button></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderWfExecPager(visibleCount) {
+  const from = WFEX.offset + 1;
+  const to   = WFEX.offset + visibleCount;
+  const hasPrev = WFEX.offset > 0;
+  const hasNext = WFEX.offset + WFEX.limit < WFEX.total;
+  return `
+    <button class="btn btn-outline" style="font-size:11px;padding:3px 10px" ${hasPrev ? '' : 'disabled'} onclick="wfExecPrevPage()">‹ Previous</button>
+    <span>Showing ${from}–${to} of ${WFEX.total}</span>
+    <button class="btn btn-outline" style="font-size:11px;padding:3px 10px" ${hasNext ? '' : 'disabled'} onclick="wfExecNextPage()">Next ›</button>
+  `;
+}
+
+function wfExecPrevPage() {
+  WFEX.offset = Math.max(0, WFEX.offset - WFEX.limit);
+  loadWorkflowExecutions();
+}
+
+function wfExecNextPage() {
+  if (WFEX.offset + WFEX.limit >= WFEX.total) return;
+  WFEX.offset += WFEX.limit;
+  loadWorkflowExecutions();
+}
+
+async function viewWorkflowExecution(id) {
+  try {
+    const data = await api(`/executions/${id}?history=true`);
+    const ex = data.execution;
+    const history = data.history || [];
+
+    const displayStatus = (ex.status && ex.status.startsWith('completed') && history.some(h => h.status === 'failed'))
+      ? 'completed_with_errors'
+      : ex.status;
+
+    const initDataObj  = parseJson(ex.init_data);
+    const variablesObj = parseJson(ex.variables);
+
+    const historyRowsHtml = history.length ? history.map(h => {
+      // Step config isn't stored on workflow_execution_steps — function name
+      // would require a JOIN to workflow_steps (and would show current config,
+      // not as-run). For now, surface the soft ref.
+      const fn = h.step_id != null ? `step_id ${h.step_id}` : '—';
+      const errorCell = h.error_message
+        ? `<div class="step-error-cell">${esc(h.error_message)}</div>`
+        : '';
+      return `
+        <tr>
+          <td>${h.step_number ?? '—'}</td>
+          <td>${fn}</td>
+          <td>${wfExecStatusBadge(h.status)}</td>
+          <td>${h.duration_ms != null ? h.duration_ms + ' ms' : '—'}</td>
+          <td class="text-sm">${wfExecFmtDate(h.executed_at)}</td>
+          <td>${errorCell}</td>
+        </tr>
+      `;
+    }).join('') : '<tr><td colspan="6" style="padding:8px;color:var(--muted);text-align:center">No steps executed.</td></tr>';
+
+    Swal.fire({
+      title: `Execution #${id}`,
+      width: 760,
+      html: `
+        <div style="text-align:left;font-size:12px;max-height:65vh;overflow:auto">
+          <p><b>Workflow:</b> ${esc(ex.workflow_name || '—')} (id ${ex.workflow_id})</p>
+          <p style="margin-top:6px"><b>Status:</b> ${wfExecStatusBadge(displayStatus)}</p>
+          <p style="margin-top:6px"><b>Started:</b> ${wfExecFmtDate(ex.created_at)}</p>
+          <p style="margin-top:6px"><b>Completed:</b> ${wfExecFmtDate(ex.completed_at)}</p>
+          <p style="margin-top:6px"><b>Current step:</b> ${ex.current_step_number == null ? '—' : ex.current_step_number}</p>
+          <p style="margin-top:6px"><b>Steps executed:</b> ${ex.steps_executed_count ?? 0}</p>
+
+          ${initDataObj ? `
+            <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Init Data</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(initDataObj, null, 2))}</pre>
+            </details>
+          ` : ''}
+
+          ${variablesObj ? `
+            <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">Variables</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${esc(JSON.stringify(variablesObj, null, 2))}</pre>
+            </details>
+          ` : ''}
+
+          <h4 style="margin-top:14px;font-size:13px">Step History</h4>
+          <table class="wf-step-history-table">
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th>Ref</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th>Executed</th>
+                <th>Error</th>
+              </tr>
+            </thead>
+            <tbody>${historyRowsHtml}</tbody>
+          </table>
+        </div>
+      `,
+    });
+  } catch (e) {
+    Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: e.message, timer: 2500, showConfirmButton: false });
+  }
+}
+
+function startWfExecPolling() {
+  stopWfExecPolling();
+  if (!WF.activeWfId) return;
+  WFEX.targetWfId = WF.activeWfId;
+  WFEX.pollTimer = setInterval(async () => {
+    // Bail if user switched workflows or the tab.
+    if (WFEX.targetWfId !== WF.activeWfId || WF.tab !== 'executions') {
+      stopWfExecPolling();
+      return;
+    }
+    try {
+      const url  = `/workflows/${WFEX.targetWfId}/executions?limit=${WFEX.limit}&offset=${WFEX.offset}`;
+      const data = await api(url);
+      if (WFEX.targetWfId !== WF.activeWfId || WF.tab !== 'executions') {
+        stopWfExecPolling();
+        return;
+      }
+
+      const rows = data.executions || [];
+      WFEX.total = data.total || 0;
+
+      const tbody = document.getElementById('wf-exec-tbody');
+      const count = document.getElementById('wf-exec-count');
+      const pager = document.getElementById('wf-exec-pagination');
+      if (!tbody || !count || !pager) { stopWfExecPolling(); return; }
+
+      count.textContent = `${WFEX.total} total execution${WFEX.total === 1 ? '' : 's'}`;
+      if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">No executions yet.</td></tr>';
+        pager.innerHTML = '';
+        stopWfExecPolling();
+        return;
+      }
+
+      tbody.innerHTML = renderWfExecRows(rows);
+      pager.innerHTML = renderWfExecPager(rows.length);
+
+      // Stop if nothing is active anymore.
+      const anyActive = rows.some(ex => !WFEX_TERMINAL.has(ex.status));
+      if (!anyActive) stopWfExecPolling();
+    } catch (e) {
+      // Swallow transient errors; keep the loop going.
+      console.warn('[wf-exec] poll error:', e.message);
+    }
+  }, 5000);
+}
+
+function stopWfExecPolling() {
+  if (WFEX.pollTimer) {
+    clearInterval(WFEX.pollTimer);
+    WFEX.pollTimer = null;
+  }
+  WFEX.targetWfId = null;
 }
 
 // ═══════════════════════════════════════════════════════════════
