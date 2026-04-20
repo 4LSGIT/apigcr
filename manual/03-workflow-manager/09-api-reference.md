@@ -82,6 +82,7 @@ Sequence list excludes: `set_next`, `evaluate_condition`, `schedule_resume`, `wa
 | `POST` | `/sequences/templates` | Create template |
 | `PUT` | `/sequences/templates/:id` | Update template |
 | `DELETE` | `/sequences/templates/:id` | Delete (blocked if active enrollments) |
+| `POST` | `/sequences/templates/:id/duplicate` | Duplicate template + steps (created inactive) |
 
 ### Template Steps
 

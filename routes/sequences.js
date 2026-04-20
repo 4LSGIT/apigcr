@@ -3,12 +3,13 @@
 // Sequence template management + enrollment operations.
 //
 // Template CRUD:
-//   GET    /sequences/templates              list all templates
-//   GET    /sequences/templates/:id          get template + steps
-//   POST   /sequences/templates              create template
-//   PUT    /sequences/templates/:id          update template
-//   DELETE /sequences/templates/:id          delete template + steps
-//   POST   /sequences/templates/:id/steps    add step
+//   GET    /sequences/templates                         list all templates
+//   GET    /sequences/templates/:id                     get template + steps
+//   POST   /sequences/templates                         create template
+//   PUT    /sequences/templates/:id                     update template
+//   DELETE /sequences/templates/:id                     delete template + steps
+//   POST   /sequences/templates/:id/duplicate           duplicate template + steps (created inactive)
+//   POST   /sequences/templates/:id/steps               add step
 //   PUT    /sequences/templates/:id/steps/:stepNumber   replace step
 //   PATCH  /sequences/templates/:id/steps/:stepNumber   partial update step
 //   DELETE /sequences/templates/:id/steps/:stepNumber   delete + renumber
@@ -24,6 +25,7 @@ const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
 const { enrollContact, cancelSequences } = require('../lib/sequenceEngine');
+const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // ─────────────────────────────────────────────────────────────
 // Template CRUD
@@ -156,6 +158,108 @@ router.delete('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
     res.json({ success: true, message: `Template ${id} deleted` });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete template', message: err.message });
+  }
+});
+
+// POST /sequences/templates/:id/duplicate
+// Duplicate a sequence template + ALL its steps.
+// The new template is created with active=0 by design — starts inactive so it
+// doesn't compete in cascade matching until the author explicitly activates it.
+// Body (optional): { "name"?: string }  → defaults to "Copy of <original name>"
+router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const { name: customName } = req.body || {};
+
+  const originalId = parseInt(id, 10);
+  if (isNaN(originalId) || originalId <= 0) {
+    return res.status(400).json({ error: 'Invalid template ID' });
+  }
+
+  let connection;
+  try {
+    connection = await db.getConnection();
+    await connection.beginTransaction();
+
+    // Fetch original template row
+    const [tplRows] = await connection.query(
+      `SELECT name, type, appt_type_filter, appt_with_filter, \`condition\`, description
+       FROM sequence_templates WHERE id = ?`,
+      [originalId]
+    );
+    if (tplRows.length === 0) {
+      await connection.commit();
+      return res.status(404).json({ error: 'Template not found' });
+    }
+
+    const original = tplRows[0];
+    const newName  = customName?.trim() || `Copy of ${original.name}`;
+
+    // Insert new template — active=0 (starts inactive, intentional).
+    // JSON column `condition` is passed through as-is from SELECT; mysql2
+    // handles the round-trip without double-encoding.
+    const [newTplResult] = await connection.query(
+      `INSERT INTO sequence_templates
+        (name, type, appt_type_filter, appt_with_filter, \`condition\`, description, active)
+       VALUES (?, ?, ?, ?, ?, ?, 0)`,
+      [
+        newName,
+        original.type,
+        original.appt_type_filter,
+        original.appt_with_filter,
+        toJson(original.condition),
+        original.description
+      ]
+    );
+    const newTemplateId = newTplResult.insertId;
+
+    // Fetch + duplicate all steps. JSON columns pass through raw — same
+    // pattern as POST /workflows/:id/duplicate.
+    const [steps] = await connection.query(
+      `SELECT step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy
+       FROM sequence_steps
+       WHERE template_id = ?
+       ORDER BY step_number ASC`,
+      [originalId]
+    );
+
+    if (steps.length > 0) {
+      const stepValues = steps.map(s => [
+        newTemplateId,
+        s.step_number,
+        s.action_type,
+        toJson(s.action_config),
+        toJson(s.timing),
+        toJson(s.condition),
+        toJson(s.fire_guard),
+        toJson(s.error_policy)
+      ]);
+
+      await connection.query(
+        `INSERT INTO sequence_steps
+          (template_id, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
+         VALUES ?`,
+        [stepValues]
+      );
+    }
+
+    await connection.commit();
+    connection.release();
+
+    console.log(`[DUPLICATE SEQUENCE] Template ${originalId} → ${newTemplateId} (${steps.length} steps)`);
+
+    res.status(201).json({
+      success: true,
+      templateId: newTemplateId,
+      name: newName
+    });
+  } catch (err) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error('[DUPLICATE SEQUENCE] Failed:', err);
+    res.status(500).json({ error: 'Failed to duplicate template', message: err.message });
   }
 });
 

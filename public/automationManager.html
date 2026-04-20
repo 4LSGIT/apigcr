@@ -767,6 +767,7 @@
       <div class="canvas-title placeholder" id="seq-canvas-title">← Select a sequence template</div>
       <div id="seq-canvas-actions" style="display:none;gap:8px">
         <button class="btn btn-outline btn-sm" onclick="seqEdit()"><i class="fa-solid fa-pencil"></i> Edit</button>
+        <button class="btn btn-outline btn-sm" onclick="seqDuplicate()"><i class="fa-regular fa-copy"></i> Duplicate</button>
         <button class="btn btn-danger btn-sm" onclick="seqDelete()"><i class="fa-solid fa-trash"></i></button>
       </div>
     </div>
@@ -1471,6 +1472,7 @@ function renderSeqList() {
       <div class="left-item-meta">${t.type} · ${t.step_count||0} step${t.step_count!==1?'s':''} ${t.appt_type_filter?'· <span style="color:#60a5fa">'+esc(t.appt_type_filter)+'</span>':''}${t.appt_with_filter?'· <span style="color:#a78bfa">user:'+esc(t.appt_with_filter)+'</span>':''}${t.active?'':'· <span style="color:#f87171">inactive</span>'}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();seqEdit()"><i class="fa-solid fa-pencil"></i></button>
+        <button class="left-act" onclick="event.stopPropagation();seqDuplicate()"><i class="fa-regular fa-copy"></i></button>
         <button class="left-act danger" onclick="event.stopPropagation();seqDelete()"><i class="fa-solid fa-trash"></i></button>
       </div>
     </div>`).join('');
@@ -1819,6 +1821,13 @@ async function seqEdit() {
   });
   if(!vals)return;
   try{await api(`/sequences/templates/${SEQ.activeTemplateId}`,'PUT',vals);await loadSequences();SEQ.activeTemplate=SEQ.templates.find(t=>t.id===SEQ.activeTemplateId);document.getElementById('seq-canvas-title').textContent=seqTitleText(SEQ.activeTemplate);}catch(e){Swal.fire('Error',e.message,'error');}
+}
+
+async function seqDuplicate() {
+  if(!SEQ.activeTemplate)return;
+  const{value:name}=await Swal.fire({title:'Duplicate',input:'text',inputValue:`Copy of ${SEQ.activeTemplate.name}`,showCancelButton:true,confirmButtonText:'Duplicate'});
+  if(!name)return;
+  try{const r=await api(`/sequences/templates/${SEQ.activeTemplateId}/duplicate`,'POST',{name});await loadSequences();selectSeqTemplate(r.templateId);}catch(e){Swal.fire('Error',e.message,'error');}
 }
 
 async function seqDelete() {

@@ -4,6 +4,10 @@ const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { advanceWorkflow, resolvePlaceholders } = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
+// JSON columns may come back from mysql2 as either a string (unparsed)
+// or a parsed object depending on driver version/config. Normalize to a
+// string for INSERT so mysql2 doesn't SET-expand objects.
+const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // ─────────────────────────────────────────────────────────────
 // GET /workflows/functions — list available internal functions
@@ -1320,8 +1324,8 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
         newWorkflowId,
         step.step_number,
         step.type,
-        step.config,
-        step.error_policy
+        toJson(step.config),
+        toJson(step.error_policy)
       ]);
 
       await connection.query(
