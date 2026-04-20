@@ -27,6 +27,12 @@ const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
 const { enrollContact, enrollContactByTemplateId, cancelSequences } = require('../lib/sequenceEngine');
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
+// Normalize the optional `type` column. As of Slice B, sequence_templates.type
+// is nullable — templates without a type are "ID-only" and can be enrolled only
+// via template_id (no cascade matching). Treat null, empty string, and
+// whitespace-only strings all equivalently as NULL.
+const normalizeType = v => (v == null || !String(v).trim()) ? null : String(v).trim();
+
 // ─────────────────────────────────────────────────────────────
 // Template CRUD
 // ─────────────────────────────────────────────────────────────
@@ -87,29 +93,38 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
 });
 
 // POST /sequences/templates
+//
+// Slice B: `type` is optional. Null / empty / whitespace-only all become NULL
+// in the DB — these "ID-only" templates cannot be cascade-matched and are
+// reachable only via template_id on POST /sequences/enroll.
 router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { name, type, appt_type_filter, appt_with_filter, condition, description, active = true } = req.body;
 
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
-  if (!type?.trim()) return res.status(400).json({ error: 'type is required' });
+
+  const typeVal = normalizeType(type);
 
   try {
     const [result] = await db.query(
       `INSERT INTO sequence_templates (name, type, appt_type_filter, appt_with_filter, \`condition\`, description, active)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [name.trim(), type.trim(), appt_type_filter || null,
+      [name.trim(), typeVal, appt_type_filter || null,
        appt_with_filter != null ? parseInt(appt_with_filter) : null,
        condition ? JSON.stringify(condition) : null,
        description || null, active ? 1 : 0]
     );
-    res.status(201).json({ success: true, templateId: result.insertId, name: name.trim(), type });
+    res.status(201).json({ success: true, templateId: result.insertId, name: name.trim(), type: typeVal });
   } catch (err) {
     res.status(500).json({ error: 'Failed to create template', message: err.message });
   }
 });
 
 // PUT /sequences/templates/:id
+//
+// Slice B: passing `type: null` OR `type: ""` OR `type: "   "` explicitly sets
+// the column to NULL (convert-to-ID-only). Omitting `type` from the body skips
+// the column entirely (unchanged partial-update semantics).
 router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const id = parseInt(req.params.id);
@@ -119,7 +134,7 @@ router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
   const params  = [];
 
   if (name        !== undefined) { updates.push('name = ?');              params.push(name?.trim()); }
-  if (type        !== undefined) { updates.push('type = ?');              params.push(type?.trim()); }
+  if (type        !== undefined) { updates.push('type = ?');              params.push(normalizeType(type)); }
   if (appt_type_filter !== undefined) { updates.push('appt_type_filter = ?'); params.push(appt_type_filter); }
   if (appt_with_filter !== undefined) { updates.push('appt_with_filter = ?'); params.push(appt_with_filter != null ? parseInt(appt_with_filter) : null); }
   if (condition   !== undefined) { updates.push('\`condition\` = ?');         params.push(condition ? JSON.stringify(condition) : null); }
@@ -198,6 +213,8 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
     // Insert new template — active=0 (starts inactive, intentional).
     // JSON column `condition` is passed through as-is from SELECT; mysql2
     // handles the round-trip without double-encoding.
+    // `type` is copied verbatim — if original is NULL (ID-only), the duplicate
+    // is NULL (ID-only) too.
     const [newTplResult] = await connection.query(
       `INSERT INTO sequence_templates
         (name, type, appt_type_filter, appt_with_filter, \`condition\`, description, active)
@@ -428,6 +445,12 @@ router.delete('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (
 // Two modes — pass exactly one of:
 //   template_type  (+ optional appt_type, appt_with) — cascade match
 //   template_id    — target a specific template directly (no cascade filters)
+//
+// Slice B: if `template_type` is present in the body but null / empty string /
+// whitespace-only, we reject with 400 rather than falling through to a zero-
+// match cascade query. Keeps behavior explicit and prevents an accidental
+// "cascade-match against NULL-type templates" surface if client code sends a
+// blanked-out value.
 router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const {
@@ -443,8 +466,20 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: 'contact_id is required' });
   }
 
-  const hasType = template_type !== undefined && template_type !== null && template_type !== '';
+  // Note: hasType now treats whitespace-only as "not a valid type" — tighter
+  // than the Slice A check which only rejected the empty string.
+  const hasType = template_type !== undefined && template_type !== null && String(template_type).trim() !== '';
   const hasId   = template_id   !== undefined && template_id   !== null && template_id   !== '';
+
+  // If the caller explicitly sent a template_type key but it's not a valid
+  // non-empty string, reject with a dedicated error rather than letting it
+  // fall through to the "one of X or Y is required" branch. This catches
+  // client bugs like `template_type: someVar` where someVar is null/''/"   ".
+  if ('template_type' in req.body && !hasType) {
+    return res.status(400).json({
+      error: 'template_type must be non-empty when provided',
+    });
+  }
 
   if (hasType && hasId) {
     return res.status(400).json({

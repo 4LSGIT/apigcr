@@ -1466,22 +1466,32 @@ async function loadSequences() {
 function renderSeqList() {
   const el = document.getElementById('seq-list');
   if (!SEQ.filtered.length) { el.innerHTML = '<div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">No templates.</div>'; return; }
-  el.innerHTML = SEQ.filtered.map(t => `
+  el.innerHTML = SEQ.filtered.map(t => {
+    const typeDisplay = (t.type && String(t.type).trim()) ? esc(t.type) : '—';
+    return `
     <div class="left-item${t.id===SEQ.activeTemplateId?' active':''}" onclick="selectSeqTemplate(${t.id})">
       <div class="left-item-name">${esc(t.name)}</div>
-      <div class="left-item-meta">${t.type} · ${t.step_count||0} step${t.step_count!==1?'s':''} ${t.appt_type_filter?'· <span style="color:#60a5fa">'+esc(t.appt_type_filter)+'</span>':''}${t.appt_with_filter?'· <span style="color:#a78bfa">user:'+esc(t.appt_with_filter)+'</span>':''}${t.active?'':'· <span style="color:#f87171">inactive</span>'}</div>
+      <div class="left-item-meta">${typeDisplay} · ${t.step_count||0} step${t.step_count!==1?'s':''} ${t.appt_type_filter?'· <span style="color:#60a5fa">'+esc(t.appt_type_filter)+'</span>':''}${t.appt_with_filter?'· <span style="color:#a78bfa">user:'+esc(t.appt_with_filter)+'</span>':''}${t.active?'':'· <span style="color:#f87171">inactive</span>'}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();seqEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act" onclick="event.stopPropagation();seqDuplicate()"><i class="fa-regular fa-copy"></i></button>
         <button class="left-act danger" onclick="event.stopPropagation();seqDelete()"><i class="fa-solid fa-trash"></i></button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
-function seqFilter(q) { SEQ.filtered=SEQ.templates.filter(t=>t.name.toLowerCase().includes(q.toLowerCase())||t.type.toLowerCase().includes(q.toLowerCase())); renderSeqList(); }
+function seqFilter(q) {
+  const needle = q.toLowerCase();
+  SEQ.filtered = SEQ.templates.filter(t =>
+    (t.name || '').toLowerCase().includes(needle) ||
+    (t.type || '').toLowerCase().includes(needle)
+  );
+  renderSeqList();
+}
 
 function seqTitleText(t) {
-  let s=`${t.name} (${t.type})`;
+  let s = (t.type && String(t.type).trim()) ? `${t.name} (${t.type})` : `${t.name}`;
   if(t.appt_type_filter) s+=` · appt: ${t.appt_type_filter}`;
   if(t.appt_with_filter) s+=` · with: ${t.appt_with_filter}`;
   return s;
@@ -1781,18 +1791,36 @@ async function seqNew() {
   const{value:vals}=await Swal.fire({
     title:'New Sequence Template',
     html:`<input id="swal-name" class="swal2-input" placeholder="Name">
+          <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:13px;color:#475569">
+            <input type="checkbox" id="swal-idonly">
+            ID-only template (cannot be cascade-matched by type)
+          </label>
           <input id="swal-type" class="swal2-input" placeholder="Type (e.g. no_show, lead_drip, pre_appt)">
           <input id="swal-appt-type" class="swal2-input" placeholder="Appt Type Filter (optional)">
           <input id="swal-appt-with" class="swal2-input" placeholder="Appt With Filter (user ID, optional)">`,
+    didOpen:()=>{
+      const cb=document.getElementById('swal-idonly');
+      const typeEl=document.getElementById('swal-type');
+      let savedType='';
+      const sync=()=>{
+        if(cb.checked){ savedType=typeEl.value; typeEl.value=''; typeEl.style.display='none'; }
+        else{ typeEl.style.display=''; if(savedType) typeEl.value=savedType; }
+      };
+      cb.addEventListener('change',sync);
+    },
     showCancelButton:true,confirmButtonText:'Create',
     preConfirm:()=>{
       const name=document.getElementById('swal-name').value.trim();
+      const idOnly=document.getElementById('swal-idonly').checked;
       const type=document.getElementById('swal-type').value.trim();
       if(!name){Swal.showValidationMessage('Name is required');return false;}
-      if(!type){Swal.showValidationMessage('Type is required');return false;}
-      return{name,type,
+      if(!idOnly && !type){Swal.showValidationMessage('Type is required (or check ID-only)');return false;}
+      return{
+        name,
+        type: idOnly ? null : type,
         appt_type_filter:document.getElementById('swal-appt-type').value.trim()||null,
-        appt_with_filter:document.getElementById('swal-appt-with').value.trim()||null};
+        appt_with_filter:document.getElementById('swal-appt-with').value.trim()||null
+      };
     }
   });
   if(!vals)return;
@@ -1801,23 +1829,47 @@ async function seqNew() {
 
 async function seqEdit() {
   if(!SEQ.activeTemplate)return;
+  const currentType = SEQ.activeTemplate.type;
+  const isIdOnly = !currentType || !String(currentType).trim();
   const{value:vals}=await Swal.fire({
     title:'Edit Template',
     html:`<input id="swal-name" class="swal2-input" placeholder="Name" value="${esc(SEQ.activeTemplate.name)}">
-          <input id="swal-type" class="swal2-input" placeholder="Type (e.g. no_show, lead_drip)" value="${esc(SEQ.activeTemplate.type)}">
+          <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:13px;color:#475569">
+            <input type="checkbox" id="swal-idonly" ${isIdOnly?'checked':''}>
+            ID-only template (cannot be cascade-matched by type)
+          </label>
+          <input id="swal-type" class="swal2-input" placeholder="Type (e.g. no_show, lead_drip)" value="${esc(currentType||'')}">
           <input id="swal-appt-type" class="swal2-input" placeholder="Appt Type Filter (optional)" value="${esc(SEQ.activeTemplate.appt_type_filter||'')}">
           <input id="swal-appt-with" class="swal2-input" placeholder="Appt With Filter (user ID, optional)" value="${esc(SEQ.activeTemplate.appt_with_filter||'')}">
           <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px">
             <input type="checkbox" id="swal-active" ${SEQ.activeTemplate.active?'checked':''}> Active
           </label>`,
+    didOpen:()=>{
+      const cb=document.getElementById('swal-idonly');
+      const typeEl=document.getElementById('swal-type');
+      let savedType=typeEl.value;
+      const sync=()=>{
+        if(cb.checked){ savedType=typeEl.value; typeEl.value=''; typeEl.style.display='none'; }
+        else{ typeEl.style.display=''; if(savedType) typeEl.value=savedType; }
+      };
+      if(cb.checked) typeEl.style.display='none';
+      cb.addEventListener('change',sync);
+    },
     showCancelButton:true,confirmButtonText:'Save',
-    preConfirm:()=>({
-      name:document.getElementById('swal-name').value.trim(),
-      type:document.getElementById('swal-type').value.trim(),
-      appt_type_filter:document.getElementById('swal-appt-type').value.trim()||null,
-      appt_with_filter:document.getElementById('swal-appt-with').value.trim()||null,
-      active:document.getElementById('swal-active').checked
-    })
+    preConfirm:()=>{
+      const name=document.getElementById('swal-name').value.trim();
+      const idOnly=document.getElementById('swal-idonly').checked;
+      const type=document.getElementById('swal-type').value.trim();
+      if(!name){Swal.showValidationMessage('Name is required');return false;}
+      if(!idOnly && !type){Swal.showValidationMessage('Type is required (or check ID-only)');return false;}
+      return{
+        name,
+        type: idOnly ? null : type,
+        appt_type_filter:document.getElementById('swal-appt-type').value.trim()||null,
+        appt_with_filter:document.getElementById('swal-appt-with').value.trim()||null,
+        active:document.getElementById('swal-active').checked
+      };
+    }
   });
   if(!vals)return;
   try{await api(`/sequences/templates/${SEQ.activeTemplateId}`,'PUT',vals);await loadSequences();SEQ.activeTemplate=SEQ.templates.find(t=>t.id===SEQ.activeTemplateId);document.getElementById('seq-canvas-title').textContent=seqTitleText(SEQ.activeTemplate);}catch(e){Swal.fire('Error',e.message,'error');}
