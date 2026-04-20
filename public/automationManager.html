@@ -907,6 +907,38 @@
             <label for="f-active">Active</label>
           </div>
           <div id="hook-meta" class="text-sm text-muted mt-12" style="display:none"></div>
+<!-- ══ Capture next event (slice 2.2) ══ -->
+          <div id="capture-section" style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:6px;background:#f8fafc">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+              <div style="flex:1;min-width:200px">
+                <label style="font-weight:600;font-size:13px;display:block">Capture next event</label>
+                <div class="hint" style="margin-top:2px">
+                  Intercepts the next inbound event, stores it as a sample, and halts the pipeline for that one event. No filter/transform/delivery runs.
+                </div>
+              </div>
+              <button class="btn btn-outline" id="f-capture-btn" type="button"
+                      onclick="window.hookToggleCapture && window.hookToggleCapture()"
+                      style="font-size:12px;min-width:170px">
+                <i class="fa-solid fa-camera" id="f-capture-btn-icon"></i>
+                <span id="f-capture-btn-label">Capture next event</span>
+              </button>
+            </div>
+
+            <div id="f-capture-waiting" style="display:none;margin-top:10px;font-size:12px;color:#92400e;padding:6px 10px;background:#fef3c7;border:1px solid #fcd34d;border-radius:4px">
+              <i class="fa-solid fa-spinner fa-pulse"></i>
+              Waiting for next event on <span class="mono">/hooks/<span id="f-capture-waiting-slug">?</span></span>…
+            </div>
+
+            <div id="f-capture-sample" style="display:none;margin-top:10px;font-size:12px;color:var(--text2)">
+              <i class="fa-solid fa-circle-check" style="color:var(--green)"></i>
+              Captured sample from <span id="f-capture-relative">—</span>
+              <span style="color:var(--muted)">(<span id="f-capture-absolute">—</span>)</span>
+              &nbsp;•&nbsp;
+              <a href="#" onclick="window.hookViewCapturedSample && window.hookViewCapturedSample();return false">View</a>
+              &nbsp;•&nbsp;
+              <a href="#" onclick="window.hookUseCapturedSample && window.hookUseCapturedSample();return false">Use in Test tab</a>
+            </div>
+          </div>
         </div>
 
         <!-- ══ AUTH ══ -->
@@ -2341,6 +2373,7 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     wrap.style.display = 'none';
     activeHookId = null;
     activeHook = null;
+    stopCapturePolling();
     updateTopbarButtons();
   }
 
@@ -2417,24 +2450,26 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
 
     // Targets
     renderTargets();
-
+    // Capture state reflects whatever was just loaded
+    testTabLastPopulatedSample = null;
+    renderCaptureSection();
     hookSwitchTab('general');
-
     E('f-slug').oninput = () => { E('slug-preview').textContent = E('f-slug').value || '…'; };
   }
 
-  function parseJson(val) {
-    if (!val) return null;
-    if (typeof val === 'object') return val;
-    try { return JSON.parse(val); } catch { return null; }
-  }
-
-  // ── Inner sub-tabs (scoped to #tab-hooks) ──
   function hookSwitchTab(tab) {
     const root = E('tab-hooks');
     root.querySelectorAll('.hook-editor-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
     root.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === `hook-tab-${tab}`));
     if (tab === 'logs') loadExecutions();
+    // Capture polling runs only while the General tab is visible AND mode is capturing
+    if (tab === 'general' && activeHook && activeHook.capture_mode === 'capturing') {
+      startCapturePolling();
+    } else {
+      stopCapturePolling();
+    }
+    // Auto-fill Test tab from captured sample (preserves manual edits)
+    if (tab === 'test') populateTestInputFromCapture();
   }
 
   // ── Auth tab ──
@@ -2782,9 +2817,11 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     const seqTypes = [...new Set(sequenceTemplatesList.map(s => s.type).filter(Boolean))];
     const seqOpts = seqTypes.map(t => `<option value="${esc(t)}" ${cfg.template_type===t?'selected':''}>${esc(t)}</option>`).join('');
     const seqTemplatesActive = sequenceTemplatesList.filter(s => s.active == 1);
-    const seqIdOpts = seqTemplatesActive.map(s =>
-      `<option value="${s.id}" ${cfg.template_id == s.id ? 'selected' : ''}>${esc(s.name)} (${esc(s.type)})</option>`
-    ).join('');
+    const seqIdOpts = seqTemplatesActive.map(s => {
+      const typeLabel = (s.type && String(s.type).trim()) ? ` (${esc(s.type)})` : '';
+      return `<option value="${s.id}" ${cfg.template_id == s.id ? 'selected' : ''}>${esc(s.name)}${typeLabel}</option>`;
+    }).join('');
+
     const seqModeInit = (cfg.template_id != null && cfg.template_id !== '') ? 'id' : 'type';
     const fnOpts = internalFunctionsList.map(fn => `<option value="${esc(fn)}" ${cfg.function_name===fn?'selected':''}>${esc(fn)}</option>`).join('');
 
@@ -2834,9 +2871,14 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
               <option value="template" ${t.body_mode==='template'?'selected':''}>Template</option>
             </select>
           </div>
-          <div class="fg">
-            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Template (if template mode)</label>
-            <textarea id="swal-t-template" class="swal2-textarea" style="margin:0;width:100%;font-family:monospace;font-size:12px;min-height:60px">${esc(t.body_template || '')}</textarea>
+          <div class="fg" id="swal-t-body-template-wrap">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Template</label>
+            <textarea id="swal-t-template" class="swal2-textarea"
+              style="margin:0;width:100%;font-family:monospace;font-size:12px;min-height:60px"
+              placeholder='{"text": "New lead: {{contact_name}}", "email": "{{contact_email}}"}'>${esc(t.body_template || '')}</textarea>
+            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
+              Use <code>{{field_name}}</code> to reference fields from the transform output. Example above.
+            </div>
           </div>
         </div>
 
@@ -2972,7 +3014,20 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     };
     typeEl.addEventListener('change', updateSections);
     updateSections();
-    
+
+    // Body Template: visible only when body_mode === 'template'.
+    // The value is preserved on hide — if the user flips to transform_output
+    // and back to template, their draft is still in the textarea.
+    const bodyModeEl = document.getElementById('swal-t-bodymode');
+    const bodyWrap   = document.getElementById('swal-t-body-template-wrap');
+    if (bodyModeEl && bodyWrap) {
+      const updateBodyTemplate = () => {
+        bodyWrap.style.display = bodyModeEl.value === 'template' ? '' : 'none';
+      };
+      bodyModeEl.addEventListener('change', updateBodyTemplate);
+      updateBodyTemplate();
+    }
+
     // Sequence mode: toggle by-type vs by-id sub-blocks.
     // We do NOT wipe values on toggle — operator may be comparing approaches.
     const seqModeEl = document.getElementById('swal-t-seq-mode');
@@ -3276,6 +3331,196 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
       E('test-result').textContent = `Error: ${e.message}`;
     }
   }
+// ══════════════════════════════════════════════════════════════════
+  // CAPTURE MODE (slice 2.2)
+  // ══════════════════════════════════════════════════════════════════
+
+  let capturePollTimer = null;
+  let testTabLastPopulatedSample = null; // tracks what we auto-filled into f-test-input
+
+  function relativeTime(dateStr) {
+    if (!dateStr) return '—';
+    const ms = Date.now() - new Date(dateStr).getTime();
+    if (!Number.isFinite(ms) || ms < 0) return 'just now';
+    const sec = Math.floor(ms / 1000);
+    if (sec < 60)   return 'just now';
+    const min = Math.floor(sec / 60);
+    if (min < 60)   return `${min} minute${min === 1 ? '' : 's'} ago`;
+    const hr  = Math.floor(min / 60);
+    if (hr < 24)    return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+    const day = Math.floor(hr / 24);
+    return `${day} day${day === 1 ? '' : 's'} ago`;
+  }
+
+  // Render the capture section from activeHook state.
+  function renderCaptureSection() {
+    const section = E('capture-section');
+    if (!section) return;
+    if (!activeHook || !activeHookId) {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
+
+    const capturing = activeHook.capture_mode === 'capturing';
+    const hasSample = !!activeHook.captured_sample;
+
+    const btn       = E('f-capture-btn');
+    const btnLabel  = E('f-capture-btn-label');
+    const btnIcon   = E('f-capture-btn-icon');
+    const waiting   = E('f-capture-waiting');
+    const sampleRow = E('f-capture-sample');
+
+    if (capturing) {
+      btnLabel.textContent = 'Capturing…';
+      btnIcon.className = 'fa-solid fa-spinner fa-pulse';
+      btn.title = 'Click to cancel';
+      waiting.style.display = '';
+      E('f-capture-waiting-slug').textContent = activeHook.slug || '?';
+    } else {
+      btnLabel.textContent = 'Capture next event';
+      btnIcon.className = 'fa-solid fa-camera';
+      btn.title = 'Capture the next inbound event as a sample';
+      waiting.style.display = 'none';
+    }
+
+    // Show sample row whenever a sample exists, even while recapturing.
+    if (hasSample) {
+      sampleRow.style.display = '';
+      E('f-capture-relative').textContent = relativeTime(activeHook.captured_at);
+      E('f-capture-absolute').textContent = activeHook.captured_at
+        ? new Date(activeHook.captured_at).toLocaleString()
+        : '—';
+    } else {
+      sampleRow.style.display = 'none';
+    }
+  }
+
+  async function hookToggleCapture() {
+    if (!activeHookId) {
+      Toast.fire({ icon: 'warning', title: 'Save the hook first' });
+      return;
+    }
+    const starting = activeHook.capture_mode !== 'capturing';
+    const path = starting
+      ? `/api/hooks/${activeHookId}/capture/start`
+      : `/api/hooks/${activeHookId}/capture/stop`;
+    try {
+      await api(path, 'POST');
+      // Re-fetch so captured_sample/captured_at reflect any change
+      const data = await api(`/api/hooks/${activeHookId}`);
+      activeHook = data.hook;
+      targets    = activeHook.targets || [];
+      renderCaptureSection();
+      if (starting) {
+        startCapturePolling();
+      } else {
+        stopCapturePolling();
+      }
+      Toast.fire({
+        icon: 'success',
+        title: starting ? 'Capture armed — send an event' : 'Capture canceled',
+      });
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  function startCapturePolling() {
+    stopCapturePolling();
+    if (!activeHookId) return;
+    const targetHookId = activeHookId;
+    capturePollTimer = setInterval(async () => {
+      // Bail if the user navigated to a different hook in the meantime
+      if (activeHookId !== targetHookId) { stopCapturePolling(); return; }
+      try {
+        const data = await api(`/api/hooks/${targetHookId}`);
+        if (activeHookId !== targetHookId) { stopCapturePolling(); return; }
+        const prevMode = activeHook ? activeHook.capture_mode : 'off';
+        activeHook = data.hook;
+        targets    = activeHook.targets || [];
+        renderCaptureSection();
+        // If mode flipped off, stop polling — an event arrived (or it was canceled elsewhere)
+        if (activeHook.capture_mode !== 'capturing') {
+          stopCapturePolling();
+          if (prevMode === 'capturing') {
+            Toast.fire({ icon: 'success', title: 'Event captured — ready to test' });
+          }
+        }
+      } catch (e) {
+        // Swallow transient errors; keep polling
+        console.warn('[hook] capture poll error:', e.message);
+      }
+    }, 5000);
+  }
+
+  function stopCapturePolling() {
+    if (capturePollTimer) {
+      clearInterval(capturePollTimer);
+      capturePollTimer = null;
+    }
+  }
+
+  function capturedSamplePretty() {
+    if (!activeHook || !activeHook.captured_sample) return '';
+    const raw = activeHook.captured_sample;
+    // MySQL JSON columns come back parsed by mysql2 in most setups, but be defensive
+    const obj = (typeof raw === 'string') ? (function(){ try { return JSON.parse(raw); } catch { return raw; } })() : raw;
+    try { return JSON.stringify(obj, null, 2); } catch { return String(obj); }
+  }
+
+  async function hookViewCapturedSample() {
+    if (!activeHook || !activeHook.captured_sample) {
+      Toast.fire({ icon: 'info', title: 'No captured sample yet' });
+      return;
+    }
+    await Swal.fire({
+      title: 'Captured sample',
+      html: `
+        <div style="text-align:left">
+          <div class="text-sm text-muted" style="margin-bottom:8px">
+            Captured ${esc(activeHook.captured_at ? new Date(activeHook.captured_at).toLocaleString() : '—')}
+          </div>
+          <pre style="background:var(--navy);color:#e2e8f0;padding:12px;border-radius:6px;font-size:11px;max-height:60vh;overflow:auto;text-align:left;white-space:pre-wrap;word-break:break-word">${esc(capturedSamplePretty())}</pre>
+        </div>
+      `,
+      width: 720,
+      confirmButtonText: 'Close',
+    });
+  }
+
+  function hookUseCapturedSample() {
+    if (!activeHook || !activeHook.captured_sample) {
+      Toast.fire({ icon: 'info', title: 'No captured sample yet' });
+      return;
+    }
+    hookSwitchTab('test');
+    const pretty = capturedSamplePretty();
+    E('f-test-input').value = pretty;
+    testTabLastPopulatedSample = pretty;
+    Toast.fire({ icon: 'success', title: 'Sample loaded into Test tab' });
+  }
+
+  // Auto-populate Test input from captured sample when switching to the Test tab,
+  // but preserve any manual edits the operator has made.
+  function populateTestInputFromCapture() {
+    if (!activeHook || !activeHook.captured_sample) return;
+    const el = E('f-test-input');
+    if (!el) return;
+    const current = el.value;
+    const pretty  = capturedSamplePretty();
+    // Only auto-populate when the textarea is empty or still holds the previously
+    // auto-populated sample (i.e. operator hasn't typed anything new).
+    if (current === '' || current === testTabLastPopulatedSample) {
+      el.value = pretty;
+      testTabLastPopulatedSample = pretty;
+    }
+  }
+
+  // Expose for inline handlers
+  window.hookToggleCapture       = hookToggleCapture;
+  window.hookViewCapturedSample  = hookViewCapturedSample;
+  window.hookUseCapturedSample   = hookUseCapturedSample;
 
   // ══════════════════════════════════════════════════════════════════
   // SAVE / NEW / DELETE

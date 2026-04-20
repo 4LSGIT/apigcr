@@ -339,6 +339,24 @@ All target types queue a `hook_retry` job on failure (3 max attempts, 120s backo
 - **`sequence`** — `enrollContact` throws "already enrolled" on duplicates. If the first attempt actually enrolled but the log write failed, the retry will fail cleanly and hit max_attempts.
 - **`internal_function`** — Functions with side effects (`create_task`, `send_sms`, `create_log`) are NOT inherently idempotent. Retries will invoke the function again. Design internal-function hooks to be safe-to-retry, or accept the small risk of duplicate actions on transient failures.
 
+### Capture Mode (v1.2.1)
+
+Capture mode is a one-shot intercept for snapshotting a real payload so you can iterate on filter/transform/targets against its actual shape — instead of hand-constructing sample JSON in the Test tab.
+
+**Enabling.** Click **Capture next event** in the hook editor's General tab. The mode flips from `off` to `capturing` and the button pulses while waiting.
+
+**What happens on the next event.** The receiver stores the unified event (`{body, headers, query, method, meta}`) in `hooks.captured_sample`, flips `capture_mode` back to `off` atomically, and **halts the pipeline** — no filter evaluation, no transform, no target delivery. The sender receives `200 {status: "captured", execution_id}`. A `hook_executions` row is written with status `captured`.
+
+**No TTL.** Capture mode stays armed indefinitely. If nothing arrives, the operator cancels with the same button (now labeled `Capturing…`).
+
+**Sample preservation.** Arming or canceling capture does *not* clear `captured_sample`. Only a subsequent successful capture replaces it. The previous sample stays available under the button as `Captured sample from <time>` with **View** and **Use in Test tab** links.
+
+**Race safety.** The mode flip uses a guarded `UPDATE … WHERE capture_mode = 'capturing'`. If two events arrive inside the same capture window, exactly one wins; the other falls through to the normal pipeline (filter/transform/deliver). There is no duplicate capture.
+
+**Interaction with dry-run.** The Test tab's Dry Run path never triggers capture — the intercept is gated on `!dryRun`.
+
+**Visibility.** Captured executions show up in the Logs tab with `status = captured`. They have no delivery logs (by design — the pipeline halted).
+
 ---
 
 ## 10. DATABASE SCHEMA
@@ -393,6 +411,8 @@ GET    /api/hooks/:id                — get hook with targets
 POST   /api/hooks                    — create hook
 PUT    /api/hooks/:id                — update hook (auto-increments version)
 DELETE /api/hooks/:id                — delete hook (cascades targets)
+POST   /api/hooks/:id/capture/start  — arm capture mode (next event snapshots + halts pipeline)
+POST   /api/hooks/:id/capture/stop   — cancel capture mode (does not clear the sample)
 
 POST   /api/hooks/:id/targets        — create target (accepts target_type + config)
 PUT    /api/hooks/targets/:id        — update target

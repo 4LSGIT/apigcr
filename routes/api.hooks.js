@@ -43,6 +43,12 @@ const VALID_TARGET_TYPES = ['http', 'workflow', 'sequence', 'internal_function']
  *
  * Receives external webhooks. Authentication is per-hook (not JWT).
  * Always returns 200 to the sender — errors are logged internally.
+ *
+ * Capture-mode branch: when hook.capture_mode === 'capturing', we await the
+ * pipeline synchronously so we can report {status:'captured',execution_id}
+ * back to the sender. The guarded UPDATE inside executeHook is the race-free
+ * primitive — concurrent events during a capture window result in exactly
+ * one capture; the others fall through to the normal pipeline.
  */
 router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
   const { slug } = req.params;
@@ -75,10 +81,26 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
       },
     };
 
-    // Return 200 immediately, execute pipeline async
+    // Capture mode: synchronous so we can respond with the captured status.
+    if (hook.capture_mode === 'capturing') {
+      try {
+        const result = await hookService.executeHook(db, slug, input, { hook });
+        if (result && result.status === 'captured') {
+          return res.json({ status: 'captured', execution_id: result.execution_id });
+        }
+        // Race-loser: pipeline ran normally. Respond with the same shape the
+        // sender would see outside capture mode — external API surface stays
+        // consistent for webhook senders.
+        return res.json({ status: 'received', slug });
+      } catch (err) {
+        console.error(`[hook] Capture-mode pipeline error for ${slug}:`, err);
+        return res.status(200).json({ status: 'received', slug });
+      }
+    }
+
+    // Normal path: return 200 immediately, execute pipeline async
     res.json({ status: 'received', slug });
 
-    // Execute pipeline (fire-and-forget from the sender's perspective)
     hookService.executeHook(db, slug, input, { hook }).catch((err) => {
       console.error(`[hook] Pipeline error for ${slug}:`, err);
     });
@@ -426,6 +448,43 @@ router.post('/api/hooks/:id/test', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// CAPTURE MODE CONTROL (slice 2.2)
+// Start/stop do NOT clear captured_sample — it's preserved until a
+// new capture replaces it.
+// ─────────────────────────────────────────────────────────────
+
+router.post('/api/hooks/:id/capture/start', jwtOrApiKey, async (req, res) => {
+  try {
+    const [result] = await req.db.query(
+      `UPDATE hooks SET capture_mode = 'capturing' WHERE id = ?`,
+      [req.params.id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ status: 'error', message: 'Hook not found' });
+    }
+    res.json({ status: 'success', capture_mode: 'capturing' });
+  } catch (err) {
+    console.error('[hook] capture start error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.post('/api/hooks/:id/capture/stop', jwtOrApiKey, async (req, res) => {
+  try {
+    const [result] = await req.db.query(
+      `UPDATE hooks SET capture_mode = 'off' WHERE id = ?`,
+      [req.params.id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ status: 'error', message: 'Hook not found' });
+    }
+    res.json({ status: 'success', capture_mode: 'off' });
+  } catch (err) {
+    console.error('[hook] capture stop error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
 
 // ─────────────────────────────────────────────────────────────
 // MANAGEMENT API — Executions / Logs

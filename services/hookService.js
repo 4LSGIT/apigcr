@@ -836,6 +836,55 @@ async function executeHook(db, slug, input, { dryRun = false, hook: preloaded = 
     return { status: 'not_found', error: `No active hook with slug: ${slug}` };
   }
 
+  // ────────────────────────────────────────────────────────────
+  // CAPTURE MODE INTERCEPT (slice 2.2)
+  // If capture_mode === 'capturing', store the raw input as a sample,
+  // atomically flip the mode off, and halt the pipeline. No filter/
+  // transform/delivery runs for the captured event.
+  //
+  // The guarded UPDATE (WHERE capture_mode='capturing') is the race-free
+  // primitive. If two events arrive within the same poll window, only one
+  // wins; the other falls through to the normal pipeline.
+  //
+  // Dry-run never triggers capture — the !dryRun guard enforces that.
+  // ────────────────────────────────────────────────────────────
+  if (!dryRun && hook.capture_mode === 'capturing') {
+    const rawInputStrForCapture = JSON.stringify(input);
+    const captureTruncated = rawInputStrForCapture.length > 512 * 1024;
+    const storedSample = captureTruncated
+      ? rawInputStrForCapture.slice(0, 512 * 1024)
+      : rawInputStrForCapture;
+
+    const [upd] = await db.query(
+      `UPDATE hooks
+         SET captured_sample = ?,
+             captured_at     = NOW(),
+             capture_mode    = 'off'
+       WHERE id = ? AND capture_mode = 'capturing'`,
+      [storedSample, hook.id]
+    );
+
+    if (upd.affectedRows > 0) {
+      // Won the race — record the captured execution and halt the pipeline.
+      const [execResult] = await db.query(
+        `INSERT INTO hook_executions
+           (hook_id, slug, raw_input, filter_passed, status)
+         VALUES (?, ?, ?, NULL, 'captured')`,
+        [hook.id, hook.slug, storedSample]
+      );
+
+      return {
+        status: 'captured',
+        execution_id: execResult.insertId,
+        truncated: captureTruncated,
+      };
+    }
+    // Lost the race (extremely narrow window) — fall through to the normal
+    // pipeline below. We deliberately do NOT insert a 'received' execution
+    // row here because the normal pipeline at step 2 will insert its own;
+    // double-inserting would produce two hook_executions rows per event.
+  }
+
   // Guard against oversized payloads (512 KB limit)
   const rawInputStr = JSON.stringify(input);
   const inputTruncated = rawInputStr.length > 512 * 1024;
