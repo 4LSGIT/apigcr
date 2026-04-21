@@ -1266,6 +1266,115 @@ function trimUrl(url) {
   try { const u = new URL(url); return u.hostname + u.pathname; } catch { return url.length > 38 ? url.slice(0,38)+'…' : url; }
 }
 
+// ═══════════════════════════════════════════════════════════════
+// firmData helpers (parent-frame relay)
+// ═══════════════════════════════════════════════════════════════
+//
+// Iframes that render dropdowns backed by firm-wide lookup data access it
+// through these helpers. If parent.firmData is unavailable (edge case —
+// editor somehow loaded outside the expected iframe, or legacy shell that
+// doesn't populate a given field), helpers return empty arrays and the
+// select-builders degrade gracefully to free-text <input> equivalents.
+//
+// Self-contained by design: these helpers touch no automationManager-
+// specific state, so a future iframe-split (slice 4.2) can grab the block
+// whole and drop it into each sub-page.
+function fdPhoneLines()  { return (window.parent?.firmData?.phoneLines)  || []; }
+function fdEmailFroms()  { return (window.parent?.firmData?.emailFrom)   || []; }
+function fdUsers()       { return (window.parent?.firmData?.users)       || []; }
+function fdCurrentUser() { return window.parent?.firmData?.currentUser    || null; }
+
+// Render a <select> for a phone-line "from" field. Falls back to <input>
+// when phoneLines is empty. Preserves the current value as a visible,
+// selected option even if it doesn't match any firmData entry — so
+// legacy or manually-entered values survive a round-trip edit.
+function fdPhoneLineSelectHtml(id, currentValue) {
+  const lines = fdPhoneLines();
+  if (!lines.length) {
+    return `<input id="${id}" value="${esc(currentValue || '')}">`;
+  }
+  const cur = String(currentValue || '');
+  const inList = lines.some(l => String(l.phone_number) === cur);
+  const customOpt = (cur && !inList)
+    ? `<option value="${esc(cur)}" selected>${esc(cur)} (not in firmData)</option>`
+    : '';
+  const blankOpt = cur ? '' : `<option value="" selected>— select a phone line —</option>`;
+  const opts = lines.map(l => {
+    const label = `${l.display_name || l.phone_number} (${l.phone_number}${l.provider ? `, ${l.provider}` : ''})`;
+    return `<option value="${esc(l.phone_number)}" ${String(l.phone_number) === cur ? 'selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+  return `<select id="${id}">${blankOpt}${customOpt}${opts}</select>`;
+}
+
+// Render a <select> for an email "from" field. Same graceful-degradation
+// and custom-value-preservation semantics as fdPhoneLineSelectHtml.
+function fdEmailFromSelectHtml(id, currentValue) {
+  const emails = fdEmailFroms();
+  if (!emails.length) {
+    return `<input id="${id}" value="${esc(currentValue || '')}">`;
+  }
+  const cur = String(currentValue || '');
+  const inList = emails.some(e => String(e.email) === cur);
+  const customOpt = (cur && !inList)
+    ? `<option value="${esc(cur)}" selected>${esc(cur)} (not in firmData)</option>`
+    : '';
+  const blankOpt = cur ? '' : `<option value="" selected>— select a sender —</option>`;
+  const opts = emails.map(e => {
+    const label = e.from_name
+      ? `${e.from_name} <${e.email}>${e.provider ? ` (${e.provider})` : ''}`
+      : `${e.email}${e.provider ? ` (${e.provider})` : ''}`;
+    return `<option value="${esc(e.email)}" ${String(e.email) === cur ? 'selected' : ''}>${esc(label)}</option>`;
+  }).join('');
+  return `<select id="${id}">${blankOpt}${customOpt}${opts}</select>`;
+}
+
+// Render a <datalist> for params_mapping "source" inputs. Offers
+// autocomplete suggestions grouped loosely via label prefixes:
+//   [contact]  — common contacts table columns, unquoted (dot-path lookup
+//                on the transform output)
+//   [phone]    — phone_lines numbers, single-quoted (literal per
+//                params_mapping convention)
+//   [email]    — email_credentials addresses, single-quoted (literal)
+//   [user]     — user IDs, single-quoted (literal; backend passes string
+//                through to functions that accept user IDs)
+//
+// <datalist> is additive — typing still works, and the existing literal
+// convention (wrap-in-single-quotes) is preserved for the user who
+// knows it. Caller binds the input via list="<datalistId>".
+function fdParamSourceDatalistHtml(datalistId) {
+  // Contact fields: intersection of lookup_contact's SELECT and the
+  // columns actually referenced by resolverService / campaign flows.
+  // Fred said "do your best, I can change it later" — kept to 10.
+  const contactFields = [
+    { name: 'contact_id',    note: 'primary key' },
+    { name: 'contact_fname', note: 'first name' },
+    { name: 'contact_lname', note: 'last name' },
+    { name: 'contact_name',  note: 'full name (computed)' },
+    { name: 'contact_pname', note: 'preferred name' },
+    { name: 'contact_phone', note: 'primary phone' },
+    { name: 'contact_email', note: 'primary email' },
+    { name: 'contact_city',  note: 'city' },
+    { name: 'contact_state', note: 'state' },
+    { name: 'contact_zip',   note: 'zip' }
+  ];
+  const cfOpts = contactFields.map(f =>
+    `<option value="${esc(f.name)}" label="[contact] ${esc(f.note)}"></option>`
+  ).join('');
+  const plOpts = fdPhoneLines().map(l => {
+    const label = `[phone] ${l.display_name || ''} — ${l.phone_number}`;
+    return `<option value="'${esc(l.phone_number)}'" label="${esc(label)}"></option>`;
+  }).join('');
+  const emOpts = fdEmailFroms().map(e => {
+    const label = `[email] ${e.from_name || ''} <${e.email}>`;
+    return `<option value="'${esc(e.email)}'" label="${esc(label)}"></option>`;
+  }).join('');
+  const usOpts = fdUsers().map(u => {
+    const label = `[user] ${u.user_name || u.user_fname || ''} (#${u.user})`;
+    return `<option value="'${u.user}'" label="${esc(label)}"></option>`;
+  }).join('');
+  return `<datalist id="${datalistId}">${cfOpts}${plOpts}${emOpts}${usOpts}</datalist>`;
+}
+
 function togglePanelLeft(btn) {
   const panel = btn.closest('.panel-left');
   const collapsed = panel.classList.toggle('collapsed');
@@ -2447,11 +2556,11 @@ function seqRenderEditTab(step) {
 
 function seqRenderActionConfig(type, cfg) {
   if(type==='sms') return `
-    <div class="field"><label>From (phone_lines number)</label><input id="se-from" value="${esc(cfg.params?.from||'')}"></div>
+    <div class="field"><label>From (phone_lines number)</label>${fdPhoneLineSelectHtml('se-from', cfg.params?.from || '')}</div>
     <div class="field"><label>To</label><input id="se-to" value="${esc(cfg.params?.to||'{{contacts.contact_phone}}')}"></div>
     <div class="field"><label>Message</label><textarea id="se-message" rows="4">${esc(cfg.params?.message||'')}</textarea></div>`;
   if(type==='email') return `
-    <div class="field"><label>From</label><input id="se-from" value="${esc(cfg.params?.from||'')}"></div>
+    <div class="field"><label>From</label>${fdEmailFromSelectHtml('se-from', cfg.params?.from || '')}</div>
     <div class="field"><label>To</label><input id="se-to" value="${esc(cfg.params?.to||'{{contacts.contact_email}}')}"></div>
     <div class="field"><label>Subject</label><input id="se-subject" value="${esc(cfg.params?.subject||'')}"></div>
     <div class="field"><label>Text</label><textarea id="se-text" rows="5">${esc(cfg.params?.text||'')}</textarea></div>`;
@@ -3854,7 +3963,7 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
   function renderParamsMapping(mapping) {
     const el = document.getElementById('swal-t-fn-params');
     if (!el) return;
-    el.innerHTML = '';
+    el.innerHTML = fdParamSourceDatalistHtml('pm-source-datalist');
     const entries = Object.entries(mapping || {});
     if (entries.length === 0) {
       // Start with one empty row so the UI isn't a void
@@ -3874,7 +3983,7 @@ document.querySelectorAll('.panel-resize-handle').forEach(handle => {
     row.innerHTML = `
       <input class="swal-pm-key" placeholder="param name" value="${esc(key)}" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
       <span style="color:var(--muted);font-size:14px">=</span>
-      <input class="swal-pm-val mono" placeholder="field  or  a.b.c  or  'literal'" value="${esc(displayValue)}" style="flex:2;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+      <input class="swal-pm-val mono" list="pm-source-datalist" placeholder="field  or  a.b.c  or  'literal'" value="${esc(displayValue)}" style="flex:2;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
       <button type="button" class="swal-pm-del" style="padding:4px 8px;font-size:11px;background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:#ef4444" title="Remove">
         <i class="fa-solid fa-times"></i>
       </button>
