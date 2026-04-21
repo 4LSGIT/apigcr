@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scheduled Jobs</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       SCHEDULED JOBS SUB-PAGE — self-contained styles.
+       Shared tokens + base layout duplicated from shell.
+       ══════════════════════════════════════════════ */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:    #1a1a2e;
+      --navy2:   #16213e;
+      --blue:    #4f8ef7;
+      --blue2:   #3a7de8;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --amber:   #f59e0b;
+      --purple:  #8b5cf6;
+      --bg:      #f1f5f9;
+      --surface: #ffffff;
+      --border:  #e2e8f0;
+      --muted:   #94a3b8;
+      --text:    #1e293b;
+      --text2:   #475569;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Button family (duplicated from shell) ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: var(--blue2); }
+    .btn-ghost { background: rgba(255,255,255,0.1); color: #fff; }
+    .btn-ghost:hover { background: rgba(255,255,255,0.18); }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* ── Empty state (shared) ── */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; color: var(--muted);
+      gap: 10px; text-align: center;
+    }
+    .empty-state i { font-size: 36px; opacity: 0.25; }
+
+    /* ══════════════════════════════════════════════
+       JOBS-SPECIFIC STYLES
+       ══════════════════════════════════════════════ */
+
+    .jobs-toolbar {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 10px 16px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+    }
+
+    .jobs-filter-select {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 13px; color: var(--text); background: var(--surface); outline: none; cursor: pointer;
+    }
+
+    .jobs-search {
+      flex: 1; padding: 6px 10px; border: 1px solid var(--border);
+      border-radius: 6px; font-size: 13px; outline: none;
+    }
+    .jobs-search:focus { border-color: var(--blue); }
+
+    #jobs-list { flex: 1; overflow-y: auto; padding: 16px; }
+
+    .job-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 13px 16px; margin-bottom: 10px;
+      display: flex; align-items: center; gap: 14px; transition: box-shadow 0.15s;
+    }
+    .job-card:hover { box-shadow: 0 2px 10px rgba(0,0,0,0.07); }
+
+    .job-status-dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    }
+    .dot-pending   { background: var(--amber); }
+    .dot-running   { background: var(--blue); animation: pulse 1s infinite; }
+    .dot-completed { background: var(--green); }
+    .dot-failed    { background: var(--red); }
+
+    .job-info { flex: 1; min-width: 0; }
+    .job-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .job-meta { font-size: 11px; color: var(--muted); margin-top: 2px; display: flex; gap: 10px; flex-wrap: wrap; }
+
+    .job-type-badge {
+      font-size: 10px; font-weight: 600; padding: 2px 6px;
+      border-radius: 4px; white-space: nowrap; flex-shrink: 0;
+    }
+    .type-one_time  { background: #eff6ff; color: #1d4ed8; }
+    .type-recurring { background: #f0fdf4; color: #166534; }
+
+    .job-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+    /* ── Status badges for job list ── */
+    .status-badge {
+      font-size: 10px; font-weight: 600; padding: 2px 7px;
+      border-radius: 10px; white-space: nowrap;
+    }
+    .status-pending   { background: #fef3c7; color: #92400e; }
+    .status-running   { background: #dbeafe; color: #1e40af; }
+    .status-completed { background: #dcfce7; color: #166534; }
+    .status-failed    { background: #fee2e2; color: #991b1b; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div class="jobs-toolbar">
+  <select class="jobs-filter-select" id="jobs-filter-status" onchange="loadJobs()">
+    <option value="">All statuses</option>
+    <option value="pending">Pending</option>
+    <option value="running">Running</option>
+    <option value="completed">Completed</option>
+    <option value="failed">Failed</option>
+  </select>
+  <select class="jobs-filter-select" id="jobs-filter-type" onchange="loadJobs()">
+    <option value="">All types</option>
+    <option value="one_time">One-time</option>
+    <option value="recurring">Recurring</option>
+    <option value="task_due_reminder">Task Due Reminder</option>
+    <option value="task_daily_digest">Task Daily Digest</option>
+    <option value="hook_retry">Hook Retry</option>
+    <option value="campaign_send">Campaign Send</option>
+  </select>
+  <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text2);cursor:pointer;white-space:nowrap">
+    <input type="checkbox" id="jobs-show-internal" onchange="loadJobs()"> Internal
+  </label>
+  <input class="jobs-search" id="jobs-search" placeholder="Search by name…" oninput="loadJobsDebounced()">
+</div>
+<div id="jobs-list">
+  <div class="empty-state" style="height:300px">
+    <i class="fa-solid fa-spinner spin"></i><p>Loading…</p>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// SCHEDULED JOBS SUB-PAGE
+//
+// Shell communication:
+//   - P.apiSend(...)                   — relayed to a.html
+//   - P.setTopbarButtons({...})        — request button visibility
+//
+// Lifecycle hooks exposed on window:
+//   - onShow, onHide                   — tab visibility changes
+//   - onRefresh, onNew                 — topbar Refresh / New clicks
+//   (onSave / onDelete not applicable — jobs tab has no shell-level
+//    Save/Delete; jobs edit/delete via in-card buttons and Swal)
+//
+// No polling in this engine — no subPageActive check needed
+// beyond gating topbar button updates.
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+
+// ── Utilities ──────────────────────────────────────────────────
+const api = (...args) => P.apiSend(...args);
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── State ──────────────────────────────────────────────────────
+let jobsLoaded = false;
+let jobsDebounceTimer;
+let subPageActive = false;
+
+// Functions list for the internal_function dropdown in New Job.
+// Each sub-page that needs this list fetches its own — cheap,
+// matches hooks.html's approach, avoids shell-level state.
+const FUNCTIONS = { workflow: [], sequence: [] };
+
+async function loadFunctions() {
+  try {
+    const data = await api('/workflows/functions');
+    FUNCTIONS.workflow = data.workflow || [];
+    FUNCTIONS.sequence = data.sequence || [];
+  } catch (e) {
+    console.warn('Failed to load function list, using fallback:', e.message);
+    FUNCTIONS.workflow = ['set_next','evaluate_condition','noop','set_var','format_string','schedule_resume','wait_for','wait_until_time','send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','set_test_var'];
+    FUNCTIONS.sequence = ['send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','noop','set_var'];
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// LIST RENDERING
+// ══════════════════════════════════════════════════════════════════
+
+async function loadJobs() {
+  jobsLoaded = true;
+  const status = document.getElementById('jobs-filter-status')?.value || '';
+  const type   = document.getElementById('jobs-filter-type')?.value || '';
+  const search = document.getElementById('jobs-search')?.value || '';
+  const list   = document.getElementById('jobs-list');
+  list.innerHTML = '<div class="empty-state" style="height:200px"><i class="fa-solid fa-spinner spin"></i><p>Loading…</p></div>';
+  try {
+    const params = { limit: 50, ...(status && { status }), ...(type && { type }), ...(search && { search }) };
+    if (document.getElementById('jobs-show-internal')?.checked) params.internal = 'true';
+    const data = await api('/scheduled-jobs', 'GET', params);
+    const jobs = data.jobs || [];
+    if (!jobs.length) {
+      list.innerHTML = '<div class="empty-state" style="height:200px"><i class="fa-solid fa-clock"></i><p>No jobs found.</p></div>';
+      return;
+    }
+    list.innerHTML = jobs.map(job => jobCardHTML(job)).join('');
+  } catch (e) {
+    list.innerHTML = `<div class="empty-state" style="height:200px"><p style="color:var(--red)">${esc(e.message)}</p></div>`;
+  }
+}
+
+function loadJobsDebounced() {
+  clearTimeout(jobsDebounceTimer);
+  jobsDebounceTimer = setTimeout(loadJobs, 400);
+}
+
+function jobCardHTML(job) {
+  const dotClass    = { pending:'dot-pending', running:'dot-running', completed:'dot-completed', failed:'dot-failed' }[job.status] || 'dot-pending';
+  const statusClass = { pending:'status-pending', running:'status-running', completed:'status-completed', failed:'status-failed' }[job.status] || 'status-pending';
+  const typeClass = `type-${job.type}`;
+  const when = job.scheduled_time ? new Date(job.scheduled_time).toLocaleString() : '—';
+  return `
+    <div class="job-card">
+      <div class="job-status-dot ${dotClass}"></div>
+      <div class="job-info">
+        <div class="job-name">${esc(job.name || `Job #${job.id}`)}</div>
+        <div class="job-meta">
+          <span><i class="fa-regular fa-clock"></i> ${esc(when)}</span>
+          ${job.recurrence_rule ? `<span><i class="fa-solid fa-rotate"></i> ${esc(job.recurrence_rule)}</span>` : ''}
+          <span>Runs: ${job.execution_count || 0}${job.max_executions ? ` / ${job.max_executions}` : ''}${job.attempts > 0 ? ` · Attempts: ${job.attempts}` : ''}
+          </span>
+          ${job.expires_at ? `<span><i class="fa-solid fa-flag-checkered"></i> Expires ${new Date(job.expires_at).toLocaleDateString()}</span>` : ''}
+        </div>
+      </div>
+      <span class="status-badge ${statusClass}">${job.status}</span>
+      <span class="job-type-badge ${typeClass}">${job.type.replace('_',' ')}</span>
+      <div class="job-actions">
+        ${['pending','failed'].includes(job.status) ? `<button class="btn btn-outline btn-sm" onclick="jobEdit(${job.id})"><i class="fa-solid fa-pencil"></i></button>` : ''}
+        ${job.status === 'failed' ? `<button class="btn btn-primary btn-sm" onclick="jobRetry(${job.id})" title="Reschedule now"><i class="fa-solid fa-rotate-right"></i></button>` : ''}
+        <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border:none" onclick="jobDelete(${job.id})" title="Delete"><i class="fa-solid fa-trash"></i></button>
+        <button class="btn btn-outline btn-sm" onclick="jobView(${job.id})"><i class="fa-solid fa-eye"></i></button>
+      </div>
+    </div>`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// NEW JOB
+// ══════════════════════════════════════════════════════════════════
+
+async function jobNew() {
+  // Make sure FUNCTIONS is loaded (could fire before init completes
+  // if shell calls onNew very early — defensive).
+  if (!FUNCTIONS.workflow.length) await loadFunctions();
+
+  const fnOpts = (FUNCTIONS.workflow.length ? FUNCTIONS.workflow : ['noop']).map(f => `<option value="${f}">${f}</option>`).join('');
+  const { value: vals } = await Swal.fire({
+    title: 'New Scheduled Job',
+    html: `
+      <style>
+        .sj-form{text-align:left;font-size:13px}
+        .sj-field{margin-bottom:12px}
+        .sj-label{display:block;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+        .sj-row{display:flex;gap:10px}
+        .sj-row>.sj-field{flex:1;margin-bottom:12px}
+        .sj-note{font-size:11px;color:#94a3b8;margin-top:3px}
+        .sj-el{display:block;width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;color:#1e293b;background:#fff;outline:none;box-sizing:border-box;height:36px}
+        .sj-el:focus{border-color:#4f8ef7;box-shadow:0 0 0 3px rgba(79,142,247,.12)}
+        select.sj-el{cursor:pointer}
+        textarea.sj-el{height:auto;min-height:64px;resize:vertical;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.5}
+        .sj-divider{border:none;border-top:1px solid #e5e7eb;margin:14px 0 12px}
+        .sj-readonly{background:#f8fafc;color:#475569;padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;height:36px;display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      </style>
+      <div class="sj-form">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Schedule Type</span>
+            <select id="sj-type" class="sj-el" onchange="sjToggleFields()">
+              <option value="one_time">One-time</option><option value="recurring">Recurring</option>
+            </select></div>
+          <div class="sj-field"><span class="sj-label">Job Type</span>
+            <select id="sj-job-type" class="sj-el" onchange="sjToggleFields()">
+              <option value="internal_function">Internal Function</option>
+              <option value="webhook">Webhook</option>
+              <option value="custom_code">Custom Code</option>
+            </select></div>
+        </div>
+        <div class="sj-field"><span class="sj-label">Name</span>
+          <input id="sj-name" class="sj-el" placeholder="e.g. Daily digest, Reminder SMS"></div>
+        <hr class="sj-divider">
+        <div id="sj-fn-wrap" class="sj-field"><span class="sj-label">Function</span>
+          <select id="sj-fn" class="sj-el">${fnOpts}</select></div>
+        <div id="sj-params-wrap" class="sj-field"><span class="sj-label">Params (JSON)</span>
+          <textarea id="sj-params" class="sj-el" placeholder='{ "from": "2485592400", "to": "...", "message": "..." }'>{}</textarea></div>
+        <div id="sj-url-wrap" class="sj-field" style="display:none"><span class="sj-label">Webhook URL</span>
+          <input id="sj-url" class="sj-el" placeholder="https://..."></div>
+        <div id="sj-method-wrap" class="sj-field" style="display:none"><span class="sj-label">HTTP Method</span>
+          <select id="sj-method" class="sj-el"><option>GET</option><option selected>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></div>
+        <div id="sj-code-wrap" class="sj-field" style="display:none"><span class="sj-label">Code</span>
+          <textarea id="sj-code" class="sj-el" style="min-height:80px" placeholder="const result = input.x + input.y; result;"></textarea></div>
+        <hr class="sj-divider">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Delay from now</span>
+            <input id="sj-delay" class="sj-el" placeholder='e.g. 10m, 2h, 1d'>
+            <div class="sj-note">Or set an exact time →</div></div>
+          <div class="sj-field"><span class="sj-label">Scheduled Time (UTC)</span>
+            <input id="sj-time" class="sj-el" type="datetime-local">
+            <div class="sj-note">Firm local = UTC−4 / UTC−5</div></div>
+        </div>
+        <div id="sj-recurring-fields" style="display:none">
+          <div class="sj-field"><span class="sj-label">Cron Rule</span>
+            <input id="sj-cron" class="sj-el" placeholder='e.g. 0 9 * * 1-5 (weekdays 9am UTC)'>
+            <div class="sj-note">minute hour day month weekday</div></div>
+          <div class="sj-row">
+            <div class="sj-field"><span class="sj-label">Max Executions</span>
+              <input id="sj-max-exec" class="sj-el" type="number" min="1" placeholder="unlimited"></div>
+            <div class="sj-field"><span class="sj-label">Expires At (UTC)</span>
+              <input id="sj-expires" class="sj-el" type="datetime-local"></div>
+          </div>
+        </div>
+        <hr class="sj-divider">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Max Attempts</span>
+            <input id="sj-max-att" class="sj-el" type="number" min="1" value="3"></div>
+          <div class="sj-field"><span class="sj-label">Backoff Seconds</span>
+            <input id="sj-backoff" class="sj-el" type="number" min="0" value="300"></div>
+        </div>
+      </div>`,
+    showCancelButton: true, confirmButtonText: 'Create', width: 560,
+    didOpen: () => sjToggleFields(),
+    preConfirm: () => {
+      const type = document.getElementById('sj-type').value;
+      const job_type = document.getElementById('sj-job-type').value;
+      const name = document.getElementById('sj-name').value.trim();
+      const delay = document.getElementById('sj-delay').value.trim();
+      const scheduledTime = document.getElementById('sj-time').value;
+
+      // Validation
+      if (job_type === 'webhook' && !document.getElementById('sj-url').value.trim()) {
+        Swal.showValidationMessage('URL is required for webhook');
+        return false;
+      }
+      if (job_type === 'custom_code' && !document.getElementById('sj-code').value.trim()) {
+        Swal.showValidationMessage('Code is required');
+        return false;
+      }
+
+      // Build payload
+      const payload = {
+        type, job_type,
+        max_attempts: parseInt(document.getElementById('sj-max-att').value) || 3,
+        backoff_seconds: parseInt(document.getElementById('sj-backoff').value) || 300,
+      };
+      if (name) payload.name = name;
+      if (delay) payload.delay = delay;
+      if (scheduledTime) payload.scheduled_time = new Date(scheduledTime + 'Z').toISOString();
+
+      if (job_type === 'internal_function') {
+        payload.function_name = document.getElementById('sj-fn').value;
+        const p = document.getElementById('sj-params').value.trim();
+        if (p) {
+          try { payload.params = JSON.parse(p); }
+          catch { Swal.showValidationMessage('Params is not valid JSON'); return false; }
+        }
+      } else if (job_type === 'webhook') {
+        payload.url = document.getElementById('sj-url').value.trim();
+        payload.method = document.getElementById('sj-method').value;
+      } else if (job_type === 'custom_code') {
+        payload.code = document.getElementById('sj-code').value;
+      }
+
+      if (type === 'recurring') {
+        const cron = document.getElementById('sj-cron').value.trim();
+        if (!cron) { Swal.showValidationMessage('Cron rule is required for recurring jobs'); return false; }
+        payload.recurrence_rule = cron;
+        const maxExec = document.getElementById('sj-max-exec').value;
+        const expires = document.getElementById('sj-expires').value;
+        if (maxExec) payload.max_executions = parseInt(maxExec);
+        if (expires) payload.expires_at = new Date(expires + 'Z').toISOString();
+      }
+      return payload;
+    }
+  });
+  if (!vals) return;
+  try {
+    await api('/scheduled-jobs', 'POST', vals);
+    await loadJobs();
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Job created', timer: 1800, showConfirmButton: false });
+  } catch (e) {
+    Swal.fire('Error', e.message, 'error');
+  }
+}
+
+function sjToggleFields() {
+  const jobType   = document.getElementById('sj-job-type')?.value || 'internal_function';
+  const schedType = document.getElementById('sj-type')?.value || 'one_time';
+  const show = (id, v) => { const el = document.getElementById(id); if (el) el.style.display = v ? '' : 'none'; };
+  show('sj-fn-wrap',           jobType === 'internal_function');
+  show('sj-params-wrap',       jobType === 'internal_function');
+  show('sj-url-wrap',          jobType === 'webhook');
+  show('sj-method-wrap',       jobType === 'webhook');
+  show('sj-code-wrap',         jobType === 'custom_code');
+  show('sj-recurring-fields',  schedType === 'recurring');
+}
+
+// ══════════════════════════════════════════════════════════════════
+// EDIT / RETRY / DELETE / VIEW
+// ══════════════════════════════════════════════════════════════════
+
+async function jobEdit(id) {
+  const data = await api(`/scheduled-jobs/${id}`);
+  const jobData = typeof data.data === 'string' ? JSON.parse(data.data || '{}') : (data.data || {});
+  const jobType = jobData.type || data.job_type || '—';
+  const fnName  = jobData.function_name || '';
+  const jobUrl  = jobData.url || '';
+
+  const { value: vals } = await Swal.fire({
+    title: `Edit Job #${id}`,
+    html: `
+      <style>
+        .sj-form{text-align:left;font-size:13px}
+        .sj-field{margin-bottom:12px}
+        .sj-label{display:block;font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+        .sj-row{display:flex;gap:10px}
+        .sj-row>.sj-field{flex:1;margin-bottom:12px}
+        .sj-note{font-size:11px;color:#94a3b8;margin-top:3px}
+        .sj-el{display:block;width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;color:#1e293b;background:#fff;outline:none;box-sizing:border-box;height:36px}
+        .sj-el:focus{border-color:#4f8ef7;box-shadow:0 0 0 3px rgba(79,142,247,.12)}
+        select.sj-el{cursor:pointer}
+        .sj-divider{border:none;border-top:1px solid #e5e7eb;margin:14px 0 12px}
+        .sj-readonly{background:#f8fafc;color:#475569;padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;height:36px;display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      </style>
+      <div class="sj-form">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Type</span>
+            <div class="sj-readonly">${esc(data.type)} · ${esc(jobType)}</div></div>
+          <div class="sj-field"><span class="sj-label">${jobType === 'internal_function' ? 'Function' : jobType === 'webhook' ? 'URL' : 'Details'}</span>
+            <div class="sj-readonly">${esc(fnName || jobUrl || '—')}</div></div>
+        </div>
+        <div class="sj-field"><span class="sj-label">Name</span>
+          <input id="sje-name" class="sj-el" value="${esc(data.name || '')}"></div>
+        <hr class="sj-divider">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Scheduled Time (UTC)</span>
+            <input id="sje-time" class="sj-el" type="datetime-local" value="${data.scheduled_time ? new Date(data.scheduled_time).toISOString().slice(0,16) : ''}">
+            <div class="sj-note">Firm local = UTC−4 / UTC−5</div></div>
+          <div class="sj-field"><span class="sj-label">Status</span>
+            <div class="sj-readonly">${esc(data.status)} · ${data.execution_count || 0} runs · ${data.attempts || 0} attempts</div></div>
+        </div>
+        ${data.type === 'recurring' ? `
+        <div class="sj-field"><span class="sj-label">Cron Rule</span>
+          <input id="sje-cron" class="sj-el" value="${esc(data.recurrence_rule || '')}">
+          <div class="sj-note">minute hour day month weekday</div></div>
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Max Executions</span>
+            <input id="sje-max-exec" class="sj-el" type="number" min="1" placeholder="unlimited" value="${data.max_executions || ''}"></div>
+          <div class="sj-field"><span class="sj-label">Expires At (UTC)</span>
+            <input id="sje-expires" class="sj-el" type="datetime-local" value="${data.expires_at ? new Date(data.expires_at).toISOString().slice(0,16) : ''}"></div>
+        </div>` : ''}
+        <hr class="sj-divider">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Max Attempts</span>
+            <input id="sje-max" class="sj-el" type="number" min="1" value="${data.max_attempts || 3}"></div>
+          <div class="sj-field"><span class="sj-label">Backoff Seconds</span>
+            <input id="sje-backoff" class="sj-el" type="number" min="0" value="${data.backoff_seconds || 300}"></div>
+        </div>
+      </div>`,
+    showCancelButton: true, confirmButtonText: 'Save', width: 560,
+    preConfirm: () => {
+      const payload = {};
+      const name = document.getElementById('sje-name').value.trim();
+      const time = document.getElementById('sje-time').value;
+      if (name !== data.name) payload.name = name || undefined;
+      if (time) payload.scheduled_time = new Date(time + 'Z').toISOString();
+      payload.max_attempts = parseInt(document.getElementById('sje-max').value) || 3;
+      payload.backoff_seconds = parseInt(document.getElementById('sje-backoff').value) || 300;
+      if (data.type === 'recurring') {
+        const cron = document.getElementById('sje-cron')?.value.trim();
+        if (cron) payload.recurrence_rule = cron;
+        const maxExec = document.getElementById('sje-max-exec')?.value;
+        const expires = document.getElementById('sje-expires')?.value;
+        payload.max_executions = maxExec ? parseInt(maxExec) : undefined;
+        payload.expires_at = expires ? new Date(expires + 'Z').toISOString() : undefined;
+      }
+      return payload;
+    }
+  });
+  if (!vals) return;
+  try {
+    await api(`/scheduled-jobs/${id}`, 'PATCH', vals);
+    await loadJobs();
+  } catch (e) {
+    Swal.fire('Error', e.message, 'error');
+  }
+}
+
+async function jobRetry(id) {
+  try {
+    await api(`/scheduled-jobs/${id}`, 'PATCH', { scheduled_time: new Date().toISOString() });
+    await loadJobs();
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Job rescheduled for now', timer: 1800, showConfirmButton: false });
+  } catch (e) {
+    Swal.fire('Error', e.message, 'error');
+  }
+}
+
+async function jobDelete(id) {
+  const r = await Swal.fire({ title: 'Delete this job?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
+  if (!r.isConfirmed) return;
+  try {
+    await api(`/scheduled-jobs/${id}`, 'DELETE');
+    await loadJobs();
+  } catch (e) {
+    Swal.fire('Error', e.message, 'error');
+  }
+}
+
+async function jobView(id) {
+  try {
+    const data = await api(`/scheduled-jobs/${id}?history=true`);
+    const jobData = typeof data.data === 'string' ? JSON.parse(data.data || '{}') : (data.data || {});
+    const jobType = jobData.type || '—';
+    const when = data.scheduled_time ? new Date(data.scheduled_time).toLocaleString() + ' (UTC)' : '—';
+
+    let config = '';
+    if (jobType === 'internal_function')
+      config = `<strong>Function:</strong> ${esc(jobData.function_name || '—')}<br><strong>Params:</strong> <pre style="background:#f1f5f9;padding:6px 8px;border-radius:4px;font-size:11px;margin:4px 0;max-height:120px;overflow:auto">${esc(JSON.stringify(jobData.params || {}, null, 2))}</pre>`;
+    else if (jobType === 'webhook')
+      config = `<strong>URL:</strong> ${esc(jobData.url || '—')}<br><strong>Method:</strong> ${esc(jobData.method || 'GET')}`;
+    else if (jobType === 'custom_code')
+      config = `<strong>Code:</strong> <pre style="background:#f1f5f9;padding:6px 8px;border-radius:4px;font-size:11px;margin:4px 0;max-height:120px;overflow:auto">${esc((jobData.code || '').slice(0, 500))}</pre>`;
+
+    let body = `<div style="text-align:left;font-size:13px;line-height:1.7">
+      <strong>Name:</strong> ${esc(data.name || '(unnamed)')}<br>
+      <strong>Type:</strong> ${esc(data.type)} · ${esc(jobType)}<br>
+      <strong>Status:</strong> ${esc(data.status)}<br>
+      <strong>Scheduled:</strong> ${esc(when)}<br>
+      <strong>Runs:</strong> ${data.execution_count || 0}${data.max_executions ? ' / ' + data.max_executions : ''}
+      · <strong>Attempts:</strong> ${data.attempts || 0} / ${data.max_attempts || 3}<br>
+      ${data.recurrence_rule ? `<strong>Cron:</strong> ${esc(data.recurrence_rule)}<br>` : ''}
+      ${data.expires_at ? `<strong>Expires:</strong> ${new Date(data.expires_at).toLocaleString()} (UTC)<br>` : ''}
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:8px 0">
+      ${config}`;
+
+    if (data.latest_execution) {
+      body += `<hr style="border:none;border-top:1px solid #e2e8f0;margin:8px 0">
+      <strong>Latest Result:</strong> ${data.latest_execution.status} in ${data.latest_execution.duration_ms}ms`;
+      if (data.latest_execution.error_message) body += `<br><span style="color:#ef4444">${esc(data.latest_execution.error_message)}</span>`;
+    }
+
+    if (data.history?.length) {
+      body += `<hr style="border:none;border-top:1px solid #e2e8f0;margin:8px 0"><strong>History (${data.history.length})</strong><div style="font-size:12px;margin-top:4px;max-height:150px;overflow:auto">`;
+      body += data.history.slice(0, 10).map(h =>
+        `<div style="padding:2px 0;border-bottom:1px solid #f1f5f9">#${h.execution_number}.${h.attempt} — <span style="color:${h.status === 'success' ? '#16a34a' : '#ef4444'}">${h.status}</span> ${h.duration_ms}ms${h.error_message ? ' — ' + esc(h.error_message) : ''}</div>`
+      ).join('');
+      body += `</div>`;
+    }
+    body += `</div>`;
+
+    Swal.fire({ title: `Job #${id}`, html: body, width: 560 });
+  } catch (e) {
+    Swal.fire('Error', e.message, 'error');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// LIFECYCLE
+// ══════════════════════════════════════════════════════════════════
+
+async function init() {
+  subPageActive = true;
+  declareTopbar();
+  await loadFunctions();   // needed before first jobNew
+  await loadJobs();
+}
+
+function declareTopbar() {
+  if (!subPageActive) return;
+  P.setTopbarButtons({ refresh: true, new: true, save: false, delete: false });
+}
+
+function onShow() {
+  subPageActive = true;
+  declareTopbar();
+  // Refresh list on re-show — jobs' status may have changed while we
+  // were away (runs happen server-side).
+  if (jobsLoaded) loadJobs();
+}
+
+function onHide() {
+  subPageActive = false;
+}
+
+function onRefresh() { return loadJobs(); }
+function onNew()     { return jobNew(); }
+
+// onSave / onDelete not exposed — jobs tab has no shell-level Save/Delete.
+// Shell's callSubPageHook returns undefined cleanly if the hook is absent.
+
+// ══════════════════════════════════════════════════════════════════
+// WINDOW EXPORTS — for inline onclick handlers in job cards
+// ══════════════════════════════════════════════════════════════════
+
+window.onShow        = onShow;
+window.onHide        = onHide;
+window.onRefresh     = onRefresh;
+window.onNew         = onNew;
+
+window.loadJobs          = loadJobs;
+window.loadJobsDebounced = loadJobsDebounced;
+window.jobNew            = jobNew;
+window.jobEdit           = jobEdit;
+window.jobRetry          = jobRetry;
+window.jobDelete         = jobDelete;
+window.jobView           = jobView;
+window.sjToggleFields    = sjToggleFields;
+
+// ── Boot ───────────────────────────────────────────────────────
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return init();
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>
