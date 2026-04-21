@@ -448,6 +448,37 @@ router.post('/api/hooks/:id/test', jwtOrApiKey, async (req, res) => {
   }
 });
 
+/**
+ * POST /api/hooks/:id/live-test
+ * Full pipeline with real delivery, against a sample input.
+ * Mirrors the dry-run endpoint's smart-unwrap so feeding a captured_sample
+ * round-trips cleanly (no double-wrap). JWT-protected; bypasses per-hook
+ * auth and rate limiting (management-side test, not an external webhook).
+ */
+router.post('/api/hooks/:id/live-test', jwtOrApiKey, async (req, res) => {
+  try {
+    const hook = await hookService.getHookById(req.db, req.params.id);
+    if (!hook) return res.status(404).json({ status: 'error', message: 'Hook not found' });
+
+    const sampleInput = req.body.input || req.body;
+
+    // Wrap in unified shape if not already — same detection as the dry-run route
+    const input = sampleInput.meta ? sampleInput : {
+      body: sampleInput,
+      headers: {},
+      query: {},
+      method: 'POST',
+      meta: { source: 'live_test', received_at: new Date().toISOString(), slug: hook.slug },
+    };
+
+    const result = await hookService.executeHook(req.db, hook.slug, input);
+    res.json({ status: 'success', result });
+  } catch (err) {
+    console.error('[hook] live-test error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 // ─────────────────────────────────────────────────────────────
 // CAPTURE MODE CONTROL (slice 2.2)
 // Start/stop do NOT clear captured_sample — it's preserved until a

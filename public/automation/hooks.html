@@ -1637,28 +1637,21 @@ window.togglePanelLeft = togglePanelLeft;
     }
   }
 
-  async function runLiveTest() {
-    if (!activeHookId) { Toast.fire({ icon: 'warning', title: 'Save the hook first' }); return; }
-    const slug = E('f-slug').value.trim();
-    if (!slug) { Toast.fire({ icon: 'warning', title: 'Slug is required' }); return; }
-    const raw = E('f-test-input').value.trim();
-    if (!raw) { Toast.fire({ icon: 'warning', title: 'Paste sample JSON first' }); return; }
-    let body;
-    try { body = JSON.parse(raw); } catch { Toast.fire({ icon: 'error', title: 'Invalid JSON' }); return; }
-    E('test-result').textContent = 'Sending live test…';
-    try {
-      // Raw fetch — same-origin resolves against our host.
-      const resp = await fetch(`/hooks/${slug}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await resp.json();
-      E('test-result').textContent = JSON.stringify(data, null, 2) + '\n\n(Check Logs tab for full execution details)';
-    } catch (e) {
-      E('test-result').textContent = `Error: ${e.message}`;
-    }
+async function runLiveTest() {
+  if (!activeHookId) { Toast.fire({ icon: 'warning', title: 'Save the hook first' }); return; }
+  const raw = E('f-test-input').value.trim();
+  if (!raw) { Toast.fire({ icon: 'warning', title: 'Paste sample JSON first' }); return; }
+  let input;
+  try { input = JSON.parse(raw); } catch { Toast.fire({ icon: 'error', title: 'Invalid JSON' }); return; }
+  E('test-result').textContent = 'Sending live test…';
+  try {
+    const data = await api(`/api/hooks/${activeHookId}/live-test`, 'POST', { input });
+    E('test-result').textContent = JSON.stringify(data.result, null, 2)
+      + '\n\n(Check Logs tab for full execution details)';
+  } catch (e) {
+    E('test-result').textContent = `Error: ${e.message}`;
   }
+}
 
   // ══════════════════════════════════════════════════════════════════
   // CAPTURE MODE (slice 2.2)
