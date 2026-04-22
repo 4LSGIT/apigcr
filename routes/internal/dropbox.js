@@ -5,6 +5,7 @@ const pabbly = require("../../services/pabblyService");
 
 // POST /internal/dropbox/create-folder
 // Body: { case_id, contact_name, case_number }
+// currently forwards to pabbly
 router.post('/internal/dropbox/create-folder', jwtOrApiKey, async (req, res) => {
   const { case_id, contact_name, case_number } = req.body;
   if (!case_id) return res.status(400).json({ status: 'error', message: 'case_id required' });
