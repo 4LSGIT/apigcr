@@ -522,6 +522,14 @@ let seqLoaded = false;
 // FUNCTIONS list (sequence-side functions used for internal_function action)
 const FUNCTIONS = { workflow: [], sequence: [] };
 
+// Slice 3.3 — caches for the new webhook + start_workflow step editors.
+// Fetched lazily on first open of a step that needs them; the async load is
+// fire-and-forget so the editor still renders (with a "loading…" placeholder
+// in the dropdown) if the list hasn't come back yet. Refetch happens on each
+// sub-page onShow via loadFunctions + loadSeqExtras() chain.
+const SEQ_CREDENTIALS = { list: [], loaded: false };
+const SEQ_WORKFLOWS   = { list: [], loaded: false };
+
 async function loadFunctions() {
   try {
     const data = await api('/workflows/functions');
@@ -532,6 +540,30 @@ async function loadFunctions() {
     FUNCTIONS.workflow = ['set_next','evaluate_condition','noop','set_var','format_string','schedule_resume','wait_for','wait_until_time','send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','set_test_var'];
     FUNCTIONS.sequence = ['send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','noop','set_var'];
   }
+}
+
+// Slice 3.3 — lazy loaders for the new step editors. Parallel fetch; either
+// one failing doesn't block the other. Called from onShow() alongside
+// loadFunctions so the caches are warm by the time the user opens a step.
+async function loadSeqExtras() {
+  const jobs = [];
+  if (!SEQ_CREDENTIALS.loaded) {
+    jobs.push(api('/api/credentials').then(d => {
+      SEQ_CREDENTIALS.list = d.credentials || [];
+      SEQ_CREDENTIALS.loaded = true;
+    }).catch(e => console.warn('Failed to load credentials:', e.message)));
+  }
+  if (!SEQ_WORKFLOWS.loaded) {
+    // /workflows returns { workflows: [...], pagination: {...} } — flat shape
+    // for the list, pagination nested (envelope finding #60 — not our fix).
+    // Default limit is 20; fetch up to 200 so the dropdown covers most firms
+    // without paginating.
+    jobs.push(api('/workflows?limit=200').then(d => {
+      SEQ_WORKFLOWS.list = d.workflows || [];
+      SEQ_WORKFLOWS.loaded = true;
+    }).catch(e => console.warn('Failed to load workflows:', e.message)));
+  }
+  if (jobs.length) await Promise.all(jobs);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -746,7 +778,7 @@ function seqRenderEditTab(step) {
   document.getElementById('seq-editor-body').innerHTML = `
     <div class="field"><label>Action Type</label>
       <select id="se-action-type" onchange="seqOnActionTypeChange()">
-        ${['sms', 'email', 'task', 'internal_function'].map(t => `<option value="${t}" ${step.action_type === t ? 'selected' : ''}>${t}</option>`).join('')}
+        ${['sms', 'email', 'task', 'internal_function', 'webhook', 'start_workflow'].map(t => `<option value="${t}" ${step.action_type === t ? 'selected' : ''}>${t}</option>`).join('')}
       </select>
     </div>
     <div id="se-config-area">${seqRenderActionConfig(step.action_type || 'sms', cfg)}</div>
@@ -778,11 +810,94 @@ function seqRenderActionConfig(type, cfg) {
     <div class="field"><label>Title</label><input id="se-title" value="${esc(cfg.params?.title || '')}"></div>
     <div class="field"><label>Assigned To (user ID)</label><input id="se-assigned-to" type="number" value="${esc(cfg.params?.assigned_to || '')}"></div>
     <div class="field"><label>Description</label><textarea id="se-desc" rows="3">${esc(cfg.params?.description || '')}</textarea></div>`;
+  // ── Slice 3.3: webhook step ──
+  // NOT retry-idempotent — receiver must tolerate duplicates. Cookbook §5.18.
+  if (type === 'webhook') {
+    const methods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+    const curMethod = (cfg.method || 'POST').toUpperCase();
+    const curCred = cfg.credential_id == null ? '' : String(cfg.credential_id);
+    const credOpts = SEQ_CREDENTIALS.loaded
+      ? `<option value="">— none —</option>` + SEQ_CREDENTIALS.list.map(c =>
+          `<option value="${c.id}" ${String(c.id) === curCred ? 'selected' : ''}>${esc(c.name)} (${esc(c.type)})</option>`
+        ).join('')
+      : `<option value="${esc(curCred)}" selected>loading credentials…</option>`;
+    const headersText = cfg.headers ? JSON.stringify(cfg.headers, null, 2) : '{}';
+    const bodyText    = cfg.body    ? JSON.stringify(cfg.body,    null, 2) : '{\n  "contact_id": "{{trigger_data.contact_id}}"\n}';
+    return `
+      <div class="field-row">
+        <div class="field" style="flex:0 0 120px"><label>Method</label>
+          <select id="se-wh-method">${methods.map(m => `<option ${m === curMethod ? 'selected' : ''}>${m}</option>`).join('')}</select>
+        </div>
+        <div class="field" style="flex:1"><label>URL</label>
+          <input id="se-wh-url" value="${esc(cfg.url || '')}" placeholder="https://example.com/path — {{placeholders}} OK">
+        </div>
+      </div>
+      <div class="field"><label>Credential</label>
+        <select id="se-wh-cred">${credOpts}</select>
+      </div>
+      <div class="field"><label>Headers (JSON)</label>
+        <textarea id="se-wh-headers" rows="2">${esc(headersText)}</textarea>
+      </div>
+      <div class="field"><label>Body (JSON)</label>
+        <textarea id="se-wh-body" rows="5">${esc(bodyText)}</textarea>
+      </div>
+      <div class="field"><label>Timeout (ms)</label>
+        <input id="se-wh-timeout" type="number" min="1" max="120000" value="${cfg.timeout_ms || 30000}">
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin:-4px 0 8px">Not retry-idempotent — receiver must tolerate duplicate delivery on retry.</p>`;
+  }
+  // ── Slice 3.3: start_workflow step ──
+  // Retry-safe: on retry, if a prior 'sent' log row has a workflow_execution_id
+  // and that execution still exists, we reuse it (no duplicate). Cookbook §3.12.
+  if (type === 'start_workflow') {
+    const curWf  = cfg.workflow_id == null ? '' : String(cfg.workflow_id);
+    const wfOpts = SEQ_WORKFLOWS.loaded
+      ? `<option value="">— select a workflow —</option>` + SEQ_WORKFLOWS.list.map(w =>
+          `<option value="${w.id}" ${String(w.id) === curWf ? 'selected' : ''}>#${w.id} ${esc(w.name)}</option>`
+        ).join('')
+      : `<option value="${esc(curWf)}" selected>loading workflows…</option>`;
+    // Default to checked when tie_to_contact is omitted (backwards-compat).
+    const tieChecked = cfg.tie_to_contact !== false;
+    const overrideVal = cfg.contact_id_override == null ? '' : String(cfg.contact_id_override);
+    const initDataText = cfg.init_data ? JSON.stringify(cfg.init_data, null, 2)
+                                       : '{\n  "contact_id": "{{trigger_data.contact_id}}"\n}';
+    // Reuse the shell's resolver-source datalist if available (contact
+    // fields, phone lines, email froms, user IDs). Falls back to a plain
+    // textarea if the shell helper isn't present.
+    const datalistHtml = (typeof P.fdParamSourceDatalistHtml === 'function')
+      ? P.fdParamSourceDatalistHtml('se-sw-initdata-sources')
+      : '';
+    return `
+      <div class="field"><label>Workflow</label>
+        <select id="se-sw-workflow">${wfOpts}</select>
+      </div>
+      <div class="field"><label>init_data (JSON)</label>
+        <textarea id="se-sw-initdata" rows="6">${esc(initDataText)}</textarea>
+        ${datalistHtml}
+        <p style="font-size:11px;color:var(--muted);margin:4px 0 0">Placeholders like <code>{{trigger_data.contact_id}}</code> resolve at step execution time.</p>
+      </div>
+      <div class="field" style="flex-direction:row;align-items:center;gap:8px">
+        <input type="checkbox" id="se-sw-tie" ${tieChecked ? 'checked' : ''} onchange="seqOnStartWorkflowTieChange()">
+        <label for="se-sw-tie" style="margin:0;cursor:pointer">Tie started workflow to this enrollment's contact</label>
+      </div>
+      <div class="field" id="se-sw-override-wrap" style="display:${tieChecked ? 'none' : ''}">
+        <label>Contact ID Override</label>
+        <input id="se-sw-override" value="${esc(overrideVal)}" placeholder="123 or {{trigger_data.spouse_contact_id}}">
+        <p style="font-size:11px;color:var(--muted);margin:4px 0 0">Contact ID or <code>{{placeholder}}</code>. Empty means rely on workflow template default.</p>
+      </div>`;
+  }
   // internal_function
   return `
     <div class="field"><label>Function</label><select id="se-fn">${(FUNCTIONS.sequence.length ? FUNCTIONS.sequence : ['noop']).map(f => `<option ${cfg.function_name === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
     <div class="field"><label>Params (JSON)</label><textarea id="se-params" rows="6">${cfg.params ? JSON.stringify(cfg.params, null, 2) : '{}'}</textarea></div>
     <div class="field"><label>set_vars (JSON)</label><textarea id="se-setvars" rows="3">${cfg.set_vars ? JSON.stringify(cfg.set_vars, null, 2) : ''}</textarea></div>`;
+}
+
+// Slice 3.3 — checkbox handler for start_workflow's tie-to-contact toggle.
+function seqOnStartWorkflowTieChange() {
+  const checked = document.getElementById('se-sw-tie')?.checked;
+  const wrap = document.getElementById('se-sw-override-wrap');
+  if (wrap) wrap.style.display = checked ? 'none' : '';
 }
 
 function seqOnActionTypeChange() {
@@ -865,7 +980,44 @@ function seqGatherStep() {
   else if (actionType === 'task') {
     const desc = val('se-desc');
     action_config = { function_name: 'create_task', params: { title: val('se-title'), assigned_to: parseInt(val('se-assigned-to')) || 0, ...(desc && { description: desc }) } };
-  } else {
+  }
+  else if (actionType === 'webhook') {
+    // Slice 3.3 — webhook step. URL can contain {{placeholders}}; resolver
+    // runs at execution time.
+    const url = val('se-wh-url');
+    if (!url) { Swal.fire('Error', 'Webhook URL is required', 'error'); return null; }
+    const headers = tryParse('se-wh-headers', {}); if (headers === 'ERROR') return null;
+    const body    = tryParse('se-wh-body',    {}); if (body    === 'ERROR') return null;
+    const credRaw = val('se-wh-cred');
+    const credId  = credRaw ? parseInt(credRaw) : null;
+    const timeoutRaw = val('se-wh-timeout');
+    const timeout_ms = timeoutRaw ? parseInt(timeoutRaw) : 30000;
+    action_config = {
+      method: document.getElementById('se-wh-method')?.value || 'POST',
+      url,
+      ...(credId && { credential_id: credId }),
+      headers: headers || {},
+      body:    body    || {},
+      timeout_ms,
+    };
+  }
+  else if (actionType === 'start_workflow') {
+    // Slice 3.3 — start_workflow step.
+    const wfRaw = val('se-sw-workflow');
+    if (!wfRaw) { Swal.fire('Error', 'Workflow is required', 'error'); return null; }
+    const workflow_id = parseInt(wfRaw);
+    if (!workflow_id) { Swal.fire('Error', 'Workflow ID must be a positive integer', 'error'); return null; }
+    const init_data = tryParse('se-sw-initdata', {}); if (init_data === 'ERROR') return null;
+    const tieChecked = document.getElementById('se-sw-tie')?.checked;
+    const overrideVal = val('se-sw-override');
+    action_config = {
+      workflow_id,
+      init_data: init_data || {},
+      tie_to_contact: !!tieChecked,
+      contact_id_override: tieChecked ? null : (overrideVal || ''),
+    };
+  }
+  else {
     const params = tryParse('se-params', {}); if (params === 'ERROR') return null;
     const sv = tryParse('se-setvars'); if (sv === 'ERROR') return null;
     action_config = { function_name: val('se-fn'), params, ...(sv && { set_vars: sv }) };
@@ -1433,6 +1585,7 @@ async function init() {
   initPanelResize();
   await loadFunctions();
   await loadSequences();
+  await loadSeqExtras();
   seqLoaded = true;
 }
 
@@ -1488,6 +1641,7 @@ window.seqSelectStep              = seqSelectStep;
 window.seqStepSave                = seqStepSave;
 window.seqStepCancel              = seqStepCancel;
 window.seqOnActionTypeChange      = seqOnActionTypeChange;
+window.seqOnStartWorkflowTieChange = seqOnStartWorkflowTieChange;
 window.seqOnTimingTypeChange      = seqOnTimingTypeChange;
 window.loadSequenceEnrollments    = loadSequenceEnrollments;
 window.seqEnrollPrevPage          = seqEnrollPrevPage;

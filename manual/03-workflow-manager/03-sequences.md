@@ -20,6 +20,26 @@ Sequences are contact-specific drip campaigns with condition gates at every step
 
 ---
 
+## Step Action Types
+
+Sequence steps dispatch through `sequenceEngine.executeStep` based on
+`action_type`. Six action types are supported:
+
+| action_type | What it does | Retry-safe? |
+|---|---|---|
+| `sms` | Sends SMS via `send_sms` internal function | Provider-dependent |
+| `email` | Sends email via `send_email` internal function | Provider-dependent |
+| `task` | Creates a task via `create_task` internal function | No — duplicates possible |
+| `internal_function` | Calls any registered internal function | Depends on function |
+| `webhook` | First-class HTTP request with credential injection | **No** — receiver must tolerate duplicates |
+| `start_workflow` | Starts a workflow execution, optionally tied to the enrollment's contact | **Yes** — checks prior log output for reusable execution |
+
+`webhook` and `start_workflow` were added in Slice 3.3. See Cookbook §3.15
+for the pattern, §5.18 for the webhook idempotency caveat, and §5.21 for
+the (now four) `workflow_executions` INSERT sites.
+
+---
+
 ## The Check Chain (Every Step)
 
 ```
@@ -159,6 +179,81 @@ Uses `before_appt` timing and `is_null` conditions. Steps fire backward from the
 | 6 | `before_appt_fixed 30m` | `case_intake is_null: true` | SMS — "Please bring ID and fill out intake on arrival" |
 
 Steps 5 and 6 fire at the same time window but on opposite conditions — exactly one of them fires.
+
+---
+
+### Example: webhook step — notify Zapier when a drip fires
+
+```json
+{
+  "step_number": 3,
+  "action_type": "webhook",
+  "action_config": {
+    "method": "POST",
+    "url": "https://hooks.zapier.com/hooks/catch/123/abc/",
+    "credential_id": 5,
+    "body": {
+      "contact_id": "{{trigger_data.contact_id}}",
+      "template_name": "{{trigger_data.template_name}}",
+      "step": 3
+    },
+    "timeout_ms": 15000
+  },
+  "timing": { "type": "business_days", "value": 2, "timeOfDay": "10:00" },
+  "error_policy": { "strategy": "retry_then_ignore", "max_retries": 2, "backoff_seconds": 60 }
+}
+```
+
+Placeholders in `url`, `headers`, and `body` resolve against the sequence
+context (enrollment + trigger_data + pulled refs) at execution time. Credential
+`5` must exist in the `credentials` table and its `allowed_urls` (if set) must
+match the `url`.
+
+---
+
+### Example: start_workflow step — escalate to branching workflow
+
+```json
+{
+  "step_number": 4,
+  "action_type": "start_workflow",
+  "action_config": {
+    "workflow_id": 12,
+    "init_data": {
+      "contact_id":  "{{trigger_data.contact_id}}",
+      "case_id":     "{{trigger_data.case_id}}",
+      "source":      "sequence:no_show_followup:step_4"
+    },
+    "tie_to_contact": true
+  },
+  "timing": { "type": "business_days", "value": 3, "timeOfDay": "09:00" },
+  "error_policy": { "strategy": "retry_then_abort", "max_retries": 1, "backoff_seconds": 30 }
+}
+```
+
+With `tie_to_contact: true` (the default), the started workflow's `contact_id`
+column is stamped with `enrollment.contact_id`, so the workflow appears on that
+contact's Automations tab even if the workflow template has no
+`default_contact_id_from` configured.
+
+To untie (e.g. fire a workflow that concerns the spouse rather than the
+enrolled contact):
+
+```json
+{
+  "tie_to_contact": false,
+  "contact_id_override": "{{trigger_data.spouse_contact_id}}"
+}
+```
+
+Leave `contact_id_override` empty to fall through to the workflow template's
+own `default_contact_id_from` setting.
+
+**Retry semantics:** if the step fires, the INSERT succeeds, but then the job
+is retried (e.g. process_jobs claim fails afterward and the job goes back to
+`pending`), the retry will find the prior `workflow_execution_id` in
+`sequence_step_log.output_data` and reuse it — no duplicate execution row is
+created.
 
 ---
 

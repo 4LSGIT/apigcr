@@ -181,6 +181,78 @@ Paginated executions/enrollments tied to a specific contact. Envelope parity wit
 
 Swap-only — unlike `/workflows/:id/steps/reorder`, the sequence variant does not accept a full `order` array. It's a two-step swap via a temp number.
 
+### Sequence Step `action_type` and `action_config`
+
+`action_type`: one of `sms`, `email`, `task`, `internal_function`,
+`webhook`, `start_workflow`. The last two were added in Slice 3.3.
+
+#### `sms`, `email`, `task`, `internal_function`
+Wrapped `internal_function` call. `action_config` shape:
+```json
+{
+  "function_name": "send_sms",
+  "params": { "from": "...", "to": "...", "message": "..." }
+}
+```
+
+#### `webhook` (Slice 3.3)
+First-class HTTP request. Shares credential injection with YisraHook HTTP
+targets via the `credentials` table.
+
+```json
+{
+  "method": "POST",
+  "url": "https://example.com/api/endpoint",
+  "credential_id": 5,
+  "headers": { "X-Custom": "value" },
+  "body": {
+    "contact_id": "{{trigger_data.contact_id}}",
+    "event": "sequence_step_fired"
+  },
+  "timeout_ms": 30000
+}
+```
+
+**Validation at save** (400 on any failure):
+- `url` required, non-empty string. Parse-checked if no `{{...}}` placeholders; otherwise syntax check deferred to execution.
+- `method` optional, one of `GET`, `POST`, `PUT`, `PATCH`, `DELETE`. Default `POST`.
+- `credential_id` optional; positive integer; FK checked against `credentials` table.
+- `headers` optional; JSON object or null.
+- `body` optional; JSON object or null.
+- `timeout_ms` optional; positive integer ≤ 120000. Default 30000.
+
+**Not retry-idempotent.** Each retry fires a fresh HTTP request. Receiver must tolerate duplicates.
+
+#### `start_workflow` (Slice 3.3)
+First-class workflow start. Fourth `workflow_executions` INSERT site (Cookbook §5.21).
+
+```json
+{
+  "workflow_id": 12,
+  "init_data": {
+    "contact_id": "{{trigger_data.contact_id}}",
+    "case_id":    "{{trigger_data.case_id}}"
+  },
+  "tie_to_contact": true,
+  "contact_id_override": null
+}
+```
+
+**Validation at save** (400 on any failure):
+- `workflow_id` required, positive integer, FK checked against `workflows` table.
+- `init_data` optional; JSON object (may be empty). Placeholder syntax not checked at save time — resolver handles runtime errors.
+- `tie_to_contact` optional; boolean. Default `true`.
+- `contact_id_override` optional; string, number, or null. Only meaningful when `tie_to_contact: false`. A string may be a `{{placeholder}}` or a literal integer.
+
+**Runtime contact_id precedence:**
+1. `tie_to_contact: true` → `enrollment.contact_id`.
+2. `tie_to_contact: false` + non-empty `contact_id_override` → resolved, must be positive integer.
+3. `tie_to_contact: false` + empty override → `workflows.default_contact_id_from` applies.
+
+**Retry-safe.** Before firing, checks `sequence_step_log.output_data` for a
+prior `workflow_execution_id` on this (enrollment, step_number). If found
+and the execution row still exists, reuses it — no duplicate execution.
+
 ### Enrollments
 
 | Method | Endpoint | Description |
@@ -260,6 +332,13 @@ Omit `template_type` to cancel all active sequences for the contact.
 | `action_type` | `sequence_steps.action_type` (via LEFT JOIN on `log_step_id`) |
 
 Rows where `log_id IS NULL` are scheduled-but-never-executed (pending, failed-before-fire, or cancelled). See Cookbook §5.24 for the display rule (log_status primary, job_status fallback).
+
+### Credentials (shared with YisraHook)
+
+Credentials in the `credentials` table are shared between YisraHook HTTP
+targets and sequence webhook steps (Slice 3.3). The same `credential_id`
+can be referenced from either side. See the Hooks management routes for
+CRUD (`GET/POST/PUT/DELETE /api/credentials`).
 
 ---
 

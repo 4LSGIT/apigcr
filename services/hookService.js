@@ -26,6 +26,7 @@ const crypto = require('crypto');
 const { evaluateConditions } = require('./hookFilter');
 const { executeMapper, resolveBodyTemplate } = require('./hookMapper');
 const { applyChain } = require('./hookTransforms');
+const credentialInjection = require('../lib/credentialInjection');
 
 // Lazy requires for the three delivery engines. These modules transitively
 // require hookService in rare paths (e.g. an internal function that itself
@@ -203,48 +204,23 @@ function runTransform(mode, config, input) {
  * Build auth headers for a delivery target.
  * Validates that the target URL matches the credential's allowed_urls.
  * Only used by HTTP targets.
+ *
+ * Slice 3.3: the body has been lifted into lib/credentialInjection so sequence
+ * webhook steps can share the same auth-header + URL-scope logic. This wrapper
+ * translates the hook-target shape (credential_id + joined cred_* fields) into
+ * a synthetic credential row, then delegates. Behaviour is bit-identical to
+ * the pre-refactor function — see Slice 3.3 checkpoint for the 9-case trace.
  */
 function buildAuthHeaders(target) {
   if (!target.credential_id) return {};
 
-  const credType = target.cred_type;
-  const credConfig = typeof target.cred_config === 'string'
-    ? JSON.parse(target.cred_config) : target.cred_config;
-  const allowedUrls = typeof target.cred_allowed_urls === 'string'
-    ? JSON.parse(target.cred_allowed_urls) : target.cred_allowed_urls;
-
-  // Validate URL scope (skip for internal — always allowed for own server)
-  if (credType !== 'internal' && Array.isArray(allowedUrls) && allowedUrls.length) {
-    const matches = allowedUrls.some((pattern) => {
-      // Simple wildcard matching: "https://api.example.com/*"
-      const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-      return regex.test(target.url);
-    });
-    if (!matches) {
-      console.warn(`[hook] Credential ${target.credential_id} not allowed for URL ${target.url}`);
-      return {};
-    }
-  }
-
-  if (credType === 'internal') {
-    return { 'x-api-key': process.env.INTERNAL_API_KEY };
-  }
-
-  if (credType === 'bearer') {
-    return { 'Authorization': `Bearer ${credConfig?.token}` };
-  }
-
-  if (credType === 'api_key') {
-    const header = credConfig?.header || 'x-api-key';
-    return { [header]: credConfig?.key };
-  }
-
-  if (credType === 'basic') {
-    const b64 = Buffer.from(`${credConfig?.username}:${credConfig?.password}`).toString('base64');
-    return { 'Authorization': `Basic ${b64}` };
-  }
-
-  return {};
+  const credential = {
+    id:           target.credential_id,
+    type:         target.cred_type,
+    config:       target.cred_config,
+    allowed_urls: target.cred_allowed_urls,
+  };
+  return credentialInjection.buildAuthHeaders(credential, target.url);
 }
 
 

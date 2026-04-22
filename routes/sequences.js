@@ -13,6 +13,7 @@
 //   PUT    /sequences/templates/:id/steps/:stepNumber   replace step
 //   PATCH  /sequences/templates/:id/steps/:stepNumber   partial update step
 //   DELETE /sequences/templates/:id/steps/:stepNumber   delete + renumber
+//   PATCH  /sequences/templates/:id/steps/reorder       swap two steps
 //
 // Enrollments:
 //   POST   /sequences/enroll                           enroll a contact
@@ -33,6 +34,118 @@ const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringi
 // via template_id (no cascade matching). Treat null, empty string, and
 // whitespace-only strings all equivalently as NULL.
 const normalizeType = v => (v == null || !String(v).trim()) ? null : String(v).trim();
+
+// ─────────────────────────────────────────────────────────────
+// Step config validation — Slice 3.3
+//
+// Single source of truth for action_type + action_config validity at save
+// time. Called from POST, PUT, and PATCH step routes. Returns null on success,
+// or { status, error, message? } on failure — caller handles res.status(...).
+//
+// Validation depth differs by action_type:
+//   - sms / email / task / internal_function: no new field-level validation
+//     beyond action_type enum membership (preserves existing permissive
+//     behavior — those routes have been open-config since day one).
+//   - webhook: URL, method, credential_id FK, headers/body shape, timeout_ms
+//   - start_workflow: workflow_id FK, init_data shape, tie_to_contact type,
+//     contact_id_override type
+// ─────────────────────────────────────────────────────────────
+
+const ALLOWED_ACTION_TYPES  = ['sms', 'email', 'task', 'internal_function', 'webhook', 'start_workflow'];
+const ALLOWED_HTTP_METHODS  = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+
+async function validateStepConfig(db, action_type, action_config) {
+  if (!ALLOWED_ACTION_TYPES.includes(action_type)) {
+    return { status: 400, error: `Invalid action_type: ${action_type}`, message: `Must be one of: ${ALLOWED_ACTION_TYPES.join(', ')}` };
+  }
+  if (action_config == null || typeof action_config !== 'object' || Array.isArray(action_config)) {
+    return { status: 400, error: 'action_config must be a JSON object' };
+  }
+
+  if (action_type === 'webhook') {
+    const { url, method, credential_id, headers, body, timeout_ms } = action_config;
+    if (!url || typeof url !== 'string' || !url.trim()) {
+      return { status: 400, error: 'webhook action_config.url is required (non-empty string)' };
+    }
+    // Accept `{{...}}` placeholders — resolver runs at execution time. For
+    // URLs with no placeholders, parse-check literally.
+    if (!/\{\{.*?\}\}/.test(url)) {
+      try { new URL(url); }
+      catch { return { status: 400, error: `webhook action_config.url is not a valid URL: ${url}` }; }
+    }
+    if (method !== undefined) {
+      const m = String(method).toUpperCase();
+      if (!ALLOWED_HTTP_METHODS.includes(m)) {
+        return { status: 400, error: `webhook action_config.method must be one of ${ALLOWED_HTTP_METHODS.join(', ')}` };
+      }
+    }
+    if (credential_id !== undefined && credential_id !== null && credential_id !== '') {
+      const n = Number(credential_id);
+      if (!Number.isInteger(n) || n <= 0) {
+        return { status: 400, error: 'webhook action_config.credential_id must be a positive integer' };
+      }
+      const [[row]] = await db.query(`SELECT id FROM credentials WHERE id = ?`, [n]);
+      if (!row) {
+        return { status: 400, error: `webhook action_config.credential_id ${n} does not exist in credentials table` };
+      }
+    }
+    if (headers !== undefined && headers !== null) {
+      if (typeof headers !== 'object' || Array.isArray(headers)) {
+        return { status: 400, error: 'webhook action_config.headers must be a JSON object' };
+      }
+    }
+    if (body !== undefined && body !== null) {
+      if (typeof body !== 'object' || Array.isArray(body)) {
+        return { status: 400, error: 'webhook action_config.body must be a JSON object or null' };
+      }
+    }
+    if (timeout_ms !== undefined && timeout_ms !== null) {
+      const n = Number(timeout_ms);
+      if (!Number.isInteger(n) || n <= 0) {
+        return { status: 400, error: 'webhook action_config.timeout_ms must be a positive integer' };
+      }
+      if (n > 120000) {
+        return { status: 400, error: 'webhook action_config.timeout_ms cannot exceed 120000 (120s)' };
+      }
+    }
+    return null;
+  }
+
+  if (action_type === 'start_workflow') {
+    const { workflow_id, init_data, tie_to_contact, contact_id_override } = action_config;
+    if (workflow_id == null || workflow_id === '') {
+      return { status: 400, error: 'start_workflow action_config.workflow_id is required' };
+    }
+    const n = Number(workflow_id);
+    if (!Number.isInteger(n) || n <= 0) {
+      return { status: 400, error: 'start_workflow action_config.workflow_id must be a positive integer' };
+    }
+    const [[wf]] = await db.query(`SELECT id FROM workflows WHERE id = ?`, [n]);
+    if (!wf) {
+      return { status: 400, error: `start_workflow action_config.workflow_id ${n} does not exist in workflows table` };
+    }
+    if (init_data !== undefined && init_data !== null) {
+      if (typeof init_data !== 'object' || Array.isArray(init_data)) {
+        return { status: 400, error: 'start_workflow action_config.init_data must be a JSON object' };
+      }
+    }
+    if (tie_to_contact !== undefined && typeof tie_to_contact !== 'boolean') {
+      return { status: 400, error: 'start_workflow action_config.tie_to_contact must be boolean' };
+    }
+    if (contact_id_override !== undefined && contact_id_override !== null) {
+      // Must be a string (for a {{placeholder}} or a literal) or a number.
+      // Runtime validation (positive integer after placeholder resolution) is
+      // enforced by executeStartWorkflowAction.
+      if (typeof contact_id_override !== 'string' && typeof contact_id_override !== 'number') {
+        return { status: 400, error: 'start_workflow action_config.contact_id_override must be a string, number, or null' };
+      }
+    }
+    return null;
+  }
+
+  // sms / email / task / internal_function — no additional field validation.
+  return null;
+}
 
 // ─────────────────────────────────────────────────────────────
 // Template CRUD
@@ -295,6 +408,12 @@ router.post('/sequences/templates/:id/steps', jwtOrApiKey, async (req, res) => {
   if (!action_config) return res.status(400).json({ error: 'action_config is required' });
   if (!timing)        return res.status(400).json({ error: 'timing is required' });
 
+  // Slice 3.3 — action_type enum + per-type config validation
+  {
+    const v = await validateStepConfig(db, action_type, action_config);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
+
   let connection;
   try {
     connection = await db.getConnection();
@@ -351,6 +470,12 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
     return res.status(400).json({ error: 'action_type, action_config, and timing are required' });
   }
 
+  // Slice 3.3 — action_type enum + per-type config validation
+  {
+    const v = await validateStepConfig(db, action_type, action_config);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
+
   try {
     const [[step]] = await db.query(
       `SELECT id FROM sequence_steps WHERE template_id = ? AND step_number = ?`, [templateId, stepNum]
@@ -390,6 +515,31 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
   if (error_policy  !== undefined) { updates.push('error_policy = ?'); params.push(error_policy ? JSON.stringify(error_policy) : null); }
 
   if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+
+  // Slice 3.3 — validate any action_type/action_config change. If only one of
+  // the pair was supplied, load the other from the existing row so we always
+  // validate the resulting (type, config) combination, not a partial view.
+  if (action_type !== undefined || action_config !== undefined) {
+    let typeToCheck   = action_type;
+    let configToCheck = action_config;
+
+    if (typeToCheck === undefined || configToCheck === undefined) {
+      const [[existing]] = await db.query(
+        `SELECT action_type, action_config FROM sequence_steps WHERE template_id = ? AND step_number = ?`,
+        [templateId, stepNum]
+      );
+      if (!existing) return res.status(404).json({ error: 'Step not found' });
+      if (typeToCheck === undefined) typeToCheck = existing.action_type;
+      if (configToCheck === undefined) {
+        configToCheck = typeof existing.action_config === 'string'
+          ? JSON.parse(existing.action_config)
+          : existing.action_config;
+      }
+    }
+
+    const v = await validateStepConfig(db, typeToCheck, configToCheck);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
 
   params.push(templateId, stepNum);
   try {
