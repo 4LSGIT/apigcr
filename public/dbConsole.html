@@ -18,7 +18,9 @@
     --warn: #fbbf24;
   }
   html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 13px; }
-  .app { display: grid; grid-template-columns: 260px 1fr; height: 100vh; }
+  .app { display: grid; grid-template-columns: 260px 1fr; height: 100vh; transition: grid-template-columns 0.15s ease; }
+  .app.sidebar-collapsed { grid-template-columns: 0 1fr; }
+  .app.sidebar-collapsed .sidebar { overflow: hidden; }
   .sidebar { border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
   .sidebar h3 { margin: 0; padding: 10px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
   .sidebar h3 button { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
@@ -53,16 +55,20 @@
   .toolbar .hint { color: var(--muted); font-size: 11px; }
 
   .editor-wrap { border-bottom: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
-  #editor { width: 100%; min-height: 140px; max-height: 40vh; resize: vertical; background: var(--panel); color: var(--text); border: none; outline: none; padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.5; box-sizing: border-box; }
+  #editor { width: 100%; min-height: 100px; height: 120px; max-height: 40vh; resize: vertical; background: var(--panel); color: var(--text); border: none; outline: none; padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.5; box-sizing: border-box; }
 
   .status { padding: 6px 10px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--panel); }
   .status .ok { color: var(--ok); }
   .status .err { color: var(--danger); }
 
   .results { flex: 1; overflow: auto; min-height: 0; }
-  table.r { border-collapse: collapse; width: 100%; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  table.r th, table.r td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; white-space: pre-wrap; word-break: break-word; max-width: 480px; }
-  table.r th { background: var(--panel); position: sticky; top: 0; cursor: pointer; user-select: none; }
+  table.r { border-collapse: collapse; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table.r th, table.r td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
+  /* default: one-line cells with ellipsis — readable, user hovers for full value */
+  table.r th { background: var(--panel); position: sticky; top: 0; cursor: pointer; user-select: none; white-space: nowrap; }
+  table.r td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px; }
+  /* "Wrap" toggle — multi-line, break only at word boundaries */
+  table.r.wrap td { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 480px; text-overflow: clip; }
   table.r th:hover { color: var(--accent); }
   table.r tbody tr:nth-child(odd) { background: rgba(255,255,255,0.02); }
   table.r td.null { color: var(--muted); font-style: italic; }
@@ -106,8 +112,10 @@
 
   <main class="main">
     <div class="toolbar">
+      <button id="btnSidebar" title="Show/hide sidebar">☰</button>
       <button class="primary" id="btnRun">Run <span class="hint">⌘/Ctrl+⏎</span></button>
       <button id="btnExplain" title="Prepend EXPLAIN">EXPLAIN</button>
+      <button id="btnWrap" title="Wrap long cells (multi-line)">Wrap</button>
       <button id="btnCsv" disabled>Export CSV</button>
       <button id="btnHistory">History</button>
       <span class="sep"></span>
@@ -164,6 +172,7 @@ let lastRows = null;
 let lastFields = null;
 let sortState = { key: null, dir: 1 };
 let writeMode = false;
+let wrapMode  = false;
 
 // ── auth guard + user hint ───────────────────────────────────────────────────
 (function checkSU() {
@@ -206,6 +215,19 @@ editor.addEventListener("keydown", (e) => {
   }
 });
 btnRun.addEventListener("click", runQuery);
+
+// Sidebar collapse — frees up horizontal room for wide result tables.
+document.getElementById("btnSidebar").addEventListener("click", () => {
+  document.querySelector(".app").classList.toggle("sidebar-collapsed");
+});
+
+// Wrap toggle — re-renders the last result with the new mode.
+document.getElementById("btnWrap").addEventListener("click", (e) => {
+  wrapMode = !wrapMode;
+  e.currentTarget.classList.toggle("primary", wrapMode);
+  if (lastRows) renderResults(lastRows, lastFields);
+});
+
 document.getElementById("btnExplain").addEventListener("click", () => {
   const q = editor.value.trim();
   if (!q) return;
@@ -255,7 +277,7 @@ function renderResults(rows, fields) {
   }
   const cols = fields?.length ? fields.map(f => f.name) : Object.keys(rows[0]);
   const sorted = sortRows(rows, cols);
-  let html = '<table class="r"><thead><tr>';
+  let html = `<table class="r${wrapMode ? " wrap" : ""}"><thead><tr>`;
   for (const c of cols) {
     const arrow = sortState.key === c ? (sortState.dir > 0 ? " ▲" : " ▼") : "";
     html += `<th data-col="${escapeHtml(c)}">${escapeHtml(c)}${arrow}</th>`;
@@ -265,9 +287,9 @@ function renderResults(rows, fields) {
     html += "<tr>";
     for (const c of cols) {
       const v = r[c];
-      if (v === null || v === undefined) html += `<td class="null">NULL</td>`;
-      else if (typeof v === "object") html += `<td>${escapeHtml(JSON.stringify(v))}</td>`;
-      else html += `<td>${escapeHtml(String(v))}</td>`;
+      if (v === null || v === undefined) { html += `<td class="null">NULL</td>`; continue; }
+      const raw = typeof v === "object" ? JSON.stringify(v) : String(v);
+      html += `<td title="${escapeHtml(raw)}">${escapeHtml(raw)}</td>`;
     }
     html += "</tr>";
   }
