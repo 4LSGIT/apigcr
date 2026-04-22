@@ -245,15 +245,17 @@ router.get("/executions", jwtOrApiKey, async (req, res) => {
 
     const total = countRows[0].total;
 
+    // Flat envelope: { success, executions, total }. Matches the per-workflow
+    // sibling (`GET /workflows/:id/executions`) and every cross-engine list
+    // endpoint added since. Grep of the frontend (workflows.html, contact2.html,
+    // automationManager.html sub-pages) turned up no consumer of the prior
+    // `pagination: { page, limit, total, totalPages }` envelope — the single
+    // live caller (`workflows.html` executions tab) hits the per-workflow
+    // sibling, not this one. See Cookbook §3.9.
     res.json({
       success: true,
       executions: rows,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit)
-      }
+      total,
     });
   } catch (err) {
     console.error("[GET EXECUTIONS] Failed:", err);

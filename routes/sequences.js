@@ -709,6 +709,13 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
       if (!Number.isInteger(idInt) || idInt <= 0) {
         return res.status(400).json({ error: 'template_id must be a positive integer' });
       }
+      // 404 on nonexistent template rather than 500 (matches the pattern in
+      // GET /sequences/templates/:id/enrollments). Cheap single-row lookup.
+      const [[tpl]] = await db.query(
+        `SELECT id FROM sequence_templates WHERE id = ?`,
+        [idInt]
+      );
+      if (!tpl) return res.status(404).json({ error: 'Template not found' });
       const result = await enrollContactByTemplateId(db, contact_id, idInt, trigger_data);
       return res.status(201).json({ success: true, ...result });
     }

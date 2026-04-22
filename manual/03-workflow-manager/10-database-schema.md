@@ -12,8 +12,11 @@ Workflow templates.
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | int AUTO_INCREMENT | PK |
+| `active` | tinyint(1) | Default 1 |
 | `name` | varchar(100) | Required |
 | `description` | text | Optional |
+| `default_contact_id_from` | varchar(100) | Names the `init_data` key whose value stamps `workflow_executions.contact_id` at start. NULL = untied template. See [03-sequences.md](03-sequences.md) and AI-context §6 for precedence |
+| `test_input` | json | Author-provided sample `init_data` for the Test tab. NULL = no sample |
 | `created_at` | datetime | |
 | `updated_at` | datetime | ON UPDATE |
 
@@ -39,11 +42,13 @@ One row per workflow run.
 |--------|------|-------|
 | `id` | bigint AUTO_INCREMENT | PK |
 | `workflow_id` | int | FK → `workflows.id` ON DELETE RESTRICT |
+| `contact_id` | int | Nullable. Set by `resolveExecutionContactId` from the explicit override or the template's `default_contact_id_from`. Tied executions show on contact2's Automations tab |
 | `status` | enum | `pending` `active` `processing` `delayed` `completed` `completed_with_errors` `failed` `cancelled` |
 | `init_data` | json | Original start payload — never modified |
 | `variables` | json | Live variable store — updated as workflow runs |
 | `current_step_number` | int | NULL when completed |
 | `steps_executed_count` | int | Total steps run including retries |
+| `cancel_reason` | varchar(500) | Populated by `POST /executions/:id/cancel`. Required on that endpoint (min 3 chars trimmed) |
 | `created_at` / `updated_at` / `completed_at` | datetime | |
 
 Indexes: `(workflow_id, status)`, `(status)`.
@@ -75,12 +80,13 @@ Template definitions.
 |--------|------|-------|
 | `id` | int unsigned AUTO_INCREMENT | PK |
 | `name` | varchar(100) | |
-| `type` | varchar(50) | e.g. `no_show`, `lead_drip` — open string |
+| `type` | varchar(50) | **Nullable.** NULL = ID-only template (not cascade-matchable; reachable only via `template_id` on enroll). Otherwise an open string like `no_show`, `lead_drip` |
 | `appt_type_filter` | varchar(50) | NULL = all appt types |
 | `appt_with_filter` | tinyint | NULL = all staff. Matches `users.user` for cascading template selection |
 | `condition` | json | Template-level condition — cancel enrollment if fails. See [03-sequences.md](03-sequences.md) |
 | `description` | text | |
 | `active` | tinyint(1) | 1 = active |
+| `test_input` | json | Author-provided sample `trigger_data` for the Test tab. NULL = no sample |
 | `created_at` / `updated_at` | datetime | |
 
 ### `sequence_steps`
@@ -91,7 +97,7 @@ One row per step in a template.
 | `id` | int unsigned AUTO_INCREMENT | PK |
 | `template_id` | int unsigned | FK → `sequence_templates.id` ON DELETE CASCADE |
 | `step_number` | int | Unique per template |
-| `action_type` | enum | `sms` `email` `task` `internal_function` |
+| `action_type` | enum | `sms` `email` `task` `internal_function` `webhook` `start_workflow` |
 | `action_config` | json | Same shape as `workflow_steps.config` |
 | `timing` | json | When to fire. See timing types in [03-sequences.md](03-sequences.md) |
 | `condition` | json | Step-level condition — skip step if fails |
@@ -135,6 +141,100 @@ Immutable step execution log.
 | `duration_ms` | int | |
 | `scheduled_at` | datetime | When the job was scheduled to fire |
 | `executed_at` | datetime | |
+
+---
+
+## YisraHook Tables
+
+### `hooks`
+Hook definitions. Each row is one external-webhook receiver slug.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | int AUTO_INCREMENT | PK |
+| `slug` | varchar(100) | Unique. Routes `POST /hooks/:slug` |
+| `name` | varchar(255) | Human-readable label |
+| `description` | text | |
+| `auth_type` | enum | `none` `api_key` `hmac`. Default `none` |
+| `auth_config` | json | Shape depends on `auth_type` |
+| `filter_mode` | enum | `none` `conditions` `code`. Default `none` |
+| `filter_config` | json | Condition list or code string depending on mode |
+| `transform_mode` | enum | `passthrough` `mapper` `code`. Default `passthrough` |
+| `transform_config` | json | Mapper rules or code string depending on mode |
+| `active` | tinyint(1) | Default 1 |
+| `version` | int | Auto-increments on PUT |
+| `last_modified_by` | int | FK → `users.user` |
+| `capture_mode` | enum | `off` `capturing`. v1.2.1. Guarded atomic flip in `executeHook` |
+| `captured_sample` | json | Snapshot of last captured event (unified `{body,headers,query,method,meta}` shape). Truncated at 512KB. Not cleared on arm/cancel — only on a successful capture |
+| `captured_at` | datetime | Nullable. Set on successful capture |
+| `created_at` / `updated_at` | datetime | |
+
+### `hook_targets`
+Delivery targets for a hook. Many per hook, fan-out is parallel-independent.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | int AUTO_INCREMENT | PK |
+| `hook_id` | int | FK → `hooks.id` ON DELETE CASCADE |
+| `target_type` | enum | `http` `workflow` `sequence` `internal_function`. Default `http` (v1.2) |
+| `name` | varchar(255) | |
+| `position` | int | Ordering within the hook. Default 0 |
+| `method` | enum | `GET` `POST` `PUT` `PATCH` `DELETE`. Default `POST`. HTTP targets only |
+| `url` | varchar(2048) | **Nullable since v1.2** — internal targets have no URL |
+| `headers` | json | HTTP targets only |
+| `credential_id` | int | FK → `credentials.id` ON DELETE SET NULL. HTTP targets only |
+| `body_mode` | enum | `transform_output` `template`. Default `transform_output`. HTTP targets only |
+| `body_template` | text | Used when `body_mode='template'`. Supports `{{path\|transforms}}` template syntax |
+| `config` | json | Internal-target routing params. v1.2. Shape varies by `target_type` (see AI-context §16) |
+| `conditions` | json | Per-target condition evaluated against transform output |
+| `transform_mode` | enum | `passthrough` `mapper` `code`. Per-target transform layer |
+| `transform_config` | json | |
+| `active` | tinyint(1) | Default 1 |
+
+### `hook_executions`
+Per-invocation log of a hook. One row per `POST /hooks/:slug`.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | bigint AUTO_INCREMENT | PK |
+| `hook_id` | int | |
+| `slug` | varchar(100) | Denormalized for query convenience |
+| `raw_input` | json | Unified event shape. Capped at 512KB |
+| `filter_passed` | tinyint(1) | NULL = filter did not run (filtered-out OR captured) |
+| `transform_output` | json | Post-transform payload delivered to targets |
+| `status` | enum | `received` `filtered` `processing` `delivered` `partial` `failed` `captured` (v1.2.1) |
+| `error` | text | |
+| `created_at` | datetime | |
+
+### `hook_delivery_logs`
+Per-target delivery log. Many per `hook_executions` row (one per target fired).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | bigint AUTO_INCREMENT | PK |
+| `execution_id` | bigint | FK → `hook_executions.id` ON DELETE CASCADE |
+| `target_id` | int | |
+| `request_url` | varchar(2048) | `internal://workflow/N`, `internal://sequence/<type>`, etc. for internal targets |
+| `request_method` | varchar(10) | `INTERNAL` for internal targets |
+| `request_body` | json | |
+| `response_status` | int | |
+| `response_body` | text | Truncated at 10KB |
+| `status` | enum | `success` `failed`. Default `failed` |
+| `error` | text | |
+| `attempts` | int | Default 1 |
+| `created_at` | datetime | |
+
+### `credentials`
+Shared outbound auth store. HTTP hook targets and sequence-step `webhook` actions both reference this.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | int AUTO_INCREMENT | PK |
+| `name` | varchar(255) | |
+| `type` | enum | `internal` `bearer` `api_key` `basic`. Default `internal` |
+| `config` | json | Shape depends on `type` (token, user/pass pair, header-name/value, etc.) |
+| `allowed_urls` | json | URL scope list. If set, injected URLs must match |
+| `created_at` / `updated_at` | datetime | |
 
 ---
 
@@ -195,11 +295,20 @@ sequence_templates (1)
   └── sequence_enrollments (many)     ON DELETE RESTRICT
         └── sequence_step_log (many)  ON DELETE CASCADE
 
+hooks (1)
+  └── hook_targets (many)             ON DELETE CASCADE
+  └── hook_executions (many)          soft ref (no FK)
+        └── hook_delivery_logs (many) ON DELETE CASCADE
+
+credentials (1)
+  └── hook_targets (many)             ON DELETE SET NULL  (HTTP targets only)
+
 scheduled_jobs (1)
   └── job_results (many)              soft ref (no FK)
 
 contacts (1)
   └── sequence_enrollments (many)     ON DELETE RESTRICT
+  └── workflow_executions (many)      soft ref, nullable (contact-tied executions)
 ```
 
 ---

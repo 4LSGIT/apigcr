@@ -1321,9 +1321,10 @@ async function viewWorkflowExecution(id) {
     const ex = data.execution;
     const history = data.history || [];
 
-    const displayStatus = (ex.status && ex.status.startsWith('completed') && history.some(h => h.status === 'failed'))
+    const rawStatus = String(ex.status || '').toLowerCase();
+    const displayStatus = (rawStatus.startsWith('completed') && history.some(h => h.status === 'failed'))
       ? 'completed_with_errors'
-      : ex.status;
+      : rawStatus;
 
     const initDataObj  = parseJson(ex.init_data);
     const variablesObj = parseJson(ex.variables);
@@ -1348,7 +1349,17 @@ async function viewWorkflowExecution(id) {
       `;
     }).join('') : '<tr><td colspan="6" style="padding:8px;color:var(--muted);text-align:center">No steps executed.</td></tr>';
 
-    Swal.fire({
+    // Cancel-reason surface for cancelled executions (parity with contact2)
+    const cancelReasonBlock = (rawStatus === 'cancelled' && ex.cancel_reason)
+      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+           <b>Cancel reason:</b> ${esc(ex.cancel_reason)}
+         </div>`
+      : '';
+
+    // Is this execution cancellable? Same non-terminal set as contact2.
+    const isCancellable = ['active', 'processing', 'delayed'].includes(rawStatus);
+
+    const res = await Swal.fire({
       title: `Execution #${id}`,
       width: 760,
       html: `
@@ -1359,6 +1370,7 @@ async function viewWorkflowExecution(id) {
           <p style="margin-top:6px"><b>Completed:</b> ${wfExecFmtDate(ex.completed_at)}</p>
           <p style="margin-top:6px"><b>Current step:</b> ${ex.current_step_number == null ? '—' : ex.current_step_number}</p>
           <p style="margin-top:6px"><b>Steps executed:</b> ${ex.steps_executed_count ?? 0}</p>
+          ${cancelReasonBlock}
 
           ${initDataObj ? `
             <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Init Data</summary>
@@ -1388,9 +1400,58 @@ async function viewWorkflowExecution(id) {
           </table>
         </div>
       `,
+      showCancelButton: true,
+      cancelButtonText:  'Close',
+      showConfirmButton: isCancellable,
+      confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel execution',
+      confirmButtonColor: '#dc2626',
+      reverseButtons: true,   // [Cancel execution] [Close]
     });
+
+    if (res.isConfirmed && isCancellable) {
+      cancelWorkflowExecution(id, ex.workflow_name || '');
+    }
   } catch (e) {
     Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: e.message, timer: 2500, showConfirmButton: false });
+  }
+}
+
+// Workflow execution cancel — lifted from contact2's cancelContactWorkflow,
+// adapted to this sub-page's helpers (api / loadWorkflowExecutions). Reason
+// required (min 3 chars trimmed, server enforces the same validation).
+async function cancelWorkflowExecution(executionId, workflowName) {
+  if (Swal.isVisible()) Swal.close();
+
+  const result = await Swal.fire({
+    title: `Cancel execution #${executionId}?`,
+    html: workflowName
+      ? `<div style="color:#64748b;margin-bottom:4px">Workflow: <b>${esc(workflowName)}</b></div>`
+      : '',
+    input: 'text',
+    inputLabel: 'Reason (required, min 3 characters)',
+    inputPlaceholder: 'e.g. client rescheduled, workflow stuck, manual intervention',
+    inputValidator: (v) => {
+      if (!v || v.trim().length < 3) return 'Please enter a reason (min 3 characters).';
+    },
+    showCancelButton: true,
+    confirmButtonText: 'Confirm Cancel',
+    confirmButtonColor: '#dc2626',
+    reverseButtons: true,
+    showLoaderOnConfirm: true,
+    preConfirm: async (reason) => {
+      try {
+        await api(`/executions/${executionId}/cancel`, 'POST', { reason: reason.trim() });
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    },
+  });
+
+  if (result.isConfirmed && result.value === true) {
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Execution cancelled', timer: 1800, showConfirmButton: false });
+    loadWorkflowExecutions();
   }
 }
 
@@ -1561,6 +1622,7 @@ window.loadWorkflowExecutions   = loadWorkflowExecutions;
 window.wfExecPrevPage           = wfExecPrevPage;
 window.wfExecNextPage           = wfExecNextPage;
 window.viewWorkflowExecution    = viewWorkflowExecution;
+window.cancelWorkflowExecution  = cancelWorkflowExecution;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {
