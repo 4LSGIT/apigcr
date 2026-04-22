@@ -59,6 +59,7 @@
 const express = require("express");
 const router = express.Router();
 const dropbox = require("../services/dropboxService");
+const trap = require("../lib/legacyTrap");
 
 const API_KEY = process.env.API_KEY;
 
@@ -87,7 +88,7 @@ async function authenticate(req) {
 /* ======================================================
    CREATE FOLDER
 ====================================================== */
-router.post("/dropbox/create-folder", async (req, res) => {
+router.post("/dropbox/create-folder", trap("dropbox-create-folder"), async (req, res) => {
   try {
     const auth = await authenticate(req);
     if (!auth) return res.status(401).json({ error: "Unauthorized" });
@@ -106,7 +107,7 @@ router.post("/dropbox/create-folder", async (req, res) => {
 /* ======================================================
    DELETE
 ====================================================== */
-router.post("/dropbox/delete", async (req, res) => {
+router.post("/dropbox/delete", trap("dropbox-delete"), async (req, res) => {
   try {
     const auth = await authenticate(req);
     if (!auth) return res.status(401).json({ error: "Unauthorized" });
@@ -125,7 +126,7 @@ router.post("/dropbox/delete", async (req, res) => {
 /* ======================================================
    RENAME
 ====================================================== */
-router.post("/dropbox/rename", async (req, res) => {
+router.post("/dropbox/rename", trap("dropbox-rename"), async (req, res) => {
   try {
     const auth = await authenticate(req);
     if (!auth) return res.status(401).json({ error: "Unauthorized" });
@@ -144,7 +145,7 @@ router.post("/dropbox/rename", async (req, res) => {
 /* ======================================================
    MOVE
 ====================================================== */
-router.post("/dropbox/move", async (req, res) => {
+router.post("/dropbox/move", trap("dropbox-move"), async (req, res) => {
   try {
     const auth = await authenticate(req);
     if (!auth) return res.status(401).json({ error: "Unauthorized" });

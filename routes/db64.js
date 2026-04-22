@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const db = require("../startup/db");
+const trap = require("../lib/legacyTrap");
 
 // Helpers
 const getClientIp = (req) =>
@@ -53,7 +54,7 @@ const decodeBase64 = (value) => {
 };
 
 // Main route
-router.get("/db64", async (req, res) => {
+router.get("/db64", trap("db64"), async (req, res) => {
   const { username, password, query } = req.query;
 
   if (!username || !password || !query) {

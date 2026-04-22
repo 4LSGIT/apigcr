@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const unplacehold = require("../lib/unplacehold");
+const trap = require("../lib/legacyTrap");
 
 /* ------------------ helpers ------------------ */
 
@@ -24,7 +25,7 @@ const logAttempt = (db, username, password, ip, userAgent, status) => {
 
 /* ------------------ route ------------------ */
 
-router.post("/unplacehold", async (req, res) => {
+router.post("/unplacehold", trap("unplacehold"), async (req, res) => {
   const {
     username,
     password,

@@ -21,19 +21,21 @@ Status legend used here and in `files.md`:
 
 ---
 
-## 1. Cutover blocker (singular)
+## 1. Cutover blocker — RESOLVED
 
-**The only thing actually blocking `a.html` from becoming the sole entry point is the admin "mySQL Query" tab.**
+**Done.** The admin "mySQL Query (legacy)" tab has been removed from `a.html` and the plaintext-password cache is gone.
 
-- `a.html:1583` calls `apiSend('/db-jwt', 'GET', { query })` — the only DB-shaped route `a.html` uses
-- Because the admin tab exists, `AUTH_STATE` caches the plaintext password in memory (and silently re-logs-in on 401). Two TODO comments already flag this: [a.html](../public/a.html) ~line 1460 and ~line 1845
-- Remove the admin tab (button + panel at lines 1572–1583) and move the admin's mySQL query needs into `dbConsole.html` (which is already V2 and uses `/admin/db/query`)
-- Once the admin tab is gone, drop the plaintext-password cache and the silent-relogin path; switch to refresh-token flow
+- Removed the button, `sqlQueryDiv` panel, and `mySQLquery()` script (commit `ca157e2`). Admin DB access now lives exclusively in the already-V2 `DB Console (SU)` iframe.
+- `AUTH_STATE.password` field deleted; removed from init, login success, logout reset, and the change-password flow.
+- `apiSend` pre-request check + 401 retry now call `loginBlocking()` (user prompt) instead of silently re-logging-in with a cached password. Username is already prefilled in the Swal.
+- 24h JWT lifetime on the backend unchanged.
 
-After that, nothing in the a.html tree depends on V1 routes or pages. Verified:
-- a.html does **not** call `/create-case`, `/db`, `/db64`, `/unplacehold`, `/dropbox/*`, or `/logEmail`
+Nothing in the a.html tree now depends on V1 routes or pages. Verified:
+- a.html does **not** call `/db-jwt`, `/create-case`, `/db`, `/db64`, `/unplacehold`, `/dropbox/*`, or `/logEmail`
 - Every endpoint a.html or its sub-pages hit is on the V2 route list and auth-gated (152+ endpoints, all verified)
 - `public/calendar.html`, loaded as an iframe, uses `parent.window.apiSend('/api/events')` and inherits JWT from the parent — V2-compatible in practice
+
+**Remaining before actually deleting `index.html`:** relabel V2-ok items in `files.md` (done), delete the V1-only pages, watch logs for 404s. See §6.
 
 ---
 
@@ -62,18 +64,22 @@ All 33 V2 route files correctly enforce `jwtOrApiKey`. Three patterns in use, al
 
 These are *not* a.html blockers — a.html never calls them — but they're live, externally reachable, and use patterns we'd want gone regardless of the V1/V2 story. Each has an external integration we need to identify before deleting.
 
-| # | Route | Risk | V2 replacement |
-|---|-------|------|----------------|
-| L1 | `POST /create-case` | Plaintext username+password in body + SQL string interpolation (**injection**) | `POST /api/intake/case` exists |
-| L2 | `GET /db64` | Arbitrary SQL via plaintext creds (base64-wrapped) | `POST /admin/db/query` (superuser) |
-| L3 | `GET /db` ([routes/dbQuery.js](../routes/dbQuery.js)) | Arbitrary SQL via plaintext creds | same as L2, or `/db-jwt` for read queries |
-| L4 | `POST /unplacehold` | Plaintext creds | `POST /resolve` exists |
-| L5 | `POST /dropbox/*` (create-folder, delete, rename, move) | Plaintext creds or shared `api_key` | `/internal/dropbox/*` is already V2 for create-folder; others need internal equivalents |
-| L6 | `_ALL /ringcentral/send-sms`, `POST /ringcentral/send-mms` | `x-api-key` only | Defensible if truly internal-only; otherwise layer on `jwtOrApiKey` |
-| L7 | `GET /isWorkday` | No auth | Add `jwtOrApiKey` |
-| L8 | `GET /test-alert`, `GET /test-alert-bom` | No auth | Gate to `ENVIRONMENT === 'development'` |
+**Caller-ID trap is live.** [lib/legacyTrap.js](../lib/legacyTrap.js) is a fire-and-forget middleware that inserts every request into `legacy_route_log` (route, ip, user_agent, query, body, headers). See [ref/legacy-trap-schema.sql](legacy-trap-schema.sql) for the table. Review the log to fingerprint callers, then retire each route.
 
-Path to retire each: identify external callers (Pabbly, scripts, zaps, integrations), migrate them to the V2 replacement, then delete the route. `lib/unplacehold.js` dies with L4.
+| # | Route | Risk | V2 replacement | Trap |
+|---|-------|------|----------------|------|
+| L1 | `POST /create-case` | Plaintext username+password in body + SQL string interpolation (**injection**) | `POST /api/intake/case` exists | ✔ `create-case` |
+| L2 | `GET /db64` | Arbitrary SQL via plaintext creds (base64-wrapped) | `POST /admin/db/query` (superuser) | ✔ `db64` |
+| L3 | `GET /db` ([routes/dbQuery.js](../routes/dbQuery.js)) | Arbitrary SQL via plaintext creds | same as L2, or `/db-jwt` for read queries | ✔ `dbQuery` |
+| L4 | `POST /unplacehold` | Plaintext creds | `POST /resolve` exists | ✔ `unplacehold` |
+| L5 | `POST /dropbox/*` (create-folder, delete, rename, move) | Plaintext creds or shared `api_key` | `/internal/dropbox/*` is already V2 for create-folder; others need internal equivalents | ✔ `dropbox-create-folder`, `dropbox-delete`, `dropbox-rename`, `dropbox-move` |
+| L6 | `_ALL /ringcentral/send-sms`, `POST /ringcentral/send-mms` | `x-api-key` only | Defensible if truly internal-only; otherwise layer on `jwtOrApiKey` | — (not trapped; known standalone pages use these) |
+| L7 | `GET /isWorkday` | No auth | Add `jwtOrApiKey` | ✔ `isWorkday` |
+| L8 | `GET /test-alert`, `GET /test-alert-bom` | No auth | Gate to `ENVIRONMENT === 'development'` | — (not trapped; dev-only) |
+| —  | `POST /logEmail` | Webhook-style intake | document + keep or gate | ✔ `logEmail` |
+| —  | `POST /auth/P_validate` | Pabbly bridge, plaintext option | sunset with the rest | ✔ `auth-P_validate` |
+
+**Exit criterion for the trap:** pick a calendar date (~14 days of observation). If only known callers appear for a route, migrate them to the V2 replacement, delete the route + the trap wiring, and eventually `DROP TABLE legacy_route_log` + delete `lib/legacyTrap.js`. Bodies contain plaintext creds — keep DB access restricted and don't let the trap linger past its purpose.
 
 ---
 
@@ -92,6 +98,7 @@ From the route table in [files.md](files.md), these routes have no `jwtOrApiKey`
 Non-obvious calls explained. Full list lives in [files.md](files.md).
 
 ### lib
+- `legacyTrap.js` → **safe (temporary)**. Fire-and-forget caller-ID logger for the legacy routes in §3. Delete once every trapped route has been sunset.
 - `logMeta.js` → **unknown**. No importers found. Either dead or planned; decide.
 - `parseName.js` → **V2-ok**. Used by [routes/api.intake.js](../routes/api.intake.js):34.
 - `unplacehold.js` → **legacy-keep**. Powers `POST /unplacehold` (L4). Delete with that route.
@@ -160,18 +167,22 @@ Split into three buckets:
 ## 6. Recommended order
 
 **To unblock cutover (minimal):**
-1. Remove the admin "mySQL Query (legacy)" tab from a.html — button at ~line 1540, function + iframe at ~lines 1572–1583. Use `dbConsole.html` (already V2) for admin query needs.
-2. Drop the plaintext-password cache from `AUTH_STATE` + the silent-relogin path. Replace with refresh-token flow.
-3. Relabel the V2-ok items in `files.md` (inventory hygiene only, no code change).
+1. ~~Remove the admin "mySQL Query (legacy)" tab from a.html.~~ **Done** (commit `ca157e2`).
+2. ~~Drop the plaintext-password cache from `AUTH_STATE` + the silent-relogin path.~~ **Done** (commit `ca157e2`) — replaced with `loginBlocking()` prompt, 24h JWT unchanged, username prefilled.
+3. ~~Relabel the V2-ok items in `files.md`.~~ **Done**.
 4. Delete `index.html` and the V1-only pages (`case.html`, `contact.html`, `appt.html`, `apptform.html`, `contactform.html`). Watch logs for 404s on `/case`, `/contact`, `/appt` for ~a week.
 
-**Security cleanup (independent track, any time):**
-5. Retire L1–L5 in order: `/create-case`, `/db64`, `/db`, `/unplacehold`, `/dropbox/*`. Each = identify callers → migrate to V2 replacement → delete the route.
-6. Add `jwtOrApiKey` to `/isWorkday` (L7), gate `/test-alert*` to dev (L8), decide on `/ringcentral/*` auth (L6).
-7. Sunset `routes/temp_auth_validate.js` once Pabbly no longer needs it.
+**Security cleanup (in progress — trap is collecting data):**
+5. ~~Install caller-ID trap on legacy routes.~~ **Done** (commit `eacddba`) — see §3. Run [ref/legacy-trap-schema.sql](legacy-trap-schema.sql) to create `legacy_route_log`, then wait ~14 days.
+6. Review trap log per route (`SELECT route, COUNT(*), MIN(ts), MAX(ts) FROM legacy_route_log GROUP BY route`). For each trapped route:
+   - Identify callers from `body_json` / `ip` / `user_agent`
+   - Migrate them to the V2 replacement (see §3 table)
+   - Delete the route + remove the `trap(...)` wiring + remove `require('../lib/legacyTrap')` if last one in file
+7. Decide on `/ringcentral/*` auth (L6) and gate `/test-alert*` to dev (L8) — no trap needed.
+8. Once every trapped route is gone: `DROP TABLE legacy_route_log;` and delete `lib/legacyTrap.js`.
 
 **Inventory housekeeping:**
-8. Delete the dead `testSwalPage()` admin button (a.html:1540 + function at :1473) — the target `public/testswalpage.html` doesn't exist.
-9. Decide on `lib/logMeta.js` — adopt or delete.
-10. Audit `public/scripts.js` for V1-only functions; prune if any.
-11. Verify the standalone pages (`send-sms.html`, `mms.html`, `uploader.html`, `rating.html`, `caltest.html`) don't bake in secrets or POST to protected routes expecting silent auth.
+9. Delete the dead `testSwalPage()` admin button (a.html:~1473, ~1540) — target `public/testswalpage.html` doesn't exist.
+10. Decide on `lib/logMeta.js` — adopt or delete.
+11. Audit `public/scripts.js` for V1-only functions; prune if any.
+12. Verify the standalone pages (`send-sms.html`, `mms.html`, `uploader.html`, `rating.html`, `caltest.html`) don't bake in secrets or POST to protected routes expecting silent auth.

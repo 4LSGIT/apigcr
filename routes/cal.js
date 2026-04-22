@@ -11,12 +11,13 @@ const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
 const calendar        = require('../services/calendarService');
+const trap            = require('../lib/legacyTrap');
 
 // ─────────────────────────────────────────────────────────────
 // GET /isWorkday?date=YYYY-MM-DDTHH:mm:ss
 // Unchanged behaviour from original cal.js — existing callers unaffected.
 // ─────────────────────────────────────────────────────────────
-router.get('/isWorkday', async (req, res) => {
+router.get('/isWorkday', trap('isWorkday'), async (req, res) => {
   const { date } = req.query;
 
   if (!date) {

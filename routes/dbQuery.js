@@ -6,6 +6,7 @@ const data = await response.json();
 const express = require("express");
 const router = express.Router();
 const db = require("../startup/db");
+const trap = require("../lib/legacyTrap");
 // Helpers
 const getClientIp = (req) =>
   req.headers["x-forwarded-for"]?.split(",").shift() ||
@@ -32,7 +33,7 @@ const logAttempt = async (username, password, ip, userAgent, queries, authStatus
   }
 };
 // Main route
-router.get("/db", async (req, res) => {
+router.get("/db", trap("dbQuery"), async (req, res) => {
   const { username, password, query } = req.query;
   if (!username || !password || !query) {
     return res.status(400).json({ error: "Missing required parameters" });

@@ -22,20 +22,21 @@
 
 ---
 
-## lib (10)
+## lib (11)
 
-| File                       | Status     | Note |
-| -------------------------- | ---------- | ---- |
-| lib/auth.jwtOrApiKey.js    | V2         | |
-| lib/auth.superuser.js      | V2         | |
-| lib/credentialInjection.js | V2         | |
-| lib/internal_functions.js  | V2         | |
-| lib/job_executor.js        | V2         | |
-| lib/logMeta.js             | unknown    | no callers found — verify or delete |
-| lib/parseName.js           | V2-ok      | used by routes/api.intake.js:34 |
-| lib/sequenceEngine.js      | V2         | |
-| lib/unplacehold.js         | legacy-keep| dies with routes/unplacehold.js (B4) |
-| lib/workflow_engine.js     | V2         | |
+| File                       | Status          | Note |
+| -------------------------- | --------------- | ---- |
+| lib/auth.jwtOrApiKey.js    | V2              | |
+| lib/auth.superuser.js      | V2              | |
+| lib/credentialInjection.js | V2              | |
+| lib/internal_functions.js  | V2              | |
+| lib/job_executor.js        | V2              | |
+| lib/legacyTrap.js          | safe (temp)     | caller-ID logger for §3 legacy routes; delete with `legacy_route_log` |
+| lib/logMeta.js             | unknown         | no callers found — verify or delete |
+| lib/parseName.js           | V2-ok           | used by routes/api.intake.js:34 |
+| lib/sequenceEngine.js      | V2              | |
+| lib/unplacehold.js         | legacy-keep     | dies with routes/unplacehold.js (L4) |
+| lib/workflow_engine.js     | V2              | |
 
 ---
 
@@ -159,13 +160,13 @@
 | routes/auth.login.js          | V2              | |
 | routes/auth.password.js       | V2              | |
 | routes/auth.profile.js        | V2              | |
-| routes/cal.js                 | V2              | /isWorkday is public — add jwtOrApiKey (L7) |
+| routes/cal.js                 | V2              | /isWorkday is public — add jwtOrApiKey (L7) · **TRAP:isWorkday** |
 | routes/campaign.js            | V2              | |
-| routes/create-case.js         | needs-migration | **L1** — plaintext creds + SQL injection. Replace with POST /api/intake/case |
-| routes/db.jwt.js              | V2-ok           | jwtOrApiKey on /db-jwt; used by a.html admin tab (remove per §1) |
-| routes/db64.js                | legacy-remove   | **L2** — plaintext creds + arbitrary SQL |
-| routes/dbQuery.js             | legacy-keep     | **L3** — /db plaintext creds + arbitrary SQL; delete after callers move |
-| routes/dropbox.js             | legacy-keep     | **L5** — plaintext/api_key. Target: delete once callers use /internal/dropbox/* |
+| routes/create-case.js         | needs-migration | **L1** — plaintext creds + SQL injection. Replace with POST /api/intake/case · **TRAP:create-case** |
+| routes/db.jwt.js              | V2-ok           | jwtOrApiKey on /db-jwt; a.html admin tab removed (§1 done) |
+| routes/db64.js                | legacy-remove   | **L2** — plaintext creds + arbitrary SQL · **TRAP:db64** |
+| routes/dbQuery.js             | legacy-keep     | **L3** — /db plaintext creds + arbitrary SQL; delete after callers move · **TRAP:dbQuery** |
+| routes/dropbox.js             | legacy-keep     | **L5** — plaintext/api_key. Delete once callers use /internal/dropbox/* · **TRAP:dropbox-{create-folder,delete,rename,move}** |
 | routes/functions.js           | legacy-keep     | /date, /myip, /parseName utilities |
 | routes/internal.js            | V2              | |
 | routes/internal/dropbox.js    | V2              | |
@@ -174,7 +175,7 @@
 | routes/internal/mms.js        | V2              | |
 | routes/internal/sequence.js   | V2              | |
 | routes/internal/sms.js        | V2              | |
-| routes/logs.js                | legacy-keep     | /logEmail email-relay webhook intake |
+| routes/logs.js                | legacy-keep     | /logEmail email-relay webhook intake · **TRAP:logEmail** |
 | routes/manuals.js             | V2              | |
 | routes/pages.js               | legacy-keep     | trivial static routes; prune individually if unused |
 | routes/process_jobs.js        | V2              | |
@@ -183,9 +184,9 @@
 | routes/scheduled_jobs.js      | V2              | |
 | routes/sequences.js           | V2              | |
 | routes/temp.jwt.js            | V2              | |
-| routes/temp_auth_validate.js  | legacy-keep     | Pabbly bridge (JWT or plaintext creds); sunset with the rest |
+| routes/temp_auth_validate.js  | legacy-keep     | Pabbly bridge (JWT or plaintext creds); sunset with the rest · **TRAP:auth-P_validate** |
 | routes/test_wf_advance.js     | V2              | |
-| routes/unplacehold.js         | legacy-keep     | **L4** — plaintext creds. Replace with POST /resolve |
+| routes/unplacehold.js         | legacy-keep     | **L4** — plaintext creds. Replace with POST /resolve · **TRAP:unplacehold** |
 | routes/upload.js              | V2-ok           | |
 | routes/workflows.js           | V2              | |
 
@@ -197,10 +198,14 @@
 
 ---
 
-# Cutover blocker & loose ends in a.html
+# a.html loose ends
 
-- **Cutover blocker (see review.md §1):** Admin "mySQL Query (legacy)" tab at a.html:1540 + panel/iframe at ~:1572–1583 is the only a.html reference to a DB-shaped route (`/db-jwt`). Remove it, then drop the plaintext-password cache in `AUTH_STATE` (TODO comments at ~:1460 and ~:1845).
-- **Dead admin button:** `testSwalPage()` at a.html:1473 loads `/testswalpage.html` which does not exist. Delete button at :1540 and function at :1473.
+- ~~**Cutover blocker:** admin "mySQL Query (legacy)" tab + plaintext-password cache in `AUTH_STATE`.~~ **Resolved** in commit `ca157e2` (see review.md §1).
+- **Dead admin button:** `testSwalPage()` at a.html:~1473 loads `/testswalpage.html` which does not exist. Delete button (~line 1540) and function (~line 1473).
+
+# Legacy-trap status
+
+Caller-ID middleware ([lib/legacyTrap.js](../lib/legacyTrap.js)) is wired into 12 endpoints across 8 routes (see **TRAP:** markers above). Schema at [legacy-trap-schema.sql](legacy-trap-schema.sql). Review workflow and exit criterion in review.md §3 and §6.
 
 ---
 

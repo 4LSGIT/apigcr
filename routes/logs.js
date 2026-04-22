@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const trap = require("../lib/legacyTrap");
 
 function dateNow() {
   const now = new Date();
@@ -26,7 +27,7 @@ function dateNow() {
   }
 }
 
-router.post("/logEmail", async (req, res) => {
+router.post("/logEmail", trap("logEmail"), async (req, res) => {
   const db = req.db;
   let { to, from, subject, body_plain, attachments, messageID } = req.body;
 
