@@ -9,15 +9,13 @@
 // Endpoints:
 //   POST   /admin/db/query              body { query, allowWrite }
 //   GET    /admin/db/schema             -> { tables: [...] }
-//   POST   /admin/db/schema/snapshot    writes ref/schema-YYYYMMDD-HHMMSS.sql
+//   GET    /admin/db/schema.sql         downloads schema-YYYYMMDD-HHMMSS.sql (no data)
 //   GET    /admin/db/saved-queries
 //   POST   /admin/db/saved-queries      body { name, query }
 //   PUT    /admin/db/saved-queries/:id  body { name, query }
 //   DELETE /admin/db/saved-queries/:id
 
 const express = require("express");
-const path    = require("path");
-const fs      = require("fs/promises");
 const { superuserOnly, auditDbConsole } = require("../lib/auth.superuser");
 
 const router = express.Router();
@@ -219,10 +217,11 @@ router.get("/admin/db/schema", ...superuserOnly, async (req, res) => {
   }
 });
 
-// ── POST /admin/db/schema/snapshot ───────────────────────────────────────────
-// Writes a CREATE-TABLE-only schema dump to ref/schema-YYYYMMDD-HHMMSS.sql.
-// Uses SHOW CREATE TABLE so the output matches MySQL's own rendering.
-router.post("/admin/db/schema/snapshot", ...superuserOnly, async (req, res) => {
+// ── GET /admin/db/schema.sql ─────────────────────────────────────────────────
+// Streams a CREATE-TABLE-only schema dump as an attachment (no disk write —
+// this runs on Cloud Run, which has an ephemeral filesystem). Uses
+// SHOW CREATE TABLE so the output matches MySQL's own rendering.
+router.get("/admin/db/schema.sql", ...superuserOnly, async (req, res) => {
   const started = Date.now();
   try {
     const [[{ db }]] = await req.db.query("SELECT DATABASE() AS db");
@@ -235,7 +234,7 @@ router.post("/admin/db/schema/snapshot", ...superuserOnly, async (req, res) => {
     const parts = [
       `-- Schema snapshot for \`${db}\``,
       `-- Generated: ${new Date().toISOString()}`,
-      `-- Source: /admin/db/schema/snapshot`,
+      `-- Source: GET /admin/db/schema.sql`,
       `-- Contains CREATE TABLE statements only (no data).`,
       ``,
     ];
@@ -250,23 +249,23 @@ router.post("/admin/db/schema/snapshot", ...superuserOnly, async (req, res) => {
       parts.push(``);
     }
 
-    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 15); // YYYYMMDDHHMMSS -> trim to 15
-    // stamp becomes "YYYYMMDDHHMMSS" — reformat to YYYYMMDD-HHMMSS for readability
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "");
     const pretty = `${stamp.slice(0, 8)}-${stamp.slice(8, 14)}`;
     const fileName = `schema-${pretty}.sql`;
-    const refDir = path.join(__dirname, "..", "ref");
-    await fs.mkdir(refDir, { recursive: true });
-    const filePath = path.join(refDir, fileName);
-    await fs.writeFile(filePath, parts.join("\n"), "utf8");
+    const body = parts.join("\n");
 
+    // Await the audit BEFORE sending so we maintain the "never lose a log" invariant.
     await auditDbConsole(req.db, {
       userId: req.auth.userId, username: req.auth.username,
       route: req.originalUrl, method: req.method, readOnlyMode: true,
       status: "success", rowCount: tables.length, durationMs: Date.now() - started,
       ip: ipOf(req), userAgent: req.headers["user-agent"] || "unknown",
-      queryText: `snapshot -> ${fileName}`,
+      queryText: `schema.sql download (${tables.length} tables, ${body.length} bytes)`,
     });
-    res.json({ ok: true, file: `ref/${fileName}`, tables: tables.length });
+
+    res.set("Content-Type", "application/sql; charset=utf-8");
+    res.set("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.send(body);
   } catch (err) {
     await auditDbConsole(req.db, {
       userId: req.auth.userId, username: req.auth.username,

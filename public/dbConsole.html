@@ -88,7 +88,7 @@
     <h3>
       <span>Schema</span>
       <span>
-        <button id="btnSnapshot" title="Write CREATE TABLEs to /ref/schema-...sql">Snapshot → ref/</button>
+        <button id="btnSnapshot" title="Download schema (CREATE TABLE only, no data)">Download schema.sql</button>
         <button id="btnReloadSchema" title="Reload schema">↻</button>
       </span>
     </h3>
@@ -357,14 +357,36 @@ async function loadSchema() {
   }
 }
 
-// ── snapshot ─────────────────────────────────────────────────────────────────
+// ── schema download ──────────────────────────────────────────────────────────
+// apiSend parses JSON, which won't work for a binary/text download, so we
+// fetch directly with the parent's JWT.
 document.getElementById("btnSnapshot").addEventListener("click", async () => {
-  setStatus("Writing snapshot…");
+  setStatus("Generating schema…");
   try {
-    const res = await api("/admin/db/schema/snapshot", "POST");
-    setStatus(`<span class="ok">Snapshot written:</span> ${escapeHtml(res.file)} (${res.tables} tables)`);
+    const token = localStorage.getItem("jwt") || P?.AUTH_STATE?.jwt;
+    if (!token) throw new Error("No JWT available — reload the admin page");
+    const res = await fetch("/admin/db/schema.sql", {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`;
+      try { msg = (await res.json()).error || msg; } catch {}
+      if (res.status === 401) msg = "Session expired — reload the admin page";
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const match = /filename="?([^";]+)"?/.exec(disposition);
+    const filename = match?.[1] || `schema-${new Date().toISOString().replace(/[:.]/g, "-")}.sql`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    setStatus(`<span class="ok">Downloaded:</span> ${escapeHtml(filename)} (${blob.size.toLocaleString()} bytes)`);
   } catch (err) {
-    setStatus(`<span class="err">Snapshot failed:</span> ${escapeHtml(err.message)}`);
+    setStatus(`<span class="err">Download failed:</span> ${escapeHtml(err.message)}`);
   }
 });
 
