@@ -22,6 +22,12 @@ app.use(
       } else if (path.endsWith(".css")) {
         res.set("Content-Type", "text/css");
       }
+      // HTML pages (and the catch-all /:page route below) must revalidate
+      // every load — iframes are especially prone to serving stale copies,
+      // and we update these files frequently.
+      if (path.endsWith(".html")) {
+        res.set("Cache-Control", "no-cache, must-revalidate");
+      }
     },
   })
 );
