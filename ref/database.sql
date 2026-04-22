@@ -2378,6 +2378,41 @@ ALTER TABLE `workflow_execution_steps`
 --
 ALTER TABLE `workflow_steps`
   ADD CONSTRAINT `fk_workflow_steps_workflow` FOREIGN KEY (`workflow_id`) REFERENCES `workflows` (`id`) ON DELETE CASCADE;
+
+-- --------------------------------------------------------
+-- Admin DB console (routes/admin.dbConsole.js)
+-- These are also auto-created at runtime via CREATE TABLE IF NOT EXISTS.
+-- --------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS `admin_db_console_log` (
+  `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `user_id` int DEFAULT NULL,
+  `username` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `route` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `method` varchar(10) COLLATE utf8mb4_general_ci NOT NULL,
+  `query_text` mediumtext COLLATE utf8mb4_general_ci,
+  `read_only_mode` tinyint(1) NOT NULL DEFAULT 1,
+  `status` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `error_message` text COLLATE utf8mb4_general_ci,
+  `row_count` int DEFAULT NULL,
+  `duration_ms` int DEFAULT NULL,
+  `ip_address` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY `idx_admin_db_console_log_user` (`user_id`,`created_at`),
+  KEY `idx_admin_db_console_log_status` (`status`,`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS `admin_saved_queries` (
+  `id` int NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  `user_id` int NOT NULL,
+  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
+  `query_text` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY `idx_admin_saved_queries_user` (`user_id`,`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

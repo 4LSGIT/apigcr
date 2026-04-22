@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DB Console</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161a22;
+    --panel-2: #1d2230;
+    --border: #2a3040;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+    --accent: #6ea8fe;
+    --danger: #ff6b6b;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+  }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, Segoe UI, Roboto, sans-serif; font-size: 13px; }
+  .app { display: grid; grid-template-columns: 260px 1fr; height: 100vh; }
+  .sidebar { border-right: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  .sidebar h3 { margin: 0; padding: 10px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .sidebar h3 button { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
+  .sidebar h3 button:hover { color: var(--text); border-color: var(--accent); }
+  .sidebar .section { flex: 1; overflow-y: auto; min-height: 0; }
+  .sidebar .section.collapsed { flex: 0 0 auto; max-height: 32px; overflow: hidden; }
+  .table-list { padding: 4px 0; }
+  .table-row { padding: 4px 10px 4px 20px; cursor: pointer; border-left: 2px solid transparent; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .table-row:hover { background: var(--panel-2); border-left-color: var(--accent); }
+  .table-row .count { float: right; color: var(--muted); font-size: 10px; }
+  .cols { padding: 2px 0 6px 28px; display: none; }
+  .cols.open { display: block; }
+  .col { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); padding: 1px 6px; cursor: pointer; }
+  .col:hover { color: var(--text); }
+  .col .k { color: var(--warn); }
+  .col .t { color: #82c0ff; margin-left: 6px; }
+  .saved-list { padding: 4px 0; }
+  .saved-item { padding: 4px 10px 4px 12px; cursor: pointer; display: flex; justify-content: space-between; font-size: 12px; border-left: 2px solid transparent; }
+  .saved-item:hover { background: var(--panel-2); border-left-color: var(--ok); }
+  .saved-item .x { color: var(--muted); font-size: 11px; padding: 0 4px; }
+  .saved-item .x:hover { color: var(--danger); }
+
+  .main { display: flex; flex-direction: column; min-width: 0; }
+  .toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .toolbar button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 12px; }
+  .toolbar button:hover { border-color: var(--accent); }
+  .toolbar button.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
+  .toolbar button.primary:hover { filter: brightness(1.08); }
+  .toolbar button.danger-toggle { border-color: var(--danger); color: var(--danger); }
+  .toolbar button.danger-toggle.active { background: var(--danger); color: #fff; }
+  .toolbar .sep { flex: 1; }
+  .toolbar .hint { color: var(--muted); font-size: 11px; }
+
+  .editor-wrap { border-bottom: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+  #editor { width: 100%; min-height: 140px; max-height: 40vh; resize: vertical; background: var(--panel); color: var(--text); border: none; outline: none; padding: 10px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.5; box-sizing: border-box; }
+
+  .status { padding: 6px 10px; font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--panel); }
+  .status .ok { color: var(--ok); }
+  .status .err { color: var(--danger); }
+
+  .results { flex: 1; overflow: auto; min-height: 0; }
+  table.r { border-collapse: collapse; width: 100%; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table.r th, table.r td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; white-space: pre-wrap; word-break: break-word; max-width: 480px; }
+  table.r th { background: var(--panel); position: sticky; top: 0; cursor: pointer; user-select: none; }
+  table.r th:hover { color: var(--accent); }
+  table.r tbody tr:nth-child(odd) { background: rgba(255,255,255,0.02); }
+  table.r td.null { color: var(--muted); font-style: italic; }
+  .empty { padding: 20px; color: var(--muted); text-align: center; }
+
+  /* history drawer */
+  .history { border-top: 1px solid var(--border); background: var(--panel); max-height: 30%; overflow: auto; display: none; }
+  .history.open { display: block; }
+  .history .h { padding: 6px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .history .h button { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
+  .hist-item { padding: 4px 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; cursor: pointer; border-bottom: 1px dotted var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hist-item:hover { background: var(--panel-2); color: var(--accent); }
+
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 14px; min-width: 340px; }
+  dialog input { width: 100%; padding: 6px 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; box-sizing: border-box; }
+  dialog .actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
+  dialog button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <h3>
+      <span>Schema</span>
+      <span>
+        <button id="btnSnapshot" title="Write CREATE TABLEs to /ref/schema-...sql">Snapshot → ref/</button>
+        <button id="btnReloadSchema" title="Reload schema">↻</button>
+      </span>
+    </h3>
+    <div class="section" id="schemaSection">
+      <div class="table-list" id="tableList"><div class="empty">Loading…</div></div>
+    </div>
+    <h3>
+      <span>Saved Queries</span>
+      <button id="btnSaveQuery">+ Save current</button>
+    </h3>
+    <div class="section" id="savedSection" style="max-height: 30%;">
+      <div class="saved-list" id="savedList"><div class="empty">—</div></div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="toolbar">
+      <button class="primary" id="btnRun">Run <span class="hint">⌘/Ctrl+⏎</span></button>
+      <button id="btnExplain" title="Prepend EXPLAIN">EXPLAIN</button>
+      <button id="btnCsv" disabled>Export CSV</button>
+      <button id="btnHistory">History</button>
+      <span class="sep"></span>
+      <button id="btnWriteToggle" class="danger-toggle" title="Toggle write mode">🔒 Read-only</button>
+      <span class="hint" id="userHint"></span>
+    </div>
+
+    <div class="editor-wrap">
+      <textarea id="editor" spellcheck="false" placeholder="SELECT 1;   -- Ctrl/Cmd+Enter to run"></textarea>
+    </div>
+
+    <div class="status" id="status">Ready.</div>
+
+    <div class="results" id="results"><div class="empty">Run a query.</div></div>
+
+    <div class="history" id="historyPanel">
+      <div class="h">
+        <span>Local history (this browser)</span>
+        <button id="btnClearHistory">Clear</button>
+      </div>
+      <div id="historyList"></div>
+    </div>
+  </main>
+</div>
+
+<dialog id="nameDialog">
+  <form method="dialog" id="nameForm">
+    <label style="display:block; font-size:12px; color:var(--muted); margin-bottom:6px;">Save query as…</label>
+    <input id="nameInput" required maxlength="120" placeholder="e.g. Active users last 7d">
+    <div class="actions">
+      <button value="cancel">Cancel</button>
+      <button value="ok" class="primary" style="background:var(--accent); color:#001;">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+// ── parent-bridge auth (same pattern as featureRequests.html) ────────────────
+const P = window.parent;
+function api(endpoint, method = "GET", payload = null) {
+  if (!P || !P.apiSend) throw new Error("This page must be loaded inside the admin app.");
+  return P.apiSend(endpoint, method, payload);
+}
+
+const editor   = document.getElementById("editor");
+const status_  = document.getElementById("status");
+const results  = document.getElementById("results");
+const btnWrite = document.getElementById("btnWriteToggle");
+const btnCsv   = document.getElementById("btnCsv");
+const btnRun   = document.getElementById("btnRun");
+const userHint = document.getElementById("userHint");
+
+let lastRows = null;
+let lastFields = null;
+let sortState = { key: null, dir: 1 };
+let writeMode = false;
+
+// ── auth guard + user hint ───────────────────────────────────────────────────
+(function checkSU() {
+  try {
+    const token = localStorage.getItem("jwt") || P?.AUTH_STATE?.jwt;
+    if (!token) throw new Error("no token");
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (payload.user_auth !== "authorized - SU") {
+      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Superuser access required.</div>';
+      return;
+    }
+    userHint.textContent = `${payload.username || payload.sub} · SU`;
+  } catch (e) {
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Not authenticated.</div>';
+  }
+})();
+
+// ── write toggle ─────────────────────────────────────────────────────────────
+btnWrite.addEventListener("click", () => {
+  if (!writeMode) {
+    if (!confirm("Enable WRITE mode?\n\nYou will be able to run INSERT/UPDATE/DELETE/DROP/ALTER.\nEvery query is audit-logged to admin_db_console_log.")) return;
+    writeMode = true;
+    btnWrite.textContent = "⚠️ WRITES ON";
+    btnWrite.classList.add("active");
+  } else {
+    writeMode = false;
+    btnWrite.textContent = "🔒 Read-only";
+    btnWrite.classList.remove("active");
+  }
+});
+
+// ── editor keybindings ───────────────────────────────────────────────────────
+editor.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); runQuery(); return; }
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const start = editor.selectionStart, end = editor.selectionEnd;
+    editor.value = editor.value.slice(0, start) + "    " + editor.value.slice(end);
+    editor.selectionStart = editor.selectionEnd = start + 4;
+  }
+});
+btnRun.addEventListener("click", runQuery);
+document.getElementById("btnExplain").addEventListener("click", () => {
+  const q = editor.value.trim();
+  if (!q) return;
+  editor.value = /^explain\s/i.test(q) ? q : "EXPLAIN " + q;
+  runQuery();
+});
+
+// ── run ──────────────────────────────────────────────────────────────────────
+async function runQuery() {
+  const query = editor.value.trim();
+  if (!query) return;
+  setStatus("Running…");
+  btnRun.disabled = true;
+  const t0 = performance.now();
+  try {
+    const res = await api("/admin/db/query", "POST", { query, allowWrite: writeMode });
+    const ms = Math.round(performance.now() - t0);
+    lastRows = res.rows;
+    lastFields = res.fields;
+    sortState = { key: null, dir: 1 };
+    renderResults(res.rows, res.fields);
+    setStatus(`<span class="ok">OK</span> · ${res.rowCount ?? 0} row(s) · ${res.durationMs ?? ms} ms`);
+    btnCsv.disabled = !Array.isArray(res.rows) || res.rows.length === 0;
+    pushHistory(query);
+  } catch (err) {
+    lastRows = null;
+    btnCsv.disabled = true;
+    results.innerHTML = `<div class="empty" style="color:var(--danger);">${escapeHtml(err.message || String(err))}</div>`;
+    setStatus(`<span class="err">Error:</span> ${escapeHtml(err.message || String(err))}`);
+  } finally {
+    btnRun.disabled = false;
+  }
+}
+
+function setStatus(html) { status_.innerHTML = html; }
+
+// ── results rendering ────────────────────────────────────────────────────────
+function renderResults(rows, fields) {
+  if (!Array.isArray(rows)) {
+    // write result: {affectedRows, insertId, ...}
+    results.innerHTML = `<pre style="padding:12px; margin:0; color:var(--muted);">${escapeHtml(JSON.stringify(rows, null, 2))}</pre>`;
+    return;
+  }
+  if (rows.length === 0) {
+    results.innerHTML = `<div class="empty">0 rows.</div>`;
+    return;
+  }
+  const cols = fields?.length ? fields.map(f => f.name) : Object.keys(rows[0]);
+  const sorted = sortRows(rows, cols);
+  let html = '<table class="r"><thead><tr>';
+  for (const c of cols) {
+    const arrow = sortState.key === c ? (sortState.dir > 0 ? " ▲" : " ▼") : "";
+    html += `<th data-col="${escapeHtml(c)}">${escapeHtml(c)}${arrow}</th>`;
+  }
+  html += "</tr></thead><tbody>";
+  for (const r of sorted) {
+    html += "<tr>";
+    for (const c of cols) {
+      const v = r[c];
+      if (v === null || v === undefined) html += `<td class="null">NULL</td>`;
+      else if (typeof v === "object") html += `<td>${escapeHtml(JSON.stringify(v))}</td>`;
+      else html += `<td>${escapeHtml(String(v))}</td>`;
+    }
+    html += "</tr>";
+  }
+  html += "</tbody></table>";
+  results.innerHTML = html;
+  results.querySelectorAll("th").forEach(th => th.addEventListener("click", () => {
+    const key = th.dataset.col;
+    if (sortState.key === key) sortState.dir *= -1;
+    else sortState = { key, dir: 1 };
+    renderResults(lastRows, lastFields);
+  }));
+}
+
+function sortRows(rows, cols) {
+  if (!sortState.key) return rows;
+  const k = sortState.key, d = sortState.dir;
+  return [...rows].sort((a, b) => {
+    const av = a[k], bv = b[k];
+    if (av === bv) return 0;
+    if (av === null || av === undefined) return 1;
+    if (bv === null || bv === undefined) return -1;
+    if (typeof av === "number" && typeof bv === "number") return (av - bv) * d;
+    return String(av).localeCompare(String(bv)) * d;
+  });
+}
+
+// ── CSV export ───────────────────────────────────────────────────────────────
+btnCsv.addEventListener("click", () => {
+  if (!Array.isArray(lastRows) || !lastRows.length) return;
+  const cols = lastFields?.length ? lastFields.map(f => f.name) : Object.keys(lastRows[0]);
+  const esc = (v) => {
+    if (v === null || v === undefined) return "";
+    const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [cols.map(esc).join(","), ...lastRows.map(r => cols.map(c => esc(r[c])).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `query-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ── schema sidebar ───────────────────────────────────────────────────────────
+const tableList = document.getElementById("tableList");
+document.getElementById("btnReloadSchema").addEventListener("click", loadSchema);
+
+async function loadSchema() {
+  tableList.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const res = await api("/admin/db/schema");
+    const rows = res.tables || [];
+    if (!rows.length) { tableList.innerHTML = '<div class="empty">No tables.</div>'; return; }
+    tableList.innerHTML = rows.map(t => {
+      const cols = t.columns.map(c => {
+        const key = c.keyType === "PRI" ? '<span class="k">🔑</span>' : c.keyType === "UNI" ? '<span class="k">·U·</span>' : c.keyType === "MUL" ? '<span class="k">·I·</span>' : "";
+        return `<div class="col" data-insert="${escapeHtml(c.name)}">${escapeHtml(c.name)} ${key}<span class="t">${escapeHtml(c.type)}</span></div>`;
+      }).join("");
+      return `
+        <div class="table-row" data-table="${escapeHtml(t.name)}">
+          ${escapeHtml(t.name)} <span class="count">${t.columns.length}c</span>
+        </div>
+        <div class="cols" data-cols-for="${escapeHtml(t.name)}">${cols}</div>
+      `;
+    }).join("");
+    tableList.querySelectorAll(".table-row").forEach(row => {
+      row.addEventListener("click", () => {
+        const name = row.dataset.table;
+        const cols = tableList.querySelector(`[data-cols-for="${CSS.escape(name)}"]`);
+        const isOpen = cols.classList.contains("open");
+        tableList.querySelectorAll(".cols.open").forEach(c => c.classList.remove("open"));
+        if (!isOpen) cols.classList.add("open");
+        // also, on click, insert a SELECT into the editor at cursor
+        insertAtCursor(editor, `SELECT * FROM \`${name}\` LIMIT 100;\n`);
+      });
+    });
+    tableList.querySelectorAll(".col").forEach(el => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        insertAtCursor(editor, el.dataset.insert);
+      });
+    });
+  } catch (err) {
+    tableList.innerHTML = `<div class="empty" style="color:var(--danger);">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+// ── snapshot ─────────────────────────────────────────────────────────────────
+document.getElementById("btnSnapshot").addEventListener("click", async () => {
+  setStatus("Writing snapshot…");
+  try {
+    const res = await api("/admin/db/schema/snapshot", "POST");
+    setStatus(`<span class="ok">Snapshot written:</span> ${escapeHtml(res.file)} (${res.tables} tables)`);
+  } catch (err) {
+    setStatus(`<span class="err">Snapshot failed:</span> ${escapeHtml(err.message)}`);
+  }
+});
+
+// ── saved queries ────────────────────────────────────────────────────────────
+const savedList = document.getElementById("savedList");
+const nameDialog = document.getElementById("nameDialog");
+const nameInput  = document.getElementById("nameInput");
+
+async function loadSaved() {
+  try {
+    const res = await api("/admin/db/saved-queries");
+    const rows = res.rows || [];
+    savedList.innerHTML = rows.length
+      ? rows.map(r => `
+          <div class="saved-item" data-id="${r.id}">
+            <span data-load title="${escapeHtml(r.query)}">${escapeHtml(r.name)}</span>
+            <span class="x" data-delete title="Delete">✕</span>
+          </div>`).join("")
+      : '<div class="empty">—</div>';
+    savedList.querySelectorAll(".saved-item").forEach(el => {
+      el.querySelector("[data-load]").addEventListener("click", async () => {
+        const row = rows.find(r => r.id == el.dataset.id);
+        if (row) { editor.value = row.query; editor.focus(); }
+      });
+      el.querySelector("[data-delete]").addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (!confirm("Delete this saved query?")) return;
+        await api(`/admin/db/saved-queries/${el.dataset.id}`, "DELETE");
+        loadSaved();
+      });
+    });
+  } catch (err) {
+    savedList.innerHTML = `<div class="empty" style="color:var(--danger);">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+document.getElementById("btnSaveQuery").addEventListener("click", () => {
+  if (!editor.value.trim()) { alert("Editor is empty."); return; }
+  nameInput.value = "";
+  nameDialog.showModal();
+});
+document.getElementById("nameForm").addEventListener("submit", async (e) => {
+  if (e.submitter?.value !== "ok") return;
+  const name = nameInput.value.trim();
+  if (!name) return;
+  try {
+    await api("/admin/db/saved-queries", "POST", { name, query: editor.value });
+    loadSaved();
+  } catch (err) {
+    alert("Save failed: " + err.message);
+  }
+});
+
+// ── history (localStorage, last 50) ──────────────────────────────────────────
+const HIST_KEY = "dbConsoleHistory";
+const historyPanel = document.getElementById("historyPanel");
+const historyList  = document.getElementById("historyList");
+document.getElementById("btnHistory").addEventListener("click", () => {
+  historyPanel.classList.toggle("open");
+  if (historyPanel.classList.contains("open")) renderHistory();
+});
+document.getElementById("btnClearHistory").addEventListener("click", () => {
+  if (confirm("Clear local query history?")) { localStorage.removeItem(HIST_KEY); renderHistory(); }
+});
+function pushHistory(q) {
+  try {
+    const arr = JSON.parse(localStorage.getItem(HIST_KEY) || "[]");
+    arr.unshift({ q, t: Date.now() });
+    localStorage.setItem(HIST_KEY, JSON.stringify(arr.slice(0, 50)));
+  } catch {}
+}
+function renderHistory() {
+  const arr = JSON.parse(localStorage.getItem(HIST_KEY) || "[]");
+  historyList.innerHTML = arr.length
+    ? arr.map((h, i) => `<div class="hist-item" data-i="${i}" title="${escapeHtml(h.q)}">${escapeHtml(h.q.replace(/\s+/g, " "))}</div>`).join("")
+    : '<div class="empty" style="padding:12px;">—</div>';
+  historyList.querySelectorAll(".hist-item").forEach(el => {
+    el.addEventListener("click", () => {
+      const a = JSON.parse(localStorage.getItem(HIST_KEY) || "[]");
+      const h = a[+el.dataset.i];
+      if (h) { editor.value = h.q; editor.focus(); }
+    });
+  });
+}
+
+// ── utils ────────────────────────────────────────────────────────────────────
+function insertAtCursor(el, text) {
+  const s = el.selectionStart, e = el.selectionEnd;
+  el.value = el.value.slice(0, s) + text + el.value.slice(e);
+  el.selectionStart = el.selectionEnd = s + text.length;
+  el.focus();
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ── init ─────────────────────────────────────────────────────────────────────
+loadSchema();
+loadSaved();
+</script>
+</body>
+</html>
