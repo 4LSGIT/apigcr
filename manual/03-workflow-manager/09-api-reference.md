@@ -19,6 +19,10 @@ All endpoints require JWT or API key authentication unless noted. Authentication
 | `DELETE` | `/workflows/:id` | Delete workflow + steps |
 | `POST` | `/workflows/:id/duplicate` | Duplicate workflow + steps |
 
+**`test_input` field (Slice 2.1).** `POST /workflows`, `POST /workflows/bulk`, and `PUT /workflows/:id` accept `test_input` in the body. `GET /workflows` and `GET /workflows/:id` return it. `POST /workflows/:id/duplicate` carries it over to the duplicate.
+
+Shape rule: `null`, `undefined`, or a plain JSON object. Arrays and primitives → 400. No runtime validation against live `init_data`.
+
 **`GET /workflows/functions` response:**
 ```json
 {
@@ -163,6 +167,10 @@ Paginated executions/enrollments tied to a specific contact. Envelope parity wit
 | `PUT` | `/sequences/templates/:id` | Update template |
 | `DELETE` | `/sequences/templates/:id` | Delete (blocked if active enrollments) |
 | `POST` | `/sequences/templates/:id/duplicate` | Slice 3.1. Duplicate template + all steps. Copy is created **inactive** with a suffixed name (mirrors `duplicateWorkflow`). |
+
+**`test_input` field (Slice 2.1).** `POST /sequences/templates` and `PUT /sequences/templates/:id` accept `test_input` in the body. `GET /sequences/templates` and `GET /sequences/templates/:id` return it (single-template GET parses the JSON; list GET returns whatever mysql2 typeCast yields — client should tolerate both string and parsed object). `POST /sequences/templates/:id/duplicate` carries it over.
+
+Shape rule: `null`, `undefined`, or a plain JSON object. Arrays and primitives → 400. No runtime validation against live `trigger_data`.
 
 ### Template Steps
 

@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost
--- Generation Time: Apr 16, 2026 at 04:12 PM
+-- Generation Time: Apr 22, 2026 at 11:02 AM
 -- Server version: 8.4.6-6
 -- PHP Version: 8.2.30
 
@@ -20,6 +20,44 @@ SET time_zone = "+00:00";
 --
 -- Database: `database`
 --
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `admin_db_console_log`
+--
+
+CREATE TABLE `admin_db_console_log` (
+  `id` bigint NOT NULL,
+  `user_id` int DEFAULT NULL,
+  `username` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `route` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `method` varchar(10) COLLATE utf8mb4_general_ci NOT NULL,
+  `query_text` mediumtext COLLATE utf8mb4_general_ci,
+  `read_only_mode` tinyint(1) NOT NULL DEFAULT '1',
+  `status` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `error_message` text COLLATE utf8mb4_general_ci,
+  `row_count` int DEFAULT NULL,
+  `duration_ms` int DEFAULT NULL,
+  `ip_address` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `admin_saved_queries`
+--
+
+CREATE TABLE `admin_saved_queries` (
+  `id` int NOT NULL,
+  `user_id` int NOT NULL,
+  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
+  `query_text` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -728,7 +766,10 @@ CREATE TABLE `hooks` (
   `version` int NOT NULL DEFAULT '1',
   `last_modified_by` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `capture_mode` enum('off','capturing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
+  `captured_sample` json DEFAULT NULL,
+  `captured_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -765,7 +806,7 @@ CREATE TABLE `hook_executions` (
   `raw_input` json DEFAULT NULL,
   `filter_passed` tinyint(1) DEFAULT NULL,
   `transform_output` json DEFAULT NULL,
-  `status` enum('received','filtered','processing','delivered','partial','failed') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'received',
+  `status` enum('received','filtered','processing','delivered','partial','failed','captured') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'received',
   `error` text COLLATE utf8mb4_general_ci,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -779,14 +820,16 @@ CREATE TABLE `hook_executions` (
 CREATE TABLE `hook_targets` (
   `id` int NOT NULL,
   `hook_id` int NOT NULL,
+  `target_type` enum('http','workflow','sequence','internal_function') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'http',
   `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
   `position` int NOT NULL DEFAULT '0',
   `method` enum('GET','POST','PUT','PATCH','DELETE') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'POST',
-  `url` varchar(2048) COLLATE utf8mb4_general_ci NOT NULL,
+  `url` varchar(2048) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `headers` json DEFAULT NULL,
   `credential_id` int DEFAULT NULL,
   `body_mode` enum('transform_output','template') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'transform_output',
   `body_template` text COLLATE utf8mb4_general_ci,
+  `config` json DEFAULT NULL,
   `conditions` json DEFAULT NULL,
   `transform_mode` enum('passthrough','mapper','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
   `transform_config` json DEFAULT NULL,
@@ -1128,7 +1171,7 @@ CREATE TABLE `sequence_steps` (
   `id` int UNSIGNED NOT NULL,
   `template_id` int UNSIGNED NOT NULL,
   `step_number` int NOT NULL,
-  `action_type` enum('sms','email','task','internal_function') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `action_type` enum('sms','email','task','internal_function','webhook','start_workflow') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `action_config` json NOT NULL,
   `timing` json NOT NULL,
   `condition` json DEFAULT NULL,
@@ -1168,14 +1211,15 @@ CREATE TABLE `sequence_step_log` (
 CREATE TABLE `sequence_templates` (
   `id` int UNSIGNED NOT NULL,
   `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
-  `type` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `type` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `appt_type_filter` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `appt_with_filter` tinyint DEFAULT NULL,
   `condition` json DEFAULT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `test_input` json DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -1480,10 +1524,13 @@ CREATE TABLE `users` (
 
 CREATE TABLE `workflows` (
   `id` int NOT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
   `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL,
   `description` text COLLATE utf8mb4_unicode_ci,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `default_contact_id_from` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `test_input` json DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -1495,6 +1542,7 @@ CREATE TABLE `workflows` (
 CREATE TABLE `workflow_executions` (
   `id` bigint NOT NULL,
   `workflow_id` int NOT NULL,
+  `contact_id` int DEFAULT NULL,
   `status` enum('pending','active','processing','delayed','completed','completed_with_errors','failed','cancelled') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
   `init_data` json DEFAULT NULL,
   `variables` json DEFAULT NULL,
@@ -1502,7 +1550,8 @@ CREATE TABLE `workflow_executions` (
   `steps_executed_count` int DEFAULT '0',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `completed_at` datetime DEFAULT NULL
+  `completed_at` datetime DEFAULT NULL,
+  `cancel_reason` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -1544,6 +1593,21 @@ CREATE TABLE `workflow_steps` (
 --
 -- Indexes for dumped tables
 --
+
+--
+-- Indexes for table `admin_db_console_log`
+--
+ALTER TABLE `admin_db_console_log`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_admin_db_console_log_user` (`user_id`,`created_at`),
+  ADD KEY `idx_admin_db_console_log_status` (`status`,`created_at`);
+
+--
+-- Indexes for table `admin_saved_queries`
+--
+ALTER TABLE `admin_saved_queries`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_admin_saved_queries_user` (`user_id`,`name`);
 
 --
 -- Indexes for table `appts`
@@ -1941,7 +2005,8 @@ ALTER TABLE `workflows`
 ALTER TABLE `workflow_executions`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_workflow_status` (`workflow_id`,`status`),
-  ADD KEY `idx_status` (`status`);
+  ADD KEY `idx_status` (`status`),
+  ADD KEY `idx_wf_exec_contact` (`contact_id`);
 
 --
 -- Indexes for table `workflow_execution_steps`
@@ -1962,6 +2027,18 @@ ALTER TABLE `workflow_steps`
 --
 -- AUTO_INCREMENT for dumped tables
 --
+
+--
+-- AUTO_INCREMENT for table `admin_db_console_log`
+--
+ALTER TABLE `admin_db_console_log`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `admin_saved_queries`
+--
+ALTER TABLE `admin_saved_queries`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `appts`
@@ -2378,41 +2455,6 @@ ALTER TABLE `workflow_execution_steps`
 --
 ALTER TABLE `workflow_steps`
   ADD CONSTRAINT `fk_workflow_steps_workflow` FOREIGN KEY (`workflow_id`) REFERENCES `workflows` (`id`) ON DELETE CASCADE;
-
--- --------------------------------------------------------
--- Admin DB console (routes/admin.dbConsole.js)
--- These are also auto-created at runtime via CREATE TABLE IF NOT EXISTS.
--- --------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS `admin_db_console_log` (
-  `id` bigint NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  `user_id` int DEFAULT NULL,
-  `username` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `route` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `method` varchar(10) COLLATE utf8mb4_general_ci NOT NULL,
-  `query_text` mediumtext COLLATE utf8mb4_general_ci,
-  `read_only_mode` tinyint(1) NOT NULL DEFAULT 1,
-  `status` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
-  `error_message` text COLLATE utf8mb4_general_ci,
-  `row_count` int DEFAULT NULL,
-  `duration_ms` int DEFAULT NULL,
-  `ip_address` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `user_agent` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  KEY `idx_admin_db_console_log_user` (`user_id`,`created_at`),
-  KEY `idx_admin_db_console_log_status` (`status`,`created_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
-CREATE TABLE IF NOT EXISTS `admin_saved_queries` (
-  `id` int NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  `user_id` int NOT NULL,
-  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
-  `query_text` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  KEY `idx_admin_saved_queries_user` (`user_id`,`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
