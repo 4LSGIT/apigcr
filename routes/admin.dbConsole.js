@@ -10,12 +10,17 @@
 //   POST   /admin/db/query              body { query, allowWrite }
 //   GET    /admin/db/schema             -> { tables: [...] }
 //   GET    /admin/db/schema.sql         downloads schema-YYYYMMDD-HHMMSS.sql (no data)
+//   POST   /admin/db/schema/save-to-ref dev-only: writes the dump to ref/ (Cloud
+//                                       Run's filesystem is ephemeral, so this
+//                                       endpoint refuses outside ENVIRONMENT=development)
 //   GET    /admin/db/saved-queries
 //   POST   /admin/db/saved-queries      body { name, query }
 //   PUT    /admin/db/saved-queries/:id  body { name, query }
 //   DELETE /admin/db/saved-queries/:id
 
 const express = require("express");
+const path    = require("path");
+const fs      = require("fs/promises");
 const { superuserOnly, auditDbConsole } = require("../lib/auth.superuser");
 
 const router = express.Router();
@@ -217,55 +222,93 @@ router.get("/admin/db/schema", ...superuserOnly, async (req, res) => {
   }
 });
 
+// Build a CREATE-TABLE-only schema dump (no data). Returns { body, fileName,
+// tableCount }. Used by both the download and the dev-only save endpoints.
+async function buildSchemaDump(db, source) {
+  const [[{ db: dbName }]] = await db.query("SELECT DATABASE() AS db");
+  const [tables] = await db.query(
+    `SELECT TABLE_NAME AS name FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
+      ORDER BY TABLE_NAME`, [dbName]
+  );
+  const parts = [
+    `-- Schema snapshot for \`${dbName}\``,
+    `-- Generated: ${new Date().toISOString()}`,
+    `-- Source: ${source}`,
+    `-- Contains CREATE TABLE statements only (no data).`,
+    ``,
+  ];
+  for (const { name } of tables) {
+    const [[row]] = await db.query(`SHOW CREATE TABLE \`${name}\``);
+    const createSql = row["Create Table"] || row["Create View"] || "";
+    parts.push(`-- -----------------------------------------------------`);
+    parts.push(`-- Table: ${name}`);
+    parts.push(`-- -----------------------------------------------------`);
+    parts.push(`DROP TABLE IF EXISTS \`${name}\`;`);
+    parts.push(`${createSql};`);
+    parts.push(``);
+  }
+  const stamp = new Date().toISOString().replace(/[-:T]/g, "");
+  const fileName = `schema-${stamp.slice(0, 8)}-${stamp.slice(8, 14)}.sql`;
+  return { body: parts.join("\n"), fileName, tableCount: tables.length };
+}
+
 // ── GET /admin/db/schema.sql ─────────────────────────────────────────────────
-// Streams a CREATE-TABLE-only schema dump as an attachment (no disk write —
-// this runs on Cloud Run, which has an ephemeral filesystem). Uses
-// SHOW CREATE TABLE so the output matches MySQL's own rendering.
+// Streams the dump as an attachment. Works everywhere (dev + Cloud Run).
 router.get("/admin/db/schema.sql", ...superuserOnly, async (req, res) => {
   const started = Date.now();
   try {
-    const [[{ db }]] = await req.db.query("SELECT DATABASE() AS db");
-    const [tables] = await req.db.query(
-      `SELECT TABLE_NAME AS name FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
-        ORDER BY TABLE_NAME`, [db]
-    );
-
-    const parts = [
-      `-- Schema snapshot for \`${db}\``,
-      `-- Generated: ${new Date().toISOString()}`,
-      `-- Source: GET /admin/db/schema.sql`,
-      `-- Contains CREATE TABLE statements only (no data).`,
-      ``,
-    ];
-    for (const { name } of tables) {
-      const [[row]] = await req.db.query(`SHOW CREATE TABLE \`${name}\``);
-      const createSql = row["Create Table"] || row["Create View"] || "";
-      parts.push(`-- -----------------------------------------------------`);
-      parts.push(`-- Table: ${name}`);
-      parts.push(`-- -----------------------------------------------------`);
-      parts.push(`DROP TABLE IF EXISTS \`${name}\`;`);
-      parts.push(`${createSql};`);
-      parts.push(``);
-    }
-
-    const stamp = new Date().toISOString().replace(/[-:T]/g, "");
-    const pretty = `${stamp.slice(0, 8)}-${stamp.slice(8, 14)}`;
-    const fileName = `schema-${pretty}.sql`;
-    const body = parts.join("\n");
-
-    // Await the audit BEFORE sending so we maintain the "never lose a log" invariant.
+    const { body, fileName, tableCount } = await buildSchemaDump(req.db, "GET /admin/db/schema.sql");
     await auditDbConsole(req.db, {
       userId: req.auth.userId, username: req.auth.username,
       route: req.originalUrl, method: req.method, readOnlyMode: true,
-      status: "success", rowCount: tables.length, durationMs: Date.now() - started,
+      status: "success", rowCount: tableCount, durationMs: Date.now() - started,
       ip: ipOf(req), userAgent: req.headers["user-agent"] || "unknown",
-      queryText: `schema.sql download (${tables.length} tables, ${body.length} bytes)`,
+      queryText: `schema.sql download (${tableCount} tables, ${body.length} bytes)`,
     });
-
     res.set("Content-Type", "application/sql; charset=utf-8");
     res.set("Content-Disposition", `attachment; filename="${fileName}"`);
     res.send(body);
+  } catch (err) {
+    await auditDbConsole(req.db, {
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method, readOnlyMode: true,
+      status: "error", errorMessage: err.message, durationMs: Date.now() - started,
+      ip: ipOf(req), userAgent: req.headers["user-agent"] || "unknown",
+    });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── POST /admin/db/schema/save-to-ref ────────────────────────────────────────
+// Dev-only: writes the dump to ref/schema-*.sql so it can be committed to git.
+// Refused outside ENVIRONMENT=development because Cloud Run's filesystem is
+// ephemeral — writes would succeed momentarily and vanish on restart.
+router.post("/admin/db/schema/save-to-ref", ...superuserOnly, async (req, res) => {
+  const started = Date.now();
+  if (process.env.ENVIRONMENT !== "development") {
+    await auditDbConsole(req.db, {
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method, readOnlyMode: true,
+      status: "rejected_not_dev", durationMs: Date.now() - started,
+      ip: ipOf(req), userAgent: req.headers["user-agent"] || "unknown",
+    });
+    return res.status(400).json({ error: "save-to-ref is only available when ENVIRONMENT=development (Cloud Run's filesystem is ephemeral)." });
+  }
+  try {
+    const { body, fileName, tableCount } = await buildSchemaDump(req.db, "POST /admin/db/schema/save-to-ref");
+    const refDir = path.join(__dirname, "..", "ref");
+    await fs.mkdir(refDir, { recursive: true });
+    const filePath = path.join(refDir, fileName);
+    await fs.writeFile(filePath, body, "utf8");
+    await auditDbConsole(req.db, {
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method, readOnlyMode: true,
+      status: "success", rowCount: tableCount, durationMs: Date.now() - started,
+      ip: ipOf(req), userAgent: req.headers["user-agent"] || "unknown",
+      queryText: `save-to-ref -> ref/${fileName}`,
+    });
+    res.json({ ok: true, file: `ref/${fileName}`, tables: tableCount, bytes: body.length });
   } catch (err) {
     await auditDbConsole(req.db, {
       userId: req.auth.userId, username: req.auth.username,

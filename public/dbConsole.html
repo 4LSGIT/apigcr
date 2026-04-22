@@ -127,6 +127,7 @@
       <span>
         <button id="btnNewTable" title="Build a CREATE TABLE statement">+ Table</button>
         <button id="btnSnapshot" title="Download schema (CREATE TABLE only, no data)">↓ .sql</button>
+        <button id="btnSaveToRef" title="Save dump to ref/ — dev only (Cloud Run filesystem is ephemeral)">→ ref/</button>
         <button id="btnReloadSchema" title="Reload schema">↻</button>
       </span>
     </h3>
@@ -238,9 +239,14 @@ let writeMode = false;
 let wrapMode  = false;
 
 // ── auth guard + user hint ───────────────────────────────────────────────────
+// Prefer the parent's live JWT (it gets refreshed on expiry by apiSend);
+// localStorage is the fallback for a just-reloaded iframe. The `authed` flag
+// gates the init calls at the bottom so we don't fire redundant API requests
+// after rejecting the user.
+let authed = false;
 (function checkSU() {
   try {
-    const token = localStorage.getItem("jwt") || P?.AUTH_STATE?.jwt;
+    const token = P?.AUTH_STATE?.jwt || localStorage.getItem("jwt");
     if (!token) throw new Error("no token");
     const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
     if (payload.user_auth !== "authorized - SU") {
@@ -248,6 +254,7 @@ let wrapMode  = false;
       return;
     }
     userHint.textContent = `${payload.username || payload.sub} · SU`;
+    authed = true;
   } catch (e) {
     document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Not authenticated.</div>';
   }
@@ -745,7 +752,7 @@ function buildAlterSql(tableName, cols) {
 document.getElementById("btnSnapshot").addEventListener("click", async () => {
   setStatus("Generating schema…");
   try {
-    const token = localStorage.getItem("jwt") || P?.AUTH_STATE?.jwt;
+    const token = P?.AUTH_STATE?.jwt || localStorage.getItem("jwt");
     if (!token) throw new Error("No JWT available — reload the admin page");
     const res = await fetch("/admin/db/schema.sql", {
       headers: { "Authorization": `Bearer ${token}` },
@@ -769,6 +776,18 @@ document.getElementById("btnSnapshot").addEventListener("click", async () => {
     setStatus(`<span class="ok">Downloaded:</span> ${escapeHtml(filename)} (${blob.size.toLocaleString()} bytes)`);
   } catch (err) {
     setStatus(`<span class="err">Download failed:</span> ${escapeHtml(err.message)}`);
+  }
+});
+
+// Dev-only: save dump server-side into ref/. The backend 400s outside
+// ENVIRONMENT=development; we just surface the error in the status bar.
+document.getElementById("btnSaveToRef").addEventListener("click", async () => {
+  setStatus("Saving to ref/…");
+  try {
+    const res = await api("/admin/db/schema/save-to-ref", "POST");
+    setStatus(`<span class="ok">Saved:</span> ${escapeHtml(res.file)} (${res.tables} tables, ${res.bytes.toLocaleString()} bytes)`);
+  } catch (err) {
+    setStatus(`<span class="err">Save failed:</span> ${escapeHtml(err.message)}`);
   }
 });
 
@@ -866,8 +885,10 @@ function escapeHtml(s) {
 }
 
 // ── init ─────────────────────────────────────────────────────────────────────
-loadSchema();
-loadSaved();
+if (authed) {
+  loadSchema();
+  loadSaved();
+}
 </script>
 </body>
 </html>
