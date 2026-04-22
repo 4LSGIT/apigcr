@@ -1541,8 +1541,9 @@
     <button class="big-button" onclick="admintask2()">Sequences</button>
     <button class="big-button"
       onclick="E('sqlQueryDiv').style.display = E('sqlQueryDiv').style.display == 'none'? '':'none'">
-      mySQL Query
+      mySQL Query (legacy)
     </button>
+    <button class="big-button" data-db-console-toggle>DB Console (SU)</button>
     <div id="sequencesDiv" style="display: none"></div>
     <div id="sqlQueryDiv" style="display: none">
       <h2>mySQL query</h2>
@@ -1556,7 +1557,26 @@
       </button>
       <div id="sqlResult"></div>
     </div>
+    <div id="dbConsoleDiv" style="display: none; margin-top: 10px;">
+      <iframe data-src="/dbConsole.html"
+              style="width: 100%; height: 80vh; border: 1px solid #2a3040; border-radius: 6px; background: #0f1117;"></iframe>
+    </div>
   </div>
+  <script>
+    // DB Console lazy-load + toggle (mirrors the #tabMore "more features" pattern)
+    document.querySelector('#tabAdmin [data-db-console-toggle]').addEventListener('click', () => {
+      const panel = document.getElementById('dbConsoleDiv');
+      const wasHidden = getComputedStyle(panel).display === 'none';
+      panel.style.display = wasHidden ? '' : 'none';
+      if (wasHidden) {
+        const iframe = panel.querySelector('iframe[data-src]');
+        if (iframe) {
+          iframe.src = iframe.dataset.src;
+          delete iframe.dataset.src;
+        }
+      }
+    });
+  </script>
   <script>
     async function mySQLquery(query) {
       try {
