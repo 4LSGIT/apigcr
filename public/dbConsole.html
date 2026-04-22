@@ -83,9 +83,40 @@
   .hist-item:hover { background: var(--panel-2); color: var(--accent); }
 
   dialog { background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 14px; min-width: 340px; }
-  dialog input { width: 100%; padding: 6px 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 13px; box-sizing: border-box; }
+  dialog input, dialog select { width: 100%; padding: 6px 8px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-size: 12px; box-sizing: border-box; }
   dialog .actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 10px; }
   dialog button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; cursor: pointer; }
+
+  /* schema editor */
+  #schemaDialog { width: min(1100px, 96vw); max-height: 90vh; overflow: auto; }
+  #schemaDialog .title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  #schemaDialog .title h3 { margin: 0; font-size: 14px; }
+  #schemaDialog .title .muted { color: var(--muted); font-size: 11px; }
+  #schemaDialog .name-row { display: grid; grid-template-columns: 100px 1fr; gap: 8px; align-items: center; margin-bottom: 10px; }
+  #schemaDialog .grid-head, #schemaDialog .grid-row {
+    display: grid;
+    grid-template-columns: 18px 1.6fr 1.4fr 0.8fr 44px 1.2fr 44px 44px 44px 44px 28px;
+    gap: 4px;
+    align-items: center;
+    font-size: 11px;
+  }
+  #schemaDialog .grid-head { color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 2px; border-bottom: 1px solid var(--border); }
+  #schemaDialog .grid-row { padding: 3px 2px; border-bottom: 1px dotted var(--border); }
+  #schemaDialog .grid-row.removed { opacity: 0.35; text-decoration: line-through; }
+  #schemaDialog .grid-row.added { background: rgba(74, 222, 128, 0.05); }
+  #schemaDialog .grid-row.changed { background: rgba(251, 191, 36, 0.05); }
+  #schemaDialog .handle { color: var(--muted); text-align: center; font-size: 10px; }
+  #schemaDialog .chk { display: flex; justify-content: center; }
+  #schemaDialog .chk input { width: auto; }
+  #schemaDialog .remove-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0; }
+  #schemaDialog .remove-btn:hover { color: var(--danger); }
+  #schemaDialog .add-col { margin-top: 6px; background: var(--panel-2); border: 1px dashed var(--border); color: var(--muted); padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; width: 100%; }
+  #schemaDialog .add-col:hover { color: var(--accent); border-color: var(--accent); }
+  #schemaDialog .warn { color: var(--warn); font-size: 11px; padding: 6px 0; }
+
+  .table-row .edit-table { opacity: 0; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0 4px; float: right; }
+  .table-row:hover .edit-table { opacity: 1; }
+  .table-row .edit-table:hover { color: var(--accent); }
 </style>
 </head>
 <body>
@@ -94,7 +125,8 @@
     <h3>
       <span>Schema</span>
       <span>
-        <button id="btnSnapshot" title="Download schema (CREATE TABLE only, no data)">Download schema.sql</button>
+        <button id="btnNewTable" title="Build a CREATE TABLE statement">+ Table</button>
+        <button id="btnSnapshot" title="Download schema (CREATE TABLE only, no data)">↓ .sql</button>
         <button id="btnReloadSchema" title="Reload schema">↻</button>
       </span>
     </h3>
@@ -150,6 +182,37 @@
       <button value="ok" class="primary" style="background:var(--accent); color:#001;">Save</button>
     </div>
   </form>
+</dialog>
+
+<dialog id="schemaDialog">
+  <div class="title">
+    <h3 id="schemaDialogTitle">New Table</h3>
+    <span class="muted">Generates SQL into the editor — nothing runs until you hit Run.</span>
+  </div>
+  <div class="name-row">
+    <label style="font-size:12px; color:var(--muted);">Table name</label>
+    <input id="schemaTableName" maxlength="64" placeholder="my_table">
+  </div>
+  <div id="schemaWarn" class="warn"></div>
+  <div class="grid-head">
+    <span></span>
+    <span>Name</span>
+    <span>Type</span>
+    <span>Length / Values</span>
+    <span title="Unsigned (integer types)">Uns.</span>
+    <span>Default</span>
+    <span title="NOT NULL if unchecked">Null</span>
+    <span title="Primary key">PK</span>
+    <span>AI</span>
+    <span>Uniq</span>
+    <span></span>
+  </div>
+  <div id="schemaColumns"></div>
+  <button type="button" class="add-col" id="schemaAddCol">+ Add column</button>
+  <div class="actions">
+    <button type="button" id="schemaCancel">Cancel</button>
+    <button type="button" id="schemaGenerate" class="primary" style="background:var(--accent); color:#001;">Generate SQL → Editor</button>
+  </div>
 </dialog>
 
 <script>
@@ -337,12 +400,14 @@ btnCsv.addEventListener("click", () => {
 
 // ── schema sidebar ───────────────────────────────────────────────────────────
 const tableList = document.getElementById("tableList");
+let schemaCache = { tables: [] }; // populated by loadSchema; used by the editor
 document.getElementById("btnReloadSchema").addEventListener("click", loadSchema);
 
 async function loadSchema() {
   tableList.innerHTML = '<div class="empty">Loading…</div>';
   try {
     const res = await api("/admin/db/schema");
+    schemaCache = res;
     const rows = res.tables || [];
     if (!rows.length) { tableList.innerHTML = '<div class="empty">No tables.</div>'; return; }
     tableList.innerHTML = rows.map(t => {
@@ -352,6 +417,7 @@ async function loadSchema() {
       }).join("");
       return `
         <div class="table-row" data-table="${escapeHtml(t.name)}">
+          <button class="edit-table" data-edit="${escapeHtml(t.name)}" title="Edit table schema">✎</button>
           ${escapeHtml(t.name)} <span class="count">${t.columns.length}c</span>
         </div>
         <div class="cols" data-cols-for="${escapeHtml(t.name)}">${cols}</div>
@@ -364,7 +430,6 @@ async function loadSchema() {
         const isOpen = cols.classList.contains("open");
         tableList.querySelectorAll(".cols.open").forEach(c => c.classList.remove("open"));
         if (!isOpen) cols.classList.add("open");
-        // also, on click, insert a SELECT into the editor at cursor
         insertAtCursor(editor, `SELECT * FROM \`${name}\` LIMIT 100;\n`);
       });
     });
@@ -374,9 +439,304 @@ async function loadSchema() {
         insertAtCursor(editor, el.dataset.insert);
       });
     });
+    tableList.querySelectorAll(".edit-table").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openTableEditor(btn.dataset.edit);
+      });
+    });
   } catch (err) {
     tableList.innerHTML = `<div class="empty" style="color:var(--danger);">${escapeHtml(err.message)}</div>`;
   }
+}
+
+// ── table editor (Create / Alter) ────────────────────────────────────────────
+// Modal form that collects column definitions and generates SQL into the
+// editor. Nothing runs automatically — preview-first by design.
+const schemaDialog   = document.getElementById("schemaDialog");
+const schemaTitle    = document.getElementById("schemaDialogTitle");
+const schemaName     = document.getElementById("schemaTableName");
+const schemaColsEl   = document.getElementById("schemaColumns");
+const schemaWarnEl   = document.getElementById("schemaWarn");
+
+// MySQL type catalogue: lengthKind tells the form whether to show the
+// Length/Values field (and what it means).
+//   none    — no args
+//   number  — single integer (VARCHAR(n), CHAR(n))
+//   decimal — "p,s" (DECIMAL, NUMERIC)
+//   values  — enum values, e.g. 'a','b','c'
+const TYPE_CATALOG = [
+  { type: "INT",        lengthKind: "none",    supportsUnsigned: true  },
+  { type: "BIGINT",     lengthKind: "none",    supportsUnsigned: true  },
+  { type: "TINYINT",    lengthKind: "number",  supportsUnsigned: true  },
+  { type: "SMALLINT",   lengthKind: "none",    supportsUnsigned: true  },
+  { type: "MEDIUMINT",  lengthKind: "none",    supportsUnsigned: true  },
+  { type: "DECIMAL",    lengthKind: "decimal", supportsUnsigned: true  },
+  { type: "FLOAT",      lengthKind: "none",    supportsUnsigned: true  },
+  { type: "DOUBLE",     lengthKind: "none",    supportsUnsigned: true  },
+  { type: "VARCHAR",    lengthKind: "number",  supportsUnsigned: false },
+  { type: "CHAR",       lengthKind: "number",  supportsUnsigned: false },
+  { type: "TEXT",       lengthKind: "none",    supportsUnsigned: false },
+  { type: "MEDIUMTEXT", lengthKind: "none",    supportsUnsigned: false },
+  { type: "LONGTEXT",   lengthKind: "none",    supportsUnsigned: false },
+  { type: "JSON",       lengthKind: "none",    supportsUnsigned: false },
+  { type: "DATE",       lengthKind: "none",    supportsUnsigned: false },
+  { type: "DATETIME",   lengthKind: "none",    supportsUnsigned: false },
+  { type: "TIMESTAMP",  lengthKind: "none",    supportsUnsigned: false },
+  { type: "TIME",       lengthKind: "none",    supportsUnsigned: false },
+  { type: "ENUM",       lengthKind: "values",  supportsUnsigned: false },
+  { type: "BOOLEAN",    lengthKind: "none",    supportsUnsigned: false }, // MySQL alias for TINYINT(1)
+  { type: "BLOB",       lengthKind: "none",    supportsUnsigned: false },
+];
+const TYPE_BY_NAME = Object.fromEntries(TYPE_CATALOG.map(t => [t.type, t]));
+
+// State: the column list currently in the modal. Each row has an `originalName`
+// when loaded from an existing table (used to emit CHANGE vs ADD/DROP).
+let editorState = null;
+
+function blankColumn() {
+  return { name: "", type: "INT", args: "", unsigned: false, notNull: true, pk: false, ai: false, unique: false, defaultVal: "", originalName: null, original: null };
+}
+
+// Parse COLUMN_TYPE from information_schema into {type, args, unsigned}.
+function parseColumnType(colType) {
+  const lower = String(colType || "").toLowerCase();
+  const unsigned = /\bunsigned\b/.test(lower);
+  const stripped = lower.replace(/\s*unsigned\s*/, "").replace(/\s*zerofill\s*/, "").trim();
+  const m = stripped.match(/^([a-z]+)(?:\((.+)\))?$/);
+  if (!m) return { type: stripped.toUpperCase(), args: "", unsigned };
+  return { type: m[1].toUpperCase(), args: m[2] || "", unsigned };
+}
+
+function openTableEditor(existingTableName) {
+  const editing = !!existingTableName;
+  schemaTitle.textContent = editing ? `Edit Table: ${existingTableName}` : "New Table";
+  schemaName.value = existingTableName || "";
+  schemaName.disabled = editing; // renaming the table itself is out of scope for v1
+  schemaWarnEl.textContent = "";
+
+  if (editing) {
+    const t = (schemaCache.tables || []).find(x => x.name === existingTableName);
+    if (!t) { alert("Table not found in schema cache. Reload schema."); return; }
+    editorState = {
+      mode: "alter",
+      tableName: existingTableName,
+      columns: t.columns.map(c => {
+        const parsed = parseColumnType(c.type);
+        const extra = String(c.extra || "").toLowerCase();
+        const defVal = c.defaultValue;
+        const col = {
+          name: c.name,
+          type: TYPE_BY_NAME[parsed.type] ? parsed.type : parsed.type, // keep as-is; unknown types still display
+          args: parsed.args,
+          unsigned: parsed.unsigned,
+          notNull: c.nullable === "NO",
+          pk: c.keyType === "PRI",
+          ai: extra.includes("auto_increment"),
+          unique: c.keyType === "UNI",
+          // COLUMN_DEFAULT is null when there is no default, literal string otherwise.
+          // Special-case CURRENT_TIMESTAMP-family so we emit it unquoted later.
+          defaultVal: defVal === null || defVal === undefined ? "" : String(defVal),
+          originalName: c.name,
+        };
+        col.original = JSON.parse(JSON.stringify(col)); // snapshot for diff
+        return col;
+      }),
+    };
+  } else {
+    editorState = {
+      mode: "create",
+      tableName: "",
+      columns: [
+        { ...blankColumn(), name: "id", type: "INT", unsigned: true, notNull: true, pk: true, ai: true },
+      ],
+    };
+  }
+  renderEditorRows();
+  schemaDialog.showModal();
+}
+
+function renderEditorRows() {
+  schemaColsEl.innerHTML = editorState.columns.map((c, i) => renderRow(c, i)).join("");
+  schemaColsEl.querySelectorAll("[data-row]").forEach(rowEl => {
+    const i = +rowEl.dataset.row;
+    rowEl.querySelector("[data-f=name]").addEventListener("input", (e) => { editorState.columns[i].name = e.target.value; flagRow(rowEl, i); });
+    rowEl.querySelector("[data-f=type]").addEventListener("change", (e) => {
+      editorState.columns[i].type = e.target.value;
+      // reset args/unsigned when type changes incompatibly
+      const meta = TYPE_BY_NAME[e.target.value];
+      if (meta && meta.lengthKind === "none") editorState.columns[i].args = "";
+      if (meta && !meta.supportsUnsigned) editorState.columns[i].unsigned = false;
+      renderEditorRows();
+    });
+    rowEl.querySelector("[data-f=args]").addEventListener("input", (e) => { editorState.columns[i].args = e.target.value; flagRow(rowEl, i); });
+    rowEl.querySelector("[data-f=def]").addEventListener("input", (e) => { editorState.columns[i].defaultVal = e.target.value; flagRow(rowEl, i); });
+    rowEl.querySelectorAll("[data-chk]").forEach(el => {
+      el.addEventListener("change", (e) => {
+        const f = el.dataset.chk;
+        // "Null" checkbox: checked = allow NULL. State stores the inverse so
+        // the snapshot-diff stays clean (no extra fields that weren't in the
+        // original snapshot).
+        if (f === "nullable") editorState.columns[i].notNull = !e.target.checked;
+        else editorState.columns[i][f] = e.target.checked;
+        flagRow(rowEl, i);
+      });
+    });
+    const unsEl = rowEl.querySelector("[data-f=unsigned]");
+    if (unsEl) unsEl.addEventListener("change", (e) => { editorState.columns[i].unsigned = e.target.checked; flagRow(rowEl, i); });
+    rowEl.querySelector("[data-remove]").addEventListener("click", () => {
+      if (editorState.mode === "alter" && editorState.columns[i].originalName) {
+        // tombstone instead of splicing so we can emit DROP COLUMN
+        editorState.columns[i]._deleted = !editorState.columns[i]._deleted;
+        renderEditorRows();
+      } else {
+        editorState.columns.splice(i, 1);
+        renderEditorRows();
+      }
+    });
+  });
+}
+
+// True when an existing (original-backed) column has been edited. We strip
+// `original` and `_deleted` from the live copy so only user-visible fields
+// participate in the comparison. Key order matters for JSON.stringify —
+// rest-destructuring preserves the insertion order of the remaining keys,
+// which matches the order in c.original (a JSON clone of the same shape).
+function columnIsDirty(c) {
+  if (!c.original) return true;
+  const { original, _deleted, ...rest } = c;
+  return JSON.stringify(rest) !== JSON.stringify(c.original);
+}
+
+function flagRow(rowEl, i) {
+  const c = editorState.columns[i];
+  rowEl.classList.remove("added", "removed", "changed");
+  if (editorState.mode !== "alter") return;
+  if (c._deleted) { rowEl.classList.add("removed"); return; }
+  if (!c.originalName) { rowEl.classList.add("added"); return; }
+  if (columnIsDirty(c)) rowEl.classList.add("changed");
+}
+
+function renderRow(c, i) {
+  const meta = TYPE_BY_NAME[c.type];
+  const lengthKind = meta?.lengthKind ?? (c.args ? "number" : "none");
+  const argsPlaceholder = lengthKind === "decimal" ? "10,2" : lengthKind === "values" ? "'a','b'" : lengthKind === "number" ? "255" : "—";
+  const canUnsigned = meta?.supportsUnsigned;
+  const types = TYPE_CATALOG.map(t => `<option ${c.type === t.type ? "selected" : ""}>${t.type}</option>`).join("")
+    + (TYPE_BY_NAME[c.type] ? "" : `<option selected>${escapeHtml(c.type)}</option>`);
+  const tombstoned = c._deleted ? "removed" : "";
+  const addedCls = editorState.mode === "alter" && !c.originalName ? "added" : "";
+  return `
+    <div class="grid-row ${tombstoned} ${addedCls}" data-row="${i}">
+      <span class="handle">${i + 1}</span>
+      <input data-f="name" value="${escapeHtml(c.name)}" placeholder="column_name">
+      <select data-f="type">${types}</select>
+      <input data-f="args" value="${escapeHtml(c.args)}" placeholder="${argsPlaceholder}" ${lengthKind === "none" ? "disabled" : ""}>
+      <span class="chk">${canUnsigned ? `<input type="checkbox" data-f="unsigned" ${c.unsigned ? "checked" : ""}>` : ""}</span>
+      <input data-f="def" value="${escapeHtml(c.defaultVal)}" placeholder="NULL / CURRENT_TIMESTAMP / …">
+      <span class="chk"><input type="checkbox" data-chk="nullable" ${!c.notNull ? "checked" : ""}></span>
+      <span class="chk"><input type="checkbox" data-chk="pk" ${c.pk ? "checked" : ""}></span>
+      <span class="chk"><input type="checkbox" data-chk="ai" ${c.ai ? "checked" : ""}></span>
+      <span class="chk"><input type="checkbox" data-chk="unique" ${c.unique ? "checked" : ""}></span>
+      <button class="remove-btn" type="button" data-remove title="${c._deleted ? "Restore" : (editorState.mode === "alter" && c.originalName ? "Mark for DROP" : "Remove")}">${c._deleted ? "↺" : "✕"}</button>
+    </div>
+  `;
+}
+
+document.getElementById("btnNewTable").addEventListener("click", () => openTableEditor(null));
+document.getElementById("schemaAddCol").addEventListener("click", () => {
+  editorState.columns.push(blankColumn());
+  renderEditorRows();
+});
+document.getElementById("schemaCancel").addEventListener("click", () => schemaDialog.close());
+document.getElementById("schemaGenerate").addEventListener("click", () => {
+  const name = schemaName.value.trim() || editorState.tableName;
+  if (!name) { schemaWarnEl.textContent = "Table name required."; return; }
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) { schemaWarnEl.textContent = "Table name must be [A-Za-z_][A-Za-z0-9_]*."; return; }
+  for (const c of editorState.columns) {
+    if (c._deleted) continue;
+    if (!c.name || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(c.name)) { schemaWarnEl.textContent = `Bad column name: ${c.name || "(empty)"}`; return; }
+  }
+  const sql = editorState.mode === "alter" ? buildAlterSql(name, editorState.columns) : buildCreateSql(name, editorState.columns);
+  if (!sql) { schemaWarnEl.textContent = "No changes to apply."; return; }
+  // Drop into editor, prepended with a header so user sees what it is. Do not run.
+  const header = `-- ${editorState.mode === "alter" ? "ALTER" : "CREATE"} generated by DB Console\n-- Review carefully. Flip the Read-only toggle off to run.\n`;
+  editor.value = (editor.value.trim() ? editor.value.trimEnd() + "\n\n" : "") + header + sql + "\n";
+  editor.focus();
+  schemaDialog.close();
+  setStatus(`<span class="ok">SQL generated.</span> Review in the editor, then Run (with writes enabled).`);
+});
+
+// ── SQL generators ───────────────────────────────────────────────────────────
+function formatType(c) {
+  const meta = TYPE_BY_NAME[c.type];
+  let out = c.type;
+  if (c.args && meta?.lengthKind !== "none") out += `(${c.args})`;
+  if (c.unsigned && meta?.supportsUnsigned) out += " UNSIGNED";
+  return out;
+}
+function formatDefault(raw) {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const v = String(raw).trim();
+  if (v === "") return null;
+  if (/^NULL$/i.test(v)) return "NULL";
+  if (/^(TRUE|FALSE)$/i.test(v)) return v.toUpperCase();
+  if (/^-?\d+(\.\d+)?$/.test(v)) return v;
+  if (/^CURRENT_TIMESTAMP(\(\d+\))?$/i.test(v)) return v.toUpperCase();
+  // treat everything else as a string literal
+  return `'${v.replace(/'/g, "''")}'`;
+}
+function columnClause(c) {
+  const bits = [`\`${c.name}\``, formatType(c)];
+  if (c.notNull) bits.push("NOT NULL"); else bits.push("NULL");
+  const def = formatDefault(c.defaultVal);
+  if (def !== null) bits.push(`DEFAULT ${def}`);
+  if (c.ai) bits.push("AUTO_INCREMENT");
+  if (c.unique && !c.pk) bits.push("UNIQUE");
+  return bits.join(" ");
+}
+
+function buildCreateSql(tableName, cols) {
+  const live = cols.filter(c => !c._deleted);
+  const body = live.map(columnClause);
+  const pks = live.filter(c => c.pk).map(c => `\`${c.name}\``);
+  if (pks.length) body.push(`PRIMARY KEY (${pks.join(", ")})`);
+  return `CREATE TABLE \`${tableName}\` (\n  ${body.join(",\n  ")}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;`;
+}
+
+function buildAlterSql(tableName, cols) {
+  // Detect PK changes — emit a warning-comment, let user hand-edit. Multi-step
+  // PK changes are fiddly and not worth auto-generating.
+  const pkBefore = cols.filter(c => c.original?.pk).map(c => c.originalName);
+  const pkAfter  = cols.filter(c => !c._deleted && c.pk).map(c => c.name);
+  const pkChanged = pkBefore.join(",") !== pkAfter.join(",");
+
+  const clauses = [];
+  for (const c of cols) {
+    if (c._deleted && c.originalName) {
+      clauses.push(`DROP COLUMN \`${c.originalName}\``);
+      continue;
+    }
+    if (!c.originalName) {
+      clauses.push(`ADD COLUMN ${columnClause(c)}`);
+      continue;
+    }
+    if (!columnIsDirty(c)) continue;
+    const renamed = c.originalName !== c.name;
+    if (renamed) {
+      clauses.push(`CHANGE COLUMN \`${c.originalName}\` ${columnClause(c)}`);
+    } else {
+      clauses.push(`MODIFY COLUMN ${columnClause(c)}`);
+    }
+  }
+  if (!clauses.length && !pkChanged) return "";
+  let sql = `ALTER TABLE \`${tableName}\`\n  ${clauses.join(",\n  ")};`;
+  if (pkChanged) {
+    sql += `\n\n-- WARNING: primary key changed (${pkBefore.join(",") || "(none)"} -> ${pkAfter.join(",") || "(none)"}).`
+        +  `\n-- Auto-generator skipped PK DDL. Hand-edit if needed:`
+        +  `\n-- ALTER TABLE \`${tableName}\` DROP PRIMARY KEY${pkAfter.length ? `, ADD PRIMARY KEY (${pkAfter.map(n => `\`${n}\``).join(", ")})` : ""};`;
+  }
+  return sql;
 }
 
 // ── schema download ──────────────────────────────────────────────────────────
