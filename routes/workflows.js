@@ -15,6 +15,28 @@ const { executeJob } = require("../lib/job_executor");
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // ─────────────────────────────────────────────────────────────
+// Slice 2.1 — test_input validation helper.
+//
+// workflows.test_input is authorial documentation of the init_data shape a
+// workflow expects. Nullable; no runtime validation against it at start
+// time. At save time we only check shape: must be absent/null/undefined, or
+// a plain JSON object (not an array, not a primitive).
+//
+// Returns null on success, or { status, error } on failure — caller handles
+// res.status(...).json(...).
+// ─────────────────────────────────────────────────────────────
+function validateTestInput(v) {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'object' || Array.isArray(v)) {
+    return {
+      status: 400,
+      error: 'test_input must be a JSON object or null (arrays and primitives are not accepted)',
+    };
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
 // GET /workflows/functions — list available internal functions
 // Used by workflowManager.html to populate dropdowns dynamically
 // MUST be defined before any /:id routes to avoid param capture
@@ -422,7 +444,7 @@ router.get("/workflows", jwtOrApiKey, async (req, res) => {
   try {
     let query = `
       SELECT 
-        id, name, description, created_at, updated_at,
+        id, name, description, test_input, created_at, updated_at,
         (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id) as step_count
       FROM workflows w
       WHERE 1=1
@@ -490,7 +512,7 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
     const [wfRows] = await db.query(
       `
       SELECT 
-        id, name, description, created_at, updated_at,
+        id, name, description, test_input, created_at, updated_at,
         (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id) as step_count
       FROM workflows w
       WHERE id = ?
@@ -538,24 +560,34 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
 /**
  * POST /workflows
  * Create a new workflow template
- * Body: { name: string, description?: string }
+ * Body: { name: string, description?: string, test_input?: object|null }
  * Returns the new workflow ID + basic info
+ *
+ * Slice 2.1: `test_input` is authorial documentation of the init_data shape
+ * this workflow expects. Nullable. Plain JSON object only — arrays/primitives
+ * rejected with 400. Not validated at runtime against actual init_data.
  */
 router.post("/workflows", jwtOrApiKey, async (req, res) => {
   const db = req.db;
-  const { name, description = "" } = req.body;
+  const { name, description = "", test_input } = req.body;
 
   if (!name || typeof name !== "string" || name.trim() === "") {
     return res.status(400).json({ error: "Workflow name is required" });
   }
 
+  // Slice 2.1 — test_input shape validation.
+  {
+    const v = validateTestInput(test_input);
+    if (v) return res.status(v.status).json({ error: v.error });
+  }
+
   try {
     const [result] = await db.query(
       `
-      INSERT INTO workflows (name, description)
-      VALUES (?, ?)
+      INSERT INTO workflows (name, description, test_input)
+      VALUES (?, ?, ?)
       `,
-      [name.trim(), description.trim()]
+      [name.trim(), description.trim(), toJson(test_input)]
     );
 
     const workflowId = result.insertId;
@@ -689,10 +721,12 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
 /**
  * POST /workflows/bulk
  * Create a workflow template and all steps in one transaction
+ *
+ * Slice 2.1: also accepts `test_input` (authorial init_data shape doc).
  */
 router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
   const db = req.db;
-  const { name, description = "", steps } = req.body;
+  const { name, description = "", test_input, steps } = req.body;
 
   if (!name || typeof name !== "string" || !name.trim()) {
     return res.status(400).json({ error: "Workflow name is required" });
@@ -700,6 +734,12 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
 
   if (!Array.isArray(steps) || steps.length === 0) {
     return res.status(400).json({ error: "At least one step is required" });
+  }
+
+  // Slice 2.1 — test_input shape validation.
+  {
+    const v = validateTestInput(test_input);
+    if (v) return res.status(v.status).json({ error: v.error });
   }
 
   // Validate all steps BEFORE opening a transaction — so bad input gets a
@@ -742,8 +782,8 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
     await connection.beginTransaction();
 
     const [workflowResult] = await connection.query(
-      `INSERT INTO workflows (name, description) VALUES (?, ?)`,
-      [name.trim(), description.trim()]
+      `INSERT INTO workflows (name, description, test_input) VALUES (?, ?, ?)`,
+      [name.trim(), description.trim(), toJson(test_input)]
     );
 
     const workflowId = workflowResult.insertId;
@@ -1072,14 +1112,17 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
 
 /**
  * PUT /workflows/:id
- * Update workflow name and/or description
- * Body: { "name"?: string, "description"?: string }
+ * Update workflow name and/or description and/or test_input
+ * Body: { "name"?: string, "description"?: string, "test_input"?: object|null }
  * Partial updates are supported (at least one field required)
+ *
+ * Slice 2.1: `test_input` is accepted as a partial-update field. Pass `null`
+ * to explicitly clear it. Omit from body to leave unchanged.
  */
 router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id } = req.params;
-  const { name, description } = req.body;
+  const { name, description, test_input } = req.body;
 
   const workflowId = parseInt(id, 10);
   if (isNaN(workflowId) || workflowId <= 0) {
@@ -1087,8 +1130,14 @@ router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
   }
 
   // At least one field must be provided for a meaningful update
-  if (name === undefined && description === undefined) {
-    return res.status(400).json({ error: "At least one field (name or description) is required" });
+  if (name === undefined && description === undefined && test_input === undefined) {
+    return res.status(400).json({ error: "At least one field (name, description, or test_input) is required" });
+  }
+
+  // Slice 2.1 — test_input shape validation (only if present in body).
+  if (test_input !== undefined) {
+    const v = validateTestInput(test_input);
+    if (v) return res.status(v.status).json({ error: v.error });
   }
 
   let connection;
@@ -1117,6 +1166,10 @@ router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
     if (description !== undefined) {
       updates.push("description = ?");
       params.push((description || "").trim());
+    }
+    if (test_input !== undefined) {
+      updates.push("test_input = ?");
+      params.push(toJson(test_input));
     }
 
     const query = `
@@ -1336,8 +1389,11 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
     await connection.beginTransaction();
 
     // Get original workflow
+    //
+    // Slice 2.1: also SELECT test_input so the duplicate carries over the
+    // authorial init_data shape doc. Symmetric with description carry-over.
     const [wfRows] = await connection.query(
-      `SELECT name, description FROM workflows WHERE id = ?`,
+      `SELECT name, description, test_input FROM workflows WHERE id = ?`,
       [originalId]
     );
     if (wfRows.length === 0) {
@@ -1350,8 +1406,8 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
     // Create new workflow
     const newName = customName?.trim() || `Copy of ${original.name}`;
     const [newWfResult] = await connection.query(
-      `INSERT INTO workflows (name, description) VALUES (?, ?)`,
-      [newName, original.description || ""]
+      `INSERT INTO workflows (name, description, test_input) VALUES (?, ?, ?)`,
+      [newName, original.description || "", toJson(original.test_input)]
     );
     const newWorkflowId = newWfResult.insertId;
 

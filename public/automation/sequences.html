@@ -1134,6 +1134,7 @@ async function seqStepMove(idx, dir) {
 async function seqNew() {
   const { value: vals } = await Swal.fire({
     title: 'New Sequence Template',
+    width: 560,
     html: `<input id="swal-name" class="swal2-input" placeholder="Name">
           <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:13px;color:#475569">
             <input type="checkbox" id="swal-idonly">
@@ -1141,7 +1142,17 @@ async function seqNew() {
           </label>
           <input id="swal-type" class="swal2-input" placeholder="Type (e.g. no_show, lead_drip, pre_appt)">
           <input id="swal-appt-type" class="swal2-input" placeholder="Appt Type Filter (optional)">
-          <input id="swal-appt-with" class="swal2-input" placeholder="Appt With Filter (user ID, optional)">`,
+          <input id="swal-appt-with" class="swal2-input" placeholder="Appt With Filter (user ID, optional)">
+          <div style="text-align:left;font-size:12px;color:#475569;margin:10px .875em 4px">
+            <strong>Test Input (JSON)</strong>
+            <span style="color:#94a3b8">— optional</span>
+          </div>
+          <textarea id="swal-testinput"
+                    placeholder='{ "appt_id": 42, "contact_id": 123, "appt_time": "2026-05-01T10:00:00Z" }'
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:110px;resize:vertical"></textarea>
+          <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+            Document what trigger_data this sequence expects when enrolled.
+          </div>`,
     didOpen: () => {
       const cb = document.getElementById('swal-idonly');
       const typeEl = document.getElementById('swal-type');
@@ -1159,11 +1170,26 @@ async function seqNew() {
       const type = document.getElementById('swal-type').value.trim();
       if (!name) { Swal.showValidationMessage('Name is required'); return false; }
       if (!idOnly && !type) { Swal.showValidationMessage('Type is required (or check ID-only)'); return false; }
+      // Slice 2.1 — parse + shape-check test_input client-side so the user
+      // gets an immediate error. Backend validates again.
+      const tiRaw = document.getElementById('swal-testinput').value.trim();
+      let test_input = null;
+      if (tiRaw) {
+        try { test_input = JSON.parse(tiRaw); }
+        catch (e) { Swal.showValidationMessage('Test Input is not valid JSON'); return false; }
+        if (test_input === null) {
+          // literal null in textarea → treat as cleared
+        } else if (typeof test_input !== 'object' || Array.isArray(test_input)) {
+          Swal.showValidationMessage('Test Input must be a JSON object (not array or primitive)');
+          return false;
+        }
+      }
       return {
         name,
         type: idOnly ? null : type,
         appt_type_filter: document.getElementById('swal-appt-type').value.trim() || null,
-        appt_with_filter: document.getElementById('swal-appt-with').value.trim() || null
+        appt_with_filter: document.getElementById('swal-appt-with').value.trim() || null,
+        test_input
       };
     }
   });
@@ -1181,8 +1207,17 @@ async function seqEdit() {
   if (!SEQ.activeTemplate) return;
   const currentType = SEQ.activeTemplate.type;
   const isIdOnly = !currentType || !String(currentType).trim();
+
+  // Slice 2.1 — test_input may be a parsed object, a JSON string, or null
+  // depending on mysql2 typeCast config. parseJson tolerates both cases.
+  let tiObj = SEQ.activeTemplate.test_input;
+  if (typeof tiObj === 'string') tiObj = parseJson(tiObj);
+  const tiText = (tiObj && typeof tiObj === 'object' && !Array.isArray(tiObj))
+    ? JSON.stringify(tiObj, null, 2) : '';
+
   const { value: vals } = await Swal.fire({
     title: 'Edit Template',
+    width: 560,
     html: `<input id="swal-name" class="swal2-input" placeholder="Name" value="${esc(SEQ.activeTemplate.name)}">
           <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:13px;color:#475569">
             <input type="checkbox" id="swal-idonly" ${isIdOnly ? 'checked' : ''}>
@@ -1193,7 +1228,17 @@ async function seqEdit() {
           <input id="swal-appt-with" class="swal2-input" placeholder="Appt With Filter (user ID, optional)" value="${esc(SEQ.activeTemplate.appt_with_filter || '')}">
           <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px">
             <input type="checkbox" id="swal-active" ${SEQ.activeTemplate.active ? 'checked' : ''}> Active
-          </label>`,
+          </label>
+          <div style="text-align:left;font-size:12px;color:#475569;margin:10px .875em 4px">
+            <strong>Test Input (JSON)</strong>
+            <span style="color:#94a3b8">— optional, leave blank to clear</span>
+          </div>
+          <textarea id="swal-testinput"
+                    placeholder='{ "appt_id": 42, "contact_id": 123, "appt_time": "2026-05-01T10:00:00Z" }'
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:110px;resize:vertical">${esc(tiText)}</textarea>
+          <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+            Document what trigger_data this sequence expects when enrolled.
+          </div>`,
     didOpen: () => {
       const cb = document.getElementById('swal-idonly');
       const typeEl = document.getElementById('swal-type');
@@ -1212,12 +1257,27 @@ async function seqEdit() {
       const type = document.getElementById('swal-type').value.trim();
       if (!name) { Swal.showValidationMessage('Name is required'); return false; }
       if (!idOnly && !type) { Swal.showValidationMessage('Type is required (or check ID-only)'); return false; }
+      // Slice 2.1 — parse + shape-check test_input. Blank textarea → null
+      // (explicit clear on PUT).
+      const tiRaw = document.getElementById('swal-testinput').value.trim();
+      let test_input = null;
+      if (tiRaw) {
+        try { test_input = JSON.parse(tiRaw); }
+        catch (e) { Swal.showValidationMessage('Test Input is not valid JSON'); return false; }
+        if (test_input === null) {
+          // literal null
+        } else if (typeof test_input !== 'object' || Array.isArray(test_input)) {
+          Swal.showValidationMessage('Test Input must be a JSON object (not array or primitive)');
+          return false;
+        }
+      }
       return {
         name,
         type: idOnly ? null : type,
         appt_type_filter: document.getElementById('swal-appt-type').value.trim() || null,
         appt_with_filter: document.getElementById('swal-appt-with').value.trim() || null,
-        active: document.getElementById('swal-active').checked
+        active: document.getElementById('swal-active').checked,
+        test_input
       };
     }
   });
