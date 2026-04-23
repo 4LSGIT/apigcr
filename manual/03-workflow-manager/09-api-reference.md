@@ -389,7 +389,7 @@ CRUD (`GET/POST/PUT/DELETE /api/credentials`).
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/resolve` | Resolve `{{table.column}}` placeholders |
-| `GET` | `/resolve/tables` | List allowed tables |
+| `GET` | `/resolve/tables` | List allowed tables (real tables only — excludes pseudo-tables) |
 
 **POST /resolve body:**
 ```json
@@ -399,6 +399,19 @@ CRUD (`GET/POST/PUT/DELETE /api/credentials`).
   "strict": false
 }
 ```
+
+**`trigger_data` pseudo-table.** Pass `refs.trigger_data` as a free-form object to resolve `{{trigger_data.key}}` placeholders (including nested dot-paths like `{{trigger_data.user.email}}`) without a DB lookup. Unlike real-table refs — which must be a single-anchor-key object like `{ contact_id: 1001 }` — `refs.trigger_data` accepts any number of keys and nested objects:
+
+```json
+{
+  "text": "Amount ${{trigger_data.amount}} due {{trigger_data.due_date|date:MMMM Do}}",
+  "refs": {
+    "trigger_data": { "amount": 250.50, "due_date": "2026-05-01T00:00:00Z" }
+  }
+}
+```
+
+See [06-variables-templating.md](06-variables-templating.md#pseudo-table-trigger_data) for full syntax.
 
 **Response statuses (always HTTP 200 for content issues):**
 
