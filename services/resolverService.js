@@ -22,6 +22,12 @@
 //   {{table.column|default:fallback text}}
 //   {{table.column|default:{{other.column}}|upper}}
 //
+// Pseudo-table `trigger_data`:
+//   {{trigger_data.key}}         — resolves from refs.trigger_data (in-memory, no SQL)
+//   {{trigger_data.a.b.c}}       — dot-path supported for nested objects
+//   Caller must pass refs.trigger_data = <the object>. Missing / unset keys
+//   leave the placeholder unresolved (soft-fail), same as missing columns.
+//
 // Modifiers (applied left-to-right):
 //   default:VALUE or default:{{table.col}}
 //   date:FORMAT / time:FORMAT / datetime:FORMAT
@@ -242,6 +248,18 @@ function applyTextTransform(value, mod) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Nested path accessor — used for trigger_data pseudo-table.
+// Mirrors sequenceEngine.checkCondition's dot-path lookup so that
+// {{trigger_data.a.b.c}} and paramMap: { x: "trigger_data.a.b.c" }
+// walk an object the same way.
+// ─────────────────────────────────────────────────────────────
+
+function getNestedValue(obj, path) {
+  if (!obj || !path) return undefined;
+  return path.split('.').reduce((current, key) => current?.[key], obj);
+}
+
+// ─────────────────────────────────────────────────────────────
 // Core resolver
 // ─────────────────────────────────────────────────────────────
 
@@ -254,6 +272,12 @@ async function resolve({ db, text, refs = {}, strict = false }) {
 
   const tableColumns = new Map(); // Map<table, Set<column>>
   const scanErrors   = [];
+
+  // hasTriggerData: tracks whether any {{trigger_data.X}} placeholder was seen.
+  // trigger_data is a pseudo-table — resolved from refs.trigger_data at resolve
+  // time, not via SQL. We still need to know it's present so the "no SQL tables
+  // referenced → short-circuit" gate doesn't bypass the resolve pass.
+  let hasTriggerData = false;
 
   // unknownTables: tables referenced in placeholders but not in ALLOWED_TABLES.
   // These are treated as soft unresolved (not hard errors) so the rest can still resolve.
@@ -270,6 +294,24 @@ async function resolve({ db, text, refs = {}, strict = false }) {
 
     const tableName  = entityField.slice(0, dotIdx).trim();
     const columnName = entityField.slice(dotIdx + 1).trim();
+
+    // trigger_data is a pseudo-table — resolved from refs.trigger_data directly,
+    // no SQL lookup. Don't add to tableColumns (which drives SELECT), but DO
+    // recurse into default: modifiers so that a construct like
+    //   {{trigger_data.amount|default:{{contacts.contact_fname}}}}
+    // still picks up the real-table ref for the default branch.
+    if (tableName === 'trigger_data') {
+      hasTriggerData = true;
+      for (const mod of parts.slice(1)) {
+        if (mod.startsWith('default:')) {
+          const inner = mod.slice(8).trim();
+          if (inner.startsWith('{{') && inner.endsWith('}}')) {
+            scanContent(inner.slice(2, -2), depth + 1);
+          }
+        }
+      }
+      return;
+    }
 
     if (!ALLOWED_TABLES.includes(tableName)) {
       // Soft: mark as unknown — placeholder will remain unresolved
@@ -306,11 +348,11 @@ async function resolve({ db, text, refs = {}, strict = false }) {
     return { status: 'failed', text, unresolved: [], errors: scanErrors, errorType: 'security' };
   }
 
-  if (tableColumns.size === 0) {
+  if (tableColumns.size === 0 && !hasTriggerData) {
     return { status: 'success', text, unresolved: [] };
   }
 
-  // ── Step 2: Validate refs ──
+  // ── Step 2: Validate refs (real tables only — trigger_data is not a SQL table) ──
 
   const missingRefs = [...tableColumns.keys()].filter(t => !refs[t]);
   if (missingRefs.length) {
@@ -321,84 +363,96 @@ async function resolve({ db, text, refs = {}, strict = false }) {
     };
   }
 
-  // ── Step 3: Build query ──
-  // First table in the map → FROM. All others → LEFT JOIN.
-  // LEFT JOIN ensures a missing anchor in one table doesn't null the whole row.
-  // All columns aliased as `table__column` to prevent name collisions.
+  // ── Step 3 & 4: Build + execute SQL (skipped entirely when only trigger_data is referenced) ──
+  //
+  // `row` stays null when there are no real-table placeholders; resolveContent's
+  // trigger_data branch doesn't need a row, and the non-trigger_data branch
+  // guards against null before touching row[aliasKey]. Skipping the query here
+  // also avoids a meaningless "no rows" early return in trigger_data-only cases.
 
-  const selectParts = [];
-  const joinParts   = [];
-  const params      = [];
-  let   baseTable   = null;
-  let   baseRefCol  = null;
-  let   baseRefVal  = null;
+  let row = null;
 
-  for (const tableName of tableColumns.keys()) {
-    const ref    = refs[tableName];
-    const refCol = Object.keys(ref)[0];
-    const refVal = ref[refCol];
+  if (tableColumns.size > 0) {
+    // First table in the map → FROM. All others → LEFT JOIN.
+    // LEFT JOIN ensures a missing anchor in one table doesn't null the whole row.
+    // All columns aliased as `table__column` to prevent name collisions.
 
-    // Safety: identifier validation (prevents SQL injection via table/column names)
-    if (!/^\w+$/.test(tableName) || !/^\w+$/.test(refCol)) {
-      return { status: 'failed', text, unresolved: [], errors: [`Invalid identifier in refs for '${tableName}'`] };
+    const selectParts = [];
+    const joinParts   = [];
+    const params      = [];
+    let   baseTable   = null;
+    let   baseRefCol  = null;
+    let   baseRefVal  = null;
+
+    for (const tableName of tableColumns.keys()) {
+      const ref    = refs[tableName];
+      const refCol = Object.keys(ref)[0];
+      const refVal = ref[refCol];
+
+      // Safety: identifier validation (prevents SQL injection via table/column names)
+      if (!/^\w+$/.test(tableName) || !/^\w+$/.test(refCol)) {
+        return { status: 'failed', text, unresolved: [], errors: [`Invalid identifier in refs for '${tableName}'`] };
+      }
+
+      const blocked = BLOCKED_COLUMNS[tableName] || [];
+      if (blocked.includes(refCol)) {
+        return { status: 'failed', text, unresolved: [], errors: [`Ref column '${tableName}.${refCol}' is not accessible`] };
+      }
+
+      // Columns to select for this table (ref col + all referenced columns)
+      const cols = [...new Set([refCol, ...tableColumns.get(tableName)])];
+      for (const col of cols) {
+        if (!/^\w+$/.test(col)) continue;
+        selectParts.push(`\`${tableName}\`.\`${col}\` AS \`${tableName}__${col}\``);
+      }
+
+      if (!baseTable) {
+        baseTable  = tableName;
+        baseRefCol = refCol;
+        baseRefVal = refVal;
+      } else {
+        // LEFT JOIN — if this anchor doesn't match, columns come back NULL
+        // rather than nuking the entire row
+        joinParts.push(`LEFT JOIN \`${tableName}\` ON \`${tableName}\`.\`${refCol}\` = ?`);
+        params.push(refVal);
+      }
     }
 
-    const blocked = BLOCKED_COLUMNS[tableName] || [];
-    if (blocked.includes(refCol)) {
-      return { status: 'failed', text, unresolved: [], errors: [`Ref column '${tableName}.${refCol}' is not accessible`] };
+    const sql = [
+      `SELECT ${selectParts.join(', ')}`,
+      `FROM \`${baseTable}\``,
+      ...joinParts,
+      `WHERE \`${baseTable}\`.\`${baseRefCol}\` = ?`,
+      'LIMIT 1'
+    ].join(' ');
+
+    params.push(baseRefVal);
+
+    // Note on error handling: we deliberately do NOT catch DB errors here.
+    // A DB connection blip / deadlock during placeholder resolution is an
+    // infrastructure failure, not a semantic resolver failure. Returning
+    // status='failed' would mask it as permanent (e.g. campaignService would
+    // record the contact as permanently failed and the job system would not
+    // retry). Letting the error propagate lets the caller / job system decide
+    // whether to retry. We still log here so the SQL is captured for debugging.
+    try {
+      const [rows] = await db.query(sql, params);
+      row = rows[0] || null;
+    } catch (err) {
+      console.error('[resolver] Query failed:', err.message, '\nSQL:', sql);
+      throw err;
     }
 
-    // Columns to select for this table (ref col + all referenced columns)
-    const cols = [...new Set([refCol, ...tableColumns.get(tableName)])];
-    for (const col of cols) {
-      if (!/^\w+$/.test(col)) continue;
-      selectParts.push(`\`${tableName}\`.\`${col}\` AS \`${tableName}__${col}\``);
+    if (!row) {
+      // Every placeholder that depended on a real-table row is now unresolvable.
+      // trigger_data placeholders in the same text COULD still resolve, but we
+      // preserve the pre-existing "no row → bail" semantics here since mixing
+      // partially-resolved real-table placeholders with resolved trigger_data
+      // ones would change behavior for existing callers (e.g. campaignService).
+      const allUnresolved = findPlaceholders(text).map(p => p.match);
+      const status = strict ? 'failed' : 'partial_success';
+      return { status, text, unresolved: allUnresolved };
     }
-
-    if (!baseTable) {
-      baseTable  = tableName;
-      baseRefCol = refCol;
-      baseRefVal = refVal;
-    } else {
-      // LEFT JOIN — if this anchor doesn't match, columns come back NULL
-      // rather than nuking the entire row
-      joinParts.push(`LEFT JOIN \`${tableName}\` ON \`${tableName}\`.\`${refCol}\` = ?`);
-      params.push(refVal);
-    }
-  }
-
-  const sql = [
-    `SELECT ${selectParts.join(', ')}`,
-    `FROM \`${baseTable}\``,
-    ...joinParts,
-    `WHERE \`${baseTable}\`.\`${baseRefCol}\` = ?`,
-    'LIMIT 1'
-  ].join(' ');
-
-  params.push(baseRefVal);
-
-  // ── Step 4: Execute ──
-
-  // Note on error handling: we deliberately do NOT catch DB errors here.
-  // A DB connection blip / deadlock during placeholder resolution is an
-  // infrastructure failure, not a semantic resolver failure. Returning
-  // status='failed' would mask it as permanent (e.g. campaignService would
-  // record the contact as permanently failed and the job system would not
-  // retry). Letting the error propagate lets the caller / job system decide
-  // whether to retry. We still log here so the SQL is captured for debugging.
-  let row;
-  try {
-    const [rows] = await db.query(sql, params);
-    row = rows[0] || null;
-  } catch (err) {
-    console.error('[resolver] Query failed:', err.message, '\nSQL:', sql);
-    throw err;
-  }
-
-  if (!row) {
-    const allUnresolved = findPlaceholders(text).map(p => p.match);
-    const status = strict ? 'failed' : 'partial_success';
-    return { status, text, unresolved: allUnresolved };
   }
 
   // ── Step 5: Resolve placeholders against row data ──
@@ -419,7 +473,22 @@ async function resolve({ db, text, refs = {}, strict = false }) {
     const columnName = entityField.slice(dotIdx + 1).trim();
     const aliasKey   = `${tableName}__${columnName}`;
 
-    let value = (row[aliasKey] !== undefined && row[aliasKey] !== '') ? row[aliasKey] : null;
+    // Two value sources:
+    //   • trigger_data — dot-path walk over the in-memory object in refs.trigger_data
+    //   • anything else — `table__column` alias on the row returned by the SQL
+    // For the non-trigger_data branch, `row` can be null only when no real-table
+    // placeholders were present in the text (SQL was skipped). In that case we
+    // fall through to null here and let modifiers/defaults take over.
+    let value;
+    if (tableName === 'trigger_data') {
+      const td = refs.trigger_data;
+      const v  = td ? getNestedValue(td, columnName) : undefined;
+      value = (v !== undefined && v !== null && v !== '') ? v : null;
+    } else {
+      value = (row && row[aliasKey] !== undefined && row[aliasKey] !== '')
+        ? row[aliasKey]
+        : null;
+    }
 
     // Apply defaults (in order, stop at first non-null result)
     for (const mod of modifiers) {

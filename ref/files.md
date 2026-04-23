@@ -322,9 +322,9 @@ Caller-ID middleware ([lib/legacyTrap.js](../lib/legacyTrap.js)) is wired into 1
 | GET    | /api/users/:id                             | ✔           | |
 | GET    | /api/judges                                | ✔           | |
 | GET    | /api/trustees                              | ✔           | |
-| POST   | /login                                     |             | pre-auth — intentional, rate-limited |
-| POST   | /auth/forgot-password                      |             | pre-auth — intentional, rate-limited |
-| POST   | /auth/reset-password                       |             | pre-auth — intentional, rate-limited |
+| POST   | /login                                     |      OK     | pre-auth — intentional, rate-limited |
+| POST   | /auth/forgot-password                      |        OK   | pre-auth — intentional, rate-limited |
+| POST   | /auth/reset-password                       |           OK| pre-auth — intentional, rate-limited |
 | POST   | /api/auth/change-password                  | ✔           | |
 | POST   | /api/auth/update-profile                   | ✔           | |
 | GET    | /isWorkday                                 |             | **L7** — add jwtOrApiKey |

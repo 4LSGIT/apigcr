@@ -87,7 +87,21 @@ These are *not* a.html blockers — a.html never calls them — but they're live
 
 From the route table in [files.md](files.md), these routes have no `jwtOrApiKey`. Each was checked.
 
-**Intentionally public — no action:** `GET /:page` (static loader); `POST /hooks/:slug` (external webhook, HMAC-verified per-hook); `GET /api/public/docs/:caseId`, `POST /api/public/get-upload-link`, `POST /api/public/upload-complete` (public doc portal, rate-limited); `POST /login`, `POST /auth/forgot-password`, `POST /auth/reset-password` (pre-auth); `GET /date`, `GET /myip`, `GET /parseName` (utilities); `GET /internal/hello` (liveness); `GET /api`, `GET /newpath` (info); `POST /auth/P_validate` (Pabbly bridge, rate-limited); `GET /ringcentral/authorize`, `GET /ringcentral/callback` (OAuth); `POST /logEmail` (email-relay webhook intake).
+**Intentionally public — no action:** 
+- `GET /:page` (static loader);
+- `POST /hooks/:slug` (external webhook, HMAC-verified per-hook);
+- `GET /api/public/docs/:caseId`,
+- `POST /api/public/get-upload-link`,
+- `POST /api/public/upload-complete` (public doc portal, rate-limited);
+- `POST /login`,
+ `POST /auth/forgot-password`,
+ `POST /auth/reset-password` (pre-auth);
+- `GET /date`, `GET /myip`, `GET /parseName` (utilities);
+- `GET /internal/hello` (liveness);
+- `GET /api`, `GET /newpath` (info);
+- `POST /auth/P_validate` (Pabbly bridge, rate-limited);
+- `GET /ringcentral/authorize`, `GET /ringcentral/callback` (OAuth);
+- `POST /logEmail` (email-relay webhook intake).
 
 **Action items:** L7 (`/isWorkday`), L8 (`/test-alert*`), L1–L5 above.
 
