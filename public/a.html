@@ -1456,11 +1456,6 @@
         allowOutsideClick: () => !Swal.isLoading()
       }).then((result) => {
         if (result.isConfirmed) {
-          // Update the in-memory password global so legacy routes stay in sync
-          // TODO: REMOVE when dropping plaintext password column
-          password = E("newPass")?.value || password;
-          AUTH_STATE.password = password;
-
           Toast.fire({
             icon: "success",
             title: "Password changed successfully",
@@ -1539,24 +1534,8 @@
     <button class="big-button" onclick="admintask1()">View/Edit Users</button>
     <button class="big-button" onclick="testSwalPage()">Test Swal Page</button>
     <button class="big-button" onclick="admintask2()">Sequences</button>
-    <button class="big-button"
-      onclick="E('sqlQueryDiv').style.display = E('sqlQueryDiv').style.display == 'none'? '':'none'">
-      mySQL Query (legacy)
-    </button>
     <button class="big-button" data-db-console-toggle>DB Console (SU)</button>
     <div id="sequencesDiv" style="display: none"></div>
-    <div id="sqlQueryDiv" style="display: none">
-      <h2>mySQL query</h2>
-      <p>
-        THIS IS AN ADVANCED FEATURE THAT CAN HAVE EXTREME CONSEQUENCES - DON'T
-        USE IF YOU DONT KNOW WHAT THIS IS! (that means you!)
-      </p>
-      <input />
-      <button class="big-button" onclick="mySQLquery(this.previousElementSibling.value)">
-        Query
-      </button>
-      <div id="sqlResult"></div>
-    </div>
     <div id="dbConsoleDiv" style="display: none; margin-top: 10px;">
       <iframe data-src="/dbConsole.html"
               style="width: 100%; height: 80vh; border: 1px solid #2a3040; border-radius: 6px; background: #0f1117;"></iframe>
@@ -1577,17 +1556,6 @@
       }
     });
   </script>
-  <script>
-    async function mySQLquery(query) {
-      try {
-        const data = await apiSend('/db-jwt', 'GET', { query });
-        E('sqlResult').innerHTML = JSON.stringify(data, undefined, 2);
-      } catch (err) {
-        E('sqlResult').innerHTML = '<span style="color:red">Error: ' + err.message + '</span>';
-      }
-    }
-  </script>
-
   <script>
     params = {};
     new URL(window.location).searchParams.forEach((value, key) => {
@@ -1624,10 +1592,9 @@
 
     let temp34 = "";
 
-    // ---- Global auth state (temporary, legacy-compatible) ----
+    // ---- Global auth state ----
     window.AUTH_STATE = {
       username: null,
-      password: null,
       jwt: null,
       loginInProgress: null
     };
@@ -1651,15 +1618,12 @@
 
 
     async function apiSend(endpoint, method = "GET", payload = null, extraHeaders = {}) {
-      // Ensure JWT
+      // Ensure JWT — prompt the user if missing or expired
       if (
         !window.AUTH_STATE.jwt ||
         isJwtExpired(window.AUTH_STATE.jwt)
       ) {
-        if (!window.AUTH_STATE.username || !window.AUTH_STATE.password) {
-          throw new Error("Not logged in");
-        }
-        await login(window.AUTH_STATE.username, window.AUTH_STATE.password);
+        await loginBlocking();
       }
       let url = endpoint;
       const options = {
@@ -1681,9 +1645,9 @@
         }
       }
       let res = await fetch(url, options);
-      // Auto-relogin + retry once
+      // Prompt re-login on 401, then retry once
       if (res.status === 401) {
-        await login(window.AUTH_STATE.username, window.AUTH_STATE.password);
+        await loginBlocking();
         options.headers.Authorization = `Bearer ${window.AUTH_STATE.jwt}`;
         res = await fetch(url, options);
       }
@@ -1840,9 +1804,8 @@ async function login(username, password) {
         throw new Error(data.error || "Login failed");
       }
 
-      // Only cache creds AFTER the server confirms they work.
+      // Cache username for next login's prefill; password is never stored.
       AUTH_STATE.username = username;
-      AUTH_STATE.password = password;//need to stop and switch to refresh token!
       AUTH_STATE.jwt = data.token;
       localStorage.setItem("jwt", data.token);
       return data.token;
@@ -1961,7 +1924,6 @@ async function initAuth() {
       if (window.AUTH_STATE) {
         AUTH_STATE.jwt = null;
         AUTH_STATE.username = "";
-        AUTH_STATE.password = "";
         AUTH_STATE.loginInProgress = null;
       }
 

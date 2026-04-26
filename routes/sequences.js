@@ -36,6 +36,28 @@ const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringi
 const normalizeType = v => (v == null || !String(v).trim()) ? null : String(v).trim();
 
 // ─────────────────────────────────────────────────────────────
+// Slice 2.1 — test_input validation helper.
+//
+// sequence_templates.test_input is authorial documentation of the
+// trigger_data shape this sequence expects at enrollment. Nullable; no
+// runtime validation against it. At save time we only check shape: must be
+// absent/null/undefined, or a plain JSON object (not an array, not a
+// primitive).
+//
+// Returns null on success, or { status, error } on failure.
+// ─────────────────────────────────────────────────────────────
+function validateTestInput(v) {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'object' || Array.isArray(v)) {
+    return {
+      status: 400,
+      error: 'test_input must be a JSON object or null (arrays and primitives are not accepted)',
+    };
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Step config validation — Slice 3.3
 //
 // Single source of truth for action_type + action_config validity at save
@@ -200,6 +222,11 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
       try { template.condition = JSON.parse(template.condition); } catch {}
     }
 
+    // Slice 2.1 — parse test_input JSON for response (same pattern as condition).
+    if (typeof template.test_input === 'string') {
+      try { template.test_input = JSON.parse(template.test_input); } catch {}
+    }
+
     res.json({ success: true, template, steps });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch template', message: err.message });
@@ -211,22 +238,33 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
 // Slice B: `type` is optional. Null / empty / whitespace-only all become NULL
 // in the DB — these "ID-only" templates cannot be cascade-matched and are
 // reachable only via template_id on POST /sequences/enroll.
+//
+// Slice 2.1: `test_input` is authorial documentation of the trigger_data
+// shape this sequence expects. Nullable. Plain JSON object only — arrays
+// and primitives rejected with 400. Not validated at runtime.
 router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
   const db = req.db;
-  const { name, type, appt_type_filter, appt_with_filter, condition, description, active = true } = req.body;
+  const { name, type, appt_type_filter, appt_with_filter, condition, description, active = true, test_input } = req.body;
 
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
+
+  // Slice 2.1 — test_input shape validation.
+  {
+    const v = validateTestInput(test_input);
+    if (v) return res.status(v.status).json({ error: v.error });
+  }
 
   const typeVal = normalizeType(type);
 
   try {
     const [result] = await db.query(
-      `INSERT INTO sequence_templates (name, type, appt_type_filter, appt_with_filter, \`condition\`, description, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO sequence_templates (name, type, appt_type_filter, appt_with_filter, \`condition\`, description, active, test_input)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [name.trim(), typeVal, appt_type_filter || null,
        appt_with_filter != null ? parseInt(appt_with_filter) : null,
        condition ? JSON.stringify(condition) : null,
-       description || null, active ? 1 : 0]
+       description || null, active ? 1 : 0,
+       toJson(test_input)]
     );
     res.status(201).json({ success: true, templateId: result.insertId, name: name.trim(), type: typeVal });
   } catch (err) {
@@ -239,10 +277,19 @@ router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
 // Slice B: passing `type: null` OR `type: ""` OR `type: "   "` explicitly sets
 // the column to NULL (convert-to-ID-only). Omitting `type` from the body skips
 // the column entirely (unchanged partial-update semantics).
+//
+// Slice 2.1: `test_input` is accepted as a partial-update field. Pass `null`
+// to explicitly clear it. Omit from body to leave unchanged.
 router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const id = parseInt(req.params.id);
-  const { name, type, appt_type_filter, appt_with_filter, condition, description, active } = req.body;
+  const { name, type, appt_type_filter, appt_with_filter, condition, description, active, test_input } = req.body;
+
+  // Slice 2.1 — test_input shape validation (only if present in body).
+  if (test_input !== undefined) {
+    const v = validateTestInput(test_input);
+    if (v) return res.status(v.status).json({ error: v.error });
+  }
 
   const updates = [];
   const params  = [];
@@ -254,6 +301,7 @@ router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
   if (condition   !== undefined) { updates.push('\`condition\` = ?');         params.push(condition ? JSON.stringify(condition) : null); }
   if (description !== undefined) { updates.push('description = ?');       params.push(description); }
   if (active      !== undefined) { updates.push('active = ?');            params.push(active ? 1 : 0); }
+  if (test_input  !== undefined) { updates.push('test_input = ?');        params.push(toJson(test_input)); }
 
   if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
 
@@ -311,8 +359,11 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
     await connection.beginTransaction();
 
     // Fetch original template row
+    //
+    // Slice 2.1: also SELECT test_input so the duplicate carries over the
+    // authorial trigger_data shape doc.
     const [tplRows] = await connection.query(
-      `SELECT name, type, appt_type_filter, appt_with_filter, \`condition\`, description
+      `SELECT name, type, appt_type_filter, appt_with_filter, \`condition\`, description, test_input
        FROM sequence_templates WHERE id = ?`,
       [originalId]
     );
@@ -329,17 +380,20 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
     // handles the round-trip without double-encoding.
     // `type` is copied verbatim — if original is NULL (ID-only), the duplicate
     // is NULL (ID-only) too.
+    // `test_input` (Slice 2.1) is copied via toJson — handles either string
+    // or parsed-object return from SELECT.
     const [newTplResult] = await connection.query(
       `INSERT INTO sequence_templates
-        (name, type, appt_type_filter, appt_with_filter, \`condition\`, description, active)
-       VALUES (?, ?, ?, ?, ?, ?, 0)`,
+        (name, type, appt_type_filter, appt_with_filter, \`condition\`, description, active, test_input)
+       VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
       [
         newName,
         original.type,
         original.appt_type_filter,
         original.appt_with_filter,
         toJson(original.condition),
-        original.description
+        original.description,
+        toJson(original.test_input)
       ]
     );
     const newTemplateId = newTplResult.insertId;
@@ -655,6 +709,13 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
       if (!Number.isInteger(idInt) || idInt <= 0) {
         return res.status(400).json({ error: 'template_id must be a positive integer' });
       }
+      // 404 on nonexistent template rather than 500 (matches the pattern in
+      // GET /sequences/templates/:id/enrollments). Cheap single-row lookup.
+      const [[tpl]] = await db.query(
+        `SELECT id FROM sequence_templates WHERE id = ?`,
+        [idInt]
+      );
+      if (!tpl) return res.status(404).json({ error: 'Template not found' });
       const result = await enrollContactByTemplateId(db, contact_id, idInt, trigger_data);
       return res.status(201).json({ success: true, ...result });
     }

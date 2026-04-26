@@ -10,7 +10,10 @@ Sequences are contact-specific drip campaigns with condition gates at every step
 
 **Enrollment** — one contact's run through a template. Stored in `sequence_enrollments`. Tracks status, current step, and the `trigger_data` that caused enrollment.
 
-**Trigger data** — context captured at enrollment time (e.g. `{ appt_id: 123, appt_time: "..." }`). Used to resolve placeholders in step messages and to evaluate conditions at each step.
+**Trigger data** — context captured at enrollment time (e.g. `{ appt_id: 123, appt_time: "..." }`). Used for three things:
+1. **Condition evaluation** — `:name` placeholders in condition queries resolve from `trigger_data` via dot-path (`"appt_id": "trigger_data.appt_id"`).
+2. **Timing** — `before_appt` / `before_appt_fixed` read `trigger_data.appt_time`.
+3. **Placeholder resolution in `action_config`** — `{{trigger_data.key}}` placeholders resolve directly from the in-memory object (no SQL), including nested dot-paths like `{{trigger_data.user.email}}`. See [Placeholders in action_config](#placeholders-in-action_config) below. Also used as ref-lookup keys: if `trigger_data.appt_id` / `case_id` / `task_id` are present, the resolver auto-pulls the matching rows so `{{appts.appt_date}}` / `{{cases.case_number}}` / `{{tasks.task_title}}` work too.
 
 **Template condition** — checked before every step. If it fails → the entire enrollment is cancelled. Use this for "the reason we enrolled is no longer true."
 
@@ -115,6 +118,37 @@ No DB query — evaluated purely from `trigger_data`.
 ```
 
 Requires `trigger_data.appt_time`. Skips the step if the appointment is fewer than 24 hours away.
+
+---
+
+## Placeholders in action_config
+
+When a step fires, the engine `JSON.stringify`s its `action_config`, runs it through the universal resolver, and parses it back. Any `{{...}}` placeholder anywhere in the config — in `params`, in webhook `url`/`body`, in `init_data` — is resolved the same way.
+
+Two sources of values are available:
+
+**Real-table refs** (auto-pulled from DB):
+
+| Placeholder prefix | Always available? | Source |
+|---|---|---|
+| `{{contacts.*}}` | Yes | The enrolled contact |
+| `{{appts.*}}` | If `trigger_data.appt_id` is set | `appts` row with that id |
+| `{{cases.*}}` | If `trigger_data.case_id` is set | `cases` row with that id |
+| `{{tasks.*}}` | If `trigger_data.task_id` is set | `tasks` row with that id |
+
+**Trigger data pseudo-table** (read straight from the enrollment's `trigger_data` object, no SQL):
+
+```
+{{trigger_data.amount}}
+{{trigger_data.missed_date|date:dddd, MMMM Do}}
+{{trigger_data.spouse_contact_id}}
+{{trigger_data.user.email}}              (nested dot-path)
+{{trigger_data.preferred_name|default:{{contacts.contact_fname}}}}
+```
+
+Modifiers (`|date:`, `|phone`, `|upper`, `|default:`, etc.) work identically on both sources. Missing keys in `trigger_data` soft-fail — the placeholder stays literal in the output and `resolveResult.status` becomes `partial_success`. The step still executes; the customer sees `{{trigger_data.amount}}` in their message, which is why it's worth validating enrollments with `test_input` before going live.
+
+See [06-variables-templating.md](06-variables-templating.md#pseudo-table-trigger_data) for the full resolver syntax (modifiers, date tokens, defaults, nested fallbacks).
 
 ---
 

@@ -8,6 +8,8 @@
 // Body:
 //   text    {string}   — text with {{table.column|modifier}} placeholders
 //   refs    {object}   — anchor for each table, e.g. { contacts: { contact_id: 1001 } }
+//                        Special-case: `refs.trigger_data` is the pseudo-table
+//                        object and is exempt from the single-anchor-key rule.
 //   strict  {boolean}  — default false
 //
 // HTTP response codes:
@@ -24,7 +26,8 @@
 //
 // Unknown tables in placeholders (e.g. {{bills.amount}}) → partial_success, not an error.
 //
-// GET /resolve/tables — returns the allowed table list
+// GET /resolve/tables — returns the allowed table list (real tables only;
+// `trigger_data` is intentionally omitted because it isn't SQL-backed).
 
 const express     = require('express');
 const router      = express.Router();
@@ -43,8 +46,22 @@ router.post('/resolve', jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: '"refs" must be an object mapping table names to anchor conditions' });
   }
 
-  // Validate shape of each ref entry
+  // Validate shape of each ref entry.
+  //
+  // `trigger_data` is the resolver's pseudo-table and is a free-form object —
+  // possibly with many top-level keys and nested values. It's not a SQL
+  // anchor, so the "exactly one anchor key" rule doesn't apply. We still
+  // require it to be a plain object (not array, not null).
   for (const [table, anchor] of Object.entries(refs)) {
+    if (table === 'trigger_data') {
+      if (anchor == null || typeof anchor !== 'object' || Array.isArray(anchor)) {
+        return res.status(400).json({
+          error: `refs.trigger_data must be a plain object (may be empty), not an array or primitive`
+        });
+      }
+      continue;
+    }
+
     if (typeof anchor !== 'object' || Array.isArray(anchor) || !Object.keys(anchor).length) {
       return res.status(400).json({
         error: `refs.${table} must be an object with one anchor key, e.g. { contact_id: 1001 }`
@@ -76,7 +93,9 @@ router.post('/resolve', jwtOrApiKey, async (req, res) => {
   }
 });
 
-// GET /resolve/tables — list allowed tables (useful for frontend template editors)
+// GET /resolve/tables — list allowed tables (useful for frontend template editors).
+// Returns real SQL-backed tables only. The `trigger_data` pseudo-table is not
+// advertised here because it isn't queryable and has no column list to enumerate.
 router.get('/resolve/tables', jwtOrApiKey, (req, res) => {
   res.json({ tables: ALLOWED_TABLES });
 });

@@ -403,7 +403,7 @@
     <div class="canvas-head">
       <div class="canvas-title placeholder" id="wf-canvas-title">← Select a workflow</div>
       <div id="wf-canvas-actions" style="display:none;gap:8px">
-        <button class="btn btn-outline btn-sm" onclick="wfRename()"><i class="fa-solid fa-pencil"></i> Rename</button>
+        <button class="btn btn-outline btn-sm" onclick="wfEdit()"><i class="fa-solid fa-pencil"></i> Edit</button>
         <button class="btn btn-outline btn-sm" onclick="wfDuplicate()"><i class="fa-regular fa-copy"></i> Duplicate</button>
         <button class="btn btn-danger btn-sm" onclick="wfDelete()"><i class="fa-solid fa-trash"></i></button>
       </div>
@@ -515,7 +515,12 @@ window.togglePanelLeft = togglePanelLeft;
 const WF = {
   workflows: [], filtered: [],
   activeWfId: null, activeWf: null, steps: [],
-  activeStepIdx: null, tab: 'edit', editingNew: false, jsonMode: false
+  activeStepIdx: null, tab: 'edit', editingNew: false, jsonMode: false,
+  // Slice 2.1 — per-step tester state. Map<stepIdx, { rows:[{key,value}], touched:bool }>.
+  // Preserves user-typed variable rows across tester re-renders (step switch,
+  // tab switch). Cleared on workflow change and on steps refresh so stale
+  // idx→state mappings don't survive a reorder/delete/add.
+  testerState: {}
 };
 
 const WFEX = {
@@ -574,7 +579,7 @@ function renderWfList() {
       <div class="left-item-name">${esc(wf.name)}</div>
       <div class="left-item-meta">${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}</div>
       <div class="left-item-actions">
-        <button class="left-act" onclick="event.stopPropagation();wfRename()"><i class="fa-solid fa-pencil"></i></button>
+        <button class="left-act" onclick="event.stopPropagation();wfEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act" onclick="event.stopPropagation();wfDuplicate()"><i class="fa-regular fa-copy"></i></button>
         <button class="left-act danger" onclick="event.stopPropagation();wfDelete()"><i class="fa-solid fa-trash"></i></button>
       </div>
@@ -591,6 +596,10 @@ async function selectWorkflow(id) {
   stopWfExecPolling();
   WFEX.offset = 0;
   WFEX.total  = 0;
+
+  // Slice 2.1 — different workflow = fresh tester context; previous per-step
+  // tester rows are irrelevant.
+  WF.testerState = {};
 
   WF.activeWfId = id;
   WF.activeWf   = WF.workflows.find(w => w.id === id);
@@ -613,6 +622,13 @@ async function loadWfSteps(id) {
   document.getElementById('wf-canvas-body').innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner spin"></i></div>';
   try {
     const data = await api(`/workflows/${id}`);
+    // Slice 2.1 — refresh WF.activeWf with the single-template GET response so
+    // we have the freshest test_input value for the tester. The list-GET value
+    // (from loadWorkflows) is used as a fallback; the single-GET is authoritative.
+    if (data.workflow) WF.activeWf = data.workflow;
+    // Steps may have been reordered/renumbered/deleted since last load — old
+    // idx→testerState mappings are no longer reliable. Clear it.
+    WF.testerState = {};
     WF.steps = (data.steps || []).map(s => ({
       ...s,
       config:       typeof s.config       === 'string' ? JSON.parse(s.config)       : s.config,
@@ -896,10 +912,46 @@ async function wfStepMove(idx, dir) {
 }
 
 async function wfNew() {
-  const { value: name } = await Swal.fire({ title: 'New Workflow', input: 'text', inputPlaceholder: 'Name…', showCancelButton: true, confirmButtonText: 'Create', inputValidator: v => !v.trim() && 'Name required' });
-  if (!name) return;
+  const { value: vals } = await Swal.fire({
+    title: 'New Workflow',
+    width: 560,
+    html: `
+      <input id="swal-wf-name" class="swal2-input" placeholder="Name…" style="margin-bottom:6px">
+      <div style="text-align:left;font-size:12px;color:#475569;margin:10px .875em 4px">
+        <strong>Test Input (JSON)</strong>
+        <span style="color:#94a3b8">— optional</span>
+      </div>
+      <textarea id="swal-wf-testinput"
+                placeholder='{ "contact_id": 123, "source": "web" }'
+                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:120px;resize:vertical"></textarea>
+      <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+        Document what init_data this workflow expects. The Test tab pre-fills
+        from this value; you can still edit test data at test time without
+        affecting this field.
+      </div>`,
+    showCancelButton: true,
+    confirmButtonText: 'Create',
+    preConfirm: () => {
+      const name = document.getElementById('swal-wf-name').value.trim();
+      if (!name) { Swal.showValidationMessage('Name is required'); return false; }
+      const raw = document.getElementById('swal-wf-testinput').value.trim();
+      let test_input = null;
+      if (raw) {
+        try { test_input = JSON.parse(raw); }
+        catch (e) { Swal.showValidationMessage('Test Input is not valid JSON'); return false; }
+        if (test_input === null) {
+          // Explicit literal `null` in the textarea → treat as cleared.
+        } else if (typeof test_input !== 'object' || Array.isArray(test_input)) {
+          Swal.showValidationMessage('Test Input must be a JSON object (not array or primitive)');
+          return false;
+        }
+      }
+      return { name, test_input };
+    }
+  });
+  if (!vals) return;
   try {
-    const r = await api('/workflows', 'POST', { name: name.trim() });
+    const r = await api('/workflows', 'POST', vals);
     await loadWorkflows();
     selectWorkflow(r.workflowId);
   } catch (e) {
@@ -907,15 +959,81 @@ async function wfNew() {
   }
 }
 
-async function wfRename() {
+async function wfEdit() {
+  // Slice 2.1 — fuller edit Swal covering name + test_input. Replaces the
+  // single-input rename path. Description is not surfaced here because it was
+  // never editable in the old rename Swal either; adding it would be scope
+  // creep. Backend still accepts it if callers send it.
   if (!WF.activeWf) return;
-  const { value: name } = await Swal.fire({ title: 'Rename', input: 'text', inputValue: WF.activeWf.name, showCancelButton: true, confirmButtonText: 'Save', inputValidator: v => !v.trim() && 'Name required' });
-  if (!name) return;
+
+  // test_input may come back from the API as a parsed object or a JSON string
+  // depending on mysql2's typeCast config. Normalize for pretty-printing.
+  let tiObj = WF.activeWf.test_input;
+  if (typeof tiObj === 'string') {
+    try { tiObj = JSON.parse(tiObj); } catch { tiObj = null; }
+  }
+  const tiText = (tiObj && typeof tiObj === 'object' && !Array.isArray(tiObj))
+    ? JSON.stringify(tiObj, null, 2) : '';
+
+  const { value: vals } = await Swal.fire({
+    title: 'Edit Workflow',
+    width: 560,
+    html: `
+      <input id="swal-wf-name" class="swal2-input" placeholder="Name" value="${esc(WF.activeWf.name || '')}" style="margin-bottom:6px">
+      <div style="text-align:left;font-size:12px;color:#475569;margin:10px .875em 4px">
+        <strong>Test Input (JSON)</strong>
+        <span style="color:#94a3b8">— optional, leave blank to clear</span>
+      </div>
+      <textarea id="swal-wf-testinput"
+                placeholder='{ "contact_id": 123, "source": "web" }'
+                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:140px;resize:vertical">${esc(tiText)}</textarea>
+      <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+        Document what init_data this workflow expects. The Test tab pre-fills
+        from this value; you can still edit test data at test time without
+        affecting this field.
+      </div>`,
+    showCancelButton: true,
+    confirmButtonText: 'Save',
+    preConfirm: () => {
+      const name = document.getElementById('swal-wf-name').value.trim();
+      if (!name) { Swal.showValidationMessage('Name is required'); return false; }
+      const raw = document.getElementById('swal-wf-testinput').value.trim();
+      // Blank textarea → clear test_input explicitly (send null on PUT so the
+      // column is updated).
+      let test_input = null;
+      if (raw) {
+        try { test_input = JSON.parse(raw); }
+        catch (e) { Swal.showValidationMessage('Test Input is not valid JSON'); return false; }
+        if (test_input === null) {
+          // Explicit literal `null` — pass through as clear.
+        } else if (typeof test_input !== 'object' || Array.isArray(test_input)) {
+          Swal.showValidationMessage('Test Input must be a JSON object (not array or primitive)');
+          return false;
+        }
+      }
+      return { name, test_input };
+    }
+  });
+  if (!vals) return;
   try {
-    await api(`/workflows/${WF.activeWfId}`, 'PUT', { name: name.trim() });
+    await api(`/workflows/${WF.activeWfId}`, 'PUT', vals);
     await loadWorkflows();
-    WF.activeWf = WF.workflows.find(w => w.id === WF.activeWfId);
+    WF.activeWf = WF.workflows.find(w => w.id === WF.activeWfId) || WF.activeWf;
+    // Re-fetch the single workflow to get the freshest test_input value for
+    // the tester (list GET may not include all columns in older builds).
+    try {
+      const data = await api(`/workflows/${WF.activeWfId}?includeSteps=false`);
+      if (data && data.workflow) WF.activeWf = data.workflow;
+    } catch { /* non-fatal — fall back to list value */ }
     document.getElementById('wf-canvas-title').textContent = WF.activeWf?.name || '';
+    // Clear tester state so the next render re-seeds from the updated test_input.
+    WF.testerState = {};
+    // If the Test tab is currently showing for a step, re-render so the user
+    // immediately sees the freshly-saved test_input seed (unless they've got
+    // in-flight edits — but we just cleared state, so this is first-pop anyway).
+    if (WF.tab === 'test' && WF.activeStepIdx !== null) {
+      wfRenderTester(WF.steps[WF.activeStepIdx]);
+    }
   } catch (e) {
     Swal.fire('Error', e.message, 'error');
   }
@@ -966,24 +1084,105 @@ async function wfDelete() {
 function wfRenderTester(step) {
   document.getElementById('wf-editor-foot').style.display = 'none';
   const cfg = step.config || {};
-  const cfgStr = JSON.stringify(cfg);
-  const detected = [...new Set([...cfgStr.matchAll(/\{\{(\w[\w.]*)\}\}/g)].map(m => m[1]).filter(k => !k.startsWith('env.') && k !== 'this'))];
-  const varRows = detected.length ? detected.map(k => wfVarRowHTML(k, '')).join('') : wfVarRowHTML('', '');
+  const idx = WF.activeStepIdx;
+
+  // Detect placeholder keys referenced by this step's config — these seed the
+  // variable list regardless of test_input (author may still want to test
+  // against them with their own values).
+  const cfgStr   = JSON.stringify(cfg);
+  const detected = [...new Set(
+    [...cfgStr.matchAll(/\{\{(\w[\w.]*)\}\}/g)]
+      .map(m => m[1])
+      .filter(k => !k.startsWith('env.') && k !== 'this')
+  )];
+
+  // Slice 2.1 — per-step dirty check. If the user has touched any variable
+  // row for this step since the last pre-pop, preserve their rows. Otherwise
+  // re-seed from (detected + test_input) so a freshly-saved test_input value
+  // takes effect immediately.
+  const saved = (idx != null) ? WF.testerState[idx] : null;
+  let rows;
+  if (saved && saved.touched) {
+    // User has unsaved edits to this step's tester — keep them.
+    rows = saved.rows.map(r => ({ key: r.key, value: r.value }));
+  } else {
+    // Seed: detected keys (empty values) merged with test_input (keys + values
+    // override). test_input may be an already-parsed object or a JSON string
+    // depending on mysql2 typeCast behaviour.
+    let ti = WF.activeWf ? WF.activeWf.test_input : null;
+    if (typeof ti === 'string') ti = parseJson(ti);
+    const seeded = {};
+    detected.forEach(k => { seeded[k] = ''; });
+    if (ti && typeof ti === 'object' && !Array.isArray(ti)) {
+      Object.keys(ti).forEach(k => {
+        const v = ti[k];
+        seeded[k] = (v == null)
+          ? ''
+          : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+      });
+    }
+    rows = Object.entries(seeded).map(([key, value]) => ({ key, value }));
+    if (!rows.length) rows = [{ key: '', value: '' }];
+    // Record as a pre-pop (untouched) snapshot so subsequent re-renders of
+    // the SAME step (no intervening user edit) also re-seed freshly rather
+    // than getting stuck with a stale snapshot.
+    if (idx != null) {
+      WF.testerState[idx] = { rows: rows.map(r => ({ ...r })), touched: false };
+    }
+  }
+
+  const varRowsHtml = rows.map(r => wfVarRowHTML(r.key, r.value)).join('');
   document.getElementById('wf-editor-body').innerHTML = `
     <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Testing: <strong style="color:var(--text)">${esc(cfg.function_name || cfg.url || step.type)}</strong></div>
     <div class="section-divider">Variables</div>
-    <div id="wf-var-rows">${varRows}</div>
+    <div id="wf-var-rows">${varRowsHtml}</div>
     <button class="add-var-btn" onclick="wfAddVarRow()"><i class="fa-solid fa-plus"></i> Add variable</button>
     <div style="margin-top:14px"><button class="btn btn-primary" style="width:100%" onclick="wfRunTest()"><i class="fa-solid fa-play"></i> Run Step</button></div>
     <div id="wf-test-result"></div>`;
+
+  // Slice 2.1 — wire dirty tracking. Any keystroke inside #wf-var-rows marks
+  // touched=true and snapshots current DOM state. This survives tab switches
+  // (Edit→Test→Edit) and step switches for the SAME step because we store
+  // by idx. wfAddVarRow and wfRemoveVarRow explicitly save too (those don't
+  // emit 'input' events on the container).
+  const container = document.getElementById('wf-var-rows');
+  if (container && idx != null) {
+    container.addEventListener('input', () => wfSaveTesterState(idx, true));
+  }
 }
 
 function wfVarRowHTML(k, v) {
-  return `<div class="var-row"><input placeholder="variable" value="${esc(k)}" style="flex:1.2"><input placeholder="value" value="${esc(v)}"><button onclick="this.parentElement.remove()"><i class="fa-solid fa-xmark"></i></button></div>`;
+  return `<div class="var-row"><input placeholder="variable" value="${esc(k)}" style="flex:1.2"><input placeholder="value" value="${esc(v)}"><button onclick="wfRemoveVarRow(this)"><i class="fa-solid fa-xmark"></i></button></div>`;
 }
 
 function wfAddVarRow() {
   document.getElementById('wf-var-rows').insertAdjacentHTML('beforeend', wfVarRowHTML('', ''));
+  // Slice 2.1 — structural change counts as touched; saves new row into state
+  // so a subsequent re-render preserves it.
+  if (WF.activeStepIdx != null) wfSaveTesterState(WF.activeStepIdx, true);
+}
+
+function wfRemoveVarRow(btn) {
+  btn.parentElement.remove();
+  // Slice 2.1 — keep saved state in sync after row removal.
+  if (WF.activeStepIdx != null) wfSaveTesterState(WF.activeStepIdx, true);
+}
+
+// Slice 2.1 — snapshot current tester row DOM into WF.testerState[idx]. Sets
+// touched=true if markTouched; otherwise preserves existing touched flag.
+function wfSaveTesterState(idx, markTouched) {
+  const container = document.getElementById('wf-var-rows');
+  if (!container) return;
+  const rows = [];
+  container.querySelectorAll('.var-row').forEach(row => {
+    const [k, v] = row.querySelectorAll('input');
+    rows.push({ key: k?.value ?? '', value: v?.value ?? '' });
+  });
+  const prev = WF.testerState[idx] || { rows: [], touched: false };
+  WF.testerState[idx] = {
+    rows,
+    touched: markTouched ? true : prev.touched
+  };
 }
 
 async function wfRunTest() {
@@ -1122,9 +1321,10 @@ async function viewWorkflowExecution(id) {
     const ex = data.execution;
     const history = data.history || [];
 
-    const displayStatus = (ex.status && ex.status.startsWith('completed') && history.some(h => h.status === 'failed'))
+    const rawStatus = String(ex.status || '').toLowerCase();
+    const displayStatus = (rawStatus.startsWith('completed') && history.some(h => h.status === 'failed'))
       ? 'completed_with_errors'
-      : ex.status;
+      : rawStatus;
 
     const initDataObj  = parseJson(ex.init_data);
     const variablesObj = parseJson(ex.variables);
@@ -1149,7 +1349,17 @@ async function viewWorkflowExecution(id) {
       `;
     }).join('') : '<tr><td colspan="6" style="padding:8px;color:var(--muted);text-align:center">No steps executed.</td></tr>';
 
-    Swal.fire({
+    // Cancel-reason surface for cancelled executions (parity with contact2)
+    const cancelReasonBlock = (rawStatus === 'cancelled' && ex.cancel_reason)
+      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+           <b>Cancel reason:</b> ${esc(ex.cancel_reason)}
+         </div>`
+      : '';
+
+    // Is this execution cancellable? Same non-terminal set as contact2.
+    const isCancellable = ['active', 'processing', 'delayed'].includes(rawStatus);
+
+    const res = await Swal.fire({
       title: `Execution #${id}`,
       width: 760,
       html: `
@@ -1160,6 +1370,7 @@ async function viewWorkflowExecution(id) {
           <p style="margin-top:6px"><b>Completed:</b> ${wfExecFmtDate(ex.completed_at)}</p>
           <p style="margin-top:6px"><b>Current step:</b> ${ex.current_step_number == null ? '—' : ex.current_step_number}</p>
           <p style="margin-top:6px"><b>Steps executed:</b> ${ex.steps_executed_count ?? 0}</p>
+          ${cancelReasonBlock}
 
           ${initDataObj ? `
             <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Init Data</summary>
@@ -1189,9 +1400,58 @@ async function viewWorkflowExecution(id) {
           </table>
         </div>
       `,
+      showCancelButton: true,
+      cancelButtonText:  'Close',
+      showConfirmButton: isCancellable,
+      confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel execution',
+      confirmButtonColor: '#dc2626',
+      reverseButtons: true,   // [Cancel execution] [Close]
     });
+
+    if (res.isConfirmed && isCancellable) {
+      cancelWorkflowExecution(id, ex.workflow_name || '');
+    }
   } catch (e) {
     Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: e.message, timer: 2500, showConfirmButton: false });
+  }
+}
+
+// Workflow execution cancel — lifted from contact2's cancelContactWorkflow,
+// adapted to this sub-page's helpers (api / loadWorkflowExecutions). Reason
+// required (min 3 chars trimmed, server enforces the same validation).
+async function cancelWorkflowExecution(executionId, workflowName) {
+  if (Swal.isVisible()) Swal.close();
+
+  const result = await Swal.fire({
+    title: `Cancel execution #${executionId}?`,
+    html: workflowName
+      ? `<div style="color:#64748b;margin-bottom:4px">Workflow: <b>${esc(workflowName)}</b></div>`
+      : '',
+    input: 'text',
+    inputLabel: 'Reason (required, min 3 characters)',
+    inputPlaceholder: 'e.g. client rescheduled, workflow stuck, manual intervention',
+    inputValidator: (v) => {
+      if (!v || v.trim().length < 3) return 'Please enter a reason (min 3 characters).';
+    },
+    showCancelButton: true,
+    confirmButtonText: 'Confirm Cancel',
+    confirmButtonColor: '#dc2626',
+    reverseButtons: true,
+    showLoaderOnConfirm: true,
+    preConfirm: async (reason) => {
+      try {
+        await api(`/executions/${executionId}/cancel`, 'POST', { reason: reason.trim() });
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    },
+  });
+
+  if (result.isConfirmed && result.value === true) {
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Execution cancelled', timer: 1800, showConfirmButton: false });
+    loadWorkflowExecutions();
   }
 }
 
@@ -1343,7 +1603,7 @@ window.onNew     = onNew;
 window.wfFilter                 = wfFilter;
 window.selectWorkflow           = selectWorkflow;
 window.wfSwitchEditorTab        = wfSwitchEditorTab;
-window.wfRename                 = wfRename;
+window.wfEdit                   = wfEdit;
 window.wfDuplicate              = wfDuplicate;
 window.wfDelete                 = wfDelete;
 window.wfNew                    = wfNew;
@@ -1356,11 +1616,13 @@ window.wfStepCancel             = wfStepCancel;
 window.wfOnTypeChange           = wfOnTypeChange;
 window.wfToggleJson             = wfToggleJson;
 window.wfAddVarRow              = wfAddVarRow;
+window.wfRemoveVarRow           = wfRemoveVarRow;
 window.wfRunTest                = wfRunTest;
 window.loadWorkflowExecutions   = loadWorkflowExecutions;
 window.wfExecPrevPage           = wfExecPrevPage;
 window.wfExecNextPage           = wfExecNextPage;
 window.viewWorkflowExecution    = viewWorkflowExecution;
+window.cancelWorkflowExecution  = cancelWorkflowExecution;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {
