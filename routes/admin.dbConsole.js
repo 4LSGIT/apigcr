@@ -4,7 +4,7 @@
 // remains for backwards compatibility and will be deprecated.
 //
 // All endpoints require JWT with user_auth === "authorized - SU", are rate
-// limited (30/min/user), and every attempt is awaited into admin_db_console_log.
+// limited (30/min/user), and every attempt is awaited into admin_audit_log.
 //
 // Endpoints:
 //   POST   /admin/db/query              body { query, allowWrite }
@@ -59,23 +59,23 @@ function ensureSchema(db) {
   if (schemaReady) return schemaReady;
   schemaReady = (async () => {
     await db.query(`
-      CREATE TABLE IF NOT EXISTS admin_db_console_log (
-        id              BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-        user_id         INT NULL,
-        username        VARCHAR(255) NULL,
-        route           VARCHAR(255) NOT NULL,
-        method          VARCHAR(10)  NOT NULL,
-        query_text      MEDIUMTEXT   NULL,
-        read_only_mode  TINYINT(1)   NOT NULL DEFAULT 1,
-        status          VARCHAR(40)  NOT NULL,
-        error_message   TEXT         NULL,
-        row_count       INT          NULL,
-        duration_ms     INT          NULL,
-        ip_address      VARCHAR(45)  NULL,
-        user_agent      VARCHAR(255) NULL,
-        created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_admin_db_console_log_user (user_id, created_at),
-        INDEX idx_admin_db_console_log_status (status, created_at)
+      CREATE TABLE IF NOT EXISTS admin_audit_log (
+        id            BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        tool          VARCHAR(32)  NOT NULL,
+        user_id       INT          NULL,
+        username      VARCHAR(255) NULL,
+        route         VARCHAR(255) NOT NULL,
+        method        VARCHAR(10)  NOT NULL,
+        status        VARCHAR(40)  NOT NULL,
+        error_message TEXT         NULL,
+        duration_ms   INT          NULL,
+        ip_address    VARCHAR(45)  NULL,
+        user_agent    VARCHAR(255) NULL,
+        details       JSON         NULL,
+        created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_admin_audit_tool   (tool, created_at),
+        INDEX idx_admin_audit_user   (user_id, created_at),
+        INDEX idx_admin_audit_status (status, created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
     `);
     await db.query(`

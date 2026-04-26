@@ -263,8 +263,7 @@ let authed = false;
 // ── write toggle ─────────────────────────────────────────────────────────────
 btnWrite.addEventListener("click", () => {
   if (!writeMode) {
-    if (!confirm("Enable WRITE mode?\n\nYou will be able to run INSERT/UPDATE/DELETE/DROP/ALTER.\nEvery query is audit-logged to admin_db_console_log.")) return;
-    writeMode = true;
+    if (!confirm("Enable WRITE mode?\n\nYou will be able to run INSERT/UPDATE/DELETE/DROP/ALTER.\nEvery query is audit-logged to admin_audit_log.")) return;    writeMode = true;
     btnWrite.textContent = "⚠️ WRITES ON";
     btnWrite.classList.add("active");
   } else {
