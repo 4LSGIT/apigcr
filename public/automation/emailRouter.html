@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Router</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       EMAIL ROUTER SUB-PAGE — self-contained styles.
+       Tokens + base layout duplicated from hooks.html so this
+       file can render standalone if needed and uses the same
+       visual idiom across the four-engine surface.
+       ══════════════════════════════════════════════ */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:    #1a1a2e;
+      --navy2:   #16213e;
+      --blue:    #4f8ef7;
+      --blue2:   #3a7de8;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --amber:   #f59e0b;
+      --purple:  #8b5cf6;
+      --bg:      #f1f5f9;
+      --surface: #ffffff;
+      --border:  #e2e8f0;
+      --muted:   #94a3b8;
+      --text:    #1e293b;
+      --text2:   #475569;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--bg);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: var(--blue2); }
+    .btn-ghost { background: rgba(255,255,255,0.1); color: #fff; }
+    .btn-ghost:hover { background: rgba(255,255,255,0.18); }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Three-panel layout ── */
+    .three-panel { flex: 1; overflow: hidden; display: flex; }
+
+    .panel-left {
+      width: 240px; min-width: 240px;
+      background: var(--navy2);
+      display: flex; flex-direction: column;
+      border-right: 1px solid rgba(255,255,255,0.06);
+      transition: width 0.15s, min-width 0.15s;
+    }
+    .panel-left.collapsed { width: 40px; min-width: 40px; }
+    .panel-left.collapsed .panel-left-search,
+    .panel-left.collapsed .panel-left-list,
+    .panel-left.collapsed .panel-left-foot { display: none; }
+    .panel-left.collapsed .panel-left-head { justify-content: center; }
+
+    .panel-collapse-btn {
+      background: none; border: none; color: rgba(255,255,255,0.4);
+      cursor: pointer; padding: 2px 4px; font-size: 12px; flex-shrink: 0;
+    }
+    .panel-collapse-btn:hover { color: #fff; }
+
+    .panel-left-head {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .panel-left-search {
+      flex: 1; background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 5px; padding: 5px 9px;
+      color: #fff; font-size: 12px; outline: none;
+    }
+    .panel-left-search::placeholder { color: rgba(255,255,255,0.3); }
+    .panel-left-search:focus { border-color: var(--blue); }
+
+    .panel-left-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+
+    .left-item {
+      padding: 9px 12px; cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: all 0.12s;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+    .left-item:hover { background: rgba(255,255,255,0.05); }
+    .left-item.active { border-left-color: var(--blue); background: rgba(79,142,247,0.1); }
+
+    .left-item-name {
+      color: rgba(255,255,255,0.85); font-size: 13px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .left-item.active .left-item-name { color: #fff; }
+
+    .left-item-meta {
+      color: rgba(255,255,255,0.35); font-size: 11px; margin-top: 2px;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    .left-item-badge {
+      font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600;
+    }
+    .badge-active   { background: rgba(34,197,94,0.15); color: #4ade80; }
+    .badge-inactive { background: rgba(239,68,68,0.15); color: #f87171; }
+    .badge-position {
+      background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.55);
+    }
+
+    /* The Settings pseudo-row at the top of the list */
+    .left-item-settings {
+      background: rgba(79,142,247,0.06);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .left-item-settings .left-item-name { color: #cfe1ff; }
+    .left-item-settings.active { background: rgba(79,142,247,0.18); }
+
+    .left-section-label {
+      padding: 8px 12px 4px;
+      color: rgba(255,255,255,0.35);
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.6px;
+    }
+
+    .panel-left-foot { padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.06); }
+
+    /* ── Editor area ── */
+    .editor-area {
+      flex: 1; display: flex; flex-direction: column;
+      background: var(--bg); overflow: hidden; min-width: 0;
+    }
+    .editor-head {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0 16px; display: flex; align-items: center;
+      flex-shrink: 0; gap: 6px;
+    }
+    .editor-title {
+      font-size: 15px; font-weight: 700; margin-right: 16px;
+      white-space: nowrap; color: var(--text);
+    }
+    .editor-meta {
+      font-size: 11px; color: var(--muted); margin-left: 12px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .editor-tabs { display: flex; flex: 1; overflow-x: auto; }
+    .editor-tab {
+      flex: none;
+      padding: 12px 14px;
+      white-space: nowrap;
+      border: none; background: none;
+      font-size: 13px; font-weight: 500; color: var(--muted); cursor: pointer;
+      border-bottom: 2px solid transparent; transition: all 0.12s;
+    }
+    .editor-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .editor-tab:hover:not(.active) { color: var(--text); }
+
+    .editor-body { flex: 1; overflow-y: auto; padding: 20px; min-height: 0; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── Form elements ── */
+    .fg { margin-bottom: 16px; }
+    .fg label {
+      display: block; font-size: 12px; font-weight: 600;
+      color: var(--text2); margin-bottom: 5px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .fg input,
+    .fg select,
+    .fg textarea {
+      width: 100%; padding: 8px 10px;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 13px; font-family: inherit;
+      background: #fff; color: var(--text);
+    }
+    .fg input:focus,
+    .fg select:focus,
+    .fg textarea:focus {
+      outline: none; border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(79,142,247,0.1);
+    }
+    .fg textarea {
+      resize: vertical; min-height: 80px;
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 12px;
+    }
+    .fg .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .fg-row { display: flex; gap: 12px; }
+    .fg-row .fg { flex: 1; }
+    .toggle-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .toggle-row label { margin: 0; text-transform: none; font-size: 13px; font-weight: 500; }
+
+    /* ── Cards ── */
+    .card {
+      background: #fff; border: 1px solid var(--border);
+      border-radius: 8px; padding: 14px; margin-bottom: 10px;
+    }
+    .card-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .card-title { font-size: 13px; font-weight: 600; }
+
+    .add-btn {
+      display: flex; align-items: center; gap: 6px;
+      padding: 8px 14px; border: 1px dashed var(--border);
+      border-radius: 8px; background: none; cursor: pointer;
+      font-size: 12px; color: var(--muted); width: 100%;
+      justify-content: center; transition: all 0.12s; margin-top: 8px;
+    }
+    .add-btn:hover {
+      border-color: var(--blue); color: var(--blue); background: rgba(79,142,247,0.04);
+    }
+
+    /* Condition builder (lifted from hooks.html idiom) */
+    .cond-group {
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px; margin-bottom: 8px; background: #fafbfc;
+    }
+    .cond-group-head {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    }
+    .cond-group-head select {
+      padding: 4px 8px; font-size: 11px;
+      border: 1px solid var(--border); border-radius: 4px; font-weight: 600;
+    }
+    .cond-row {
+      display: flex; gap: 6px; align-items: center; margin-bottom: 6px;
+    }
+    .cond-row input,
+    .cond-row select {
+      padding: 5px 8px; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 4px;
+    }
+    .cond-path  { flex: 2; }
+    .cond-op    { width: 120px; }
+    .cond-value { flex: 2; }
+    .rule-remove {
+      background: none; border: none; color: var(--muted);
+      cursor: pointer; padding: 6px; font-size: 13px;
+    }
+    .rule-remove:hover { color: var(--red); }
+
+    /* ── Log table ── */
+    .log-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .log-table th {
+      text-align: left; padding: 8px 10px;
+      background: var(--bg); font-weight: 600; color: var(--text2);
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+    }
+    .log-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .log-table tr:hover { background: #f8fafc; }
+
+    /* Status badges */
+    .er-status-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+    }
+    .er-status-routed   { background: #dcfce7; color: #166534; }
+    .er-status-unrouted { background: #fef9c3; color: #854d0e; }
+    .er-status-captured { background: #e0e7ff; color: #3730a3; }
+    .er-status-error    { background: #fef2f2; color: #991b1b; }
+
+    /* Preview side-by-side panes */
+    .preview-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .preview-pane {
+      background: #fff; border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px;
+      max-height: 50vh; overflow: auto;
+    }
+    .preview-pane h4 {
+      font-size: 12px; font-weight: 700; color: var(--text2);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 8px; padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+    .preview-block { margin-bottom: 12px; }
+    .preview-block h5 {
+      font-size: 11px; font-weight: 600; color: var(--text2);
+      margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .preview-pre {
+      background: var(--navy); color: #e2e8f0;
+      padding: 10px; border-radius: 6px;
+      font-family: 'SF Mono', 'Consolas', monospace;
+      font-size: 11px; overflow: auto; max-height: 200px;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .preview-pill {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 600;
+    }
+    .preview-pill-ok    { background: #dcfce7; color: #166534; }
+    .preview-pill-fail  { background: #fef2f2; color: #991b1b; }
+    .preview-pill-info  { background: #e0e7ff; color: #3730a3; }
+    .preview-pill-mute  { background: #f1f5f9; color: #64748b; }
+
+    /* Match-test row */
+    .match-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; margin-bottom: 4px;
+      background: #f8fafc; border-radius: 4px; font-size: 12px;
+    }
+    .match-row.is-first { background: #dcfce7; font-weight: 600; }
+    .match-row.is-other { color: var(--muted); }
+
+    /* Capture box (mirrors hooks.html capture section) */
+    .capture-box {
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 12px; background: #f8fafc; margin-bottom: 16px;
+    }
+    .capture-box-head {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 12px;
+    }
+    .capture-box-text {
+      font-size: 12px; color: var(--text2); flex: 1;
+    }
+
+    /* Utilities */
+    .mono { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; }
+    .text-muted { color: var(--muted); }
+    .text-sm { font-size: 12px; }
+    .mb-0 { margin-bottom: 0; }
+    .mt-8 { margin-top: 8px; }
+    .mt-12 { margin-top: 12px; }
+    .hidden { display: none !important; }
+
+    #er-no-selection {
+      display: flex; flex: 1; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: var(--muted); gap: 4px; text-align: center;
+    }
+    #er-no-selection i { font-size: 42px; opacity: 0.2; }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div class="three-panel">
+
+  <!-- ── Left panel: Settings + Routes list ── -->
+  <div class="panel-left">
+    <div class="panel-left-head">
+      <input class="panel-left-search" id="er-search" placeholder="Search routes…" oninput="window.erFilterList && window.erFilterList(this.value)">
+      <button class="panel-collapse-btn" onclick="togglePanelLeft(this)" title="Collapse"><i class="fa-solid fa-angles-left"></i></button>
+    </div>
+
+    <div class="panel-left-list" id="er-list">
+      <div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">Loading…</div>
+    </div>
+
+    <div class="panel-left-foot">
+      <button class="btn btn-primary" style="width:100%;font-size:12px" onclick="window.erNew && window.erNew()">
+        <i class="fa-solid fa-plus"></i> New Route
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Right: editor area ── -->
+  <div class="editor-area" id="er-editor-area">
+
+    <div id="er-no-selection">
+      <i class="fa-solid fa-envelope-open-text"></i>
+      <p style="font-size:14px;font-weight:500;margin:6px 0 0">Select a route or open Settings</p>
+      <p style="font-size:12px">Routes match inbound emails to a hook slug for processing</p>
+    </div>
+
+    <!-- ROUTE EDITOR (active when a route is selected) -->
+    <div id="er-route-wrap" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden">
+      <div class="editor-head">
+        <div class="editor-title" id="er-editor-title">—</div>
+        <div class="editor-meta" id="er-editor-meta" style="display:none"></div>
+        <div class="editor-tabs">
+          <button class="editor-tab active" data-tab="general"  onclick="window.erSwitchTab('general')">General</button>
+          <button class="editor-tab"        data-tab="match"    onclick="window.erSwitchTab('match')">Match</button>
+          <button class="editor-tab"        data-tab="preview"  onclick="window.erSwitchTab('preview')">Preview</button>
+        </div>
+      </div>
+
+      <div class="editor-body">
+
+        <!-- ══ GENERAL ══ -->
+        <div class="tab-content active" id="er-tab-general">
+          <div class="fg-row">
+            <div class="fg">
+              <label>Name</label>
+              <input id="r-name" placeholder="e.g. Stripe payment failed">
+            </div>
+            <div class="fg" style="max-width:140px">
+              <label>Position</label>
+              <input type="number" id="r-position" min="1" step="1" value="100">
+              <div class="hint">Lower = earlier</div>
+            </div>
+          </div>
+          <div class="fg">
+            <label>Description</label>
+            <textarea id="r-description" rows="2" style="font-family:inherit;font-size:13px;min-height:50px" placeholder="What kind of email does this route handle?"></textarea>
+          </div>
+          <div class="fg">
+            <label>Target Hook (slug)</label>
+            <select id="r-slug">
+              <option value="">— choose a hook —</option>
+            </select>
+            <div class="hint">
+              The matched email is dispatched to <code>POST /hooks/&lt;slug&gt;</code> via <code>hookService.executeHook</code>.
+              The hook's filter, transform, and targets handle everything from there.
+            </div>
+          </div>
+          <div class="toggle-row">
+            <input type="checkbox" id="r-active" checked>
+            <label for="r-active">Active</label>
+          </div>
+        </div>
+
+        <!-- ══ MATCH ══ -->
+        <div class="tab-content" id="er-tab-match">
+          <div class="fg">
+            <label>Match Mode</label>
+            <select id="r-match-mode" onchange="window.erToggleMatchMode()">
+              <option value="conditions">Conditions</option>
+              <option value="code">Code (advanced)</option>
+            </select>
+          </div>
+          <div id="r-match-conditions">
+            <div id="r-match-conditions-root"></div>
+            <button class="add-btn mt-8" onclick="window.erAddRootCondition()"><i class="fa-solid fa-plus"></i> Add Condition</button>
+            <div class="hint mt-12">
+              Match against the email JSON. Common paths:
+              <code>body.from.email</code>, <code>body.subject</code>,
+              <code>body.to.0.email</code>, <code>body.raw_to_address</code>.
+              Same operators as hook filters.
+            </div>
+          </div>
+          <div id="r-match-code" class="hidden">
+            <div class="fg">
+              <label>Match Code</label>
+              <textarea id="r-match-code-textarea" rows="8" placeholder="return input.body.from.email.endsWith('@stripe.com');" class="mono"></textarea>
+              <div class="hint">Return true to match. Variable: <code>input</code> (the unified envelope <code>{body, headers, query, method, meta}</code>).</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══ PREVIEW ══ -->
+        <div class="tab-content" id="er-tab-preview">
+          <div class="fg">
+            <label>Sample Input (JSON)</label>
+            <textarea id="r-preview-input" rows="10" class="mono" placeholder='Paste an email JSON, or click "Use captured sample"'></textarea>
+            <div class="hint">
+              You can paste the raw email JSON or the full unified envelope <code>{body, headers, query, method, meta}</code> — both work.
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+            <button class="btn btn-primary" onclick="window.erRunPreview()">
+              <i class="fa-solid fa-flask"></i> Run Preview
+            </button>
+            <button class="btn btn-outline" onclick="window.erUseCapturedSampleInPreview()">
+              <i class="fa-solid fa-camera"></i> Use captured sample
+            </button>
+            <button class="btn btn-outline" onclick="window.erRunMatchTestOnly()">
+              <i class="fa-solid fa-magnifying-glass"></i> Match-only (all routes)
+            </button>
+          </div>
+          <div id="r-preview-result"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- SETTINGS / GLOBAL CONFIG (active when Settings pseudo-row is selected) -->
+    <div id="er-settings-wrap" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden">
+      <div class="editor-head">
+        <div class="editor-title">Email Router — Settings</div>
+        <div class="editor-tabs">
+          <button class="editor-tab active" data-tab="config"   onclick="window.erSettingsSwitchTab('config')">Config</button>
+          <button class="editor-tab"        data-tab="capture"  onclick="window.erSettingsSwitchTab('capture')">Capture</button>
+          <button class="editor-tab"        data-tab="logs"     onclick="window.erSettingsSwitchTab('logs')">Logs</button>
+        </div>
+      </div>
+
+      <div class="editor-body">
+
+        <!-- Config: auth + receiver URL -->
+        <div class="tab-content active" id="er-set-config">
+          <div class="card">
+            <div class="card-title" style="margin-bottom:8px">Receiver Endpoint</div>
+            <div class="text-sm text-muted">
+              Adapter posts standardized email JSON to:
+            </div>
+            <div class="mono" id="er-receiver-url" style="margin-top:6px;font-size:13px;padding:8px 10px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">…</div>
+          </div>
+
+          <div class="fg">
+            <label>Authentication</label>
+            <select id="er-auth-type" onchange="window.erToggleAuthFields()">
+              <option value="api_key">API Key</option>
+              <option value="none">None (open endpoint, not recommended)</option>
+            </select>
+          </div>
+
+          <div id="er-auth-api-key">
+            <div class="fg-row">
+              <div class="fg">
+                <label>Header Name</label>
+                <input id="er-auth-header" value="x-router-key" class="mono">
+              </div>
+              <div class="fg" style="flex:2">
+                <label>API Key</label>
+                <input id="er-auth-key" placeholder="(write-only — not displayed once saved)" class="mono">
+                <div class="hint" id="er-auth-key-hint">Existing key not displayed for security. Leave blank to keep current; type a new value to replace.</div>
+              </div>
+            </div>
+            <button class="btn btn-outline" onclick="window.erGenerateApiKey()" style="font-size:12px">
+              <i class="fa-solid fa-rotate"></i> Generate Key
+            </button>
+          </div>
+
+          <div style="margin-top:20px;display:flex;gap:8px">
+            <button class="btn btn-primary" onclick="window.erSaveConfig()">
+              <i class="fa-solid fa-floppy-disk"></i> Save Config
+            </button>
+          </div>
+        </div>
+
+        <!-- Capture: arm next-event capture -->
+        <div class="tab-content" id="er-set-capture">
+          <div class="capture-box">
+            <div class="capture-box-head">
+              <div class="capture-box-text">
+                <strong style="color:var(--text)">Capture next event</strong>
+                <div style="margin-top:4px">
+                  When armed, the next email arriving at <code>/email-router</code> is snapshotted to the global router sample
+                  (truncated to 512 KB) and the pipeline halts. No routing, no dispatch — just a captured payload you can
+                  use in route Match conditions and Preview.
+                </div>
+              </div>
+              <button class="btn btn-outline" id="er-capture-btn" type="button" onclick="window.erToggleCapture()" style="min-width:170px">
+                <i class="fa-solid fa-camera" id="er-capture-btn-icon"></i>
+                <span id="er-capture-btn-label">Capture next event</span>
+              </button>
+            </div>
+
+            <div id="er-capture-waiting" style="display:none;margin-top:10px;font-size:12px;color:#92400e;padding:6px 10px;background:#fef3c7;border:1px solid #fcd34d;border-radius:4px">
+              <i class="fa-solid fa-spinner fa-pulse"></i> Waiting for next event on <span class="mono">/email-router</span>…
+            </div>
+
+            <div id="er-capture-sample" style="display:none;margin-top:10px;font-size:12px;color:var(--text2)">
+              <i class="fa-solid fa-circle-check" style="color:var(--green)"></i>
+              Captured sample from <span id="er-capture-relative">—</span>
+              <span style="color:var(--muted)">(<span id="er-capture-absolute">—</span>)</span>
+              &nbsp;•&nbsp;
+              <a href="#" onclick="window.erViewCapturedSample();return false">View</a>
+            </div>
+          </div>
+
+          <div class="hint" style="font-size:12px">
+            Capture mode is one-shot and global to the router (one slot, not per-route).
+            Use the captured sample in any route's Preview tab via <em>Use captured sample</em>.
+          </div>
+        </div>
+
+        <!-- Logs -->
+        <div class="tab-content" id="er-set-logs">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:12px;flex-wrap:wrap">
+            <div style="display:flex;gap:8px;align-items:center">
+              <label style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px">Status:</label>
+              <select id="er-log-status" onchange="window.erLoadLogs()" style="padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+                <option value="">All</option>
+                <option value="routed">Routed</option>
+                <option value="unrouted">Unrouted</option>
+                <option value="captured">Captured</option>
+                <option value="error">Error</option>
+              </select>
+              <span class="text-sm text-muted" id="er-log-count"></span>
+            </div>
+            <button class="btn btn-outline" onclick="window.erLoadLogs()" style="font-size:12px">
+              <i class="fa-solid fa-rotate"></i> Refresh
+            </button>
+          </div>
+          <table class="log-table">
+            <thead><tr><th>ID</th><th>Status</th><th>Route</th><th>→ Slug</th><th>Time</th><th></th></tr></thead>
+            <tbody id="er-log-tbody"></tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// EMAIL ROUTER SUB-PAGE
+//
+// Talks to the shell (automationManager.html) via:
+//   - P.apiSend(...)               relayed to a.html
+//   - P.setTopbarButtons({...})    request button visibility
+//
+// Exposes lifecycle hooks on window:
+//   - onShow, onHide               tab visibility changes
+//   - onSave, onDelete             topbar Save / Delete clicks
+//   - onRefresh, onNew             topbar Refresh / New clicks
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+
+// ── Utilities ──────────────────────────────────────────────────
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function parseJson(val) {
+  if (!val) return null;
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return null; }
+}
+function togglePanelLeft(btn) {
+  const panel = btn.closest('.panel-left');
+  const collapsed = panel.classList.toggle('collapsed');
+  btn.innerHTML = collapsed ? '<i class="fa-solid fa-angles-right"></i>' : '<i class="fa-solid fa-angles-left"></i>';
+  btn.title = collapsed ? 'Expand' : 'Collapse';
+}
+window.togglePanelLeft = togglePanelLeft;
+
+
+(function emailRouterModule() {
+  const api = (...args) => P.apiSend(...args);
+  const E = id => document.getElementById(id);
+  const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
+
+  // ── State ──
+  let routes = [];
+  let filteredRoutes = [];
+  let hooksList = [];          // for the slug dropdown — fetched once per session
+  let metaOps = [];            // operators list — fetched once per session
+  let activeRouteId = null;    // route id, or null when settings-mode
+  let activeRoute = null;
+  let settingsMode = false;    // true when the Settings pseudo-row is selected
+  let settingsTab = 'config';  // last-active sub-tab inside settings
+  let activeRouteTab = 'general';
+  let routesLoaded = false;
+  let subPageActive = false;
+  let routerConfig = null;     // last-fetched config row (masked)
+  let lastCapturedSample = null;  // raw object from /captured-sample (cached for "Use" buttons)
+  let capturePollTimer = null;
+  let matchConditions = { operator: 'and', conditions: [] };
+
+  // ── Init ──
+  async function erInit() {
+    if (routesLoaded) return;
+    routesLoaded = true;
+    try {
+      const [routesData, hooksData, metaData, configData] = await Promise.all([
+        api('/api/email-router/routes'),
+        api('/api/hooks').catch(() => ({ hooks: [] })),
+        api('/api/hooks/meta').catch(() => ({ operators: [] })),
+        api('/api/email-router/config'),
+      ]);
+      routes = routesData.routes || [];
+      filteredRoutes = routes;
+      hooksList = hooksData.hooks || [];
+      metaOps = metaData.operators || ['equals','not_equals','contains','starts_with','ends_with','exists','not_exists','matches'];
+      routerConfig = configData.config || null;
+      renderList();
+      renderReceiverUrl();
+    } catch (e) {
+      E('er-list').innerHTML = `<div style="padding:16px;color:#f87171;font-size:12px">${esc(e.message)}</div>`;
+      routesLoaded = false;
+    }
+  }
+
+  async function erRefresh() {
+    routesLoaded = false;
+    await erInit();
+    if (settingsMode) {
+      await loadSettings();
+      if (settingsTab === 'logs') await loadLogs();
+    } else if (activeRouteId) {
+      selectRoute(activeRouteId);
+    }
+  }
+
+  // ── List rendering ────────────────────────────────────────────
+  function renderList() {
+    const el = E('er-list');
+    const settingsActive = settingsMode ? 'active' : '';
+    const settingsRow = `
+      <div class="left-item left-item-settings ${settingsActive}" onclick="window.erOpenSettings()">
+        <div class="left-item-name"><i class="fa-solid fa-gear"></i> &nbsp; Settings</div>
+        <div class="left-item-meta">
+          <span>Auth, capture, logs</span>
+        </div>
+      </div>
+    `;
+
+    let listHtml = settingsRow + '<div class="left-section-label">Routes (in match order)</div>';
+    if (!filteredRoutes.length) {
+      listHtml += '<div style="padding:14px 12px;color:rgba(255,255,255,0.3);font-size:12px;text-align:center">No routes yet.</div>';
+    } else {
+      listHtml += filteredRoutes.map(r => `
+        <div class="left-item ${(!settingsMode && r.id === activeRouteId) ? 'active' : ''}" onclick="window.selectRoute(${r.id})">
+          <div class="left-item-name">${esc(r.name)}</div>
+          <div class="left-item-meta">
+            <span class="left-item-badge badge-position">#${r.position}</span>
+            <span>→ /hooks/${esc(r.slug)}</span>
+            <span class="left-item-badge ${r.active ? 'badge-active' : 'badge-inactive'}">${r.active ? 'ON' : 'OFF'}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+    el.innerHTML = listHtml;
+  }
+
+  function erFilterList(q) {
+    const lower = (q || '').toLowerCase();
+    filteredRoutes = routes.filter(r =>
+      (r.name || '').toLowerCase().includes(lower) ||
+      (r.slug || '').toLowerCase().includes(lower)
+    );
+    renderList();
+  }
+
+  // ── Selection: route vs settings ──────────────────────────────
+  async function selectRoute(id) {
+    try {
+      const data = await api(`/api/email-router/routes/${id}`);
+      activeRoute = data.route;
+      activeRouteId = id;
+      settingsMode = false;
+      stopCapturePolling();
+      renderList();
+      populateRouteEditor();
+      showRouteEditor();
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  function erOpenSettings() {
+    settingsMode = true;
+    activeRouteId = null;
+    activeRoute = null;
+    renderList();
+    showSettingsEditor();
+    loadSettings();
+    settingsSwitchTab(settingsTab);
+  }
+
+  function showRouteEditor() {
+    E('er-no-selection').style.display = 'none';
+    E('er-settings-wrap').style.display = 'none';
+    E('er-route-wrap').style.display = 'flex';
+    updateTopbarButtons();
+    erSwitchTab('general');
+  }
+
+  function showSettingsEditor() {
+    E('er-no-selection').style.display = 'none';
+    E('er-route-wrap').style.display = 'none';
+    E('er-settings-wrap').style.display = 'flex';
+    updateTopbarButtons();
+  }
+
+  function hideEditors() {
+    E('er-no-selection').style.display = '';
+    E('er-route-wrap').style.display = 'none';
+    E('er-settings-wrap').style.display = 'none';
+    activeRouteId = null;
+    activeRoute = null;
+    settingsMode = false;
+    stopCapturePolling();
+    renderList();
+    updateTopbarButtons();
+  }
+
+  // ── Topbar visibility ─────────────────────────────────────────
+  function updateTopbarButtons() {
+    if (!subPageActive) return;
+    const routeOpen    = E('er-route-wrap')?.style.display === 'flex';
+    const settingsOpen = E('er-settings-wrap')?.style.display === 'flex';
+    P.setTopbarButtons({
+      refresh: true,
+      new:     true,
+      save:    routeOpen || settingsOpen,
+      delete:  routeOpen && !!activeRouteId,
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // ROUTE EDITOR
+  // ══════════════════════════════════════════════════════════════
+
+  function populateRouteEditor() {
+    const r = activeRoute;
+    E('er-editor-title').textContent = r.name || 'New Route';
+
+    const metaEl = E('er-editor-meta');
+    if (r.last_matched_at || r.match_count) {
+      metaEl.style.display = '';
+      const parts = [];
+      parts.push(`Matched ${r.match_count || 0} time${r.match_count === 1 ? '' : 's'}`);
+      if (r.last_matched_at) parts.push(`Last: ${new Date(r.last_matched_at).toLocaleString()}`);
+      metaEl.textContent = parts.join(' • ');
+    } else { metaEl.style.display = 'none'; }
+
+    E('r-name').value = r.name || '';
+    E('r-position').value = r.position == null ? 100 : r.position;
+    E('r-description').value = r.description || '';
+    E('r-active').checked = !!r.active;
+
+    populateSlugDropdown(r.slug);
+
+    // Match config
+    E('r-match-mode').value = r.match_mode || 'conditions';
+    const mc = parseJson(r.match_config);
+    if ((r.match_mode || 'conditions') === 'conditions') {
+      matchConditions = (mc && mc.operator) ? mc : { operator: 'and', conditions: [] };
+      E('r-match-code-textarea').value = '';
+    } else {
+      // code mode
+      matchConditions = { operator: 'and', conditions: [] };
+      E('r-match-code-textarea').value = (mc && typeof mc === 'object') ? (mc.code || '') : (typeof mc === 'string' ? mc : '');
+    }
+    erToggleMatchMode();
+
+    // Reset preview tab
+    E('r-preview-input').value = '';
+    E('r-preview-result').innerHTML = '';
+  }
+
+  function populateSlugDropdown(currentSlug) {
+    const sel = E('r-slug');
+    sel.innerHTML = '<option value="">— choose a hook —</option>'
+      + hooksList.map(h => `<option value="${esc(h.slug)}" ${h.slug === currentSlug ? 'selected' : ''}>${esc(h.name)} (${esc(h.slug)})</option>`).join('');
+    // Preserve the saved slug even if the hook isn't in the current list
+    // (deleted/inactive) — show it as a disabled option so the operator
+    // is alerted rather than silently losing the value.
+    if (currentSlug && !hooksList.some(h => h.slug === currentSlug)) {
+      const opt = document.createElement('option');
+      opt.value = currentSlug;
+      opt.textContent = `${currentSlug} (hook missing or inactive)`;
+      opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+
+  function erSwitchTab(tab) {
+    activeRouteTab = tab;
+    document.querySelectorAll('#er-route-wrap .editor-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    document.querySelectorAll('#er-route-wrap .tab-content').forEach(t => t.classList.toggle('active', t.id === `er-tab-${tab}`));
+    if (tab === 'match' && (E('r-match-mode').value === 'conditions')) {
+      renderMatchConditions();
+    }
+  }
+
+  function erToggleMatchMode() {
+    const m = E('r-match-mode').value;
+    E('r-match-conditions').classList.toggle('hidden', m !== 'conditions');
+    E('r-match-code').classList.toggle('hidden', m !== 'code');
+    if (m === 'conditions') renderMatchConditions();
+  }
+
+  // ── Conditions builder (lifted from hooks.html, simplified) ──
+  function renderMatchConditions() {
+    const root = E('r-match-conditions-root');
+    root.innerHTML = '';
+    root.appendChild(buildConditionGroupEl(matchConditions, true));
+  }
+
+  function buildConditionGroupEl(group, isRoot) {
+    const div = document.createElement('div');
+    div.className = 'cond-group';
+    div._group = group;
+
+    const head = document.createElement('div');
+    head.className = 'cond-group-head';
+    const opSel = document.createElement('select');
+    opSel.innerHTML = `
+      <option value="and" ${group.operator === 'and' ? 'selected' : ''}>AND</option>
+      <option value="or"  ${group.operator === 'or'  ? 'selected' : ''}>OR</option>
+    `;
+    opSel.onchange = () => { group.operator = opSel.value; };
+    head.appendChild(opSel);
+
+    const addLeaf = document.createElement('button');
+    addLeaf.type = 'button';
+    addLeaf.className = 'btn btn-outline';
+    addLeaf.style.fontSize = '11px';
+    addLeaf.style.padding = '3px 8px';
+    addLeaf.innerHTML = '<i class="fa-solid fa-plus"></i> Condition';
+    addLeaf.onclick = () => {
+      group.conditions.push({ path: '', op: 'equals', value: '' });
+      renderMatchConditions();
+    };
+    head.appendChild(addLeaf);
+
+    const addGroup = document.createElement('button');
+    addGroup.type = 'button';
+    addGroup.className = 'btn btn-outline';
+    addGroup.style.fontSize = '11px';
+    addGroup.style.padding = '3px 8px';
+    addGroup.innerHTML = '<i class="fa-solid fa-layer-group"></i> Group';
+    addGroup.onclick = () => {
+      group.conditions.push({ operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] });
+      renderMatchConditions();
+    };
+    head.appendChild(addGroup);
+
+    if (!isRoot) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'rule-remove';
+      del.title = 'Remove group';
+      del.innerHTML = '<i class="fa-solid fa-times"></i>';
+      del.onclick = () => {
+        // remove this group from its parent — handled in renderer via re-build
+        div.dispatchEvent(new CustomEvent('group-remove', { bubbles: true }));
+      };
+      head.appendChild(del);
+    }
+
+    div.appendChild(head);
+
+    const body = document.createElement('div');
+    body.className = 'cond-group-body';
+    body.style.paddingLeft = isRoot ? '0' : '8px';
+
+    for (const c of group.conditions) {
+      if (c.operator && Array.isArray(c.conditions)) {
+        const sub = buildConditionGroupEl(c, false);
+        sub.addEventListener('group-remove', (e) => {
+          if (e.target !== sub) return;
+          group.conditions = group.conditions.filter(x => x !== c);
+          renderMatchConditions();
+        });
+        body.appendChild(sub);
+      } else {
+        body.appendChild(buildConditionRowEl(c, group));
+      }
+    }
+
+    div.appendChild(body);
+    return div;
+  }
+
+  function buildConditionRowEl(cond, parentGroup) {
+    const row = document.createElement('div');
+    row.className = 'cond-row';
+    row.innerHTML = `
+      <input class="cond-path mono" placeholder="body.from.email" value="${esc(cond.path || '')}">
+      <select class="cond-op">
+        ${metaOps.map(o => `<option value="${o}" ${cond.op===o?'selected':''}>${o.replace(/_/g,' ')}</option>`).join('')}
+      </select>
+      <input class="cond-value" placeholder="value" value="${esc(cond.value ?? '')}">
+      <button class="rule-remove" title="Remove"><i class="fa-solid fa-times"></i></button>
+    `;
+    row.querySelector('.cond-path').oninput  = e => { cond.path  = e.target.value; };
+    row.querySelector('.cond-op').onchange   = e => { cond.op    = e.target.value; };
+    row.querySelector('.cond-value').oninput = e => { cond.value = e.target.value; };
+    row.querySelector('.rule-remove').onclick = () => {
+      parentGroup.conditions = parentGroup.conditions.filter(x => x !== cond);
+      renderMatchConditions();
+    };
+    return row;
+  }
+
+  function erAddRootCondition() {
+    matchConditions.conditions.push({ path: '', op: 'equals', value: '' });
+    renderMatchConditions();
+  }
+
+  // Walk DOM back to a clean object (mirrors hooks.html collectGroupFromDom)
+  function collectMatchConditions() {
+    const root = E('r-match-conditions-root').querySelector('.cond-group');
+    if (!root) return { operator: 'and', conditions: [] };
+    return collectGroupFromDom(root);
+  }
+  function collectGroupFromDom(groupEl) {
+    const operator = groupEl.querySelector(':scope > .cond-group-head select')?.value || 'and';
+    const body = groupEl.querySelector(':scope > .cond-group-body');
+    const conditions = [];
+    if (body) {
+      for (const child of body.children) {
+        if (child.classList.contains('cond-group')) {
+          conditions.push(collectGroupFromDom(child));
+        } else if (child.classList.contains('cond-row')) {
+          const path  = child.querySelector('.cond-path')?.value?.trim();
+          const op    = child.querySelector('.cond-op')?.value;
+          const value = child.querySelector('.cond-value')?.value;
+          if (path && op) conditions.push({ path, op, value });
+        }
+      }
+    }
+    return { operator, conditions };
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // SAVE / NEW / DELETE — ROUTE
+  // ══════════════════════════════════════════════════════════════
+
+  async function saveRoute() {
+    if (settingsMode) return saveConfig();
+
+    const name = E('r-name').value.trim();
+    const slug = E('r-slug').value.trim();
+    if (!name) { Toast.fire({ icon: 'warning', title: 'Name is required' }); erSwitchTab('general'); return; }
+    if (!slug) { Toast.fire({ icon: 'warning', title: 'Target hook is required' }); erSwitchTab('general'); return; }
+
+    const match_mode = E('r-match-mode').value;
+    let match_config;
+    if (match_mode === 'conditions') {
+      match_config = collectMatchConditions();
+    } else {
+      match_config = { code: E('r-match-code-textarea').value };
+    }
+
+    const payload = {
+      name,
+      slug,
+      description: E('r-description').value,
+      position:    parseInt(E('r-position').value, 10) || 100,
+      active:      E('r-active').checked ? 1 : 0,
+      match_mode,
+      match_config,
+    };
+
+    try {
+      if (activeRouteId) {
+        await api(`/api/email-router/routes/${activeRouteId}`, 'PUT', payload);
+        Toast.fire({ icon: 'success', title: 'Route saved' });
+      } else {
+        const res = await api('/api/email-router/routes', 'POST', payload);
+        activeRouteId = res.id;
+        Toast.fire({ icon: 'success', title: 'Route created' });
+      }
+      // Reload list and re-select
+      const routesData = await api('/api/email-router/routes');
+      routes = routesData.routes || [];
+      filteredRoutes = routes;
+      const newId = activeRouteId;
+      const data = await api(`/api/email-router/routes/${newId}`);
+      activeRoute = data.route;
+      renderList();
+      populateRouteEditor();
+      updateTopbarButtons();
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  async function deleteRoute() {
+    if (!activeRouteId) return;
+    const r = await Swal.fire({
+      title: `Delete "${activeRoute?.name || 'this route'}"?`,
+      text: 'Inbound emails matching this rule will fall through to the next route.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Delete',
+      confirmButtonColor: '#ef4444',
+    });
+    if (!r.isConfirmed) return;
+    try {
+      await api(`/api/email-router/routes/${activeRouteId}`, 'DELETE');
+      Toast.fire({ icon: 'success', title: 'Route deleted' });
+      const routesData = await api('/api/email-router/routes');
+      routes = routesData.routes || [];
+      filteredRoutes = routes;
+      hideEditors();
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  function newRoute() {
+    settingsMode = false;
+    activeRouteId = null;
+    activeRoute = {
+      name: '',
+      slug: '',
+      description: '',
+      position: (routes.reduce((m, r) => Math.max(m, r.position || 0), 0) + 10),
+      active: 1,
+      match_mode: 'conditions',
+      match_config: { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] },
+      match_count: 0,
+      last_matched_at: null,
+    };
+    matchConditions = { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] };
+    renderList();
+    populateRouteEditor();
+    showRouteEditor();
+    erSwitchTab('general');
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // PREVIEW (route's Preview tab) — the headline feature
+  // ══════════════════════════════════════════════════════════════
+
+  function parsePreviewInput() {
+    const raw = E('r-preview-input').value.trim();
+    if (!raw) {
+      Toast.fire({ icon: 'warning', title: 'Paste input or click "Use captured sample"' });
+      return null;
+    }
+    try { return JSON.parse(raw); }
+    catch { Toast.fire({ icon: 'error', title: 'Invalid JSON' }); return null; }
+  }
+
+  async function erRunPreview() {
+    const input = parsePreviewInput();
+    if (!input) return;
+    E('r-preview-result').innerHTML = '<div class="text-sm text-muted"><i class="fa-solid fa-spinner fa-pulse"></i> Running preview…</div>';
+    try {
+      const data = await api('/api/email-router/preview', 'POST', { input });
+      renderPreviewResult(data.preview);
+    } catch (e) {
+      E('r-preview-result').innerHTML = `<div class="card" style="border-color:var(--red);color:var(--red);font-size:12px">${esc(e.message)}</div>`;
+    }
+  }
+
+  async function erUseCapturedSampleInPreview() {
+    try {
+      const data = await api('/api/email-router/captured-sample');
+      const sample = data.captured_sample;
+      if (!sample) {
+        Toast.fire({ icon: 'info', title: 'No captured sample yet — arm capture in Settings' });
+        return;
+      }
+      lastCapturedSample = sample;
+      E('r-preview-input').value = JSON.stringify(sample, null, 2);
+      Toast.fire({ icon: 'success', title: 'Sample loaded' });
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  async function erRunMatchTestOnly() {
+    const input = parsePreviewInput();
+    if (!input) return;
+    E('r-preview-result').innerHTML = '<div class="text-sm text-muted"><i class="fa-solid fa-spinner fa-pulse"></i> Running match test…</div>';
+    try {
+      const data = await api('/api/email-router/match-test', 'POST', { input });
+      renderMatchOnlyResult(data);
+    } catch (e) {
+      E('r-preview-result').innerHTML = `<div class="card" style="border-color:var(--red);color:var(--red);font-size:12px">${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderPreviewResult(preview) {
+    const matched = preview.matched;
+    const first   = preview.first_match;
+    const others  = (preview.all_matches || []).filter(m => !first || m.id !== first.id);
+    const hp      = preview.hook_preview;
+
+    // Build the routing pane
+    let routingHtml = '';
+    if (matched && first) {
+      const isThisRoute = activeRouteId && first.id === activeRouteId;
+      routingHtml += `
+        <div class="preview-block">
+          <h5>First match (live behavior)</h5>
+          <div class="match-row is-first">
+            <span class="preview-pill preview-pill-ok">#${first.position}</span>
+            <strong>${esc(first.name)}</strong>
+            <span style="color:var(--muted)">→ /hooks/${esc(first.slug)}</span>
+            ${isThisRoute ? '' : '<span class="preview-pill preview-pill-info" style="margin-left:auto">different route</span>'}
+          </div>
+        </div>
+      `;
+      if (others.length) {
+        routingHtml += '<div class="preview-block"><h5>Other routes that also match</h5>';
+        for (const m of others) {
+          routingHtml += `
+            <div class="match-row is-other">
+              <span class="preview-pill preview-pill-mute">#${m.position}</span>
+              <span>${esc(m.name)}</span>
+              <span style="color:var(--muted)">→ /hooks/${esc(m.slug)}</span>
+            </div>
+          `;
+        }
+        routingHtml += '<div class="hint" style="margin-top:6px">Live behavior is first-match-wins. Reorder by position if these should win instead.</div></div>';
+      }
+    } else {
+      routingHtml += `
+        <div class="preview-block">
+          <span class="preview-pill preview-pill-fail">No match</span>
+          <div class="hint" style="margin-top:6px">This input would land in the unrouted log. Check your match conditions.</div>
+        </div>
+      `;
+    }
+
+    // Build the hook preview pane
+    let hookHtml = '';
+    if (hp) {
+      const status = hp.status || 'unknown';
+      const statusPill = status === 'filtered'
+        ? '<span class="preview-pill preview-pill-mute">filtered</span>'
+        : status === 'not_found'
+          ? '<span class="preview-pill preview-pill-fail">hook not found</span>'
+          : '<span class="preview-pill preview-pill-ok">passed filter</span>';
+
+      hookHtml += `<div class="preview-block"><h5>Hook</h5>${statusPill}`;
+      if (hp.error) {
+        hookHtml += `<div style="color:var(--red);margin-top:4px;font-size:11px">${esc(hp.error)}</div>`;
+      }
+      if (hp.filter && hp.filter.error) {
+        hookHtml += `<div style="color:var(--amber);margin-top:4px;font-size:11px">Filter: ${esc(hp.filter.error)}</div>`;
+      }
+      hookHtml += `</div>`;
+
+      // Transform output (only when it ran)
+      if (hp.transform_output !== undefined) {
+        hookHtml += `
+          <div class="preview-block">
+            <h5>Transform output</h5>
+            <pre class="preview-pre">${esc(JSON.stringify(hp.transform_output, null, 2))}</pre>
+          </div>
+        `;
+      } else if (hp.targets && hp.targets[0]?.transform_output !== undefined) {
+        hookHtml += `
+          <div class="preview-block">
+            <h5>Transform output (per-target view)</h5>
+            <pre class="preview-pre">${esc(JSON.stringify(hp.targets[0].transform_output, null, 2))}</pre>
+          </div>
+        `;
+      }
+
+      if (Array.isArray(hp.targets) && hp.targets.length) {
+        hookHtml += '<div class="preview-block"><h5>Targets that would fire</h5>';
+        for (const t of hp.targets) {
+          const tType = t.target_type || 'http';
+          const cond  = t.conditions_passed === false
+            ? '<span class="preview-pill preview-pill-mute">skipped (condition)</span>'
+            : '<span class="preview-pill preview-pill-ok">would fire</span>';
+          const ws    = t.would_send || {};
+          const wsLine = ws.url
+            ? `${esc(ws.method || 'POST')} ${esc(ws.url)}`
+            : (ws.action ? `${esc(ws.action)}` : '');
+          hookHtml += `
+            <div style="padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;font-size:12px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <strong>${esc(t.name || '?')}</strong>
+                <span class="preview-pill preview-pill-info">${esc(tType)}</span>
+                ${cond}
+              </div>
+              ${wsLine ? `<div class="mono text-sm" style="margin-top:4px;color:var(--muted)">${wsLine}</div>` : ''}
+            </div>
+          `;
+        }
+        hookHtml += '</div>';
+      }
+    } else if (matched) {
+      hookHtml = '<div class="text-sm text-muted">Hook preview unavailable (target hook not found or returned no preview)</div>';
+    } else {
+      hookHtml = '<div class="text-sm text-muted">No hook preview — no route matched.</div>';
+    }
+
+    E('r-preview-result').innerHTML = `
+      <div class="preview-grid">
+        <div class="preview-pane">
+          <h4><i class="fa-solid fa-route"></i> Routing</h4>
+          ${routingHtml}
+        </div>
+        <div class="preview-pane">
+          <h4><i class="fa-solid fa-shuffle"></i> Hook (dry-run)</h4>
+          ${hookHtml}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderMatchOnlyResult(result) {
+    const matched = result.matched;
+    const first   = result.first_match;
+    const others  = (result.all_matches || []).filter(m => !first || m.id !== first.id);
+    let html = '<div class="preview-pane"><h4><i class="fa-solid fa-route"></i> Match results</h4>';
+    if (!matched) {
+      html += '<span class="preview-pill preview-pill-fail">No match</span>';
+    } else {
+      html += `<div class="match-row is-first">
+        <span class="preview-pill preview-pill-ok">#${first.position}</span>
+        <strong>${esc(first.name)}</strong>
+        <span style="color:var(--muted)">→ /hooks/${esc(first.slug)}</span>
+      </div>`;
+      for (const m of others) {
+        html += `<div class="match-row is-other">
+          <span class="preview-pill preview-pill-mute">#${m.position}</span>
+          <span>${esc(m.name)}</span>
+          <span style="color:var(--muted)">→ /hooks/${esc(m.slug)}</span>
+        </div>`;
+      }
+      if (others.length) {
+        html += '<div class="hint" style="margin-top:6px">Live behavior is first-match-wins.</div>';
+      }
+    }
+    html += '</div>';
+    E('r-preview-result').innerHTML = html;
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // SETTINGS — config / capture / logs
+  // ══════════════════════════════════════════════════════════════
+
+  function settingsSwitchTab(tab) {
+    settingsTab = tab;
+    document.querySelectorAll('#er-settings-wrap .editor-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+    document.querySelectorAll('#er-settings-wrap .tab-content').forEach(t => t.classList.toggle('active', t.id === `er-set-${tab}`));
+    if (tab === 'logs') loadLogs();
+    if (tab === 'capture' && routerConfig?.capture_mode === 'capturing') startCapturePolling();
+    else if (tab !== 'capture') stopCapturePolling();
+  }
+
+  async function loadSettings() {
+    try {
+      const data = await api('/api/email-router/config');
+      routerConfig = data.config;
+      renderConfigForm();
+      renderCaptureBox();
+      renderReceiverUrl();
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  function renderReceiverUrl() {
+    const el = E('er-receiver-url');
+    if (!el) return;
+    const origin = (window.location.origin || '').replace(/\/$/, '');
+    el.textContent = `POST  ${origin}/email-router`;
+  }
+
+  function renderConfigForm() {
+    if (!routerConfig) return;
+    E('er-auth-type').value = routerConfig.auth_type || 'api_key';
+    const ac = routerConfig.auth_config || {};
+    E('er-auth-header').value = ac.header || 'x-router-key';
+    E('er-auth-key').value = '';  // Always blank on render — write-only field
+    E('er-auth-key-hint').textContent = ac.key_set
+      ? 'Existing key not displayed for security. Leave blank to keep current; type a new value to replace.'
+      : 'No key set yet. Generate or paste a value before activating.';
+    erToggleAuthFields();
+  }
+
+  function erToggleAuthFields() {
+    E('er-auth-api-key').classList.toggle('hidden', E('er-auth-type').value !== 'api_key');
+  }
+
+  function erGenerateApiKey() {
+    const arr = new Uint8Array(24);
+    crypto.getRandomValues(arr);
+    E('er-auth-key').value = Array.from(arr, b => b.toString(16).padStart(2,'0')).join('');
+  }
+
+  async function saveConfig() {
+    const auth_type = E('er-auth-type').value;
+    const payload = { auth_type };
+    if (auth_type === 'api_key') {
+      const newKey = E('er-auth-key').value;
+      const header = E('er-auth-header').value || 'x-router-key';
+      // If the field is blank, send only the header (keeps existing key);
+      // if the field has a value, send both (replaces key).
+      payload.auth_config = newKey ? { key: newKey, header } : { header };
+    } else {
+      payload.auth_config = null;
+    }
+    try {
+      const res = await api('/api/email-router/config', 'PUT', payload);
+      routerConfig = res.config;
+      renderConfigForm();
+      Toast.fire({ icon: 'success', title: 'Config saved' });
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  // ── Capture mode (mirrors hooks.html, simpler — one slot) ──
+  function relativeTime(dateStr) {
+    if (!dateStr) return '—';
+    const ms = Date.now() - new Date(dateStr).getTime();
+    if (!Number.isFinite(ms) || ms < 0) return 'just now';
+    const sec = Math.floor(ms / 1000);
+    if (sec < 60)   return 'just now';
+    const min = Math.floor(sec / 60);
+    if (min < 60)   return `${min} minute${min === 1 ? '' : 's'} ago`;
+    const hr  = Math.floor(min / 60);
+    if (hr < 24)    return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+    const day = Math.floor(hr / 24);
+    return `${day} day${day === 1 ? '' : 's'} ago`;
+  }
+
+  function renderCaptureBox() {
+    if (!routerConfig) return;
+    const capturing = routerConfig.capture_mode === 'capturing';
+    const hasSample = !!routerConfig.has_captured_sample;
+
+    E('er-capture-btn-label').textContent = capturing ? 'Capturing…' : 'Capture next event';
+    E('er-capture-btn-icon').className = capturing ? 'fa-solid fa-spinner fa-pulse' : 'fa-solid fa-camera';
+    E('er-capture-waiting').style.display = capturing ? '' : 'none';
+
+    if (hasSample) {
+      E('er-capture-sample').style.display = '';
+      E('er-capture-relative').textContent = relativeTime(routerConfig.captured_at);
+      E('er-capture-absolute').textContent = routerConfig.captured_at
+        ? new Date(routerConfig.captured_at).toLocaleString()
+        : '—';
+    } else {
+      E('er-capture-sample').style.display = 'none';
+    }
+  }
+
+  async function erToggleCapture() {
+    const starting = routerConfig?.capture_mode !== 'capturing';
+    const path = starting ? '/api/email-router/capture/start' : '/api/email-router/capture/stop';
+    try {
+      await api(path, 'POST');
+      await loadSettings();
+      if (starting) startCapturePolling();
+      else stopCapturePolling();
+      Toast.fire({
+        icon: 'success',
+        title: starting ? 'Capture armed — send a test email' : 'Capture canceled',
+      });
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  function startCapturePolling() {
+    stopCapturePolling();
+    capturePollTimer = setInterval(async () => {
+      if (!subPageActive) { stopCapturePolling(); return; }
+      if (!settingsMode || settingsTab !== 'capture') { stopCapturePolling(); return; }
+      try {
+        const prev = routerConfig?.capture_mode;
+        const data = await api('/api/email-router/config');
+        routerConfig = data.config;
+        renderCaptureBox();
+        if (routerConfig.capture_mode !== 'capturing') {
+          stopCapturePolling();
+          if (prev === 'capturing') {
+            Toast.fire({ icon: 'success', title: 'Sample captured' });
+          }
+        }
+      } catch (e) {
+        console.warn('[email-router] capture poll error:', e.message);
+      }
+    }, 5000);
+  }
+
+  function stopCapturePolling() {
+    if (capturePollTimer) { clearInterval(capturePollTimer); capturePollTimer = null; }
+  }
+
+  async function erViewCapturedSample() {
+    try {
+      const data = await api('/api/email-router/captured-sample');
+      const sample = data.captured_sample;
+      if (!sample) {
+        Toast.fire({ icon: 'info', title: 'No captured sample yet' });
+        return;
+      }
+      lastCapturedSample = sample;
+      const pretty = JSON.stringify(sample, null, 2);
+      await Swal.fire({
+        title: 'Captured sample',
+        html: `
+          <div style="text-align:left">
+            <div class="text-sm text-muted" style="margin-bottom:8px">
+              Captured ${esc(routerConfig?.captured_at ? new Date(routerConfig.captured_at).toLocaleString() : '—')}
+            </div>
+            <pre style="background:var(--navy);color:#e2e8f0;padding:12px;border-radius:6px;font-size:11px;max-height:60vh;overflow:auto;text-align:left;white-space:pre-wrap;word-break:break-word">${esc(pretty)}</pre>
+          </div>
+        `,
+        width: 720,
+        confirmButtonText: 'Close',
+      });
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  // ── Logs ──
+  async function loadLogs() {
+    const tbody = E('er-log-tbody');
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)"><i class="fa-solid fa-spinner fa-pulse"></i></td></tr>';
+    const status = E('er-log-status').value;
+    const qs = status ? `?status=${encodeURIComponent(status)}&limit=50` : '?limit=50';
+    try {
+      const data = await api(`/api/email-router/executions${qs}`);
+      E('er-log-count').textContent = `${data.total} total`;
+      if (!data.executions.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--muted)">No executions yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = data.executions.map(ex => `
+        <tr>
+          <td class="mono">${ex.id}</td>
+          <td><span class="er-status-badge er-status-${ex.status}">${ex.status}</span></td>
+          <td>${ex.route_name ? esc(ex.route_name) : '<span class="text-muted">—</span>'}</td>
+          <td class="mono text-sm">${ex.resolved_slug ? esc(ex.resolved_slug) : '—'}</td>
+          <td class="text-sm">${new Date(ex.created_at).toLocaleString()}</td>
+          <td><button class="btn btn-outline" style="padding:3px 8px;font-size:11px" onclick="window.erViewLog(${ex.id})"><i class="fa-solid fa-eye"></i></button></td>
+        </tr>
+      `).join('');
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="6" style="color:var(--red);padding:12px">${esc(e.message)}</td></tr>`;
+    }
+  }
+
+  async function erViewLog(id) {
+    try {
+      const data = await api(`/api/email-router/executions/${id}`);
+      const ex = data.execution;
+      const he = ex.hook_execution;
+      const dl = ex.hook_delivery_logs || [];
+      Swal.fire({
+        title: `Execution #${id}`,
+        width: 760,
+        html: `
+          <div style="text-align:left;font-size:12px;max-height:65vh;overflow:auto">
+            <p><b>Status:</b> <span class="er-status-badge er-status-${ex.status}">${ex.status}</span></p>
+            ${ex.route_name ? `<p style="margin-top:6px"><b>Route:</b> ${esc(ex.route_name)} (#${ex.matched_route_id})</p>` : ''}
+            ${ex.resolved_slug ? `<p style="margin-top:6px"><b>Slug:</b> <code>${esc(ex.resolved_slug)}</code></p>` : ''}
+            ${ex.error ? `<p style="margin-top:8px;color:var(--red)"><b>Error:</b> ${esc(ex.error)}</p>` : ''}
+            <details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Raw input</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:240px;margin-top:6px">${esc(JSON.stringify(parseJson(ex.raw_input), null, 2))}</pre>
+            </details>
+            ${he ? `
+              <details style="margin-top:8px" open><summary style="cursor:pointer;font-weight:600">Linked hook execution #${he.id}</summary>
+                <p style="margin-top:6px"><b>Hook status:</b> ${esc(he.status)}</p>
+                ${he.transform_output ? `
+                  <p style="margin-top:6px;font-weight:600">Transform output</p>
+                  <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:200px">${esc(JSON.stringify(parseJson(he.transform_output), null, 2))}</pre>` : ''}
+                ${dl.length ? `
+                  <p style="margin-top:6px;font-weight:600">Deliveries (${dl.length})</p>
+                  ${dl.map(d => `
+                    <div style="border:1px solid var(--border);border-radius:6px;padding:8px;margin-top:6px;background:#fff">
+                      <div><b>Target #${d.target_id}</b> · <span class="er-status-badge ${d.status === 'success' ? 'er-status-routed' : 'er-status-error'}">${esc(d.status)}</span></div>
+                      <div class="mono text-sm" style="color:var(--muted);margin-top:3px">${esc(d.request_method || '')} ${esc(d.request_url || '')}</div>
+                      ${d.error ? `<div style="color:var(--red);margin-top:3px">${esc(d.error)}</div>` : ''}
+                    </div>
+                  `).join('')}
+                ` : ''}
+              </details>
+            ` : ''}
+          </div>
+        `,
+      });
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // LIFECYCLE — shell hooks
+  // ══════════════════════════════════════════════════════════════
+
+  function init() {
+    subPageActive = true;
+    updateTopbarButtons();
+    erInit();
+  }
+
+  function onShow() {
+    subPageActive = true;
+    updateTopbarButtons();
+    if (settingsMode && settingsTab === 'capture' && routerConfig?.capture_mode === 'capturing') {
+      startCapturePolling();
+    }
+  }
+
+  function onHide() {
+    subPageActive = false;
+    stopCapturePolling();
+  }
+
+  async function onSave()    { return saveRoute(); }   // settingsMode → saveConfig (handled inside)
+  async function onDelete()  { return deleteRoute(); }
+  function onRefresh()       { return erRefresh(); }
+  function onNew()           { return newRoute(); }
+
+  // ══════════════════════════════════════════════════════════════
+  // WINDOW EXPORTS
+  // ══════════════════════════════════════════════════════════════
+
+  // Lifecycle (shell calls these)
+  window.onShow    = onShow;
+  window.onHide    = onHide;
+  window.onSave    = onSave;
+  window.onDelete  = onDelete;
+  window.onRefresh = onRefresh;
+  window.onNew     = onNew;
+
+  // Inline onclick handlers
+  window.erInit                      = erInit;
+  window.erFilterList                = erFilterList;
+  window.selectRoute                 = selectRoute;
+  window.erOpenSettings              = erOpenSettings;
+  window.erNew                       = newRoute;
+  window.erSwitchTab                 = erSwitchTab;
+  window.erSettingsSwitchTab         = settingsSwitchTab;
+  window.erToggleMatchMode           = erToggleMatchMode;
+  window.erAddRootCondition          = erAddRootCondition;
+  window.erRunPreview                = erRunPreview;
+  window.erUseCapturedSampleInPreview = erUseCapturedSampleInPreview;
+  window.erRunMatchTestOnly          = erRunMatchTestOnly;
+  window.erToggleAuthFields          = erToggleAuthFields;
+  window.erGenerateApiKey            = erGenerateApiKey;
+  window.erSaveConfig                = saveConfig;
+  window.erToggleCapture             = erToggleCapture;
+  window.erViewCapturedSample        = erViewCapturedSample;
+  window.erLoadLogs                  = loadLogs;
+  window.erViewLog                   = erViewLog;
+
+  // ── Boot ──
+  (function waitForShell() {
+    if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+      return init();
+    }
+    setTimeout(waitForShell, 50);
+  })();
+})();
+</script>
+</body>
+</html>
