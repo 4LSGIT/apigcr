@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>API Tester (SU)</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; height: 100%; background: #0f1117; color: #d6d9e0;
+               font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .bar { display: flex; align-items: center; justify-content: space-between;
+         padding: 8px 14px; border-bottom: 1px solid #2a3040;
+         background: linear-gradient(180deg, #181c25, #14171f); }
+  .title { font-weight: 600; letter-spacing: 0.3px; }
+  .user-hint { color: #6e7691; font-size: 11px; }
+  .app { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr);
+         gap: 10px; padding: 10px; }
+  .pane { background: #141821; border: 1px solid #2a3040; border-radius: 6px;
+          padding: 10px; min-height: 200px; }
+  .pane h3 { margin: 0 0 6px 0; font-size: 11px; text-transform: uppercase;
+             letter-spacing: 0.6px; color: #8a93ad; display: flex; align-items: center;
+             gap: 6px; justify-content: space-between; }
+  .row { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
+  .row.options { flex-wrap: wrap; gap: 14px; }
+  label { font-size: 12px; color: #b3bacb; display: inline-flex; gap: 6px; align-items: center; }
+  input[type=text], input[type=number], select, textarea {
+    background: #0c0f15; color: #d6d9e0; border: 1px solid #2a3040;
+    border-radius: 4px; padding: 6px 8px; font: inherit; font-family: ui-monospace, monospace;
+  }
+  input[type=text], input[type=number] { height: 30px; }
+  textarea { width: 100%; min-height: 100px; resize: vertical; }
+  select { height: 30px; }
+  button { background: #2a3040; color: #d6d9e0; border: 1px solid #3b4358;
+           border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  button:hover { background: #353c50; }
+  button.primary { background: #2563eb; border-color: #1d4ed8; color: #fff; }
+  button.primary:hover { background: #1d4ed8; }
+  button.small { padding: 2px 6px; font-size: 11px; }
+  button.danger-text { color: #ff7b7b; }
+  .method-url { gap: 6px; }
+  .method-url .method-wrap { flex: 0 0 auto; display: flex; gap: 4px; }
+  .method-url select { width: 100px; }
+  .method-url #methodCustom { width: 110px; text-transform: uppercase; }
+  .method-url input[type=text] { flex: 1 1 auto; }
+  .header-row { display: grid; grid-template-columns: 1fr 2fr auto; gap: 6px; margin-bottom: 4px; }
+  pre.scroll { background: #0c0f15; border: 1px solid #2a3040; border-radius: 4px;
+               padding: 8px; max-height: 360px; overflow: auto; white-space: pre-wrap;
+               word-break: break-word; font-family: ui-monospace, monospace; font-size: 12px; margin: 0; }
+  .status-line { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .badge { padding: 2px 8px; border-radius: 4px; font-weight: 600; font-size: 12px; }
+  .badge.s2 { background: #1c4427; color: #9ce4ad; }
+  .badge.s3 { background: #443a1c; color: #e4cf9c; }
+  .badge.s4 { background: #441c1c; color: #e49c9c; }
+  .badge.s5 { background: #441c33; color: #e49ccd; }
+  .badge.err { background: #441c1c; color: #ff8a8a; }
+  .muted { color: #6e7691; font-size: 11px; }
+  .notice { background: #1f2a3a; border-left: 3px solid #2563eb; padding: 6px 10px;
+            margin: 6px 0; font-size: 12px; border-radius: 3px; }
+  .notice.warn { background: #3a2a1f; border-left-color: #d97706; }
+  .notice.err  { background: #3a1f1f; border-left-color: #dc2626; }
+  .history { padding: 10px; }
+  .history-bar { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
+  table.history { width: 100%; border-collapse: collapse; font-size: 12px; font-family: ui-monospace, monospace; }
+  table.history th { text-align: left; color: #8a93ad; font-weight: 500; padding: 4px 6px;
+                     border-bottom: 1px solid #2a3040; }
+  table.history td { padding: 4px 6px; border-bottom: 1px solid #1a1f2a; vertical-align: top; }
+  table.history tr:hover td { background: #1a1f2a; cursor: pointer; }
+  .truncate { max-width: 380px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
+  @media (max-width: 1100px) {
+    .app { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <span class="title">API Tester (SU)</span>
+  <span class="user-hint" id="userHint"></span>
+</div>
+
+<div class="app">
+
+  <!-- Request builder -->
+  <div class="pane">
+    <h3>Request</h3>
+
+    <div class="row method-url">
+      <div id="methodWrap" class="method-wrap">
+        <select id="method">
+          <option>GET</option>
+          <option>POST</option>
+          <option>PUT</option>
+          <option>PATCH</option>
+          <option>DELETE</option>
+          <option>HEAD</option>
+          <option>OPTIONS</option>
+          <option value="__custom__">Custom…</option>
+        </select>
+        <input id="methodCustom" type="text" placeholder="METHOD" maxlength="32" hidden />
+      </div>
+      <input id="url" type="text" placeholder="https://example.com/path" />
+      <button id="btnSend" class="primary">Send</button>
+    </div>
+
+    <div class="row">
+      <label style="flex: 1 1 auto;">Credential:
+        <select id="credential" style="flex: 1 1 auto;">
+          <option value="">(none)</option>
+        </select>
+      </label>
+    </div>
+
+    <h3 style="margin-top: 14px;">
+      Headers
+      <button id="btnAddHeader" class="small">+ row</button>
+    </h3>
+    <div id="headersBox"></div>
+
+    <h3 style="margin-top: 14px;">Body</h3>
+    <textarea id="body" placeholder='{"key":"value"}'></textarea>
+
+    <h3 style="margin-top: 14px;">Options</h3>
+    <div class="row options">
+      <label>Timeout ms: <input id="timeoutMs" type="number" value="30000" min="1000" max="60000" style="width: 80px;"></label>
+      <label><input id="followRedirects" type="checkbox"> Follow redirects</label>
+      <label><input id="saveFull" type="checkbox"> Log full request/response</label>
+    </div>
+
+    <div class="row" style="margin-top: 10px;">
+      <button id="btnCurl">Copy as cURL</button>
+      <button id="btnClear">Clear</button>
+    </div>
+  </div>
+
+  <!-- Response -->
+  <div class="pane">
+    <h3>Response</h3>
+    <div id="respEmpty" class="muted">Send a request to see the response.</div>
+    <div id="respBox" hidden>
+      <div class="status-line">
+        <span class="badge" id="statusBadge"></span>
+        <span class="muted" id="statusText"></span>
+        <span class="muted" id="duration"></span>
+        <span class="muted" id="credInjected"></span>
+      </div>
+      <div id="errorNotice" class="notice err" hidden></div>
+      <div id="redirectNotice" class="notice warn" hidden></div>
+      <div id="truncatedNotice" class="notice warn" hidden></div>
+
+      <h3 style="margin-top: 12px;">
+        Response Headers
+        <button id="btnHeadersToggle" class="small">show</button>
+      </h3>
+      <pre id="respHeaders" class="scroll" hidden></pre>
+
+      <h3 style="margin-top: 12px;">
+        Body
+        <span style="display:flex; gap: 4px;">
+          <button id="btnPretty" class="small">Pretty</button>
+          <button id="btnRaw" class="small">Raw</button>
+          <button id="btnCopyBody" class="small">Copy</button>
+        </span>
+      </h3>
+      <pre id="respBody" class="scroll"></pre>
+    </div>
+  </div>
+
+</div>
+
+<!-- History -->
+<div class="history">
+  <div class="history-bar">
+    <h3 style="margin: 0;">Recent Requests</h3>
+    <label><input id="scopeAll" type="checkbox"> Show all SUs</label>
+    <button id="btnRefreshHistory" class="small">↻ Refresh</button>
+    <span class="muted" id="historyMeta"></span>
+  </div>
+  <table class="history">
+    <thead>
+      <tr>
+        <th style="width: 130px;">When</th>
+        <th style="width: 80px;">User</th>
+        <th style="width: 60px;">Method</th>
+        <th>URL</th>
+        <th style="width: 80px;">Status</th>
+        <th style="width: 70px;">Duration</th>
+      </tr>
+    </thead>
+    <tbody id="historyBody"></tbody>
+  </table>
+</div>
+
+<script>
+const P = window.parent;
+
+// ── auth gate (mirrors dbConsole.html) ───────────────────────────────────────
+let authed = false;
+(function checkSU() {
+  try {
+    const token = P?.AUTH_STATE?.jwt || localStorage.getItem("jwt");
+    if (!token) throw new Error("no token");
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (payload.user_auth !== "authorized - SU") {
+      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Superuser access required.</div>';
+      return;
+    }
+    document.getElementById("userHint").textContent =
+      `${payload.username || payload.sub} · SU`;
+    authed = true;
+  } catch (e) {
+    document.body.innerHTML =
+      '<div style="padding:40px; text-align:center; color:#ff6b6b;">Not authenticated.</div>';
+  }
+})();
+
+// ── tiny helpers ────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g,
+  c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const fmtRelative = (iso) => {
+  const d = new Date(iso); const now = Date.now();
+  const sec = Math.round((now - d.getTime()) / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.round(sec/60)}m ago`;
+  if (sec < 86400) return `${Math.round(sec/3600)}h ago`;
+  return d.toLocaleString();
+};
+
+
+// ── headers UI ──────────────────────────────────────────────────────────────
+function addHeaderRow(name = "", value = "") {
+  const box = $("headersBox");
+  const row = document.createElement("div");
+  row.className = "header-row";
+  row.innerHTML = `
+    <input type="text" class="hk" placeholder="Header-Name" />
+    <input type="text" class="hv" placeholder="value" />
+    <button class="small danger-text" type="button">×</button>
+  `;
+  row.querySelector(".hk").value = name;
+  row.querySelector(".hv").value = value;
+  row.querySelector("button").addEventListener("click", () => row.remove());
+  box.appendChild(row);
+}
+function readHeaders() {
+  const out = {};
+  for (const row of $("headersBox").querySelectorAll(".header-row")) {
+    const k = row.querySelector(".hk").value.trim();
+    const v = row.querySelector(".hv").value;
+    if (k) out[k] = v;
+  }
+  return out;
+}
+function setHeaders(obj) {
+  $("headersBox").innerHTML = "";
+  for (const [k, v] of Object.entries(obj || {})) addHeaderRow(k, v);
+  if (!Object.keys(obj || {}).length) addHeaderRow();
+}
+$("btnAddHeader").addEventListener("click", () => addHeaderRow());
+addHeaderRow();
+
+// ── method (select + custom input) ──────────────────────────────────────────
+// The dropdown covers the common verbs; "Custom…" reveals a text input for
+// anything else (PROPFIND, PURGE, MKCOL, etc.). Server-side validation only
+// checks RFC 7230 token shape, not a verb allowlist.
+function getMethod() {
+  const sel = $("method").value;
+  if (sel === "__custom__") {
+    return $("methodCustom").value.trim().toUpperCase();
+  }
+  return sel;
+}
+function setMethod(m) {
+  const v = String(m || "GET").toUpperCase();
+  const sel = $("method");
+  // If v matches one of the standard options, pick it; otherwise → Custom.
+  const known = Array.from(sel.options).some(o => o.value === v && v !== "__custom__");
+  if (known) {
+    sel.value = v;
+    $("methodCustom").hidden = true;
+    $("methodCustom").value = "";
+  } else {
+    sel.value = "__custom__";
+    $("methodCustom").hidden = false;
+    $("methodCustom").value = v;
+  }
+}
+$("method").addEventListener("change", () => {
+  const isCustom = $("method").value === "__custom__";
+  $("methodCustom").hidden = !isCustom;
+  if (isCustom) {
+    $("methodCustom").focus();
+  } else {
+    $("methodCustom").value = "";
+  }
+});
+// Force the typed method to uppercase visually as the user types.
+$("methodCustom").addEventListener("input", (e) => {
+  const start = e.target.selectionStart;
+  e.target.value = e.target.value.toUpperCase();
+  e.target.setSelectionRange(start, start);
+});
+
+// ── credentials dropdown ────────────────────────────────────────────────────
+async function loadCredentials() {
+  if (!authed) return;
+  try {
+    const resp = await P.apiSend("/api/credentials", "GET");
+    const list = resp?.credentials || [];
+    const sel = $("credential");
+    sel.innerHTML = '<option value="">(none)</option>';
+    for (const c of list) {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = `${c.name} (${c.type})${c.allowed_urls ? " ·  scoped" : ""}`;
+      sel.appendChild(opt);
+    }
+  } catch (e) {
+    console.warn("Failed to load credentials:", e);
+  }
+}
+
+// ── send ────────────────────────────────────────────────────────────────────
+let lastResponseBody = "";   // raw, for raw/pretty toggling
+let lastResponseHeaders = {};
+
+async function sendRequest() {
+  if (!authed) return;
+  const url = $("url").value.trim();
+  if (!url) { alert("URL is required"); return; }
+  const method = getMethod();
+  if (!method) { alert("Method is required (Custom… selected with empty input)"); return; }
+
+  const payload = {
+    method,
+    url,
+    headers: readHeaders(),
+    body: $("body").value || null,
+    credential_id: $("credential").value ? Number($("credential").value) : null,
+    timeout_ms: Number($("timeoutMs").value) || 30000,
+    follow_redirects: $("followRedirects").checked,
+    save_full: $("saveFull").checked,
+  };
+
+  $("btnSend").disabled = true;
+  $("btnSend").textContent = "Sending…";
+  try {
+    const resp = await P.apiSend("/admin/api-tester/send-request", "POST", payload);
+    renderResponse(resp);
+    loadHistory(); // refresh history after each call
+  } catch (e) {
+    renderResponse({ status: null, error: e.message || String(e), error_type: "client" });
+  } finally {
+    $("btnSend").disabled = false;
+    $("btnSend").textContent = "Send";
+  }
+}
+$("btnSend").addEventListener("click", sendRequest);
+$("url").addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") sendRequest();
+});
+
+// ── render response ─────────────────────────────────────────────────────────
+function renderResponse(r) {
+  $("respEmpty").hidden = true;
+  $("respBox").hidden = false;
+
+  // status badge
+  const badge = $("statusBadge");
+  if (r.status == null) {
+    badge.className = "badge err";
+    badge.textContent = "ERR";
+  } else {
+    badge.className = "badge s" + Math.floor(r.status / 100);
+    badge.textContent = r.status;
+  }
+  $("statusText").textContent = r.status_text || "";
+  $("duration").textContent = (r.duration_ms != null) ? `${r.duration_ms}ms` : "";
+  $("credInjected").textContent = r.credential_injected ? "credential applied" : "";
+
+  // notices
+  if (r.error) {
+    $("errorNotice").hidden = false;
+    $("errorNotice").textContent = `${r.error_type || "error"}: ${r.error}`;
+  } else $("errorNotice").hidden = true;
+
+  if (r.redirect_location) {
+    $("redirectNotice").hidden = false;
+    $("redirectNotice").innerHTML =
+      `Redirect → <code>${escapeHtml(r.redirect_location)}</code>
+       <button class="small" id="btnUseRedirect">Use this URL</button>`;
+    $("btnUseRedirect").addEventListener("click", () => {
+      $("url").value = r.redirect_location;
+      sendRequest();
+    });
+  } else $("redirectNotice").hidden = true;
+
+  if (r.body_truncated) {
+    $("truncatedNotice").hidden = false;
+    $("truncatedNotice").textContent =
+      `Response body truncated (${r.body_size?.toLocaleString() || "?"} bytes received, capped).`;
+  } else $("truncatedNotice").hidden = true;
+
+  // headers
+  lastResponseHeaders = r.headers || {};
+  $("respHeaders").textContent = JSON.stringify(lastResponseHeaders, null, 2);
+
+  // body
+  lastResponseBody = r.body || "";
+  renderBody("pretty");
+}
+
+function renderBody(mode) {
+  const out = $("respBody");
+  if (mode === "pretty") {
+    try {
+      out.textContent = JSON.stringify(JSON.parse(lastResponseBody), null, 2);
+      return;
+    } catch (_) { /* not JSON */ }
+  }
+  out.textContent = lastResponseBody;
+}
+$("btnPretty").addEventListener("click", () => renderBody("pretty"));
+$("btnRaw").addEventListener("click", () => renderBody("raw"));
+$("btnCopyBody").addEventListener("click", () => navigator.clipboard.writeText(lastResponseBody));
+
+// headers expand/collapse
+$("btnHeadersToggle").addEventListener("click", (e) => {
+  const pre = $("respHeaders");
+  const showing = !pre.hidden;
+  pre.hidden = showing;
+  e.currentTarget.textContent = showing ? "show" : "hide";
+});
+
+// ── copy as cURL ────────────────────────────────────────────────────────────
+function shellQuote(s) {
+  // Wrap in single quotes; escape inner ' as '\''
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+$("btnCurl").addEventListener("click", () => {
+  const url = $("url").value.trim();
+  if (!url) return;
+  const method = getMethod() || "GET";
+  const hdrs = readHeaders();
+  const body = $("body").value;
+  const credId = $("credential").value;
+
+  const lines = [`curl -i -X ${method} ${shellQuote(url)}`];
+  for (const [k, v] of Object.entries(hdrs)) {
+    lines.push(`  -H ${shellQuote(`${k}: ${v}`)}`);
+  }
+  if (body && method !== "GET" && method !== "HEAD") {
+    lines.push(`  --data ${shellQuote(body)}`);
+  }
+  let out = lines.join(" \\\n");
+  if (credId) {
+    out = `# NOTE: credential #${credId} was injected by YC and is NOT included here.\n# Add the appropriate -H 'Authorization: ...' yourself.\n` + out;
+  }
+  navigator.clipboard.writeText(out);
+
+  const btn = $("btnCurl");
+  const orig = btn.textContent;
+  btn.textContent = "Copied!";
+  setTimeout(() => { btn.textContent = orig; }, 1200);
+});
+
+// ── clear ───────────────────────────────────────────────────────────────────
+$("btnClear").addEventListener("click", () => {
+  setMethod("GET");
+  $("url").value = "";
+  $("body").value = "";
+  $("credential").value = "";
+  $("followRedirects").checked = false;
+  $("saveFull").checked = false;
+  $("timeoutMs").value = 30000;
+  setHeaders({});
+  $("respBox").hidden = true;
+  $("respEmpty").hidden = false;
+});
+
+// ── history ─────────────────────────────────────────────────────────────────
+async function loadHistory() {
+  if (!authed) return;
+  const scope = $("scopeAll").checked ? "all" : "own";
+  try {
+    const resp = await P.apiSend(`/admin/api-tester/history?limit=50&scope=${scope}`, "GET");
+    const rows = resp?.rows || [];
+    $("historyMeta").textContent = `${rows.length} row${rows.length === 1 ? "" : "s"} · scope=${resp?.scope || scope}`;
+    const tbody = $("historyBody");
+    tbody.innerHTML = "";
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+      const details = (typeof row.details === "string") ? safeJSON(row.details) : (row.details || {});
+      const url = details.target_url || "";
+      const tStatus = details.target_status_code;
+      const statusCls = row.status === "success"
+        ? `badge s${tStatus ? Math.floor(tStatus / 100) : 2}`
+        : "badge err";
+      const statusLabel = row.status === "success" ? (tStatus ?? "ok") : row.status;
+      tr.innerHTML = `
+        <td title="${escapeHtml(row.created_at)}">${escapeHtml(fmtRelative(row.created_at))}</td>
+        <td>${escapeHtml(row.username || "")}</td>
+        <td>${escapeHtml(details.target_method || row.method)}</td>
+        <td><span class="truncate" title="${escapeHtml(url)}">${escapeHtml(url)}</span></td>
+        <td><span class="${statusCls}">${escapeHtml(String(statusLabel))}</span></td>
+        <td>${row.duration_ms != null ? row.duration_ms + "ms" : ""}</td>
+      `;
+      tr.addEventListener("click", () => repopulateFrom(row, details));
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    console.warn("Failed to load history:", e);
+  }
+}
+function safeJSON(s) { try { return JSON.parse(s); } catch { return {}; } }
+
+function repopulateFrom(row, details) {
+  setMethod(details.target_method || "GET");
+  $("url").value = details.target_url || "";
+  $("credential").value = details.credential_id ?? "";
+  $("followRedirects").checked = !!details.follow_redirects;
+  if (details.request_headers) setHeaders(details.request_headers);
+  if (details.request_body != null) $("body").value = details.request_body;
+  // Note: headers/body are only present when save_full was checked at the time.
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+$("scopeAll").addEventListener("change", loadHistory);
+$("btnRefreshHistory").addEventListener("click", loadHistory);
+
+// ── boot ────────────────────────────────────────────────────────────────────
+if (authed) {
+  loadCredentials();
+  loadHistory();
+  // Poll history every 30s while tab is visible.
+  setInterval(() => { if (!document.hidden) loadHistory(); }, 30000);
+}
+</script>
+
+</body>
+</html>

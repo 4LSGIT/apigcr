@@ -1487,75 +1487,75 @@
 
 <div id="tabMore" class="tab-main">
   <h2>More Features</h2>
+  <button class="big-button" data-target="manualsDiv"         data-exclusive-group="more">Manuals</button>
+  <button class="big-button" data-target="automationsDiv"     data-exclusive-group="more">Automations</button>
+  <button class="big-button" data-target="featureRequestsDiv" data-exclusive-group="more">Feature Requests</button>
 
-  <button class="big-button" data-target="manualsDiv">Manuals</button>
-  <button class="big-button" data-target="automationsDiv">Automations</button>
-  <button class="big-button" data-target="featureRequestsDiv">Feature Requests</button>
-
-  <div id="manualsDiv" class="more-panel" style="display:none">
+  <div id="manualsDiv"         class="more-panel" style="display:none">
     <iframe data-src="/manuals.html"></iframe>
   </div>
-  <div id="automationsDiv" class="more-panel" style="display:none">
+  <div id="automationsDiv"     class="more-panel" style="display:none">
     <iframe data-src="/automationManager.html"></iframe>
   </div>
   <div id="featureRequestsDiv" class="more-panel" style="display:none">
     <iframe data-src="/featureRequests.html"></iframe>
   </div>
 </div>
+
+  
+<div id="tabAdmin" class="tab-main">
+  <h2>Admin</h2>
+  <button class="big-button" onclick="admintask1()">Button 1</button>
+  <button class="big-button" onclick="testSwalPage()">Test Swal Page</button>
+  <button class="big-button" onclick="admintask2()">Sequences</button>
+  <button class="big-button" data-target="dbConsoleDiv" data-exclusive-group="admin">DB Console (SU)</button>
+  <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin">API Tester (SU)</button>
+
+  <div id="sequencesDiv" style="display:none"></div>
+  <div id="dbConsoleDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/dbConsole.html"
+            style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
+  </div>
+  <div id="apiTesterDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/apiTester.html"></iframe>
+  </div>
+</div>
 <script>
-  document.querySelectorAll('#tabMore .big-button').forEach(btn => {
-  btn.addEventListener('click', () => {
+  // Generic panel toggle + lazy iframe loader.
+  // Any button with data-target="someDivId" toggles that div.
+  // If the panel contains an <iframe data-src="...">, it gets loaded on first show.
+  // Optional: data-exclusive-group="groupName" makes buttons in the same group
+  // hide their siblings (the old #tabMore "only one open at a time" behavior).
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-target]');
+    if (!btn) return;
 
-    const targetId = btn.dataset.target
-    const target = document.getElementById(targetId)
+    const target = document.getElementById(btn.dataset.target);
+    if (!target) return;
 
-    const panels = document.querySelectorAll('#tabMore .more-panel')
+    const wasHidden = getComputedStyle(target).display === 'none';
 
-    const wasHidden = getComputedStyle(target).display === 'none'
+    // If this button belongs to an exclusive group, hide other panels in that group first.
+    const group = btn.dataset.exclusiveGroup;
+    if (group) {
+      document.querySelectorAll(`[data-target][data-exclusive-group="${group}"]`)
+        .forEach(b => {
+          const panel = document.getElementById(b.dataset.target);
+          if (panel) panel.style.display = 'none';
+        });
+    }
 
-    panels.forEach(p => p.style.display = 'none')
+    target.style.display = wasHidden ? '' : 'none';
 
     if (wasHidden) {
-      target.style.display = ''
-      // Lazy-load: set src from data-src on first click
-      const iframe = target.querySelector('iframe[data-src]')
+      const iframe = target.querySelector('iframe[data-src]');
       if (iframe) {
-        iframe.src = iframe.dataset.src
-        delete iframe.dataset.src
+        iframe.src = iframe.dataset.src;
+        delete iframe.dataset.src;
       }
     }
-  })
-})
+  });
 </script>
-  
-
-  <div id="tabAdmin" class="tab-main">
-    <h2>Admin</h2>
-    <button class="big-button" onclick="admintask1()">View/Edit Users</button>
-    <button class="big-button" onclick="testSwalPage()">Test Swal Page</button>
-    <button class="big-button" onclick="admintask2()">Sequences</button>
-    <button class="big-button" data-db-console-toggle>DB Console (SU)</button>
-    <div id="sequencesDiv" style="display: none"></div>
-    <div id="dbConsoleDiv" style="display: none; margin-top: 10px;">
-      <iframe data-src="/dbConsole.html"
-              style="width: 100%; height: 80vh; border: 1px solid #2a3040; border-radius: 6px; background: #0f1117;"></iframe>
-    </div>
-  </div>
-  <script>
-    // DB Console lazy-load + toggle (mirrors the #tabMore "more features" pattern)
-    document.querySelector('#tabAdmin [data-db-console-toggle]').addEventListener('click', () => {
-      const panel = document.getElementById('dbConsoleDiv');
-      const wasHidden = getComputedStyle(panel).display === 'none';
-      panel.style.display = wasHidden ? '' : 'none';
-      if (wasHidden) {
-        const iframe = panel.querySelector('iframe[data-src]');
-        if (iframe) {
-          iframe.src = iframe.dataset.src;
-          delete iframe.dataset.src;
-        }
-      }
-    });
-  </script>
   <script>
     params = {};
     new URL(window.location).searchParams.forEach((value, key) => {
