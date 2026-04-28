@@ -21,6 +21,13 @@
  *
  * GET   /api/email-router/executions           — paginated log
  * GET   /api/email-router/executions/:id       — single execution + linked hook execution
+ *
+ * Internal alert slugs (convention — create the hook to opt in):
+ *   router-unrouted-alert  — fires when an email matches no route
+ *   router-error-alert     — fires when receiver throws, OR resolved hook
+ *                            slug is missing/inactive, OR dispatch rejects
+ *
+ * Both are throttled per-sender (default 1h, env ROUTER_ALERT_THROTTLE_MS).
  */
 
 const express = require('express');
@@ -28,6 +35,96 @@ const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const emailRouter = require('../services/emailRouter');
+const hookService = require('../services/hookService');
+
+
+// ─────────────────────────────────────────────────────────────
+// INTERNAL ALERT SLUGS — convention, not enforcement
+// ─────────────────────────────────────────────────────────────
+//
+// The router fires these well-known hook slugs on internal failure paths.
+// If the hook doesn't exist, executeHook returns { status: 'not_found' }
+// and we silently no-op — operators opt in by creating the hook.
+//
+// Per-sender throttle prevents alert storms from misconfigured forwarders:
+// if a Gmail filter loops 1000 emails/min from the same source, we alert
+// once per (sender, throttle window) combination instead of 1000 times.
+//
+// IMPORTANT — Cloud Run multi-instance caveat:
+// The throttle map lives in the Node process memory. Each Cloud Run
+// instance has its own copy. Under concurrent load that spawns multiple
+// instances, the same sender may alert N times within one window (once
+// per instance) instead of exactly once. This is a deliberate trade-off:
+// the alternative is a DB-backed throttle that adds query latency to
+// every event in the alert path. For the firm's volume, in-process is
+// fine; revisit if alert noise becomes a real problem in production.
+const SLUG_UNROUTED_ALERT = 'router-unrouted-alert';
+const SLUG_ERROR_ALERT    = 'router-error-alert';
+
+const ALERT_THROTTLE_MS = parseInt(process.env.ROUTER_ALERT_THROTTLE_MS, 10) || 60 * 60 * 1000; // 1 hour
+const _alertThrottle = new Map(); // key: `${slug}|${senderEmail}` → lastFiredMs
+
+// Periodic cleanup so the map can't grow unbounded over time.
+// Drops entries older than 2× the throttle window — anything older won't
+// suppress a future alert anyway, so it's safe to forget.
+setInterval(() => {
+  const cutoff = Date.now() - (ALERT_THROTTLE_MS * 2);
+  for (const [key, ts] of _alertThrottle) {
+    if (ts < cutoff) _alertThrottle.delete(key);
+  }
+}, 10 * 60 * 1000).unref();
+// .unref() so the interval doesn't keep the Node process alive on shutdown.
+
+/**
+ * Extract a stable sender key for throttle bucketing. Falls back through
+ * progressively less-trusted sources, ending in a single bucket for
+ * fully-unparseable inputs (so junk gets ONE bucket, not infinite buckets).
+ */
+function senderKeyFromInput(input) {
+  const b = input?.body || {};
+  return (
+    (b.from && typeof b.from === 'object' && b.from.email)
+      || (b.envelope && b.envelope.sender)
+      || '(unknown)'
+  ).toString().toLowerCase();
+}
+
+/**
+ * Fire-and-forget dispatch to a well-known router-internal alert slug.
+ * Returns immediately; the alert hook runs async, errors are swallowed
+ * (the alerting path must never break the receiver).
+ *
+ * @param {object} db
+ * @param {string} slug                — SLUG_UNROUTED_ALERT or SLUG_ERROR_ALERT
+ * @param {object} input               — the wrapped {body, headers, ...} envelope
+ * @param {object} [extraMeta]         — merged into input.meta for context
+ *                                       (e.g. {kind, error, execution_id})
+ */
+function fireAlertHook(db, slug, input, extraMeta = {}) {
+  try {
+    // Throttle by sender.
+    const senderKey = senderKeyFromInput(input);
+    const throttleKey = `${slug}|${senderKey}`;
+    const now = Date.now();
+    const last = _alertThrottle.get(throttleKey) || 0;
+    if (now - last < ALERT_THROTTLE_MS) return;
+    _alertThrottle.set(throttleKey, now);
+
+    // Augment meta so the alert hook's transform/targets can see why
+    // it fired without inspecting code. We don't mutate the original
+    // input — clone the meta.
+    const enrichedInput = {
+      ...input,
+      meta: { ...(input.meta || {}), ...extraMeta, alert_slug: slug },
+    };
+
+    hookService.executeHook(db, slug, enrichedInput)
+      .catch(err => console.error(`[email-router] alert hook ${slug} failed:`, err.message));
+  } catch (err) {
+    // Defensive — alerter must never throw into the receiver.
+    console.error('[email-router] fireAlertHook exception:', err.message);
+  }
+}
 
 
 // ─────────────────────────────────────────────────────────────
@@ -95,14 +192,46 @@ router.post('/email-router', receiveLimiter, async (req, res) => {
       return res.json({ status: 'captured', execution_id: result.execution_id });
     }
     if (result.status === 'unrouted') {
+      // Fire-and-forget unrouted alert. If `router-unrouted-alert` hook
+      // doesn't exist, executeHook returns { status: 'not_found' } and
+      // we silently no-op. See SLUG_UNROUTED_ALERT comment block above.
+      fireAlertHook(db, SLUG_UNROUTED_ALERT, input, {
+        kind: 'unrouted',
+        execution_id: result.execution_id,
+      });
       return res.json({ status: 'unrouted', execution_id: result.execution_id });
     }
     // Routed: respond now, dispatch continues async (hookService handles
     // its own logging). dispatchPromise is fire-and-forget here — the
     // service catches and logs internally and writes an 'error' status to
     // email_router_executions on dispatch failure.
+    //
+    // We attach handlers to fire SLUG_ERROR_ALERT for two distinct failure
+    // modes: (a) the resolved slug isn't an active hook, (b) the dispatch
+    // threw. In both cases the service has already written status='error'
+    // to email_router_executions; the alert is the operator-visible
+    // notification.
     if (result.dispatchPromise) {
-      result.dispatchPromise.catch(() => {}); // already logged inside service
+      result.dispatchPromise.then(
+        (dispatchResult) => {
+          if (dispatchResult?.status === 'not_found') {
+            fireAlertHook(db, SLUG_ERROR_ALERT, input, {
+              kind: 'hook_not_found',
+              execution_id: result.execution_id,
+              resolved_slug: result.slug,
+              error: `Hook not found or inactive: ${result.slug}`,
+            });
+          }
+        },
+        (err) => {
+          fireAlertHook(db, SLUG_ERROR_ALERT, input, {
+            kind: 'dispatch_failed',
+            execution_id: result.execution_id,
+            resolved_slug: result.slug,
+            error: err?.message || 'unknown dispatch error',
+          });
+        }
+      );
     }
     return res.json({
       status: 'routed',
@@ -111,6 +240,21 @@ router.post('/email-router', receiveLimiter, async (req, res) => {
     });
   } catch (err) {
     console.error('[email-router] receiver error:', err);
+    // Fire error-alert from the catch-all. We may not have a wrapped
+    // `input` here if the failure happened before we built it — guard
+    // with an inline minimal envelope so the alerter's senderKey logic
+    // still has something to work with.
+    const fallbackInput = {
+      body: req.body || {},
+      headers: req.headers || {},
+      query: req.query || {},
+      method: req.method,
+      meta: { source: 'email', received_at: new Date().toISOString(), remote_ip: req.ip },
+    };
+    fireAlertHook(db, SLUG_ERROR_ALERT, fallbackInput, {
+      kind: 'receiver_exception',
+      error: err?.message || 'unknown receiver error',
+    });
     // 200 to avoid sender retries on our errors. The execution log will
     // not have a row in this case (failure happened before log write) —
     // the operator sees this only in server logs.
