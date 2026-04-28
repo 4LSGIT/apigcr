@@ -919,11 +919,24 @@ function seqRenderTimingTab(step) {
 
 function seqTimingFields(t) {
   if (t.type === 'immediate') return `<p style="font-size:12px;color:var(--muted);padding:8px 0">Fires immediately (~5 seconds after enrollment or previous step).</p>`;
-  if (t.type === 'delay') return `
-    <div class="field-row">
-      <div class="field"><label>Value</label><input id="st-value" type="number" min="1" value="${t.value || 5}"></div>
-      <div class="field"><label>Unit</label><select id="st-unit">${['seconds', 'minutes', 'hours', 'days'].map(u => `<option ${t.unit === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
-    </div>`;
+  if (t.type === 'delay') {
+    const isAbsolute = typeof t.at === 'string';
+    const mode = isAbsolute ? 'absolute' : 'relative';
+    return `
+      <div class="field">
+        <label>Mode</label>
+        <select id="st-delay-mode" onchange="seqOnDelayModeChange()">
+          <option value="relative" ${mode === 'relative' ? 'selected' : ''}>Relative (value + unit)</option>
+          <option value="absolute" ${mode === 'absolute' ? 'selected' : ''}>Absolute (specific datetime)</option>
+        </select>
+      </div>
+      <div id="st-delay-fields">${seqDelayModeFields(mode, t)}</div>
+      <div class="field">
+        <label>Randomize ± Minutes</label>
+        <input id="st-rand" type="number" min="0" max="1440" value="${t.randomizeMinutes || 0}">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Symmetric jitter — fires within ±N minutes of the computed time.</div>
+      </div>`;
+  }
   if (t.type === 'next_business_day' || t.type === 'business_days') return `
     ${t.type === 'business_days' ? `<div class="field"><label>Business Days Ahead</label><input id="st-value" type="number" min="1" value="${t.value || 1}"></div>` : ''}
     <div class="field"><label>Time of Day (HH:MM)</label><input id="st-time" value="${t.timeOfDay || '09:00'}"></div>
@@ -937,9 +950,39 @@ function seqTimingFields(t) {
   return '';
 }
 
+function seqDelayModeFields(mode, t) {
+  if (mode === 'absolute') {
+    return `
+      <div class="field">
+        <label>At (datetime)</label>
+        <input id="st-at" value="${esc(t.at || '')}" placeholder="2026-05-01T14:30:00 or {{trigger_data.target_iso}}">
+        <div style="font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5">
+          <strong>Accepted formats:</strong><br>
+          • <code>2026-05-01T14:30:00Z</code> &mdash; explicit UTC<br>
+          • <code>2026-05-01T14:30:00-04:00</code> &mdash; explicit offset<br>
+          • <code>2026-05-01T14:30:00</code> or <code>2026-05-01 14:30:00</code> &mdash; firm timezone<br>
+          • <code>2026-05-01</code> &mdash; firm timezone, midnight<br>
+          • <code>{{trigger_data.field_name}}</code> &mdash; placeholder resolved at fire time<br>
+          Past times fire on next process-jobs tick.
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="field-row">
+      <div class="field"><label>Value</label><input id="st-value" type="number" min="1" value="${t.value || 5}"></div>
+      <div class="field"><label>Unit</label><select id="st-unit">${['seconds', 'minutes', 'hours', 'days'].map(u => `<option ${t.unit === u ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+    </div>`;
+}
+
 function seqOnTimingTypeChange() {
   const t = document.getElementById('st-type')?.value;
   if (t) document.getElementById('st-fields').innerHTML = seqTimingFields({ type: t });
+}
+
+function seqOnDelayModeChange() {
+  const mode = document.getElementById('st-delay-mode')?.value || 'relative';
+  const target = document.getElementById('st-delay-fields');
+  if (target) target.innerHTML = seqDelayModeFields(mode, {});
 }
 
 function seqRenderConditionsTab(step) {
@@ -1029,8 +1072,20 @@ function seqGatherStep() {
   if (timingType) {
     timing = { type: timingType };
     if (timingType === 'delay') {
-      timing.value = parseInt(document.getElementById('st-value')?.value) || 5;
-      timing.unit  = document.getElementById('st-unit')?.value || 'minutes';
+      const mode = document.getElementById('st-delay-mode')?.value || 'relative';
+      if (mode === 'absolute') {
+        const atVal = document.getElementById('st-at')?.value?.trim();
+        if (!atVal) {
+          Swal.fire('Error', 'Absolute mode requires a value in the "At (datetime)" field', 'error');
+          return null;
+        }
+        timing.at = atVal;
+      } else {
+        timing.value = parseInt(document.getElementById('st-value')?.value) || 5;
+        timing.unit  = document.getElementById('st-unit')?.value || 'minutes';
+      }
+      const rand = parseInt(document.getElementById('st-rand')?.value) || 0;
+      if (rand > 0) timing.randomizeMinutes = rand;
     } else if (timingType === 'next_business_day') {
       timing.timeOfDay        = document.getElementById('st-time')?.value || '09:00';
       timing.randomizeMinutes = parseInt(document.getElementById('st-rand')?.value) || 0;
@@ -1703,6 +1758,7 @@ window.seqStepCancel              = seqStepCancel;
 window.seqOnActionTypeChange      = seqOnActionTypeChange;
 window.seqOnStartWorkflowTieChange = seqOnStartWorkflowTieChange;
 window.seqOnTimingTypeChange      = seqOnTimingTypeChange;
+window.seqOnDelayModeChange       = seqOnDelayModeChange;
 window.loadSequenceEnrollments    = loadSequenceEnrollments;
 window.seqEnrollPrevPage          = seqEnrollPrevPage;
 window.seqEnrollNextPage          = seqEnrollNextPage;

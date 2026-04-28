@@ -37,6 +37,150 @@ function validateTestInput(v) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Internal-function param validation — Timing-extensions slice
+//
+// Save-time validation for the params block of an `internal_function` step.
+// Deliberately narrow: only `wait_for` and `schedule_resume` are checked,
+// because those are the functions affected by the timing-extensions slice.
+// Every other function continues to accept any params shape (the engine
+// validates at run time).
+//
+// Returns null on success, or { status, error, message? } on failure.
+// ─────────────────────────────────────────────────────────────
+
+const { parseUserDateTime } = require("../services/timezoneService");
+const ms = require("ms");
+
+function _wfHasPlaceholder(s) {
+  return typeof s === 'string' && /\{\{[^}]+\}\}/.test(s);
+}
+
+function _wfValidateRandomizeMinutes(rm) {
+  if (rm === undefined || rm === null) return null;
+  const n = Number(rm);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+    return { status: 400, error: 'randomizeMinutes must be a non-negative integer' };
+  }
+  if (n > 1440) {
+    return { status: 400, error: 'randomizeMinutes cannot exceed 1440 (24 hours)' };
+  }
+  return null;
+}
+
+function validateInternalFunctionParams(functionName, params) {
+  if (!functionName) return null;
+  if (params == null) return null; // function-level required-field check happens elsewhere/runtime
+  if (typeof params !== 'object' || Array.isArray(params)) {
+    return { status: 400, error: 'params must be a JSON object' };
+  }
+
+  if (functionName === 'wait_for') {
+    if (params.nextStep === undefined || params.nextStep === null) {
+      return { status: 400, error: 'wait_for params: nextStep is required' };
+    }
+
+    const atProvided       = 'at' in params;
+    const durationProvided = 'duration' in params;
+
+    if (!atProvided && !durationProvided) {
+      return { status: 400, error: 'wait_for params: must include either `duration` or `at`' };
+    }
+
+    // null/""/"null" values count as "present, will skip at runtime" — parity
+    // with schedule_resume.resumeAt. Authors using the precompute-and-gate
+    // pattern (apptService.createAppt et al.) hardcode `at: null` to express
+    // "this whole step always skips."
+    const atIsNullish  = atProvided       && (params.at === null       || params.at === ''       || params.at === 'null');
+    const durIsNullish = durationProvided && (params.duration === null || params.duration === '');
+
+    // Reject only when BOTH have real (non-nullish) values
+    if (atProvided && durationProvided && !atIsNullish && !durIsNullish) {
+      return { status: 400, error: 'wait_for params: provide exactly one of `duration` or `at`, not both' };
+    }
+
+    if (atProvided && !atIsNullish) {
+      if (typeof params.at !== 'string') {
+        return { status: 400, error: 'wait_for params.at must be a string' };
+      }
+      if (!_wfHasPlaceholder(params.at)) {
+        try {
+          const parsed = parseUserDateTime(params.at);
+          if (!parsed) return { status: 400, error: `wait_for params.at is empty after trim: "${params.at}"` };
+        } catch (err) {
+          return { status: 400, error: `wait_for params.at: ${err.message}` };
+        }
+      }
+    } else if (durationProvided && !durIsNullish && typeof params.duration === 'string') {
+      // Numbers (ms) accepted as-is. String durations get a parse-check
+      // unless they contain a placeholder.
+      if (!_wfHasPlaceholder(params.duration)) {
+        if (ms(params.duration) === undefined) {
+          return {
+            status: 400,
+            error: `wait_for params.duration: "${params.duration}" is not a valid duration ` +
+                   `(use "30s", "10m", "2h", "1d", or a millisecond number)`,
+          };
+        }
+      }
+    }
+
+    const rmErr = _wfValidateRandomizeMinutes(params.randomizeMinutes);
+    if (rmErr) return rmErr;
+    return null;
+  }
+
+  if (functionName === 'schedule_resume') {
+    if (params.nextStep === undefined || params.nextStep === null) {
+      return { status: 400, error: 'schedule_resume params: nextStep is required' };
+    }
+
+    // resumeAt allowed shapes: null/""/"null" (skip path), string, or number.
+    const r = params.resumeAt;
+    if (r === undefined) {
+      return { status: 400, error: 'schedule_resume params: resumeAt is required (use null for skip-block path)' };
+    }
+    if (r !== null && r !== '' && r !== 'null' && typeof r !== 'string' && typeof r !== 'number') {
+      return { status: 400, error: 'schedule_resume params.resumeAt must be string, number, or null' };
+    }
+
+    if (typeof r === 'string' && r !== '' && r !== 'null' && !_wfHasPlaceholder(r)) {
+      // Same engine-side dispatch: date-shape goes to parseUserDateTime,
+      // everything else goes to ms(). Validate accordingly.
+      if (/^\d{4}-\d{2}-\d{2}/.test(r)) {
+        try {
+          const parsed = parseUserDateTime(r);
+          if (!parsed) return { status: 400, error: `schedule_resume params.resumeAt is empty after trim: "${r}"` };
+        } catch (err) {
+          return { status: 400, error: `schedule_resume params.resumeAt: ${err.message}` };
+        }
+      } else if (ms(r) === undefined) {
+        return {
+          status: 400,
+          error: `schedule_resume params.resumeAt: "${r}" is not a valid duration or datetime`,
+        };
+      }
+    }
+
+    const rmErr = _wfValidateRandomizeMinutes(params.randomizeMinutes);
+    if (rmErr) return rmErr;
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * Convenience wrapper: validates an `internal_function` step's config block.
+ * Skips silently for non-`internal_function` step types (those preserve
+ * existing permissive behavior).
+ */
+function validateInternalFunctionConfig(stepType, config) {
+  if (stepType !== 'internal_function') return null;
+  if (config == null || typeof config !== 'object') return null;
+  return validateInternalFunctionParams(config.function_name, config.params);
+}
+
+// ─────────────────────────────────────────────────────────────
 // GET /workflows/functions — list available internal functions
 // Used by workflowManager.html to populate dropdowns dynamically
 // MUST be defined before any /:id routes to avoid param capture
@@ -642,6 +786,12 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "config object is required" });
   }
 
+  // Timing-extensions slice — validate wait_for / schedule_resume params
+  {
+    const v = validateInternalFunctionConfig(type, config);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
+
   let connection;
   try {
     connection = await db.getConnection();
@@ -759,6 +909,15 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
 
     if (!step.config || typeof step.config !== "object") {
       return res.status(400).json({ error: `Step ${i + 1} must contain a valid config object` });
+    }
+
+    // Timing-extensions slice — validate wait_for / schedule_resume params
+    {
+      const v = validateInternalFunctionConfig(step.type, step.config);
+      if (v) return res.status(v.status).json({
+        error: `Step ${i + 1}: ${v.error}`,
+        message: v.message,
+      });
     }
 
     const stepNumber = step.stepNumber ?? (i + 1);
@@ -1231,6 +1390,12 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
     return res.status(400).json({ error: "config object is required" });
   }
 
+  // Timing-extensions slice — validate wait_for / schedule_resume params
+  {
+    const v = validateInternalFunctionConfig(type, config);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
+
   let connection;
   try {
     connection = await db.getConnection();
@@ -1314,12 +1479,34 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
 
     // Verify step exists
     const [rows] = await connection.query(
-      `SELECT id FROM workflow_steps WHERE workflow_id = ? AND step_number = ?`,
+      `SELECT id, type, config FROM workflow_steps WHERE workflow_id = ? AND step_number = ?`,
       [workflowId, stepNum]
     );
     if (rows.length === 0) {
       await connection.commit();
       return res.status(404).json({ error: "Step not found" });
+    }
+
+    // Timing-extensions slice — if type or config is being updated, validate
+    // the resulting (type, config) pair. If only one of the two was supplied,
+    // load the other from the existing row so we always validate the
+    // combination, not a partial view. Mirrors the pattern used for
+    // action_type/action_config validation in routes/sequences.js.
+    if (type !== undefined || config !== undefined) {
+      let typeToCheck   = type;
+      let configToCheck = config;
+      if (typeToCheck === undefined) typeToCheck = rows[0].type;
+      if (configToCheck === undefined) {
+        configToCheck = typeof rows[0].config === 'string'
+          ? JSON.parse(rows[0].config)
+          : rows[0].config;
+      }
+      const v = validateInternalFunctionConfig(typeToCheck, configToCheck);
+      if (v) {
+        await connection.rollback();
+        connection.release();
+        return res.status(v.status).json({ error: v.error, message: v.message });
+      }
     }
 
     const updates = [];

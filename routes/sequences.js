@@ -58,6 +58,123 @@ function validateTestInput(v) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Timing validation — Timing-extensions slice
+//
+// Validates the `timing` JSON column on sequence_steps at save time. The
+// engine (lib/sequenceEngine.calculateStepTime) is the runtime source of
+// truth; this helper just rejects shapes that are guaranteed to fail
+// before they hit the DB.
+//
+// Permissive by default — only `delay` (which got new "absolute" mode and
+// `randomizeMinutes`) is fully validated. Other types preserve the existing
+// open-config behavior so we don't accidentally reject a working config
+// nobody documented.
+//
+// Returns null on success, or { status, error, message? } on failure.
+// ─────────────────────────────────────────────────────────────
+
+const { parseUserDateTime } = require('../services/timezoneService');
+
+const ALLOWED_TIMING_TYPES = [
+  'immediate', 'delay', 'next_business_day', 'business_days',
+  'before_appt', 'before_appt_fixed',
+];
+
+function _hasPlaceholder(s) {
+  return typeof s === 'string' && /\{\{[^}]+\}\}/.test(s);
+}
+
+function _validateRandomizeMinutes(rm) {
+  if (rm === undefined || rm === null) return null;
+  const n = Number(rm);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
+    return { status: 400, error: 'randomizeMinutes must be a non-negative integer' };
+  }
+  if (n > 1440) {
+    return { status: 400, error: 'randomizeMinutes cannot exceed 1440 (24 hours)' };
+  }
+  return null;
+}
+
+function validateTiming(timing) {
+  if (timing == null) {
+    return { status: 400, error: 'timing is required' };
+  }
+  if (typeof timing !== 'object' || Array.isArray(timing)) {
+    return { status: 400, error: 'timing must be a JSON object' };
+  }
+  if (!ALLOWED_TIMING_TYPES.includes(timing.type)) {
+    return {
+      status: 400,
+      error: `Invalid timing.type: "${timing.type}"`,
+      message: `Must be one of: ${ALLOWED_TIMING_TYPES.join(', ')}`,
+    };
+  }
+
+  if (timing.type === 'delay') {
+    const hasAt           = timing.at !== undefined && timing.at !== null && timing.at !== '';
+    const hasValueOrUnit  = timing.value !== undefined || timing.unit !== undefined;
+
+    if (hasAt && hasValueOrUnit) {
+      return {
+        status: 400,
+        error: 'delay timing accepts exactly one of `at` (absolute) or `value`+`unit` (relative), not both',
+      };
+    }
+    if (!hasAt && !hasValueOrUnit) {
+      return {
+        status: 400,
+        error: 'delay timing requires either `at` (absolute) or `value`+`unit` (relative)',
+      };
+    }
+
+    if (hasAt) {
+      if (typeof timing.at !== 'string') {
+        return { status: 400, error: 'delay.at must be a string' };
+      }
+      // Defer parse-check for placeholder strings — we don't have
+      // trigger_data at save time. Literal strings get parse-checked now
+      // so authors find typos before the first enrollment fires.
+      if (!_hasPlaceholder(timing.at)) {
+        try {
+          const parsed = parseUserDateTime(timing.at);
+          if (!parsed) {
+            return { status: 400, error: `delay.at is empty after trim: "${timing.at}"` };
+          }
+        } catch (err) {
+          return { status: 400, error: `delay.at: ${err.message}` };
+        }
+      }
+    } else {
+      // Relative mode
+      const v = Number(timing.value);
+      if (!Number.isFinite(v) || v <= 0) {
+        return { status: 400, error: 'delay.value must be a positive number' };
+      }
+      const allowedUnits = ['seconds', 'minutes', 'hours', 'days'];
+      if (!allowedUnits.includes(timing.unit)) {
+        return {
+          status: 400,
+          error: `delay.unit must be one of: ${allowedUnits.join(', ')}`,
+        };
+      }
+    }
+
+    const rmErr = _validateRandomizeMinutes(timing.randomizeMinutes);
+    if (rmErr) return rmErr;
+  }
+
+  // Other timing types: validate randomizeMinutes range if present (cheap
+  // sanity check shared with delay) but otherwise stay permissive.
+  if (timing.type !== 'delay' && timing.randomizeMinutes !== undefined) {
+    const rmErr = _validateRandomizeMinutes(timing.randomizeMinutes);
+    if (rmErr) return rmErr;
+  }
+
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
 // Step config validation — Slice 3.3
 //
 // Single source of truth for action_type + action_config validity at save
@@ -462,6 +579,12 @@ router.post('/sequences/templates/:id/steps', jwtOrApiKey, async (req, res) => {
   if (!action_config) return res.status(400).json({ error: 'action_config is required' });
   if (!timing)        return res.status(400).json({ error: 'timing is required' });
 
+  // Timing-extensions slice — timing.type enum + delay-mode validation
+  {
+    const v = validateTiming(timing);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
+
   // Slice 3.3 — action_type enum + per-type config validation
   {
     const v = await validateStepConfig(db, action_type, action_config);
@@ -524,6 +647,12 @@ router.put('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (req
     return res.status(400).json({ error: 'action_type, action_config, and timing are required' });
   }
 
+  // Timing-extensions slice — timing.type enum + delay-mode validation
+  {
+    const v = validateTiming(timing);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
+
   // Slice 3.3 — action_type enum + per-type config validation
   {
     const v = await validateStepConfig(db, action_type, action_config);
@@ -569,6 +698,12 @@ router.patch('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (r
   if (error_policy  !== undefined) { updates.push('error_policy = ?'); params.push(error_policy ? JSON.stringify(error_policy) : null); }
 
   if (!updates.length) return res.status(400).json({ error: 'Nothing to update' });
+
+  // Timing-extensions slice — if `timing` is being updated, validate it.
+  if (timing !== undefined) {
+    const v = validateTiming(timing);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
 
   // Slice 3.3 — validate any action_type/action_config change. If only one of
   // the pair was supplied, load the other from the existing row so we always

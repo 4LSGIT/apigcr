@@ -106,10 +106,84 @@ function formatLocal(localDate, format = 'cccc, MMMM d, yyyy h:mm a') {
   return DateTime.fromISO(naive).toFormat(format);
 }
 
+/**
+ * Parse a user-supplied datetime string into a real UTC Date.
+ *
+ * Distinct from `localToUTC` — that helper is for datetimes coming back
+ * from mysql2 (stored as fake UTC). This helper is for free-form strings
+ * authored by humans (or pre-computed by upstream code into trigger_data).
+ *
+ * Accepted shapes:
+ *   "2026-05-01T14:30:00Z"           explicit UTC
+ *   "2026-05-01T14:30:00-04:00"      explicit offset (colon form)
+ *   "2026-05-01T14:30:00"            naive ISO   → FIRM_TZ
+ *   "2026-05-01T14:30"               naive ISO without seconds → FIRM_TZ
+ *   "2026-05-01 14:30:00"            SQL-ish     → FIRM_TZ
+ *   "2026-05-01"                     date-only   → FIRM_TZ midnight
+ *
+ * Empty/null input returns null (caller decides what that means).
+ * Malformed input throws.
+ *
+ * @param {string|null|undefined} input
+ * @returns {Date|null}
+ * @throws {Error} when input is a non-empty string that cannot be parsed
+ */
+function parseUserDateTime(input) {
+  if (input == null) return null;
+  if (typeof input !== 'string') {
+    throw new Error(`parseUserDateTime expects a string, got ${typeof input}`);
+  }
+  const trimmed = input.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'null') return null;
+
+  // Date-only: YYYY-MM-DD → midnight in FIRM_TZ
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const dt = DateTime.fromISO(trimmed, { zone: FIRM_TZ });
+    if (!dt.isValid) {
+      throw new Error(`Invalid date "${input}": ${dt.invalidReason || 'unknown'}`);
+    }
+    return dt.toUTC().toJSDate();
+  }
+
+  // Normalize space-separator to T (SQL "YYYY-MM-DD HH:MM:SS" → ISO form)
+  const isoForm = trimmed.replace(' ', 'T');
+
+  // Basic shape gate. Avoids accepting things like "2026" or "garbage".
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(isoForm)) {
+    throw new Error(
+      `Invalid datetime "${input}": expected ISO 8601 like ` +
+      `"2026-05-01T14:30:00Z", "2026-05-01T14:30:00-04:00", ` +
+      `"2026-05-01T14:30:00" (firm time), or "2026-05-01"`
+    );
+  }
+
+  // Detect explicit timezone suffix: Z or ±HH:MM (colon form only — compact
+  // ±HHMM is not part of the spec for this slice).
+  const hasOffset = /(?:Z|[+-]\d{2}:\d{2})$/.test(isoForm);
+
+  if (hasOffset) {
+    // Preserve the explicit offset by passing setZone: true; luxon will keep
+    // the wall time at the given offset and we then convert to UTC.
+    const dt = DateTime.fromISO(isoForm, { setZone: true });
+    if (!dt.isValid) {
+      throw new Error(`Invalid datetime "${input}": ${dt.invalidReason || 'unknown'}`);
+    }
+    return dt.toUTC().toJSDate();
+  }
+
+  // Naive (no offset) → interpret in firm timezone, then convert to UTC.
+  const dt = DateTime.fromISO(isoForm, { zone: FIRM_TZ });
+  if (!dt.isValid) {
+    throw new Error(`Invalid datetime "${input}": ${dt.invalidReason || 'unknown'}`);
+  }
+  return dt.toUTC().toJSDate();
+}
+
 module.exports = {
   localToUTC,
   utcToLocal,
   nowLocal,
   formatLocal,
+  parseUserDateTime,
   FIRM_TZ
 };

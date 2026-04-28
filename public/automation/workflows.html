@@ -786,8 +786,9 @@ function wfRenderConfigFields(type, cfg) {
     <div class="field"><label>Headers (JSON)</label><textarea id="e-headers" rows="3">${cfg.headers ? JSON.stringify(cfg.headers, null, 2) : ''}</textarea></div>
     <div class="field"><label>set_vars (JSON)</label><textarea id="e-setvars" rows="3">${cfg.set_vars ? JSON.stringify(cfg.set_vars, null, 2) : ''}</textarea></div>`;
   if (type === 'internal_function') return `${toggle}
-    <div class="field"><label>Function</label><select id="e-fn">${(FUNCTIONS.workflow.length ? FUNCTIONS.workflow : ['noop']).map(f => `<option ${cfg.function_name === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+    <div class="field"><label>Function</label><select id="e-fn" onchange="wfOnFnChange()">${(FUNCTIONS.workflow.length ? FUNCTIONS.workflow : ['noop']).map(f => `<option ${cfg.function_name === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
     <div class="field"><label>Params (JSON)</label><textarea id="e-params">${cfg.params ? JSON.stringify(cfg.params, null, 2) : '{}'}</textarea></div>
+    <div id="e-fn-hint">${wfRenderFnHint(cfg.function_name)}</div>
     <div class="field"><label>set_vars (JSON)</label><textarea id="e-setvars" rows="3">${cfg.set_vars ? JSON.stringify(cfg.set_vars, null, 2) : ''}</textarea></div>`;
   if (type === 'custom_code') return `${toggle}
     <div class="field"><label>Code</label><textarea id="e-code" rows="10">${esc(cfg.code || '')}</textarea></div>
@@ -798,6 +799,45 @@ function wfRenderConfigFields(type, cfg) {
 function wfOnTypeChange() {
   const t = document.getElementById('e-type')?.value;
   if (t) document.getElementById('e-config-area').innerHTML = wfRenderConfigFields(t, {});
+}
+
+// Timing-extensions slice — shape hint panel for wait_for / schedule_resume.
+// Fired on function-select change to keep the params textarea unchanged but
+// surface the accepted shapes inline so authors don't have to consult the
+// cookbook to remember absolute-mode syntax.
+function wfRenderFnHint(fnName) {
+  if (fnName === 'wait_for') return `
+    <div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:6px;padding:10px;margin:8px 0 12px;font-size:11px;line-height:1.5;color:var(--muted)">
+      <strong style="color:var(--text)">wait_for params</strong> — exactly one of <code>duration</code> or <code>at</code>.<br>
+      <strong>Relative:</strong> <code>{ "duration": "2h", "nextStep": 5 }</code> &mdash; durations: <code>30s</code> <code>5m</code> <code>2h</code> <code>1d</code> or ms number.<br>
+      <strong>Absolute:</strong> <code>{ "at": "2026-05-01T14:30:00", "nextStep": 5 }</code><br>
+      &nbsp;&nbsp;Accepts <code>...Z</code> (UTC), <code>...-04:00</code> (offset), naive ISO or <code>YYYY-MM-DD HH:MM:SS</code> (firm tz), <code>YYYY-MM-DD</code> (firm tz midnight).<br>
+      <strong>Optional:</strong> <code>randomizeMinutes</code> (±N jitter, max 1440), <code>skipToStep</code> (when <code>at</code> resolves to null).<br>
+      Past times fire on next process-jobs tick.
+    </div>`;
+  if (fnName === 'schedule_resume') return `
+    <div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:6px;padding:10px;margin:8px 0 12px;font-size:11px;line-height:1.5;color:var(--muted)">
+      <strong style="color:var(--text)">schedule_resume params</strong><br>
+      <code>{ "resumeAt": "2h", "nextStep": 4 }</code> &mdash; relative duration<br>
+      <code>{ "resumeAt": "2026-05-01T14:30:00Z", "nextStep": 4 }</code> &mdash; UTC<br>
+      <code>{ "resumeAt": "2026-05-01T14:30:00", "nextStep": 4 }</code> &mdash; firm tz<br>
+      <code>{ "resumeAt": "2026-05-01", "nextStep": 4 }</code> &mdash; firm tz midnight<br>
+      <code>{ "resumeAt": "{{resume_24h}}", "nextStep": 4, "skipToStep": 6 }</code> &mdash; null-skip pattern<br>
+      <strong>Optional:</strong> <code>randomizeMinutes</code> (±N jitter, max 1440), <code>skipToStep</code> (when resumeAt is null/empty).
+    </div>`;
+  if (fnName === 'wait_until_time') return `
+    <div style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:6px;padding:10px;margin:8px 0 12px;font-size:11px;line-height:1.5;color:var(--muted)">
+      <strong style="color:var(--text)">wait_until_time params</strong><br>
+      <code>{ "time": "09:00", "timezone": "America/Detroit", "nextStep": 6 }</code><br>
+      Resumes at the next occurrence of HH:MM in the given timezone.
+    </div>`;
+  return '';
+}
+
+function wfOnFnChange() {
+  const fn = document.getElementById('e-fn')?.value;
+  const target = document.getElementById('e-fn-hint');
+  if (target) target.innerHTML = wfRenderFnHint(fn);
 }
 
 function wfToggleJson() {
@@ -1614,6 +1654,7 @@ window.wfSelectStep             = wfSelectStep;
 window.wfStepSave               = wfStepSave;
 window.wfStepCancel             = wfStepCancel;
 window.wfOnTypeChange           = wfOnTypeChange;
+window.wfOnFnChange              = wfOnFnChange;
 window.wfToggleJson             = wfToggleJson;
 window.wfAddVarRow              = wfAddVarRow;
 window.wfRemoveVarRow           = wfRemoveVarRow;
