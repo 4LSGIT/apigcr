@@ -37,32 +37,58 @@ function validateTestInput(v) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Internal-function param validation — Timing-extensions slice
+// Internal-function param validation — metadata-driven
 //
 // Save-time validation for the params block of an `internal_function` step.
-// Deliberately narrow: only `wait_for` and `schedule_resume` are checked,
-// because those are the functions affected by the timing-extensions slice.
-// Every other function continues to accept any params shape (the engine
-// validates at run time).
+// Drives off __meta blocks defined in lib/internal_functions.js — see the
+// schema notes there. This file owns the specialized parse-checks for
+// iso_datetime and duration types because they require parseUserDateTime
+// and ms() which we already have imported here.
 //
-// Returns null on success, or { status, error, message? } on failure.
+// Functions without __meta are passed through (engine validates at run
+// time, same as before this slice).
+//
+// Returns null on success, or { status, error } on failure.
 // ─────────────────────────────────────────────────────────────
 
 const { parseUserDateTime } = require("../services/timezoneService");
 const ms = require("ms");
+const internalFunctions = require("../lib/internal_functions");
+
+const PLACEHOLDER_RE = /\{\{[^}]+\}\}/;
 
 function _wfHasPlaceholder(s) {
-  return typeof s === 'string' && /\{\{[^}]+\}\}/.test(s);
+  return typeof s === 'string' && PLACEHOLDER_RE.test(s);
 }
 
-function _wfValidateRandomizeMinutes(rm) {
-  if (rm === undefined || rm === null) return null;
-  const n = Number(rm);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) {
-    return { status: 400, error: 'randomizeMinutes must be a non-negative integer' };
+// iso_datetime fields accept three string shapes at runtime: date-leading
+// strings (parseUserDateTime), duration strings (ms()), and plain numbers
+// (ms-from-now). Validate accordingly when not a placeholder.
+function _wfValidateIsoDatetimeString(label, v) {
+  if (typeof v === 'number') return null;
+  if (typeof v !== 'string') return { error: `${label} must be a string or number` };
+  if (_wfHasPlaceholder(v)) return null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(v)) {
+    try {
+      const parsed = parseUserDateTime(v);
+      if (!parsed) return { error: `${label} is empty after trim: "${v}"` };
+    } catch (err) {
+      return { error: `${label}: ${err.message}` };
+    }
+    return null;
   }
-  if (n > 1440) {
-    return { status: 400, error: 'randomizeMinutes cannot exceed 1440 (24 hours)' };
+  if (ms(v) === undefined) {
+    return { error: `${label}: "${v}" is not a valid duration or datetime (use "30s","10m","2h","1d", or an ISO datetime like "2026-05-01T14:30:00")` };
+  }
+  return null;
+}
+
+function _wfValidateDurationString(label, v) {
+  if (typeof v === 'number') return null;
+  if (typeof v !== 'string') return { error: `${label} must be a duration string or number` };
+  if (_wfHasPlaceholder(v)) return null;
+  if (ms(v) === undefined) {
+    return { error: `${label}: "${v}" is not a valid duration (use "30s","10m","2h","1d", or a millisecond number)` };
   }
   return null;
 }
@@ -70,100 +96,34 @@ function _wfValidateRandomizeMinutes(rm) {
 function validateInternalFunctionParams(functionName, params) {
   if (!functionName) return null;
   if (params == null) return null; // function-level required-field check happens elsewhere/runtime
-  if (typeof params !== 'object' || Array.isArray(params)) {
-    return { status: 400, error: 'params must be a JSON object' };
-  }
 
-  if (functionName === 'wait_for') {
-    if (params.nextStep === undefined || params.nextStep === null) {
-      return { status: 400, error: 'wait_for params: nextStep is required' };
+  const meta = internalFunctions.__getMeta(functionName);
+  if (!meta) {
+    // No metadata — preserve legacy permissive behavior (engine validates at run time)
+    if (typeof params !== 'object' || Array.isArray(params)) {
+      return { status: 400, error: 'params must be a JSON object' };
     }
-
-    const atProvided       = 'at' in params;
-    const durationProvided = 'duration' in params;
-
-    if (!atProvided && !durationProvided) {
-      return { status: 400, error: 'wait_for params: must include either `duration` or `at`' };
-    }
-
-    // null/""/"null" values count as "present, will skip at runtime" — parity
-    // with schedule_resume.resumeAt. Authors using the precompute-and-gate
-    // pattern (apptService.createAppt et al.) hardcode `at: null` to express
-    // "this whole step always skips."
-    const atIsNullish  = atProvided       && (params.at === null       || params.at === ''       || params.at === 'null');
-    const durIsNullish = durationProvided && (params.duration === null || params.duration === '');
-
-    // Reject only when BOTH have real (non-nullish) values
-    if (atProvided && durationProvided && !atIsNullish && !durIsNullish) {
-      return { status: 400, error: 'wait_for params: provide exactly one of `duration` or `at`, not both' };
-    }
-
-    if (atProvided && !atIsNullish) {
-      if (typeof params.at !== 'string') {
-        return { status: 400, error: 'wait_for params.at must be a string' };
-      }
-      if (!_wfHasPlaceholder(params.at)) {
-        try {
-          const parsed = parseUserDateTime(params.at);
-          if (!parsed) return { status: 400, error: `wait_for params.at is empty after trim: "${params.at}"` };
-        } catch (err) {
-          return { status: 400, error: `wait_for params.at: ${err.message}` };
-        }
-      }
-    } else if (durationProvided && !durIsNullish && typeof params.duration === 'string') {
-      // Numbers (ms) accepted as-is. String durations get a parse-check
-      // unless they contain a placeholder.
-      if (!_wfHasPlaceholder(params.duration)) {
-        if (ms(params.duration) === undefined) {
-          return {
-            status: 400,
-            error: `wait_for params.duration: "${params.duration}" is not a valid duration ` +
-                   `(use "30s", "10m", "2h", "1d", or a millisecond number)`,
-          };
-        }
-      }
-    }
-
-    const rmErr = _wfValidateRandomizeMinutes(params.randomizeMinutes);
-    if (rmErr) return rmErr;
     return null;
   }
 
-  if (functionName === 'schedule_resume') {
-    if (params.nextStep === undefined || params.nextStep === null) {
-      return { status: 400, error: 'schedule_resume params: nextStep is required' };
-    }
+  // Phase 1 — generic shape/type/group validation
+  const metaErr = internalFunctions.__validateParamsAgainstMeta(meta, params);
+  if (metaErr) return { status: 400, error: metaErr.error };
 
-    // resumeAt allowed shapes: null/""/"null" (skip path), string, or number.
-    const r = params.resumeAt;
-    if (r === undefined) {
-      return { status: 400, error: 'schedule_resume params: resumeAt is required (use null for skip-block path)' };
-    }
-    if (r !== null && r !== '' && r !== 'null' && typeof r !== 'string' && typeof r !== 'number') {
-      return { status: 400, error: 'schedule_resume params.resumeAt must be string, number, or null' };
-    }
+  // Phase 2 — specialized parse-checks for iso_datetime / duration string forms
+  if (typeof params !== 'object' || params === null) return null; // already validated above
+  for (const spec of meta.params) {
+    if (!(spec.name in params)) continue;
+    const v = params[spec.name];
+    if (v === null || v === '' || v === 'null') continue; // nullishSkipsBlock handled by phase 1
 
-    if (typeof r === 'string' && r !== '' && r !== 'null' && !_wfHasPlaceholder(r)) {
-      // Same engine-side dispatch: date-shape goes to parseUserDateTime,
-      // everything else goes to ms(). Validate accordingly.
-      if (/^\d{4}-\d{2}-\d{2}/.test(r)) {
-        try {
-          const parsed = parseUserDateTime(r);
-          if (!parsed) return { status: 400, error: `schedule_resume params.resumeAt is empty after trim: "${r}"` };
-        } catch (err) {
-          return { status: 400, error: `schedule_resume params.resumeAt: ${err.message}` };
-        }
-      } else if (ms(r) === undefined) {
-        return {
-          status: 400,
-          error: `schedule_resume params.resumeAt: "${r}" is not a valid duration or datetime`,
-        };
-      }
+    if (spec.type === 'iso_datetime') {
+      const err = _wfValidateIsoDatetimeString(`${functionName} params.${spec.name}`, v);
+      if (err) return { status: 400, error: err.error };
+    } else if (spec.type === 'duration') {
+      const err = _wfValidateDurationString(`${functionName} params.${spec.name}`, v);
+      if (err) return { status: 400, error: err.error };
     }
-
-    const rmErr = _wfValidateRandomizeMinutes(params.randomizeMinutes);
-    if (rmErr) return rmErr;
-    return null;
   }
 
   return null;
@@ -194,11 +154,16 @@ const SEQUENCE_EXCLUDED = new Set([
 ]);
 
 router.get('/workflows/functions', jwtOrApiKey, (req, res) => {
-  const allFunctions = Object.keys(require('../lib/internal_functions'));
+  // Filter out the __-prefixed helpers (validateParamsAgainstMeta, getMeta, getAllMeta)
+  // added alongside the metadata registry — those aren't callable functions.
+  const allFunctions = Object.keys(internalFunctions).filter(
+    name => typeof internalFunctions[name] === 'function' && !name.startsWith('__')
+  );
   res.json({
     success: true,
     workflow: allFunctions,
-    sequence: allFunctions.filter(f => !SEQUENCE_EXCLUDED.has(f))
+    sequence: allFunctions.filter(f => !SEQUENCE_EXCLUDED.has(f)),
+    meta:     internalFunctions.__getAllMeta(),
   });
 });
 
