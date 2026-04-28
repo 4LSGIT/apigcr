@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: localhost
--- Generation Time: Apr 22, 2026 at 11:02 AM
+-- Generation Time: Apr 28, 2026 at 07:14 PM
 -- Server version: 8.4.6-6
 -- PHP Version: 8.2.30
 
@@ -24,23 +24,22 @@ SET time_zone = "+00:00";
 -- --------------------------------------------------------
 
 --
--- Table structure for table `admin_db_console_log`
+-- Table structure for table `admin_audit_log`
 --
 
-CREATE TABLE `admin_db_console_log` (
+CREATE TABLE `admin_audit_log` (
   `id` bigint NOT NULL,
+  `tool` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'db_console, api_tester, ...',
   `user_id` int DEFAULT NULL,
   `username` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `route` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
   `method` varchar(10) COLLATE utf8mb4_general_ci NOT NULL,
-  `query_text` mediumtext COLLATE utf8mb4_general_ci,
-  `read_only_mode` tinyint(1) NOT NULL DEFAULT '1',
-  `status` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `status` varchar(40) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'success/error/rejected_not_su/rejected_rate_limit/...',
   `error_message` text COLLATE utf8mb4_general_ci,
-  `row_count` int DEFAULT NULL,
   `duration_ms` int DEFAULT NULL,
   `ip_address` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `user_agent` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `details` json DEFAULT NULL COMMENT 'tool-specific fields (query_text/read_only_mode/row_count for db_console)',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -663,6 +662,61 @@ CREATE TABLE `email_log` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `email_router_config`
+--
+
+CREATE TABLE `email_router_config` (
+  `id` int NOT NULL DEFAULT '1',
+  `auth_type` enum('none','api_key') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'api_key',
+  `auth_config` json DEFAULT NULL,
+  `capture_mode` enum('off','capturing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
+  `captured_sample` json DEFAULT NULL,
+  `captured_at` datetime DEFAULT NULL,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `email_router_executions`
+--
+
+CREATE TABLE `email_router_executions` (
+  `id` bigint NOT NULL,
+  `raw_input` json DEFAULT NULL,
+  `matched_route_id` int DEFAULT NULL,
+  `resolved_slug` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `hook_execution_id` bigint DEFAULT NULL,
+  `status` enum('routed','unrouted','captured','error') COLLATE utf8mb4_general_ci NOT NULL,
+  `error` text COLLATE utf8mb4_general_ci,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `email_routes`
+--
+
+CREATE TABLE `email_routes` (
+  `id` int NOT NULL,
+  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text COLLATE utf8mb4_general_ci,
+  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `match_mode` enum('conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
+  `match_config` json NOT NULL,
+  `position` int NOT NULL DEFAULT '100',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `last_matched_at` datetime DEFAULT NULL,
+  `match_count` int NOT NULL DEFAULT '0',
+  `last_modified_by` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `feature_requests`
 --
 
@@ -901,6 +955,24 @@ CREATE TABLE `jwt_api_audit_log` (
   `username` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `auth_status` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `legacy_route_log`
+--
+
+CREATE TABLE `legacy_route_log` (
+  `id` bigint NOT NULL,
+  `ts` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `route` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `method` varchar(8) COLLATE utf8mb4_general_ci NOT NULL,
+  `ip` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` text COLLATE utf8mb4_general_ci,
+  `query_json` json DEFAULT NULL,
+  `body_json` json DEFAULT NULL,
+  `headers_json` json DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1595,12 +1667,13 @@ CREATE TABLE `workflow_steps` (
 --
 
 --
--- Indexes for table `admin_db_console_log`
+-- Indexes for table `admin_audit_log`
 --
-ALTER TABLE `admin_db_console_log`
+ALTER TABLE `admin_audit_log`
   ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_admin_db_console_log_user` (`user_id`,`created_at`),
-  ADD KEY `idx_admin_db_console_log_status` (`status`,`created_at`);
+  ADD KEY `idx_admin_audit_tool` (`tool`,`created_at`),
+  ADD KEY `idx_admin_audit_user` (`user_id`,`created_at`),
+  ADD KEY `idx_admin_audit_status` (`status`,`created_at`);
 
 --
 -- Indexes for table `admin_saved_queries`
@@ -1734,6 +1807,30 @@ ALTER TABLE `email_log`
   ADD KEY `idx_message_id` (`message_id`);
 
 --
+-- Indexes for table `email_router_config`
+--
+ALTER TABLE `email_router_config`
+  ADD PRIMARY KEY (`id`);
+
+--
+-- Indexes for table `email_router_executions`
+--
+ALTER TABLE `email_router_executions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_created_at` (`created_at`),
+  ADD KEY `idx_status` (`status`),
+  ADD KEY `idx_route` (`matched_route_id`),
+  ADD KEY `idx_hook_exec` (`hook_execution_id`);
+
+--
+-- Indexes for table `email_routes`
+--
+ALTER TABLE `email_routes`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_active_position` (`active`,`position`),
+  ADD KEY `idx_slug` (`slug`);
+
+--
 -- Indexes for table `feature_requests`
 --
 ALTER TABLE `feature_requests`
@@ -1824,6 +1921,13 @@ ALTER TABLE `judges`
 --
 ALTER TABLE `jwt_api_audit_log`
   ADD PRIMARY KEY (`id`);
+
+--
+-- Indexes for table `legacy_route_log`
+--
+ALTER TABLE `legacy_route_log`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_route_ts` (`route`,`ts`);
 
 --
 -- Indexes for table `log`
@@ -2029,9 +2133,9 @@ ALTER TABLE `workflow_steps`
 --
 
 --
--- AUTO_INCREMENT for table `admin_db_console_log`
+-- AUTO_INCREMENT for table `admin_audit_log`
 --
-ALTER TABLE `admin_db_console_log`
+ALTER TABLE `admin_audit_log`
   MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
 
 --
@@ -2131,6 +2235,18 @@ ALTER TABLE `email_log`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `email_router_executions`
+--
+ALTER TABLE `email_router_executions`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `email_routes`
+--
+ALTER TABLE `email_routes`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `feature_requests`
 --
 ALTER TABLE `feature_requests`
@@ -2206,6 +2322,12 @@ ALTER TABLE `judges`
 -- AUTO_INCREMENT for table `jwt_api_audit_log`
 --
 ALTER TABLE `jwt_api_audit_log`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `legacy_route_log`
+--
+ALTER TABLE `legacy_route_log`
   MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
 
 --
