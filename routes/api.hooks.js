@@ -791,15 +791,24 @@ router.post('/api/credentials', superuserOnlyFor(CONN_TOOL), async (req, res) =>
   }
 });
 
-// PUT — admin only. Handles three things beyond the obvious update:
-//   1. For oauth2 credentials, preserves the existing encrypted client_secret
-//      when the request body's config has no client_secret field (admin
-//      didn't touch the field in the form). Encrypts a fresh non-encrypted
-//      value if provided. Clears it if explicitly null/empty string.
-//   2. Idempotent re-submit: if the admin re-saves an already-encrypted
-//      client_secret, isEncrypted() short-circuits the second encryption.
-//   3. Type-change: clears all oauth-related columns so a credential
-//      morphed between types starts clean (no orphan tokens, status, etc.).
+// PUT — admin only. Handles four things beyond the obvious update:
+//   1. Deep-merge config (Slice 5 fix): when type is unchanged and
+//      `req.body.config` is provided, we shallow-merge it into the existing
+//      config rather than replacing wholesale. The Slice 4 admin UI sends
+//      partial config objects when the user edits a single field — without
+//      this merge, saving any one field (e.g. just auth_url) would silently
+//      wipe every other key (client_id, scopes, token_url, etc.). The merge
+//      is one level deep, which matches the schema's flat config shape.
+//   2. For oauth2 credentials, encrypts client_secret on the way in. With
+//      deep merge, "preserve existing" happens automatically (the existing
+//      encrypted value survives the merge when admin omits the field). The
+//      isEncrypted() heuristic keeps repeat submissions idempotent. Explicit
+//      null or empty string clears the field.
+//   3. Type-change: replaces config wholesale (the old type's shape is
+//      meaningless for the new type) and clears all oauth-related columns
+//      so the row is clean (no orphan tokens, status, errors, etc.).
+//   4. If body has no `config` and type is unchanged, the existing config
+//      stays untouched.
 router.put('/api/credentials/:id', superuserOnlyFor(CONN_TOOL), async (req, res) => {
   const id = req.params.id;
   const meta = reqMetaForConn(req);
@@ -834,35 +843,52 @@ router.put('/api/credentials/:id', superuserOnlyFor(CONN_TOOL), async (req, res)
       fieldsChanged.push('allowed_urls');
     }
 
-    // Config handling. Two sub-cases:
-    //   (a) Body included config → use it, with oauth2 client_secret
-    //       handling layered on.
-    //   (b) Body did NOT include config but type is changing → wipe config
-    //       (the existing one is for the wrong type). Caller can re-PUT
-    //       with the new shape if they want one.
-    //   (c) Body did NOT include config and type isn't changing → leave
+    // Config handling (Slice 5):
+    //   (a) Body included config + type unchanged → deep-merge incoming
+    //       into existing (one level deep — matches flat schema). This is
+    //       the fix for the Slice-4-bug where saving any single config
+    //       field wiped the others.
+    //   (b) Body included config + type changing → replace wholesale.
+    //       The old config shape is meaningless to the new type.
+    //   (c) Body included config === null → clear it explicitly.
+    //   (d) Body did NOT include config but type is changing → wipe config
+    //       (the existing one is for the wrong type).
+    //   (e) Body did NOT include config and type isn't changing → leave
     //       config alone (don't touch).
+    //
+    // OAuth2 client_secret encryption-on-write applies to (a)/(b)/(c)
+    // whenever the resulting type is oauth2. With merge semantics, the
+    // "preserve existing encrypted secret when admin didn't touch the
+    // field" behavior happens automatically — the existing value lives
+    // in `existingConfig` and survives the merge.
     if (req.body.config !== undefined) {
-      let effectiveConfig = req.body.config && typeof req.body.config === 'object'
-        ? { ...req.body.config }
-        : req.body.config;
+      let effectiveConfig;
+      if (req.body.config === null) {
+        // Explicit null: caller wants to clear config entirely.
+        effectiveConfig = null;
+      } else if (typeof req.body.config !== 'object' || Array.isArray(req.body.config)) {
+        return res.status(400).json({ status: 'error', message: 'config must be a JSON object or null' });
+      } else if (typeChanging) {
+        // Wholesale replace on type change — old shape is meaningless.
+        effectiveConfig = { ...req.body.config };
+      } else {
+        // Deep-merge incoming into existing (one-level shallow merge).
+        effectiveConfig = { ...existingConfig, ...req.body.config };
+      }
 
       if (newType === 'oauth2' && effectiveConfig && typeof effectiveConfig === 'object') {
-        // Preserve existing encrypted client_secret if the admin didn't
-        // include the field at all in this PUT. Only applies when type
-        // is unchanged — type changes wipe oauth state below.
-        if (!typeChanging
-            && !('client_secret' in effectiveConfig)
-            && existingConfig.client_secret) {
-          effectiveConfig.client_secret = existingConfig.client_secret;
-        }
-        // Explicit clear: null or empty string → null
-        if (effectiveConfig.client_secret === null || effectiveConfig.client_secret === '') {
+        const cs = effectiveConfig.client_secret;
+        if (cs === null || cs === '') {
+          // Explicit clear.
           effectiveConfig.client_secret = null;
-        } else {
-          // Encrypt if non-empty plaintext, idempotent if already encrypted
+        } else if (typeof cs === 'string' && cs.length > 0) {
+          // Encrypt plaintext; idempotent if already encrypted.
           encryptOauth2ClientSecret(effectiveConfig);
+        } else if (cs !== undefined) {
+          return res.status(400).json({ status: 'error', message: 'client_secret must be a string' });
         }
+        // cs === undefined: not present in merged config (e.g. type
+        // change with no secret in incoming) — leave alone.
       }
 
       data.config = effectiveConfig === null ? null : JSON.stringify(effectiveConfig);
