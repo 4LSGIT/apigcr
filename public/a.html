@@ -1509,11 +1509,16 @@
   <button class="big-button" onclick="testSwalPage()">Test Swal Page</button>
   <button class="big-button" onclick="admintask2()">Sequences</button>
   <button class="big-button" data-target="dbConsoleDiv" data-exclusive-group="admin">DB Console (SU)</button>
+  <button class="big-button" data-target="connectionsDiv" data-exclusive-group="admin">Connections (SU)</button>
   <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin">API Tester (SU)</button>
 
   <div id="sequencesDiv" style="display:none"></div>
   <div id="dbConsoleDiv" style="display:none; margin-top:10px;">
     <iframe data-src="/dbConsole.html"
+            style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
+  </div>
+  <div id="connectionsDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/connections.html"
             style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
   </div>
   <div id="apiTesterDiv" style="display:none; margin-top:10px;">

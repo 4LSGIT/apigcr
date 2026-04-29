@@ -1,0 +1,1625 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connections</title>
+<style>
+  /* Palette matches dbConsole.html — admin tools loaded into a.html share this. */
+  :root {
+    --bg: #0f1117;
+    --panel: #161a22;
+    --panel-2: #1d2230;
+    --border: #2a3040;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+    --accent: #6ea8fe;
+    --accent-2: #82c0ff;
+    --danger: #ff6b6b;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+
+  /* ── Tab strip ─────────────────────────────────────────────── */
+  .tabs {
+    display: flex;
+    gap: 0;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .tab {
+    background: none;
+    border: none;
+    color: var(--muted);
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color 0.12s, border-color 0.12s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+  .panel-host { flex: 1; overflow: auto; min-height: 0; }
+  .panel { display: none; padding: 14px 16px; }
+  .panel.active { display: block; }
+
+  /* ── List view ─────────────────────────────────────────────── */
+  .list-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .list-header h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+  .list-header .right { display: flex; gap: 6px; align-items: center; }
+
+  table.list {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    border: 1px solid var(--border); background: var(--panel);
+  }
+  table.list th, table.list td {
+    border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left;
+    vertical-align: middle;
+  }
+  table.list th {
+    background: var(--panel-2); color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; font-weight: 600;
+  }
+  table.list tbody tr { cursor: pointer; }
+  table.list tbody tr:hover { background: var(--panel-2); }
+  table.list .actions-cell { white-space: nowrap; }
+  table.list .actions-cell button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; margin-right: 4px;
+  }
+  table.list .actions-cell button:hover { border-color: var(--accent); }
+  table.list .actions-cell button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .empty-row td { color: var(--muted); padding: 16px; text-align: center; font-style: italic; }
+
+  /* ── Buttons ───────────────────────────────────────────────── */
+  .btn {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn.danger:hover { background: var(--danger); color: #fff; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* ── Badges ────────────────────────────────────────────────── */
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    padding: 2px 7px; border-radius: 10px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    border: 1px solid var(--border);
+  }
+  .badge.type { background: var(--panel-2); color: var(--accent-2); }
+  .badge.status-pending  { background: rgba(251, 191, 36, 0.15); color: var(--warn);   border-color: rgba(251,191,36,0.4); }
+  .badge.status-connected { background: rgba(74, 222, 128, 0.15); color: var(--ok);    border-color: rgba(74,222,128,0.4); }
+  .badge.status-failed   { background: rgba(255, 107, 107, 0.15); color: var(--danger); border-color: rgba(255,107,107,0.4); }
+  .badge.status-revoked  { background: rgba(138, 147, 166, 0.15); color: var(--muted); border-color: rgba(138,147,166,0.4); }
+  .warn-icon {
+    display: inline-block; margin-left: 6px; color: var(--warn);
+    cursor: help; font-size: 13px;
+  }
+
+  /* ── Editor ────────────────────────────────────────────────── */
+  .editor {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 16px; max-width: 900px;
+  }
+  .editor-toolbar {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+  }
+  .editor-toolbar h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .editor-toolbar .right { margin-left: auto; display: flex; gap: 6px; }
+
+  .field { margin-bottom: 12px; }
+  .field-row { display: grid; grid-template-columns: 160px 1fr; gap: 12px; align-items: start; }
+  .field label {
+    display: block; color: var(--muted); font-size: 11.5px; font-weight: 500;
+    padding-top: 6px;
+  }
+  .field input[type=text], .field input[type=password], .field input[type=number],
+  .field textarea, .field select {
+    width: 100%; padding: 6px 8px;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    font-size: 12px; font-family: inherit;
+  }
+  .field input:focus, .field textarea:focus, .field select:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .field textarea {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    min-height: 60px; resize: vertical;
+  }
+  .field .checkbox-line { display: flex; align-items: center; gap: 8px; padding-top: 6px; }
+  .field .checkbox-line input { width: auto; }
+  .field .helper {
+    font-size: 11px; color: var(--muted); margin-top: 4px; font-style: italic;
+  }
+  .field-error { color: var(--danger); font-size: 11.5px; margin-top: 4px; }
+
+  /* Password input + Show button */
+  .pw-row { display: flex; gap: 6px; }
+  .pw-row input { flex: 1; }
+  .pw-row .btn { white-space: nowrap; min-width: 70px; padding: 6px 10px; }
+
+  /* Type-specific subsection */
+  .subsection {
+    border: 1px dashed var(--border); border-radius: 4px;
+    padding: 12px; margin-top: 10px;
+  }
+  .subsection h4 {
+    margin: 0 0 10px 0; font-size: 12px; font-weight: 600;
+    color: var(--accent-2); text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .subsection .note {
+    color: var(--muted); font-size: 11.5px; font-style: italic; padding: 4px 0;
+  }
+  .redirect-uri-row {
+    display: flex; gap: 6px; align-items: center;
+    padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+    margin-top: 6px;
+  }
+  .redirect-uri-row code {
+    flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; color: var(--accent-2); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Status card (oauth2 connection status) */
+  .status-card {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 12px; margin-top: 8px;
+  }
+  .status-card .row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+  .status-card .row .k { color: var(--muted); }
+  .status-card .row .v { color: var(--text); }
+  .status-card .actions { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+
+  /* Dialogs */
+  dialog {
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 16px; min-width: 360px;
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.5); }
+  dialog h3 { margin: 0 0 10px 0; font-size: 14px; }
+  dialog input {
+    width: 100%; padding: 6px 8px; box-sizing: border-box;
+    background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; font-size: 12px;
+  }
+  dialog .actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
+  dialog .result { margin-top: 10px; font-size: 12px; }
+  dialog .result.ok { color: var(--ok); }
+  dialog .result.err { color: var(--danger); }
+
+  /* Toasts (transient successes only) */
+  #toast-host {
+    position: fixed; bottom: 20px; right: 20px; display: flex;
+    flex-direction: column; gap: 8px; z-index: 10000;
+    pointer-events: none;
+  }
+  .toast {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-left: 3px solid var(--ok);
+    border-radius: 4px; padding: 8px 12px; font-size: 12px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    animation: slideIn 0.2s ease;
+    pointer-events: auto;
+  }
+  .toast.warn { border-left-color: var(--warn); }
+  .toast.err  { border-left-color: var(--danger); }
+  @keyframes slideIn {
+    from { transform: translateX(20px); opacity: 0; }
+    to   { transform: translateX(0); opacity: 1; }
+  }
+
+  /* Inline error banner inside editor */
+  .inline-error {
+    background: rgba(255, 107, 107, 0.1); border: 1px solid rgba(255, 107, 107, 0.4);
+    color: var(--danger); padding: 8px 10px; border-radius: 4px;
+    font-size: 12px; margin-bottom: 10px;
+  }
+
+  /* "Loading..." inline label */
+  .saving-hint { color: var(--muted); font-size: 11.5px; margin-left: 8px; font-style: italic; }
+</style>
+</head>
+<body>
+<div class="tabs" id="tabs">
+  <button class="tab active" data-tab="creds"><i class="fa-solid"></i>API Credentials</button>
+  <button class="tab" data-tab="email">Email Senders</button>
+</div>
+
+<div class="panel-host">
+  <div id="panel-creds" class="panel active"></div>
+  <div id="panel-email" class="panel"></div>
+</div>
+
+<dialog id="testEmailDialog">
+  <h3>Send test email</h3>
+  <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">
+    From: <span id="testEmailFromLabel" style="color:var(--text);"></span>
+  </div>
+  <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">To:</div>
+  <input id="testEmailTo" type="text" placeholder="recipient@example.com">
+  <div class="result" id="testEmailResult"></div>
+  <div class="actions">
+    <button class="btn" id="testEmailCancel">Cancel</button>
+    <button class="btn primary" id="testEmailSend">Send Test</button>
+  </div>
+</dialog>
+
+<div id="toast-host"></div>
+
+<script>
+/**
+ * Connections admin UI — manages api credentials and email_credentials.
+ * Hosted in a.html as a lazy-loaded iframe in the Admin tab. SU-only;
+ * server enforces this independently — the page-level guard is UX only.
+ */
+
+// ── Parent bridge / direct-fetch wrapper ─────────────────────
+// We bypass P.apiSend because it throws Error("API error") for 4xx/5xx,
+// swallowing the server's `message` field. This page surfaces real errors
+// (test-email failures, decryption failures, OAuth refresh errors), so we
+// fetch directly with the parent's JWT and pull the message ourselves.
+const P = window.parent;
+
+/**
+ * Authenticated JSON fetch using the parent's JWT.
+ * @returns parsed JSON, or null for 204
+ * @throws Error with the server's `message`/`error` field on non-2xx
+ */
+async function api(endpoint, method = 'GET', payload = null) {
+  if (!P || !P.AUTH_STATE) throw new Error('This page must be loaded inside the admin app.');
+
+  // Prompt re-login if missing/expired (parent owns this flow)
+  if (!P.AUTH_STATE.jwt || (P.isJwtExpired && P.isJwtExpired(P.AUTH_STATE.jwt))) {
+    if (P.loginBlocking) await P.loginBlocking();
+  }
+
+  const opts = {
+    method: method.toUpperCase(),
+    headers: {
+      'Authorization': `Bearer ${P.AUTH_STATE.jwt}`,
+      'Content-Type': 'application/json',
+    },
+  };
+  let url = endpoint;
+  if (payload != null) {
+    if (opts.method === 'GET' || opts.method === 'HEAD') {
+      url += '?' + new URLSearchParams(payload).toString();
+    } else {
+      opts.body = JSON.stringify(payload);
+    }
+  }
+
+  let res = await fetch(url, opts);
+  if (res.status === 401 && P.loginBlocking) {
+    await P.loginBlocking();
+    opts.headers.Authorization = `Bearer ${P.AUTH_STATE.jwt}`;
+    res = await fetch(url, opts);
+  }
+
+  if (res.status === 204) return null;
+  const text = await res.text();
+  let data;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+  if (!res.ok) {
+    const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+// ── SU guard — UX only; server enforces authoritatively ──────
+(function checkSU() {
+  try {
+    const cu = P?.firmData?.currentUser;
+    if (cu && cu.user_auth === 'authorized - SU') return;
+
+    // Fallback: try JWT (firmData might not be loaded yet on direct refresh)
+    const token = P?.AUTH_STATE?.jwt;
+    if (token) {
+      const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (payload.user_auth === 'authorized - SU') return;
+    }
+
+    document.body.innerHTML =
+      '<div style="padding:40px; text-align:center; color:#ff6b6b;">Admin only — superuser access required.</div>';
+    throw new Error('not SU');
+  } catch (e) {
+    if (e.message !== 'not SU') {
+      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Not authenticated.</div>';
+    }
+  }
+})();
+
+// ── Utilities ────────────────────────────────────────────────
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function E(id) { return document.getElementById(id); }
+
+/** Relative time string: "in 23 minutes" / "2 hours ago". */
+function relTime(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d)) return null;
+  const ms = d.getTime() - Date.now();
+  const abs = Math.abs(ms);
+  const mins = Math.floor(abs / 60000);
+  const hrs  = Math.floor(mins / 60);
+  const days = Math.floor(hrs / 24);
+  let val;
+  if (mins < 1)      val = 'less than a minute';
+  else if (mins < 60) val = `${mins} minute${mins === 1 ? '' : 's'}`;
+  else if (hrs < 24)  val = `${hrs} hour${hrs === 1 ? '' : 's'}`;
+  else                val = `${days} day${days === 1 ? '' : 's'}`;
+  return ms > 0 ? `in ${val}` : `${val} ago`;
+}
+function expiryStr(iso) {
+  const r = relTime(iso);
+  if (!r) return '—';
+  const d = new Date(iso);
+  const future = d.getTime() > Date.now();
+  return `${future ? 'expires' : 'expired'} ${r}`;
+}
+function localTimeStr(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  return d.toLocaleString();
+}
+
+/** Toast notification. Use sparingly — successes only. */
+function toast(msg, kind = 'ok', ms = 3000) {
+  const t = document.createElement('div');
+  t.className = 'toast' + (kind === 'warn' ? ' warn' : kind === 'err' ? ' err' : '');
+  t.textContent = msg;
+  E('toast-host').appendChild(t);
+  setTimeout(() => t.remove(), ms);
+}
+
+// ── Tab switching ────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const id = btn.dataset.tab;
+    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('active', p.id === `panel-${id}`));
+    state.activeTab = id;
+  });
+});
+
+// ── State ────────────────────────────────────────────────────
+const state = {
+  activeTab: 'creds',
+  creds:  { rows: [], view: 'list', editing: null, original: null, error: null, saving: false },
+  email:  { rows: [], view: 'list', editing: null, original: null, error: null, saving: false },
+};
+
+// ════════════════════════════════════════════════════════════
+// CREDENTIALS TAB
+// ════════════════════════════════════════════════════════════
+
+const CRED_TYPES = ['internal', 'bearer', 'api_key', 'basic', 'oauth2'];
+
+async function loadCreds() {
+  try {
+    const r = await api('/api/credentials');
+    state.creds.rows = r.credentials || r.rows || [];
+    if (state.creds.view === 'list') renderCreds();
+  } catch (err) {
+    state.creds.error = err.message;
+    renderCreds();
+  }
+}
+
+function renderCreds() {
+  const host = E('panel-creds');
+  if (state.creds.view === 'editor') {
+    renderCredsEditor(host);
+  } else {
+    renderCredsList(host);
+  }
+}
+
+function renderCredsList(host) {
+  const rows = state.creds.rows;
+  const errBanner = state.creds.error
+    ? `<div class="inline-error">${esc(state.creds.error)}</div>`
+    : '';
+  const body = rows.length === 0
+    ? `<tr class="empty-row"><td colspan="6">No credentials yet — click "+ New Credential" to add one.</td></tr>`
+    : rows.map(r => credListRow(r)).join('');
+
+  host.innerHTML = `
+    ${errBanner}
+    <div class="list-header">
+      <h2>API Credentials</h2>
+      <div class="right">
+        <button class="btn primary" id="cred-new">+ New Credential</button>
+      </div>
+    </div>
+    <table class="list">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th>Token expiry</th>
+          <th>Last refreshed</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+
+  E('cred-new').addEventListener('click', () => openCredEditor(null));
+  host.querySelectorAll('tr[data-id]').forEach(tr => {
+    tr.addEventListener('click', e => {
+      if (e.target.closest('.actions-cell')) return;
+      openCredEditor(Number(tr.dataset.id));
+    });
+    const del = tr.querySelector('button[data-action=delete]');
+    if (del) del.addEventListener('click', e => {
+      e.stopPropagation();
+      deleteCred(Number(tr.dataset.id), tr.dataset.name);
+    });
+    const edit = tr.querySelector('button[data-action=edit]');
+    if (edit) edit.addEventListener('click', e => {
+      e.stopPropagation();
+      openCredEditor(Number(tr.dataset.id));
+    });
+  });
+}
+
+function credListRow(r) {
+  const isOauth = r.type === 'oauth2';
+  const status = isOauth ? statusBadge(r.oauth_status) : '<span style="color:var(--muted);">—</span>';
+  const warn = (isOauth && r.refresh_failure_count >= 1 && r.oauth_status === 'connected')
+    ? `<span class="warn-icon" title="${esc(r.refresh_failure_count)} refresh failure(s) recently — investigate. Last error: ${esc(r.oauth_last_error || 'unknown')}">⚠</span>`
+    : '';
+  const expiry = isOauth && r.oauth_status === 'connected'
+    ? esc(expiryStr(r.access_token_expires_at))
+    : '<span style="color:var(--muted);">—</span>';
+  const refreshed = isOauth && r.last_refreshed_at
+    ? esc(relTime(r.last_refreshed_at))
+    : '<span style="color:var(--muted);">—</span>';
+
+  return `
+    <tr data-id="${r.id}" data-name="${esc(r.name)}">
+      <td>${esc(r.name)}</td>
+      <td><span class="badge type">${esc(r.type)}</span></td>
+      <td>${status}${warn}</td>
+      <td>${expiry}</td>
+      <td>${refreshed}</td>
+      <td class="actions-cell">
+        <button data-action="edit">Edit</button>
+        <button data-action="delete" class="danger">Delete</button>
+      </td>
+    </tr>
+  `;
+}
+
+function statusBadge(status) {
+  const map = {
+    pending_auth:    ['status-pending',   'Awaiting authorization'],
+    connected:       ['status-connected', 'Connected'],
+    refresh_failed:  ['status-failed',    'Refresh failed'],
+    revoked:         ['status-revoked',   'Revoked'],
+  };
+  const [cls, label] = map[status] || ['', status || '—'];
+  if (!status) return '<span style="color:var(--muted);">—</span>';
+  return `<span class="badge ${cls}">${esc(label)}</span>`;
+}
+
+async function openCredEditor(id) {
+  state.creds.error = null;
+  state.creds.saving = false;
+
+  if (id == null) {
+    // Fresh
+    state.creds.editing = blankCred();
+    state.creds.original = null;
+  } else {
+    try {
+      const r = await api(`/api/credentials/${id}`);
+      const row = r.credential || r.row || r;
+      state.creds.editing = JSON.parse(JSON.stringify(row));
+      state.creds.original = JSON.parse(JSON.stringify(row));
+    } catch (err) {
+      toast('Could not load credential: ' + err.message, 'err', 5000);
+      return;
+    }
+  }
+  state.creds.view = 'editor';
+  renderCreds();
+}
+
+function blankCred() {
+  return {
+    id: null,
+    name: '',
+    type: 'internal',
+    config: {},
+    allowed_urls: [],
+    verbose: 0,
+    oauth_status: null,
+  };
+}
+
+function backToCredList() {
+  state.creds.view = 'list';
+  state.creds.editing = null;
+  state.creds.original = null;
+  state.creds.error = null;
+  renderCreds();
+}
+
+function renderCredsEditor(host) {
+  const e = state.creds.editing;
+  const isNew = !e.id;
+  const errBanner = state.creds.error
+    ? `<div class="inline-error">${esc(state.creds.error)}</div>`
+    : '';
+
+  host.innerHTML = `
+    <div class="editor">
+      <div class="editor-toolbar">
+        <h3>${isNew ? 'New credential' : 'Edit credential'}</h3>
+        <span class="saving-hint" id="cred-saving" style="display:none;">Saving…</span>
+        <div class="right">
+          <button class="btn" id="cred-cancel">Cancel</button>
+          ${isNew ? '' : '<button class="btn danger" id="cred-delete">Delete</button>'}
+          <button class="btn primary" id="cred-save">Save</button>
+        </div>
+      </div>
+      ${errBanner}
+      <div class="field field-row">
+        <label for="cred-name">Name</label>
+        <input id="cred-name" type="text" value="${esc(e.name || '')}" maxlength="255">
+      </div>
+      <div class="field field-row">
+        <label for="cred-type">Type</label>
+        <select id="cred-type">${CRED_TYPES.map(t => `<option value="${t}" ${e.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      </div>
+      <div class="field field-row">
+        <label for="cred-allowed">Allowed URLs</label>
+        <div>
+          <textarea id="cred-allowed" placeholder="https://api.example.com/*&#10;https://another.example.com/v1/*">${esc(((e.allowed_urls || [])).join('\n'))}</textarea>
+          <div class="helper">One URL pattern per line. Use <code>*</code> as a wildcard. Leave blank to skip URL restriction.</div>
+        </div>
+      </div>
+      <div class="field field-row" id="cred-verbose-row" style="${e.type === 'oauth2' ? '' : 'display:none;'}">
+        <label>Verbose</label>
+        <div class="checkbox-line">
+          <input id="cred-verbose" type="checkbox" ${e.verbose ? 'checked' : ''}>
+          <span style="color:var(--muted); font-size:11.5px;">Log full request/response payloads (debug only — sensitive data is logged)</span>
+        </div>
+      </div>
+      <div id="cred-type-section"></div>
+    </div>
+  `;
+
+  // Wire up
+  E('cred-cancel').addEventListener('click', backToCredList);
+  E('cred-save').addEventListener('click', saveCred);
+  if (!isNew) E('cred-delete').addEventListener('click', () => deleteCredFromEditor());
+  E('cred-type').addEventListener('change', (ev) => {
+    state.creds.editing.type = ev.target.value;
+    E('cred-verbose-row').style.display = ev.target.value === 'oauth2' ? '' : 'none';
+    renderTypeSection();
+  });
+  renderTypeSection();
+}
+
+function renderTypeSection() {
+  const e = state.creds.editing;
+  const host = E('cred-type-section');
+  const cfg = e.config || {};
+  const isNew = !e.id;
+
+  if (e.type === 'internal') {
+    host.innerHTML = `
+      <div class="subsection">
+        <div class="note">Uses the <code>INTERNAL_API_KEY</code> environment variable. No secrets stored here.</div>
+      </div>
+    `;
+    return;
+  }
+
+  if (e.type === 'bearer') {
+    host.innerHTML = `
+      <div class="subsection">
+        <h4>Token</h4>
+        <div class="field field-row">
+          <label>Bearer token</label>
+          ${pwField('cred-pw-token', cfg.token, isNew)}
+        </div>
+      </div>
+    `;
+    bindShowButton('cred-pw-token', e.id, 'token', isNew);
+    return;
+  }
+
+  if (e.type === 'api_key') {
+    host.innerHTML = `
+      <div class="subsection">
+        <h4>API Key</h4>
+        <div class="field field-row">
+          <label>Header name</label>
+          <input id="cred-apikey-header" type="text" value="${esc(cfg.header || 'x-api-key')}">
+        </div>
+        <div class="field field-row">
+          <label>Key value</label>
+          ${pwField('cred-pw-key', cfg.key, isNew)}
+        </div>
+      </div>
+    `;
+    bindShowButton('cred-pw-key', e.id, 'key', isNew);
+    return;
+  }
+
+  if (e.type === 'basic') {
+    host.innerHTML = `
+      <div class="subsection">
+        <h4>HTTP Basic</h4>
+        <div class="field field-row">
+          <label>Username</label>
+          <input id="cred-basic-user" type="text" value="${esc(cfg.username || '')}">
+        </div>
+        <div class="field field-row">
+          <label>Password</label>
+          ${pwField('cred-pw-pass', cfg.password, isNew)}
+        </div>
+      </div>
+    `;
+    bindShowButton('cred-pw-pass', e.id, 'password', isNew);
+    return;
+  }
+
+  if (e.type === 'oauth2') {
+    const redirectUri = window.location.origin + '/auth/oauth/callback';
+    const extraAuth    = JSON.stringify(cfg.extra_authorize_params || {}, null, 2);
+    const extraToken   = JSON.stringify(cfg.extra_token_params     || {}, null, 2);
+    const extraRefresh = JSON.stringify(cfg.extra_refresh_params   || {}, null, 2);
+    const scopes       = (cfg.scopes || []).join('\n');
+
+    host.innerHTML = `
+      <div class="subsection">
+        <h4>Provider Configuration</h4>
+        <div class="field field-row">
+          <label>Client ID</label>
+          <input id="cred-oa-clientid" type="text" value="${esc(cfg.client_id || '')}">
+        </div>
+        <div class="field field-row">
+          <label>Client Secret</label>
+          ${pwField('cred-pw-secret', cfg.client_secret, isNew)}
+        </div>
+        <div class="field field-row">
+          <label>Authorization URL</label>
+          <input id="cred-oa-authurl" type="text" value="${esc(cfg.authorization_url || '')}" placeholder="https://provider.example.com/oauth/authorize">
+        </div>
+        <div class="field field-row">
+          <label>Token URL</label>
+          <input id="cred-oa-tokenurl" type="text" value="${esc(cfg.token_url || '')}" placeholder="https://provider.example.com/oauth/token">
+        </div>
+        <div class="field field-row">
+          <label>Revoke URL</label>
+          <input id="cred-oa-revokeurl" type="text" value="${esc(cfg.revoke_url || '')}" placeholder="(optional)">
+        </div>
+        <div class="field field-row">
+          <label>Scopes</label>
+          <div>
+            <textarea id="cred-oa-scopes" placeholder="read:contacts&#10;write:contacts">${esc(scopes)}</textarea>
+            <div class="helper">One scope per line.</div>
+          </div>
+        </div>
+        <div class="field field-row">
+          <label>Use PKCE</label>
+          <div class="checkbox-line">
+            <input id="cred-oa-pkce" type="checkbox" ${cfg.use_pkce ? 'checked' : ''}>
+          </div>
+        </div>
+        <div class="field field-row">
+          <label>Client Auth Method</label>
+          <select id="cred-oa-authmethod">
+            <option value="basic" ${(cfg.client_auth_method || 'basic') === 'basic' ? 'selected' : ''}>Basic header</option>
+            <option value="body"  ${cfg.client_auth_method === 'body' ? 'selected' : ''}>Body fields</option>
+          </select>
+        </div>
+        <div class="field field-row">
+          <label>Extra Authorize Params</label>
+          <div>
+            <textarea id="cred-oa-extra-auth">${esc(extraAuth)}</textarea>
+            <div class="helper">JSON object. For Google: try <code>{"access_type": "offline", "prompt": "consent"}</code> to get a refresh_token.</div>
+          </div>
+        </div>
+        <div class="field field-row">
+          <label>Extra Token Params</label>
+          <div>
+            <textarea id="cred-oa-extra-token">${esc(extraToken)}</textarea>
+            <div class="helper">JSON object.</div>
+          </div>
+        </div>
+        <div class="field field-row">
+          <label>Extra Refresh Params</label>
+          <div>
+            <textarea id="cred-oa-extra-refresh">${esc(extraRefresh)}</textarea>
+            <div class="helper">JSON object.</div>
+          </div>
+        </div>
+        <div class="field field-row">
+          <label>Redirect URI</label>
+          <div>
+            <div class="redirect-uri-row">
+              <code id="cred-oa-redirect">${esc(redirectUri)}</code>
+              <button class="btn" id="cred-oa-copy" type="button">Copy</button>
+            </div>
+            <div class="helper">This must be registered exactly with the OAuth provider. The provider will redirect users back here after authorization.</div>
+          </div>
+        </div>
+      </div>
+      ${isNew ? '' : renderOauthStatusCard(e)}
+    `;
+    bindShowButton('cred-pw-secret', e.id, 'client_secret', isNew);
+    E('cred-oa-copy').addEventListener('click', () => {
+      navigator.clipboard.writeText(redirectUri).then(
+        () => toast('Redirect URI copied'),
+        () => toast('Copy failed — select and copy manually', 'err')
+      );
+    });
+    if (!isNew) bindOauthActionButtons(e);
+    return;
+  }
+}
+
+function pwField(inputId, currentValue, isNew) {
+  // For new credentials: plaintext-by-default (no value to reveal yet, just type)
+  // For existing: empty input + placeholder; admin clicks Show to reveal
+  if (isNew) {
+    return `
+      <div class="pw-row">
+        <input id="${inputId}" type="text" value="${esc(currentValue || '')}" placeholder="Enter value">
+      </div>
+    `;
+  }
+  return `
+    <div class="pw-row">
+      <input id="${inputId}" type="password" placeholder="(unchanged — leave empty to keep current)">
+      <button class="btn" id="${inputId}-show" type="button">Show</button>
+    </div>
+  `;
+}
+
+/**
+ * Wire up Show/Hide button for password inputs on existing creds.
+ * Calls /api/credentials/:id/reveal to fetch decrypted secrets.
+ * After 30s OR Hide click, clears the input — admin retypes if changing.
+ */
+function bindShowButton(inputId, credId, configKey, isNew) {
+  if (isNew) return;
+  const input = E(inputId);
+  const btn = E(inputId + '-show');
+  if (!input || !btn) return;
+
+  let revealed = false;
+  let timer = null;
+
+  function reset() {
+    revealed = false;
+    if (timer) { clearInterval(timer); timer = null; }
+    input.value = '';
+    input.type = 'password';
+    input.placeholder = '(unchanged — leave empty to keep current)';
+    btn.textContent = 'Show';
+    btn.disabled = false;
+  }
+
+  btn.addEventListener('click', async () => {
+    if (revealed) { reset(); return; }
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+    try {
+      const r = await api(`/api/credentials/${credId}/reveal`);
+      const cfg = r.config || r.credential?.config || {};
+      const val = cfg[configKey];
+      if (val == null) {
+        btn.disabled = false;
+        btn.textContent = 'Show';
+        toast('No value stored for this field', 'warn');
+        return;
+      }
+      input.value = String(val);
+      input.type = 'text';
+      btn.disabled = false;
+      revealed = true;
+      let secs = 30;
+      btn.textContent = `Hide (${secs}s)`;
+      timer = setInterval(() => {
+        secs -= 1;
+        if (secs <= 0) reset();
+        else btn.textContent = `Hide (${secs}s)`;
+      }, 1000);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'Show';
+      state.creds.error = `Could not decrypt — ${err.message}`;
+      renderCreds();
+    }
+  });
+}
+
+function renderOauthStatusCard(e) {
+  const expiry = e.access_token_expires_at
+    ? `${esc(expiryStr(e.access_token_expires_at))}${e.access_token_expires_at ? ` (at ${esc(localTimeStr(e.access_token_expires_at))})` : ''}`
+    : '—';
+  const refExpiry = e.refresh_token_expires_at
+    ? `${esc(expiryStr(e.refresh_token_expires_at))}${e.refresh_token_expires_at ? ` (at ${esc(localTimeStr(e.refresh_token_expires_at))})` : ''}`
+    : (e.oauth_status === 'connected' ? 'no expiry' : '—');
+  const lastRefreshed = e.last_refreshed_at ? esc(relTime(e.last_refreshed_at)) : '—';
+  const failures = (e.refresh_failure_count || 0) > 0
+    ? `${e.refresh_failure_count} — last error: ${esc(e.oauth_last_error || 'unknown')}`
+    : '0';
+
+  const status = e.oauth_status;
+  const showConnect    = !status || status === 'pending_auth';
+  const showReauth     = status === 'refresh_failed' || status === 'revoked';
+  const showRefreshNow = status === 'connected';
+  const showRevoke     = status === 'connected' || status === 'refresh_failed';
+  const showTest       = status === 'connected';
+
+  return `
+    <div class="subsection">
+      <h4>Connection Status</h4>
+      <div class="status-card">
+        <div class="row"><span class="k">Status</span><span class="v">${statusBadge(status)}</span></div>
+        <div class="row"><span class="k">Access token</span><span class="v">${expiry}</span></div>
+        <div class="row"><span class="k">Refresh token</span><span class="v">${refExpiry}</span></div>
+        <div class="row"><span class="k">Last refreshed</span><span class="v">${lastRefreshed}</span></div>
+        <div class="row"><span class="k">Refresh failures</span><span class="v">${failures}</span></div>
+        <div class="actions">
+          ${showConnect    ? '<button class="btn primary" id="oa-connect">Connect</button>' : ''}
+          ${showReauth     ? '<button class="btn primary" id="oa-connect">Re-authorize</button>' : ''}
+          ${showRefreshNow ? '<button class="btn" id="oa-refresh">Refresh now</button>' : ''}
+          ${showTest       ? '<button class="btn" id="oa-test">Test connection</button>' : ''}
+          ${showRevoke     ? '<button class="btn danger" id="oa-revoke">Revoke</button>' : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function bindOauthActionButtons(e) {
+  const connect = E('oa-connect');
+  if (connect) connect.addEventListener('click', () => oauthConnect(e.id));
+
+  const refresh = E('oa-refresh');
+  if (refresh) refresh.addEventListener('click', () => oauthRefresh(e.id, false));
+
+  const test = E('oa-test');
+  if (test) test.addEventListener('click', () => oauthRefresh(e.id, true));
+
+  const revoke = E('oa-revoke');
+  if (revoke) revoke.addEventListener('click', () => oauthRevoke(e.id));
+}
+
+async function oauthConnect(id) {
+  try {
+    const r = await api(`/api/credentials/${id}/authorize`, 'POST');
+    if (!r.auth_url) throw new Error('No auth_url returned');
+    window.open(r.auth_url, 'oauth_popup', 'width=600,height=700');
+    // Wait for postMessage from the callback page (set up globally below).
+  } catch (err) {
+    state.creds.error = `Could not start authorization: ${err.message}`;
+    renderCreds();
+  }
+}
+
+async function oauthRefresh(id, asTest) {
+  try {
+    await api(`/api/credentials/${id}/refresh`, 'POST');
+    toast(asTest ? 'Connection works — token refreshed.' : 'Refreshed.');
+    await reloadCredEditor(id);
+  } catch (err) {
+    state.creds.error = (asTest ? 'Test failed: ' : 'Refresh failed: ') + err.message;
+    renderCreds();
+  }
+}
+
+async function oauthRevoke(id) {
+  if (!confirm('Revoke this connection? Local tokens will be cleared and the provider will be notified if revoke_url is set.')) return;
+  try {
+    await api(`/api/credentials/${id}/revoke`, 'POST');
+    toast('Revoked.');
+    await reloadCredEditor(id);
+  } catch (err) {
+    state.creds.error = `Revoke failed: ${err.message}`;
+    renderCreds();
+  }
+}
+
+async function reloadCredEditor(id) {
+  try {
+    const r = await api(`/api/credentials/${id}`);
+    const row = r.credential || r.row || r;
+    state.creds.editing = JSON.parse(JSON.stringify(row));
+    state.creds.original = JSON.parse(JSON.stringify(row));
+    renderCreds();
+    // Also refresh the list (in the background) so the table is fresh when user backs out.
+    loadCreds();
+  } catch (err) {
+    state.creds.error = err.message;
+    renderCreds();
+  }
+}
+
+// ── OAuth popup postMessage listener ─────────────────────────
+window.addEventListener('message', (ev) => {
+  if (ev.origin !== window.location.origin) return;
+  const data = ev.data || {};
+  if (data.type === 'oauth_success') {
+    toast('Authorization complete.');
+    if (state.creds.view === 'editor' && state.creds.editing?.id) {
+      reloadCredEditor(state.creds.editing.id);
+    } else {
+      loadCreds();
+    }
+  } else if (data.type === 'oauth_warning') {
+    toast(data.message || 'Authorization completed with a warning.', 'warn', 6000);
+    if (state.creds.view === 'editor' && state.creds.editing?.id) {
+      reloadCredEditor(state.creds.editing.id);
+    } else {
+      loadCreds();
+    }
+  } else if (data.type === 'oauth_error') {
+    state.creds.error = `Authorization failed: ${data.message || 'unknown error'}`;
+    renderCreds();
+  }
+});
+
+// ── Form readers ─────────────────────────────────────────────
+
+/**
+ * Build the config object from the visible form fields for the current type.
+ * Secret fields are included only if the input is non-empty (admin typed).
+ */
+function readCredFormConfig(type, isNew) {
+  const cfg = {};
+  if (type === 'internal') return cfg;
+
+  if (type === 'bearer') {
+    const v = E('cred-pw-token').value;
+    if (isNew || v !== '') cfg.token = v;
+    return cfg;
+  }
+
+  if (type === 'api_key') {
+    cfg.header = E('cred-apikey-header').value.trim() || 'x-api-key';
+    const v = E('cred-pw-key').value;
+    if (isNew || v !== '') cfg.key = v;
+    return cfg;
+  }
+
+  if (type === 'basic') {
+    cfg.username = E('cred-basic-user').value;
+    const v = E('cred-pw-pass').value;
+    if (isNew || v !== '') cfg.password = v;
+    return cfg;
+  }
+
+  if (type === 'oauth2') {
+    cfg.client_id          = E('cred-oa-clientid').value.trim();
+    const sec = E('cred-pw-secret').value;
+    if (isNew || sec !== '') cfg.client_secret = sec;
+    cfg.authorization_url  = E('cred-oa-authurl').value.trim();
+    cfg.token_url          = E('cred-oa-tokenurl').value.trim();
+    const rev = E('cred-oa-revokeurl').value.trim();
+    if (rev) cfg.revoke_url = rev;
+    cfg.scopes = E('cred-oa-scopes').value.split('\n').map(s => s.trim()).filter(Boolean);
+    cfg.use_pkce = E('cred-oa-pkce').checked;
+    cfg.client_auth_method = E('cred-oa-authmethod').value;
+    cfg.extra_authorize_params = parseJsonField('cred-oa-extra-auth',    'Extra Authorize Params');
+    cfg.extra_token_params     = parseJsonField('cred-oa-extra-token',   'Extra Token Params');
+    cfg.extra_refresh_params   = parseJsonField('cred-oa-extra-refresh', 'Extra Refresh Params');
+    return cfg;
+  }
+  return cfg;
+}
+
+function parseJsonField(id, label) {
+  const raw = (E(id).value || '').trim();
+  if (!raw) return {};
+  try {
+    const v = JSON.parse(raw);
+    if (typeof v !== 'object' || Array.isArray(v) || v === null) {
+      throw new Error(`${label} must be a JSON object`);
+    }
+    return v;
+  } catch (err) {
+    const e = new Error(`Invalid JSON in "${label}": ${err.message}`);
+    e._field = id;
+    throw e;
+  }
+}
+
+function readCredFormTopLevel() {
+  return {
+    name: E('cred-name').value.trim(),
+    type: E('cred-type').value,
+    allowed_urls: E('cred-allowed').value.split('\n').map(s => s.trim()).filter(Boolean),
+    verbose: E('cred-verbose')?.checked ? 1 : 0,
+  };
+}
+
+// ── Save / Delete ────────────────────────────────────────────
+
+async function saveCred() {
+  const e = state.creds.editing;
+  const isNew = !e.id;
+  const saveBtn = E('cred-save');
+  state.creds.error = null;
+
+  let top, cfg;
+  try {
+    top = readCredFormTopLevel();
+    cfg = readCredFormConfig(top.type, isNew);
+  } catch (err) {
+    state.creds.error = err.message;
+    renderCreds();
+    return;
+  }
+
+  if (!top.name) {
+    state.creds.error = 'Name is required.';
+    renderCreds();
+    return;
+  }
+
+  let body;
+  if (isNew) {
+    body = { ...top, config: cfg };
+  } else {
+    // Diff against original: only send changed fields
+    const o = state.creds.original;
+    body = {};
+    if (top.name !== o.name) body.name = top.name;
+    if (top.type !== o.type) body.type = top.type;
+    if (JSON.stringify(top.allowed_urls) !== JSON.stringify(o.allowed_urls || [])) {
+      body.allowed_urls = top.allowed_urls;
+    }
+    if ((top.verbose ? 1 : 0) !== (o.verbose ? 1 : 0)) body.verbose = top.verbose;
+
+    // Config diff — partial config object containing only changed sub-fields.
+    // NOTE: assumes server merges incoming config with existing on PUT.
+    const oldCfg = o.config || {};
+    const partial = {};
+    for (const k of Object.keys(cfg)) {
+      if (JSON.stringify(cfg[k]) !== JSON.stringify(oldCfg[k])) {
+        partial[k] = cfg[k];
+      }
+    }
+    if (Object.keys(partial).length > 0) body.config = partial;
+
+    if (Object.keys(body).length === 0) {
+      backToCredList();
+      return;
+    }
+  }
+
+  saveBtn.disabled = true;
+  E('cred-saving').style.display = '';
+  state.creds.saving = true;
+  try {
+    if (isNew) {
+      await api('/api/credentials', 'POST', body);
+    } else {
+      await api(`/api/credentials/${e.id}`, 'PUT', body);
+    }
+    toast('Saved.');
+    await loadCreds();
+    backToCredList();
+  } catch (err) {
+    state.creds.error = err.message;
+    renderCreds();
+  } finally {
+    state.creds.saving = false;
+  }
+}
+
+async function deleteCred(id, name) {
+  if (!confirm(`Delete credential "${name}"?\n\nThis cannot be undone. Any hooks/sequences using it will start failing.`)) return;
+  try {
+    await api(`/api/credentials/${id}`, 'DELETE');
+    toast('Deleted.');
+    await loadCreds();
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'err', 5000);
+  }
+}
+
+async function deleteCredFromEditor() {
+  const e = state.creds.editing;
+  if (!confirm(`Delete credential "${e.name}"?\n\nThis cannot be undone. Any hooks/sequences using it will start failing.`)) return;
+  try {
+    await api(`/api/credentials/${e.id}`, 'DELETE');
+    toast('Deleted.');
+    await loadCreds();
+    backToCredList();
+  } catch (err) {
+    state.creds.error = err.message;
+    renderCreds();
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// EMAIL SENDERS TAB
+// ════════════════════════════════════════════════════════════
+
+async function loadEmails() {
+  try {
+    const r = await api('/api/email-credentials');
+    state.email.rows = r.email_credentials || r.rows || [];
+    if (state.email.view === 'list') renderEmail();
+  } catch (err) {
+    state.email.error = err.message;
+    renderEmail();
+  }
+}
+
+function renderEmail() {
+  const host = E('panel-email');
+  if (state.email.view === 'editor') {
+    renderEmailEditor(host);
+  } else {
+    renderEmailList(host);
+  }
+}
+
+function renderEmailList(host) {
+  const rows = state.email.rows;
+  const errBanner = state.email.error
+    ? `<div class="inline-error">${esc(state.email.error)}</div>`
+    : '';
+  const body = rows.length === 0
+    ? `<tr class="empty-row"><td colspan="5">No email senders yet — click "+ New Email Sender" to add one.</td></tr>`
+    : rows.map(r => emailListRow(r)).join('');
+
+  host.innerHTML = `
+    ${errBanner}
+    <div class="list-header">
+      <h2>Email Senders</h2>
+      <div class="right">
+        <button class="btn primary" id="email-new">+ New Email Sender</button>
+      </div>
+    </div>
+    <table class="list">
+      <thead>
+        <tr>
+          <th>From name</th>
+          <th>Email</th>
+          <th>Provider</th>
+          <th>SMTP host</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+
+  E('email-new').addEventListener('click', () => openEmailEditor(null));
+  host.querySelectorAll('tr[data-id]').forEach(tr => {
+    tr.addEventListener('click', e => {
+      if (e.target.closest('.actions-cell')) return;
+      openEmailEditor(Number(tr.dataset.id));
+    });
+    const edit = tr.querySelector('button[data-action=edit]');
+    if (edit) edit.addEventListener('click', e => {
+      e.stopPropagation();
+      openEmailEditor(Number(tr.dataset.id));
+    });
+    const test = tr.querySelector('button[data-action=test]');
+    if (test) test.addEventListener('click', e => {
+      e.stopPropagation();
+      openTestEmailDialog(Number(tr.dataset.id), tr.dataset.email);
+    });
+    const del = tr.querySelector('button[data-action=delete]');
+    if (del) del.addEventListener('click', e => {
+      e.stopPropagation();
+      deleteEmail(Number(tr.dataset.id), tr.dataset.email);
+    });
+  });
+}
+
+function emailListRow(r) {
+  const provider = `<span class="badge type">${esc(r.provider)}</span>`;
+  const host = r.provider === 'smtp'
+    ? esc(r.smtp_host || '—')
+    : '<span style="color:var(--muted);">—</span>';
+  return `
+    <tr data-id="${r.id}" data-email="${esc(r.email)}">
+      <td>${esc(r.from_name)}</td>
+      <td>${esc(r.email)}</td>
+      <td>${provider}</td>
+      <td>${host}</td>
+      <td class="actions-cell">
+        <button data-action="edit">Edit</button>
+        <button data-action="test">Test</button>
+        <button data-action="delete" class="danger">Delete</button>
+      </td>
+    </tr>
+  `;
+}
+
+async function openEmailEditor(id) {
+  state.email.error = null;
+  state.email.saving = false;
+
+  if (id == null) {
+    state.email.editing = blankEmail();
+    state.email.original = null;
+  } else {
+    try {
+      const r = await api(`/api/email-credentials/${id}`);
+      const row = r.email_credential || r;
+      state.email.editing = JSON.parse(JSON.stringify(row));
+      state.email.original = JSON.parse(JSON.stringify(row));
+    } catch (err) {
+      toast('Could not load sender: ' + err.message, 'err', 5000);
+      return;
+    }
+  }
+  state.email.view = 'editor';
+  renderEmail();
+}
+
+function blankEmail() {
+  return {
+    id: null,
+    email: '',
+    smtp_host: '',
+    smtp_port: 587,
+    smtp_user: '',
+    smtp_pass: '',
+    smtp_secure: 1,
+    provider: 'smtp',
+    from_name: '',
+  };
+}
+
+function backToEmailList() {
+  state.email.view = 'list';
+  state.email.editing = null;
+  state.email.original = null;
+  state.email.error = null;
+  renderEmail();
+}
+
+function renderEmailEditor(host) {
+  const e = state.email.editing;
+  const isNew = !e.id;
+  const errBanner = state.email.error
+    ? `<div class="inline-error">${esc(state.email.error)}</div>`
+    : '';
+
+  host.innerHTML = `
+    <div class="editor">
+      <div class="editor-toolbar">
+        <h3>${isNew ? 'New email sender' : 'Edit email sender'}</h3>
+        <span class="saving-hint" id="email-saving" style="display:none;">Saving…</span>
+        <div class="right">
+          <button class="btn" id="email-cancel">Cancel</button>
+          ${isNew ? '' : '<button class="btn" id="email-test">Test</button>'}
+          ${isNew ? '' : '<button class="btn danger" id="email-delete">Delete</button>'}
+          <button class="btn primary" id="email-save">Save</button>
+        </div>
+      </div>
+      ${errBanner}
+      <div class="field field-row">
+        <label>From name</label>
+        <input id="email-from-name" type="text" value="${esc(e.from_name || '')}" maxlength="64">
+      </div>
+      <div class="field field-row">
+        <label>Email address</label>
+        <input id="email-email" type="text" value="${esc(e.email || '')}">
+      </div>
+      <div class="field field-row">
+        <label>Provider</label>
+        <select id="email-provider">
+          <option value="smtp"   ${e.provider === 'smtp'   ? 'selected' : ''}>smtp</option>
+          <option value="pabbly" ${e.provider === 'pabbly' ? 'selected' : ''}>pabbly</option>
+        </select>
+      </div>
+      <div id="email-smtp-section"></div>
+    </div>
+  `;
+
+  E('email-cancel').addEventListener('click', backToEmailList);
+  E('email-save').addEventListener('click', saveEmail);
+  if (!isNew) {
+    E('email-delete').addEventListener('click', deleteEmailFromEditor);
+    E('email-test').addEventListener('click', () => openTestEmailDialog(e.id, e.email));
+  }
+  E('email-provider').addEventListener('change', renderEmailSmtpSection);
+  renderEmailSmtpSection();
+}
+
+function renderEmailSmtpSection() {
+  const host = E('email-smtp-section');
+  const provider = E('email-provider').value;
+  const e = state.email.editing;
+  const isNew = !e.id;
+
+  if (provider === 'pabbly') {
+    host.innerHTML = `
+      <div class="subsection">
+        <div class="note">Pabbly senders are configured at pabbly.com — only the email address is needed here for routing.</div>
+      </div>
+    `;
+    return;
+  }
+
+  // SMTP
+  host.innerHTML = `
+    <div class="subsection">
+      <h4>SMTP</h4>
+      <div class="field field-row">
+        <label>SMTP Host</label>
+        <input id="email-smtp-host" type="text" value="${esc(e.smtp_host || '')}" placeholder="smtp.example.com">
+      </div>
+      <div class="field field-row">
+        <label>SMTP Port</label>
+        <input id="email-smtp-port" type="number" value="${esc(e.smtp_port ?? 587)}">
+      </div>
+      <div class="field field-row">
+        <label>SMTP User</label>
+        <input id="email-smtp-user" type="text" value="${esc(e.smtp_user || '')}" placeholder="often the same as the email address">
+      </div>
+      <div class="field field-row">
+        <label>SMTP Password</label>
+        ${pwField('email-pw-pass', e.smtp_pass, isNew)}
+      </div>
+      <div class="field field-row">
+        <label>SMTP Secure (TLS)</label>
+        <div class="checkbox-line">
+          <input id="email-smtp-secure" type="checkbox" ${e.smtp_secure ? 'checked' : ''}>
+          <span style="color:var(--muted); font-size:11.5px;">Checked = TLS-from-handshake (port 465). Unchecked = STARTTLS upgrade (port 587).</span>
+        </div>
+      </div>
+    </div>
+  `;
+  bindEmailShowButton('email-pw-pass', e.id, isNew);
+}
+
+/**
+ * Email sender Show/Hide button. Reveals smtp_pass via GET /api/email-credentials/:id
+ * (admin endpoint returns the full row). NOTE per Slice 3: smtp_pass is plaintext.
+ */
+function bindEmailShowButton(inputId, emailId, isNew) {
+  if (isNew) return;
+  const input = E(inputId);
+  const btn = E(inputId + '-show');
+  if (!input || !btn) return;
+
+  let revealed = false;
+  let timer = null;
+
+  function reset() {
+    revealed = false;
+    if (timer) { clearInterval(timer); timer = null; }
+    input.value = '';
+    input.type = 'password';
+    input.placeholder = '(unchanged — leave empty to keep current)';
+    btn.textContent = 'Show';
+    btn.disabled = false;
+  }
+
+  btn.addEventListener('click', async () => {
+    if (revealed) { reset(); return; }
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+    try {
+      const r = await api(`/api/email-credentials/${emailId}`);
+      const row = r.email_credential || r;
+      input.value = String(row.smtp_pass ?? '');
+      input.type = 'text';
+      btn.disabled = false;
+      revealed = true;
+      let secs = 30;
+      btn.textContent = `Hide (${secs}s)`;
+      timer = setInterval(() => {
+        secs -= 1;
+        if (secs <= 0) reset();
+        else btn.textContent = `Hide (${secs}s)`;
+      }, 1000);
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = 'Show';
+      state.email.error = `Could not load password: ${err.message}`;
+      renderEmail();
+    }
+  });
+}
+
+async function saveEmail() {
+  const e = state.email.editing;
+  const isNew = !e.id;
+  const saveBtn = E('email-save');
+  state.email.error = null;
+
+  const top = {
+    from_name: E('email-from-name').value.trim(),
+    email:     E('email-email').value.trim(),
+    provider:  E('email-provider').value,
+  };
+
+  if (!top.from_name) { state.email.error = 'From name is required.'; renderEmail(); return; }
+  if (!top.email)     { state.email.error = 'Email address is required.'; renderEmail(); return; }
+  if (!/^\S+@\S+\.\S+$/.test(top.email)) { state.email.error = 'Email address looks invalid.'; renderEmail(); return; }
+
+  let smtp = {};
+  if (top.provider === 'smtp') {
+    const passInput = E('email-pw-pass').value;
+    smtp = {
+      smtp_host:   E('email-smtp-host').value.trim(),
+      smtp_port:   Number(E('email-smtp-port').value || 587),
+      smtp_user:   E('email-smtp-user').value.trim(),
+      smtp_secure: E('email-smtp-secure').checked ? 1 : 0,
+    };
+    // Only include smtp_pass if user typed (or new)
+    if (isNew || passInput !== '') smtp.smtp_pass = passInput;
+
+    if (!smtp.smtp_host) { state.email.error = 'SMTP host is required.'; renderEmail(); return; }
+    if (!smtp.smtp_user) { state.email.error = 'SMTP user is required.'; renderEmail(); return; }
+    if (isNew && !smtp.smtp_pass) { state.email.error = 'SMTP password is required for new senders.'; renderEmail(); return; }
+  } else {
+    // pabbly — backend still requires smtp_* fields per current API. We send placeholders
+    // for new, and skip them for edits (server validates per its own rules).
+    if (isNew) {
+      smtp = { smtp_host: 'pabbly', smtp_port: 0, smtp_user: top.email, smtp_pass: 'pabbly', smtp_secure: 0 };
+    }
+  }
+
+  let body;
+  if (isNew) {
+    body = { ...top, ...smtp };
+  } else {
+    // Diff
+    const o = state.email.original;
+    body = {};
+    for (const k of Object.keys(top)) {
+      if (top[k] !== o[k]) body[k] = top[k];
+    }
+    for (const k of Object.keys(smtp)) {
+      const a = JSON.stringify(smtp[k]);
+      const b = JSON.stringify(o[k]);
+      if (a !== b) body[k] = smtp[k];
+    }
+    if (Object.keys(body).length === 0) { backToEmailList(); return; }
+  }
+
+  saveBtn.disabled = true;
+  E('email-saving').style.display = '';
+  state.email.saving = true;
+  try {
+    if (isNew) {
+      await api('/api/email-credentials', 'POST', body);
+    } else {
+      await api(`/api/email-credentials/${e.id}`, 'PUT', body);
+    }
+    toast('Saved.');
+    await loadEmails();
+    backToEmailList();
+  } catch (err) {
+    state.email.error = err.message;
+    renderEmail();
+  } finally {
+    state.email.saving = false;
+  }
+}
+
+async function deleteEmail(id, email) {
+  if (!confirm(`Delete email sender "${email}"?\n\nThis cannot be undone.`)) return;
+  try {
+    await api(`/api/email-credentials/${id}`, 'DELETE');
+    toast('Deleted.');
+    await loadEmails();
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'err', 5000);
+  }
+}
+
+async function deleteEmailFromEditor() {
+  const e = state.email.editing;
+  if (!confirm(`Delete email sender "${e.email}"?\n\nThis cannot be undone.`)) return;
+  try {
+    await api(`/api/email-credentials/${e.id}`, 'DELETE');
+    toast('Deleted.');
+    await loadEmails();
+    backToEmailList();
+  } catch (err) {
+    state.email.error = err.message;
+    renderEmail();
+  }
+}
+
+// ── Test email dialog ────────────────────────────────────────
+let pendingTest = { id: null, from: null };
+
+function openTestEmailDialog(id, fromEmail) {
+  pendingTest = { id, from: fromEmail };
+  E('testEmailFromLabel').textContent = fromEmail;
+  E('testEmailResult').textContent = '';
+  E('testEmailResult').className = 'result';
+
+  const defaultTo = P?.firmData?.currentUser?.email || '';
+  const toInput = E('testEmailTo');
+  toInput.value = defaultTo;
+  E('testEmailSend').disabled = !defaultTo;
+  toInput.oninput = () => { E('testEmailSend').disabled = !toInput.value.trim(); };
+
+  E('testEmailDialog').showModal();
+}
+
+E('testEmailCancel').addEventListener('click', () => {
+  E('testEmailDialog').close();
+});
+
+E('testEmailSend').addEventListener('click', async () => {
+  const to = E('testEmailTo').value.trim();
+  if (!to) return;
+  const btn = E('testEmailSend');
+  const result = E('testEmailResult');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  result.className = 'result';
+  result.textContent = '';
+  try {
+    const r = await api(`/api/email-credentials/${pendingTest.id}/test`, 'POST', { to });
+    result.className = 'result ok';
+    result.textContent = `Test email sent to ${r.recipient || to} — check the inbox.`;
+  } catch (err) {
+    result.className = 'result err';
+    result.textContent = `Send failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send Test';
+  }
+});
+
+// ── Visibility refresh ───────────────────────────────────────
+// When the user comes back to this tab after working elsewhere
+// (e.g. revoked from another window), refresh whichever tab is active.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (state.activeTab === 'creds' && state.creds.view === 'list') loadCreds();
+  if (state.activeTab === 'email' && state.email.view === 'list') loadEmails();
+});
+
+// ── Init ─────────────────────────────────────────────────────
+loadCreds();
+loadEmails();
+</script>
+</body>
+</html>

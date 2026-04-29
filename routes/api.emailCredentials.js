@@ -7,6 +7,7 @@
  * POST   /api/email-credentials       — admin only
  * PUT    /api/email-credentials/:id   — admin only
  * DELETE /api/email-credentials/:id   — admin only
+ * POST   /api/email-credentials/:id/test — admin only (sends a real test email)
  *
  * Slice 3 deliverable. Currently smtp_pass is plaintext in the DB (matches
  * existing send-site read patterns); a future cleanup slice may encrypt it
@@ -20,6 +21,7 @@ const express = require('express');
 const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
+const emailService = require('../services/emailService');
 
 const TOOL = 'connections';
 
@@ -49,6 +51,10 @@ const UPDATABLE_FIELDS = [
 ];
 
 const VALID_PROVIDERS = ['smtp', 'pabbly'];
+
+// Lightweight email-shape check; deliberately permissive. The send itself
+// is the ultimate validator.
+const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -295,6 +301,107 @@ router.delete('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, 
       status: 'failed', errorMessage: err.message,
       ...meta,
       details: { email_credential_id: Number(id), email: null, error: err.message },
+    });
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/email-credentials/:id/test   — admin (live test send)
+//
+// Sends a real email through emailService.sendEmail() to verify the sender
+// configuration end-to-end. The Connections UI uses this to validate a sender
+// after creation/edit.
+//
+// Body: { to: 'recipient@example.com' }
+//
+// Audit details on success: { email_credential_id, from_email, to_email }
+// Audit details on failure: { ..., error: <message> }
+// ─────────────────────────────────────────────────────────────
+
+router.post('/api/email-credentials/:id/test', superuserOnlyFor(TOOL), async (req, res) => {
+  const id = req.params.id;
+  const meta = reqMeta(req);
+  const to = (req.body && typeof req.body.to === 'string') ? req.body.to.trim() : '';
+
+  if (!to || !EMAIL_RE.test(to)) {
+    return res.status(400).json({ status: 'error', message: 'A valid recipient email is required' });
+  }
+
+  try {
+    const [[row]] = await req.db.query(
+      `SELECT id, email, from_name FROM email_credentials WHERE id = ?`,
+      [id]
+    );
+    if (!row) {
+      return res.status(404).json({ status: 'error', message: 'Email credential not found' });
+    }
+
+    const sentAt = new Date().toISOString();
+    const subject = `YisraCase email sender test — ${row.email}`;
+    const text =
+      `This is a test email from YisraCase Connections, sent at ${sentAt} ` +
+      `to verify the "${row.from_name} <${row.email}>" sender configuration. ` +
+      `If you received this, the sender works.`;
+    const html =
+      `<p>This is a test email from <strong>YisraCase Connections</strong>, ` +
+      `sent at ${sentAt} to verify the "${row.from_name} &lt;${row.email}&gt;" sender configuration.</p>` +
+      `<p>If you received this, the sender works.</p>`;
+
+    try {
+      await emailService.sendEmail(req.db, {
+        from: row.email,
+        to,
+        subject,
+        text,
+        html,
+      });
+    } catch (sendErr) {
+      console.error('[email-test]', sendErr);
+      audit(req.db, {
+        tool: TOOL,
+        userId: req.auth.userId, username: req.auth.username,
+        route: req.originalUrl, method: req.method,
+        status: 'failed', errorMessage: sendErr.message,
+        ...meta,
+        details: {
+          email_credential_id: Number(id),
+          from_email: row.email,
+          to_email: to,
+          error: sendErr.message,
+        },
+      });
+      return res.status(500).json({ status: 'error', message: sendErr.message });
+    }
+
+    audit(req.db, {
+      tool: TOOL,
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method,
+      status: 'success',
+      ...meta,
+      details: {
+        email_credential_id: Number(id),
+        from_email: row.email,
+        to_email: to,
+      },
+    });
+
+    res.json({ status: 'success', sent_at: sentAt, recipient: to });
+  } catch (err) {
+    console.error('[email-test]', err);
+    audit(req.db, {
+      tool: TOOL,
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method,
+      status: 'failed', errorMessage: err.message,
+      ...meta,
+      details: {
+        email_credential_id: Number(id),
+        from_email: null,
+        to_email: to,
+        error: err.message,
+      },
     });
     res.status(500).json({ status: 'error', message: err.message });
   }

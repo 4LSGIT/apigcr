@@ -108,22 +108,32 @@ function renderCallbackHtml({ kind, message, credentialId, credentialName, warni
   }
 
   const postMessageScript = isSuccess
-    ? `
-        try {
-          if (window.opener) {
-            window.opener.postMessage({
-              type: 'oauth_success',
-              credentialId: ${safeJson(credentialId)},
-              name: ${safeJson(credentialName)}
-            }, window.location.origin);
-            ${warning
-              ? `window.opener.postMessage({ type: 'oauth_warning', credentialId: ${safeJson(credentialId)}, message: ${safeJson(warning)} }, window.location.origin);`
-              : ''}
-          }
-        } catch (e) {}
-        setTimeout(function () { try { window.close(); } catch (e) {} }, 2000);
-      `
-    : '';
+  ? `
+      try {
+        if (window.opener) {
+          window.opener.postMessage({
+            type: 'oauth_success',
+            credentialId: ${safeJson(credentialId)},
+            name: ${safeJson(credentialName)}
+          }, window.location.origin);
+          ${warning
+            ? `window.opener.postMessage({ type: 'oauth_warning', credentialId: ${safeJson(credentialId)}, message: ${safeJson(warning)} }, window.location.origin);`
+            : ''}
+        }
+      } catch (e) {}
+      setTimeout(function () { try { window.close(); } catch (e) {} }, 2000);
+    `
+  : `
+      try {
+        if (window.opener) {
+          window.opener.postMessage({
+            type: 'oauth_error',
+            credentialId: ${safeJson(credentialId)},
+            message: ${safeJson(message)}
+          }, window.location.origin);
+        }
+      } catch (e) {}
+    `;
 
   return `<!DOCTYPE html>
 <html lang="en">
