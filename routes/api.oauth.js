@@ -5,7 +5,7 @@
  * Built as Slice 3 of the Connections refactor.
  *
  * POST /api/credentials/:id/authorize  — admin: build auth URL
- * GET  /api/oauth/callback            — PUBLIC: provider redirect target
+ * GET  /auth/oauth/callback            — PUBLIC: provider redirect target
  * POST /api/credentials/:id/refresh    — admin: manual refresh
  * POST /api/credentials/:id/revoke     — admin: revoke + clear tokens
  * GET  /api/credentials/:id/reveal     — admin: decrypt and return secrets
@@ -58,14 +58,14 @@ function getRedirectUri() {
   if (!appUrl) {
     const err = new Error(
       'APP_URL env var is not set — set to e.g. https://app.4lsg.com (no path, ' +
-      'no trailing slash). OAuth callback URL is APP_URL + /api/oauth/callback ' +
+      'no trailing slash). OAuth callback URL is APP_URL + /auth/oauth/callback ' +
       'and that full URL must be registered with each OAuth provider.'
     );
     err.code = 'MISSING_APP_URL';
     throw err;
   }
   const base = appUrl.replace(/\/+$/, '');
-  return `${base}/api/oauth/callback`;
+  return `${base}/auth/oauth/callback`;
 }
 
 // HTML escape for callback rendering
@@ -76,8 +76,8 @@ function escapeHtml(s) {
 }
 
 // JSON-for-script: prevent </script> breakout via untrusted credential names
-function safeJson(v) {
-  return JSON.stringify(v)
+function safeJson(value) {
+  return JSON.stringify(value ?? null)
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
     .replace(/&/g, '\\u0026')
@@ -220,7 +220,7 @@ router.post('/api/credentials/:id/authorize', superuserOnlyFor(TOOL), async (req
 });
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/oauth/callback   — PUBLIC, no auth middleware
+// GET /auth/oauth/callback   — PUBLIC, no auth middleware
 // ─────────────────────────────────────────────────────────────
 //
 // Security model:
@@ -233,7 +233,7 @@ router.post('/api/credentials/:id/authorize', superuserOnlyFor(TOOL), async (req
 // We always render HTML (this is browser-facing) and audit every outcome.
 // userId is null in audit rows because there's no JWT context here.
 
-router.get('/api/oauth/callback', async (req, res) => {
+router.get('/auth/oauth/callback', async (req, res) => {
   const meta = reqMeta(req);
   const { state, code, error, error_description } = req.query;
 

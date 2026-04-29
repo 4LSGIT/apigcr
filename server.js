@@ -55,25 +55,25 @@ require("./startup/init")(db);
 console.log("db ready");
 
 
-function listRoutes(app) {
-  function walk(stack, prefix = '') {
-    stack.forEach(layer => {
-      if (layer.route) {
-        const methods = Object.keys(layer.route.methods)
-          .map(m => m.toUpperCase())
-          .join(', ');
-        console.log(`${methods.padEnd(10)} ${prefix}${layer.route.path}`);
-      } 
-      else if (layer.name === 'router' && layer.handle.stack) {
-        walk(layer.handle.stack, prefix);
-      }
-    });
-  }
-  walk(app._router.stack);
-}
-if (process.env.ENVIRONMENT == "development") {
-  listRoutes(app);
-}
+// function listRoutes(app) {
+//   function walk(stack, prefix = '') {
+//     stack.forEach(layer => {
+//       if (layer.route) {
+//         const methods = Object.keys(layer.route.methods)
+//           .map(m => m.toUpperCase())
+//           .join(', ');
+//         console.log(`${methods.padEnd(10)} ${prefix}${layer.route.path}`);
+//       } 
+//       else if (layer.name === 'router' && layer.handle.stack) {
+//         walk(layer.handle.stack, prefix);
+//       }
+//     });
+//   }
+//   walk(app._router.stack);
+// }
+// if (process.env.ENVIRONMENT == "development") {
+//   listRoutes(app);
+// }
 
 // Set port and start the server
 const PORT = process.env.PORT || 8080;

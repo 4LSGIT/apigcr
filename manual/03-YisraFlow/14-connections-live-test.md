@@ -16,7 +16,7 @@ Confirm before starting:
 |---|---|---|
 | `CREDENTIALS_ENCRYPTION_KEY` set in env | `gcloud run services describe …` or local `.env` | Required at module load — `lib/credentialCrypto.js` throws if missing or wrong length |
 | `APP_URL` set in env | Same | Required to build the OAuth callback URL — `routes/api.oauth.js` throws `MISSING_APP_URL` if absent |
-| Callback URL registered with Clio | Clio developer portal → your OAuth app → Redirect URIs | Must be `${APP_URL}/api/oauth/callback` exactly. Trailing slashes matter. |
+| Callback URL registered with Clio | Clio developer portal → your OAuth app → Redirect URIs | Must be `${APP_URL}/auth/oauth/callback` exactly. Trailing slashes matter. |
 | Clio dev app credentials in hand | Clio developer portal | `client_id`, `client_secret`, `auth_url`, `token_url` |
 | You have SU access | Login → Connections tab visible | All tests require superuser |
 
@@ -72,7 +72,7 @@ The `secret_prefix` should look like base64 (no recognizable plaintext). `oauth_
 2. Click "Connect".
 3. Popup opens to Clio's authorization URL.
 4. Log into Clio dev account, authorize the app.
-5. Clio redirects back to `/api/oauth/callback`.
+5. Clio redirects back to `/auth/oauth/callback`.
 6. Popup shows "Connection successful".
 7. Popup auto-closes after ~2 seconds.
 8. The editor parent window receives `postMessage` and reloads the credential.
@@ -107,7 +107,7 @@ Expect: `oauth_status='connected'`, `access_token` and `refresh_token` non-null 
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Popup shows `redirect_uri_mismatch` | Clio's registered callback ≠ `${APP_URL}/api/oauth/callback` | Update Clio app config; popular gotcha is trailing slash |
+| Popup shows `redirect_uri_mismatch` | Clio's registered callback ≠ `${APP_URL}/auth/oauth/callback` | Update Clio app config; popular gotcha is trailing slash |
 | Popup shows "invalid client" | `client_secret` wrong | Re-enter; the merge will encrypt the new value (Slice 5 fix means other fields stay) |
 | Callback returns blank page | `APP_URL` not set | Set the env var, restart Cloud Run service |
 
