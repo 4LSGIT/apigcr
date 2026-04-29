@@ -15,9 +15,27 @@ const express = require('express');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
+const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
+const credentialCrypto = require('../lib/credentialCrypto');
 const hookService = require('../services/hookService');
 const { listTransforms } = require('../services/hookTransforms');
 const { listOperators } = require('../services/hookFilter');
+
+// Tool name for admin-audit-log entries on credential CRUD (Slice 3 of
+// the Connections refactor). Same value as routes/api.oauth.js and
+// routes/api.emailCredentials.js so all credential-management actions
+// live under one tool tag.
+const CONN_TOOL = 'connections';
+
+// Fields that hold (or have held) a secret in `config` per credential type.
+// Used by GET /api/credentials/:id to strip secrets before returning.
+const SECRET_FIELDS_BY_TYPE = {
+  oauth2:  ['client_secret'],
+  bearer:  ['token'],
+  api_key: ['key'],
+  basic:   ['username', 'password'],
+  internal: [],
+};
 
 // Rate limit the public receiver endpoint: 120 req/min per slug+IP
 const hookReceiveLimiter = rateLimit({
@@ -598,64 +616,353 @@ router.get('/api/hooks/executions/:id', jwtOrApiKey, async (req, res) => {
 
 
 // ─────────────────────────────────────────────────────────────
-// MANAGEMENT API — Credentials
+// MANAGEMENT API — Credentials (Slice 3 of the Connections refactor)
+//
+// Access split:
+//   - LIST stays on jwtOrApiKey — needed for hook/sequence/workflow dropdowns,
+//     but secrets and config are scrubbed.
+//   - GET single, POST, PUT, DELETE, and the OAuth/reveal endpoints (in
+//     routes/api.oauth.js) are admin-only via superuserOnlyFor('connections').
+//
+// Encryption-on-write for oauth2 client_secret: when type='oauth2' on POST,
+// or when the resulting type is oauth2 on PUT, any non-empty plaintext
+// client_secret in `config` is encrypted before being persisted. The
+// isEncrypted() heuristic makes the route idempotent — if the admin saves
+// a form that re-submits an already-encrypted value (because they didn't
+// edit the secret field), we don't double-encrypt.
+//
+// Type changes on PUT clear all OAuth state columns (tokens, status, errors,
+// timestamps, refresh_failure_count) so the credential starts clean.
 // ─────────────────────────────────────────────────────────────
 
+function reqMetaForConn(req) {
+  return {
+    ip:        req.headers['x-forwarded-for']?.split(',').shift() || req.socket?.remoteAddress,
+    userAgent: req.headers['user-agent'] || 'unknown',
+  };
+}
+
+function auditConn(db, row) {
+  return auditAdminAction(db, row).catch(err =>
+    console.error('[hook] audit log failed:', err.message)
+  );
+}
+
+// Parse a possibly-stringified JSON column value into an object/array, or
+// fall through to null on parse error so we never throw mid-handler.
+function parseJsonColumn(value) {
+  if (value == null) return null;
+  if (typeof value === 'object') return value;
+  try { return JSON.parse(value); }
+  catch (_) { return null; }
+}
+
+// Encrypt config.client_secret in place, but only if it's a non-empty string
+// AND not already encrypted. Mutates and returns the same config object.
+// Use only when the credential type is 'oauth2'.
+function encryptOauth2ClientSecret(config) {
+  if (!config || typeof config !== 'object') return config;
+  const v = config.client_secret;
+  if (typeof v === 'string' && v.length > 0 && !credentialCrypto.isEncrypted(v)) {
+    config.client_secret = credentialCrypto.encrypt(v);
+  }
+  return config;
+}
+
+// LIST — any authenticated user (dropdown source).
+// Returns id/name/type/allowed_urls/timestamps + non-secret oauth status
+// fields. NEVER returns config, access_token, refresh_token, oauth_state,
+// oauth_pkce_verifier — those are admin-only.
 router.get('/api/credentials', jwtOrApiKey, async (req, res) => {
   try {
-    const credentials = await hookService.listCredentials(req.db);
-    res.json({ status: 'success', credentials });
+    const [rows] = await req.db.query(
+      `SELECT id, name, type, allowed_urls,
+              created_at, updated_at,
+              oauth_status, last_refreshed_at, refresh_failure_count,
+              access_token_expires_at, refresh_token_expires_at,
+              verbose
+         FROM credentials
+        ORDER BY name ASC`
+    );
+    for (const r of rows) {
+      r.allowed_urls = parseJsonColumn(r.allowed_urls);
+    }
+    res.json({ status: 'success', credentials: rows });
   } catch (err) {
     console.error('[hook] list credentials error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
 
-router.post('/api/credentials', jwtOrApiKey, async (req, res) => {
+// GET single — admin only. Returns full row with secret-bearing fields in
+// `config` stripped (set to null), plus oauth_state/oauth_pkce_verifier
+// suppressed. Encrypted token columns are also not returned — those go
+// through GET /:id/reveal in routes/api.oauth.js.
+router.get('/api/credentials/:id', superuserOnlyFor(CONN_TOOL), async (req, res) => {
+  const id = req.params.id;
+  const meta = reqMetaForConn(req);
+  try {
+    const [[row]] = await req.db.query(
+      `SELECT id, name, type, config, allowed_urls,
+              created_at, updated_at,
+              oauth_status, last_refreshed_at, refresh_failure_count,
+              access_token_expires_at, refresh_token_expires_at,
+              oauth_last_error, oauth_last_error_at,
+              verbose
+         FROM credentials WHERE id = ?`,
+      [id]
+    );
+    if (!row) {
+      return res.status(404).json({ status: 'error', message: 'Credential not found' });
+    }
+
+    row.config       = parseJsonColumn(row.config);
+    row.allowed_urls = parseJsonColumn(row.allowed_urls);
+
+    // Strip secret fields from config based on type
+    if (row.config && typeof row.config === 'object') {
+      const fields = SECRET_FIELDS_BY_TYPE[row.type] || [];
+      for (const f of fields) {
+        if (f in row.config) row.config[f] = null;
+      }
+    }
+
+    auditConn(req.db, {
+      tool: CONN_TOOL,
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method,
+      status: 'success',
+      ...meta,
+      details: { credential_id: row.id, credential_name: row.name, credential_type: row.type },
+    });
+
+    res.json({ status: 'success', credential: row });
+  } catch (err) {
+    console.error('[hook] get credential error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// POST — admin only. Encrypts oauth2 client_secret on the way in.
+router.post('/api/credentials', superuserOnlyFor(CONN_TOOL), async (req, res) => {
+  const meta = reqMetaForConn(req);
   try {
     const { name, type, config, allowed_urls } = req.body;
     if (!name || !type) {
       return res.status(400).json({ status: 'error', message: 'name and type are required' });
     }
+
+    let effectiveConfig = config;
+    if (type === 'oauth2' && config && typeof config === 'object') {
+      effectiveConfig = encryptOauth2ClientSecret({ ...config });
+    }
+
     const data = { name, type };
-    if (config !== undefined) data.config = JSON.stringify(config);
-    if (allowed_urls !== undefined) data.allowed_urls = JSON.stringify(allowed_urls);
+    if (effectiveConfig !== undefined) {
+      data.config = effectiveConfig === null ? null : JSON.stringify(effectiveConfig);
+    }
+    if (allowed_urls !== undefined) {
+      data.allowed_urls = allowed_urls === null ? null : JSON.stringify(allowed_urls);
+    }
 
     const id = await hookService.createCredential(req.db, data);
+
+    auditConn(req.db, {
+      tool: CONN_TOOL,
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method,
+      status: 'success',
+      ...meta,
+      details: { credential_id: id, credential_name: name, credential_type: type },
+    });
+
     res.json({ status: 'success', id });
   } catch (err) {
     console.error('[hook] create credential error:', err);
+    auditConn(req.db, {
+      tool: CONN_TOOL,
+      userId: req.auth?.userId, username: req.auth?.username,
+      route: req.originalUrl, method: req.method,
+      status: 'failed', errorMessage: err.message,
+      ...meta,
+      details: { credential_name: req.body?.name ?? null, credential_type: req.body?.type ?? null, error: err.message },
+    });
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
 
-router.put('/api/credentials/:id', jwtOrApiKey, async (req, res) => {
+// PUT — admin only. Handles three things beyond the obvious update:
+//   1. For oauth2 credentials, preserves the existing encrypted client_secret
+//      when the request body's config has no client_secret field (admin
+//      didn't touch the field in the form). Encrypts a fresh non-encrypted
+//      value if provided. Clears it if explicitly null/empty string.
+//   2. Idempotent re-submit: if the admin re-saves an already-encrypted
+//      client_secret, isEncrypted() short-circuits the second encryption.
+//   3. Type-change: clears all oauth-related columns so a credential
+//      morphed between types starts clean (no orphan tokens, status, etc.).
+router.put('/api/credentials/:id', superuserOnlyFor(CONN_TOOL), async (req, res) => {
+  const id = req.params.id;
+  const meta = reqMetaForConn(req);
   try {
+    const [[existing]] = await req.db.query(
+      `SELECT id, name, type, config FROM credentials WHERE id = ?`,
+      [id]
+    );
+    if (!existing) {
+      return res.status(404).json({ status: 'error', message: 'Credential not found' });
+    }
+
+    const existingConfig = parseJsonColumn(existing.config) || {};
+    const newType        = req.body.type !== undefined ? req.body.type : existing.type;
+    const typeChanging   = req.body.type !== undefined && req.body.type !== existing.type;
+
     const data = {};
-    const allowed = ['name', 'type', 'config', 'allowed_urls'];
-    for (const key of allowed) {
-      if (req.body[key] !== undefined) {
-        if (['config', 'allowed_urls'].includes(key) && typeof req.body[key] === 'object') {
-          data[key] = JSON.stringify(req.body[key]);
+    const fieldsChanged = [];
+
+    if (req.body.name !== undefined) {
+      data.name = req.body.name;
+      fieldsChanged.push('name');
+    }
+    if (req.body.type !== undefined) {
+      data.type = req.body.type;
+      fieldsChanged.push('type');
+    }
+    if (req.body.allowed_urls !== undefined) {
+      data.allowed_urls = req.body.allowed_urls === null
+        ? null
+        : JSON.stringify(req.body.allowed_urls);
+      fieldsChanged.push('allowed_urls');
+    }
+
+    // Config handling. Two sub-cases:
+    //   (a) Body included config → use it, with oauth2 client_secret
+    //       handling layered on.
+    //   (b) Body did NOT include config but type is changing → wipe config
+    //       (the existing one is for the wrong type). Caller can re-PUT
+    //       with the new shape if they want one.
+    //   (c) Body did NOT include config and type isn't changing → leave
+    //       config alone (don't touch).
+    if (req.body.config !== undefined) {
+      let effectiveConfig = req.body.config && typeof req.body.config === 'object'
+        ? { ...req.body.config }
+        : req.body.config;
+
+      if (newType === 'oauth2' && effectiveConfig && typeof effectiveConfig === 'object') {
+        // Preserve existing encrypted client_secret if the admin didn't
+        // include the field at all in this PUT. Only applies when type
+        // is unchanged — type changes wipe oauth state below.
+        if (!typeChanging
+            && !('client_secret' in effectiveConfig)
+            && existingConfig.client_secret) {
+          effectiveConfig.client_secret = existingConfig.client_secret;
+        }
+        // Explicit clear: null or empty string → null
+        if (effectiveConfig.client_secret === null || effectiveConfig.client_secret === '') {
+          effectiveConfig.client_secret = null;
         } else {
-          data[key] = req.body[key];
+          // Encrypt if non-empty plaintext, idempotent if already encrypted
+          encryptOauth2ClientSecret(effectiveConfig);
         }
       }
+
+      data.config = effectiveConfig === null ? null : JSON.stringify(effectiveConfig);
+      fieldsChanged.push('config');
+    } else if (typeChanging) {
+      // Type changed but no new config supplied — old config is for old type.
+      // Wipe it; admin can re-PUT with the right shape.
+      data.config = null;
+      fieldsChanged.push('config');
     }
-    await hookService.updateCredential(req.db, req.params.id, data);
+
+    await hookService.updateCredential(req.db, id, data);
+
+    // Type change: clear all oauth columns so the row is clean for whatever
+    // type it now is. Done as a follow-up UPDATE to avoid widening the
+    // hookService.updateCredential surface (Slice 3 doesn't touch services).
+    if (typeChanging) {
+      await req.db.query(
+        `UPDATE credentials SET
+           access_token = NULL,
+           refresh_token = NULL,
+           access_token_expires_at = NULL,
+           refresh_token_expires_at = NULL,
+           last_refreshed_at = NULL,
+           oauth_status = NULL,
+           oauth_state = NULL,
+           oauth_pkce_verifier = NULL,
+           oauth_last_error = NULL,
+           oauth_last_error_at = NULL,
+           refresh_failure_count = 0
+         WHERE id = ?`,
+        [id]
+      );
+      fieldsChanged.push('oauth_state_cleared');
+    }
+
+    auditConn(req.db, {
+      tool: CONN_TOOL,
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method,
+      status: 'success',
+      ...meta,
+      details: {
+        credential_id: Number(id),
+        credential_name: data.name ?? existing.name,
+        credential_type: newType,
+        fields_changed: fieldsChanged,
+      },
+    });
+
     res.json({ status: 'success' });
   } catch (err) {
     console.error('[hook] update credential error:', err);
+    auditConn(req.db, {
+      tool: CONN_TOOL,
+      userId: req.auth?.userId, username: req.auth?.username,
+      route: req.originalUrl, method: req.method,
+      status: 'failed', errorMessage: err.message,
+      ...meta,
+      details: { credential_id: Number(id), error: err.message },
+    });
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
 
-router.delete('/api/credentials/:id', jwtOrApiKey, async (req, res) => {
+// DELETE — admin only.
+router.delete('/api/credentials/:id', superuserOnlyFor(CONN_TOOL), async (req, res) => {
+  const id = req.params.id;
+  const meta = reqMetaForConn(req);
   try {
-    await hookService.deleteCredential(req.db, req.params.id);
+    const [[existing]] = await req.db.query(
+      `SELECT id, name, type FROM credentials WHERE id = ?`,
+      [id]
+    );
+    if (!existing) {
+      return res.status(404).json({ status: 'error', message: 'Credential not found' });
+    }
+
+    await hookService.deleteCredential(req.db, id);
+
+    auditConn(req.db, {
+      tool: CONN_TOOL,
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method,
+      status: 'success',
+      ...meta,
+      details: { credential_id: existing.id, credential_name: existing.name, credential_type: existing.type },
+    });
+
     res.json({ status: 'success' });
   } catch (err) {
     console.error('[hook] delete credential error:', err);
+    auditConn(req.db, {
+      tool: CONN_TOOL,
+      userId: req.auth?.userId, username: req.auth?.username,
+      route: req.originalUrl, method: req.method,
+      status: 'failed', errorMessage: err.message,
+      ...meta,
+      details: { credential_id: Number(id), error: err.message },
+    });
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
