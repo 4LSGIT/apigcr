@@ -141,6 +141,68 @@ function validateInternalFunctionConfig(stepType, config) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Webhook step config validation — async because credential FK check.
+//
+// Mirrors routes/sequences.js validateStepConfig 'webhook' branch and
+// routes/scheduled_jobs.js validateWebhookJobData. Single source of truth
+// would be nice but each engine has different config shapes (sequences put
+// it in action_config, workflows in step.config, scheduled jobs in job
+// data) so the gathering differs even though the field-level rules are
+// identical. Kept duplicated rather than abstracted for readability.
+//
+// Returns null on success, or { status, error } on failure.
+// ─────────────────────────────────────────────────────────────
+
+const ALLOWED_HTTP_METHODS_WF = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+const MAX_TIMEOUT_MS_WF = 120000;
+
+async function validateWebhookConfig(db, type, config) {
+  if (type !== 'webhook') return null;
+  if (config == null || typeof config !== 'object') return null;
+
+  const { url, method, credential_id, headers, body, timeout_ms } = config;
+
+  if (!url || typeof url !== 'string' || !url.trim()) {
+    return { status: 400, error: 'webhook config.url is required (non-empty string)' };
+  }
+  // URL parse-check: skip if it has placeholders, since the universal resolver
+  // runs at execution time (same pattern as sequence webhook validation).
+  if (!/\{\{.*?\}\}/.test(url)) {
+    try { new URL(url); }
+    catch { return { status: 400, error: `webhook config.url is not a valid URL: ${url}` }; }
+  }
+  if (method !== undefined && method !== null && method !== '') {
+    const m = String(method).toUpperCase();
+    if (!ALLOWED_HTTP_METHODS_WF.includes(m)) {
+      return { status: 400, error: `webhook config.method must be one of ${ALLOWED_HTTP_METHODS_WF.join(', ')}` };
+    }
+  }
+  if (credential_id !== undefined && credential_id !== null && credential_id !== '') {
+    const n = Number(credential_id);
+    if (!Number.isInteger(n) || n <= 0) {
+      return { status: 400, error: 'webhook config.credential_id must be a positive integer' };
+    }
+    const [[row]] = await db.query(`SELECT id FROM credentials WHERE id = ?`, [n]);
+    if (!row) {
+      return { status: 400, error: `webhook config.credential_id ${n} does not exist in credentials table` };
+    }
+  }
+  if (headers !== undefined && headers !== null) {
+    if (typeof headers !== 'object' || Array.isArray(headers)) {
+      return { status: 400, error: 'webhook config.headers must be a JSON object' };
+    }
+  }
+  // body intentionally permissive — object, array, string, number all OK
+  if (timeout_ms !== undefined && timeout_ms !== null) {
+    const n = Number(timeout_ms);
+    if (!Number.isInteger(n) || n <= 0 || n > MAX_TIMEOUT_MS_WF) {
+      return { status: 400, error: `webhook config.timeout_ms must be a positive integer <= ${MAX_TIMEOUT_MS_WF}` };
+    }
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
 // GET /workflows/functions — list available internal functions
 // Used by workflowManager.html to populate dropdowns dynamically
 // MUST be defined before any /:id routes to avoid param capture
@@ -757,6 +819,12 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
+  // Webhook credential injection slice — validate URL, method, credential FK, timeout
+  {
+    const v = await validateWebhookConfig(db, type, config);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
+
   let connection;
   try {
     connection = await db.getConnection();
@@ -879,6 +947,15 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
     // Timing-extensions slice — validate wait_for / schedule_resume params
     {
       const v = validateInternalFunctionConfig(step.type, step.config);
+      if (v) return res.status(v.status).json({
+        error: `Step ${i + 1}: ${v.error}`,
+        message: v.message,
+      });
+    }
+
+    // Webhook credential injection slice — validate URL, method, credential FK, timeout
+    {
+      const v = await validateWebhookConfig(db, step.type, step.config);
       if (v) return res.status(v.status).json({
         error: `Step ${i + 1}: ${v.error}`,
         message: v.message,
@@ -1361,6 +1438,12 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
+  // Webhook credential injection slice — validate URL, method, credential FK, timeout
+  {
+    const v = await validateWebhookConfig(db, type, config);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
+
   let connection;
   try {
     connection = await db.getConnection();
@@ -1471,6 +1554,13 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
         await connection.rollback();
         connection.release();
         return res.status(v.status).json({ error: v.error, message: v.message });
+      }
+      // Webhook credential injection slice — same combination-check pattern.
+      const wv = await validateWebhookConfig(db, typeToCheck, configToCheck);
+      if (wv) {
+        await connection.rollback();
+        connection.release();
+        return res.status(wv.status).json({ error: wv.error, message: wv.message });
       }
     }
 

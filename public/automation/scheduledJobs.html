@@ -205,6 +205,12 @@ let subPageActive = false;
 // matches hooks.html's approach, avoids shell-level state.
 const FUNCTIONS = { workflow: [], sequence: [] };
 
+// Credentials list for the webhook credential dropdown — same pattern as
+// workflows.html and sequences.html.  `loaded` flag distinguishes "not yet
+// fetched" from "fetched and empty" so the dropdown can show a loading
+// placeholder vs an empty option list.
+const CREDENTIALS = { list: [], loaded: false };
+
 async function loadFunctions() {
   try {
     const data = await api('/workflows/functions');
@@ -215,6 +221,89 @@ async function loadFunctions() {
     FUNCTIONS.workflow = ['set_next','evaluate_condition','noop','set_var','format_string','schedule_resume','wait_for','wait_until_time','send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','set_test_var'];
     FUNCTIONS.sequence = ['send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','noop','set_var'];
   }
+}
+
+async function loadCredentials() {
+  try {
+    const data = await api('/api/credentials');
+    CREDENTIALS.list = data.credentials || [];
+    CREDENTIALS.loaded = true;
+  } catch (e) {
+    console.warn('Failed to load credentials:', e.message);
+    // loaded stays false so the dropdown shows "loading credentials…"
+    // rather than implying the user has none configured.
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Internal-credential URL safety check (save-time warning)
+//
+// Mirrors the same helper in workflows.html. See that file for full rationale.
+// Runtime credential injection (lib/credentialInjection) fails closed for
+// internal creds when the URL is foreign; this surfaces the misconfig at
+// edit time so operators don't waste a job execution on a silent fail.
+//
+// Two flavors:
+//   - 'foreign'        — URL host is not this app
+//   - 'hook_receiver'  — URL is /hooks/* on this app (exfil risk via hook targets)
+//
+// Returns { ok: true } or { ok: false, level, text }.
+// ─────────────────────────────────────────────────────────────
+function checkInternalCredUrl(credentialId, urlString) {
+  if (!credentialId) return { ok: true };
+  const cred = CREDENTIALS.list.find(c => String(c.id) === String(credentialId));
+  if (!cred || cred.type !== 'internal') return { ok: true };
+  if (!urlString || typeof urlString !== 'string' || !urlString.trim()) return { ok: true };
+
+  const appOrigin = window.location.origin;
+
+  let target;
+  try { target = new URL(urlString); } catch { return { ok: true }; }
+  let appUrl;
+  try { appUrl = new URL(appOrigin); } catch { return { ok: true }; }
+
+  const sameHost = target.protocol === appUrl.protocol
+                && target.hostname === appUrl.hostname
+                && (!appUrl.port || target.port === appUrl.port);
+  if (!sameHost) {
+    return {
+      ok: false, level: 'foreign',
+      text: `Internal credential will NOT be sent at runtime — URL host does not match this app (${appUrl.hostname}). Pick a different credential type or change the URL.`,
+    };
+  }
+  if (target.pathname.startsWith('/hooks/') || target.pathname === '/hooks') {
+    return {
+      ok: false, level: 'hook_receiver',
+      text: `Internal credential should not be used for hook receiver URLs — the receiver does not consume the credential, and a configured hook target could forward the key to an external URL (exfil risk).`,
+    };
+  }
+  return { ok: true };
+}
+
+// Render the warning into the supplied element id (caller passes the id
+// because the new-job dialog and the edit dialog use different ids).
+function sjUpdateCredWarning(warnElId, credElId, urlElId) {
+  const warnEl = document.getElementById(warnElId);
+  if (!warnEl) return;
+  const credId = document.getElementById(credElId)?.value || '';
+  // URL field is optional (only present in jobNew, not in jobEdit which
+  // displays URL as readonly). Caller passes urlElId='' if no URL field
+  // exists; in that case use the captured-at-render URL stored on the
+  // warning element via data-url.
+  let url = '';
+  if (urlElId) {
+    url = document.getElementById(urlElId)?.value || '';
+  } else {
+    url = warnEl.dataset.url || '';
+  }
+  const result = checkInternalCredUrl(credId, url);
+  if (result.ok) {
+    warnEl.style.display = 'none';
+    warnEl.textContent = '';
+    return;
+  }
+  warnEl.style.display = '';
+  warnEl.textContent = '⚠ ' + result.text;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -283,10 +372,19 @@ function jobCardHTML(job) {
 
 async function jobNew() {
   // Make sure FUNCTIONS is loaded (could fire before init completes
-  // if shell calls onNew very early — defensive).
+  // if shell calls onNew very early — defensive). Same for CREDENTIALS,
+  // which the webhook branch of the form needs.
   if (!FUNCTIONS.workflow.length) await loadFunctions();
+  if (!CREDENTIALS.loaded)        await loadCredentials();
 
   const fnOpts = (FUNCTIONS.workflow.length ? FUNCTIONS.workflow : ['noop']).map(f => `<option value="${f}">${f}</option>`).join('');
+  // Webhook credential injection slice — credential dropdown for webhook jobs.
+  // Empty option means no auth header (anonymous request).
+  const credOpts = CREDENTIALS.loaded
+    ? `<option value="">— none —</option>` + CREDENTIALS.list.map(c =>
+        `<option value="${c.id}">${esc(c.name)} (${esc(c.type)})</option>`
+      ).join('')
+    : `<option value="">loading credentials…</option>`;
   const { value: vals } = await Swal.fire({
     title: 'New Scheduled Job',
     html: `
@@ -325,9 +423,16 @@ async function jobNew() {
         <div id="sj-params-wrap" class="sj-field"><span class="sj-label">Params (JSON)</span>
           <textarea id="sj-params" class="sj-el" placeholder='{ "from": "2485592400", "to": "...", "message": "..." }'>{}</textarea></div>
         <div id="sj-url-wrap" class="sj-field" style="display:none"><span class="sj-label">Webhook URL</span>
-          <input id="sj-url" class="sj-el" placeholder="https://..."></div>
+          <input id="sj-url" class="sj-el" placeholder="https://..." oninput="sjUpdateCredWarning('sj-cred-warn','sj-cred','sj-url')"></div>
         <div id="sj-method-wrap" class="sj-field" style="display:none"><span class="sj-label">HTTP Method</span>
           <select id="sj-method" class="sj-el"><option>GET</option><option selected>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option></select></div>
+        <div id="sj-cred-wrap" class="sj-field" style="display:none"><span class="sj-label">Credential</span>
+          <select id="sj-cred" class="sj-el" onchange="sjUpdateCredWarning('sj-cred-warn','sj-cred','sj-url')">${credOpts}</select>
+          <div class="sj-note">Optional — auth header injected at request time.</div>
+          <div id="sj-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.4"></div></div>
+        <div id="sj-timeout-wrap" class="sj-field" style="display:none"><span class="sj-label">Timeout (ms)</span>
+          <input id="sj-timeout" class="sj-el" type="number" min="1" max="120000" value="30000">
+          <div class="sj-note">Default 30000, max 120000.</div></div>
         <div id="sj-code-wrap" class="sj-field" style="display:none"><span class="sj-label">Code</span>
           <textarea id="sj-code" class="sj-el" style="min-height:80px" placeholder="const result = input.x + input.y; result;"></textarea></div>
         <hr class="sj-divider">
@@ -359,7 +464,12 @@ async function jobNew() {
         </div>
       </div>`,
     showCancelButton: true, confirmButtonText: 'Create', width: 560,
-    didOpen: () => sjToggleFields(),
+    didOpen: () => {
+      sjToggleFields();
+      // Initial warning evaluation — covers the case where someone re-opens
+      // New Job after switching from a webhook flow.
+      sjUpdateCredWarning('sj-cred-warn', 'sj-cred', 'sj-url');
+    },
     preConfirm: () => {
       const type = document.getElementById('sj-type').value;
       const job_type = document.getElementById('sj-job-type').value;
@@ -397,6 +507,17 @@ async function jobNew() {
       } else if (job_type === 'webhook') {
         payload.url = document.getElementById('sj-url').value.trim();
         payload.method = document.getElementById('sj-method').value;
+        // Webhook credential injection slice — both fields optional. Empty
+        // dropdown selection ⇒ omit credential_id (anonymous request, route
+        // accepts that). Empty/invalid timeout_ms ⇒ omit so engine default
+        // (30 s) applies.
+        const credRaw = document.getElementById('sj-cred')?.value;
+        if (credRaw) payload.credential_id = parseInt(credRaw, 10);
+        const timeoutRaw = document.getElementById('sj-timeout')?.value;
+        if (timeoutRaw) {
+          const t = parseInt(timeoutRaw, 10);
+          if (Number.isInteger(t) && t > 0) payload.timeout_ms = t;
+        }
       } else if (job_type === 'custom_code') {
         payload.code = document.getElementById('sj-code').value;
       }
@@ -431,8 +552,17 @@ function sjToggleFields() {
   show('sj-params-wrap',       jobType === 'internal_function');
   show('sj-url-wrap',          jobType === 'webhook');
   show('sj-method-wrap',       jobType === 'webhook');
+  show('sj-cred-wrap',         jobType === 'webhook');
+  show('sj-timeout-wrap',      jobType === 'webhook');
   show('sj-code-wrap',         jobType === 'custom_code');
   show('sj-recurring-fields',  schedType === 'recurring');
+  // Hide warning when leaving webhook — fields are about to disappear so
+  // the warning would dangle. Re-evaluation happens via the URL/cred
+  // oninput/onchange handlers when user re-enters webhook.
+  if (jobType !== 'webhook') {
+    const w = document.getElementById('sj-cred-warn');
+    if (w) { w.style.display = 'none'; w.textContent = ''; }
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -445,6 +575,21 @@ async function jobEdit(id) {
   const jobType = jobData.type || data.job_type || '—';
   const fnName  = jobData.function_name || '';
   const jobUrl  = jobData.url || '';
+
+  // Webhook credential injection slice — make sure credentials cache is loaded
+  // before showing the Edit dialog if the job is a webhook. For non-webhook
+  // jobs the cache isn't needed; skip the wait.
+  if (jobType === 'webhook' && !CREDENTIALS.loaded) await loadCredentials();
+
+  // Build the credential dropdown for webhook jobs only. Selected option
+  // matches the job's current credential_id; empty option means "no auth".
+  const isWebhook = jobType === 'webhook';
+  const curCred = jobData.credential_id == null ? '' : String(jobData.credential_id);
+  const credOpts = CREDENTIALS.loaded
+    ? `<option value="">— none —</option>` + CREDENTIALS.list.map(c =>
+        `<option value="${c.id}" ${String(c.id) === curCred ? 'selected' : ''}>${esc(c.name)} (${esc(c.type)})</option>`
+      ).join('')
+    : `<option value="${esc(curCred)}" selected>loading credentials…</option>`;
 
   const { value: vals } = await Swal.fire({
     title: `Edit Job #${id}`,
@@ -471,6 +616,17 @@ async function jobEdit(id) {
         </div>
         <div class="sj-field"><span class="sj-label">Name</span>
           <input id="sje-name" class="sj-el" value="${esc(data.name || '')}"></div>
+        ${isWebhook ? `
+        <hr class="sj-divider">
+        <div class="sj-row">
+          <div class="sj-field"><span class="sj-label">Credential</span>
+            <select id="sje-cred" class="sj-el" onchange="sjUpdateCredWarning('sje-cred-warn','sje-cred','')">${credOpts}</select>
+            <div class="sj-note">Auth header injected at request time.</div>
+            <div id="sje-cred-warn" data-url="${esc(jobUrl)}" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.4"></div></div>
+          <div class="sj-field"><span class="sj-label">Timeout (ms)</span>
+            <input id="sje-timeout" class="sj-el" type="number" min="1" max="120000" value="${jobData.timeout_ms || 30000}">
+            <div class="sj-note">Default 30000, max 120000.</div></div>
+        </div>` : ''}
         <hr class="sj-divider">
         <div class="sj-row">
           <div class="sj-field"><span class="sj-label">Scheduled Time (UTC)</span>
@@ -498,6 +654,12 @@ async function jobEdit(id) {
         </div>
       </div>`,
     showCancelButton: true, confirmButtonText: 'Save', width: 560,
+    didOpen: () => {
+      // Initial warning evaluation — covers existing webhook jobs that were
+      // saved before this slice's URL-scope check landed (or where the URL
+      // was changed externally to a foreign host).
+      if (isWebhook) sjUpdateCredWarning('sje-cred-warn', 'sje-cred', '');
+    },
     preConfirm: () => {
       const payload = {};
       const name = document.getElementById('sje-name').value.trim();
@@ -514,6 +676,35 @@ async function jobEdit(id) {
         payload.max_executions = maxExec ? parseInt(maxExec) : undefined;
         payload.expires_at = expires ? new Date(expires + 'Z').toISOString() : undefined;
       }
+
+      // Webhook credential injection slice — if this is a webhook job and the
+      // user changed the credential or timeout, send a merged `data` payload.
+      // PATCH replaces the entire data column, so we must spread the existing
+      // jobData and overwrite only the touched keys. Skip the merge entirely
+      // if neither field actually changed — keeps the PATCH minimal.
+      if (isWebhook) {
+        const credRaw = document.getElementById('sje-cred')?.value || '';
+        const newCredId = credRaw ? parseInt(credRaw, 10) : null;
+        const oldCredId = jobData.credential_id == null ? null : Number(jobData.credential_id);
+
+        const timeoutRaw = document.getElementById('sje-timeout')?.value || '';
+        const newTimeout = timeoutRaw ? parseInt(timeoutRaw, 10) : null;
+        const oldTimeout = jobData.timeout_ms == null ? null : Number(jobData.timeout_ms);
+
+        const credChanged    = newCredId   !== oldCredId;
+        const timeoutChanged = newTimeout  !== oldTimeout;
+
+        if (credChanged || timeoutChanged) {
+          const mergedData = { ...jobData };
+          // Use null to explicitly clear; route validation handles null/missing the same.
+          if (newCredId == null) delete mergedData.credential_id;
+          else                   mergedData.credential_id = newCredId;
+          if (newTimeout == null) delete mergedData.timeout_ms;
+          else                    mergedData.timeout_ms = newTimeout;
+          payload.data = mergedData;
+        }
+      }
+
       return payload;
     }
   });
@@ -557,8 +748,23 @@ async function jobView(id) {
     let config = '';
     if (jobType === 'internal_function')
       config = `<strong>Function:</strong> ${esc(jobData.function_name || '—')}<br><strong>Params:</strong> <pre style="background:#f1f5f9;padding:6px 8px;border-radius:4px;font-size:11px;margin:4px 0;max-height:120px;overflow:auto">${esc(JSON.stringify(jobData.params || {}, null, 2))}</pre>`;
-    else if (jobType === 'webhook')
-      config = `<strong>URL:</strong> ${esc(jobData.url || '—')}<br><strong>Method:</strong> ${esc(jobData.method || 'GET')}`;
+    else if (jobType === 'webhook') {
+      // Resolve credential name from cache if available; fall back to id
+      // when the cache hasn't loaded yet (View dialog can be opened before
+      // init's loadCredentials resolves).
+      let credLabel = '— none —';
+      if (jobData.credential_id != null && jobData.credential_id !== '') {
+        const found = CREDENTIALS.list.find(c => String(c.id) === String(jobData.credential_id));
+        credLabel = found
+          ? `${found.name} (${found.type})`
+          : `#${jobData.credential_id}`;
+      }
+      const timeoutLabel = jobData.timeout_ms ? `${jobData.timeout_ms} ms` : '30000 ms (default)';
+      config = `<strong>URL:</strong> ${esc(jobData.url || '—')}<br>` +
+               `<strong>Method:</strong> ${esc(jobData.method || 'GET')}<br>` +
+               `<strong>Credential:</strong> ${esc(credLabel)}<br>` +
+               `<strong>Timeout:</strong> ${esc(timeoutLabel)}`;
+    }
     else if (jobType === 'custom_code')
       config = `<strong>Code:</strong> <pre style="background:#f1f5f9;padding:6px 8px;border-radius:4px;font-size:11px;margin:4px 0;max-height:120px;overflow:auto">${esc((jobData.code || '').slice(0, 500))}</pre>`;
 
@@ -602,7 +808,9 @@ async function jobView(id) {
 async function init() {
   subPageActive = true;
   declareTopbar();
-  await loadFunctions();   // needed before first jobNew
+  // FUNCTIONS needed before first jobNew. CREDENTIALS only used for webhook
+  // job type — fetch in parallel so the New Job dialog opens snappy either way.
+  await Promise.all([loadFunctions(), loadCredentials()]);
   await loadJobs();
 }
 
@@ -646,6 +854,7 @@ window.jobRetry          = jobRetry;
 window.jobDelete         = jobDelete;
 window.jobView           = jobView;
 window.sjToggleFields    = sjToggleFields;
+window.sjUpdateCredWarning = sjUpdateCredWarning;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {

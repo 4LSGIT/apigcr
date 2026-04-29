@@ -566,6 +566,66 @@ async function loadSeqExtras() {
   if (jobs.length) await Promise.all(jobs);
 }
 
+// ─────────────────────────────────────────────────────────────
+// Internal-credential URL safety check (save-time warning)
+//
+// Same pattern as workflows.html and scheduledJobs.html — see those for
+// detailed rationale. The warning surfaces two flavors:
+//   - 'foreign'        — URL host is not this app
+//   - 'hook_receiver'  — URL is /hooks/* on this app (exfil risk via hook
+//     targets, even though the receiver-side header strip closes the
+//     specific INTERNAL_API_KEY exfil — there's no legitimate reason to
+//     send an internal cred to a hook)
+//
+// Returns { ok: true } or { ok: false, level, text }.
+// ─────────────────────────────────────────────────────────────
+function checkInternalCredUrl(credentialId, urlString) {
+  if (!credentialId) return { ok: true };
+  const cred = SEQ_CREDENTIALS.list.find(c => String(c.id) === String(credentialId));
+  if (!cred || cred.type !== 'internal') return { ok: true };
+  if (!urlString || typeof urlString !== 'string' || !urlString.trim()) return { ok: true };
+
+  const appOrigin = window.location.origin;
+  let target;
+  try { target = new URL(urlString); } catch { return { ok: true }; }
+  let appUrl;
+  try { appUrl = new URL(appOrigin); } catch { return { ok: true }; }
+
+  const sameHost = target.protocol === appUrl.protocol
+                && target.hostname === appUrl.hostname
+                && (!appUrl.port || target.port === appUrl.port);
+  if (!sameHost) {
+    return {
+      ok: false, level: 'foreign',
+      text: `Internal credential will NOT be sent at runtime — URL host does not match this app (${appUrl.hostname}). Pick a different credential type or change the URL.`,
+    };
+  }
+  if (target.pathname.startsWith('/hooks/') || target.pathname === '/hooks') {
+    return {
+      ok: false, level: 'hook_receiver',
+      text: `Internal credential should not be used for hook receiver URLs — the receiver does not consume the credential, and a configured hook target could forward the key to an external URL (exfil risk).`,
+    };
+  }
+  return { ok: true };
+}
+
+// Update the warning element in the sequence webhook editor.  Pure DOM
+// op — no-op if the editor isn't currently mounted.
+function seqUpdateCredWarning() {
+  const warnEl = document.getElementById('se-wh-cred-warn');
+  if (!warnEl) return;
+  const credId = document.getElementById('se-wh-cred')?.value || '';
+  const url    = document.getElementById('se-wh-url')?.value || '';
+  const result = checkInternalCredUrl(credId, url);
+  if (result.ok) {
+    warnEl.style.display = 'none';
+    warnEl.textContent = '';
+    return;
+  }
+  warnEl.style.display = '';
+  warnEl.textContent = '⚠ ' + result.text;
+}
+
 // ══════════════════════════════════════════════════════════════════
 // TEMPLATE LIST + CANVAS
 // ══════════════════════════════════════════════════════════════════
@@ -794,6 +854,10 @@ function seqRenderEditTab(step) {
     <div class="field"><label>Backoff Seconds</label>
       <input id="se-ep-backoff" type="number" min="0" value="${ep.backoff_seconds ?? 5}">
     </div>`;
+  // Surface the internal-cred warning on initial render — covers the case
+  // where a saved webhook step already has a misconfigured (cred + URL) pair.
+  // No-op if action_type is not 'webhook' (warning element won't exist).
+  seqUpdateCredWarning();
 }
 
 function seqRenderActionConfig(type, cfg) {
@@ -829,11 +893,12 @@ function seqRenderActionConfig(type, cfg) {
           <select id="se-wh-method">${methods.map(m => `<option ${m === curMethod ? 'selected' : ''}>${m}</option>`).join('')}</select>
         </div>
         <div class="field" style="flex:1"><label>URL</label>
-          <input id="se-wh-url" value="${esc(cfg.url || '')}" placeholder="https://example.com/path — {{placeholders}} OK">
+          <input id="se-wh-url" value="${esc(cfg.url || '')}" placeholder="https://example.com/path — {{placeholders}} OK" oninput="seqUpdateCredWarning()">
         </div>
       </div>
       <div class="field"><label>Credential</label>
-        <select id="se-wh-cred">${credOpts}</select>
+        <select id="se-wh-cred" onchange="seqUpdateCredWarning()">${credOpts}</select>
+        <div id="se-wh-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.4"></div>
       </div>
       <div class="field"><label>Headers (JSON)</label>
         <textarea id="se-wh-headers" rows="2">${esc(headersText)}</textarea>
@@ -903,6 +968,10 @@ function seqOnStartWorkflowTieChange() {
 function seqOnActionTypeChange() {
   const t = document.getElementById('se-action-type')?.value;
   if (t) document.getElementById('se-config-area').innerHTML = seqRenderActionConfig(t, {});
+  // If user just switched to webhook the cred dropdown is freshly mounted
+  // with no value, so no warning will fire — but we run anyway to keep
+  // render and warning evaluation paired.
+  seqUpdateCredWarning();
 }
 
 function seqRenderTimingTab(step) {
@@ -1756,6 +1825,7 @@ window.seqSelectStep              = seqSelectStep;
 window.seqStepSave                = seqStepSave;
 window.seqStepCancel              = seqStepCancel;
 window.seqOnActionTypeChange      = seqOnActionTypeChange;
+window.seqUpdateCredWarning       = seqUpdateCredWarning;
 window.seqOnStartWorkflowTieChange = seqOnStartWorkflowTieChange;
 window.seqOnTimingTypeChange      = seqOnTimingTypeChange;
 window.seqOnDelayModeChange       = seqOnDelayModeChange;

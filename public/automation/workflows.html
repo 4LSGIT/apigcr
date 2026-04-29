@@ -543,6 +543,12 @@ let wfLoaded = false;
 // without metadata fall back to a Params JSON textarea.
 const FUNCTIONS = { workflow: [], sequence: [], meta: {} };
 
+// ── CREDENTIALS list — same pattern as sequences.html SEQ_CREDENTIALS ──
+// Loaded once at init and reused by the webhook step editor.  `loaded`
+// flag lets the editor render a "loading credentials…" placeholder if
+// the user opens the editor before the fetch completes (race-safe).
+const CREDENTIALS = { list: [], loaded: false };
+
 async function loadFunctions() {
   try {
     const data = await api('/workflows/functions');
@@ -555,6 +561,97 @@ async function loadFunctions() {
     FUNCTIONS.sequence = ['send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','run_task_digest','noop','set_var'];
     FUNCTIONS.meta     = {};  // metadata-driven form falls back to JSON textarea when meta is empty
   }
+}
+
+async function loadCredentials() {
+  try {
+    const data = await api('/api/credentials');
+    CREDENTIALS.list = data.credentials || [];
+    CREDENTIALS.loaded = true;
+  } catch (e) {
+    console.warn('Failed to load credentials:', e.message);
+    // Leave loaded=false so the editor knows the dropdown is empty for a
+    // reason other than "user has no credentials". An empty dropdown with
+    // loaded=true would silently look like "you have none configured".
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Internal-credential URL safety check (save-time warning)
+//
+// The runtime credential injection layer (lib/credentialInjection) fails
+// closed for internal creds when the URL doesn't match APP_URL, but a
+// silent fail at execution time is bad UX. This helper surfaces the
+// problem in the editor so operators catch the misconfig at save time.
+//
+// Two warning flavors:
+//   - foreign: URL is on a different host than the shell (APP_URL).
+//     Internal cred header won't inject at runtime; operator probably
+//     meant to pick a non-internal cred.
+//   - hook_receiver: URL is on this app's host but its path starts with
+//     /hooks/. The receiver doesn't consume the internal cred AND
+//     forwarding to a hook is the known exfil vector for INTERNAL_API_KEY.
+//
+// Returns one of:
+//   { ok: true }                                  — no warning
+//   { ok: false, level: 'foreign',       text }
+//   { ok: false, level: 'hook_receiver', text }
+// ─────────────────────────────────────────────────────────────
+function checkInternalCredUrl(credentialId, urlString) {
+  // Only relevant for internal-typed credentials.
+  if (!credentialId) return { ok: true };
+  const cred = CREDENTIALS.list.find(c => String(c.id) === String(credentialId));
+  if (!cred || cred.type !== 'internal') return { ok: true };
+  if (!urlString || typeof urlString !== 'string' || !urlString.trim()) return { ok: true };
+
+  // Use window.location.origin as APP_URL proxy — the shell is served from
+  // APP_URL so they're the same origin. (Any further-out config like CDNs
+  // is irrelevant here.)
+  const appOrigin = window.location.origin;
+
+  let target;
+  try { target = new URL(urlString); } catch { return { ok: true }; } // bad URL — let server validation catch it
+
+  // Foreign host? Compare protocol + hostname (and port if app has one).
+  let appUrl;
+  try { appUrl = new URL(appOrigin); } catch { return { ok: true }; }
+  const sameHost = target.protocol === appUrl.protocol
+                && target.hostname === appUrl.hostname
+                && (!appUrl.port || target.port === appUrl.port);
+  if (!sameHost) {
+    return {
+      ok: false, level: 'foreign',
+      text: `Internal credential will NOT be sent at runtime — URL host does not match this app (${appUrl.hostname}). Pick a different credential type or change the URL.`,
+    };
+  }
+
+  // Hook receiver? /hooks/* path on this host. Trailing-slash and exact-prefix
+  // match: /hooks/something matches; /hooks-stats does not.
+  if (target.pathname.startsWith('/hooks/') || target.pathname === '/hooks') {
+    return {
+      ok: false, level: 'hook_receiver',
+      text: `Internal credential should not be used for hook receiver URLs — the receiver does not consume the credential, and a configured hook target could forward the key to an external URL (exfil risk). Use a different mechanism for self-targeted hook calls.`,
+    };
+  }
+
+  return { ok: true };
+}
+
+// Render the warning into the #e-cred-warn element if present.
+// Called on every credential-dropdown or URL change in the webhook editor.
+function wfUpdateCredWarning() {
+  const warnEl = document.getElementById('e-cred-warn');
+  if (!warnEl) return;
+  const credId = document.getElementById('e-cred')?.value || '';
+  const url    = document.getElementById('e-url')?.value || '';
+  const result = checkInternalCredUrl(credId, url);
+  if (result.ok) {
+    warnEl.style.display = 'none';
+    warnEl.textContent = '';
+    return;
+  }
+  warnEl.style.display = '';
+  warnEl.textContent = '⚠ ' + result.text;
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -779,17 +876,37 @@ function wfRenderEditor(step) {
     <div class="field"><label>Backoff Seconds</label>
       <input id="e-ep-backoff" type="number" min="0" value="${ep.backoff_seconds ?? 5}">
     </div>`;
+  // Surface the internal-cred warning on initial render — covers the case
+  // where a saved step already has a misconfigured (cred + URL) pair.
+  // wfUpdateCredWarning is a no-op if the webhook editor isn't currently
+  // mounted (e.g. step type is internal_function), so safe to call always.
+  wfUpdateCredWarning();
 }
 
 function wfRenderConfigFields(type, cfg) {
   const toggle = `<div class="json-toggle" onclick="wfToggleJson()"><i class="fa-solid fa-code"></i> ${WF.jsonMode ? 'Switch to form' : 'Edit as JSON'}</div>`;
   if (WF.jsonMode) return `${toggle}<div class="field"><label>Config JSON</label><textarea id="e-config-json" rows="14">${JSON.stringify(cfg, null, 2)}</textarea></div>`;
-  if (type === 'webhook') return `${toggle}
-    <div class="field"><label>URL</label><input id="e-url" value="${esc(cfg.url || '')}"></div>
+  if (type === 'webhook') {
+    // Credential dropdown — same pattern as sequences.html webhook step editor.
+    // Selected value derives from cfg.credential_id; pre-load placeholder if
+    // the credentials cache hasn't landed yet (race on first paint).
+    const curCred = cfg.credential_id == null ? '' : String(cfg.credential_id);
+    const credOpts = CREDENTIALS.loaded
+      ? `<option value="">— none —</option>` + CREDENTIALS.list.map(c =>
+          `<option value="${c.id}" ${String(c.id) === curCred ? 'selected' : ''}>${esc(c.name)} (${esc(c.type)})</option>`
+        ).join('')
+      : `<option value="${esc(curCred)}" selected>loading credentials…</option>`;
+    return `${toggle}
+    <div class="field"><label>URL</label><input id="e-url" value="${esc(cfg.url || '')}" oninput="wfUpdateCredWarning()"></div>
     <div class="field"><label>Method</label><select id="e-method">${['GET','POST','PUT','PATCH','DELETE'].map(m => `<option ${cfg.method === m ? 'selected' : ''}>${m}</option>`).join('')}</select></div>
+    <div class="field"><label>Credential</label><select id="e-cred" onchange="wfUpdateCredWarning()">${credOpts}</select>
+      <div id="e-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.4"></div>
+    </div>
     <div class="field"><label>Body (JSON)</label><textarea id="e-body">${cfg.body ? JSON.stringify(cfg.body, null, 2) : ''}</textarea></div>
     <div class="field"><label>Headers (JSON)</label><textarea id="e-headers" rows="3">${cfg.headers ? JSON.stringify(cfg.headers, null, 2) : ''}</textarea></div>
+    <div class="field"><label>Timeout (ms)</label><input id="e-timeout" type="number" min="1" max="120000" value="${cfg.timeout_ms || 30000}"><div style="font-size:11px;color:var(--muted);margin-top:3px">Default 30000, max 120000</div></div>
     <div class="field"><label>set_vars (JSON)</label><textarea id="e-setvars" rows="3">${cfg.set_vars ? JSON.stringify(cfg.set_vars, null, 2) : ''}</textarea></div>`;
+  }
   if (type === 'internal_function') {
     const fnList = (FUNCTIONS.workflow.length ? FUNCTIONS.workflow : ['noop']);
     const currentFn = cfg.function_name && fnList.includes(cfg.function_name) ? cfg.function_name : fnList[0];
@@ -807,6 +924,9 @@ function wfRenderConfigFields(type, cfg) {
 function wfOnTypeChange() {
   const t = document.getElementById('e-type')?.value;
   if (t) document.getElementById('e-config-area').innerHTML = wfRenderConfigFields(t, {});
+  // If user switched to webhook, run the warning check (no cred selected
+  // yet so it'll be a no-op, but keeps the helper coupled to render events).
+  wfUpdateCredWarning();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1007,6 +1127,22 @@ function wfGatherConfig(type) {
     if (body) cfg.body = body;
     if (headers) cfg.headers = headers;
     if (sv) cfg.set_vars = sv;
+
+    // Webhook credential injection slice — gather optional credential FK and
+    // timeout. Empty credential dropdown selection ⇒ omit the key entirely
+    // (route validates only when present). Timeout: empty / non-numeric ⇒
+    // omit so the engine's default (30s) applies; the field's default value
+    // is also 30000 so this is mostly a defensive fallback.
+    const credRaw = val('e-cred');
+    if (credRaw) {
+      const credId = parseInt(credRaw, 10);
+      if (Number.isInteger(credId) && credId > 0) cfg.credential_id = credId;
+    }
+    const timeoutRaw = val('e-timeout');
+    if (timeoutRaw) {
+      const t = parseInt(timeoutRaw, 10);
+      if (Number.isInteger(t) && t > 0) cfg.timeout_ms = t;
+    }
     return cfg;
   }
   if (type === 'internal_function') {
@@ -1838,7 +1974,9 @@ async function init() {
   initPanelResize();
   // Load FUNCTIONS first — wfRenderConfigFields needs it when a step is
   // selected, and the user may select a step before loadWorkflows completes.
-  await loadFunctions();
+  // CREDENTIALS loaded in parallel — only used when a webhook step editor
+  // is opened, so it's fine if it lands a moment after FUNCTIONS.
+  await Promise.all([loadFunctions(), loadCredentials()]);
   await loadWorkflows();
   wfLoaded = true;
 }
@@ -1900,6 +2038,7 @@ window.wfStepCancel             = wfStepCancel;
 window.wfOnTypeChange           = wfOnTypeChange;
 window.wfOnFnChange              = wfOnFnChange;
 window.wfToggleJson             = wfToggleJson;
+window.wfUpdateCredWarning      = wfUpdateCredWarning;
 window.wfAddVarRow              = wfAddVarRow;
 window.wfRemoveVarRow           = wfRemoveVarRow;
 window.wfRunTest                = wfRunTest;

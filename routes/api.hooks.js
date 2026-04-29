@@ -35,6 +35,55 @@ const hookReceiveLimiter = rateLimit({
 const VALID_TARGET_TYPES = ['http', 'workflow', 'sequence', 'internal_function'];
 
 // ─────────────────────────────────────────────────────────────
+// SENSITIVE HEADER STRIPPING
+//
+// The hook receiver puts `req.headers` verbatim into `input.headers`, which
+// is then passed to filter / transform / target-delivery code. Transforms
+// in 'code' mode get full access to that input via `new Function('input',
+// code)`, which means a hook author with code-mode privileges could
+// otherwise read any auth header from an inbound request and exfil it via
+// an HTTP target.
+//
+// The specific motivating attack: a workflow webhook step uses an
+// 'internal' credential to call /hooks/<slug> on this app's host. The
+// internal-cred URL-scope check (lib/credentialInjection) approves the
+// call (URL matches APP_URL host), so x-api-key: <INTERNAL_API_KEY>
+// reaches the receiver. Without this strip, the configured transform on
+// that hook can pull the key out of input.headers and a configured HTTP
+// target can POST it to an external URL like webhook.site.
+//
+// Defense-in-depth: this strip closes the chain even if the URL-scope
+// check is misconfigured (e.g., APP_URL env var unset → fails open in
+// some future bug).
+//
+// Denylist rationale:
+//   - 'x-api-key'      — our internal cred header; never a legitimate
+//                        external-webhook payload field
+//   - 'authorization'  — bearer/basic from any other internal auth path
+//   - 'cookie'         — session cookies; never a legitimate external
+//                        webhook payload field
+// External webhook senders (Stripe, Calendly, GitHub, etc.) put their
+// signatures in vendor-specific headers (Stripe-Signature, X-Hub-Signature,
+// etc.) that are NOT in the denylist, so legitimate use is unaffected.
+//
+// Express normalizes header keys to lowercase, so the comparison is
+// straightforward — but we lowercase explicitly anyway in case middleware
+// upstream did something different.
+// ─────────────────────────────────────────────────────────────
+
+const SENSITIVE_HEADER_DENYLIST = new Set(['x-api-key', 'authorization', 'cookie']);
+
+function stripSensitiveHeaders(headers) {
+  if (!headers || typeof headers !== 'object') return {};
+  const out = {};
+  for (const k of Object.keys(headers)) {
+    if (SENSITIVE_HEADER_DENYLIST.has(String(k).toLowerCase())) continue;
+    out[k] = headers[k];
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────
 // RECEIVER — the catch-all webhook endpoint
 // ─────────────────────────────────────────────────────────────
 
@@ -67,10 +116,14 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
       return res.status(401).json({ status: 'error', message: auth.error });
     }
 
-    // Build unified event shape
+    // Build unified event shape.  Headers are stripped of auth-bearing
+    // entries (x-api-key, authorization, cookie) BEFORE being placed into
+    // input.headers — see SENSITIVE_HEADER_DENYLIST above for rationale.
+    // Authentication ran on the raw req above, so per-hook HMAC/header
+    // auth still works against the unscrubbed headers.
     const input = {
       body: req.body || {},
-      headers: req.headers || {},
+      headers: stripSensitiveHeaders(req.headers),
       query: req.query || {},
       method: req.method,
       meta: {

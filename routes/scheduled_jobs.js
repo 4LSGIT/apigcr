@@ -14,6 +14,70 @@ function parseDelay(delayStr) {
   return parsed;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Webhook job-data validation — shared by POST and PATCH.
+//
+// Mirrors the webhook validation in routes/workflows.js and
+// routes/sequences.js (same allowed methods, same FK check on
+// credential_id, same timeout cap). Kept local rather than imported
+// because each engine's route file is the natural validation seam
+// for its own create/update endpoints.
+//
+// `data` is the parsed jobData object (NOT the JSON string column).
+// Returns null on success, or { status, error } on failure.
+// ─────────────────────────────────────────────────────────────
+
+const ALLOWED_HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+const PLACEHOLDER_RE = /\{\{.*?\}\}/;
+const MAX_TIMEOUT_MS = 120000;
+
+async function validateWebhookJobData(db, data) {
+  if (!data || typeof data !== 'object') return null; // not our concern
+  if (data.type !== 'webhook') return null;
+
+  const { url, method, credential_id, headers, body, timeout_ms } = data;
+
+  if (!url || typeof url !== 'string' || !url.trim()) {
+    return { status: 400, error: 'webhook job: url is required (non-empty string)' };
+  }
+  // Allow {{...}} for forward-compat — scheduled jobs don't currently resolve
+  // placeholders in URLs, but the syntax is harmless and matches the workflow
+  // and sequence webhook routes.
+  if (!PLACEHOLDER_RE.test(url)) {
+    try { new URL(url); }
+    catch { return { status: 400, error: `webhook job: url is not a valid URL: ${url}` }; }
+  }
+  if (method !== undefined && method !== null && method !== '') {
+    const m = String(method).toUpperCase();
+    if (!ALLOWED_HTTP_METHODS.includes(m)) {
+      return { status: 400, error: `webhook job: method must be one of ${ALLOWED_HTTP_METHODS.join(', ')}` };
+    }
+  }
+  if (credential_id !== undefined && credential_id !== null && credential_id !== '') {
+    const n = Number(credential_id);
+    if (!Number.isInteger(n) || n <= 0) {
+      return { status: 400, error: 'webhook job: credential_id must be a positive integer' };
+    }
+    const [[row]] = await db.query(`SELECT id FROM credentials WHERE id = ?`, [n]);
+    if (!row) {
+      return { status: 400, error: `webhook job: credential_id ${n} does not exist in credentials table` };
+    }
+  }
+  if (headers !== undefined && headers !== null) {
+    if (typeof headers !== 'object' || Array.isArray(headers)) {
+      return { status: 400, error: 'webhook job: headers must be a JSON object' };
+    }
+  }
+  // body intentionally permissive — object, array, string, number all OK
+  if (timeout_ms !== undefined && timeout_ms !== null) {
+    const n = Number(timeout_ms);
+    if (!Number.isInteger(n) || n <= 0 || n > MAX_TIMEOUT_MS) {
+      return { status: 400, error: `webhook job: timeout_ms must be a positive integer <= ${MAX_TIMEOUT_MS}` };
+    }
+  }
+  return null;
+}
+
 router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const {
@@ -31,6 +95,8 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
 
     // job-specific payload
     url, method = "GET", headers = {}, body,           // webhook
+    credential_id,                                     // webhook (optional, FK → credentials.id)
+    timeout_ms,                                        // webhook (optional, capped at 120000ms)
     function_name, params = {},                        // internal_function
     code, input = {},                                  // custom_code
   } = req.body;
@@ -63,11 +129,23 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
   let jobData = { type: job_type };
 
   if (job_type === "webhook") {
+    // Bare presence/string check first — validateWebhookJobData below does the
+    // full check including URL parse, method enum, credential FK, timeout cap.
     if (!url) return res.status(400).json({ error: "url is required for webhook" });
     jobData.url = url;
     jobData.method = method;
     jobData.headers = headers;
     jobData.body = body;
+    if (credential_id !== undefined && credential_id !== null && credential_id !== '') {
+      // Coerce to integer here — validation below confirms FK
+      jobData.credential_id = parseInt(credential_id, 10);
+    }
+    if (timeout_ms !== undefined && timeout_ms !== null && timeout_ms !== '') {
+      jobData.timeout_ms = parseInt(timeout_ms, 10);
+    }
+
+    const v = await validateWebhookJobData(db, jobData);
+    if (v) return res.status(v.status).json({ error: v.error });
   } else if (job_type === "internal_function") {
     if (!function_name) return res.status(400).json({ error: "function_name is required" });
     jobData.function_name = function_name;
@@ -378,7 +456,15 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
     if (recurrence_rule  !== undefined) { updates.push("recurrence_rule = ?");  params.push(recurrence_rule); }
     if (max_attempts     !== undefined) { updates.push("max_attempts = ?");     params.push(parseInt(max_attempts)); }
     if (backoff_seconds  !== undefined) { updates.push("backoff_seconds = ?");  params.push(parseInt(backoff_seconds)); }
-    if (data             !== undefined) { updates.push("data = ?");             params.push(JSON.stringify(data)); }
+    if (data             !== undefined) {
+      // Validate webhook job-data shape if the new data IS a webhook payload.
+      // Non-webhook data (internal_function, custom_code) passes through with
+      // existing permissive behavior — those types weren't validated before
+      // and aren't part of this slice.
+      const v = await validateWebhookJobData(db, data);
+      if (v) return res.status(v.status).json({ error: v.error });
+      updates.push("data = ?"); params.push(JSON.stringify(data));
+    }
     if (max_executions   !== undefined) { updates.push("max_executions = ?");   params.push(max_executions !== null ? parseInt(max_executions) : null); }
     if (expires_at       !== undefined) {
       const dt = expires_at ? new Date(expires_at) : null;

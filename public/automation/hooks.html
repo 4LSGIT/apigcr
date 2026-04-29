@@ -1157,6 +1157,75 @@ window.togglePanelLeft = togglePanelLeft;
     renderTargets();
   }
 
+  // ─────────────────────────────────────────────────────────────
+  // Internal-credential URL safety check (save-time warning)
+  //
+  // Same pattern as workflows.html / scheduledJobs.html / sequences.html.
+  // Surfaces two warning flavors when an HTTP target is configured with an
+  // 'internal'-typed credential against a problematic URL:
+  //
+  //   - 'foreign'        — URL host is not this app. Internal credential
+  //     header will not inject at runtime (fails closed in
+  //     lib/credentialInjection); operator probably meant a different
+  //     credential type.
+  //
+  //   - 'hook_receiver'  — URL points at /hooks/* on this app. Even though
+  //     the receiver-side header strip closes the specific INTERNAL_API_KEY
+  //     exfil path, there's no legitimate reason to send an internal cred
+  //     to a hook receiver — the receiver doesn't consume it, and configuring
+  //     a hook target this way creates a chain that's been a real attack
+  //     vector in the past.
+  //
+  // Returns { ok: true } or { ok: false, level, text }.
+  // ─────────────────────────────────────────────────────────────
+  function checkInternalCredUrl(credentialId, urlString) {
+    if (!credentialId) return { ok: true };
+    const cred = credentials.find(c => String(c.id) === String(credentialId));
+    if (!cred || cred.type !== 'internal') return { ok: true };
+    if (!urlString || typeof urlString !== 'string' || !urlString.trim()) return { ok: true };
+
+    const appOrigin = window.location.origin;
+    let target;
+    try { target = new URL(urlString); } catch { return { ok: true }; }
+    let appUrl;
+    try { appUrl = new URL(appOrigin); } catch { return { ok: true }; }
+
+    const sameHost = target.protocol === appUrl.protocol
+                  && target.hostname === appUrl.hostname
+                  && (!appUrl.port || target.port === appUrl.port);
+    if (!sameHost) {
+      return {
+        ok: false, level: 'foreign',
+        text: `Internal credential will NOT be sent at runtime — URL host does not match this app (${appUrl.hostname}). Pick a different credential type or change the URL.`,
+      };
+    }
+    if (target.pathname.startsWith('/hooks/') || target.pathname === '/hooks') {
+      return {
+        ok: false, level: 'hook_receiver',
+        text: `Internal credential should not be used for hook receiver URLs — the receiver does not consume the credential, and a hook target chain creates an exfil risk.`,
+      };
+    }
+    return { ok: true };
+  }
+
+  // Update the warning element in the hook target form. Pure DOM op —
+  // no-op if the target editor isn't currently mounted (e.g. user is on a
+  // different tab) or if target_type is not 'http'.
+  function hookUpdateCredWarning() {
+    const warnEl = document.getElementById('swal-t-cred-warn');
+    if (!warnEl) return;
+    const credId = document.getElementById('swal-t-cred')?.value || '';
+    const url    = document.getElementById('swal-t-url')?.value || '';
+    const result = checkInternalCredUrl(credId, url);
+    if (result.ok) {
+      warnEl.style.display = 'none';
+      warnEl.textContent = '';
+      return;
+    }
+    warnEl.style.display = '';
+    warnEl.textContent = '⚠ ' + result.text;
+  }
+
   // ── Target form — HTML builder ──
   function buildTargetForm(t) {
     const type = t.target_type || 'http';
@@ -1204,14 +1273,15 @@ window.togglePanelLeft = togglePanelLeft;
             </div>
             <div class="fg" style="flex:1">
               <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">URL</label>
-              <input id="swal-t-url" class="swal2-input" style="margin:0;width:100%" value="${esc(t.url || '')}" placeholder="https://...">
+              <input id="swal-t-url" class="swal2-input" style="margin:0;width:100%" value="${esc(t.url || '')}" placeholder="https://..." oninput="window.hookUpdateCredWarning && window.hookUpdateCredWarning()">
             </div>
           </div>
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Credential</label>
-            <select id="swal-t-cred" class="swal2-select" style="margin:0;width:100%">
+            <select id="swal-t-cred" class="swal2-select" style="margin:0;width:100%" onchange="window.hookUpdateCredWarning && window.hookUpdateCredWarning()">
               <option value="">None</option>${credOpts}
             </select>
+            <div id="swal-t-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.4"></div>
           </div>
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Mode</label>
@@ -1354,9 +1424,18 @@ window.togglePanelLeft = togglePanelLeft;
       document.querySelectorAll('.swal-t-section').forEach(sec => {
         sec.style.display = sec.id === `swal-sec-${type}` ? '' : 'none';
       });
+      // When user toggles between target types, the cred + URL pair may
+      // become irrelevant (workflow / sequence / internal_function don't
+      // use the warning), so re-evaluate. The function is a safe no-op
+      // when the warn element isn't present in the visible section.
+      hookUpdateCredWarning();
     };
     typeEl.addEventListener('change', updateSections);
     updateSections();
+
+    // Initial warning evaluation — surface the misconfig on edit-open
+    // for existing targets, not just on subsequent input.
+    hookUpdateCredWarning();
 
     const bodyModeEl = document.getElementById('swal-t-bodymode');
     const bodyWrap   = document.getElementById('swal-t-body-template-wrap');
@@ -2000,6 +2079,7 @@ async function runLiveTest() {
   window.hookToggleTransformMode  = toggleTransformMode;
   window.hookAddMapperRule        = addMapperRule;
   window.hookAddTarget            = addTarget;
+  window.hookUpdateCredWarning    = hookUpdateCredWarning;
   window.hookLoadExecutions       = loadExecutions;
   window.hookRunDryTest           = runDryTest;
   window.hookRunLiveTest          = runLiveTest;
