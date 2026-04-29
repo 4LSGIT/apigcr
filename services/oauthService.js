@@ -335,9 +335,8 @@ async function buildAuthorizationUrl(db, credentialId, redirectUri) {
     throw new Error(`Credential ${credentialId} is not type oauth2 (got ${cred.type})`);
   }
   const config = parseConfig(cred);
-  if (!config?.auth_url || !config?.client_id) {
-    throw new Error(`Credential ${credentialId} config missing auth_url or client_id`);
-  }
+  if (!config.auth_url) throw new Error(`Credential ${id} config missing auth_url`);
+  if (!config.client_id) throw new Error(`Credential ${id} config missing client_id`);
 
   const state = crypto.randomBytes(32).toString('hex');
   let verifier = null;
