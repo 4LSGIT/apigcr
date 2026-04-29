@@ -700,7 +700,7 @@ function renderTypeSection() {
   }
 
   if (e.type === 'oauth2') {
-    const redirectUri = window.location.origin + '/auth/oauth/callback';
+    const redirectUri = window.location.origin + '/api/oauth/callback';
     const extraAuth    = JSON.stringify(cfg.extra_authorize_params || {}, null, 2);
     const extraToken   = JSON.stringify(cfg.extra_token_params     || {}, null, 2);
     const extraRefresh = JSON.stringify(cfg.extra_refresh_params   || {}, null, 2);

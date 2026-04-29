@@ -8,14 +8,20 @@
 //   - round-trip (encrypt → decrypt yields original plaintext, ASCII + UTF-8 + empty)
 //   - tamper detection (flipping a byte in ciphertext or auth tag throws)
 //   - decrypt with a different key throws
+//   - decrypt rejects values without ENCv1: prefix
 //   - IV uniqueness (encrypting same plaintext twice yields different output)
 //   - missing CREDENTIALS_ENCRYPTION_KEY → throws on require
 //   - wrong-length key (16 and 64 bytes) → throws on require
-//   - isEncrypted heuristic — true for encrypt() output, false for plain strings
+//   - isEncrypted prefix check — true for encrypt() output, false for plain strings
+//     including base64-shaped plaintext that lacks the ENCv1: prefix
 
 const path = require('path');
 const assert = require('assert');
 const crypto = require('crypto');
+
+// Wire-format prefix (mirrors lib/credentialCrypto.js). Tamper tests strip
+// this off before manipulating bytes and re-add it before calling decrypt().
+const ENC_PREFIX = 'ENCv1:';
 
 // Auto-detect whether we're running from /tests or from project root, so the
 // require path resolves either way (same shim trick test-timing-extensions uses).
@@ -95,26 +101,26 @@ console.log('\ntamper detection');
 test('flipping a byte in ciphertext causes decrypt to throw', () => {
   const { encrypt, decrypt } = loadFresh(validKey);
   const enc = encrypt('payload');
-  const buf = Buffer.from(enc, 'base64');
+  const buf = Buffer.from(enc.slice(ENC_PREFIX.length), 'base64');
   // Flip a byte in the ciphertext region (after IV + tag = byte 28+).
   buf[buf.length - 1] ^= 0x01;
-  assert.throws(() => decrypt(buf.toString('base64')));
+  assert.throws(() => decrypt(ENC_PREFIX + buf.toString('base64')));
 });
 
 test('flipping a byte in the auth tag causes decrypt to throw', () => {
   const { encrypt, decrypt } = loadFresh(validKey);
   const enc = encrypt('payload');
-  const buf = Buffer.from(enc, 'base64');
+  const buf = Buffer.from(enc.slice(ENC_PREFIX.length), 'base64');
   buf[12] ^= 0x01; // first byte of auth tag (right after the 12-byte IV)
-  assert.throws(() => decrypt(buf.toString('base64')));
+  assert.throws(() => decrypt(ENC_PREFIX + buf.toString('base64')));
 });
 
 test('flipping a byte in the IV causes decrypt to throw', () => {
   const { encrypt, decrypt } = loadFresh(validKey);
   const enc = encrypt('payload');
-  const buf = Buffer.from(enc, 'base64');
+  const buf = Buffer.from(enc.slice(ENC_PREFIX.length), 'base64');
   buf[0] ^= 0x01;
-  assert.throws(() => decrypt(buf.toString('base64')));
+  assert.throws(() => decrypt(ENC_PREFIX + buf.toString('base64')));
 });
 
 test('decrypt with a different key throws', () => {
@@ -125,18 +131,27 @@ test('decrypt with a different key throws', () => {
   assert.throws(() => decrypt(enc));
 });
 
-test('decrypt rejects too-short input', () => {
+test('decrypt rejects too-short payload after prefix', () => {
   const { decrypt } = loadFresh(validKey);
-  // 20 bytes < IV(12) + tag(16) = 28
-  const tooShort = crypto.randomBytes(20).toString('base64');
+  // 20 bytes < IV(12) + tag(16) = 28; prefix is present so we reach the length check.
+  const tooShort = ENC_PREFIX + crypto.randomBytes(20).toString('base64');
   assert.throws(() => decrypt(tooShort), /too short/);
 });
 
 test('decrypt rejects empty / non-string input', () => {
   const { decrypt } = loadFresh(validKey);
-  assert.throws(() => decrypt(''),        /requires a non-empty string/);
-  assert.throws(() => decrypt(null),      /requires a non-empty string/);
-  assert.throws(() => decrypt(undefined), /requires a non-empty string/);
+  assert.throws(() => decrypt(''),        /missing ENCv1: prefix/);
+  assert.throws(() => decrypt(null),      /missing ENCv1: prefix/);
+  assert.throws(() => decrypt(undefined), /missing ENCv1: prefix/);
+});
+
+test('decrypt rejects values without ENCv1: prefix', () => {
+  const { decrypt } = loadFresh(validKey);
+  // A bare base64 blob (what Slice 2/3 used to emit) is no longer accepted.
+  const bareB64 = crypto.randomBytes(40).toString('base64');
+  assert.throws(() => decrypt(bareB64), /missing ENCv1: prefix/);
+  // Wrong version prefix.
+  assert.throws(() => decrypt('ENCv2:' + bareB64), /missing ENCv1: prefix/);
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -186,9 +201,9 @@ test('garbage non-base64 key throws on require (decodes to <32 bytes)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// isEncrypted heuristic
+// isEncrypted prefix check
 // ─────────────────────────────────────────────────────────────
-console.log('\nisEncrypted heuristic');
+console.log('\nisEncrypted prefix check');
 
 test('returns true for encrypt() output', () => {
   const { encrypt, isEncrypted } = loadFresh(validKey);
@@ -203,6 +218,16 @@ test('returns false for a short plain string', () => {
 test('returns false for empty string', () => {
   const { isEncrypted } = loadFresh(validKey);
   assert.strictEqual(isEncrypted(''), false);
+});
+
+test('returns false for plaintext that happens to look like base64 ciphertext', () => {
+  // The bug this fix addresses: a plain client_secret composed of base64 chars
+  // and >= 28 bytes used to trip the old heuristic, so encrypt() was skipped
+  // and the plaintext was stored as-is. With the prefix marker, no plaintext
+  // collides unless it literally starts with "ENCv1:".
+  const { isEncrypted } = loadFresh(validKey);
+  const baseLikePlaintext = crypto.randomBytes(40).toString('base64');
+  assert.strictEqual(isEncrypted(baseLikePlaintext), false);
 });
 
 test('returns false for a string with non-base64 characters', () => {
