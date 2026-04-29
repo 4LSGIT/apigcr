@@ -606,11 +606,23 @@ CREATE TABLE `court_emails2` (
 CREATE TABLE `credentials` (
   `id` int NOT NULL,
   `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
-  `type` enum('internal','bearer','api_key','basic') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'internal',
+  `type` enum('internal','bearer','api_key','basic','oauth2') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'internal',
   `config` json DEFAULT NULL,
   `allowed_urls` json DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `access_token` text COLLATE utf8mb4_general_ci,
+  `refresh_token` text COLLATE utf8mb4_general_ci,
+  `access_token_expires_at` datetime DEFAULT NULL,
+  `refresh_token_expires_at` datetime DEFAULT NULL,
+  `last_refreshed_at` datetime DEFAULT NULL,
+  `oauth_status` enum('pending_auth','connected','refresh_failed','revoked') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `oauth_state` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `oauth_pkce_verifier` varchar(128) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `oauth_last_error` text COLLATE utf8mb4_general_ci,
+  `oauth_last_error_at` datetime DEFAULT NULL,
+  `refresh_failure_count` tinyint UNSIGNED NOT NULL DEFAULT '0',
+  `verbose` tinyint(1) NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1783,7 +1795,9 @@ ALTER TABLE `court_emails2`
 -- Indexes for table `credentials`
 --
 ALTER TABLE `credentials`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_oauth_refresh_window` (`oauth_status`,`refresh_token_expires_at`),
+  ADD KEY `idx_oauth_state` (`oauth_state`);
 
 --
 -- Indexes for table `default`
