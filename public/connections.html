@@ -719,7 +719,7 @@ function renderTypeSection() {
         </div>
         <div class="field field-row">
           <label>Authorization URL</label>
-          <input id="cred-oa-authurl" type="text" value="${esc(cfg.authorization_url || '')}" placeholder="https://provider.example.com/oauth/authorize">
+          <input id="cred-oa-authurl" type="text" value="${esc(cfg.auth_url || '')}" placeholder="https://provider.example.com/oauth/authorize">
         </div>
         <div class="field field-row">
           <label>Token URL</label>
@@ -1033,7 +1033,7 @@ function readCredFormConfig(type, isNew) {
     cfg.client_id          = E('cred-oa-clientid').value.trim();
     const sec = E('cred-pw-secret').value;
     if (isNew || sec !== '') cfg.client_secret = sec;
-    cfg.authorization_url  = E('cred-oa-authurl').value.trim();
+    cfg.auth_url  = E('cred-oa-authurl').value.trim();
     cfg.token_url          = E('cred-oa-tokenurl').value.trim();
     const rev = E('cred-oa-revokeurl').value.trim();
     if (rev) cfg.revoke_url = rev;
