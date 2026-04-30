@@ -201,28 +201,53 @@ function runTransform(mode, config, input) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Build auth headers for a delivery target.
- * Validates that the target URL matches the credential's allowed_urls.
- * Only used by HTTP targets.
+ * Build auth headers for a delivery target. Async to support oauth2
+ * credentials (which need a DB round-trip to load token state and refresh
+ * if needed). Pre-checks scope and oauth_status so we can fail the delivery
+ * up front with a specific reason rather than letting the upstream server
+ * return a generic 401/403 (which retries can't fix and is harder to debug).
  *
- * Slice 3.3: the body has been lifted into lib/credentialInjection so sequence
- * webhook steps can share the same auth-header + URL-scope logic. This wrapper
- * translates the hook-target shape (credential_id + joined cred_* fields) into
- * a synthetic credential row, then delegates. Behaviour is bit-identical to
- * the pre-refactor function — see Slice 3.3 checkpoint for the 9-case trace.
+ * @param {object} target - hook_targets row (only credential_id is used here;
+ *                          the joined cred_* fields are no longer consulted —
+ *                          we re-load from the credentials table to pick up
+ *                          oauth_status / access_token, which the join didn't
+ *                          carry).
+ * @param {object} db     - DB pool / req.db, required for credential load
+ * @returns {Promise<{ headers: object, error?: string }>}
+ *   - headers: auth headers to merge (empty {} if no credential configured)
+ *   - error:   human-readable rejection reason if a credential IS configured
+ *              but produced no headers; absence of `error` means OK
  */
-function buildAuthHeaders(target) {
-  if (!target.credential_id) return {};
-
-  const credential = {
-    id:           target.credential_id,
-    type:         target.cred_type,
-    config:       target.cred_config,
-    allowed_urls: target.cred_allowed_urls,
-  };
-  return credentialInjection.buildAuthHeaders(credential, target.url);
+async function buildAuthHeaders(target, db) {
+  if (!target.credential_id) return { headers: {} };
+  const cred = await credentialInjection.loadCredential(db, target.credential_id);
+  if (!cred) {
+    return { headers: {}, error: `Credential ${target.credential_id} not found` };
+  }
+  const scope = credentialInjection.checkUrlScope(cred, target.url);
+  if (!scope.ok) {
+    return {
+      headers: {},
+      error: `Credential "${cred.name}" rejected for URL: ${scope.reason}`,
+    };
+  }
+  if (cred.type === 'oauth2' && cred.oauth_status !== 'connected') {
+    return {
+      headers: {},
+      error: `Credential "${cred.name}" not connected (oauth_status=${cred.oauth_status}). Reconnect via the OAuth flow.`,
+    };
+  }
+  const headers = await credentialInjection.buildHeadersForCredential(
+    db, target.credential_id, target.url
+  );
+  if (Object.keys(headers).length === 0) {
+    return {
+      headers: {},
+      error: `Credential "${cred.name}" produced no auth headers — check server logs (oauth refresh failure or malformed config).`,
+    };
+  }
+  return { headers };
 }
-
 
 // ─────────────────────────────────────────────────────────────
 // HELPERS FOR INTERNAL TARGETS
@@ -300,7 +325,7 @@ function resolveParamsMapping(paramsMapping, targetOutput) {
 // DELIVERY — HTTP (the original behavior)
 // ─────────────────────────────────────────────────────────────
 
-async function deliverHttp(target, targetOutput) {
+async function deliverHttp(target, targetOutput, db) {
   // Build request body
   let requestBody;
   if (target.body_mode === 'template' && target.body_template) {
@@ -309,15 +334,32 @@ async function deliverHttp(target, targetOutput) {
     requestBody = JSON.stringify(targetOutput);
   }
 
-  // Build headers
+  // Build headers (oauth2 credentials may refresh tokens here)
   const staticHeaders = typeof target.headers === 'string'
     ? JSON.parse(target.headers) : (target.headers || {});
-  const authHeaders = buildAuthHeaders(target);
+  const authResult = await buildAuthHeaders(target, db);
+
+  // If credential setup failed, fail the delivery up front rather than
+  // sending an unauthenticated request and letting the upstream server
+  // return a generic 401/403. Retries can't fix a misconfigured credential,
+  // and the explicit reason is easier to debug than upstream "Unauthorized".
+  if (authResult.error) {
+    return {
+      target_id: target.id,
+      request_url: target.url,
+      request_method: target.method || 'POST',
+      request_body: requestBody,
+      response_status: null,
+      response_body: null,
+      status: 'failed',
+      error: `Auth setup failed: ${authResult.error}`,
+    };
+  }
 
   const headers = {
     'Content-Type': 'application/json',
     ...staticHeaders,
-    ...authHeaders,
+    ...authResult.headers,
   };
 
   const fetchOptions = {
@@ -676,7 +718,7 @@ async function deliverToTarget(target, hookTransformOutput, db) {
   const targetType = target.target_type || 'http';
 
   if (targetType === 'http') {
-    return deliverHttp(target, targetOutput);
+    return deliverHttp(target, targetOutput, db);
   }
 
   const targetConfig = parseTargetConfig(target);

@@ -34,7 +34,7 @@ const router = express.Router();
 
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
 const { assertSafeUrl } = require('../lib/ssrfGuard');
-const { loadCredential, buildAuthHeaders } = require('../lib/credentialInjection');
+const { loadCredential, buildAuthHeaders, buildHeadersForCredential, checkUrlScope,} = require('../lib/credentialInjection');
 
 const TOOL = 'api_tester';
 const su = superuserOnlyFor(TOOL);
@@ -239,37 +239,18 @@ router.post('/admin/api-tester/send-request', ...su, async (req, res) => {
     return res.status(400).json({ error: e.message });
   }
 
-  // ── Credential injection (with allowed_urls scope check) ─────────────────
-  // Done manually so we can tell the admin if the credential was silently
-  // skipped due to allowed_urls — turn that into a hard reject instead of
-  // letting them wonder why their auth isn't working.
+  // ── Credential injection (with explicit pre-flight checks) ───────────────
+  // We pre-check scope (and oauth_status, for oauth2) so we can give the
+  // admin a precise rejection reason. If those pass and the dispatcher
+  // still returns no headers, the failure is a config problem (oauth refresh
+  // failed, missing token in config, etc) — surface that distinctly so the
+  // admin doesn't have to guess.
   let credentialInjected = null;
   let authHeaders = {};
   if (credentialId != null && credentialId !== '') {
+    let cred;
     try {
-      const cred = await loadCredential(req.db, credentialId);
-      if (!cred) {
-        await auditAdminAction(req.db, {
-          ...auditBase, status: 'rejected_bad_credential',
-          errorMessage: `Credential ${credentialId} not found`,
-          durationMs: Date.now() - started,
-          details: detailsBase(),
-        });
-        return res.status(400).json({ error: `Credential ${credentialId} not found` });
-      }
-      authHeaders = buildAuthHeaders(cred, parsedUrl.toString());
-      credentialInjected = Object.keys(authHeaders).length > 0;
-      if (!credentialInjected) {
-        await auditAdminAction(req.db, {
-          ...auditBase, status: 'rejected_credential_scope',
-          errorMessage: `Credential ${credentialId} (${cred.name}) blocked by allowed_urls`,
-          durationMs: Date.now() - started,
-          details: detailsBase(),
-        });
-        return res.status(400).json({
-          error: `Credential "${cred.name}" is restricted by allowed_urls and does not permit this URL.`,
-        });
-      }
+      cred = await loadCredential(req.db, credentialId);
     } catch (e) {
       await auditAdminAction(req.db, {
         ...auditBase, status: 'error',
@@ -278,6 +259,72 @@ router.post('/admin/api-tester/send-request', ...su, async (req, res) => {
         details: detailsBase(),
       });
       return res.status(500).json({ error: `Credential load failed: ${e.message}` });
+    }
+    if (!cred) {
+      await auditAdminAction(req.db, {
+        ...auditBase, status: 'rejected_bad_credential',
+        errorMessage: `Credential ${credentialId} not found`,
+        durationMs: Date.now() - started,
+        details: detailsBase(),
+      });
+      return res.status(400).json({ error: `Credential ${credentialId} not found` });
+    }
+
+    // Pre-flight 1: allowed_urls / APP_URL scope check (all types)
+    const scope = checkUrlScope(cred, parsedUrl.toString());
+    if (!scope.ok) {
+      await auditAdminAction(req.db, {
+        ...auditBase, status: 'rejected_credential_scope',
+        errorMessage: `Credential ${credentialId} (${cred.name}) scope rejected: ${scope.reason}`,
+        durationMs: Date.now() - started,
+        details: detailsBase(),
+      });
+      return res.status(400).json({
+        error: `Credential "${cred.name}" rejected for this URL: ${scope.reason}`,
+      });
+    }
+
+    // Pre-flight 2: oauth2 must be connected before we attempt a refresh
+    if (cred.type === 'oauth2' && cred.oauth_status !== 'connected') {
+      await auditAdminAction(req.db, {
+        ...auditBase, status: 'rejected_oauth_not_connected',
+        errorMessage: `Credential ${credentialId} (${cred.name}) oauth_status=${cred.oauth_status}`,
+        durationMs: Date.now() - started,
+        details: detailsBase(),
+      });
+      return res.status(400).json({
+        error: `Credential "${cred.name}" is not connected (oauth_status=${cred.oauth_status}). Reconnect via the OAuth flow.`,
+      });
+    }
+
+    // Build headers — async so oauth2 can refresh if needed.
+    try {
+      authHeaders = await buildHeadersForCredential(req.db, cred.id, parsedUrl.toString());
+    } catch (e) {
+      await auditAdminAction(req.db, {
+        ...auditBase, status: 'error',
+        errorMessage: `Credential header build failed: ${e.message}`,
+        durationMs: Date.now() - started,
+        details: detailsBase(),
+      });
+      return res.status(500).json({ error: `Credential header build failed: ${e.message}` });
+    }
+
+    credentialInjected = Object.keys(authHeaders).length > 0;
+    if (!credentialInjected) {
+      // Pre-flights passed but no headers came back. For oauth2 this almost
+      // always means the token refresh failed inside oauthService (see server
+      // logs for the precise provider error). For other types it means the
+      // config blob is missing required fields (e.g. bearer with no token).
+      await auditAdminAction(req.db, {
+        ...auditBase, status: 'rejected_credential_build_failed',
+        errorMessage: `Credential ${credentialId} (${cred.name}, type=${cred.type}) produced no auth headers`,
+        durationMs: Date.now() - started,
+        details: detailsBase(),
+      });
+      return res.status(500).json({
+        error: `Credential "${cred.name}" produced no auth headers — check server logs for the underlying reason (oauth refresh failure, malformed config, etc).`,
+      });
     }
   }
 
