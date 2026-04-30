@@ -57,9 +57,9 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
          ORDER BY id`
       ),
       req.db.query(
-        `SELECT user, user_name, user_fname, user_lname, user_initials
+        `SELECT user, user_name, user_fname, user_lname, user_initials,
+         user_type, does_appts
          FROM users
-         WHERE user_type = true
          ORDER BY user_name ASC`
       )
     ]);

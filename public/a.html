@@ -408,7 +408,7 @@
         <option selected>Scheduled</option>
       </select>
       With:
-      <select id="tabApptsWith" class="userslist" style="width: auto">
+      <select id="tabApptsWith" class="userslist" data-userlist-filter="does_appts" style="width: auto">
         <option value="">All</option>
       </select>
       Time:
@@ -849,7 +849,7 @@
         <option value="">All</option>
       </select>
       Assigned to:
-      <select id="tabTasksTo" class="userslist" style="width: 150px">
+      <select id="tabTasksTo" class="userslist" data-userlist-filter="user_type" style="width: 150px">
         <option value="">All</option>
       </select>
       <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
@@ -889,10 +889,11 @@
       // Build assignee dropdown from firmData. Placeholder is disabled+hidden
       // so it shows as a hint but cannot be re-selected once the user picks someone.
       const userOpts =
-        '<option value="" disabled selected hidden>— select assignee —</option>' +
-        (window.firmData?.users || [])
-          .map(u => `<option value="${u.user}">${u.user_name}</option>`)
-          .join('');
+      '<option value="" disabled selected hidden>— select assignee —</option>' +
+      (window.firmData?.users || [])
+      .filter(u => u.user_type)
+      .map(u => `<option value="${u.user}">${u.user_name}</option>`)
+      .join('');
 
       Swal.fire({
         title: `${isEdit ? "Update" : "New"} Task:`,
@@ -1403,8 +1404,6 @@
           // Refresh in-memory user object
           Object.assign(user, updated);
 
-          // Sync auth globals in case username changed
-          username = updated.username;
           AUTH_STATE.username = updated.username;
 
           E("myNameIs").innerHTML = updated.user_name;
@@ -1575,25 +1574,16 @@
     new URL(window.location).searchParams.forEach((value, key) => {
       params[key] = value;
     });
-    // Legacy globals — kept declared to avoid reference errors from straggling code.
-    // username/password are no longer read from URL params (JWT auth handles everything).
-    username = "";
-    password = "";
-    userName = "";
+    // Top-level state used across tab handlers
     user = {};
-    userArray = "";
     limit = 100;
-    users = "";
-    checklists = [];
     fileCounter = 1;
-    allow_sms = 0;
     cases = "";
     contacts = "";
     appts = "";
     tasks = "";
     logs = "";
-    customTabVar = '';
-    offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0 };
+    offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0, custom: 0,  };
 
     function openMainTab(tabName) {
       var i, tabs;
@@ -1603,8 +1593,6 @@
       }
       E(tabName).style.display = "block";
     }
-
-    let temp34 = "";
 
     // ---- Global auth state ----
     window.AUTH_STATE = {
@@ -1882,9 +1870,15 @@ async function initAuth() {
         showAppt(params.appt);
       }
       // Populate all user-list selects in the parent shell.
-      // Static <option value="">All</option> in the markup is preserved; users are appended.
+      // A select can opt into filtering by adding data-userlist-filter="<column>",
+      // e.g. data-userlist-filter="user_does_appts" to only include users
+      // flagged for appointments. Static options in the markup are preserved.
       document.querySelectorAll('select.userslist').forEach(sel => {
-        (window.firmData?.users || []).forEach(u => {
+        const filterField = sel.dataset.userlistFilter;
+        const list = filterField
+          ? (window.firmData?.users || []).filter(u => u[filterField])
+          : (window.firmData?.users || []);
+        list.forEach(u => {
           const opt = document.createElement('option');
           opt.value = u.user;
           opt.textContent = u.user_name;
@@ -1914,12 +1908,7 @@ async function initAuth() {
       }
 
       // --- Legacy globals ---
-      username = "";
-      password = "";
-      userName = "";
       user = {};
-      userArray = "";
-
       users = [];
       cases = "";
       contacts = "";

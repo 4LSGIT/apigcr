@@ -523,7 +523,7 @@ async function addLog() {
         <option value="">All</option>
       </select>
       Assigned to: 
-      <select id="tabTasksTo" class="userslist" style="width:150px">
+      <select id="tabTasksTo" class="userslist" data-userlist-filter="user_type" style="width:150px">
         <option value="">All</option>
       </select>
       <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
@@ -640,7 +640,11 @@ window.firmData = P.firmData;  // relay firm-wide data (phone lines, email sende
 // Static <option value="">All</option> is preserved; users are appended.
 // Parent's populateUserSelect doesn't reach into iframes.
 document.querySelectorAll('select.userslist').forEach(sel => {
-  (window.firmData?.users || []).forEach(u => {
+  const filterField = sel.dataset.userlistFilter;
+  const list = filterField
+    ? (window.firmData?.users || []).filter(u => u[filterField])
+    : (window.firmData?.users || []);
+  list.forEach(u => {
     const opt = document.createElement('option');
     opt.value = u.user;
     opt.textContent = u.user_name;
@@ -875,6 +879,12 @@ function conMsg() {
 
 let newApptTemp = "";
 async function newAppt() {
+  // const userOpts =
+  // '<option value="" disabled selected hidden>— select staff member —</option>' +
+  // (window.firmData?.users || [])
+  //   .filter(u => u.does_appts)
+  //   .map(u => `<option value="${u.user}">${u.user_name}</option>`)
+  //   .join('');
   Swal.fire({
     title: "Schedule Appointment",
     html: `<form onchange="conMsg()"><select style="width:300px" onchange="[E('apptType').value,E('apptLen').value]=this.value.split(',');document.getElementById('ApptOtherSpan').style.display=this.value==','?'block':'none'">
