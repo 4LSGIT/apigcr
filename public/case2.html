@@ -257,23 +257,25 @@
             .replace(",", " at");
       }
       function newAppt() {
-        // const userOpts =
-        //   '<option value="" disabled selected hidden>— select staff member —</option>' +
-        //   (window.firmData?.users || [])
-        //   .filter(u => u.does_appts)
-        //   .map(u => `<option value="${u.user}">${u.user_name}</option>`)
-        //   .join('');
+        const userOpts =
+          //'<select style="width:300px;" id="newApptWith"><option value="" disabled selected hidden>— select staff member —</option>' +
+          '<select disabled style="width:300px;" id="newApptWith">' +
+          (window.firmData?.users || [])
+          .filter(u => u.does_appts)
+          .sort((a, b) => a.user - b.user)
+          .map(u => `<option value="${u.user}">with ${u.user_name}</option>`)
+          .join('') + '</select><br>';
         clientSelect =
           window.entityData.clients.length == 1
             ? `<select style="width:300px;" id="newApptClient">`
             : `<select style="width:300px;" id="newApptClient"><option disabled selected value="">Select a Client</option>`;
         window.entityData.clients.forEach((client) => {
-          clientSelect += `<option value="{'id':'${client.contact_id}','name':'${client.contact_name}','email':'${client.contact_email}','phone':'${client.contact_phone}'}">${client.contact_id} ${client.contact_name} - ${client.case_relate_type}</option>`;
+          clientSelect += `<option value="{'id':'${client.contact_id}','name':'${client.contact_name}','email':'${client.contact_email}','phone':'${client.contact_phone}'}">${client.contact_id} - ${client.contact_name} (${client.relate_type})</option>`;
         });
         clientSelect += "</select>";
         Swal.fire({
           title: "Schedule Appointment",
-          html: `${clientSelect}<br><form onchange="conMsg()""><select style="width:300px" onchange="[E('apptType').value,E('apptLen').value]=this.value.split(',');document.getElementById('ApptOtherSpan').style.display=this.value==','?'block':'none'">
+          html: `${userOpts}${clientSelect}<br><form onchange="conMsg()""><select style="width:300px" onchange="[E('apptType').value,E('apptLen').value]=this.value.split(',');document.getElementById('ApptOtherSpan').style.display=this.value==','?'block':'none'">
       <option disabled selected>Appointment Type:</option>
       <option value="Strategy Session,15">Strategy Session (15 min)</option>
       <option value="Strategy Session Follow Up,15">Strategy Session Follow Up (15 min)</option>

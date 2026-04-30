@@ -879,15 +879,17 @@ function conMsg() {
 
 let newApptTemp = "";
 async function newAppt() {
-  // const userOpts =
-  // '<option value="" disabled selected hidden>— select staff member —</option>' +
-  // (window.firmData?.users || [])
-  //   .filter(u => u.does_appts)
-  //   .map(u => `<option value="${u.user}">${u.user_name}</option>`)
-  //   .join('');
+  const userOpts =
+    //'<select style="width:300px;" id="newApptWith"><option value="" disabled selected hidden>— select staff member —</option>' +
+    '<select disabled style="width:300px;" id="newApptWith">' +
+      (window.firmData?.users || [])
+      .filter(u => u.does_appts)
+      .sort((a, b) => a.user - b.user)
+      .map(u => `<option value="${u.user}">with ${u.user_name}</option>`)
+      .join('') + '</select><br>';
   Swal.fire({
     title: "Schedule Appointment",
-    html: `<form onchange="conMsg()"><select style="width:300px" onchange="[E('apptType').value,E('apptLen').value]=this.value.split(',');document.getElementById('ApptOtherSpan').style.display=this.value==','?'block':'none'">
+    html: `<form onchange="conMsg()">${userOpts}<select style="width:300px" onchange="[E('apptType').value,E('apptLen').value]=this.value.split(',');document.getElementById('ApptOtherSpan').style.display=this.value==','?'block':'none'">
       <option disabled selected>Appointment Type:</option>
       <option value="Strategy Session,15">Strategy Session (15 min)</option>
       <option value="Strategy Session Follow Up,15">Strategy Session Follow Up (15 min)</option>
