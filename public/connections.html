@@ -158,6 +158,18 @@
   .pw-row { display: flex; gap: 6px; }
   .pw-row input { flex: 1; }
   .pw-row .btn { white-space: nowrap; min-width: 70px; padding: 6px 10px; }
+  .pw-row input {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.pw-row input:focus { outline: none; border-color: var(--accent); }
+.pw-row input[readonly] { background: var(--panel-2); cursor: default; }
 
   /* Type-specific subsection */
   .subsection {
@@ -784,6 +796,10 @@ function renderTypeSection() {
       ${isNew ? '' : renderOauthStatusCard(e)}
     `;
     bindShowButton('cred-pw-secret', e.id, 'client_secret', isNew);
+    if (!isNew && (e.oauth_status === 'connected' || e.oauth_status === 'refresh_failed')) {
+      bindShowButton('cred-pw-atoken', e.id, 'access_token', false);
+      bindShowButton('cred-pw-rtoken', e.id, 'refresh_token', false);
+    }
     E('cred-oa-copy').addEventListener('click', () => {
       navigator.clipboard.writeText(redirectUri).then(
         () => toast('Redirect URI copied'),
@@ -822,7 +838,10 @@ function bindShowButton(inputId, credId, configKey, isNew) {
   if (isNew) return;
   const input = E(inputId);
   const btn = E(inputId + '-show');
-  if (!input || !btn) return;
+  if (!input || !btn) {
+    //console.warn(`[bindShowButton] missing input or button for ${inputId}`);
+    return;
+  }
 
   let revealed = false;
   let timer = null;
@@ -832,7 +851,6 @@ function bindShowButton(inputId, credId, configKey, isNew) {
     if (timer) { clearInterval(timer); timer = null; }
     input.value = '';
     input.type = 'password';
-    input.placeholder = '(unchanged — leave empty to keep current)';
     btn.textContent = 'Show';
     btn.disabled = false;
   }
@@ -843,12 +861,15 @@ function bindShowButton(inputId, credId, configKey, isNew) {
     btn.textContent = 'Loading…';
     try {
       const r = await api(`/api/credentials/${credId}/reveal`);
-      const cfg = r.config || r.credential?.config || {};
-      const val = cfg[configKey];
-      if (val == null) {
+      // Reveal endpoint returns { status, revealed: { ... } }.
+      // Old/legacy fallbacks kept for safety.
+      const bag = r?.revealed || r?.config || r?.credential?.config || {};
+      const val = bag[configKey];
+      if (val == null || val === '') {
+        //console.warn(`[bindShowButton] no value at "${configKey}" — full response:`, r);
         btn.disabled = false;
         btn.textContent = 'Show';
-        toast('No value stored for this field', 'warn');
+        toast(`No value stored for "${configKey}"`, 'warn');
         return;
       }
       input.value = String(val);
@@ -863,6 +884,7 @@ function bindShowButton(inputId, credId, configKey, isNew) {
         else btn.textContent = `Hide (${secs}s)`;
       }, 1000);
     } catch (err) {
+      //console.error('[bindShowButton] reveal call threw:', err);
       btn.disabled = false;
       btn.textContent = 'Show';
       state.creds.error = `Could not decrypt — ${err.message}`;
@@ -907,6 +929,24 @@ function renderOauthStatusCard(e) {
           ${showRevoke     ? '<button class="btn danger" id="oa-revoke">Revoke</button>' : ''}
         </div>
       </div>
+      ${(status === 'connected' || status === 'refresh_failed') ? `
+        <div class="status-card" style="margin-top: 8px">
+          <div class="row" style="flex-direction: column; align-items: stretch; gap: 4px">
+            <span class="k">Access token (decrypted)</span>
+            <div class="pw-row">
+              <input id="cred-pw-atoken" type="password" placeholder="(hidden — click Show)" readonly>
+              <button class="btn" id="cred-pw-atoken-show" type="button">Show</button>
+            </div>
+          </div>
+          <div class="row" style="flex-direction: column; align-items: stretch; gap: 4px; margin-top: 8px">
+            <span class="k">Refresh token (decrypted)</span>
+            <div class="pw-row">
+              <input id="cred-pw-rtoken" type="password" placeholder="(hidden — click Show)" readonly>
+              <button class="btn" id="cred-pw-rtoken-show" type="button">Show</button>
+            </div>
+          </div>
+        </div>
+      ` : ''}
     </div>
   `;
 }
