@@ -886,6 +886,13 @@
       const lId = isEdit ? (t.link?.id || '') : (linkId || '');
       const showLink = !!(lType && lId);
       const linkLabel = lType === 'case' ? 'Case' : 'Client';
+      // Build assignee dropdown from firmData. Placeholder is disabled+hidden
+      // so it shows as a hint but cannot be re-selected once the user picks someone.
+      const userOpts =
+        '<option value="" disabled selected hidden>— select assignee —</option>' +
+        (window.firmData?.users || [])
+          .map(u => `<option value="${u.user}">${u.user_name}</option>`)
+          .join('');
 
       Swal.fire({
         title: `${isEdit ? "Update" : "New"} Task:`,
@@ -913,6 +920,8 @@
           const title = E("taskTitle").value;
           const desc = E("taskDesc").value;
           const due = E("taskDate").value;
+          const assignTo = E("taskAssignTo").value;
+          if (!assignTo) { Swal.showValidationMessage("Please choose an assignee"); return false; }
           if (!title) { Swal.showValidationMessage("Please add a brief title"); return false; }
           if (!desc) { Swal.showValidationMessage("Please add a clear description"); return false; }
           if (!due) { Swal.showValidationMessage("Without a due date it will never be done!"); return false; }
@@ -1683,41 +1692,7 @@ async function loadFirmData() {
   if (!window.firmData.currentUser) throw new Error("No user data returned");
 }
 
-    /**
-     * Populate a <select> with the active users list from firmData.
-     * Parent tabs call directly; iframes call via P.populateUserSelect().
-     *
-     * @param {HTMLSelectElement} selectEl
-     * @param {Object} [opts]
-     * @param {boolean} [opts.includeBlank=true]  prepend a blank option
-     * @param {string}  [opts.blankLabel='']      label for the blank option
-     * @param {*}       [opts.value]              pre-select this value
-     * @param {string}  [opts.valueField='user']       option value field
-     * @param {string}  [opts.labelField='user_name']  option label field
-     */
-    window.populateUserSelect = function(selectEl, opts = {}) {
-      const {
-        includeBlank = true,
-        blankLabel   = '',
-        value        = undefined,
-        valueField   = 'user',
-        labelField   = 'user_name'
-      } = opts;
-      selectEl.innerHTML = '';
-      if (includeBlank) {
-        const blank = document.createElement('option');
-        blank.value = '';
-        blank.textContent = blankLabel;
-        selectEl.appendChild(blank);
-      }
-      (window.firmData.users || []).forEach(u => {
-        const opt = document.createElement('option');
-        opt.value = u[valueField];
-        opt.textContent = u[labelField];
-        selectEl.appendChild(opt);
-      });
-      if (value !== undefined) selectEl.value = value;
-    };
+
 
  async function loginBlocking() {
   await Swal.fire({
@@ -1906,9 +1881,15 @@ async function initAuth() {
       if (params.appt) {
         showAppt(params.appt);
       }
-      // Populate all user-list selects in the parent shell
+      // Populate all user-list selects in the parent shell.
+      // Static <option value="">All</option> in the markup is preserved; users are appended.
       document.querySelectorAll('select.userslist').forEach(sel => {
-        populateUserSelect(sel, { includeBlank: true });
+        (window.firmData?.users || []).forEach(u => {
+          const opt = document.createElement('option');
+          opt.value = u.user;
+          opt.textContent = u.user_name;
+          sel.appendChild(opt);
+        });
       });
     }
 

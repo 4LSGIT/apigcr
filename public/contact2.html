@@ -636,6 +636,17 @@ let limit      = P.limit || 100;
 
 window.apiSend = P.apiSend;   // relay for child form iframes
 window.firmData = P.firmData;  // relay firm-wide data (phone lines, email senders, current user)
+// Populate userslist filter selects from firmData.users.
+// Static <option value="">All</option> is preserved; users are appended.
+// Parent's populateUserSelect doesn't reach into iframes.
+document.querySelectorAll('select.userslist').forEach(sel => {
+  (window.firmData?.users || []).forEach(u => {
+    const opt = document.createElement('option');
+    opt.value = u.user;
+    opt.textContent = u.user_name;
+    sel.appendChild(opt);
+  });
+});
 
 // ── State (single source of truth) ──────────────────────────
 window.entityData = {
