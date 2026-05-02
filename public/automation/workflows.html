@@ -1102,15 +1102,25 @@ function wfOnModeChange(mode) {
 }
 
 function wfToggleJson() {
-  WF.jsonMode = !WF.jsonMode;
   const t = document.getElementById('e-type')?.value;
-  const cfg = WF.jsonMode ? wfGatherConfig(t) : {};
-  document.getElementById('e-config-area').innerHTML = wfRenderConfigFields(t, WF.jsonMode ? cfg : {});
+  // Gather from the CURRENTLY-displayed view BEFORE flipping the mode flag —
+  // wfGatherConfig branches on WF.jsonMode to decide where to read from. If
+  // gather fails (invalid JSON in either view), stay put so the user can fix
+  // it without losing the toggle button.
+  const cfg = wfGatherConfig(t);
+  if (cfg === null) return;
+  WF.jsonMode = !WF.jsonMode;
+  document.getElementById('e-config-area').innerHTML = wfRenderConfigFields(t, cfg);
+  // Cred dropdown may have just re-mounted (form mode) — re-evaluate the
+  // internal-cred + non-internal-URL warning. No-op when not in webhook editor.
+  wfUpdateCredWarning();
 }
 
 function wfGatherConfig(type) {
   if (WF.jsonMode) {
-    try { return JSON.parse(document.getElementById('e-config-json').value); }
+    const raw = document.getElementById('e-config-json')?.value?.trim() ?? '';
+    if (!raw) return {};
+    try { return JSON.parse(raw); }
     catch { Swal.fire('Error', 'Config JSON invalid', 'error'); return null; }
   }
   const tryParse = (id, fb = null) => {
