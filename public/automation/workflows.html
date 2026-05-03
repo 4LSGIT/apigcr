@@ -403,6 +403,7 @@
     <div class="canvas-head">
       <div class="canvas-title placeholder" id="wf-canvas-title">← Select a workflow</div>
       <div id="wf-canvas-actions" style="display:none;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="wfShowExplain()"><i class="fa-regular fa-circle-question"></i> Explain</button>
         <button class="btn btn-outline btn-sm" onclick="wfEdit()"><i class="fa-solid fa-pencil"></i> Edit</button>
         <button class="btn btn-outline btn-sm" onclick="wfDuplicate()"><i class="fa-regular fa-copy"></i> Duplicate</button>
         <button class="btn btn-danger btn-sm" onclick="wfDelete()"><i class="fa-solid fa-trash"></i></button>
@@ -1944,6 +1945,281 @@ function stopWfExecPolling() {
     WFEX.pollTimer = null;
   }
   WFEX.targetWfId = null;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// EXPLAIN (human-readable workflow summary)
+//
+// `wfExplain(workflow, steps)` is a pure function: takes the same
+// payload shape returned by GET /api/workflows/:id and emits an HTML
+// string. No dependencies beyond a local _wfEsc, so this module lifts
+// cleanly into a standalone read-only viewer page later.
+//
+// Step references (then/else/skipToStep/set_next value/etc) render as
+// <a class="ex-step-link" data-explain-step="N"> — the consumer wires
+// click handlers. wfShowExplain (below) wires editor-jump behavior.
+//
+// Variables stay as-is per design: {{user_default_phone}} renders
+// literally. No glossary translation in v1.
+// ══════════════════════════════════════════════════════════════════
+
+const _wfEsc = (window.esc || function(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+});
+
+// Render a step-number reference. Handles all four engine sentinel
+// cases plus a missing key (control function didn't set next_step at
+// all → engine falls through to step+1).
+//
+// Pass hasKey=false when the field is absent from the config. Pass
+// hasKey=true with val=null|number|'cancel'|'fail' for explicit values.
+function _wfNextRef(val, hasKey) {
+  if (!hasKey)              return `<i>continue to next step</i>`;
+  if (val === null)         return `<i>end workflow</i>`;
+  if (val === 'cancel')     return `<i>cancel workflow</i>`;
+  if (val === 'fail')       return `<i>fail workflow</i>`;
+  if (typeof val === 'number') {
+    return `<a class="ex-step-link" data-explain-step="${val}">step ${val}</a>`;
+  }
+  return `<code>${_wfEsc(JSON.stringify(val))}</code>`;
+}
+
+// Per-function explainers. Each returns an HTML body fragment for the
+// step. Add new entries here as new internal functions ship — unknown
+// functions fall through to a generic display.
+const _wfExplainers = {
+  query_db(p) {
+    const { from, join = [], where = [], select = [], format } = p;
+    const tablesText = join.length
+      ? `<b>${_wfEsc(from)}</b> joined with ${join.map(j => `<b>${_wfEsc(j.table)}</b>`).join(', ')}`
+      : `<b>${_wfEsc(from)}</b>`;
+    const filters = where.map(w =>
+      `<code>${_wfEsc(w.column)}</code> ${_wfEsc(w.op)} <code>${_wfEsc(String(w.value))}</code>`
+    ).join(' AND ');
+    const formatNote = format === 'first' ? ' (first row)' : (format ? ` (${_wfEsc(format)})` : '');
+    return `
+      <div class="ex-line"><b>Look up data</b>${formatNote}</div>
+      <div class="ex-detail">From: ${tablesText}</div>
+      ${filters ? `<div class="ex-detail">Where: ${filters}</div>` : ''}
+      ${select.length ? `<div class="ex-detail">Reads: ${select.map(s => `<code>${_wfEsc(s)}</code>`).join(' ')}</div>` : ''}
+    `;
+  },
+
+  evaluate_condition(p) {
+    // Multi-condition (with conditions[] + match) or single (variable/operator/value)
+    const conds = Array.isArray(p.conditions) && p.conditions.length
+      ? p.conditions
+      : [{ variable: p.variable, operator: p.operator, value: p.value }];
+    const matchText = conds.length > 1
+      ? ` <span class="ex-muted">(${p.match === 'any' ? 'any' : 'all'} must match)</span>`
+      : '';
+    const renderCond = c =>
+      `<code>{{${_wfEsc(c.variable)}}}</code> <b>${_wfEsc(c.operator)}</b> <code>${_wfEsc(JSON.stringify(c.value))}</code>`;
+    const condsHtml = conds.length === 1
+      ? renderCond(conds[0])
+      : `<ul class="ex-list">${conds.map(c => `<li>${renderCond(c)}</li>`).join('')}</ul>`;
+    const hasThen = Object.prototype.hasOwnProperty.call(p, 'then');
+    const hasElse = Object.prototype.hasOwnProperty.call(p, 'else');
+    return `
+      <div class="ex-line"><b>Check:</b>${matchText}</div>
+      <div class="ex-detail">${condsHtml}</div>
+      <div class="ex-detail">If yes → ${_wfNextRef(p.then, hasThen)}</div>
+      <div class="ex-detail">If no → ${_wfNextRef(p.else, hasElse)}</div>
+    `;
+  },
+
+  schedule_resume(p) {
+    const hasNext = Object.prototype.hasOwnProperty.call(p, 'nextStep');
+    const hasSkip = Object.prototype.hasOwnProperty.call(p, 'skipToStep');
+    return `
+      <div class="ex-line"><b>Wait until</b> <code>${_wfEsc(String(p.resumeAt ?? ''))}</code></div>
+      <div class="ex-detail">Then continue at ${_wfNextRef(p.nextStep, hasNext)}</div>
+      ${hasSkip ? `<div class="ex-detail">If that time is already past, skip to ${_wfNextRef(p.skipToStep, true)}</div>` : ''}
+    `;
+  },
+
+  set_next(p) {
+    const hasVal = Object.prototype.hasOwnProperty.call(p, 'value');
+    if (!hasVal || p.value === null) return `<div class="ex-line"><b>End workflow</b></div>`;
+    return `<div class="ex-line"><b>Jump to</b> ${_wfNextRef(p.value, true)}</div>`;
+  },
+
+  send_sms(p) {
+    return `
+      <div class="ex-line"><b>Send SMS</b></div>
+      <div class="ex-detail">To: <code>${_wfEsc(String(p.to ?? ''))}</code></div>
+      <div class="ex-detail">From: <code>${_wfEsc(String(p.from ?? ''))}</code></div>
+      <div class="ex-message">${_wfEsc(String(p.message ?? ''))}</div>
+    `;
+  },
+
+  send_email(p) {
+    // Engine accepts text? and html? — show whichever is present.
+    // For html, strip tags for readability; staff don't want to read raw markup.
+    // For text, preserve newlines via white-space: pre-wrap (already on .ex-message).
+    let bodyHtml = '';
+    if (p.html) {
+      const stripped = String(p.html)
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      bodyHtml = `<div class="ex-message">${_wfEsc(stripped)}</div>
+        <div class="ex-detail ex-muted">(HTML body — tags stripped for readability)</div>`;
+    } else if (p.text) {
+      bodyHtml = `<div class="ex-message">${_wfEsc(String(p.text))}</div>`;
+    } else {
+      bodyHtml = `<div class="ex-message ex-muted"><i>(no body)</i></div>`;
+    }
+    return `
+      <div class="ex-line"><b>Send Email</b></div>
+      <div class="ex-detail">To: <code>${_wfEsc(String(p.to ?? ''))}</code></div>
+      <div class="ex-detail">From: <code>${_wfEsc(String(p.from ?? ''))}</code></div>
+      ${p.subject ? `<div class="ex-detail">Subject: <code>${_wfEsc(String(p.subject))}</code></div>` : ''}
+      ${bodyHtml}
+    `;
+  },
+
+  noop() { return `<div class="ex-line"><b>No-op</b> <span class="ex-muted">(does nothing)</span></div>`; }
+};
+
+// Wraps the per-function body with type-agnostic concerns: set_vars
+// listing and error_policy. Keeps explainers focused on their unique
+// payload.
+function _wfExplainStep(step) {
+  const cfg = step.config || {};
+  let body;
+  if (step.type === 'webhook') {
+    const m = (cfg.method || 'GET').toUpperCase();
+    body = `
+      <div class="ex-line"><b>HTTP Request</b></div>
+      <div class="ex-detail"><code>${_wfEsc(m)}</code> <code>${_wfEsc(cfg.url || '')}</code></div>
+      ${cfg.body ? `<div class="ex-detail">Body: <code>${_wfEsc(JSON.stringify(cfg.body))}</code></div>` : ''}
+      ${cfg.credential_id ? `<div class="ex-detail ex-muted">Uses credential #${cfg.credential_id}</div>` : ''}
+    `;
+  } else if (step.type === 'custom_code') {
+    const preview = (cfg.code || '').slice(0, 200);
+    body = `<div class="ex-line"><b>Run custom JavaScript</b></div><pre class="ex-code">${_wfEsc(preview)}${(cfg.code || '').length > 200 ? '\n…' : ''}</pre>`;
+  } else if (step.type === 'internal_function') {
+    const fn = cfg.function_name;
+    const explainer = _wfExplainers[fn];
+    body = explainer
+      ? explainer(cfg.params || {})
+      : `<div class="ex-line"><b>Internal function:</b> <code>${_wfEsc(fn)}</code></div>
+         <div class="ex-detail">Params: <code>${_wfEsc(JSON.stringify(cfg.params || {}))}</code></div>`;
+  } else {
+    body = `<div class="ex-line"><b>Unknown step type:</b> <code>${_wfEsc(step.type)}</code></div>`;
+  }
+
+  // Common addenda
+  let extras = '';
+  if (cfg.set_vars && Object.keys(cfg.set_vars).length) {
+    const names = Object.keys(cfg.set_vars).map(k => `<code>${_wfEsc(k)}</code>`).join(' ');
+    extras += `<div class="ex-detail ex-muted">Saves: ${names}</div>`;
+  }
+  const ep = step.error_policy;
+  if (ep && ep.strategy && ep.strategy !== 'ignore') {
+    const retries = ep.max_retries
+      ? ` (retry ${ep.max_retries}× , ${ep.backoff_seconds || 5}s apart)`
+      : '';
+    extras += `<div class="ex-detail ex-policy">On failure: <b>${_wfEsc(ep.strategy)}</b>${retries}</div>`;
+  }
+
+  return body + extras;
+}
+
+// Pure renderer. Returns a complete HTML document fragment (no <html>,
+// no <body>, just inner content) — caller decides how to mount it.
+function wfExplain(workflow, steps) {
+  const sorted = [...(steps || [])].sort((a, b) => a.step_number - b.step_number);
+  const stepBlocks = sorted.map(step => `
+    <div class="ex-step" id="ex-step-${step.step_number}">
+      <div class="ex-step-num">${step.step_number}</div>
+      <div class="ex-step-body">${_wfExplainStep(step)}</div>
+    </div>
+  `).join('');
+  return `
+    <div class="ex-doc">
+      <div class="ex-header">
+        <h2 class="ex-title">${_wfEsc(workflow?.name || 'Workflow')}</h2>
+        ${workflow?.description ? `<p class="ex-desc">${_wfEsc(workflow.description)}</p>` : ''}
+      </div>
+      <div class="ex-steps">${stepBlocks || '<div class="ex-muted">No steps defined.</div>'}</div>
+    </div>
+  `;
+}
+
+// Embedded styles for the modal. Inline-friendly, no external deps,
+// no reliance on iframe-specific CSS vars (so this lifts to a
+// standalone page unchanged).
+const _WF_EXPLAIN_CSS = `
+  .ex-doc { font-size: 13px; line-height: 1.55; color: #1f2937; text-align: left; }
+  .ex-header { padding: 0 4px 14px; border-bottom: 1px solid #e5e7eb; margin-bottom: 14px; }
+  .ex-title { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+  .ex-desc  { margin: 0; color: #6b7280; font-size: 12px; }
+  .ex-steps { display: flex; flex-direction: column; gap: 10px; }
+  .ex-step  { display: flex; gap: 12px; padding: 10px 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; scroll-margin-top: 12px; }
+  .ex-step-num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: #6366f1; color: white; font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .ex-step-body { flex: 1; min-width: 0; }
+  .ex-line   { margin-bottom: 4px; }
+  .ex-detail { margin: 2px 0 0; padding-left: 2px; font-size: 12.5px; color: #374151; }
+  .ex-message { margin: 6px 0 0; padding: 8px 10px; background: white; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .ex-code { margin: 6px 0 0; padding: 8px; background: #1f2937; color: #f9fafb; border-radius: 6px; font-size: 11.5px; font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; max-height: 200px; overflow: auto; }
+  .ex-muted { color: #9ca3af; font-size: 11.5px; }
+  .ex-policy { color: #b45309; }
+  .ex-list { margin: 4px 0 0; padding-left: 18px; }
+  .ex-list li { margin: 2px 0; }
+  .ex-step-link { color: #4f46e5; text-decoration: underline; cursor: pointer; }
+  .ex-step-link:hover { color: #3730a3; background: #eef2ff; padding: 0 3px; border-radius: 3px; }
+  .ex-doc code { background: #eef2ff; padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: #3730a3; word-break: break-word; }
+`;
+
+// Editor-side handler. Opens the modal, wires step-jump links to
+// close-and-select behavior. The standalone read-only viewer (B) will
+// reuse wfExplain() but bind its own click handler.
+function wfShowExplain() {
+  if (!WF.activeWf) return;
+  if (!WF.steps?.length) {
+    Swal.fire({ icon: 'info', title: 'Nothing to explain', text: 'This workflow has no steps yet.' });
+    return;
+  }
+  const html = `<style>${_WF_EXPLAIN_CSS}</style>${wfExplain(WF.activeWf, WF.steps)}`;
+  Swal.fire({
+    html,
+    width: 820,
+    showConfirmButton: false,
+    showCloseButton: true,
+    didOpen: () => {
+      const popup = Swal.getPopup();
+      if (!popup) return;
+      popup.querySelectorAll('[data-explain-step]').forEach(a => {
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          const num = parseInt(a.dataset.explainStep, 10);
+          const idx = WF.steps.findIndex(s => s.step_number === num);
+          if (idx < 0) {
+            Swal.fire({ icon: 'warning', title: `Step ${num} not found`, text: 'This reference points to a step that no longer exists.' });
+            return;
+          }
+          Swal.close();
+          wfSelectStep(idx);
+          // Scroll the canvas card into view after the editor renders
+          setTimeout(() => {
+            const cards = document.querySelectorAll('.step-card');
+            if (cards[idx]) cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 80);
+        });
+      });
+    }
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════
