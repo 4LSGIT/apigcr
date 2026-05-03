@@ -396,6 +396,7 @@
     <div class="canvas-head">
       <div class="canvas-title placeholder" id="seq-canvas-title">← Select a sequence template</div>
       <div id="seq-canvas-actions" style="display:none;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="seqShowExplain()"><i class="fa-regular fa-circle-question"></i> Explain</button>
         <button class="btn btn-outline btn-sm" onclick="seqEdit()"><i class="fa-solid fa-pencil"></i> Edit</button>
         <button class="btn btn-outline btn-sm" onclick="seqDuplicate()"><i class="fa-regular fa-copy"></i> Duplicate</button>
         <button class="btn btn-danger btn-sm" onclick="seqDelete()"><i class="fa-solid fa-trash"></i></button>
@@ -1737,6 +1738,269 @@ function stopSeqEnrollPolling() {
     SEQENROLL.pollTimer = null;
   }
   SEQENROLL.targetTemplateId = null;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// EXPLAIN (human-readable sequence summary)
+//
+// `seqExplain(template, steps)` is a pure function — same shape as
+// the workflow explainer in workflows.html. Sequences are linear,
+// so step references are just self-anchors (click to open in editor).
+//
+// Action types covered: sms, email, task, internal_function,
+// webhook, start_workflow. Variables stay as-is per design choice.
+// ══════════════════════════════════════════════════════════════════
+
+const _seqEsc = (window.esc || function(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => (
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+});
+
+// Render the timing block. Six top-level types, each with sub-shapes.
+function _seqExplainTiming(t) {
+  if (!t || !t.type || t.type === 'immediate') {
+    return `<div class="ex-timing"><b>Fires:</b> immediately (~5s after enrollment or previous step)</div>`;
+  }
+  const jitter = t.randomizeMinutes ? ` <span class="ex-muted">(±${t.randomizeMinutes} min jitter)</span>` : '';
+
+  if (t.type === 'delay') {
+    if (typeof t.at === 'string') {
+      return `<div class="ex-timing"><b>Fires at:</b> <code>${_seqEsc(t.at)}</code>${jitter}</div>`;
+    }
+    return `<div class="ex-timing"><b>Waits:</b> ${_seqEsc(String(t.value ?? '?'))} ${_seqEsc(t.unit || 'minutes')}${jitter}</div>`;
+  }
+  if (t.type === 'next_business_day') {
+    return `<div class="ex-timing"><b>Fires:</b> next business day at ${_seqEsc(t.timeOfDay || '09:00')}${jitter}</div>`;
+  }
+  if (t.type === 'business_days') {
+    const n = t.value || 1;
+    return `<div class="ex-timing"><b>Fires:</b> ${n} business day${n === 1 ? '' : 's'} later at ${_seqEsc(t.timeOfDay || '09:00')}${jitter}</div>`;
+  }
+  if (t.type === 'before_appt') {
+    const minNote = t.minHoursBefore != null
+      ? ` <span class="ex-muted">(skipped if appt is less than ${t.minHoursBefore}h away)</span>`
+      : '';
+    return `<div class="ex-timing"><b>Fires:</b> ${_seqEsc(String(t.hoursBack ?? 24))}h before appointment, at ${_seqEsc(t.timeOfDay || '10:00')}${jitter}${minNote}</div>`;
+  }
+  if (t.type === 'before_appt_fixed') {
+    return `<div class="ex-timing"><b>Fires:</b> exactly ${_seqEsc(String(t.hoursBack ?? 24))}h before appointment${jitter}</div>`;
+  }
+  return `<div class="ex-timing"><b>Fires:</b> <code>${_seqEsc(t.type)}</code> <span class="ex-muted">(unknown timing type)</span></div>`;
+}
+
+// Render the action body. action_type drives the shape; action_config
+// usually has { function_name, params } for sms/email/task/internal,
+// or carries top-level url/method/credential_id/body for webhook,
+// or workflow_id/init_data/tie_to_contact for start_workflow.
+function _seqExplainAction(step) {
+  const at = step.action_type || 'internal_function';
+  const cfg = step.action_config || {};
+  const params = cfg.params || {};
+
+  if (at === 'sms') {
+    return `
+      <div class="ex-line"><b>Send SMS</b></div>
+      <div class="ex-detail">To: <code>${_seqEsc(String(params.to ?? ''))}</code></div>
+      <div class="ex-detail">From: <code>${_seqEsc(String(params.from ?? ''))}</code></div>
+      <div class="ex-message">${_seqEsc(String(params.message ?? ''))}</div>
+    `;
+  }
+
+  if (at === 'email') {
+    let bodyHtml = '';
+    if (params.html) {
+      const stripped = String(params.html)
+        .replace(/<style[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[\s\S]*?<\/script>/gi, '')
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      bodyHtml = `<div class="ex-message">${_seqEsc(stripped)}</div>
+        <div class="ex-detail ex-muted">(HTML body — tags stripped for readability)</div>`;
+    } else if (params.text) {
+      bodyHtml = `<div class="ex-message">${_seqEsc(String(params.text))}</div>`;
+    } else {
+      bodyHtml = `<div class="ex-message ex-muted"><i>(no body)</i></div>`;
+    }
+    return `
+      <div class="ex-line"><b>Send Email</b></div>
+      <div class="ex-detail">To: <code>${_seqEsc(String(params.to ?? ''))}</code></div>
+      <div class="ex-detail">From: <code>${_seqEsc(String(params.from ?? ''))}</code></div>
+      ${params.subject ? `<div class="ex-detail">Subject: <code>${_seqEsc(String(params.subject))}</code></div>` : ''}
+      ${bodyHtml}
+    `;
+  }
+
+  if (at === 'task') {
+    return `
+      <div class="ex-line"><b>Create Task</b></div>
+      ${params.title ? `<div class="ex-detail">Title: <code>${_seqEsc(String(params.title))}</code></div>` : ''}
+      ${params.assigned_to ? `<div class="ex-detail">Assigned to: <code>user #${_seqEsc(String(params.assigned_to))}</code></div>` : ''}
+      ${params.description ? `<div class="ex-message">${_seqEsc(String(params.description))}</div>` : ''}
+    `;
+  }
+
+  if (at === 'webhook') {
+    const m = (cfg.method || 'POST').toUpperCase();
+    return `
+      <div class="ex-line"><b>HTTP Request</b> <span class="ex-muted">(not retry-idempotent)</span></div>
+      <div class="ex-detail"><code>${_seqEsc(m)}</code> <code>${_seqEsc(cfg.url || '')}</code></div>
+      ${cfg.credential_id ? `<div class="ex-detail ex-muted">Uses credential #${cfg.credential_id}</div>` : ''}
+      ${cfg.body ? `<div class="ex-detail">Body: <code>${_seqEsc(JSON.stringify(cfg.body))}</code></div>` : ''}
+    `;
+  }
+
+  if (at === 'start_workflow') {
+    const tied = cfg.tie_to_contact !== false;
+    return `
+      <div class="ex-line"><b>Start Workflow</b> <code>#${_seqEsc(String(cfg.workflow_id ?? '?'))}</code></div>
+      <div class="ex-detail ex-muted">${tied ? 'Tied to this enrollment\'s contact' : (cfg.contact_id_override ? `Override contact: <code>${_seqEsc(String(cfg.contact_id_override))}</code>` : 'Untied')}</div>
+      ${cfg.init_data ? `<div class="ex-detail">init_data: <code>${_seqEsc(JSON.stringify(cfg.init_data))}</code></div>` : ''}
+    `;
+  }
+
+  // internal_function
+  const fn = cfg.function_name || 'unknown';
+  return `
+    <div class="ex-line"><b>Internal function:</b> <code>${_seqEsc(fn)}</code></div>
+    ${Object.keys(params).length ? `<div class="ex-detail">Params: <code>${_seqEsc(JSON.stringify(params))}</code></div>` : ''}
+    ${cfg.set_vars && Object.keys(cfg.set_vars).length ? `<div class="ex-detail ex-muted">Saves: ${Object.keys(cfg.set_vars).map(k => `<code>${_seqEsc(k)}</code>`).join(' ')}</div>` : ''}
+  `;
+}
+
+// Condition is a SQL-query gate: cond.query runs with cond.params bound,
+// result compared to cond.assert. If it doesn't match, step is SKIPPED.
+function _seqExplainCondition(cond) {
+  if (!cond) return '';
+  return `
+    <div class="ex-detail ex-cond">
+      <b>Only fires if:</b> SQL query matches <code>${_seqEsc(JSON.stringify(cond.assert ?? null))}</code>
+      <div class="ex-muted">Query: <code>${_seqEsc(String(cond.query || '').slice(0, 120))}${(cond.query || '').length > 120 ? '…' : ''}</code></div>
+    </div>
+  `;
+}
+
+function _seqExplainGuard(guard) {
+  if (!guard || !guard.min_hours_before_appt) return '';
+  return `
+    <div class="ex-detail ex-cond">
+      <b>Skipped if:</b> appointment is less than ${_seqEsc(String(guard.min_hours_before_appt))}h away when this step fires
+    </div>
+  `;
+}
+
+// Top-level pure renderer.
+function seqExplain(template, steps) {
+  const sorted = [...(steps || [])].sort((a, b) => a.step_number - b.step_number);
+  const stepBlocks = sorted.map(step => {
+    const ep = step.error_policy;
+    const policy = (ep && ep.strategy && ep.strategy !== 'ignore')
+      ? `<div class="ex-detail ex-policy">On failure: <b>${_seqEsc(ep.strategy)}</b>${ep.max_retries ? ` (retry ${ep.max_retries}× , ${ep.backoff_seconds || 5}s apart)` : ''}</div>`
+      : '';
+    return `
+      <div class="ex-step" id="seq-ex-step-${step.step_number}">
+        <div class="ex-step-num">${step.step_number}</div>
+        <div class="ex-step-body">
+          ${_seqExplainTiming(step.timing)}
+          ${_seqExplainCondition(step.condition)}
+          ${_seqExplainGuard(step.fire_guard)}
+          <div class="ex-action">
+            ${_seqExplainAction(step)}
+          </div>
+          ${policy}
+          <div class="ex-detail ex-muted ex-jump"><a class="ex-step-link" data-explain-step="${step.step_number}">Open step ${step.step_number} in editor</a></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Header includes filter chips for appt_type / appt_with so paralegals
+  // see at a glance which appointments this template is scoped to.
+  const filterChips = [];
+  if (template?.type)              filterChips.push(`<span class="ex-chip">type: ${_seqEsc(template.type)}</span>`);
+  if (template?.appt_type_filter)  filterChips.push(`<span class="ex-chip">appt: ${_seqEsc(template.appt_type_filter)}</span>`);
+  if (template?.appt_with_filter)  filterChips.push(`<span class="ex-chip">with: ${_seqEsc(template.appt_with_filter)}</span>`);
+
+  return `
+    <div class="ex-doc">
+      <div class="ex-header">
+        <h2 class="ex-title">${_seqEsc(template?.name || 'Sequence')}</h2>
+        ${filterChips.length ? `<div class="ex-chips">${filterChips.join('')}</div>` : ''}
+        ${template?.description ? `<p class="ex-desc">${_seqEsc(template.description)}</p>` : ''}
+      </div>
+      <div class="ex-steps">${stepBlocks || '<div class="ex-muted">No steps defined.</div>'}</div>
+    </div>
+  `;
+}
+
+// Embedded styles. Self-contained so this lifts to a standalone
+// viewer page later. Mirrors the workflow explainer's CSS with a
+// few sequence-specific additions (.ex-timing, .ex-cond, .ex-chip).
+const _SEQ_EXPLAIN_CSS = `
+  .ex-doc { font-size: 13px; line-height: 1.55; color: #1f2937; text-align: left; }
+  .ex-header { padding: 0 4px 14px; border-bottom: 1px solid #e5e7eb; margin-bottom: 14px; }
+  .ex-title { margin: 0 0 6px; font-size: 18px; font-weight: 600; }
+  .ex-desc  { margin: 8px 0 0; color: #6b7280; font-size: 12px; }
+  .ex-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .ex-chip  { display: inline-block; padding: 2px 8px; background: #eef2ff; color: #3730a3; border-radius: 10px; font-size: 11px; }
+  .ex-steps { display: flex; flex-direction: column; gap: 10px; }
+  .ex-step  { display: flex; gap: 12px; padding: 10px 12px; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; }
+  .ex-step-num { flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%; background: #6366f1; color: white; font-weight: 600; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .ex-step-body { flex: 1; min-width: 0; }
+  .ex-timing { padding: 5px 9px; background: #ecfdf5; border-radius: 5px; font-size: 12px; color: #065f46; margin-bottom: 8px; }
+  .ex-cond   { padding: 5px 9px; background: #fef3c7; border-radius: 5px; color: #92400e; margin: 4px 0; font-size: 12px; }
+  .ex-action { margin-top: 4px; }
+  .ex-line   { margin-bottom: 4px; }
+  .ex-detail { margin: 2px 0 0; padding-left: 2px; font-size: 12.5px; color: #374151; }
+  .ex-message { margin: 6px 0 0; padding: 8px 10px; background: white; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
+  .ex-muted  { color: #9ca3af; font-size: 11.5px; }
+  .ex-policy { color: #b45309; }
+  .ex-jump   { margin-top: 6px; }
+  .ex-step-link { color: #4f46e5; text-decoration: underline; cursor: pointer; }
+  .ex-step-link:hover { color: #3730a3; background: #eef2ff; padding: 0 3px; border-radius: 3px; }
+  .ex-doc code { background: #eef2ff; padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: #3730a3; word-break: break-word; }
+`;
+
+function seqShowExplain() {
+  if (!SEQ.activeTemplate) return;
+  if (!SEQ.steps?.length) {
+    Swal.fire({ icon: 'info', title: 'Nothing to explain', text: 'This sequence has no steps yet.' });
+    return;
+  }
+  const html = `<style>${_SEQ_EXPLAIN_CSS}</style>${seqExplain(SEQ.activeTemplate, SEQ.steps)}`;
+  Swal.fire({
+    html,
+    width: 820,
+    showConfirmButton: false,
+    showCloseButton: true,
+    didOpen: () => {
+      const popup = Swal.getPopup();
+      if (!popup) return;
+      popup.querySelectorAll('[data-explain-step]').forEach(a => {
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          const num = parseInt(a.dataset.explainStep, 10);
+          const idx = SEQ.steps.findIndex(s => s.step_number === num);
+          if (idx < 0) {
+            Swal.fire({ icon: 'warning', title: `Step ${num} not found`, text: 'This reference points to a step that no longer exists.' });
+            return;
+          }
+          Swal.close();
+          seqSelectStep(idx);
+          setTimeout(() => {
+            const cards = document.querySelectorAll('.step-card');
+            if (cards[idx]) cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 80);
+        });
+      });
+    }
+  });
 }
 
 // ══════════════════════════════════════════════════════════════════
