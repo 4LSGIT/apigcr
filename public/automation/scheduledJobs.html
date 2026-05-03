@@ -120,6 +120,17 @@
     .type-one_time  { background: #eff6ff; color: #1d4ed8; }
     .type-recurring { background: #f0fdf4; color: #166534; }
 
+    .job-id-tag {
+      display: inline-block;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 10px; font-weight: 600;
+      color: var(--text2);
+      background: var(--bg);
+      padding: 1px 6px; border-radius: 4px;
+      margin-right: 6px;
+      vertical-align: 1px;
+    }
+
     .job-actions { display: flex; gap: 6px; flex-shrink: 0; }
 
     /* ── Status badges for job list ── */
@@ -346,7 +357,7 @@ function jobCardHTML(job) {
     <div class="job-card">
       <div class="job-status-dot ${dotClass}"></div>
       <div class="job-info">
-        <div class="job-name">${esc(job.name || `Job #${job.id}`)}</div>
+        <div class="job-name"><span class="job-id-tag">#${job.id}</span>${esc(job.name || 'Untitled')}</div>
         <div class="job-meta">
           <span><i class="fa-regular fa-clock"></i> ${esc(when)}</span>
           ${job.recurrence_rule ? `<span><i class="fa-solid fa-rotate"></i> ${esc(job.recurrence_rule)}</span>` : ''}

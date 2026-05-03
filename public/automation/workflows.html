@@ -250,6 +250,13 @@
     .step-card-actions { display: none; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
     .step-card.active .step-card-actions { display: flex; }
 
+    .step-id-tag {
+      font-size: 10px; color: var(--muted); opacity: 0.7;
+      font-family: ui-monospace, Menlo, monospace;
+      white-space: nowrap; flex-shrink: 0;
+      align-self: flex-start;
+    }
+
     .step-act {
       background: var(--bg); border: 1px solid var(--border); color: var(--text2);
       border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer;
@@ -680,7 +687,7 @@ function renderWfList() {
   el.innerHTML = WF.filtered.map(wf => `
     <div class="left-item${wf.id === WF.activeWfId ? ' active' : ''}" onclick="selectWorkflow(${wf.id})">
       <div class="left-item-name">${esc(wf.name)}</div>
-      <div class="left-item-meta">${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}</div>
+      <div class="left-item-meta">id: ${wf.id} · ${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();wfEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act" onclick="event.stopPropagation();wfDuplicate()"><i class="fa-regular fa-copy"></i></button>
@@ -782,6 +789,7 @@ function wfStepCardHTML(step, idx) {
           ${sub ? `<div class="step-label-sub">${esc(sub)}</div>` : ''}
         </div>
         <div class="step-badges">${badges.join('')}</div>
+        <div class="step-id-tag">id ${step.id ?? '—'}</div>
       </div>
       ${isActive ? `
       <div class="step-card-actions">
