@@ -198,22 +198,32 @@ function fdEmailFroms()  { return (window.parent?.firmData?.emailFrom)   || []; 
 function fdUsers()       { return (window.parent?.firmData?.users)       || []; }
 function fdCurrentUser() { return window.parent?.firmData?.currentUser   || null; }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Phone-line / email-from widgets — hybrid dropdown + placeholder text input.
+//
+// Both helpers return either a plain <input> (when firmData has no lines/
+// emails) or a <span> wrapper containing one of two child widgets and a
+// toggle button. The two child modes are:
+//   - select mode: <select id="${id}"> populated from firmData
+//   - text mode:   <input id="${id}" type="text"> for {{var}} placeholders
+//
+// Both modes use the SAME id="${id}" element, so callers' gather logic
+// (document.getElementById(id).value) needs no changes. Auto-detects mode
+// from currentValue: a {{...}} placeholder starts in text mode, anything
+// else starts in select mode. Toggle button flips modes in place,
+// preserving the current value across the swap.
+//
+// Cross-frame: onclick uses `parent.fdToggleLineWidget(this)` so it works
+// from sub-page iframes (workflows.html, sequences.html). When called from
+// the shell directly, parent === window so it still resolves.
+// ─────────────────────────────────────────────────────────────────────────
+
 function fdPhoneLineSelectHtml(id, currentValue) {
   const lines = fdPhoneLines();
   if (!lines.length) {
     return `<input id="${id}" value="${esc(currentValue || '')}">`;
   }
-  const cur = String(currentValue || '');
-  const inList = lines.some(l => String(l.phone_number) === cur);
-  const customOpt = (cur && !inList)
-    ? `<option value="${esc(cur)}" selected>${esc(cur)} (not in firmData)</option>`
-    : '';
-  const blankOpt = cur ? '' : `<option value="" selected>— select a phone line —</option>`;
-  const opts = lines.map(l => {
-    const label = `${l.display_name || l.phone_number} (${l.phone_number}${l.provider ? `, ${l.provider}` : ''})`;
-    return `<option value="${esc(l.phone_number)}" ${String(l.phone_number) === cur ? 'selected' : ''}>${esc(label)}</option>`;
-  }).join('');
-  return `<select id="${id}">${blankOpt}${customOpt}${opts}</select>`;
+  return _fdHybridLineWidget(id, currentValue, 'phone');
 }
 
 function fdEmailFromSelectHtml(id, currentValue) {
@@ -221,19 +231,86 @@ function fdEmailFromSelectHtml(id, currentValue) {
   if (!emails.length) {
     return `<input id="${id}" value="${esc(currentValue || '')}">`;
   }
+  return _fdHybridLineWidget(id, currentValue, 'email');
+}
+
+function _fdHybridLineWidget(id, currentValue, kind) {
   const cur = String(currentValue || '');
-  const inList = emails.some(e => String(e.email) === cur);
+  const isPlaceholder = /\{\{[^}]+\}\}/.test(cur);
+  const inner = isPlaceholder ? _fdLineTextInput(id, cur) : _fdLineSelect(id, cur, kind);
+  // Toggle icon shows what mode you'd switch TO, not what you're in.
+  const iconClass = isPlaceholder ? 'fa-list' : 'fa-code';
+  const title     = isPlaceholder ? 'Pick from list' : 'Use a variable';
+  return `<span class="fd-line-widget" id="fd-w-${id}" data-kind="${kind}" style="display:flex;gap:6px;align-items:stretch">
+    <span class="fd-line-inner" style="flex:1;min-width:0">${inner}</span>
+    <button type="button" class="fd-line-toggle" title="${title}"
+      onclick="parent.fdToggleLineWidget(this)"
+      style="padding:4px 10px;border:1px solid #d1d5db;background:transparent;border-radius:6px;cursor:pointer;font-size:12px;flex-shrink:0">
+      <i class="fa-solid ${iconClass}"></i>
+    </button>
+  </span>`;
+}
+
+function _fdLineTextInput(id, cur) {
+  return `<input id="${id}" type="text" value="${esc(cur)}" placeholder="e.g. {{user_default_phone}}" style="width:100%">`;
+}
+
+function _fdLineSelect(id, cur, kind) {
+  const isPlaceholderCur = /\{\{[^}]+\}\}/.test(cur);
+  // Relabel custom options for placeholders — calling them "(not in firmData)"
+  // is misleading when the value is intentionally a variable.
+  const customLabelSuffix = isPlaceholderCur ? '(variable)' : '(not in firmData)';
+
+  if (kind === 'email') {
+    const emails = fdEmailFroms();
+    const inList = emails.some(e => String(e.email) === cur);
+    const customOpt = (cur && !inList)
+      ? `<option value="${esc(cur)}" selected>${esc(cur)} ${customLabelSuffix}</option>`
+      : '';
+    const blankOpt = cur ? '' : `<option value="" selected>— select a sender —</option>`;
+    const opts = emails.map(e => {
+      const label = e.from_name
+        ? `${e.from_name} <${e.email}>${e.provider ? ` (${e.provider})` : ''}`
+        : `${e.email}${e.provider ? ` (${e.provider})` : ''}`;
+      return `<option value="${esc(e.email)}" ${String(e.email) === cur ? 'selected' : ''}>${esc(label)}</option>`;
+    }).join('');
+    return `<select id="${id}" style="width:100%">${blankOpt}${customOpt}${opts}</select>`;
+  }
+
+  // phone
+  const lines = fdPhoneLines();
+  const inList = lines.some(l => String(l.phone_number) === cur);
   const customOpt = (cur && !inList)
-    ? `<option value="${esc(cur)}" selected>${esc(cur)} (not in firmData)</option>`
+    ? `<option value="${esc(cur)}" selected>${esc(cur)} ${customLabelSuffix}</option>`
     : '';
-  const blankOpt = cur ? '' : `<option value="" selected>— select a sender —</option>`;
-  const opts = emails.map(e => {
-    const label = e.from_name
-      ? `${e.from_name} <${e.email}>${e.provider ? ` (${e.provider})` : ''}`
-      : `${e.email}${e.provider ? ` (${e.provider})` : ''}`;
-    return `<option value="${esc(e.email)}" ${String(e.email) === cur ? 'selected' : ''}>${esc(label)}</option>`;
+  const blankOpt = cur ? '' : `<option value="" selected>— select a phone line —</option>`;
+  const opts = lines.map(l => {
+    const label = `${l.display_name || l.phone_number} (${l.phone_number}${l.provider ? `, ${l.provider}` : ''})`;
+    return `<option value="${esc(l.phone_number)}" ${String(l.phone_number) === cur ? 'selected' : ''}>${esc(label)}</option>`;
   }).join('');
-  return `<select id="${id}">${blankOpt}${customOpt}${opts}</select>`;
+  return `<select id="${id}" style="width:100%">${blankOpt}${customOpt}${opts}</select>`;
+}
+
+function fdToggleLineWidget(btn) {
+  const wrap = btn.closest('.fd-line-widget');
+  if (!wrap) return;
+  const kind = wrap.dataset.kind;
+  const id   = wrap.id.slice('fd-w-'.length);
+  const valueEl   = wrap.querySelector(`#${CSS.escape(id)}`);
+  const cur       = (valueEl?.value ?? '').trim();
+  const innerWrap = wrap.querySelector('.fd-line-inner');
+  const iconEl    = wrap.querySelector('.fd-line-toggle i');
+  const btnEl     = wrap.querySelector('.fd-line-toggle');
+  const isCurrentlySelect = !!innerWrap.querySelector('select');
+  if (isCurrentlySelect) {
+    innerWrap.innerHTML = _fdLineTextInput(id, cur);
+    iconEl.className = 'fa-solid fa-list';
+    btnEl.title = 'Pick from list';
+  } else {
+    innerWrap.innerHTML = _fdLineSelect(id, cur, kind);
+    iconEl.className = 'fa-solid fa-code';
+    btnEl.title = 'Use a variable';
+  }
 }
 
 function fdParamSourceDatalistHtml(datalistId) {
@@ -406,6 +483,7 @@ window.fdUsers             = fdUsers;
 window.fdCurrentUser       = fdCurrentUser;
 window.fdPhoneLineSelectHtml   = fdPhoneLineSelectHtml;
 window.fdEmailFromSelectHtml   = fdEmailFromSelectHtml;
+window.fdToggleLineWidget      = fdToggleLineWidget;
 window.fdParamSourceDatalistHtml = fdParamSourceDatalistHtml;
 window.setTopbarButtons    = setTopbarButtons;
 window.esc                 = esc; // useful for sub-pages that want to match helper output
