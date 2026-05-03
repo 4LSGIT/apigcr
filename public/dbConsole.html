@@ -74,6 +74,15 @@
   table.r td.null { color: var(--muted); font-style: italic; }
   .empty { padding: 20px; color: var(--muted); text-align: center; }
 
+  /* result-actions: thin bar under the results pane, always visible */
+  .result-actions { padding: 5px 10px; background: var(--panel); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  .result-actions button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 11px; }
+  .result-actions button:hover:not(:disabled) { border-color: var(--accent); }
+  .result-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .result-actions .hint { color: var(--muted); font-size: 11px; margin-left: auto; }
+  .result-actions .hint.ok { color: var(--ok); }
+  .result-actions .hint.err { color: var(--danger); }
+
   /* history drawer */
   .history { border-top: 1px solid var(--border); background: var(--panel); max-height: 30%; overflow: auto; display: none; }
   .history.open { display: block; }
@@ -164,6 +173,13 @@
 
     <div class="results" id="results"><div class="empty">Run a query.</div></div>
 
+    <!-- Result-actions bar: sits under the results pane. Always visible; the
+         Copy button is enabled when there's something to grab. -->
+    <div class="result-actions">
+      <button id="btnCopy" disabled title="Copy results to clipboard as TSV (paste-friendly for Sheets/Excel)">📋 Copy</button>
+      <span class="hint" id="copyHint"></span>
+    </div>
+
     <div class="history" id="historyPanel">
       <div class="h">
         <span>Local history (this browser)</span>
@@ -229,14 +245,17 @@ const status_  = document.getElementById("status");
 const results  = document.getElementById("results");
 const btnWrite = document.getElementById("btnWriteToggle");
 const btnCsv   = document.getElementById("btnCsv");
+const btnCopy  = document.getElementById("btnCopy");
 const btnRun   = document.getElementById("btnRun");
 const userHint = document.getElementById("userHint");
+const copyHint = document.getElementById("copyHint");
 
 let lastRows = null;
 let lastFields = null;
 let sortState = { key: null, dir: 1 };
 let writeMode = false;
 let wrapMode  = false;
+let copyHintTimer = null;
 
 // ── auth guard + user hint ───────────────────────────────────────────────────
 // Prefer the parent's live JWT (it gets refreshed on expiry by apiSend);
@@ -319,11 +338,18 @@ async function runQuery() {
     sortState = { key: null, dir: 1 };
     renderResults(res.rows, res.fields);
     setStatus(`<span class="ok">OK</span> · ${res.rowCount ?? 0} row(s) · ${res.durationMs ?? ms} ms`);
-    btnCsv.disabled = !Array.isArray(res.rows) || res.rows.length === 0;
+    btnCsv.disabled  = !Array.isArray(res.rows) || res.rows.length === 0;
+    // Copy works for both SELECT results (TSV) and write results (JSON), so
+    // it's enabled whenever there's *something* to put on the clipboard.
+    btnCopy.disabled = res.rows == null || (Array.isArray(res.rows) && res.rows.length === 0);
     pushHistory(query);
+    // Auto-refresh the open history panel — without this, the panel shows a
+    // stale snapshot and any click misindexes into localStorage.
+    if (historyPanel.classList.contains("open")) renderHistory();
   } catch (err) {
     lastRows = null;
     btnCsv.disabled = true;
+    btnCopy.disabled = true;
     results.innerHTML = `<div class="empty" style="color:var(--danger);">${escapeHtml(err.message || String(err))}</div>`;
     setStatus(`<span class="err">Error:</span> ${escapeHtml(err.message || String(err))}`);
   } finally {
@@ -332,6 +358,16 @@ async function runQuery() {
 }
 
 function setStatus(html) { status_.innerHTML = html; }
+
+// Show a transient message in the result-actions bar (next to the Copy button).
+// Auto-clears after a few seconds so it doesn't linger past relevance.
+function setCopyHint(text, kind) {
+  copyHint.textContent = text || "";
+  copyHint.classList.remove("ok", "err");
+  if (kind) copyHint.classList.add(kind);
+  if (copyHintTimer) clearTimeout(copyHintTimer);
+  if (text) copyHintTimer = setTimeout(() => { copyHint.textContent = ""; copyHint.classList.remove("ok", "err"); }, 2500);
+}
 
 // ── results rendering ────────────────────────────────────────────────────────
 function renderResults(rows, fields) {
@@ -402,6 +438,37 @@ btnCsv.addEventListener("click", () => {
   a.download = `query-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+});
+
+// ── Copy to clipboard ────────────────────────────────────────────────────────
+// TSV rather than CSV: tab-separated text pastes straight into Excel/Sheets/
+// Notion without an import dialog. For write results (OkPacket) we copy JSON
+// since there's no row structure to transpose.
+btnCopy.addEventListener("click", async () => {
+  if (lastRows == null) return;
+  let text;
+  let label;
+  if (Array.isArray(lastRows)) {
+    if (!lastRows.length) return;
+    const cols = lastFields?.length ? lastFields.map(f => f.name) : Object.keys(lastRows[0]);
+    const cell = (v) => {
+      if (v === null || v === undefined) return "";
+      const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+      // TSV is unquoted; sanitize tabs/newlines so we don't break the grid.
+      return s.replace(/\t/g, "    ").replace(/\r?\n/g, " ");
+    };
+    text = [cols.join("\t"), ...lastRows.map(r => cols.map(c => cell(r[c])).join("\t"))].join("\n");
+    label = `Copied ${lastRows.length} row${lastRows.length === 1 ? "" : "s"} (TSV).`;
+  } else {
+    text = JSON.stringify(lastRows, null, 2);
+    label = "Copied result (JSON).";
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    setCopyHint(label, "ok");
+  } catch (err) {
+    setCopyHint(`Copy failed: ${err.message}`, "err");
+  }
 });
 
 // ── schema sidebar ───────────────────────────────────────────────────────────
@@ -851,23 +918,40 @@ document.getElementById("btnHistory").addEventListener("click", () => {
 document.getElementById("btnClearHistory").addEventListener("click", () => {
   if (confirm("Clear local query history?")) { localStorage.removeItem(HIST_KEY); renderHistory(); }
 });
+
+// pushHistory dedupes against the most-recent entry: re-running the same query
+// just bumps its timestamp instead of stacking duplicates. Useful because Run
+// is a one-button action and people hammer it.
 function pushHistory(q) {
   try {
     const arr = JSON.parse(localStorage.getItem(HIST_KEY) || "[]");
-    arr.unshift({ q, t: Date.now() });
+    if (arr[0]?.q === q) {
+      arr[0].t = Date.now();
+    } else {
+      arr.unshift({ q, t: Date.now() });
+    }
     localStorage.setItem(HIST_KEY, JSON.stringify(arr.slice(0, 50)));
   } catch {}
 }
+
+// renderHistory stores each query in `data-q` rather than relying on an index
+// into localStorage. The previous index-based version misfired whenever a new
+// query landed at the top — clicking the visually-top item silently loaded the
+// just-run query instead of the one shown.
 function renderHistory() {
   const arr = JSON.parse(localStorage.getItem(HIST_KEY) || "[]");
   historyList.innerHTML = arr.length
-    ? arr.map((h, i) => `<div class="hist-item" data-i="${i}" title="${escapeHtml(h.q)}">${escapeHtml(h.q.replace(/\s+/g, " "))}</div>`).join("")
+    ? arr.map(h => {
+        const escaped = escapeHtml(h.q);
+        return `<div class="hist-item" data-q="${escaped}" title="${escaped}">${escapeHtml(h.q.replace(/\s+/g, " "))}</div>`;
+      }).join("")
     : '<div class="empty" style="padding:12px;">—</div>';
   historyList.querySelectorAll(".hist-item").forEach(el => {
     el.addEventListener("click", () => {
-      const a = JSON.parse(localStorage.getItem(HIST_KEY) || "[]");
-      const h = a[+el.dataset.i];
-      if (h) { editor.value = h.q; editor.focus(); }
+      // dataset round-trips HTML-decoded values, so this gives back the
+      // original query verbatim.
+      editor.value = el.dataset.q;
+      editor.focus();
     });
   });
 }

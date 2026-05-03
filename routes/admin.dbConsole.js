@@ -9,7 +9,7 @@
 // Endpoints:
 //   POST   /admin/db/query              body { query, allowWrite }
 //   GET    /admin/db/schema             -> { tables: [...] }
-//   GET    /admin/db/schema.sql         downloads schema-YYYYMMDD-HHMMSS.sql (no data)
+//   GET    /admin/db/schema.sql         downloads schema-YYYYMMDD-HHMMSS.sql (no data, no DB name)
 //   POST   /admin/db/schema/save-to-ref dev-only: writes the dump to ref/ (Cloud
 //                                       Run's filesystem is ephemeral, so this
 //                                       endpoint refuses outside ENVIRONMENT=development)
@@ -187,8 +187,9 @@ router.get("/admin/db/schema", ...superuserOnly, async (req, res) => {
     );
 
     const [fks] = await req.db.query(
-      `SELECT TABLE_NAME AS tableName, CONSTRAINT_NAME AS name, COLUMN_NAME AS columnName,
-              REFERENCED_TABLE_NAME AS refTable, REFERENCED_COLUMN_NAME AS refColumn
+      `SELECT TABLE_NAME AS tableName, CONSTRAINT_NAME AS name,
+              COLUMN_NAME AS columnName, REFERENCED_TABLE_NAME AS refTable,
+              REFERENCED_COLUMN_NAME AS refColumn
          FROM information_schema.KEY_COLUMN_USAGE
         WHERE TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL
         ORDER BY TABLE_NAME, CONSTRAINT_NAME`, [db]
@@ -222,35 +223,260 @@ router.get("/admin/db/schema", ...superuserOnly, async (req, res) => {
   }
 });
 
-// Build a CREATE-TABLE-only schema dump (no data). Returns { body, fileName,
-// tableCount }. Used by both the download and the dev-only save endpoints.
+// ─────────────────────────────────────────────────────────────────────────────
+// Schema dump construction.
+//
+// The output is a phpMyAdmin-compatible .sql file with one notable goal: it's
+// committed to git, so we (a) omit the database identifier and (b) strip the
+// AUTO_INCREMENT high-water mark from table options to keep diffs quiet.
+//
+// Layout:
+//   preamble (SET … / FOREIGN_KEY_CHECKS = 0)
+//   for each base table:
+//     CREATE TABLE (columns + CHECK constraints only — keys/FKs deferred)
+//     CREATE TRIGGER blocks for triggers attached to that table
+//   for each view:
+//     CREATE VIEW (DEFINER/SQL SECURITY stripped for portability)
+//   ALTER TABLE … ADD PRIMARY KEY/KEY/UNIQUE/FULLTEXT/SPATIAL  (one block per table)
+//   ALTER TABLE … MODIFY … AUTO_INCREMENT                       (one block per table)
+//   ALTER TABLE … ADD CONSTRAINT … FOREIGN KEY                   (one block per table)
+//   postamble (FOREIGN_KEY_CHECKS = 1, COMMIT)
+//
+// The deferred-keys structure means the file re-imports cleanly into a fresh
+// DB regardless of FK ordering. CHECK constraints are kept inline (phpMyAdmin
+// silently drops them, which is a bug — they're part of the schema).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Parse a SHOW CREATE TABLE result into { createTable (without keys/FKs),
+// indexes (raw key clauses), fks (raw constraint clauses), autoIncCol,
+// autoIncTypeSpec }. The type-spec captures everything between the column name
+// and the AUTO_INCREMENT keyword — typically "int NOT NULL" or
+// "bigint UNSIGNED NOT NULL" — so we can reproduce it verbatim in the deferred
+// MODIFY clause.
+function parseCreateTable(name, ddl) {
+  const lines = ddl.split("\n");
+  const headerLine = lines[0];                         // CREATE TABLE `name` (
+  const footerLine = lines[lines.length - 1];          // ) ENGINE=InnoDB ...
+  const bodyLines  = lines.slice(1, -1);
+
+  const cols    = [];   // column definitions + inline CHECK constraints (kept in CREATE TABLE)
+  const indexes = [];   // raw "PRIMARY KEY (...)" / "KEY ... (...)" clauses
+  const fks     = [];   // raw "CONSTRAINT ... FOREIGN KEY ..." clauses
+  let autoIncCol      = null;
+  let autoIncTypeSpec = null;
+
+  for (const rawLine of bodyLines) {
+    const noComma = rawLine.replace(/,\s*$/, "");
+    const trimmed = noComma.trim();
+    if (!trimmed) continue;
+
+    if (/^`[^`]+`/.test(trimmed)) {
+      // Column definition. Detect AUTO_INCREMENT and extract the type spec.
+      const aiMatch = trimmed.match(/^`([^`]+)`\s+(.+)\s+AUTO_INCREMENT\b/i);
+      if (aiMatch) {
+        autoIncCol = aiMatch[1];
+        autoIncTypeSpec = aiMatch[2];
+        cols.push(noComma.replace(/\s+AUTO_INCREMENT\b/i, ""));
+      } else {
+        cols.push(noComma);
+      }
+    } else if (/^(PRIMARY KEY|UNIQUE KEY|KEY|FULLTEXT KEY|SPATIAL KEY)\b/i.test(trimmed)) {
+      indexes.push(trimmed);
+    } else if (/^CONSTRAINT\s+`[^`]+`\s+FOREIGN KEY\b/i.test(trimmed)) {
+      fks.push(trimmed);
+    } else {
+      // CHECK constraint or unknown clause — keep inline. CHECK references
+      // columns that exist in the table being defined, so it's safe here.
+      cols.push(noComma);
+    }
+  }
+
+  // Strip the AUTO_INCREMENT high-water mark — noisy in git diffs, irrelevant
+  // for re-import.
+  const cleanFooter = footerLine.replace(/\s+AUTO_INCREMENT=\d+/i, "");
+
+  const createTable = `${headerLine}\n${cols.join(",\n")}\n${cleanFooter};`;
+  return { name, createTable, indexes, fks, autoIncCol, autoIncTypeSpec };
+}
+
+// Build the full dump. Returns { body, fileName, tableCount }.
 async function buildSchemaDump(db, source) {
   const [[{ db: dbName }]] = await db.query("SELECT DATABASE() AS db");
-  const [tables] = await db.query(
+
+  const [tableRows] = await db.query(
     `SELECT TABLE_NAME AS name FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
       ORDER BY TABLE_NAME`, [dbName]
   );
-  const parts = [
-    `-- Schema snapshot for \`${dbName}\``,
+
+  const [viewRows] = await db.query(
+    `SELECT TABLE_NAME AS name FROM information_schema.VIEWS
+      WHERE TABLE_SCHEMA = ?
+      ORDER BY TABLE_NAME`, [dbName]
+  );
+
+  const [triggerRows] = await db.query(
+    `SELECT TRIGGER_NAME       AS name,
+            EVENT_MANIPULATION AS event,
+            EVENT_OBJECT_TABLE AS tableName,
+            ACTION_TIMING      AS timing,
+            ACTION_STATEMENT   AS body
+       FROM information_schema.TRIGGERS
+      WHERE TRIGGER_SCHEMA = ?
+      ORDER BY EVENT_OBJECT_TABLE, ACTION_ORDER, TRIGGER_NAME`, [dbName]
+  );
+  const triggersByTable = {};
+  for (const t of triggerRows) (triggersByTable[t.tableName] ||= []).push(t);
+
+  // Pull each table's CREATE TABLE and split into deferred parts.
+  const parsedTables = [];
+  for (const { name } of tableRows) {
+    const [[row]] = await db.query(`SHOW CREATE TABLE \`${name}\``);
+    const ddl = row["Create Table"];
+    if (ddl) parsedTables.push(parseCreateTable(name, ddl));
+  }
+
+  const parts = [];
+
+  // Preamble
+  parts.push(
+    `-- DB Console schema snapshot`,
     `-- Generated: ${new Date().toISOString()}`,
     `-- Source: ${source}`,
-    `-- Contains CREATE TABLE statements only (no data).`,
+    `-- Contains schema only (no data, no database identifier).`,
     ``,
-  ];
-  for (const { name } of tables) {
-    const [[row]] = await db.query(`SHOW CREATE TABLE \`${name}\``);
-    const createSql = row["Create Table"] || row["Create View"] || "";
-    parts.push(`-- -----------------------------------------------------`);
-    parts.push(`-- Table: ${name}`);
-    parts.push(`-- -----------------------------------------------------`);
-    parts.push(`DROP TABLE IF EXISTS \`${name}\`;`);
-    parts.push(`${createSql};`);
+    `SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";`,
+    `START TRANSACTION;`,
+    `SET time_zone = "+00:00";`,
+    `SET FOREIGN_KEY_CHECKS = 0;`,
+    ``,
+    `/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;`,
+    `/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;`,
+    `/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;`,
+    `/*!40101 SET NAMES utf8mb4 */;`,
+    ``
+  );
+
+  // Tables (CREATE TABLE without keys/FKs) + per-table triggers.
+  for (const t of parsedTables) {
+    parts.push(`-- --------------------------------------------------------`);
+    parts.push(``);
+    parts.push(`--`);
+    parts.push(`-- Table structure for table \`${t.name}\``);
+    parts.push(`--`);
+    parts.push(``);
+    parts.push(`DROP TABLE IF EXISTS \`${t.name}\`;`);
+    parts.push(t.createTable);
+    parts.push(``);
+
+    const tt = triggersByTable[t.name] || [];
+    if (tt.length) {
+      parts.push(`--`);
+      parts.push(`-- Triggers for table \`${t.name}\``);
+      parts.push(`--`);
+      for (const trig of tt) {
+        parts.push(`DELIMITER $$`);
+        parts.push(
+          `CREATE TRIGGER \`${trig.name}\` ${trig.timing} ${trig.event} ` +
+          `ON \`${trig.tableName}\` FOR EACH ROW ${trig.body}`
+        );
+        parts.push(`$$`);
+        parts.push(`DELIMITER ;`);
+      }
+      parts.push(``);
+    }
+  }
+
+  // Views — placed after tables so they can reference any table. DEFINER and
+  // SQL SECURITY clauses are stripped so the dump re-imports without needing
+  // the same DB user to exist.
+  for (const { name } of viewRows) {
+    let viewSql = "";
+    try {
+      const [[row]] = await db.query(`SHOW CREATE VIEW \`${name}\``);
+      viewSql = (row["Create View"] || "").replace(
+        /CREATE\s+(?:ALGORITHM=\w+\s+)?(?:DEFINER=`[^`]+`@`[^`]+`\s+)?(?:SQL SECURITY \w+\s+)?VIEW/i,
+        "CREATE VIEW"
+      );
+    } catch (e) {
+      // Skip views we can't introspect (rare; usually a privilege issue).
+      continue;
+    }
+
+    parts.push(`-- --------------------------------------------------------`);
+    parts.push(``);
+    parts.push(`--`);
+    parts.push(`-- Structure for view \`${name}\``);
+    parts.push(`--`);
+    parts.push(``);
+    parts.push(`DROP VIEW IF EXISTS \`${name}\`;`);
+    parts.push(`${viewSql};`);
     parts.push(``);
   }
+
+  // Indexes — one ALTER TABLE per table, all keys grouped.
+  const tablesWithIndexes = parsedTables.filter(t => t.indexes.length);
+  if (tablesWithIndexes.length) {
+    parts.push(`--`);
+    parts.push(`-- Indexes for dumped tables`);
+    parts.push(`--`);
+    parts.push(``);
+    for (const t of tablesWithIndexes) {
+      parts.push(`--`);
+      parts.push(`-- Indexes for table \`${t.name}\``);
+      parts.push(`--`);
+      parts.push(`ALTER TABLE \`${t.name}\``);
+      parts.push(`  ${t.indexes.map(i => `ADD ${i}`).join(",\n  ")};`);
+      parts.push(``);
+    }
+  }
+
+  // AUTO_INCREMENT — one MODIFY per table.
+  const tablesWithAi = parsedTables.filter(t => t.autoIncCol);
+  if (tablesWithAi.length) {
+    parts.push(`--`);
+    parts.push(`-- AUTO_INCREMENT for dumped tables`);
+    parts.push(`--`);
+    parts.push(``);
+    for (const t of tablesWithAi) {
+      parts.push(`--`);
+      parts.push(`-- AUTO_INCREMENT for table \`${t.name}\``);
+      parts.push(`--`);
+      parts.push(`ALTER TABLE \`${t.name}\``);
+      parts.push(`  MODIFY \`${t.autoIncCol}\` ${t.autoIncTypeSpec} AUTO_INCREMENT;`);
+      parts.push(``);
+    }
+  }
+
+  // Foreign keys — last, since both sides of the reference must exist.
+  const tablesWithFks = parsedTables.filter(t => t.fks.length);
+  if (tablesWithFks.length) {
+    parts.push(`--`);
+    parts.push(`-- Constraints for dumped tables`);
+    parts.push(`--`);
+    parts.push(``);
+    for (const t of tablesWithFks) {
+      parts.push(`--`);
+      parts.push(`-- Constraints for table \`${t.name}\``);
+      parts.push(`--`);
+      parts.push(`ALTER TABLE \`${t.name}\``);
+      parts.push(`  ${t.fks.map(fk => `ADD ${fk}`).join(",\n  ")};`);
+      parts.push(``);
+    }
+  }
+
+  // Postamble
+  parts.push(`SET FOREIGN_KEY_CHECKS = 1;`);
+  parts.push(`COMMIT;`);
+  parts.push(``);
+  parts.push(`/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;`);
+  parts.push(`/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;`);
+  parts.push(`/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;`);
+  parts.push(``);
+
   const stamp = new Date().toISOString().replace(/[-:T]/g, "");
   const fileName = `schema-${stamp.slice(0, 8)}-${stamp.slice(8, 14)}.sql`;
-  return { body: parts.join("\n"), fileName, tableCount: tables.length };
+  return { body: parts.join("\n"), fileName, tableCount: tableRows.length };
 }
 
 // ── GET /admin/db/schema.sql ─────────────────────────────────────────────────
