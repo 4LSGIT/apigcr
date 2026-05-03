@@ -1513,9 +1513,8 @@
   
 <div id="tabAdmin" class="tab-main">
   <h2>Admin</h2>
-  <button class="big-button" onclick="admintask1()">Button 1</button>
-  <button class="big-button" onclick="testSwalPage()">Test Swal Page</button>
-  <button class="big-button" onclick="admintask2()">Sequences</button>
+  <button class="big-button" onclick="adminTask()">Button</button>
+  <button class="big-button" onclick="testSwalPage()">Swal Page</button>
   <button class="big-button" data-target="dbConsoleDiv" data-exclusive-group="admin">DB Console (SU)</button>
   <button class="big-button" data-target="connectionsDiv" data-exclusive-group="admin">Connections (SU)</button>
   <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin">API Tester (SU)</button>
@@ -1534,6 +1533,9 @@
   </div>
 </div>
 <script>
+  function adminTask(){
+    alert("admin task executed!")
+  }
   // Generic panel toggle + lazy iframe loader.
   // Any button with data-target="someDivId" toggles that div.
   // If the panel contains an <iframe data-src="...">, it gets loaded on first show.
