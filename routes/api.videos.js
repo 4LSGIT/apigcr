@@ -90,6 +90,22 @@ router.get('/api/videos/:id', jwtOrApiKey, async (req, res) => {
   }
 });
 
+router.get('/api/videos/:id/analytics', jwtOrApiKey, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    // Confirm the video exists so we return 404 for missing IDs instead of
+    // implying "this video has zero views" via an empty analytics payload.
+    const exists = await videoService.getVideoById(req.db, id);
+    if (!exists) return res.status(404).json({ error: 'Video not found' });
+
+    const analytics = await videoService.getVideoAnalytics(req.db, id);
+    res.json(analytics);
+  } catch (err) {
+    console.error('[GET /api/videos/:id/analytics]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/api/videos', jwtOrApiKey, async (req, res) => {
   try {
     const video = await videoService.createVideo(req.db, req.body || {});

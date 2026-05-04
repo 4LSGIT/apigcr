@@ -104,8 +104,14 @@
       color: var(--muted);
       font-size: 11px;
     }
+    #listHeader .spacer { flex: 1; }
     #listItems { flex: 1; overflow-y: auto; }
 
+    /* List row — three lines on the right of the thumb:
+         line 1: title
+         line 2: slug · N actions · M views
+         line 3: badges
+       Thumb is anchored to the top via align-items: flex-start. */
     .list-item {
       display: flex;
       gap: 10px;
@@ -113,7 +119,7 @@
       border-bottom: 1px solid var(--border);
       cursor: pointer;
       transition: background 0.1s;
-      align-items: center;
+      align-items: flex-start;
     }
     .list-item:hover { background: var(--bg); }
     .list-item.active {
@@ -133,6 +139,7 @@
       justify-content: center;
       overflow: hidden;
       color: var(--muted);
+      margin-top: 1px;
     }
     .list-item .thumb img {
       width: 100%; height: 100%; object-fit: cover;
@@ -148,23 +155,22 @@
     .list-item .meta .sub {
       font-size: 11px;
       color: var(--muted);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      margin-top: 2px;
+      margin-top: 3px;
+      line-height: 1.4;
+      word-break: break-word;
     }
-    .list-item .views {
-      flex-shrink: 0;
-      font-size: 11px;
+    .list-item .meta .sub .slug {
+      font-family: ui-monospace, Menlo, Consolas, monospace;
       color: var(--text2);
-      text-align: right;
-      min-width: 42px;
-      padding-left: 4px;
     }
-    .list-item .views i {
-      font-size: 10px;
-      color: var(--muted);
-      margin-right: 3px;
+    .list-item .meta .badges {
+      margin-top: 5px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .list-item .meta .badges .badge {
+      margin-right: 0;
     }
     .badge {
       display: inline-block;
@@ -225,6 +231,53 @@
       margin-top: -6px;
       margin-bottom: 12px;
       line-height: 1.4;
+    }
+
+    /* ── Analytics panel ─────────────────────────────── */
+    .analytics-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      font-size: 13px;
+      padding: 3px 0;
+      line-height: 1.5;
+    }
+    .analytics-row .a-label {
+      width: 130px;
+      color: var(--text2);
+      font-weight: 500;
+      flex-shrink: 0;
+    }
+    .analytics-row .a-value {
+      font-weight: 600;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      min-width: 38px;
+    }
+    .analytics-row .a-detail {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .analytics-cta-block { margin-top: 12px; }
+    .analytics-cta-block .a-section-head {
+      font-weight: 600;
+      color: var(--text2);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 6px;
+    }
+    .analytics-row.is-cta { padding-left: 16px; }
+    .analytics-row.is-cta .a-label {
+      width: auto;
+      flex: 1;
+      font-weight: 400;
+      color: var(--text);
+    }
+    .analytics-empty {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 6px 0;
     }
 
     .form-row { margin-bottom: 14px; }
@@ -538,6 +591,10 @@
     <div id="listHeader">
       <span class="label">Videos</span>
       <span class="count" id="listCount"></span>
+      <span class="spacer"></span>
+      <button class="btn btn-outline btn-sm" onclick="onRefreshList()" title="Re-fetch the video list (does not affect the open editor)">
+        <i class="fa-solid fa-arrows-rotate"></i> Refresh
+      </button>
     </div>
     <div id="listItems">
       <div class="empty-state"><i class="fa-solid fa-spinner fa-spin"></i><br>Loading…</div>
@@ -670,6 +727,7 @@ const state = {
   selected:  null,   // id of currently-edited video, or null for new
   form:      null,   // working copy of the form
   uploading: false,  // any uploader currently active
+  analytics: null,   // analytics for the open editor; null when no video open or new video
 };
 
 // Slug input regex — must mirror SLUG_RE in services/videoService.js
@@ -740,30 +798,45 @@ function renderList() {
       ? '<img src="' + esc(v.gcs_poster_url) + '" alt="">'
       : '<i class="fa-solid fa-film"></i>';
     const actionCount = Array.isArray(v.actions) ? v.actions.length : 0;
+    const viewCount   = Number(v.view_count) || 0;
     const pubBadge = v.is_published
       ? '<span class="badge badge-published">Published</span>'
       : '<span class="badge badge-draft">Draft</span>';
     const accessBadge = v.access_level === 'contact_only'
       ? '<span class="badge badge-contact">Contact</span>'
       : '<span class="badge badge-public">Public</span>';
-    const views = fmtViews(v.view_count);
+
+    // Sub-line: slug · N actions · M views
+    // Slug rendered in monospace (visually distinct from the counts).
+    const subParts = [
+      '<span class="slug">' + esc(v.slug) + '</span>',
+      actionCount + ' action' + (actionCount === 1 ? '' : 's'),
+      fmtViews(viewCount) + ' view' + (viewCount === 1 ? '' : 's'),
+    ];
 
     return '<div class="list-item ' + (isActive ? 'active' : '') + '" '
       + 'onclick="selectVideo(' + v.id + ')">'
       +   '<div class="thumb">' + thumb + '</div>'
       +   '<div class="meta">'
       +     '<div class="title">' + esc(v.title) + '</div>'
-      +     '<div class="sub">' + pubBadge + accessBadge
-      +       '<span style="color:var(--muted)">'
-      +         esc(v.slug) + ' · ' + actionCount + ' action' + (actionCount === 1 ? '' : 's')
-      +       '</span>'
-      +     '</div>'
-      +   '</div>'
-      +   '<div class="views" title="' + (v.view_count || 0) + ' view' + ((v.view_count || 0) === 1 ? '' : 's') + '">'
-      +     '<i class="fa-solid fa-eye"></i>' + views
+      +     '<div class="sub">' + subParts.join(' · ') + '</div>'
+      +     '<div class="badges">' + pubBadge + accessBadge + '</div>'
       +   '</div>'
       + '</div>';
   }).join('');
+}
+
+/**
+ * Refresh button handler — re-fetches the list and re-renders it.
+ *
+ * Deliberately does NOT touch state.form, state.selected, or state.analytics:
+ *   - Unsaved edits in the open editor are preserved.
+ *   - The Analytics panel for the currently-open video is NOT refreshed.
+ *     To get fresh analytics, close the editor and reopen the video.
+ */
+async function onRefreshList() {
+  await loadList();
+  Toast.fire({ icon: 'success', title: 'List refreshed' });
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -797,6 +870,7 @@ function blankForm() {
 function onNewVideo() {
   state.selected = null;
   state.form = blankForm();
+  state.analytics = null;
   renderEditor();
   renderList();
 }
@@ -807,7 +881,15 @@ async function selectVideo(id) {
     return;
   }
   try {
-    const v = await api('/api/videos/' + id, 'GET');
+    // Fetch video and analytics in parallel. Analytics is soft-required:
+    // a failure there shouldn't block the editor from opening.
+    const [v, a] = await Promise.all([
+      api('/api/videos/' + id, 'GET'),
+      api('/api/videos/' + id + '/analytics', 'GET').catch(err => ({
+        _error: err.message || 'Analytics unavailable',
+      })),
+    ]);
+
     state.selected = v.id;
     state.form = {
       slug:                   v.slug || '',
@@ -833,11 +915,68 @@ async function selectVideo(id) {
       _aliases:               Array.isArray(v.aliases) ? v.aliases : [],
       _relatedVideosResolved: Array.isArray(v.related_videos) ? v.related_videos : [],
     };
+    state.analytics = a;
     renderEditor();
     renderList();
   } catch (err) {
     Swal.fire('Load failed', err.message, 'error');
   }
+}
+
+/**
+ * Render the contents of the Analytics panel. Returns an HTML string.
+ * Caller is responsible for placing it inside the panel container.
+ */
+function renderAnalyticsHtml() {
+  const a = state.analytics;
+  if (!a) return '<div class="analytics-empty">Loading…</div>';
+  if (a._error) return '<div class="analytics-empty">Analytics unavailable.</div>';
+
+  const tv = Number(a.total_views) || 0;
+  if (tv === 0) return '<div class="analytics-empty">No views yet.</div>';
+
+  const id  = Number(a.identified_views)  || 0;
+  const an  = Number(a.anonymous_views)   || 0;
+  const pl  = Number(a.played_count)      || 0;
+  const cp  = Number(a.completed_count)   || 0;
+  const ac  = Number(a.avg_completion_pct) || 0;
+  // Show "—" instead of "NaN%" when the denominator is zero.
+  const pct = (num, den) => den > 0 ? Math.round((num / den) * 100) + '%' : '—';
+
+  const ctaList = Array.isArray(a.cta_clicks_by_label) ? a.cta_clicks_by_label : [];
+  const ctaSection = ctaList.length
+    ? '<div class="analytics-cta-block">'
+    +   '<div class="a-section-head">CTA clicks</div>'
+    +   ctaList.map(c =>
+          '<div class="analytics-row is-cta">'
+        +   '<span class="a-label">' + esc(c.label) + '</span>'
+        +   '<span class="a-value">' + (Number(c.count) || 0) + '</span>'
+        + '</div>'
+        ).join('')
+    + '</div>'
+    : '';
+
+  return ''
+    + '<div class="analytics-row">'
+    +   '<span class="a-label">Total views</span>'
+    +   '<span class="a-value">' + tv + '</span>'
+    +   '<span class="a-detail">(' + id + ' identified · ' + an + ' anonymous)</span>'
+    + '</div>'
+    + '<div class="analytics-row">'
+    +   '<span class="a-label">Played</span>'
+    +   '<span class="a-value">' + pl + '</span>'
+    +   '<span class="a-detail">(' + pct(pl, tv) + ' of views)</span>'
+    + '</div>'
+    + '<div class="analytics-row">'
+    +   '<span class="a-label">Completed</span>'
+    +   '<span class="a-value">' + cp + '</span>'
+    +   '<span class="a-detail">(' + pct(cp, pl) + ' of plays)</span>'
+    + '</div>'
+    + '<div class="analytics-row">'
+    +   '<span class="a-label">Avg watch</span>'
+    +   '<span class="a-value">' + ac + '%</span>'
+    + '</div>'
+    + ctaSection;
 }
 
 function renderEditor() {
@@ -866,10 +1005,20 @@ function renderEditor() {
        </div>`
     : '';
 
+  // Analytics section — only on edit (no analytics for unsaved new videos).
+  const analyticsHtml = !isNew ? `
+    <div class="form-section">
+      <h3>Analytics</h3>
+      <div id="analytics-panel">${renderAnalyticsHtml()}</div>
+    </div>
+  ` : '';
+
   root.innerHTML = `
     <h2 style="font-size:18px; margin-bottom:14px;">
       ${isNew ? 'New Video' : 'Edit Video'}
     </h2>
+
+    ${analyticsHtml}
 
     <!-- ── URL / Slug ── -->
     <div class="form-section">
@@ -1552,6 +1701,7 @@ async function onSave() {
 function onCancel() {
   state.form = null;
   state.selected = null;
+  state.analytics = null;
   renderEditor();
   renderList();
 }
@@ -1571,6 +1721,7 @@ async function onDelete() {
     Toast.fire({ icon: 'success', title: 'Deleted' });
     state.form = null;
     state.selected = null;
+    state.analytics = null;
     await loadList();
     renderEditor();
   } catch (err) {

@@ -39,6 +39,22 @@
       padding: 24px 16px 48px;
     }
 
+    /* ── Header / logo ──────────────────────────────── */
+    .vid-header {
+      max-width: 720px;
+      margin: 0 auto 20px;
+      text-align: center;
+    }
+    .vid-header a {
+      display: inline-block;
+      line-height: 0;  /* prevents extra space below the inline image */
+    }
+    .vid-header img {
+      display: block;
+      max-width: 200px;
+      height: auto;
+    }
+
     .container {
       max-width: 720px;
       margin: 0 auto;
@@ -190,6 +206,8 @@
 
     @media (max-width: 480px) {
       body { padding: 12px 8px 24px; }
+      .vid-header { margin-bottom: 14px; }
+      .vid-header img { max-width: 160px; }
       .body { padding: 18px 18px 20px; }
       h1 { font-size: 19px; }
       .vid-btn { width: 100%; }
@@ -200,6 +218,13 @@
   </style>
 </head>
 <body>
+  <header class="vid-header">
+    <a href="https://legalsolutions.group/" target="_blank" rel="noopener">
+      <img src="https://legalsolutions.group/wp-content/uploads/2022/06/Legal-Solutions-Group-LSG-Logo-Clear-Background-200x88.png"
+           alt="Legal Solutions Group" width="200" height="88">
+    </a>
+  </header>
+
   <div class="container">
     <div class="video-wrap">
       <video controls preload="metadata" poster="{{POSTER_URL}}" playsinline>

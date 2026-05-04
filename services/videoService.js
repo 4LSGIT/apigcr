@@ -603,6 +603,101 @@ async function recordCtaClick(db, { viewId, videoId, label }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// Slice 3.5 — analytics
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Aggregate analytics for a single video.
+ *
+ * Returns:
+ *   {
+ *     total_views, identified_views, anonymous_views,
+ *     played_count, completed_count, avg_completion_pct,
+ *     cta_clicks_by_label: [{ label, count }, ...]   // descending
+ *   }
+ *
+ * For a video with zero views: all numeric fields = 0, cta array empty.
+ *
+ * Two queries: one for the scalars (single SELECT), one for CTA aggregation
+ * via JSON_TABLE. CTA query is wrapped in try/catch — falls back to JS
+ * aggregation if JSON_TABLE is unavailable on the running MySQL version.
+ *
+ * mysql2 returns Decimal/string for SUM and AVG; coerce with Number().
+ */
+async function getVideoAnalytics(db, videoId) {
+  const [scalarRows] = await db.query(
+    `SELECT
+        COUNT(*)                                                  AS total_views,
+        SUM(CASE WHEN contact_id IS NOT NULL THEN 1 ELSE 0 END)   AS identified_views,
+        SUM(CASE WHEN contact_id IS NULL     THEN 1 ELSE 0 END)   AS anonymous_views,
+        SUM(CASE WHEN played_at  IS NOT NULL THEN 1 ELSE 0 END)   AS played_count,
+        SUM(CASE WHEN completion_pct = 100   THEN 1 ELSE 0 END)   AS completed_count,
+        ROUND(AVG(completion_pct))                                AS avg_completion_pct
+       FROM video_views
+      WHERE video_id = ?`,
+    [videoId]
+  );
+
+  const r = scalarRows[0] || {};
+  const result = {
+    total_views:         Number(r.total_views)        || 0,
+    identified_views:    Number(r.identified_views)   || 0,
+    anonymous_views:     Number(r.anonymous_views)    || 0,
+    played_count:        Number(r.played_count)       || 0,
+    completed_count:     Number(r.completed_count)    || 0,
+    avg_completion_pct:  Number(r.avg_completion_pct) || 0,
+    cta_clicks_by_label: [],
+  };
+
+  // No views → no cta query needed.
+  if (result.total_views === 0) return result;
+
+  // Preferred path: JSON_TABLE expansion + GROUP BY.
+  try {
+    const [ctaRows] = await db.query(
+      `SELECT jt.label, COUNT(*) AS cnt
+         FROM video_views vv,
+              JSON_TABLE(vv.cta_clicks, '$[*]'
+                COLUMNS (label VARCHAR(200) PATH '$.label')) jt
+        WHERE vv.video_id = ?
+          AND vv.cta_clicks IS NOT NULL
+        GROUP BY jt.label
+        ORDER BY cnt DESC, jt.label ASC`,
+      [videoId]
+    );
+    result.cta_clicks_by_label = ctaRows.map(row => ({
+      label: row.label,
+      count: Number(row.cnt) || 0,
+    }));
+  } catch (err) {
+    // JSON_TABLE unavailable (very old MySQL) or some other SQL error.
+    // Fall back to JS aggregation.
+    console.warn('[getVideoAnalytics] JSON_TABLE path failed, falling back to JS aggregation:', err.message);
+    const [rows] = await db.query(
+      `SELECT cta_clicks
+         FROM video_views
+        WHERE video_id = ? AND cta_clicks IS NOT NULL`,
+      [videoId]
+    );
+    const counts = new Map();
+    for (const row of rows) {
+      const arr = parseJsonField(row.cta_clicks);
+      if (!Array.isArray(arr)) continue;
+      for (const click of arr) {
+        if (click && typeof click.label === 'string') {
+          counts.set(click.label, (counts.get(click.label) || 0) + 1);
+        }
+      }
+    }
+    result.cta_clicks_by_label = Array.from(counts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+  }
+
+  return result;
+}
+
 /**
  * Resolve up to `limit` related videos for the given video.
  *
@@ -733,6 +828,7 @@ module.exports = {
   recordProgress,
   recordCtaClick,
   getRelatedVideos,
+  getVideoAnalytics,
   hashIp,
   resolveCaseIdForContact,
   getJsonOverlapsCachedStatus,
