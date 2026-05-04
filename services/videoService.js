@@ -614,10 +614,22 @@ async function recordCtaClick(db, { viewId, videoId, label }) {
  *   {
  *     total_views, identified_views, anonymous_views,
  *     played_count, completed_count, avg_completion_pct,
- *     cta_clicks_by_label: [{ label, count }, ...]   // descending
+ *     cta_clicks_by_label: [{ label, count }, ...],   // descending
+ *     analytics_reset_at: ISO string | null            // 3.6 addition
  *   }
  *
- * For a video with zero views: all numeric fields = 0, cta array empty.
+ * For a video with zero views (or zero post-reset views): all numeric
+ * fields = 0, cta array empty, analytics_reset_at echoed if set.
+ *
+ * Soft reset (3.6):
+ *   videos.analytics_reset_at, when non-null, becomes the inclusive lower
+ *   bound for video_views.opened_at across all three view-querying paths
+ *   below. Past rows in video_views are preserved (not deleted) so direct
+ *   SQL forensics still work; they're just hidden from the dashboard.
+ *
+ *   recordView still bumps videos.view_count after a reset — the counter
+ *   re-climbs from zero, and the cutoff filter keeps the analytics panel
+ *   matching going forward.
  *
  * Two queries: one for the scalars (single SELECT), one for CTA aggregation
  * via JSON_TABLE. CTA query is wrapped in try/catch — falls back to JS
@@ -626,6 +638,24 @@ async function recordCtaClick(db, { viewId, videoId, label }) {
  * mysql2 returns Decimal/string for SUM and AVG; coerce with Number().
  */
 async function getVideoAnalytics(db, videoId) {
+  // Resolve the soft-reset cutoff for this video. A missing video returns
+  // a zero-shaped result rather than throwing — matches the prior behavior
+  // (the old function would just see no view rows for an unknown id).
+  const [vRows] = await db.query(
+    'SELECT analytics_reset_at FROM videos WHERE id = ? LIMIT 1',
+    [videoId]
+  );
+  if (!vRows.length) {
+    return {
+      total_views: 0, identified_views: 0, anonymous_views: 0,
+      played_count: 0, completed_count: 0, avg_completion_pct: 0,
+      cta_clicks_by_label: [], analytics_reset_at: null,
+    };
+  }
+  const resetAt    = vRows[0].analytics_reset_at;            // Date | null
+  const cutoff     = resetAt || new Date(0);                  // mysql2 binds Date directly
+  const resetAtIso = resetAt ? new Date(resetAt).toISOString() : null;
+
   const [scalarRows] = await db.query(
     `SELECT
         COUNT(*)                                                  AS total_views,
@@ -635,8 +665,9 @@ async function getVideoAnalytics(db, videoId) {
         SUM(CASE WHEN completion_pct = 100   THEN 1 ELSE 0 END)   AS completed_count,
         ROUND(AVG(completion_pct))                                AS avg_completion_pct
        FROM video_views
-      WHERE video_id = ?`,
-    [videoId]
+      WHERE video_id = ?
+        AND opened_at >= ?`,
+    [videoId, cutoff]
   );
 
   const r = scalarRows[0] || {};
@@ -648,6 +679,7 @@ async function getVideoAnalytics(db, videoId) {
     completed_count:     Number(r.completed_count)    || 0,
     avg_completion_pct:  Number(r.avg_completion_pct) || 0,
     cta_clicks_by_label: [],
+    analytics_reset_at:  resetAtIso,
   };
 
   // No views → no cta query needed.
@@ -661,10 +693,11 @@ async function getVideoAnalytics(db, videoId) {
               JSON_TABLE(vv.cta_clicks, '$[*]'
                 COLUMNS (label VARCHAR(200) PATH '$.label')) jt
         WHERE vv.video_id = ?
+          AND vv.opened_at >= ?
           AND vv.cta_clicks IS NOT NULL
         GROUP BY jt.label
         ORDER BY cnt DESC, jt.label ASC`,
-      [videoId]
+      [videoId, cutoff]
     );
     result.cta_clicks_by_label = ctaRows.map(row => ({
       label: row.label,
@@ -677,8 +710,10 @@ async function getVideoAnalytics(db, videoId) {
     const [rows] = await db.query(
       `SELECT cta_clicks
          FROM video_views
-        WHERE video_id = ? AND cta_clicks IS NOT NULL`,
-      [videoId]
+        WHERE video_id = ?
+          AND opened_at >= ?
+          AND cta_clicks IS NOT NULL`,
+      [videoId, cutoff]
     );
     const counts = new Map();
     for (const row of rows) {
@@ -696,6 +731,59 @@ async function getVideoAnalytics(db, videoId) {
   }
 
   return result;
+}
+
+/**
+ * Reset visible analytics for a video.
+ *
+ * Single transaction:
+ *   - Stamps videos.analytics_reset_at = NOW().
+ *   - Zeros videos.view_count.
+ *
+ * Past video_views rows are intentionally PRESERVED. getVideoAnalytics
+ * filters them out via WHERE opened_at >= analytics_reset_at, so they're
+ * hidden from the dashboard but available for direct-SQL forensics.
+ *
+ * @param {object} pool   mysql2 pool (must support getConnection)
+ * @param {number} videoId
+ * @returns {Promise<{ ok: true, reset_at: string }>}  ISO-8601 timestamp
+ * @throws {Error}  err.statusCode = 404 if video does not exist
+ */
+async function resetVideoAnalytics(pool, videoId) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [result] = await conn.query(
+      `UPDATE videos
+          SET analytics_reset_at = NOW(),
+              view_count = 0
+        WHERE id = ?`,
+      [videoId]
+    );
+    if (result.affectedRows === 0) {
+      await conn.rollback();
+      const e = new Error('Video not found');
+      e.statusCode = 404;
+      throw e;
+    }
+
+    const [[row]] = await conn.query(
+      'SELECT analytics_reset_at FROM videos WHERE id = ?',
+      [videoId]
+    );
+
+    await conn.commit();
+    const iso = row && row.analytics_reset_at
+      ? new Date(row.analytics_reset_at).toISOString()
+      : null;
+    return { ok: true, reset_at: iso };
+  } catch (err) {
+    try { await conn.rollback(); } catch { /* ignore */ }
+    throw err;
+  } finally {
+    conn.release();
+  }
 }
 
 /**
@@ -829,6 +917,7 @@ module.exports = {
   recordCtaClick,
   getRelatedVideos,
   getVideoAnalytics,
+  resetVideoAnalytics,
   hashIp,
   resolveCaseIdForContact,
   getJsonOverlapsCachedStatus,

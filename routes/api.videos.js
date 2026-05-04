@@ -106,6 +106,29 @@ router.get('/api/videos/:id/analytics', jwtOrApiKey, async (req, res) => {
   }
 });
 
+router.post('/api/videos/:id/reset-analytics', jwtOrApiKey, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ error: 'Invalid video id' });
+
+    // Defensive existence check — gives a clean 404 before we open a
+    // transaction. resetVideoAnalytics also throws statusCode=404 on a
+    // race (deleted between the check and the UPDATE), so the route
+    // remains correct under concurrent delete.
+    const exists = await videoService.getVideoById(req.db, id);
+    if (!exists) return res.status(404).json({ error: 'Video not found' });
+
+    const result = await videoService.resetVideoAnalytics(req.db, id);
+    res.json(result);
+  } catch (err) {
+    if (err.statusCode === 404) {
+      return res.status(404).json({ error: err.message });
+    }
+    console.error('[POST /api/videos/:id/reset-analytics]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/api/videos', jwtOrApiKey, async (req, res) => {
   try {
     const video = await videoService.createVideo(req.db, req.body || {});

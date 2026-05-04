@@ -69,6 +69,18 @@
     .btn-outline:hover:not(:disabled) { background: var(--bg); }
     .btn-danger { background: var(--red); color: #fff; }
     .btn-danger:hover:not(:disabled) { background: #dc2626; }
+    /* Outlined danger — quieter than .btn-danger but reads as destructive.
+       Used for the analytics Reset button. Matches the danger color
+       language of the Delete button (which uses solid red). */
+    .btn-outline-danger {
+      background: var(--surface);
+      color: var(--red);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+    .btn-outline-danger:hover:not(:disabled) {
+      background: rgba(239, 68, 68, 0.08);
+      border-color: var(--red);
+    }
     .btn-sm { padding: 3px 8px; font-size: 11px; }
 
     /* ── Two-pane layout ────────────────────────────── */
@@ -232,6 +244,16 @@
       margin-bottom: 12px;
       line-height: 1.4;
     }
+    /* Section header that puts a button on the right of the h3.
+       Used in Analytics for the Reset button. The h3 inside loses its
+       bottom margin so the row aligns to a single baseline. */
+    .form-section .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .form-section .section-head h3 { margin-bottom: 0; }
 
     /* ── Analytics panel ─────────────────────────────── */
     .analytics-row {
@@ -279,6 +301,18 @@
       font-size: 12px;
       padding: 6px 0;
     }
+    /* "Stats since DATE" notice — shown above the analytics rows when the
+       video has a non-null analytics_reset_at. Hovering the icon reveals
+       a tooltip via the title attribute. */
+    .analytics-reset-notice {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px dashed var(--border);
+      cursor: help;
+    }
+    .analytics-reset-notice i { margin-right: 4px; }
 
     .form-row { margin-bottom: 14px; }
     .form-row:last-child { margin-bottom: 0; }
@@ -723,11 +757,12 @@ async function uploadAsset(file, kind, onProgress) {
 // State
 // ════════════════════════════════════════════════════════════════════════════
 const state = {
-  videos:    [],     // list cache (returned by GET /api/videos)
-  selected:  null,   // id of currently-edited video, or null for new
-  form:      null,   // working copy of the form
-  uploading: false,  // any uploader currently active
-  analytics: null,   // analytics for the open editor; null when no video open or new video
+  videos:      [],     // list cache (returned by GET /api/videos)
+  selected:    null,   // id of currently-edited video, or null for new
+  form:        null,   // working copy of the form
+  uploading:   false,  // any uploader currently active
+  analytics:   null,   // analytics for the open editor; null when no video open or new video
+  editorDirty: false,  // any unsaved edits in the open editor (3.6)
 };
 
 // Slug input regex — must mirror SLUG_RE in services/videoService.js
@@ -762,6 +797,49 @@ function fmtViews(n) {
   if (v < 1000) return String(v);
   if (v < 10000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
   return Math.round(v / 1000) + 'k';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Dirty-tracking (Slice 3.6)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Approach: flag-on-input. Any input/change event inside #editorContent flips
+// state.editorDirty = true via a delegated listener attached once at boot.
+// Non-DOM mutations (file uploads, action move/add/delete, related move/
+// add/delete) call markDirty() explicitly.
+//
+// The flag is cleared whenever an editor is freshly opened — selectVideo()
+// and onNewVideo() set state.editorDirty = false at the end. After a
+// successful save, onSave() routes through selectVideo() to refresh the
+// editor with server data, which clears the flag as a side effect.
+//
+// We chose flag-on-input over deep-equal-vs-snapshot because:
+//   - Existing form-state plumbing already mutates state.form directly
+//     in inline oninput/onchange handlers; deep-equal would require a
+//     parallel snapshot of every nested field (tags arrays, actions
+//     objects, related arrays). Flag-on-input is ~10 lines vs. ~80.
+//   - False positives (user types in a field then types it back) cost
+//     nothing — they get a discard prompt that's still safe to confirm.
+function markDirty() {
+  if (state.form) state.editorDirty = true;
+}
+
+/**
+ * Show a "Discard unsaved changes?" confirmation. Returns true if the
+ * user confirms, false otherwise. Caller is responsible for the no-op
+ * fast path when state.editorDirty is false.
+ */
+async function confirmDiscard(bodyText, confirmLabel) {
+  const r = await Swal.fire({
+    title: 'Discard unsaved changes?',
+    text:  bodyText,
+    icon:  'warning',
+    showCancelButton:   true,
+    confirmButtonText:  confirmLabel,
+    cancelButtonText:   'Keep editing',
+    confirmButtonColor: '#ef4444',
+  });
+  return r.isConfirmed;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -814,8 +892,10 @@ function renderList() {
       fmtViews(viewCount) + ' view' + (viewCount === 1 ? '' : 's'),
     ];
 
+    // Click goes through onListRowClick (3.6) — the unsaved-changes guard
+    // wrapper. selectVideo() itself is unchanged in semantics (full load).
     return '<div class="list-item ' + (isActive ? 'active' : '') + '" '
-      + 'onclick="selectVideo(' + v.id + ')">'
+      + 'onclick="onListRowClick(' + v.id + ')">'
       +   '<div class="thumb">' + thumb + '</div>'
       +   '<div class="meta">'
       +     '<div class="title">' + esc(v.title) + '</div>'
@@ -837,6 +917,42 @@ function renderList() {
 async function onRefreshList() {
   await loadList();
   Toast.fire({ icon: 'success', title: 'List refreshed' });
+}
+
+/**
+ * List-row click handler (3.6). Wraps selectVideo() with two guards:
+ *   1. Re-clicking the active row is a no-op (no fetch, no prompt).
+ *      This is a small behavior change — previously a click on the
+ *      active row would re-fetch + re-render. The new no-op protects
+ *      a user with unsaved edits from accidentally wiping them with
+ *      a stray click on the row they're already editing.
+ *   2. If editorDirty, prompt before switching.
+ */
+async function onListRowClick(id) {
+  if (state.uploading) {
+    Toast.fire({ icon: 'warning', title: 'Upload in progress — wait until it finishes' });
+    return;
+  }
+  // Same-row click: no-op, no prompt.
+  if (state.selected === id) return;
+
+  if (state.editorDirty) {
+    const currentLabel = (state.form && state.form.title && state.form.title.trim())
+      ? state.form.title.trim() : 'this video';
+    const target       = state.videos.find(v => v.id === id);
+    const targetLabel  = (target && target.title && target.title.trim())
+      ? target.title.trim() : 'another video';
+    const ok = await confirmDiscard(
+      'You have unsaved edits to "' + currentLabel + '". '
+      + 'Switching to "' + targetLabel + '" will discard them.',
+      'Discard and switch'
+    );
+    if (!ok) return;
+    // Pre-clear so any race in the load flow doesn't re-prompt.
+    state.editorDirty = false;
+  }
+
+  await selectVideo(id);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -867,10 +983,23 @@ function blankForm() {
   };
 }
 
-function onNewVideo() {
-  state.selected = null;
-  state.form = blankForm();
-  state.analytics = null;
+async function onNewVideo() {
+  // Discard guard (3.6).
+  if (state.editorDirty) {
+    const currentLabel = (state.form && state.form.title && state.form.title.trim())
+      ? state.form.title.trim() : 'this video';
+    const ok = await confirmDiscard(
+      'You have unsaved edits to "' + currentLabel + '". '
+      + 'Starting a new video will discard them.',
+      'Discard and start new'
+    );
+    if (!ok) return;
+  }
+
+  state.selected    = null;
+  state.form        = blankForm();
+  state.analytics   = null;
+  state.editorDirty = false;     // fresh editor — clean slate
   renderEditor();
   renderList();
 }
@@ -918,6 +1047,11 @@ async function selectVideo(id) {
     state.analytics = a;
     renderEditor();
     renderList();
+    // Freshly-loaded data → clean state. Note this MUST come after
+    // renderEditor; renderEditor uses innerHTML replacement which doesn't
+    // fire input/change events, so the delegated listener won't flip the
+    // flag — but explicit clear here is defensive against future changes.
+    state.editorDirty = false;
   } catch (err) {
     Swal.fire('Load failed', err.message, 'error');
   }
@@ -925,15 +1059,37 @@ async function selectVideo(id) {
 
 /**
  * Render the contents of the Analytics panel. Returns an HTML string.
- * Caller is responsible for placing it inside the panel container.
+ * Caller is responsible for placing it inside the #analytics-panel container.
+ *
+ * 3.6: prepends a "Stats since DATE" notice when analytics_reset_at is set.
+ * The notice is rendered for both the empty (post-reset, no new views)
+ * and the populated case so the user can confirm the reset took effect
+ * even before any new views accrue.
  */
 function renderAnalyticsHtml() {
   const a = state.analytics;
   if (!a) return '<div class="analytics-empty">Loading…</div>';
   if (a._error) return '<div class="analytics-empty">Analytics unavailable.</div>';
 
+  // "Stats since" notice — only when this video has been reset.
+  const resetAt = a.analytics_reset_at;
+  let resetNotice = '';
+  if (resetAt) {
+    let dateStr;
+    try { dateStr = new Date(resetAt).toLocaleDateString(); }
+    catch { dateStr = String(resetAt); }
+    const tip = 'Analytics were reset on this date. Older view records are '
+              + 'preserved in the database but excluded from these stats.';
+    resetNotice = '<div class="analytics-reset-notice" title="' + esc(tip) + '">'
+      + '<i class="fa-solid fa-circle-info"></i>'
+      + 'Stats since ' + esc(dateStr)
+      + '</div>';
+  }
+
   const tv = Number(a.total_views) || 0;
-  if (tv === 0) return '<div class="analytics-empty">No views yet.</div>';
+  if (tv === 0) {
+    return resetNotice + '<div class="analytics-empty">No views yet.</div>';
+  }
 
   const id  = Number(a.identified_views)  || 0;
   const an  = Number(a.anonymous_views)   || 0;
@@ -956,7 +1112,7 @@ function renderAnalyticsHtml() {
     + '</div>'
     : '';
 
-  return ''
+  return resetNotice
     + '<div class="analytics-row">'
     +   '<span class="a-label">Total views</span>'
     +   '<span class="a-value">' + tv + '</span>'
@@ -1006,9 +1162,19 @@ function renderEditor() {
     : '';
 
   // Analytics section — only on edit (no analytics for unsaved new videos).
+  // 3.6: header now carries a Reset button on the right. The button is
+  // shown unconditionally for any existing video — there's no harm in
+  // resetting an already-empty analytics state, and the simpler rule
+  // beats threading a visibility predicate through render+rerender paths.
   const analyticsHtml = !isNew ? `
     <div class="form-section">
-      <h3>Analytics</h3>
+      <div class="section-head">
+        <h3>Analytics</h3>
+        <button class="btn btn-outline-danger btn-sm" onclick="onResetAnalytics()"
+          title="Zero the visible view count and start a fresh window of analytics">
+          <i class="fa-solid fa-arrow-rotate-left"></i> Reset
+        </button>
+      </div>
       <div id="analytics-panel">${renderAnalyticsHtml()}</div>
     </div>
   ` : '';
@@ -1299,6 +1465,7 @@ function addAction() {
     config: { url: '', style: 'primary' },
   });
   refreshActions();
+  markDirty();   // 3.6: structural mutation isn't caught by input listener
 }
 function moveAction(i, delta) {
   const j = i + delta;
@@ -1306,10 +1473,12 @@ function moveAction(i, delta) {
   const arr = state.form.actions;
   [arr[i], arr[j]] = [arr[j], arr[i]];
   refreshActions();
+  markDirty();   // 3.6
 }
 function deleteAction(i) {
   state.form.actions.splice(i, 1);
   refreshActions();
+  markDirty();   // 3.6
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1373,12 +1542,14 @@ function moveRelated(i, delta) {
   [ids[i], ids[j]] = [ids[j], ids[i]];
   [res[i], res[j]] = [res[j], res[i]];
   refreshRelated();
+  markDirty();   // 3.6
 }
 
 function deleteRelated(i) {
   state.form.related_video_ids.splice(i, 1);
   state.form._relatedVideosResolved.splice(i, 1);
   refreshRelated();
+  markDirty();   // 3.6
 }
 
 async function openRelatedPicker() {
@@ -1502,6 +1673,7 @@ async function openRelatedPicker() {
     gcs_gif_url:    picked.gcs_gif_url,
   });
   refreshRelated();
+  markDirty();   // 3.6
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1549,6 +1721,7 @@ async function onAssetFilePicked(kind, inputEl) {
     }
 
     Toast.fire({ icon: 'success', title: 'Uploaded ' + kind });
+    markDirty();    // 3.6: upload result is unsaved until user clicks Save
     renderEditor(); // re-render so preview shows the new asset
   } catch (err) {
     Swal.fire('Upload failed', err.message, 'error');
@@ -1583,7 +1756,7 @@ function extractVideoDuration(file) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// Save / cancel / delete
+// Save / cancel / delete / reset-analytics
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -1622,6 +1795,27 @@ function buildPayload(isNew) {
     }
   }
   return payload;
+}
+
+/**
+ * Scroll the editor pane so the Analytics section is at the top of view.
+ * Called after a successful save (3.6). The form fields remain rendered
+ * below — the user just sees analytics first.
+ *
+ * #editorPane is the scrollable container; the analytics section is
+ * inside #editorContent. scrollIntoView walks up to the nearest
+ * scrolling ancestor, which is #editorPane (overflow-y: auto), so this
+ * scrolls the editor pane only — not the page or any iframe parent.
+ */
+function scrollToAnalytics() {
+  // requestAnimationFrame defers until after layout; harmless if DOM is
+  // already settled, helpful if a race ever appears.
+  requestAnimationFrame(() => {
+    const panel = document.getElementById('analytics-panel');
+    if (!panel) return;
+    const section = panel.closest('.form-section');
+    (section || panel).scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 }
 
 async function onSave() {
@@ -1690,18 +1884,27 @@ async function onSave() {
       saved = await api('/api/videos/' + state.selected, 'PATCH', payload);
       Toast.fire({ icon: 'success', title: 'Saved' });
     }
+    // selectVideo() refreshes the editor with the persisted server state
+    // and resets state.editorDirty=false at the end of its happy path.
+    // For new videos, this transitions the editor from "new" to "existing"
+    // mode — the analytics section appears for the first time.
     state.selected = saved.id;
     await loadList();
     await selectVideo(saved.id);
+    // 3.6: scroll the freshly-rendered analytics into view.
+    scrollToAnalytics();
   } catch (err) {
+    // Failure path: state.editorDirty stays true (never touched), user
+    // can retry without losing their edits.
     Swal.fire('Save failed', err.message, 'error');
   }
 }
 
 function onCancel() {
-  state.form = null;
-  state.selected = null;
-  state.analytics = null;
+  state.form        = null;
+  state.selected    = null;
+  state.analytics   = null;
+  state.editorDirty = false;
   renderEditor();
   renderList();
 }
@@ -1719,13 +1922,75 @@ async function onDelete() {
   try {
     await api('/api/videos/' + state.selected, 'DELETE');
     Toast.fire({ icon: 'success', title: 'Deleted' });
-    state.form = null;
-    state.selected = null;
-    state.analytics = null;
+    state.form        = null;
+    state.selected    = null;
+    state.analytics   = null;
+    state.editorDirty = false;
     await loadList();
     renderEditor();
   } catch (err) {
     Swal.fire('Delete failed', err.message, 'error');
+  }
+}
+
+/**
+ * Reset analytics for the open video (3.6). Two-button confirmation
+ * (mirroring the existing delete pattern). On success:
+ *   - Re-fetch /api/videos/:id/analytics and re-render the panel.
+ *     The "Stats since" notice will appear; numbers will read zero.
+ *   - Update the open video's view_count in the list cache so the
+ *     "M views" label on the row drops to "0 views" without needing
+ *     a full list reload.
+ *   - Toast.
+ *
+ * Does NOT touch state.editorDirty — reset doesn't modify any form
+ * field, so an in-progress edit must remain "dirty".
+ */
+async function onResetAnalytics() {
+  if (state.selected == null) return;   // defensive — button shouldn't render
+  const titleStr = (state.form && state.form.title && state.form.title.trim())
+    ? state.form.title.trim() : 'this video';
+
+  const r = await Swal.fire({
+    title: 'Reset analytics for "' + titleStr + '"?',
+    html:  '<p style="margin-bottom:8px;">This zeros the visible view count. '
+         + 'Past view records are preserved in the database but won\'t appear '
+         + 'in the dashboard.</p>'
+         + '<p>This action can only be undone by direct database edit.</p>',
+    icon:  'warning',
+    showCancelButton:   true,
+    confirmButtonText:  'Reset analytics',
+    cancelButtonText:   'Cancel',
+    confirmButtonColor: '#ef4444',
+  });
+  if (!r.isConfirmed) return;
+
+  try {
+    await api('/api/videos/' + state.selected + '/reset-analytics', 'POST');
+
+    // Re-fetch fresh analytics. Mirrors the catch pattern in selectVideo.
+    state.analytics = await api(
+      '/api/videos/' + state.selected + '/analytics', 'GET'
+    ).catch(err => ({ _error: err.message || 'Analytics unavailable' }));
+
+    // Update list-cache view_count for the active row, then re-render.
+    // No need to reload the whole list — the only thing that changed
+    // server-side is this video's view_count and analytics_reset_at,
+    // and the latter isn't shown on list rows.
+    const idx = state.videos.findIndex(v => v.id === state.selected);
+    if (idx !== -1) state.videos[idx].view_count = 0;
+
+    // Re-render JUST the analytics panel — the section header (with the
+    // Reset button) lives outside #analytics-panel so it doesn't get
+    // touched. Avoids a full editor re-render that would re-parse all
+    // form fields.
+    const panel = document.getElementById('analytics-panel');
+    if (panel) panel.innerHTML = renderAnalyticsHtml();
+
+    renderList();
+    Toast.fire({ icon: 'success', title: 'Analytics reset.' });
+  } catch (err) {
+    Swal.fire('Reset failed', err.message, 'error');
   }
 }
 
@@ -1874,6 +2139,19 @@ async function copyAsImageLink(variant) {
 // ════════════════════════════════════════════════════════════════════════════
 // Boot
 // ════════════════════════════════════════════════════════════════════════════
+
+// 3.6: Dirty-tracking listener. Delegated at #editorContent so it survives
+// the innerHTML replacement that renderEditor performs each load. innerHTML
+// replacement does NOT fire input/change events on the new nodes, so this
+// listener only flips the flag when a real user input occurs — no false
+// positives from the render itself.
+(function attachDirtyTracking() {
+  const editor = document.getElementById('editorContent');
+  if (!editor) return;
+  editor.addEventListener('input',  markDirty);
+  editor.addEventListener('change', markDirty);
+})();
+
 (function waitForParent() {
   if (P && P.AUTH_STATE && P.AUTH_STATE.jwt) return loadList();
   setTimeout(waitForParent, 100);
