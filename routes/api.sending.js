@@ -7,7 +7,6 @@
  * GET  /api/users/me             current user's defaults
  * POST /api/compose-docs-message assemble doc request message from selections
  *
- * Mount: app.use('/', require('./routes/api.sending'));
  */
 
 const express     = require('express');

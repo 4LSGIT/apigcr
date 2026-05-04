@@ -7,7 +7,6 @@
  * Unified search across contacts and cases.
  * Replaces the raw SQL quickPick queries.
  *
- * Mount: app.use('/', require('./routes/api.search'));
  */
 
 const express       = require('express');

@@ -24,7 +24,6 @@
  * Environment:
  *   GCS_BUCKET — Google Cloud Storage bucket name (e.g. "uploads.4lsg.com")
  *
- * Mount: app.use('/', require('./routes/upload'));
  */
 
 const express     = require('express');

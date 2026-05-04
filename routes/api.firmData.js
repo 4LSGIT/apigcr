@@ -17,7 +17,6 @@
  *   GET /api/users (filtered)
  * Those individual routes still work — switch consumers at your own pace.
  *
- * Mount: app.use('/', require('./routes/api.firmdata'));
  */
 
 const express     = require('express');
