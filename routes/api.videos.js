@@ -8,11 +8,15 @@
  *
  * Routes:
  *   GET    /api/videos                — list (?published=1, ?tag=foo)
- *   GET    /api/videos/:id            — single (includes `aliases` array)
+ *   GET    /api/videos/:id            — single (includes `aliases` and
+ *                                         `related_videos` arrays)
  *   POST   /api/videos                — create (slug optional, server gens if absent)
  *   PATCH  /api/videos/:id            — partial update (slug editable; old slug archived)
  *   DELETE /api/videos/:id            — DB delete; GCS objects orphaned
  *   POST   /api/videos/upload-asset   — multipart streaming upload to GCS
+ *
+ * `related_videos` on GET/PATCH responses contains ONLY the resolved
+ * hand-picked entries (not auto-fill, which is render-time only). Capped at 3.
  *
  * Asset upload contract matches routes/upload.js's response shape:
  *   { success, url, filename, size, mime, uploadedAt }
@@ -31,6 +35,30 @@ const router = express.Router();
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
 
 // ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Resolve hand-picked related videos to the API response shape:
+ *   [{ id, slug, title, gcs_poster_url, gcs_gif_url }, ...]
+ * Auto-fill is intentionally not included — it's a render-time concern
+ * for the landing page only, and the editor only cares about user picks.
+ */
+async function resolveHandPickedRelated(db, videoId) {
+  const rows = await videoService.getRelatedVideos(db, videoId, {
+    autoFill: false,
+    limit:    3,
+  });
+  return rows.map(r => ({
+    id:             r.id,
+    slug:           r.slug,
+    title:          r.title,
+    gcs_poster_url: r.gcs_poster_url,
+    gcs_gif_url:    r.gcs_gif_url,
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────
 // CRUD
 // ─────────────────────────────────────────────────────────────
 
@@ -40,6 +68,7 @@ router.get('/api/videos', jwtOrApiKey, async (req, res) => {
       published: req.query.published,
       tag:       req.query.tag,
     });
+    // listVideos does SELECT * so view_count rides along automatically.
     res.json({ videos });
   } catch (err) {
     console.error('[GET /api/videos]', err);
@@ -52,7 +81,8 @@ router.get('/api/videos/:id', jwtOrApiKey, async (req, res) => {
     const id    = parseInt(req.params.id, 10);
     const video = await videoService.getVideoById(req.db, id);
     if (!video) return res.status(404).json({ error: 'Video not found' });
-    video.aliases = await videoService.listAliasesForVideo(req.db, id);
+    video.aliases        = await videoService.listAliasesForVideo(req.db, id);
+    video.related_videos = await resolveHandPickedRelated(req.db, id);
     res.json(video);
   } catch (err) {
     console.error('[GET /api/videos/:id]', err);
@@ -63,6 +93,10 @@ router.get('/api/videos/:id', jwtOrApiKey, async (req, res) => {
 router.post('/api/videos', jwtOrApiKey, async (req, res) => {
   try {
     const video = await videoService.createVideo(req.db, req.body || {});
+    // Newly-created videos rarely have related picks set yet, but the
+    // editor will rely on the field being present in the response shape.
+    video.aliases        = await videoService.listAliasesForVideo(req.db, video.id);
+    video.related_videos = await resolveHandPickedRelated(req.db, video.id);
     res.json(video);
   } catch (err) {
     console.error('[POST /api/videos]', err);
@@ -79,7 +113,8 @@ router.patch('/api/videos/:id', jwtOrApiKey, async (req, res) => {
       req.body || {},
     );
     if (!video) return res.status(404).json({ error: 'Video not found' });
-    video.aliases = await videoService.listAliasesForVideo(req.db, video.id);
+    video.aliases        = await videoService.listAliasesForVideo(req.db, video.id);
+    video.related_videos = await resolveHandPickedRelated(req.db, video.id);
     res.json(video);
   } catch (err) {
     console.error('[PATCH /api/videos/:id]', err);

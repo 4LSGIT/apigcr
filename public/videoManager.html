@@ -79,7 +79,7 @@
     }
 
     #listPane {
-      width: 340px;
+      width: 360px;
       flex-shrink: 0;
       background: var(--surface);
       border-right: 1px solid var(--border);
@@ -153,6 +153,19 @@
       text-overflow: ellipsis;
       margin-top: 2px;
     }
+    .list-item .views {
+      flex-shrink: 0;
+      font-size: 11px;
+      color: var(--text2);
+      text-align: right;
+      min-width: 42px;
+      padding-left: 4px;
+    }
+    .list-item .views i {
+      font-size: 10px;
+      color: var(--muted);
+      margin-right: 3px;
+    }
     .badge {
       display: inline-block;
       padding: 1px 6px;
@@ -205,6 +218,13 @@
       letter-spacing: 0.04em;
       color: var(--text2);
       margin-bottom: 14px;
+    }
+    .form-section .section-note {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: -6px;
+      margin-bottom: 12px;
+      line-height: 1.4;
     }
 
     .form-row { margin-bottom: 14px; }
@@ -372,6 +392,92 @@
     }
     .action-row .ctrl button:hover { background: var(--bg); }
     .action-row .ctrl button.del:hover { background: rgba(239, 68, 68, 0.1); color: var(--red); }
+
+    /* ── Related videos picker ──────────────────────── */
+    .related-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 8px;
+      background: var(--surface);
+    }
+    .related-row .rel-thumb {
+      width: 70px;
+      height: 40px;
+      flex-shrink: 0;
+      background: var(--bg);
+      border-radius: 3px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+    }
+    .related-row .rel-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .related-row .rel-meta { flex: 1; min-width: 0; }
+    .related-row .rel-meta .rel-title {
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .related-row .rel-meta .rel-slug {
+      font-size: 11px;
+      color: var(--muted);
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+    .related-row .ctrl { display: flex; gap: 2px; flex-shrink: 0; }
+    .related-row .ctrl button {
+      width: 28px; height: 28px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--text2);
+      font-size: 12px;
+    }
+    .related-row .ctrl button:hover:not(:disabled) { background: var(--bg); }
+    .related-row .ctrl button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .related-row .ctrl button.del:hover { background: rgba(239, 68, 68, 0.1); color: var(--red); }
+
+    /* Picker modal results */
+    .rel-picker-row {
+      display: flex;
+      gap: 10px;
+      padding: 8px 10px;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      align-items: center;
+    }
+    .rel-picker-row:hover { background: var(--bg); }
+    .rel-picker-row.selected {
+      background: rgba(79, 142, 247, 0.12);
+      border-left: 3px solid var(--blue);
+      padding-left: 7px;
+    }
+    .rel-picker-row .rel-thumb {
+      width: 60px; height: 34px; flex-shrink: 0;
+      background: var(--bg); border-radius: 3px; overflow: hidden;
+    }
+    .rel-picker-row .rel-thumb img { width: 100%; height: 100%; object-fit: cover; }
+    .rel-picker-row .rel-info { flex: 1; min-width: 0; text-align: left; }
+    .rel-picker-row .rel-info .t {
+      font-weight: 600; font-size: 13px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .rel-picker-row .rel-info .s {
+      font-size: 11px; color: var(--muted);
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      margin-top: 2px;
+    }
 
     /* ── Copy buttons row ───────────────────────────── */
     .copy-row {
@@ -560,7 +666,7 @@ async function uploadAsset(file, kind, onProgress) {
 // State
 // ════════════════════════════════════════════════════════════════════════════
 const state = {
-  videos:    [],     // list cache
+  videos:    [],     // list cache (returned by GET /api/videos)
   selected:  null,   // id of currently-edited video, or null for new
   form:      null,   // working copy of the form
   uploading: false,  // any uploader currently active
@@ -569,6 +675,8 @@ const state = {
 // Slug input regex — must mirror SLUG_RE in services/videoService.js
 // Lowercase alphanumeric + single hyphens. No leading/trailing or doubled hyphens.
 const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+const MAX_RELATED = 3;
 
 // Helper: HTML-escape for safe interpolation.
 function esc(s) {
@@ -589,6 +697,13 @@ function fmtDate(iso) {
   if (!iso) return '';
   try { return new Date(iso).toLocaleString(); }
   catch { return iso; }
+}
+
+function fmtViews(n) {
+  const v = Number(n) || 0;
+  if (v < 1000) return String(v);
+  if (v < 10000) return (v / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
+  return Math.round(v / 1000) + 'k';
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -631,6 +746,7 @@ function renderList() {
     const accessBadge = v.access_level === 'contact_only'
       ? '<span class="badge badge-contact">Contact</span>'
       : '<span class="badge badge-public">Public</span>';
+    const views = fmtViews(v.view_count);
 
     return '<div class="list-item ' + (isActive ? 'active' : '') + '" '
       + 'onclick="selectVideo(' + v.id + ')">'
@@ -643,6 +759,9 @@ function renderList() {
       +       '</span>'
       +     '</div>'
       +   '</div>'
+      +   '<div class="views" title="' + (v.view_count || 0) + ' view' + ((v.view_count || 0) === 1 ? '' : 's') + '">'
+      +     '<i class="fa-solid fa-eye"></i>' + views
+      +   '</div>'
       + '</div>';
   }).join('');
 }
@@ -653,23 +772,25 @@ function renderList() {
 
 function blankForm() {
   return {
-    slug:             '',     // user-supplied; blank → server auto-generates
-    title:            '',
-    description:      '',
-    gcs_video_url:    '',
-    gcs_poster_url:   '',
-    gcs_gif_url:      '',
-    duration_seconds: null,
-    tags:             [],
-    actions:          [],
-    access_level:     'public',
-    is_published:     false,
+    slug:                   '',     // user-supplied; blank → server auto-generates
+    title:                  '',
+    description:            '',
+    gcs_video_url:          '',
+    gcs_poster_url:         '',
+    gcs_gif_url:            '',
+    duration_seconds:       null,
+    tags:                   [],
+    actions:                [],
+    related_video_ids:      [],
+    access_level:           'public',
+    is_published:           false,
     // ephemeral display info, not sent to server
-    _videoFilename:   '',
-    _posterFilename:  '',
-    _gifFilename:     '',
-    _originalSlug:    null,   // null on new; canonical at load time on edit
-    _aliases:         [],     // historical slugs from the server
+    _videoFilename:         '',
+    _posterFilename:        '',
+    _gifFilename:           '',
+    _originalSlug:          null,   // null on new; canonical at load time on edit
+    _aliases:               [],     // historical slugs from the server
+    _relatedVideosResolved: [],     // resolved hand-picked details from server
   };
 }
 
@@ -689,26 +810,28 @@ async function selectVideo(id) {
     const v = await api('/api/videos/' + id, 'GET');
     state.selected = v.id;
     state.form = {
-      slug:             v.slug || '',
-      title:            v.title || '',
-      description:      v.description || '',
-      gcs_video_url:    v.gcs_video_url || '',
-      gcs_poster_url:   v.gcs_poster_url || '',
-      gcs_gif_url:      v.gcs_gif_url || '',
-      duration_seconds: v.duration_seconds,
-      tags:             Array.isArray(v.tags) ? v.tags : [],
-      actions:          Array.isArray(v.actions) ? v.actions.map(a => ({
-                          label:  a.label || '',
-                          type:   a.type  || 'url',
-                          config: { url: a.config?.url || '', style: a.config?.style || 'primary' },
-                        })) : [],
-      access_level:     v.access_level || 'public',
-      is_published:     !!v.is_published,
-      _videoFilename:   '',
-      _posterFilename:  '',
-      _gifFilename:     '',
-      _originalSlug:    v.slug,
-      _aliases:         Array.isArray(v.aliases) ? v.aliases : [],
+      slug:                   v.slug || '',
+      title:                  v.title || '',
+      description:            v.description || '',
+      gcs_video_url:          v.gcs_video_url || '',
+      gcs_poster_url:         v.gcs_poster_url || '',
+      gcs_gif_url:            v.gcs_gif_url || '',
+      duration_seconds:       v.duration_seconds,
+      tags:                   Array.isArray(v.tags) ? v.tags : [],
+      actions:                Array.isArray(v.actions) ? v.actions.map(a => ({
+                                label:  a.label || '',
+                                type:   a.type  || 'url',
+                                config: { url: a.config?.url || '', style: a.config?.style || 'primary' },
+                              })) : [],
+      related_video_ids:      Array.isArray(v.related_video_ids) ? v.related_video_ids.slice() : [],
+      access_level:           v.access_level || 'public',
+      is_published:           !!v.is_published,
+      _videoFilename:         '',
+      _posterFilename:        '',
+      _gifFilename:           '',
+      _originalSlug:          v.slug,
+      _aliases:               Array.isArray(v.aliases) ? v.aliases : [],
+      _relatedVideosResolved: Array.isArray(v.related_videos) ? v.related_videos : [],
     };
     renderEditor();
     renderList();
@@ -843,6 +966,21 @@ function renderEditor() {
       <div id="actionsList">${renderActionsList()}</div>
       <button class="btn btn-outline btn-sm" onclick="addAction()" style="margin-top:8px;">
         <i class="fa-solid fa-plus"></i> Add Action
+      </button>
+    </div>
+
+    <!-- ── Related videos ── -->
+    <div class="form-section">
+      <h3>Related Videos</h3>
+      <div class="section-note">
+        Up to ${MAX_RELATED} related videos shown on the landing page.
+        Hand-picks fill first; remaining slots auto-filled by matching tags.
+      </div>
+      <div id="relatedList">${renderRelatedList()}</div>
+      <button class="btn btn-outline btn-sm" id="addRelatedBtn"
+        onclick="openRelatedPicker()" style="margin-top:8px;"
+        ${(f.related_video_ids || []).length >= MAX_RELATED ? 'disabled title="Maximum reached"' : ''}>
+        <i class="fa-solid fa-plus"></i> Add Related Video
       </button>
     </div>
 
@@ -1026,6 +1164,198 @@ function deleteAction(i) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+// Related Videos picker
+// ════════════════════════════════════════════════════════════════════════════
+//
+// State model: state.form.related_video_ids is the canonical array sent to
+// the server. state.form._relatedVideosResolved is parallel display data
+// (one entry per id, in the same order). The two must always be kept in
+// sync — every move/delete/add updates both.
+//
+// Picker source: state.videos (already loaded for the list pane). We filter
+// client-side rather than hitting the server. With <1000 videos this is fine;
+// add server-side ?q= later if it gets sluggish.
+
+function renderRelatedList() {
+  const arr = state.form._relatedVideosResolved || [];
+  if (!arr.length) {
+    return '<div style="color:var(--muted); font-size:12px; padding:6px 0;">'
+      + 'No related videos picked. The landing page will auto-fill from videos sharing tags.'
+      + '</div>';
+  }
+  return arr.map((v, i) => {
+    const thumb = v.gcs_poster_url
+      ? '<img src="' + esc(v.gcs_poster_url) + '" alt="">'
+      : '<i class="fa-solid fa-film"></i>';
+    const lastIdx = arr.length - 1;
+    return `
+      <div class="related-row">
+        <div class="rel-thumb">${thumb}</div>
+        <div class="rel-meta">
+          <div class="rel-title">${esc(v.title || '')}</div>
+          <div class="rel-slug">/v/${esc(v.slug || '')}</div>
+        </div>
+        <div class="ctrl">
+          <button onclick="moveRelated(${i}, -1)" title="Move up"   ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button onclick="moveRelated(${i},  1)" title="Move down" ${i === lastIdx ? 'disabled' : ''}>↓</button>
+          <button class="del" onclick="deleteRelated(${i})" title="Remove">✕</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function refreshRelated() {
+  const list = document.getElementById('relatedList');
+  if (list) list.innerHTML = renderRelatedList();
+  const btn = document.getElementById('addRelatedBtn');
+  if (btn) {
+    const full = (state.form.related_video_ids || []).length >= MAX_RELATED;
+    btn.disabled = full;
+    btn.title = full ? 'Maximum reached' : '';
+  }
+}
+
+function moveRelated(i, delta) {
+  const j = i + delta;
+  const ids = state.form.related_video_ids;
+  const res = state.form._relatedVideosResolved;
+  if (j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  [res[i], res[j]] = [res[j], res[i]];
+  refreshRelated();
+}
+
+function deleteRelated(i) {
+  state.form.related_video_ids.splice(i, 1);
+  state.form._relatedVideosResolved.splice(i, 1);
+  refreshRelated();
+}
+
+async function openRelatedPicker() {
+  if ((state.form.related_video_ids || []).length >= MAX_RELATED) {
+    Toast.fire({ icon: 'info', title: 'Maximum ' + MAX_RELATED + ' related videos' });
+    return;
+  }
+
+  // Make sure list cache is loaded (defensive — boot loads it).
+  if (!state.videos.length) {
+    try { await loadList(); } catch { /* swallow — picker will show "no candidates" */ }
+  }
+
+  const excluded = new Set([
+    state.selected,
+    ...(state.form.related_video_ids || []),
+  ]);
+  // Only published videos are eligible — landing-page resolution requires
+  // is_published=1 anyway, so picking a draft would be invisible.
+  const candidates = state.videos.filter(v =>
+    !excluded.has(v.id) && v.is_published
+  );
+
+  if (!candidates.length) {
+    Swal.fire({
+      icon:  'info',
+      title: 'No candidates',
+      text:  'No other published videos are available to add. Publish more videos, '
+           + 'or the landing page will auto-fill from tag matches.',
+    });
+    return;
+  }
+
+  let selectedId = null;
+  let debounceTimer = null;
+
+  const result = await Swal.fire({
+    title: 'Add related video',
+    html: `
+      <input id="rel-search" class="swal2-input" placeholder="Type to filter by title or slug…" autofocus>
+      <div id="rel-results" style="
+        max-height: 320px;
+        overflow-y: auto;
+        border: 1px solid var(--border, #e2e8f0);
+        border-radius: 6px;
+      "></div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: 'Add',
+    width: 560,
+    didOpen: () => {
+      const input   = Swal.getPopup().querySelector('#rel-search');
+      const results = Swal.getPopup().querySelector('#rel-results');
+
+      function render(filter) {
+        const q = (filter || '').toLowerCase().trim();
+        const matched = q
+          ? candidates.filter(v =>
+              (v.title || '').toLowerCase().includes(q)
+              || (v.slug || '').toLowerCase().includes(q)
+            )
+          : candidates;
+
+        if (!matched.length) {
+          results.innerHTML = '<div style="padding:18px; color:#94a3b8; '
+            + 'font-size:12px; text-align:center;">No matches.</div>';
+          return;
+        }
+
+        results.innerHTML = matched.map(v => {
+          const thumb = v.gcs_poster_url
+            ? '<img src="' + esc(v.gcs_poster_url) + '" alt="">'
+            : '';
+          return '<div class="rel-picker-row" data-id="' + v.id + '">'
+            +   '<div class="rel-thumb">' + thumb + '</div>'
+            +   '<div class="rel-info">'
+            +     '<div class="t">' + esc(v.title || '(untitled)') + '</div>'
+            +     '<div class="s">' + esc(v.slug || '') + '</div>'
+            +   '</div>'
+            + '</div>';
+        }).join('');
+
+        results.querySelectorAll('.rel-picker-row').forEach(row => {
+          row.addEventListener('click', () => {
+            results.querySelectorAll('.rel-picker-row').forEach(r =>
+              r.classList.remove('selected'));
+            row.classList.add('selected');
+            selectedId = parseInt(row.dataset.id, 10);
+          });
+        });
+      }
+
+      input.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => render(input.value), 250);
+      });
+      // Pressing Enter in the input shouldn't submit the form unless something
+      // is selected — Swal's preConfirm handles that path.
+      render('');
+    },
+    preConfirm: () => {
+      if (selectedId == null) {
+        Swal.showValidationMessage('Pick a video from the list first');
+        return false;
+      }
+      return selectedId;
+    },
+  });
+
+  if (!result.isConfirmed || result.value == null) return;
+
+  const picked = candidates.find(c => c.id === result.value);
+  if (!picked) return;
+
+  state.form.related_video_ids.push(picked.id);
+  state.form._relatedVideosResolved.push({
+    id:             picked.id,
+    slug:           picked.slug,
+    title:          picked.title,
+    gcs_poster_url: picked.gcs_poster_url,
+    gcs_gif_url:    picked.gcs_gif_url,
+  });
+  refreshRelated();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 // Asset upload + duration extraction
 // ════════════════════════════════════════════════════════════════════════════
 async function onAssetFilePicked(kind, inputEl) {
@@ -1117,22 +1447,23 @@ function buildPayload(isNew) {
   const f = state.form;
   const slugTrim = (f.slug || '').trim();
   const payload = {
-    title:            f.title.trim(),
-    description:      f.description.trim() || null,
-    gcs_video_url:    f.gcs_video_url || '',
-    gcs_poster_url:   f.gcs_poster_url || null,
-    gcs_gif_url:      f.gcs_gif_url || null,
-    duration_seconds: Number.isFinite(f.duration_seconds) ? f.duration_seconds : null,
-    tags:             f.tags,
-    actions:          f.actions
-                        .filter(a => (a.label || '').trim() && (a.config?.url || '').trim())
-                        .map(a => ({
-                          label:  a.label.trim(),
-                          type:   'url',
-                          config: { url: a.config.url.trim(), style: a.config.style || 'primary' },
-                        })),
-    access_level:     f.access_level,
-    is_published:     f.is_published,
+    title:             f.title.trim(),
+    description:       f.description.trim() || null,
+    gcs_video_url:     f.gcs_video_url || '',
+    gcs_poster_url:    f.gcs_poster_url || null,
+    gcs_gif_url:       f.gcs_gif_url || null,
+    duration_seconds:  Number.isFinite(f.duration_seconds) ? f.duration_seconds : null,
+    tags:              f.tags,
+    actions:           f.actions
+                         .filter(a => (a.label || '').trim() && (a.config?.url || '').trim())
+                         .map(a => ({
+                           label:  a.label.trim(),
+                           type:   'url',
+                           config: { url: a.config.url.trim(), style: a.config.style || 'primary' },
+                         })),
+    related_video_ids: (f.related_video_ids || []).slice(0, MAX_RELATED),
+    access_level:      f.access_level,
+    is_published:      f.is_published,
   };
   if (isNew) {
     if (slugTrim) payload.slug = slugTrim;

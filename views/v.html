@@ -126,11 +126,76 @@
     }
     .vid-btn-ghost:hover { text-decoration: underline; }
 
+    /* ── Related videos ─────────────────────────────── */
+    .related-videos {
+      max-width: 720px;
+      margin: 24px auto 0;
+    }
+    .related-heading {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 12px;
+      padding-left: 4px;
+    }
+    .related-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    .related-card {
+      display: block;
+      text-decoration: none;
+      color: inherit;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s;
+    }
+    .related-card:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+      border-color: #cbd5e1;
+    }
+    .related-thumb {
+      aspect-ratio: 16 / 9;
+      background: #000;
+      display: block;
+    }
+    .related-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .related-no-poster {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #1e293b, #334155);
+    }
+    .related-title {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      padding: 8px 10px 10px;
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
     @media (max-width: 480px) {
       body { padding: 12px 8px 24px; }
       .body { padding: 18px 18px 20px; }
       h1 { font-size: 19px; }
       .vid-btn { width: 100%; }
+      .related-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -148,5 +213,96 @@
       <div class="actions">{{ACTIONS_HTML}}</div>
     </div>
   </div>
+
+  {{RELATED_HTML}}
+
+  <script>
+  (function() {
+    // VIEW_ID is the BIGINT video_views.id, stringified server-side.
+    // Empty string when recordView failed — script no-ops in that case.
+    var VIEW_ID = "{{VIEW_ID}}";
+    // CANONICAL_SLUG is the video's current canonical slug, even if the
+    // request hit an alias URL. Tracking POSTs go to the canonical so the
+    // server doesn't need a second alias lookup per event.
+    var SLUG    = "{{CANONICAL_SLUG}}";
+
+    if (!VIEW_ID || !SLUG) return;
+
+    var video = document.querySelector('.video-wrap video');
+    if (!video) return;
+
+    var TRACK_URL = '/api/v/' + encodeURIComponent(SLUG) + '/track';
+    var CTA_URL   = '/api/v/' + encodeURIComponent(SLUG) + '/cta-click';
+
+    // fetch with keepalive — survives page unload (replacement for
+    // navigator.sendBeacon when an explicit Content-Type matters).
+    function send(url, payload) {
+      try {
+        fetch(url, {
+          method:    'POST',
+          headers:   { 'Content-Type': 'application/json' },
+          body:      JSON.stringify(payload),
+          keepalive: true,
+        }).catch(function() { /* swallow — best-effort tracking */ });
+      } catch (e) { /* swallow */ }
+    }
+
+    // First-play only. Re-firing on pause/resume or seek-replay does NOT
+    // re-record (matches the server-side COALESCE on played_at).
+    var played = false;
+    video.addEventListener('play', function() {
+      if (played) return;
+      played = true;
+      send(TRACK_URL, { viewId: VIEW_ID, event: 'play' });
+    });
+
+    // Progress every ~10s of wall-clock playback.
+    // Reports the highest currentTime seen so far (not strictly cumulative
+    // watch time — the server's GREATEST() guards against monotonic
+    // regressions either way).
+    var PROGRESS_INTERVAL_S = 10;
+    var lastReported = 0;
+    video.addEventListener('timeupdate', function() {
+      var cur = Math.floor(video.currentTime);
+      if (cur - lastReported < PROGRESS_INTERVAL_S) return;
+      lastReported = cur;
+      var pct = (video.duration && isFinite(video.duration))
+        ? Math.min(100, Math.round((cur / video.duration) * 100))
+        : 0;
+      send(TRACK_URL, {
+        viewId:        VIEW_ID,
+        event:         'progress',
+        watchSeconds:  cur,
+        completionPct: pct,
+      });
+    });
+
+    // 'ended' fires once the video plays to its natural end. The server
+    // forces completion_pct=100 for this event regardless of payload, but
+    // we still send watchSeconds so analytics has a value.
+    video.addEventListener('ended', function() {
+      var cur = Math.floor(video.currentTime);
+      send(TRACK_URL, {
+        viewId:        VIEW_ID,
+        event:         'complete',
+        watchSeconds:  cur,
+        completionPct: 100,
+      });
+    });
+
+    // CTA click delegation — captures any .vid-btn anchor click in the
+    // .actions row. Doesn't preventDefault so the link still navigates.
+    var actionsRow = document.querySelector('.actions');
+    if (actionsRow) {
+      actionsRow.addEventListener('click', function(e) {
+        var a = e.target.closest && e.target.closest('a.vid-btn');
+        if (!a) return;
+        var label = (a.textContent || '').trim().slice(0, 200);
+        if (!label) return;
+        send(CTA_URL, { viewId: VIEW_ID, label: label });
+      });
+    }
+  })();
+  </script>
 </body>
 </html>

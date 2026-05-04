@@ -10,10 +10,20 @@
  *   - Old slugs are archived into `video_slug_aliases` on change.
  *   - The landing route looks up canonical first, then alias.
  *   - Cross-table uniqueness (a slug can't be the canonical of one video AND
- *     the alias of another) is enforced at the app layer in setSlugChanged().
+ *     the alias of another) is enforced at the app layer in setSlugCanonical().
  *
- * Slice 1 scope: no view tracking, no related-video resolution, no audit logs.
- * GCS objects are intentionally orphaned on delete — see deleteVideo().
+ * Slice 2 additions: view tracking + related-videos resolution.
+ *   - recordView: transactional INSERT into video_views + view_count++
+ *   - recordPlayed / recordProgress / recordCtaClick: per-event updates
+ *   - getRelatedVideos: hand-picked first, then tag-overlap auto-fill
+ *
+ * Notes on case_id resolution:
+ *   - cases.case_id is varchar(20) (8-char alphanumeric).
+ *   - video_views.case_id was migrated from int → varchar(20) for Slice 2.
+ *   - Resolution rule: most recent OPEN case where contact is the PRIMARY
+ *     party (case_relate.case_relate_type = 'Primary').
+ *   - Anonymous views (no contactId) → case_id NULL.
+ *   - Contact with no Primary open case → case_id NULL.
  */
 
 const crypto = require('crypto');
@@ -113,11 +123,6 @@ function validateSlug(slug) {
 /**
  * Throws 409 if `slug` is in use by a different video — either as canonical
  * (`videos.slug`) or as alias (`video_slug_aliases.slug`).
- *
- * @param db        connection or pool
- * @param slug      candidate slug
- * @param ownerId   id of the video that "owns" this slug attempt (so we
- *                  don't false-conflict against itself); pass null on create.
  */
 async function assertSlugAvailable(db, slug, ownerId) {
   const [vRows] = await db.query(
@@ -139,6 +144,64 @@ async function assertSlugAvailable(db, slug, ownerId) {
     e.statusCode = 409;
     throw e;
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Slice 2 helpers — IP hash, case resolution, JSON_OVERLAPS probe
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * SHA-256 of an IP. Stored in video_views.ip_hash so plain IPs never hit disk.
+ */
+function hashIp(ip) {
+  return crypto.createHash('sha256').update(String(ip || 'unknown')).digest('hex');
+}
+
+/**
+ * Most-recent OPEN case where the given contact is the PRIMARY party.
+ * Returns the case_id (varchar) or null. NULL on anonymous (contactId == null)
+ * and on contacts with no open primary case.
+ *
+ * Verified column names against actual schema:
+ *   - cases.case_id          (varchar(20))
+ *   - cases.case_stage       (enum incl. 'Open')   — NOT case_status (free-form varchar)
+ *   - cases.case_open_date   (date)
+ *   - case_relate.case_relate_case_id    (FK to cases)
+ *   - case_relate.case_relate_client_id  (FK to contacts)
+ *   - case_relate.case_relate_type       (enum incl. 'Primary')
+ */
+async function resolveCaseIdForContact(db, contactId) {
+  if (contactId == null) return null;
+  const [rows] = await db.query(
+    `SELECT c.case_id
+       FROM cases c
+       JOIN case_relate cr ON cr.case_relate_case_id = c.case_id
+      WHERE cr.case_relate_client_id = ?
+        AND cr.case_relate_type = 'Primary'
+        AND c.case_stage = 'Open'
+      ORDER BY c.case_open_date DESC, c.case_id DESC
+      LIMIT 1`,
+    [contactId]
+  );
+  return rows.length ? rows[0].case_id : null;
+}
+
+// JSON_OVERLAPS requires MySQL 8.0.17+. Probe once at first use, cache.
+let _jsonOverlapsSupported = null;
+async function _supportsJsonOverlaps(db) {
+  if (_jsonOverlapsSupported !== null) return _jsonOverlapsSupported;
+  try {
+    await db.query("SELECT JSON_OVERLAPS(JSON_ARRAY(1), JSON_ARRAY(1)) AS t");
+    _jsonOverlapsSupported = true;
+  } catch {
+    _jsonOverlapsSupported = false;
+  }
+  return _jsonOverlapsSupported;
+}
+
+/** For test harness / report-out. */
+function getJsonOverlapsCachedStatus() {
+  return _jsonOverlapsSupported;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -182,11 +245,8 @@ async function getVideoById(db, id) {
 /**
  * Look up by canonical slug first, then fall back to alias.
  *
- * @param {object} opts  { mustBePublished?: boolean }  default true
  * @returns {object|null} video row plus a `_resolvedVia` field:
- *                        'canonical' | 'alias'. Useful if a caller wants
- *                        to redirect alias hits to the canonical URL
- *                        (out of scope for Slice 1).
+ *                        'canonical' | 'alias'.
  */
 async function getVideoBySlug(db, slug, { mustBePublished = true } = {}) {
   const pubClause = mustBePublished ? ' AND is_published = 1' : '';
@@ -218,8 +278,7 @@ async function getVideoBySlug(db, slug, { mustBePublished = true } = {}) {
 }
 
 /**
- * List historical aliases for a given video (newest first). Used by the
- * admin UI to surface what URLs still resolve.
+ * List historical aliases for a given video (newest first).
  */
 async function listAliasesForVideo(db, videoId) {
   const [rows] = await db.query(
@@ -235,12 +294,6 @@ async function listAliasesForVideo(db, videoId) {
 
 /**
  * Create a video.
- *
- * Slug behavior:
- *   - If `data.slug` is provided and non-empty: validated and used as-is;
- *     409 if already taken (canonical or alias of another video).
- *   - If `data.slug` is empty/missing: auto-generated from title with a
- *     4-hex random suffix; up to 5 collision retries.
  */
 async function createVideo(db, data) {
   if (!data.title || !data.title.trim()) {
@@ -262,8 +315,6 @@ async function createVideo(db, data) {
     await assertSlugAvailable(db, userSuppliedSlug, null);
   }
 
-  // Build the column/value lists. `slug` value varies per attempt when
-  // auto-generating; fixed when user-supplied.
   const cols = [
     'slug', 'title', 'description',
     'gcs_video_url', 'gcs_poster_url', 'gcs_gif_url',
@@ -296,8 +347,6 @@ async function createVideo(db, data) {
       return await getVideoById(db, result.insertId);
     } catch (err) {
       if (err.code === 'ER_DUP_ENTRY') {
-        // Race: assertSlugAvailable passed but another insert grabbed it
-        // between then and now. Surface as a 409.
         const e = new Error(`Slug "${userSuppliedSlug}" is already in use`);
         e.statusCode = 409;
         throw e;
@@ -324,12 +373,6 @@ async function createVideo(db, data) {
 /**
  * Atomically swap the canonical slug. Old slug becomes an alias; new slug
  * becomes canonical.
- *
- *   - 409 if the new slug is in use by a different video.
- *   - If the new slug is already an alias of THIS video (e.g. the user is
- *     reverting), it's removed from aliases first so it can become canonical.
- *
- * Wrapped in a transaction so partial state can't leak on error.
  */
 async function setSlugCanonical(pool, videoId, newSlug) {
   validateSlug(newSlug);
@@ -352,20 +395,11 @@ async function setSlugCanonical(pool, videoId, newSlug) {
   try {
     await conn.beginTransaction();
 
-    // If newSlug is in this video's own aliases, remove it (it's becoming canonical).
     await conn.query(
       'DELETE FROM video_slug_aliases WHERE slug = ? AND video_id = ?',
       [newSlug, videoId],
     );
 
-    // Free the canonical slug slot first to avoid the UNIQUE constraint
-    // colliding with itself when the old slug isn't yet archived. We do this
-    // by archiving the old slug to aliases, but the alias INSERT must come
-    // BEFORE the canonical UPDATE if the new slug equals an existing alias
-    // of another video — but assertSlugAvailable already ruled that out.
-    //
-    // Order: INSERT alias (using REPLACE in case of a stale alias row from
-    // a prior cycle) → UPDATE canonical.
     await conn.query(
       'REPLACE INTO video_slug_aliases (slug, video_id) VALUES (?, ?)',
       [oldSlug, videoId],
@@ -399,12 +433,9 @@ async function updateVideo(db, id, partial) {
     throw new Error('Update body must be an object');
   }
 
-  // Slug change runs first — its own transaction. If it throws, the rest
-  // doesn't apply (consistent with "validate everything before any write").
   if ('slug' in partial && typeof partial.slug === 'string' && partial.slug.trim()) {
     await setSlugCanonical(db, id, partial.slug.trim());
   } else if ('slug' in partial && (partial.slug === '' || partial.slug == null)) {
-    // Explicitly blank slug in PATCH is not permitted (would orphan URLs).
     const e = new Error('slug cannot be set to empty');
     e.statusCode = 400;
     throw e;
@@ -442,8 +473,6 @@ async function updateVideo(db, id, partial) {
       values,
     );
     if (!result.affectedRows && !('slug' in partial)) {
-      // Only treat "not found" as terminal if no slug change happened —
-      // a slug change with no other fields is still a successful update.
       return null;
     }
   }
@@ -452,16 +481,238 @@ async function updateVideo(db, id, partial) {
 }
 
 /**
- * DB delete only.
- *
- * GCS cleanup is intentionally deferred to a future ops task — orphaned
- * objects don't impact correctness and deletes are infrequent.
- *
- * Aliases are removed automatically via FK ON DELETE CASCADE.
+ * DB delete only. GCS objects intentionally orphaned. Aliases cascade.
  */
 async function deleteVideo(db, id) {
   const [result] = await db.query('DELETE FROM videos WHERE id = ?', [id]);
   return result.affectedRows > 0;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Slice 2 — view tracking
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Record a page-open. Single transaction:
+ *   1. Resolve case_id from contactId (if any) — most recent open case
+ *      where contact is Primary.
+ *   2. INSERT video_views row.
+ *   3. UPDATE videos.view_count += 1.
+ *
+ * Returns the new view's id (BIGINT). Caller should String() it before
+ * embedding in HTML to be safe with values > Number.MAX_SAFE_INTEGER,
+ * though we won't reach that range in practice.
+ *
+ * @param {object} pool   mysql2 pool (must support getConnection)
+ * @param {object} args
+ * @param {number} args.videoId
+ * @param {number|null} args.contactId
+ * @param {string} args.ipHash      64-char hex (use hashIp())
+ * @param {string} args.userAgent   capped at 255 chars
+ * @returns {Promise<{viewId: number}>}
+ */
+async function recordView(pool, { videoId, contactId, ipHash, userAgent }) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    let caseId = null;
+    if (contactId != null) {
+      const [rows] = await conn.query(
+        `SELECT c.case_id
+           FROM cases c
+           JOIN case_relate cr ON cr.case_relate_case_id = c.case_id
+          WHERE cr.case_relate_client_id = ?
+            AND cr.case_relate_type = 'Primary'
+            AND c.case_stage = 'Open'
+          ORDER BY c.case_open_date DESC, c.case_id DESC
+          LIMIT 1`,
+        [contactId]
+      );
+      caseId = rows.length ? rows[0].case_id : null;
+    }
+
+    const [result] = await conn.query(
+      `INSERT INTO video_views (video_id, contact_id, case_id, ip_hash, user_agent)
+       VALUES (?, ?, ?, ?, ?)`,
+      [videoId, contactId, caseId, ipHash || null, (userAgent || '').slice(0, 255) || null]
+    );
+
+    await conn.query(
+      'UPDATE videos SET view_count = view_count + 1 WHERE id = ?',
+      [videoId]
+    );
+
+    await conn.commit();
+    return { viewId: result.insertId };
+  } catch (err) {
+    try { await conn.rollback(); } catch { /* ignore */ }
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+/**
+ * Mark first-play. Idempotent: re-firing 'play' (e.g. after pause+play, or
+ * on a seek-replay) does not overwrite the original played_at timestamp.
+ */
+async function recordPlayed(db, { viewId, videoId }) {
+  await db.query(
+    `UPDATE video_views
+        SET played_at = COALESCE(played_at, NOW())
+      WHERE id = ? AND video_id = ?`,
+    [viewId, videoId]
+  );
+}
+
+/**
+ * Update progress monotonically. Coerces inputs and clamps:
+ *   watchSeconds  → [0, 86400]   (24h cap to keep ints sane)
+ *   completionPct → [0, 100]
+ * Uses GREATEST in SQL so a backward seek can't regress the stored value.
+ */
+async function recordProgress(db, { viewId, videoId, watchSeconds, completionPct }) {
+  const ws  = Math.max(0, Math.min(86400, parseInt(watchSeconds,  10) || 0));
+  const pct = Math.max(0, Math.min(100,   parseInt(completionPct, 10) || 0));
+  await db.query(
+    `UPDATE video_views
+        SET watch_seconds  = GREATEST(watch_seconds,  ?),
+            completion_pct = GREATEST(completion_pct, ?)
+      WHERE id = ? AND video_id = ?`,
+    [ws, pct, viewId, videoId]
+  );
+}
+
+/**
+ * Append a CTA click event to the cta_clicks JSON array.
+ * Label is capped at 200 chars.
+ */
+async function recordCtaClick(db, { viewId, videoId, label }) {
+  const trimmedLabel = String(label || '').slice(0, 200);
+  const ts = new Date().toISOString();
+  await db.query(
+    `UPDATE video_views
+        SET cta_clicks = JSON_ARRAY_APPEND(
+              COALESCE(cta_clicks, JSON_ARRAY()),
+              '$',
+              JSON_OBJECT('label', ?, 'clicked_at', ?)
+            )
+      WHERE id = ? AND video_id = ?`,
+    [trimmedLabel, ts, viewId, videoId]
+  );
+}
+
+/**
+ * Resolve up to `limit` related videos for the given video.
+ *
+ * Order:
+ *   1. Hand-picked from videos.related_video_ids, in the array's order.
+ *      Only published videos make the list. Missing/unpublished IDs are
+ *      silently skipped.
+ *   2. If autoFill && fewer than `limit` so far, top up with random
+ *      published videos that share at least one tag with this video.
+ *      Excludes the current video and anything already in the list.
+ *
+ * Tag matching uses JSON_OVERLAPS (MySQL 8.0.17+) when supported; falls back
+ * to JSON_TABLE + IN(...) otherwise. Probe runs once per process.
+ *
+ * @param {object} db
+ * @param {number} videoId
+ * @param {object} [opts]
+ * @param {boolean} [opts.autoFill=true]  if false, returns only hand-picked
+ * @param {number}  [opts.limit=3]        max items returned
+ * @returns {Promise<object[]>}  rows with id, slug, title, gcs_poster_url,
+ *                               gcs_gif_url, tags (JSON-hydrated). Up to limit.
+ */
+async function getRelatedVideos(db, videoId, { autoFill = true, limit = 3 } = {}) {
+  const [vRows] = await db.query(
+    'SELECT id, related_video_ids, tags FROM videos WHERE id = ? LIMIT 1',
+    [videoId]
+  );
+  if (!vRows.length) return [];
+
+  const handPicked = parseJsonField(vRows[0].related_video_ids) || [];
+  const tags       = parseJsonField(vRows[0].tags) || [];
+
+  const picked = [];
+
+  // 1. Resolve hand-picked, preserving their declared order.
+  if (Array.isArray(handPicked) && handPicked.length) {
+    const validIds = handPicked
+      .map(n => parseInt(n, 10))
+      .filter(n => Number.isInteger(n) && n > 0);
+
+    if (validIds.length) {
+      const placeholders = validIds.map(() => '?').join(',');
+      const [rows] = await db.query(
+        `SELECT id, slug, title, gcs_poster_url, gcs_gif_url, tags
+           FROM videos
+          WHERE id IN (${placeholders})
+            AND is_published = 1
+            AND id != ?`,
+        [...validIds, videoId]
+      );
+      // Re-order to match validIds order, capped at limit.
+      for (const id of validIds) {
+        if (picked.length >= limit) break;
+        const row = rows.find(r => r.id === id);
+        if (row) picked.push(hydrateRow(row));
+      }
+    }
+  }
+
+  // 2. Auto-fill if requested and we have room and the source video has tags.
+  if (autoFill && picked.length < limit && Array.isArray(tags) && tags.length) {
+    const fillCount = limit - picked.length;
+    const excludedIds = [videoId, ...picked.map(p => p.id)];
+    const excludePh   = excludedIds.map(() => '?').join(',');
+
+    const overlapsOk = await _supportsJsonOverlaps(db);
+
+    let fillRows = [];
+    try {
+      if (overlapsOk) {
+        const [rows] = await db.query(
+          `SELECT id, slug, title, gcs_poster_url, gcs_gif_url, tags
+             FROM videos
+            WHERE id NOT IN (${excludePh})
+              AND is_published = 1
+              AND JSON_OVERLAPS(tags, CAST(? AS JSON))
+            ORDER BY RAND()
+            LIMIT ?`,
+          [...excludedIds, JSON.stringify(tags), fillCount]
+        );
+        fillRows = rows;
+      } else {
+        const tagPh = tags.map(() => '?').join(',');
+        const [rows] = await db.query(
+          `SELECT id, slug, title, gcs_poster_url, gcs_gif_url, tags
+             FROM videos
+            WHERE id NOT IN (${excludePh})
+              AND is_published = 1
+              AND EXISTS (
+                SELECT 1
+                  FROM JSON_TABLE(tags, '$[*]' COLUMNS (tag VARCHAR(255) PATH '$')) jt
+                 WHERE jt.tag IN (${tagPh})
+              )
+            ORDER BY RAND()
+            LIMIT ?`,
+          [...excludedIds, ...tags, fillCount]
+        );
+        fillRows = rows;
+      }
+    } catch (err) {
+      // If JSON_OVERLAPS path failed mid-flight (e.g. server upgraded
+      // mid-process and the probe was stale), don't blow up the landing —
+      // skip auto-fill silently and log.
+      console.warn('[getRelatedVideos] auto-fill query failed:', err.message);
+    }
+
+    for (const r of fillRows) picked.push(hydrateRow(r));
+  }
+
+  return picked.slice(0, limit);
 }
 
 module.exports = {
@@ -476,4 +727,13 @@ module.exports = {
   generateSlug,
   generateSlugBase,
   validateSlug,
+  // Slice 2
+  recordView,
+  recordPlayed,
+  recordProgress,
+  recordCtaClick,
+  getRelatedVideos,
+  hashIp,
+  resolveCaseIdForContact,
+  getJsonOverlapsCachedStatus,
 };

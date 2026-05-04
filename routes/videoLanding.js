@@ -2,18 +2,24 @@
  * Video Landing Route
  * routes/videoLanding.js
  *
- * GET /v/:slug — public-facing landing page. Reads views/v.html (cached
- * after first load), substitutes placeholders, sends as text/html.
+ * Public-facing endpoints (no auth):
+ *   GET  /v/:slug                      — landing page (HTML)
+ *   POST /api/v/:slug/track            — { viewId, event, watchSeconds?, completionPct? }
+ *   POST /api/v/:slug/cta-click        — { viewId, label }
  *
- * Slug resolution order:
+ * Slug resolution order on GET:
  *   1. canonical (`videos.slug`)
  *   2. alias    (`video_slug_aliases.slug` → joins to videos)
+ * Both lookups require `is_published = 1`. Alias hits serve in place — no
+ * redirect to canonical. The canonical slug IS still passed to the inline
+ * tracking script so the POST endpoints don't require a second alias lookup.
  *
- * Both lookups require `is_published = 1`. Slice 1: no view tracking.
+ * View row is recorded ONLY after access checks pass (so 404s don't pollute
+ * the log). Tracking-endpoint failures don't block rendering.
  *
- * The template lives in views/ (not public/) because both the static
- * middleware and the /:page catch-all in server.js would otherwise serve
- * the unsubstituted template at /v.html and /v.
+ * The HTML template lives in views/ (not public/) so the static middleware
+ * and the /:page catch-all in server.js don't accidentally serve the
+ * unsubstituted template at /v.html or /v.
  */
 
 const express      = require('express');
@@ -44,6 +50,15 @@ function htmlEscape(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function getClientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (xff) {
+    const first = String(xff).split(',').shift().trim();
+    if (first) return first;
+  }
+  return req.socket?.remoteAddress || 'unknown';
 }
 
 /**
@@ -82,6 +97,37 @@ function renderActions(actions, contactId) {
   return out.join('');
 }
 
+/**
+ * Render the related-videos section. Returns an empty string when there are
+ * no related videos — the template's {{RELATED_HTML}} substitution then
+ * becomes empty, and the page just doesn't show the section.
+ *
+ * Each card preserves ?c= so the contact context follows across navigations.
+ */
+function renderRelated(relatedVideos, contactId) {
+  if (!Array.isArray(relatedVideos) || !relatedVideos.length) return '';
+  const cParam = contactId != null
+    ? '?c=' + encodeURIComponent(String(contactId))
+    : '';
+
+  const cards = relatedVideos.map(v => {
+    const href  = '/v/' + encodeURIComponent(v.slug) + cParam;
+    const title = htmlEscape(v.title || '');
+    const poster = v.gcs_poster_url
+      ? `<img src="${htmlEscape(v.gcs_poster_url)}" alt="" loading="lazy">`
+      : '<div class="related-no-poster"></div>';
+    return `<a class="related-card" href="${href}">`
+         +    `<div class="related-thumb">${poster}</div>`
+         +    `<div class="related-title">${title}</div>`
+         + `</a>`;
+  }).join('');
+
+  return `<section class="related-videos">`
+       +   `<h2 class="related-heading">More videos</h2>`
+       +   `<div class="related-grid">${cards}</div>`
+       + `</section>`;
+}
+
 // ─────────────────────────────────────────────────────────────
 // GET /v/:slug
 // ─────────────────────────────────────────────────────────────
@@ -112,11 +158,42 @@ router.get('/v/:slug', async (req, res) => {
       return res.status(404).type('text/plain').send('Not found');
     }
 
+    // ── Record the view (post-access-check). Tracking failures must not
+    //    break rendering — log and continue with an empty viewId so the
+    //    inline script no-ops.
+    let viewId = '';
+    try {
+      const ipHash    = videoService.hashIp(getClientIp(req));
+      const userAgent = (req.headers['user-agent'] || '').slice(0, 255);
+      const r = await videoService.recordView(req.db, {
+        videoId:   video.id,
+        contactId,
+        ipHash,
+        userAgent,
+      });
+      if (r && r.viewId != null) viewId = String(r.viewId);
+    } catch (err) {
+      console.error('[GET /v/:slug] recordView failed:', err);
+    }
+
+    // ── Resolve related videos (hand-picked + tag auto-fill). Failures
+    //    again degrade gracefully.
+    let relatedHtml = '';
+    try {
+      const related = await videoService.getRelatedVideos(req.db, video.id, {
+        autoFill: true,
+        limit:    3,
+      });
+      relatedHtml = renderRelated(related, contactId);
+    } catch (err) {
+      console.error('[GET /v/:slug] getRelatedVideos failed:', err);
+    }
+
     const actions     = video.actions; // already hydrated by service
     const description = video.description || '';
 
-    // Use the canonical slug for the og:url and twitter URL — even if the
-    // request hit an alias. Sharing should always use the current canonical.
+    // Use the canonical slug for og:url and the in-page tracker — even if the
+    // request hit an alias.
     const landingUrl = req.protocol + '://' + req.get('host') + '/v/' + video.slug;
 
     // Single-line, escaped — for meta-tag content="" attributes.
@@ -134,12 +211,14 @@ router.get('/v/:slug', async (req, res) => {
       '{{ACTIONS_HTML}}':     renderActions(actions, contactId),
       '{{OG_TYPE}}':          'video.other',
       '{{TWITTER_CARD}}':     'summary_large_image',
+      '{{VIEW_ID}}':          htmlEscape(viewId),
+      '{{CANONICAL_SLUG}}':   htmlEscape(video.slug),
+      '{{RELATED_HTML}}':     relatedHtml,
     };
 
     let html = getTemplate();
 
     // If no poster, strip og:image and twitter:image meta lines entirely.
-    // Empty content="" produces broken previews on Slack/iMessage/etc.
     if (!video.gcs_poster_url) {
       html = html.replace(/[ \t]*<meta property="og:image"[^>]*>\n?/g, '');
       html = html.replace(/[ \t]*<meta name="twitter:image"[^>]*>\n?/g, '');
@@ -158,6 +237,125 @@ router.get('/v/:slug', async (req, res) => {
   } catch (err) {
     console.error('[GET /v/:slug]', err);
     res.status(500).type('text/plain').send('Internal error');
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/v/:slug/track  — { viewId, event, watchSeconds?, completionPct? }
+// ─────────────────────────────────────────────────────────────
+
+const TRACK_EVENTS = new Set(['play', 'progress', 'complete']);
+
+router.post('/api/v/:slug/track', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { viewId, event, watchSeconds, completionPct } = body;
+
+    // Validate event.
+    if (!TRACK_EVENTS.has(event)) {
+      return res.status(400).json({
+        error: 'event must be one of: play, progress, complete',
+      });
+    }
+
+    // Validate viewId — accept JSON number or numeric string.
+    const vidNum = Number(viewId);
+    if (!Number.isInteger(vidNum) || vidNum <= 0) {
+      return res.status(400).json({ error: 'viewId must be a positive integer' });
+    }
+
+    // Validate progress payload.
+    if (event === 'progress') {
+      if (typeof watchSeconds !== 'number' || typeof completionPct !== 'number') {
+        return res.status(400).json({
+          error: 'progress requires numeric watchSeconds and completionPct',
+        });
+      }
+    }
+
+    // Resolve slug → video (handles aliases too — even though our own client
+    // sends the canonical slug, accept either).
+    const video = await videoService.getVideoBySlug(req.db, req.params.slug, {
+      mustBePublished: true,
+    });
+    if (!video) return res.status(404).json({ error: 'Not found' });
+
+    // Verify viewId belongs to this video. Prevents cross-video poisoning.
+    const [check] = await req.db.query(
+      'SELECT id FROM video_views WHERE id = ? AND video_id = ? LIMIT 1',
+      [vidNum, video.id]
+    );
+    if (!check.length) return res.status(404).json({ error: 'Not found' });
+
+    if (event === 'play') {
+      await videoService.recordPlayed(req.db, {
+        viewId:  vidNum,
+        videoId: video.id,
+      });
+    } else if (event === 'progress') {
+      await videoService.recordProgress(req.db, {
+        viewId:        vidNum,
+        videoId:       video.id,
+        watchSeconds,
+        completionPct,
+      });
+    } else if (event === 'complete') {
+      // 'complete' forces 100% but uses whatever watchSeconds the client
+      // reported (still GREATEST-guarded by recordProgress).
+      const ws = typeof watchSeconds === 'number' ? watchSeconds : 0;
+      await videoService.recordProgress(req.db, {
+        viewId:         vidNum,
+        videoId:        video.id,
+        watchSeconds:   ws,
+        completionPct:  100,
+      });
+    }
+
+    return res.status(204).end();
+  } catch (err) {
+    console.error('[POST /api/v/:slug/track]', err);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/v/:slug/cta-click  — { viewId, label }
+// ─────────────────────────────────────────────────────────────
+
+router.post('/api/v/:slug/cta-click', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { viewId, label } = body;
+
+    const vidNum = Number(viewId);
+    if (!Number.isInteger(vidNum) || vidNum <= 0) {
+      return res.status(400).json({ error: 'viewId must be a positive integer' });
+    }
+    if (typeof label !== 'string' || !label.trim()) {
+      return res.status(400).json({ error: 'label is required' });
+    }
+
+    const video = await videoService.getVideoBySlug(req.db, req.params.slug, {
+      mustBePublished: true,
+    });
+    if (!video) return res.status(404).json({ error: 'Not found' });
+
+    const [check] = await req.db.query(
+      'SELECT id FROM video_views WHERE id = ? AND video_id = ? LIMIT 1',
+      [vidNum, video.id]
+    );
+    if (!check.length) return res.status(404).json({ error: 'Not found' });
+
+    await videoService.recordCtaClick(req.db, {
+      viewId:  vidNum,
+      videoId: video.id,
+      label:   label.slice(0, 200),
+    });
+
+    return res.status(204).end();
+  } catch (err) {
+    console.error('[POST /api/v/:slug/cta-click]', err);
+    return res.status(500).json({ error: 'Internal error' });
   }
 });
 
