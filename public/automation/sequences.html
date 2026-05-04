@@ -874,11 +874,26 @@ function seqRenderActionConfig(type, cfg) {
     <div class="field"><label>From (phone_lines number)</label>${fdPhoneLineSelectHtml('se-from', cfg.params?.from || '')}</div>
     <div class="field"><label>To</label><input id="se-to" value="${esc(cfg.params?.to || '{{contacts.contact_phone}}')}"></div>
     <div class="field"><label>Message</label><textarea id="se-message" rows="4">${esc(cfg.params?.message || '')}</textarea></div>`;
-  if (type === 'email') return `
+  if (type === 'email') {
+    const attachJson = cfg.params?.attachment_urls != null
+      ? JSON.stringify(cfg.params.attachment_urls, null, 2)
+      : '';
+    return `
     <div class="field"><label>From</label>${fdEmailFromSelectHtml('se-from', cfg.params?.from || '')}</div>
     <div class="field"><label>To</label><input id="se-to" value="${esc(cfg.params?.to || '{{contacts.contact_email}}')}"></div>
     <div class="field"><label>Subject</label><input id="se-subject" value="${esc(cfg.params?.subject || '')}"></div>
-    <div class="field"><label>Text</label><textarea id="se-text" rows="5">${esc(cfg.params?.text || '')}</textarea></div>`;
+    <div class="field"><label>Text</label><textarea id="se-text" rows="5">${esc(cfg.params?.text || '')}</textarea></div>
+    <div class="field">
+      <label>Attachments (optional)</label>
+      <textarea id="se-attach" rows="4" placeholder='[]'>${esc(attachJson)}</textarea>
+      <p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4">
+        JSON array. Examples:<br>
+        &nbsp;&nbsp;<code>["https://.../file.pdf"]</code><br>
+        &nbsp;&nbsp;<code>[{"url":"https://...","name":"Fee Agreement.pdf"}]</code><br>
+        Placeholders work inside URL strings. Files must be publicly reachable.
+      </p>
+    </div>`;
+  }
   if (type === 'task') return `
     <div class="field"><label>Title</label><input id="se-title" value="${esc(cfg.params?.title || '')}"></div>
     <div class="field"><label>Assigned To (user ID)</label><input id="se-assigned-to" type="number" value="${esc(cfg.params?.assigned_to || '')}"></div>
@@ -1097,7 +1112,26 @@ function seqGatherStep() {
 
   let action_config = {};
   if (actionType === 'sms') action_config = { function_name: 'send_sms', params: { from: val('se-from'), to: val('se-to'), message: val('se-message') } };
-  else if (actionType === 'email') action_config = { function_name: 'send_email', params: { from: val('se-from'), to: val('se-to'), subject: val('se-subject'), text: val('se-text') } };
+  else if (actionType === 'email') {
+    const params = {
+      from: val('se-from'),
+      to: val('se-to'),
+      subject: val('se-subject'),
+      text: val('se-text'),
+    };
+    const attachRaw = val('se-attach');
+    if (attachRaw) {
+      let parsed;
+      try { parsed = JSON.parse(attachRaw); }
+      catch { Swal.fire('Error', 'Attachments is not valid JSON', 'error'); return null; }
+      if (!Array.isArray(parsed)) {
+        Swal.fire('Error', 'Attachments must be a JSON array', 'error');
+        return null;
+      }
+      if (parsed.length) params.attachment_urls = parsed;
+    }
+    action_config = { function_name: 'send_email', params };
+  }
   else if (actionType === 'task') {
     const desc = val('se-desc');
     action_config = { function_name: 'create_task', params: { title: val('se-title'), assigned_to: parseInt(val('se-assigned-to')) || 0, ...(desc && { description: desc }) } };
@@ -1789,6 +1823,29 @@ function _seqExplainTiming(t) {
   return `<div class="ex-timing"><b>Fires:</b> <code>${_seqEsc(t.type)}</code> <span class="ex-muted">(unknown timing type)</span></div>`;
 }
 
+// Normalize attachment_urls (string | array of strings | array of {url,name} |
+// single {url,name}) into a list of display names for the explainer.
+// Returns null if there's nothing to show.
+function _seqAttachmentNames(au) {
+  if (au == null || au === '') return null;
+  let items;
+  if (Array.isArray(au))           items = au;
+  else if (typeof au === 'object') items = [au];
+  else if (typeof au === 'string') items = au.split(',').map(s => s.trim()).filter(Boolean);
+  else return null;
+  if (!items.length) return null;
+  return items.map(it => {
+    if (typeof it === 'string') {
+      return it.split('/').pop().split('?')[0] || 'file';
+    }
+    if (it && typeof it === 'object') {
+      if (it.name) return String(it.name);
+      if (typeof it.url === 'string') return it.url.split('/').pop().split('?')[0] || 'file';
+    }
+    return 'file';
+  });
+}
+
 // Render the action body. action_type drives the shape; action_config
 // usually has { function_name, params } for sms/email/task/internal,
 // or carries top-level url/method/credential_id/body for webhook,
@@ -1828,11 +1885,16 @@ function _seqExplainAction(step) {
     } else {
       bodyHtml = `<div class="ex-message ex-muted"><i>(no body)</i></div>`;
     }
+    const attachNames = _seqAttachmentNames(params.attachment_urls);
+    const attachLine = attachNames
+      ? `<div class="ex-detail">Attachments: ${attachNames.map(n => `<code>${_seqEsc(n)}</code>`).join(' ')}</div>`
+      : '';
     return `
       <div class="ex-line"><b>Send Email</b></div>
       <div class="ex-detail">To: <code>${_seqEsc(String(params.to ?? ''))}</code></div>
       <div class="ex-detail">From: <code>${_seqEsc(String(params.from ?? ''))}</code></div>
       ${params.subject ? `<div class="ex-detail">Subject: <code>${_seqEsc(String(params.subject))}</code></div>` : ''}
+      ${attachLine}
       ${bodyHtml}
     `;
   }

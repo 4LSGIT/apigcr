@@ -218,10 +218,26 @@ Send a single email via the configured provider (smtp or pabbly).
 | `subject` | string | yes (placeholderAllowed) | — | |
 | `text` | string | conditional (placeholderAllowed, multiline) | — | Plain text body. |
 | `html` | string | conditional (placeholderAllowed, multiline) | — | HTML body. |
+| `attachment_urls` | array | optional | — | JSON array. Either URL strings or `{url, name}` objects. Single `{url, name}` also accepted at runtime but rejected by the workflow editor (must be wrapped in an array there — see pitfall #7). |
+| `attachment_names` | array | optional | — | Parallel array of display names. Usually unnecessary — names are inferred from URL or the `{name}` field. |
 
 `requiredWith: [['text', 'html']]` — at least one of `text` / `html` required.
 
-**No attachments support today.** The runtime only forwards `from/to/subject/text/html` to `emailService.sendEmail` — `attachments` and `attachment_urls` are silently dropped if you pass them. The underlying service supports both, so this is just a matter of extending the `__meta` and the function body if you need it. For now, attachments need to go through a webhook step that hits an internal route which calls `emailService` directly.
+**Attachment shapes** — `attachment_urls` accepts:
+
+```json
+["https://storage.googleapis.com/.../intake.pdf"]
+[{"url": "https://...", "name": "Fee Agreement.pdf"}]
+[{"url": "https://...", "name": "Doc 1.pdf"}, "https://.../doc2.pdf"]
+```
+
+Placeholders work inside URL strings: `["{{contacts.contact_doc_url}}"]` resolves at send time. Files are fetched at send time — they must be publicly reachable (Pabbly fetches the URL itself; SMTP uses nodemailer's remote-`path:` mode).
+
+**Provider behavior at the `emailService` layer** — both routes are wired:
+- **SMTP**: `attachment_urls` are converted to nodemailer `{filename, path}` entries on send.
+- **Pabbly**: `attachment_urls` and `attachment_names` are flattened to comma-separated strings on the outbound payload.
+
+**`attachments`** (raw nodemailer format, SMTP-only) is supported by `emailService.sendEmail` directly, but `send_email` does not pass it through — the runtime destructure pulls only `attachment_urls` and `attachment_names`. If you genuinely need raw nodemailer `attachments` from a workflow/sequence step, edit the `send_email` body to add it to the destructure. In practice `attachment_urls` covers all use cases and survives provider swaps, so this hasn't been needed.
 
 ---
 
@@ -552,5 +568,5 @@ internalFunctions.__validateParamsAgainstMeta(name, params)   // → null on suc
 4. **`{{}}` placeholders work everywhere `placeholderAllowed: true` is set on the param.** Where it's not set, the value is taken literally — useful for `function_name` selectors, enum fields, etc.
 5. **`get_appointments` and `query_db` both have a `format` param** — use `count` to just get the row count, `first` (query_db only) for a single row, `html_rows` for an HTML-formatted block ready for an email.
 6. **`evaluate_condition` `else: null` ends the workflow** — same as `set_next` with `null`. Useful for "if condition fails, we're done."
-7. **`send_email` does not pass attachments today.** `attachments` / `attachment_urls` would be silently dropped — see the function's note above.
+7. **`send_email` `attachment_urls` must be a JSON array in the editor.** `emailService.sendEmail` accepts a single `{url, name}` object or a comma-separated string at runtime, but the workflow editor's metadata-driven validator declares `type: 'array'` and rejects non-array shapes at save time. Sequence editor enforces the same. **Wrap single attachments as `[{...}]`.** Also: the URL must be publicly reachable at send time (Pabbly fetches it itself; nodemailer's `path:` for SMTP does the same) — private/signed GCS URLs without anonymous access won't work.
 8. **Workflow variables shadow resolver placeholders.** A workflow variable named `contact_fname` (set via `set_vars`) makes `{{contact_fname}}` resolve to the variable, not to `contacts.contact_fname`. Pick variable names that don't collide with resolver column names.

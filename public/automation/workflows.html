@@ -2087,11 +2087,36 @@ const _wfExplainers = {
     } else {
       bodyHtml = `<div class="ex-message ex-muted"><i>(no body)</i></div>`;
     }
+
+    // Attachments: normalize the various shapes emailService accepts
+    // (array of strings, array of {url,name}, single {url,name}, or legacy
+    // comma-separated string) into a list of display names.
+    let attachLine = '';
+    const au = p.attachment_urls;
+    if (au != null && au !== '') {
+      let items;
+      if (Array.isArray(au))           items = au;
+      else if (typeof au === 'object') items = [au];
+      else if (typeof au === 'string') items = au.split(',').map(s => s.trim()).filter(Boolean);
+      if (items && items.length) {
+        const names = items.map(it => {
+          if (typeof it === 'string') return it.split('/').pop().split('?')[0] || 'file';
+          if (it && typeof it === 'object') {
+            if (it.name) return String(it.name);
+            if (typeof it.url === 'string') return it.url.split('/').pop().split('?')[0] || 'file';
+          }
+          return 'file';
+        });
+        attachLine = `<div class="ex-detail">Attachments: ${names.map(n => `<code>${_wfEsc(n)}</code>`).join(' ')}</div>`;
+      }
+    }
+
     return `
       <div class="ex-line"><b>Send Email</b></div>
       <div class="ex-detail">To: <code>${_wfEsc(String(p.to ?? ''))}</code></div>
       <div class="ex-detail">From: <code>${_wfEsc(String(p.from ?? ''))}</code></div>
       ${p.subject ? `<div class="ex-detail">Subject: <code>${_wfEsc(String(p.subject))}</code></div>` : ''}
+      ${attachLine}
       ${bodyHtml}
     `;
   },

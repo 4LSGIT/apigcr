@@ -623,6 +623,10 @@ window.togglePanelLeft = togglePanelLeft;
   let meta = {};
   let mapperRules = [];
   let filterConditions = { operator: 'and', conditions: [] };
+  // Per-target conditions buffer — populated when the target editor opens,
+  // mutated as the user edits, harvested by collectTargetForm. Null = no
+  // conditions on this target (column will be cleared on save).
+  let targetConditions = null;
   let targets = [];
   let hooksLoaded = false;
   let subPageActive = false; // tracks whether the shell has us on-screen
@@ -852,9 +856,25 @@ window.togglePanelLeft = togglePanelLeft;
   }
 
   function renderFilterConditions() {
-    const root = E('filter-conditions-root');
-    root.innerHTML = '';
-    root.appendChild(buildConditionGroupEl(filterConditions, true));
+    renderConditionsInto(E('filter-conditions-root'), filterConditions);
+  }
+
+  // Render any condition tree into any root element bound to any state object.
+  // Marks the root with class 'cond-root' and stashes _state so the shared
+  // add/remove handlers can find which tree to re-render after mutating state.
+  function renderConditionsInto(rootEl, state) {
+    if (!rootEl) return;
+    rootEl.classList.add('cond-root');
+    rootEl._state = state;
+    rootEl.innerHTML = '';
+    rootEl.appendChild(buildConditionGroupEl(state, true));
+  }
+
+  // Re-render the nearest containing condition root (hook-filter or per-target).
+  // Used by addCondToGroup / addSubgroup so the same handlers work for both.
+  function rerenderNearestRoot(el) {
+    const root = el.closest('.cond-root');
+    if (root && root._state) renderConditionsInto(root, root._state);
   }
 
   function buildConditionGroupEl(group, isRoot) {
@@ -917,13 +937,13 @@ window.togglePanelLeft = togglePanelLeft;
   function addCondToGroup(btn) {
     const group = btn.closest('div[style]')._group || btn.closest('.cond-group')._group;
     group.conditions.push({ path: '', op: 'equals', value: '' });
-    renderFilterConditions();
+    rerenderNearestRoot(btn);
   }
 
   function addSubgroup(btn) {
     const group = btn.closest('div[style]')._group || btn.closest('.cond-group')._group;
     group.conditions.push({ operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] });
-    renderFilterConditions();
+    rerenderNearestRoot(btn);
   }
 
   function addFilterCondition() {
@@ -1406,6 +1426,26 @@ window.togglePanelLeft = togglePanelLeft;
           </div>
         </div>
 
+        <!-- ═══ Conditions section (per-target gating, all types) ═══ -->
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none" onclick="window.hookToggleTargetConditions()">
+            <i id="swal-t-cond-chevron" class="fa-solid fa-chevron-right" style="font-size:11px;width:10px;color:var(--muted)"></i>
+            <strong style="font-size:13px">Conditions <span style="font-weight:400;color:var(--muted);font-size:11px">— optional, gates this target</span></strong>
+            <span id="swal-t-cond-active-badge" style="display:none;font-size:10px;font-weight:600;background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:4px">ACTIVE</span>
+          </div>
+          <div id="swal-t-cond-wrap" style="display:none;margin-top:10px">
+            <div class="hint" style="font-size:11px;color:var(--muted);margin-bottom:6px">
+              Evaluated against the <strong>transform output</strong> (after the hook-level transform, before any target-level transform).
+              If conditions don&rsquo;t pass, this target is skipped and logged as <code>condition not met</code>.
+            </div>
+            <div id="swal-t-cond-root"></div>
+            <div style="display:flex;gap:6px;margin-top:6px">
+              <button type="button" class="btn btn-outline" style="padding:4px 10px;font-size:12px" onclick="window.hookAddTargetCondition()"><i class="fa-solid fa-plus"></i> Condition</button>
+              <button type="button" class="btn btn-outline" style="padding:4px 10px;font-size:12px;color:#ef4444;border-color:#ef4444" onclick="window.hookClearTargetConditions()"><i class="fa-solid fa-trash"></i> Clear all</button>
+            </div>
+          </div>
+        </div>
+
         <!-- ═══ Shared: Active toggle ═══ -->
         <div style="display:flex;gap:8px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
           <input type="checkbox" id="swal-t-active" ${t.active !== false ? 'checked' : ''}>
@@ -1469,6 +1509,25 @@ window.togglePanelLeft = togglePanelLeft;
         rows.appendChild(buildParamMappingRow('', ''));
       });
     }
+
+    // ── Per-target conditions ──
+    // Hydrate the module-level buffer from the row, render if populated,
+    // and wire the badge state. The section stays collapsed when there are
+    // no existing conditions; opening it bootstraps an empty group.
+    const initialConditions = parseJson(t.conditions);
+    if (initialConditions && initialConditions.operator && Array.isArray(initialConditions.conditions) && initialConditions.conditions.length > 0) {
+      targetConditions = initialConditions;
+      const condRoot = document.getElementById('swal-t-cond-root');
+      if (condRoot) renderConditionsInto(condRoot, targetConditions);
+      const wrap = document.getElementById('swal-t-cond-wrap');
+      const chev = document.getElementById('swal-t-cond-chevron');
+      const badge = document.getElementById('swal-t-cond-active-badge');
+      if (wrap) wrap.style.display = 'block';
+      if (chev) chev.classList.replace('fa-chevron-right', 'fa-chevron-down');
+      if (badge) badge.style.display = '';
+    } else {
+      targetConditions = null;
+    }
   }
 
   function renderParamsMapping(mapping) {
@@ -1514,12 +1573,76 @@ window.togglePanelLeft = togglePanelLeft;
     return mapping;
   }
 
+  // ── Per-target conditions helpers ──
+
+  // Toggle the conditions panel open/closed. Bootstraps an empty group
+  // the first time the panel is opened with no existing conditions.
+  function hookToggleTargetConditions() {
+    const wrap = document.getElementById('swal-t-cond-wrap');
+    const chev = document.getElementById('swal-t-cond-chevron');
+    if (!wrap || !chev) return;
+    const opening = wrap.style.display === 'none' || wrap.style.display === '';
+    wrap.style.display = opening ? 'block' : 'none';
+    chev.classList.toggle('fa-chevron-right', !opening);
+    chev.classList.toggle('fa-chevron-down', opening);
+    if (opening && !targetConditions) {
+      targetConditions = { operator: 'and', conditions: [] };
+      const root = document.getElementById('swal-t-cond-root');
+      if (root) renderConditionsInto(root, targetConditions);
+    }
+  }
+
+  // Append a new leaf condition. Bootstraps the buffer and renders if
+  // this is the first condition added.
+  function hookAddTargetCondition() {
+    if (!targetConditions) targetConditions = { operator: 'and', conditions: [] };
+    targetConditions.conditions.push({ path: '', op: 'equals', value: '' });
+    const root = document.getElementById('swal-t-cond-root');
+    if (root) renderConditionsInto(root, targetConditions);
+    const badge = document.getElementById('swal-t-cond-active-badge');
+    if (badge) badge.style.display = '';
+  }
+
+  // Discard all conditions on this target. Saved row will have NULL,
+  // so the target will fire unconditionally on every event that survives
+  // the hook-level filter.
+  function hookClearTargetConditions() {
+    targetConditions = null;
+    const root = document.getElementById('swal-t-cond-root');
+    if (root) root.innerHTML = '';
+    const badge = document.getElementById('swal-t-cond-active-badge');
+    if (badge) badge.style.display = 'none';
+  }
+
+  // Read the current condition tree out of the DOM. Returns null when
+  // there's nothing meaningful to save (no leaves anywhere). An empty
+  // group is intentionally stored as null because an empty-OR group
+  // would block the target — null is the unambiguous "no filter" state.
+  function collectTargetConditions() {
+    const root = document.getElementById('swal-t-cond-root');
+    if (!root) return null;
+    const groupEl = root.querySelector('.cond-group');
+    if (!groupEl) return null;
+    const collected = collectGroupFromDom(groupEl);
+    return hasAnyLeafCondition(collected) ? collected : null;
+  }
+
+  function hasAnyLeafCondition(node) {
+    if (!node) return false;
+    if (node.operator && Array.isArray(node.conditions)) {
+      return node.conditions.some(hasAnyLeafCondition);
+    }
+    return !!(node.path && node.op);
+  }
+
   function collectTargetForm() {
     const name = document.getElementById('swal-t-name').value.trim();
     const type = document.getElementById('swal-t-type').value;
     if (!name) { Swal.showValidationMessage('Name is required'); return false; }
 
     const active = document.getElementById('swal-t-active').checked ? 1 : 0;
+    // Harvest once — same shape (or null) on every target type.
+    const conditions = collectTargetConditions();
 
     if (type === 'http') {
       const url = document.getElementById('swal-t-url').value.trim();
@@ -1533,6 +1656,7 @@ window.togglePanelLeft = togglePanelLeft;
         body_mode: document.getElementById('swal-t-bodymode').value,
         body_template: document.getElementById('swal-t-template').value || null,
         config: null,
+        conditions,
         active,
       };
     }
@@ -1550,6 +1674,7 @@ window.togglePanelLeft = togglePanelLeft;
         target_type: 'workflow',
         url: null,
         config: { workflow_id: workflowId },
+        conditions,
         active,
       };
     }
@@ -1577,6 +1702,7 @@ window.togglePanelLeft = togglePanelLeft;
             contact_id_field: cidField,
             trigger_data_fields: triggerDataFields,
           },
+          conditions,
           active,
         };
       }
@@ -1601,6 +1727,7 @@ window.togglePanelLeft = togglePanelLeft;
           appt_type_filter: apptTypeFilter,
           appt_with_filter: apptWithFilter,
         },
+        conditions,
         active,
       };
     }
@@ -1617,6 +1744,7 @@ window.togglePanelLeft = togglePanelLeft;
           function_name: fn,
           params_mapping: paramsMapping,
         },
+        conditions,
         active,
       };
     }
@@ -2099,6 +2227,10 @@ async function runLiveTest() {
   window.editTarget        = editTarget;
   window.removeTarget      = removeTarget;
   window.viewExecution     = viewExecution;
+
+  window.hookToggleTargetConditions = hookToggleTargetConditions;
+  window.hookAddTargetCondition     = hookAddTargetCondition;
+  window.hookClearTargetConditions  = hookClearTargetConditions;
 
   // ── Boot ─────────────────────────────────────────────────────
   // Wait until the shell's relays are ready, then init.
