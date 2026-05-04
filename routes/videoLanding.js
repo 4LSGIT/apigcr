@@ -5,20 +5,21 @@
  * GET /v/:slug — public-facing landing page. Reads views/v.html (cached
  * after first load), substitutes placeholders, sends as text/html.
  *
- * Slice 1: no view tracking, no viewId in HTML. Slice 2 will add those.
+ * Slug resolution order:
+ *   1. canonical (`videos.slug`)
+ *   2. alias    (`video_slug_aliases.slug` → joins to videos)
  *
- * Access control:
- *   - 404 if the slug doesn't match a published video.
- *   - 404 if access_level = 'contact_only' and ?c= is missing/invalid/unknown.
+ * Both lookups require `is_published = 1`. Slice 1: no view tracking.
  *
  * The template lives in views/ (not public/) because both the static
  * middleware and the /:page catch-all in server.js would otherwise serve
  * the unsubstituted template at /v.html and /v.
  */
 
-const express = require('express');
-const fs      = require('fs');
-const path    = require('path');
+const express      = require('express');
+const fs           = require('fs');
+const path         = require('path');
+const videoService = require('../services/videoService');
 
 const router = express.Router();
 
@@ -43,14 +44,6 @@ function htmlEscape(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-function parseJsonField(v) {
-  if (v == null) return null;
-  if (typeof v === 'string') {
-    try { return JSON.parse(v); } catch { return null; }
-  }
-  return v;
 }
 
 /**
@@ -95,12 +88,11 @@ function renderActions(actions, contactId) {
 
 router.get('/v/:slug', async (req, res) => {
   try {
-    const [rows] = await req.db.query(
-      'SELECT * FROM videos WHERE slug = ? AND is_published = 1 LIMIT 1',
-      [req.params.slug],
-    );
-    if (!rows.length) return res.status(404).type('text/plain').send('Not found');
-    const video = rows[0];
+    // canonical first, then alias — both gated to published.
+    const video = await videoService.getVideoBySlug(req.db, req.params.slug, {
+      mustBePublished: true,
+    });
+    if (!video) return res.status(404).type('text/plain').send('Not found');
 
     // Resolve ?c= → real contact_id, or null.
     let contactId = null;
@@ -120,9 +112,12 @@ router.get('/v/:slug', async (req, res) => {
       return res.status(404).type('text/plain').send('Not found');
     }
 
-    const actions     = parseJsonField(video.actions);
-    const landingUrl  = req.protocol + '://' + req.get('host') + '/v/' + video.slug;
+    const actions     = video.actions; // already hydrated by service
     const description = video.description || '';
+
+    // Use the canonical slug for the og:url and twitter URL — even if the
+    // request hit an alias. Sharing should always use the current canonical.
+    const landingUrl = req.protocol + '://' + req.get('host') + '/v/' + video.slug;
 
     // Single-line, escaped — for meta-tag content="" attributes.
     const descMeta = htmlEscape(description.replace(/\s*\n+\s*/g, ' '));

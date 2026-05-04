@@ -234,6 +234,7 @@
       color: var(--text);
       background: var(--surface);
     }
+    .form-row input[type="text"].mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
     .form-row input:focus,
     .form-row textarea:focus,
     .form-row select:focus {
@@ -252,6 +253,42 @@
       cursor: pointer;
     }
     .form-row .check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+    .inline-warning {
+      display: none;
+      margin-top: 6px;
+      padding: 8px 10px;
+      background: rgba(245, 158, 11, 0.10);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      border-radius: 5px;
+      font-size: 12px;
+      color: #92400e;
+      line-height: 1.4;
+    }
+    .inline-warning.active { display: block; }
+    .inline-warning i { margin-right: 6px; }
+
+    .alias-list {
+      margin-top: 8px;
+      padding: 10px 12px;
+      background: var(--bg);
+      border-radius: 5px;
+      font-size: 12px;
+    }
+    .alias-list .label-line {
+      color: var(--text2);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .alias-list .alias-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      color: var(--muted);
+      padding: 1px 0;
+    }
+    .alias-list .alias-row .when { font-size: 10px; }
 
     /* ── Asset uploader ─────────────────────────────── */
     .asset-uploader {
@@ -341,6 +378,26 @@
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
+    }
+    .copy-subhead {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text2);
+      margin-bottom: 6px;
+    }
+    .copy-hint {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 8px;
+      line-height: 1.4;
+    }
+    .copy-hint code {
+      background: var(--bg);
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 11px;
     }
 
     /* ── Save bar ───────────────────────────────────── */
@@ -509,6 +566,10 @@ const state = {
   uploading: false,  // any uploader currently active
 };
 
+// Slug input regex — must mirror SLUG_RE in services/videoService.js
+// Lowercase alphanumeric + single hyphens. No leading/trailing or doubled hyphens.
+const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
 // Helper: HTML-escape for safe interpolation.
 function esc(s) {
   if (s == null) return '';
@@ -522,6 +583,12 @@ function fmtDuration(sec) {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return m + ':' + String(s).padStart(2, '0');
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleString(); }
+  catch { return iso; }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -586,6 +653,7 @@ function renderList() {
 
 function blankForm() {
   return {
+    slug:             '',     // user-supplied; blank → server auto-generates
     title:            '',
     description:      '',
     gcs_video_url:    '',
@@ -600,6 +668,8 @@ function blankForm() {
     _videoFilename:   '',
     _posterFilename:  '',
     _gifFilename:     '',
+    _originalSlug:    null,   // null on new; canonical at load time on edit
+    _aliases:         [],     // historical slugs from the server
   };
 }
 
@@ -619,6 +689,7 @@ async function selectVideo(id) {
     const v = await api('/api/videos/' + id, 'GET');
     state.selected = v.id;
     state.form = {
+      slug:             v.slug || '',
       title:            v.title || '',
       description:      v.description || '',
       gcs_video_url:    v.gcs_video_url || '',
@@ -636,7 +707,8 @@ async function selectVideo(id) {
       _videoFilename:   '',
       _posterFilename:  '',
       _gifFilename:     '',
-      _slug:            v.slug,
+      _originalSlug:    v.slug,
+      _aliases:         Array.isArray(v.aliases) ? v.aliases : [],
     };
     renderEditor();
     renderList();
@@ -659,16 +731,46 @@ function renderEditor() {
 
   const f      = state.form;
   const isNew  = state.selected == null;
-  const slugLine = isNew ? '' :
-    '<div style="color:var(--muted); font-size:12px; margin-bottom:8px;">'
-    + '<i class="fa-solid fa-link"></i> ' + esc(f._slug)
-    + ' <span style="color:var(--text2)">(slug locked after create)</span></div>';
+
+  // Aliases section (only on edit, only when there are any)
+  const aliasesHtml = !isNew && f._aliases && f._aliases.length
+    ? `<div class="alias-list">
+         <div class="label-line"><i class="fa-solid fa-clock-rotate-left"></i> Old slugs (still resolve)</div>
+         ${f._aliases.map(a =>
+           '<div class="alias-row"><span>' + esc(a.slug) + '</span>'
+           + '<span class="when" style="color:var(--muted)">(archived ' + esc(fmtDate(a.archived_at)) + ')</span></div>'
+         ).join('')}
+       </div>`
+    : '';
 
   root.innerHTML = `
-    <h2 style="font-size:18px; margin-bottom:4px;">
+    <h2 style="font-size:18px; margin-bottom:14px;">
       ${isNew ? 'New Video' : 'Edit Video'}
     </h2>
-    ${slugLine}
+
+    <!-- ── URL / Slug ── -->
+    <div class="form-section">
+      <h3>URL Slug</h3>
+      <div class="form-row">
+        <label>Slug
+          <span class="hint">${isNew
+            ? 'optional — leave blank to auto-generate from title'
+            : 'change to update the canonical URL; the old slug becomes an alias and continues to work'}</span>
+        </label>
+        <input type="text" id="f-slug" maxlength="64" class="mono"
+          placeholder="${isNew ? '(auto-generated from title)' : ''}"
+          value="${esc(f.slug)}"
+          oninput="onSlugInput(this.value)">
+        <div class="inline-warning" id="slug-warning">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          You're about to change this video's URL. The old slug
+          (<code id="slug-warning-old">${esc(f._originalSlug || '')}</code>)
+          will be archived as an alias — links already shared with that slug
+          will continue to work.
+        </div>
+        ${aliasesHtml}
+      </div>
+    </div>
 
     <!-- ── Assets ── -->
     <div class="form-section">
@@ -730,6 +832,7 @@ function renderEditor() {
             ${f.is_published ? 'checked' : ''}
             onchange="state.form.is_published = this.checked">
           Published
+          <span class="hint" style="margin-left:8px;">unpublished videos return 404 on /v/&lt;slug&gt;</span>
         </label>
       </div>
     </div>
@@ -747,6 +850,8 @@ function renderEditor() {
     <!-- ── Sharing ── -->
     <div class="form-section">
       <h3>Share / Embed</h3>
+
+      <div class="copy-subhead">For sharing in email, Slack, or text</div>
       <div class="copy-row">
         <button class="btn btn-outline btn-sm" onclick="copyLandingUrl()">
           <i class="fa-solid fa-link"></i> Copy landing URL
@@ -755,19 +860,38 @@ function renderEditor() {
           <i class="fa-solid fa-user"></i> Copy URL for contact…
         </button>
         <button class="btn btn-outline btn-sm"
+          onclick="copyAsImageLink('poster')"
+          ${!f.gcs_poster_url ? 'disabled title="Add a poster to enable."' : ''}>
+          <i class="fa-solid fa-image"></i> Copy as image (poster)
+        </button>
+        <button class="btn btn-outline btn-sm"
+          onclick="copyAsImageLink('gif')"
+          ${!f.gcs_gif_url ? 'disabled title="Add a GIF to enable."' : ''}>
+          <i class="fa-solid fa-film"></i> Copy as image (GIF)
+        </button>
+      </div>
+      <div class="copy-hint">
+        Paste into Gmail/Outlook/Slack and the recipient sees the image as a
+        clickable link to <code>/v/${esc(f._originalSlug || '')}</code>. Plain-text
+        contexts get the title and URL as fallback.
+      </div>
+
+      <div class="copy-subhead" style="margin-top:18px;">For campaign templates</div>
+      <div class="copy-row">
+        <button class="btn btn-outline btn-sm"
           onclick="copyEmbed('poster')"
-          ${!f.gcs_poster_url ? 'disabled title="Add a poster to enable embed snippet."' : ''}>
-          <i class="fa-solid fa-image"></i> Copy embed (poster)
+          ${!f.gcs_poster_url ? 'disabled title="Add a poster to enable."' : ''}>
+          <i class="fa-solid fa-code"></i> Copy HTML snippet (poster)
         </button>
         <button class="btn btn-outline btn-sm"
           onclick="copyEmbed('gif')"
-          ${!f.gcs_gif_url ? 'disabled title="Add a GIF to enable GIF embed snippet."' : ''}>
-          <i class="fa-solid fa-film"></i> Copy embed (GIF)
+          ${!f.gcs_gif_url ? 'disabled title="Add a GIF to enable."' : ''}>
+          <i class="fa-solid fa-code"></i> Copy HTML snippet (GIF)
         </button>
       </div>
-      <div style="font-size:11px; color:var(--muted); margin-top:8px;">
-        Embed snippets contain <code>{{contact_id}}</code> as a literal placeholder for the
-        campaign resolver to substitute later.
+      <div class="copy-hint">
+        HTML snippets contain <code>{{contact_id}}</code> as a literal placeholder
+        for the campaign resolver to substitute later.
       </div>
     </div>
     `}
@@ -781,6 +905,22 @@ function renderEditor() {
       </button>
     </div>
   `;
+}
+
+// Slug-input change handler — updates state, toggles the "you're changing
+// the URL" warning when the typed value differs from the loaded canonical.
+function onSlugInput(value) {
+  state.form.slug = value;
+  const w = document.getElementById('slug-warning');
+  if (!w) return;
+  const isEdit = state.selected != null;
+  const trimmed = (value || '').trim();
+  const original = state.form._originalSlug || '';
+  if (isEdit && trimmed && trimmed !== original) {
+    w.classList.add('active');
+  } else {
+    w.classList.remove('active');
+  }
 }
 
 // ── Asset uploader fragment ─────────────────────────────────
@@ -966,9 +1106,17 @@ function extractVideoDuration(file) {
 // ════════════════════════════════════════════════════════════════════════════
 // Save / cancel / delete
 // ════════════════════════════════════════════════════════════════════════════
-function buildPayload() {
+
+/**
+ * Build the JSON body. Slug handling:
+ *   - On CREATE: include slug only if non-empty (server auto-generates if absent).
+ *   - On UPDATE: include slug only if it actually changed (avoids triggering
+ *     the alias-archival path on no-op saves).
+ */
+function buildPayload(isNew) {
   const f = state.form;
-  return {
+  const slugTrim = (f.slug || '').trim();
+  const payload = {
     title:            f.title.trim(),
     description:      f.description.trim() || null,
     gcs_video_url:    f.gcs_video_url || '',
@@ -986,6 +1134,14 @@ function buildPayload() {
     access_level:     f.access_level,
     is_published:     f.is_published,
   };
+  if (isNew) {
+    if (slugTrim) payload.slug = slugTrim;
+  } else {
+    if (slugTrim && slugTrim !== (f._originalSlug || '')) {
+      payload.slug = slugTrim;
+    }
+  }
+  return payload;
 }
 
 async function onSave() {
@@ -993,7 +1149,21 @@ async function onSave() {
     Toast.fire({ icon: 'warning', title: 'Upload still in progress — please wait' });
     return;
   }
-  const payload = buildPayload();
+
+  const f       = state.form;
+  const isNew   = state.selected == null;
+  const slugTrim = (f.slug || '').trim();
+
+  // Client-side slug format check. Server re-validates.
+  if (slugTrim && !SLUG_RE.test(slugTrim)) {
+    Swal.fire('Invalid slug',
+      'Slug must be lowercase alphanumeric with single hyphens (e.g. "my-video-title"). '
+      + 'No leading/trailing hyphens, no double hyphens, no other punctuation.',
+      'warning');
+    return;
+  }
+
+  const payload = buildPayload(isNew);
   if (!payload.title) {
     Swal.fire('Missing title', 'Title is required.', 'warning');
     return;
@@ -1003,9 +1173,37 @@ async function onSave() {
     return;
   }
 
+  // Confirm slug change on edit (only when slug actually differs).
+  if (!isNew && payload.slug) {
+    const r = await Swal.fire({
+      title: 'Change the slug?',
+      html: 'The new URL will be:'
+        + '<br><code style="font-size:12px;">/v/' + esc(payload.slug) + '</code><br><br>'
+        + 'The old slug (<code>' + esc(f._originalSlug) + '</code>) will be archived '
+        + 'as an alias and continue to resolve.',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Change slug',
+    });
+    if (!r.isConfirmed) return;
+  }
+
+  // Warn if saving as unpublished — common gotcha (unpublished → /v/<slug> 404s).
+  if (!payload.is_published && isNew) {
+    const r = await Swal.fire({
+      title: 'Save as draft?',
+      text: 'This video isn\'t marked Published, so /v/<slug> will return 404 until you publish it.',
+      icon: 'info',
+      showCancelButton: true,
+      confirmButtonText: 'Save as draft',
+      cancelButtonText: 'Cancel — let me check',
+    });
+    if (!r.isConfirmed) return;
+  }
+
   try {
     let saved;
-    if (state.selected == null) {
+    if (isNew) {
       saved = await api('/api/videos', 'POST', payload);
       Toast.fire({ icon: 'success', title: 'Video created' });
     } else {
@@ -1068,14 +1266,13 @@ async function copyText(text, label) {
 }
 
 function copyLandingUrl() {
-  const slug = state.form._slug;
+  // Always use the canonical (saved) slug, not whatever's typed in the form.
+  const slug = state.form._originalSlug;
   const url  = window.location.origin + '/v/' + slug;
   copyText(url, 'Landing URL');
 }
 
 async function copyLandingUrlForContact() {
-  // Escape hatch per prompt: simple text-input fallback. If a /api/search
-  // endpoint exists, we can wire it up later.
   const r = await Swal.fire({
     title: 'Copy URL for contact',
     html: '<input id="cid-input" class="swal2-input" type="number" min="1" '
@@ -1093,12 +1290,12 @@ async function copyLandingUrlForContact() {
     },
   });
   if (!r.isConfirmed) return;
-  const url = window.location.origin + '/v/' + state.form._slug + '?c=' + r.value;
+  const url = window.location.origin + '/v/' + state.form._originalSlug + '?c=' + r.value;
   copyText(url, 'Landing URL for contact ' + r.value);
 }
 
 function copyEmbed(variant) {
-  const slug = state.form._slug;
+  const slug = state.form._originalSlug;
   const title = state.form.title;
   const imgUrl = variant === 'gif' ? state.form.gcs_gif_url : state.form.gcs_poster_url;
   if (!imgUrl) {
@@ -1111,6 +1308,84 @@ function copyEmbed(variant) {
     + '<img src="' + imgUrl + '" alt="' + esc(title) + '" width="600" '
     + 'style="display:block; max-width:100%; height:auto;"></a>';
   copyText(snippet, 'Embed snippet (' + variant + ')');
+}
+
+/**
+ * Rich clipboard copy. Puts BOTH text/html and text/plain on the clipboard:
+ *   - text/html  → <a href><img></a>  (Gmail/Slack/Outlook render this)
+ *   - text/plain → "<title>\n<url>"   (plain-text fallback)
+ *
+ * No {{contact_id}} placeholder — this is for ad-hoc one-off sends. For
+ * campaign templates, use copyEmbed() (which produces HTML-as-text with
+ * the placeholder for the resolver).
+ *
+ * Falls back to plain-text writeText if the rich clipboard API rejects
+ * (older browser, missing iframe permissions, non-HTTPS).
+ */
+async function copyAsImageLink(variant) {
+  const slug   = state.form._originalSlug;
+  const title  = state.form.title || '';
+  const imgUrl = variant === 'gif' ? state.form.gcs_gif_url : state.form.gcs_poster_url;
+  if (!imgUrl) {
+    Swal.fire('Not available', 'Add a ' + variant + ' first.', 'info');
+    return;
+  }
+  const linkUrl = window.location.origin + '/v/' + slug;
+  const altText = title || 'Watch the video';
+
+  // HTML version — anchor wrapping the image.
+  const html =
+    '<a href="' + esc(linkUrl) + '" target="_blank" rel="noopener">'
+      + '<img src="' + esc(imgUrl) + '" alt="' + esc(altText) + '" '
+      + 'width="600" '
+      + 'style="display:block; max-width:100%; height:auto; border:0;">'
+    + '</a>';
+
+  // Plain-text fallback — title + URL on separate lines, or just URL.
+  const plain = title ? (title + '\n' + linkUrl) : linkUrl;
+
+  // Modern Clipboard API — multi-format write.
+  try {
+    if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
+      throw new Error('Rich clipboard not supported');
+    }
+    const item = new ClipboardItem({
+      'text/html':  new Blob([html],  { type: 'text/html' }),
+      'text/plain': new Blob([plain], { type: 'text/plain' }),
+    });
+    await navigator.clipboard.write([item]);
+    Toast.fire({ icon: 'success', title: 'Copied — paste into email or Slack' });
+    return;
+  } catch (err) {
+    // Common failure modes: NotAllowedError (no user gesture / iframe perms),
+    // non-secure context (HTTP), or older browser missing ClipboardItem.
+    console.warn('[copyAsImageLink] Rich clipboard failed, falling back:', err);
+  }
+
+  // Fallback 1: plain text only.
+  try {
+    await navigator.clipboard.writeText(plain);
+    Toast.fire({
+      icon:  'warning',
+      title: 'Rich clipboard unavailable — copied URL as plain text',
+    });
+    return;
+  } catch (err) {
+    // Fallback 2: show the user.
+    Swal.fire({
+      icon: 'info',
+      title: 'Copy manually',
+      html:
+        '<div style="text-align:left; font-size:12px; margin-bottom:8px; color:#475569;">'
+        + 'Plain-text version:</div>'
+        + '<textarea readonly style="width:100%; height:50px; font-family:monospace; '
+        + 'font-size:11px;">' + esc(plain) + '</textarea>'
+        + '<div style="text-align:left; font-size:12px; margin:10px 0 8px; color:#475569;">'
+        + 'HTML version (paste into a rich editor):</div>'
+        + '<textarea readonly style="width:100%; height:80px; font-family:monospace; '
+        + 'font-size:11px;">' + esc(html) + '</textarea>',
+    });
+  }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

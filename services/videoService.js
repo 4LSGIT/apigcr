@@ -3,8 +3,14 @@
  * services/videoService.js
  *
  * CRUD for the `videos` table. JSON columns (tags, related_video_ids, actions)
- * are stringified on write and parsed on read (handles both string and
- * already-parsed shapes returned by mysql2 across configs).
+ * are stringified on write and parsed on read.
+ *
+ * Slug handling:
+ *   - `videos.slug` is the canonical/current slug.
+ *   - Old slugs are archived into `video_slug_aliases` on change.
+ *   - The landing route looks up canonical first, then alias.
+ *   - Cross-table uniqueness (a slug can't be the canonical of one video AND
+ *     the alias of another) is enforced at the app layer in setSlugChanged().
  *
  * Slice 1 scope: no view tracking, no related-video resolution, no audit logs.
  * GCS objects are intentionally orphaned on delete — see deleteVideo().
@@ -13,7 +19,8 @@
 const crypto = require('crypto');
 
 // Whitelisted fields that PATCH /api/videos/:id is allowed to write.
-// `slug` is intentionally excluded — slugs are immutable in v1.
+// `slug` is handled separately (see updateVideo) because it requires
+// alias-archival logic and a transaction.
 const UPDATABLE_FIELDS = [
   'title',
   'description',
@@ -29,6 +36,10 @@ const UPDATABLE_FIELDS = [
 ];
 
 const JSON_FIELDS = ['tags', 'related_video_ids', 'actions'];
+
+// Slug must be lowercase alphanumeric + single hyphens, no leading/trailing
+// hyphens, no double hyphens, length 1-64.
+const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 // ─────────────────────────────────────────────────────────────
 // Helpers
@@ -72,10 +83,62 @@ function generateSlugBase(title) {
 }
 
 /**
- * Full slug = base + '-' + 4 hex chars. Exported for testing.
+ * Full auto-generated slug = base + '-' + 4 hex chars. Exported for testing.
  */
 function generateSlug(title) {
   return generateSlugBase(title) + '-' + crypto.randomBytes(2).toString('hex');
+}
+
+function validateSlug(slug) {
+  if (typeof slug !== 'string' || !slug) {
+    const e = new Error('slug must be a non-empty string');
+    e.statusCode = 400;
+    throw e;
+  }
+  if (slug.length > 64) {
+    const e = new Error('slug must be 64 characters or fewer');
+    e.statusCode = 400;
+    throw e;
+  }
+  if (!SLUG_RE.test(slug)) {
+    const e = new Error(
+      'slug must be lowercase alphanumeric with single hyphens (e.g. "my-video-title"); '
+      + 'no leading/trailing hyphens, no double hyphens, no other punctuation',
+    );
+    e.statusCode = 400;
+    throw e;
+  }
+}
+
+/**
+ * Throws 409 if `slug` is in use by a different video — either as canonical
+ * (`videos.slug`) or as alias (`video_slug_aliases.slug`).
+ *
+ * @param db        connection or pool
+ * @param slug      candidate slug
+ * @param ownerId   id of the video that "owns" this slug attempt (so we
+ *                  don't false-conflict against itself); pass null on create.
+ */
+async function assertSlugAvailable(db, slug, ownerId) {
+  const [vRows] = await db.query(
+    'SELECT id FROM videos WHERE slug = ? LIMIT 1',
+    [slug],
+  );
+  if (vRows.length && vRows[0].id !== ownerId) {
+    const e = new Error(`Slug "${slug}" is already in use`);
+    e.statusCode = 409;
+    throw e;
+  }
+
+  const [aRows] = await db.query(
+    'SELECT video_id FROM video_slug_aliases WHERE slug = ? LIMIT 1',
+    [slug],
+  );
+  if (aRows.length && aRows[0].video_id !== ownerId) {
+    const e = new Error(`Slug "${slug}" is already in use`);
+    e.statusCode = 409;
+    throw e;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -117,14 +180,53 @@ async function getVideoById(db, id) {
 }
 
 /**
+ * Look up by canonical slug first, then fall back to alias.
+ *
  * @param {object} opts  { mustBePublished?: boolean }  default true
+ * @returns {object|null} video row plus a `_resolvedVia` field:
+ *                        'canonical' | 'alias'. Useful if a caller wants
+ *                        to redirect alias hits to the canonical URL
+ *                        (out of scope for Slice 1).
  */
 async function getVideoBySlug(db, slug, { mustBePublished = true } = {}) {
-  const sql = mustBePublished
-    ? 'SELECT * FROM videos WHERE slug = ? AND is_published = 1 LIMIT 1'
-    : 'SELECT * FROM videos WHERE slug = ? LIMIT 1';
-  const [rows] = await db.query(sql, [slug]);
-  return rows.length ? hydrateRow(rows[0]) : null;
+  const pubClause = mustBePublished ? ' AND is_published = 1' : '';
+
+  const [direct] = await db.query(
+    'SELECT * FROM videos WHERE slug = ?' + pubClause + ' LIMIT 1',
+    [slug],
+  );
+  if (direct.length) {
+    const v = hydrateRow(direct[0]);
+    v._resolvedVia = 'canonical';
+    return v;
+  }
+
+  const [aliased] = await db.query(
+    `SELECT v.*
+     FROM video_slug_aliases a
+     JOIN videos v ON v.id = a.video_id
+     WHERE a.slug = ?` + pubClause + ' LIMIT 1',
+    [slug],
+  );
+  if (aliased.length) {
+    const v = hydrateRow(aliased[0]);
+    v._resolvedVia = 'alias';
+    return v;
+  }
+
+  return null;
+}
+
+/**
+ * List historical aliases for a given video (newest first). Used by the
+ * admin UI to surface what URLs still resolve.
+ */
+async function listAliasesForVideo(db, videoId) {
+  const [rows] = await db.query(
+    'SELECT slug, archived_at FROM video_slug_aliases WHERE video_id = ? ORDER BY archived_at DESC',
+    [videoId],
+  );
+  return rows;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -132,20 +234,36 @@ async function getVideoBySlug(db, slug, { mustBePublished = true } = {}) {
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Create a video. Server generates slug — never trust client.
- * Retries up to 5 times on slug collision (regenerates the 4-hex suffix).
+ * Create a video.
+ *
+ * Slug behavior:
+ *   - If `data.slug` is provided and non-empty: validated and used as-is;
+ *     409 if already taken (canonical or alias of another video).
+ *   - If `data.slug` is empty/missing: auto-generated from title with a
+ *     4-hex random suffix; up to 5 collision retries.
  */
 async function createVideo(db, data) {
   if (!data.title || !data.title.trim()) {
-    throw new Error('title is required');
+    const e = new Error('title is required');
+    e.statusCode = 400;
+    throw e;
   }
   if (!data.gcs_video_url) {
-    throw new Error('gcs_video_url is required');
+    const e = new Error('gcs_video_url is required');
+    e.statusCode = 400;
+    throw e;
   }
 
-  const base = generateSlugBase(data.title);
+  const userSuppliedSlug =
+    typeof data.slug === 'string' && data.slug.trim() ? data.slug.trim() : null;
 
-  // Build the column/value lists once — slug varies per attempt.
+  if (userSuppliedSlug) {
+    validateSlug(userSuppliedSlug);
+    await assertSlugAvailable(db, userSuppliedSlug, null);
+  }
+
+  // Build the column/value lists. `slug` value varies per attempt when
+  // auto-generating; fixed when user-supplied.
   const cols = [
     'slug', 'title', 'description',
     'gcs_video_url', 'gcs_poster_url', 'gcs_gif_url',
@@ -171,6 +289,24 @@ async function createVideo(db, data) {
   const placeholders = cols.map(() => '?').join(', ');
   const sql = `INSERT INTO videos (${cols.join(', ')}) VALUES (${placeholders})`;
 
+  if (userSuppliedSlug) {
+    baseValues[0] = userSuppliedSlug;
+    try {
+      const [result] = await db.query(sql, baseValues);
+      return await getVideoById(db, result.insertId);
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') {
+        // Race: assertSlugAvailable passed but another insert grabbed it
+        // between then and now. Surface as a 409.
+        const e = new Error(`Slug "${userSuppliedSlug}" is already in use`);
+        e.statusCode = 409;
+        throw e;
+      }
+      throw err;
+    }
+  }
+
+  const base = generateSlugBase(data.title);
   for (let attempt = 0; attempt < 5; attempt++) {
     const slug = base + '-' + crypto.randomBytes(2).toString('hex');
     baseValues[0] = slug;
@@ -178,7 +314,7 @@ async function createVideo(db, data) {
       const [result] = await db.query(sql, baseValues);
       return await getVideoById(db, result.insertId);
     } catch (err) {
-      if (err.code === 'ER_DUP_ENTRY') continue; // collision on slug — retry
+      if (err.code === 'ER_DUP_ENTRY') continue;
       throw err;
     }
   }
@@ -186,14 +322,90 @@ async function createVideo(db, data) {
 }
 
 /**
- * Partial update. Whitelisted fields only; rejects `slug`.
+ * Atomically swap the canonical slug. Old slug becomes an alias; new slug
+ * becomes canonical.
+ *
+ *   - 409 if the new slug is in use by a different video.
+ *   - If the new slug is already an alias of THIS video (e.g. the user is
+ *     reverting), it's removed from aliases first so it can become canonical.
+ *
+ * Wrapped in a transaction so partial state can't leak on error.
+ */
+async function setSlugCanonical(pool, videoId, newSlug) {
+  validateSlug(newSlug);
+
+  const [curRows] = await pool.query(
+    'SELECT slug FROM videos WHERE id = ? LIMIT 1',
+    [videoId],
+  );
+  if (!curRows.length) {
+    const e = new Error('Video not found');
+    e.statusCode = 404;
+    throw e;
+  }
+  const oldSlug = curRows[0].slug;
+  if (oldSlug === newSlug) return; // no-op
+
+  await assertSlugAvailable(pool, newSlug, videoId);
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // If newSlug is in this video's own aliases, remove it (it's becoming canonical).
+    await conn.query(
+      'DELETE FROM video_slug_aliases WHERE slug = ? AND video_id = ?',
+      [newSlug, videoId],
+    );
+
+    // Free the canonical slug slot first to avoid the UNIQUE constraint
+    // colliding with itself when the old slug isn't yet archived. We do this
+    // by archiving the old slug to aliases, but the alias INSERT must come
+    // BEFORE the canonical UPDATE if the new slug equals an existing alias
+    // of another video — but assertSlugAvailable already ruled that out.
+    //
+    // Order: INSERT alias (using REPLACE in case of a stale alias row from
+    // a prior cycle) → UPDATE canonical.
+    await conn.query(
+      'REPLACE INTO video_slug_aliases (slug, video_id) VALUES (?, ?)',
+      [oldSlug, videoId],
+    );
+
+    await conn.query(
+      'UPDATE videos SET slug = ? WHERE id = ?',
+      [newSlug, videoId],
+    );
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    if (err.code === 'ER_DUP_ENTRY') {
+      const e = new Error(`Slug "${newSlug}" is already in use`);
+      e.statusCode = 409;
+      throw e;
+    }
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+/**
+ * Partial update. Whitelisted fields only. `slug` is handled out-of-band
+ * via setSlugCanonical (transaction + alias archival).
  */
 async function updateVideo(db, id, partial) {
   if (partial == null || typeof partial !== 'object') {
     throw new Error('Update body must be an object');
   }
-  if ('slug' in partial) {
-    const e = new Error('slug is not editable');
+
+  // Slug change runs first — its own transaction. If it throws, the rest
+  // doesn't apply (consistent with "validate everything before any write").
+  if ('slug' in partial && typeof partial.slug === 'string' && partial.slug.trim()) {
+    await setSlugCanonical(db, id, partial.slug.trim());
+  } else if ('slug' in partial && (partial.slug === '' || partial.slug == null)) {
+    // Explicitly blank slug in PATCH is not permitted (would orphan URLs).
+    const e = new Error('slug cannot be set to empty');
     e.statusCode = 400;
     throw e;
   }
@@ -223,17 +435,19 @@ async function updateVideo(db, id, partial) {
     }
   }
 
-  if (!sets.length) {
-    // Nothing to update — return current row so caller still gets fresh data.
-    return await getVideoById(db, id);
+  if (sets.length) {
+    values.push(id);
+    const [result] = await db.query(
+      `UPDATE videos SET ${sets.join(', ')} WHERE id = ?`,
+      values,
+    );
+    if (!result.affectedRows && !('slug' in partial)) {
+      // Only treat "not found" as terminal if no slug change happened —
+      // a slug change with no other fields is still a successful update.
+      return null;
+    }
   }
 
-  values.push(id);
-  const [result] = await db.query(
-    `UPDATE videos SET ${sets.join(', ')} WHERE id = ?`,
-    values,
-  );
-  if (!result.affectedRows) return null;
   return await getVideoById(db, id);
 }
 
@@ -242,6 +456,8 @@ async function updateVideo(db, id, partial) {
  *
  * GCS cleanup is intentionally deferred to a future ops task — orphaned
  * objects don't impact correctness and deletes are infrequent.
+ *
+ * Aliases are removed automatically via FK ON DELETE CASCADE.
  */
 async function deleteVideo(db, id) {
   const [result] = await db.query('DELETE FROM videos WHERE id = ?', [id]);
@@ -252,9 +468,12 @@ module.exports = {
   listVideos,
   getVideoById,
   getVideoBySlug,
+  listAliasesForVideo,
   createVideo,
   updateVideo,
   deleteVideo,
+  setSlugCanonical,
   generateSlug,
   generateSlugBase,
+  validateSlug,
 };

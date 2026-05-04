@@ -8,9 +8,9 @@
  *
  * Routes:
  *   GET    /api/videos                — list (?published=1, ?tag=foo)
- *   GET    /api/videos/:id            — single
- *   POST   /api/videos                — create (server generates slug)
- *   PATCH  /api/videos/:id            — partial update (slug not editable)
+ *   GET    /api/videos/:id            — single (includes `aliases` array)
+ *   POST   /api/videos                — create (slug optional, server gens if absent)
+ *   PATCH  /api/videos/:id            — partial update (slug editable; old slug archived)
  *   DELETE /api/videos/:id            — DB delete; GCS objects orphaned
  *   POST   /api/videos/upload-asset   — multipart streaming upload to GCS
  *
@@ -49,8 +49,10 @@ router.get('/api/videos', jwtOrApiKey, async (req, res) => {
 
 router.get('/api/videos/:id', jwtOrApiKey, async (req, res) => {
   try {
-    const video = await videoService.getVideoById(req.db, parseInt(req.params.id, 10));
+    const id    = parseInt(req.params.id, 10);
+    const video = await videoService.getVideoById(req.db, id);
     if (!video) return res.status(404).json({ error: 'Video not found' });
+    video.aliases = await videoService.listAliasesForVideo(req.db, id);
     res.json(video);
   } catch (err) {
     console.error('[GET /api/videos/:id]', err);
@@ -77,6 +79,7 @@ router.patch('/api/videos/:id', jwtOrApiKey, async (req, res) => {
       req.body || {},
     );
     if (!video) return res.status(404).json({ error: 'Video not found' });
+    video.aliases = await videoService.listAliasesForVideo(req.db, video.id);
     res.json(video);
   } catch (err) {
     console.error('[PATCH /api/videos/:id]', err);
