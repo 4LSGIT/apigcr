@@ -5,7 +5,9 @@
  * Body: { from, to, text, attachment_url }
  * 
  * - JWT authenticated (works with apiSend)
- * - from must be a RingCentral number in phone_lines
+ * - from must be an active phone line with mms_capable=1 in phone_lines
+ *   (capability check, not provider check — see migration that backfills
+ *   mms_capable=1 for ringcentral lines)
  * - URL attachment only (no file upload)
  * - Delegates to ringcentralService.sendMms()
  *
@@ -38,11 +40,14 @@ router.post('/internal/mms/send', jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ status: 'error', message: 'Missing attachment_url' });
   }
 
-  // Validate: from must be a RingCentral line
+  // Validate: from must be an active mms_capable line.
+  // Capability is read from the phone_lines.mms_capable flag rather than
+  // inferred from provider — keeps the door open for future MMS-capable
+  // providers to opt in with a row update.
   const fromClean = from.toString().replace(/\D/g, '').slice(-10);
   try {
     const [[line]] = await req.db.query(
-      `SELECT provider, active FROM phone_lines WHERE phone_number = ? LIMIT 1`,
+      `SELECT provider, active, mms_capable FROM phone_lines WHERE phone_number = ? LIMIT 1`,
       [fromClean]
     );
 
@@ -52,8 +57,8 @@ router.post('/internal/mms/send', jwtOrApiKey, async (req, res) => {
     if (!line.active) {
       return res.status(400).json({ status: 'error', message: `Phone line ${from} is inactive` });
     }
-    if (line.provider !== 'ringcentral') {
-      return res.status(400).json({ status: 'error', message: `MMS not supported for ${line.provider} lines` });
+    if (!line.mms_capable) {
+      return res.status(400).json({ status: 'error', message: `Phone line ${from} is not MMS-capable (provider=${line.provider})` });
     }
 
     const result = await ringcentral.sendMms(

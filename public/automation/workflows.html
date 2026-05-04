@@ -1028,9 +1028,12 @@ function wfRenderParamField(spec, value, visible) {
   const wrapperStyle = visible ? '' : 'display:none';
   const wrapperAttrs = `class="field" id="e-pfw-${spec.name}" data-mode-group="${spec.modeGroup || ''}" style="${wrapperStyle}"`;
 
-  // Widget hints — phone_line / email_from dropdowns (shell helpers)
+  // Widget hints — phone_line / phone_line_mms / email_from dropdowns (shell helpers)
   if (spec.widget === 'phone_line' && typeof P.fdPhoneLineSelectHtml === 'function') {
     return `<div ${wrapperAttrs}>${labelHtml}${P.fdPhoneLineSelectHtml(id, value || '')}${helpHtml}</div>`;
+  }
+  if (spec.widget === 'phone_line_mms' && typeof P.fdPhoneLineMmsSelectHtml === 'function') {
+    return `<div ${wrapperAttrs}>${labelHtml}${P.fdPhoneLineMmsSelectHtml(id, value || '')}${helpHtml}</div>`;
   }
   if (spec.widget === 'email_from' && typeof P.fdEmailFromSelectHtml === 'function') {
     return `<div ${wrapperAttrs}>${labelHtml}${P.fdEmailFromSelectHtml(id, value || '')}${helpHtml}</div>`;

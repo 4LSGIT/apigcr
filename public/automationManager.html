@@ -226,6 +226,18 @@ function fdPhoneLineSelectHtml(id, currentValue) {
   return _fdHybridLineWidget(id, currentValue, 'phone');
 }
 
+function fdPhoneLineMmsSelectHtml(id, currentValue) {
+  // MMS-only variant — filters to phone_lines.mms_capable=1 in the dropdown.
+  // Used by the send_mms internal function's `widget: 'phone_line_mms'` meta.
+  // The text-input mode (placeholder toggle) is unfiltered by design — if the
+  // operator wants {{user_default_phone}}, runtime validates capability anyway.
+  const lines = fdPhoneLines().filter(l => !!l.mms_capable);
+  if (!lines.length) {
+    return `<input id="${id}" value="${esc(currentValue || '')}" placeholder="No MMS-capable lines configured">`;
+  }
+  return _fdHybridLineWidget(id, currentValue, 'phone_mms');
+}
+
 function fdEmailFromSelectHtml(id, currentValue) {
   const emails = fdEmailFroms();
   if (!emails.length) {
@@ -277,13 +289,17 @@ function _fdLineSelect(id, cur, kind) {
     return `<select id="${id}" style="width:100%">${blankOpt}${customOpt}${opts}</select>`;
   }
 
-  // phone
-  const lines = fdPhoneLines();
+  // phone / phone_mms — same select shape, MMS variant filters to mms_capable lines.
+  const allLines = fdPhoneLines();
+  const lines = (kind === 'phone_mms')
+    ? allLines.filter(l => !!l.mms_capable)
+    : allLines;
   const inList = lines.some(l => String(l.phone_number) === cur);
   const customOpt = (cur && !inList)
     ? `<option value="${esc(cur)}" selected>${esc(cur)} ${customLabelSuffix}</option>`
     : '';
-  const blankOpt = cur ? '' : `<option value="" selected>— select a phone line —</option>`;
+  const blankPlaceholder = (kind === 'phone_mms') ? '— select an MMS-capable line —' : '— select a phone line —';
+  const blankOpt = cur ? '' : `<option value="" selected>${blankPlaceholder}</option>`;
   const opts = lines.map(l => {
     const label = `${l.display_name || l.phone_number} (${l.phone_number}${l.provider ? `, ${l.provider}` : ''})`;
     return `<option value="${esc(l.phone_number)}" ${String(l.phone_number) === cur ? 'selected' : ''}>${esc(label)}</option>`;

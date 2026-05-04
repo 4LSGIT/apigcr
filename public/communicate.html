@@ -700,7 +700,7 @@ async function attachMmsImage() {
   if (senderOpt?.dataset.provider !== 'ringcentral') {
     return Swal.fire('SMS Only', 'The selected phone line does not support MMS. Choose a RingCentral line.', 'warning');
   }
-  const url = await attachDialog('Attach Image (MMS)', 'image/png,image/jpeg,image/gif,image/webp');
+  const url = await attachDialog('Attach Image (MMS)', 'image/png,image/jpeg,image/gif,image/webp,.pdf');
   if (url) setMmsAttachment(url);
 }
 

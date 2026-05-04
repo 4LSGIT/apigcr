@@ -347,7 +347,13 @@ async function sendMms(db, from, to, text, countryIso = "US", attachmentBuffer, 
     const res = await fetch(attachmentUrl);
     if (!res.ok) throw new Error(`Failed to fetch attachment: ${res.statusText}`);
     finalBuffer = Buffer.from(await res.arrayBuffer());
-    finalType = res.headers.get("content-type") || finalType;
+    // Strip Content-Type parameters (charset, qs, boundary, etc.) before
+    // forwarding to RingCentral's MMS endpoint. RC's media-type check is
+    // not normalizing — `application/pdf; qs=0.001` (which W3C and a few
+    // other servers send) gets rejected as "unsupported attachment media
+    // type" even though plain `application/pdf` is accepted.
+    const rawCT = res.headers.get("content-type") || finalType;
+    finalType = rawCT.split(';')[0].trim() || finalType;
     finalName = path.basename(attachmentUrl) || finalName; // Infer name from URL
     if (finalBuffer.length > 1.5 * 1024 * 1024) {
       throw new Error("Attachment too large");

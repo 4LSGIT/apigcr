@@ -45,7 +45,7 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
     ] = await Promise.all([
       req.db.query('SELECT * FROM users WHERE user = ?', [userId]),
       req.db.query(
-        `SELECT id, phone_number, display_name, provider
+        `SELECT id, phone_number, display_name, provider, mms_capable
          FROM phone_lines
          WHERE active = 1
          ORDER BY display_name DESC`

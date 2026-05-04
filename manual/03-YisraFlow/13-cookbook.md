@@ -1156,6 +1156,10 @@ await ringcentralService.sendMms(db, from, to, text, country, buffer, filename, 
 
 **`/internal/mms/send`** takes `attachment_url` (singular). **Email** takes `attachment_urls` (plural).
 
+**MMS capability is now a column, not an inferred property.** `phone_lines.mms_capable` (`TINYINT(1)`) is the source of truth — backfilled to `1` for ringcentral lines, `0` for everyone else. The `send_mms` internal function and `/internal/mms/send` route both read this flag rather than checking `provider === 'ringcentral'`. New providers that gain MMS support opt in with a row update, no code change.
+
+**Internal-function path is also wired.** `send_mms` is a first-class internal function (workflows + sequences via `action_type='internal_function'`). The workflow editor's metadata-driven form filters its "From" dropdown to MMS-capable lines via `widget: 'phone_line_mms'`; the sequence editor uses a JSON params textarea so operators type the number, but `send_mms`'s runtime check rejects non-MMS-capable lines clearly.
+
 ### 5.7 Resolver Strict Mode Semantics
 
 **Behavior that bit you in the campaign rewrite:**

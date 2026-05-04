@@ -93,17 +93,16 @@ describe('internal_functions __meta registry — shape', () => {
     }
   );
 
-  test('all 23 functions present', () => {
+  test('all 24 functions present', () => {
     expect(Object.keys(allMeta).sort()).toEqual([
       'cancel_sequences', 'create_appointment', 'create_log', 'create_task',
       'enroll_sequence', 'evaluate_condition', 'format_string', 'get_appointments',
       'lookup_appointment', 'lookup_contact', 'noop', 'query_db',
-      'run_task_digest', 'schedule_resume', 'send_email', 'send_sms',
+      'run_task_digest', 'schedule_resume', 'send_email', 'send_mms', 'send_sms',
       'set_next', 'set_test_var', 'set_var', 'update_appointment',
       'update_contact', 'wait_for', 'wait_until_time',
     ]);
   });
-});
 
 describe('validateParamsAgainstMeta — behavior fixtures', () => {
   const meta = internalFunctions.__getAllMeta();

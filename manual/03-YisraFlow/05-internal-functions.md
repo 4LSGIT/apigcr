@@ -35,7 +35,7 @@ Functions can return:
 
 Each function carries a `__meta` block — a JSON description of its params (name, type, required, etc.) that drives the form-driven UI. The reference below pulls directly from those `__meta` blocks; if a future change adds or renames a param, `GET /workflows/functions` is the live source of truth.
 
-### The 23 functions
+### The 24 functions
 
 Confirmed by `tests/internal_functions.meta.test.js`:
 
@@ -43,7 +43,7 @@ Confirmed by `tests/internal_functions.meta.test.js`:
 cancel_sequences, create_appointment, create_log, create_task,
 enroll_sequence, evaluate_condition, format_string, get_appointments,
 lookup_appointment, lookup_contact, noop, query_db,
-run_task_digest, schedule_resume, send_email, send_sms,
+run_task_digest, schedule_resume, send_email, send_mms, send_sms,
 set_next, set_test_var, set_var, update_appointment,
 update_contact, wait_for, wait_until_time
 ```
@@ -238,6 +238,27 @@ Placeholders work inside URL strings: `["{{contacts.contact_doc_url}}"]` resolve
 - **Pabbly**: `attachment_urls` and `attachment_names` are flattened to comma-separated strings on the outbound payload.
 
 **`attachments`** (raw nodemailer format, SMTP-only) is supported by `emailService.sendEmail` directly, but `send_email` does not pass it through — the runtime destructure pulls only `attachment_urls` and `attachment_names`. If you genuinely need raw nodemailer `attachments` from a workflow/sequence step, edit the `send_email` body to add it to the destructure. In practice `attachment_urls` covers all use cases and survives provider swaps, so this hasn't been needed.
+
+#### `send_mms`
+
+Send an MMS from an MMS-capable phone line. URL-attachment only (single attachment per RingCentral API limits).
+
+| Param | Type | Required | Widget | Description |
+|---|---|---|---|---|
+| `from` | string | yes | `phone_line_mms` | 10-digit number matching `phone_lines.phone_number` where `mms_capable=1`. |
+| `to` | string | yes (placeholderAllowed) | — | Recipient phone (any common format). |
+| `text` | string | optional (placeholderAllowed, multiline) | — | Optional message body (≤1000 chars per RingCentral limits). |
+| `attachment_url` | string | yes (placeholderAllowed) | — | Publicly fetchable URL. RingCentral fetches the file at send time and caps it at 1.5MB. **See media-type notes below.** |
+
+Lazy-requires `ringcentralService` and calls `ringcentralService.sendMms(db, from, to, text, 'US', null, null, null, attachment_url, false)` — same shape as `routes/internal/mms.js`. Performs a capability check against `phone_lines.mms_capable` (not `provider`) so future MMS-capable providers can opt in via a row update without code changes here.
+
+**Media types.** RingCentral's published spec lists images (JPEG, PNG, GIF, BMP, TIFF) and standard audio/video as supported. **PDFs are not on the published list but work in practice for this account today** — tested-good, but best-effort: an RC API change could break PDF support without notice, and there's no contractual guarantee. Prefer the spec-supported types when reliability matters. For documents you need delivered guaranteed (especially across providers or RC API changes), use `send_email` — `attachment_urls` handles PDFs cleanly.
+
+**Content-Type gotcha.** `ringcentralService.sendMms` strips Content-Type parameters before forwarding to RC because RC's parser doesn't normalize them. A source URL that returns `application/pdf; qs=0.001` (some W3C-hosted files do this as a content-negotiation hint) gets rejected as `MSG-348 "Unsupported attachment media type"` if the parameter isn't stripped. Hosting attachments on GCS, your own server, or any provider that returns a clean `Content-Type` avoids the issue entirely — and the parameter strip is in place defensively for the rest.
+
+**MMS today is RingCentral-only.** Quo and OpenPhone don't support MMS; their lines have `mms_capable=0` and won't appear in the editor's `phone_line_mms` dropdown. If you need cross-provider parity, send a link via `send_sms` instead.
+
+The `phone_line_mms` widget filters the dropdown to MMS-capable lines only. In the workflow editor this is automatic. In the sequence editor, MMS works only via `action_type='internal_function'` + `function_name='send_mms'` (JSON params textarea) — there's no first-class `'mms'` `action_type` and consequently no widget filtering. Operators picking the line by hand will get a clear runtime error from `send_mms`'s capability check if they choose a non-MMS line.
 
 ---
 
