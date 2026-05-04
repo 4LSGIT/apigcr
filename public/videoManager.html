@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Manager</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:    #1a1a2e;
+      --navy2:   #16213e;
+      --blue:    #4f8ef7;
+      --blue2:   #3a7de8;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --amber:   #f59e0b;
+      --bg:      #f1f5f9;
+      --surface: #ffffff;
+      --border:  #e2e8f0;
+      --muted:   #94a3b8;
+      --text:    #1e293b;
+      --text2:   #475569;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    body { display: flex; flex-direction: column; overflow: hidden; }
+
+    /* ── Topbar ────────────────────────────────────── */
+    #topbar {
+      background: var(--navy);
+      color: #fff;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      flex-shrink: 0;
+      border-bottom: 2px solid var(--blue);
+    }
+    #topbar .title { font-weight: 700; font-size: 13px; letter-spacing: 0.02em; }
+    #topbar .title span { color: var(--blue); }
+    #topbar .spacer { flex: 1; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+      font-family: inherit;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--blue2); }
+    .btn-ghost { background: rgba(255,255,255,0.08); color: #fff; }
+    .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.18); }
+    .btn-outline {
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-outline:hover:not(:disabled) { background: var(--bg); }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-danger:hover:not(:disabled) { background: #dc2626; }
+    .btn-sm { padding: 3px 8px; font-size: 11px; }
+
+    /* ── Two-pane layout ────────────────────────────── */
+    #panes {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+
+    #listPane {
+      width: 340px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+    #listHeader {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    #listHeader .label {
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--text2);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    #listHeader .count {
+      color: var(--muted);
+      font-size: 11px;
+    }
+    #listItems { flex: 1; overflow-y: auto; }
+
+    .list-item {
+      display: flex;
+      gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+      align-items: center;
+    }
+    .list-item:hover { background: var(--bg); }
+    .list-item.active {
+      background: rgba(79, 142, 247, 0.08);
+      border-left: 3px solid var(--blue);
+      padding-left: 11px;
+    }
+    .list-item .thumb {
+      width: 60px;
+      height: 34px;
+      flex-shrink: 0;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      color: var(--muted);
+    }
+    .list-item .thumb img {
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    .list-item .meta { flex: 1; min-width: 0; }
+    .list-item .meta .title {
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .list-item .meta .sub {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-right: 4px;
+    }
+    .badge-published { background: rgba(34, 197, 94, 0.15); color: #15803d; }
+    .badge-draft     { background: rgba(148, 163, 184, 0.20); color: #475569; }
+    .badge-public    { background: rgba(79, 142, 247, 0.15); color: #1e40af; }
+    .badge-contact   { background: rgba(245, 158, 11, 0.18); color: #92400e; }
+
+    .empty-state {
+      padding: 40px 24px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .empty-state i { font-size: 30px; margin-bottom: 12px; opacity: 0.5; }
+
+    /* ── Editor pane ────────────────────────────────── */
+    #editorPane {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 28px 32px;
+    }
+
+    #editorContent { max-width: 720px; }
+    #editorEmpty {
+      max-width: 480px;
+      margin: 80px auto 0;
+      text-align: center;
+      color: var(--muted);
+    }
+    #editorEmpty i { font-size: 48px; opacity: 0.4; margin-bottom: 16px; display: block; }
+
+    .form-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .form-section h3 {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text2);
+      margin-bottom: 14px;
+    }
+
+    .form-row { margin-bottom: 14px; }
+    .form-row:last-child { margin-bottom: 0; }
+    .form-row label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text2);
+      margin-bottom: 5px;
+    }
+    .form-row label .hint {
+      font-weight: 400;
+      color: var(--muted);
+      margin-left: 6px;
+    }
+    .form-row input[type="text"],
+    .form-row input[type="number"],
+    .form-row textarea,
+    .form-row select {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      font-size: 13px;
+      font-family: inherit;
+      color: var(--text);
+      background: var(--surface);
+    }
+    .form-row input:focus,
+    .form-row textarea:focus,
+    .form-row select:focus {
+      outline: none;
+      border-color: var(--blue);
+      box-shadow: 0 0 0 2px rgba(79, 142, 247, 0.15);
+    }
+    .form-row textarea { min-height: 70px; resize: vertical; }
+    .form-row .radios { display: flex; gap: 16px; padding-top: 4px; }
+    .form-row .radios label {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 400;
+      margin-bottom: 0;
+      cursor: pointer;
+    }
+    .form-row .check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+
+    /* ── Asset uploader ─────────────────────────────── */
+    .asset-uploader {
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      background: var(--bg);
+    }
+    .asset-uploader .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .asset-uploader .preview {
+      width: 90px;
+      height: 50px;
+      flex-shrink: 0;
+      background: #000;
+      border-radius: 4px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+    }
+    .asset-uploader .preview img,
+    .asset-uploader .preview video {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+    }
+    .asset-uploader .info {
+      flex: 1;
+      min-width: 0;
+      font-size: 12px;
+    }
+    .asset-uploader .info .filename {
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .asset-uploader .info .meta {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 2px;
+      word-break: break-all;
+    }
+    .asset-uploader input[type="file"] { display: none; }
+    .progress {
+      margin-top: 8px;
+      height: 6px;
+      border-radius: 3px;
+      background: var(--border);
+      overflow: hidden;
+      display: none;
+    }
+    .progress.active { display: block; }
+    .progress-bar {
+      height: 100%;
+      background: var(--blue);
+      width: 0%;
+      transition: width 0.2s;
+    }
+
+    /* ── Actions builder ────────────────────────────── */
+    .action-row {
+      display: grid;
+      grid-template-columns: 1fr 1.4fr 110px auto;
+      gap: 8px;
+      margin-bottom: 8px;
+      align-items: center;
+    }
+    .action-row .ctrl { display: flex; gap: 2px; }
+    .action-row .ctrl button {
+      width: 28px; height: 28px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--text2);
+      font-size: 12px;
+    }
+    .action-row .ctrl button:hover { background: var(--bg); }
+    .action-row .ctrl button.del:hover { background: rgba(239, 68, 68, 0.1); color: var(--red); }
+
+    /* ── Copy buttons row ───────────────────────────── */
+    .copy-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    /* ── Save bar ───────────────────────────────────── */
+    #saveBar {
+      position: sticky;
+      bottom: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 12px 0 0;
+      margin-top: 16px;
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .swal2-popup { font-size: 13px !important; }
+  </style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="title">Yisra<span>Video</span> Manager</div>
+  <div class="spacer"></div>
+  <button class="btn btn-primary" onclick="onNewVideo()">
+    <i class="fa-solid fa-plus"></i> New Video
+  </button>
+</div>
+
+<div id="panes">
+  <!-- ── Left: list ──────────────────────────────────────── -->
+  <div id="listPane">
+    <div id="listHeader">
+      <span class="label">Videos</span>
+      <span class="count" id="listCount"></span>
+    </div>
+    <div id="listItems">
+      <div class="empty-state"><i class="fa-solid fa-spinner fa-spin"></i><br>Loading…</div>
+    </div>
+  </div>
+
+  <!-- ── Right: editor ───────────────────────────────────── -->
+  <div id="editorPane">
+    <div id="editorEmpty">
+      <i class="fa-solid fa-video"></i>
+      <p>Select a video from the list to edit, or create a new one.</p>
+    </div>
+    <div id="editorContent" style="display:none"></div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// Parent bridge — JWT-aware fetch wrappers. We bypass P.apiSend for JSON
+// because we want server `error`/`message` text surfaced, and bypass it
+// entirely for multipart because P.apiSend is JSON-only.
+// ════════════════════════════════════════════════════════════════════════════
+const P = window.parent;
+
+if (!P || !P.AUTH_STATE) {
+  document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ef4444;">'
+    + 'This page must be loaded inside the YisraCase admin app.</div>';
+  throw new Error('No parent auth context');
+}
+
+// Toast for non-blocking notices.
+const Toast = Swal.mixin({
+  toast: true, position: 'top-end', timer: 2500,
+  showConfirmButton: false, timerProgressBar: true,
+});
+
+async function ensureFreshJwt() {
+  if (!P.AUTH_STATE.jwt || (P.isJwtExpired && P.isJwtExpired(P.AUTH_STATE.jwt))) {
+    if (P.loginBlocking) await P.loginBlocking();
+  }
+}
+
+/**
+ * Authenticated JSON fetch.
+ * @returns parsed JSON, or null for 204
+ * @throws Error with the server's `error`/`message` field on non-2xx
+ */
+async function api(endpoint, method = 'GET', payload = null) {
+  await ensureFreshJwt();
+
+  const opts = {
+    method: method.toUpperCase(),
+    headers: {
+      'Authorization': 'Bearer ' + P.AUTH_STATE.jwt,
+      'Content-Type':  'application/json',
+    },
+  };
+  let url = endpoint;
+  if (payload != null) {
+    if (opts.method === 'GET' || opts.method === 'HEAD') {
+      url += (url.includes('?') ? '&' : '?') + new URLSearchParams(payload).toString();
+    } else {
+      opts.body = JSON.stringify(payload);
+    }
+  }
+
+  let res = await fetch(url, opts);
+  if (res.status === 401 && P.loginBlocking) {
+    await P.loginBlocking();
+    opts.headers.Authorization = 'Bearer ' + P.AUTH_STATE.jwt;
+    res = await fetch(url, opts);
+  }
+
+  if (res.status === 204) return null;
+  const text = await res.text();
+  let data;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+  if (!res.ok) {
+    const msg = (data && (data.error || data.message)) || ('HTTP ' + res.status);
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/**
+ * Multipart asset upload via XHR (for upload progress events).
+ * @returns {Promise<{success, url, filename, size, mime, uploadedAt}>}
+ */
+async function uploadAsset(file, kind, onProgress) {
+  await ensureFreshJwt();
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const fd  = new FormData();
+    fd.append('file', file);
+
+    xhr.open('POST', '/api/videos/upload-asset?kind=' + encodeURIComponent(kind));
+    xhr.setRequestHeader('Authorization', 'Bearer ' + P.AUTH_STATE.jwt);
+    // Do NOT set Content-Type — XHR sets the multipart boundary itself.
+
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    });
+
+    xhr.addEventListener('load', () => {
+      let data = null;
+      try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data);
+      } else if (xhr.status === 401) {
+        reject(new Error('Authentication expired — please retry'));
+      } else {
+        reject(new Error((data && (data.error || data.message)) || ('HTTP ' + xhr.status)));
+      }
+    });
+
+    xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+    xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
+
+    xhr.send(fd);
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════════════════════════
+const state = {
+  videos:    [],     // list cache
+  selected:  null,   // id of currently-edited video, or null for new
+  form:      null,   // working copy of the form
+  uploading: false,  // any uploader currently active
+};
+
+// Helper: HTML-escape for safe interpolation.
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtDuration(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return '—';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// List rendering
+// ════════════════════════════════════════════════════════════════════════════
+async function loadList() {
+  const container = document.getElementById('listItems');
+  try {
+    const res = await api('/api/videos', 'GET');
+    state.videos = res.videos || [];
+  } catch (err) {
+    container.innerHTML = '<div class="empty-state" style="color:#ef4444">'
+      + '<i class="fa-solid fa-circle-exclamation"></i><br>'
+      + 'Failed to load: ' + esc(err.message) + '</div>';
+    return;
+  }
+  renderList();
+}
+
+function renderList() {
+  const container = document.getElementById('listItems');
+  const count     = document.getElementById('listCount');
+  count.textContent = state.videos.length ? '(' + state.videos.length + ')' : '';
+
+  if (!state.videos.length) {
+    container.innerHTML = '<div class="empty-state">'
+      + '<i class="fa-solid fa-film"></i><br>No videos yet.</div>';
+    return;
+  }
+
+  container.innerHTML = state.videos.map(v => {
+    const isActive = state.selected === v.id;
+    const thumb    = v.gcs_poster_url
+      ? '<img src="' + esc(v.gcs_poster_url) + '" alt="">'
+      : '<i class="fa-solid fa-film"></i>';
+    const actionCount = Array.isArray(v.actions) ? v.actions.length : 0;
+    const pubBadge = v.is_published
+      ? '<span class="badge badge-published">Published</span>'
+      : '<span class="badge badge-draft">Draft</span>';
+    const accessBadge = v.access_level === 'contact_only'
+      ? '<span class="badge badge-contact">Contact</span>'
+      : '<span class="badge badge-public">Public</span>';
+
+    return '<div class="list-item ' + (isActive ? 'active' : '') + '" '
+      + 'onclick="selectVideo(' + v.id + ')">'
+      +   '<div class="thumb">' + thumb + '</div>'
+      +   '<div class="meta">'
+      +     '<div class="title">' + esc(v.title) + '</div>'
+      +     '<div class="sub">' + pubBadge + accessBadge
+      +       '<span style="color:var(--muted)">'
+      +         esc(v.slug) + ' · ' + actionCount + ' action' + (actionCount === 1 ? '' : 's')
+      +       '</span>'
+      +     '</div>'
+      +   '</div>'
+      + '</div>';
+  }).join('');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Editor — state + render
+// ════════════════════════════════════════════════════════════════════════════
+
+function blankForm() {
+  return {
+    title:            '',
+    description:      '',
+    gcs_video_url:    '',
+    gcs_poster_url:   '',
+    gcs_gif_url:      '',
+    duration_seconds: null,
+    tags:             [],
+    actions:          [],
+    access_level:     'public',
+    is_published:     false,
+    // ephemeral display info, not sent to server
+    _videoFilename:   '',
+    _posterFilename:  '',
+    _gifFilename:     '',
+  };
+}
+
+function onNewVideo() {
+  state.selected = null;
+  state.form = blankForm();
+  renderEditor();
+  renderList();
+}
+
+async function selectVideo(id) {
+  if (state.uploading) {
+    Toast.fire({ icon: 'warning', title: 'Upload in progress — wait until it finishes' });
+    return;
+  }
+  try {
+    const v = await api('/api/videos/' + id, 'GET');
+    state.selected = v.id;
+    state.form = {
+      title:            v.title || '',
+      description:      v.description || '',
+      gcs_video_url:    v.gcs_video_url || '',
+      gcs_poster_url:   v.gcs_poster_url || '',
+      gcs_gif_url:      v.gcs_gif_url || '',
+      duration_seconds: v.duration_seconds,
+      tags:             Array.isArray(v.tags) ? v.tags : [],
+      actions:          Array.isArray(v.actions) ? v.actions.map(a => ({
+                          label:  a.label || '',
+                          type:   a.type  || 'url',
+                          config: { url: a.config?.url || '', style: a.config?.style || 'primary' },
+                        })) : [],
+      access_level:     v.access_level || 'public',
+      is_published:     !!v.is_published,
+      _videoFilename:   '',
+      _posterFilename:  '',
+      _gifFilename:     '',
+      _slug:            v.slug,
+    };
+    renderEditor();
+    renderList();
+  } catch (err) {
+    Swal.fire('Load failed', err.message, 'error');
+  }
+}
+
+function renderEditor() {
+  const empty = document.getElementById('editorEmpty');
+  const root  = document.getElementById('editorContent');
+
+  if (!state.form) {
+    empty.style.display = '';
+    root.style.display  = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  root.style.display  = '';
+
+  const f      = state.form;
+  const isNew  = state.selected == null;
+  const slugLine = isNew ? '' :
+    '<div style="color:var(--muted); font-size:12px; margin-bottom:8px;">'
+    + '<i class="fa-solid fa-link"></i> ' + esc(f._slug)
+    + ' <span style="color:var(--text2)">(slug locked after create)</span></div>';
+
+  root.innerHTML = `
+    <h2 style="font-size:18px; margin-bottom:4px;">
+      ${isNew ? 'New Video' : 'Edit Video'}
+    </h2>
+    ${slugLine}
+
+    <!-- ── Assets ── -->
+    <div class="form-section">
+      <h3>Assets</h3>
+
+      <div class="form-row">
+        <label>MP4 Video <span class="hint">required · up to 500 MB</span></label>
+        ${renderUploader('video', f.gcs_video_url, f._videoFilename, f.duration_seconds)}
+      </div>
+
+      <div class="form-row">
+        <label>Poster image (JPG/PNG) <span class="hint">optional</span></label>
+        ${renderUploader('poster', f.gcs_poster_url, f._posterFilename)}
+      </div>
+
+      <div class="form-row">
+        <label>Animated GIF preview <span class="hint">optional · for email embeds</span></label>
+        ${renderUploader('gif', f.gcs_gif_url, f._gifFilename)}
+      </div>
+    </div>
+
+    <!-- ── Metadata ── -->
+    <div class="form-section">
+      <h3>Details</h3>
+
+      <div class="form-row">
+        <label>Title <span class="hint">required</span></label>
+        <input type="text" id="f-title" maxlength="255"
+          value="${esc(f.title)}" oninput="state.form.title = this.value">
+      </div>
+
+      <div class="form-row">
+        <label>Description</label>
+        <textarea id="f-desc" oninput="state.form.description = this.value">${esc(f.description)}</textarea>
+      </div>
+
+      <div class="form-row">
+        <label>Tags <span class="hint">comma-separated</span></label>
+        <input type="text" id="f-tags"
+          value="${esc((f.tags || []).join(', '))}"
+          oninput="state.form.tags = this.value.split(',').map(t => t.trim()).filter(Boolean)">
+      </div>
+
+      <div class="form-row">
+        <label>Access</label>
+        <div class="radios">
+          <label><input type="radio" name="access" value="public"
+            ${f.access_level === 'public' ? 'checked' : ''}
+            onchange="state.form.access_level = 'public'"> Public</label>
+          <label><input type="radio" name="access" value="contact_only"
+            ${f.access_level === 'contact_only' ? 'checked' : ''}
+            onchange="state.form.access_level = 'contact_only'"> Contact-only</label>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label class="check">
+          <input type="checkbox"
+            ${f.is_published ? 'checked' : ''}
+            onchange="state.form.is_published = this.checked">
+          Published
+        </label>
+      </div>
+    </div>
+
+    <!-- ── Actions ── -->
+    <div class="form-section">
+      <h3>Action Buttons</h3>
+      <div id="actionsList">${renderActionsList()}</div>
+      <button class="btn btn-outline btn-sm" onclick="addAction()" style="margin-top:8px;">
+        <i class="fa-solid fa-plus"></i> Add Action
+      </button>
+    </div>
+
+    ${isNew ? '' : `
+    <!-- ── Sharing ── -->
+    <div class="form-section">
+      <h3>Share / Embed</h3>
+      <div class="copy-row">
+        <button class="btn btn-outline btn-sm" onclick="copyLandingUrl()">
+          <i class="fa-solid fa-link"></i> Copy landing URL
+        </button>
+        <button class="btn btn-outline btn-sm" onclick="copyLandingUrlForContact()">
+          <i class="fa-solid fa-user"></i> Copy URL for contact…
+        </button>
+        <button class="btn btn-outline btn-sm"
+          onclick="copyEmbed('poster')"
+          ${!f.gcs_poster_url ? 'disabled title="Add a poster to enable embed snippet."' : ''}>
+          <i class="fa-solid fa-image"></i> Copy embed (poster)
+        </button>
+        <button class="btn btn-outline btn-sm"
+          onclick="copyEmbed('gif')"
+          ${!f.gcs_gif_url ? 'disabled title="Add a GIF to enable GIF embed snippet."' : ''}>
+          <i class="fa-solid fa-film"></i> Copy embed (GIF)
+        </button>
+      </div>
+      <div style="font-size:11px; color:var(--muted); margin-top:8px;">
+        Embed snippets contain <code>{{contact_id}}</code> as a literal placeholder for the
+        campaign resolver to substitute later.
+      </div>
+    </div>
+    `}
+
+    <div id="saveBar">
+      ${!isNew ? '<button class="btn btn-danger" onclick="onDelete()"><i class="fa-solid fa-trash"></i> Delete</button>' : ''}
+      <div style="flex:1"></div>
+      <button class="btn btn-outline" onclick="onCancel()">Cancel</button>
+      <button class="btn btn-primary" onclick="onSave()">
+        <i class="fa-solid fa-floppy-disk"></i> ${isNew ? 'Create' : 'Save changes'}
+      </button>
+    </div>
+  `;
+}
+
+// ── Asset uploader fragment ─────────────────────────────────
+function renderUploader(kind, currentUrl, filename, duration) {
+  const inputId = 'upl-' + kind;
+  const previewId = 'upl-preview-' + kind;
+  const filenameId = 'upl-fn-' + kind;
+  const progressId = 'upl-prog-' + kind;
+  const barId = 'upl-bar-' + kind;
+
+  let preview = '<i class="fa-solid fa-' + (kind === 'video' ? 'film' : 'image') + '"></i>';
+  if (currentUrl) {
+    if (kind === 'video') {
+      preview = '<video src="' + esc(currentUrl) + '" preload="metadata" muted></video>';
+    } else {
+      preview = '<img src="' + esc(currentUrl) + '" alt="">';
+    }
+  }
+
+  const fnDisplay = filename || (currentUrl ? '(saved)' : '(none)');
+  const meta = kind === 'video' && Number.isFinite(duration)
+    ? 'duration: ' + fmtDuration(duration)
+    : (currentUrl ? esc(currentUrl) : '');
+
+  const accept = kind === 'video' ? 'video/mp4,video/*'
+              : kind === 'gif'    ? 'image/gif'
+              : 'image/jpeg,image/png,image/webp';
+
+  return `
+    <div class="asset-uploader">
+      <div class="row">
+        <div class="preview" id="${previewId}">${preview}</div>
+        <div class="info">
+          <div class="filename" id="${filenameId}">${esc(fnDisplay)}</div>
+          <div class="meta">${meta}</div>
+        </div>
+        <div>
+          <input type="file" id="${inputId}" accept="${accept}"
+            onchange="onAssetFilePicked('${kind}', this)">
+          <button class="btn btn-outline btn-sm" onclick="document.getElementById('${inputId}').click()">
+            <i class="fa-solid fa-upload"></i> ${currentUrl ? 'Replace' : 'Upload'}
+          </button>
+        </div>
+      </div>
+      <div class="progress" id="${progressId}">
+        <div class="progress-bar" id="${barId}"></div>
+      </div>
+    </div>
+  `;
+}
+
+function renderActionsList() {
+  if (!state.form.actions.length) {
+    return '<div style="color:var(--muted); font-size:12px; padding:6px 0;">No actions yet.</div>';
+  }
+  return state.form.actions.map((a, i) => `
+    <div class="action-row">
+      <input type="text" placeholder="Label (e.g. Book My 341 Prep Call)"
+        value="${esc(a.label || '')}"
+        oninput="state.form.actions[${i}].label = this.value">
+      <input type="text" placeholder="https://… (use {{c}} for contact ID)"
+        value="${esc(a.config?.url || '')}"
+        oninput="state.form.actions[${i}].config.url = this.value">
+      <select onchange="state.form.actions[${i}].config.style = this.value">
+        <option value="primary"   ${a.config?.style === 'primary'   ? 'selected' : ''}>Primary</option>
+        <option value="secondary" ${a.config?.style === 'secondary' ? 'selected' : ''}>Secondary</option>
+        <option value="ghost"     ${a.config?.style === 'ghost'     ? 'selected' : ''}>Ghost</option>
+      </select>
+      <div class="ctrl">
+        <button onclick="moveAction(${i}, -1)" title="Move up"  ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button onclick="moveAction(${i},  1)" title="Move down" ${i === state.form.actions.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="del" onclick="deleteAction(${i})" title="Remove">✕</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function refreshActions() {
+  document.getElementById('actionsList').innerHTML = renderActionsList();
+}
+
+// v2: 'signed_action' | 'chatbot' | 'comments' will be added here — do not
+// enumerate types in the landing route or the admin UI in a way that requires
+// editing both sides to add a new type. v1 hardcodes type:'url' in addAction.
+function addAction() {
+  state.form.actions.push({
+    label: '',
+    type:  'url',
+    config: { url: '', style: 'primary' },
+  });
+  refreshActions();
+}
+function moveAction(i, delta) {
+  const j = i + delta;
+  if (j < 0 || j >= state.form.actions.length) return;
+  const arr = state.form.actions;
+  [arr[i], arr[j]] = [arr[j], arr[i]];
+  refreshActions();
+}
+function deleteAction(i) {
+  state.form.actions.splice(i, 1);
+  refreshActions();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Asset upload + duration extraction
+// ════════════════════════════════════════════════════════════════════════════
+async function onAssetFilePicked(kind, inputEl) {
+  const file = inputEl.files && inputEl.files[0];
+  if (!file) return;
+
+  // Soft client-side guard before we try to upload 500 MB.
+  if (file.size > 500 * 1024 * 1024) {
+    Swal.fire('File too large', 'Maximum file size is 500 MB.', 'warning');
+    inputEl.value = '';
+    return;
+  }
+
+  // Client-side duration extraction for MP4 — best-effort only.
+  let duration = null;
+  if (kind === 'video') {
+    duration = await extractVideoDuration(file);
+  }
+
+  state.uploading = true;
+  const progress = document.getElementById('upl-prog-' + kind);
+  const bar      = document.getElementById('upl-bar-' + kind);
+  progress.classList.add('active');
+  bar.style.width = '0%';
+
+  try {
+    const result = await uploadAsset(file, kind, (frac) => {
+      bar.style.width = (frac * 100).toFixed(1) + '%';
+    });
+
+    // Persist into form state.
+    if (kind === 'video') {
+      state.form.gcs_video_url = result.url;
+      state.form._videoFilename = file.name;
+      state.form.duration_seconds = duration; // may be null
+    } else if (kind === 'poster') {
+      state.form.gcs_poster_url = result.url;
+      state.form._posterFilename = file.name;
+    } else if (kind === 'gif') {
+      state.form.gcs_gif_url = result.url;
+      state.form._gifFilename = file.name;
+    }
+
+    Toast.fire({ icon: 'success', title: 'Uploaded ' + kind });
+    renderEditor(); // re-render so preview shows the new asset
+  } catch (err) {
+    Swal.fire('Upload failed', err.message, 'error');
+  } finally {
+    state.uploading = false;
+    inputEl.value = ''; // allow re-picking the same file
+    progress.classList.remove('active');
+    bar.style.width = '0%';
+  }
+}
+
+/**
+ * Read MP4 duration client-side via a hidden <video>. Returns int seconds
+ * or null if the metadata can't be read within 5 s.
+ */
+function extractVideoDuration(file) {
+  return new Promise((resolve) => {
+    const blobUrl = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    const cleanup = () => URL.revokeObjectURL(blobUrl);
+    const t = setTimeout(() => { cleanup(); resolve(null); }, 5000);
+    v.addEventListener('loadedmetadata', () => {
+      clearTimeout(t); cleanup();
+      resolve(Number.isFinite(v.duration) ? Math.round(v.duration) : null);
+    });
+    v.addEventListener('error', () => {
+      clearTimeout(t); cleanup(); resolve(null);
+    });
+    v.src = blobUrl;
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Save / cancel / delete
+// ════════════════════════════════════════════════════════════════════════════
+function buildPayload() {
+  const f = state.form;
+  return {
+    title:            f.title.trim(),
+    description:      f.description.trim() || null,
+    gcs_video_url:    f.gcs_video_url || '',
+    gcs_poster_url:   f.gcs_poster_url || null,
+    gcs_gif_url:      f.gcs_gif_url || null,
+    duration_seconds: Number.isFinite(f.duration_seconds) ? f.duration_seconds : null,
+    tags:             f.tags,
+    actions:          f.actions
+                        .filter(a => (a.label || '').trim() && (a.config?.url || '').trim())
+                        .map(a => ({
+                          label:  a.label.trim(),
+                          type:   'url',
+                          config: { url: a.config.url.trim(), style: a.config.style || 'primary' },
+                        })),
+    access_level:     f.access_level,
+    is_published:     f.is_published,
+  };
+}
+
+async function onSave() {
+  if (state.uploading) {
+    Toast.fire({ icon: 'warning', title: 'Upload still in progress — please wait' });
+    return;
+  }
+  const payload = buildPayload();
+  if (!payload.title) {
+    Swal.fire('Missing title', 'Title is required.', 'warning');
+    return;
+  }
+  if (!payload.gcs_video_url) {
+    Swal.fire('Missing video', 'Upload an MP4 file before saving.', 'warning');
+    return;
+  }
+
+  try {
+    let saved;
+    if (state.selected == null) {
+      saved = await api('/api/videos', 'POST', payload);
+      Toast.fire({ icon: 'success', title: 'Video created' });
+    } else {
+      saved = await api('/api/videos/' + state.selected, 'PATCH', payload);
+      Toast.fire({ icon: 'success', title: 'Saved' });
+    }
+    state.selected = saved.id;
+    await loadList();
+    await selectVideo(saved.id);
+  } catch (err) {
+    Swal.fire('Save failed', err.message, 'error');
+  }
+}
+
+function onCancel() {
+  state.form = null;
+  state.selected = null;
+  renderEditor();
+  renderList();
+}
+
+async function onDelete() {
+  const r = await Swal.fire({
+    title: 'Delete this video?',
+    text:  'The DB row will be removed. The MP4/poster/GIF in cloud storage will be left in place.',
+    icon:  'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Delete',
+    confirmButtonColor: '#ef4444',
+  });
+  if (!r.isConfirmed) return;
+  try {
+    await api('/api/videos/' + state.selected, 'DELETE');
+    Toast.fire({ icon: 'success', title: 'Deleted' });
+    state.form = null;
+    state.selected = null;
+    await loadList();
+    renderEditor();
+  } catch (err) {
+    Swal.fire('Delete failed', err.message, 'error');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Copy buttons
+// ════════════════════════════════════════════════════════════════════════════
+async function copyText(text, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+    Toast.fire({ icon: 'success', title: (label || 'Copied') + ' to clipboard' });
+  } catch (err) {
+    // Clipboard API can fail in some iframe/permission contexts.
+    Swal.fire({
+      icon: 'info',
+      title: 'Copy manually',
+      html: '<textarea readonly style="width:100%; height:80px; font-family:monospace; font-size:11px;">'
+        + esc(text) + '</textarea>',
+    });
+  }
+}
+
+function copyLandingUrl() {
+  const slug = state.form._slug;
+  const url  = window.location.origin + '/v/' + slug;
+  copyText(url, 'Landing URL');
+}
+
+async function copyLandingUrlForContact() {
+  // Escape hatch per prompt: simple text-input fallback. If a /api/search
+  // endpoint exists, we can wire it up later.
+  const r = await Swal.fire({
+    title: 'Copy URL for contact',
+    html: '<input id="cid-input" class="swal2-input" type="number" min="1" '
+      + 'placeholder="contact_id (e.g. 1234)" autofocus>',
+    showCancelButton: true,
+    confirmButtonText: 'Copy URL',
+    preConfirm: () => {
+      const v = Swal.getPopup().querySelector('#cid-input').value.trim();
+      const id = parseInt(v, 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        Swal.showValidationMessage('Enter a positive integer contact_id');
+        return false;
+      }
+      return id;
+    },
+  });
+  if (!r.isConfirmed) return;
+  const url = window.location.origin + '/v/' + state.form._slug + '?c=' + r.value;
+  copyText(url, 'Landing URL for contact ' + r.value);
+}
+
+function copyEmbed(variant) {
+  const slug = state.form._slug;
+  const title = state.form.title;
+  const imgUrl = variant === 'gif' ? state.form.gcs_gif_url : state.form.gcs_poster_url;
+  if (!imgUrl) {
+    Swal.fire('Not available', 'Add a ' + variant + ' first.', 'info');
+    return;
+  }
+  const origin = window.location.origin;
+  // {{contact_id}} stays literal — Slice 3's resolver will substitute.
+  const snippet = '<a href="' + origin + '/v/' + slug + '?c={{contact_id}}">'
+    + '<img src="' + imgUrl + '" alt="' + esc(title) + '" width="600" '
+    + 'style="display:block; max-width:100%; height:auto;"></a>';
+  copyText(snippet, 'Embed snippet (' + variant + ')');
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Boot
+// ════════════════════════════════════════════════════════════════════════════
+(function waitForParent() {
+  if (P && P.AUTH_STATE && P.AUTH_STATE.jwt) return loadList();
+  setTimeout(waitForParent, 100);
+})();
+</script>
+</body>
+</html>

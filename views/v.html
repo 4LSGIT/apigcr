@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{TITLE}}</title>
+
+  <meta property="og:title" content="{{TITLE}}">
+  <meta property="og:description" content="{{DESCRIPTION}}">
+  <meta property="og:image" content="{{POSTER_URL}}">
+  <meta property="og:type" content="{{OG_TYPE}}">
+  <meta property="og:url" content="{{LANDING_URL}}">
+  <meta property="og:video" content="{{VIDEO_URL}}">
+  <meta property="og:video:type" content="video/mp4">
+  <meta name="twitter:card" content="{{TWITTER_CARD}}">
+  <meta name="twitter:title" content="{{TITLE}}">
+  <meta name="twitter:description" content="{{DESCRIPTION}}">
+  <meta name="twitter:image" content="{{POSTER_URL}}">
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #fafafa;
+      --surface:  #ffffff;
+      --border:   #e2e8f0;
+      --text:     #1e293b;
+      --muted:    #64748b;
+      --accent:   #1d4ed8;
+      --accent-2: #1e40af;
+    }
+
+    html, body { background: var(--bg); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: var(--text);
+      line-height: 1.5;
+      min-height: 100vh;
+      padding: 24px 16px 48px;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.06);
+    }
+
+    .video-wrap {
+      background: #000;
+      aspect-ratio: 16 / 9;
+      display: block;
+    }
+    .video-wrap video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      outline: none;
+    }
+
+    .body {
+      padding: 24px 28px 28px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      color: var(--text);
+      margin-bottom: 12px;
+    }
+
+    .description {
+      color: var(--muted);
+      font-size: 15px;
+      white-space: pre-wrap;
+      margin-bottom: 20px;
+    }
+    .description:empty { display: none; margin: 0; }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .actions:empty { display: none; }
+
+    .vid-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+
+    .vid-btn-primary {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .vid-btn-primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+
+    .vid-btn-secondary {
+      background: transparent;
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .vid-btn-secondary:hover { background: rgba(29, 78, 216, 0.06); }
+
+    .vid-btn-ghost {
+      background: transparent;
+      color: var(--accent);
+      padding-left: 4px;
+      padding-right: 4px;
+    }
+    .vid-btn-ghost:hover { text-decoration: underline; }
+
+    @media (max-width: 480px) {
+      body { padding: 12px 8px 24px; }
+      .body { padding: 18px 18px 20px; }
+      h1 { font-size: 19px; }
+      .vid-btn { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="video-wrap">
+      <video controls preload="metadata" poster="{{POSTER_URL}}" playsinline>
+        <source src="{{VIDEO_URL}}" type="video/mp4">
+        Your browser does not support HTML5 video.
+      </video>
+    </div>
+    <div class="body">
+      <h1>{{TITLE}}</h1>
+      <p class="description">{{DESCRIPTION_BODY}}</p>
+      <div class="actions">{{ACTIONS_HTML}}</div>
+    </div>
+  </div>
+</body>
+</html>
