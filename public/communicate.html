@@ -8,6 +8,7 @@
   <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/js/videoInsert.js"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -236,6 +237,13 @@
       </div>
     </div>
 
+    <!-- Insert Video Link (works for SMS plain or MMS) -->
+    <div style="margin-top:6px;">
+      <button class="btn-outline" id="sms-video-btn" onclick="insertVideoSms()">
+        <i class="fa-solid fa-video"></i> Insert Video Link
+      </button>
+    </div>
+
     <div class="comm-actions">
       <button class="btn btn-send" onclick="send('sms')">
         <i class="fa-solid fa-paper-plane"></i> Send
@@ -273,6 +281,9 @@
     <div style="margin-top:6px;">
       <button class="btn-outline" onclick="attachEmailFile()">
         <i class="fa-solid fa-paperclip"></i> Attach File
+      </button>
+      <button class="btn-outline" id="email-video-btn" onclick="insertVideoEmail()" style="margin-left:6px;">
+        <i class="fa-solid fa-video"></i> Insert Video Link
       </button>
       <span class="text-muted" style="margin-left:8px;">File will be sent as an email attachment</span>
     </div>
@@ -737,6 +748,76 @@ function removeEmailAttachment() {
   emailAttachmentUrl = null;
   E('email-attach-name').textContent = '';
   E('email-attach-preview').classList.remove('visible');
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// INSERT VIDEO (YisraVideo picker)
+// ═══════════════════════════════════════════════════════════════
+
+// SMS panel — context: 'sms', mmsCapable iff selected sender is RingCentral.
+async function insertVideoSms() {
+  const senderOpt = E('sms-from').selectedOptions[0];
+  if (!senderOpt) {
+    return Toast.fire({ icon: 'warning', title: 'Select a sender first' });
+  }
+  const mmsCapable = senderOpt.dataset.provider === 'ringcentral';
+  const result = await YisraVideoInsert.openVideoPicker({
+    contactId, context: 'sms', mmsCapable,
+  });
+  if (!result) return;
+
+  const ta = E('sms-body');
+
+  if (result.kind === 'sms-text') {
+    insertAtCursor(ta, result.text);
+  } else if (result.kind === 'mms') {
+    insertAtCursor(ta, result.text);
+    setMmsAttachment(result.attachmentUrl);
+  } else {
+    console.warn('[insertVideoSms] Unexpected result kind:', result.kind);
+  }
+
+  // Update char counter
+  E('sms-chars').textContent = ta.value.length + '/1000';
+}
+
+// Email panel — context: 'email'. Picker returns kind:'html' for all variants.
+async function insertVideoEmail() {
+  if (!quill) {
+    return Toast.fire({ icon: 'warning', title: 'Editor not ready' });
+  }
+  const result = await YisraVideoInsert.openVideoPicker({
+    contactId, context: 'email', mmsCapable: false,
+  });
+  if (!result) return;
+
+  if (result.kind !== 'html') {
+    console.warn('[insertVideoEmail] Unexpected result kind:', result.kind);
+    return;
+  }
+
+  // Insert at current cursor (or end if no selection)
+  const sel = quill.getSelection(true);
+  const idx = sel ? sel.index : quill.getLength();
+  quill.clipboard.dangerouslyPasteHTML(idx, result.html);
+}
+
+/**
+ * Insert text at current cursor position in a textarea, preserving the
+ * remainder. Used by the SMS picker.
+ */
+function insertAtCursor(textarea, text) {
+  const start = textarea.selectionStart || 0;
+  const end   = textarea.selectionEnd   || 0;
+  const before = textarea.value.slice(0, start);
+  const after  = textarea.value.slice(end);
+  const sep = (before && !before.endsWith(' ') && !before.endsWith('\n')) ? ' ' : '';
+  textarea.value = before + sep + text + after;
+  // Place cursor after the inserted text
+  const newPos = (before + sep + text).length;
+  textarea.focus();
+  textarea.setSelectionRange(newPos, newPos);
 }
 
 

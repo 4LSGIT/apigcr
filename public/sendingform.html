@@ -11,6 +11,7 @@
   <link href="https://cdn.quilljs.com/1.3.7/quill.snow.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="https://cdn.quilljs.com/1.3.7/quill.min.js"></script>
+  <script src="/js/videoInsert.js"></script>
   <style>
     .sf-form { max-width: 950px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
     .sf-contact-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -223,6 +224,13 @@
             <button onclick="otherRemoveMmsAttachment()" style="background:#dc3545; color:#fff; border:none; border-radius:4px; padding:4px 10px; cursor:pointer; font-size:13px;">&times;</button>
           </div>
         </div>
+
+        <!-- Insert Video Link (works for SMS plain or MMS) -->
+        <div style="margin-bottom:8px;">
+          <button class="yc-btn yc-btn-secondary" onclick="otherInsertVideoSms()" style="padding:6px 14px; font-size:13px;">
+            <i class="fa-solid fa-video"></i> Insert Video Link
+          </button>
+        </div>
       </div>
 
       <!-- Email fields -->
@@ -238,6 +246,9 @@
         <div style="margin-top:8px;">
           <button class="yc-btn yc-btn-secondary" onclick="otherAttachEmailFile()" style="padding:6px 14px; font-size:13px;">
             <i class="fa-solid fa-paperclip"></i> Attach File
+          </button>
+          <button class="yc-btn yc-btn-secondary" onclick="otherInsertVideoEmail()" style="padding:6px 14px; font-size:13px; margin-left:6px;">
+            <i class="fa-solid fa-video"></i> Insert Video Link
           </button>
           <span style="color:#888; font-size:13px; margin-left:8px;">File will be sent as an email attachment</span>
         </div>
@@ -927,28 +938,37 @@ async function send() {
       // ── OTHER ──
       if (action.type === 'other') {
         for (const r of recipients) {
+          // Per-recipient placeholder substitution. The Insert Video picker
+          // emits {{contacts.contact_id}} as a literal (campaign mode) so
+          // each recipient's URL tracks correctly to their own contact_id.
+          // No server-side resolver runs on the 'other' send path; this is
+          // intentional client-side substitution.
+          const recipSmsText  = (action.sms_text  || '').replace(/\{\{contacts\.contact_id\}\}/g, r.contact_id);
+          const recipEmailHtml = (action.email_html || '').replace(/\{\{contacts\.contact_id\}\}/g, r.contact_id);
+          const recipEmailText = (action.email_text || '').replace(/\{\{contacts\.contact_id\}\}/g, r.contact_id);
+
           if (action.mode === 'sms' && smsOn && r.phone) {
             if (action.mms_attachment) {
               const smsOpt = document.getElementById('smsFrom').selectedOptions[0];
               if (smsOpt?.dataset.provider === 'ringcentral') {
                 await P.apiSend('/internal/mms/send', 'POST', {
-                  from: smsFrom, to: r.phone, text: action.sms_text || '', attachment_url: action.mms_attachment
+                  from: smsFrom, to: r.phone, text: recipSmsText, attachment_url: action.mms_attachment
                 });
                 successes.push(`Other MMS → ${r.name}`);
-              } else if (action.sms_text) {
-                await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: action.sms_text });
+              } else if (recipSmsText) {
+                await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: recipSmsText });
                 successes.push(`Other SMS → ${r.name} (image skipped — not RC)`);
               }
-            } else if (action.sms_text) {
-              await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: action.sms_text });
+            } else if (recipSmsText) {
+              await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: recipSmsText });
               successes.push(`Other SMS → ${r.name}`);
             }
           }
-          if (action.mode === 'email' && emailOn && r.email && action.email_html) {
+          if (action.mode === 'email' && emailOn && r.email && recipEmailHtml) {
             const emailPayload = {
               from: emailFrom, to: r.email,
               subject: action.email_subject || 'Message from 4LSG',
-              html: action.email_html, text: action.email_text,
+              html: recipEmailHtml, text: recipEmailText,
             };
             if (action.email_attachment) {
               const name = action.email_attachment.split('/').pop().split('?')[0] || 'attachment';
@@ -1220,6 +1240,74 @@ function otherRemoveEmailAttachment() {
   otherEmailAttachmentUrl = null;
   document.getElementById('otherEmailAttachName').textContent = '';
   document.getElementById('otherEmailAttachPreview').style.display = 'none';
+}
+
+// ── Insert Video (YisraVideo picker) ──
+//
+// sendingform.html is multi-recipient (primary + secondary contact). We pass
+// contactId: null so the picker emits {{contacts.contact_id}} as a literal
+// placeholder, and the 'other' action send path substitutes per-recipient
+// at send time (see actions.js, search "{{contacts.contact_id}}").
+
+async function otherInsertVideoSms() {
+  const smsSelect = document.getElementById('smsFrom');
+  const senderOpt = smsSelect.selectedOptions[0];
+  if (!senderOpt) {
+    return Toast.fire({ icon: 'warning', title: 'Select an SMS sender first' });
+  }
+  const mmsCapable = senderOpt.dataset.provider === 'ringcentral';
+  const result = await YisraVideoInsert.openVideoPicker({
+    contactId: null,        // multi-recipient → leave placeholder literal
+    context: 'sms',
+    mmsCapable,
+  });
+  if (!result) return;
+
+  const ta = document.getElementById('otherSms');
+  if (result.kind === 'sms-text') {
+    sfInsertAtCursor(ta, result.text);
+  } else if (result.kind === 'mms') {
+    sfInsertAtCursor(ta, result.text);
+    otherSetMmsAttachment(result.attachmentUrl);
+  } else {
+    console.warn('[otherInsertVideoSms] Unexpected result kind:', result.kind);
+  }
+  document.getElementById('otherSmsChars').textContent = ta.value.length + '/1000';
+}
+
+async function otherInsertVideoEmail() {
+  if (!quillEditor) {
+    return Toast.fire({ icon: 'warning', title: 'Editor not ready' });
+  }
+  const result = await YisraVideoInsert.openVideoPicker({
+    contactId: null,        // multi-recipient → leave placeholder literal
+    context: 'email',
+    mmsCapable: false,
+  });
+  if (!result) return;
+  if (result.kind !== 'html') {
+    console.warn('[otherInsertVideoEmail] Unexpected result kind:', result.kind);
+    return;
+  }
+  const sel = quillEditor.getSelection(true);
+  const idx = sel ? sel.index : quillEditor.getLength();
+  quillEditor.clipboard.dangerouslyPasteHTML(idx, result.html);
+}
+
+/**
+ * Insert text at the textarea's current cursor position. Adds a leading space
+ * if the preceding character isn't whitespace.
+ */
+function sfInsertAtCursor(textarea, text) {
+  const start = textarea.selectionStart || 0;
+  const end   = textarea.selectionEnd   || 0;
+  const before = textarea.value.slice(0, start);
+  const after  = textarea.value.slice(end);
+  const sep = (before && !before.endsWith(' ') && !before.endsWith('\n')) ? ' ' : '';
+  textarea.value = before + sep + text + after;
+  const newPos = (before + sep + text).length;
+  textarea.focus();
+  textarea.setSelectionRange(newPos, newPos);
 }
 </script>
 </body>

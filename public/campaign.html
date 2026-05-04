@@ -5,6 +5,7 @@
   <title>Campaigns</title>
   <link href="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.min.js"></script>
+  <script src="/js/videoInsert.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, Helvetica, sans-serif; padding: 12px; background: #fff; color: #333; font-size: 14px; }
@@ -219,6 +220,9 @@
     <!-- Email attachment -->
     <div style="margin-top:10px;">
       <button class="btn btn-outline btn-sm" onclick="attachEmailFile()">Attach File</button>
+      <button class="btn btn-outline btn-sm" onclick="insertVideoEmail()" style="margin-left:6px;">
+        ▶ Insert Video Link
+      </button>
       <span class="text-muted" style="margin-left:8px;">File will be sent as an email attachment</span>
     </div>
     <div id="email-attach-preview" class="hidden" style="margin-top:8px; font-size:13px; display:flex; align-items:center; gap:8px;">
@@ -248,6 +252,12 @@
     <div id="mms-section" style="margin-top:10px;">
       <button class="btn btn-outline btn-sm" onclick="attachMmsImage()">Attach Image (MMS)</button>
       <span id="mms-rc-hint" class="text-muted" style="margin-left:8px;"></span>
+    </div>
+    <!-- Insert Video Link (always visible for SMS campaigns) -->
+    <div style="margin-top:8px;">
+      <button class="btn btn-outline btn-sm" onclick="insertVideoSms()">
+        ▶ Insert Video Link
+      </button>
     </div>
     <div id="mms-preview" class="hidden" style="margin-top:8px; display:inline-flex; align-items:flex-start; gap:8px;">
       <img id="mms-preview-img" src="" style="max-width:120px; max-height:90px; border-radius:4px; border:1px solid #ddd;">
@@ -1104,6 +1114,81 @@ function removeEmailAttachment() {
   const preview = document.getElementById('email-attach-preview');
   preview.classList.add('hidden');
   preview.style.display = '';
+}
+
+
+// ─── INSERT VIDEO (YisraVideo picker) ─────────────────────────
+//
+// Campaigns are templated sends to many contacts. We pass contactId: null so
+// the picker emits {{contacts.contact_id}} as a literal placeholder. The
+// resolverService runs on body (and subject) at executeSend time, substituting
+// per-recipient. attachment_url is NOT resolved (it's a static GCS asset URL
+// with no contact placeholders, so this is fine).
+
+async function insertVideoEmail() {
+  if (!quill) {
+    return Toast.fire({ icon: 'warning', title: 'Editor not ready' });
+  }
+  const result = await YisraVideoInsert.openVideoPicker({
+    contactId: null,        // campaign template mode
+    context: 'email',
+    mmsCapable: false,
+  });
+  if (!result || result.kind !== 'html') return;
+
+  // If user is in HTML mode, paste into the textarea instead. Otherwise paste
+  // into Quill (which fires text-change → syncs to html-editor automatically).
+  const mode = document.getElementById('c-editor-mode').value;
+  if (mode === 'html') {
+    const ta = document.getElementById('html-editor');
+    insertAtTextareaCursor(ta, result.html);
+  } else {
+    const sel = quill.getSelection(true);
+    const idx = sel ? sel.index : quill.getLength();
+    quill.clipboard.dangerouslyPasteHTML(idx, result.html);
+    // text-change handler syncs to #html-editor automatically
+  }
+}
+
+async function insertVideoSms() {
+  const senderOpt = document.getElementById('c-sender').selectedOptions[0];
+  if (!senderOpt) {
+    return Toast.fire({ icon: 'warning', title: 'Select a sender first' });
+  }
+  const mmsCapable = senderOpt.dataset.provider === 'ringcentral';
+
+  const result = await YisraVideoInsert.openVideoPicker({
+    contactId: null,        // campaign template mode
+    context: 'sms',
+    mmsCapable,
+  });
+  if (!result) return;
+
+  const ta = document.getElementById('c-sms-body');
+  if (result.kind === 'sms-text') {
+    insertAtTextareaCursor(ta, result.text);
+  } else if (result.kind === 'mms') {
+    insertAtTextareaCursor(ta, result.text);
+    // attachment URL is the static poster/GIF URL — no per-recipient placeholders
+    // in it, so safe to set as-is on the campaign.
+    setMmsAttachment(result.attachmentUrl);
+  }
+}
+
+/**
+ * Insert text at a textarea's current cursor position. Adds a leading space
+ * if the previous character isn't whitespace.
+ */
+function insertAtTextareaCursor(ta, text) {
+  const start = ta.selectionStart || 0;
+  const end   = ta.selectionEnd   || 0;
+  const before = ta.value.slice(0, start);
+  const after  = ta.value.slice(end);
+  const sep = (before && !before.endsWith(' ') && !before.endsWith('\n')) ? ' ' : '';
+  ta.value = before + sep + text + after;
+  const newPos = (before + sep + text).length;
+  ta.focus();
+  ta.setSelectionRange(newPos, newPos);
 }
 
 async function previewCampaign() {

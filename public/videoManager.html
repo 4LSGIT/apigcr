@@ -1028,7 +1028,7 @@ function renderEditor() {
         </button>
       </div>
       <div class="copy-hint">
-        HTML snippets contain <code>{{contact_id}}</code> as a literal placeholder
+        HTML snippets contain <code>{{contacts.contact_id}}</code> as a literal placeholder
         for the campaign resolver to substitute later.
       </div>
     </div>
@@ -1634,8 +1634,9 @@ function copyEmbed(variant) {
     return;
   }
   const origin = window.location.origin;
-  // {{contact_id}} stays literal — Slice 3's resolver will substitute.
-  const snippet = '<a href="' + origin + '/v/' + slug + '?c={{contact_id}}">'
+  // {{contacts.contact_id}} stays literal — campaign resolverService substitutes
+  // it per-recipient at send time.
+  const snippet = '<a href="' + origin + '/v/' + slug + '?c={{contacts.contact_id}}">'
     + '<img src="' + imgUrl + '" alt="' + esc(title) + '" width="600" '
     + 'style="display:block; max-width:100%; height:auto;"></a>';
   copyText(snippet, 'Embed snippet (' + variant + ')');
