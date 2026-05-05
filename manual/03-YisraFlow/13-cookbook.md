@@ -182,7 +182,14 @@ see §3.15 for the pattern.
 {{trigger_data.preferred_name|default:{{contacts.contact_fname}}}}
 ```
 
-**Refs auto-built in sequences** from `enrollment.contact_id` + `trigger_data.{appt_id, case_id, task_id}`, plus `trigger_data` itself is passed through as the pseudo-table so any key on the enrollment's `trigger_data` object is reachable via `{{trigger_data.X}}`.
+**Refs auto-built in sequences** (`lib/sequenceEngine.js:buildRefsForStep`):
+
+- `contacts` — always, anchored on `enrollment.contact_id`
+- `trigger_data` — always, the in-memory pseudo-table (no SQL)
+- `appts` — when `trigger_data.appt_id` is set
+- `cases` — when `trigger_data.case_id` is set
+- `tasks` — when `trigger_data.task_id` is set
+- `users` — when any of `trigger_data.user`, `trigger_data.user_id`, or `trigger_data.appt_with` is set, in that fallback order. Anchored on `users.user` (the PK column is `user`, not `user_id`). Reachable columns include `users.default_email`, `users.default_phone`, `users.user_name`. The `appt_with` fallback means appt-triggered sequences get a sensible default user without enrollment sites having to copy `appt_with` into a separate trigger_data key.
 
 **Not auto-wired into** campaign bodies (`campaignService.executeSend` only passes `refs.contacts`) or hook body templates — those call sites would need updating separately if you want trigger_data placeholders there.
 

@@ -301,6 +301,13 @@
       padding: 6px 0 8px; border-top: 1px solid var(--border); margin: 8px 0 12px;
     }
 
+    .json-toggle {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--blue); cursor: pointer;
+      margin-bottom: 6px; user-select: none;
+    }
+    .json-toggle:hover { text-decoration: underline; }
+
     /* ══════════════════════════════════════════════
        ENROLLMENTS TAB
        ══════════════════════════════════════════════ */
@@ -467,10 +474,11 @@
 // SEQUENCES SUB-PAGE
 //
 // Shell communication:
-//   - P.apiSend(...)                   — relayed to a.html
-//   - P.fdPhoneLineSelectHtml(...)     — shell helper
-//   - P.fdEmailFromSelectHtml(...)     — shell helper
-//   - P.setTopbarButtons({...})        — topbar button visibility
+//   - P.apiSend(...)                      — relayed to a.html
+//   - P.fdPhoneLineSelectHtml(...)        — shell helper
+//   - P.fdPhoneLineMmsSelectHtml(...)     — shell helper (MMS-capable lines only)
+//   - P.fdEmailFromSelectHtml(...)        — shell helper
+//   - P.setTopbarButtons({...})           — topbar button visibility
 //
 // Lifecycle hooks on window: onShow, onHide, onRefresh, onNew
 //
@@ -504,8 +512,9 @@ window.togglePanelLeft = togglePanelLeft;
 
 // Shell firmData helpers — bound to parent frame so they pick up
 // whatever a.html currently has in window.firmData.
-const fdPhoneLineSelectHtml  = (id, val) => P.fdPhoneLineSelectHtml(id, val);
-const fdEmailFromSelectHtml  = (id, val) => P.fdEmailFromSelectHtml(id, val);
+const fdPhoneLineSelectHtml    = (id, val) => P.fdPhoneLineSelectHtml(id, val);
+const fdPhoneLineMmsSelectHtml = (id, val) => P.fdPhoneLineMmsSelectHtml(id, val);
+const fdEmailFromSelectHtml    = (id, val) => P.fdEmailFromSelectHtml(id, val);
 
 // ── State ──────────────────────────────────────────────────────
 const SEQ = {
@@ -528,7 +537,28 @@ let subPageActive = false;
 let seqLoaded = false;
 
 // FUNCTIONS list (sequence-side functions used for internal_function action)
-const FUNCTIONS = { workflow: [], sequence: [] };
+// FUNCTIONS.meta is a map of name → __meta from lib/internal_functions.js.
+// Metadata-bearing functions render structured form fields; functions without
+// metadata fall back to a Params JSON textarea.
+const FUNCTIONS = { workflow: [], sequence: [], meta: {} };
+
+// ─────────────────────────────────────────────────────────────
+// Slice B — sequence-context filtering for the metadata-driven form.
+// REMOVE WHEN SEQUENCES GAIN VARIABLE SUPPORT (slice C; see cookbook 2.3).
+//
+// Sequences have no per-enrollment variable bag. set_vars on step config and
+// per-function output_var/count_var/date_var params would all save into the
+// DB and then be silently dropped at execution time, since sequenceEngine
+// does not call mergeVariables. Hiding them in the UI prevents the footgun.
+// JSON-mode authors who hand-write these fields are advanced users and
+// accept the no-op behavior; their JSON survives and will start working
+// quietly when slice C ships (graceful migration).
+//
+// To re-enable: delete these constants and the two filter checks (search:
+//   SEQ_HIDDEN_PARAMS / SEQ_HIDE_SETVARS_FIELD).
+// ─────────────────────────────────────────────────────────────
+const SEQ_HIDDEN_PARAMS      = new Set(['output_var', 'count_var', 'date_var']);
+const SEQ_HIDE_SETVARS_FIELD = true;
 
 // Slice 3.3 — caches for the new webhook + start_workflow step editors.
 // Fetched lazily on first open of a step that needs them; the async load is
@@ -543,10 +573,12 @@ async function loadFunctions() {
     const data = await api('/workflows/functions');
     FUNCTIONS.workflow = data.workflow || [];
     FUNCTIONS.sequence = data.sequence || [];
+    FUNCTIONS.meta     = data.meta     || {};
   } catch (e) {
     console.warn('Failed to load function list, using fallback:', e.message);
     FUNCTIONS.workflow = ['set_next','evaluate_condition','noop','set_var','format_string','schedule_resume','wait_for','wait_until_time','send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','set_test_var'];
     FUNCTIONS.sequence = ['send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','noop','set_var'];
+    FUNCTIONS.meta     = {};  // metadata-driven form falls back to JSON textarea when meta is empty
   }
 }
 
@@ -842,6 +874,11 @@ function seqRenderActiveTab() {
 }
 
 function seqRenderEditTab(step) {
+  // Reset jsonMode whenever the edit tab opens for a (different or same)
+  // step. Without this, switching steps while in JSON mode would carry the
+  // flag over and try to render the new step's config as raw JSON before
+  // the user explicitly toggled — confusing.
+  SEQ.jsonMode = false;
   const cfg = step.action_config || {}, ep = step.error_policy || {};
   const strategies = ['ignore', 'abort', 'retry_then_ignore', 'retry_then_abort'];
   document.getElementById('seq-editor-body').innerHTML = `
@@ -870,7 +907,16 @@ function seqRenderEditTab(step) {
 }
 
 function seqRenderActionConfig(type, cfg) {
-  if (type === 'sms') return `
+  // JSON-toggle affordance — shared across all action types. Clicking flips
+  // SEQ.jsonMode and re-renders this same area as a single textarea, where
+  // the user can edit the entire action_config blob directly. Mirror of
+  // workflows.html wfToggleJson pattern.
+  const toggle = `<div class="json-toggle" onclick="seqToggleJson()"><i class="fa-solid fa-code"></i> ${SEQ.jsonMode ? 'Switch to form' : 'Edit as JSON'}</div>`;
+  if (SEQ.jsonMode) {
+    return `${toggle}<div class="field"><label>Action Config (JSON)</label><textarea id="se-config-json" rows="14">${esc(JSON.stringify(cfg, null, 2))}</textarea></div>`;
+  }
+
+  if (type === 'sms') return `${toggle}
     <div class="field"><label>From (phone_lines number)</label>${fdPhoneLineSelectHtml('se-from', cfg.params?.from || '')}</div>
     <div class="field"><label>To</label><input id="se-to" value="${esc(cfg.params?.to || '{{contacts.contact_phone}}')}"></div>
     <div class="field"><label>Message</label><textarea id="se-message" rows="4">${esc(cfg.params?.message || '')}</textarea></div>`;
@@ -878,7 +924,7 @@ function seqRenderActionConfig(type, cfg) {
     const attachJson = cfg.params?.attachment_urls != null
       ? JSON.stringify(cfg.params.attachment_urls, null, 2)
       : '';
-    return `
+    return `${toggle}
     <div class="field"><label>From</label>${fdEmailFromSelectHtml('se-from', cfg.params?.from || '')}</div>
     <div class="field"><label>To</label><input id="se-to" value="${esc(cfg.params?.to || '{{contacts.contact_email}}')}"></div>
     <div class="field"><label>Subject</label><input id="se-subject" value="${esc(cfg.params?.subject || '')}"></div>
@@ -894,7 +940,7 @@ function seqRenderActionConfig(type, cfg) {
       </p>
     </div>`;
   }
-  if (type === 'task') return `
+  if (type === 'task') return `${toggle}
     <div class="field"><label>Title</label><input id="se-title" value="${esc(cfg.params?.title || '')}"></div>
     <div class="field"><label>Assigned To (user ID)</label><input id="se-assigned-to" type="number" value="${esc(cfg.params?.assigned_to || '')}"></div>
     <div class="field"><label>Description</label><textarea id="se-desc" rows="3">${esc(cfg.params?.description || '')}</textarea></div>`;
@@ -911,7 +957,7 @@ function seqRenderActionConfig(type, cfg) {
       : `<option value="${esc(curCred)}" selected>loading credentials…</option>`;
     const headersText = cfg.headers ? JSON.stringify(cfg.headers, null, 2) : '{}';
     const bodyText    = cfg.body    ? JSON.stringify(cfg.body,    null, 2) : '{\n  "contact_id": "{{trigger_data.contact_id}}"\n}';
-    return `
+    return `${toggle}
       <div class="field-row">
         <div class="field" style="flex:0 0 120px"><label>Method</label>
           <select id="se-wh-method">${methods.map(m => `<option ${m === curMethod ? 'selected' : ''}>${m}</option>`).join('')}</select>
@@ -956,7 +1002,7 @@ function seqRenderActionConfig(type, cfg) {
     const datalistHtml = (typeof P.fdParamSourceDatalistHtml === 'function')
       ? P.fdParamSourceDatalistHtml('se-sw-initdata-sources')
       : '';
-    return `
+    return `${toggle}
       <div class="field"><label>Workflow</label>
         <select id="se-sw-workflow">${wfOpts}</select>
       </div>
@@ -975,11 +1021,28 @@ function seqRenderActionConfig(type, cfg) {
         <p style="font-size:11px;color:var(--muted);margin:4px 0 0">Contact ID or <code>{{placeholder}}</code>. Empty means rely on workflow template default.</p>
       </div>`;
   }
-  // internal_function
-  return `
-    <div class="field"><label>Function</label><select id="se-fn">${(FUNCTIONS.sequence.length ? FUNCTIONS.sequence : ['noop']).map(f => `<option ${cfg.function_name === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
-    <div class="field"><label>Params (JSON)</label><textarea id="se-params" rows="6">${cfg.params ? JSON.stringify(cfg.params, null, 2) : '{}'}</textarea></div>
-    <div class="field"><label>set_vars (JSON)</label><textarea id="se-setvars" rows="3">${cfg.set_vars ? JSON.stringify(cfg.set_vars, null, 2) : ''}</textarea></div>`;
+  // ── internal_function — metadata-driven form. Falls back to JSON params
+  // textarea when no metadata is registered for the function. set_vars is
+  // hidden in the sequence renderer (SEQ_HIDE_SETVARS_FIELD) — see filter
+  // constants near top of script.
+  const fnList   = (FUNCTIONS.sequence.length ? FUNCTIONS.sequence : ['noop']);
+  const currentFn = cfg.function_name && fnList.includes(cfg.function_name) ? cfg.function_name : fnList[0];
+  const setVarsHtml = SEQ_HIDE_SETVARS_FIELD
+    ? ''
+    : `<div class="field"><label>set_vars (JSON)</label><textarea id="se-setvars" rows="3">${cfg.set_vars ? esc(JSON.stringify(cfg.set_vars, null, 2)) : ''}</textarea></div>`;
+  // When the set_vars field is hidden, preserve any existing set_vars value
+  // through round-trip save via a hidden input. Without this, opening a step
+  // that has set_vars and re-saving via the form would silently drop them.
+  // The JSON-mode round-trip also relies on this — toggleJson re-renders the
+  // form with the just-gathered cfg, so any JSON-mode edit to set_vars flows
+  // back through this hidden input.
+  const setVarsHidden = (SEQ_HIDE_SETVARS_FIELD && cfg.set_vars && Object.keys(cfg.set_vars).length)
+    ? `<input type="hidden" id="se-setvars-preserved" value="${esc(JSON.stringify(cfg.set_vars))}">`
+    : '';
+  return `${toggle}
+    <div class="field"><label>Function</label><select id="se-fn" onchange="seqOnFnChange()">${fnList.map(f => `<option ${currentFn === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+    <div id="se-fn-body">${seqRenderInternalFnBody(currentFn, cfg.params || {})}</div>
+    ${setVarsHtml}${setVarsHidden}`;
 }
 
 // Slice 3.3 — checkbox handler for start_workflow's tie-to-contact toggle.
@@ -987,6 +1050,199 @@ function seqOnStartWorkflowTieChange() {
   const checked = document.getElementById('se-sw-tie')?.checked;
   const wrap = document.getElementById('se-sw-override-wrap');
   if (wrap) wrap.style.display = checked ? 'none' : '';
+}
+
+// ─────────────────────────────────────────────────────────────
+// Internal-function form renderer — drives off FUNCTIONS.meta. Mirror of
+// the workflows.html wfRenderInternalFnBody / wfRenderParamField pair, with
+// SEQ_HIDDEN_PARAMS filtering to suppress workflow-only params (output_var,
+// count_var, date_var) that would silently no-op in sequences.
+//
+// Renders:
+//   - Description line (one-liner from meta.description)
+//   - Mode toggle (when meta has params with modeGroup)
+//   - Per-param form fields, ordered by meta.params declaration
+//   - Params JSON fallback when no meta is present
+//
+// Field naming: id="se-pf-{paramName}" for per-param inputs.
+// Mode tracking: data-mode attribute on the body container.
+// ─────────────────────────────────────────────────────────────
+
+function _seqHumanizeMode(s) {
+  return String(s || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function _seqHasPlaceholder(v) {
+  return typeof v === 'string' && /\{\{[^}]+\}\}/.test(v);
+}
+
+function _seqDetectMode(meta, params) {
+  // Returns {modes:[], current} — which modeGroup is currently active based
+  // on which params are populated. Defaults to first declared mode.
+  const modes = [];
+  for (const p of meta.params) {
+    if (p.modeGroup && !modes.includes(p.modeGroup)) modes.push(p.modeGroup);
+  }
+  if (!modes.length) return { modes: [], current: null };
+  for (const mode of modes) {
+    const fieldsInMode = meta.params.filter(p => p.modeGroup === mode);
+    const anyPopulated = fieldsInMode.some(p => {
+      // nullishSkipsBlock: key-presence counts even when null
+      if (p.nullishSkipsBlock) return p.name in params;
+      const v = params[p.name];
+      return v !== undefined && v !== null && v !== '';
+    });
+    if (anyPopulated) return { modes, current: mode };
+  }
+  return { modes, current: modes[0] };
+}
+
+function seqRenderInternalFnBody(fnName, params) {
+  const meta = FUNCTIONS.meta[fnName];
+  if (!meta) {
+    // No metadata — fall back to Params JSON textarea.
+    return `<div class="field"><label>Params (JSON)</label><textarea id="se-params" rows="8">${esc(params ? JSON.stringify(params, null, 2) : '{}')}</textarea></div>`;
+  }
+
+  const desc = meta.description
+    ? `<p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.5">${esc(meta.description)}</p>`
+    : '';
+
+  // Filter out workflow-only params for the sequence renderer. SEQ_HIDDEN_PARAMS
+  // is the slice-B kill list — see comment near constant declaration.
+  const visibleParams = meta.params.filter(p => !SEQ_HIDDEN_PARAMS.has(p.name));
+
+  if (!visibleParams.length) {
+    // Functions with no (visible) params (noop, etc.)
+    return `${desc}<p style="font-size:12px;color:var(--muted);margin:0 0 10px">No parameters required.</p>`;
+  }
+
+  const { modes, current } = _seqDetectMode({ params: visibleParams }, params);
+
+  const modeBar = modes.length
+    ? `<div class="field">
+         <label>Mode</label>
+         <div style="display:flex;gap:6px">
+           ${modes.map(m => `<button type="button" class="mode-btn" data-mode="${m}" onclick="seqOnModeChange('${m}')" style="padding:6px 12px;border:1px solid ${m === current ? 'var(--blue)' : 'var(--border)'};background:${m === current ? 'rgba(79,142,247,0.15)' : 'transparent'};color:var(--text);border-radius:6px;cursor:pointer;font-size:12px">${esc(_seqHumanizeMode(m))}</button>`).join('')}
+         </div>
+       </div>`
+    : '';
+
+  const fieldsHtml = visibleParams.map(spec => {
+    const value = params[spec.name];
+    const visible = !spec.modeGroup || spec.modeGroup === current;
+    return seqRenderParamField(spec, value, visible);
+  }).join('');
+
+  return `<div id="se-fn-body-inner" data-mode="${current || ''}">${desc}${modeBar}${fieldsHtml}</div>`;
+}
+
+function seqRenderParamField(spec, value, visible) {
+  const id = `se-pf-${spec.name}`;
+  const labelHtml = `<label>${esc(spec.name)}${spec.required ? ' <span style="color:#ef4444">*</span>' : ''}</label>`;
+  const helpHtml = spec.description
+    ? `<p style="font-size:11px;color:var(--muted);margin:4px 0 0;line-height:1.4">${esc(spec.description)}</p>`
+    : '';
+  const wrapperStyle = visible ? '' : 'display:none';
+  const wrapperAttrs = `class="field" id="se-pfw-${spec.name}" data-mode-group="${spec.modeGroup || ''}" style="${wrapperStyle}"`;
+
+  // Widget hints — phone_line / phone_line_mms / email_from dropdowns (shell helpers).
+  // Falls through to default text input if the helper isn't present.
+  if (spec.widget === 'phone_line' && typeof P.fdPhoneLineSelectHtml === 'function') {
+    return `<div ${wrapperAttrs}>${labelHtml}${P.fdPhoneLineSelectHtml(id, value || '')}${helpHtml}</div>`;
+  }
+  if (spec.widget === 'phone_line_mms' && typeof P.fdPhoneLineMmsSelectHtml === 'function') {
+    return `<div ${wrapperAttrs}>${labelHtml}${P.fdPhoneLineMmsSelectHtml(id, value || '')}${helpHtml}</div>`;
+  }
+  if (spec.widget === 'email_from' && typeof P.fdEmailFromSelectHtml === 'function') {
+    return `<div ${wrapperAttrs}>${labelHtml}${P.fdEmailFromSelectHtml(id, value || '')}${helpHtml}</div>`;
+  }
+
+  // Type-driven rendering.
+  let inputHtml;
+  switch (spec.type) {
+    case 'boolean': {
+      const checked = value === true ? 'checked' : '';
+      inputHtml = `<input type="checkbox" id="${id}" ${checked} style="width:auto">`;
+      break;
+    }
+    case 'enum': {
+      const opts = spec.enum || [];
+      const includeBlank = !spec.required;
+      const blank = includeBlank ? '<option value=""></option>' : '';
+      inputHtml = `<select id="${id}">${blank}${opts.map(o => `<option ${o === value ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+      break;
+    }
+    case 'integer':
+    case 'number': {
+      const v = (value === null || value === undefined) ? '' : value;
+      const step = spec.type === 'integer' ? 'step="1"' : '';
+      const min  = spec.min !== undefined ? `min="${spec.min}"` : '';
+      const max  = spec.max !== undefined ? `max="${spec.max}"` : '';
+      inputHtml = `<input id="${id}" type="number" ${step} ${min} ${max} value="${esc(v)}">`;
+      break;
+    }
+    case 'object':
+    case 'array': {
+      let display = '';
+      if (value !== undefined && value !== null) {
+        display = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+      }
+      const placeholder = spec.type === 'array' ? '[]' : '{}';
+      inputHtml = `<textarea id="${id}" rows="4" placeholder="${placeholder}">${esc(display)}</textarea>`;
+      break;
+    }
+    default: {
+      // string / iso_datetime / duration / placeholder_string
+      const v = (value === null || value === undefined) ? '' : String(value);
+      if (spec.multiline) {
+        inputHtml = `<textarea id="${id}" rows="4">${esc(v)}</textarea>`;
+      } else {
+        inputHtml = `<input id="${id}" value="${esc(v)}">`;
+      }
+    }
+  }
+
+  return `<div ${wrapperAttrs}>${labelHtml}${inputHtml}${helpHtml}</div>`;
+}
+
+function seqOnFnChange() {
+  const fn = document.getElementById('se-fn')?.value;
+  const target = document.getElementById('se-fn-body');
+  if (target) target.innerHTML = seqRenderInternalFnBody(fn, {});
+}
+
+function seqOnModeChange(mode) {
+  const inner = document.getElementById('se-fn-body-inner');
+  if (!inner) return;
+  inner.dataset.mode = mode;
+  // Show/hide param wrappers by mode group
+  inner.querySelectorAll('[data-mode-group]').forEach(el => {
+    const g = el.dataset.modeGroup;
+    if (!g) return; // no mode group → always visible
+    el.style.display = (g === mode) ? '' : 'none';
+  });
+  // Update mode button styling
+  inner.querySelectorAll('.mode-btn').forEach(btn => {
+    const isActive = btn.dataset.mode === mode;
+    btn.style.borderColor = isActive ? 'var(--blue)' : 'var(--border)';
+    btn.style.background  = isActive ? 'rgba(79,142,247,0.15)' : 'transparent';
+  });
+}
+
+// JSON toggle. Reads the currently-displayed view via seqGatherActionConfig
+// BEFORE flipping the mode flag; if gather fails (invalid JSON in either
+// view, etc.), stays put so the user can fix it without losing the toggle.
+function seqToggleJson() {
+  const t = document.getElementById('se-action-type')?.value;
+  if (!t) return;
+  const cfg = seqGatherActionConfig(t);
+  if (cfg === null) return;
+  SEQ.jsonMode = !SEQ.jsonMode;
+  document.getElementById('se-config-area').innerHTML = seqRenderActionConfig(t, cfg);
+  // Cred dropdown may have just re-mounted (form mode) — re-evaluate the
+  // internal-cred + non-internal-URL warning. No-op when not webhook.
+  seqUpdateCredWarning();
 }
 
 function seqOnActionTypeChange() {
@@ -1099,9 +1355,26 @@ function seqRenderConditionsTab(step) {
     </div>`;
 }
 
-function seqGatherStep() {
-  // Gather action config
-  const actionType = document.getElementById('se-action-type')?.value || SEQ.steps[SEQ.activeStepIdx]?.action_type || 'sms';
+// ─────────────────────────────────────────────────────────────
+// Gather the action_config blob from the editor. Branches on:
+//   - SEQ.jsonMode (raw textarea)  → parse as JSON
+//   - actionType                   → action-specific form fields
+//   - internal_function:
+//       - meta available + form rendered → per-field gather with type coercion
+//       - meta missing or fallback JSON textarea present → parse #se-params
+//
+// Returns the action_config object, or null on validation failure (caller
+// must early-return without saving). Used by both seqGatherStep (for save)
+// and seqToggleJson (to capture state across the form↔JSON flip).
+// ─────────────────────────────────────────────────────────────
+function seqGatherActionConfig(actionType) {
+  if (SEQ.jsonMode) {
+    const raw = document.getElementById('se-config-json')?.value?.trim() ?? '';
+    if (!raw) return {};
+    try { return JSON.parse(raw); }
+    catch { Swal.fire('Error', 'Action Config JSON invalid', 'error'); return null; }
+  }
+
   const val = id => document.getElementById(id)?.value?.trim() || '';
   const tryParse = (id, fb = null) => {
     const el = document.getElementById(id);
@@ -1110,9 +1383,10 @@ function seqGatherStep() {
     catch { Swal.fire('Error', `${id} is not valid JSON`, 'error'); return 'ERROR'; }
   };
 
-  let action_config = {};
-  if (actionType === 'sms') action_config = { function_name: 'send_sms', params: { from: val('se-from'), to: val('se-to'), message: val('se-message') } };
-  else if (actionType === 'email') {
+  if (actionType === 'sms') {
+    return { function_name: 'send_sms', params: { from: val('se-from'), to: val('se-to'), message: val('se-message') } };
+  }
+  if (actionType === 'email') {
     const params = {
       from: val('se-from'),
       to: val('se-to'),
@@ -1130,13 +1404,13 @@ function seqGatherStep() {
       }
       if (parsed.length) params.attachment_urls = parsed;
     }
-    action_config = { function_name: 'send_email', params };
+    return { function_name: 'send_email', params };
   }
-  else if (actionType === 'task') {
+  if (actionType === 'task') {
     const desc = val('se-desc');
-    action_config = { function_name: 'create_task', params: { title: val('se-title'), assigned_to: parseInt(val('se-assigned-to')) || 0, ...(desc && { description: desc }) } };
+    return { function_name: 'create_task', params: { title: val('se-title'), assigned_to: parseInt(val('se-assigned-to')) || 0, ...(desc && { description: desc }) } };
   }
-  else if (actionType === 'webhook') {
+  if (actionType === 'webhook') {
     // Slice 3.3 — webhook step. URL can contain {{placeholders}}; resolver
     // runs at execution time.
     const url = val('se-wh-url');
@@ -1147,7 +1421,7 @@ function seqGatherStep() {
     const credId  = credRaw ? parseInt(credRaw) : null;
     const timeoutRaw = val('se-wh-timeout');
     const timeout_ms = timeoutRaw ? parseInt(timeoutRaw) : 30000;
-    action_config = {
+    return {
       method: document.getElementById('se-wh-method')?.value || 'POST',
       url,
       ...(credId && { credential_id: credId }),
@@ -1156,7 +1430,7 @@ function seqGatherStep() {
       timeout_ms,
     };
   }
-  else if (actionType === 'start_workflow') {
+  if (actionType === 'start_workflow') {
     // Slice 3.3 — start_workflow step.
     const wfRaw = val('se-sw-workflow');
     if (!wfRaw) { Swal.fire('Error', 'Workflow is required', 'error'); return null; }
@@ -1165,18 +1439,114 @@ function seqGatherStep() {
     const init_data = tryParse('se-sw-initdata', {}); if (init_data === 'ERROR') return null;
     const tieChecked = document.getElementById('se-sw-tie')?.checked;
     const overrideVal = val('se-sw-override');
-    action_config = {
+    return {
       workflow_id,
       init_data: init_data || {},
       tie_to_contact: !!tieChecked,
       contact_id_override: tieChecked ? null : (overrideVal || ''),
     };
   }
-  else {
-    const params = tryParse('se-params', {}); if (params === 'ERROR') return null;
-    const sv = tryParse('se-setvars'); if (sv === 'ERROR') return null;
-    action_config = { function_name: val('se-fn'), params, ...(sv && { set_vars: sv }) };
+  // internal_function — metadata-driven path with JSON fallback.
+  const fnName = val('se-fn');
+  // set_vars handling:
+  //   - When the field is rendered (SEQ_HIDE_SETVARS_FIELD=false): gather
+  //     from the textarea like normal.
+  //   - When the field is hidden: read from a hidden input that the renderer
+  //     emits to preserve the original step's set_vars across form-mode
+  //     saves and form↔JSON round-trips. Avoids silently dropping data on
+  //     unrelated edits.
+  let sv = null;
+  if (!SEQ_HIDE_SETVARS_FIELD) {
+    sv = tryParse('se-setvars');
+    if (sv === 'ERROR') return null;
+  } else {
+    const hidden = document.getElementById('se-setvars-preserved');
+    if (hidden?.value) {
+      try { sv = JSON.parse(hidden.value); } catch { /* malformed — drop silently */ }
+    }
   }
+
+  // Fallback path: function has no metadata (or load failed) → still a
+  // JSON textarea at #se-params.
+  if (!FUNCTIONS.meta[fnName] || document.getElementById('se-params')) {
+    const params = tryParse('se-params', {});
+    if (params === 'ERROR') return null;
+    const cfg = { function_name: fnName, params };
+    if (sv) cfg.set_vars = sv;
+    return cfg;
+  }
+
+  // Metadata-driven gather — read per-field inputs, skip hidden mode-group
+  // fields and skip workflow-only params (SEQ_HIDDEN_PARAMS).
+  const meta = FUNCTIONS.meta[fnName];
+  const inner = document.getElementById('se-fn-body-inner');
+  const activeMode = inner ? inner.dataset.mode : '';
+  const params = {};
+
+  for (const spec of meta.params) {
+    if (SEQ_HIDDEN_PARAMS.has(spec.name)) continue;
+    if (spec.modeGroup && spec.modeGroup !== activeMode) continue;
+
+    const el = document.getElementById(`se-pf-${spec.name}`);
+    if (!el) continue;
+
+    if (spec.type === 'boolean') {
+      if (el.checked) params[spec.name] = true;
+      else if (spec.default === true) params[spec.name] = false; // explicit override of true default
+      continue;
+    }
+
+    const raw = (el.value || '').trim();
+    if (!raw) continue;
+
+    switch (spec.type) {
+      case 'integer': {
+        const n = parseInt(raw, 10);
+        if (Number.isFinite(n)) params[spec.name] = n;
+        else { Swal.fire('Error', `${spec.name} must be an integer`, 'error'); return null; }
+        break;
+      }
+      case 'number': {
+        const n = Number(raw);
+        if (Number.isFinite(n)) params[spec.name] = n;
+        else { Swal.fire('Error', `${spec.name} must be a number`, 'error'); return null; }
+        break;
+      }
+      case 'object':
+      case 'array': {
+        try {
+          const parsed = JSON.parse(raw);
+          const isArr = Array.isArray(parsed);
+          if (spec.type === 'array' && !isArr) {
+            Swal.fire('Error', `${spec.name} must be a JSON array`, 'error');
+            return null;
+          }
+          if (spec.type === 'object' && (isArr || typeof parsed !== 'object' || parsed === null)) {
+            Swal.fire('Error', `${spec.name} must be a JSON object`, 'error');
+            return null;
+          }
+          params[spec.name] = parsed;
+        } catch {
+          Swal.fire('Error', `${spec.name} is not valid JSON`, 'error');
+          return null;
+        }
+        break;
+      }
+      default:
+        // string / enum / iso_datetime / duration / placeholder_string
+        params[spec.name] = raw;
+    }
+  }
+
+  const cfg = { function_name: fnName, params };
+  if (sv) cfg.set_vars = sv;
+  return cfg;
+}
+
+function seqGatherStep() {
+  const actionType = document.getElementById('se-action-type')?.value || SEQ.steps[SEQ.activeStepIdx]?.action_type || 'sms';
+  const action_config = seqGatherActionConfig(actionType);
+  if (action_config === null) return null;
 
   // Gather timing
   const timingType = document.getElementById('st-type')?.value;
@@ -1218,6 +1588,15 @@ function seqGatherStep() {
   let condition = null, fire_guard = null;
   const cq = document.getElementById('sc-query')?.value?.trim();
   if (cq) {
+    // Local tryParse — was previously hoisted in seqGatherStep but moved into
+    // seqGatherActionConfig along with the action_config gather. Inlined here
+    // for the two condition fields that still need it.
+    const tryParse = (id, fb = null) => {
+      const el = document.getElementById(id);
+      if (!el || !el.value.trim()) return fb;
+      try { return JSON.parse(el.value); }
+      catch { Swal.fire('Error', `${id} is not valid JSON`, 'error'); return 'ERROR'; }
+    };
     const cp = tryParse('sc-params', {}); if (cp === 'ERROR') return null;
     const ca = tryParse('sc-assert', {}); if (ca === 'ERROR') return null;
     condition = { query: cq, params: cp, assert: ca };
@@ -2161,6 +2540,9 @@ window.seqStepCancel              = seqStepCancel;
 window.seqOnActionTypeChange      = seqOnActionTypeChange;
 window.seqUpdateCredWarning       = seqUpdateCredWarning;
 window.seqOnStartWorkflowTieChange = seqOnStartWorkflowTieChange;
+window.seqOnFnChange              = seqOnFnChange;
+window.seqOnModeChange            = seqOnModeChange;
+window.seqToggleJson              = seqToggleJson;
 window.seqOnTimingTypeChange      = seqOnTimingTypeChange;
 window.seqOnDelayModeChange       = seqOnDelayModeChange;
 window.loadSequenceEnrollments    = loadSequenceEnrollments;
