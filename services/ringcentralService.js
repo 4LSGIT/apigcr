@@ -86,7 +86,7 @@ async function refreshAccessToken(db) {
       // Acquire lock (timeout 10s; adjust as needed)
       const [[{ lockAcquired }]] = await db.query("SELECT GET_LOCK('rc_token_refresh', 10) AS lockAcquired");
       if (lockAcquired !== 1) {
-        throw new Error("Could not acquire refresh lock; another instance may be refreshing");
+        throw new Error(`Could not acquire refresh lock; another instance may be refreshing\nEnvironment: ${process.env.ENVIRONMENT || "unknown"}`);
       }
 
       // Reload token from DB to check if another instance already refreshed
