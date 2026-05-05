@@ -26,7 +26,7 @@
 const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
-const { enrollContact, enrollContactByTemplateId, cancelSequences } = require('../lib/sequenceEngine');
+const { enrollContact, enrollContactByTemplateId, cancelSequences, validateTemplateFilters } = require('../lib/sequenceEngine');
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // Normalize the optional `type` column. As of Slice B, sequence_templates.type
@@ -52,6 +52,24 @@ function validateTestInput(v) {
     return {
       status: 400,
       error: 'test_input must be a JSON object or null (arrays and primitives are not accepted)',
+    };
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Slice E Phase 2 — filters shape validation helper.
+//
+// Shape-only check (object | null | undefined). Semantic validation
+// against the type's priority_fields is delegated to
+// sequenceEngine.validateTemplateFilters which hits the DB.
+// ─────────────────────────────────────────────────────────────
+function validateFiltersShape(v) {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'object' || Array.isArray(v)) {
+    return {
+      status: 400,
+      error: 'filters must be a JSON object or null (arrays and primitives are not accepted)',
     };
   }
   return null;
@@ -359,9 +377,13 @@ router.get('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
 // Slice 2.1: `test_input` is authorial documentation of the trigger_data
 // shape this sequence expects. Nullable. Plain JSON object only — arrays
 // and primitives rejected with 400. Not validated at runtime.
+//
+// Slice E Phase 2: `filters` JSON replaces appt_type_filter / appt_with_filter.
+// Keys must be a subset of the type's priority_fields (validated against
+// sequence_template_types). Filters cannot be set on type-less templates.
 router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
   const db = req.db;
-  const { name, type, appt_type_filter, appt_with_filter, condition, description, active = true, test_input } = req.body;
+  const { name, type, filters, condition, description, active = true, test_input } = req.body;
 
   if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
 
@@ -371,14 +393,29 @@ router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
     if (v) return res.status(v.status).json({ error: v.error });
   }
 
+  // Slice E Phase 2 — filters shape validation.
+  {
+    const v = validateFiltersShape(filters);
+    if (v) return res.status(v.status).json({ error: v.error });
+  }
+
   const typeVal = normalizeType(type);
+
+  // Slice E Phase 2 — semantic filter validation against priority_fields.
+  // Skipped when type is NULL (ID-only templates) — but only if filters is
+  // also empty; non-empty filters on a type-less template is an error
+  // surfaced by validateTemplateFilters itself.
+  {
+    const v = await validateTemplateFilters(db, typeVal, filters);
+    if (!v.valid) return res.status(400).json({ error: v.error });
+  }
 
   try {
     const [result] = await db.query(
-      `INSERT INTO sequence_templates (name, type, appt_type_filter, appt_with_filter, \`condition\`, description, active, test_input)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name.trim(), typeVal, appt_type_filter || null,
-       appt_with_filter != null ? parseInt(appt_with_filter) : null,
+      `INSERT INTO sequence_templates (name, type, filters, \`condition\`, description, active, test_input)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [name.trim(), typeVal,
+       toJson(filters),
        condition ? JSON.stringify(condition) : null,
        description || null, active ? 1 : 0,
        toJson(test_input)]
@@ -397,10 +434,14 @@ router.post('/sequences/templates', jwtOrApiKey, async (req, res) => {
 //
 // Slice 2.1: `test_input` is accepted as a partial-update field. Pass `null`
 // to explicitly clear it. Omit from body to leave unchanged.
+//
+// Slice E Phase 2: `filters` is a partial-update field. Pass `null` to clear.
+// Validated against the type currently being saved (or the existing row's
+// type if `type` isn't in the body).
 router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const id = parseInt(req.params.id);
-  const { name, type, appt_type_filter, appt_with_filter, condition, description, active, test_input } = req.body;
+  const { name, type, filters, condition, description, active, test_input } = req.body;
 
   // Slice 2.1 — test_input shape validation (only if present in body).
   if (test_input !== undefined) {
@@ -408,14 +449,38 @@ router.put('/sequences/templates/:id', jwtOrApiKey, async (req, res) => {
     if (v) return res.status(v.status).json({ error: v.error });
   }
 
+  // Slice E Phase 2 — filters shape validation (only if present in body).
+  if (filters !== undefined) {
+    const v = validateFiltersShape(filters);
+    if (v) return res.status(v.status).json({ error: v.error });
+  }
+
+  // Slice E Phase 2 — semantic filter validation. We need the resulting
+  // type after this PUT to validate against the right priority_fields.
+  // If `type` isn't in the body, look up the existing row.
+  if (filters !== undefined) {
+    let typeForValidation;
+    if (type !== undefined) {
+      typeForValidation = normalizeType(type);
+    } else {
+      const [[existing]] = await db.query(
+        `SELECT type FROM sequence_templates WHERE id = ?`,
+        [id]
+      );
+      if (!existing) return res.status(404).json({ error: 'Template not found' });
+      typeForValidation = existing.type;
+    }
+    const v = await validateTemplateFilters(db, typeForValidation, filters);
+    if (!v.valid) return res.status(400).json({ error: v.error });
+  }
+
   const updates = [];
   const params  = [];
 
   if (name        !== undefined) { updates.push('name = ?');              params.push(name?.trim()); }
   if (type        !== undefined) { updates.push('type = ?');              params.push(normalizeType(type)); }
-  if (appt_type_filter !== undefined) { updates.push('appt_type_filter = ?'); params.push(appt_type_filter); }
-  if (appt_with_filter !== undefined) { updates.push('appt_with_filter = ?'); params.push(appt_with_filter != null ? parseInt(appt_with_filter) : null); }
-  if (condition   !== undefined) { updates.push('\`condition\` = ?');         params.push(condition ? JSON.stringify(condition) : null); }
+  if (filters     !== undefined) { updates.push('filters = ?');           params.push(toJson(filters)); }
+  if (condition   !== undefined) { updates.push('\`condition\` = ?');     params.push(condition ? JSON.stringify(condition) : null); }
   if (description !== undefined) { updates.push('description = ?');       params.push(description); }
   if (active      !== undefined) { updates.push('active = ?');            params.push(active ? 1 : 0); }
   if (test_input  !== undefined) { updates.push('test_input = ?');        params.push(toJson(test_input)); }
@@ -479,8 +544,10 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
     //
     // Slice 2.1: also SELECT test_input so the duplicate carries over the
     // authorial trigger_data shape doc.
+    // Slice E Phase 2: SELECT filters JSON in place of the dropped
+    // appt_type_filter / appt_with_filter columns.
     const [tplRows] = await connection.query(
-      `SELECT name, type, appt_type_filter, appt_with_filter, \`condition\`, description, test_input
+      `SELECT name, type, filters, \`condition\`, description, test_input
        FROM sequence_templates WHERE id = ?`,
       [originalId]
     );
@@ -493,21 +560,18 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
     const newName  = customName?.trim() || `Copy of ${original.name}`;
 
     // Insert new template — active=0 (starts inactive, intentional).
-    // JSON column `condition` is passed through as-is from SELECT; mysql2
-    // handles the round-trip without double-encoding.
+    // JSON columns (`filters`, `condition`, `test_input`) round-trip through
+    // toJson — handles either string or parsed-object return from SELECT.
     // `type` is copied verbatim — if original is NULL (ID-only), the duplicate
     // is NULL (ID-only) too.
-    // `test_input` (Slice 2.1) is copied via toJson — handles either string
-    // or parsed-object return from SELECT.
     const [newTplResult] = await connection.query(
       `INSERT INTO sequence_templates
-        (name, type, appt_type_filter, appt_with_filter, \`condition\`, description, active, test_input)
-       VALUES (?, ?, ?, ?, ?, ?, 0, ?)`,
+        (name, type, filters, \`condition\`, description, active, test_input)
+       VALUES (?, ?, ?, ?, ?, 0, ?)`,
       [
         newName,
         original.type,
-        original.appt_type_filter,
-        original.appt_with_filter,
+        toJson(original.filters),
         toJson(original.condition),
         original.description,
         toJson(original.test_input)
@@ -783,14 +847,21 @@ router.delete('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (
 // POST /sequences/enroll
 //
 // Two modes — pass exactly one of:
-//   template_type  (+ optional appt_type, appt_with) — cascade match
-//   template_id    — target a specific template directly (no cascade filters)
+//   template_type — cascade match against sequence_template_types config;
+//                   any cascade fields (e.g. appt_type, appt_with, case_type)
+//                   should be inside `trigger_data`, NOT top-level.
+//   template_id   — target a specific template directly (no cascade)
 //
 // Slice B: if `template_type` is present in the body but null / empty string /
 // whitespace-only, we reject with 400 rather than falling through to a zero-
 // match cascade query. Keeps behavior explicit and prevents an accidental
 // "cascade-match against NULL-type templates" surface if client code sends a
 // blanked-out value.
+//
+// Slice E Phase 2: top-level appt_type / appt_with body fields are no longer
+// accepted — the cascade reads them from trigger_data. This is a backward-
+// incompatible change; any external caller still sending them must move
+// those fields inside trigger_data.
 router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const {
@@ -798,8 +869,6 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
     template_type,
     template_id,
     trigger_data = {},
-    appt_type = null,
-    appt_with = null,
   } = req.body;
 
   if (!contact_id) {
@@ -834,12 +903,6 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
 
   try {
     if (hasId) {
-      // By-ID mode — cascade filters are not allowed
-      if (appt_type !== null || appt_with !== null) {
-        return res.status(400).json({
-          error: 'appt_type and appt_with are only valid with template_type (cascade mode); omit them when using template_id',
-        });
-      }
       const idInt = parseInt(template_id, 10);
       if (!Number.isInteger(idInt) || idInt <= 0) {
         return res.status(400).json({ error: 'template_id must be a positive integer' });
@@ -855,8 +918,8 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
       return res.status(201).json({ success: true, ...result });
     }
 
-    // By-type (cascade) mode — original behavior, unchanged
-    const result = await enrollContact(db, contact_id, template_type, trigger_data, { appt_type, appt_with });
+    // By-type (cascade) mode — cascade keys come from trigger_data.
+    const result = await enrollContact(db, contact_id, template_type, trigger_data);
     res.status(201).json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ error: 'Failed to enroll contact', message: err.message });

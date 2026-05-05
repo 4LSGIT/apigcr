@@ -532,14 +532,16 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
     if (activeEnrollments === 0) {
       try {
         const seq = getSequenceEngine();
+        // Cascade fields (appt_type, appt_with) live in trigger_data now —
+        // sequenceEngine.enrollContact reads them from there per the type's
+        // priority_fields config in sequence_template_types.
         await seq.enrollContact(db, appt.appt_client_id, 'no_show', {
           appt_id:     appt_id,
           appt_time:   appt.appt_date,
           case_id:     appt.appt_case_id,
+          appt_type:   appt.appt_type,
+          appt_with:   appt.appt_with,
           enrolled_by: 'no_show_handler'
-        }, {
-          appt_type: appt.appt_type,
-          appt_with: appt.appt_with
         });
         enrolled = true;
       } catch (err) {

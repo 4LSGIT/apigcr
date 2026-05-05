@@ -514,8 +514,13 @@ async function deliverWorkflow(target, targetConfig, targetOutput, db) {
  * the enrollment row and schedules the first step job.
  *
  * Two modes, determined by targetConfig:
- *   - template_id set → enrollContactByTemplateId (direct), no cascade filters
- *   - template_type set → enrollContact (cascade), honors appt_type/appt_with filters
+ *   - template_id set → enrollContactByTemplateId (direct)
+ *   - template_type set → enrollContact (cascade)
+ *
+ * Cascade fields are no longer a separate config — the cascade reads them
+ * from the resolved triggerData object. To get cascade specificity, list
+ * the relevant fields (appt_type, appt_with, case_type, …) in
+ * targetConfig.trigger_data_fields so they flow into triggerData.
  *
  * contact_id_field and trigger_data_fields entries support dot-paths — e.g.
  * "body.contactId" on a passthrough hook — so users don't need a mapper just
@@ -563,8 +568,6 @@ async function deliverSequence(target, targetConfig, targetOutput, db) {
       contact_id: contactId,
       template_type: templateType,
       trigger_data: triggerData,
-      appt_type: targetConfig.appt_type_filter || null,
-      appt_with: targetConfig.appt_with_filter || null,
     };
     requestUrl = `internal://sequence/${templateType || '?'}`;
   }
@@ -611,8 +614,7 @@ async function deliverSequence(target, targetConfig, targetOutput, db) {
         db,
         contactId,
         templateType,
-        triggerData,
-        { appt_type: callPayload.appt_type, appt_with: callPayload.appt_with }
+        triggerData
       );
     }
 
@@ -846,8 +848,6 @@ function buildDryRunPreview(target, hookTransformOutput) {
         contact_id_field: contactIdField,
         template_type: targetConfig.template_type || null,
         trigger_data: triggerData,
-        appt_type: targetConfig.appt_type_filter || null,
-        appt_with: targetConfig.appt_with_filter || null,
       },
     };
   }
