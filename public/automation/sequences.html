@@ -376,6 +376,103 @@
     ::-webkit-scrollbar { width: 4px; height: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ══════════════════════════════════════════════
+       SEQUENCE TYPES MANAGER (modal contents)
+       ══════════════════════════════════════════════ */
+    .stm-list { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+    .stm-empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 13px; }
+    .stm-row {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+      background: var(--surface);
+    }
+    .stm-row.inactive { opacity: 0.55; background: #fafafa; }
+    .stm-row-body { flex: 1; min-width: 0; }
+    .stm-row-name { font-weight: 600; font-size: 13px; color: var(--text); }
+    .stm-row-desc { font-size: 12px; color: var(--text2); margin-top: 2px; }
+    .stm-row-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .stm-chip-pf {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 7px; background: #eef2ff; color: #3730a3;
+      border-radius: 10px; font-size: 11px; font-family: 'SF Mono','Consolas',monospace;
+    }
+    .stm-chip-pf-idx { color: #6366f1; font-weight: 700; }
+    .stm-row-actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+    .stm-row-actions .btn { padding: 4px 9px; font-size: 11px; }
+    .stm-row-toggle {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11px; color: var(--text2); user-select: none; cursor: pointer;
+    }
+
+    /* Priority fields editor (inside type editor modal) */
+    .pfe-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+    .pfe-row {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .pfe-row input[type="text"] {
+      flex: 1; padding: 6px 9px;
+      border: 1px solid var(--border); border-radius: 5px;
+      font-size: 13px; font-family: 'SF Mono','Consolas',monospace;
+      outline: none;
+    }
+    .pfe-row input[type="text"]:focus { border-color: var(--blue); }
+    .pfe-row input[type="text"].invalid { border-color: var(--red); background: #fef2f2; }
+    .pfe-btn {
+      width: 26px; height: 26px;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: var(--bg); color: var(--text2); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; flex-shrink: 0;
+    }
+    .pfe-btn:hover { background: var(--border); }
+    .pfe-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    .pfe-btn.danger:hover { background: #fee2e2; border-color: #fca5a5; color: var(--red); }
+    .pfe-add {
+      align-self: flex-start; margin-top: 6px;
+      padding: 5px 11px; font-size: 11px;
+      background: var(--bg); border: 1px dashed var(--border); border-radius: 5px;
+      color: var(--text2); cursor: pointer;
+    }
+    .pfe-add:hover { background: var(--border); color: var(--text); }
+    .pfe-hint {
+      font-size: 11px; color: var(--muted); margin-top: 4px;
+      font-family: 'SF Mono','Consolas',monospace;
+    }
+
+    /* Filter fields container in template editor swal */
+    .tfe-container { text-align: left; margin: 8px .875em 0; }
+    .tfe-label {
+      display: block; font-size: 11px; font-weight: 600;
+      color: var(--text2); text-transform: uppercase;
+      letter-spacing: 0.05em; margin-bottom: 6px;
+    }
+    .tfe-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .tfe-row-label {
+      width: 130px; flex-shrink: 0;
+      font-size: 12px; color: var(--text2);
+      font-family: 'SF Mono','Consolas',monospace;
+    }
+    .tfe-row input {
+      flex: 1; padding: 6px 9px;
+      border: 1px solid var(--border); border-radius: 5px;
+      font-size: 13px; outline: none;
+    }
+    .tfe-row input:focus { border-color: var(--blue); }
+    .tfe-empty {
+      font-size: 12px; color: var(--muted); font-style: italic;
+      padding: 6px 0;
+    }
+    .tfe-notice {
+      font-size: 11px; color: #c2410c;
+      background: #fff7ed; border: 1px solid #fed7aa;
+      padding: 6px 9px; border-radius: 5px; margin-top: 6px;
+    }
+    .tfe-notice-info {
+      font-size: 11px; color: #3730a3;
+      background: #eef2ff; border: 1px solid #c7d2fe;
+      padding: 6px 9px; border-radius: 5px; margin-bottom: 8px;
+    }
   </style>
 </head>
 <body>
@@ -392,8 +489,8 @@
       <div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">Loading…</div>
     </div>
     <div class="panel-left-foot">
-      <button class="btn btn-primary" style="width:100%;font-size:12px" onclick="seqNew()">
-        <i class="fa-solid fa-plus"></i> New Template
+      <button class="btn btn-outline" style="width:100%;font-size:12px;background:rgba(255,255,255,0.06);border-color:rgba(255,255,255,0.1);color:rgba(255,255,255,0.75)" onclick="seqOpenTypesManager()" title="Manage Sequence Types">
+        <i class="fa-solid fa-gear"></i> Manage Types
       </button>
     </div>
   </div>
@@ -568,6 +665,13 @@ const SEQ_HIDE_SETVARS_FIELD = true;
 const SEQ_CREDENTIALS = { list: [], loaded: false };
 const SEQ_WORKFLOWS   = { list: [], loaded: false };
 
+// Slice E Phase 3 — sequence_template_types cache. Drives the type
+// dropdown and dynamic filter fields in the template editor, plus the
+// in-page Manage Types modal. Reloaded on every onShow + after any type
+// CRUD inside the manager. Includes inactive types so existing templates
+// pinned to a now-inactive type still render correctly.
+const SEQ_TYPES = { list: [], loaded: false };
+
 async function loadFunctions() {
   try {
     const data = await api('/workflows/functions');
@@ -603,7 +707,22 @@ async function loadSeqExtras() {
       SEQ_WORKFLOWS.loaded = true;
     }).catch(e => console.warn('Failed to load workflows:', e.message)));
   }
+  // Slice E Phase 3 — types cache. No active filter; we want orphaned/
+  // inactive types to render in the editor too (with an "(unregistered)"
+  // hint if needed).
+  if (!SEQ_TYPES.loaded) {
+    jobs.push(loadSeqTypes().catch(e => console.warn('Failed to load sequence types:', e.message)));
+  }
   if (jobs.length) await Promise.all(jobs);
+}
+
+// Refresh-able loader — used both by loadSeqExtras (initial) and by the
+// types manager modal (after each CRUD). Always overwrites the cache.
+async function loadSeqTypes() {
+  const d = await api('/api/sequence-types');
+  SEQ_TYPES.list = d.types || d.sequence_types || [];
+  SEQ_TYPES.loaded = true;
+  return SEQ_TYPES.list;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -692,7 +811,7 @@ function renderSeqList() {
     return `
     <div class="left-item${t.id === SEQ.activeTemplateId ? ' active' : ''}" onclick="selectSeqTemplate(${t.id})">
       <div class="left-item-name">${esc(t.name)}</div>
-      <div class="left-item-meta">id: ${t.id} · ${typeDisplay} · ${t.step_count || 0} step${t.step_count !== 1 ? 's' : ''} ${t.appt_type_filter ? '· <span style="color:#60a5fa">' + esc(t.appt_type_filter) + '</span>' : ''}${t.appt_with_filter ? '· <span style="color:#a78bfa">user:' + esc(t.appt_with_filter) + '</span>' : ''}${t.active ? '' : '· <span style="color:#f87171">inactive</span>'}</div>
+      <div class="left-item-meta">id: ${t.id} · ${typeDisplay} · ${t.step_count || 0} step${t.step_count !== 1 ? 's' : ''}${_seqFilterChipsList(t.filters)}${t.active ? '' : ' · <span style="color:#f87171">inactive</span>'}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();seqEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act" onclick="event.stopPropagation();seqDuplicate()"><i class="fa-regular fa-copy"></i></button>
@@ -700,6 +819,19 @@ function renderSeqList() {
       </div>
     </div>`;
   }).join('');
+}
+
+// Slice E Phase 3 — render filters JSON as inline meta chips in the
+// left-pane list. Tolerates filters being null, an object, or a JSON
+// string (mysql2 typeCast variability). Empty object → no chips.
+function _seqFilterChipsList(filters) {
+  const obj = (typeof filters === 'string') ? parseJson(filters) : filters;
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return '';
+  const entries = Object.entries(obj).filter(([, v]) => v !== null && v !== '' && v !== undefined);
+  if (!entries.length) return '';
+  return entries.map(([k, v]) =>
+    ` · <span style="color:#60a5fa">${esc(k)}:${esc(v)}</span>`
+  ).join('');
 }
 
 function seqFilter(q) {
@@ -713,8 +845,13 @@ function seqFilter(q) {
 
 function seqTitleText(t) {
   let s = (t.type && String(t.type).trim()) ? `${t.name} (${t.type})` : `${t.name}`;
-  if (t.appt_type_filter) s += ` · appt: ${t.appt_type_filter}`;
-  if (t.appt_with_filter) s += ` · with: ${t.appt_with_filter}`;
+  // Slice E Phase 3 — generic filters iteration. Tolerates string or object.
+  const f = (typeof t.filters === 'string') ? parseJson(t.filters) : t.filters;
+  if (f && typeof f === 'object' && !Array.isArray(f)) {
+    for (const [k, v] of Object.entries(f)) {
+      if (v !== null && v !== '' && v !== undefined) s += ` · ${k}: ${v}`;
+    }
+  }
   return s;
 }
 
@@ -1674,22 +1811,560 @@ async function seqStepMove(idx, dir) {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// SEQUENCE TYPES — MANAGER MODAL + HELPERS (Slice E Phase 3)
+//
+// Sequence types live in the sequence_template_types table and define
+// (a) the namespace for `sequence_templates.type` and (b) the
+// priority_fields ordering used by the cascade ranker. Editing happens
+// inside this sub-page via a SweetAlert2 modal launched from the
+// bottom-left "Manage Types" button — there is no separate sub-page.
+// All API CRUD goes through /api/sequence-types[/:type] with a Phase 2
+// backend.
+// ══════════════════════════════════════════════════════════════════
+
+// Read priority_fields off a type row, tolerating string or array shape.
+function _seqPriorityFieldsOf(type) {
+  if (!type) return [];
+  const pf = type.priority_fields;
+  if (Array.isArray(pf)) return pf.slice();
+  if (typeof pf === 'string') {
+    const parsed = parseJson(pf);
+    return Array.isArray(parsed) ? parsed.slice() : [];
+  }
+  return [];
+}
+
+// Read the current filter-input values from the open template editor swal.
+function _seqCurrentFilterValues() {
+  const inputs = document.querySelectorAll('#seq-filter-fields-container .seq-filter-input');
+  const out = {};
+  inputs.forEach(inp => {
+    const k = inp.dataset.pfKey;
+    const v = (inp.value || '').trim();
+    if (k && v) out[k] = v;
+  });
+  return out;
+}
+
+// Build <option> HTML for the type dropdown. Active types listed first;
+// orphaned (or inactive) currentType is prepended as a disabled option
+// so the user sees what the template is currently pinned to.
+function _seqTypeOptionsHtml(currentType) {
+  const opts = [];
+  const activeTypes = SEQ_TYPES.list.filter(t => t.active !== 0 && t.active !== false);
+  for (const t of activeTypes) {
+    const desc = (t.description || '').trim();
+    const labelRaw = desc ? `${t.type} — ${desc}` : t.type;
+    const label = labelRaw.length > 70 ? labelRaw.slice(0, 67) + '…' : labelRaw;
+    const sel = (t.type === currentType) ? ' selected' : '';
+    opts.push(`<option value="${esc(t.type)}"${sel}>${esc(label)}</option>`);
+  }
+  if (currentType) {
+    const inActive = activeTypes.some(t => t.type === currentType);
+    if (!inActive) {
+      const inAny = SEQ_TYPES.list.some(t => t.type === currentType);
+      const suffix = inAny ? '(inactive)' : '(unregistered)';
+      opts.unshift(`<option value="${esc(currentType)}" selected disabled>${esc(currentType)} ${suffix}</option>`);
+    }
+  } else {
+    opts.unshift(`<option value="" disabled selected>— Select a type —</option>`);
+  }
+  return opts.join('');
+}
+
+// Render the dynamic filter-fields container based on the selected type's
+// priority_fields. `currentFilters` preloads inputs; `droppedKeys` (if
+// non-empty) shows an amber notice listing fields cleared by a type-change.
+function _seqRenderFilterFields(typeName, currentFilters, droppedKeys) {
+  const el = document.getElementById('seq-filter-fields-container');
+  if (!el) return;
+  if (!typeName) { el.innerHTML = ''; return; }
+  const type = SEQ_TYPES.list.find(t => t.type === typeName);
+  if (!type) { el.innerHTML = ''; return; }
+  const pf = _seqPriorityFieldsOf(type);
+  if (!pf.length) {
+    el.innerHTML = `
+      <div class="tfe-label">Filters</div>
+      <div class="tfe-empty">This type has no priority_fields configured — no filters available.</div>
+    `;
+    return;
+  }
+  currentFilters = currentFilters || {};
+  const droppedSet = new Set(droppedKeys || []);
+  // Orphans: keys present in currentFilters that aren't in pf and weren't
+  // just dropped — i.e. stale data from a prior type config. They'll be
+  // cleared on save.
+  const orphans = Object.keys(currentFilters)
+    .filter(k => !pf.includes(k) && !droppedSet.has(k) && currentFilters[k]);
+  const droppedHtml = (droppedKeys && droppedKeys.length)
+    ? `<div class="tfe-notice">Cleared filter${droppedKeys.length > 1 ? 's' : ''}: ${droppedKeys.map(esc).join(', ')} — not in the new type's priority list.</div>`
+    : '';
+  const orphanHtml = orphans.length
+    ? `<div class="tfe-notice-info">Filter${orphans.length > 1 ? 's' : ''} for ${orphans.map(esc).join(', ')} — no longer in this type's priority list. Will be cleared on save.</div>`
+    : '';
+  el.innerHTML = `
+    <div class="tfe-label">Filters <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(blank = match anything)</span></div>
+    ${orphanHtml}
+    ${pf.map(field => `
+      <div class="tfe-row">
+        <span class="tfe-row-label">${esc(field)}</span>
+        <input type="text" data-pf-key="${esc(field)}" class="seq-filter-input"
+               placeholder="Any" value="${esc(currentFilters[field] || '')}">
+      </div>
+    `).join('')}
+    ${droppedHtml}
+  `;
+}
+
+// Bound to the type <select>'s change event in the template editor swal.
+// Preserves overlapping filter values; drops the rest with a notice.
+function _seqOnTypeChange() {
+  const sel = document.getElementById('swal-type');
+  if (!sel) return;
+  const newType = sel.value;
+  // Clear orphan/inactive warning — picking from the dropdown is by
+  // definition picking a known active type.
+  const warn = document.getElementById('seq-orphan-warn');
+  if (warn) { warn.style.display = 'none'; warn.textContent = ''; }
+  const oldFilters = _seqCurrentFilterValues();
+  const newType_obj = SEQ_TYPES.list.find(t => t.type === newType);
+  const newPf = _seqPriorityFieldsOf(newType_obj);
+  const kept = {};
+  const dropped = [];
+  for (const [k, v] of Object.entries(oldFilters)) {
+    if (newPf.includes(k)) kept[k] = v;
+    else dropped.push(k);
+  }
+  _seqRenderFilterFields(newType, kept, dropped);
+}
+
+// Validate a priority_fields name. Spec: /^[a-z][a-z0-9_]*$/ , ≤50 chars.
+function _seqValidPfName(s) {
+  return typeof s === 'string' && s.length > 0 && s.length <= 50 && /^[a-z][a-z0-9_]*$/.test(s);
+}
+
+// ── Types Manager modal ────────────────────────────────────────
+// Opens a list view of all sequence_template_types. Returns when the
+// user closes it. Re-fetches the cache on entry. Each row supports
+// active toggle, edit, delete. "+ New Type" button opens the editor.
+async function seqOpenTypesManager() {
+  // Fresh fetch every open — small table, cheap call.
+  try { await loadSeqTypes(); }
+  catch (e) {
+    Swal.fire('Error', `Failed to load sequence types: ${e.message}`, 'error');
+    return;
+  }
+
+  await Swal.fire({
+    title: 'Sequence Types',
+    width: 720,
+    showCancelButton: false,
+    showConfirmButton: true,
+    confirmButtonText: 'Close',
+    html: `
+      <div style="display:flex;justify-content:flex-end;margin:0 0 10px">
+        <button class="btn btn-primary btn-sm" id="stm-new-btn">
+          <i class="fa-solid fa-plus"></i> New Type
+        </button>
+      </div>
+      <div id="stm-list-container">${_seqRenderTypesList()}</div>
+    `,
+    didOpen: () => {
+      const newBtn = document.getElementById('stm-new-btn');
+      if (newBtn) newBtn.addEventListener('click', async () => {
+        Swal.close();
+        const created = await seqOpenTypeEditor(null);
+        // Re-open the list regardless of outcome, with refreshed data.
+        if (created !== 'cancelled') await loadSeqTypes().catch(() => {});
+        seqOpenTypesManager();
+      });
+      _seqWireTypesList();
+    }
+  });
+}
+
+function _seqRenderTypesList() {
+  if (!SEQ_TYPES.list.length) {
+    return `<div class="stm-empty">No sequence types yet. Click "+ New Type" to create one.</div>`;
+  }
+  // Sort: active first, then alpha by type name
+  const sorted = SEQ_TYPES.list.slice().sort((a, b) => {
+    const aA = (a.active !== 0 && a.active !== false) ? 0 : 1;
+    const bA = (b.active !== 0 && b.active !== false) ? 0 : 1;
+    if (aA !== bA) return aA - bA;
+    return String(a.type).localeCompare(String(b.type));
+  });
+  return `<div class="stm-list">` + sorted.map(t => {
+    const isActive = t.active !== 0 && t.active !== false;
+    const pf = _seqPriorityFieldsOf(t);
+    const chips = pf.length
+      ? pf.map((f, i) => `<span class="stm-chip-pf"><span class="stm-chip-pf-idx">${i + 1}.</span>${esc(f)}</span>`).join('')
+      : `<span style="color:var(--muted);font-style:italic;font-size:11px">no priority fields</span>`;
+    const desc = (t.description || '').trim();
+    const descShort = desc.length > 120 ? desc.slice(0, 117) + '…' : desc;
+    return `
+      <div class="stm-row${isActive ? '' : ' inactive'}" data-type="${esc(t.type)}">
+        <div class="stm-row-body">
+          <div class="stm-row-name">${esc(t.type)}${isActive ? '' : ' <span style="color:var(--muted);font-weight:400;font-size:11px">(inactive)</span>'}</div>
+          ${descShort ? `<div class="stm-row-desc">${esc(descShort)}</div>` : ''}
+          <div class="stm-row-chips">${chips}</div>
+        </div>
+        <div class="stm-row-actions">
+          <label class="stm-row-toggle" title="${isActive ? 'Click to deactivate' : 'Click to activate'}">
+            <input type="checkbox" data-stm-active="${esc(t.type)}" ${isActive ? 'checked' : ''}>
+            ${isActive ? 'Active' : 'Inactive'}
+          </label>
+          <button class="btn btn-outline btn-sm" data-stm-edit="${esc(t.type)}"><i class="fa-solid fa-pencil"></i></button>
+          <button class="btn btn-outline btn-sm" data-stm-del="${esc(t.type)}" title="Delete"><i class="fa-solid fa-trash"></i></button>
+        </div>
+      </div>
+    `;
+  }).join('') + `</div>`;
+}
+
+// Wire the row buttons inside the list container. Called on initial render
+// and after each refresh.
+function _seqWireTypesList() {
+  const root = document.getElementById('stm-list-container');
+  if (!root) return;
+
+  root.querySelectorAll('[data-stm-edit]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const typeName = btn.getAttribute('data-stm-edit');
+      const t = SEQ_TYPES.list.find(x => x.type === typeName);
+      if (!t) return;
+      Swal.close();
+      const result = await seqOpenTypeEditor(t);
+      if (result !== 'cancelled') await loadSeqTypes().catch(() => {});
+      seqOpenTypesManager();
+    });
+  });
+
+  root.querySelectorAll('[data-stm-del]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const typeName = btn.getAttribute('data-stm-del');
+      // Use a nested confirm here — small dialog, OK to layer.
+      const r = await Swal.fire({
+        title: `Delete type "${typeName}"?`,
+        text: 'This cannot be undone. Deletion will fail if any templates currently use this type.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        confirmButtonText: 'Delete'
+      });
+      if (!r.isConfirmed) {
+        // Re-open the list (Swal.fire above closed the parent).
+        seqOpenTypesManager();
+        return;
+      }
+      try {
+        await api(`/api/sequence-types/${encodeURIComponent(typeName)}`, 'DELETE');
+        await loadSeqTypes().catch(() => {});
+        Swal.fire({ icon: 'success', title: 'Deleted', timer: 1200, showConfirmButton: false });
+        setTimeout(() => seqOpenTypesManager(), 1300);
+      } catch (e) {
+        // 409: templates exist using this type. Backend response is expected
+        // to include either a `templates` array or a message listing them.
+        let body = null;
+        try { body = e.response || (e.body ? JSON.parse(e.body) : null); } catch {}
+        let listHtml = '';
+        const tpls = (body && (body.templates || body.usedBy || body.in_use_by)) || null;
+        if (Array.isArray(tpls) && tpls.length) {
+          listHtml = `<div style="margin-top:10px;text-align:left;font-size:12px"><strong>Templates using this type:</strong><ul style="margin:6px 0 0 18px;padding:0">${
+            tpls.map(t => `<li>${esc(t.name || t.id || JSON.stringify(t))}</li>`).join('')
+          }</ul></div>`;
+        }
+        await Swal.fire({
+          icon: 'error',
+          title: 'Cannot delete type',
+          html: `${esc(e.message || 'Templates currently use this type.')}${listHtml}`,
+        });
+        seqOpenTypesManager();
+      }
+    });
+  });
+
+  root.querySelectorAll('[data-stm-active]').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const typeName = cb.getAttribute('data-stm-active');
+      const want = !!cb.checked;
+      try {
+        await api(`/api/sequence-types/${encodeURIComponent(typeName)}`, 'PUT', { active: want });
+        await loadSeqTypes().catch(() => {});
+        // Re-render the list in place (don't bounce through close/reopen)
+        const container = document.getElementById('stm-list-container');
+        if (container) {
+          container.innerHTML = _seqRenderTypesList();
+          _seqWireTypesList();
+        }
+      } catch (e) {
+        cb.checked = !want; // revert
+        Swal.showValidationMessage?.(e.message);
+        Swal.fire('Error', e.message, 'error').then(() => seqOpenTypesManager());
+      }
+    });
+  });
+}
+
+// ── Type Editor (create or edit) ──────────────────────────────
+// Returns 'saved', 'cancelled', or undefined on hard error.
+async function seqOpenTypeEditor(existingType) {
+  const isEdit = !!existingType;
+  const initial = isEdit ? {
+    type: existingType.type || '',
+    description: existingType.description || '',
+    active: existingType.active !== 0 && existingType.active !== false,
+    priority_fields: _seqPriorityFieldsOf(existingType),
+  } : {
+    type: '',
+    description: '',
+    active: true,
+    priority_fields: [],
+  };
+
+  // Snapshot for reorder-detection on save (edit mode only).
+  const originalPf = initial.priority_fields.slice();
+
+  const html = `
+    <div style="text-align:left;display:flex;flex-direction:column;gap:10px;padding:0 .25em">
+      <div>
+        <label style="display:block;font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Type Name</label>
+        <input id="ste-type" type="text" value="${esc(initial.type)}" ${isEdit ? 'disabled' : ''}
+               placeholder="e.g. no_show, lead_drip"
+               style="width:100%;padding:7px 9px;border:1px solid #d1d5db;border-radius:5px;font-size:13px;font-family:'SF Mono','Consolas',monospace${isEdit ? ';background:#f1f5f9;color:#64748b' : ''}">
+        ${isEdit ? '<div style="font-size:11px;color:#94a3b8;margin-top:3px">Type name is the primary key and cannot be changed.</div>' : '<div style="font-size:11px;color:#94a3b8;margin-top:3px">Lowercase letters, digits, underscores. Must start with a letter.</div>'}
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Description</label>
+        <textarea id="ste-desc" placeholder="What this type is used for"
+                  style="width:100%;min-height:60px;padding:7px 9px;border:1px solid #d1d5db;border-radius:5px;font-size:13px;resize:vertical">${esc(initial.description)}</textarea>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#475569">
+        <input id="ste-active" type="checkbox" ${initial.active ? 'checked' : ''}>
+        Active
+      </label>
+      <div>
+        <label style="display:block;font-size:11px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Priority Fields (ordered)</label>
+        <div style="font-size:11px;color:#64748b;margin-bottom:6px">Cascade ranks templates by these fields in this order. Most-specific first.</div>
+        <div id="ste-pf-list" class="pfe-list"></div>
+        <button type="button" id="ste-pf-add" class="pfe-add">
+          <i class="fa-solid fa-plus"></i> Add field
+        </button>
+        <div class="pfe-hint">Format: lowercase, digits, underscores. Start with a letter. Max 50 chars.</div>
+      </div>
+    </div>
+  `;
+
+  const result = await Swal.fire({
+    title: isEdit ? `Edit Type: ${initial.type}` : 'New Sequence Type',
+    width: 600,
+    html,
+    showCancelButton: true,
+    confirmButtonText: isEdit ? 'Save' : 'Create',
+    didOpen: () => {
+      // Populate priority_fields rows
+      _steRenderPfRows(initial.priority_fields);
+      document.getElementById('ste-pf-add').addEventListener('click', () => {
+        const cur = _steReadPfRows();
+        cur.push('');
+        _steRenderPfRows(cur);
+        // Focus the new input
+        const list = document.getElementById('ste-pf-list');
+        const inputs = list.querySelectorAll('input[type="text"]');
+        if (inputs.length) inputs[inputs.length - 1].focus();
+      });
+    },
+    preConfirm: async () => {
+      const typeName = (document.getElementById('ste-type').value || '').trim();
+      const desc = (document.getElementById('ste-desc').value || '').trim();
+      const active = document.getElementById('ste-active').checked;
+      const pf = _steReadPfRows();
+
+      if (!isEdit) {
+        if (!_seqValidPfName(typeName)) {
+          Swal.showValidationMessage('Type name must be lowercase, start with a letter, and contain only letters/digits/underscores (max 50 chars).');
+          return false;
+        }
+      }
+      // priority_fields: each must validate, must be unique, may be empty list
+      const trimmed = pf.map(s => (s || '').trim()).filter(s => s !== '');
+      for (const f of trimmed) {
+        if (!_seqValidPfName(f)) {
+          Swal.showValidationMessage(`Priority field "${f}" is invalid. Use lowercase, start with a letter, only letters/digits/underscores (max 50 chars).`);
+          return false;
+        }
+      }
+      const seen = new Set();
+      for (const f of trimmed) {
+        if (seen.has(f)) {
+          Swal.showValidationMessage(`Duplicate priority field: "${f}".`);
+          return false;
+        }
+        seen.add(f);
+      }
+
+      // Reorder-detection (edit mode): if order changed (or set changed),
+      // confirm before saving.
+      if (isEdit) {
+        const changed = JSON.stringify(trimmed) !== JSON.stringify(originalPf);
+        if (changed) {
+          // Check is "reorder" (same set, different order) vs add/remove.
+          const sameSet = trimmed.length === originalPf.length
+            && trimmed.every(f => originalPf.includes(f));
+          if (sameSet) {
+            const ok = await Swal.fire({
+              title: 'Confirm reorder',
+              html: `Templates of type <strong>${esc(typeName)}</strong> will rank by these fields in this new order. Existing in-flight enrollments are unaffected.`,
+              icon: 'warning',
+              showCancelButton: true,
+              confirmButtonText: 'Save reorder',
+            });
+            if (!ok.isConfirmed) return false;
+          }
+          // For add/remove we don't confirm — that's a structural change
+          // the user explicitly made by adding/removing rows. The rank is
+          // implicitly affected, but Phase 2 backend should also block
+          // removal of fields used by template filters via a 409 anyway.
+        }
+      }
+
+      // Build payload
+      const body = {
+        description: desc || null,
+        active,
+        priority_fields: trimmed,
+      };
+      try {
+        if (isEdit) {
+          await api(`/api/sequence-types/${encodeURIComponent(initial.type)}`, 'PUT', body);
+        } else {
+          body.type = typeName;
+          await api('/api/sequence-types', 'POST', body);
+        }
+        return true;
+      } catch (e) {
+        // 409 on remove-of-used-field expected here — surface body if present
+        let body2 = null;
+        try { body2 = e.response || (e.body ? JSON.parse(e.body) : null); } catch {}
+        let extra = '';
+        const tpls = (body2 && (body2.templates || body2.usedBy || body2.in_use_by)) || null;
+        if (Array.isArray(tpls) && tpls.length) {
+          extra = `<div style="margin-top:10px;text-align:left;font-size:12px"><strong>Templates affected:</strong><ul style="margin:6px 0 0 18px;padding:0">${
+            tpls.map(t => `<li>${esc(t.name || t.id || JSON.stringify(t))}</li>`).join('')
+          }</ul></div>`;
+        }
+        Swal.showValidationMessage(`${e.message || 'Save failed'}${extra ? ' (see details below)' : ''}`);
+        if (extra) {
+          // Append details to the validation message container if possible
+          const vc = Swal.getValidationMessage?.();
+          if (vc) { vc.innerHTML += extra; vc.style.textAlign = 'left'; }
+        }
+        return false;
+      }
+    }
+  });
+
+  return result.isConfirmed ? 'saved' : 'cancelled';
+}
+
+// Render priority_fields rows from a string array.
+function _steRenderPfRows(arr) {
+  const list = document.getElementById('ste-pf-list');
+  if (!list) return;
+  arr = arr || [];
+  if (!arr.length) {
+    list.innerHTML = `<div style="font-size:12px;color:var(--muted);font-style:italic;padding:4px 0">No priority fields. Click "Add field" to add one.</div>`;
+    return;
+  }
+  list.innerHTML = arr.map((v, i) => `
+    <div class="pfe-row" data-idx="${i}">
+      <button type="button" class="pfe-btn" data-pf-up="${i}" ${i === 0 ? 'disabled' : ''} title="Move up"><i class="fa-solid fa-arrow-up"></i></button>
+      <button type="button" class="pfe-btn" data-pf-down="${i}" ${i === arr.length - 1 ? 'disabled' : ''} title="Move down"><i class="fa-solid fa-arrow-down"></i></button>
+      <input type="text" value="${esc(v)}" maxlength="50" placeholder="field_name">
+      <button type="button" class="pfe-btn danger" data-pf-rm="${i}" title="Remove"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+  `).join('');
+  // Wire up/down/remove
+  list.querySelectorAll('[data-pf-up]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = parseInt(btn.getAttribute('data-pf-up'), 10);
+      const cur = _steReadPfRows();
+      if (i > 0) {
+        [cur[i - 1], cur[i]] = [cur[i], cur[i - 1]];
+        _steRenderPfRows(cur);
+      }
+    });
+  });
+  list.querySelectorAll('[data-pf-down]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = parseInt(btn.getAttribute('data-pf-down'), 10);
+      const cur = _steReadPfRows();
+      if (i < cur.length - 1) {
+        [cur[i], cur[i + 1]] = [cur[i + 1], cur[i]];
+        _steRenderPfRows(cur);
+      }
+    });
+  });
+  list.querySelectorAll('[data-pf-rm]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = parseInt(btn.getAttribute('data-pf-rm'), 10);
+      const cur = _steReadPfRows();
+      cur.splice(i, 1);
+      _steRenderPfRows(cur);
+    });
+  });
+  // Live invalid-styling on input
+  list.querySelectorAll('input[type="text"]').forEach(inp => {
+    const sync = () => {
+      const v = inp.value.trim();
+      if (!v || _seqValidPfName(v)) inp.classList.remove('invalid');
+      else inp.classList.add('invalid');
+    };
+    inp.addEventListener('input', sync);
+    sync();
+  });
+}
+
+// Read current priority_fields values from the DOM as a string array.
+function _steReadPfRows() {
+  const list = document.getElementById('ste-pf-list');
+  if (!list) return [];
+  return Array.from(list.querySelectorAll('.pfe-row input[type="text"]')).map(i => i.value);
+}
+
+// ══════════════════════════════════════════════════════════════════
 // TEMPLATE CRUD
 // ══════════════════════════════════════════════════════════════════
 
 async function seqNew() {
+  // Slice E Phase 3 — refresh types cache before opening so the dropdown
+  // reflects any changes made in the types manager during this session.
+  // Best-effort; if it fails we still open with whatever's cached.
+  try { await loadSeqTypes(); } catch {}
+
+  const hasTypes = SEQ_TYPES.list.some(t => t.active !== 0 && t.active !== false);
+
   const { value: vals } = await Swal.fire({
     title: 'New Sequence Template',
-    width: 560,
+    width: 600,
     html: `<input id="swal-name" class="swal2-input" placeholder="Name">
           <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:13px;color:#475569">
             <input type="checkbox" id="swal-idonly">
             ID-only template (cannot be cascade-matched by type)
           </label>
-          <input id="swal-type" class="swal2-input" placeholder="Type (e.g. no_show, lead_drip, pre_appt)">
-          <input id="swal-appt-type" class="swal2-input" placeholder="Appt Type Filter (optional)">
-          <input id="swal-appt-with" class="swal2-input" placeholder="Appt With Filter (user ID, optional)">
-          <div style="text-align:left;font-size:12px;color:#475569;margin:10px .875em 4px">
+          <div id="seq-type-and-filters">
+            <select id="swal-type" class="swal2-input" style="display:flex">
+              ${_seqTypeOptionsHtml(null)}
+            </select>
+            <div id="seq-orphan-warn" class="tfe-notice" style="display:none;margin:0 .875em"></div>
+            <div id="seq-filter-fields-container" class="tfe-container"></div>
+          </div>
+          <div id="seq-no-types" class="tfe-notice" style="display:${hasTypes ? 'none' : ''};margin:8px .875em">
+            No sequence types registered.
+            <a href="javascript:void(0)" id="seq-no-types-link" style="color:#3b82f6;font-weight:600">Create one now →</a>
+            Or check "ID-only template" above to skip type matching.
+          </div>
+          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
             <strong>Test Input (JSON)</strong>
             <span style="color:#94a3b8">— optional</span>
           </div>
@@ -1700,22 +2375,54 @@ async function seqNew() {
             Document what trigger_data this sequence expects when enrolled.
           </div>`,
     didOpen: () => {
-      const cb = document.getElementById('swal-idonly');
-      const typeEl = document.getElementById('swal-type');
-      let savedType = '';
+      const cb       = document.getElementById('swal-idonly');
+      const typeEl   = document.getElementById('swal-type');
+      const filtersEl= document.getElementById('seq-filter-fields-container');
+      const groupEl  = document.getElementById('seq-type-and-filters');
+      const link     = document.getElementById('seq-no-types-link');
+
+      // Initial filter fields — empty (no type selected yet, unless we pre-select)
+      // If the dropdown has a real first option (i.e. types exist), render its filters.
+      const firstOpt = Array.from(typeEl.options).find(o => !o.disabled && o.value);
+      if (firstOpt) {
+        typeEl.value = firstOpt.value;
+        _seqRenderFilterFields(firstOpt.value, {}, []);
+      }
+
+      typeEl.addEventListener('change', _seqOnTypeChange);
+
       const sync = () => {
-        if (cb.checked) { savedType = typeEl.value; typeEl.value = ''; typeEl.style.display = 'none'; }
-        else { typeEl.style.display = ''; if (savedType) typeEl.value = savedType; }
+        if (cb.checked) { groupEl.style.display = 'none'; }
+        else { groupEl.style.display = ''; }
       };
       cb.addEventListener('change', sync);
+      // ID-only auto-toggles itself if there are no types
+      if (!hasTypes) {
+        // Don't force-check, but make it more discoverable
+        cb.focus();
+      }
+      if (link) {
+        link.addEventListener('click', async () => {
+          // Close current modal, open types manager, then re-open this one.
+          Swal.close();
+          await seqOpenTypesManager();
+          // Re-open seqNew with refreshed cache
+          seqNew();
+        });
+      }
     },
-    showCancelButton: true, confirmButtonText: 'Create',
+    showCancelButton: true,
+    confirmButtonText: 'Create',
     preConfirm: () => {
       const name = document.getElementById('swal-name').value.trim();
       const idOnly = document.getElementById('swal-idonly').checked;
-      const type = document.getElementById('swal-type').value.trim();
+      const typeEl = document.getElementById('swal-type');
+      const type = idOnly ? null : (typeEl.value || '').trim();
       if (!name) { Swal.showValidationMessage('Name is required'); return false; }
-      if (!idOnly && !type) { Swal.showValidationMessage('Type is required (or check ID-only)'); return false; }
+      if (!idOnly && !type) {
+        Swal.showValidationMessage('Type is required (or check ID-only)');
+        return false;
+      }
       // Slice 2.1 — parse + shape-check test_input client-side so the user
       // gets an immediate error. Backend validates again.
       const tiRaw = document.getElementById('swal-testinput').value.trim();
@@ -1730,11 +2437,13 @@ async function seqNew() {
           return false;
         }
       }
+      // Slice E Phase 3 — read filter fields and assemble filters payload.
+      const filters = idOnly ? null : _seqCurrentFilterValues();
+      const filtersOut = (filters && Object.keys(filters).length) ? filters : null;
       return {
         name,
-        type: idOnly ? null : type,
-        appt_type_filter: document.getElementById('swal-appt-type').value.trim() || null,
-        appt_with_filter: document.getElementById('swal-appt-with').value.trim() || null,
+        type,
+        filters: filtersOut,
         test_input
       };
     }
@@ -1751,8 +2460,22 @@ async function seqNew() {
 
 async function seqEdit() {
   if (!SEQ.activeTemplate) return;
+
+  // Slice E Phase 3 — refresh types cache so dropdown reflects current state.
+  try { await loadSeqTypes(); } catch {}
+
   const currentType = SEQ.activeTemplate.type;
   const isIdOnly = !currentType || !String(currentType).trim();
+  const hasTypes = SEQ_TYPES.list.some(t => t.active !== 0 && t.active !== false);
+
+  // Existing filters as object (tolerate string/object/null)
+  let curFilters = SEQ.activeTemplate.filters;
+  if (typeof curFilters === 'string') curFilters = parseJson(curFilters);
+  if (!curFilters || typeof curFilters !== 'object' || Array.isArray(curFilters)) curFilters = {};
+
+  // Snapshot of priority_fields order at modal open — used to detect a true
+  // reorder vs additions/removals when assembling the save-time confirm.
+  // (Not used here — that confirm is for the type editor itself, not template edit.)
 
   // Slice 2.1 — test_input may be a parsed object, a JSON string, or null
   // depending on mysql2 typeCast config. parseJson tolerates both cases.
@@ -1761,21 +2484,39 @@ async function seqEdit() {
   const tiText = (tiObj && typeof tiObj === 'object' && !Array.isArray(tiObj))
     ? JSON.stringify(tiObj, null, 2) : '';
 
+  // Orphan / inactive type warning text
+  const inActive = currentType && SEQ_TYPES.list.some(t => t.type === currentType && (t.active !== 0 && t.active !== false));
+  const inAny    = currentType && SEQ_TYPES.list.some(t => t.type === currentType);
+  let orphanWarn = '';
+  if (currentType && !inActive) {
+    orphanWarn = inAny
+      ? `Type "${esc(currentType)}" is currently inactive. Pick another active type if you want this template to participate in cascade matching.`
+      : `Type "${esc(currentType)}" is not registered. Pick a registered type or check ID-only.`;
+  }
+
   const { value: vals } = await Swal.fire({
     title: 'Edit Template',
-    width: 560,
+    width: 600,
     html: `<input id="swal-name" class="swal2-input" placeholder="Name" value="${esc(SEQ.activeTemplate.name)}">
           <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:13px;color:#475569">
             <input type="checkbox" id="swal-idonly" ${isIdOnly ? 'checked' : ''}>
             ID-only template (cannot be cascade-matched by type)
           </label>
-          <input id="swal-type" class="swal2-input" placeholder="Type (e.g. no_show, lead_drip)" value="${esc(currentType || '')}">
-          <input id="swal-appt-type" class="swal2-input" placeholder="Appt Type Filter (optional)" value="${esc(SEQ.activeTemplate.appt_type_filter || '')}">
-          <input id="swal-appt-with" class="swal2-input" placeholder="Appt With Filter (user ID, optional)" value="${esc(SEQ.activeTemplate.appt_with_filter || '')}">
-          <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px">
+          <div id="seq-type-and-filters" style="display:${isIdOnly ? 'none' : ''}">
+            <select id="swal-type" class="swal2-input" style="display:flex">
+              ${_seqTypeOptionsHtml(currentType)}
+            </select>
+            <div id="seq-orphan-warn" class="tfe-notice" style="display:${orphanWarn ? '' : 'none'};margin:0 .875em">${orphanWarn}</div>
+            <div id="seq-filter-fields-container" class="tfe-container"></div>
+          </div>
+          <div id="seq-no-types" class="tfe-notice" style="display:${(!isIdOnly && !hasTypes) ? '' : 'none'};margin:8px .875em">
+            No active sequence types registered.
+            <a href="javascript:void(0)" id="seq-no-types-link" style="color:#3b82f6;font-weight:600">Manage types →</a>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:14px">
             <input type="checkbox" id="swal-active" ${SEQ.activeTemplate.active ? 'checked' : ''}> Active
           </label>
-          <div style="text-align:left;font-size:12px;color:#475569;margin:10px .875em 4px">
+          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
             <strong>Test Input (JSON)</strong>
             <span style="color:#94a3b8">— optional, leave blank to clear</span>
           </div>
@@ -1786,25 +2527,48 @@ async function seqEdit() {
             Document what trigger_data this sequence expects when enrolled.
           </div>`,
     didOpen: () => {
-      const cb = document.getElementById('swal-idonly');
-      const typeEl = document.getElementById('swal-type');
-      let savedType = typeEl.value;
+      const cb       = document.getElementById('swal-idonly');
+      const typeEl   = document.getElementById('swal-type');
+      const groupEl  = document.getElementById('seq-type-and-filters');
+      const link     = document.getElementById('seq-no-types-link');
+
+      // Initial filter fields render — preload from current template's filters
+      if (!isIdOnly && currentType) {
+        _seqRenderFilterFields(currentType, curFilters, []);
+      } else if (!isIdOnly && typeEl.value) {
+        // No current type but dropdown has a default selection — render empty
+        _seqRenderFilterFields(typeEl.value, {}, []);
+      }
+
+      typeEl.addEventListener('change', _seqOnTypeChange);
+
       const sync = () => {
-        if (cb.checked) { savedType = typeEl.value; typeEl.value = ''; typeEl.style.display = 'none'; }
-        else { typeEl.style.display = ''; if (savedType) typeEl.value = savedType; }
+        groupEl.style.display = cb.checked ? 'none' : '';
       };
-      if (cb.checked) typeEl.style.display = 'none';
       cb.addEventListener('change', sync);
+
+      if (link) {
+        link.addEventListener('click', async () => {
+          Swal.close();
+          await seqOpenTypesManager();
+          // Re-open seqEdit with refreshed cache and current template state
+          seqEdit();
+        });
+      }
     },
-    showCancelButton: true, confirmButtonText: 'Save',
+    showCancelButton: true,
+    confirmButtonText: 'Save',
     preConfirm: () => {
       const name = document.getElementById('swal-name').value.trim();
       const idOnly = document.getElementById('swal-idonly').checked;
-      const type = document.getElementById('swal-type').value.trim();
+      const typeEl = document.getElementById('swal-type');
+      const type = idOnly ? null : (typeEl.value || '').trim();
       if (!name) { Swal.showValidationMessage('Name is required'); return false; }
-      if (!idOnly && !type) { Swal.showValidationMessage('Type is required (or check ID-only)'); return false; }
-      // Slice 2.1 — parse + shape-check test_input. Blank textarea → null
-      // (explicit clear on PUT).
+      if (!idOnly && !type) {
+        Swal.showValidationMessage('Type is required (or check ID-only)');
+        return false;
+      }
+      // Slice 2.1 — parse + shape-check test_input. Blank textarea → null.
       const tiRaw = document.getElementById('swal-testinput').value.trim();
       let test_input = null;
       if (tiRaw) {
@@ -1817,11 +2581,13 @@ async function seqEdit() {
           return false;
         }
       }
+      // Slice E Phase 3 — assemble filters payload.
+      const filters = idOnly ? null : _seqCurrentFilterValues();
+      const filtersOut = (filters && Object.keys(filters).length) ? filters : null;
       return {
         name,
-        type: idOnly ? null : type,
-        appt_type_filter: document.getElementById('swal-appt-type').value.trim() || null,
-        appt_with_filter: document.getElementById('swal-appt-with').value.trim() || null,
+        type,
+        filters: filtersOut,
         active: document.getElementById('swal-active').checked,
         test_input
       };
@@ -2361,12 +3127,20 @@ function seqExplain(template, steps) {
     `;
   }).join('');
 
-  // Header includes filter chips for appt_type / appt_with so paralegals
-  // see at a glance which appointments this template is scoped to.
+  // Header includes filter chips for type and filters JSON so paralegals
+  // see at a glance which appointments / triggers this template is scoped to.
   const filterChips = [];
   if (template?.type)              filterChips.push(`<span class="ex-chip">type: ${_seqEsc(template.type)}</span>`);
-  if (template?.appt_type_filter)  filterChips.push(`<span class="ex-chip">appt: ${_seqEsc(template.appt_type_filter)}</span>`);
-  if (template?.appt_with_filter)  filterChips.push(`<span class="ex-chip">with: ${_seqEsc(template.appt_with_filter)}</span>`);
+  // Slice E Phase 3 — generic filters iteration. Tolerates string or object.
+  let _expFilters = template?.filters;
+  if (typeof _expFilters === 'string') _expFilters = parseJson(_expFilters);
+  if (_expFilters && typeof _expFilters === 'object' && !Array.isArray(_expFilters)) {
+    for (const [k, v] of Object.entries(_expFilters)) {
+      if (v !== null && v !== '' && v !== undefined) {
+        filterChips.push(`<span class="ex-chip">${_seqEsc(k)}: ${_seqEsc(v)}</span>`);
+      }
+    }
+  }
 
   return `
     <div class="ex-doc">
@@ -2531,6 +3305,7 @@ window.seqEdit                    = seqEdit;
 window.seqDuplicate               = seqDuplicate;
 window.seqDelete                  = seqDelete;
 window.seqNew                     = seqNew;
+window.seqOpenTypesManager        = seqOpenTypesManager;
 window.seqStepNew                 = seqStepNew;
 window.seqStepDelete              = seqStepDelete;
 window.seqStepMove                = seqStepMove;
