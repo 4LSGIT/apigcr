@@ -22,7 +22,9 @@ You wouldn't reach for one when:
 - It's a single message with no chaining (use a one-time scheduled job).
 - It needs branching logic ("if A do this, else do that") — sequences only support skip-or-continue, not branching. Use a workflow.
 
-**In `automationManager.html` → Sequences tab**, you'll see a list of templates on the left. Each template has a `type` (like `no_show`), optional filters (`appt_type_filter`, `appt_with_filter`), an optional template-level condition that cancels the whole enrollment if it stops being true, and an ordered list of steps. Each step has its own action, timing, and optional condition / fire guard.
+**In `automationManager.html` → Sequences tab**, you'll see a list of templates on the left. Each template has a `type` (like `no_show`), an optional `filters` JSON whose keys come from the type's cascade configuration, an optional template-level condition that cancels the whole enrollment if it stops being true, and an ordered list of steps. Each step has its own action, timing, and optional condition / fire guard.
+
+Cascade configuration is per-type — declared in the `sequence_template_types` table and edited in-page via the **Manage Types** button at the top of the Sequences tab. Each type names an ordered list of `trigger_data` fields (`priority_fields`) that drive the cascade scoring; templates of that type expose one filter input per field. See the *Cascading template match* section below.
 
 When something doesn't fire when you expected:
 1. Find the enrollment in the template's Enrollments tab. Status `cancelled` and `cancel_reason` will tell you why.
@@ -35,7 +37,9 @@ When something doesn't fire when you expected:
 
 ### Core concepts
 
-**Template** (`sequence_templates`) — the definition. `name`, `type` (string identifier like `no_show`), optional `appt_type_filter` and `appt_with_filter` for cascading match, optional template-level `condition`, and a list of steps in `sequence_steps`.
+**Template** (`sequence_templates`) — the definition. `name`, `type` (string identifier like `no_show`, FK-style reference to `sequence_template_types.type`; nullable for ID-only templates), optional `filters` JSON (keys must be a subset of the type's `priority_fields`), optional template-level `condition`, and a list of steps in `sequence_steps`.
+
+**Type config** (`sequence_template_types`) — per-type cascade configuration. PK `type`, plus `priority_fields` (ordered JSON array of `trigger_data` keys, most-specific first) that drives template scoring at enrollment, plus `description` and `active` flag. CRUD via `/api/sequence-types` and the in-page Manage Types editor in the Sequences tab. See *Cascading template match* below.
 
 **Enrollment** (`sequence_enrollments`) — one specific contact's run through a template. Stores `contact_id`, `trigger_data` (the event context), `current_step`, and `status` (`active` / `completed` / `cancelled`).
 
@@ -159,26 +163,31 @@ See [08-error-policies.md](08-error-policies.md) for full details.
 
 ### Cascading template match
 
-When enrolling via `POST /sequences/enroll` with `template_type`, the engine picks the most specific matching template using `appt_type_filter` and `appt_with_filter`:
+When enrolling via `POST /sequences/enroll` with `template_type`, the engine ranks every active template of that type and picks the highest scorer. Cascade structure is per-type, declared in `sequence_template_types.priority_fields` — an ordered list of `trigger_data` keys, most-specific first.
 
-1. type + `appt_type_filter` matches + `appt_with_filter` matches (most specific)
-2. type + `appt_type_filter` matches + `appt_with_filter` NULL
-3. type + `appt_type_filter` NULL + `appt_with_filter` matches
-4. type + both filters NULL (generic fallback)
-
-Pass `appt_type` and `appt_with` in the enroll body or the `filters` arg of `enrollContact()`:
+**Scoring.** For `priority_fields` of length N, each matched filter at position `i` contributes `2^(N-1-i)`. A template's filter for a given field is **wildcard** when absent or null in `filters` JSON (score 0, never disqualifies) and **specific** when set to a value — must equal `triggerData[field]` or the template is disqualified. If the trigger lacks a value for a field a template has set, that template is disqualified. Qualified templates sort by `score DESC, id ASC`; ties go to the lowest id. Throws if no template qualifies.
 
 ```js
 await apiSend("/sequences/enroll", "POST", {
   contact_id:    456,
   template_type: "pre_appt",
-  trigger_data:  { appt_id: 123, appt_time: "2026-03-20T14:00:00Z" },
-  appt_type:     "Strategy Session",
-  appt_with:     2
+  trigger_data:  {
+    appt_id:    123,
+    appt_time:  "2026-03-20T14:00:00Z",
+    // cascade fields — flatten into trigger_data:
+    appt_type:  "Strategy Session",
+    appt_with:  2
+  }
 });
 ```
 
-This lets you have multiple templates with the same `type` but different content per appointment type or assigned staff member, with a generic fallback.
+The cascade fields (`appt_type`, `appt_with`, etc.) are passed inside `trigger_data`. The engine reads them from there — there is no separate `filters` arg or top-level `appt_type` / `appt_with` body field.
+
+A worked cascade example with multiple templates and trigger shapes lives in **cookbook §3.5** (`manual/03-YisraFlow/13-cookbook.md`). The `no_show` type ships with `priority_fields: ["appt_type", "appt_with"]` — equivalent to the prior hardcoded cascade.
+
+**Template `filters` validation.** `POST` and `PUT /sequences/templates` reject `filters` keys not in the type's `priority_fields` (`validateTemplateFilters` in `lib/sequenceEngine.js`). Type-less (ID-only) templates can't have filters at all.
+
+**Editing types.** The Sequences tab → **Manage Types** button opens an in-page editor (no separate sub-page) backed by `/api/sequence-types`. Removing a key from a type's `priority_fields` is rejected 409 if any template of that type still references it in `filters`.
 
 ### Direct enrollment by template ID
 
@@ -192,7 +201,7 @@ await apiSend("/sequences/enroll", "POST", {
 });
 ```
 
-This bypasses cascade matching entirely. The `template_type`, `appt_type`, and `appt_with` fields are not allowed in this mode (400 if you include them).
+This bypasses cascade matching entirely. `template_type` cannot also be set in this mode (400 if both are provided).
 
 **Validation rule:** exactly one of `template_type` or `template_id` must be provided. Empty strings, whitespace-only strings, and both-set all return 400.
 

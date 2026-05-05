@@ -20,6 +20,7 @@ All tables use `utf8mb4` collation, mostly `utf8mb4_general_ci` (a few in `_unic
 | `workflow_steps` | Workflow Engine | 2 |
 | `workflow_executions` | Workflow Engine | 2 |
 | `workflow_execution_steps` | Workflow Engine | 2 |
+| `sequence_template_types` | Sequence Engine | 3 |
 | `sequence_templates` | Sequence Engine | 3 |
 | `sequence_steps` | Sequence Engine | 3 |
 | `sequence_enrollments` | Sequence Engine | 3 |
@@ -109,22 +110,40 @@ Indexes: `idx_execution_step (workflow_execution_id, step_number, executed_at DE
 
 ### Sequence tables
 
+#### `sequence_template_types` — per-type cascade configuration
+
+```sql
+type             varchar(50)   PK              -- snake_case identifier, immutable PK
+priority_fields  json          NOT NULL        -- ordered array of trigger_data keys, most-specific first
+description      text                          -- human note
+active           tinyint(1)    default 1       -- disable a whole type at once
+created_at       datetime      default CURRENT_TIMESTAMP
+updated_at       datetime      default CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+```
+
+`priority_fields` example: `["appt_type", "appt_with", "case_type"]`. The ordering is the cascade priority — earlier fields dominate later ones via `2^(N-1-i)` weighting at enrollment-time scoring (see chapter 3 / cookbook §3.5). Empty array is valid (no cascade; lowest id wins).
+
+CRUD via `/api/sequence-types`. Edited in-page via the **Manage Types** button on the Sequences tab.
+
 #### `sequence_templates` — template
 
 ```sql
-id                int unsigned   PK
-name              varchar(100)
-type              varchar(50)                 -- e.g. "no_show", "lead_drip"
-appt_type_filter  varchar(50)                 -- cascade match (NULL = wildcard)
-appt_with_filter  tinyint                     -- cascade match (NULL = wildcard)
-condition         json                        -- template-level condition (cancel-level)
-description       text
-active            tinyint(1)     default 1
+id           int unsigned   PK
+name         varchar(100)
+type         varchar(50)                 -- e.g. "no_show", "lead_drip"; nullable (ID-only templates)
+                                          -- soft reference to sequence_template_types.type (no FK)
+filters      json                        -- cascade filter values; keys must be subset of the type's
+                                          -- priority_fields. NULL = generic fallback (every slot wildcard).
+condition    json                        -- template-level condition (cancel-level)
+description  text
+active       tinyint(1)     default 1
 created_at, updated_at
-test_input        json                        -- saved test payload
+test_input   json                        -- saved test payload
 ```
 
-Indexes: `idx_type (type)`, `idx_active (active)`.
+Indexes: `idx_type (type)`, `idx_active (active)`. No FK from `type` to `sequence_template_types.type` — the reference is app-enforced (validated at template save and at enrollment time). The `type` column is nullable to support ID-only templates, which don't fit a hard FK.
+
+`filters` JSON shape: `{ "<priority_field>": <value>, ... }` — for example `{"appt_type": "341 Meeting", "appt_with": 2}`. Keys absent or set to `null` are wildcards. Validation at template save (`validateTemplateFilters`) rejects keys not in the type's `priority_fields`.
 
 #### `sequence_steps` — ordered steps
 

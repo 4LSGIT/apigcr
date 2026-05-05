@@ -483,25 +483,73 @@ if (!workday) return { skipped: 'non-workday' };
 
 ### 3.5 Cascade-Skip (Sequence Cascading Template Match)
 
-**Use when:** you want different content per `appt_type` or `appt_with`, but also want a generic fallback.
+**Use when:** you want different content along one or more cascade dimensions (appt type, assigned attorney, case type, source, …) but also want a generic fallback.
 
-Create multiple templates with the same `type` but different filters:
+Cascade structure is **per-type**, declared in `sequence_template_types.priority_fields` — an ordered JSON array of `trigger_data` keys, most-specific first. Templates carry a `filters` JSON column whose keys must be a subset of `priority_fields`. Cascade fields flow through `trigger_data` — there's no separate `filters` arg to `enrollContact` anymore.
 
-| Template | type | appt_type_filter | appt_with_filter | Specificity |
-|---|---|---|---|---|
-| "No-show — 341, Fred" | no_show | 341 Meeting | 2 | 1 (most specific) |
-| "No-show — 341" | no_show | 341 Meeting | NULL | 2 |
-| "No-show — Fred" | no_show | NULL | 2 | 3 |
-| "No-show — default" | no_show | NULL | NULL | 4 (fallback) |
+**Scoring.** For `priority_fields` of length N, position `i` (0-indexed) contributes weight `2^(N-1-i)` when `template.filters[field]` matches `triggerData[field]`. Earlier fields dominate later ones — the binary weighting guarantees that any match on field K outranks every combination of matches on K+1..N-1.
 
-Enrollment picks the first match from this ordered list. Pass `appt_type` + `appt_with` in the `filters` arg:
+| Template filter | trigger_data has field | Equal | Outcome |
+|---|---|---|---|
+| absent or `null` | n/a | n/a | wildcard — score 0, never disqualifies |
+| set | missing | n/a | template **disqualified** |
+| set | set | yes | adds `2^(N-1-i)` |
+| set | set | no | template **disqualified** |
+
+After scoring, qualified templates sort by `score DESC, id ASC` — ties broken by lowest id. Throws if no template qualifies.
+
+**Worked example.** Type `pre_appt` with `priority_fields: ["appt_type", "appt_with", "case_type"]` (N=3). Field weights: `appt_type=4`, `appt_with=2`, `case_type=1`.
+
+| Template | filters | Max score |
+|---|---|---|
+| T1 — pre_appt 341/Fred/Ch7 | `{appt_type:"341 Meeting", appt_with:2, case_type:"Ch 7"}` | 7 |
+| T2 — pre_appt 341/Fred | `{appt_type:"341 Meeting", appt_with:2}` | 6 |
+| T3 — pre_appt Fred/Ch7 | `{appt_with:2, case_type:"Ch 7"}` | 3 |
+| T4 — pre_appt default | `{}` | 0 |
+
+Cascade results for several `trigger_data` shapes:
+
+| trigger_data | T1 | T2 | T3 | T4 | Winner |
+|---|---|---|---|---|---|
+| `{appt_type:"341 Meeting", appt_with:2, case_type:"Ch 7"}` | 7 | 6 | 3 | 0 | **T1** |
+| `{appt_type:"341 Meeting", appt_with:2, case_type:"Ch 13"}` | DQ | 6 | DQ | 0 | **T2** |
+| `{appt_type:"Strategy Session", appt_with:2, case_type:"Ch 7"}` | DQ | DQ | 3 | 0 | **T3** |
+| `{appt_type:"Strategy Session", appt_with:5, case_type:"Ch 13"}` | DQ | DQ | DQ | 0 | **T4** |
+| `{appt_type:"341 Meeting"}` (other fields missing) | DQ | DQ | DQ | 0 | **T4** |
+
+DQ = disqualified by mismatch or by trigger missing a value the template requires.
+
+**Caller responsibility.** Whatever calls `enrollContact` flattens cascade fields into `triggerData` — the engine reads them directly from there. For internal call sites, see `services/apptService.js markNoShow`. For hook sequence targets, list cascade fields in `target.config.trigger_data_fields` so they flow through. For the `start_workflow` step inside a sequence, propagate them via `init_data` if the workflow later starts another sequence.
 
 ```js
-await sequenceEngine.enrollContact(db, contactId, 'no_show', triggerData, {
-  appt_type: appt.appt_type,
-  appt_with: appt.appt_with
+// pre_appt enrollment from an appt-handling route
+await sequenceEngine.enrollContact(db, contactId, 'pre_appt', {
+  appt_id:    appt.appt_id,
+  appt_time:  appt.appt_date,
+  // cascade fields:
+  appt_type:  appt.appt_type,
+  appt_with:  appt.appt_with,
+  case_type:  caseRow.case_type,
 });
 ```
+
+**Edge cases.**
+- `priority_fields = []` → all templates score 0; lowest id wins. Useful for a type that exists only to support direct enrollment without cascade.
+- `template.filters` is `NULL` → treated as `{}` (generic fallback — every cascade slot is wildcard).
+- `filters` validation at template save (`POST/PUT /sequences/templates`) rejects keys not in the type's `priority_fields` (`validateTemplateFilters` in `lib/sequenceEngine.js`).
+
+**Migration note.** The `no_show` type ships with `priority_fields: ["appt_type", "appt_with"]` — exactly the dimensions the old hardcoded cascade used. Pre-cutover and post-cutover behavior is equivalent for that type; what's new is that the *same machinery* now powers any other type's cascade, declared in DB rather than in code.
+
+#### Adding a new sequence type
+
+1. **Sequences page → Manage Types → + New Type.** Same UI route as the rest of the sequence editor — there is no separate sub-page.
+2. Enter the type name (snake_case, immutable PK — used directly as `sequence_templates.type` and as the `templateType` arg to `enrollContact`).
+3. Define `priority_fields`, most-specific first. Empty array is valid (no cascade).
+4. Save. The type is now an option in the template editor's type dropdown.
+5. Author one or more templates of the new type. The template editor renders one filter input per `priority_fields` entry. Empty inputs = wildcard (match anything).
+6. Wire callers. Anything that enrolls into this type — internal routes, hook sequence targets (`trigger_data_fields`), workflow `start_workflow` steps that fan out into the sequence — must populate the cascade fields in `trigger_data`. Templates whose filters require a field that no caller provides will silently never win.
+
+Type editing (PUT) is partial — `priority_fields`, `description`, `active` are all optional. Removing a key from `priority_fields` is rejected 409 if any existing template of that type references the key in its `filters` JSON; clear those template filters or restore the key first. Deleting a type (DELETE) is rejected 409 if any template still references it.
 
 ### 3.6 Branching via `evaluate_condition` + `set_next`
 
@@ -801,6 +849,8 @@ const contactId = resolveExecutionContactId({ explicitContactId, initData, defau
 ### 3.13 ID-Only Sequence Templates
 
 `sequence_templates.type` is nullable. **NULL type = "not cascade-matchable, reachable only by `template_id`."** Use for one-off sequences where cascading template selection doesn't fit (e.g. a drip keyed directly to a specific hook or route).
+
+ID-only templates have no `priority_fields` to validate against, so `filters` must be NULL or empty — `validateTemplateFilters` rejects any non-empty filters JSON on a typeless template.
 
 **UI convention:**
 - List / title display: em-dash (`—`) for null type
@@ -1453,12 +1503,11 @@ The endpoint accepts two shapes, and the difference matters for contact-tying:
 -- ─────────────────────────────────────────────────────────────
 
 INSERT INTO sequence_templates
-  (name, type, appt_type_filter, appt_with_filter, active, condition, description)
+  (name, type, filters, active, condition, description)
 VALUES
   (
     'Missing Bank Statements Follow-Up',
     'missing_statements',
-    NULL,
     NULL,
     1,
     JSON_OBJECT(
@@ -1726,9 +1775,7 @@ Contact-tied, multi-step, auto-cancels if the appt gets cancelled.
   "config": {
     "template_type":       "new_lead_welcome",
     "contact_id_field":    "contact_id",
-    "trigger_data_fields": ["appt_start_utc", "appt_type", "utm_source"],
-    "appt_type_filter":    null,
-    "appt_with_filter":    null
+    "trigger_data_fields": ["appt_start_utc", "appt_type", "utm_source"]
   },
   "conditions": {
     "operator": "and",
@@ -1739,6 +1786,8 @@ Contact-tied, multi-step, auto-cancels if the appt gets cancelled.
   "active": 1
 }
 ```
+
+Cascade specificity comes from `trigger_data_fields` — fields listed here flow into the enrollment's `trigger_data` and are matched against each template's `filters` JSON per the type's `priority_fields` (see §3.5). To get cascade behavior on this target, list every field that `new_lead_welcome`'s `priority_fields` declares.
 
 Condition note: Target 3 only fires if `contact_id` is present in the transform output. That depends on Target 2 having already run and stored the contact ID back into the transform output — which it can't, because each target gets a fresh copy of the hook-level transform output. **Lesson:** if one target's output depends on another's side effect, use a workflow as the downstream target (Target 4 below) and orchestrate there. Keep hook targets independent.
 

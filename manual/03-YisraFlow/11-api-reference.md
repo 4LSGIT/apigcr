@@ -88,14 +88,19 @@ Returns **202** with `{ success, executionId, workflowId, contactId, status: "pr
 ```json
 {
   "contact_id":    123,
-  "template_type": "no_show",
-  "trigger_data":  { "appt_id": 456, "appt_time": "..." },
-  "appt_type":     "341 Meeting",
-  "appt_with":     2
+  "template_type": "pre_appt",
+  "trigger_data":  {
+    "appt_id":   456,
+    "appt_time": "2026-03-20T14:00:00Z",
+    "appt_type": "341 Meeting",
+    "appt_with": 2
+  }
 }
 ```
 
-**Direct by id** (no cascade — `appt_type`/`appt_with` rejected):
+Cascade fields (the keys named in the type's `priority_fields`) live **inside** `trigger_data` — there are no top-level `appt_type` / `appt_with` body fields anymore. The engine reads them straight from `trigger_data` and ranks every active template of `template_type` against them.
+
+**Direct by id** (no cascade):
 ```json
 {
   "contact_id":   123,
@@ -104,7 +109,57 @@ Returns **202** with `{ success, executionId, workflowId, contactId, status: "pr
 }
 ```
 
-400 on: both/neither set, empty `template_type`, invalid `template_id`, missing `contact_id`, template inactive.
+400 on: both/neither of `template_type`/`template_id` set, empty `template_type`, invalid `template_id`, missing `contact_id`, template inactive.
+
+#### Sequence Types — `/api/sequence-types`
+
+Cascade configuration per sequence type. `priority_fields` declares the ordered list of `trigger_data` keys that drive cascade scoring (see chapter 3 / cookbook §3.5). Edited in-page via the **Manage Types** button on the Sequences tab — no separate sub-page.
+
+| Route | Method | Auth | Purpose |
+|---|---|---|---|
+| `/api/sequence-types` | GET | jwt | List all types (active + inactive), `ORDER BY type ASC` |
+| `/api/sequence-types/:type` | GET | jwt | Single type |
+| `/api/sequence-types` | POST | superuser | Create |
+| `/api/sequence-types/:type` | PUT | superuser | Partial update (any subset of `priority_fields`, `description`, `active`) |
+| `/api/sequence-types/:type` | DELETE | superuser | Delete |
+
+Write operations are SU-gated and audited under `tool='sequence_types'`. Reads use the standard `jwtOrApiKey` middleware.
+
+**Validation:**
+- `type` — `/^[a-z][a-z0-9_]*$/`, ≤50 chars; immutable PK (no rename via PUT)
+- `priority_fields` — JSON array of unique strings, each matching the `type` regex and ≤50 chars; **empty array allowed** (a type with no cascade — every template scores 0, lowest id wins)
+
+**Response shapes:**
+```json
+// GET /api/sequence-types
+{ "success": true, "types": [
+  { "type": "no_show", "priority_fields": ["appt_type", "appt_with"],
+    "description": "...", "active": true,
+    "created_at": "...", "updated_at": "..." },
+  ...
+]}
+
+// GET /api/sequence-types/:type, POST 201, PUT 200
+{ "success": true, "type": { ...row... } }
+// (POST/PUT may return just `{ "success": true, "type": "no_show" }` — string, not object)
+
+// DELETE 200
+{ "success": true, "message": "Sequence type \"...\" deleted" }
+```
+
+**409 conflict shapes:**
+
+| Operation | Cause | Body |
+|---|---|---|
+| POST | Type already exists | `{ "error": "Sequence type \"...\" already exists" }` |
+| PUT | Removing a `priority_fields` key still referenced by some template's `filters` | `{ "error": "...", "removed_keys": ["..."], "offenders": [{ "id": 4, "name": "..." }, ...] }` |
+| DELETE | Type still has templates referencing it (active or inactive) | `{ "error": "...", "template_count": 3 }` |
+
+The shrinkage check is the only place a PUT can 409 — adding fields, reordering, toggling `active`, and editing `description` are unconstrained.
+
+#### Template `filters` validation
+
+`POST /sequences/templates` and `PUT /sequences/templates/:id` reject `filters` JSON keys that aren't in the type's `priority_fields` (`validateTemplateFilters` in `lib/sequenceEngine.js`). Type-less (ID-only) templates can't have non-empty filters at all.
 
 ---
 
