@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        #container {
+  width: 960px;
+  height: 960px;
+  border: 1px solid black;
+  display: flex;
+  flex-wrap: wrap
+}
+    </style>
+</head>
+<body>
+    <button id="resize">New Grid</button>
+    <div id="container"></div>
+</body>
+<script>
+    function resizeGrid(num) {
+  const container = document.querySelector("#container");
+  container.innerHTML = "";
+
+  const fragment = document.createDocumentFragment();
+  const size = container.clientWidth / num + "px";
+  for (let i = 0; i < num; i++) {
+    for (let j = 0; j < num; j++) {
+      const div = document.createElement("div");
+      div.className = "grid-square";
+      div.id = `gs-${i + 1}-${j + 1}`;
+      div.style.width = size
+      div.style.height = size
+      div.hits = 0;
+      div.color = randomColor();
+      fragment.appendChild(div);
+    }
+  }
+  container.appendChild(fragment);
+}
+
+document
+  .querySelector("#container")
+  .addEventListener("mouseover", function (e) {
+    if (!e.target.classList.contains("grid-square")) return;
+    const square = e.target;
+    square.hits++;
+    if (square.hits == 1) square.style.backgroundColor = square.color;
+    square.style.opacity = Math.min(0.1 * square.hits, 1);
+  });
+
+  document
+  .querySelector("#container")
+  .addEventListener("click", function (e) {
+    if (!e.target.classList.contains("grid-square")) return;
+    const square = e.target;
+    square.color = square.style.backgroundColor = randomColor();
+  });
+
+  document
+  .querySelector("#container")
+  .addEventListener("dblclick", function (e) {
+    if (!e.target.classList.contains("grid-square")) return;
+    const square = e.target;
+    square.style.opacity = 0.1 ;
+    square.hits = 0
+  });
+
+
+const newButton = document.querySelector("#resize");
+newButton.addEventListener("click", function () {
+  let num;
+  do {
+    num = prompt("enter a number between 1 and 100");
+    if (!num) return;
+  } while (isNaN(num) || num < 1 || num > 100);
+  if (num) resizeGrid(num);
+});
+
+function randomColor() {
+  const r = Math.floor(Math.random() * 256);
+  const g = Math.floor(Math.random() * 256);
+  const b = Math.floor(Math.random() * 256);
+  return `rgb(${r},${g},${b})`;
+}
+resizeGrid(16);
+
+</script>
+</html>
