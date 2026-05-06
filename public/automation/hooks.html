@@ -634,6 +634,7 @@ window.togglePanelLeft = togglePanelLeft;
   // ── Internal-target reference data (fetched on init, cached for session) ──
   let workflowsList = [];
   let sequenceTemplatesList = [];
+  let sequenceTypesList = [];   // [{ type, priority_fields, description, active, ... }]
   let internalFunctionsList = [];
 
   // ── Init (lazy, runs on first tab open) ──
@@ -641,13 +642,14 @@ window.togglePanelLeft = togglePanelLeft;
     if (hooksLoaded) return;
     hooksLoaded = true;
     try {
-      const [hooksData, credsData, metaData, wfData, seqData, fnData] = await Promise.all([
+      const [hooksData, credsData, metaData, wfData, seqData, fnData, stData] = await Promise.all([
         api('/api/hooks'),
         api('/api/credentials'),
         api('/api/hooks/meta'),
         api('/workflows').catch(() => ({ workflows: [] })),
         api('/sequences/templates').catch(() => ({ templates: [] })),
         api('/workflows/functions').catch(() => ({ workflow: [] })),
+        api('/api/sequence-types').catch(() => ({ types: [] })),
       ]);
       hooks = hooksData.hooks || [];
       filtered = hooks;
@@ -656,6 +658,7 @@ window.togglePanelLeft = togglePanelLeft;
       workflowsList = wfData.workflows || wfData || [];
       sequenceTemplatesList = seqData.templates || seqData || [];
       internalFunctionsList = fnData.workflow || fnData.functions || fnData || [];
+      sequenceTypesList = stData.types || [];
       renderHookList();
     } catch (e) {
       E('hook-list').innerHTML = `<div style="padding:16px;color:#f87171;font-size:12px">${esc(e.message)}</div>`;
@@ -1360,17 +1363,6 @@ window.togglePanelLeft = togglePanelLeft;
               </select>
               ${seqTypes.length === 0 ? '<div class="hint" style="color:#ef4444;font-size:11px;margin-top:3px">No sequence templates loaded. Check /sequences/templates.</div>' : ''}
             </div>
-            <div style="display:flex;gap:8px">
-              <div class="fg" style="flex:1">
-                <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">appt_type filter (optional)</label>
-                <input id="swal-t-seq-appttype" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.appt_type_filter || '')}" placeholder="Strategy Session">
-              </div>
-              <div class="fg" style="flex:1">
-                <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">appt_with filter (user ID)</label>
-                <input id="swal-t-seq-apptwith" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.appt_with_filter != null ? cfg.appt_with_filter : '')}" placeholder="2">
-              </div>
-            </div>
-            <div class="hint" style="font-size:11px;color:var(--muted);margin-top:-6px">Cascading template match — both filters are optional.</div>
           </div>
 
           <div id="swal-sec-seq-by-id" style="display:none">
@@ -1393,6 +1385,9 @@ window.togglePanelLeft = togglePanelLeft;
               Dot-paths supported for nested/passthrough shapes — e.g. <code>body.contactId</code>.
             </div>
           </div>
+          <!-- Cascade hint (populated by initTargetFormHandlers; hidden in id-mode) -->
+          <div id="swal-t-seq-cascade-hint" style="display:none;margin:6px 0 8px 0;padding:8px 10px;border-radius:6px;font-size:11px;line-height:1.45;border:1px solid transparent"></div>
+
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">trigger_data fields (comma-separated)</label>
             <input id="swal-t-seq-td" class="swal2-input mono" style="margin:0;width:100%" value="${esc((cfg.trigger_data_fields || []).join(', '))}" placeholder="appt_id, appt_time, case_id">
@@ -1488,6 +1483,55 @@ window.togglePanelLeft = togglePanelLeft;
     }
 
     const seqModeEl = document.getElementById('swal-t-seq-mode');
+    const seqTypeEl = document.getElementById('swal-t-seq-type');
+    const cascadeHintEl = document.getElementById('swal-t-seq-cascade-hint');
+
+    // Update the cascade hint banner based on current type-selector value.
+    // - id-mode: hint hidden entirely (cascade bypassed by template_id).
+    // - type-mode + empty type: hint hidden.
+    // - type-mode + registered type with priority_fields: tip shape.
+    // - type-mode + registered type with empty priority_fields: tip shape (lowest-id win).
+    // - type-mode + unregistered type: warning shape.
+    function renderCascadeHint() {
+      if (!cascadeHintEl) return;
+      const mode = seqModeEl ? seqModeEl.value : 'type';
+      if (mode !== 'type') {
+        cascadeHintEl.style.display = 'none';
+        cascadeHintEl.innerHTML = '';
+        return;
+      }
+      const tt = seqTypeEl ? seqTypeEl.value.trim() : '';
+      if (!tt) {
+        cascadeHintEl.style.display = 'none';
+        cascadeHintEl.innerHTML = '';
+        return;
+      }
+      const reg = sequenceTypesList.find(r => r.type === tt);
+      if (!reg) {
+        cascadeHintEl.style.display = '';
+        cascadeHintEl.style.background = '#fef3c7';
+        cascadeHintEl.style.borderColor = '#fde68a';
+        cascadeHintEl.style.color = '#78350f';
+        cascadeHintEl.innerHTML = `⚠️ Type <code>${esc(tt)}</code> is not registered. Enrollment will fail at delivery time unless this type is created first.`;
+        return;
+      }
+      const pf = Array.isArray(reg.priority_fields) ? reg.priority_fields : [];
+      cascadeHintEl.style.display = '';
+      cascadeHintEl.style.background = '#eff6ff';
+      cascadeHintEl.style.borderColor = '#bfdbfe';
+      cascadeHintEl.style.color = '#1e3a8a';
+      if (pf.length === 0) {
+        cascadeHintEl.innerHTML =
+          `💡 Type <code>${esc(tt)}</code> has no cascade fields. ` +
+          `Any active template of this type wins by lowest id.`;
+      } else {
+        cascadeHintEl.innerHTML =
+          `💡 Type <code>${esc(tt)}</code> cascades on: ` +
+          pf.map(f => `<code>${esc(f)}</code>`).join(', ') + `.<br>` +
+          `Include these in <strong>trigger_data fields</strong> below so the engine can match against them at enrollment.`;
+      }
+    }
+
     if (seqModeEl) {
       const updateSeqMode = () => {
         const mode = seqModeEl.value;
@@ -1495,9 +1539,16 @@ window.togglePanelLeft = togglePanelLeft;
         const byId   = document.getElementById('swal-sec-seq-by-id');
         if (byType) byType.style.display = mode === 'type' ? '' : 'none';
         if (byId)   byId.style.display   = mode === 'id'   ? '' : 'none';
+        renderCascadeHint();
       };
       seqModeEl.addEventListener('change', updateSeqMode);
       updateSeqMode();
+    }
+
+    if (seqTypeEl) {
+      seqTypeEl.addEventListener('change', renderCascadeHint);
+      // Initial render covers the edit-existing case where a type is already selected.
+      renderCascadeHint();
     }
 
     const cfg = parseJson(t.config) || {};
@@ -1709,13 +1760,6 @@ window.togglePanelLeft = togglePanelLeft;
 
       const tt = document.getElementById('swal-t-seq-type').value.trim();
       if (!tt) { Swal.showValidationMessage('Select a template type'); return false; }
-      const apptTypeFilter = document.getElementById('swal-t-seq-appttype').value.trim() || null;
-      const apptWithRaw = document.getElementById('swal-t-seq-apptwith').value.trim();
-      const apptWithFilter = apptWithRaw ? parseInt(apptWithRaw, 10) : null;
-      if (apptWithRaw && !Number.isInteger(apptWithFilter)) {
-        Swal.showValidationMessage('appt_with filter must be a user ID (integer)');
-        return false;
-      }
       return {
         name,
         target_type: 'sequence',
@@ -1724,8 +1768,6 @@ window.togglePanelLeft = togglePanelLeft;
           template_type: tt,
           contact_id_field: cidField,
           trigger_data_fields: triggerDataFields,
-          appt_type_filter: apptTypeFilter,
-          appt_with_filter: apptWithFilter,
         },
         conditions,
         active,

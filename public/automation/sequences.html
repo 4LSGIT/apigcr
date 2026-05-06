@@ -720,7 +720,7 @@ async function loadSeqExtras() {
 // types manager modal (after each CRUD). Always overwrites the cache.
 async function loadSeqTypes() {
   const d = await api('/api/sequence-types');
-  SEQ_TYPES.list = d.types || d.sequence_types || [];
+  SEQ_TYPES.list = d.types || [];
   SEQ_TYPES.loaded = true;
   return SEQ_TYPES.list;
 }
@@ -2063,21 +2063,20 @@ function _seqWireTypesList() {
         Swal.fire({ icon: 'success', title: 'Deleted', timer: 1200, showConfirmButton: false });
         setTimeout(() => seqOpenTypesManager(), 1300);
       } catch (e) {
-        // 409: templates exist using this type. Backend response is expected
-        // to include either a `templates` array or a message listing them.
+        // 409: templates exist using this type. Backend response shape:
+        // { error, template_count }. The error message itself names the
+        // count and the type, so we surface it as-is. (No list of templates
+        // is returned — only the count.)
         let body = null;
         try { body = e.response || (e.body ? JSON.parse(e.body) : null); } catch {}
-        let listHtml = '';
-        const tpls = (body && (body.templates || body.usedBy || body.in_use_by)) || null;
-        if (Array.isArray(tpls) && tpls.length) {
-          listHtml = `<div style="margin-top:10px;text-align:left;font-size:12px"><strong>Templates using this type:</strong><ul style="margin:6px 0 0 18px;padding:0">${
-            tpls.map(t => `<li>${esc(t.name || t.id || JSON.stringify(t))}</li>`).join('')
-          }</ul></div>`;
-        }
+        const count = body && Number.isInteger(body.template_count) ? body.template_count : null;
+        const countLine = count != null
+          ? `<div style="margin-top:8px;font-size:12px;color:#64748b">${count} template${count === 1 ? '' : 's'} reference this type.</div>`
+          : '';
         await Swal.fire({
           icon: 'error',
           title: 'Cannot delete type',
-          html: `${esc(e.message || 'Templates currently use this type.')}${listHtml}`,
+          html: `${esc(e.message || 'Templates currently use this type.')}${countLine}`,
         });
         seqOpenTypesManager();
       }
@@ -2243,14 +2242,16 @@ async function seqOpenTypeEditor(existingType) {
         }
         return true;
       } catch (e) {
-        // 409 on remove-of-used-field expected here — surface body if present
+        // 409 on remove-of-used-field expected here — surface offenders if present.
+        // Backend response shape: { error, removed_keys, offenders } where
+        // offenders is [{id, name}, ...].
         let body2 = null;
         try { body2 = e.response || (e.body ? JSON.parse(e.body) : null); } catch {}
         let extra = '';
-        const tpls = (body2 && (body2.templates || body2.usedBy || body2.in_use_by)) || null;
-        if (Array.isArray(tpls) && tpls.length) {
+        const offenders = (body2 && Array.isArray(body2.offenders)) ? body2.offenders : null;
+        if (offenders && offenders.length) {
           extra = `<div style="margin-top:10px;text-align:left;font-size:12px"><strong>Templates affected:</strong><ul style="margin:6px 0 0 18px;padding:0">${
-            tpls.map(t => `<li>${esc(t.name || t.id || JSON.stringify(t))}</li>`).join('')
+            offenders.map(o => `<li>#${esc(o.id)} ${esc(o.name || '')}</li>`).join('')
           }</ul></div>`;
         }
         Swal.showValidationMessage(`${e.message || 'Save failed'}${extra ? ' (see details below)' : ''}`);
