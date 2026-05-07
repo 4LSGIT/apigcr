@@ -13,6 +13,7 @@
 </head>
 
 <body>
+  <button onclick="(async () => {console.log(await apiSend('/process-jobs'));})()">Process Jobs</button>
   <div style="text-align: center">
     <img src="https://iili.io/Jy2nXHv.md.png" width="280" aria-label="Form Logo" /><br />
     <div id="loading" style="text-align: center; display: none">
