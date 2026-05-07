@@ -624,7 +624,7 @@ async function quillImageHandler() {
         Swal.showValidationMessage('Upload a file or enter a URL');
         return false;
       }
-      return { file, url };
+      return { file, url, saveToLibrary };
     }
   });
 
@@ -953,7 +953,7 @@ async function attachMmsImage() {
         Swal.showValidationMessage('Upload a file or enter a URL');
         return false;
       }
-      return { file, url };
+      return { file, url, saveToLibrary };
     }
   });
 
@@ -1064,7 +1064,7 @@ async function attachEmailFile() {
         Swal.showValidationMessage('Upload a file or enter a URL');
         return false;
       }
-      return { file, url };
+      return { file, url, saveToLibrary };
     }
   });
 
