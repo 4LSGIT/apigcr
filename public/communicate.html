@@ -526,7 +526,8 @@ async function showLibraryPicker() {
               <div style="font-size:10px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:2px 4px;">
                 ${esc(img.original_name || img.filename)}
               </div>
-              <button onclick="event.stopPropagation(); deleteLibraryImage(${img.id}, this.closest('.lib-img-wrap'))"
+              <button data-delete-id="${img.id}"
+                      class="lib-img-delete"
                       style="position:absolute; top:2px; right:2px; background:rgba(220,53,69,.85); color:#fff;
                              border:none; border-radius:50%; width:20px; height:20px; font-size:12px;
                              cursor:pointer; line-height:20px; padding:0;"
@@ -540,10 +541,17 @@ async function showLibraryPicker() {
       cancelButtonText: 'Cancel',
       width: 600,
       didOpen: () => {
-        Swal.getPopup().querySelectorAll('.lib-img-wrap').forEach(wrap => {
+        const popup = Swal.getPopup();
+        popup.querySelectorAll('.lib-img-wrap').forEach(wrap => {
           wrap.addEventListener('click', () => {
             resolve(wrap.dataset.url);
             Swal.close();
+          });
+        });
+        popup.querySelectorAll('.lib-img-delete').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteLibraryImage(Number(btn.dataset.deleteId), btn.closest('.lib-img-wrap'));
           });
         });
       },
@@ -834,7 +842,6 @@ function updateSubjectHint() {
   else { hint.textContent = `${len}/150 — high risk of truncation`; hint.style.color = 'red'; }
 }
 
-
 // ═══════════════════════════════════════════════════════════════
 // SEND / LOG
 // ═══════════════════════════════════════════════════════════════
@@ -961,7 +968,6 @@ async function send(action) {
   }
 }
 
-
 // ═══════════════════════════════════════════════════════════════
 // UTILITIES
 // ═══════════════════════════════════════════════════════════════
@@ -979,7 +985,6 @@ function esc(str) {
   div.textContent = str;
   return div.innerHTML;
 }
-
 
 // ═══════════════════════════════════════════════════════════════
 // BOOT

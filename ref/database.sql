@@ -1,5 +1,5 @@
 -- DB Console schema snapshot
--- Generated: 2026-05-07T08:34:23.962Z
+-- Generated: 2026-05-07T23:05:34.855Z
 -- Source: GET /admin/db/schema.sql
 -- Contains schema only (no data, no database identifier).
 
@@ -1146,6 +1146,9 @@ CREATE TABLE `phone_lines` (
   `display_name` varchar(50) DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `provider_id` varchar(50) DEFAULT NULL,
+  `driver_key` varchar(50) DEFAULT NULL,
+  `credential_id` int DEFAULT NULL,
+  `driver_config` json DEFAULT NULL,
   `mms_capable` tinyint(1) NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -1178,6 +1181,8 @@ DROP TABLE IF EXISTS `rc_messages_log`;
 CREATE TABLE `rc_messages_log` (
   `id` int NOT NULL,
   `type` enum('sms','mms') COLLATE utf8mb4_general_ci NOT NULL,
+  `driver_key` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `credential_id` int DEFAULT NULL,
   `from_number` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
   `to_number` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
   `message` text COLLATE utf8mb4_general_ci,
@@ -2108,7 +2113,8 @@ ALTER TABLE `payment_failed`
 --
 ALTER TABLE `phone_lines`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `uk_phone_number` (`phone_number`);
+  ADD UNIQUE KEY `uk_phone_number` (`phone_number`),
+  ADD KEY `fk_phone_lines_credential` (`credential_id`);
 
 --
 -- Indexes for table `query_log`
@@ -2733,6 +2739,12 @@ ALTER TABLE `hook_delivery_logs`
 ALTER TABLE `hook_targets`
   ADD CONSTRAINT `fk_hook_targets_cred` FOREIGN KEY (`credential_id`) REFERENCES `credentials` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_hook_targets_hook` FOREIGN KEY (`hook_id`) REFERENCES `hooks` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `phone_lines`
+--
+ALTER TABLE `phone_lines`
+  ADD CONSTRAINT `fk_phone_lines_credential` FOREIGN KEY (`credential_id`) REFERENCES `credentials` (`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 --
 -- Constraints for table `sequence_enrollments`
