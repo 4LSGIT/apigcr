@@ -27,9 +27,8 @@
  */
 
 const { resolve }    = require('./resolverService');
-const smsService     = require('./smsService');
-const emailService   = require('./emailService');
-const ringcentralService = require('./ringcentralService');
+const phoneService = require('./phoneService');
+const emailService = require('./emailService');
 const { localToUTC } = require('./timezoneService');
 
 // ─────────────────────────────────────────────────────────────
@@ -162,18 +161,19 @@ async function createCampaign(db, { type, sender, subject, body, contactIds, sch
     throw new Error('Subject is required for email campaigns');
   }
 
-  // MMS validation: attachment requires a RingCentral sender
+  // MMS validation: attachment requires an MMS-capable line.
+  // (Capability lives on phone_lines.mms_capable; checked at send time too.)
   if (attachmentUrl && type === 'sms') {
     const fromClean = sender.toString().replace(/\D/g, '').slice(-10);
     const [[line]] = await db.query(
-      'SELECT provider FROM phone_lines WHERE phone_number = ? AND active = 1 LIMIT 1',
+      'SELECT provider, mms_capable FROM phone_lines WHERE phone_number = ? AND active = 1 LIMIT 1',
       [fromClean]
     );
     if (!line) {
-      throw new Error(`Sender ${sender} not found in phone_lines`);
+      throw new Error(`Sender ${sender} not found in phone_lines (or inactive)`);
     }
-    if (line.provider !== 'ringcentral') {
-      throw new Error(`MMS requires a RingCentral line. ${sender} uses ${line.provider}.`);
+    if (!line.mms_capable) {
+      throw new Error(`MMS requires an MMS-capable line. ${sender} (provider=${line.provider}) is not MMS-capable.`);
     }
   }
 
@@ -593,19 +593,16 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
 
     if (campaign.type === 'sms') {
       if (campaign.attachment_url) {
-        // MMS — RingCentral only (validated at campaign creation)
-        sendResult = await ringcentralService.sendMms(
+        // MMS — line must be mms_capable (validated at campaign creation)
+        sendResult = await phoneService.sendMms(
           db,
           campaign.sender,
           contact.contact_phone,
           resolvedBody.text,
-          'US',
-          null, null, null,        // no buffer/filename/mimetype
-          campaign.attachment_url, // URL attachment
-          false                    // don't re-store in GCS
+          campaign.attachment_url
         );
       } else {
-        sendResult = await smsService.sendSms(
+        sendResult = await phoneService.sendSms(
           db,
           campaign.sender,
           contact.contact_phone,
@@ -769,8 +766,8 @@ function isTransientError(err) {
   }
 
   // Provider HTTP errors come through as plain Error objects with the status
-  // baked into the message (ringcentralService throws `new Error(text)`,
-  // quoService throws `new Error(\`Quo API error ${status}: ...\`)`).
+  // baked into the message (RC adapter throws `new Error(\`RingCentral SMS ${status}: ...\`)`,
+  // Quo adapter throws `new Error(\`Quo API ${status}: ...\`)`).
   // Best-effort pattern matching as a fallback.
   const msg = (err.message || '').toLowerCase();
 

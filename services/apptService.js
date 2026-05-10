@@ -12,7 +12,7 @@
  */
 
 const { getSetting, getSettings } = require('./settingsService');
-const smsService   = require('./smsService');
+const smsService   = require('./phoneService');
 const emailService = require('./emailService');
 const pabbly       = require('./pabblyService');
 const taskService  = require('./taskService');

@@ -23,7 +23,7 @@ const logService   = require('./logService');
 
 // ─── lazy-load to avoid circular deps ───────────────────────────────────────
 function emailSvc() { return require('./emailService'); }
-function smsSvc()   { return require('./smsService'); }
+function smsSvc()   { return require('./phoneService'); }
 function settings() { return require('./settingsService'); }
 
 // ─────────────────────────────────────────────────────────────────────────────

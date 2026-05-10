@@ -1,108 +1,121 @@
 /**
- * RingCentral Routes
+ * RingCentral Routes — TRAP SHIMS
  * ------------------------------------------------------
- * - /ringcentral/send-sms : POST/GET
- * - /ringcentral/send-mms : POST (with optional file attachment or URL)
- * - /ringcentral/status   : GET
- * - /ringcentral/authorize & /callback : OAuth
+ * Pre-Connections legacy SMS/MMS routes. Internal callers all migrated to
+ * /internal/sms/send and /internal/mms/send. We don't know whether anything
+ * external still hits these endpoints, so we keep them as trap shims:
  *
- * Uses:
- * - API key in headers/query
- * - Calls service for SMS, token refresh, etc.
+ *   - legacyTrap middleware writes every inbound request (incl. headers,
+ *     body, query) to legacy_route_log. Review the table to identify
+ *     callers.
+ *   - alertOnce sends a throttled email to IT_EMAIL on each distinct
+ *     caller (1/hr per route+ip+ua) so a hit doesn't sit unnoticed.
+ *   - Actual send goes through phoneService — same outcome as before.
+ *
+ * After ~1 week of empty traps:
+ *   1. Delete this file.
+ *   2. DROP TABLE legacy_route_log.
+ *   3. Delete lib/legacyTrap.js if no other legacy routes use it.
+ *
+ * The legacy OAuth callback, authorize, and status routes are gone —
+ * Connections owns OAuth now.
  */
 
-const express = require("express");
-const multer = require("multer"); // For file uploads in MMS
-const router = express.Router();
-const ringcentral = require("../services/ringcentralService");
+const express      = require("express");
+const router       = express.Router();
+const phoneService = require("../services/phoneService");
+const emailService = require("../services/emailService");
+const trap         = require("../lib/legacyTrap");
 
-// Multer setup for MMS file uploads (memory storage, 1.5MB limit per RingCentral docs)
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 1.5 * 1024 * 1024 },
-});
+// In-memory throttle so a misconfigured cron can't bury IT in 1500
+// emails overnight. 1 hour per (route, ip, user-agent) tuple.
+const ALERT_THROTTLE_MS = 60 * 60 * 1000;
+const lastAlertAt = new Map();
 
-async function checkApiKey(req, res, next) {
+function checkApiKey(req, res, next) {
   const key = req.headers["x-api-key"] || req.query.key;
-  const cachedKey = process.env.RINGCENTRAL_API_KEY;
-  if (key !== cachedKey) return res.status(403).json({ error: "Invalid API Key" });
+  if (key !== process.env.RINGCENTRAL_API_KEY) {
+    return res.status(403).json({ error: "Invalid API Key" });
+  }
   next();
 }
 
-// -------------------- LOAD TOKEN --------------------
-router.use(async (req, res, next) => {
-  try {
-    if (ringcentral.loadToken) await ringcentral.loadToken(req.db);
-  } catch (err) {
-    console.error("Token load failed:", err);
-    // Do not block the request — allow route to respond anyway
+function alertOnce(req, kind) {
+  const ua = req.get("user-agent") || "unknown";
+  const ip = req.ip || "unknown";
+  const k  = `${kind}|${ip}|${ua}`;
+  const now = Date.now();
+  if ((now - (lastAlertAt.get(k) || 0)) < ALERT_THROTTLE_MS) return;
+  lastAlertAt.set(k, now);
+
+  const to   = process.env.IT_EMAIL;
+  const from = process.env.AUTO_EMAIL;
+  if (!to || !from) {
+    console.warn("[LEGACY-RINGCENTRAL] IT_EMAIL or AUTO_EMAIL not set; alert skipped");
+    return;
   }
-  next();
-});
-// -------------------- SEND SMS --------------------
-router.all("/ringcentral/send-sms", checkApiKey, async (req, res) => {
-  try {
-    const { from, to, message } = { ...req.query, ...req.body };
-    const result = await ringcentral.sendSms(req.db, from, to, message);
-    res.json(result);
-  } catch (err) {
-    console.error("SMS send failed:", err);
-    res.status(500).json({ error: err.message });
+
+  emailService.sendEmail(req.db, {
+    from,
+    to,
+    subject: `[YisraCase] Legacy route hit: /ringcentral/${kind}`,
+    text:
+      `Deprecated route /ringcentral/${kind} was called.\n\n` +
+      `Environment:  ${process.env.ENVIRONMENT || "unknown"}\n` +
+      `Time:         ${new Date().toISOString()}\n` +
+      `IP:           ${ip}\n` +
+      `User-Agent:   ${ua}\n` +
+      `From:         ${req.body?.from || req.query?.from || "n/a"}\n` +
+      `To:           ${req.body?.to   || req.query?.to   || "n/a"}\n\n` +
+      `Full request (incl. headers and body) logged in legacy_route_log.\n\n` +
+      `Throttled to once per hour per distinct caller (route+ip+UA).`
+  }).catch(e => console.error("[LEGACY-RINGCENTRAL] alert email failed:", e.message));
+}
+
+// Order: trap → checkApiKey → alertOnce → handler.
+//   - trap runs first so even rejected (bad-key) hits are recorded —
+//     useful for distinguishing real callers from probes.
+//   - alertOnce only fires on authenticated hits to keep signal high.
+
+router.all(
+  "/ringcentral/send-sms",
+  trap("/ringcentral/send-sms"),
+  checkApiKey,
+  async (req, res) => {
+    alertOnce(req, "send-sms");
+    try {
+      const { from, to, message } = { ...req.query, ...req.body };
+      const result = await phoneService.sendSms(req.db, from, to, message);
+      res.json(result);
+    } catch (err) {
+      console.error("Legacy RC SMS send failed:", err);
+      res.status(500).json({ error: err.message });
+    }
   }
-});
+);
 
-// -------------------- SEND MMS --------------------
-router.post("/ringcentral/send-mms", checkApiKey, upload.single("attachment"), async (req, res) => {
-  try {
-    const { from, to, text, country = "US", attachment_url, store_attachment = "false" } = req.body;
-    const attachment = req.file;
-    const store = store_attachment === "true"; // Convert to boolean
-    const result = await ringcentral.sendMms(
-      req.db,
-      from,
-      to,
-      text,
-      country,
-      attachment?.buffer,
-      attachment?.originalname,
-      attachment?.mimetype,
-      attachment_url,
-      store
-    );
-    res.json(result);
-  } catch (err) {
-    console.error("MMS send failed:", err);
-    res.status(500).json({ error: err.message });
+router.post(
+  "/ringcentral/send-mms",
+  trap("/ringcentral/send-mms"),
+  checkApiKey,
+  async (req, res) => {
+    alertOnce(req, "send-mms");
+    try {
+      const { from, to, text, attachment_url } = req.body || {};
+      if (!attachment_url) {
+        console.warn(
+          "[LEGACY-RINGCENTRAL] /ringcentral/send-mms hit WITHOUT attachment_url — " +
+          "if caller is uploading a file, it needs migration to URL-based attachments"
+        );
+        return res.status(400).json({ error: "attachment_url is required (file uploads no longer supported)" });
+      }
+      const result = await phoneService.sendMms(req.db, from, to, text || "", attachment_url);
+      res.json(result);
+    } catch (err) {
+      console.error("Legacy RC MMS send failed:", err);
+      res.status(500).json({ error: err.message });
+    }
   }
-});
-
-// -------------------- STATUS --------------------
-router.get("/ringcentral/status", checkApiKey, (req, res) => {
-  const token = ringcentral.tokenData;
-  res.json({
-    authorized: !!token?.access_token,
-    access_token_expires_at: token?.access_issued_at ? new Date(token.access_issued_at + (token.expires_in || 0) * 1000) : null,
-    refresh_token_expires_at: token?.refresh_issued_at ? new Date(token.refresh_issued_at + (token.refresh_token_expires_in || 0) * 1000) : null
-  });
-});
-
-// -------------------- OAUTH --------------------
-router.get("/ringcentral/authorize", (req, res) => {
-  const authUrl = `https://platform.ringcentral.com/restapi/oauth/authorize?response_type=code&client_id=${process.env.RINGCENTRAL_CLIENT_ID}&redirect_uri=${process.env.RINGCENTRAL_REDIRECT_URI}`;
-  res.redirect(authUrl);
-});
-
-router.get("/ringcentral/callback", async (req, res) => {
-  if (req.query.error) return res.status(400).send("Authorization failed: " + req.query.error);
-
-  const code = req.query.code;
-  try {
-    await ringcentral.exchangeCodeForToken(req.db, code);
-    res.send("Authorization successful.");
-  } catch (err) {
-    console.error("OAuth callback failed:", err);
-    res.status(500).send("Failed to retrieve token.");
-  }
-});
+);
 
 module.exports = router;

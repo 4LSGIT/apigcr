@@ -2,7 +2,7 @@
  * Internal SMS Route
  * POST /internal/sms/send
  *
- * Thin HTTP wrapper around smsService.
+ * Thin HTTP wrapper around phoneService.
  * Protected by jwtOrApiKey — internal use only.
  *
  * Body:
@@ -14,7 +14,7 @@
 const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../../lib/auth.jwtOrApiKey");
-const smsService = require("../../services/smsService");
+const phoneService = require("../../services/phoneService");
 
 router.post("/internal/sms/send", jwtOrApiKey, async (req, res) => {
   const { from, to, message } = req.body;
@@ -27,7 +27,7 @@ router.post("/internal/sms/send", jwtOrApiKey, async (req, res) => {
   }
 
   try {
-    const result = await smsService.sendSms(req.db, from, to, message);
+    const result = await phoneService.sendSms(req.db, from, to, message);
     res.json({ status: "success", data: result });
   } catch (err) {
     console.error("Internal SMS error:", err);
