@@ -1,22 +1,39 @@
 // routes/api.emailCredentials.js
 //
 /**
- * Email Credentials API — SMTP sender accounts for the Connections system.
+ * Email Credentials API — sender accounts for the Connections system.
  * routes/api.emailCredentials.js
  *
- * GET    /api/email-credentials       — list, any auth (smtp_pass scrubbed)
- * GET    /api/email-credentials/:id   — admin only (full row incl. smtp_pass)
- * POST   /api/email-credentials       — admin only
- * PUT    /api/email-credentials/:id   — admin only
- * DELETE /api/email-credentials/:id   — admin only
- * POST   /api/email-credentials/:id/test — admin only (sends a real test email)
+ * GET    /api/email-credentials                       — list, any auth user
+ *                                                       (smtp_pass scrubbed;
+ *                                                        joins credentials.name)
+ * GET    /api/email-credentials/:id                   — admin (full row incl. smtp_pass)
+ * POST   /api/email-credentials                       — admin
+ * PUT    /api/email-credentials/:id                   — admin
+ * DELETE /api/email-credentials/:id                   — admin
+ * POST   /api/email-credentials/:id/test              — admin (sends a real test email)
+ * GET    /api/email-credentials/:id/verify-aliases    — admin (gmail rows only — probes Gmail sendAs)
  *
- * Slice 3 deliverable. Currently smtp_pass is plaintext in the DB (matches
- * existing send-site read patterns); a future cleanup slice may encrypt it
- * with a one-time migration. NOT addressed here.
+ * Slice 4 changes (this file):
+ *   - VALID_PROVIDERS expanded to ['smtp','pabbly','gmail'].
+ *   - Field validation is now provider-conditional (see requiredForProvider).
+ *   - credential_id wired through CRUD; defaults to NULL for non-gmail.
+ *   - For provider='gmail' on save, the referenced credential must exist,
+ *     be type='oauth2', and have oauth_status='connected'.
+ *   - After a successful gmail save, alias verification is auto-run and
+ *     returned in the response body for the UI to surface as a warning.
+ *     The save is NEVER blocked — Gmail silently rewrites unrecognized
+ *     same-account From: addresses, so the warning is informational, not
+ *     gating. (See gmail.js Slice 2 comment block.)
+ *   - admin_audit_log details now include a before/after diff for updates
+ *     (smtp_pass values redacted).
  *
- * The list endpoint is the dropdown source for hooks/sequences/workflows when
- * configuring an email sender. Admin CRUD endpoints feed the Connections UI.
+ * Slice 3 background (kept):
+ *   - smtp_pass is still plaintext in the DB. A future cleanup slice may
+ *     encrypt it via a one-time migration. NOT addressed here.
+ *
+ * The list endpoint is the dropdown source for hooks/sequences/workflows
+ * when configuring an email sender, so it remains jwtOrApiKey (not SU).
  */
 
 const express = require('express');
@@ -24,35 +41,45 @@ const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
 const emailService = require('../services/emailService');
+const gmailAdapter = require('../services/adapters/email/gmail');
 
 const TOOL = 'connections';
 
-// Columns that are safe to expose in the list endpoint (any auth user).
+// Columns safe to expose in the list endpoint (any auth user).
 // smtp_pass is intentionally omitted — admin GET single returns it.
 const LIST_COLUMNS = [
   'id', 'email', 'smtp_host', 'smtp_port', 'smtp_user',
-  'smtp_secure', 'provider', 'from_name',
+  'smtp_secure', 'provider', 'from_name', 'credential_id',
 ];
 
-// Full column set for admin GET single.
+// Full column set for admin GET single. smtp_pass included.
 const ALL_COLUMNS = [
   'id', 'email', 'smtp_host', 'smtp_port', 'smtp_user',
-  'smtp_pass', 'smtp_secure', 'provider', 'from_name',
+  'smtp_pass', 'smtp_secure', 'provider', 'from_name', 'credential_id',
 ];
 
-// Required on POST.
-const REQUIRED_FIELDS = [
-  'email', 'smtp_host', 'smtp_port', 'smtp_user',
-  'smtp_pass', 'provider', 'from_name',
-];
+// Per-provider required fields. Always required: email, provider, from_name.
+const BASE_REQUIRED = ['email', 'provider', 'from_name'];
+const SMTP_REQUIRED = ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass'];
+const GMAIL_REQUIRED = ['credential_id'];
+
+function requiredForProvider(provider) {
+  if (provider === 'smtp')  return [...BASE_REQUIRED, ...SMTP_REQUIRED];
+  if (provider === 'gmail') return [...BASE_REQUIRED, ...GMAIL_REQUIRED];
+  // pabbly + any other: just the base set
+  return BASE_REQUIRED;
+}
 
 // Allowed on PUT.
 const UPDATABLE_FIELDS = [
   'email', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass',
-  'smtp_secure', 'provider', 'from_name',
+  'smtp_secure', 'provider', 'from_name', 'credential_id',
 ];
 
-const VALID_PROVIDERS = ['smtp', 'pabbly'];
+// Fields whose old/new values are redacted in the audit diff.
+const REDACTED_FIELDS = new Set(['smtp_pass']);
+
+const VALID_PROVIDERS = ['smtp', 'pabbly', 'gmail'];
 
 // Lightweight email-shape check; deliberately permissive. The send itself
 // is the ultimate validator.
@@ -75,20 +102,167 @@ function audit(db, row) {
   );
 }
 
+/**
+ * Coerce a single input value into its DB-shaped form. Returns null for
+ * "blank" credential_id input (undefined/null/empty string).
+ */
 function coerceField(field, value) {
-  if (field === 'smtp_port')   return Number(value);
-  if (field === 'smtp_secure') return value ? 1 : 0;
+  if (field === 'smtp_port')     return Number(value);
+  if (field === 'smtp_secure')   return value ? 1 : 0;
+  if (field === 'credential_id') {
+    if (value === undefined || value === null || value === '') return null;
+    const n = Number(value);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
   return value;
+}
+
+/**
+ * Validate that a credential_id references a usable gmail credential.
+ * Returns { ok: true, cred } or { ok: false, status, message }.
+ *
+ * "Usable" = exists, type='oauth2', oauth_status='connected'.
+ */
+async function validateGmailCredential(db, credentialId) {
+  if (credentialId == null) {
+    return { ok: false, status: 400, message: 'credential_id is required for provider=gmail' };
+  }
+  const [[cred]] = await db.query(
+    `SELECT id, name, type, oauth_status FROM credentials WHERE id = ?`,
+    [credentialId]
+  );
+  if (!cred) {
+    return { ok: false, status: 400, message: `credential ${credentialId} not found` };
+  }
+  if (cred.type !== 'oauth2') {
+    return {
+      ok: false, status: 400,
+      message: `credential ${credentialId} (${cred.name}) is type=${cred.type}, not oauth2`,
+    };
+  }
+  if (cred.oauth_status !== 'connected') {
+    return {
+      ok: false, status: 400,
+      message: `credential ${credentialId} (${cred.name}) is not connected ` +
+               `(oauth_status=${cred.oauth_status ?? 'null'}) — authorize it in Connections first`,
+    };
+  }
+  return { ok: true, cred };
+}
+
+/**
+ * Probe Gmail's sendAs list for an email_credentials row and compare its
+ * .email against the verified alias list. Used by both the auto-verify-on-
+ * save path and the GET /:id/verify-aliases endpoint.
+ *
+ * Returns:
+ *   { ok: true, row_email, matches, matched_entry, all_aliases }   on success
+ *   { ok: false, error }                                           on Gmail API failure
+ *
+ * Never throws — callers can fold the result into a response unconditionally.
+ */
+async function runAliasVerification(db, emailRow) {
+  if (!emailRow || emailRow.provider !== 'gmail' || !emailRow.credential_id) {
+    // Don't make this an error — auto-verify only runs when applicable. The
+    // endpoint enforces gmail-only at its own boundary.
+    return null;
+  }
+  try {
+    const aliases = await gmailAdapter.listSendAs(db, emailRow.credential_id);
+    const lc = String(emailRow.email || '').toLowerCase();
+    const matched = aliases.find(a =>
+      String(a?.sendAsEmail || '').toLowerCase() === lc
+    ) || null;
+    return {
+      ok: true,
+      row_email: emailRow.email,
+      matches: !!matched,
+      matched_entry: matched,
+      all_aliases: aliases,
+    };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+}
+
+/**
+ * Build the data row for INSERT / UPDATE from a (validated) body. Forces
+ * credential_id to null when provider is not gmail. Defaults missing SMTP
+ * fields to empty/zero for non-smtp providers, since the schema is NOT NULL.
+ *
+ * The caller has already validated REQUIRED fields per provider.
+ */
+function buildDataRow(body) {
+  const data = {
+    email:     body.email,
+    provider:  body.provider,
+    from_name: body.from_name,
+  };
+
+  // SMTP block — required only for smtp provider. Default to empty/zero
+  // for other providers (schema is NOT NULL).
+  if (body.provider === 'smtp') {
+    data.smtp_host   = body.smtp_host;
+    data.smtp_port   = Number(body.smtp_port);
+    data.smtp_user   = body.smtp_user;
+    data.smtp_pass   = body.smtp_pass;
+    data.smtp_secure = body.smtp_secure !== undefined ? (body.smtp_secure ? 1 : 0) : 1;
+  } else {
+    data.smtp_host   = body.smtp_host   ?? '';
+    data.smtp_port   = body.smtp_port   != null ? Number(body.smtp_port) : 0;
+    data.smtp_user   = body.smtp_user   ?? '';
+    data.smtp_pass   = body.smtp_pass   ?? '';
+    data.smtp_secure = body.smtp_secure !== undefined ? (body.smtp_secure ? 1 : 0) : 0;
+  }
+
+  // credential_id — only meaningful for gmail
+  if (body.provider === 'gmail') {
+    data.credential_id = coerceField('credential_id', body.credential_id);
+  } else {
+    data.credential_id = null;
+  }
+
+  return data;
+}
+
+/**
+ * Build an audit-safe before/after diff. smtp_pass values are redacted
+ * (replaced with the literal string '(redacted)' on either side when the
+ * field appears in the diff). Fields whose values are unchanged are
+ * omitted.
+ */
+function buildAuditDiff(before, after, touchedFields) {
+  const diff = {};
+  for (const f of touchedFields) {
+    const a = before?.[f];
+    const b = after?.[f];
+    if (JSON.stringify(a) === JSON.stringify(b)) continue;
+    if (REDACTED_FIELDS.has(f)) {
+      diff[f] = { from: '(redacted)', to: '(redacted)' };
+    } else {
+      diff[f] = { from: a ?? null, to: b ?? null };
+    }
+  }
+  return diff;
 }
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/email-credentials   — list (any auth user)
+//
+// LEFT JOINs credentials so the UI can show the credential's name next
+// to gmail rows. credential_name is null for non-gmail rows and for any
+// gmail row whose credential row has been deleted (FK is not enforced
+// today; if/when SET NULL semantics are wanted, add the FK).
 // ─────────────────────────────────────────────────────────────
 
 router.get('/api/email-credentials', jwtOrApiKey, async (req, res) => {
   try {
+    const selectCols = LIST_COLUMNS.map(c => `ec.${c}`).join(', ');
     const [rows] = await req.db.query(
-      `SELECT ${LIST_COLUMNS.join(', ')} FROM email_credentials ORDER BY email ASC`
+      `SELECT ${selectCols}, c.name AS credential_name
+         FROM email_credentials ec
+         LEFT JOIN credentials c ON c.id = ec.credential_id
+        ORDER BY ec.email ASC`
     );
     res.json({ status: 'success', email_credentials: rows });
   } catch (err) {
@@ -119,7 +293,7 @@ router.get('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
       route: req.originalUrl, method: req.method,
       status: 'success',
       ...meta,
-      details: { email_credential_id: row.id, email: row.email },
+      details: { email_credential_id: row.id, email: row.email, action: 'read' },
     });
 
     res.json({ status: 'success', email_credential: row });
@@ -138,11 +312,6 @@ router.post('/api/email-credentials', superuserOnlyFor(TOOL), async (req, res) =
   try {
     const body = req.body || {};
 
-    for (const f of REQUIRED_FIELDS) {
-      if (body[f] === undefined || body[f] === null || body[f] === '') {
-        return res.status(400).json({ status: 'error', message: `${f} is required` });
-      }
-    }
     if (!VALID_PROVIDERS.includes(body.provider)) {
       return res.status(400).json({
         status: 'error',
@@ -150,18 +319,36 @@ router.post('/api/email-credentials', superuserOnlyFor(TOOL), async (req, res) =
       });
     }
 
-    const data = {
-      email:       body.email,
-      smtp_host:   body.smtp_host,
-      smtp_port:   Number(body.smtp_port),
-      smtp_user:   body.smtp_user,
-      smtp_pass:   body.smtp_pass,                                // plaintext (existing convention)
-      smtp_secure: body.smtp_secure !== undefined ? (body.smtp_secure ? 1 : 0) : 1,
-      provider:    body.provider,
-      from_name:   body.from_name,
-    };
+    const required = requiredForProvider(body.provider);
+    for (const f of required) {
+      const v = body[f];
+      if (v === undefined || v === null || v === '') {
+        return res.status(400).json({ status: 'error', message: `${f} is required` });
+      }
+    }
 
+    // Gmail-specific credential validation. Same call is repeated on PUT.
+    if (body.provider === 'gmail') {
+      const credId = coerceField('credential_id', body.credential_id);
+      const check = await validateGmailCredential(req.db, credId);
+      if (!check.ok) {
+        return res.status(check.status).json({ status: 'error', message: check.message });
+      }
+    }
+
+    const data = buildDataRow(body);
     const [result] = await req.db.query(`INSERT INTO email_credentials SET ?`, [data]);
+    const insertId = result.insertId;
+
+    // Auto-verify aliases for gmail rows. Result is informational only —
+    // we don't block the save even if matches=false (documented Gmail
+    // silent-rewrite behavior; see gmail.js Slice 2 comment).
+    let aliasVerification = null;
+    if (data.provider === 'gmail') {
+      aliasVerification = await runAliasVerification(req.db, {
+        id: insertId, ...data,
+      });
+    }
 
     audit(req.db, {
       tool: TOOL,
@@ -169,10 +356,17 @@ router.post('/api/email-credentials', superuserOnlyFor(TOOL), async (req, res) =
       route: req.originalUrl, method: req.method,
       status: 'success',
       ...meta,
-      details: { email_credential_id: result.insertId, email: data.email },
+      details: {
+        email_credential_id: insertId,
+        email: data.email,
+        provider: data.provider,
+        credential_id: data.credential_id,
+        action: 'create',
+        alias_verified: aliasVerification?.ok ? aliasVerification.matches : null,
+      },
     });
 
-    res.json({ status: 'success', id: result.insertId });
+    res.json({ status: 'success', id: insertId, alias_verification: aliasVerification });
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({
@@ -187,7 +381,7 @@ router.post('/api/email-credentials', superuserOnlyFor(TOOL), async (req, res) =
       route: req.originalUrl, method: req.method,
       status: 'failed', errorMessage: err.message,
       ...meta,
-      details: { email_credential_id: null, email: req.body?.email ?? null, error: err.message },
+      details: { email_credential_id: null, email: req.body?.email ?? null, action: 'create', error: err.message },
     });
     res.status(500).json({ status: 'error', message: err.message });
   }
@@ -195,6 +389,9 @@ router.post('/api/email-credentials', superuserOnlyFor(TOOL), async (req, res) =
 
 // ─────────────────────────────────────────────────────────────
 // PUT /api/email-credentials/:id   — admin
+//
+// Body may include any subset of UPDATABLE_FIELDS. Provider-conditional
+// validation runs against the FINAL state (current row + body overlay).
 // ─────────────────────────────────────────────────────────────
 
 router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res) => {
@@ -203,34 +400,107 @@ router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
   try {
     const body = req.body || {};
 
-    const data = {};
-    const fieldsChanged = [];
-    for (const f of UPDATABLE_FIELDS) {
-      if (body[f] !== undefined) {
-        data[f] = coerceField(f, body[f]);
-        fieldsChanged.push(f);
-      }
-    }
-
-    if (data.provider !== undefined && !VALID_PROVIDERS.includes(data.provider)) {
-      return res.status(400).json({
-        status: 'error',
-        message: `provider must be one of: ${VALID_PROVIDERS.join(', ')}`,
-      });
-    }
-    if (Object.keys(data).length === 0) {
-      return res.status(400).json({ status: 'error', message: 'No fields to update' });
-    }
-
+    // Load existing row (used for provider-switch logic, validation,
+    // and the audit diff).
     const [[existing]] = await req.db.query(
-      `SELECT id, email FROM email_credentials WHERE id = ?`,
+      `SELECT ${ALL_COLUMNS.join(', ')} FROM email_credentials WHERE id = ?`,
       [id]
     );
     if (!existing) {
       return res.status(404).json({ status: 'error', message: 'Email credential not found' });
     }
 
+    // Overlay body onto existing to compute the final state.
+    const finalProvider = body.provider !== undefined ? body.provider : existing.provider;
+    if (!VALID_PROVIDERS.includes(finalProvider)) {
+      return res.status(400).json({
+        status: 'error',
+        message: `provider must be one of: ${VALID_PROVIDERS.join(', ')}`,
+      });
+    }
+
+    // For switching provider TO smtp, ensure the resulting state has
+    // SMTP fields populated — either from the body OR from the existing
+    // row. (Switching from gmail/pabbly to smtp without re-supplying
+    // credentials should fail loudly.)
+    if (finalProvider === 'smtp') {
+      const merged = {
+        smtp_host: body.smtp_host ?? existing.smtp_host,
+        smtp_port: body.smtp_port ?? existing.smtp_port,
+        smtp_user: body.smtp_user ?? existing.smtp_user,
+        smtp_pass: body.smtp_pass ?? existing.smtp_pass,
+      };
+      for (const f of SMTP_REQUIRED) {
+        if (merged[f] === undefined || merged[f] === null || merged[f] === '') {
+          return res.status(400).json({
+            status: 'error',
+            message: `${f} is required when provider=smtp`,
+          });
+        }
+      }
+    }
+
+    // Gmail: validate the final credential_id (body override OR existing,
+    // unless the provider just switched to gmail in which case body MUST
+    // supply credential_id — we never inherit a previously-null id).
+    if (finalProvider === 'gmail') {
+      let finalCredId;
+      if (body.credential_id !== undefined) {
+        finalCredId = coerceField('credential_id', body.credential_id);
+      } else if (existing.provider === 'gmail') {
+        finalCredId = existing.credential_id;
+      } else {
+        finalCredId = null;
+      }
+      const check = await validateGmailCredential(req.db, finalCredId);
+      if (!check.ok) {
+        return res.status(check.status).json({ status: 'error', message: check.message });
+      }
+      // Stamp the validated value back onto the body so the data-builder
+      // picks it up even if it wasn't explicitly supplied.
+      body.credential_id = finalCredId;
+      body.provider = 'gmail';
+    }
+
+    // Build the partial update. Only fields explicitly present in the body
+    // are included — EXCEPT when provider is switching, in which case we
+    // also force credential_id reset so smtp/pabbly rows don't leak a
+    // dangling credential_id from a prior gmail config.
+    const data = {};
+    const touchedFields = [];
+    for (const f of UPDATABLE_FIELDS) {
+      if (body[f] !== undefined) {
+        data[f] = coerceField(f, body[f]);
+        touchedFields.push(f);
+      }
+    }
+
+    if (body.provider !== undefined && body.provider !== existing.provider) {
+      // Provider switch: defensively reset credential_id when switching
+      // AWAY from gmail. (We can't simply unconditionally reset because
+      // a same-provider edit of credential_id should be allowed.)
+      if (body.provider !== 'gmail' && existing.credential_id != null) {
+        data.credential_id = null;
+        if (!touchedFields.includes('credential_id')) touchedFields.push('credential_id');
+      }
+    }
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ status: 'error', message: 'No fields to update' });
+    }
+
     await req.db.query(`UPDATE email_credentials SET ? WHERE id = ?`, [data, id]);
+
+    // Load the post-update row for auto-verify + diff.
+    const [[after]] = await req.db.query(
+      `SELECT ${ALL_COLUMNS.join(', ')} FROM email_credentials WHERE id = ?`,
+      [id]
+    );
+
+    let aliasVerification = null;
+    if (after.provider === 'gmail') {
+      aliasVerification = await runAliasVerification(req.db, after);
+    }
 
     audit(req.db, {
       tool: TOOL,
@@ -240,12 +510,16 @@ router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
       ...meta,
       details: {
         email_credential_id: Number(id),
-        email: data.email ?? existing.email,
-        fields_changed: fieldsChanged,
+        email: after.email,
+        provider: after.provider,
+        credential_id: after.credential_id,
+        action: 'update',
+        diff: buildAuditDiff(existing, after, touchedFields),
+        alias_verified: aliasVerification?.ok ? aliasVerification.matches : null,
       },
     });
 
-    res.json({ status: 'success' });
+    res.json({ status: 'success', alias_verification: aliasVerification });
   } catch (err) {
     if (err.code === 'ER_DUP_ENTRY') {
       return res.status(409).json({
@@ -260,7 +534,7 @@ router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
       route: req.originalUrl, method: req.method,
       status: 'failed', errorMessage: err.message,
       ...meta,
-      details: { email_credential_id: Number(id), email: req.body?.email ?? null, error: err.message },
+      details: { email_credential_id: Number(id), email: req.body?.email ?? null, action: 'update', error: err.message },
     });
     res.status(500).json({ status: 'error', message: err.message });
   }
@@ -275,7 +549,7 @@ router.delete('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, 
   const meta = reqMeta(req);
   try {
     const [[existing]] = await req.db.query(
-      `SELECT id, email FROM email_credentials WHERE id = ?`,
+      `SELECT id, email, provider, credential_id FROM email_credentials WHERE id = ?`,
       [id]
     );
     if (!existing) {
@@ -290,7 +564,13 @@ router.delete('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, 
       route: req.originalUrl, method: req.method,
       status: 'success',
       ...meta,
-      details: { email_credential_id: Number(id), email: existing.email },
+      details: {
+        email_credential_id: Number(id),
+        email: existing.email,
+        provider: existing.provider,
+        credential_id: existing.credential_id,
+        action: 'delete',
+      },
     });
 
     res.json({ status: 'success' });
@@ -302,7 +582,90 @@ router.delete('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, 
       route: req.originalUrl, method: req.method,
       status: 'failed', errorMessage: err.message,
       ...meta,
-      details: { email_credential_id: Number(id), email: null, error: err.message },
+      details: { email_credential_id: Number(id), email: null, action: 'delete', error: err.message },
+    });
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/email-credentials/:id/verify-aliases   — admin
+//
+// Gmail-only. Probes Gmail's settings.sendAs.list API for the linked
+// credential and reports whether the row's email is a verified alias.
+//
+// Response (success):
+//   {
+//     ok: true,
+//     row_email: 'foo@4lsg.com',
+//     matches:   true | false,
+//     matched_entry: { sendAsEmail, displayName, isPrimary,
+//                      verificationStatus, ... } | null,
+//     all_aliases: [ { ... } ]
+//   }
+//
+// Response (Gmail API failure — e.g. token revoked, scope missing):
+//   { ok: false, error: '<message>' }
+//
+// Response (non-gmail row):
+//   400 { status: 'error', message: 'verify-aliases is gmail-only' }
+//
+// Audit: logged regardless of outcome; alias-match result captured.
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/email-credentials/:id/verify-aliases', superuserOnlyFor(TOOL), async (req, res) => {
+  const id = req.params.id;
+  const meta = reqMeta(req);
+  try {
+    const [[row]] = await req.db.query(
+      `SELECT id, email, provider, credential_id FROM email_credentials WHERE id = ?`,
+      [id]
+    );
+    if (!row) {
+      return res.status(404).json({ status: 'error', message: 'Email credential not found' });
+    }
+    if (row.provider !== 'gmail') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'verify-aliases is gmail-only',
+      });
+    }
+    if (!row.credential_id) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'this gmail row has no credential_id linked',
+      });
+    }
+
+    const result = await runAliasVerification(req.db, row);
+
+    audit(req.db, {
+      tool: TOOL,
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method,
+      status: result?.ok ? 'success' : 'failed',
+      errorMessage: result?.ok ? null : (result?.error || 'unknown'),
+      ...meta,
+      details: {
+        email_credential_id: row.id,
+        email: row.email,
+        credential_id: row.credential_id,
+        action: 'verify_aliases',
+        alias_matches: result?.ok ? result.matches : null,
+        error: result?.ok ? null : result?.error,
+      },
+    });
+
+    res.json(result || { ok: false, error: 'no result' });
+  } catch (err) {
+    console.error('[email-creds] verify-aliases error:', err);
+    audit(req.db, {
+      tool: TOOL,
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method,
+      status: 'failed', errorMessage: err.message,
+      ...meta,
+      details: { email_credential_id: Number(id), action: 'verify_aliases', error: err.message },
     });
     res.status(500).json({ status: 'error', message: err.message });
   }
@@ -311,14 +674,8 @@ router.delete('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, 
 // ─────────────────────────────────────────────────────────────
 // POST /api/email-credentials/:id/test   — admin (live test send)
 //
-// Sends a real email through emailService.sendEmail() to verify the sender
-// configuration end-to-end. The Connections UI uses this to validate a sender
-// after creation/edit.
-//
-// Body: { to: 'recipient@example.com' }
-//
-// Audit details on success: { email_credential_id, from_email, to_email }
-// Audit details on failure: { ..., error: <message> }
+// Unchanged from Slice 3. emailService.sendEmail dispatches by the row's
+// provider, so gmail rows are tested through the gmail adapter automatically.
 // ─────────────────────────────────────────────────────────────
 
 router.post('/api/email-credentials/:id/test', superuserOnlyFor(TOOL), async (req, res) => {
@@ -370,6 +727,7 @@ router.post('/api/email-credentials/:id/test', superuserOnlyFor(TOOL), async (re
           email_credential_id: Number(id),
           from_email: row.email,
           to_email: to,
+          action: 'test_send',
           error: sendErr.message,
         },
       });
@@ -386,6 +744,7 @@ router.post('/api/email-credentials/:id/test', superuserOnlyFor(TOOL), async (re
         email_credential_id: Number(id),
         from_email: row.email,
         to_email: to,
+        action: 'test_send',
       },
     });
 
@@ -402,6 +761,7 @@ router.post('/api/email-credentials/:id/test', superuserOnlyFor(TOOL), async (re
         email_credential_id: Number(id),
         from_email: null,
         to_email: to,
+        action: 'test_send',
         error: err.message,
       },
     });

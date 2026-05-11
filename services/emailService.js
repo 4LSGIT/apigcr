@@ -213,4 +213,6 @@ async function sendEmail(db, opts) {
   });
 }
 
-module.exports = { sendEmail, sendEmailDirect };
+const VALID_PROVIDERS = Object.freeze(Object.keys(ADAPTERS));
+
+module.exports = { sendEmail, sendEmailDirect, VALID_PROVIDERS };

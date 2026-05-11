@@ -359,6 +359,56 @@ async function sendEmail(db, {
   };
 }
 
+// ─────────────────────────────────────────────────────────────
+// List Send-as aliases (Slice 4)
+//
+// Probes Gmail's settings.sendAs.list endpoint and returns the raw
+// array. Used by routes/api.emailCredentials.js for both the manual
+// "Verify aliases" action and the auto-verify-on-save warning.
+//
+// Requires the gmail.settings.basic scope on the credential. Gmail
+// returns 403 with insufficient_scope if the credential was authorized
+// before that scope was added — caller surfaces the message to the UI
+// so the operator knows to re-authorize.
+//
+// Returns the array directly (not the wrapping {sendAs:[...]} envelope)
+// — callers don't need the wrapper. Each element shape:
+//   { sendAsEmail, displayName, replyToAddress, signature,
+//     isPrimary, isDefault, treatAsAlias, verificationStatus }
+// ─────────────────────────────────────────────────────────────
+
+const GMAIL_SENDAS_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/settings/sendAs';
+
+async function listSendAs(db, credentialId) {
+  if (credentialId == null) {
+    throw new Error('listSendAs: credentialId is required');
+  }
+  const headers = await buildHeadersForCredential(db, credentialId, GMAIL_SENDAS_URL);
+  if (!headers.Authorization) {
+    throw new Error(
+      `Gmail listSendAs: could not obtain access token for credential ${credentialId} ` +
+      `— check Connections UI (oauth_status may not be 'connected', or token refresh failed).`
+    );
+  }
+  const res = await fetch(GMAIL_SENDAS_URL, { method: 'GET', headers });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    let parsed;
+    try { parsed = JSON.parse(body); } catch { parsed = null; }
+    const apiMsg = parsed?.error?.message || body.slice(0, 500);
+    if (res.status === 403 && /insufficient[\s_-]?scope|gmail\.settings/i.test(apiMsg)) {
+      throw new Error(
+        `Gmail listSendAs: credential ${credentialId} is missing the ` +
+        `gmail.settings.basic scope. Re-authorize this credential from the API ` +
+        `Credentials tab to grant the new scope. (Gmail: "${apiMsg}")`
+      );
+    }
+    throw new Error(`Gmail listSendAs failed (${res.status}): ${apiMsg}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data?.sendAs) ? data.sendAs : [];
+}
+
 module.exports = {
   capabilities: {
     html: true,
@@ -366,4 +416,5 @@ module.exports = {
     attachments_url: true,
   },
   sendEmail,
+  listSendAs,
 };

@@ -50,6 +50,18 @@
   .tab:hover { color: var(--text); }
   .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 
+  .tab-refresh {
+    margin-left: auto; align-self: center;
+    background: none; border: 1px solid var(--border); border-radius: 4px;
+    color: var(--muted); cursor: pointer;
+    padding: 3px 9px; margin-right: 10px;
+    font-size: 14px; line-height: 1;
+    transition: color 0.12s, border-color 0.12s, transform 0.6s ease-out;
+  }
+  .tab-refresh:hover { color: var(--text); border-color: var(--accent); }
+  .tab-refresh.spinning { transform: rotate(360deg); pointer-events: none; }
+  .tab-refresh:disabled { opacity: 0.5; cursor: not-allowed; }
+
   .panel-host { flex: 1; overflow: auto; min-height: 0; }
   .panel { display: none; padding: 14px 16px; }
   .panel.active { display: block; }
@@ -258,6 +270,7 @@
 <div class="tabs" id="tabs">
   <button class="tab active" data-tab="creds"><i class="fa-solid"></i>API Credentials</button>
   <button class="tab" data-tab="email">Email Senders</button>
+  <button class="tab-refresh" id="refresh-btn" title="Refresh current tab" type="button">↻</button>
 </div>
 
 <div class="panel-host">
@@ -276,6 +289,18 @@
   <div class="actions">
     <button class="btn" id="testEmailCancel">Cancel</button>
     <button class="btn primary" id="testEmailSend">Send Test</button>
+  </div>
+</dialog>
+
+<dialog id="aliasResultDialog" style="min-width:480px; max-width:640px;">
+  <h3 id="aliasResultTitle">Alias verification</h3>
+  <div id="aliasResultBody" style="font-size:12.5px; line-height:1.5; color:var(--text);"></div>
+  <div class="actions">
+    <a href="https://mail.google.com/mail/u/0/#settings/accounts" target="_blank" rel="noopener"
+       style="margin-right:auto; font-size:11.5px; color:var(--accent-2); text-decoration:none; align-self:center;">
+       Open Gmail Settings ↗
+    </a>
+    <button class="btn primary" id="aliasResultClose">Close</button>
   </div>
 </dialog>
 
@@ -426,7 +451,13 @@ document.querySelectorAll('.tab').forEach(btn => {
 const state = {
   activeTab: 'creds',
   creds:  { rows: [], view: 'list', editing: null, original: null, error: null, saving: false },
-  email:  { rows: [], view: 'list', editing: null, original: null, error: null, saving: false },
+  email:  {
+    rows: [], view: 'list', editing: null, original: null, error: null, saving: false,
+    // Credentials cache for the gmail credential_id dropdown. Loaded
+    // lazily on demand (when the editor opens for a gmail row, or when
+    // the user picks 'gmail' in the provider dropdown).
+    credentialsCache: null,
+  },
 };
 
 // ════════════════════════════════════════════════════════════
@@ -1260,7 +1291,7 @@ function renderEmailList(host) {
           <th>From name</th>
           <th>Email</th>
           <th>Provider</th>
-          <th>SMTP host</th>
+          <th>SMTP host / Credential</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -1284,6 +1315,11 @@ function renderEmailList(host) {
       e.stopPropagation();
       openTestEmailDialog(Number(tr.dataset.id), tr.dataset.email);
     });
+    const verify = tr.querySelector('button[data-action=verify]');
+    if (verify) verify.addEventListener('click', e => {
+      e.stopPropagation();
+      verifyEmailAliases(Number(tr.dataset.id), tr.dataset.email);
+    });
     const del = tr.querySelector('button[data-action=delete]');
     if (del) del.addEventListener('click', e => {
       e.stopPropagation();
@@ -1294,18 +1330,31 @@ function renderEmailList(host) {
 
 function emailListRow(r) {
   const provider = `<span class="badge type">${esc(r.provider)}</span>`;
-  const host = r.provider === 'smtp'
-    ? esc(r.smtp_host || '—')
-    : '<span style="color:var(--muted);">—</span>';
+  let detail;
+  if (r.provider === 'smtp') {
+    detail = esc(r.smtp_host || '—');
+  } else if (r.provider === 'gmail') {
+    detail = r.credential_name
+      ? esc(r.credential_name)
+      : (r.credential_id
+          ? `<span style="color:var(--warn);">credential #${esc(r.credential_id)} (missing)</span>`
+          : `<span style="color:var(--danger);">no credential linked</span>`);
+  } else {
+    detail = '<span style="color:var(--muted);">—</span>';
+  }
+  const verifyBtn = r.provider === 'gmail'
+    ? '<button data-action="verify">Verify aliases</button>'
+    : '';
   return `
     <tr data-id="${r.id}" data-email="${esc(r.email)}">
       <td>${esc(r.from_name)}</td>
       <td>${esc(r.email)}</td>
       <td>${provider}</td>
-      <td>${host}</td>
+      <td>${detail}</td>
       <td class="actions-cell">
         <button data-action="edit">Edit</button>
         <button data-action="test">Test</button>
+        ${verifyBtn}
         <button data-action="delete" class="danger">Delete</button>
       </td>
     </tr>
@@ -1345,6 +1394,8 @@ function blankEmail() {
     smtp_secure: 1,
     provider: 'smtp',
     from_name: '',
+    credential_id: null,
+    credential_name: null,
   };
 }
 
@@ -1363,6 +1414,10 @@ function renderEmailEditor(host) {
     ? `<div class="inline-error">${esc(state.email.error)}</div>`
     : '';
 
+  const verifyBtnHtml = (!isNew && e.provider === 'gmail')
+    ? '<button class="btn" id="email-verify">Verify aliases</button>'
+    : '';
+
   host.innerHTML = `
     <div class="editor">
       <div class="editor-toolbar">
@@ -1371,6 +1426,7 @@ function renderEmailEditor(host) {
         <div class="right">
           <button class="btn" id="email-cancel">Cancel</button>
           ${isNew ? '' : '<button class="btn" id="email-test">Test</button>'}
+          ${verifyBtnHtml}
           ${isNew ? '' : '<button class="btn danger" id="email-delete">Delete</button>'}
           <button class="btn primary" id="email-save">Save</button>
         </div>
@@ -1389,6 +1445,7 @@ function renderEmailEditor(host) {
         <select id="email-provider">
           <option value="smtp"   ${e.provider === 'smtp'   ? 'selected' : ''}>smtp</option>
           <option value="pabbly" ${e.provider === 'pabbly' ? 'selected' : ''}>pabbly</option>
+          <option value="gmail"  ${e.provider === 'gmail'  ? 'selected' : ''}>gmail</option>
         </select>
       </div>
       <div id="email-smtp-section"></div>
@@ -1400,9 +1457,25 @@ function renderEmailEditor(host) {
   if (!isNew) {
     E('email-delete').addEventListener('click', deleteEmailFromEditor);
     E('email-test').addEventListener('click', () => openTestEmailDialog(e.id, e.email));
+    if (e.provider === 'gmail') {
+      E('email-verify').addEventListener('click', () => verifyEmailAliases(e.id, e.email));
+    }
   }
-  E('email-provider').addEventListener('change', renderEmailSmtpSection);
-  renderEmailSmtpSection();
+  E('email-provider').addEventListener('change', async () => {
+    // Pre-load credentials list when switching to gmail so the dropdown
+    // doesn't render with an empty <select>.
+    if (E('email-provider').value === 'gmail') {
+      await ensureCredentialsCache();
+    }
+    renderEmailSmtpSection();
+  });
+
+  // Initial render — if provider is gmail, ensure the cache is loaded first.
+  if (e.provider === 'gmail') {
+    ensureCredentialsCache().then(renderEmailSmtpSection);
+  } else {
+    renderEmailSmtpSection();
+  }
 }
 
 function renderEmailSmtpSection() {
@@ -1420,7 +1493,63 @@ function renderEmailSmtpSection() {
     return;
   }
 
-  // SMTP
+  if (provider === 'gmail') {
+    const creds = state.email.credentialsCache || [];
+    const oauthCreds = creds.filter(c => c.type === 'oauth2' && c.oauth_status === 'connected');
+    const currentId = e.credential_id;
+    let dropdown;
+    if (!state.email.credentialsCache) {
+      dropdown = `<div class="note">Loading credentials…</div>`;
+    } else if (oauthCreds.length === 0) {
+      dropdown = `
+        <div class="note" style="color:var(--warn);">
+          No connected oauth2 credentials found. Create one in the API Credentials tab
+          and complete the Authorize flow before linking it here.
+        </div>
+      `;
+    } else {
+      const opts = oauthCreds.map(c =>
+        `<option value="${c.id}" ${Number(currentId) === Number(c.id) ? 'selected' : ''}>${esc(c.name)} (#${c.id})</option>`
+      ).join('');
+      // For new rows or rows whose current credential isn't in the connected
+      // list (e.g. it was disconnected after this row was saved), render a
+      // placeholder option so we never silently pre-select a different row.
+      const needsPlaceholder = isNew ||
+        (currentId != null && !oauthCreds.some(c => Number(c.id) === Number(currentId)));
+      const placeholder = needsPlaceholder
+        ? `<option value="" ${currentId == null ? 'selected' : ''}>— select credential —</option>`
+        : '';
+      dropdown = `
+        <select id="email-credential-id">${placeholder}${opts}</select>
+      `;
+    }
+
+    host.innerHTML = `
+      <div class="subsection">
+        <h4>Gmail (OAuth2)</h4>
+        <div class="field field-row">
+          <label>Credential</label>
+          <div>
+            ${dropdown}
+            <div class="helper">
+              The oauth2 credentials row that authorizes this send. Multiple email senders
+              (Send-as aliases) can share a single credential — each row represents one
+              verified alias on that Google account.
+            </div>
+          </div>
+        </div>
+        <div class="note" style="margin-top:8px;">
+          <strong>Note:</strong> the alias address (this row's Email) must be a verified
+          Send-as alias in Gmail Settings → Accounts → Send mail as on the credential's
+          Google account. Unverified aliases are silently rewritten by Gmail to the account's
+          primary address. Click <em>Verify aliases</em> after saving to confirm.
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // SMTP (default)
   host.innerHTML = `
     <div class="subsection">
       <h4>SMTP</h4>
@@ -1450,6 +1579,29 @@ function renderEmailSmtpSection() {
     </div>
   `;
   bindEmailShowButton('email-pw-pass', e.id, isNew);
+}
+
+// ── Credentials cache (gmail dropdown) ───────────────────────
+//
+// Loads /api/credentials once per session. The Connections tab and the
+// Email Senders tab both call /api/credentials independently — this is
+// the Email-tab cache, separate from state.creds.rows (which has the
+// full editor working set). Keeps the gmail dropdown decoupled from the
+// API Credentials tab's render lifecycle.
+//
+// Refresh trigger: any save in the Connections tab that adds/changes a
+// credential should invalidate this. Current Slice 4 scope: cache for
+// the editor's lifetime; reopen-the-editor (or reload-the-page) refreshes.
+async function ensureCredentialsCache(force = false) {
+  if (state.email.credentialsCache && !force) return state.email.credentialsCache;
+  try {
+    const r = await api('/api/credentials');
+    state.email.credentialsCache = r.credentials || [];
+  } catch (err) {
+    state.email.credentialsCache = [];
+    state.email.error = `Could not load credentials: ${err.message}`;
+  }
+  return state.email.credentialsCache;
 }
 
 /**
@@ -1518,43 +1670,58 @@ async function saveEmail() {
   if (!top.email)     { state.email.error = 'Email address is required.'; renderEmail(); return; }
   if (!/^\S+@\S+\.\S+$/.test(top.email)) { state.email.error = 'Email address looks invalid.'; renderEmail(); return; }
 
-  let smtp = {};
+  // Per-provider extra fields
+  let extra = {};
   if (top.provider === 'smtp') {
     const passInput = E('email-pw-pass').value;
-    smtp = {
+    extra = {
       smtp_host:   E('email-smtp-host').value.trim(),
       smtp_port:   Number(E('email-smtp-port').value || 587),
       smtp_user:   E('email-smtp-user').value.trim(),
       smtp_secure: E('email-smtp-secure').checked ? 1 : 0,
     };
-    // Only include smtp_pass if user typed (or new)
-    if (isNew || passInput !== '') smtp.smtp_pass = passInput;
-
-    if (!smtp.smtp_host) { state.email.error = 'SMTP host is required.'; renderEmail(); return; }
-    if (!smtp.smtp_user) { state.email.error = 'SMTP user is required.'; renderEmail(); return; }
-    if (isNew && !smtp.smtp_pass) { state.email.error = 'SMTP password is required for new senders.'; renderEmail(); return; }
-  } else {
-    // pabbly — backend still requires smtp_* fields per current API. We send placeholders
-    // for new, and skip them for edits (server validates per its own rules).
-    if (isNew) {
-      smtp = { smtp_host: 'pabbly', smtp_port: 0, smtp_user: top.email, smtp_pass: 'pabbly', smtp_secure: 0 };
+    if (isNew || passInput !== '') extra.smtp_pass = passInput;
+    if (!extra.smtp_host) { state.email.error = 'SMTP host is required.'; renderEmail(); return; }
+    if (!extra.smtp_user) { state.email.error = 'SMTP user is required.'; renderEmail(); return; }
+    if (isNew && !extra.smtp_pass) { state.email.error = 'SMTP password is required for new senders.'; renderEmail(); return; }
+  } else if (top.provider === 'gmail') {
+    const sel = E('email-credential-id');
+    const rawId = sel ? sel.value : '';
+    const credId = rawId ? Number(rawId) : null;
+    if (!credId) {
+      state.email.error = 'Select a credential for gmail senders.';
+      renderEmail();
+      return;
     }
+    extra.credential_id = credId;
+  } else if (top.provider === 'pabbly') {
+    // No extra fields. Server defaults SMTP columns to empty/zero for
+    // non-smtp providers, so we don't need to send placeholders anymore.
   }
 
+  // Build request body
   let body;
   if (isNew) {
-    body = { ...top, ...smtp };
+    body = { ...top, ...extra };
   } else {
-    // Diff
+    // Diff against the loaded original. Only send fields that changed.
     const o = state.email.original;
     body = {};
     for (const k of Object.keys(top)) {
       if (top[k] !== o[k]) body[k] = top[k];
     }
-    for (const k of Object.keys(smtp)) {
-      const a = JSON.stringify(smtp[k]);
+    for (const k of Object.keys(extra)) {
+      const a = JSON.stringify(extra[k]);
       const b = JSON.stringify(o[k]);
-      if (a !== b) body[k] = smtp[k];
+      if (a !== b) body[k] = extra[k];
+    }
+    // Switching provider is a non-trivial transition: always include
+    // provider AND any required field for the new provider, even if the
+    // text content matched a stale field on the row.
+    if (body.provider !== undefined) {
+      if (body.provider === 'gmail' && body.credential_id === undefined) {
+        body.credential_id = extra.credential_id ?? null;
+      }
     }
     if (Object.keys(body).length === 0) { backToEmailList(); return; }
   }
@@ -1563,14 +1730,35 @@ async function saveEmail() {
   E('email-saving').style.display = '';
   state.email.saving = true;
   try {
+    let response;
     if (isNew) {
-      await api('/api/email-credentials', 'POST', body);
+      response = await api('/api/email-credentials', 'POST', body);
     } else {
-      await api(`/api/email-credentials/${e.id}`, 'PUT', body);
+      response = await api(`/api/email-credentials/${e.id}`, 'PUT', body);
     }
     toast('Saved.');
     await loadEmails();
     backToEmailList();
+
+    // Surface auto-verify warning for gmail saves, if applicable. Save
+    // already succeeded — this is purely informational.
+    const av = response && response.alias_verification;
+    if (av) {
+      if (av.ok === false) {
+        showAliasResultDialog({
+          kind: 'error',
+          rowEmail: top.email,
+          error: av.error,
+        });
+      } else if (av.ok === true && av.matches === false) {
+        showAliasResultDialog({
+          kind: 'no-match',
+          rowEmail: av.row_email,
+          aliases: av.all_aliases,
+        });
+      }
+      // matches === true is the happy path — no dialog.
+    }
   } catch (err) {
     state.email.error = err.message;
     renderEmail();
@@ -1648,13 +1836,195 @@ E('testEmailSend').addEventListener('click', async () => {
   }
 });
 
-// ── Visibility refresh ───────────────────────────────────────
+// ── Alias verification (gmail rows) ──────────────────────────
+//
+// Probes Gmail's settings.sendAs.list to confirm the row's email is
+// a verified Send-as alias on the linked credential's Google account.
+// Surfaces the result in the aliasResultDialog.
+
+async function verifyEmailAliases(id, fromEmail) {
+  // Show a transient "checking" state via the dialog itself rather
+  // than a toast — the dialog handles the result anyway.
+  showAliasResultDialog({ kind: 'loading', rowEmail: fromEmail });
+  let r;
+  try {
+    r = await api(`/api/email-credentials/${id}/verify-aliases`);
+  } catch (err) {
+    showAliasResultDialog({ kind: 'error', rowEmail: fromEmail, error: err.message });
+    return;
+  }
+  if (!r || r.ok === false) {
+    showAliasResultDialog({
+      kind: 'error',
+      rowEmail: fromEmail,
+      error: r && r.error ? r.error : 'Unknown error',
+    });
+    return;
+  }
+  if (r.matches) {
+    showAliasResultDialog({
+      kind: 'match',
+      rowEmail: r.row_email,
+      matchedEntry: r.matched_entry,
+    });
+  } else {
+    showAliasResultDialog({
+      kind: 'no-match',
+      rowEmail: r.row_email,
+      aliases: r.all_aliases || [],
+    });
+  }
+}
+
+/**
+ * Render the aliasResultDialog with one of four content shapes.
+ * kind: 'loading' | 'match' | 'no-match' | 'error'
+ */
+function showAliasResultDialog(opts) {
+  const titleEl = E('aliasResultTitle');
+  const bodyEl = E('aliasResultBody');
+  const dlg = E('aliasResultDialog');
+
+  if (opts.kind === 'loading') {
+    titleEl.textContent = 'Checking aliases…';
+    bodyEl.innerHTML = `<div style="color:var(--muted);">Probing Gmail for ${esc(opts.rowEmail)}…</div>`;
+    if (!dlg.open) dlg.showModal();
+    return;
+  }
+
+  if (opts.kind === 'error') {
+    titleEl.innerHTML = `<span style="color:var(--danger);">⚠</span> Alias verification failed`;
+    bodyEl.innerHTML = `
+      <div style="margin-bottom:8px;">
+        Could not retrieve the alias list for <strong>${esc(opts.rowEmail)}</strong>.
+      </div>
+      <div class="inline-error">${esc(opts.error)}</div>
+      <div style="margin-top:10px; color:var(--muted); font-size:11.5px;">
+        Common causes: the credential's <code>oauth_status</code> is no longer
+        <em>connected</em>, the access token can't be refreshed, or the credential
+        is missing the <code>gmail.settings.basic</code> scope (re-authorize from
+        the API Credentials tab to grant additional scopes).
+      </div>
+    `;
+    if (!dlg.open) dlg.showModal();
+    return;
+  }
+
+  if (opts.kind === 'match') {
+    const entry = opts.matchedEntry || {};
+    const vStatus = entry.verificationStatus || 'unknown';
+    const primary = entry.isPrimary ? ' <span class="badge type">primary</span>' : '';
+    const displayName = entry.displayName
+      ? `<div style="margin-top:6px;">Display name: <strong>${esc(entry.displayName)}</strong></div>`
+      : '';
+    titleEl.innerHTML = `<span style="color:var(--ok);">✓</span> Alias verified`;
+    bodyEl.innerHTML = `
+      <div>
+        <strong>${esc(opts.rowEmail)}</strong> is a recognized Send-as alias on the credential's
+        Google account.
+      </div>
+      <div style="margin-top:6px;">
+        Verification status: <strong>${esc(vStatus)}</strong>${primary}
+      </div>
+      ${displayName}
+    `;
+    if (!dlg.open) dlg.showModal();
+    return;
+  }
+
+  if (opts.kind === 'no-match') {
+    const aliases = Array.isArray(opts.aliases) ? opts.aliases : [];
+    const aliasList = aliases.length
+      ? `<ul style="margin:6px 0 0 0; padding-left:18px;">
+           ${aliases.map(a => `<li>
+             <code>${esc(a.sendAsEmail || '?')}</code>
+             ${a.isPrimary ? ' <span class="badge type">primary</span>' : ''}
+             <span style="color:var(--muted); font-size:11px;"> — ${esc(a.verificationStatus || 'unknown')}</span>
+           </li>`).join('')}
+         </ul>`
+      : '<div style="color:var(--muted); margin-top:6px;">No aliases returned.</div>';
+    const primary = aliases.find(a => a.isPrimary);
+    const primaryNote = primary
+      ? `Sends from this row will silently arrive from <strong>${esc(primary.sendAsEmail)}</strong>.`
+      : `Sends from this row may be silently rewritten by Gmail.`;
+    titleEl.innerHTML = `<span style="color:var(--warn);">⚠</span> Alias not verified`;
+    bodyEl.innerHTML = `
+      <div style="margin-bottom:8px;">
+        <strong>${esc(opts.rowEmail)}</strong> is <strong>not</strong> a verified Send-as
+        alias on this credential's Google account. ${primaryNote}
+      </div>
+      <div style="margin-top:10px; color:var(--muted); font-size:12px;">
+        To fix: open <em>Gmail Settings → Accounts → Send mail as</em> and verify
+        the alias, then click <em>Verify aliases</em> again here.
+      </div>
+      <div style="margin-top:10px;">
+        <div style="font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:4px;">
+          Available verified aliases on this credential
+        </div>
+        ${aliasList}
+      </div>
+    `;
+    if (!dlg.open) dlg.showModal();
+    return;
+  }
+}
+
+E('aliasResultClose').addEventListener('click', () => {
+  E('aliasResultDialog').close();
+});
+
+// ── Refresh (button + visibility) ────────────────────────────
+//
+// Refresh action shared by the top-right ↻ button and the
+// visibilitychange handler. Re-fetches the active tab's list. From the
+// email editor, refreshes the underlying rows in the background AND
+// reloads the credentials dropdown source (common use case: "I just
+// added a credential and it's not in the dropdown yet").
+//
+// Editor state (state.email.editing) is NEVER clobbered — loadEmails
+// only re-renders when view === 'list'.
+async function refreshActive() {
+  const btn = E('refresh-btn');
+  if (btn) {
+    btn.classList.add('spinning');
+    btn.disabled = true;
+  }
+  try {
+    // Always invalidate the credentials cache; commonly stale when the
+    // user is bouncing between the two tabs.
+    state.email.credentialsCache = null;
+
+    if (state.activeTab === 'creds') {
+      await loadCreds();
+    } else if (state.activeTab === 'email') {
+      await loadEmails();
+      // If sitting in the email editor on a gmail row, reload the
+      // credentials dropdown without forcing the user out.
+      if (state.email.view === 'editor' &&
+          state.email.editing &&
+          E('email-provider')?.value === 'gmail') {
+        await ensureCredentialsCache();
+        if (E('email-smtp-section')) renderEmailSmtpSection();
+      }
+    }
+  } finally {
+    if (btn) {
+      // Let the rotate transition finish before re-enabling.
+      setTimeout(() => {
+        btn.classList.remove('spinning');
+        btn.disabled = false;
+      }, 600);
+    }
+  }
+}
+
+E('refresh-btn').addEventListener('click', refreshActive);
+
 // When the user comes back to this tab after working elsewhere
 // (e.g. revoked from another window), refresh whichever tab is active.
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
-  if (state.activeTab === 'creds' && state.creds.view === 'list') loadCreds();
-  if (state.activeTab === 'email' && state.email.view === 'list') loadEmails();
+  refreshActive();
 });
 
 // ── Init ─────────────────────────────────────────────────────
