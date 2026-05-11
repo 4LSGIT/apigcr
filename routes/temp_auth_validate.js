@@ -1,4 +1,4 @@
-// routes/auth.validate.js
+// routes/temp_auth_validate.js
 const express = require("express");
 const router = express.Router();
 const jwt = require("jsonwebtoken");

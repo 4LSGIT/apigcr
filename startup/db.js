@@ -60,6 +60,12 @@ promisePool.execute = async function (...args) {
   }
 };
 
+if (process.env.ENVIRONMENT === "development") {
+  promisePool.query("SELECT 1")
+    .then(() => console.log(`[db] connected to ${process.env.database}@${process.env.host} as ${process.env.user}`))
+    .catch((err) => console.error(`[db] connection failed: ${err.code || err.name} — ${err.message}`));
+}
+
 module.exports = promisePool;
 
 /*const mysql = require("mysql2");

@@ -1,3 +1,5 @@
+// routes/internal/sms.js
+//
 /**
  * Internal SMS Route
  * POST /internal/sms/send

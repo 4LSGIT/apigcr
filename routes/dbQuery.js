@@ -1,4 +1,4 @@
-// routes/db.js
+// routes/dbQuery.js
 /*
 const response = await fetch(`/db?username=${username}&password=${password}&query=${encodeURIComponent(q)}`);
 const data = await response.json();

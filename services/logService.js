@@ -1,3 +1,5 @@
+// services/logService.js
+//
 /**
  * Log Service
  * services/logService.js

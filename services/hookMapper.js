@@ -1,3 +1,5 @@
+// services/hookMapper.js
+//
 /**
  * Hook Mapper — Declarative Mapping Engine
  * services/hookMapper.js

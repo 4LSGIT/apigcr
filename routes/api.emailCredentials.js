@@ -1,3 +1,5 @@
+// routes/api.emailCredentials.js
+//
 /**
  * Email Credentials API — SMTP sender accounts for the Connections system.
  * routes/api.emailCredentials.js

@@ -1,3 +1,5 @@
+// routes/auth.profile.js
+//
 /**
  * User Profile Route
  * ----------------------------------------

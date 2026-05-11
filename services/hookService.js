@@ -1,3 +1,5 @@
+// services/hookService.js
+//
 /**
  * Hook Service — Core YisraHook Engine
  * services/hookService.js

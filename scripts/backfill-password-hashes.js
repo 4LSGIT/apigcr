@@ -1,3 +1,5 @@
+// scripts/backfill-password-hashes.js
+//
 /**
  * One-time password hash backfill script
  * Run with: node scripts/backfill-password-hashes.js

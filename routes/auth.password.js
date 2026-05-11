@@ -1,3 +1,5 @@
+// routes/auth.password.js
+//
 /**
  * Password Routes
  * ----------------------------------------

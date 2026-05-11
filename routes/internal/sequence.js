@@ -1,3 +1,5 @@
+// routes/internal/sequence.js
+//
 /**
  * Internal Sequence Routes
  *

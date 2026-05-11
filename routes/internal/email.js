@@ -1,3 +1,5 @@
+// routes/internal/email.js
+//
 /**
  * Internal Email Route
  * POST /internal/email/send

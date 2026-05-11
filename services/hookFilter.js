@@ -1,3 +1,5 @@
+// services/hookFilter.js
+//
 /**
  * Hook Filter — Recursive Condition Evaluator
  * services/hookFilter.js

@@ -1,4 +1,4 @@
-// test_alert.js
+// routes/alert-test.js
 const express = require('express');
 const router = express.Router();
 

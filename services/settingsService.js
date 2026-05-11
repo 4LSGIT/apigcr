@@ -1,3 +1,5 @@
+// services/settingsService.js
+//
 /**
  * Settings Service
  * services/settingsService.js
