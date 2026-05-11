@@ -15,6 +15,15 @@
  *     attachment_names    // legacy csv string, Pabbly only
  *   })
  *
+ * Internal entry point added in Slice 2:
+ *   sendEmailDirect(db, emailRow, opts)
+ *     Bypasses the email_credentials lookup. Caller supplies a pre-built
+ *     emailRow (loaded from DB or synthesized). Used by the diagnostic
+ *     test route to send through the Gmail adapter without flipping any
+ *     production email_credentials row's provider column. Not currently
+ *     called by any other production code path — sendEmail remains the
+ *     normal public entry point.
+ *
  * Adapter contract (services/adapters/email/<provider>.js):
  *   module.exports = {
  *     capabilities: { html, attachments_inline, attachments_url },
@@ -25,7 +34,7 @@
  *       attachmentUrls,      // raw input (string/object/array) — adapter parses
  *       attachmentNames,     // raw legacy csv, may be undefined
  *       credential,          // credentials row, null when emailRow.credential_id is null
- *       emailRow,            // full email_credentials row
+ *       emailRow,            // full email_credentials row (or synthesized one)
  *     }) → providerResult
  *   }
  *
@@ -51,6 +60,7 @@ const { loadCredential } = require('../lib/credentialInjection');
 const ADAPTERS = {
   smtp:   require('./adapters/email/smtp'),
   pabbly: require('./adapters/email/pabbly'),
+  gmail:  require('./adapters/email/gmail'),
 };
 
 // -------------------- BODY NORMALIZATION --------------------
@@ -89,23 +99,29 @@ function normalizeBodies(text, html) {
   };
 }
 
-// -------------------- MAIN --------------------
+// -------------------- INTERNAL: sendEmailDirect --------------------
 
 /**
- * Send a single email. Routes to the appropriate provider adapter.
+ * Internal entry point — dispatches to a provider adapter using a
+ * pre-built emailRow. The public sendEmail wraps this with an
+ * email_credentials lookup. Slice 2 added this so the diagnostic test
+ * route can test Gmail without flipping any production row's `provider`
+ * column.
+ *
+ * Validation + body normalization is performed here so direct callers
+ * don't need to repeat it. When sendEmail forwards already-normalized
+ * bodies, the second normalize call is a no-op (both fields are set).
+ *
  * @param {object} db
- * @param {object} opts
- * @param {string} opts.from               - must match a row in email_credentials
- * @param {string} opts.to
- * @param {string} opts.subject
- * @param {string} [opts.text]             - plain text body (auto-generated from html if omitted)
- * @param {string} [opts.html]             - html body (auto-generated from text if omitted)
- *                                           At least one of text or html is required.
- * @param {Array}  [opts.attachments]      - smtp-style inline attachments (nodemailer format)
- * @param {*}      [opts.attachment_urls]  - URLs (string | object | array)
- * @param {string} [opts.attachment_names] - legacy csv string of filenames (Pabbly)
+ * @param {object} emailRow
+ *   Required: email, provider, from_name. Optional: id, credential_id,
+ *   smtp_host/port/user/pass/secure (smtp adapter only). May be a real
+ *   row from the email_credentials table, or a synthesized object with
+ *   the same shape.
+ * @param {object} opts                same shape as sendEmail's opts
+ * @returns provider result
  */
-async function sendEmail(db, {
+async function sendEmailDirect(db, emailRow, {
   from, to, subject,
   text, html,
   attachments = [],
@@ -115,33 +131,25 @@ async function sendEmail(db, {
   if (!from || !to || !subject) {
     throw new Error('Missing required email fields (from, to, subject)');
   }
-
-  // Validate + normalize bodies BEFORE the DB lookup, to preserve original
-  // error ordering when both `text/html missing` and `creds not found` could
-  // fire. normalizeBodies throws the same message the old explicit check did.
+  // If sendEmail already normalized, this is a cheap no-op (both fields set).
   const bodies = normalizeBodies(text, html);
 
-  const [[emailRow]] = await db.query(
-    'SELECT * FROM email_credentials WHERE email = ? LIMIT 1',
-    [from]
-  );
-  if (!emailRow) {
-    throw new Error(`No credentials found for sender: ${from}`);
+  if (!emailRow || !emailRow.provider) {
+    throw new Error('sendEmailDirect requires emailRow with a provider');
   }
-
   const adapter = ADAPTERS[emailRow.provider];
   if (!adapter) {
     throw new Error(`Unknown email provider '${emailRow.provider}' for sender: ${from}`);
   }
 
-  // Load credential if linked. SMTP and Pabbly rows have credential_id NULL
-  // today; Slice 2 (Gmail) will populate this.
+  // Load credential if linked.
   let credential = null;
   if (emailRow.credential_id) {
     credential = await loadCredential(db, emailRow.credential_id);
     if (!credential) {
       throw new Error(
-        `email_credentials ${emailRow.id} references credential ${emailRow.credential_id} but it was not found`
+        `email_credentials ${emailRow.id ?? '<synthesized>'} references credential ` +
+        `${emailRow.credential_id} but it was not found`
       );
     }
   }
@@ -161,4 +169,48 @@ async function sendEmail(db, {
   });
 }
 
-module.exports = { sendEmail };
+// -------------------- PUBLIC: sendEmail --------------------
+
+/**
+ * Send a single email. Routes to the appropriate provider adapter.
+ * @param {object} db
+ * @param {object} opts
+ * @param {string} opts.from               - must match a row in email_credentials
+ * @param {string} opts.to
+ * @param {string} opts.subject
+ * @param {string} [opts.text]             - plain text body (auto-generated from html if omitted)
+ * @param {string} [opts.html]             - html body (auto-generated from text if omitted)
+ *                                           At least one of text or html is required.
+ * @param {Array}  [opts.attachments]      - smtp-style inline attachments (nodemailer format)
+ * @param {*}      [opts.attachment_urls]  - URLs (string | object | array)
+ * @param {string} [opts.attachment_names] - legacy csv string of filenames (Pabbly)
+ */
+async function sendEmail(db, opts) {
+  const { from, to, subject, text, html } = opts || {};
+
+  // Validate + normalize bodies BEFORE the DB lookup, to preserve original
+  // error ordering when both `text/html missing` and `creds not found` could
+  // fire. normalizeBodies throws the same message the old explicit check did.
+  if (!from || !to || !subject) {
+    throw new Error('Missing required email fields (from, to, subject)');
+  }
+  const bodies = normalizeBodies(text, html);
+
+  const [[emailRow]] = await db.query(
+    'SELECT * FROM email_credentials WHERE email = ? LIMIT 1',
+    [from]
+  );
+  if (!emailRow) {
+    throw new Error(`No credentials found for sender: ${from}`);
+  }
+
+  // Forward already-normalized bodies; sendEmailDirect will idempotently
+  // re-normalize for direct callers.
+  return sendEmailDirect(db, emailRow, {
+    ...opts,
+    text: bodies.text,
+    html: bodies.html,
+  });
+}
+
+module.exports = { sendEmail, sendEmailDirect };
