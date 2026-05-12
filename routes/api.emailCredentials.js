@@ -7,14 +7,21 @@
  * GET    /api/email-credentials                       — list, any auth user
  *                                                       (smtp_pass scrubbed;
  *                                                        joins credentials.name)
- * GET    /api/email-credentials/:id                   — admin (full row incl. smtp_pass)
+ * GET    /api/email-credentials/:id                   — admin (full row, smtp_pass scrubbed)
+ * GET    /api/email-credentials/:id/reveal            — admin (decrypts smtp_pass)
  * POST   /api/email-credentials                       — admin
  * PUT    /api/email-credentials/:id                   — admin
  * DELETE /api/email-credentials/:id                   — admin
  * POST   /api/email-credentials/:id/test              — admin (sends a real test email)
  * GET    /api/email-credentials/:id/verify-aliases    — admin (gmail rows only — probes Gmail sendAs)
  *
- * Slice 4 changes (this file):
+ * Encryption-at-rest change:
+ *   - smtp_pass is encrypted via lib/credentialCrypto (ENCv1: envelope) at
+ *     POST/PUT time, decrypted only at the SMTP adapter and via the new
+ *     /reveal endpoint. GET single no longer returns smtp_pass in the body.
+ *     One-time migration of legacy plaintext rows: scripts/encrypt-smtp-passwords.js.
+ *
+ * Slice 4 changes (kept):
  *   - VALID_PROVIDERS expanded to ['smtp','pabbly','gmail'].
  *   - Field validation is now provider-conditional (see requiredForProvider).
  *   - credential_id wired through CRUD; defaults to NULL for non-gmail.
@@ -28,10 +35,6 @@
  *   - admin_audit_log details now include a before/after diff for updates
  *     (smtp_pass values redacted).
  *
- * Slice 3 background (kept):
- *   - smtp_pass is still plaintext in the DB. A future cleanup slice may
- *     encrypt it via a one-time migration. NOT addressed here.
- *
  * The list endpoint is the dropdown source for hooks/sequences/workflows
  * when configuring an email sender, so it remains jwtOrApiKey (not SU).
  */
@@ -40,6 +43,7 @@ const express = require('express');
 const router = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
+const { encrypt, decrypt, isEncrypted } = require('../lib/credentialCrypto');
 const emailService = require('../services/emailService');
 const gmailAdapter = require('../services/adapters/email/gmail');
 
@@ -52,7 +56,9 @@ const LIST_COLUMNS = [
   'smtp_secure', 'provider', 'from_name', 'credential_id',
 ];
 
-// Full column set for admin GET single. smtp_pass included.
+// Full column set for admin GET single. smtp_pass column included in the
+// SELECT (so it's available for the audit diff source-of-truth load on
+// PUT), but the GET single endpoint strips it from the response body.
 const ALL_COLUMNS = [
   'id', 'email', 'smtp_host', 'smtp_port', 'smtp_user',
   'smtp_pass', 'smtp_secure', 'provider', 'from_name', 'credential_id',
@@ -105,6 +111,10 @@ function audit(db, row) {
 /**
  * Coerce a single input value into its DB-shaped form. Returns null for
  * "blank" credential_id input (undefined/null/empty string).
+ *
+ * Note: smtp_pass is NOT coerced here — encryption is applied at the
+ * route-handler boundary (POST and PUT) so the loop-based PUT path can
+ * special-case the "empty string = leave unchanged" behavior cleanly.
  */
 function coerceField(field, value) {
   if (field === 'smtp_port')     return Number(value);
@@ -190,6 +200,9 @@ async function runAliasVerification(db, emailRow) {
  * credential_id to null when provider is not gmail. Defaults missing SMTP
  * fields to empty/zero for non-smtp providers, since the schema is NOT NULL.
  *
+ * For provider=smtp, body.smtp_pass is encrypted here before insertion —
+ * it has already been validated as a non-empty string by the caller.
+ *
  * The caller has already validated REQUIRED fields per provider.
  */
 function buildDataRow(body) {
@@ -205,12 +218,15 @@ function buildDataRow(body) {
     data.smtp_host   = body.smtp_host;
     data.smtp_port   = Number(body.smtp_port);
     data.smtp_user   = body.smtp_user;
-    data.smtp_pass   = body.smtp_pass;
+    // Caller has validated smtp_pass is a non-empty string. Encrypt at the
+    // route boundary; SMTP adapter decrypts at send time.
+    data.smtp_pass   = encrypt(body.smtp_pass);
     data.smtp_secure = body.smtp_secure !== undefined ? (body.smtp_secure ? 1 : 0) : 1;
   } else {
     data.smtp_host   = body.smtp_host   ?? '';
     data.smtp_port   = body.smtp_port   != null ? Number(body.smtp_port) : 0;
     data.smtp_user   = body.smtp_user   ?? '';
+    // Don't encrypt an empty string — the schema default for non-smtp.
     data.smtp_pass   = body.smtp_pass   ?? '';
     data.smtp_secure = body.smtp_secure !== undefined ? (body.smtp_secure ? 1 : 0) : 0;
   }
@@ -272,7 +288,10 @@ router.get('/api/email-credentials', jwtOrApiKey, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// GET /api/email-credentials/:id   — admin (full row incl. smtp_pass)
+// GET /api/email-credentials/:id   — admin (row WITHOUT smtp_pass)
+//
+// smtp_pass is scrubbed from the response. Use the /reveal endpoint
+// to retrieve the decrypted value.
 // ─────────────────────────────────────────────────────────────
 
 router.get('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res) => {
@@ -287,6 +306,10 @@ router.get('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
       return res.status(404).json({ status: 'error', message: 'Email credential not found' });
     }
 
+    // Scrub the ciphertext from the response body — clients should call
+    // /:id/reveal explicitly to get the decrypted plaintext (audited).
+    delete row.smtp_pass;
+
     audit(req.db, {
       tool: TOOL,
       userId: req.auth.userId, username: req.auth.username,
@@ -299,6 +322,117 @@ router.get('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
     res.json({ status: 'success', email_credential: row });
   } catch (err) {
     console.error('[email-creds] get error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/email-credentials/:id/reveal   — admin (decrypts smtp_pass)
+//
+// SU-only. Audited. Mirrors the pattern of GET /api/credentials/:id/reveal:
+// response body carries the plaintext, audit log carries only metadata.
+//
+// Three terminal cases:
+//   - smtp_pass null/empty:      200 { revealed: { smtp_pass: null } }, empty=true in audit
+//   - smtp_pass not ENCv1:        500 "not encrypted; run scripts/..." (defense — shouldn't happen post-migration)
+//   - decrypt() throws:           500 with generic message, error='decrypt_failed' in audit
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/email-credentials/:id/reveal', superuserOnlyFor(TOOL), async (req, res) => {
+  const id = req.params.id;
+  const meta = reqMeta(req);
+  try {
+    const [[row]] = await req.db.query(
+      `SELECT id, email, smtp_pass FROM email_credentials WHERE id = ?`,
+      [id]
+    );
+    if (!row) {
+      return res.status(404).json({ status: 'error', message: 'Email credential not found' });
+    }
+
+    // Empty / null smtp_pass — not an error (non-smtp rows have empty
+    // smtp_pass by design). Audit with empty=true so the trail is clear.
+    if (row.smtp_pass == null || row.smtp_pass === '') {
+      audit(req.db, {
+        tool: TOOL,
+        userId: req.auth.userId, username: req.auth.username,
+        route: req.originalUrl, method: req.method,
+        status: 'success',
+        ...meta,
+        details: {
+          email_credential_id: row.id,
+          email: row.email,
+          action: 'reveal_smtp_pass',
+          empty: true,
+        },
+      });
+      return res.json({ status: 'success', revealed: { smtp_pass: null } });
+    }
+
+    // Defense-in-depth: post-migration this branch should never trigger.
+    // If it does, surface loudly so the operator runs the migration.
+    if (!isEncrypted(row.smtp_pass)) {
+      audit(req.db, {
+        tool: TOOL,
+        userId: req.auth.userId, username: req.auth.username,
+        route: req.originalUrl, method: req.method,
+        status: 'failed',
+        errorMessage: 'smtp_pass not encrypted',
+        ...meta,
+        details: {
+          email_credential_id: row.id,
+          email: row.email,
+          action: 'reveal_smtp_pass',
+          error: 'not_encrypted',
+        },
+      });
+      return res.status(500).json({
+        status: 'error',
+        message: 'smtp_pass is not encrypted; run scripts/encrypt-smtp-passwords.js',
+      });
+    }
+
+    let plaintext;
+    try {
+      plaintext = decrypt(row.smtp_pass);
+    } catch (decryptErr) {
+      console.error('[email-creds] reveal decrypt failed:', decryptErr);
+      audit(req.db, {
+        tool: TOOL,
+        userId: req.auth.userId, username: req.auth.username,
+        route: req.originalUrl, method: req.method,
+        status: 'failed',
+        errorMessage: `decrypt failed: ${decryptErr.message}`,
+        ...meta,
+        details: {
+          email_credential_id: row.id,
+          email: row.email,
+          action: 'reveal_smtp_pass',
+          error: 'decrypt_failed',
+        },
+      });
+      return res.status(500).json({
+        status: 'error',
+        message: 'Decryption failed (corrupt data or wrong CREDENTIALS_ENCRYPTION_KEY)',
+      });
+    }
+
+    audit(req.db, {
+      tool: TOOL,
+      userId: req.auth.userId, username: req.auth.username,
+      route: req.originalUrl, method: req.method,
+      status: 'success',
+      ...meta,
+      details: {
+        email_credential_id: row.id,
+        email: row.email,
+        action: 'reveal_smtp_pass',
+      },
+    });
+
+    res.json({ status: 'success', revealed: { smtp_pass: plaintext } });
+  } catch (err) {
+    console.error('[email-creds] reveal error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
@@ -392,6 +526,13 @@ router.post('/api/email-credentials', superuserOnlyFor(TOOL), async (req, res) =
 //
 // Body may include any subset of UPDATABLE_FIELDS. Provider-conditional
 // validation runs against the FINAL state (current row + body overlay).
+//
+// smtp_pass semantics:
+//   - body.smtp_pass === undefined  → leave row's smtp_pass untouched
+//   - body.smtp_pass === ''         → leave row's smtp_pass untouched
+//                                     (UI sends '' when user opens the
+//                                     editor but doesn't retype the pw)
+//   - body.smtp_pass === '<plain>'  → encrypt('<plain>'), write to DB
 // ─────────────────────────────────────────────────────────────
 
 router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res) => {
@@ -423,6 +564,10 @@ router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
     // SMTP fields populated — either from the body OR from the existing
     // row. (Switching from gmail/pabbly to smtp without re-supplying
     // credentials should fail loudly.)
+    //
+    // Note: existing.smtp_pass is ciphertext (ENCv1:…) post-migration,
+    // which is truthy/non-empty — so the merged check passes when body
+    // omits smtp_pass and the row already has one. ✓
     if (finalProvider === 'smtp') {
       const merged = {
         smtp_host: body.smtp_host ?? existing.smtp_host,
@@ -466,10 +611,20 @@ router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
     // are included — EXCEPT when provider is switching, in which case we
     // also force credential_id reset so smtp/pabbly rows don't leak a
     // dangling credential_id from a prior gmail config.
+    //
+    // smtp_pass is special-cased:
+    //   - undefined or empty string → skip (leave row unchanged)
+    //   - non-empty string          → encrypt before writing
     const data = {};
     const touchedFields = [];
     for (const f of UPDATABLE_FIELDS) {
-      if (body[f] !== undefined) {
+      if (body[f] === undefined) continue;
+      if (f === 'smtp_pass') {
+        if (typeof body.smtp_pass !== 'string') continue;   // defensive
+        if (body.smtp_pass === '') continue;                // "unchanged" sentinel
+        data.smtp_pass = encrypt(body.smtp_pass);
+        touchedFields.push('smtp_pass');
+      } else {
         data[f] = coerceField(f, body[f]);
         touchedFields.push(f);
       }
@@ -674,8 +829,9 @@ router.get('/api/email-credentials/:id/verify-aliases', superuserOnlyFor(TOOL), 
 // ─────────────────────────────────────────────────────────────
 // POST /api/email-credentials/:id/test   — admin (live test send)
 //
-// Unchanged from Slice 3. emailService.sendEmail dispatches by the row's
-// provider, so gmail rows are tested through the gmail adapter automatically.
+// emailService.sendEmail dispatches by the row's provider, so gmail rows
+// are tested through the gmail adapter automatically. The SMTP adapter
+// decrypts smtp_pass internally before opening the nodemailer transport.
 // ─────────────────────────────────────────────────────────────
 
 router.post('/api/email-credentials/:id/test', superuserOnlyFor(TOOL), async (req, res) => {

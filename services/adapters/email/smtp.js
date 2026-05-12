@@ -13,8 +13,18 @@
 //     passed to nodemailer. (Old code did this; changing would be a
 //     behavior change outside this slice's scope.)
 //   - On send failure, log a FAILED-<ts> row to email_log BEFORE rethrowing.
+//
+// Encryption-at-rest:
+//   - emailRow.smtp_pass is ENCv1: ciphertext (lib/credentialCrypto).
+//     The adapter decrypts inside the existing try/catch block, so any
+//     decrypt failure (corrupt ciphertext, wrong key) or "not encrypted"
+//     defensive throw is logged to email_log as a FAILED row, then
+//     rethrown to the caller. There is NO plaintext fallback — a row
+//     whose smtp_pass is not ENCv1:-prefixed will hard-fail; run
+//     scripts/encrypt-smtp-passwords.js to migrate any legacy plaintext.
 
 const nodemailer = require('nodemailer');
+const { decrypt, isEncrypted } = require('../../../lib/credentialCrypto');
 
 function urlToNodemailerAttachment(item) {
   if (typeof item === 'string' && item) {
@@ -58,16 +68,6 @@ async function sendEmail(db, {
   // attachmentNames, credential, emailRow.credential_id: ignored for SMTP
   emailRow,
 }) {
-  const transporter = nodemailer.createTransport({
-    host:   emailRow.smtp_host,
-    port:   emailRow.smtp_port,
-    secure: !!emailRow.smtp_secure,
-    auth: {
-      user: emailRow.smtp_user,
-      pass: emailRow.smtp_pass,
-    },
-  });
-
   const mergedAttachments = buildAttachments(attachments, attachmentUrls);
 
   const mailOptions = {
@@ -81,6 +81,29 @@ async function sendEmail(db, {
 
   let info;
   try {
+    // Decrypt smtp_pass at the adapter boundary. No plaintext fallback —
+    // a row that isn't ENCv1: prefixed is treated as a hard error so the
+    // operator runs the migration script. Both this throw and any throw
+    // from decrypt() (e.g. auth-tag failure) land in the catch below,
+    // producing an email_log FAILED row and propagating the error.
+    if (!isEncrypted(emailRow.smtp_pass)) {
+      throw new Error(
+        `SMTP adapter: emailRow id=${emailRow.id} smtp_pass is not encrypted. ` +
+        `Run scripts/encrypt-smtp-passwords.js.`
+      );
+    }
+    const smtpPassPlain = decrypt(emailRow.smtp_pass);
+
+    const transporter = nodemailer.createTransport({
+      host:   emailRow.smtp_host,
+      port:   emailRow.smtp_port,
+      secure: !!emailRow.smtp_secure,
+      auth: {
+        user: emailRow.smtp_user,
+        pass: smtpPassPlain,
+      },
+    });
+
     info = await transporter.sendMail(mailOptions);
   } catch (err) {
     logEmail(db, `FAILED-${Date.now()}`, from, to, subject, `SEND FAILED: ${err.message}`);

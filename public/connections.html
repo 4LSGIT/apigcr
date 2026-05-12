@@ -1689,8 +1689,8 @@ async function ensureCredentialsCache(force = false) {
 }
 
 /**
- * Email sender Show/Hide button. Reveals smtp_pass via GET /api/email-credentials/:id
- * (admin endpoint returns the full row). NOTE per Slice 3: smtp_pass is plaintext.
+ * Email sender Show/Hide button. Reveals decrypted smtp_pass via
+ * GET /api/email-credentials/:id/reveal — SU-only, audited.
  */
 function bindEmailShowButton(inputId, emailId, isNew) {
   if (isNew) return;
@@ -1716,9 +1716,15 @@ function bindEmailShowButton(inputId, emailId, isNew) {
     btn.disabled = true;
     btn.textContent = 'Loading…';
     try {
-      const r = await api(`/api/email-credentials/${emailId}`);
-      const row = r.email_credential || r;
-      input.value = String(row.smtp_pass ?? '');
+      const r = await api(`/api/email-credentials/${emailId}/reveal`);
+      const val = r?.revealed?.smtp_pass;
+      if (val == null || val === '') {
+        btn.disabled = false;
+        btn.textContent = 'Show';
+        toast('No SMTP password stored', 'warn');
+        return;
+      }
+      input.value = String(val);
       input.type = 'text';
       btn.disabled = false;
       revealed = true;
@@ -1732,7 +1738,7 @@ function bindEmailShowButton(inputId, emailId, isNew) {
     } catch (err) {
       btn.disabled = false;
       btn.textContent = 'Show';
-      state.email.error = `Could not load password: ${err.message}`;
+      state.email.error = `Could not decrypt — ${err.message}`;
       renderEmail();
     }
   });
