@@ -36,6 +36,11 @@ const ADAPTERS = {
   quo:         require('./adapters/phone/quo'),
 };
 
+// Frozen list of provider keys. Exported for admin route validation
+// (Connections > Phone Lines tab). Single source of truth for what
+// counts as a valid provider in the system.
+const VALID_PROVIDERS = Object.freeze(Object.keys(ADAPTERS));
+
 // ─── Number helpers ──────────────────────────────────────────────────
 
 function tenDigit(num) {
@@ -207,6 +212,12 @@ async function sendMms(db, from, to, text, attachmentUrl) {
 module.exports = {
   sendSms,
   sendMms,
+
+  // Exposed for the admin Phone Lines tab: VALID_PROVIDERS for route
+  // validation, ADAPTERS for capability lookup (default mms_capable on
+  // new lines). Read-only consumers — do not mutate.
+  ADAPTERS,
+  VALID_PROVIDERS,
 
   // Exposed for the temp test route + future channel additions.
   _resolveLine: resolveLine,

@@ -270,12 +270,14 @@
 <div class="tabs" id="tabs">
   <button class="tab active" data-tab="creds"><i class="fa-solid"></i>API Credentials</button>
   <button class="tab" data-tab="email">Email Senders</button>
+  <button class="tab" data-tab="phone">Phone Lines</button>
   <button class="tab-refresh" id="refresh-btn" title="Refresh current tab" type="button">↻</button>
 </div>
 
 <div class="panel-host">
   <div id="panel-creds" class="panel active"></div>
   <div id="panel-email" class="panel"></div>
+  <div id="panel-phone" class="panel"></div>
 </div>
 
 <dialog id="testEmailDialog">
@@ -301,6 +303,76 @@
        Open Gmail Settings ↗
     </a>
     <button class="btn primary" id="aliasResultClose">Close</button>
+  </div>
+</dialog>
+
+<dialog id="phoneLineDialog" style="min-width:520px; max-width:620px;">
+  <h3 id="phoneLineDialogTitle">Phone line</h3>
+  <div id="phoneLineDialogError" class="inline-error" style="display:none;"></div>
+  <div class="field field-row">
+    <label>Phone number</label>
+    <div>
+      <input id="phone-number" type="text" maxlength="14" placeholder="10 digits, e.g. 2485551234">
+      <div class="helper">Stored as 10 digits. Non-digits stripped; a leading US "1" is dropped.</div>
+    </div>
+  </div>
+  <div class="field field-row">
+    <label>Display name</label>
+    <input id="phone-display-name" type="text" maxlength="50" placeholder="(optional)">
+  </div>
+  <div class="field field-row">
+    <label>Provider</label>
+    <select id="phone-provider">
+      <option value="ringcentral">ringcentral</option>
+      <option value="quo">quo</option>
+    </select>
+  </div>
+  <div class="field field-row">
+    <label>Provider ID</label>
+    <div>
+      <input id="phone-provider-id" type="text" maxlength="50" placeholder="">
+      <div class="helper" id="phone-provider-id-helper"></div>
+    </div>
+  </div>
+  <div class="field field-row">
+    <label>Credential</label>
+    <div id="phone-credential-host">
+      <div class="note">Loading credentials…</div>
+    </div>
+  </div>
+  <div class="field field-row">
+    <label>MMS capable</label>
+    <div class="checkbox-line">
+      <input id="phone-mms-capable" type="checkbox">
+      <span style="color:var(--muted); font-size:11.5px;">Default mirrors the adapter's MMS capability; override per-line.</span>
+    </div>
+  </div>
+  <div class="field field-row">
+    <label>Active</label>
+    <div class="checkbox-line">
+      <input id="phone-active" type="checkbox" checked>
+      <span style="color:var(--muted); font-size:11.5px;">Inactive lines are skipped by phoneService.</span>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="btn" id="phoneLineCancel">Cancel</button>
+    <button class="btn primary" id="phoneLineSave">Save</button>
+  </div>
+</dialog>
+
+<dialog id="phoneTestSmsDialog" style="min-width:480px; max-width:560px;">
+  <h3>Send test SMS</h3>
+  <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">
+    From: <span id="phoneTestSmsFromLabel" style="color:var(--text);"></span>
+  </div>
+  <div style="font-size:12px; color:var(--muted); margin-bottom:4px;">To:</div>
+  <input id="phoneTestSmsTo" type="text" placeholder="2485551234 or +12485551234">
+  <div style="font-size:12px; color:var(--muted); margin: 8px 0 4px 0;">Message:</div>
+  <textarea id="phoneTestSmsMessage" style="width:100%; min-height:60px; box-sizing:border-box; padding:6px 8px; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:4px; font-size:12px; font-family:inherit;">Test from YisraCase admin connections page.</textarea>
+  <div class="result" id="phoneTestSmsResult"></div>
+  <div class="actions">
+    <button class="btn" id="phoneTestSmsCancel">Cancel</button>
+    <button class="btn primary" id="phoneTestSmsSend">Send Test</button>
   </div>
 </dialog>
 
@@ -448,6 +520,7 @@ document.querySelectorAll('.tab').forEach(btn => {
 });
 
 // ── State ────────────────────────────────────────────────────
+// ── State ────────────────────────────────────────────────────
 const state = {
   activeTab: 'creds',
   creds:  { rows: [], view: 'list', editing: null, original: null, error: null, saving: false },
@@ -457,6 +530,17 @@ const state = {
     // lazily on demand (when the editor opens for a gmail row, or when
     // the user picks 'gmail' in the provider dropdown).
     credentialsCache: null,
+  },
+  phone: {
+    rows: [], view: 'list', editing: null, original: null, error: null, saving: false,
+    // Independent cache (separate from state.email.credentialsCache) so
+    // the refresh button can invalidate both without coupling tab
+    // lifecycles. Loaded lazily when the Phone Lines editor dialog opens.
+    credentialsCache: null,
+    // Per-provider capability map { <provider>: { sms, mms } } from the
+    // GET /admin response. Drives editor + list MMS-checkbox state so
+    // we never display (or submit) an invariant the server will reject.
+    providers: {},
   },
 };
 
@@ -1973,6 +2057,501 @@ E('aliasResultClose').addEventListener('click', () => {
   E('aliasResultDialog').close();
 });
 
+// ════════════════════════════════════════════════════════════
+// PHONE LINES TAB
+// ════════════════════════════════════════════════════════════
+//
+// SU-only CRUD over phone_lines. Built around a <dialog> for the editor
+// (rather than the inline editor used by the Email Senders tab) because
+// phone lines have fewer fields and the modal flow keeps the list
+// always visible.
+
+// Per-provider hint text for the provider_id field. RC stores extension
+// IDs (often blank on single-extension accounts); Quo stores OpenPhone
+// phone IDs like 'PNAkKuagWX' (required by the Quo adapter).
+const PHONE_PROVIDER_HINTS = {
+  ringcentral: 'RingCentral extension ID. Usually left blank on single-extension accounts.',
+  quo:         "OpenPhone phone number ID (e.g. 'PNAkKuagWX'). Required by the Quo adapter to identify which OpenPhone number to send from.",
+};
+
+async function loadPhone() {
+  try {
+    const r = await api('/api/phone-lines/admin');
+    state.phone.rows      = r.phone_lines || r.rows || [];
+    state.phone.providers = r.providers   || {};
+    state.phone.error = null;
+  } catch (err) {
+    state.phone.rows = [];
+    state.phone.error = err.message;
+  }
+  renderPhoneList();
+}
+
+function renderPhoneList() {
+  const host = E('panel-phone');
+  const rows = state.phone.rows;
+  const errBanner = state.phone.error
+    ? `<div class="inline-error">${esc(state.phone.error)}</div>`
+    : '';
+  const body = rows.length === 0
+    ? `<tr class="empty-row"><td colspan="9">No phone lines yet — click "+ Add Line" to add one.</td></tr>`
+    : rows.map(r => phoneListRow(r)).join('');
+
+  host.innerHTML = `
+    ${errBanner}
+    <div class="list-header">
+      <h2>Phone Lines</h2>
+      <div class="right">
+        <button class="btn primary" id="phone-new">+ Add Line</button>
+      </div>
+    </div>
+    <table class="list">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Number</th>
+          <th>Display name</th>
+          <th>Provider</th>
+          <th>Provider ID</th>
+          <th>Credential</th>
+          <th>Active</th>
+          <th>MMS</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+
+  E('phone-new').addEventListener('click', () => openPhoneEditor(null));
+  host.querySelectorAll('tr[data-id]').forEach(tr => {
+    tr.addEventListener('click', e => {
+      // Don't open the editor when clicking the inline toggles or buttons.
+      if (e.target.closest('.actions-cell')) return;
+      if (e.target.closest('input[type=checkbox]')) return;
+      openPhoneEditor(Number(tr.dataset.id));
+    });
+    const edit = tr.querySelector('button[data-action=edit]');
+    if (edit) edit.addEventListener('click', e => {
+      e.stopPropagation();
+      openPhoneEditor(Number(tr.dataset.id));
+    });
+    const test = tr.querySelector('button[data-action=test]');
+    if (test) test.addEventListener('click', e => {
+      e.stopPropagation();
+      openPhoneTestSmsDialog(Number(tr.dataset.id), tr.dataset.from);
+    });
+    const activeBox = tr.querySelector('input[data-toggle=active]');
+    if (activeBox) activeBox.addEventListener('change', e => {
+      e.stopPropagation();
+      togglePhoneActive(Number(tr.dataset.id), activeBox.checked, activeBox);
+    });
+    const mmsBox = tr.querySelector('input[data-toggle=mms]');
+    if (mmsBox) mmsBox.addEventListener('change', e => {
+      e.stopPropagation();
+      togglePhoneMms(Number(tr.dataset.id), mmsBox.checked, mmsBox);
+    });
+  });
+}
+
+function phoneListRow(r) {
+  const providerBadge = `<span class="badge type">${esc(r.provider)}</span>`;
+  let credCell;
+  if (r.credential_name) {
+    credCell = `${esc(r.credential_name)} <span class="badge type" style="margin-left:4px;">${esc(r.credential_type || '?')}</span>`;
+  } else if (r.credential_id) {
+    // FK should prevent this; defensive UI for any orphaned row that
+    // somehow slipped through.
+    credCell = `<span style="color:var(--warn);">credential #${esc(r.credential_id)} (missing)<span class="warn-icon" title="The linked credential row was not found via LEFT JOIN. Investigate.">⚠</span></span>`;
+  } else {
+    credCell = `<span style="color:var(--danger);">no credential linked</span>`;
+  }
+  // Pretty-print: 2485592400 → (248) 559-2400. Raw value preserved in
+  // data-from for the test-SMS handoff.
+  const pn = r.phone_number && r.phone_number.length === 10
+    ? `(${r.phone_number.slice(0,3)}) ${r.phone_number.slice(3,6)}-${r.phone_number.slice(6)}`
+    : (r.phone_number || '—');
+
+  // MMS checkbox state. If we have a capability map (server responded
+  // with `providers`), block ENABLING mms on a provider that doesn't
+  // support it. Disabling a stale mms=1 row is always allowed so the
+  // SU can fix bad legacy state without DB Console. If the map is
+  // empty (older backend), fall back to permissive — the server is
+  // still authoritative.
+  const knownCaps = Object.keys(state.phone.providers || {}).length > 0;
+  const supportsMms = state.phone.providers?.[r.provider]?.mms === true;
+  const mmsDisabled = knownCaps && !supportsMms && !r.mms_capable;
+  const mmsTitle = (knownCaps && !supportsMms)
+    ? ` title="Provider '${esc(r.provider)}' does not support MMS"`
+    : '';
+  const mmsAttrs = `${r.mms_capable ? 'checked' : ''}${mmsDisabled ? ' disabled' : ''}${mmsTitle}`;
+
+  return `
+    <tr data-id="${r.id}" data-from="${esc(r.phone_number || '')}">
+      <td>${r.id}</td>
+      <td>${esc(pn)}</td>
+      <td>${esc(r.display_name || '—')}</td>
+      <td>${providerBadge}</td>
+      <td><code style="font-size:11.5px;">${esc(r.provider_id || '—')}</code></td>
+      <td>${credCell}</td>
+      <td><input type="checkbox" data-toggle="active" ${r.active ? 'checked' : ''}></td>
+      <td><input type="checkbox" data-toggle="mms" ${mmsAttrs}></td>
+      <td class="actions-cell">
+        <button data-action="edit">Edit</button>
+        <button data-action="test">Test SMS</button>
+      </td>
+    </tr>
+  `;
+}
+
+// ── Credentials cache (phone-tab copy) ───────────────────────
+//
+// Mirrors state.email.credentialsCache. Loaded lazily when the editor
+// dialog opens. Invalidated by the global ↻ refresh and on save (so a
+// just-added credential shows up in the dropdown without a reload).
+async function ensurePhoneCredentialsCache(force = false) {
+  if (state.phone.credentialsCache && !force) return state.phone.credentialsCache;
+  try {
+    const r = await api('/api/credentials');
+    state.phone.credentialsCache = r.credentials || [];
+  } catch (err) {
+    state.phone.credentialsCache = [];
+    state.phone.error = `Could not load credentials: ${err.message}`;
+  }
+  return state.phone.credentialsCache;
+}
+
+// ── Editor dialog ────────────────────────────────────────────
+
+function blankPhone() {
+  return {
+    id: null,
+    phone_number: '',
+    display_name: '',
+    provider: 'ringcentral',
+    provider_id: '',
+    credential_id: null,
+    credential_name: null,
+    credential_type: null,
+    active: 1,
+    // mms_capable is set when the dialog renders, based on adapter
+    // capabilities for the default provider. RC supports MMS → 1; Quo
+    // doesn't → 0. UI affordance; server is source of truth.
+    mms_capable: 1,
+  };
+}
+
+async function openPhoneEditor(id) {
+  state.phone.error = null;
+  state.phone.saving = false;
+
+  if (id == null) {
+    state.phone.editing = blankPhone();
+    state.phone.original = null;
+  } else {
+    // Edit pulls the current row from the list (loadPhone runs on every
+    // save, so this is fresh as of the last list render).
+    const row = state.phone.rows.find(r => Number(r.id) === Number(id));
+    if (!row) {
+      toast('Phone line not found in current list — refresh and try again.', 'err', 5000);
+      return;
+    }
+    state.phone.editing = JSON.parse(JSON.stringify(row));
+    state.phone.original = JSON.parse(JSON.stringify(row));
+  }
+
+  // Pre-load credentials cache so the dropdown renders immediately.
+  await ensurePhoneCredentialsCache();
+  renderPhoneEditorDialog();
+  E('phoneLineDialog').showModal();
+}
+
+function renderPhoneEditorDialog() {
+  const e = state.phone.editing;
+  const isNew = !e.id;
+
+  E('phoneLineDialogTitle').textContent = isNew ? 'New phone line' : `Edit phone line #${e.id}`;
+  setPhoneDialogError(null);
+
+  E('phone-number').value        = e.phone_number || '';
+  E('phone-display-name').value  = e.display_name || '';
+  E('phone-provider').value      = e.provider || 'ringcentral';
+  E('phone-provider-id').value   = e.provider_id || '';
+  E('phone-mms-capable').checked = !!e.mms_capable;
+  E('phone-active').checked      = e.active == null ? true : !!e.active;
+
+  renderPhoneProviderIdHelper();
+  renderPhoneCredentialDropdown();
+  // Run after initial population so the disabled/title state matches
+  // the provider. Also catches the stale legacy case where a Quo row
+  // somehow has mms_capable=1: this resets the checkbox to off on open.
+  applyMmsCapabilityToEditor();
+}
+
+// Reconcile the MMS checkbox in the editor against the currently-
+// selected provider's capability. Called on initial render and on
+// every provider change.
+//
+//   - Provider doesn't support MMS → checkbox forced off, disabled,
+//     state.phone.editing.mms_capable forced to 0.
+//   - Provider supports MMS → checkbox enabled. For NEW rows, default
+//     checked=true (since adapter supports MMS). For edit rows, leave
+//     the checkbox as-is (user may have manually toggled).
+//   - Empty providers map (older backend) → fall back to permissive;
+//     server-side check is the safety net.
+function applyMmsCapabilityToEditor() {
+  const provider = E('phone-provider').value;
+  const cb = E('phone-mms-capable');
+  const knownCaps = Object.keys(state.phone.providers || {}).length > 0;
+  const supportsMms = state.phone.providers?.[provider]?.mms === true;
+
+  if (knownCaps && !supportsMms) {
+    cb.checked = false;
+    cb.disabled = true;
+    cb.title = `Provider '${provider}' does not support MMS.`;
+    if (state.phone.editing) state.phone.editing.mms_capable = 0;
+  } else {
+    cb.disabled = false;
+    cb.title = '';
+    if (state.phone.editing && !state.phone.editing.id) {
+      // New row + provider supports (or capability unknown) → default on.
+      cb.checked = true;
+      state.phone.editing.mms_capable = 1;
+    }
+    // Edit row: leave the checkbox as it was (saved value on first
+    // render; whatever the user last set on subsequent provider changes).
+  }
+}
+
+function renderPhoneProviderIdHelper() {
+  const provider = E('phone-provider').value;
+  E('phone-provider-id-helper').textContent = PHONE_PROVIDER_HINTS[provider] || '';
+}
+
+function renderPhoneCredentialDropdown() {
+  const host = E('phone-credential-host');
+  const provider = E('phone-provider').value;
+  const e = state.phone.editing;
+  const isNew = !e.id;
+  const currentId = e.credential_id;
+
+  if (!state.phone.credentialsCache) {
+    host.innerHTML = `<div class="note">Loading credentials…</div>`;
+    return;
+  }
+
+  const creds = state.phone.credentialsCache;
+  let filtered;
+  if (provider === 'ringcentral') {
+    filtered = creds.filter(c => c.type === 'oauth2' && c.oauth_status === 'connected');
+  } else if (provider === 'quo') {
+    filtered = creds.filter(c => c.type === 'api_key');
+  } else {
+    filtered = [];
+  }
+
+  if (filtered.length === 0) {
+    const msg = provider === 'ringcentral'
+      ? 'No connected oauth2 credentials found. Create one in the API Credentials tab and complete the Authorize flow first.'
+      : 'No api_key credentials found. Create one in the API Credentials tab first.';
+    host.innerHTML = `<div class="note" style="color:var(--warn);">${msg}</div>`;
+    return;
+  }
+
+  const opts = filtered.map(c =>
+    `<option value="${c.id}" ${Number(currentId) === Number(c.id) ? 'selected' : ''}>${esc(c.name)} (#${c.id})</option>`
+  ).join('');
+  // Placeholder when the current credential isn't in the filtered list
+  // (e.g. provider just changed, or the original credential was disconnected).
+  const inFiltered = currentId != null && filtered.some(c => Number(c.id) === Number(currentId));
+  const needsPlaceholder = isNew || !inFiltered;
+  const placeholder = needsPlaceholder
+    ? `<option value="" ${(currentId == null || !inFiltered) ? 'selected' : ''}>— select credential —</option>`
+    : '';
+
+  host.innerHTML = `<select id="phone-credential-id">${placeholder}${opts}</select>`;
+}
+
+function setPhoneDialogError(msg) {
+  const banner = E('phoneLineDialogError');
+  if (!msg) {
+    banner.style.display = 'none';
+    banner.textContent = '';
+  } else {
+    banner.style.display = '';
+    banner.textContent = msg;
+  }
+}
+
+// Wire up dialog event handlers (once at script load — dialog DOM exists
+// in body before this script runs).
+E('phoneLineCancel').addEventListener('click', () => E('phoneLineDialog').close());
+E('phoneLineSave').addEventListener('click', savePhone);
+E('phone-provider').addEventListener('change', () => {
+  renderPhoneProviderIdHelper();
+  renderPhoneCredentialDropdown();
+  // Sources the MMS default from state.phone.providers (server-driven)
+  // rather than hardcoded provider names. Forces mms_capable=0 and
+  // disables the checkbox when the new provider doesn't support MMS,
+  // matching the server's effective-state PUT enforcement.
+  applyMmsCapabilityToEditor();
+});
+
+async function savePhone() {
+  const e = state.phone.editing;
+  const isNew = !e.id;
+  const saveBtn = E('phoneLineSave');
+  setPhoneDialogError(null);
+
+  // Normalize phone (mirror server-side logic so the user sees errors
+  // before the round-trip).
+  const raw = E('phone-number').value.trim();
+  const digits = raw.replace(/\D/g, '');
+  const ten = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+  if (!/^\d{10}$/.test(ten)) {
+    setPhoneDialogError('Phone number must be 10 digits.');
+    return;
+  }
+
+  const provider     = E('phone-provider').value;
+  const display_name = E('phone-display-name').value.trim();
+  const provider_id  = E('phone-provider-id').value.trim();
+  const mms_capable  = E('phone-mms-capable').checked ? 1 : 0;
+  const active       = E('phone-active').checked ? 1 : 0;
+  const credSel      = E('phone-credential-id');
+  const rawCredId    = credSel ? credSel.value : '';
+  const credential_id = rawCredId ? Number(rawCredId) : null;
+  if (!credential_id) {
+    setPhoneDialogError('Select a credential for this line.');
+    return;
+  }
+
+  // Build body. POST = full row; PUT = diff against state.phone.original.
+  let body;
+  if (isNew) {
+    body = {
+      phone_number: ten,
+      provider,
+      display_name: display_name || null,
+      provider_id:  provider_id  || null,
+      credential_id,
+      mms_capable,
+      active,
+    };
+  } else {
+    const o = state.phone.original;
+    body = {};
+    if (ten !== o.phone_number) body.phone_number = ten;
+    if (provider !== o.provider) body.provider = provider;
+    if ((display_name || null) !== (o.display_name || null)) body.display_name = display_name || null;
+    if ((provider_id  || null) !== (o.provider_id  || null)) body.provider_id  = provider_id  || null;
+    if (credential_id !== o.credential_id) body.credential_id = credential_id;
+    if (mms_capable !== (o.mms_capable ? 1 : 0)) body.mms_capable = mms_capable;
+    if (active !== (o.active ? 1 : 0)) body.active = active;
+    if (Object.keys(body).length === 0) {
+      E('phoneLineDialog').close();
+      return;
+    }
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = 'Saving…';
+  state.phone.saving = true;
+  try {
+    if (isNew) {
+      await api('/api/phone-lines/admin', 'POST', body);
+    } else {
+      await api(`/api/phone-lines/admin/${e.id}`, 'PUT', body);
+    }
+    toast('Saved.');
+    E('phoneLineDialog').close();
+    await loadPhone();
+  } catch (err) {
+    setPhoneDialogError(err.message);
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = 'Save';
+    state.phone.saving = false;
+  }
+}
+
+// ── Inline toggles (no dialog) ───────────────────────────────
+
+async function togglePhoneActive(id, next, checkbox) {
+  checkbox.disabled = true;
+  try {
+    await api(`/api/phone-lines/admin/${id}/active`, 'PATCH', { active: next ? 1 : 0 });
+    toast(`Line #${id} ${next ? 'activated' : 'deactivated'}.`);
+    await loadPhone();
+  } catch (err) {
+    checkbox.checked = !next; // roll back
+    toast(`Toggle failed: ${err.message}`, 'err', 5000);
+  } finally {
+    checkbox.disabled = false;
+  }
+}
+
+async function togglePhoneMms(id, next, checkbox) {
+  checkbox.disabled = true;
+  try {
+    await api(`/api/phone-lines/admin/${id}/mms-capable`, 'PATCH', { mms_capable: next ? 1 : 0 });
+    toast(`Line #${id} MMS ${next ? 'enabled' : 'disabled'}.`);
+    await loadPhone();
+  } catch (err) {
+    checkbox.checked = !next; // roll back
+    toast(`Toggle failed: ${err.message}`, 'err', 5000);
+  } finally {
+    checkbox.disabled = false;
+  }
+}
+
+// ── Test SMS dialog ──────────────────────────────────────────
+let pendingPhoneTest = { id: null, from: null };
+
+function openPhoneTestSmsDialog(id, fromNumber) {
+  pendingPhoneTest = { id, from: fromNumber };
+  E('phoneTestSmsFromLabel').textContent = fromNumber;
+  E('phoneTestSmsTo').value = '';
+  E('phoneTestSmsMessage').value = 'Test from YisraCase admin connections page.';
+  E('phoneTestSmsResult').textContent = '';
+  E('phoneTestSmsResult').className = 'result';
+  E('phoneTestSmsDialog').showModal();
+}
+
+E('phoneTestSmsCancel').addEventListener('click', () => E('phoneTestSmsDialog').close());
+
+E('phoneTestSmsSend').addEventListener('click', async () => {
+  const to = E('phoneTestSmsTo').value.trim();
+  const message = E('phoneTestSmsMessage').value.trim();
+  const result = E('phoneTestSmsResult');
+  if (!to) {
+    result.className = 'result err';
+    result.textContent = 'Recipient required.';
+    return;
+  }
+  if (!message) {
+    result.className = 'result err';
+    result.textContent = 'Message required.';
+    return;
+  }
+  const btn = E('phoneTestSmsSend');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  result.className = 'result';
+  result.textContent = '';
+  try {
+    await api(`/api/phone-lines/admin/${pendingPhoneTest.id}/test-sms`, 'POST', { to, message });
+    result.className = 'result ok';
+    result.textContent = `Test SMS sent from ${pendingPhoneTest.from} to ${to}.`;
+  } catch (err) {
+    result.className = 'result err';
+    result.textContent = `Send failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send Test';
+  }
+});
+
 // ── Refresh (button + visibility) ────────────────────────────
 //
 // Refresh action shared by the top-right ↻ button and the
@@ -1990,9 +2569,10 @@ async function refreshActive() {
     btn.disabled = true;
   }
   try {
-    // Always invalidate the credentials cache; commonly stale when the
-    // user is bouncing between the two tabs.
+    // Always invalidate the credentials caches; commonly stale when the
+    // user is bouncing between tabs.
     state.email.credentialsCache = null;
+    state.phone.credentialsCache = null;
 
     if (state.activeTab === 'creds') {
       await loadCreds();
@@ -2005,6 +2585,14 @@ async function refreshActive() {
           E('email-provider')?.value === 'gmail') {
         await ensureCredentialsCache();
         if (E('email-smtp-section')) renderEmailSmtpSection();
+      }
+    } else if (state.activeTab === 'phone') {
+      await loadPhone();
+      // If the phone editor dialog is open, reload its credential
+      // dropdown without closing the dialog.
+      if (E('phoneLineDialog')?.open && state.phone.editing) {
+        await ensurePhoneCredentialsCache(true);
+        renderPhoneCredentialDropdown();
       }
     }
   } finally {
@@ -2030,6 +2618,7 @@ document.addEventListener('visibilitychange', () => {
 // ── Init ─────────────────────────────────────────────────────
 loadCreds();
 loadEmails();
+loadPhone();
 </script>
 </body>
 </html>
