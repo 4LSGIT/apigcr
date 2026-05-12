@@ -1485,6 +1485,12 @@ function seqRenderConditionsTab(step) {
     <div class="field"><label>Assert (JSON)</label>
       <textarea id="sc-assert" rows="2" placeholder='{ "case_intake": { "is_null": true } }'>${cond.assert ? JSON.stringify(cond.assert, null, 2) : ''}</textarea>
     </div>
+    <div class="field"><label>Match Mode</label>
+      <select id="sc-mode">
+        <option value="all"${(cond.assert_mode === 'any') ? '' : ' selected'}>All assertions must pass (AND)</option>
+        <option value="any"${(cond.assert_mode === 'any') ? ' selected' : ''}>Any one assertion passes (OR)</option>
+      </select>
+    </div>
     <div class="section-divider">Fire Guard (time-based skip)</div>
     <p style="font-size:11px;color:var(--muted);margin-bottom:10px">Requires <code>trigger_data.appt_time</code>.</p>
     <div class="field"><label>Min Hours Before Appointment</label>
@@ -1737,6 +1743,9 @@ function seqGatherStep() {
     const cp = tryParse('sc-params', {}); if (cp === 'ERROR') return null;
     const ca = tryParse('sc-assert', {}); if (ca === 'ERROR') return null;
     condition = { query: cq, params: cp, assert: ca };
+    const modeVal = document.getElementById('sc-mode')?.value;
+    if (modeVal === 'any') condition.assert_mode = 'any';
+    // 'all' is the engine default — omit so round-trip stays clean
   }
   const mgv = document.getElementById('sg-minhours')?.value?.trim();
   if (mgv) fire_guard = { min_hours_before_appt: parseFloat(mgv) };
@@ -2374,6 +2383,39 @@ async function seqNew() {
                     style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:110px;resize:vertical"></textarea>
           <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
             Document what trigger_data this sequence expects when enrolled.
+          </div>
+          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
+            <strong>Description</strong>
+            <span style="color:#94a3b8">— optional, shown in explainer</span>
+          </div>
+          <textarea id="swal-description"
+                    placeholder="What this template does, when it fires, who it's for…"
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;min-height:70px;resize:vertical"></textarea>
+          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
+            <strong>Enrollment Condition</strong>
+            <span style="color:#94a3b8">— optional, cancels enrollment if check fails</span>
+          </div>
+          <textarea id="swal-cond-query"
+                    placeholder="SELECT appt_status FROM appts WHERE appt_id = :appt_id"
+                    rows="3"
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:60px;resize:vertical"></textarea>
+          <textarea id="swal-cond-params"
+                    placeholder='{ "appt_id": "trigger_data.appt_id" }'
+                    rows="2"
+                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical"></textarea>
+          <textarea id="swal-cond-assert"
+                    placeholder='{ "appt_status": "No Show" }'
+                    rows="2"
+                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical"></textarea>
+          <div style="text-align:left;font-size:12px;color:#475569;margin:8px .875em 0">
+            Match mode:
+            <select id="swal-cond-mode" style="margin-left:6px;padding:3px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:white">
+              <option value="all" selected>All assertions must pass (AND)</option>
+              <option value="any">Any one assertion passes (OR)</option>
+            </select>
+          </div>
+          <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+            If set, the engine re-checks this before every step. Failure cancels the enrollment.
           </div>`,
     didOpen: () => {
       const cb       = document.getElementById('swal-idonly');
@@ -2441,11 +2483,47 @@ async function seqNew() {
       // Slice E Phase 3 — read filter fields and assemble filters payload.
       const filters = idOnly ? null : _seqCurrentFilterValues();
       const filtersOut = (filters && Object.keys(filters).length) ? filters : null;
+
+      // Template description — empty → null (PUT/POST stores plain text, not JSON).
+      const desc = document.getElementById('swal-description').value.trim();
+      const description = desc || null;
+
+      // Template-level enrollment condition. Same shape as step-level condition,
+      // but engine treats failure as cancel-enrollment (not skip-step).
+      // assert_mode defaults to 'all' in the engine — only emit when user picks 'any'.
+      const cqRaw = document.getElementById('swal-cond-query').value.trim();
+      let condition = null;
+      if (cqRaw) {
+        const cpRaw = document.getElementById('swal-cond-params').value.trim();
+        const caRaw = document.getElementById('swal-cond-assert').value.trim();
+        let cp = {}, ca = {};
+        if (cpRaw) {
+          try { cp = JSON.parse(cpRaw); }
+          catch { Swal.showValidationMessage('Condition Params is not valid JSON'); return false; }
+          if (cp === null || typeof cp !== 'object' || Array.isArray(cp)) {
+            Swal.showValidationMessage('Condition Params must be a JSON object'); return false;
+          }
+        }
+        if (caRaw) {
+          try { ca = JSON.parse(caRaw); }
+          catch { Swal.showValidationMessage('Condition Assert is not valid JSON'); return false; }
+          if (ca === null || typeof ca !== 'object' || Array.isArray(ca)) {
+            Swal.showValidationMessage('Condition Assert must be a JSON object'); return false;
+          }
+        }
+        condition = { query: cqRaw, params: cp, assert: ca };
+        const modeVal = document.getElementById('swal-cond-mode').value;
+        if (modeVal === 'any') condition.assert_mode = 'any';
+        // 'all' is the engine default — omit to keep saved JSON minimal
+      }
+
       return {
         name,
         type,
         filters: filtersOut,
-        test_input
+        test_input,
+        description,
+        condition
       };
     }
   });
@@ -2484,6 +2562,19 @@ async function seqEdit() {
   if (typeof tiObj === 'string') tiObj = parseJson(tiObj);
   const tiText = (tiObj && typeof tiObj === 'object' && !Array.isArray(tiObj))
     ? JSON.stringify(tiObj, null, 2) : '';
+
+  // Template-level condition — list endpoint does SELECT t.* and does NOT
+  // parse JSON columns, so this is usually a string when arriving via
+  // SEQ.activeTemplate (sourced from the list). Mirror the filters/test_input
+  // defensive-parse pattern above.
+  let condObj = SEQ.activeTemplate.condition;
+  if (typeof condObj === 'string') condObj = parseJson(condObj);
+  if (!condObj || typeof condObj !== 'object' || Array.isArray(condObj)) condObj = null;
+  const condQueryText  = condObj?.query  || '';
+  const condParamsText = condObj?.params ? JSON.stringify(condObj.params, null, 2) : '';
+  const condAssertText = condObj?.assert ? JSON.stringify(condObj.assert, null, 2) : '';
+  const condMode       = condObj?.assert_mode === 'any' ? 'any' : 'all';
+  const descText       = SEQ.activeTemplate.description || '';
 
   // Orphan / inactive type warning text
   const inActive = currentType && SEQ_TYPES.list.some(t => t.type === currentType && (t.active !== 0 && t.active !== false));
@@ -2526,6 +2617,39 @@ async function seqEdit() {
                     style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:110px;resize:vertical">${esc(tiText)}</textarea>
           <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
             Document what trigger_data this sequence expects when enrolled.
+          </div>
+          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
+            <strong>Description</strong>
+            <span style="color:#94a3b8">— optional, shown in explainer</span>
+          </div>
+          <textarea id="swal-description"
+                    placeholder="What this template does, when it fires, who it's for…"
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;min-height:70px;resize:vertical">${esc(descText)}</textarea>
+          <div style="text-align:left;font-size:12px;color:#475569;margin:14px .875em 4px">
+            <strong>Enrollment Condition</strong>
+            <span style="color:#94a3b8">— optional, cancels enrollment if check fails</span>
+          </div>
+          <textarea id="swal-cond-query"
+                    placeholder="SELECT appt_status FROM appts WHERE appt_id = :appt_id"
+                    rows="3"
+                    style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:60px;resize:vertical">${esc(condQueryText)}</textarea>
+          <textarea id="swal-cond-params"
+                    placeholder='{ "appt_id": "trigger_data.appt_id" }'
+                    rows="2"
+                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical">${esc(condParamsText)}</textarea>
+          <textarea id="swal-cond-assert"
+                    placeholder='{ "appt_status": "No Show" }'
+                    rows="2"
+                    style="width:calc(100% - 1.75em);margin:6px .875em 0;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-family:'SF Mono','Consolas',monospace;font-size:12px;min-height:44px;resize:vertical">${esc(condAssertText)}</textarea>
+          <div style="text-align:left;font-size:12px;color:#475569;margin:8px .875em 0">
+            Match mode:
+            <select id="swal-cond-mode" style="margin-left:6px;padding:3px 8px;font-size:12px;border:1px solid #d1d5db;border-radius:4px;background:white">
+              <option value="all"${condMode === 'any' ? '' : ' selected'}>All assertions must pass (AND)</option>
+              <option value="any"${condMode === 'any' ? ' selected' : ''}>Any one assertion passes (OR)</option>
+            </select>
+          </div>
+          <div style="text-align:left;font-size:11px;color:#64748b;margin:6px .875em 0">
+            If set, the engine re-checks this before every step. Failure cancels the enrollment.
           </div>`,
     didOpen: () => {
       const cb       = document.getElementById('swal-idonly');
@@ -2585,12 +2709,47 @@ async function seqEdit() {
       // Slice E Phase 3 — assemble filters payload.
       const filters = idOnly ? null : _seqCurrentFilterValues();
       const filtersOut = (filters && Object.keys(filters).length) ? filters : null;
+
+      // Template description — empty textarea must send null (PUT pushes raw,
+      // so "" would store an empty string).
+      const desc = document.getElementById('swal-description').value.trim();
+      const description = desc || null;
+
+      // Template-level enrollment condition. Empty query → null (clear it).
+      const cqRaw = document.getElementById('swal-cond-query').value.trim();
+      let condition = null;
+      if (cqRaw) {
+        const cpRaw = document.getElementById('swal-cond-params').value.trim();
+        const caRaw = document.getElementById('swal-cond-assert').value.trim();
+        let cp = {}, ca = {};
+        if (cpRaw) {
+          try { cp = JSON.parse(cpRaw); }
+          catch { Swal.showValidationMessage('Condition Params is not valid JSON'); return false; }
+          if (cp === null || typeof cp !== 'object' || Array.isArray(cp)) {
+            Swal.showValidationMessage('Condition Params must be a JSON object'); return false;
+          }
+        }
+        if (caRaw) {
+          try { ca = JSON.parse(caRaw); }
+          catch { Swal.showValidationMessage('Condition Assert is not valid JSON'); return false; }
+          if (ca === null || typeof ca !== 'object' || Array.isArray(ca)) {
+            Swal.showValidationMessage('Condition Assert must be a JSON object'); return false;
+          }
+        }
+        condition = { query: cqRaw, params: cp, assert: ca };
+        const modeVal = document.getElementById('swal-cond-mode').value;
+        if (modeVal === 'any') condition.assert_mode = 'any';
+        // 'all' is the engine default — omit to keep saved JSON minimal
+      }
+
       return {
         name,
         type,
         filters: filtersOut,
         active: document.getElementById('swal-active').checked,
-        test_input
+        test_input,
+        description,
+        condition
       };
     }
   });
@@ -3088,7 +3247,7 @@ function _seqExplainCondition(cond) {
   if (!cond) return '';
   return `
     <div class="ex-detail ex-cond">
-      <b>Only fires if:</b> SQL query matches <code>${_seqEsc(JSON.stringify(cond.assert ?? null))}</code>
+      <b>Only fires if:</b> SQL query matches <code>${_seqEsc(JSON.stringify(cond.assert ?? null))}</code>${cond.assert_mode === 'any' ? ` <span class="ex-muted">(any one)</span>` : ''}
       <div class="ex-muted">Query: <code>${_seqEsc(String(cond.query || '').slice(0, 120))}${(cond.query || '').length > 120 ? '…' : ''}</code></div>
     </div>
   `;
@@ -3143,12 +3302,25 @@ function seqExplain(template, steps) {
     }
   }
 
+  // Template-level enrollment condition. List endpoint returns this as a JSON
+  // string (SELECT t.* doesn't parse JSON columns), so tolerate both shapes.
+  let _tCond = template?.condition;
+  if (typeof _tCond === 'string') _tCond = parseJson(_tCond);
+  if (!_tCond || typeof _tCond !== 'object' || Array.isArray(_tCond)) _tCond = null;
+
   return `
     <div class="ex-doc">
       <div class="ex-header">
         <h2 class="ex-title">${_seqEsc(template?.name || 'Sequence')}</h2>
         ${filterChips.length ? `<div class="ex-chips">${filterChips.join('')}</div>` : ''}
         ${template?.description ? `<p class="ex-desc">${_seqEsc(template.description)}</p>` : ''}
+        ${_tCond ? `
+          <div class="ex-detail ex-cond" style="margin-top:8px">
+            <b>Enrollment cancels if:</b> SQL query result doesn't match <code>${_seqEsc(JSON.stringify(_tCond.assert ?? null))}</code>
+            ${_tCond.assert_mode === 'any' ? ` <span class="ex-muted">(any one)</span>` : ''}
+            <div class="ex-muted">Query: <code>${_seqEsc(String(_tCond.query || '').slice(0, 120))}${(_tCond.query || '').length > 120 ? '…' : ''}</code></div>
+          </div>
+        ` : ''}
       </div>
       <div class="ex-steps">${stepBlocks || '<div class="ex-muted">No steps defined.</div>'}</div>
     </div>
