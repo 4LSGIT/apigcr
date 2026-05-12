@@ -630,13 +630,33 @@ router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
       }
     }
 
-    if (body.provider !== undefined && body.provider !== existing.provider) {
+if (body.provider !== undefined && body.provider !== existing.provider) {
       // Provider switch: defensively reset credential_id when switching
       // AWAY from gmail. (We can't simply unconditionally reset because
       // a same-provider edit of credential_id should be allowed.)
       if (body.provider !== 'gmail' && existing.credential_id != null) {
         data.credential_id = null;
         if (!touchedFields.includes('credential_id')) touchedFields.push('credential_id');
+      }
+
+      // Provider switch: reset smtp_* columns when switching AWAY from
+      // smtp. Prevents stale (and potentially still-valid) SMTP credentials
+      // from sitting in the row after a switch to gmail/pabbly. Matches
+      // buildDataRow's empty/zero defaults for new non-smtp rows.
+      //
+      // These overwrite any smtp_* values the loop above set from the
+      // body. That's intentional: provider switch wins. If the caller
+      // really wants to set smtp_* fields, they shouldn't also be
+      // switching the provider in the same call.
+      if (existing.provider === 'smtp' && body.provider !== 'smtp') {
+        data.smtp_host   = '';
+        data.smtp_port   = 0;
+        data.smtp_user   = '';
+        data.smtp_pass   = '';
+        data.smtp_secure = 0;
+        for (const f of ['smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass', 'smtp_secure']) {
+          if (!touchedFields.includes(f)) touchedFields.push(f);
+        }
       }
     }
 
