@@ -9,10 +9,18 @@
 // Endpoints here are namespaced under /api/phone-lines/admin and return
 // the full admin shape (joined credential name/type, mms_capable, etc.).
 //
-// MMS capability is server-enforced: a row whose provider's adapter
-// has capabilities.mms !== true cannot have mms_capable=1, no matter
-// what the request body says. The GET response also surfaces the
-// capability map so the UI can disable the corresponding controls.
+// Capability + credential-type enforcement, server side:
+//   - mms_capable=1 requires the provider's adapter to declare
+//     capabilities.mms === true (post-update effective state on PUT).
+//   - The credential row linked to a line must satisfy the adapter's
+//     credentialRequirements spec (e.g. RC requires oauth2 + connected;
+//     Quo requires api_key). Enforced on POST and PUT. Closes the
+//     latent bug where buildHeadersForCredential silently returned {}
+//     at send time for mismatched pairs.
+//
+// All adapter metadata is sourced through phoneService.getProviderMetadata()
+// so adding a new adapter (services/adapters/phone/<name>.js) auto-
+// propagates to UI + validation with no edits here.
 //
 // NO DELETE endpoint: phone_lines rows are referenced by campaigns,
 // scheduled jobs, and historical logs. Deactivation only.
@@ -62,21 +70,6 @@ function normalizePhone(raw) {
   return /^\d{10}$/.test(ten) ? ten : null;
 }
 
-// Build the public-facing capability map { <provider>: { sms, mms } }.
-// Sourced directly from each adapter's `capabilities` object so adding
-// a new adapter (services/adapters/phone/<name>.js) auto-propagates to
-// the UI without any frontend change.
-function providerCapabilities() {
-  const map = {};
-  for (const [name, adapter] of Object.entries(phoneService.ADAPTERS)) {
-    map[name] = {
-      sms: adapter?.capabilities?.sms === true,
-      mms: adapter?.capabilities?.mms === true,
-    };
-  }
-  return map;
-}
-
 // Load a single row with the joined credential metadata used by the UI.
 async function loadOne(db, id) {
   const [[row]] = await db.query(
@@ -86,6 +79,17 @@ async function loadOne(db, id) {
        FROM phone_lines pl
        LEFT JOIN credentials c ON c.id = pl.credential_id
       WHERE pl.id = ? LIMIT 1`,
+    [id]
+  );
+  return row || null;
+}
+
+// Load the columns the credentialMatchesRequirements matcher needs.
+// `oauth_status` is required by the RC adapter spec; `type` by every
+// adapter spec; `name` only for human-readable error messages.
+async function loadCredentialForMatch(db, id) {
+  const [[row]] = await db.query(
+    'SELECT id, name, type, oauth_status FROM credentials WHERE id = ? LIMIT 1',
     [id]
   );
   return row || null;
@@ -106,7 +110,7 @@ router.get('/api/phone-lines/admin', superuserOnlyFor(TOOL), async (req, res) =>
     res.json({
       status: 'success',
       phone_lines: rows,
-      providers: providerCapabilities(),
+      providers: phoneService.getProviderMetadata(),
     });
   } catch (err) {
     console.error('GET /api/phone-lines/admin error:', err);
@@ -137,15 +141,38 @@ router.post('/api/phone-lines/admin', superuserOnlyFor(TOOL), async (req, res) =
     }
 
     // credential_id — required (column is NOT NULL); confirm it exists
+    // and load enough columns for the requirements matcher.
     const credential_id = Number(body.credential_id);
     if (!Number.isInteger(credential_id) || credential_id <= 0) {
       return res.status(400).json({ status: 'error', message: 'credential_id is required.' });
     }
-    const [[credRow]] = await req.db.query(
-      'SELECT id FROM credentials WHERE id = ? LIMIT 1', [credential_id]
-    );
+    const credRow = await loadCredentialForMatch(req.db, credential_id);
     if (!credRow) {
       return res.status(400).json({ status: 'error', message: `credential_id ${credential_id} does not exist.` });
+    }
+
+    // Adapter metadata lookup, single source for the rest of this handler.
+    const metadata = phoneService.getProviderMetadata()[provider];
+    if (!metadata) {
+      // Defensive — VALID_PROVIDERS already gated this; would only fire
+      // if ADAPTERS and getProviderMetadata diverge.
+      return res.status(400).json({
+        status: 'error',
+        message: `Unknown provider '${provider}'`,
+      });
+    }
+
+    // Credential-type enforcement: the linked credentials row must
+    // satisfy the adapter's credentialRequirements spec. Closes the
+    // latent bug where buildHeadersForCredential silently returned {}
+    // at send time for mismatched pairs.
+    if (!phoneService.credentialMatchesRequirements(credRow, metadata.credentialRequirements)) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Credential ${credRow.id} (${credRow.name}, type=${credRow.type}) ` +
+                 `does not match the requirements for provider '${provider}': ` +
+                 `${JSON.stringify(metadata.credentialRequirements)}`,
+      });
     }
 
     const display_name = body.display_name == null || body.display_name === ''
@@ -157,8 +184,7 @@ router.post('/api/phone-lines/admin', superuserOnlyFor(TOOL), async (req, res) =
     //   - body omits it: default to adapter capability (RC→1, Quo→0).
     //   - body explicit 1, adapter !mms: 400.
     //   - body explicit 0: always allowed.
-    const adapter   = phoneService.ADAPTERS[provider];
-    const adapterMms = adapter?.capabilities?.mms === true;
+    const adapterMms = metadata.capabilities?.mms === true;
     let mms_capable;
     if (body.mms_capable == null) {
       mms_capable = adapterMms ? 1 : 0;
@@ -219,9 +245,14 @@ router.put('/api/phone-lines/admin/:id', superuserOnlyFor(TOOL), async (req, res
     if (!existing) return res.status(404).json({ status: 'error', message: 'Phone line not found.' });
 
     const body = req.body || {};
+
     const sets   = [];
     const params = [];
     const changed = {};
+
+    // If body.credential_id was provided, this gets populated for reuse
+    // in the effective-state matcher below; saves a duplicate query.
+    let bodyCredRow = null;
 
     if ('phone_number' in body) {
       const pn = normalizePhone(body.phone_number);
@@ -253,12 +284,11 @@ router.put('/api/phone-lines/admin/:id', superuserOnlyFor(TOOL), async (req, res
       if (!Number.isInteger(cid) || cid <= 0) {
         return res.status(400).json({ status: 'error', message: 'credential_id must be a positive integer.' });
       }
-      const [[credRow]] = await req.db.query(
-        'SELECT id FROM credentials WHERE id = ? LIMIT 1', [cid]
-      );
-      if (!credRow) {
+      const row = await loadCredentialForMatch(req.db, cid);
+      if (!row) {
         return res.status(400).json({ status: 'error', message: `credential_id ${cid} does not exist.` });
       }
+      bodyCredRow = row;
       sets.push('credential_id = ?'); params.push(cid); changed.credential_id = cid;
     }
     if ('mms_capable' in body) {
@@ -274,21 +304,60 @@ router.put('/api/phone-lines/admin/:id', superuserOnlyFor(TOOL), async (req, res
       return res.json({ status: 'success', phone_line: existing, message: 'no changes' });
     }
 
-    // Capability enforcement against the *effective* (post-update)
-    // provider/mms pair. Catches every shape: switching provider to a
-    // no-MMS one while leaving mms_capable=1 untouched is just as
-    // invalid as flipping mms_capable=1 on an existing Quo line.
-    const effectiveProvider = 'provider'    in body ? body.provider                : existing.provider;
-    const effectiveMms      = 'mms_capable' in body ? (body.mms_capable ? 1 : 0)   : (existing.mms_capable ? 1 : 0);
-    if (effectiveMms === 1) {
-      const adapter = phoneService.ADAPTERS[effectiveProvider];
-      if (adapter?.capabilities?.mms !== true) {
-        return res.status(400).json({
-          status: 'error',
-          message: `Provider '${effectiveProvider}' does not support MMS — cannot set mms_capable=1. ` +
-                   `If you're changing provider away from an MMS-capable one, set mms_capable=0 in the same request.`,
-        });
-      }
+    // ── Effective post-update state validation ─────────────────────
+    //
+    // Catches every shape: switching provider to a no-MMS one while
+    // leaving mms_capable=1 untouched is just as invalid as flipping
+    // mms_capable=1 on an existing Quo line. Likewise for credential
+    // type: switching provider to RC while leaving a Quo api_key
+    // credential attached is rejected.
+
+    const effectiveProvider = 'provider'      in body ? body.provider                : existing.provider;
+    const effectiveCredId   = 'credential_id' in body ? Number(body.credential_id)   : existing.credential_id;
+    const effectiveMms      = 'mms_capable'   in body ? (body.mms_capable ? 1 : 0)   : (existing.mms_capable ? 1 : 0);
+
+    const metadata = phoneService.getProviderMetadata()[effectiveProvider];
+    if (!metadata) {
+      // Defensive — VALID_PROVIDERS gated body.provider, and any pre-
+      // existing row should have a valid provider. Would only fire if
+      // an orphaned legacy provider is stuck in the row.
+      return res.status(400).json({
+        status: 'error',
+        message: `Unknown provider '${effectiveProvider}'`,
+      });
+    }
+
+    // MMS capability check (existing pattern, migrated from ADAPTERS).
+    if (effectiveMms === 1 && metadata.capabilities?.mms !== true) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Provider '${effectiveProvider}' does not support MMS — cannot set mms_capable=1. ` +
+                 `If you're changing provider away from an MMS-capable one, set mms_capable=0 in the same request.`,
+      });
+    }
+
+    // Credential-type check. Reuse bodyCredRow if body specified
+    // credential_id; otherwise load the existing line's credential
+    // (which may be different from the existing-row state if the
+    // credential's columns were edited elsewhere — we always validate
+    // effective state).
+    const effectiveCredRow = bodyCredRow
+      ? bodyCredRow
+      : await loadCredentialForMatch(req.db, effectiveCredId);
+    if (!effectiveCredRow) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Credential ${effectiveCredId} for this phone line no longer exists. ` +
+                 `Set credential_id in this request to fix the line.`,
+      });
+    }
+    if (!phoneService.credentialMatchesRequirements(effectiveCredRow, metadata.credentialRequirements)) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Credential ${effectiveCredRow.id} (${effectiveCredRow.name}, type=${effectiveCredRow.type}) ` +
+                 `does not match the requirements for provider '${effectiveProvider}': ` +
+                 `${JSON.stringify(metadata.credentialRequirements)}`,
+      });
     }
 
     params.push(id);
@@ -359,8 +428,8 @@ router.patch('/api/phone-lines/admin/:id/mms-capable', superuserOnlyFor(TOOL), a
     // existing provider — there's no provider change here. Reject any
     // attempt to enable MMS on a no-MMS adapter.
     if (next === 1) {
-      const adapter = phoneService.ADAPTERS[existing.provider];
-      if (adapter?.capabilities?.mms !== true) {
+      const metadata = phoneService.getProviderMetadata()[existing.provider];
+      if (metadata?.capabilities?.mms !== true) {
         return res.status(400).json({
           status: 'error',
           message: `Provider '${existing.provider}' does not support MMS — cannot enable mms_capable.`,

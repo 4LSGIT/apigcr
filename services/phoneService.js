@@ -5,6 +5,7 @@
 //   sendSms(db, from, to, message)
 //   sendMms(db, from, to, text, attachmentUrl)
 //   getProviderMetadata() → public-facing per-provider metadata map
+//   credentialMatchesRequirements(cred, requirements) → bool
 //
 // Dispatch:
 //   1. resolveLine: phone_lines lookup by 10-digit `from`. Reject if
@@ -216,10 +217,10 @@ async function sendMms(db, from, to, text, attachmentUrl) {
 // ─── Public: getProviderMetadata ─────────────────────────────────────
 
 /**
- * Returns a public-facing per-provider metadata map. Used by the route
- * GET /admin response (slice 2) so the frontend can render the provider
- * dropdown, hints, credential filter, and capability-driven UI without
- * hardcoding provider names.
+ * Returns a public-facing per-provider metadata map. Consumed by
+ * routes/api.phoneLines.js (GET /admin response and POST/PUT validation)
+ * so the frontend can render the provider dropdown, hints, credential
+ * filter, and capability-driven UI without hardcoding provider names.
  *
  * Returned shape:
  *   {
@@ -247,15 +248,38 @@ function getProviderMetadata() {
   return result;
 }
 
+// ─── Public: credentialMatchesRequirements ───────────────────────────
+
+/**
+ * Generic credentials-row matcher. Walks the requirements spec and
+ * checks each key/value pair against the credentials row. Used by:
+ *   - routes/api.phoneLines.js  (server-side enforcement on POST and PUT)
+ *   - public/connections.html   (mirrored client-side for dropdown filter)
+ *
+ * The frontend has its own copy of this function — 4 lines isn't worth
+ * crossing the wire for. Keep the two copies in sync.
+ *
+ * Returns true if every key in requirements exists on cred with strict
+ * equality; false otherwise. Empty requirements object matches all
+ * credentials (no adapter declares empty today). null/undefined
+ * requirements fails closed.
+ */
+function credentialMatchesRequirements(cred, requirements) {
+  if (!cred || !requirements) return false;
+  for (const [key, expectedValue] of Object.entries(requirements)) {
+    if (cred[key] !== expectedValue) return false;
+  }
+  return true;
+}
+
 module.exports = {
   sendSms,
   sendMms,
   getProviderMetadata,
+  credentialMatchesRequirements,
 
   // Exposed for the admin Phone Lines tab: VALID_PROVIDERS for route
-  // validation, ADAPTERS for capability lookup (default mms_capable on
-  // new lines). Read-only consumers — do not mutate.
-  ADAPTERS,
+  // validation. Read-only — do not mutate.
   VALID_PROVIDERS,
 
   // Exposed for the temp test route + future channel additions.

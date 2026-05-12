@@ -322,10 +322,10 @@
   </div>
   <div class="field field-row">
     <label>Provider</label>
-    <select id="phone-provider">
-      <option value="ringcentral">ringcentral</option>
-      <option value="quo">quo</option>
-    </select>
+    <!-- Options populated dynamically by renderPhoneEditorDialog from
+         state.phone.providers (which is hydrated from the adapter
+         metadata blob in the GET /admin response). -->
+    <select id="phone-provider"></select>
   </div>
   <div class="field field-row">
     <label>Provider ID</label>
@@ -2066,13 +2066,18 @@ E('aliasResultClose').addEventListener('click', () => {
 // phone lines have fewer fields and the modal flow keeps the list
 // always visible.
 
-// Per-provider hint text for the provider_id field. RC stores extension
-// IDs (often blank on single-extension accounts); Quo stores OpenPhone
-// phone IDs like 'PNAkKuagWX' (required by the Quo adapter).
-const PHONE_PROVIDER_HINTS = {
-  ringcentral: 'RingCentral extension ID. Usually left blank on single-extension accounts.',
-  quo:         "OpenPhone phone number ID (e.g. 'PNAkKuagWX'). Required by the Quo adapter to identify which OpenPhone number to send from.",
-};
+// Generic credentials-row matcher — client-side mirror of
+// phoneService.credentialMatchesRequirements. Used by the editor's
+// credential-dropdown filter. Keep in sync with the backend copy in
+// services/phoneService.js. Returns true if every key in requirements
+// exists on cred with strict equality; false otherwise.
+function credentialMatchesRequirements(cred, requirements) {
+  if (!cred || !requirements) return false;
+  for (const [key, expectedValue] of Object.entries(requirements)) {
+    if (cred[key] !== expectedValue) return false;
+  }
+  return true;
+}
 
 async function loadPhone() {
   try {
@@ -2179,7 +2184,7 @@ function phoneListRow(r) {
   // empty (older backend), fall back to permissive — the server is
   // still authoritative.
   const knownCaps = Object.keys(state.phone.providers || {}).length > 0;
-  const supportsMms = state.phone.providers?.[r.provider]?.mms === true;
+  const supportsMms = state.phone.providers?.[r.provider]?.capabilities?.mms === true;
   const mmsDisabled = knownCaps && !supportsMms && !r.mms_capable;
   const mmsTitle = (knownCaps && !supportsMms)
     ? ` title="Provider '${esc(r.provider)}' does not support MMS"`
@@ -2224,20 +2229,25 @@ async function ensurePhoneCredentialsCache(force = false) {
 // ── Editor dialog ────────────────────────────────────────────
 
 function blankPhone() {
+  // Default provider = first key in the adapter metadata map. Default
+  // mms_capable mirrors that provider's adapter capability (server is
+  // source of truth; applyMmsCapabilityToEditor reconciles on every
+  // provider change). If providers haven't loaded yet (shouldn't happen
+  // since loadPhone runs at init, before the editor can be opened),
+  // fall back to empty and the server will reject on save.
+  const firstProvider = Object.keys(state.phone.providers || {})[0] || '';
+  const firstMms = state.phone.providers?.[firstProvider]?.capabilities?.mms === true;
   return {
     id: null,
     phone_number: '',
     display_name: '',
-    provider: 'ringcentral',
+    provider: firstProvider,
     provider_id: '',
     credential_id: null,
     credential_name: null,
     credential_type: null,
     active: 1,
-    // mms_capable is set when the dialog renders, based on adapter
-    // capabilities for the default provider. RC supports MMS → 1; Quo
-    // doesn't → 0. UI affordance; server is source of truth.
-    mms_capable: 1,
+    mms_capable: firstMms ? 1 : 0,
   };
 }
 
@@ -2273,9 +2283,20 @@ function renderPhoneEditorDialog() {
   E('phoneLineDialogTitle').textContent = isNew ? 'New phone line' : `Edit phone line #${e.id}`;
   setPhoneDialogError(null);
 
+  // Populate the provider dropdown from state.phone.providers so adding
+  // a new adapter (services/adapters/phone/<name>.js) auto-propagates
+  // here with no template edits. Option text uses displayName; value is
+  // the provider key (lowercase, stored in DB).
+  const fallbackProvider = Object.keys(state.phone.providers || {})[0] || '';
+  const selectedProvider = e.provider || fallbackProvider;
+  E('phone-provider').innerHTML = Object.entries(state.phone.providers || {})
+    .map(([key, meta]) =>
+      `<option value="${esc(key)}" ${selectedProvider === key ? 'selected' : ''}>${esc(meta.displayName || key)}</option>`)
+    .join('');
+
   E('phone-number').value        = e.phone_number || '';
   E('phone-display-name').value  = e.display_name || '';
-  E('phone-provider').value      = e.provider || 'ringcentral';
+  E('phone-provider').value      = selectedProvider;
   E('phone-provider-id').value   = e.provider_id || '';
   E('phone-mms-capable').checked = !!e.mms_capable;
   E('phone-active').checked      = e.active == null ? true : !!e.active;
@@ -2303,7 +2324,7 @@ function applyMmsCapabilityToEditor() {
   const provider = E('phone-provider').value;
   const cb = E('phone-mms-capable');
   const knownCaps = Object.keys(state.phone.providers || {}).length > 0;
-  const supportsMms = state.phone.providers?.[provider]?.mms === true;
+  const supportsMms = state.phone.providers?.[provider]?.capabilities?.mms === true;
 
   if (knownCaps && !supportsMms) {
     cb.checked = false;
@@ -2325,7 +2346,10 @@ function applyMmsCapabilityToEditor() {
 
 function renderPhoneProviderIdHelper() {
   const provider = E('phone-provider').value;
-  E('phone-provider-id-helper').textContent = PHONE_PROVIDER_HINTS[provider] || '';
+  // Hint text comes from the adapter's formHints metadata (slice 1).
+  // Each adapter declares per-field help text in its module.exports.
+  const hint = state.phone.providers?.[provider]?.formHints?.provider_id?.help || '';
+  E('phone-provider-id-helper').textContent = hint;
 }
 
 function renderPhoneCredentialDropdown() {
@@ -2341,20 +2365,15 @@ function renderPhoneCredentialDropdown() {
   }
 
   const creds = state.phone.credentialsCache;
-  let filtered;
-  if (provider === 'ringcentral') {
-    filtered = creds.filter(c => c.type === 'oauth2' && c.oauth_status === 'connected');
-  } else if (provider === 'quo') {
-    filtered = creds.filter(c => c.type === 'api_key');
-  } else {
-    filtered = [];
-  }
+  const meta = state.phone.providers?.[provider];
+  const req = meta?.credentialRequirements;
+  const filtered = req
+    ? creds.filter(c => credentialMatchesRequirements(c, req))
+    : [];
 
   if (filtered.length === 0) {
-    const msg = provider === 'ringcentral'
-      ? 'No connected oauth2 credentials found. Create one in the API Credentials tab and complete the Authorize flow first.'
-      : 'No api_key credentials found. Create one in the API Credentials tab first.';
-    host.innerHTML = `<div class="note" style="color:var(--warn);">${msg}</div>`;
+    const label = meta?.displayName || provider || 'this provider';
+    host.innerHTML = `<div class="note" style="color:var(--warn);">No credentials match the requirements for ${esc(label)}. Create one in the API Credentials tab.</div>`;
     return;
   }
 
