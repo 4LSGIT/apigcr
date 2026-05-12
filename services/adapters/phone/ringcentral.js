@@ -15,6 +15,11 @@
 //     rejects e.g. "application/pdf; qs=0.001" with MSG-348.
 //   - 1.5MB attachment cap.
 //   - PDFs work in practice despite not being on RC's published spec.
+//
+// SELF-DESCRIBING METADATA: displayName, credentialRequirements, and
+// formHints are read by phoneService.getProviderMetadata() and surfaced
+// to the Connections > Phone Lines admin UI. Adding fields here
+// auto-propagates to the frontend without route or template edits.
 
 const fetch    = require('node-fetch');
 const FormData = require('form-data');
@@ -122,7 +127,14 @@ async function sendMms(db, { from, to, text, attachmentUrl, credential }) {
 }
 
 module.exports = {
+  displayName: 'RingCentral',
   capabilities: { sms: true, mms: true },
+  credentialRequirements: { type: 'oauth2', oauth_status: 'connected' },
+  formHints: {
+    provider_id: {
+      help: 'RingCentral extension ID. Usually left blank on single-extension accounts.',
+    },
+  },
   sendSms,
   sendMms,
 };

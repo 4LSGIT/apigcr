@@ -10,6 +10,11 @@
 // Quo's `from` field requires a phoneNumberId (PN...), which we carry on
 // phone_lines.provider_id. The 10-digit `from` reaching this adapter is
 // only used for logging (in phoneService).
+//
+// SELF-DESCRIBING METADATA: displayName, credentialRequirements, and
+// formHints are read by phoneService.getProviderMetadata() and surfaced
+// to the Connections > Phone Lines admin UI. Adding fields here
+// auto-propagates to the frontend without route or template edits.
 
 const fetch = require('node-fetch');
 const { buildHeadersForCredential } = require('../../../lib/credentialInjection');
@@ -55,6 +60,13 @@ async function sendSms(db, { to, message, line, credential }) {
 }
 
 module.exports = {
+  displayName: 'Quo',
   capabilities: { sms: true, mms: false },
+  credentialRequirements: { type: 'api_key' },
+  formHints: {
+    provider_id: {
+      help: "OpenPhone phone number ID (e.g. 'PNAkKuagWX'). Required by the Quo adapter to identify which OpenPhone number to send from.",
+    },
+  },
   sendSms,
 };

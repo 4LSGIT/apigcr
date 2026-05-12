@@ -4,6 +4,7 @@
 // Public API:
 //   sendSms(db, from, to, message)
 //   sendMms(db, from, to, text, attachmentUrl)
+//   getProviderMetadata() → public-facing per-provider metadata map
 //
 // Dispatch:
 //   1. resolveLine: phone_lines lookup by 10-digit `from`. Reject if
@@ -16,7 +17,10 @@
 //
 // Adapter contract — services/adapters/phone/<provider>.js:
 //   {
+//     displayName: string,                     // UI label
 //     capabilities: { sms: bool, mms: bool, ... },
+//     credentialRequirements: { ...columnSpec },  // credentials-row matcher
+//     formHints: { <field>: { help?, label?, placeholder? } },  // optional
 //     async sendSms(db, { from, to, message,           line, credential }) → providerResult,
 //     async sendMms(db, { from, to, text, attachmentUrl, line, credential }) → providerResult,
 //   }
@@ -209,9 +213,44 @@ async function sendMms(db, from, to, text, attachmentUrl) {
   }
 }
 
+// ─── Public: getProviderMetadata ─────────────────────────────────────
+
+/**
+ * Returns a public-facing per-provider metadata map. Used by the route
+ * GET /admin response (slice 2) so the frontend can render the provider
+ * dropdown, hints, credential filter, and capability-driven UI without
+ * hardcoding provider names.
+ *
+ * Returned shape:
+ *   {
+ *     <provider_key>: {
+ *       displayName: string,
+ *       capabilities: { ...adapter-declared booleans },
+ *       credentialRequirements: { ...adapter-declared key/value spec },
+ *       formHints: { ...adapter-declared per-field hint map (may be empty) },
+ *     },
+ *     ...
+ *   }
+ *
+ * Adapter `send` functions are NOT included; this is read-only metadata.
+ */
+function getProviderMetadata() {
+  const result = {};
+  for (const [key, adapter] of Object.entries(ADAPTERS)) {
+    result[key] = {
+      displayName: adapter.displayName,
+      capabilities: adapter.capabilities,
+      credentialRequirements: adapter.credentialRequirements,
+      formHints: adapter.formHints || {},
+    };
+  }
+  return result;
+}
+
 module.exports = {
   sendSms,
   sendMms,
+  getProviderMetadata,
 
   // Exposed for the admin Phone Lines tab: VALID_PROVIDERS for route
   // validation, ADAPTERS for capability lookup (default mms_capable on
