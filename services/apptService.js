@@ -494,8 +494,19 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0 }) {
 async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId = 0 }) {
   if (!appt_id) throw new Error('markNoShow requires appt_id');
 
+  // SELECT extended: pull contact_phone for pre-check, JOIN cases for case_type.
+  // Without case_type in trigger_data, future case_type-filtered no_show
+  // templates would never qualify (sequenceEngine disqualifies specific filters
+  // when the trigger field is undefined).
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id, appt_case_id, appt_date, appt_type, appt_with, appt_status FROM appts WHERE appt_id = ?',
+    `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_date,
+            a.appt_type, a.appt_with, a.appt_status,
+            c.contact_phone,
+            cs.case_type
+     FROM appts a
+     LEFT JOIN contacts c ON c.contact_id = a.appt_client_id
+     LEFT JOIN cases    cs ON cs.case_id  = a.appt_case_id
+     WHERE a.appt_id = ?`,
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
@@ -503,10 +514,8 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
     throw new Error('Appointment is already marked No Show');
   }
 
-  // Capture prior status before we flip it — used for the log's From field
   const priorStatus = appt.appt_status;
 
-  // Update status
   await db.query(
     `UPDATE appts
      SET appt_status = 'No Show',
@@ -515,39 +524,46 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
     [note ? ` ${note}` : '', appt_id]
   );
 
-  // Cancel reminder workflow (non-blocking)
   cancelApptWorkflow(db, appt_id)
     .catch(err => console.error('[APPT SERVICE] Cancel workflow failed:', err.message));
 
   // Sequence enrollment
   let enrolled = false;
+  let skipReason = null;
   if (enroll) {
-    const [[{ activeEnrollments }]] = await db.query(
-      `SELECT COUNT(*) AS activeEnrollments
-      FROM sequence_enrollments se
-      JOIN sequence_templates st ON se.template_id = st.id
-      WHERE se.contact_id = ?
-      AND se.status = 'active'
-      AND st.type = 'no_show'`,
-      [appt.appt_client_id]
-    );
-    if (activeEnrollments === 0) {
-      try {
-        const seq = getSequenceEngine();
-        // Cascade fields (appt_type, appt_with) live in trigger_data now —
-        // sequenceEngine.enrollContact reads them from there per the type's
-        // priority_fields config in sequence_template_types.
-        await seq.enrollContact(db, appt.appt_client_id, 'no_show', {
-          appt_id:     appt_id,
-          appt_time:   appt.appt_date,
-          case_id:     appt.appt_case_id,
-          appt_type:   appt.appt_type,
-          appt_with:   appt.appt_with,
-          enrolled_by: 'no_show_handler'
-        });
-        enrolled = true;
-      } catch (err) {
-        console.error('[APPT SERVICE] Sequence enroll failed:', err.message);
+    // Pre-check: contact must have a phone number. The no_show sequences are
+    // SMS-only; without a phone, the sequence would either silent-fail every
+    // step or close the case after zero outreach. Fail loud at enrollment.
+    if (!appt.contact_phone || !String(appt.contact_phone).trim()) {
+      skipReason = 'no_phone';
+    } else {
+      const [[{ activeEnrollments }]] = await db.query(
+        `SELECT COUNT(*) AS activeEnrollments
+        FROM sequence_enrollments se
+        JOIN sequence_templates st ON se.template_id = st.id
+        WHERE se.contact_id = ?
+        AND se.status = 'active'
+        AND st.type = 'no_show'`,
+        [appt.appt_client_id]
+      );
+      if (activeEnrollments === 0) {
+        try {
+          const seq = getSequenceEngine();
+          await seq.enrollContact(db, appt.appt_client_id, 'no_show', {
+            appt_id:     appt_id,
+            appt_time:   appt.appt_date,
+            case_id:     appt.appt_case_id,
+            appt_type:   appt.appt_type,
+            appt_with:   appt.appt_with,
+            case_type:   appt.case_type,        // NEW — cascade field
+            enrolled_by: 'no_show_handler'
+          });
+          enrolled = true;
+        } catch (err) {
+          console.error('[APPT SERVICE] Sequence enroll failed:', err.message);
+        }
+      } else {
+        skipReason = 'active_enrollment';
       }
     }
   }
@@ -556,9 +572,10 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
   const logExtras = { Status: 'No Show', Enrolled: String(enrolled) };
   if (priorStatus !== 'Scheduled') logExtras.From = priorStatus;
   if (note) logExtras.Note = note;
+  if (skipReason) logExtras.SkipReason = skipReason;
   await insertApptLog(db, appt_id, actingUserId, logExtras);
 
-  return { appt_id, enrolled };
+  return { appt_id, enrolled, skipReason };
 }
 
 

@@ -224,8 +224,11 @@ router.post('/api/appts/:id/no-show', jwtOrApiKey, async (req, res) => {
       actingUserId: req.auth?.userId || 0
     });
 
-    const message = req.body.enroll && !result.enrolled
-      ? 'Marked No Show — sequence not triggered (contact has prior no-shows)'
+    const message =
+    req.body.enroll && !result.enrolled
+      ? (result.skipReason === 'no_phone'
+        ? 'Marked No Show — sequence not triggered (contact has no phone number)'
+        : 'Marked No Show — sequence not triggered (contact has prior no-shows)')
       : `Marked No Show${result.enrolled ? ' and enrolled in sequence' : ''}`;
 
     res.json({ status: 'success', title: 'Success!', message });
