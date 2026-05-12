@@ -365,12 +365,8 @@ Quill.register(EmailImage, true);
 // ─── INIT ─────────────────────────────────────────────────────
 async function init() {
   try {
-    const [linesRes, emailsRes] = await Promise.all([
-      P.apiSend('/api/phone-lines', 'GET'),
-      P.apiSend('/api/email-from', 'GET'),
-    ]);
-    phoneLines = linesRes.lines || [];
-    emailAddresses = emailsRes.emails || [];
+    phoneLines = P.firmData.phoneLines || [];
+    emailAddresses = P.firmData.emailFrom || [];
   } catch (err) {
     console.error('Init failed:', err);
   }
@@ -462,9 +458,9 @@ function onChannelChange() {
   sel.innerHTML = '';
   if (isSms) {
     phoneLines.forEach(l => {
-      const suffix = l.provider !== 'ringcentral' ? ' (SMS only)' : '';
+      const suffix = l.mms_capable ? '' : ' (SMS only)';
       const label = l.display_name ? `${l.display_name} (${fmtPhone(l.phone_number)})${suffix}` : `${fmtPhone(l.phone_number)}${suffix}`;
-      sel.innerHTML += `<option value="${esc(l.phone_number)}" data-provider="${esc(l.provider)}">${esc(label)}</option>`;
+      sel.innerHTML += `<option value="${esc(l.phone_number)}" data-mms-capable="${l.mms_capable ? '1' : '0'}">${esc(label)}</option>`;
     });
   } else {
     emailAddresses.forEach(e => {
@@ -918,7 +914,7 @@ function getBody() {
 async function attachMmsImage() {
   // Check sender supports MMS
   const senderOpt = document.getElementById('c-sender').selectedOptions[0];
-  if (senderOpt && senderOpt.dataset.provider && senderOpt.dataset.provider !== 'ringcentral') {
+  if (senderOpt && senderOpt.dataset.mmsCapable && senderOpt.dataset.mmsCapable !== '1') {
     return Swal.fire('SMS Only', 'The selected phone line does not support MMS. Choose a RingCentral line.', 'warning');
   }
 
@@ -1018,14 +1014,13 @@ function updateMmsVisibility() {
   if (!section) return;
 
   const senderOpt = document.getElementById('c-sender').selectedOptions[0];
-  const provider = senderOpt?.dataset?.provider;
-  const isRc = provider === 'ringcentral';
+  const mmsCapable = senderOpt?.dataset?.mmsCapable === '1';
 
-  section.style.display = isRc ? '' : 'none';
+  section.style.display = mmsCapable ? '' : 'none';
   hint.textContent = '';
 
-  // If switching away from RC with an attachment, clear it
-  if (!isRc && mmsAttachmentUrl) {
+  // If switching away from MMS-capable line with an attachment, clear it
+  if (!mmsCapable && mmsAttachmentUrl) {
     removeMmsAttachment();
   }
 }
@@ -1162,7 +1157,7 @@ async function insertVideoSms() {
   if (!senderOpt) {
     return Toast.fire({ icon: 'warning', title: 'Select a sender first' });
   }
-  const mmsCapable = senderOpt.dataset.provider === 'ringcentral';
+  const mmsCapable = senderOpt.dataset.mmsCapable === '1';
 
   const result = await YisraVideoInsert.openVideoPicker({
     contactId: null,        // campaign template mode
@@ -1455,9 +1450,18 @@ function fmtPhone(n) {
 
 // ─── BOOT ─────────────────────────────────────────────────────
 (function waitForParent() {
-  if (P.apiSend && P.firmData?.currentUser) return init();
+if (
+  P.apiSend &&
+  (P.firmData?.phoneLines?.length || P.firmData?.emailFrom?.length)
+) return init();
   setTimeout(waitForParent, 100);
 })();
+/* for v2 replace with:
+(function waitForParent() {
+  if (P.apiSend && P.firmData?.phoneLines && P.firmData?.emailFrom) return init();
+  setTimeout(waitForParent, 100);
+})();
+*/
 </script>
 </body>
 </html>

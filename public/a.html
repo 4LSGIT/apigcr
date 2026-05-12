@@ -115,7 +115,7 @@
   </div>
 
   <div id="tabCampaigns" class="tab-main">
-    <iframe id="tabCampFrame" src="/campaign.html"></iframe>
+    <iframe id="tabCampFrame" iframe data-src="/campaign.html"></iframe>
   </div>
 
 
@@ -1599,7 +1599,14 @@
       for (i = 0; i < tabs.length; i++) {
         tabs[i].style.display = "none";
       }
-      E(tabName).style.display = "block";
+      const target = E(tabName);
+      target.style.display = "block";
+      // Lazy-load any iframe inside the tab on first open
+      const iframe = target.querySelector('iframe[data-src]');
+      if (iframe) {
+        iframe.src = iframe.dataset.src;
+        delete iframe.dataset.src;
+      }
     }
 
     // ---- Global auth state ----

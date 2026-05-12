@@ -399,12 +399,12 @@ async function init() {
   // ── Populate SMS "From" ──
   const smsSel = E('sms-from');
   phoneLines.forEach(l => {
-    const suffix = l.provider !== 'ringcentral' ? ' (SMS only)' : '';
+    const suffix = l.mms_capable ? '' : ' (SMS only)';
     const label = l.display_name
       ? `${l.display_name} (${fmtPhone(l.phone_number)})${suffix}`
       : `${fmtPhone(l.phone_number)}${suffix}`;
     const opt = new Option(label, l.phone_number);
-    opt.dataset.provider = l.provider;
+    opt.dataset.mmsCapable = String(l.mms_capable);
     smsSel.add(opt);
   });
   if (currentUser.default_phone) smsSel.value = currentUser.default_phone;
@@ -705,7 +705,7 @@ async function insertImageAtCursor(url) {
 
 async function attachMmsImage() {
   const senderOpt = E('sms-from').selectedOptions[0];
-  if (senderOpt?.dataset.provider !== 'ringcentral') {
+  if (senderOpt?.dataset.mmsCapable !== '1') {
     return Swal.fire('SMS Only', 'The selected phone line does not support MMS. Choose a RingCentral line.', 'warning');
   }
   const url = await attachDialog('Attach Image (MMS)', 'image/png,image/jpeg,image/gif,image/webp,.pdf');
@@ -729,11 +729,11 @@ function removeMmsAttachment() {
 
 function updateMmsVisibility() {
   const senderOpt = E('sms-from').selectedOptions[0];
-  const isRc = senderOpt?.dataset.provider === 'ringcentral';
-  E('mms-section').style.display = isRc ? '' : 'none';
-  E('mms-hint').textContent = isRc ? '' : '';
-  // If switching away from RC with attachment, clear it
-  if (!isRc && mmsAttachmentUrl) removeMmsAttachment();
+  const mmsCapable = senderOpt?.dataset.mmsCapable === '1';
+  E('mms-section').style.display = mmsCapable ? '' : 'none';
+  E('mms-hint').textContent = mmsCapable ? '' : '';
+  // If switching away from MMS-capable line with attachment, clear it
+  if (!mmsCapable && mmsAttachmentUrl) removeMmsAttachment();
 }
 
 
@@ -769,7 +769,7 @@ async function insertVideoSms() {
   if (!senderOpt) {
     return Toast.fire({ icon: 'warning', title: 'Select a sender first' });
   }
-  const mmsCapable = senderOpt.dataset.provider === 'ringcentral';
+  const mmsCapable = senderOpt.dataset.mmsCapable === '1';
   const result = await YisraVideoInsert.openVideoPicker({
     contactId, context: 'sms', mmsCapable,
   });
@@ -872,9 +872,9 @@ async function send(action) {
       // Send
       if (action === 'sms') {
         const senderOpt = E('sms-from').selectedOptions[0];
-        const isRc = senderOpt?.dataset.provider === 'ringcentral';
+        const mmsCapable = senderOpt?.dataset.mmsCapable === '1';
 
-        if (mmsAttachmentUrl && isRc) {
+        if (mmsAttachmentUrl && mmsCapable) {
           await P.apiSend('/internal/mms/send', 'POST', {
             from, to, text: body, attachment_url: mmsAttachmentUrl
           });

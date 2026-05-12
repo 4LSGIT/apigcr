@@ -430,8 +430,8 @@ function renderDropdowns() {
   phoneLines.forEach(line => {
     const opt = document.createElement('option');
     opt.value = line.phone_number;
-    opt.dataset.provider = line.provider;
-    const suffix = line.provider !== 'ringcentral' ? ' (SMS only)' : '';
+    opt.dataset.mmsCapable = String(line.mms_capable);
+    const suffix = line.mms_capable ? '' : ' (SMS only)';
     opt.textContent = `${line.display_name} - ${formatPhone(line.phone_number)}${suffix}`;
     if (currentUser.default_phone && line.phone_number === currentUser.default_phone) opt.selected = true;
     smsSelect.appendChild(opt);
@@ -764,14 +764,14 @@ async function send() {
       // ── CREDIT COUNSELING (MMS + email) ──
       if (action.type === 'credit_counseling') {
   const smsOpt = document.getElementById('smsFrom').selectedOptions[0];
-  const isRc = smsOpt?.dataset.provider === 'ringcentral';
+  const mmsCapable = smsOpt?.dataset.mmsCapable === '1';
   const ccImgUrl = 'https://storage.googleapis.com/uploads.4lsg.com/be38469da984371bdb8b18905abc113a.png';
 
   for (const r of recipients) {
     const mmsText = `Hi ${r.fname}! Here is information about the credit counseling course that we discussed. Just go to EVERGREENCLASS.COM. If you use the code LSG, you will get a $25 discount and they will automatically send us your certificate!`;
 
     if (smsOn && r.phone) {
-      if (isRc) {
+      if (mmsCapable) {
         await P.apiSend('/internal/mms/send', 'POST', {
           from: smsFrom, to: r.phone, text: mmsText,
           attachment_url: ccImgUrl,
@@ -827,11 +827,11 @@ async function send() {
   const irsVideo = 'https://storage.googleapis.com/uploads.4lsg.com/f90893673d9f2e3869c8fb02e3410631.mp4';
   const irsPdf = 'https://storage.googleapis.com/uploads.4lsg.com/f7cdbf587e6b80018b5e819c0ee54635.pdf';
   const smsOpt = document.getElementById('smsFrom').selectedOptions[0];
-  const isRc = smsOpt?.dataset.provider === 'ringcentral';
+  const mmsCapable = smsOpt?.dataset.mmsCapable === '1';
 
   for (const r of recipients) {
     if (smsOn && r.phone) {
-      if (isRc) {
+      if (mmsCapable) {
         await P.apiSend('/internal/mms/send', 'POST', {
           from: smsFrom, to: r.phone,
           text: `Hi ${r.fname}! Here is instructions for setting up your IRS.GOV account through ID.ME. See the attached PDF or for video instructions click here: ${irsVideo}`,
@@ -950,7 +950,7 @@ async function send() {
           if (action.mode === 'sms' && smsOn && r.phone) {
             if (action.mms_attachment) {
               const smsOpt = document.getElementById('smsFrom').selectedOptions[0];
-              if (smsOpt?.dataset.provider === 'ringcentral') {
+              if (smsOpt?.dataset.mmsCapable === '1') {
                 await P.apiSend('/internal/mms/send', 'POST', {
                   from: smsFrom, to: r.phone, text: recipSmsText, attachment_url: action.mms_attachment
                 });
@@ -1201,7 +1201,7 @@ async function otherQuillImageHandler() {
 async function otherAttachMmsImage() {
   const smsSelect = document.getElementById('smsFrom');
   const senderOpt = smsSelect.selectedOptions[0];
-  if (senderOpt?.dataset.provider !== 'ringcentral') {
+  if (senderOpt?.dataset.mmsCapable !== '1') {
     return Swal.fire('SMS Only', 'The selected phone line does not support MMS. Choose a RingCentral line.', 'warning');
   }
   const url = await sfAttachDialog('Attach Image (MMS)', 'image/png,image/jpeg,image/gif,image/webp');
@@ -1226,9 +1226,9 @@ function otherRemoveMmsAttachment() {
 function updateOtherMmsVisibility() {
   const smsSelect = document.getElementById('smsFrom');
   const senderOpt = smsSelect.selectedOptions[0];
-  const isRc = senderOpt?.dataset.provider === 'ringcentral';
-  document.getElementById('otherMmsSection').style.display = isRc ? '' : 'none';
-  if (!isRc && otherMmsAttachmentUrl) otherRemoveMmsAttachment();
+  const mmsCapable = senderOpt?.dataset.mmsCapable === '1';
+  document.getElementById('otherMmsSection').style.display = mmsCapable ? '' : 'none';
+  if (!mmsCapable && otherMmsAttachmentUrl) otherRemoveMmsAttachment();
 }
 
 // ── Email attachment (Other section) ──
@@ -1263,7 +1263,7 @@ async function otherInsertVideoSms() {
   if (!senderOpt) {
     return Toast.fire({ icon: 'warning', title: 'Select an SMS sender first' });
   }
-  const mmsCapable = senderOpt.dataset.provider === 'ringcentral';
+  const mmsCapable = senderOpt.dataset.mmsCapable === '1';
   const result = await YisraVideoInsert.openVideoPicker({
     contactId: null,        // multi-recipient → leave placeholder literal
     context: 'sms',
