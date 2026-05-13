@@ -27,6 +27,13 @@
  * form, so 'Foo@BAR.com' and 'foo@bar.com' are treated as the same address.
  * The stored row is the normalized form.
  *
+ * SLICE 3 STAGE A: validateEmailRow extracted as a pure validator that
+ * is used both by the dedicated create/update routes here AND by the
+ * aggregate reconciler in services/contactService.js. The validator has
+ * two modes: 'insert' (full row with defaults; email required) and
+ * 'update' (sparse — only fields present are validated/normalized).
+ * Behavior of createContactEmail / updateContactEmail is unchanged.
+ *
  * NOTE: audit logging for child-table mutations is deferred to a later
  * slice. The audit trigger on the contacts table will fire when the
  * mirror helper updates contact_email; per-row audit on contact_emails
@@ -71,6 +78,106 @@ function _normDate(v) {
 function _toBit(v) {
   return v ? 1 : 0;
 }
+
+
+// ─────────────────────────────────────────────────────────────
+// validateEmailRow — pure validator (no DB access)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Validate + normalize an email row. Pure function — no DB access. Used
+ * by both the dedicated route handlers (createContactEmail /
+ * updateContactEmail) and by the aggregate reconciler
+ * (contactService._planEmails).
+ *
+ * Returns a normalized row object. Throws Error with a `.field` property
+ * naming the offending column on validation failure.
+ *
+ * Modes:
+ *   - 'insert' (default): full-row semantics. `email` is required and
+ *     must satisfy EMAIL_REGEX and EMAIL_MAX_LENGTH. Missing optional
+ *     fields take INSERT-time defaults. `is_primary` is preserved as
+ *     `undefined` when absent so callers can apply auto-promote logic.
+ *     Tinyint outputs are 0/1 (not booleans).
+ *   - 'update': sparse semantics. Only fields actually present in `fields`
+ *     appear in the result. Missing fields are NOT defaulted.
+ *
+ * @param {object} fields
+ * @param {object} [opts]
+ * @param {'insert'|'update'} [opts.mode='insert']
+ * @returns {object}  normalized row (full in insert mode, sparse in update mode)
+ */
+function validateEmailRow(fields, { mode = 'insert' } = {}) {
+  if (mode === 'insert') {
+    const email = normalizeEmail(fields.email);
+    if (!EMAIL_REGEX.test(email)) {
+      const e = new Error('Invalid email — must be a valid address');
+      e.field = 'email';
+      throw e;
+    }
+    if (email.length > EMAIL_MAX_LENGTH) {
+      const e = new Error(`Invalid email — exceeds ${EMAIL_MAX_LENGTH} character limit`);
+      e.field = 'email';
+      throw e;
+    }
+
+    const label = fields.label || 'Other';
+    if (!EMAIL_LABELS.includes(label)) {
+      const e = new Error(`Invalid label "${label}" (allowed: ${EMAIL_LABELS.join(', ')})`);
+      e.field = 'label';
+      throw e;
+    }
+
+    const result = {
+      email,
+      label,
+      email_optout: _toBit(fields.email_optout),
+      verified:     _toBit(fields.verified),
+      start_date:   _normDate(fields.start_date),
+      end_date:     _normDate(fields.end_date),
+      end_reason:   fields.end_reason || null,
+      notes:        fields.notes == null ? '' : fields.notes,
+    };
+    if (fields.is_primary !== undefined) {
+      result.is_primary = _toBit(fields.is_primary);
+    }
+    return result;
+  }
+
+  // mode === 'update'
+  const result = {};
+  if ('email' in fields) {
+    const email = normalizeEmail(fields.email);
+    if (!EMAIL_REGEX.test(email)) {
+      const e = new Error('Invalid email — must be a valid address');
+      e.field = 'email';
+      throw e;
+    }
+    if (email.length > EMAIL_MAX_LENGTH) {
+      const e = new Error(`Invalid email — exceeds ${EMAIL_MAX_LENGTH} character limit`);
+      e.field = 'email';
+      throw e;
+    }
+    result.email = email;
+  }
+  if ('label' in fields) {
+    if (!EMAIL_LABELS.includes(fields.label)) {
+      const e = new Error(`Invalid label "${fields.label}" (allowed: ${EMAIL_LABELS.join(', ')})`);
+      e.field = 'label';
+      throw e;
+    }
+    result.label = fields.label;
+  }
+  if ('is_primary'   in fields) result.is_primary   = _toBit(fields.is_primary);
+  if ('email_optout' in fields) result.email_optout = _toBit(fields.email_optout);
+  if ('verified'     in fields) result.verified     = _toBit(fields.verified);
+  if ('start_date'   in fields) result.start_date   = _normDate(fields.start_date);
+  if ('end_date'     in fields) result.end_date     = _normDate(fields.end_date);
+  if ('end_reason'   in fields) result.end_reason   = fields.end_reason == null ? null : fields.end_reason;
+  if ('notes'        in fields) result.notes        = fields.notes == null ? '' : fields.notes;
+  return result;
+}
+
 
 /** Shared SELECT/JOIN for fetching one or many emails with user joins. */
 const EMAIL_SELECT_SQL = `
@@ -157,7 +264,7 @@ async function getContactEmail(db, emailId) {
 /**
  * Create a contact_emails row.
  *
- * Validates:
+ * Validates (via validateEmailRow):
  *   - email normalizes + matches EMAIL_REGEX
  *   - email length <= EMAIL_MAX_LENGTH (100)
  *   - label is in EMAIL_LABELS (if provided)
@@ -200,18 +307,7 @@ async function getContactEmail(db, emailId) {
  */
 async function createContactEmail(db, contactId, fields = {}, { force = false, createdBy = 0 } = {}) {
   // ─── Validation (pre-transaction) ───
-  const email = normalizeEmail(fields.email);
-  if (!EMAIL_REGEX.test(email)) {
-    throw new Error('Invalid email — must be a valid address');
-  }
-  if (email.length > EMAIL_MAX_LENGTH) {
-    throw new Error(`Invalid email — exceeds ${EMAIL_MAX_LENGTH} character limit`);
-  }
-
-  const label = fields.label || 'Other';
-  if (!EMAIL_LABELS.includes(label)) {
-    throw new Error(`Invalid label "${label}" (allowed: ${EMAIL_LABELS.join(', ')})`);
-  }
+  const validated = validateEmailRow(fields, { mode: 'insert' });
 
   const [[contactRow]] = await db.query(
     `SELECT contact_id FROM contacts WHERE contact_id = ?`,
@@ -233,7 +329,7 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
          FROM contact_emails ce
          JOIN contacts c ON c.contact_id = ce.contact_id
         WHERE ce.email = ? AND ce.end_date IS NULL`,
-      [email]
+      [validated.email]
     );
 
     if (collision) {
@@ -275,25 +371,25 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
     }
 
     // 2. Auto-promote check
-    let isPrimary;
+    let isPrimary; // 0 or 1
     let autoPromoted = false;
-    if (fields.is_primary !== undefined) {
-      isPrimary = !!fields.is_primary;
+    if (validated.is_primary !== undefined) {
+      isPrimary = validated.is_primary; // already 0 or 1 from validator
     } else {
       const [[{ cnt }]] = await conn.query(
         `SELECT COUNT(*) AS cnt FROM contact_emails WHERE contact_id = ?`,
         [cid]
       );
       if (cnt === 0) {
-        isPrimary   = true;
+        isPrimary   = 1;
         autoPromoted = true;
       } else {
-        isPrimary = false;
+        isPrimary = 0;
       }
     }
 
     // 3. Demote existing primary-active if we're inserting as primary
-    if (isPrimary) {
+    if (isPrimary === 1) {
       await conn.query(
         `UPDATE contact_emails
             SET is_primary = 0, updated_by = ?
@@ -312,11 +408,11 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
             start_date, notes, created_by, updated_by)
          VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), ?, ?, ?)`,
         [
-          cid, email, label, _toBit(isPrimary),
-          _toBit(fields.email_optout),
-          _toBit(fields.verified),
-          _normDate(fields.start_date),
-          fields.notes || '',
+          cid, validated.email, validated.label, isPrimary,
+          validated.email_optout,
+          validated.verified,
+          validated.start_date,
+          validated.notes,
           createdBy, createdBy,
         ]
       );
@@ -371,6 +467,9 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
  * Forbidden: id, contact_id, email, start_date, created_*, updated_*,
  *            generated columns. Changing the email value is not supported
  *            via PATCH — delete and re-create instead.
+ *            (NOTE: the AGGREGATE PATCH route in api.contacts.js DOES
+ *             support email value changes via end-and-replace. This
+ *             dedicated PATCH does not.)
  *
  * Transitions:
  *   - is_primary 0→1 → demotes any existing primary-active row first
@@ -398,6 +497,9 @@ async function updateContactEmail(db, emailId, fields, { updatedBy = 0 } = {}) {
     throw new Error(`Cannot update ${unknown.join(', ')}`);
   }
 
+  // validateEmailRow (update mode) — sparse, per-field shape validation.
+  const incoming = validateEmailRow(fields, { mode: 'update' });
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -407,17 +509,6 @@ async function updateContactEmail(db, emailId, fields, { updatedBy = 0 } = {}) {
       [emailId]
     );
     if (!current) throw new Error(`Email ${emailId} not found`);
-
-    const incoming = { ...fields };
-    if ('label' in incoming && !EMAIL_LABELS.includes(incoming.label)) {
-      throw new Error(`Invalid label "${incoming.label}" (allowed: ${EMAIL_LABELS.join(', ')})`);
-    }
-    if ('is_primary'   in incoming) incoming.is_primary   = _toBit(incoming.is_primary);
-    if ('email_optout' in incoming) incoming.email_optout = _toBit(incoming.email_optout);
-    if ('verified'     in incoming) incoming.verified     = _toBit(incoming.verified);
-    if ('end_date'     in incoming) incoming.end_date     = _normDate(incoming.end_date);
-    if ('end_reason'   in incoming && incoming.end_reason == null) incoming.end_reason = null;
-    if ('notes'        in incoming && incoming.notes      == null) incoming.notes      = '';
 
     const becomingPrimary = 'is_primary' in incoming
       && incoming.is_primary === 1
@@ -539,5 +630,6 @@ module.exports = {
   deleteContactEmail,
   setPrimaryContactEmail,
   normalizeEmail,
+  validateEmailRow,
   EMAIL_LABELS,
 };

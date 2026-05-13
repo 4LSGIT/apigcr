@@ -24,6 +24,13 @@
  *     contacts.contact_phone column can never drift from the
  *     contact_phones primary-active row.
  *
+ * SLICE 3 STAGE A: validatePhoneRow extracted as a pure validator that
+ * is used both by the dedicated create/update routes here AND by the
+ * aggregate reconciler in services/contactService.js. The validator has
+ * two modes: 'insert' (full row with defaults; phone required) and
+ * 'update' (sparse — only fields present are validated/normalized).
+ * Behavior of createContactPhone / updateContactPhone is unchanged.
+ *
  * NOTE: audit logging for child-table mutations is deferred to a later
  * slice. The audit trigger on the contacts table will fire when the
  * mirror helper updates contact_phone; per-row audit on contact_phones
@@ -72,6 +79,105 @@ function _normDate(v) {
 function _toBit(v) {
   return v ? 1 : 0;
 }
+
+
+// ─────────────────────────────────────────────────────────────
+// validatePhoneRow — pure validator (no DB access)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Validate + normalize a phone row. Pure function — no DB access. Used
+ * by both the dedicated route handlers (createContactPhone /
+ * updateContactPhone) and by the aggregate reconciler
+ * (contactService._planPhones).
+ *
+ * Returns a normalized row object. Throws Error with a `.field` property
+ * naming the offending column on validation failure.
+ *
+ * Modes:
+ *   - 'insert' (default): full-row semantics. `phone` is required.
+ *     Missing optional fields take INSERT-time defaults. `is_primary`
+ *     is preserved as `undefined` when absent so callers can apply
+ *     auto-promote logic. Tinyint outputs are 0/1 (not booleans).
+ *   - 'update': sparse semantics. Only fields actually present in `fields`
+ *     appear in the result. Missing fields are NOT defaulted. Useful for
+ *     PATCH-style operations that should not touch unspecified columns.
+ *
+ * Note on PHONE_LABELS validation:
+ *   - In 'insert' mode, label defaults to 'Other' if not provided.
+ *   - In 'update' mode, label is validated only if present in `fields`.
+ *
+ * @param {object} fields
+ * @param {object} [opts]
+ * @param {'insert'|'update'} [opts.mode='insert']
+ * @returns {object}  normalized row (full in insert mode, sparse in update mode)
+ */
+function validatePhoneRow(fields, { mode = 'insert' } = {}) {
+  if (mode === 'insert') {
+    const phone = normalizePhone(fields.phone);
+    if (phone.length !== 10) {
+      const e = new Error('Invalid phone — must be 10 digits');
+      e.field = 'phone';
+      throw e;
+    }
+
+    const label = fields.label || 'Other';
+    if (!PHONE_LABELS.includes(label)) {
+      const e = new Error(`Invalid label "${label}" (allowed: ${PHONE_LABELS.join(', ')})`);
+      e.field = 'label';
+      throw e;
+    }
+
+    const result = {
+      phone,
+      label,
+      sms_optout:  _toBit(fields.sms_optout),
+      mms_capable: fields.mms_capable === undefined ? 1 : _toBit(fields.mms_capable),
+      verified:    _toBit(fields.verified),
+      start_date:  _normDate(fields.start_date),
+      end_date:    _normDate(fields.end_date),
+      end_reason:  fields.end_reason || null,
+      notes:       fields.notes == null ? '' : fields.notes,
+    };
+    // Preserve is_primary as undefined when caller didn't set it, so
+    // auto-promote logic (in createContactPhone / aggregate reconciler)
+    // can distinguish "user said no" from "user didn't say".
+    if (fields.is_primary !== undefined) {
+      result.is_primary = _toBit(fields.is_primary);
+    }
+    return result;
+  }
+
+  // mode === 'update'
+  const result = {};
+  if ('phone' in fields) {
+    const phone = normalizePhone(fields.phone);
+    if (phone.length !== 10) {
+      const e = new Error('Invalid phone — must be 10 digits');
+      e.field = 'phone';
+      throw e;
+    }
+    result.phone = phone;
+  }
+  if ('label' in fields) {
+    if (!PHONE_LABELS.includes(fields.label)) {
+      const e = new Error(`Invalid label "${fields.label}" (allowed: ${PHONE_LABELS.join(', ')})`);
+      e.field = 'label';
+      throw e;
+    }
+    result.label = fields.label;
+  }
+  if ('is_primary'  in fields) result.is_primary  = _toBit(fields.is_primary);
+  if ('sms_optout'  in fields) result.sms_optout  = _toBit(fields.sms_optout);
+  if ('mms_capable' in fields) result.mms_capable = _toBit(fields.mms_capable);
+  if ('verified'    in fields) result.verified    = _toBit(fields.verified);
+  if ('start_date'  in fields) result.start_date  = _normDate(fields.start_date);
+  if ('end_date'    in fields) result.end_date    = _normDate(fields.end_date);
+  if ('end_reason'  in fields) result.end_reason  = fields.end_reason == null ? null : fields.end_reason;
+  if ('notes'       in fields) result.notes       = fields.notes == null ? '' : fields.notes;
+  return result;
+}
+
 
 /** Shared SELECT/JOIN for fetching one or many phones with user joins. */
 const PHONE_SELECT_SQL = `
@@ -158,7 +264,7 @@ async function getContactPhone(db, phoneId) {
 /**
  * Create a contact_phones row.
  *
- * Validates:
+ * Validates (via validatePhoneRow):
  *   - phone normalizes to exactly 10 digits
  *   - label is in PHONE_LABELS (if provided)
  *   - contact exists
@@ -204,15 +310,9 @@ async function getContactPhone(db, phoneId) {
  */
 async function createContactPhone(db, contactId, fields = {}, { force = false, createdBy = 0 } = {}) {
   // ─── Validation (pre-transaction) ───
-  const phone = normalizePhone(fields.phone);
-  if (phone.length !== 10) {
-    throw new Error('Invalid phone — must be 10 digits');
-  }
-
-  const label = fields.label || 'Other';
-  if (!PHONE_LABELS.includes(label)) {
-    throw new Error(`Invalid label "${label}" (allowed: ${PHONE_LABELS.join(', ')})`);
-  }
+  // validatePhoneRow throws on bad phone/label; preserves is_primary as
+  // undefined when caller didn't set it, so auto-promote works below.
+  const validated = validatePhoneRow(fields, { mode: 'insert' });
 
   const [[contactRow]] = await db.query(
     `SELECT contact_id FROM contacts WHERE contact_id = ?`,
@@ -242,7 +342,7 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
          FROM contact_phones cp
          JOIN contacts c ON c.contact_id = cp.contact_id
         WHERE cp.phone = ? AND cp.end_date IS NULL`,
-      [phone]
+      [validated.phone]
     );
 
     if (collision) {
@@ -286,25 +386,25 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
     }
 
     // 2. Auto-promote check (zero rows ever for this contact)
-    let isPrimary;
+    let isPrimary; // 0 or 1
     let autoPromoted = false;
-    if (fields.is_primary !== undefined) {
-      isPrimary = !!fields.is_primary;
+    if (validated.is_primary !== undefined) {
+      isPrimary = validated.is_primary; // already 0 or 1 from validator
     } else {
       const [[{ cnt }]] = await conn.query(
         `SELECT COUNT(*) AS cnt FROM contact_phones WHERE contact_id = ?`,
         [cid]
       );
       if (cnt === 0) {
-        isPrimary   = true;
+        isPrimary   = 1;
         autoPromoted = true;
       } else {
-        isPrimary = false;
+        isPrimary = 0;
       }
     }
 
     // 3. Demote existing primary-active if we're inserting as primary
-    if (isPrimary) {
+    if (isPrimary === 1) {
       await conn.query(
         `UPDATE contact_phones
             SET is_primary = 0, updated_by = ?
@@ -323,12 +423,12 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
             start_date, notes, created_by, updated_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), ?, ?, ?)`,
         [
-          cid, phone, label, _toBit(isPrimary),
-          _toBit(fields.sms_optout),
-          fields.mms_capable === undefined ? 1 : _toBit(fields.mms_capable),
-          _toBit(fields.verified),
-          _normDate(fields.start_date),
-          fields.notes || '',
+          cid, validated.phone, validated.label, isPrimary,
+          validated.sms_optout,
+          validated.mms_capable,
+          validated.verified,
+          validated.start_date,
+          validated.notes,
           createdBy, createdBy,
         ]
       );
@@ -386,6 +486,9 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
  * Forbidden: id, contact_id, phone, start_date, created_*, updated_*,
  *            generated columns. Changing the phone value is not supported
  *            via PATCH — delete and re-create instead.
+ *            (NOTE: the AGGREGATE PATCH route in api.contacts.js DOES
+ *             support phone value changes via end-and-replace. This
+ *             dedicated PATCH does not.)
  *
  * Transitions:
  *   - is_primary 0→1 → demotes any existing primary-active row first
@@ -413,6 +516,11 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0 } = {}) {
     throw new Error(`Cannot update ${unknown.join(', ')}`);
   }
 
+  // validatePhoneRow (update mode) does the per-field shape validation
+  // + normalization that used to be inline. Sparse output — only fields
+  // actually present in `fields` appear in `incoming`.
+  const incoming = validatePhoneRow(fields, { mode: 'update' });
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -424,20 +532,7 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0 } = {}) {
     );
     if (!current) throw new Error(`Phone ${phoneId} not found`);
 
-    // Normalize incoming fields
-    const incoming = { ...fields };
-    if ('label' in incoming && !PHONE_LABELS.includes(incoming.label)) {
-      throw new Error(`Invalid label "${incoming.label}" (allowed: ${PHONE_LABELS.join(', ')})`);
-    }
-    if ('is_primary'  in incoming) incoming.is_primary  = _toBit(incoming.is_primary);
-    if ('sms_optout'  in incoming) incoming.sms_optout  = _toBit(incoming.sms_optout);
-    if ('mms_capable' in incoming) incoming.mms_capable = _toBit(incoming.mms_capable);
-    if ('verified'    in incoming) incoming.verified    = _toBit(incoming.verified);
-    if ('end_date'    in incoming) incoming.end_date    = _normDate(incoming.end_date);
-    if ('end_reason'  in incoming && incoming.end_reason == null) incoming.end_reason = null;
-    if ('notes'       in incoming && incoming.notes      == null) incoming.notes      = '';
-
-    // Detect transitions
+    // Detect transitions (validator already coerced to 0/1 ints)
     const becomingPrimary = 'is_primary' in incoming
       && incoming.is_primary === 1
       && current.is_primary !== 1;
@@ -576,5 +671,6 @@ module.exports = {
   setPrimaryContactPhone,
   // Internal helpers (exported for tests / dual-write reuse)
   normalizePhone,
+  validatePhoneRow,
   PHONE_LABELS,
 };

@@ -33,6 +33,14 @@
  *     changes on a primary-active row, not just on is_primary/end_date
  *     transitions.
  *
+ * SLICE 3 STAGE A: validateAddressRow extracted as a pure validator that
+ * is used both by the dedicated create/update routes here AND by the
+ * aggregate reconciler in services/contactService.js. The validator has
+ * two modes: 'insert' (full row with defaults; at least one of
+ * address1/city/state/zip required) and 'update' (sparse — only fields
+ * present are validated/normalized). Behavior of createContactAddress /
+ * updateContactAddress is unchanged.
+ *
  * NOTE: audit logging for child-table mutations is deferred to a later
  * slice. The audit trigger on the contacts table will fire when the
  * mirror helper updates the contact_address/city/state/zip columns;
@@ -83,6 +91,95 @@ function _hasAnyAddressField(row) {
     (row.zip      && String(row.zip).trim())
   );
 }
+
+
+// ─────────────────────────────────────────────────────────────
+// validateAddressRow — pure validator (no DB access)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Validate + normalize an address row. Pure function — no DB access.
+ * Used by both the dedicated route handlers (createContactAddress /
+ * updateContactAddress) and by the aggregate reconciler
+ * (contactService._planAddresses).
+ *
+ * Returns a normalized row object. Throws Error with a `.field` property
+ * naming the offending column on validation failure.
+ *
+ * Modes:
+ *   - 'insert' (default): full-row semantics. At least one of
+ *     address1/city/state/zip must be non-empty. country defaults to
+ *     'US'. Missing optional fields take INSERT-time defaults.
+ *     `is_primary` is preserved as `undefined` when absent so callers
+ *     can apply auto-promote logic. Tinyint outputs are 0/1.
+ *   - 'update': sparse semantics. Only fields actually present in `fields`
+ *     appear in the result. No "at least one address field" requirement
+ *     (caller may PATCH only `notes` or `label`).
+ *
+ * @param {object} fields
+ * @param {object} [opts]
+ * @param {'insert'|'update'} [opts.mode='insert']
+ * @returns {object}  normalized row (full in insert mode, sparse in update mode)
+ */
+function validateAddressRow(fields, { mode = 'insert' } = {}) {
+  if (mode === 'insert') {
+    const address1 = _trim(fields.address1) || '';
+    const address2 = _trim(fields.address2) || '';
+    const city     = _trim(fields.city)     || '';
+    const state    = _trim(fields.state)    || '';
+    const zip      = _trim(fields.zip)      || '';
+    const country  = _trim(fields.country)  || 'US';
+
+    if (!_hasAnyAddressField({ address1, city, state, zip })) {
+      const e = new Error('Address requires at least one of address1/city/state/zip');
+      e.field = 'address1';
+      throw e;
+    }
+
+    const label = fields.label || 'Other';
+    if (!ADDRESS_LABELS.includes(label)) {
+      const e = new Error(`Invalid label "${label}" (allowed: ${ADDRESS_LABELS.join(', ')})`);
+      e.field = 'label';
+      throw e;
+    }
+
+    const result = {
+      address1, address2, city, state, zip, country,
+      label,
+      verified:    _toBit(fields.verified),
+      start_date:  _normDate(fields.start_date),
+      end_date:    _normDate(fields.end_date),
+      end_reason:  fields.end_reason || null,
+      notes:       fields.notes == null ? '' : fields.notes,
+    };
+    if (fields.is_primary !== undefined) {
+      result.is_primary = _toBit(fields.is_primary);
+    }
+    return result;
+  }
+
+  // mode === 'update'
+  const result = {};
+  for (const k of ['address1', 'address2', 'city', 'state', 'zip', 'country']) {
+    if (k in fields) result[k] = _trim(fields[k]) || '';
+  }
+  if ('label' in fields) {
+    if (!ADDRESS_LABELS.includes(fields.label)) {
+      const e = new Error(`Invalid label "${fields.label}" (allowed: ${ADDRESS_LABELS.join(', ')})`);
+      e.field = 'label';
+      throw e;
+    }
+    result.label = fields.label;
+  }
+  if ('is_primary' in fields) result.is_primary = _toBit(fields.is_primary);
+  if ('verified'   in fields) result.verified   = _toBit(fields.verified);
+  if ('start_date' in fields) result.start_date = _normDate(fields.start_date);
+  if ('end_date'   in fields) result.end_date   = _normDate(fields.end_date);
+  if ('end_reason' in fields) result.end_reason = fields.end_reason == null ? null : fields.end_reason;
+  if ('notes'      in fields) result.notes      = fields.notes == null ? '' : fields.notes;
+  return result;
+}
+
 
 /** Shared SELECT/JOIN for fetching one or many addresses with user joins. */
 const ADDRESS_SELECT_SQL = `
@@ -165,7 +262,7 @@ async function getContactAddress(db, addressId) {
 /**
  * Create a contact_addresses row.
  *
- * Validates:
+ * Validates (via validateAddressRow):
  *   - at least one of address1/city/state/zip is non-empty
  *   - label is in ADDRESS_LABELS (if provided)
  *   - contact exists
@@ -202,21 +299,7 @@ async function getContactAddress(db, addressId) {
  */
 async function createContactAddress(db, contactId, fields = {}, { createdBy = 0 } = {}) {
   // ─── Validation (pre-transaction) ───
-  const address1 = _trim(fields.address1) || '';
-  const address2 = _trim(fields.address2) || '';
-  const city     = _trim(fields.city)     || '';
-  const state    = _trim(fields.state)    || '';
-  const zip      = _trim(fields.zip)      || '';
-  const country  = _trim(fields.country)  || 'US';
-
-  if (!_hasAnyAddressField({ address1, city, state, zip })) {
-    throw new Error('Address requires at least one of address1/city/state/zip');
-  }
-
-  const label = fields.label || 'Other';
-  if (!ADDRESS_LABELS.includes(label)) {
-    throw new Error(`Invalid label "${label}" (allowed: ${ADDRESS_LABELS.join(', ')})`);
-  }
+  const validated = validateAddressRow(fields, { mode: 'insert' });
 
   const [[contactRow]] = await db.query(
     `SELECT contact_id FROM contacts WHERE contact_id = ?`,
@@ -232,25 +315,25 @@ async function createContactAddress(db, contactId, fields = {}, { createdBy = 0 
     await conn.beginTransaction();
 
     // 1. Auto-promote check
-    let isPrimary;
+    let isPrimary; // 0 or 1
     let autoPromoted = false;
-    if (fields.is_primary !== undefined) {
-      isPrimary = !!fields.is_primary;
+    if (validated.is_primary !== undefined) {
+      isPrimary = validated.is_primary; // already 0 or 1
     } else {
       const [[{ cnt }]] = await conn.query(
         `SELECT COUNT(*) AS cnt FROM contact_addresses WHERE contact_id = ?`,
         [cid]
       );
       if (cnt === 0) {
-        isPrimary   = true;
+        isPrimary   = 1;
         autoPromoted = true;
       } else {
-        isPrimary = false;
+        isPrimary = 0;
       }
     }
 
     // 2. Demote existing primary-active if we're inserting as primary
-    if (isPrimary) {
+    if (isPrimary === 1) {
       await conn.query(
         `UPDATE contact_addresses
             SET is_primary = 0, updated_by = ?
@@ -269,10 +352,11 @@ async function createContactAddress(db, contactId, fields = {}, { createdBy = 0 
             start_date, notes, created_by, updated_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), ?, ?, ?)`,
         [
-          cid, address1, address2, city, state, zip, country,
-          label, _toBit(isPrimary), _toBit(fields.verified),
-          _normDate(fields.start_date),
-          fields.notes || '',
+          cid, validated.address1, validated.address2, validated.city,
+          validated.state, validated.zip, validated.country,
+          validated.label, isPrimary, validated.verified,
+          validated.start_date,
+          validated.notes,
           createdBy, createdBy,
         ]
       );
@@ -354,6 +438,9 @@ async function updateContactAddress(db, addressId, fields, { updatedBy = 0 } = {
     throw new Error(`Cannot update ${unknown.join(', ')}`);
   }
 
+  // validateAddressRow (update mode) — sparse, per-field shape validation.
+  const incoming = validateAddressRow(fields, { mode: 'update' });
+
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
@@ -363,22 +450,6 @@ async function updateContactAddress(db, addressId, fields, { updatedBy = 0 } = {
       [addressId]
     );
     if (!current) throw new Error(`Address ${addressId} not found`);
-
-    const incoming = { ...fields };
-
-    // Trim string-typed address fields
-    for (const k of ['address1', 'address2', 'city', 'state', 'zip', 'country']) {
-      if (k in incoming) incoming[k] = _trim(incoming[k]) || '';
-    }
-
-    if ('label' in incoming && !ADDRESS_LABELS.includes(incoming.label)) {
-      throw new Error(`Invalid label "${incoming.label}" (allowed: ${ADDRESS_LABELS.join(', ')})`);
-    }
-    if ('is_primary' in incoming) incoming.is_primary = _toBit(incoming.is_primary);
-    if ('verified'   in incoming) incoming.verified   = _toBit(incoming.verified);
-    if ('end_date'   in incoming) incoming.end_date   = _normDate(incoming.end_date);
-    if ('end_reason' in incoming && incoming.end_reason == null) incoming.end_reason = null;
-    if ('notes'      in incoming && incoming.notes      == null) incoming.notes      = '';
 
     const becomingPrimary = 'is_primary' in incoming
       && incoming.is_primary === 1
@@ -500,5 +571,6 @@ module.exports = {
   updateContactAddress,
   deleteContactAddress,
   setPrimaryContactAddress,
+  validateAddressRow,
   ADDRESS_LABELS,
 };

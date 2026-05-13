@@ -7,12 +7,13 @@
  * GET    /api/contacts            list with search/filters
  * GET    /api/contacts/:id        single + sub-entities (?include=)
  * POST   /api/contacts            create
- * PATCH  /api/contacts/:id        update fields
+ * PATCH  /api/contacts/:id        update fields (+ nested phones/emails/addresses arrays)
  * GET    /api/contacts/:id/cases  cases for contact
  * GET    /api/contacts/:id/appts  appointments for contact
  * GET    /api/contacts/:id/tasks  tasks for contact
  * GET    /api/contacts/:id/log    log entries for contact
  * GET    /api/contacts/:id/sequences  sequence enrollments
+ * GET    /api/contacts/:id/workflows  workflow executions
  */
 
 const express        = require('express');
@@ -41,6 +42,21 @@ function resolveCreatedBy(req) {
   if (typeof raw === 'number' && Number.isInteger(raw) && raw > 0) return raw;
   if (typeof raw === 'string' && /^\d+$/.test(raw)) return parseInt(raw, 10);
   return 0;
+}
+
+/**
+ * Parse a query-string boolean. Matches the helper in
+ * routes/api.contactPhones.js so the `?force=true` opt-in has identical
+ * semantics on the aggregate PATCH and the dedicated POST routes.
+ *
+ * Accepts: 'true', '1', 'yes', 'on' (case-insensitive) → true.
+ * Anything else → false.
+ */
+function parseBool(v) {
+  if (v === true) return true;
+  if (typeof v !== 'string') return false;
+  const s = v.trim().toLowerCase();
+  return s === 'true' || s === '1' || s === 'yes' || s === 'on';
 }
 
 
@@ -96,16 +112,80 @@ router.post('/api/contacts', jwtOrApiKey, async (req, res) => {
 });
 
 // ─── UPDATE ───
+//
+// Slice 3 Stage A: this handler now accepts nested phones/emails/addresses
+// arrays alongside the scalar fields. When an aggregate array is present
+// for a kind, the legacy single-value column for that kind (contact_phone,
+// contact_email, contact_address/city/state/zip) is silently stripped from
+// the scalar UPDATE — the reconciler is authoritative.
+//
+// Aggregate-aware response semantics:
+//   - On success (any aggregate present): re-fetch the contact with the
+//     three child-table includes and return the full row map so the UI
+//     can replace its in-memory state without a follow-up GET. Wrapped
+//     in `contact:` to keep the shape distinguishable from a plain scalar
+//     PATCH response.
+//   - Validation errors thrown by the service carry `.errors` (keyed
+//     object): map to 400 with `{ status:'error', message, errors }`.
+//   - Cross-contact conflicts (force=false): service throws Error with
+//     `.conflicts` (flat array): map to 409 with the array intact so the
+//     UI can render a "transfer N values from N source(s)?" modal.
+//   - `?force=true` opt-in covers conflicts on all kinds in one shot —
+//     matches the per-row dedicated-POST routes' semantics.
 router.patch('/api/contacts/:id', jwtOrApiKey, async (req, res) => {
   try {
     const userId = resolveCreatedBy(req);
-    const updated = await contactService.updateContact(req.db, req.params.id, req.body, { userId });
+    const force  = parseBool(req.query.force);
+
+    const updated = await contactService.updateContact(
+      req.db,
+      req.params.id,
+      req.body,
+      { userId, force }
+    );
+
+    // Detect whether an aggregate array was supplied. If so, return the
+    // contact with the relevant includes so the UI can hydrate in one round-trip.
+    const hasAggregate =
+      Object.prototype.hasOwnProperty.call(req.body, 'phones') ||
+      Object.prototype.hasOwnProperty.call(req.body, 'emails') ||
+      Object.prototype.hasOwnProperty.call(req.body, 'addresses');
+
+    if (hasAggregate) {
+      const fresh = await contactService.getContact(
+        req.db, req.params.id, 'phones,emails,addresses'
+      );
+      return res.json({
+        status:  'success',
+        data:    updated,
+        contact: fresh,
+      });
+    }
+
     res.json({ status: 'success', data: updated });
   } catch (err) {
+    // Structured-validation error path (from the aggregate reconcilers)
+    if (err.errors) {
+      return res.status(400).json({
+        status:  'error',
+        message: err.message,
+        errors:  err.errors,
+      });
+    }
+    // Conflict path (cross-contact phone/email collision without ?force)
+    if (err.conflicts) {
+      return res.status(409).json({
+        status:    'error',
+        message:   err.message,
+        conflicts: err.conflicts,
+      });
+    }
+
     console.error('PATCH /api/contacts/:id error:', err);
     const m = err.message || '';
     const status =
       m.includes('blocked')                                    ? 400
+      : m.includes('must be an array')                         ? 400
       : m.includes('not found')                                ? 404
       : (m.includes('concurrent') || m.includes('Concurrent')) ? 400
       : 500;
