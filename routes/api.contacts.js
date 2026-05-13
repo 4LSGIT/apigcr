@@ -20,6 +20,30 @@ const router         = express.Router();
 const jwtOrApiKey    = require('../lib/auth.jwtOrApiKey');
 const contactService = require('../services/contactService');
 
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Resolve req.auth.userId to a numeric users.user value, or 0.
+ *
+ * Matches the route-local helper in routes/api.contactRelations.js (and
+ * api.contactPhones.js). JWT auth sets req.auth.userId from payload.sub
+ * (string); api-key auth doesn't set userId at all (returns 0 sentinel).
+ *
+ * Slice 2 Stage 1 revision: introduced to plumb userId into createContact
+ * and updateContact so child-table propagation (contact_phones,
+ * eventually contact_emails / contact_addresses) gets accurate
+ * created_by / updated_by values instead of the 0 automation sentinel.
+ */
+function resolveCreatedBy(req) {
+  const raw = req.auth && req.auth.userId;
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw > 0) return raw;
+  if (typeof raw === 'string' && /^\d+$/.test(raw)) return parseInt(raw, 10);
+  return 0;
+}
+
+
 // ─── LIST ───
 router.get("/api/contacts", jwtOrApiKey, async (req, res) => {
   try {
@@ -62,7 +86,8 @@ router.post('/api/contacts', jwtOrApiKey, async (req, res) => {
   }
 
   try {
-    const result = await contactService.createContact(req.db, req.body);
+    const userId = resolveCreatedBy(req);
+    const result = await contactService.createContact(req.db, req.body, { userId });
     res.json({ status: 'success', ...result });
   } catch (err) {
     console.error('POST /api/contacts error:', err);
@@ -73,11 +98,17 @@ router.post('/api/contacts', jwtOrApiKey, async (req, res) => {
 // ─── UPDATE ───
 router.patch('/api/contacts/:id', jwtOrApiKey, async (req, res) => {
   try {
-    const updated = await contactService.updateContact(req.db, req.params.id, req.body);
+    const userId = resolveCreatedBy(req);
+    const updated = await contactService.updateContact(req.db, req.params.id, req.body, { userId });
     res.json({ status: 'success', data: updated });
   } catch (err) {
     console.error('PATCH /api/contacts/:id error:', err);
-    const status = err.message.includes('blocked') ? 400 : err.message.includes('not found') ? 404 : 500;
+    const m = err.message || '';
+    const status =
+      m.includes('blocked')                                    ? 400
+      : m.includes('not found')                                ? 404
+      : (m.includes('concurrent') || m.includes('Concurrent')) ? 400
+      : 500;
     res.status(status).json({ status: 'error', message: err.message });
   }
 });

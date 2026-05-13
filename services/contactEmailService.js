@@ -1,0 +1,543 @@
+// services/contactEmailService.js
+//
+/**
+ * Contact Email Service
+ * services/contactEmailService.js
+ *
+ * CRUD + lifecycle for the contact_emails table. Companion to the legacy
+ * contacts.contact_email column, which is now maintained as the
+ * denormalized projection of the primary-active row in contact_emails.
+ *
+ * Mirror maintenance is delegated to lib/contactMirror.js after every
+ * mutation that could change the primary-active row.
+ *
+ * Conventions (mirror services/contactPhoneService.js):
+ *   - Validation errors throw Error with a user-presentable .message —
+ *     the route layer maps them to 400/404/500 based on substring match.
+ *   - Email-collision errors throw Error with a .conflict property
+ *     attached; the route maps these to 409.
+ *   - created_by / updated_by accept 0 as a sentinel for "no user identity"
+ *     (API-key auth, system actions, legacy propagation without plumbed
+ *     userId).
+ *   - All mutations are wrapped in a transaction so that the child-table
+ *     write + mirror recompute land atomically.
+ *
+ * Email normalization (trim + lowercase) is applied on input. Equality
+ * comparisons in this service and in legacy propagation use the normalized
+ * form, so 'Foo@BAR.com' and 'foo@bar.com' are treated as the same address.
+ * The stored row is the normalized form.
+ *
+ * NOTE: audit logging for child-table mutations is deferred to a later
+ * slice. The audit trigger on the contacts table will fire when the
+ * mirror helper updates contact_email; per-row audit on contact_emails
+ * itself is TBD.
+ *
+ * Usage:
+ *   const emailSvc = require('../services/contactEmailService');
+ *   const { emails } = await emailSvc.listContactEmails(db, contactId);
+ *   const { email } = await emailSvc.createContactEmail(db, contactId, fields, { createdBy: 3 });
+ */
+
+const { recomputePrimaryEmail } = require('../lib/contactMirror');
+
+
+// ─────────────────────────────────────────────────────────────
+// Constants & helpers
+// ─────────────────────────────────────────────────────────────
+
+const EMAIL_LABELS    = ['Personal', 'Work', 'Other'];
+const EMAIL_REGEX     = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const EMAIL_MAX_LENGTH = 100; // matches contact_emails.email VARCHAR(100)
+
+/**
+ * Normalize an email: trim + lowercase. NOT exhaustive (no IDN handling,
+ * no plus-tag stripping); intentional, see service header.
+ *
+ * @param {string|number|null|undefined} email
+ * @returns {string}  - trimmed/lowercased, or '' if input is empty/null
+ */
+function normalizeEmail(email) {
+  if (!email && email !== 0) return '';
+  return String(email).trim().toLowerCase();
+}
+
+/** Normalize a possibly-empty date input to null. */
+function _normDate(v) {
+  if (v == null || v === '') return null;
+  return v;
+}
+
+/** Coerce truthy/falsy to 0/1 for tinyint columns. */
+function _toBit(v) {
+  return v ? 1 : 0;
+}
+
+/** Shared SELECT/JOIN for fetching one or many emails with user joins. */
+const EMAIL_SELECT_SQL = `
+  SELECT ce.id, ce.contact_id, ce.email, ce.label, ce.is_primary,
+         ce.email_optout, ce.verified,
+         ce.start_date, ce.end_date, ce.end_reason, ce.notes,
+         ce.created_at, ce.updated_at, ce.created_by, ce.updated_by,
+         uc.user_name AS created_by_name,
+         uu.user_name AS updated_by_name
+    FROM contact_emails ce
+    LEFT JOIN users uc ON uc.user = ce.created_by
+    LEFT JOIN users uu ON uu.user = ce.updated_by
+`;
+
+
+// ─────────────────────────────────────────────────────────────
+// listContactEmails
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * List emails for one contact.
+ *
+ * Returns null when the contact doesn't exist (route → 404).
+ *
+ * Ordering: primary-active first, then non-primary active, then ended rows,
+ * with id ASC within each group (stable insert order).
+ *
+ * @param {object} db
+ * @param {number|string} contactId
+ * @param {object} [opts]
+ * @param {boolean} [opts.include_inactive=false]
+ * @returns {Promise<{emails: object[]} | null>}
+ */
+async function listContactEmails(db, contactId, { include_inactive = false } = {}) {
+  const [[exists]] = await db.query(
+    `SELECT contact_id FROM contacts WHERE contact_id = ?`,
+    [contactId]
+  );
+  if (!exists) return null;
+
+  const whereParts  = ['ce.contact_id = ?'];
+  const whereParams = [contactId];
+  if (!include_inactive) {
+    whereParts.push('ce.end_date IS NULL');
+  }
+  const whereSQL = whereParts.join(' AND ');
+
+  const [rows] = await db.query(
+    `${EMAIL_SELECT_SQL}
+      WHERE ${whereSQL}
+      ORDER BY ce.is_primary DESC, (ce.end_date IS NULL) DESC, ce.id ASC`,
+    whereParams
+  );
+
+  return { emails: rows };
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// getContactEmail
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Fetch one email row in the full list-row shape (with user joins).
+ * Returns null if not found.
+ *
+ * @param {object} db
+ * @param {number|string} emailId
+ * @returns {Promise<object|null>}
+ */
+async function getContactEmail(db, emailId) {
+  const [[row]] = await db.query(
+    `${EMAIL_SELECT_SQL} WHERE ce.id = ?`,
+    [emailId]
+  );
+  return row || null;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// createContactEmail
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Create a contact_emails row.
+ *
+ * Validates:
+ *   - email normalizes + matches EMAIL_REGEX
+ *   - email length <= EMAIL_MAX_LENGTH (100)
+ *   - label is in EMAIL_LABELS (if provided)
+ *   - contact exists
+ *
+ * Behavior:
+ *   - Active-uniqueness collision, two cases:
+ *       (a) same-contact   — the contact already has this email as an
+ *           active row. Throws 400 ("already has...") directing the
+ *           caller to PATCH/END the existing row instead.
+ *       (b) cross-contact  — email is active on a DIFFERENT contact.
+ *           Throws (with .conflict attached → 409) unless force=true,
+ *           in which case the donor's row is ended ('transferred') and
+ *           the donor's mirror is recomputed.
+ *   - Same-contact primary demotion: if the new row is_primary=true,
+ *     any existing primary-active row for this contact is demoted (in
+ *     the same transaction).
+ *   - Auto-promote: if the contact has zero email rows (active or not)
+ *     before this insert AND is_primary wasn't explicitly set, default
+ *     to is_primary=true. Surfaces as `auto_promoted: true` in response.
+ *   - Historical reclamation: a contact may have ended rows with the
+ *     same email value (post-Slice-2-Stage-1-revision migration). The
+ *     INSERT proceeds and yields a new active row alongside the
+ *     historical ended one(s).
+ *
+ * @param {object} db
+ * @param {number|string} contactId
+ * @param {object} fields
+ * @param {string}  fields.email        - required; normalized + validated
+ * @param {string}  [fields.label='Other']
+ * @param {boolean} [fields.is_primary]
+ * @param {boolean} [fields.email_optout=false]
+ * @param {boolean} [fields.verified=false]
+ * @param {string}  [fields.start_date]
+ * @param {string}  [fields.notes='']
+ * @param {object}  [opts]
+ * @param {boolean} [opts.force=false]
+ * @param {number}  [opts.createdBy=0]
+ * @returns {Promise<{email: object, auto_promoted: boolean, transferred_from?: object}>}
+ */
+async function createContactEmail(db, contactId, fields = {}, { force = false, createdBy = 0 } = {}) {
+  // ─── Validation (pre-transaction) ───
+  const email = normalizeEmail(fields.email);
+  if (!EMAIL_REGEX.test(email)) {
+    throw new Error('Invalid email — must be a valid address');
+  }
+  if (email.length > EMAIL_MAX_LENGTH) {
+    throw new Error(`Invalid email — exceeds ${EMAIL_MAX_LENGTH} character limit`);
+  }
+
+  const label = fields.label || 'Other';
+  if (!EMAIL_LABELS.includes(label)) {
+    throw new Error(`Invalid label "${label}" (allowed: ${EMAIL_LABELS.join(', ')})`);
+  }
+
+  const [[contactRow]] = await db.query(
+    `SELECT contact_id FROM contacts WHERE contact_id = ?`,
+    [contactId]
+  );
+  if (!contactRow) throw new Error(`Contact ${contactId} not found`);
+
+  const cid = parseInt(contactId, 10);
+
+  // ─── Transaction ───
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // 1. Active-uniqueness collision check
+    let transferredFrom = null;
+    const [[collision]] = await conn.query(
+      `SELECT ce.id AS email_id, ce.contact_id, c.contact_name
+         FROM contact_emails ce
+         JOIN contacts c ON c.contact_id = ce.contact_id
+        WHERE ce.email = ? AND ce.end_date IS NULL`,
+      [email]
+    );
+
+    if (collision) {
+      if (collision.contact_id === cid) {
+        // (a) same-contact: refuse and direct to PATCH the existing row
+        throw new Error(
+          'This contact already has this email as an active row. ' +
+          'End or update the existing row first.'
+        );
+      }
+
+      // (b) cross-contact
+      if (!force) {
+        const err = new Error(
+          `Email is currently active on contact ${collision.contact_id} (${collision.contact_name})`
+        );
+        err.conflict = {
+          contact_id:   collision.contact_id,
+          contact_name: collision.contact_name,
+          email_id:     collision.email_id,
+        };
+        throw err;
+      }
+      await conn.query(
+        `UPDATE contact_emails
+            SET end_date = CURDATE(),
+                is_primary = 0,
+                end_reason = 'transferred',
+                updated_by = ?
+          WHERE id = ?`,
+        [createdBy, collision.email_id]
+      );
+      await recomputePrimaryEmail(conn, collision.contact_id);
+      transferredFrom = {
+        contact_id:   collision.contact_id,
+        contact_name: collision.contact_name,
+        email_id:     collision.email_id,
+      };
+    }
+
+    // 2. Auto-promote check
+    let isPrimary;
+    let autoPromoted = false;
+    if (fields.is_primary !== undefined) {
+      isPrimary = !!fields.is_primary;
+    } else {
+      const [[{ cnt }]] = await conn.query(
+        `SELECT COUNT(*) AS cnt FROM contact_emails WHERE contact_id = ?`,
+        [cid]
+      );
+      if (cnt === 0) {
+        isPrimary   = true;
+        autoPromoted = true;
+      } else {
+        isPrimary = false;
+      }
+    }
+
+    // 3. Demote existing primary-active if we're inserting as primary
+    if (isPrimary) {
+      await conn.query(
+        `UPDATE contact_emails
+            SET is_primary = 0, updated_by = ?
+          WHERE contact_id = ? AND is_primary = 1 AND end_date IS NULL`,
+        [createdBy, cid]
+      );
+    }
+
+    // 4. INSERT new row
+    let newId;
+    try {
+      const [insertResult] = await conn.query(
+        `INSERT INTO contact_emails
+           (contact_id, email, label, is_primary,
+            email_optout, verified,
+            start_date, notes, created_by, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), ?, ?, ?)`,
+        [
+          cid, email, label, _toBit(isPrimary),
+          _toBit(fields.email_optout),
+          _toBit(fields.verified),
+          _normDate(fields.start_date),
+          fields.notes || '',
+          createdBy, createdBy,
+        ]
+      );
+      newId = insertResult.insertId;
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') {
+        // After the Slice 2 Stage 1 revision migration, uc_contact_email
+        // is dropped, so this can only fire from uk_email_active (race)
+        // or uk_one_active_primary (race). Same remediation: same-contact-
+        // style 400, caller retries.
+        throw new Error(
+          'This contact already has this email as an active row. ' +
+          'End or update the existing row first. ' +
+          '(Likely a concurrent update — refresh and retry.)'
+        );
+      }
+      throw err;
+    }
+
+    // 5. Recompute target contact's mirror
+    await recomputePrimaryEmail(conn, cid);
+
+    await conn.commit();
+
+    // 6. Re-fetch with joins
+    const emailRow = await getContactEmail(db, newId);
+
+    const result = {
+      email:         emailRow,
+      auto_promoted: autoPromoted,
+    };
+    if (transferredFrom) result.transferred_from = transferredFrom;
+    return result;
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) { /* ignore */ }
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// updateContactEmail
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Update lifecycle fields on a contact_emails row.
+ *
+ * Allowed:   label, is_primary, email_optout, verified, end_date,
+ *            end_reason, notes
+ * Forbidden: id, contact_id, email, start_date, created_*, updated_*,
+ *            generated columns. Changing the email value is not supported
+ *            via PATCH — delete and re-create instead.
+ *
+ * Transitions:
+ *   - is_primary 0→1 → demotes any existing primary-active row first
+ *   - end_date NULL→non-NULL on a primary-active row → also clears
+ *     is_primary in the same UPDATE
+ *
+ * Mirror recompute fires if is_primary or end_date appears in fields.
+ *
+ * @param {object} db
+ * @param {number|string} emailId
+ * @param {object} fields
+ * @param {object} [opts]
+ * @param {number} [opts.updatedBy=0]
+ * @returns {Promise<{ email: object }>}
+ */
+async function updateContactEmail(db, emailId, fields, { updatedBy = 0 } = {}) {
+  if (!fields || !Object.keys(fields).length) {
+    throw new Error('updateContactEmail requires at least one field');
+  }
+
+  const ALLOWED = ['label', 'is_primary', 'email_optout',
+                   'verified', 'end_date', 'end_reason', 'notes'];
+  const unknown = Object.keys(fields).filter(k => !ALLOWED.includes(k));
+  if (unknown.length) {
+    throw new Error(`Cannot update ${unknown.join(', ')}`);
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[current]] = await conn.query(
+      `SELECT * FROM contact_emails WHERE id = ?`,
+      [emailId]
+    );
+    if (!current) throw new Error(`Email ${emailId} not found`);
+
+    const incoming = { ...fields };
+    if ('label' in incoming && !EMAIL_LABELS.includes(incoming.label)) {
+      throw new Error(`Invalid label "${incoming.label}" (allowed: ${EMAIL_LABELS.join(', ')})`);
+    }
+    if ('is_primary'   in incoming) incoming.is_primary   = _toBit(incoming.is_primary);
+    if ('email_optout' in incoming) incoming.email_optout = _toBit(incoming.email_optout);
+    if ('verified'     in incoming) incoming.verified     = _toBit(incoming.verified);
+    if ('end_date'     in incoming) incoming.end_date     = _normDate(incoming.end_date);
+    if ('end_reason'   in incoming && incoming.end_reason == null) incoming.end_reason = null;
+    if ('notes'        in incoming && incoming.notes      == null) incoming.notes      = '';
+
+    const becomingPrimary = 'is_primary' in incoming
+      && incoming.is_primary === 1
+      && current.is_primary !== 1;
+    const beingEnded = 'end_date' in incoming
+      && incoming.end_date !== null
+      && current.end_date === null;
+
+    if (beingEnded && current.is_primary === 1) {
+      incoming.is_primary = 0;
+    }
+
+    if (becomingPrimary && !beingEnded) {
+      await conn.query(
+        `UPDATE contact_emails
+            SET is_primary = 0, updated_by = ?
+          WHERE contact_id = ? AND is_primary = 1 AND end_date IS NULL AND id <> ?`,
+        [updatedBy, current.contact_id, emailId]
+      );
+    }
+
+    incoming.updated_by = updatedBy;
+    const setKeys = Object.keys(incoming);
+    const setSQL  = setKeys.map(k => `\`${k}\` = ?`).join(', ');
+    const setVals = setKeys.map(k => incoming[k]);
+
+    try {
+      await conn.query(
+        `UPDATE contact_emails SET ${setSQL} WHERE id = ?`,
+        [...setVals, emailId]
+      );
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') {
+        throw new Error(
+          'Update would violate uniqueness (uk_one_active_primary or uk_email_active). ' +
+          'Another primary-active row may exist for this contact, or the email ' +
+          'is already active elsewhere.'
+        );
+      }
+      throw err;
+    }
+
+    const mirrorAffected = 'is_primary' in incoming || 'end_date' in incoming;
+    if (mirrorAffected) {
+      await recomputePrimaryEmail(conn, current.contact_id);
+    }
+
+    await conn.commit();
+
+    const emailRow = await getContactEmail(db, emailId);
+    return { email: emailRow };
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) { /* ignore */ }
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// deleteContactEmail
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Hard-delete one contact_emails row.
+ * Mirror recompute fires if the deleted row was primary-active.
+ *
+ * @param {object} db
+ * @param {number|string} emailId
+ * @returns {Promise<{ deleted: true, deleted_id: number }>}
+ */
+async function deleteContactEmail(db, emailId) {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [[current]] = await conn.query(
+      `SELECT id, contact_id, is_primary, end_date FROM contact_emails WHERE id = ?`,
+      [emailId]
+    );
+    if (!current) throw new Error(`Email ${emailId} not found`);
+
+    await conn.query(`DELETE FROM contact_emails WHERE id = ?`, [emailId]);
+
+    if (current.is_primary === 1 && current.end_date === null) {
+      await recomputePrimaryEmail(conn, current.contact_id);
+    }
+
+    await conn.commit();
+    return { deleted: true, deleted_id: parseInt(emailId, 10) };
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) { /* ignore */ }
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// setPrimaryContactEmail (convenience wrapper)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Promote an email row to primary. Equivalent to
+ * updateContactEmail(db, emailId, { is_primary: 1 }, { updatedBy }).
+ */
+async function setPrimaryContactEmail(db, emailId, { updatedBy = 0 } = {}) {
+  return updateContactEmail(db, emailId, { is_primary: 1 }, { updatedBy });
+}
+
+
+module.exports = {
+  listContactEmails,
+  getContactEmail,
+  createContactEmail,
+  updateContactEmail,
+  deleteContactEmail,
+  setPrimaryContactEmail,
+  normalizeEmail,
+  EMAIL_LABELS,
+};

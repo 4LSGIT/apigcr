@@ -13,11 +13,43 @@
  *   - contact_ssn is NEVER returned by any function in this service
  *   - The after_contact_update trigger auto-logs changes — don't double-log
  *   - contact_phone is char(10) — normalize input (strip formatting)
+ *   - contact_email is lowercased on write — equality is case-insensitive
+ *
+ * Slice-2 dual-write:
+ *   - contact_phone   writes propagate to contact_phones
+ *   - contact_email   writes propagate to contact_emails
+ *   - contact_address/city/state/zip writes propagate to contact_addresses
+ *   - contact_phone2 / contact_email2 are NOT propagated (vestigial; new
+ *     code should use the child-table endpoints to add secondary numbers)
+ *
+ * Dual-write asymmetry vs. the new POST /api/contact-{phones,emails,addresses}
+ * routes:
+ *   - LEGACY propagation (via this service) for phones/emails always behaves
+ *     as force=true for global active-uniqueness collisions — the legacy
+ *     form has no UI surface to confirm a transfer, so silently transferring
+ *     is the only workable default. Addresses have no collision logic in
+ *     either path (multiple contacts may share an address).
+ *   - NEW direct phone/email API defaults to force=false and returns 409
+ *     with a conflict payload; caller opts in via ?force=true. This
+ *     asymmetry is intentional and load-bearing.
+ *
+ * Address propagation shape diverges from phone/email: the legacy form
+ * sends partial updates (e.g. {contact_city: 'Detroit'} alone), and
+ * addresses are EDITED IN PLACE on the primary-active row rather than
+ * ended-and-re-inserted. The "moved vs typo" ambiguity makes this the
+ * right default; phone/email get end+insert because their values
+ * function as identifiers.
  *
  * Usage:
  *   const contactService = require('../services/contactService');
  *   const { contact, cases, appts, tasks, log } = await contactService.getContact(db, 123);
  */
+const {
+  recomputePrimaryPhone,
+  recomputePrimaryEmail,
+  recomputePrimaryAddress,
+} = require('../lib/contactMirror');
+
 const DEFAULT_LOG_LIMIT = 200;
 const SSN_COLUMN = 'contact_ssn';
 
@@ -41,6 +73,328 @@ function normalizePhone(phone) {
   return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
 }
 
+/**
+ * Normalize an email: trim + lowercase. Matches contactEmailService's
+ * normalization so the legacy column and the child row stay in sync.
+ */
+function normalizeEmail(email) {
+  if (!email && email !== 0) return '';
+  return String(email).trim().toLowerCase();
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// Internal dual-write helpers (Slice 2)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Propagate a contacts.contact_phone change into the contact_phones
+ * child table within an open transaction connection.
+ *
+ * Behavior:
+ *   - newPhone === current primary-active phone for this contact → no-op
+ *   - newPhone is non-empty:
+ *       * end existing primary-active row (if any) as 'replaced'
+ *         (same-contact reason — reserve 'transferred' for cross-contact)
+ *       * if newPhone is active on ANOTHER contact, end that row as
+ *         'transferred' and recompute that contact's mirror (force=true
+ *         semantics — legacy never asks for confirmation)
+ *       * INSERT a new primary-active row with the new value
+ *       * recompute this contact's mirror (safety net; should be no-op)
+ *   - newPhone is '' (empty string):
+ *       * end the existing primary-active row as 'ended'
+ *       * recompute mirror (writes '' to contacts.contact_phone, but
+ *         the outer UPDATE already did that — no-op)
+ *
+ * Constraint note: this propagator relies on the Slice 2 Stage 1
+ * revision migration (contact_multivalue_relax_unique.up.sql) having
+ * dropped uc_contact_phone. With that migration applied, a contact may
+ * have multiple history rows for the same phone value, so "phone
+ * returns" (re-adopting a previously-ended number) works correctly.
+ *
+ * @param {object} conn      - transaction connection
+ * @param {number} contactId
+ * @param {string} newPhone  - already normalized (10 digits) or '' to clear
+ * @param {number} updatedBy
+ * @returns {Promise<void>}
+ */
+async function _propagatePhone(conn, contactId, newPhone, updatedBy) {
+  const cid = parseInt(contactId, 10);
+
+  const [[primary]] = await conn.query(
+    `SELECT id, phone FROM contact_phones
+      WHERE contact_id = ? AND is_primary = 1 AND end_date IS NULL
+      LIMIT 1`,
+    [cid]
+  );
+
+  if (newPhone) {
+    if (primary && primary.phone === newPhone) return;
+
+    // End existing primary-active as 'replaced' (same-contact reason)
+    if (primary) {
+      await conn.query(
+        `UPDATE contact_phones
+            SET end_date = CURDATE(), is_primary = 0,
+                end_reason = 'replaced', updated_by = ?
+          WHERE id = ?`,
+        [updatedBy, primary.id]
+      );
+    }
+
+    // force=true: end any other contact's active claim on this phone
+    const [[collision]] = await conn.query(
+      `SELECT id, contact_id FROM contact_phones
+        WHERE phone = ? AND end_date IS NULL AND contact_id <> ?`,
+      [newPhone, cid]
+    );
+    if (collision) {
+      await conn.query(
+        `UPDATE contact_phones
+            SET end_date = CURDATE(), is_primary = 0,
+                end_reason = 'transferred', updated_by = ?
+          WHERE id = ?`,
+        [updatedBy, collision.id]
+      );
+      await recomputePrimaryPhone(conn, collision.contact_id);
+    }
+
+    try {
+      await conn.query(
+        `INSERT INTO contact_phones
+           (contact_id, phone, is_primary, start_date, created_by, updated_by)
+         VALUES (?, ?, 1, CURDATE(), ?, ?)`,
+        [cid, newPhone, updatedBy, updatedBy]
+      );
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') {
+        throw new Error(
+          `Cannot set contact_phone to ${newPhone}: a concurrent update ` +
+          `claimed this number. Refresh and retry.`
+        );
+      }
+      throw err;
+    }
+
+    await recomputePrimaryPhone(conn, cid);
+  } else {
+    if (primary) {
+      await conn.query(
+        `UPDATE contact_phones
+            SET end_date = CURDATE(), is_primary = 0,
+                end_reason = 'ended', updated_by = ?
+          WHERE id = ?`,
+        [updatedBy, primary.id]
+      );
+      await recomputePrimaryPhone(conn, cid);
+    }
+  }
+}
+
+/**
+ * Propagate a contacts.contact_email change into the contact_emails
+ * child table within an open transaction connection. Direct mirror of
+ * _propagatePhone — see that JSDoc for behavior. Differences:
+ *   - normalization is trim + lowercase (caller is expected to have
+ *     pre-normalized via normalizeEmail; this fn does NOT re-normalize)
+ *   - constraint relaxation note applies to uc_contact_email
+ *
+ * @param {object} conn
+ * @param {number} contactId
+ * @param {string} newEmail  - already normalized (trim+lowercased) or '' to clear
+ * @param {number} updatedBy
+ * @returns {Promise<void>}
+ */
+async function _propagateEmail(conn, contactId, newEmail, updatedBy) {
+  const cid = parseInt(contactId, 10);
+
+  const [[primary]] = await conn.query(
+    `SELECT id, email FROM contact_emails
+      WHERE contact_id = ? AND is_primary = 1 AND end_date IS NULL
+      LIMIT 1`,
+    [cid]
+  );
+
+  if (newEmail) {
+    if (primary && primary.email === newEmail) return;
+
+    if (primary) {
+      await conn.query(
+        `UPDATE contact_emails
+            SET end_date = CURDATE(), is_primary = 0,
+                end_reason = 'replaced', updated_by = ?
+          WHERE id = ?`,
+        [updatedBy, primary.id]
+      );
+    }
+
+    const [[collision]] = await conn.query(
+      `SELECT id, contact_id FROM contact_emails
+        WHERE email = ? AND end_date IS NULL AND contact_id <> ?`,
+      [newEmail, cid]
+    );
+    if (collision) {
+      await conn.query(
+        `UPDATE contact_emails
+            SET end_date = CURDATE(), is_primary = 0,
+                end_reason = 'transferred', updated_by = ?
+          WHERE id = ?`,
+        [updatedBy, collision.id]
+      );
+      await recomputePrimaryEmail(conn, collision.contact_id);
+    }
+
+    try {
+      await conn.query(
+        `INSERT INTO contact_emails
+           (contact_id, email, is_primary, start_date, created_by, updated_by)
+         VALUES (?, ?, 1, CURDATE(), ?, ?)`,
+        [cid, newEmail, updatedBy, updatedBy]
+      );
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') {
+        throw new Error(
+          `Cannot set contact_email to ${newEmail}: a concurrent update ` +
+          `claimed this address. Refresh and retry.`
+        );
+      }
+      throw err;
+    }
+
+    await recomputePrimaryEmail(conn, cid);
+  } else {
+    if (primary) {
+      await conn.query(
+        `UPDATE contact_emails
+            SET end_date = CURDATE(), is_primary = 0,
+                end_reason = 'ended', updated_by = ?
+          WHERE id = ?`,
+        [updatedBy, primary.id]
+      );
+      await recomputePrimaryEmail(conn, cid);
+    }
+  }
+}
+
+/**
+ * Propagate a contacts.contact_address / city / state / zip change into
+ * the contact_addresses child table. SHAPE DIVERGES from phone/email:
+ * addresses are edited IN PLACE on the existing primary-active row
+ * rather than ended-and-re-inserted. Rationale: legacy forms send
+ * partial updates (e.g. only contact_city), and "moved vs typo" is
+ * genuinely ambiguous.
+ *
+ * Behavior:
+ *   1. Find primary-active row for contactId.
+ *   2. Determine the target full state (address1/city/state/zip):
+ *        for each, prefer normalized.contact_<field> if present,
+ *        else fall back to the existing primary row's value (or ''
+ *        if no row).
+ *   3. If target is all-empty AND a primary-active row exists:
+ *        end that row with end_reason='ended'. Recompute mirror.
+ *   4. If target is all-empty AND no primary row: nothing to do.
+ *   5. If a primary-active row exists: UPDATE in place with target
+ *        values (address1/city/state/zip + updated_by). country is
+ *        not touched — the legacy form doesn't write it. Recompute.
+ *   6. If no primary row exists: INSERT a new primary-active row
+ *        with target values, country='US', start_date=CURDATE(),
+ *        created_by=updatedBy. Recompute.
+ *
+ * No collision check (addresses are not active-unique across contacts).
+ * No `transferred` reason (no donor-end ever happens).
+ *
+ * @param {object} conn
+ * @param {number} contactId
+ * @param {object} normalized  - the full normalized fields obj from updateContact;
+ *                               reads contact_address/city/state/zip keys
+ * @param {number} updatedBy
+ * @returns {Promise<void>}
+ */
+async function _propagateAddress(conn, contactId, normalized, updatedBy) {
+  const cid = parseInt(contactId, 10);
+
+  // Step 1. Find primary-active row.
+  const [[primary]] = await conn.query(
+    `SELECT id, address1, city, state, zip
+       FROM contact_addresses
+      WHERE contact_id = ? AND is_primary = 1 AND end_date IS NULL
+      LIMIT 1`,
+    [cid]
+  );
+
+  // Step 2. Determine target state.
+  //   - For each of (address1, city, state, zip): use normalized.contact_<field>
+  //     if that key is present in `normalized`, else use the existing
+  //     primary row's value (or '' if no row).
+  const target = {
+    address1: 'contact_address' in normalized
+      ? (normalized.contact_address || '')
+      : (primary ? (primary.address1 || '') : ''),
+    city: 'contact_city' in normalized
+      ? (normalized.contact_city || '')
+      : (primary ? (primary.city || '') : ''),
+    state: 'contact_state' in normalized
+      ? (normalized.contact_state || '')
+      : (primary ? (primary.state || '') : ''),
+    zip: 'contact_zip' in normalized
+      ? (normalized.contact_zip || '')
+      : (primary ? (primary.zip || '') : ''),
+  };
+
+  const targetAllEmpty = !target.address1 && !target.city
+                      && !target.state    && !target.zip;
+
+  // Step 3 / 4. All-empty target.
+  if (targetAllEmpty) {
+    if (primary) {
+      await conn.query(
+        `UPDATE contact_addresses
+            SET end_date = CURDATE(), is_primary = 0,
+                end_reason = 'ended', updated_by = ?
+          WHERE id = ?`,
+        [updatedBy, primary.id]
+      );
+      await recomputePrimaryAddress(conn, cid);
+    }
+    // No primary, target all-empty → nothing to do.
+    return;
+  }
+
+  // Step 5. Primary exists → UPDATE in place.
+  if (primary) {
+    await conn.query(
+      `UPDATE contact_addresses
+          SET address1 = ?, city = ?, state = ?, zip = ?, updated_by = ?
+        WHERE id = ?`,
+      [target.address1, target.city, target.state, target.zip,
+       updatedBy, primary.id]
+    );
+    await recomputePrimaryAddress(conn, cid);
+    return;
+  }
+
+  // Step 6. No primary → INSERT new one.
+  try {
+    await conn.query(
+      `INSERT INTO contact_addresses
+         (contact_id, address1, address2, city, state, zip, country,
+          label, is_primary, start_date, created_by, updated_by)
+       VALUES (?, ?, '', ?, ?, ?, 'US', 'Other', 1, CURDATE(), ?, ?)`,
+      [cid, target.address1, target.city, target.state, target.zip,
+       updatedBy, updatedBy]
+    );
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      throw new Error(
+        'Concurrent promote on this contact — another primary-active ' +
+        'address row was created. Refresh and retry.'
+      );
+    }
+    throw err;
+  }
+  await recomputePrimaryAddress(conn, cid);
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // listContacts
@@ -51,15 +405,6 @@ function normalizePhone(phone) {
  *
  * Search uses FULLTEXT on contact_name for text queries,
  * with LIKE fallback for phone/email patterns.
- *
- * @param {object} db
- * @param {object} opts
- * @param {string}  [opts.query]       - search text
- * @param {string}  [opts.type]        - contact_type filter
- * @param {string}  [opts.tags]        - match against contact_tags (LIKE)
- * @param {number}  [opts.limit=50]
- * @param {number}  [opts.offset=0]
- * @returns {{ contacts: object[], total: number }}
  */
 async function listContacts(db, {
   query  = '',
@@ -75,24 +420,19 @@ async function listContacts(db, {
 
   if (query) {
     if (/^\d+$/.test(query)) {
-      // Numeric — could be contact_id or phone
       const digits = query.replace(/\D/g, '');
       if (digits.length >= 7) {
-        // Long enough to be a phone
         where.push(`(c.contact_phone LIKE ? OR c.contact_phone2 LIKE ?)`);
         params.push(`%${digits}%`, `%${digits}%`);
       } else {
-        // Short numeric — treat as contact_id
         where.push(`c.contact_id = ?`);
         params.push(parseInt(query, 10));
       }
     } else if (query.includes('@')) {
-      // Email search
       where.push(`(c.contact_email LIKE ? OR c.contact_email2 LIKE ?)`);
       const q = `%${query}%`;
       params.push(q, q);
     } else {
-      // Name search — FULLTEXT for relevance, LIKE as fallback
       where.push(`(
         MATCH(c.contact_name) AGAINST(? IN BOOLEAN MODE)
         OR c.contact_name LIKE ?
@@ -125,7 +465,7 @@ async function listContacts(db, {
   };
   const orderClause =
     SORT_WHITELIST[`${sort_by} ${sort_dir}`] ||
-    SORT_WHITELIST[sort_by] || // if sort_dir already embedded in sort_by (legacy dropdown value)
+    SORT_WHITELIST[sort_by] ||
     "c.contact_lname ASC";
 
   const [contacts] = await db.query(
@@ -167,20 +507,8 @@ async function listContacts(db, {
 
 
 // ─────────────────────────────────────────────────────────────
-// getContact — UPDATED to respect `include` parameter
+// getContact — respects `include` parameter
 // ─────────────────────────────────────────────────────────────
-//
-// Replace the existing getContact function in services/contactService.js
-// with this version.
-//
-// CHANGE: The `include` parameter now controls which sub-entities are fetched.
-//   - If omitted/empty → returns ONLY the contact row (no sub-entities)
-//   - If provided → comma-separated list: 'cases,appts,tasks,log,sequences'
-//
-// This means GET /api/contacts/123 returns just { contact: {...} }
-// and GET /api/contacts/123?include=cases,appts returns { contact, cases, appts }
-//
-// Previously: always fetched ALL sub-entities regardless of include param.
 
 /**
  * Fetch a single contact, optionally with related entities.
@@ -191,22 +519,19 @@ async function listContacts(db, {
  * @returns {object|null} null if contact not found
  */
 async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_LIMIT } = {}) {
-  // 1) Contact record (always fetched)
   const [[raw]] = await db.query(
     'SELECT * FROM contacts WHERE contact_id = ?',
     [contactId]
   );
   if (!raw) return null;
-  const contact = { ...raw };  // SSN exposed — authenticated staff only
+  const contact = { ...raw };
 
   const result = { contact };
 
-  // Parse include param
   const parts = include
     ? include.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
     : [];
 
-  // 2) Cases via case_relate
   if (parts.includes('cases')) {
     const [cases] = await db.query(
       `SELECT
@@ -225,7 +550,6 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
     result.cases = cases;
   }
 
-  // 3) Appointments
   if (parts.includes('appts')) {
     const [appts] = await db.query(
       `SELECT
@@ -245,7 +569,6 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
     result.appts = appts;
   }
 
-  // 4) Tasks linked to this contact
   if (parts.includes('tasks')) {
     const [tasks] = await db.query(
       `SELECT
@@ -264,7 +587,6 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
     result.tasks = tasks;
   }
 
-  // 5) Log entries
   if (parts.includes('log')) {
     const [log] = await db.query(
       `SELECT
@@ -282,7 +604,6 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
     result.log = log;
   }
 
-  // 6) Sequence enrollments
   if (parts.includes('sequences')) {
     const [sequences] = await db.query(
       `SELECT
@@ -303,7 +624,7 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
 
 
 // ─────────────────────────────────────────────────────────────
-// createContact
+// createContact — wrapped in transaction; dual-write to all three children
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -312,8 +633,22 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
  *
  * DB triggers auto-compute contact_name, contact_lfm_name, contact_rname.
  *
+ * SLICE 2 DUAL-WRITE: after the contacts INSERT, propagate the primary
+ * phone/email/address into the corresponding child tables as primary-
+ * active rows. force=true semantics for phone/email on cross-contact
+ * collisions (silently transfer). Addresses have no collision check.
+ *
+ * The whole operation runs in a transaction so that if a child INSERT
+ * fails non-recoverably, the contacts INSERT is rolled back too —
+ * avoiding a drifted-state contact with no child rows.
+ *
+ * `phone2` / `email2` write to the legacy columns only; they are NOT
+ * propagated to child tables (vestigial).
+ *
  * @param {object} db
  * @param {object} opts
+ * @param {object} [opts2]
+ * @param {number} [opts2.userId=0]
  * @returns {{ contact_id: number, contact_name: string }}
  */
 async function createContact(db, {
@@ -334,60 +669,157 @@ async function createContact(db, {
   email2 = '',
   tags   = '',
   notes  = ''
-}) {
+}, { userId = 0 } = {}) {
   if (!fname) throw new Error('createContact requires fname');
   if (!lname) throw new Error('createContact requires lname');
 
-  const normalizedPhone  = normalizePhone(phone);
-  const normalizedPhone2 = normalizePhone(phone2);
+  const normalizedPhone   = normalizePhone(phone);
+  const normalizedPhone2  = normalizePhone(phone2);
+  const normalizedEmail   = normalizeEmail(email);
+  const normalizedEmail2  = normalizeEmail(email2);
 
-  const [result] = await db.query(
-    `INSERT INTO contacts
-       (contact_fname, contact_mname, contact_lname, contact_pname,
-        contact_phone, contact_email, contact_type,
-        contact_address, contact_city, contact_state, contact_zip,
-        contact_dob, contact_marital_status,
-        contact_phone2, contact_email2,
-        contact_tags, contact_notes, contact_created)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-    [
-      fname, mname, lname, pname,
-      normalizedPhone, email, type,
-      address, city, state, zip,
-      dob, marital_status,
-      normalizedPhone2, email2,
-      tags, notes
-    ]
-  );
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
 
-  const newId = result.insertId;
+    // 1. Insert the contacts row
+    const [result] = await conn.query(
+      `INSERT INTO contacts
+         (contact_fname, contact_mname, contact_lname, contact_pname,
+          contact_phone, contact_email, contact_type,
+          contact_address, contact_city, contact_state, contact_zip,
+          contact_dob, contact_marital_status,
+          contact_phone2, contact_email2,
+          contact_tags, contact_notes, contact_created)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [
+        fname, mname, lname, pname,
+        normalizedPhone, normalizedEmail, type,
+        address, city, state, zip,
+        dob, marital_status,
+        normalizedPhone2, normalizedEmail2,
+        tags, notes
+      ]
+    );
 
-  // Re-fetch to get trigger-computed name fields
-  const [[created]] = await db.query(
-    'SELECT contact_id, contact_name FROM contacts WHERE contact_id = ?',
-    [newId]
-  );
+    const newId = result.insertId;
 
-  return { contact_id: newId, contact_name: created.contact_name };
+    // 2. Propagate phone (force=true semantics on cross-contact collision)
+    if (normalizedPhone) {
+      const [[collision]] = await conn.query(
+        `SELECT id, contact_id FROM contact_phones
+          WHERE phone = ? AND end_date IS NULL`,
+        [normalizedPhone]
+      );
+      if (collision) {
+        await conn.query(
+          `UPDATE contact_phones
+              SET end_date = CURDATE(), is_primary = 0,
+                  end_reason = 'transferred', updated_by = ?
+            WHERE id = ?`,
+          [userId, collision.id]
+        );
+        await recomputePrimaryPhone(conn, collision.contact_id);
+      }
+
+      await conn.query(
+        `INSERT INTO contact_phones
+           (contact_id, phone, is_primary, start_date, created_by, updated_by)
+         VALUES (?, ?, 1, CURDATE(), ?, ?)`,
+        [newId, normalizedPhone, userId, userId]
+      );
+      await recomputePrimaryPhone(conn, newId);
+    }
+
+    // 3. Propagate email (parallel to phone)
+    if (normalizedEmail) {
+      const [[collision]] = await conn.query(
+        `SELECT id, contact_id FROM contact_emails
+          WHERE email = ? AND end_date IS NULL`,
+        [normalizedEmail]
+      );
+      if (collision) {
+        await conn.query(
+          `UPDATE contact_emails
+              SET end_date = CURDATE(), is_primary = 0,
+                  end_reason = 'transferred', updated_by = ?
+            WHERE id = ?`,
+          [userId, collision.id]
+        );
+        await recomputePrimaryEmail(conn, collision.contact_id);
+      }
+
+      await conn.query(
+        `INSERT INTO contact_emails
+           (contact_id, email, is_primary, start_date, created_by, updated_by)
+         VALUES (?, ?, 1, CURDATE(), ?, ?)`,
+        [newId, normalizedEmail, userId, userId]
+      );
+      await recomputePrimaryEmail(conn, newId);
+    }
+
+    // 4. Propagate address (no collision check)
+    if (address || city || state || zip) {
+      await conn.query(
+        `INSERT INTO contact_addresses
+           (contact_id, address1, address2, city, state, zip, country,
+            label, is_primary, start_date, created_by, updated_by)
+         VALUES (?, ?, '', ?, ?, ?, 'US', 'Other', 1, CURDATE(), ?, ?)`,
+        [newId, address || '', city || '', state || '', zip || '',
+         userId, userId]
+      );
+      await recomputePrimaryAddress(conn, newId);
+    }
+
+    // 5. Re-fetch to get trigger-computed name fields
+    const [[created]] = await conn.query(
+      'SELECT contact_id, contact_name FROM contacts WHERE contact_id = ?',
+      [newId]
+    );
+
+    await conn.commit();
+    return { contact_id: newId, contact_name: created.contact_name };
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) { /* ignore */ }
+    throw err;
+  } finally {
+    conn.release();
+  }
 }
 
 
 // ─────────────────────────────────────────────────────────────
-// updateContact
+// updateContact — wrapped in transaction; dual-write on relevant fields
 // ─────────────────────────────────────────────────────────────
 
 /**
  * Update one or more fields on a contact.
  *
  * Whitelist enforced — blocks PK, SSN, and trigger-computed fields.
- * DB trigger handles: recomputing name fields + logging changes.
+ * DB trigger handles: recomputing name fields + logging changes on the
+ * contacts row.
+ *
+ * SLICE 2 DUAL-WRITE: when contact_phone / contact_email /
+ * contact_address|city|state|zip appear in `fields`, the corresponding
+ * child table is updated to keep the primary-active row in sync with
+ * the legacy column. force=true semantics for phone/email on cross-
+ * contact collisions. Addresses are edited in place (see
+ * _propagateAddress).
+ *
+ * `contact_phone2` / `contact_email2` write to the legacy columns only;
+ * they are NOT propagated to child tables (vestigial).
+ *
+ * The whole operation runs in a transaction so the contacts UPDATE and
+ * child-table propagation land atomically.
  *
  * @param {object} db
  * @param {number} contactId
  * @param {object} fields - column: value pairs
+ * @param {object} [opts]
+ * @param {number} [opts.userId=0]
  * @returns {{ contact_id: number, updated_fields: string[] }}
  */
-async function updateContact(db, contactId, fields) {
+async function updateContact(db, contactId, fields, { userId = 0 } = {}) {
   if (!fields || !Object.keys(fields).length) {
     throw new Error('updateContact requires at least one field');
   }
@@ -407,44 +839,60 @@ async function updateContact(db, contactId, fields) {
     throw new Error(`updateContact: blocked columns: ${blocked.join(', ')}`);
   }
 
-  // Normalize phone fields if present
+  // Normalize phone + email fields if present
   const normalized = { ...fields };
   if (normalized.contact_phone)  normalized.contact_phone  = normalizePhone(normalized.contact_phone);
   if (normalized.contact_phone2) normalized.contact_phone2 = normalizePhone(normalized.contact_phone2);
+  if (normalized.contact_email)  normalized.contact_email  = normalizeEmail(normalized.contact_email);
+  if (normalized.contact_email2) normalized.contact_email2 = normalizeEmail(normalized.contact_email2);
 
   const finalKeys = Object.keys(normalized);
   const setClauses = finalKeys.map(k => `\`${k}\` = ?`).join(', ');
   const values = [...finalKeys.map(k => normalized[k]), contactId];
 
-  const [result] = await db.query(
-    `UPDATE contacts SET ${setClauses}, contact_updated = NOW() WHERE contact_id = ?`,
-    values
-  );
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
 
-  if (result.affectedRows === 0) {
-    throw new Error(`Contact ${contactId} not found`);
+    // 1. Existing UPDATE on contacts
+    const [result] = await conn.query(
+      `UPDATE contacts SET ${setClauses}, contact_updated = NOW() WHERE contact_id = ?`,
+      values
+    );
+
+    if (result.affectedRows === 0) {
+      throw new Error(`Contact ${contactId} not found`);
+    }
+
+    // 2. Propagate contact_phone
+    if ('contact_phone' in normalized) {
+      await _propagatePhone(conn, contactId, normalized.contact_phone || '', userId);
+    }
+
+    // 3. Propagate contact_email
+    if ('contact_email' in normalized) {
+      await _propagateEmail(conn, contactId, normalized.contact_email || '', userId);
+    }
+
+    // 4. Propagate contact_address / city / state / zip
+    const addrKeys = ['contact_address', 'contact_city', 'contact_state', 'contact_zip'];
+    if (addrKeys.some(k => k in normalized)) {
+      await _propagateAddress(conn, contactId, normalized, userId);
+    }
+
+    await conn.commit();
+    return { contact_id: contactId, updated_fields: finalKeys };
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) { /* ignore */ }
+    throw err;
+  } finally {
+    conn.release();
   }
-
-  return { contact_id: contactId, updated_fields: finalKeys };
 }
 
 /**
  * List sequence enrollments for a contact with pagination, status filter,
- * and active/all scope. Envelope-parity with Slices 1–2 ({success, ...}),
- * plus `active_total` so the UI header can read "N active of M total"
- * when `?scope=all`.
- *
- * @param {object} db
- * @param {number|string} contactId
- * @param {object}  [opts]
- * @param {number}  [opts.limit=50]      max 200
- * @param {number}  [opts.offset=0]
- * @param {string|null} [opts.status=null]  'active' | 'completed' | 'cancelled'
- * @param {string}  [opts.scope='active']  'active' (filter to active) or 'all'
- *                                         Ignored when `status` is supplied —
- *                                         explicit > defaulted.
- * @returns {Promise<{sequences, total, active_total} | null>}
- *          Returns null when the contact doesn't exist (route → 404).
+ * and active/all scope.
  */
 async function listContactSequences(db, contactId, {
   limit  = 50,
@@ -452,17 +900,14 @@ async function listContactSequences(db, contactId, {
   status = null,
   scope  = 'active',
 } = {}) {
-  // Confirm the contact exists so the route can 404 vs returning an empty
-  // list (which would mask "no such contact" as "no enrollments").
   const [[row]] = await db.query(
     `SELECT contact_id FROM contacts WHERE contact_id = ?`,
     [contactId]
   );
   if (!row) return null;
- 
-  // Explicit status overrides scope. scope='active' is the default filter.
+
   const effectiveStatus = status || (scope === 'active' ? 'active' : null);
- 
+
   const whereParts  = ['se.contact_id = ?'];
   const whereParams = [contactId];
   if (effectiveStatus) {
@@ -470,10 +915,7 @@ async function listContactSequences(db, contactId, {
     whereParams.push(effectiveStatus);
   }
   const whereSQL = whereParts.join(' AND ');
- 
-  // `se.id AS enrollment_id` — frontend reads enrollment_id; aliasing here
-  // keeps the UI self-documenting and matches the label the old (broken)
-  // putSeq was already reading.
+
   const [sequences] = await db.query(
     `SELECT
        se.id           AS enrollment_id,
@@ -494,59 +936,24 @@ async function listContactSequences(db, contactId, {
      LIMIT ? OFFSET ?`,
     [...whereParams, parseInt(limit, 10), parseInt(offset, 10)]
   );
- 
+
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total FROM sequence_enrollments se WHERE ${whereSQL}`,
     whereParams
   );
- 
-  // Always compute active_total (regardless of current filter) so the UI
-  // can render "N active of M total" when ?scope=all.
+
   const [[{ active_total }]] = await db.query(
     `SELECT COUNT(*) AS active_total
        FROM sequence_enrollments
       WHERE contact_id = ? AND status = 'active'`,
     [contactId]
   );
- 
+
   return { sequences, total, active_total };
 }
- 
+
 /**
- * List workflow executions tied to a contact. Envelope parity with
- * listContactSequences: `{ workflows, total, active_total }`, returning
- * null when the contact doesn't exist so the route can 404.
- *
- * Row contents (per spec): execution_id, workflow_id, workflow_name,
- * status, current_step_number, steps_executed_count, cancel_reason,
- * created_at, updated_at, completed_at. `workflow_name` comes from a
- * LEFT JOIN to workflows (handles the edge case of a template that was
- * deleted while old executions remain; LEFT JOIN yields NULL rather
- * than dropping the row).
- *
- * Scope semantics mirror sequences but with the workflow status enum:
- *   - Non-terminal statuses (the "active" set): active, processing, delayed
- *   - Terminal statuses: completed, completed_with_errors, failed, cancelled
- * Explicit `status` filter (if supplied) wins over scope; route validates
- * allowed values and 400s otherwise.
- *
- * `delayed_until` is intentionally NOT joined from scheduled_jobs here —
- * execution-level delayed timestamps don't exist as a column today, only
- * per-resume-job in scheduled_jobs. Keeping this query single-table simple
- * and punting that tooltip to a later slice if it proves useful.
- *
- * @param {object} db
- * @param {number|string} contactId
- * @param {object}  [opts]
- * @param {number}  [opts.limit=50]      max 200
- * @param {number}  [opts.offset=0]
- * @param {string|null} [opts.status=null]
- *        One of: 'active' | 'processing' | 'delayed' | 'completed'
- *              | 'completed_with_errors' | 'failed' | 'cancelled'
- * @param {string}  [opts.scope='active']  'active' (filter to non-terminal)
- *                                         or 'all'. Ignored when `status`
- *                                         is supplied.
- * @returns {Promise<{workflows, total, active_total} | null>}
+ * List workflow executions tied to a contact.
  */
 async function listContactWorkflows(db, contactId, {
   limit  = 50,
@@ -554,20 +961,14 @@ async function listContactWorkflows(db, contactId, {
   status = null,
   scope  = 'active',
 } = {}) {
-  // 404-support: confirm the contact exists (mirrors listContactSequences).
   const [[row]] = await db.query(
     `SELECT contact_id FROM contacts WHERE contact_id = ?`,
     [contactId]
   );
   if (!row) return null;
 
-  // The "active" set for workflow executions — non-terminal statuses.
-  // Kept as an array so we can splice into `?` placeholders rather than
-  // inlining an SQL fragment.
   const NON_TERMINAL = ['active', 'processing', 'delayed'];
 
-  // Build WHERE. Explicit status wins; otherwise scope='active' narrows to
-  // non-terminal rows; scope='all' imposes no status filter.
   const whereParts  = ['we.contact_id = ?'];
   const whereParams = [contactId];
   if (status) {
@@ -599,15 +1000,11 @@ async function listContactWorkflows(db, contactId, {
     [...whereParams, parseInt(limit, 10), parseInt(offset, 10)]
   );
 
-  // Total matching the current filter — same whereParams.
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total FROM workflow_executions we WHERE ${whereSQL}`,
     whereParams
   );
 
-  // Unfiltered "active" count for the header "N active of M total" readout
-  // when scope='all'. Computed regardless of current filter so the UI can
-  // flip scope without a second round-trip.
   const placeholders = NON_TERMINAL.map(() => '?').join(',');
   const [[{ active_total }]] = await db.query(
     `SELECT COUNT(*) AS active_total
@@ -625,6 +1022,7 @@ module.exports = {
   createContact,
   updateContact,
   normalizePhone,
+  normalizeEmail,
   listContactSequences,
   listContactWorkflows,
   stripSsn
