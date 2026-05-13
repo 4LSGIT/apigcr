@@ -232,6 +232,97 @@
   word-break: break-word;
   color: #991b1b;
 }
+
+/* ── Relationships tab (Slice 3) — all classes prefixed .crel-* ── */
+.crel-scope-toggle {
+  display: inline-flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.crel-scope-btn {
+  background: #fff;
+  border: none;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #334155;
+}
+.crel-scope-btn.active { background: #2563eb; color: #fff; }
+.crel-scope-btn:not(.active):hover { background: #f1f5f9; }
+
+.crel-refresh-btn {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: #334155;
+  font-size: 13px;
+}
+.crel-refresh-btn:hover { background: #f1f5f9; }
+
+.crel-add-btn {
+  background: #2563eb;
+  color: #fff;
+  border: 1px solid #2563eb;
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.crel-add-btn:hover { background: #1d4ed8; }
+
+.crel-table th, .crel-table td { text-align: left; padding: 6px 8px; vertical-align: top; }
+
+.crel-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.crel-status-active   { background: #dcfce7; color: #166534; }
+.crel-status-inactive { background: #e2e8f0; color: #475569; }
+
+.crel-edit-btn, .crel-delete-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 4px;
+}
+.crel-edit-btn {
+  background: #fff;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+.crel-edit-btn:hover { background: #f1f5f9; }
+.crel-delete-btn {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+.crel-delete-btn:hover { background: #fecaca; }
+
+.crel-empty {
+  color: #94a3b8;
+  font-weight: 400;
+  padding: 18px;
+  text-align: center;
+  margin: 6px 0;
+}
+
+.crel-result-row:hover { background: #f0f9ff; }
+
+.crel-other-link {
+  color: #07ADEF;
+  text-decoration: none;
+  font-weight: 500;
+}
+.crel-other-link:hover {
+  text-decoration: underline;
+}
 </style>  
 
 
@@ -242,6 +333,7 @@
         <button class="tab" onclick="openTab(this, 'tabSeq')"><i class="fa-solid fa-robot"></i> Automations</button>
         <button class="tab" onclick="openTab(this, 'tabAppts')"><i class="fa-solid fa-calendar-check"></i>&nbsp;&nbsp;Appointments</button>
         <button class="tab" onclick="openTab(this, 'tabCases')"><i class="fa-solid fa-landmark"></i> Cases</button>
+        <button class="tab" onclick="openTab(this, 'tabRels')"><i class="fa-solid fa-people-arrows"></i> Relationships</button>
         <button class="tab" onclick="openTab(this, 'tabBills')"><i class="fa-solid fa-file-invoice-dollar"></i> Bills</button>
         <button class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Log</button>
         <button class="tab" onclick="openTab(this, 'tabTasks')"><i class="fa-solid fa-clipboard"></i> Tasks</button>
@@ -348,6 +440,51 @@
     <table id="casesTable" class="logTable" style="display:none">
       <tr><th>Lead ID:</th><th>Relation</th><th>Case Number:</th><th>Case Type:</th><th>Stage:</th><th>Status:</th><th>Open Date:</th><th>File Date:</th><th>Close Date:</th></tr>
     </table>
+  </div>
+
+
+  <div id="tabRels" class="tab-content">
+    <div class="cauto-header">
+      <div class="crel-scope-toggle" role="tablist" aria-label="Relationship scope">
+        <button type="button" class="crel-scope-btn active"
+                data-scope="active"
+                onclick="contactRelationsSetScope('active')">Active only</button>
+        <button type="button" class="crel-scope-btn"
+                data-scope="all"
+                onclick="contactRelationsSetScope('all')">Show all</button>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="crel-add-btn"
+                onclick="openAddRelationModal()">
+          <i class="fa-solid fa-plus"></i> Add Relationship
+        </button>
+        <button type="button" class="crel-refresh-btn"
+                onclick="loadContactRelations()" title="Refresh">
+          <i class="fa-solid fa-arrows-rotate"></i> Refresh
+        </button>
+      </div>
+    </div>
+    <div class="cauto-section-head">
+      <h3 class="cauto-section-title">
+        <i class="fa-solid fa-people-arrows"></i> Relationships
+      </h3>
+      <span id="crel-count" class="cauto-section-count">—</span>
+    </div>
+    <table id="crel-table" class="logTable crel-table" style="display:none">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Related Contact</th>
+          <th>Status</th>
+          <th>Start</th>
+          <th>End</th>
+          <th>Notes</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="crel-tbody"></tbody>
+    </table>
+    <h2 id="crel-empty" class="crel-empty" style="display:none">No relationships.</h2>
   </div>
 
 
@@ -764,13 +901,16 @@ function openTab(tab, tabName) {
   }
   document.querySelectorAll(".tab-content").forEach(t => t.style.display = "none");
   E(tabName).style.display = "block";
-  // Automations tab: load BOTH lists on entry, stop polling on exit.
-  // Same openTab-driven lifecycle that Part A used; just extended to cover
-  // the new workflows section too via reloadContactAutomations().
+  // Stop automation polling whenever the user leaves the Automations tab —
+  // regardless of which tab they switch to (tabRels, tabCases, anything else).
+  if (tabName !== 'tabSeq') {
+    stopContactAutomationPolling();
+  }
+  // Per-tab lifecycle hooks.
   if (tabName === 'tabSeq') {
     reloadContactAutomations();
-  } else {
-    stopContactAutomationPolling();
+  } else if (tabName === 'tabRels') {
+    loadContactRelations();
   }
 }
 
@@ -1801,6 +1941,629 @@ function maybeStopAutomationPolling() {
   const seqHasActive = (CSEQ.activeTotal || 0) > 0;
   const wfHasActive  = (CWF.activeTotal  || 0) > 0;
   if (!seqHasActive && !wfHasActive) stopContactAutomationPolling();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// RELATIONSHIPS TAB (Slice 3)
+// Contact-scoped relationship management via /api/contact-relations and
+// /api/contacts/:id/relations. Catalog cached on first tab entry.
+// Row shape (from listContactRelations, perspective projected to clientID):
+//   { id, type_code, perspective: { label, other_contact_id,
+//     other_contact_name, other_contact_pname, other_contact_type },
+//     contact_a_id, contact_b_id, active, status, start_date, end_date,
+//     end_reason, notes, is_symmetric, forward_label, reverse_label,
+//     created_at, created_by, created_by_name, updated_at }
+// Catalog shape (from listRelationTypes):
+//   { type_code, forward_label, reverse_label, is_symmetric,
+//     allowed_statuses: [], allowed_end_reasons: [], sort_order, active }
+// Uses P.apiSend. No polling — relations don't change without user action.
+// ═════════════════════════════════════════════════════════════════════════
+
+const CREL = {
+  scope:   'active',   // 'active' | 'all'
+  rows:    [],
+  types:   null,       // catalog cache, fetched lazily on first modal open
+  loading: false,
+};
+
+// ── Shared helpers ────────────────────────────────────────────────────────
+function crelEsc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * Normalize a date-ish value (Date object, ISO string, or 'YYYY-MM-DD') to
+ * a 'YYYY-MM-DD' string. mysql2 may return DATE columns as Date objects
+ * depending on driver config; the relation service does NOT pre-format
+ * dates, so the frontend must handle both shapes. Returns '' on empty.
+ */
+function crelToDateOnly(v) {
+  if (v == null || v === '') return '';
+  if (typeof v === 'string') {
+    return v.length >= 10 ? v.slice(0, 10) : v;
+  }
+  try {
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return '';
+    return d.toISOString().slice(0, 10);
+  } catch { return ''; }
+}
+
+function crelFmtDate(v) {
+  const ymd = crelToDateOnly(v);
+  if (!ymd) return '—';
+  // Parse as a local date so a 2010-06-12 string doesn't shift backward
+  // to 2010-06-11 in negative UTC offsets.
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (!y || !m || !d) return ymd;
+  try {
+    return new Date(y, m - 1, d).toLocaleDateString('en-US',
+      { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return ymd; }
+}
+
+function crelToast(icon, title, text) {
+  const T = (typeof Toast !== 'undefined') ? Toast : (P && P.Toast);
+  if (T && typeof T.fire === 'function') T.fire({ icon, title, text });
+}
+
+/**
+ * Open the "other" contact's page via the parent shell's file-opener.
+ * Looks up the name from CREL.rows so user-provided strings (e.g.
+ * names with apostrophes) don't have to be JS-escaped into onclick.
+ */
+function crelOpenContact(otherId) {
+  const row = CREL.rows.find(r => r.perspective.other_contact_id === otherId);
+  if (!row) return;
+  P.addFile(row.perspective.other_contact_name, 'client', otherId);
+}
+
+// ── Catalog fetch (cached) ────────────────────────────────────────────────
+async function getRelationTypes(forceRefresh = false) {
+  if (CREL.types && !forceRefresh) return CREL.types;
+  const data = await P.apiSend('/api/relation-types', 'GET');
+  CREL.types = data.types || [];
+  return CREL.types;
+}
+
+function getRelationTypeByCode(code) {
+  return (CREL.types || []).find(t => t.type_code === code);
+}
+
+// ── List load & render ────────────────────────────────────────────────────
+async function loadContactRelations() {
+  if (CREL.loading) return;
+  CREL.loading = true;
+
+  const contactAtCall = clientID;
+  const tbody = E('crel-tbody');
+  const empty = E('crel-empty');
+  const table = E('crel-table');
+  const count = E('crel-count');
+  if (!tbody || !empty || !table || !count) { CREL.loading = false; return; }
+
+  // Inline spinner — tab already visible
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>';
+  table.style.display = '';
+  empty.style.display = 'none';
+  count.textContent   = '…';
+
+  try {
+    const params = { limit: 100, offset: 0 };
+    if (CREL.scope === 'active') params.active = 'true';
+    const data = await P.apiSend(
+      `/api/contacts/${contactAtCall}/relations`, 'GET', params);
+
+    // Race guard: drop result if user navigated to a different contact.
+    if (clientID !== contactAtCall) { CREL.loading = false; return; }
+
+    const rows = data.relations || [];
+    CREL.rows = rows;
+    count.textContent = String(data.total ?? rows.length);
+
+    if (!rows.length) {
+      table.style.display = 'none';
+      empty.style.display = '';
+      empty.textContent   = CREL.scope === 'active'
+        ? 'No active relationships.'
+        : 'No relationships.';
+      return;
+    }
+
+    tbody.innerHTML = renderContactRelationRows(rows);
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" style="color:#991b1b;padding:12px">Error: ${crelEsc(err.message || String(err))}</td></tr>`;
+    count.textContent = '!';
+  } finally {
+    CREL.loading = false;
+  }
+}
+
+function renderContactRelationRows(rows) {
+  return rows.map(r => {
+    const persp     = r.perspective || {};
+    const typeLabel = persp.label || r.type_code || '—';
+    // Show type_code as a small grey hint only on asymmetric types — for
+    // symmetric types the forward_label IS the only label and the type_code
+    // is redundant noise.
+    const typeHint  = (!r.is_symmetric && r.type_code !== typeLabel)
+      ? `<div class="cseq-template-type">${crelEsc(r.type_code)}</div>`
+      : '';
+
+    const otherName = persp.other_contact_name
+      || (persp.other_contact_id != null ? `Contact #${persp.other_contact_id}` : '—');
+    const otherIdLine = persp.other_contact_id != null
+      ? `<div class="cseq-template-type">#${crelEsc(persp.other_contact_id)}</div>`
+      : '';
+
+    const isActive  = !!r.active;
+    const badge = isActive
+      ? `<span class="crel-status-badge crel-status-active">Active</span>`
+      : `<span class="crel-status-badge crel-status-inactive">Inactive</span>`;
+    const statusLine = r.status
+      ? `<div style="font-size:11px;color:#64748b;margin-top:2px">${crelEsc(r.status)}</div>`
+      : '';
+    const endLine = r.end_reason
+      ? `<div style="font-size:11px;color:#64748b;margin-top:2px">${crelEsc(r.end_reason)}${r.end_date ? ' on ' + crelEsc(crelFmtDate(r.end_date)) : ''}</div>`
+      : '';
+
+    const notesText  = r.notes || '';
+    const notesTrunc = notesText.length > 60
+      ? notesText.slice(0, 60) + '…'
+      : notesText;
+
+    return `
+      <tr>
+        <td>
+          <div class="cseq-template-name">${crelEsc(typeLabel)}</div>
+          ${typeHint}
+        </td>
+        <td>
+          <a href="#" class="crel-other-link"
+             onclick="crelOpenContact(${persp.other_contact_id});return false;"
+             title="Open this contact">${crelEsc(otherName)}</a>
+          ${otherIdLine}
+        </td>
+        <td>${badge}${statusLine}${endLine}</td>
+        <td>${crelFmtDate(r.start_date)}</td>
+        <td>${crelFmtDate(r.end_date)}</td>
+        <td title="${crelEsc(notesText)}">${crelEsc(notesTrunc)}</td>
+        <td>
+          <button type="button" class="crel-edit-btn"
+                  onclick="openEditRelationModal(${r.id})">
+            <i class="fa-solid fa-pen"></i> Edit
+          </button>
+          <button type="button" class="crel-delete-btn"
+                  onclick="deleteContactRelation(${r.id})">
+            <i class="fa-solid fa-trash"></i> Delete
+          </button>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function contactRelationsSetScope(scope) {
+  if (scope !== 'active' && scope !== 'all') return;
+  if (CREL.scope === scope) return;
+  CREL.scope = scope;
+  document.querySelectorAll('.crel-scope-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.scope === scope);
+  });
+  loadContactRelations();
+}
+
+// ── Type dropdown / vocab option builders ────────────────────────────────
+/**
+ * Build <option> list for the type dropdown.
+ *   - Symmetric types get ONE option (forward_label only).
+ *   - Asymmetric types get TWO options (forward_label, reverse_label).
+ *   - The option value is `type_code|swap` where swap=0 means "page contact
+ *     is contact_a" and swap=1 means "page contact is contact_b" (so the
+ *     reverse label correctly identifies the relationship direction).
+ * Catalog is already sorted by sort_order ASC server-side; forward+reverse
+ * for the same type land adjacent.
+ */
+function buildRelationTypeOptions(types, selectedValue = '') {
+  const opts = [
+    `<option value="" disabled${selectedValue ? '' : ' selected'}>— select type —</option>`
+  ];
+  types.forEach(t => {
+    if (t.is_symmetric) {
+      const v = `${t.type_code}|0`;
+      const sel = v === selectedValue ? ' selected' : '';
+      opts.push(`<option value="${crelEsc(v)}"${sel}>${crelEsc(t.forward_label)}</option>`);
+    } else {
+      const vf = `${t.type_code}|0`;
+      const vr = `${t.type_code}|1`;
+      const selF = vf === selectedValue ? ' selected' : '';
+      const selR = vr === selectedValue ? ' selected' : '';
+      opts.push(`<option value="${crelEsc(vf)}"${selF}>${crelEsc(t.forward_label)}</option>`);
+      opts.push(`<option value="${crelEsc(vr)}"${selR}>${crelEsc(t.reverse_label)}</option>`);
+    }
+  });
+  return opts.join('');
+}
+
+function buildVocabOptions(vocab, current = '') {
+  if (!Array.isArray(vocab) || !vocab.length) return '';
+  const opts = [
+    `<option value=""${current ? '' : ' selected'}>— none —</option>`
+  ];
+  vocab.forEach(v => {
+    const sel = v === current ? ' selected' : '';
+    opts.push(`<option value="${crelEsc(v)}"${sel}>${crelEsc(v)}</option>`);
+  });
+  return opts.join('');
+}
+
+// ── Add Relationship Modal ────────────────────────────────────────────────
+async function openAddRelationModal() {
+  let types;
+  try {
+    types = await getRelationTypes();
+  } catch (err) {
+    crelToast('error', 'Failed to load relation types', err.message);
+    return;
+  }
+  if (!types.length) {
+    crelToast('error', 'No relation types configured.');
+    return;
+  }
+
+  // Closure state for the contact picker.
+  let pickedContactId   = null;
+  let pickedContactName = '';
+  let searchDebounce    = null;
+  let searchSeq         = 0;
+
+  const html = `
+    <div style="text-align:left">
+      <div style="margin-bottom:10px">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Type</label>
+        <select id="crelm-type" style="width:100%;padding:6px">
+          ${buildRelationTypeOptions(types)}
+        </select>
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Other Contact</label>
+        <div id="crelm-picked" style="display:none;padding:6px 10px;background:#dbeafe;border:1px solid #93c5fd;border-radius:6px;margin-bottom:6px;font-size:13px"></div>
+        <input id="crelm-search" placeholder="Type to search contacts..." style="width:100%;padding:6px" autocomplete="off">
+        <div id="crelm-results" style="max-height:160px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:4px;margin-top:4px;display:none;background:#fff"></div>
+      </div>
+      <div id="crelm-status-wrap" style="margin-bottom:10px;display:none">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Status</label>
+        <select id="crelm-status" style="width:100%;padding:6px"></select>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div style="flex:1">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Start Date</label>
+          <input type="date" id="crelm-start" style="width:100%;padding:6px">
+        </div>
+        <div style="flex:1">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Date</label>
+          <input type="date" id="crelm-end" style="width:100%;padding:6px">
+        </div>
+      </div>
+      <div id="crelm-endreason-wrap" style="margin-bottom:10px;display:none">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Reason</label>
+        <select id="crelm-endreason" style="width:100%;padding:6px"></select>
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#334155">
+          <input type="checkbox" id="crelm-active" checked style="width:auto">
+          Active
+        </label>
+      </div>
+      <div style="margin-bottom:6px">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Notes</label>
+        <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000"></textarea>
+      </div>
+    </div>
+  `;
+
+  await Swal.fire({
+    title: 'Add Relationship',
+    html,
+    width: 520,
+    showCancelButton: true,
+    confirmButtonText: 'Create',
+    focusConfirm: false,
+    didOpen: () => {
+      const typeSel    = document.getElementById('crelm-type');
+      const searchInp  = document.getElementById('crelm-search');
+      const resultsBox = document.getElementById('crelm-results');
+      const pickedBox  = document.getElementById('crelm-picked');
+
+      // Type change → repopulate Status + End Reason dropdowns.
+      typeSel.addEventListener('change', () => {
+        const val = typeSel.value;
+        if (!val) return;
+        const [code] = val.split('|');
+        const t = getRelationTypeByCode(code);
+        const statusWrap = document.getElementById('crelm-status-wrap');
+        const statusSel  = document.getElementById('crelm-status');
+        const endrWrap   = document.getElementById('crelm-endreason-wrap');
+        const endrSel    = document.getElementById('crelm-endreason');
+        if (t && t.allowed_statuses && t.allowed_statuses.length) {
+          statusSel.innerHTML = buildVocabOptions(t.allowed_statuses);
+          statusWrap.style.display = '';
+        } else {
+          statusSel.innerHTML = '';
+          statusWrap.style.display = 'none';
+        }
+        if (t && t.allowed_end_reasons && t.allowed_end_reasons.length) {
+          endrSel.innerHTML = buildVocabOptions(t.allowed_end_reasons);
+          endrWrap.style.display = '';
+        } else {
+          endrSel.innerHTML = '';
+          endrWrap.style.display = 'none';
+        }
+      });
+
+      // Debounced contact search.
+      searchInp.addEventListener('input', () => {
+        if (searchDebounce) clearTimeout(searchDebounce);
+        const term = searchInp.value.trim();
+        if (!term) {
+          resultsBox.innerHTML = '';
+          resultsBox.style.display = 'none';
+          return;
+        }
+        searchDebounce = setTimeout(async () => {
+          const mySeq = ++searchSeq;
+          try {
+            const data = await P.apiSend('/api/contacts', 'GET',
+              { q: term, limit: 10 });
+            if (mySeq !== searchSeq) return; // stale response, drop
+            const list = data.contacts || [];
+            if (!list.length) {
+              resultsBox.innerHTML =
+                '<div style="padding:8px;color:#94a3b8;font-size:12px">No matches.</div>';
+              resultsBox.style.display = '';
+              return;
+            }
+            resultsBox.innerHTML = list.map(c => {
+              const id = c.contact_id;
+              const nm = c.contact_name
+                || `${c.contact_fname || ''} ${c.contact_lname || ''}`.trim()
+                || `Contact #${id}`;
+              const ph = c.contact_phone
+                ? c.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')
+                : '';
+              const em = c.contact_email || '';
+              const sub = [ph, em].filter(Boolean).join(' · ');
+              return `<div class="crel-result-row" data-id="${id}" data-name="${crelEsc(nm)}"
+                           style="padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px">
+                        <b>${crelEsc(nm)}</b>
+                        <span style="color:#64748b;font-size:11px;margin-left:6px">#${id}${sub ? ' · ' + crelEsc(sub) : ''}</span>
+                      </div>`;
+            }).join('');
+            resultsBox.style.display = '';
+            resultsBox.querySelectorAll('.crel-result-row').forEach(row => {
+              row.addEventListener('click', () => {
+                pickedContactId   = parseInt(row.dataset.id, 10);
+                pickedContactName = row.dataset.name;
+                pickedBox.textContent =
+                  `Selected: ${pickedContactName} (#${pickedContactId})`;
+                pickedBox.style.display = '';
+                searchInp.value = '';
+                resultsBox.innerHTML = '';
+                resultsBox.style.display = 'none';
+              });
+            });
+          } catch (err) {
+            if (mySeq !== searchSeq) return;
+            resultsBox.innerHTML =
+              `<div style="padding:8px;color:#991b1b;font-size:12px">Error: ${crelEsc(err.message)}</div>`;
+            resultsBox.style.display = '';
+          }
+        }, 300);
+      });
+    },
+    preConfirm: async () => {
+      const typeVal = document.getElementById('crelm-type').value;
+      if (!typeVal) {
+        Swal.showValidationMessage('Please select a relationship type.');
+        return false;
+      }
+      if (!pickedContactId) {
+        Swal.showValidationMessage('Please pick a contact.');
+        return false;
+      }
+      if (pickedContactId === parseInt(clientID, 10)) {
+        Swal.showValidationMessage('Cannot create a relationship with self.');
+        return false;
+      }
+      const [type_code, swapStr] = typeVal.split('|');
+      const swap    = swapStr === '1';
+      const meId    = parseInt(clientID, 10);
+      const otherId = pickedContactId;
+      const contact_a_id = swap ? otherId : meId;
+      const contact_b_id = swap ? meId    : otherId;
+
+      const statusEl = document.getElementById('crelm-status');
+      const endrEl   = document.getElementById('crelm-endreason');
+      const status     = (statusEl && statusEl.value) || '';
+      const end_reason = (endrEl   && endrEl.value)   || '';
+      const start_date = document.getElementById('crelm-start').value || null;
+      const end_date   = document.getElementById('crelm-end').value   || null;
+      const active     = document.getElementById('crelm-active').checked ? 1 : 0;
+      const notes      = document.getElementById('crelm-notes').value || '';
+
+      try {
+        await P.apiSend('/api/contact-relations', 'POST', {
+          contact_a_id, contact_b_id, type_code,
+          active, status, start_date, end_date, end_reason, notes
+        });
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    }
+  }).then(result => {
+    if (result.isConfirmed && result.value === true) {
+      crelToast('success', 'Relationship created');
+      loadContactRelations();
+    }
+  });
+}
+
+// ── Edit Relationship Modal ──────────────────────────────────────────────
+async function openEditRelationModal(id) {
+  const row = CREL.rows.find(r => r.id === id);
+  if (!row) {
+    crelToast('error', 'Relation not in current view — try Refresh.');
+    return;
+  }
+
+  let types;
+  try {
+    types = await getRelationTypes();
+  } catch (err) {
+    crelToast('error', 'Failed to load relation types', err.message);
+    return;
+  }
+
+  const t = getRelationTypeByCode(row.type_code);
+  if (!t) {
+    crelToast('error', 'Relation type missing from catalog.');
+    return;
+  }
+
+  const persp     = row.perspective || {};
+  const otherName = persp.other_contact_name
+    || `Contact #${persp.other_contact_id}`;
+  const typeLabelDisplay = `${persp.label || row.type_code} ${otherName}`;
+
+  const statusOpts = (t.allowed_statuses && t.allowed_statuses.length)
+    ? buildVocabOptions(t.allowed_statuses, row.status || '')
+    : '';
+  const endrOpts   = (t.allowed_end_reasons && t.allowed_end_reasons.length)
+    ? buildVocabOptions(t.allowed_end_reasons, row.end_reason || '')
+    : '';
+
+  const startYmd = crelToDateOnly(row.start_date);
+  const endYmd   = crelToDateOnly(row.end_date);
+
+  const html = `
+    <div style="text-align:left">
+      <div style="margin-bottom:10px;padding:8px 10px;background:#f1f5f9;border-radius:6px;font-size:13px;color:#334155">
+        <div><b>${crelEsc(typeLabelDisplay)}</b></div>
+        <div style="font-size:11px;color:#64748b">Type and other contact cannot be changed.</div>
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#334155">
+          <input type="checkbox" id="crelm-active" ${row.active ? 'checked' : ''} style="width:auto">
+          Active
+        </label>
+      </div>
+      ${statusOpts ? `
+        <div style="margin-bottom:10px">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Status</label>
+          <select id="crelm-status" style="width:100%;padding:6px">${statusOpts}</select>
+        </div>` : ''}
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div style="flex:1">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Start Date</label>
+          <input type="date" id="crelm-start" value="${crelEsc(startYmd)}" style="width:100%;padding:6px">
+        </div>
+        <div style="flex:1">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Date</label>
+          <input type="date" id="crelm-end" value="${crelEsc(endYmd)}" style="width:100%;padding:6px">
+        </div>
+      </div>
+      ${endrOpts ? `
+        <div style="margin-bottom:10px">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Reason</label>
+          <select id="crelm-endreason" style="width:100%;padding:6px">${endrOpts}</select>
+        </div>` : ''}
+      <div style="margin-bottom:6px">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Notes</label>
+        <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000">${crelEsc(row.notes || '')}</textarea>
+      </div>
+    </div>
+  `;
+
+  await Swal.fire({
+    title: `Edit Relationship #${id}`,
+    html,
+    width: 520,
+    showCancelButton: true,
+    confirmButtonText: 'Save',
+    focusConfirm: false,
+    preConfirm: async () => {
+      const active     = document.getElementById('crelm-active').checked ? 1 : 0;
+      const statusEl   = document.getElementById('crelm-status');
+      const endrEl     = document.getElementById('crelm-endreason');
+      const newStatus     = statusEl ? statusEl.value : (row.status || '');
+      const newEndReason  = endrEl   ? endrEl.value   : (row.end_reason || '');
+      const newStart   = document.getElementById('crelm-start').value || null;
+      const newEnd     = document.getElementById('crelm-end').value   || null;
+      const newNotes   = document.getElementById('crelm-notes').value;
+
+      // Build patch with only changed fields. Normalize for comparison.
+      const patch = {};
+      const rowStart = crelToDateOnly(row.start_date) || null;
+      const rowEnd   = crelToDateOnly(row.end_date)   || null;
+      const rowActive = row.active ? 1 : 0;
+
+      if (active !== rowActive)                              patch.active     = active;
+      if ((newStart || null) !== rowStart)                   patch.start_date = newStart;
+      if ((newEnd   || null) !== rowEnd)                     patch.end_date   = newEnd;
+      if (statusEl && newStatus    !== (row.status     || '')) patch.status     = newStatus;
+      if (endrEl   && newEndReason !== (row.end_reason || '')) patch.end_reason = newEndReason;
+      if (newNotes !== (row.notes || ''))                    patch.notes      = newNotes;
+
+      if (!Object.keys(patch).length) {
+        Swal.showValidationMessage('No changes to save.');
+        return false;
+      }
+
+      try {
+        await P.apiSend(`/api/contact-relations/${id}`, 'PATCH', patch);
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    }
+  }).then(result => {
+    if (result.isConfirmed && result.value === true) {
+      crelToast('success', 'Relationship updated');
+      loadContactRelations();
+    }
+  });
+}
+
+// ── Delete ───────────────────────────────────────────────────────────────
+async function deleteContactRelation(id) {
+  const result = await Swal.fire({
+    title: 'Delete this relationship?',
+    text: 'This cannot be undone.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Delete',
+    confirmButtonColor: '#dc2626',
+    reverseButtons: true,
+    showLoaderOnConfirm: true,
+    preConfirm: async () => {
+      try {
+        await P.apiSend(`/api/contact-relations/${id}`, 'DELETE');
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    }
+  });
+  if (result.isConfirmed && result.value === true) {
+    crelToast('success', 'Relationship deleted');
+    loadContactRelations();
+  }
 }
 
 // ── Initial load ────────────────────────────────────────────
