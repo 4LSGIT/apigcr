@@ -1536,16 +1536,40 @@ async function listContacts(db, {
     if (/^\d+$/.test(query)) {
       const digits = query.replace(/\D/g, '');
       if (digits.length >= 7) {
-        where.push(`(c.contact_phone LIKE ? OR c.contact_phone2 LIKE ?)`);
-        params.push(`%${digits}%`, `%${digits}%`);
+        // Slice 3 Stage B.1: EXISTS subquery reaches into contact_phones.
+        // Ended rows included by design (orphan-log auto-link case).
+        // Leading-wildcard LIKE can't use idx_phone; full scan inside subquery
+        // is <10ms at current scale (~975 active phones). Revisit at 10x growth.
+        where.push(`(
+          c.contact_phone     LIKE ?
+          OR c.contact_phone2 LIKE ?
+          OR EXISTS (
+            SELECT 1 FROM contact_phones cp
+             WHERE cp.contact_id = c.contact_id
+               AND cp.phone LIKE ?
+          )
+        )`);
+        params.push(`%${digits}%`, `%${digits}%`, `%${digits}%`);
       } else {
         where.push(`c.contact_id = ?`);
         params.push(parseInt(query, 10));
       }
     } else if (query.includes('@')) {
-      where.push(`(c.contact_email LIKE ? OR c.contact_email2 LIKE ?)`);
+      // Slice 3 Stage B.1: EXISTS subquery reaches into contact_emails.
+      // Ended rows included by design (orphan-log auto-link case).
+      // Leading-wildcard LIKE can't use idx_email; full scan inside subquery
+      // is <10ms at current scale (~968 active emails). Revisit at 10x growth.
+      where.push(`(
+        c.contact_email     LIKE ?
+        OR c.contact_email2 LIKE ?
+        OR EXISTS (
+          SELECT 1 FROM contact_emails ce
+           WHERE ce.contact_id = c.contact_id
+             AND ce.email LIKE ?
+        )
+      )`);
       const q = `%${query}%`;
-      params.push(q, q);
+      params.push(q, q, q);
     } else {
       where.push(`(
         MATCH(c.contact_name) AGAINST(? IN BOOLEAN MODE)
