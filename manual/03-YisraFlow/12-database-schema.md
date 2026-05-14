@@ -166,6 +166,10 @@ created_at, updated_at
 id              bigint unsigned  PK
 template_id     int unsigned     FK → sequence_templates(id)  ON DELETE RESTRICT
 contact_id      int unsigned
+appt_id         int                              -- nullable; back-pointer for appt-scoped types
+                                                  -- (pre_appt, iss_intake, no_show). Populated at
+                                                  -- INSERT from trigger_data.appt_id. NULL for
+                                                  -- contact-scoped enrollments.
 trigger_data    json                              -- frozen at enrollment time
 status          enum('active','completed','cancelled')  default 'active'
 current_step    int unsigned     default 1
@@ -176,7 +180,9 @@ completed_at    datetime
 updated_at      datetime
 ```
 
-Indexes: `idx_contact_status (contact_id, status)`, `idx_template_status (template_id, status)`, `idx_status`.
+Indexes: `idx_contact_status (contact_id, status)`, `idx_template_status (template_id, status)`, `idx_status`, `idx_appt_id_status (appt_id, status)`.
+
+The `appt_id` column is the indexed lookup key for `sequenceEngine.cancelByApptId` — see chapter 3. The duplicate-enrollment guard in `_enrollWithTemplate` is keyed on `(contact_id, template_id, appt_id)` via the NULL-safe `<=>` operator, so two appts for the same contact can share a template type while one contact can't accidentally double-enroll under the same appt.
 
 #### `sequence_step_log` — per-step audit
 
@@ -427,7 +433,9 @@ value       text
 updated_at  timestamp
 ```
 
-Used by automations to read system-wide values like `appt_reminder_workflow_id`. Not to be confused with the `settings` table (legacy, also exists).
+Used by automations to read system-wide values like `sms_default_from`, `email_default_from`, `default_task_assignee`. Not to be confused with the `settings` table (legacy, also exists).
+
+The `appt_reminder_workflow_id` key was retired in May 2026 when the appointment reminder system moved from a single 31-step workflow to the `pre_appt` + `iss_intake` sequence pair — see chapter 3.
 
 ---
 

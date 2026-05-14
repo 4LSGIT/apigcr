@@ -82,7 +82,7 @@ For `one_time` and `recurring` jobs, the actual *execution flavor* is stored in 
 
 **`resolverService.resolve()`** is the universal placeholder engine. `{{contacts.contact_fname}}`, `{{appts.appt_date|date:dddd}}`, `{{trigger_data.amount}}`. Used by sequences automatically and by workflows via the `set_vars`/template path. Restricted to a whitelist of 12 tables.
 
-**`calendarService`** answers "is this datetime a workday?" with Jewish business calendar awareness (Shabbos Friday 6pm – Saturday 10pm, plus the eleven strict Yom Tov holidays). `nextBusinessDay()` and `prevBusinessDay()` walk to find a valid slot, optionally with random jitter.
+**`calendarService`** answers "is this datetime a workday?" with Jewish business calendar awareness (Shabbos Friday 6pm – Saturday 10pm, plus the eleven strict Yom Tov holidays). `nextBusinessDay()` and `prevBusinessDay()` walk to find a valid slot, optionally with random jitter. `nextFriendlyTime()` is a lighter helper: offset N ms from now, roll to Monday 9am if the result lands Friday-evening or weekend.
 
 ### How a job flows through the system
 

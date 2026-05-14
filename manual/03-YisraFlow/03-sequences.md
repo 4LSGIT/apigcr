@@ -205,6 +205,12 @@ This bypasses cascade matching entirely. `template_type` cannot also be set in t
 
 **Validation rule:** exactly one of `template_type` or `template_id` must be provided. Empty strings, whitespace-only strings, and both-set all return 400.
 
+### Duplicate-enrollment guard
+
+`_enrollWithTemplate` rejects a new enrollment if an active one already exists for the same `(contact_id, template_id, appt_id)`. The `appt_id` discriminator is what makes appt-scoped types (`pre_appt`, `iss_intake`) work correctly — two different appts for the same contact need two independent enrollments under the same template, and the guard allows that. The check uses MySQL's NULL-safe `<=>` operator, so contact-scoped types with no `appt_id` in `trigger_data` (NULL column value) still get contact-level dedup: `NULL <=> NULL` is true.
+
+Trying to enroll twice for the same `(contact, template, appt)` triple throws `Contact N is already enrolled in sequence "name" for appt M`. Callers should treat this as a no-op (already handled) rather than an error.
+
 ### Cancellation hooks
 
 Call `cancelSequences()` (or `POST /sequences/cancel`) from any event that means "the reason this sequence started no longer applies":
@@ -228,6 +234,20 @@ await apiSend("/sequences/cancel", "POST", {
 ```
 
 Omit `template_type` to cancel **all** active sequences for the contact.
+
+### Appt-scoped cancellation — `cancelByApptId`
+
+For sequences whose lifetime is bound to a single appointment (the `pre_appt` and `iss_intake` types ship this way), use `cancelByApptId` instead of contact-level `cancelSequences`. It cancels every active enrollment whose `appt_id` matches — across all template types — without touching enrollments tied to other appts for the same contact.
+
+```js
+// In services/apptService.js, called from markAttended/markNoShow/cancelAppt/rescheduleAppt:
+await seq.cancelByApptId(db, apptId, 'appointment_cancelled');
+// returns { cancelled: N, enrollmentIds: [...] }
+```
+
+The lookup is indexed on `sequence_enrollments.appt_id` (real column, populated at enrollment-INSERT time from `trigger_data.appt_id`) — O(1) per cancellation, no JSON_EXTRACT scan.
+
+Use `cancelByApptId` (not `cancelSequences`) for any sequence type whose enrollments carry an `appt_id` in `trigger_data`. Use `cancelSequences` only for genuinely contact-scoped types like `no_show`.
 
 ### `webhook` step (first-class HTTP)
 
@@ -308,6 +328,37 @@ Leave `contact_id_override` empty to fall through to the workflow template's own
 
 **Retry semantics — retry-safe.** If the step fires, the INSERT succeeds, but then the job is retried (process-jobs claim fails afterward and the job goes back to `pending`), the retry checks `sequence_step_log.output_data` for a prior `workflow_execution_id` on this `(enrollment, step_number)`. If found and the execution still exists, it reuses it — no duplicate execution row.
 
+### Example: pre-appointment + ISS intake sequences (production)
+
+The appointment reminder system uses **two cooperating sequence types** instead of one workflow:
+
+**`pre_appt`** (`priority_fields = ["appt_type", "appt_with"]`) — appt-time-anchored reminders for every new appt. Enrolled from `apptService.createAppt`. Three templates ship:
+- `pre_appt — 341 Meeting` — 6PM day-before client SMS + 10-min-before client SMS (both with trustee Zoom link), 3-min-before staff alert
+- `pre_appt — Initial Strategy Session` — 24h-before client SMS, 3-min-before alert to `appt_with`, 3-min-before alert to RG, 3-min-before Clio Grow inbox webhook. Omits a 2h step — `iss_intake` step 8 owns that slot for ISS.
+- `pre_appt — Fallback (generic)` — 24h-before, 2h-before, 3-min-before. Matches any non-341, non-ISS appt.
+
+**`iss_intake`** (`priority_fields = ["appt_with"]`) — enrolled only when `appt_type === 'Initial Strategy Session'`, in addition to `pre_appt`. Single fallback template with 9 steps in Shape-A paired-conditional design: each timing slot has an "intake not submitted" step and an "intake submitted" step on opposite `case_intake_form is_null` conditions. Exactly one of each pair fires.
+
+```
+Slot 0 — Step 1: Welcome (always fires)               delay { at: welcome_at }
+Slot 1 — Step 2: Intake request (if not submitted)    delay 11 min after slot 0
+         Step 3: "thanks for filling early" (if submitted)    immediate after step 2
+Slot 2 — Step 4: 12h nag (if not submitted)           delay { at: reminder1_at }
+         Step 5: "looking forward" (if submitted)     immediate after step 4
+Slot 3 — Step 6: 24h nag (if not submitted)           delay { at: reminder2_at }
+         Step 7: friendly check-in (if submitted)     immediate after step 6
+Slot 4 — Step 8: 2h-before "we can't wait" (if submitted)     before_appt_fixed 2h
+         Step 9: 20-min final nag (if not submitted)  before_appt_fixed 0.334h + fire_guard 0.05h
+```
+
+**Why step 8 is ordered before step 9** (despite firing 100 min earlier in wall-clock time): when an "a" variant skips because its condition fails, the engine schedules the next step from current time using its own timing. If step 9 were first and fired at 20-min-before, step 8's timing would then resolve relative to "now" and land in the past — firing immediately rather than 2h before. Step 8 first means step 8 fires at 2h-before (or skips), then step 9 fires at 20-min-before (or skips) — correct ordering for both branches.
+
+**Lifecycle:**
+- `apptService.createAppt` pre-computes timing ISOs (`welcome_at` via `calendarService.nextFriendlyTime`, `reminder1_at` / `reminder2_at` with cap-at-4PM + skip-Sat rules) and trustee link, packs them into `trigger_data`, calls `seq.enrollContact(db, contactId, 'pre_appt', triggerData)` and (if ISS) `seq.enrollContact(db, contactId, 'iss_intake', triggerData)`.
+- `markAttended` / `markNoShow` / `cancelAppt` / `rescheduleAppt` / `rescheduleLater` all call `apptService.cancelApptAutomation(db, apptId, reason)` which calls `seq.cancelByApptId`. Tears down both enrollments atomically.
+- Reschedule cancels both old enrollments and the new `createAppt` re-enrolls fresh — the intake-drip restarts. Acceptable per "if they rescheduled, they're engaged" reasoning; revisit if it becomes annoying.
+- The `pre_appt` templates carry a template-level `condition` asserting `appts.appt_status = 'Scheduled'` — third line of defense if a cancel hook is ever missed.
+
 ### Example: no-show sequence template
 
 ```json
@@ -340,18 +391,3 @@ await apiSend("/sequences/enroll", "POST", {
 ```
 
 **Cancelled when a new appt is booked, the contact replies, or someone marks them resolved.**
-
-### Example: pre-appointment intake sequence
-
-Uses `before_appt` timing and `is_null` conditions. Steps fire backward from the appointment time.
-
-| # | Timing | Condition | Action |
-|---|---|---|---|
-| 1 | `immediate` | none | SMS — confirmation + intake link |
-| 2 | `delay 10m` | none | SMS — "please fill out intake form" |
-| 3 | `delay 24h` | `case_intake is_null: true` + fire_guard `min_hours_before_appt: 24` | SMS — intake reminder |
-| 4 | `delay 24h` after step 3 | `case_intake is_null: true` + fire_guard `min_hours_before_appt: 24` | SMS — second intake reminder |
-| 5 | `before_appt_fixed 2h` | `case_intake is_null: false` | SMS — "you're all set, see you soon!" |
-| 6 | `before_appt_fixed 30m` | `case_intake is_null: true` | SMS — "please bring ID and fill out intake on arrival" |
-
-Steps 5 and 6 fire at the same time but on opposite conditions — exactly one of them fires, depending on whether the intake form is in by then.

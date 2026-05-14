@@ -373,7 +373,7 @@ The sequence editor doesn't currently have a Test tab, so the value is documenta
 
 ### 3.1 Resume-Refetch-Recheck-Send
 
-**The foundational workflow pattern** for any scheduled communication tied to an entity whose state can change. Used by the appointment reminder workflow at every touchpoint.
+**The foundational workflow pattern** for any scheduled communication tied to an entity whose state can change. Historically the appointment-reminder workflow used this at every touchpoint; that workflow was retired May 2026 in favor of the `pre_appt` + `iss_intake` sequence pair (see §3.5 worked example and chapter 3), but the pattern itself remains the right tool for workflow-based touchpoints where branching is needed.
 
 The principle: between the time a step is scheduled and the time it fires, the world may have changed. *Don't trust frozen data.*
 
@@ -736,7 +736,7 @@ YisraHook is the **entry point for external data**. The three engines (workflow 
 
 | External trigger | Hook target type | What happens next |
 |---|---|---|
-| Calendly booking | `workflow` | Workflow: find-or-create contact → create appt → which starts the **appt reminder workflow** → which fires scheduled `workflow_resume` jobs → which eventually call `send_sms` |
+| Calendly booking | `workflow` | Workflow: find-or-create contact → create appt → `apptService.createAppt` enrolls in `pre_appt` + (if ISS) `iss_intake` sequences → which fire `sequence_step` jobs → which eventually call `send_sms` and `send_email` |
 | Client uploads bank statement via Dropbox | `internal_function` → `cancel_sequences` | Kills the `missing_statements` sequence in one shot |
 | JotForm intake submission | `sequence` → enrollment in `new_intake_drip` | Sequence runs N steps over N business days, each gated by "has the client responded?" |
 | Stripe payment received | `http` → internal `/internal/payments/record` route | The route does FK updates, ledger entries, invoice PDF generation — too much logic for a single internal function |
@@ -844,7 +844,7 @@ const { resolveExecutionContactId, InvalidContactIdError } = require('../lib/wor
 const contactId = resolveExecutionContactId({ explicitContactId, initData, defaultKey });
 ```
 
-`InvalidContactIdError` throws only for **explicit** overrides (explicit contract → loud failure → HTTP 400). Template-default misses fall through to NULL silently — a bad init_data shouldn't blow up a hook delivery or appt-reminder workflow start.
+`InvalidContactIdError` throws only for **explicit** overrides (explicit contract → loud failure → HTTP 400). Template-default misses fall through to NULL silently — a bad init_data shouldn't blow up a hook delivery or any other start-workflow path.
 
 ### 3.13 ID-Only Sequence Templates
 
@@ -1491,6 +1491,33 @@ The endpoint accepts two shapes, and the difference matters for contact-tying:
 
 **Cross-ref:** §3.12 (contact-tying precedence — full precedence ladder).
 
+### 5.31 Sequence Duplicate-Enrollment Guard Is `(contact, template, appt_id)`
+
+`_enrollWithTemplate` rejects a new enrollment when an active one already exists for the same `(contact_id, template_id, appt_id)` triple. The lookup uses MySQL's NULL-safe `<=>` operator so contact-scoped types (no `appt_id`) still get one-active-enrollment-per-contact-per-template semantics — `NULL <=> NULL` is true.
+
+**The pitfall.** Earlier versions keyed on `(contact_id, template_id)` only. For appt-scoped sequences like `pre_appt`, that meant two real appointments for the same contact couldn't both enroll under the same template — the second appt's enrollment silently threw. The fix: include `appt_id` in the dedup check. Verify whenever you're adding a new appt-scoped sequence type.
+
+**Rule of thumb.** If `trigger_data.appt_id` is meaningful for your type, the dup guard handles it correctly. If you have a different per-event discriminator (e.g. `case_event_id`), the guard does NOT see it — two events for the same contact under the same template would silently fail to enroll. Either widen the guard or store the discriminator into a new column.
+
+### 5.32 `sequence_enrollments.appt_id` Is a Real Column, Not JSON_EXTRACT
+
+The `appt_id` column on `sequence_enrollments` is populated at INSERT time from `trigger_data.appt_id`. It is the indexed lookup key for `cancelByApptId`. Always use the column — not `JSON_EXTRACT(trigger_data, '$.appt_id')` — for scoping queries to an appt.
+
+**The pitfall.** JSON_EXTRACT scans every row; the column has `idx_appt_id_status (appt_id, status)`. For a database with thousands of enrollments, the difference is measurable. Also: the column is what guarantees the duplicate-enrollment guard (§5.31) works correctly under load — JSON_EXTRACT-based dedup would still work but slower and harder to reason about.
+
+**Rule.** All appt-scoped sequence operations (`cancelByApptId`, dup guard, future analytics) MUST use the column. The JSON field is for callers reading `trigger_data` for their own purposes.
+
+### 5.33 Two-Sequence Cooperation Pattern (`pre_appt` + `iss_intake`)
+
+A single sequence type can't always express both "fire reminders anchored to appt time" AND "fire intake-state-aware messages anchored to enrollment time" without doubling the step count. The production pattern: split into two cooperating types enrolled from the same call site.
+
+- `pre_appt` (cascade on `appt_type × appt_with`) — owns appt-time-anchored reminders (24h before, 2h before, 3min before)
+- `iss_intake` (cascade on `appt_with`) — owns enrollment-time-anchored intake-drip + the intake-state-aware reminders that should fire INSTEAD of pre_appt's at conflicting times
+
+**Coordination rule** when types share a touchpoint: one type omits its step at that touchpoint, the other owns it. For ISS appts, `pre_appt — Initial Strategy Session` omits its 2h-before step because `iss_intake` step 8 owns that slot (firing the "we can't wait" message for intake-submitted clients). No conditional logic crosses types; each template is self-contained.
+
+**Cancellation symmetry.** Both types use `cancelByApptId` for teardown — `apptService.cancelApptAutomation(db, apptId, reason)` cancels every active enrollment with that `appt_id` in one call, regardless of how many types are involved. Adding a third cooperating type later requires no changes to the cancellation path.
+
 ---
 
 ## 6. Template Examples
@@ -1612,7 +1639,7 @@ run_case_stage_review: async ({ recipient_user_id }, db) => {
 
 ### 6.3 Workflow — Branching With Resume-Refetch-Recheck Pattern
 
-This is a compact version of the appointment reminder workflow pattern. Adapt freely.
+This is a compact illustrative example of branching-with-state-refetch. The production appointment-reminder system itself moved to sequences (see §3.5 / chapter 3) — sequences handle the cascade-on-appt_type-and-appt_with case more cleanly than a workflow with explicit branching. Use this pattern for workflows that genuinely need branching that sequences can't express.
 
 ```js
 // init_data shape (passed in by apiSend('/workflows/X/start', 'POST', { init_data: {...} }))
@@ -1760,7 +1787,7 @@ Complex business logic stays in a route — multiple hooks can call it, and the 
 }
 ```
 
-Credential #5 is type `internal` — auto-injects `INTERNAL_API_KEY` as `x-api-key`. The route does find-or-create contact, `apptService.createAppt()` (which fires the **appointment reminder workflow** as a side effect — see §3.8).
+Credential #5 is type `internal` — auto-injects `INTERNAL_API_KEY` as `x-api-key`. The route does find-or-create contact, `apptService.createAppt()` (which enrolls in `pre_appt` + `iss_intake` sequences as a side effect — see chapter 3).
 
 #### Target 3 — `sequence` (enroll in a welcome drip)
 
@@ -1839,7 +1866,7 @@ This is the **Resume-Refetch-Recheck-Send pattern (§3.1)**, kicked off by an ex
 | File | What it owns |
 |---|---|
 | `lib/workflow_engine.js` | `advanceWorkflow`, `scheduleResume`, `mergeVariables`, `isControlStep`, `getWorkflowFinalStatus` |
-| `lib/sequenceEngine.js` | `enrollContact`, `executeStep`, `cancelSequences`, `cancelEnrollment`, `checkCondition`, `calculateStepTime` |
+| `lib/sequenceEngine.js` | `enrollContact`, `enrollContactByTemplateId`, `executeStep`, `cancelSequences`, `cancelEnrollment`, `cancelByApptId`, `checkCondition`, `calculateStepTime`, `validateTemplateFilters` |
 | `lib/internal_functions.js` | All 23 built-in functions |
 | `lib/job_executor.js` | `executeJob`, inline blocks for `task_due_reminder` / `task_daily_digest` / `campaign_send` |
 | `routes/process_jobs.js` | Heartbeat: claim jobs, dispatch, record results, reschedule recurring |
@@ -1848,9 +1875,9 @@ This is the **Resume-Refetch-Recheck-Send pattern (§3.1)**, kicked off by an ex
 | `routes/sequences.js` | Template + enrollment CRUD |
 | `services/campaignService.js` | `createCampaign`, `executeSend`, `cancelCampaign`, `checkCompletion` |
 | `services/hookService.js` | `executeHook`, `executeRetry`, `queueRetryJob`, `deliverToTarget` (dispatcher), `deliverHttp`/`deliverWorkflow`/`deliverSequence`/`deliverInternalFunction`, `buildDryRunPreview`, `resolveParamsMapping`, `getByPath` |
-| `services/apptService.js` | `createAppt`, `markAttended`, `markNoShow`, `cancelAppt`, `rescheduleAppt`, `cancelApptWorkflow` |
+| `services/apptService.js` | `createAppt`, `markAttended`, `markNoShow`, `cancelAppt`, `rescheduleAppt`, `rescheduleLater`, `cancelApptAutomation`, `enrollApptReminderSequences`, `insertApptLog`, `fetchApptWithContact` |
 | `services/taskService.js` | `createTask`, `completeTask`, `scheduleDueReminder`, `cancelDueReminder` + email builders |
-| `services/calendarService.js` | `isWorkday`, `nextBusinessDay`, `prevBusinessDay` |
+| `services/calendarService.js` | `isWorkday`, `nextBusinessDay`, `prevBusinessDay`, `nextFriendlyTime` |
 | `services/resolverService.js` | `resolve({ db, text, refs, strict })` |
 | `services/timezoneService.js` | `localToUTC`, `utcToLocal`, `nowLocal`, `formatLocal` |
 

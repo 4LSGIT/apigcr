@@ -21,12 +21,13 @@ When you need to pick a real datetime — e.g. setting a follow-up for "next Tue
 
 ### Module: `services/calendarService.js`
 
-Exports three functions:
+Exports four functions:
 
 ```js
 isWorkday(dateIso)                              // → { isShabbos, isHoliday, holidayName, workday, workdayIn, nextDay }
 nextBusinessDay(fromDate, options)              // → Date (UTC)
 prevBusinessDay(fromDate, attempts, options)    // → { scheduledAt, attemptUsed }
+nextFriendlyTime(fromDate, offsetMs, options)   // → Date (UTC); "daytime-safe" offset
 ```
 
 ### Restricted days
@@ -125,6 +126,30 @@ Each attempt rule:
 
 `minHoursBefore` is the safeguard that prevents the engine from picking, say, "30 minutes before the appointment" when you asked for "24 hours before" but the 24-hour-prior moment is on a Saturday — it walks back further until it finds a Friday slot at least N hours out.
 
+### `nextFriendlyTime(fromDate, offsetMs, options)`
+
+A simpler, more focused helper than `nextBusinessDay` — for "send this in N minutes from now, unless N-minutes-from-now is rude (Friday evening or weekend), in which case roll forward to next Monday morning."
+
+Used by `apptService.enrollApptReminderSequences` to pick the welcome-SMS time for `iss_intake` enrollments — 11 minutes after appt creation by default, but if the appt is booked Friday at 8pm or Saturday, the welcome shifts to Monday 9am.
+
+```js
+const sendAt = calendarService.nextFriendlyTime(new Date(), 11 * 60 * 1000, {
+  timezone:      'America/Detroit',     // default: FIRM_TIMEZONE env
+  friCutoffHour: 19,                     // Friday >= this hour rolls (default 19 = 7pm)
+  fallbackTime:  '09:00'                 // H:MM applied on the rolled-to Monday (default 9am)
+});
+// On Wed at 2pm + 11 min  →  Wed at 2:11pm
+// On Fri at 7pm + 11 min  →  Mon at 9:00am
+// On Sat at 10am + 11 min →  Mon at 9:00am
+```
+
+**Differences from `nextBusinessDay`:**
+- Holiday-unaware (doesn't call Hebcal). Yom Tov dates pass through unchanged. Acceptable for short-fuse welcome messages; if you need holiday-awareness, use `nextBusinessDay`.
+- No business-day walk — it only knows about Friday-evening + weekend. Doesn't check Sundays as holidays.
+- No jitter — caller specifies exact offset.
+
+Returns a JS `Date` in UTC. Caller `.toISOString()` for trigger_data, etc.
+
 ### Random jitter (`randomizeMinutes`)
 
 Symmetric: an integer between `-N` and `+N` is added to the computed time. Distribution is uniform over `[-N, +N]` minutes inclusive. Capped at `1440` (24 hours).
@@ -144,7 +169,7 @@ All return JSON. The `isWorkday` route is unauth'd because it's used by other in
 ### Where it's called from
 
 - `sequenceEngine.calculateStepTime()` for `next_business_day`, `business_days`, `before_appt` timing types
-- `apptService` (workday-aware reminder scheduling)
+- `apptService.enrollApptReminderSequences()` for `iss_intake` welcome-time computation (via `nextFriendlyTime`)
 - The three test/inspect routes above
 - Manually via the gate-check pattern inside recurring scheduled jobs
 
