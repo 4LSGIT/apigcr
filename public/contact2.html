@@ -1545,7 +1545,7 @@ async function viewContactEnrollment(id) {
               <td>${stepCell}</td>
               <td>${actCell}</td>
               <td>${primary}${secondary}</td>
-              <td>${cseqFmtDate(h.scheduled_time)}</td>
+              <td>${cseqFmtDate(h.scheduled_time)}${cseqFireNowBtnHtml(en, h)}</td>
               <td>${hasLog ? cseqFmtDate(h.executed_at) : '—'}</td>
               <td>${attempts}</td>
               <td>${duration}</td>
@@ -1605,6 +1605,13 @@ async function viewContactEnrollment(id) {
       confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel enrollment',
       confirmButtonColor: '#dc2626',
       reverseButtons: true,   // [Cancel enrollment] [Close]
+      didOpen: (popup) => {
+        popup.querySelectorAll('.cseq-fire-now-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            handleContactSequenceFireNow(id, btn.dataset.jobId, btn.dataset.scheduledRaw);
+          });
+        });
+      },
     });
  
     if (res.isConfirmed && isActive) {
@@ -1616,6 +1623,76 @@ async function viewContactEnrollment(id) {
   } catch (err) {
     Swal.fire({ icon: 'error', title: 'Failed to load enrollment',
                 text: err.message || String(err) });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Fire Now — render helper + handler. Parallel to handleSequenceFireNow
+// in sequences.html. Rendered as a small button in the Scheduled column
+// of the step-history table, only on the row representing the next-to-
+// execute step:
+//   - enrollment.status === 'active'
+//   - row has no log entry (step hasn't run)
+//   - job_status === 'pending'
+// Engine invariant guarantees at most one such row per enrollment.
+//
+// Reschedules the job to NOW; the next /process-jobs tick picks it up.
+// fire_guard and condition still apply at execution — this is NOT a
+// force-execute, just a scheduling override.
+// ─────────────────────────────────────────────────────────────────────────
+function cseqFireNowBtnHtml(en, h) {
+  const hasLog      = h.log_id != null;
+  const isActive    = String(en.status).toLowerCase() === 'active';
+  const showFireBtn = isActive && !hasLog && h.job_status === 'pending';
+  if (!showFireBtn) return '';
+  return `
+    <button type="button" class="cseq-fire-now-btn"
+            data-job-id="${h.job_id}"
+            data-scheduled-raw="${cseqEsc(h.scheduled_time || '')}"
+            title="Reschedule this step to fire on the next process-jobs tick"
+            style="margin-left:8px;padding:2px 8px;font-size:10px;
+                   background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer">
+      <i class="fa-solid fa-play"></i> Fire Now
+    </button>`;
+}
+
+async function handleContactSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
+  // Close the enrollment-detail modal first so the confirmation dialog
+  // owns the screen; we'll re-open the detail modal after success.
+  Swal.close();
+
+  const result = await Swal.fire({
+    title: 'Fire this step now?',
+    html: `
+      <div style="text-align:left;font-size:13px;line-height:1.5">
+        <p><b>Job:</b> #${cseqEsc(String(jobId))}</p>
+        <p style="margin-top:6px"><b>Original scheduled:</b> ${cseqFmtDate(scheduledRaw)}</p>
+        <p style="margin-top:10px">This reschedules the job to <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
+        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply — a step that fails its condition will skip, just as it would have at the original time.</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Fire now',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#2563eb',
+  });
+  if (!result.isConfirmed) {
+    // User backed out — re-open the enrollment-detail modal.
+    viewContactEnrollment(enrollmentId);
+    return;
+  }
+
+  try {
+    const resp = await P.apiSend(`/sequences/enrollments/${enrollmentId}/fire-next`, 'POST');
+    cseqToast('success', `Job ${resp.job_id} → NOW. Will fire on next process-jobs tick.`);
+    // Refresh the list (scheduled_time changed) then re-open the detail modal.
+    await loadContactSequences();
+    setTimeout(() => viewContactEnrollment(enrollmentId), 250);
+  } catch (e) {
+    cseqToast('error', e.message || 'Fire-now failed');
+    // Re-open the detail modal so the user sees current state.
+    setTimeout(() => viewContactEnrollment(enrollmentId), 250);
   }
 }
  

@@ -2960,7 +2960,7 @@ async function viewSequenceEnrollment(id) {
               <td>${h.step_number ?? '—'}</td>
               <td>${esc(h.action_type || '—')}</td>
               <td>${primary}${secondary}</td>
-              <td class="text-sm">${seqEnrollFmtDate(h.scheduled_time)}</td>
+              <td class="text-sm">${seqEnrollFmtDate(h.scheduled_time)}${seqFireNowBtnHtml(en, h)}</td>
               <td class="text-sm">${hasLog ? seqEnrollFmtDate(h.executed_at) : '—'}</td>
               <td>${attemptsCell}</td>
               <td class="text-sm">${durationCell}</td>
@@ -3012,9 +3012,83 @@ async function viewSequenceEnrollment(id) {
           </table>
         </div>
       `,
+      didOpen: (popup) => {
+        popup.querySelectorAll('.fire-now-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            handleSequenceFireNow(id, btn.dataset.jobId, btn.dataset.scheduledRaw);
+          });
+        });
+      },
     });
   } catch (e) {
     Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: e.message, timer: 2500, showConfirmButton: false });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Fire Now — render helper + handler.
+//
+// Rendered as a small button in the Scheduled column of the step-history
+// table, only on the row that represents the next-to-execute step:
+//   - enrollment.status === 'active'
+//   - row has no log entry (step hasn't run)
+//   - job_status === 'pending'
+// Engine invariant guarantees at most one such row per enrollment.
+//
+// The handler reschedules the job to NOW; the next /process-jobs tick picks
+// it up. fire_guard and condition still apply at execution — this is purely
+// a scheduling override, not a force-execute.
+// ─────────────────────────────────────────────────────────────
+function seqFireNowBtnHtml(en, h) {
+  const hasLog      = h.log_id != null;
+  const showFireBtn = en.status === 'active' && !hasLog && h.job_status === 'pending';
+  if (!showFireBtn) return '';
+  return `
+    <button type="button" class="btn btn-primary btn-sm fire-now-btn"
+            data-job-id="${h.job_id}"
+            data-scheduled-raw="${esc(h.scheduled_time || '')}"
+            title="Reschedule this step to fire on the next process-jobs tick"
+            style="margin-left:8px;padding:2px 8px;font-size:10px">
+      <i class="fa-solid fa-play"></i> Fire Now
+    </button>`;
+}
+
+async function handleSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
+  const result = await Swal.fire({
+    title: 'Fire this step now?',
+    html: `
+      <div style="text-align:left;font-size:13px;line-height:1.5">
+        <p><b>Job:</b> #${esc(String(jobId))}</p>
+        <p style="margin-top:6px"><b>Original scheduled:</b> ${seqEnrollFmtDate(scheduledRaw)}</p>
+        <p style="margin-top:10px">This reschedules the job to <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
+        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply — a step that fails its condition will skip, just as it would have at the original time.</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Fire now',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f8ef7',
+  });
+  if (!result.isConfirmed) return;
+
+  try {
+    const resp = await api(`/sequences/enrollments/${enrollmentId}/fire-next`, 'POST');
+    Swal.fire({
+      toast: true, position: 'top-end', icon: 'success',
+      title: `Job ${resp.job_id} → NOW`,
+      text:  'Will fire on next process-jobs tick',
+      timer: 2500, showConfirmButton: false,
+    });
+    // Refresh the enrollment-detail popup with the new scheduled_time.
+    // Small delay so the toast mounts before the modal re-opens.
+    setTimeout(() => viewSequenceEnrollment(enrollmentId), 250);
+  } catch (e) {
+    Swal.fire({
+      toast: true, position: 'top-end', icon: 'error',
+      title: e.message || 'Fire-now failed',
+      timer: 3500, showConfirmButton: false,
+    });
   }
 }
 

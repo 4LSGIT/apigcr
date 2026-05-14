@@ -1204,6 +1204,103 @@ router.post('/sequences/enrollments/:id/cancel', jwtOrApiKey, async (req, res) =
   }
 });
 
+// POST /sequences/enrollments/:id/fire-next
+//
+// Reschedules the enrollment's pending step job to NOW so the next
+// /process-jobs tick picks it up.
+//
+// NOT a force-execute — the engine still evaluates the step's fire_guard
+// and condition when it runs. This is purely a scheduling override. A step
+// that would have skipped at its original time will still skip now.
+//
+// Race with /process-jobs:
+//   Between our SELECT and UPDATE, the heartbeat can claim the job (it does
+//   SELECT ... FOR UPDATE SKIP LOCKED, then UPDATE status='running'). We
+//   rely on our UPDATE's `WHERE status='pending'` filter as the lock — if
+//   affectedRows === 0, we lost the race; return 409. Do NOT retry.
+//
+// Use scheduled_jobs.sequence_enrollment_id (canonical column) — never filter
+// via JSON_EXTRACT(data, '$.enrollmentId').
+router.post('/sequences/enrollments/:id/fire-next', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const id = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid enrollment ID' });
+  }
+
+  try {
+    // 1) Load enrollment
+    const [[en]] = await db.query(
+      `SELECT id, status FROM sequence_enrollments WHERE id = ?`,
+      [id]
+    );
+    if (!en) return res.status(404).json({ error: 'Enrollment not found' });
+    if (en.status !== 'active') {
+      return res.status(409).json({
+        error: `Enrollment is ${en.status}, not active`,
+        enrollment_status: en.status,
+      });
+    }
+
+    // 2) Find the pending scheduled_jobs row
+    const [[job]] = await db.query(
+      `SELECT id, scheduled_time, status, data
+         FROM scheduled_jobs
+        WHERE sequence_enrollment_id = ?
+          AND status = 'pending'
+        ORDER BY id DESC
+        LIMIT 1`,
+      [id]
+    );
+    if (!job) {
+      return res.status(409).json({
+        error: 'No pending step job for this enrollment',
+        enrollment_status: en.status,
+      });
+    }
+
+    // 3) Race-safe UPDATE. The WHERE status='pending' is the only thing
+    //    standing between us and double-execution.
+    const [upd] = await db.query(
+      `UPDATE scheduled_jobs
+          SET scheduled_time = NOW(), updated_at = NOW()
+        WHERE id = ? AND status = 'pending'`,
+      [job.id]
+    );
+    if (upd.affectedRows !== 1) {
+      return res.status(409).json({ error: 'Job is already executing' });
+    }
+
+    // 4) Read back the new scheduled_time (NOW() at UPDATE moment) and
+    //    pull stepNumber out of the data JSON for the response.
+    const [[after]] = await db.query(
+      `SELECT scheduled_time FROM scheduled_jobs WHERE id = ?`,
+      [job.id]
+    );
+    let stepNumber = null;
+    try {
+      const d = typeof job.data === 'string' ? JSON.parse(job.data) : job.data;
+      if (d && Number.isInteger(d.stepNumber)) stepNumber = d.stepNumber;
+    } catch { /* leave null */ }
+
+    return res.json({
+      success:               true,
+      enrollment_id:         id,
+      job_id:                job.id,
+      original_scheduled_at: new Date(job.scheduled_time).toISOString(),
+      new_scheduled_at:      new Date(after.scheduled_time).toISOString(),
+      step_number:           stepNumber,
+      note: "Job will fire on the next /process-jobs tick (within ~5 min, "
+          + "target ~1 min once cadence is tightened). The step's fire_guard "
+          + "and condition still apply at execution.",
+    });
+  } catch (err) {
+    console.error('[POST /sequences/enrollments/:id/fire-next] failed:', err);
+    return res.status(500).json({ error: 'Failed to fire next step', message: err.message });
+  }
+});
+
 // PATCH /sequences/templates/:id/steps/reorder — swap two steps
 router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, res) => {
   const db         = req.db;
