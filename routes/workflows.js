@@ -1728,10 +1728,6 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
  *   - scheduled_jobs: any pending/running 'workflow_resume' for this
  *     execution is deleted (not "failed" — deletion matches the legacy
  *     behaviour of this route, and cancelled resumes have no audit value).
- *
- * Note: apptService.cancelApptWorkflow bypasses this route and writes
- *       directly (it's the lifecycle-driven cancel path — no user-facing
- *       reason applies). That path intentionally leaves cancel_reason NULL.
  */
 router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
   const db = req.db;

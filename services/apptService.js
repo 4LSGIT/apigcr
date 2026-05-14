@@ -21,7 +21,6 @@ const taskService  = require('./taskService');
 const logService   = require('./logService');
 const { localToUTC, FIRM_TZ } = require('./timezoneService');
 const { DateTime } = require('luxon');
-const { advanceWorkflow } = require('../lib/workflow_engine');
 const calendar = require('./calendarService');
 
 // Lazy-require to avoid circular dependency (sequenceEngine → job_executor → internal_functions)
@@ -103,43 +102,24 @@ async function insertApptLog(db, apptId, actingUserId, extraFields = {}) {
 }
 
 /**
- * Cancel the reminder workflow for an appointment.
- * Called by every status-change function.
+ * Cancel all reminder automation tied to an appointment — currently just
+ * sequence enrollments scoped to this appt_id (pre_appt, iss_intake, or
+ * any future appt-scoped type). Kept as a thin wrapper around
+ * cancelByApptId so additional appt-scoped teardown (tasks, scheduled
+ * jobs, etc.) can be added here later without re-touching every caller.
+ *
+ * Non-blocking — automation teardown should never block the status-change
+ * that triggered it. Caller passes a reason string that lands in
+ * sequence_enrollments.cancel_reason for audit.
  */
-async function cancelApptWorkflow(db, apptId) {
-  const [[appt]] = await db.query(
-    'SELECT appt_workflow_execution_id FROM appts WHERE appt_id = ?',
-    [apptId]
-  );
-  if (!appt?.appt_workflow_execution_id) return;
-
-  const execId = appt.appt_workflow_execution_id;
-
-  await db.query(
-    `UPDATE workflow_executions
-     SET status = 'cancelled', updated_at = NOW()
-     WHERE id = ? AND status IN ('active', 'delayed', 'processing')`,
-    [execId]
-  );
-
-  await db.query(
-    `UPDATE scheduled_jobs
-     SET status = 'failed', updated_at = NOW()
-     WHERE workflow_execution_id = ? AND status = 'pending'`,
-    [execId]
-  );
-
-  console.log(`[APPT SERVICE] Cancelled reminder workflow execution ${execId} for appt ${apptId}`);
-}
-
-/**
- * Determine the case_tab for a given appointment type.
- */
-function determineCaseTab(apptType) {
-  if (!apptType) return '';
-  if (apptType === '341 Meeting') return '341';
-  if (apptType === 'Initial Strategy Session') return 'ISSN';
-  return '';
+async function cancelApptAutomation(db, apptId, reason = 'manual') {
+  try {
+    const seq = getSequenceEngine();
+    seq.cancelByApptId(db, apptId, reason)
+      .catch(err => console.error('[APPT SERVICE] Cancel sequences failed:', err.message));
+  } catch (err) {
+    console.error('[APPT SERVICE] Sequence engine error in cancelApptAutomation:', err.message);
+  }
 }
 
 /**
@@ -160,6 +140,126 @@ async function fetchApptWithContact(db, apptId) {
   return appt || null;
 }
 
+/**
+ * Enroll the appropriate appt-reminder sequences for a new appointment.
+ *
+ * Always enrolls pre_appt (cascade-matched on appt_type × appt_with).
+ * If appt_type is 'Initial Strategy Session', ALSO enrolls iss_intake.
+ *
+ * Pre-computes timing ISOs that the templates reference in trigger_data:
+ *   - day_before_6pm_at  (341 only — 6 PM firm-local the day before)
+ *   - trustee_link       (341 only — looked up by case_trustee name)
+ *   - welcome_at         (ISS only — nextFriendlyTime, daytime-safe)
+ *   - reminder1_at       (ISS only — 12h after welcome, capped 4 PM, skip Sat)
+ *   - reminder2_at       (ISS only — 24h after reminder1, skip weekend to Mon 1 PM)
+ *
+ * Non-blocking — any failure is logged and swallowed.
+ */
+async function enrollApptReminderSequences(db, {
+  appt_id,
+  contact_id,
+  case_id,
+  appt_type,
+  appt_with,
+  appt_date,
+  appt_date_utc,
+}) {
+  // ── 341-only: 6 PM day-before (firm-local), trustee link
+  let day_before_6pm_at = null;
+  let trustee_link = null;
+  if (appt_type === '341 Meeting') {
+    const apptDt = DateTime.fromJSDate(appt_date_utc, { zone: FIRM_TZ });
+    day_before_6pm_at = apptDt
+      .minus({ days: 1 })
+      .set({ hour: 18, minute: 0, second: 0, millisecond: 0 })
+      .toUTC()
+      .toISO();
+
+    if (case_id) {
+      try {
+        const [[row]] = await db.query(
+          `SELECT t.trustee_link
+           FROM cases c
+           LEFT JOIN trustees t ON t.trustee_full_name = c.case_trustee
+           WHERE c.case_id = ? AND c.case_trustee != ''
+           LIMIT 1`,
+          [case_id]
+        );
+        trustee_link = row?.trustee_link || null;
+      } catch (err) {
+        console.error('[APPT SERVICE] Trustee link lookup failed:', err.message);
+      }
+    }
+  }
+
+  // ── ISS-only: welcome + intake-nag times
+  let welcome_at = null;
+  let reminder1_at = null;
+  let reminder2_at = null;
+
+  if (appt_type === 'Initial Strategy Session') {
+    // Welcome: now + 11 min, rolled to Mon 9 AM if Fri-late or weekend.
+    const welcomeAt = calendar.nextFriendlyTime(new Date(), 11 * 60 * 1000);
+    welcome_at = welcomeAt.toISOString();
+
+    // reminder1: welcome + 12h, capped at 4 PM same day, Sat → Sun.
+    const welcomeDt = DateTime.fromJSDate(welcomeAt, { zone: FIRM_TZ });
+    let r1 = welcomeDt.plus({ hours: 12 });
+    if (r1.hour >= 16) {
+      r1 = r1.set({ hour: 16, minute: 0, second: 0, millisecond: 0 });
+    }
+    if (r1.weekday === 6) {
+      r1 = r1.plus({ days: 1 });
+    }
+    reminder1_at = r1.toUTC().toISO();
+
+    // reminder2: reminder1 + 24h. If lands Sat/Sun, jump to next Mon at 1 PM.
+    let r2 = r1.plus({ hours: 24 });
+    if (r2.weekday === 6 || r2.weekday === 7) {
+      while (r2.weekday !== 1) r2 = r2.plus({ days: 1 });
+      r2 = r2.set({ hour: 13, minute: 0, second: 0, millisecond: 0 });
+    }
+    reminder2_at = r2.toUTC().toISO();
+  }
+
+  // ── Build trigger_data (frozen at enrollment) ──
+  const triggerData = {
+    appt_id,
+    appt_time:   appt_date_utc.toISOString(),
+    appt_type,
+    appt_with:   Number(appt_with),
+    case_id:     case_id || null,
+    enrolled_by: 'createAppt',
+    // 341-only (null for non-341)
+    day_before_6pm_at,
+    trustee_link,
+    // ISS-only (null for non-ISS)
+    welcome_at,
+    reminder1_at,
+    reminder2_at,
+  };
+
+  const seq = getSequenceEngine();
+
+  // ── Enroll pre_appt (always) ──
+  try {
+    await seq.enrollContact(db, contact_id, 'pre_appt', triggerData);
+    console.log(`[APPT SERVICE] Enrolled appt ${appt_id} in pre_appt sequence`);
+  } catch (err) {
+    console.error(`[APPT SERVICE] pre_appt enrollment failed for appt ${appt_id}:`, err.message);
+  }
+
+  // ── Enroll iss_intake (ISS only) ──
+  if (appt_type === 'Initial Strategy Session') {
+    try {
+      await seq.enrollContact(db, contact_id, 'iss_intake', triggerData);
+      console.log(`[APPT SERVICE] Enrolled appt ${appt_id} in iss_intake sequence`);
+    } catch (err) {
+      console.error(`[APPT SERVICE] iss_intake enrollment failed for appt ${appt_id}:`, err.message);
+    }
+  }
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // createAppt
@@ -168,14 +268,17 @@ async function fetchApptWithContact(db, apptId) {
 /**
  * Create a new appointment.
  *
- * Immediate side effects:
+ * Immediate side effects (transaction):
  *   - INSERT into appts (with appt_date_utc computed from local appt_date)
  *   - Log entry
- *   - If 341 Meeting: UPDATE cases.case_341_current
+ *   - If 341 Meeting: supersede prior 341 (mark Rescheduled) + UPDATE cases.case_341_current
+ *
+ * Post-commit (non-blocking):
+ *   - 341 supersession: cancel old appt's automation + GCal-delete + log
  *   - Cancel active no_show sequences for this contact
- *   - Send confirmation SMS if provided
- *   - GCal create via Pabbly (fire-and-forget)
- *   - Start reminder workflow → store execution_id on appt row (TODO: Phase 3)
+ *   - Send confirmation SMS / email if provided
+ *   - GCal create via Pabbly
+ *   - Enroll in pre_appt + (if ISS) iss_intake sequences
  *
  * @param {object} db
  * @param {object} opts
@@ -206,12 +309,13 @@ async function createAppt(db, {
   const apptDateUTC = localToUTC(new Date(appt_date));
 
   // ────────────────────────────────────────────────────────────
-  // Atomic core writes (transaction): INSERT appt + log + 341 pointer
+  // Atomic core writes (transaction): INSERT appt + log + 341 supersession + pointer.
   // If any of these fail, we don't want the appt to exist.
-  // Everything after this runs on the pool and is fire-and-forget.
+  // Post-commit side effects (sequences, GCal, etc.) are fire-and-forget.
   // ────────────────────────────────────────────────────────────
   const conn = await db.getConnection();
   let apptId;
+  let supersededAppt = null; // { appt_id, appt_gcal } for any prior 341 we're replacing
   try {
     await conn.beginTransaction();
 
@@ -232,8 +336,29 @@ async function createAppt(db, {
     if (note) logExtras.Note = note;
     await insertApptLog(conn, apptId, actingUserId, logExtras);
 
-    // 3) If 341 Meeting, update case pointer — MUST succeed or we roll back
+    // 3) 341 Meeting: supersede prior 341 for this case + update case pointer
     if (appt_type === '341 Meeting' && case_id) {
+      // 3a) Find the prior 341 (if any) and mark Rescheduled — but only if
+      //     it's still 'Scheduled'. rescheduleAppt may have already handled
+      //     teardown if it's the caller; in that case the prior is already
+      //     Rescheduled and we skip the inner UPDATE + post-commit work.
+      const [[prior]] = await conn.query(
+        `SELECT a.appt_id, a.appt_gcal, a.appt_status
+         FROM cases c
+         JOIN appts a ON a.appt_id = c.\`341_appt_id\`
+         WHERE c.case_id = ? AND c.\`341_appt_id\` != 0 AND c.\`341_appt_id\` != ?
+         LIMIT 1`,
+        [case_id, apptId]
+      );
+      if (prior && prior.appt_status === 'Scheduled') {
+        await conn.query(
+          `UPDATE appts SET appt_status = 'Rescheduled' WHERE appt_id = ?`,
+          [prior.appt_id]
+        );
+        supersededAppt = { appt_id: prior.appt_id, appt_gcal: prior.appt_gcal };
+      }
+
+      // 3b) Point the case at the new 341
       await conn.query(
         'UPDATE cases SET case_341_current = ?, `341_appt_id` = ? WHERE case_id = ?',
         [appt_date, apptId, case_id]
@@ -251,7 +376,26 @@ async function createAppt(db, {
     conn.release();
   }
 
-  // 4) Cancel active no_show sequences for this contact
+  // 3c) Post-commit 341 supersession side effects (non-blocking)
+  if (supersededAppt) {
+    cancelApptAutomation(db, supersededAppt.appt_id, '341_superseded')
+      .catch(err => console.error('[APPT SERVICE] cancelApptAutomation (341 supersession) failed:', err.message));
+
+    if (supersededAppt.appt_gcal) {
+      pabbly.send(db, 'gcal_delete', {
+        appt_gcal: supersededAppt.appt_gcal,
+        appt_id:   supersededAppt.appt_id,
+      });
+    }
+
+    insertApptLog(db, supersededAppt.appt_id, actingUserId, {
+      Status:     'Rescheduled',
+      'New Appt': apptId,
+      Reason:     '341_superseded',
+    }).catch(err => console.error('[APPT SERVICE] Supersession log failed:', err.message));
+  }
+
+  // 4) Cancel active no_show sequences for this contact (contact-level)
   try {
     const seq = getSequenceEngine();
     await seq.cancelSequences(db, contact_id, 'no_show', 'new_appointment_booked');
@@ -301,115 +445,20 @@ async function createAppt(db, {
     case_id
   });
 
-  // 7) Start reminder workflow
-  let workflowExecutionId = null;
+  // 7) Reminder automation — enroll in pre_appt + (if ISS) iss_intake sequences
   try {
-    const wfId = await getSetting(db, 'appt_reminder_workflow_id');
-    if (wfId) {
-      // Build display strings in firm timezone from the local appt_date
-      // (appt_date is firm-local stored as fake UTC by mysql2)
-      const apptLocal = DateTime.fromISO(
-        new Date(appt_date).toISOString().slice(0, 19),
-        { zone: FIRM_TZ }
-      );
- 
-      // Pre-compute resume timestamps from real UTC
-      // Any timestamp already in the past → null (schedule_resume will skip)
-      const now = Date.now();
-      const utcMs = apptDateUTC.getTime();
- 
-      // 341: day before at 6 PM firm time
-      let resume_day_before = null;
-      if (appt_type === '341 Meeting') {
-        const dayBefore = apptLocal.minus({ days: 1 }).set({ hour: 18, minute: 0, second: 0 });
-        const dayBeforeUTC = dayBefore.toUTC().toJSDate();
-        resume_day_before = dayBeforeUTC.getTime() > now ? dayBeforeUTC.toISOString() : null;
-      }
- 
-      // Non-341: 24h before using prevBusinessDay for business-day awareness
-      let resume_24h = null;
-      if (appt_type !== '341 Meeting') {
-        try {
-          const prevBiz = await calendar.prevBusinessDay(apptDateUTC, [
-            { hoursBack: 24, timeOfDay: '10:00', minHoursBefore: 4 }
-          ], { minHoursBefore: 4 });
-          if (prevBiz?.scheduledAt && prevBiz.scheduledAt.getTime() > now) {
-            resume_24h = prevBiz.scheduledAt.toISOString();
-          }
-        } catch (err) {
-          console.error('[APPT SERVICE] prevBusinessDay failed:', err.message);
-        }
-      }
- 
-      // Simple offsets from real UTC
-      const resume_2h  = (utcMs - 2 * 3600000)  > now ? new Date(utcMs - 2 * 3600000).toISOString()  : null;
-      const resume_10m = (utcMs - 10 * 60000)    > now ? new Date(utcMs - 10 * 60000).toISOString()   : null;
-      const resume_3m  = (utcMs - 3 * 60000)     > now ? new Date(utcMs - 3 * 60000).toISOString()    : null;
- 
-// Start the workflow
-      const initData = {
-        appt_id:           apptId,
-        appt_type,
-        appt_platform,
-        case_id:           case_id || '',
-        case_tab:          determineCaseTab(appt_type),
-        appt_with,
-        // Slice 4.3 Part B — surface contact_id in init_data so workflow
-        // steps can reference {{contact_id}} directly, AND so the template
-        // default mechanism (workflows.default_contact_id_from = 'contact_id')
-        // works for any future non-appt caller that routes through
-        // POST /workflows/:id/start. This path (apptService direct INSERT)
-        // populates the column explicitly in the INSERT below, so it doesn't
-        // depend on the default mechanism — both paths now produce the same
-        // wiring.
-        contact_id,
-        sms_staff_from:    await getSetting(db, 'sms_staff_from') || '2486213656',
-        sms_client_from:   await getSetting(db, 'sms_default_from') || '2485592400',
-        // Display strings (pre-formatted, frozen at creation time)
-        appt_time_display: apptLocal.toFormat('h:mm a'),       // "2:30 PM"
-        appt_day_name:     apptLocal.toFormat('cccc'),          // "Wednesday"
-        appt_date_display: apptLocal.toFormat('LLL. d'),        // "Mar. 19"
-        // Resume timestamps (real UTC, null if already past)
-        resume_day_before,
-        resume_24h,
-        resume_2h,
-        resume_10m,
-        resume_3m,
-      };
- 
-      // Create execution row. Populates the new contact_id column directly
-      // — this path bypasses POST /workflows/:id/start (and therefore the
-      // shared resolveExecutionContactId helper), but the caller always
-      // knows contact_id at this point, so using it directly is simpler
-      // and doesn't require re-reading the workflows row.
-      const [execResult] = await db.query(
-        `INSERT INTO workflow_executions
-           (workflow_id, contact_id, status, init_data, variables, current_step_number)
-         VALUES (?, ?, 'active', ?, ?, 1)`,
-        [parseInt(wfId), contact_id, JSON.stringify(initData), JSON.stringify(initData)]
-      );
-      workflowExecutionId = execResult.insertId;
- 
-      // Store execution ID on the appointment
-      await db.query(
-        'UPDATE appts SET appt_workflow_execution_id = ? WHERE appt_id = ?',
-        [workflowExecutionId, apptId]
-      );
- 
-      // Advance in background (non-blocking)
-      advanceWorkflow(workflowExecutionId, db)
-        .then(r => console.log(`[APPT SERVICE] Reminder workflow ${workflowExecutionId} started: ${r.status}`))
-        .catch(err => console.error(`[APPT SERVICE] Reminder workflow failed:`, err.message));
- 
-      console.log(`[APPT SERVICE] Started reminder workflow ${workflowExecutionId} for appt ${apptId} (${appt_type})`);
-    } else {
-      console.log('[APPT SERVICE] appt_reminder_workflow_id not set in app_settings — skipping workflow');
-    }
+    await enrollApptReminderSequences(db, {
+      appt_id:       apptId,
+      contact_id,
+      case_id,
+      appt_type,
+      appt_with,
+      appt_date,
+      appt_date_utc: apptDateUTC,
+    });
   } catch (err) {
-    // Workflow failure should never block appointment creation
-    console.error('[APPT SERVICE] Failed to start reminder workflow:', err.message);
+    console.error('[APPT SERVICE] Reminder automation failed:', err.message);
   }
-
 
   // 8) Re-fetch the created appointment
   const [[appt]] = await db.query('SELECT * FROM appts WHERE appt_id = ?', [apptId]);
@@ -418,7 +467,7 @@ async function createAppt(db, {
     appt_id: apptId,
     appt,
     appt_date_utc: apptDateUTC,
-    workflow_execution_id: workflowExecutionId
+    workflow_execution_id: null   // kept for API shape compat with prior callers
   };
 }
 
@@ -431,8 +480,8 @@ async function createAppt(db, {
  * Mark an appointment as Attended.
  *
  * Side effects:
- *   - Cancel reminder workflow
- *   - Cancel active no_show sequences for this contact
+ *   - Cancel appt-scoped automation (workflow + pre_appt/iss_intake)
+ *   - Cancel contact-level no_show sequences
  *   - Log entry
  */
 async function markAttended(db, { appt_id, note = '', actingUserId = 0 }) {
@@ -462,11 +511,11 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0 }) {
   if (note) logExtras.Note = note;
   await insertApptLog(db, appt_id, actingUserId, logExtras);
 
-  // Cancel reminder workflow (non-blocking)
-  cancelApptWorkflow(db, appt_id)
-    .catch(err => console.error('[APPT SERVICE] Cancel workflow failed:', err.message));
+  // Cancel appt-scoped automation (workflow + pre_appt/iss_intake sequences)
+  cancelApptAutomation(db, appt_id, 'appointment_attended')
+    .catch(err => console.error('[APPT SERVICE] cancelApptAutomation failed:', err.message));
 
-  // Cancel no_show sequences (non-blocking)
+  // Cancel contact-level no_show sequences (separate scope from cancelByApptId)
   try {
     const seq = getSequenceEngine();
     seq.cancelSequences(db, appt.appt_client_id, 'no_show', 'appointment_attended')
@@ -487,7 +536,7 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0 }) {
  * Mark an appointment as No Show.
  *
  * Side effects:
- *   - Cancel reminder workflow
+ *   - Cancel appt-scoped automation (workflow + pre_appt/iss_intake)
  *   - If enroll=true and first no-show for contact: enroll in no_show sequence
  *   - Log entry
  */
@@ -524,8 +573,10 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
     [note ? ` ${note}` : '', appt_id]
   );
 
-  cancelApptWorkflow(db, appt_id)
-    .catch(err => console.error('[APPT SERVICE] Cancel workflow failed:', err.message));
+  // Cancel appt-scoped automation (workflow + pre_appt/iss_intake sequences).
+  // The new no_show enrollment below is a separate, contact-level concern.
+  cancelApptAutomation(db, appt_id, 'appointment_no_show')
+    .catch(err => console.error('[APPT SERVICE] cancelApptAutomation failed:', err.message));
 
   // Sequence enrollment
   let enrolled = false;
@@ -555,7 +606,7 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
             case_id:     appt.appt_case_id,
             appt_type:   appt.appt_type,
             appt_with:   appt.appt_with,
-            case_type:   appt.case_type,        // NEW — cascade field
+            case_type:   appt.case_type,
             enrolled_by: 'no_show_handler'
           });
           enrolled = true;
@@ -587,8 +638,8 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
  * Cancel an appointment.
  *
  * Side effects:
- *   - Cancel reminder workflow
- *   - Cancel no_show sequences for contact
+ *   - Cancel appt-scoped automation (workflow + pre_appt/iss_intake)
+ *   - Cancel contact-level no_show sequences
  *   - Optional: follow-up task, SMS/email confirmation, GCal delete
  */
 async function cancelAppt(db, {
@@ -624,11 +675,11 @@ async function cancelAppt(db, {
     [note ? ` ${note}` : '', appt_id]
   );
 
-  // 2) Cancel reminder workflow
-  cancelApptWorkflow(db, appt_id)
-    .catch(err => console.error('[APPT SERVICE] Cancel workflow failed:', err.message));
+  // 2) Cancel appt-scoped automation (workflow + pre_appt/iss_intake)
+  cancelApptAutomation(db, appt_id, 'appointment_cancelled')
+    .catch(err => console.error('[APPT SERVICE] cancelApptAutomation failed:', err.message));
 
-  // 3) Cancel no_show sequences
+  // 3) Cancel contact-level no_show sequences
   try {
     const seq = getSequenceEngine();
     seq.cancelSequences(db, appt.appt_client_id, 'no_show', 'appointment_cancelled')
@@ -720,8 +771,8 @@ async function cancelAppt(db, {
  *
  * Side effects:
  *   - Mark old appt as 'Rescheduled'
- *   - Cancel old appt's reminder workflow
- *   - Create new appt (calls createAppt, which starts a new workflow)
+ *   - Cancel old appt's automation (workflow + pre_appt/iss_intake)
+ *   - Create new appt (calls createAppt, which enrolls fresh sequences)
  *   - Log on old appt
  */
 async function rescheduleAppt(db, {
@@ -749,8 +800,10 @@ async function rescheduleAppt(db, {
     [note, appt_id]
   );
 
-  // 3) Cancel old reminder workflow
-  await cancelApptWorkflow(db, appt_id);
+  // 3) Cancel old appt's automation (workflow + pre_appt/iss_intake sequences).
+  //    Non-blocking — createAppt below proceeds regardless.
+  cancelApptAutomation(db, appt_id, 'appointment_rescheduled')
+    .catch(err => console.error('[APPT SERVICE] cancelApptAutomation (reschedule) failed:', err.message));
 
   // 3b) GCal delete for old appt (non-blocking)
   if (oldAppt.appt_gcal) {
@@ -758,7 +811,7 @@ async function rescheduleAppt(db, {
       .catch(err => console.error('[APPT SERVICE] GCal delete (reschedule) failed:', err.message));
   }
 
-  // 4) Create new appointment (handles workflow, GCal, sequences, etc.)
+  // 4) Create new appointment (handles enrollments, GCal, etc.)
   const newAppt = await createAppt(db, {
     contact_id:      oldAppt.appt_client_id,
     case_id:         oldAppt.appt_case_id,
@@ -796,7 +849,7 @@ async function rescheduleAppt(db, {
  * Optionally creates a follow-up task.
  *
  * Side effects:
- *   - Cancel reminder workflow
+ *   - Cancel appt-scoped automation (workflow + pre_appt/iss_intake)
  *   - Optional follow-up task
  *   - Log entry
  *
@@ -826,8 +879,9 @@ async function rescheduleLater(db, {
     [note, appt_id]
   );
 
-  // 2) Cancel reminder workflow
-  await cancelApptWorkflow(db, appt_id);
+  // 2) Cancel appt-scoped automation
+  cancelApptAutomation(db, appt_id, 'appointment_rescheduled_later')
+    .catch(err => console.error('[APPT SERVICE] cancelApptAutomation (rescheduleLater) failed:', err.message));
 
   // 2b) GCal delete (non-blocking)
   if (appt.appt_gcal) {
@@ -870,8 +924,7 @@ module.exports = {
   cancelAppt,
   rescheduleAppt,
   rescheduleLater,
-  cancelApptWorkflow,
+  cancelApptAutomation,
   insertApptLog,
-  determineCaseTab,
   fetchApptWithContact
 };

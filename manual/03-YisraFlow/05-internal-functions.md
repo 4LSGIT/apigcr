@@ -442,7 +442,6 @@ appt_ref_id, appt_note, appt_platform, appt_with
 - `appt_id` (PK)
 - `appt_end` (GENERATED ALWAYS AS `appt_date + interval appt_length minute`)
 - `appt_create_date` (set once)
-- `appt_workflow_execution_id` (managed by `apptService`)
 
 Reminder: `appt_status` is Title Case with spaces — `Scheduled`, `Attended`, `No Show`, `Canceled` (one L), `Rescheduled`. Setting it to `no_show` will silently fail to match anywhere downstream.
 

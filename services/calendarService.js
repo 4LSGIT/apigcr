@@ -518,7 +518,7 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
  */
 function nextFriendlyTime(from, offsetMs, opts = {}) {
   const {
-    timezone      = FIRM_TZ,
+    timezone      = DEFAULT_TZ,
     friCutoffHour = 19,
     fallbackTime  = '09:00',
   } = opts;
