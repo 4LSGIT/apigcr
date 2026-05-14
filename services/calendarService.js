@@ -490,6 +490,60 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// nextFriendlyTime — daytime-safe offset
+//
+// Used by sequence enrollers that want to schedule a "soon-but-not-rude"
+// fire time: now + N minutes, *unless* that lands Friday evening or the
+// weekend, in which case roll forward to the next Monday at fallbackTime.
+//
+// Deliberately narrow scope — covers the welcome / intake-request slots
+// of iss_intake. Other "schedule politely" rules (mid-week-late, cap-at-hour,
+// skip-Saturdays-only) belong in sibling helpers if and when they're needed;
+// trying to make one helper handle every variant proved to be a fool's
+// errand in the design pass.
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Compute a "friendly" send time = from + offsetMs, rolled forward to the
+ * next Monday at `fallbackTime` (firm-local) if the raw result lands in
+ * Friday-after-`friCutoffHour` or any weekend day.
+ *
+ * @param {Date|string} from
+ * @param {number}      offsetMs
+ * @param {object}      [opts]
+ * @param {string}      [opts.timezone='America/Detroit']  — IANA tz
+ * @param {number}      [opts.friCutoffHour=19]            — Friday >= this hour rolls
+ * @param {string}      [opts.fallbackTime='09:00']        — H:MM, applied on the rolled day
+ * @returns {Date}  JS Date in UTC; call .toISOString() for trigger_data
+ */
+function nextFriendlyTime(from, offsetMs, opts = {}) {
+  const {
+    timezone      = FIRM_TZ,
+    friCutoffHour = 19,
+    fallbackTime  = '09:00',
+  } = opts;
+
+  const startMs = (from instanceof Date ? from.getTime() : new Date(from).getTime()) + offsetMs;
+  let target = DateTime.fromJSDate(new Date(startMs), { zone: timezone });
+
+  // Luxon weekday: 1 = Mon ... 7 = Sun
+  const isFriLate = target.weekday === 5 && target.hour >= friCutoffHour;
+  const isWeekend = target.weekday === 6 || target.weekday === 7;
+
+  if (isFriLate || isWeekend) {
+    let next = target;
+    do {
+      next = next.plus({ days: 1 });
+    } while (next.weekday !== 1); // roll to Monday
+
+    const [h, m] = fallbackTime.split(':').map(Number);
+    target = next.set({ hour: h, minute: m, second: 0, millisecond: 0 });
+  }
+
+  return target.toJSDate();
+}
+
+// ─────────────────────────────────────────────────────────────
 // Exports
 // ─────────────────────────────────────────────────────────────
 
@@ -500,6 +554,7 @@ module.exports = {
   fetchHebcalEvents,
   buildRestrictedSet,
   isDayRestricted,
+  nextFriendlyTime,
   // Constants exposed for reference
   START_HOUR,
   END_HOUR,
