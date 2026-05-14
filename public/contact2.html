@@ -800,12 +800,21 @@ window.entityData = {
 
 // ── Data loading ────────────────────────────────────────────
 async function loadEntityData() {
+  // Slice 3 Stage B.2: include phones/emails/addresses for the
+  // contact-form repeaters. Children are flattened into ed.contact
+  // so the form's endpoints.load.path = 'contact' surfaces them
+  // alongside scalar contact columns. The aggregate PATCH response
+  // also gets re-flattened the same way (in contact-form.html's
+  // custom save flow) for a single source of truth.
   const data = await P.apiSend(
     `/api/contacts/${clientID}`, 'GET',
-    { include: 'cases,appts,tasks,log' }
+    { include: 'cases,appts,tasks,log,phones,emails,addresses' }
   );
   const ed       = window.entityData;
   ed.contact     = data.contact;
+  ed.contact.phones    = data.phones    || [];
+  ed.contact.emails    = data.emails    || [];
+  ed.contact.addresses = data.addresses || [];
   ed.cases       = data.cases     || [];
   ed.appts       = data.appts     || [];
   ed.tasks       = data.tasks     || [];
@@ -970,6 +979,17 @@ document.querySelectorAll('iframe').forEach(iframe => {
 window.addEventListener('message', async (e) => {
   if (e.data?.type === 'form-saved') {
     await refreshEntityData(e.data.form);
+  }
+  // Slice 3 Stage B.2: contact-form grows when the user adds
+  // phone/email/address rows or expands per-row advanced sections.
+  // The form reports its scrollHeight via postMessage; we set the
+  // iframe's height to match. Scoped to contact_info — other iframes
+  // (communicate.html) keep their default sizing.
+  if (e.data?.type === 'iframe-resize' && e.data?.form === 'contact_info') {
+    const iframe = E('tabInfoIframe');
+    if (iframe && e.data.height) {
+      iframe.style.height = e.data.height + 'px';
+    }
   }
 });
 

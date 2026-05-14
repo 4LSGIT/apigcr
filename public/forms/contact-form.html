@@ -6,8 +6,162 @@
   <title>Contact Information</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet"
+        integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLJAJ9/2PkPKZ5QiAj6Ta86w+fsb2TkcmfRyVX3pBnMFcV7oQPJkl9QevSCWr3W6A==" crossorigin="anonymous" referrerpolicy="no-referrer">
   <link href="/css/yc-forms.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* ──────────────────────────────────────────────────────────
+       Slice 3 Stage B.2 — repeater-specific styling
+       Local to this form. Keep yc-forms.css untouched.
+       ────────────────────────────────────────────────────────── */
+
+    /* Section header with title + History/Add affordances */
+    .ycp-section-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .ycp-section-head .yc-section-title { margin: 0; flex: 1; }
+    .ycp-section-head button {
+      background: none;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 12px;
+      color: #475569;
+      cursor: pointer;
+    }
+    .ycp-section-head button:hover { background: #f1f5f9; color: #0f172a; }
+    .yc-readonly .ycp-section-head .ycp-history-btn:hover { background: #f1f5f9; color: #0f172a; }
+    .yc-readonly .ycp-section-head .ycp-add-inline { display: none; }
+
+    /* Inline-style add button (lives in section head instead of bottom dashed bar) */
+    .ycp-add-inline {
+      color: #0d6efd;
+      border-color: #93c5fd;
+    }
+    .ycp-add-inline:hover { background: #eff6ff; color: #0a58ca; }
+
+    /* Per-row mini header: label + primary + remove on one tight row */
+    .ycp-row-main {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+    .ycp-row-main .yc-field { margin-bottom: 0; }
+    .ycp-primary-wrap {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding-bottom: 8px;
+      font-size: 12px;
+      color: #475569;
+      white-space: nowrap;
+    }
+    .ycp-primary-wrap input { margin: 0; cursor: pointer; }
+    .ycp-actions {
+      display: flex;
+      gap: 4px;
+      padding-bottom: 4px;
+    }
+    .ycp-advanced-toggle {
+      background: none;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      width: 32px;
+      height: 32px;
+      color: #6c757d;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .ycp-advanced-toggle:hover { background: #f1f5f9; color: #0f172a; }
+
+    /* Section title icon — sits left of the title text */
+    .ycp-section-icon {
+      color: #64748b;
+      margin-right: 6px;
+      font-size: 14px;
+    }
+
+    /* Readonly state for repeater controls.
+       Driven by JS (applyRepeaterReadonly) which sets readOnly on text/email
+       inputs and disabled on checkboxes/selects. CSS here just dims the
+       visual so view mode is obviously non-interactive. The advanced ⚙
+       toggle is intentionally NOT styled here so it stays usable in view
+       mode. */
+    .yc-readonly .yc-repeater-item input[readonly] {
+      background: #f8f9fa;
+      color: #475569;
+    }
+    .yc-readonly .yc-repeater-item input[disabled],
+    .yc-readonly .yc-repeater-item select[disabled] {
+      background: #f8f9fa;
+      color: #475569;
+      opacity: 0.7;
+    }
+    .yc-readonly .yc-repeater-item .yc-repeater-remove { display: none; }
+
+    /* Per-row error stamp (Stage B.2.b) — set via .dataset.ycpError when a
+       400 validation response includes a row-level error. Cleared by the
+       user editing any input in the row, or by the next showValidationModal
+       call (fresh re-stamp). */
+    .yc-repeater-item[data-ycp-error] {
+      border-left: 3px solid #ef4444;
+      background: #fef2f2;
+      padding-left: 8px;
+    }
+    .yc-repeater-item[data-ycp-error]::before {
+      content: attr(data-ycp-error);
+      display: block;
+      color: #b91c1c;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 4px 8px 4px 0;
+      margin: 0 0 6px 0;
+    }
+
+    /* Advanced block — collapsed by default; .open shows it */
+    .ycp-advanced { display: none; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #dee2e6; }
+    .ycp-repeater-item.ycp-open .ycp-advanced { display: block; }
+
+    /* Field width tweaks (mostly narrowing fixed-size inputs for the inline row) */
+    .ycp-w-phone   { flex: 0 0 160px; }
+    .ycp-w-label   { flex: 0 0 110px; }
+    .ycp-w-state   { flex: 0 0 80px; }
+    .ycp-w-zip     { flex: 0 0 110px; }
+    .ycp-w-grow    { flex: 1 1 auto; min-width: 180px; }
+
+    /* History modal table */
+    .ycp-hist-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .ycp-hist-table th, .ycp-hist-table td {
+      padding: 4px 8px;
+      text-align: left;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    .ycp-hist-table th { background: #f1f5f9; font-weight: 600; color: #475569; }
+    .ycp-revive-btn {
+      background: #fff;
+      border: 1px solid #93c5fd;
+      color: #0d6efd;
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .ycp-revive-btn:hover { background: #eff6ff; color: #0a58ca; }
+
+    /* Transfer modal list — readable, grouped by source contact */
+    .ycp-conflict-source { font-weight: 600; margin-top: 8px; }
+    .ycp-conflict-source:first-child { margin-top: 0; }
+    .ycp-conflict-list { margin: 4px 0 0 18px; font-size: 13px; }
+  </style>
 </head>
 <body>
 
@@ -40,7 +194,7 @@
     </div>
     <div class="yc-field yc-field-locked">
       <label class="yc-label">Contact ID</label>
-      <input type="text" name="contact_id" placeholder="Contact ID" data-yc-locked-msg="The Case ID cannot be changed">
+      <input type="text" name="contact_id" placeholder="Contact ID" data-yc-locked-msg="The Contact ID cannot be changed">
     </div>
   </div>
 
@@ -60,35 +214,186 @@
     </div>
   </div>
 
-  <!-- ── Row 3: Phone + Email ── -->
-  <div class="yc-row">
-    <div class="yc-field">
-      <label class="yc-label">Phone Number</label>
-      <input type="text" name="phone" placeholder="(000) 000-0000" data-yc-mask="phone">
-      <small class="yc-error"></small>
+  <!-- ════════════════════════════════════════════════════════════════
+       PHONES repeater
+       ════════════════════════════════════════════════════════════════ -->
+  <div class="yc-section">
+    <div class="ycp-section-head">
+      <div class="yc-section-title"><i class="fa-solid fa-phone ycp-section-icon"></i>Phone(s)</div>
+      <button type="button" class="ycp-history-btn" data-kind="phones">History</button>
+      <button type="button" class="ycp-add-inline yc-repeater-add" data-repeater="phones">+ Add Phone</button>
     </div>
-    <div class="yc-field">
-      <label class="yc-label">Email</label>
-      <input type="email" name="email" placeholder="Email">
-      <small class="yc-error"></small>
-    </div>
+    <div class="yc-repeater" id="phonesRepeater"></div>
   </div>
 
-  <!-- ── Row 4: Secondary Phone + Email ── -->
-  <div class="yc-row">
-    <div class="yc-field">
-      <label class="yc-label">Secondary Phone</label>
-      <input type="text" name="phone2" placeholder="(000) 000-0000" data-yc-mask="phone">
-      <small class="yc-error"></small>
+  <template id="phoneRowTemplate">
+    <div class="yc-repeater-item ycp-repeater-item">
+      <input type="hidden" name="id">
+      <div class="ycp-row-main">
+        <div class="yc-field ycp-w-phone">
+          <label class="yc-label">Phone</label>
+          <input type="text" name="phone" placeholder="(000) 000-0000" data-yc-mask="phone">
+        </div>
+        <div class="yc-field ycp-w-label">
+          <label class="yc-label">Label</label>
+          <select name="label">
+            <option value="Mobile" selected>Mobile</option>
+            <option value="Home">Home</option>
+            <option value="Work">Work</option>
+            <option value="Office">Office</option>
+            <option value="Fax">Fax</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <label class="ycp-primary-wrap">
+          <input type="checkbox" name="is_primary"> Primary
+        </label>
+        <div class="ycp-actions">
+          <button type="button" class="ycp-advanced-toggle" title="Show advanced fields">⚙</button>
+          <button type="button" class="yc-repeater-remove" title="Remove">×</button>
+        </div>
+      </div>
+      <div class="ycp-advanced">
+        <div class="yc-row">
+          <label class="ycp-primary-wrap"><input type="checkbox" name="sms_optout"> SMS opted out</label>
+          <label class="ycp-primary-wrap"><input type="checkbox" name="mms_capable" checked> MMS capable</label>
+          <label class="ycp-primary-wrap"><input type="checkbox" name="verified"> Verified</label>
+        </div>
+        <div class="yc-row">
+          <div class="yc-field ycp-w-grow">
+            <label class="yc-label">Notes</label>
+            <input type="text" name="notes" placeholder="Notes (optional)">
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="yc-field">
-      <label class="yc-label">Secondary Email</label>
-      <input type="email" name="email2" placeholder="Secondary email">
-      <small class="yc-error"></small>
+  </template>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       EMAILS repeater
+       ════════════════════════════════════════════════════════════════ -->
+  <div class="yc-section">
+    <div class="ycp-section-head">
+      <div class="yc-section-title"><i class="fa-solid fa-envelope ycp-section-icon"></i>Email(s)</div>
+      <button type="button" class="ycp-history-btn" data-kind="emails">History</button>
+      <button type="button" class="ycp-add-inline yc-repeater-add" data-repeater="emails">+ Add Email</button>
     </div>
+    <div class="yc-repeater" id="emailsRepeater"></div>
   </div>
 
-  <!-- ── Row 5: DOB + SSN ── -->
+  <template id="emailRowTemplate">
+    <div class="yc-repeater-item ycp-repeater-item">
+      <input type="hidden" name="id">
+      <div class="ycp-row-main">
+        <div class="yc-field ycp-w-grow">
+          <label class="yc-label">Email</label>
+          <input type="email" name="email" placeholder="Email">
+        </div>
+        <div class="yc-field ycp-w-label">
+          <label class="yc-label">Label</label>
+          <select name="label">
+            <option value="Personal" selected>Personal</option>
+            <option value="Work">Work</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <label class="ycp-primary-wrap">
+          <input type="checkbox" name="is_primary"> Primary
+        </label>
+        <div class="ycp-actions">
+          <button type="button" class="ycp-advanced-toggle" title="Show advanced fields">⚙</button>
+          <button type="button" class="yc-repeater-remove" title="Remove">×</button>
+        </div>
+      </div>
+      <div class="ycp-advanced">
+        <div class="yc-row">
+          <label class="ycp-primary-wrap"><input type="checkbox" name="email_optout"> Email opted out</label>
+          <label class="ycp-primary-wrap"><input type="checkbox" name="verified"> Verified</label>
+        </div>
+        <div class="yc-row">
+          <div class="yc-field ycp-w-grow">
+            <label class="yc-label">Notes</label>
+            <input type="text" name="notes" placeholder="Notes (optional)">
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ════════════════════════════════════════════════════════════════
+       ADDRESSES repeater
+       ════════════════════════════════════════════════════════════════ -->
+  <div class="yc-section">
+    <div class="ycp-section-head">
+      <div class="yc-section-title"><i class="fa-solid fa-location-dot ycp-section-icon"></i>Address(es)</div>
+      <button type="button" class="ycp-history-btn" data-kind="addresses">History</button>
+      <button type="button" class="ycp-add-inline yc-repeater-add" data-repeater="addresses">+ Add Address</button>
+    </div>
+    <div class="yc-repeater" id="addressesRepeater"></div>
+  </div>
+
+  <template id="addressRowTemplate">
+    <div class="yc-repeater-item ycp-repeater-item">
+      <input type="hidden" name="id">
+      <div class="yc-row">
+        <div class="yc-field yc-3x">
+          <label class="yc-label">Street Address</label>
+          <input type="text" name="address1" placeholder="Street address">
+        </div>
+      </div>
+      <div class="yc-row">
+        <div class="yc-field yc-3x">
+          <input type="text" name="address2" placeholder="Apt, suite, unit (optional)">
+        </div>
+      </div>
+      <div class="yc-row">
+        <div class="yc-field yc-2x">
+          <input type="text" name="city" placeholder="City">
+        </div>
+        <div class="yc-field ycp-w-state">
+          <input type="text" name="state" placeholder="State">
+        </div>
+        <div class="yc-field ycp-w-zip">
+          <input type="text" name="zip" placeholder="ZIP code" data-yc-mask="zip">
+        </div>
+      </div>
+      <div class="ycp-row-main">
+        <div class="yc-field ycp-w-label">
+          <label class="yc-label">Label</label>
+          <select name="label">
+            <option value="Home" selected>Home</option>
+            <option value="Work">Work</option>
+            <option value="Mailing">Mailing</option>
+            <option value="Other">Other</option>
+          </select>
+        </div>
+        <label class="ycp-primary-wrap">
+          <input type="checkbox" name="is_primary"> Primary
+        </label>
+        <div class="ycp-actions">
+          <button type="button" class="ycp-advanced-toggle" title="Show advanced fields">⚙</button>
+          <button type="button" class="yc-repeater-remove" title="Remove">×</button>
+        </div>
+      </div>
+      <div class="ycp-advanced">
+        <div class="yc-row">
+          <div class="yc-field ycp-w-label">
+            <label class="yc-label">Country</label>
+            <input type="text" name="country" placeholder="US" value="US">
+          </div>
+          <label class="ycp-primary-wrap"><input type="checkbox" name="verified"> Verified</label>
+        </div>
+        <div class="yc-row">
+          <div class="yc-field ycp-w-grow">
+            <label class="yc-label">Notes</label>
+            <input type="text" name="notes" placeholder="Notes (optional)">
+          </div>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ── DOB + SSN ── -->
   <div class="yc-row">
     <div class="yc-field">
       <label class="yc-label">Date of Birth</label>
@@ -102,27 +407,6 @@
     </div>
   </div>
 
-  <!-- ── Address section ── -->
-  <div class="yc-section">
-    <div class="yc-section-title">Address</div>
-    <div class="yc-row">
-      <div class="yc-field yc-3x">
-        <input type="text" name="address" placeholder="Street address">
-      </div>
-    </div>
-    <div class="yc-row">
-      <div class="yc-field yc-2x">
-        <input type="text" name="city" placeholder="City">
-      </div>
-      <div class="yc-field yc-fixed-sm">
-        <input type="text" name="state" placeholder="State">
-      </div>
-      <div class="yc-field yc-fixed-md">
-        <input type="text" name="zip" placeholder="ZIP code">
-      </div>
-    </div>
-  </div>
-
   <!-- ── Tags + Notes ── -->
   <div class="yc-row">
     <div class="yc-field">
@@ -132,8 +416,14 @@
     </div>
     <div class="yc-field">
       <label class="yc-label">Notes</label>
-      <textarea name="notes" rows="4" placeholder="Notes" maxlength="1000"></textarea>
-      <!-- Counter auto-injected by yc-forms.js -->
+      <!-- Stage B.2.b: scalar uses `contact_notes` (not `notes`) to avoid
+           a name collision with row-level `<input name="notes">` inputs in
+           the repeaters. After any row is populated, document-order
+           querySelector('[name="notes"]') would return the first row's
+           notes input, breaking populate/collect/diff for the scalar.
+           Form-field name now matches the DB column name. -->
+      <textarea name="contact_notes" rows="4" placeholder="Notes" maxlength="1000"></textarea>
+      <!-- Counter auto-injected by yc-forms.js (selects by textarea[maxlength]) -->
     </div>
   </div>
 
@@ -144,6 +434,42 @@
 
 <script src="/js/yc-forms.js"></script>
 <script>
+  /**
+   * Slice 3 Stage B.2 — contact-form.html
+   *
+   * Adds three native repeaters (phones, emails, addresses) on top of the
+   * aggregate PATCH /api/contacts/:id endpoint shipped in Stage A.
+   *
+   * Departures from stock yc-forms.js:
+   *
+   *  1. Full save() override. yc-forms.js's save() calls PATCH via _api()
+   *     (→ parent.apiSend), which throws Error("API error") with no body
+   *     access for 4xx responses. To handle the aggregate-PATCH's
+   *     structured 409 (conflicts) and 400 (errors) responses, we replace
+   *     save() with our own. Everything else (validate, getDiff,
+   *     _buildPatchPayload, form_submissions/workflow/log dispatch via
+   *     form._api) is reused from YF as-is. If yc-forms.js's save() changes
+   *     structurally, this override needs to be re-ported. Pattern follows
+   *     public/connections.html, which uses direct fetch with the parent's
+   *     JWT for the same reason.
+   *
+   *  2. Per-form glue (not in YF core):
+   *     - Per-kind primary-checkbox exclusivity inside each repeater
+   *     - Auto-promote first row's is_primary on add-to-empty
+   *     - Auto-promote next row's is_primary when primary row is removed
+   *     - Save-time at-least-one-primary guard with Swal prompt
+   *     - 409 conflict → transfer modal → retry with ?force=true
+   *     - 400 validation → error modal listing errors
+   *     - Per-kind History modal (read-only)
+   *     - Per-row Advanced toggle (show/hide secondary fields)
+   *     - iframe-resize message to parent on body resize
+   *
+   *  3. Scalar phone/email/address fields removed entirely. The repeaters
+   *     are the only data source. contact_phone2 / contact_email2 are
+   *     also dropped from the UI (Slice 3 deprecates them; Fred handles
+   *     residual DB values manually).
+   */
+
   const P = window.parent;
   const params = new URLSearchParams(location.search);
   const contactId = params.get('contact_id');
@@ -152,6 +478,7 @@
     document.body.innerHTML = '<p style="color:red;padding:20px;">Missing contact_id parameter.</p>';
   } else {
 
+    // ─── YCForm config ──────────────────────────────────────────────
     const form = new YCForm({
       formKey:       'contact_info',
       schemaVersion: 1,
@@ -164,69 +491,1135 @@
       readonly:      true,
 
       fields: {
-        contact_id:    { el: '[name="contact_id"]',  type: 'text',     readonly: true },
-        pname:         { el: '[name="pname"]',        type: 'text' },
-        fname:         { el: '[name="fname"]',        type: 'text' },
-        mname:         { el: '[name="mname"]',        type: 'text' },
-        lname:         { el: '[name="lname"]',        type: 'text' },
-        phone:         { el: '[name="phone"]',        type: 'text' },
-        email:         { el: '[name="email"]',        type: 'text' },
-        phone2:        { el: '[name="phone2"]',       type: 'text' },
-        email2:        { el: '[name="email2"]',       type: 'text' },
-        dob:           { el: '[name="dob"]',          type: 'date' },
-        ssn:           { el: '[name="ssn"]',          type: 'text' },
-        address:       { el: '[name="address"]',      type: 'text' },
-        city:          { el: '[name="city"]',         type: 'text' },
-        state:         { el: '[name="state"]',        type: 'text' },
-        zip:           { el: '[name="zip"]',          type: 'text' },
-        tags:          { el: '[name="tags"]',         type: 'tags' },
-        notes:         { el: '[name="notes"]',        type: 'textarea' },
+        contact_id:    { el: '[name="contact_id"]',    type: 'text', readonly: true },
+        pname:         { el: '[name="pname"]',         type: 'text' },
+        fname:         { el: '[name="fname"]',         type: 'text' },
+        mname:         { el: '[name="mname"]',         type: 'text' },
+        lname:         { el: '[name="lname"]',         type: 'text' },
+        dob:           { el: '[name="dob"]',           type: 'date' },
+        ssn:           { el: '[name="ssn"]',           type: 'text' },
+        tags:          { el: '[name="tags"]',          type: 'tags' },
+        // Stage B.2.b: scalar uses `contact_notes` (matches DB column) to
+        // avoid collision with row-level `<input name="notes">` inputs.
+        contact_notes: { el: '[name="contact_notes"]', type: 'textarea' },
       },
 
+      // Repeater config — YF auto-collects, populates, dirty-tracks.
+      // We add per-form glue (primary exclusivity, auto-promote, advanced
+      // toggle, history) below in init(). Field set per row matches what
+      // the aggregate PATCH reconciler accepts.
+      repeaters: {
+        phones: {
+          container: '#phonesRepeater',
+          template:  '#phoneRowTemplate',
+          fields: {
+            id:          { type: 'text' },
+            phone:       { type: 'text' },
+            label:       { type: 'select' },
+            is_primary:  { type: 'checkbox' },
+            sms_optout:  { type: 'checkbox' },
+            mms_capable: { type: 'checkbox' },
+            verified:    { type: 'checkbox' },
+            notes:       { type: 'text' },
+          },
+        },
+        emails: {
+          container: '#emailsRepeater',
+          template:  '#emailRowTemplate',
+          fields: {
+            id:           { type: 'text' },
+            email:        { type: 'text' },
+            label:        { type: 'select' },
+            is_primary:   { type: 'checkbox' },
+            email_optout: { type: 'checkbox' },
+            verified:     { type: 'checkbox' },
+            notes:        { type: 'text' },
+          },
+        },
+        addresses: {
+          container: '#addressesRepeater',
+          template:  '#addressRowTemplate',
+          fields: {
+            id:         { type: 'text' },
+            address1:   { type: 'text' },
+            address2:   { type: 'text' },
+            city:       { type: 'text' },
+            state:      { type: 'text' },
+            zip:        { type: 'text' },
+            country:    { type: 'text' },
+            label:      { type: 'select' },
+            is_primary: { type: 'checkbox' },
+            verified:   { type: 'checkbox' },
+            notes:      { type: 'text' },
+          },
+        },
+      },
+
+      // Top-level field validation only. Repeater rows are validated
+      // server-side by validatePhoneRow / validateEmailRow / validateAddressRow.
       validation: {
-        phone:  { mask: 'phone' },
-        email:  { email: true },
-        phone2: { mask: 'phone' },
-        email2: { email: true },
-        ssn:    { mask: 'ssn' },
+        ssn: { mask: 'ssn' },
       },
 
       endpoints: {
         load: { method: 'GET', url: '/api/contacts/{linkId}', path: 'contact' },
       },
 
-      // API returns contact_fname, form uses fname — map them
+      // API column → form-field name. Repeater arrays land under the same
+      // key on both sides (phones/emails/addresses), so they don't need
+      // entries here. _mergeApiData passes unmapped keys through unchanged.
       apiMap: {
-        'contact_id':     'contact_id',
-        'contact_pname':  'pname',
-        'contact_fname':  'fname',
-        'contact_mname':  'mname',
-        'contact_lname':  'lname',
-        'contact_phone':  'phone',
-        'contact_email':  'email',
-        'contact_phone2': 'phone2',
-        'contact_email2': 'email2',
-        'contact_dob':    'dob',
-        'contact_ssn':    'ssn',
-        'contact_address':'address',
-        'contact_city':   'city',
-        'contact_state':  'state',
-        'contact_zip':    'zip',
-        'contact_tags':   'tags',
-        'contact_notes':  'notes',
+        'contact_id':    'contact_id',
+        'contact_pname': 'pname',
+        'contact_fname': 'fname',
+        'contact_mname': 'mname',
+        'contact_lname': 'lname',
+        'contact_dob':   'dob',
+        'contact_ssn':   'ssn',
+        'contact_tags':  'tags',
+        // contact_notes maps to itself — omitted (apiMap fallback uses key as-is).
       },
 
       onSubmit: {
         patch: { method: 'PATCH', url: '/api/contacts/{linkId}' },
       },
 
-      onSave: () => {
-        /*// Tell parent to refresh contact header (name, phone, etc.)
-        try {
-          P.postMessage({ type: 'form-saved', form: 'contact_info' }, '*');
-        } catch (_) {}*/
+      onLoad: () => {
+        // Wire per-form glue after first populate.
+        bindRepeaterGlue('phones');
+        bindRepeaterGlue('emails');
+        bindRepeaterGlue('addresses');
+        bindHistoryButtons();
+        bindRepeaterMasks();
+        bindRepeaterErrorClear();
+        // Apply readonly state to freshly-populated rows.
+        // yc-forms.js's setReadonly fires before populate at init step 6,
+        // so the rows that exist now need their readonly attributes set
+        // based on the form's current state.
+        applyRepeaterReadonly(document.querySelector('#contactForm').classList.contains('yc-readonly'));
+        // First height report after layout settles.
+        reportHeight();
       },
+
+      // No-op. yc-forms.js fires its own postMessage 'form-saved' after a
+      // successful save (lines 673–682), which is what triggers the parent's
+      // refreshEntityData. This callback exists for parity with other forms
+      // that need post-save side effects.
+      onSave: () => {},
     });
+
+    // ────────────────────────────────────────────────────────────────
+    // REPEATER READONLY — yc-forms.js's setReadonly only toggles the
+    // `yc-readonly` class on the form element and walks `config.fields`
+    // to re-apply field locks. Repeater inputs aren't in config.fields,
+    // so they need their own readonly application.
+    //
+    // We wrap form.setReadonly to call the original and then push the
+    // readonly state down to repeater controls via real DOM attributes
+    // (readOnly for text/email, disabled for checkbox/select). The ⚙
+    // advanced toggle is intentionally NOT disabled — users still need
+    // to see advanced fields in view mode.
+    // ────────────────────────────────────────────────────────────────
+    const _origSetReadonly = form.setReadonly.bind(form);
+    form.setReadonly = function(on) {
+      _origSetReadonly(on);
+      applyRepeaterReadonly(on);
+    };
+
+    function applyRepeaterReadonly(isReadonly) {
+      const formEl = document.querySelector('#contactForm');
+      if (!formEl) return;
+      formEl.querySelectorAll('.yc-repeater-item').forEach(item => {
+        // Text-like inputs: use readOnly (preserves text selection for copy).
+        item.querySelectorAll('input[type="text"], input[type="email"], input[type="date"]').forEach(el => {
+          el.readOnly = isReadonly;
+        });
+        // Checkboxes and selects: must use disabled (no readonly attr exists).
+        item.querySelectorAll('input[type="checkbox"]').forEach(el => {
+          el.disabled = isReadonly;
+        });
+        item.querySelectorAll('select').forEach(el => {
+          el.disabled = isReadonly;
+        });
+        // Remove button — hidden by CSS (.yc-readonly selector) — no JS needed.
+      });
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // CUSTOM SAVE — full override of YF's save()
+    //
+    // Mirrors yc-forms.js's save() (lines 559–693), with two changes:
+    //   - PATCH goes through `doRawPatch()` instead of form._api(), so we
+    //     get status codes + response bodies on 4xx.
+    //   - Before PATCH, run primaryGuard() — prompt user when any kind
+    //     has rows but no primary marked.
+    //   - Handle 409 (conflicts) with transfer modal + retry-with-force.
+    //   - Handle 400 (errors) with validation modal.
+    //   - After successful PATCH, rehydrate form from the response's
+    //     `contact` envelope before doing forms/submit + workflow + log.
+    //
+    // If yc-forms.js's save() materially changes (e.g. new tracking calls,
+    // changed audit log shape), re-port this override.
+    // ────────────────────────────────────────────────────────────────
+    form.save = async function() {
+      if (this._saving) return;
+
+      // 0. Primary guard — interactive; may mutate is_primary in-place.
+      const proceed = await primaryGuard();
+      if (!proceed) return;
+
+      // 1. Validate (top-level fields only)
+      if (!this.validate()) return;
+
+      // 2. Diff check
+      const diff = this.getDiff();
+      if (Object.keys(diff).length === 0) {
+        this._toast('success', 'No changes to save');
+        if (this.config.readonly) this.setReadonly(true);
+        return;
+      }
+
+      this._saving = true;
+      this._showLoading(true);
+
+      try {
+        this._showStatus('Saving...', true);
+
+        // 3. PATCH with 409/400 handling and force-retry loop
+        const patchPayload = this._buildPatchPayload();
+        let patchResp = null;
+
+        if (Object.keys(patchPayload).length > 0) {
+          let force = false;
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            try {
+              const url = `/api/contacts/${this.config.linkId}${force ? '?force=true' : ''}`;
+              patchResp = await doRawPatch(url, patchPayload);
+              break;
+            } catch (e) {
+              if (e.status === 409 && e.body && Array.isArray(e.body.conflicts) && e.body.conflicts.length) {
+                const accept = await showTransferModal(e.body.conflicts);
+                if (!accept) {
+                  // User cancelled. Unwind state, restore last-saved status,
+                  // do NOT bubble to the catch block (would show error toast).
+                  this._showLoading(false);
+                  this._saving = false;
+                  this._showLastSaved();
+                  return;
+                }
+                force = true;
+                continue;
+              }
+              if (e.status === 400 && e.body && e.body.errors) {
+                await showValidationModal(e.body.errors);
+                this._showLoading(false);
+                this._saving = false;
+                this._showLastSaved();
+                return;
+              }
+              // Other error — fall through to outer catch
+              throw e;
+            }
+          }
+        }
+
+        // 4. Rehydrate form from PATCH response.
+        //
+        // Server shape: { status, data, contact: <getContact result> }
+        //   where <getContact result> = { contact: {...}, phones, emails, addresses }
+        //
+        // Flatten into the same shape entityData.contact uses (Stage B.2
+        // in contact2.html), so populate() via endpoints.load.path='contact'
+        // hits the child arrays naturally.
+        if (patchResp && patchResp.contact) {
+          const fresh = patchResp.contact;
+          const flat = {
+            ...fresh.contact,
+            phones:    fresh.phones    || [],
+            emails:    fresh.emails    || [],
+            addresses: fresh.addresses || [],
+          };
+
+          // Update parent's entityData so subsequent refresh paths see
+          // consistent data even before the postMessage round-trip.
+          try {
+            if (P.entityData && P.entityData.contact) {
+              P.entityData.contact = flat;
+            }
+          } catch (_) { /* cross-origin */ }
+
+          // Update our own _liveData and re-populate. populate() also
+          // re-snapshots _original so dirty state clears.
+          this._liveData = flat;
+          this.populate(this._resolveDataSource());
+
+          // Re-run onLoad to re-bind repeater glue (populate() rebuilt
+          // the .yc-repeater-item nodes; their event handlers are on the
+          // container so binding is once-per-load, but glue's per-row
+          // dataset state on advanced toggle is lost — rebinding is safe
+          // and idempotent).
+          if (this.config.onLoad) this.config.onLoad(this._resolveDataSource());
+        } else {
+          // Scalar-only save (no aggregate arrays in payload): server
+          // returned { status, data } without rehydration envelope.
+          // populate() didn't run, so do the dirty-state reset manually
+          // — mirrors yc-forms.js save() step 7.
+          this._original = JSON.parse(JSON.stringify(this.collect()));
+          this._lastAutosaveJson = JSON.stringify(this._original);
+          this.el.classList.remove('yc-dirty');
+          this.el.querySelectorAll('.yc-changed').forEach(el => el.classList.remove('yc-changed'));
+        }
+
+        // 5. Record submission in form_submissions
+        const submitResult = await this._api('/api/forms/submit', 'POST', {
+          form_key:       this.config.formKey,
+          link_type:      this.config.linkType,
+          link_id:        this.config.linkId,
+          schema_version: this.config.schemaVersion,
+          data:           this.collect(),
+        });
+
+        // 6. Workflow trigger (fire-and-forget) — not configured here, but
+        //    kept for parity if future config adds it.
+        if (this.config.onSubmit.workflow) {
+          const wfConfig = this.config.onSubmit.workflow;
+          const initData = Object.assign(
+            {},
+            this.collect(),
+            wfConfig.initData || {},
+            {
+              form_key:      this.config.formKey,
+              link_type:     this.config.linkType,
+              link_id:       this.config.linkId,
+              submission_id: submitResult.id,
+            }
+          );
+          this._api(`/workflows/${wfConfig.id}/start`, 'POST', initData)
+            .catch(err => console.warn('[YCForm] Workflow trigger failed (non-blocking):', err));
+        }
+
+        // 7. Audit log
+        try {
+          await this._api('/api/log', 'POST', {
+            type:      'form',
+            link_type: this.config.linkType,
+            link_id:   this.config.linkId,
+            by:        0,
+            data: JSON.stringify({
+              form_key: this.config.formKey,
+              action:   'form_submit',
+              version:  submitResult.version,
+              changes:  JSON.stringify(diff),
+            }),
+          });
+        } catch (err) {
+          console.warn('[YCForm] Audit log failed (non-blocking):', err);
+        }
+
+        // 8. Status & banner update
+        this._showStatus('Saved just now');
+
+        let currentUserName = null;
+        try { currentUserName = P.firmData?.currentUser?.user_name || null; } catch (_) {}
+        this._submittedData = {
+          version: submitResult.version,
+          updated_at: submitResult.updated_at,
+          user_name: currentUserName,
+          submitted_by: null,
+        };
+        this._showSnapshotBanner();
+
+        // 9. Return to view mode
+        if (this.config.readonly) this.setReadonly(true);
+
+        // 10. Success toast
+        this._toast('success', 'Saved successfully');
+
+        // 11. Callbacks + parent notification
+        if (this.config.onSave) this.config.onSave(submitResult);
+        if (!this.config.external) {
+          try {
+            P.postMessage({
+              type: 'form-saved',
+              form: this.config.formKey,
+              linkType: this.config.linkType,
+              linkId: this.config.linkId,
+            }, '*');
+          } catch (_) {}
+        }
+      } catch (err) {
+        console.error('[YCForm] Save error:', err);
+        this._showStatus('Save failed!');
+        this._toast('error', 'Save failed', err.message);
+        if (this.config.onError) this.config.onError(err);
+      } finally {
+        this._saving = false;
+        this._showLoading(false);
+      }
+    };
+
+    // ────────────────────────────────────────────────────────────────
+    // doRawPatch — direct fetch with parent's JWT.
+    //
+    // Used in place of form._api for the contact PATCH so we can read the
+    // response body on 4xx. Pattern lifted from public/connections.html's
+    // api() helper. Returns parsed JSON on 2xx; throws Error with
+    // .status and .body on non-2xx.
+    // ────────────────────────────────────────────────────────────────
+    async function doRawPatch(url, body) {
+      const authWin = findAuthWindow();
+      if (!authWin || !authWin.AUTH_STATE || !authWin.AUTH_STATE.jwt) {
+        throw new Error('Not authenticated — please refresh the page.');
+      }
+
+      // Lazy-relogin (parent owns this flow). Only invoke once.
+      if (authWin.isJwtExpired && authWin.isJwtExpired(authWin.AUTH_STATE.jwt) && authWin.loginBlocking) {
+        await authWin.loginBlocking();
+      }
+
+      const doFetch = async () => fetch(url, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${authWin.AUTH_STATE.jwt}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+
+      let res = await doFetch();
+      if (res.status === 401 && authWin.loginBlocking) {
+        await authWin.loginBlocking();
+        res = await doFetch();
+      }
+
+      if (res.status === 204) return null;
+      const text = await res.text();
+      let data;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+      if (!res.ok) {
+        const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
+        const err = new Error(msg);
+        err.status = res.status;
+        err.body = data || {};
+        throw err;
+      }
+      return data;
+    }
+
+    /** Walk up window.parent chain looking for AUTH_STATE (defined on shell). */
+    function findAuthWindow() {
+      let w = window;
+      for (let i = 0; i < 5; i++) {
+        try {
+          if (w.parent === w) break;
+          w = w.parent;
+          if (w.AUTH_STATE) return w;
+        } catch (_) { break; }
+      }
+      return null;
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // PRIMARY GUARD — save-time at-least-one-primary check.
+    //
+    // For each kind that has rows, ensure exactly one is_primary=true.
+    // If none, prompt the user. On confirm, check the first row's
+    // is_primary and continue. On cancel, abort save.
+    // Returns false to abort, true to continue.
+    // ────────────────────────────────────────────────────────────────
+    async function primaryGuard() {
+      const kindLabels = {
+        phones:    { singular: 'phone',   plural: 'phones'    },
+        emails:    { singular: 'email',   plural: 'emails'    },
+        addresses: { singular: 'address', plural: 'addresses' },
+      };
+
+      for (const kind of ['phones', 'emails', 'addresses']) {
+        const container = document.querySelector(`#${kind}Repeater`);
+        if (!container) continue;
+        const rows = container.querySelectorAll('.yc-repeater-item');
+        if (rows.length === 0) continue;
+
+        const hasPrimary = Array.from(rows).some(r => {
+          const cb = r.querySelector('input[type="checkbox"][name="is_primary"]');
+          return cb && cb.checked;
+        });
+        if (hasPrimary) continue;
+
+        const labels = kindLabels[kind];
+        const result = await Swal.fire({
+          title: `No primary ${labels.singular} selected`,
+          text: `A primary ${labels.singular} is required when ${labels.plural} are present. Make the first row primary?`,
+          showCancelButton: true,
+          confirmButtonText: 'Make first row primary',
+          cancelButtonText: 'Cancel save',
+          icon: 'warning',
+        });
+        if (!result.isConfirmed) return false;
+
+        const firstCb = rows[0].querySelector('input[type="checkbox"][name="is_primary"]');
+        if (firstCb) {
+          firstCb.checked = true;
+          firstCb.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+      return true;
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // TRANSFER MODAL — shown on 409.
+    //
+    // Conflicts shape (from contactService._planPhones / _planEmails):
+    //   [{ kind, from_contact_id, from_contact_name, phone|email, closed_phone_id|closed_email_id }, ...]
+    //
+    // We group by source contact for readability. Returns true if user
+    // accepts (caller retries with ?force=true), false on cancel.
+    // ────────────────────────────────────────────────────────────────
+    async function showTransferModal(conflicts) {
+      // Group by from_contact_id for clearer presentation
+      const groups = new Map(); // contact_id → { name, items: [{kind, display}] }
+      for (const c of conflicts) {
+        const id = c.from_contact_id;
+        if (!groups.has(id)) groups.set(id, { name: c.from_contact_name, items: [] });
+        const display = c.kind === 'phone' ? formatPhoneDisplay(c.phone) : c.email;
+        groups.get(id).items.push({ kind: c.kind, display });
+      }
+
+      let html = '<p>The following values are currently on other contacts. Saving will end them on the source contact and move them here:</p>';
+      for (const [id, g] of groups) {
+        html += `<div class="ycp-conflict-source">${escapeHtml(g.name)} (#${id}):</div>`;
+        html += '<ul class="ycp-conflict-list">';
+        for (const it of g.items) {
+          html += `<li>${escapeHtml(it.display)} <small style="color:#64748b">(${it.kind})</small></li>`;
+        }
+        html += '</ul>';
+      }
+      html += '<p style="margin-top:10px;font-size:13px;color:#475569">Proceed?</p>';
+
+      const result = await Swal.fire({
+        title: `Transfer ${conflicts.length} value(s) from ${groups.size} contact(s)?`,
+        html,
+        showCancelButton: true,
+        confirmButtonText: 'Transfer and save',
+        cancelButtonText: 'Cancel',
+        icon: 'question',
+        width: 560,
+      });
+      return result.isConfirmed;
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // VALIDATION MODAL — shown on 400.
+    //
+    // errors shape (from contactService.updateContact):
+    //   { phones?: [...], emails?: [...], addresses?: [...], contact?: [...] }
+    //   each entry: { index, field, message }
+    //
+    // index = -1 means "applies to the whole kind" (e.g. "Exactly one row
+    // may be marked is_primary").
+    //
+    // Stage B.2.b: also stamps `.yc-repeater-item[data-ycp-error]` on
+    // offending rows for inline visual feedback. Stale stamps from any
+    // prior 400 are cleared at the top, so the visible state always
+    // reflects the current error set. Stamps are also cleared per-row
+    // when the user starts editing the row (see bindRepeaterErrorClear).
+    // We do NOT clear all stamps on Swal close — that would remove the
+    // visual cues the moment the user dismisses the modal, before they
+    // could act on them.
+    // ────────────────────────────────────────────────────────────────
+    async function showValidationModal(errors) {
+      // 1. Clear any stamps from a prior save attempt.
+      document.querySelectorAll('.yc-repeater-item[data-ycp-error]')
+        .forEach(el => el.removeAttribute('data-ycp-error'));
+
+      // 2. Stamp rows with their first row-level error (kind in {phones,emails,addresses}).
+      for (const [kind, arr] of Object.entries(errors)) {
+        if (!['phones', 'emails', 'addresses'].includes(kind)) continue;
+        const container = document.querySelector(`#${kind}Repeater`);
+        if (!container) continue;
+        const rows = container.querySelectorAll('.yc-repeater-item');
+        for (const e of arr) {
+          if (e.index === -1) continue;
+          const row = rows[e.index];
+          if (!row) continue;
+          // First error per row wins (don't overwrite if a previous entry
+          // in this same modal already stamped this row).
+          if (row.dataset.ycpError) continue;
+          row.dataset.ycpError = e.message;
+        }
+      }
+
+      // 3. Build the modal HTML.
+      const labels = { phones: 'Phone', emails: 'Email', addresses: 'Address', contact: 'Contact' };
+      let html = '<ul style="text-align:left;margin:0;padding-left:18px">';
+      for (const [kind, arr] of Object.entries(errors)) {
+        const labelBase = labels[kind] || kind;
+        for (const e of arr) {
+          const prefix = (e.index === -1)
+            ? `All ${kind}:`
+            : `${labelBase} row ${e.index + 1}:`;
+          const field = e.field ? ` <small style="color:#64748b">(${escapeHtml(e.field)})</small>` : '';
+          html += `<li><strong>${escapeHtml(prefix)}</strong> ${escapeHtml(e.message)}${field}</li>`;
+        }
+      }
+      html += '</ul>';
+
+      await Swal.fire({
+        icon: 'error',
+        title: 'Validation errors',
+        html,
+        confirmButtonText: 'Fix and retry',
+        width: 600,
+      });
+      // No stamp-clearing here — see header comment.
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // REPEATER ERROR-CLEAR — input listener that wipes a row's
+    // [data-ycp-error] stamp when the user starts editing it.
+    //
+    // Stamps are set by showValidationModal after a 400. They persist
+    // until either (a) the user types in any input inside the row, or
+    // (b) the next showValidationModal call (which clears all and
+    // re-stamps based on the new error set).
+    // ────────────────────────────────────────────────────────────────
+    function bindRepeaterErrorClear() {
+      const formEl = document.querySelector('#contactForm');
+      if (!formEl || formEl.dataset.ycpErrClearBound) return;
+      formEl.dataset.ycpErrClearBound = '1';
+      // Delegated on the form; one listener covers all current and
+      // future repeater rows. 'input' fires for typing in text/email,
+      // 'change' fires for selects + checkboxes.
+      const clearOnEdit = (e) => {
+        const row = e.target.closest('.yc-repeater-item');
+        if (!row) return;
+        if (!row.hasAttribute('data-ycp-error')) return;
+        row.removeAttribute('data-ycp-error');
+      };
+      formEl.addEventListener('input', clearOnEdit);
+      formEl.addEventListener('change', clearOnEdit);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // REPEATER MASKS — delegated blur-formatting for data-yc-mask inputs.
+    //
+    // yc-forms.js's _setupMasks() binds blur handlers ONCE at init time
+    // by querying this.el.querySelectorAll('[data-yc-mask]'). Template
+    // content is not in the live DOM at that point, and repeater rows
+    // added by _addRepeaterItemWithData (whether from initial populate
+    // or user click) never get their mask handlers bound.
+    //
+    // Worked around here via delegated blur (capture phase since blur
+    // doesn't bubble). One handler covers all current and future rows.
+    // Format logic mirrors yc-forms.js's _formatMask exactly.
+    // ────────────────────────────────────────────────────────────────
+    function bindRepeaterMasks() {
+      const formEl = document.querySelector('#contactForm');
+      if (!formEl || formEl.dataset.ycpMasksBound) return;
+      formEl.dataset.ycpMasksBound = '1';
+      formEl.addEventListener('blur', (e) => {
+        const t = e.target;
+        if (!(t instanceof HTMLInputElement)) return;
+        if (!t.dataset.ycMask) return;
+        // Only act on inputs inside a repeater row (yc-forms.js already
+        // handles scalar-field masks via direct binding at init time).
+        if (!t.closest('.yc-repeater-item')) return;
+        t.value = formatMaskInline(t.value, t.dataset.ycMask);
+      }, true);
+    }
+
+    function formatMaskInline(value, maskType) {
+      if (!value) return '';
+      const digits = String(value).replace(/\D/g, '');
+      switch (maskType) {
+        case 'phone':
+          if (digits.length === 10) return digits.replace(/^(\d{3})(\d{3})(\d{4})$/, '($1) $2-$3');
+          return value;
+        case 'ssn':
+          if (digits.length === 9) return digits.replace(/^(\d{3})(\d{2})(\d{4})$/, '$1-$2-$3');
+          return value;
+        case 'zip':
+          if (digits.length === 5) return digits;
+          if (digits.length === 9) return digits.replace(/^(\d{5})(\d{4})$/, '$1-$2');
+          return value;
+        default:
+          return value;
+      }
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // REPEATER GLUE — per-kind setup:
+    //   - Primary checkbox exclusivity
+    //   - Auto-promote on add to empty repeater
+    //   - Auto-promote on removal of primary row
+    //   - Advanced toggle (per row)
+    //
+    // Bound once via the container element. Survives populate()'s
+    // teardown-and-rebuild because the container is stable.
+    // ────────────────────────────────────────────────────────────────
+    function bindRepeaterGlue(kind) {
+      const container = document.querySelector(`#${kind}Repeater`);
+      if (!container) return;
+      if (container.dataset.ycpGlueBound) return;
+      container.dataset.ycpGlueBound = '1';
+
+      const singular = { phones: 'phone', emails: 'email', addresses: 'address' }[kind];
+      const plural   = { phones: 'phones', emails: 'emails', addresses: 'addresses' }[kind];
+
+      // Stage B.2.b: last-row-removal warning.
+      // Fires BEFORE yc-forms.js's per-button bubble-phase remove handler
+      // (registered in _addRepeaterItemWithData at yc-forms.js line ~910).
+      // When the row being removed is the only one, intercept the click,
+      // confirm via Swal, then either let the original handler proceed
+      // (we just don't block) or — since we already stopped propagation —
+      // perform the removal manually on confirm.
+      //
+      // The MutationObserver below sees the manual remove just as it
+      // would see yc-forms.js's; its auto-promote logic short-circuits
+      // when remaining.length === 0, so no spurious promotion fires.
+      container.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.yc-repeater-remove');
+        if (!btn) return;
+        if (!container.contains(btn)) return; // safety
+        const rows = container.querySelectorAll('.yc-repeater-item');
+        if (rows.length !== 1) return; // only intercept on last row
+
+        // Block yc-forms.js's bubble-phase handler.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+
+        const result = await Swal.fire({
+          title: `Remove the last ${singular}?`,
+          text: `This contact will have no ${plural} after save.`,
+          icon: 'warning',
+          showCancelButton: true,
+          confirmButtonText: 'Remove',
+          cancelButtonText: 'Keep',
+        });
+        if (!result.isConfirmed) return;
+
+        // Confirmed — perform the removal manually since we blocked the
+        // original handler. Mirrors yc-forms.js's removeBtn click handler.
+        const item = btn.closest('.yc-repeater-item');
+        if (item) {
+          item.remove();
+          if (typeof form._onFieldChange === 'function') {
+            form._onFieldChange();
+          }
+        }
+      }, true); // capture phase — runs before yc-forms.js's bubble handler
+
+      // Primary exclusivity: clicking primary on one row unchecks others.
+      container.addEventListener('change', (e) => {
+        if (e.target.matches('input[type="checkbox"][name="is_primary"]') && e.target.checked) {
+          container.querySelectorAll('input[type="checkbox"][name="is_primary"]').forEach(cb => {
+            if (cb !== e.target) cb.checked = false;
+          });
+        }
+      });
+
+      // Advanced toggle: click the ⚙ button on a row to expand its
+      // .ycp-advanced section.
+      container.addEventListener('click', (e) => {
+        const btn = e.target.closest('.ycp-advanced-toggle');
+        if (!btn) return;
+        const item = btn.closest('.ycp-repeater-item');
+        if (item) {
+          item.classList.toggle('ycp-open');
+          // Trigger height report after toggle
+          setTimeout(reportHeight, 0);
+        }
+      });
+
+      // Hook the Add button to apply auto-promote-on-empty.
+      // yc-forms.js already binds .yc-repeater-add to addRepeaterItem.
+      // We need to act AFTER the row is appended. Easiest: wrap the
+      // form-level method here. (Per-form glue, not framework changes.)
+      const addBtn = document.querySelector(`.yc-repeater-add[data-repeater="${kind}"]`);
+      if (addBtn) {
+        addBtn.addEventListener('click', () => {
+          // Defer so yc-forms.js's click handler runs first and the new
+          // .yc-repeater-item is in the DOM.
+          setTimeout(() => {
+            const rows = container.querySelectorAll('.yc-repeater-item');
+            if (rows.length === 1) {
+              // First row in a previously-empty repeater → auto-primary.
+              const cb = rows[0].querySelector('input[type="checkbox"][name="is_primary"]');
+              if (cb) {
+                cb.checked = true;
+                cb.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            }
+            reportHeight();
+          }, 0);
+        });
+      }
+
+      // Hook removal: use a MutationObserver so we react to yc-forms.js's
+      // built-in remove handler (which calls itemEl.remove() directly).
+      // If the leaving row was primary AND no remaining row is primary,
+      // promote the first remaining row.
+      //
+      // Race-safe vs. populate(): populate clears all rows then adds new
+      // ones synchronously, batching into a single MO callback. By the
+      // time we run, container holds the new rows (some may already be
+      // primary). The "no remaining primary" check prevents spurious
+      // promotion when populate replaces a primary-having state with
+      // a new primary-having state.
+      const mo = new MutationObserver((mutations) => {
+        let sawPrimaryRemoval = false;
+        for (const m of mutations) {
+          for (const removed of m.removedNodes) {
+            if (!(removed instanceof HTMLElement)) continue;
+            if (!removed.classList.contains('yc-repeater-item')) continue;
+            if (removed.querySelector('input[type="checkbox"][name="is_primary"]:checked')) {
+              sawPrimaryRemoval = true;
+            }
+          }
+        }
+        if (sawPrimaryRemoval) {
+          const remaining = container.querySelectorAll('.yc-repeater-item');
+          if (remaining.length > 0) {
+            const someoneIsPrimary = Array.from(remaining).some(r =>
+              !!r.querySelector('input[type="checkbox"][name="is_primary"]:checked')
+            );
+            if (!someoneIsPrimary) {
+              const cb = remaining[0].querySelector('input[type="checkbox"][name="is_primary"]');
+              if (cb) {
+                cb.checked = true;
+                cb.dispatchEvent(new Event('change', { bubbles: true }));
+              }
+            }
+          }
+        }
+        reportHeight();
+      });
+      mo.observe(container, { childList: true });
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // HISTORY MODAL — per-kind read-only list of ended rows.
+    //
+    // Hits the dedicated GET /api/contacts/:id/{phones|emails|addresses}
+    // ?include_inactive=true and filters client-side to end_date != null.
+    // Read-only: no revive, no permanent delete.
+    // ────────────────────────────────────────────────────────────────
+    function bindHistoryButtons() {
+      document.querySelectorAll('.ycp-history-btn').forEach(btn => {
+        if (btn.dataset.ycpBound) return;
+        btn.dataset.ycpBound = '1';
+        btn.addEventListener('click', () => openHistoryModal(btn.dataset.kind));
+      });
+    }
+
+    async function openHistoryModal(kind) {
+      const url = `/api/contacts/${contactId}/${kind}?include_inactive=true`;
+      let data;
+      try {
+        data = await P.apiSend(url, 'GET');
+      } catch (e) {
+        await Swal.fire({ icon: 'error', title: 'Failed to load history', text: e.message });
+        return;
+      }
+
+      const arr = data[kind] || [];
+      const ended = arr.filter(r => r.end_date != null);
+      const labelKind = { phones: 'phones', emails: 'emails', addresses: 'addresses' }[kind];
+
+      if (ended.length === 0) {
+        await Swal.fire({
+          icon: 'info',
+          title: 'No history',
+          text: `No ended ${labelKind} for this contact.`,
+        });
+        return;
+      }
+
+      const valueColLabel = { phones: 'Phone', emails: 'Email', addresses: 'Address' }[kind];
+      const renderValue = (r) => {
+        if (kind === 'phones')    return formatPhoneDisplay(r.phone);
+        if (kind === 'emails')    return r.email;
+        // address: collapse the four address columns into one line
+        const parts = [r.address1, r.city, r.state, r.zip].filter(Boolean);
+        return parts.join(', ') || '(no street/city/state/zip)';
+      };
+
+      // Stage B.2.b: each row gets a Revive button. We pass enough info
+      // on the button via data-* attrs to reconstruct the POST body
+      // without keeping a closure over the original `ended` array.
+      let html = '<table class="ycp-hist-table"><thead><tr>';
+      html += `<th>${valueColLabel}</th><th>Label</th><th>Ended</th><th>Reason</th><th>Notes</th><th></th>`;
+      html += '</tr></thead><tbody>';
+      for (const r of ended) {
+        const reviveData = encodeURIComponent(JSON.stringify({
+          // Per kind, the fields the dedicated POST cares about.
+          phone:    r.phone,
+          email:    r.email,
+          address1: r.address1,
+          address2: r.address2,
+          city:     r.city,
+          state:    r.state,
+          zip:      r.zip,
+          country:  r.country,
+          label:    r.label,
+          note:     r.note ?? r.notes,  // tolerate either column name
+          // Display-only — used in the confirm prompt.
+          _display: renderValue(r),
+        }));
+        html += '<tr>';
+        html += `<td>${escapeHtml(renderValue(r))}</td>`;
+        html += `<td>${escapeHtml(r.label || '')}</td>`;
+        html += `<td>${escapeHtml(r.end_date || '')}</td>`;
+        html += `<td>${escapeHtml(r.end_reason || '')}</td>`;
+        html += `<td>${escapeHtml(r.note ?? r.notes ?? '')}</td>`;
+        html += `<td><button class="ycp-revive-btn" data-kind="${kind}" data-payload="${reviveData}">Revive</button></td>`;
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+
+      // Use Swal's didOpen to bind click handlers on the Revive buttons.
+      // The handler closes the history modal, runs the revive flow, and
+      // (on success) refreshes the form from the server.
+      await Swal.fire({
+        title: `${valueColLabel} history`,
+        html,
+        width: 760,
+        showConfirmButton: true,
+        confirmButtonText: 'Close',
+        didOpen: () => {
+          const container = Swal.getHtmlContainer();
+          if (!container) return;
+          container.addEventListener('click', async (e) => {
+            const btn = e.target.closest('.ycp-revive-btn');
+            if (!btn) return;
+            const kind = btn.dataset.kind;
+            let payload;
+            try { payload = JSON.parse(decodeURIComponent(btn.dataset.payload)); }
+            catch (_) { return; }
+            Swal.close();
+            await reviveRow(kind, payload);
+          });
+        },
+      });
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // REVIVE — POST a previously-ended row's value to the dedicated
+    // /api/contact-{phones|emails|addresses} endpoint to bring it back
+    // as an active row on this contact.
+    //
+    // Routes accept { contact_id, ...fields } and return 201 on success.
+    // Phone & email routes support ?force=true for 409 cross-contact
+    // conflicts (matches the slice 2 Stage 1 uc_contact_phone removal —
+    // same-contact re-activation does not collide). Addresses don't have
+    // cross-contact uniqueness, so no force flag needed.
+    //
+    // 409 body shape: { status:'error', message, conflict: <singular> }
+    // (different from PATCH's plural `conflicts`). The conflict object's
+    // shape is service-internal and may differ from the modal's expected
+    // fields, so revive uses a simpler confirmation Swal rather than
+    // reusing showTransferModal.
+    // ────────────────────────────────────────────────────────────────
+    async function reviveRow(kind, payload) {
+      const singular = { phones: 'phone', emails: 'email', addresses: 'address' }[kind];
+      if (!singular) return;
+
+      // Build POST body — strip null/empty values and the _display helper.
+      const fields = {};
+      for (const [k, v] of Object.entries(payload)) {
+        if (k.startsWith('_')) continue;
+        if (v === null || v === undefined || v === '') continue;
+        fields[k] = v;
+      }
+      const body = { contact_id: contactId, ...fields };
+
+      // Confirm prompt.
+      const confirmRes = await Swal.fire({
+        title: `Revive this ${singular}?`,
+        html: `<p><strong>${escapeHtml(payload._display)}</strong> will be added back to this contact as an active ${singular}.</p>` +
+              `<p style="font-size:13px;color:#475569">If the value is currently active on another contact, you'll be prompted to transfer it.</p>`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: 'Revive',
+        cancelButtonText: 'Cancel',
+      });
+      if (!confirmRes.isConfirmed) return;
+
+      // Endpoint per kind.
+      const endpointBase = {
+        phones:    '/api/contact-phones',
+        emails:    '/api/contact-emails',
+        addresses: '/api/contact-addresses',
+      }[kind];
+
+      // Try once, retry with ?force=true on 409 if user accepts.
+      // (Addresses don't support force; the loop only runs once.)
+      let force = false;
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          const url = endpointBase + (force && kind !== 'addresses' ? '?force=true' : '');
+          await doRawPost(url, body);
+          break;
+        } catch (e) {
+          if (e.status === 409 && e.body && e.body.conflict && kind !== 'addresses') {
+            const c = e.body.conflict;
+            // Shape may vary — extract whatever we can for the prompt.
+            const otherName = c.from_contact_name || c.contact_name || `contact #${c.from_contact_id || c.contact_id || '?'}`;
+            const transferRes = await Swal.fire({
+              title: 'Value in use elsewhere',
+              html: `<p><strong>${escapeHtml(payload._display)}</strong> is currently active on <strong>${escapeHtml(otherName)}</strong>.</p>` +
+                    `<p>Transfer it to this contact? The other contact's row will be ended.</p>`,
+              icon: 'warning',
+              showCancelButton: true,
+              confirmButtonText: 'Transfer and revive',
+              cancelButtonText: 'Cancel',
+            });
+            if (!transferRes.isConfirmed) return;
+            force = true;
+            continue;
+          }
+          // Unknown error.
+          await Swal.fire({ icon: 'error', title: 'Revive failed', text: e.message || 'Unknown error' });
+          return;
+        }
+      }
+
+      // Success — refresh the form from the server (out-of-band mutation,
+      // not via form.save, so postMessage 'form-saved' is the right way
+      // to tell the parent + siblings to refresh too. We refresh ourselves
+      // locally since contact2.html's refreshEntityData skips the sender.)
+      try {
+        const fresh = await P.apiSend(
+          `/api/contacts/${contactId}`,
+          'GET',
+          { include: 'cases,appts,tasks,log,phones,emails,addresses' }
+        );
+        const flat = {
+          ...fresh.contact,
+          phones:    fresh.phones    || [],
+          emails:    fresh.emails    || [],
+          addresses: fresh.addresses || [],
+        };
+        try {
+          if (P.entityData) {
+            P.entityData.contact = flat;
+          }
+        } catch (_) {}
+        form._liveData = flat;
+        form.populate(form._resolveDataSource());
+        if (form.config.onLoad) form.config.onLoad(form._resolveDataSource());
+      } catch (refreshErr) {
+        console.warn('[contact-form] Revive refresh failed:', refreshErr);
+      }
+
+      // Notify parent so the header/other tabs update.
+      try {
+        P.postMessage({
+          type: 'form-saved',
+          form: 'contact_info',
+          linkType: 'contact',
+          linkId: contactId,
+        }, '*');
+      } catch (_) {}
+
+      await Swal.fire({
+        icon: 'success',
+        title: 'Revived',
+        text: `The ${singular} is back on this contact.`,
+        timer: 1800,
+        showConfirmButton: false,
+      });
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // doRawPost — direct fetch POST for revive. Same auth pattern as
+    // doRawPatch; returns parsed JSON on 2xx, throws Error with
+    // .status + .body on 4xx.
+    // ────────────────────────────────────────────────────────────────
+    async function doRawPost(url, body) {
+      const authWin = findAuthWindow();
+      if (!authWin || !authWin.AUTH_STATE || !authWin.AUTH_STATE.jwt) {
+        throw new Error('Not authenticated — please refresh the page.');
+      }
+      if (authWin.isJwtExpired && authWin.isJwtExpired(authWin.AUTH_STATE.jwt) && authWin.loginBlocking) {
+        await authWin.loginBlocking();
+      }
+      const doFetch = async () => fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authWin.AUTH_STATE.jwt}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      let res = await doFetch();
+      if (res.status === 401 && authWin.loginBlocking) {
+        await authWin.loginBlocking();
+        res = await doFetch();
+      }
+      if (res.status === 204) return null;
+      const text = await res.text();
+      let data;
+      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+      if (!res.ok) {
+        const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
+        const err = new Error(msg);
+        err.status = res.status;
+        err.body = data || {};
+        throw err;
+      }
+      return data;
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // IFRAME HEIGHT REPORTING
+    //
+    // The form grows as the user adds repeater rows or expands advanced
+    // sections. Parent (contact2.html) listens for {type:'iframe-resize',
+    // form:'contact_info', height} and sets iframe.style.height.
+    //
+    // Uses ResizeObserver for robustness — fires on any body size change.
+    // ────────────────────────────────────────────────────────────────
+    let lastReportedHeight = 0;
+    function reportHeight() {
+      const h = Math.max(
+        document.documentElement.scrollHeight,
+        document.body.scrollHeight
+      );
+      if (h === lastReportedHeight) return;
+      lastReportedHeight = h;
+      try {
+        P.postMessage({
+          type: 'iframe-resize',
+          form: 'contact_info',
+          height: h,
+        }, '*');
+      } catch (_) {}
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(reportHeight).observe(document.body);
+    }
+    // Backup: also report after a short delay post-load.
+    window.addEventListener('load', () => setTimeout(reportHeight, 100));
+
+    // ────────────────────────────────────────────────────────────────
+    // Utility helpers
+    // ────────────────────────────────────────────────────────────────
+    function formatPhoneDisplay(raw) {
+      if (!raw) return '';
+      const d = String(raw).replace(/\D/g, '');
+      if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+      if (d.length === 11 && d.startsWith('1')) return `(${d.slice(1,4)}) ${d.slice(4,7)}-${d.slice(7)}`;
+      return String(raw);
+    }
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[c]));
+    }
 
     form.init();
   }
