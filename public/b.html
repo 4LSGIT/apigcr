@@ -271,6 +271,147 @@
       #appHeader .hdr-btn,
       #appHeader .hdr-logout { padding: 0 10px; }
       #appHeader .hdr-logo { height: 32px; }
+      /* Hide/skinny collapse bar is desktop-only — drawer is the mobile model */
+      #appSidebar .sb-collapse-bar { display: none; }
+      #appSidebar .sb-version { display: none; }
+    }
+
+    /* === Resets for style.css collisions (apply in both light & dark) === */
+    /* style.css has its own .file-button rules that conflict with sidebar use */
+    #appSidebar .sb-sublist .file-button {
+      background: transparent !important;
+      border: none !important;
+      border-left: 3px solid transparent !important;
+      border-radius: 0 !important;
+      margin: 0 !important;
+    }
+    #appSidebar .sb-sublist .file-button.active {
+      border-left-color: var(--accent) !important;
+    }
+    #appSidebar .sb-sublist .file-button .file-close {
+      color: inherit !important;
+      margin-left: auto !important;
+    }
+
+    /* === Dark mode overrides for main content === */
+    body.dark .tab-main {
+      color: var(--text);
+    }
+    /* Default buttons (excluding the branded blue CTAs) */
+    body.dark .tab-main button:not(.big-button):not(.pop-button):not(.switch-button) {
+      background: var(--surface-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    body.dark .tab-main button:not(.big-button):not(.pop-button):not(.switch-button):hover:not(:disabled) {
+      background: var(--sidebar-hover);
+    }
+    body.dark .tab-main button:disabled {
+      opacity: 0.5;
+    }
+    /* Keep branded blue CTAs blue in dark mode */
+    body.dark .tab-main .big-button,
+    body.dark .tab-main .pop-button,
+    body.dark .tab-main .switch-button {
+      background-color: var(--accent);
+      color: #fff;
+      border: none;
+    }
+    body.dark .tab-main .big-button:hover,
+    body.dark .tab-main .pop-button:hover,
+    body.dark .tab-main .switch-button:hover {
+      background-color: var(--accent-dark);
+    }
+    body.dark .tab-main input,
+    body.dark .tab-main select,
+    body.dark .tab-main textarea {
+      background: var(--surface-bg);
+      color: var(--text);
+      border: 1px solid var(--border) !important;
+    }
+    body.dark .tab-main input:focus,
+    body.dark .tab-main select:focus,
+    body.dark .tab-main textarea:focus {
+      outline: none;
+      border-color: var(--accent) !important;
+    }
+    /* Tables — need solid bg on tr to override style.css's #f2f2f2 stripe */
+    body.dark .tab-main table.logTable {
+      background: var(--surface-bg);
+      color: var(--text);
+    }
+    body.dark .tab-main table.logTable th {
+      background-color: var(--accent-dark);
+      color: #fff;
+      border-color: var(--border);
+    }
+    body.dark .tab-main table.logTable td {
+      border-color: var(--border);
+      background: var(--surface-bg);
+    }
+    body.dark .tab-main table.logTable tr {
+      background-color: var(--surface-bg);
+    }
+    body.dark .tab-main table.logTable tr:nth-child(even) {
+      background-color: var(--sidebar-bg);
+    }
+    body.dark .tab-main table.logTable tr:nth-child(even) td {
+      background-color: var(--sidebar-bg);
+    }
+    body.dark .tab-main table.logTable tr:hover,
+    body.dark .tab-main table.logTable tr:hover td {
+      background-color: var(--sidebar-hover) !important;
+    }
+    body.dark .tab-main a,
+    body.dark .tab-main a:visited {
+      color: var(--accent);
+    }
+    body.dark .tab-main hr {
+      border: none;
+      border-top: 1px solid var(--border);
+    }
+    /* Appointment box etc. */
+    body.dark .tab-main .appointment-box {
+      border-color: var(--border);
+      background: var(--surface-bg);
+    }
+    /* style.css .tab (tabs class) */
+    body.dark .tab {
+      background-color: var(--sidebar-bg);
+      color: var(--text);
+    }
+    body.dark .tab:hover {
+      background-color: var(--sidebar-hover);
+    }
+    /* Campaign tab styles from style.css */
+    body.dark .campaign-tab-button {
+      background-color: var(--sidebar-bg);
+      color: var(--text);
+      border-color: var(--border);
+    }
+    body.dark .campaign-tab-button.active {
+      background-color: var(--surface-bg);
+    }
+    body.dark .campaign-tab-main {
+      background-color: var(--surface-bg);
+      border-color: var(--border);
+    }
+    /* SweetAlert in dark mode */
+    body.dark .swal2-popup {
+      background: var(--surface-bg) !important;
+      color: var(--text) !important;
+    }
+    body.dark .swal2-title,
+    body.dark .swal2-html-container {
+      color: var(--text) !important;
+    }
+    body.dark .swal2-input,
+    body.dark .swal2-textarea,
+    body.dark .swal2-select {
+      background: var(--sidebar-bg) !important;
+      color: var(--text) !important;
+      border-color: var(--border) !important;
     }
 
     /* Print */
@@ -2650,7 +2791,6 @@ async function initAuth() {
         width: '450px'
       });
     }
-
     // ============ SIDEBAR / HEADER CONTROLS ============
     function toggleSidebarSkinny() {
       // Cannot enter skinny while hidden — un-hide first
