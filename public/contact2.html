@@ -1574,7 +1574,18 @@ async function viewContactEnrollment(id) {
       ? cseqEsc(en.template_type) : '—';
     const stepCell  = (en.current_step != null && en.total_steps != null)
       ? `${cseqEsc(en.current_step)}/${cseqEsc(en.total_steps)}` : '—';
- 
+
+    // Recover button shows only when the enrollment is wedged: active AND
+    // no pending/running scheduled_jobs row in history. Distinct from
+    // Fire Now, which targets an EXISTING pending job. If a pending row
+    // exists, the Fire Now button in that row's Scheduled cell is the
+    // right control and Recover stays hidden. See routes/sequences.js
+    // POST /enrollments/:id/recover for the backend contract.
+    const hasInFlightJob = history.some(h =>
+      h.job_status === 'pending' || h.job_status === 'running'
+    );
+    const showRecoverBtn = isActive && !hasInFlightJob;
+
     const res = await Swal.fire({
       title: `Enrollment #${id}`,
       width: 820,
@@ -1613,7 +1624,10 @@ async function viewContactEnrollment(id) {
       showConfirmButton: isActive,
       confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel enrollment',
       confirmButtonColor: '#dc2626',
-      reverseButtons: true,   // [Cancel enrollment] [Close]
+      showDenyButton:    showRecoverBtn,
+      denyButtonText:    '<i class="fa-solid fa-wand-magic-sparkles"></i> Recover stuck enrollment',
+      denyButtonColor:   '#4f8ef7',
+      reverseButtons: true,   // [Cancel enrollment] [Recover] [Close]
       didOpen: (popup) => {
         popup.querySelectorAll('.cseq-fire-now-btn').forEach(btn => {
           btn.addEventListener('click', () => {
@@ -1628,6 +1642,8 @@ async function viewContactEnrollment(id) {
       // so we don't need to look it up from the list cache (which may be on
       // a different page of the paginated list).
       cancelContactEnrollment(id, en.template_name || '');
+    } else if (res.isDenied && showRecoverBtn) {
+      handleContactSequenceRecover(id);
     }
   } catch (err) {
     Swal.fire({ icon: 'error', title: 'Failed to load enrollment',
@@ -1701,6 +1717,54 @@ async function handleContactSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
   } catch (e) {
     cseqToast('error', e.message || 'Fire-now failed');
     // Re-open the detail modal so the user sees current state.
+    setTimeout(() => viewContactEnrollment(enrollmentId), 250);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Recover stuck enrollment — handler for the denyButton in the enrollment-
+// detail modal. Distinct from Fire Now: this CREATES a new scheduled_jobs
+// row (because the enrollment has no pending/running job), whereas Fire Now
+// reschedules an EXISTING pending job. Parallel handler lives in
+// public/automation/sequences.html as seqEnrollRecover.
+//
+// Flow mirrors handleContactSequenceFireNow: close drill-down modal so the
+// confirm dialog owns the screen, confirm, POST /recover, toast, reload
+// list, reopen drill-down.
+// ─────────────────────────────────────────────────────────────────────────
+async function handleContactSequenceRecover(enrollmentId) {
+  Swal.close();
+  const result = await Swal.fire({
+    title: 'Recover stuck enrollment?',
+    html: `
+      <div style="text-align:left;font-size:13px;line-height:1.5">
+        <p>This enrollment is <b>active</b> but has no pending job — likely wedged when scheduling the next step failed (e.g. a transient calendar API blip).</p>
+        <p style="margin-top:10px">Recovery schedules the next step for <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
+        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply at execution — a step that fails its condition will skip, just as it would have at the original time.</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Recover',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f8ef7',
+  });
+  if (!result.isConfirmed) {
+    viewContactEnrollment(enrollmentId);
+    return;
+  }
+
+  try {
+    const resp = await P.apiSend(`/sequences/enrollments/${enrollmentId}/recover`, 'POST');
+    if (resp.status === 'completed') {
+      cseqToast('success', `Enrollment ${enrollmentId} → completed (no next step).`);
+    } else {
+      cseqToast('success', `Step ${resp.step_number} scheduled (job ${resp.job_id}).`);
+    }
+    await loadContactSequences();
+    setTimeout(() => viewContactEnrollment(enrollmentId), 250);
+  } catch (e) {
+    cseqToast('error', e.message || 'Recovery failed');
     setTimeout(() => viewContactEnrollment(enrollmentId), 250);
   }
 }

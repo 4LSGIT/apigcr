@@ -2977,6 +2977,16 @@ async function viewSequenceEnrollment(id) {
 
     const isActive = en.status === 'active';
 
+    // Recover button shows only when the enrollment is wedged: active AND
+    // no pending/running scheduled_jobs row in history. Distinct from
+    // Fire Now (which targets an EXISTING pending job). See
+    // routes/sequences.js POST /enrollments/:id/recover for the backend
+    // contract and the matching block in contact2.html viewContactEnrollment.
+    const hasInFlightJob = history.some(h =>
+      h.job_status === 'pending' || h.job_status === 'running'
+    );
+    const showRecoverBtn = isActive && !hasInFlightJob;
+
     const result = await Swal.fire({
       title: `Enrollment #${id}`,
       width: 820,
@@ -3019,7 +3029,10 @@ async function viewSequenceEnrollment(id) {
       showConfirmButton:  isActive,
       confirmButtonText:  '<i class="fa-solid fa-ban"></i> Cancel enrollment',
       confirmButtonColor: '#dc2626',
-      reverseButtons:     true,   // [Cancel enrollment] [Close]
+      showDenyButton:     showRecoverBtn,
+      denyButtonText:     '<i class="fa-solid fa-wand-magic-sparkles"></i> Recover stuck enrollment',
+      denyButtonColor:    '#4f8ef7',
+      reverseButtons:     true,   // [Cancel enrollment] [Recover] [Close]
       didOpen: (popup) => {
         popup.querySelectorAll('.fire-now-btn').forEach(btn => {
           btn.addEventListener('click', () => {
@@ -3031,6 +3044,8 @@ async function viewSequenceEnrollment(id) {
 
     if (result.isConfirmed && isActive) {
       handleSequenceCancel(id, en.template_name || '');
+    } else if (result.isDenied && showRecoverBtn) {
+      handleSequenceRecover(id);
     }
   } catch (e) {
     Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: e.message, timer: 2500, showConfirmButton: false });
@@ -3147,6 +3162,54 @@ async function handleSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
     Swal.fire({
       toast: true, position: 'top-end', icon: 'error',
       title: e.message || 'Fire-now failed',
+      timer: 3500, showConfirmButton: false,
+    });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Recover stuck enrollment — handler for the denyButton in the enrollment-
+// detail modal. Distinct from Fire Now: this CREATES a new scheduled_jobs
+// row (because the enrollment has no pending/running job), whereas Fire Now
+// reschedules an EXISTING pending job. Parallel handler lives in contact2.html
+// as handleContactSequenceRecover.
+// ─────────────────────────────────────────────────────────────
+async function handleSequenceRecover(enrollmentId) {
+  const result = await Swal.fire({
+    title: 'Recover stuck enrollment?',
+    html: `
+      <div style="text-align:left;font-size:13px;line-height:1.5">
+        <p>This enrollment is <b>active</b> but has no pending job — likely wedged when scheduling the next step failed (e.g. a transient calendar API blip).</p>
+        <p style="margin-top:10px">Recovery schedules the next step for <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
+        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply at execution — a step that fails its condition will skip, just as it would have at the original time.</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Recover',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f8ef7',
+  });
+  if (!result.isConfirmed) return;
+
+  try {
+    const resp = await api(`/sequences/enrollments/${enrollmentId}/recover`, 'POST');
+    const title = resp.status === 'completed'
+      ? `Enrollment ${enrollmentId} → completed`
+      : `Step ${resp.step_number} scheduled (job ${resp.job_id})`;
+    const text = resp.status === 'completed'
+      ? 'No next step in template — marked completed'
+      : 'Will fire on next process-jobs tick';
+    Swal.fire({
+      toast: true, position: 'top-end', icon: 'success',
+      title, text,
+      timer: 2500, showConfirmButton: false,
+    });
+    setTimeout(() => viewSequenceEnrollment(enrollmentId), 250);
+  } catch (e) {
+    Swal.fire({
+      toast: true, position: 'top-end', icon: 'error',
+      title: e.message || 'Recovery failed',
       timer: 3500, showConfirmButton: false,
     });
   }

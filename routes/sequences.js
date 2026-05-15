@@ -26,7 +26,7 @@
 const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
-const { enrollContact, enrollContactByTemplateId, cancelSequences, validateTemplateFilters } = require('../lib/sequenceEngine');
+const { enrollContact, enrollContactByTemplateId, cancelSequences, validateTemplateFilters, scheduleStepJob } = require('../lib/sequenceEngine');
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // Normalize the optional `type` column. As of Slice B, sequence_templates.type
@@ -1298,6 +1298,172 @@ router.post('/sequences/enrollments/:id/fire-next', jwtOrApiKey, async (req, res
   } catch (err) {
     console.error('[POST /sequences/enrollments/:id/fire-next] failed:', err);
     return res.status(500).json({ error: 'Failed to fire next step', message: err.message });
+  }
+});
+
+// POST /sequences/enrollments/:id/recover
+//
+// Recover a stuck (wedged) enrollment by re-creating the missing
+// scheduled_jobs row for whichever step should run next.
+//
+// "Stuck" = enrollment.status='active' AND no pending/running
+// scheduled_jobs row. This state is normally created by the
+// safeAdvanceToNextStep catch path in sequenceEngine.executeStep:
+// the prior step's action ran fine, but the immediate next-step
+// scheduling threw (Hebcal timeout chain → calculateStepTime → Invalid
+// Date, transient DB blip, etc.). The action's success is durable in
+// sequence_step_log; the missing next-step job is what this endpoint
+// repairs.
+//
+// Target step selection:
+//   - If sequence_step_log has any rows for this enrollment: target is
+//     (most-recent log row's step_number) + 1. This is robust to the
+//     edge where advanceToNextStep threw BEFORE updating
+//     enrollment.current_step.
+//   - If no log rows exist (enrollment-time wedge — _enrollWithTemplate
+//     INSERTed the enrollment but scheduling the first step threw):
+//     target is enrollment.current_step (which is 1 from the initial
+//     INSERT).
+//   - If no step exists at the target step_number in the template
+//     (e.g., template was truncated after enrollment): mark the
+//     enrollment 'completed', mirroring advanceToNextStep's terminal
+//     branch.
+//
+// Idempotency: delegates the INSERT to sequenceEngine.scheduleStepJob,
+// which short-circuits if a pending/running row already exists for the
+// same (enrollmentId, step_number) idempotency_key. Two simultaneous
+// clicks → only the first INSERT lands; the second is a no-op (and we
+// surface a 409 below for clarity).
+//
+// Fire_guard / condition: NOT a force-execute. The step's guards still
+// apply when /process-jobs picks the job up — same semantics as
+// /fire-next.
+router.post('/sequences/enrollments/:id/recover', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const id = parseInt(req.params.id, 10);
+
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid enrollment ID' });
+  }
+
+  try {
+    // 1) Load enrollment
+    const [[en]] = await db.query(
+      `SELECT id, template_id, status, current_step FROM sequence_enrollments WHERE id = ?`,
+      [id]
+    );
+    if (!en) return res.status(404).json({ error: 'Enrollment not found' });
+    if (en.status !== 'active') {
+      return res.status(409).json({
+        error: `Enrollment is ${en.status}, not active`,
+        enrollment_status: en.status,
+      });
+    }
+
+    // 2) Refuse if a pending/running job already exists — that's the
+    //    /fire-next territory, not /recover. Caller's UI should already
+    //    have hidden this button in that case; this is belt-and-braces.
+    const [[existingJob]] = await db.query(
+      `SELECT id, status FROM scheduled_jobs
+        WHERE sequence_enrollment_id = ?
+          AND status IN ('pending', 'running')
+        ORDER BY id DESC LIMIT 1`,
+      [id]
+    );
+    if (existingJob) {
+      return res.status(409).json({
+        error: `A ${existingJob.status} job already exists for this enrollment; nothing to recover`,
+        job_id: existingJob.id,
+        job_status: existingJob.status,
+      });
+    }
+
+    // 3) Determine target step_number — see route comment for rationale.
+    const [[lastLog]] = await db.query(
+      `SELECT step_number FROM sequence_step_log
+        WHERE enrollment_id = ?
+        ORDER BY id DESC LIMIT 1`,
+      [id]
+    );
+    const targetStepNumber = lastLog && lastLog.step_number != null
+      ? lastLog.step_number + 1
+      : en.current_step;
+
+    // 4) Load the step row. If absent, complete the enrollment (mirrors
+    //    advanceToNextStep terminal branch).
+    const [[step]] = await db.query(
+      `SELECT id, step_number, timing FROM sequence_steps
+        WHERE template_id = ? AND step_number = ? LIMIT 1`,
+      [en.template_id, targetStepNumber]
+    );
+    if (!step) {
+      await db.query(
+        `UPDATE sequence_enrollments
+            SET status = 'completed', completed_at = NOW(), updated_at = NOW()
+          WHERE id = ?`,
+        [id]
+      );
+      console.log(`[sequence] Recovery completed enrollment ${id} — no step ${targetStepNumber} in template`);
+      return res.json({
+        success:        true,
+        enrollment_id:  id,
+        status:         'completed',
+        step_number:    targetStepNumber,
+        note: 'Template has no step at the target number; marked enrollment completed.',
+      });
+    }
+
+    // 5) Advance enrollment.current_step if it's behind targetStepNumber.
+    //    This covers the edge where advanceToNextStep threw before its
+    //    UPDATE current_step ran.
+    if (en.current_step !== targetStepNumber) {
+      await db.query(
+        `UPDATE sequence_enrollments
+            SET current_step = ?, updated_at = NOW()
+          WHERE id = ?`,
+        [targetStepNumber, id]
+      );
+    }
+
+    // 6) Schedule. scheduleStepJob expects step.timing parsed already
+    //    where it matters, but it only reads step.step_number and step.id
+    //    for the INSERT — timing isn't touched here. Schedule for NOW so
+    //    the next /process-jobs tick picks it up.
+    const now = new Date();
+    await scheduleStepJob(db, id, step, now);
+
+    // 7) Read back the row we just (probably) inserted. If scheduleStepJob
+    //    short-circuited because a pending row materialized between our
+    //    check and the call (very unlikely but possible under concurrent
+    //    recovery clicks), surface that.
+    const [[after]] = await db.query(
+      `SELECT id, scheduled_time, status FROM scheduled_jobs
+        WHERE sequence_enrollment_id = ?
+          AND idempotency_key = ?
+          AND status IN ('pending', 'running')
+        ORDER BY id DESC LIMIT 1`,
+      [id, `seq-${id}-step-${step.step_number}`]
+    );
+    if (!after) {
+      // Shouldn't happen — scheduleStepJob either inserts or finds a
+      // pending/running existing row. Belt-and-braces 500.
+      return res.status(500).json({
+        error: 'Recovery insert did not produce a pending job; please check logs',
+      });
+    }
+
+    return res.json({
+      success:           true,
+      enrollment_id:     id,
+      job_id:            after.id,
+      step_number:       step.step_number,
+      new_scheduled_at:  new Date(after.scheduled_time).toISOString(),
+      note: "Job will fire on the next /process-jobs tick (within ~5 min). "
+          + "The step's fire_guard and condition still apply at execution.",
+    });
+  } catch (err) {
+    console.error('[POST /sequences/enrollments/:id/recover] failed:', err);
+    return res.status(500).json({ error: 'Failed to recover enrollment', message: err.message });
   }
 });
 

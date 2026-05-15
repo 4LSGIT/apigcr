@@ -279,28 +279,60 @@ async function nextBusinessDay(fromDate, options = {}) {
     maxDaysAhead     = 30,
     timezone         = DEFAULT_TZ,
   } = options;
- 
-  const from = moment.isMoment(fromDate) ? fromDate.clone() : moment(fromDate);
- 
-  // Fetch a wide range so we only call Hebcal once
-  const rangeEnd  = from.clone().add(maxDaysAhead + 7, 'days');
-  const events    = await fetchHebcalEvents(from.clone().subtract(1, 'day'), rangeEnd);
-  const restricted = buildRestrictedSet(from.clone().subtract(1, 'day'), rangeEnd, events);
- 
-  const [targetHour, targetMin] = timeOfDay.split(':').map(Number);
- 
-  // Start from tomorrow (or today if from is before target time today)
-  let candidate = from.clone().startOf('day');
-  if (from.hour() >= targetHour && from.minute() >= targetMin) {
-    candidate.add(1, 'day');
+
+  // Anchor everything in the firm timezone. "Have we passed today's target
+  // time?", "what calendar day are we on?", and "is this day restricted?"
+  // are all firm-local questions, not server-local. The previous moment-
+  // based path mixed moment's local TZ (UTC on Cloud Run) with firm-TZ
+  // target times, which (a) compared UTC hour to firm-TZ hour — wrong by
+  // tzOffset hours — and (b) used a UTC-frame startOf('day') for the
+  // restricted-day lookup, which worked by accident under Detroit's
+  // negative offset but would silently misfire under other configurations.
+  // See post-mortem (May 2026).
+  let fromDt;
+  if (DateTime.isDateTime(fromDate)) {
+    fromDt = fromDate.setZone(timezone);
+  } else if (moment.isMoment(fromDate)) {
+    fromDt = DateTime.fromJSDate(fromDate.toDate(), { zone: timezone });
+  } else if (fromDate instanceof Date) {
+    fromDt = DateTime.fromJSDate(fromDate, { zone: timezone });
+  } else {
+    fromDt = DateTime.fromISO(String(fromDate), { zone: timezone });
   }
- 
+
+  // Build the moment-anchored range that fetchHebcalEvents and
+  // buildRestrictedSet still consume. We feed them moments derived from
+  // firm-tz YYYY-MM-DD strings so the dateStr keys they generate match
+  // firm-local civil dates — which is the frame Hebcal returns events in
+  // and the frame our candidate loop iterates in below.
+  const rangeStartStr = fromDt.minus({ days: 1 }).toFormat('yyyy-LL-dd');
+  const rangeEndStr   = fromDt.plus({ days: maxDaysAhead + 7 }).toFormat('yyyy-LL-dd');
+  const events     = await fetchHebcalEvents(moment(rangeStartStr), moment(rangeEndStr));
+  const restricted = buildRestrictedSet(moment(rangeStartStr), moment(rangeEndStr), events);
+
+  const [targetHour, targetMin] = timeOfDay.split(':').map(Number);
+
+  // "today at target time" in firm tz. Compare to fromDt as instants.
+  const todayTargetDt = fromDt.set({
+    hour: targetHour, minute: targetMin, second: 0, millisecond: 0,
+  });
+
+  // Start the candidate at today's calendar day in firm tz. Advance to
+  // tomorrow only if we're already past today's target moment. Comparing
+  // DateTime objects (Luxon) compares instants regardless of zone — no
+  // hour/minute field arithmetic.
+  let candidateDt = fromDt.startOf('day');
+  if (fromDt >= todayTargetDt) {
+    candidateDt = candidateDt.plus({ days: 1 });
+  }
+
   for (let i = 0; i < maxDaysAhead; i++) {
-    const dateStr = candidate.format('YYYY-MM-DD');
-    const dayOfWeek = candidate.day();
- 
-    // Skip Sunday (0), Saturday (Shabbos), restricted (Yom Tov)
-    if (dayOfWeek !== 0 && !isDayRestricted(dateStr, restricted)) {
+    const dateStr   = candidateDt.toFormat('yyyy-LL-dd');
+    const dayOfWeek = candidateDt.weekday;   // Luxon: 1=Mon..7=Sun
+
+    // Skip Sunday (7 in Luxon), Saturday (handled via restricted set as
+    // Shabbos by buildRestrictedSet), Yom Tov (also in restricted).
+    if (dayOfWeek !== 7 && !isDayRestricted(dateStr, restricted)) {
       // Found a valid day — apply time + jitter in firm timezone, return UTC.
       //
       // Jitter is applied via `.plus({ minutes: jitter })` (NOT by passing
@@ -316,25 +348,17 @@ async function nextBusinessDay(fromDate, options = {}) {
         ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
         : 0;
 
-      const localDt = DateTime.fromObject(
-        {
-          year:   candidate.year(),
-          month:  candidate.month() + 1,  // moment is 0-based, luxon is 1-based
-          day:    candidate.date(),
-          hour:   targetHour,
-          minute: targetMin,
-          second: 0,
-        },
-        { zone: timezone }
-      ).plus({ minutes: jitter });
+      const localDt = candidateDt
+        .set({ hour: targetHour, minute: targetMin, second: 0, millisecond: 0 })
+        .plus({ minutes: jitter });
 
       return localDt.toUTC().toJSDate();
     }
- 
-    candidate.add(1, 'day');
+
+    candidateDt = candidateDt.plus({ days: 1 });
   }
- 
-  throw new Error(`No business day found within ${maxDaysAhead} days of ${from.format('YYYY-MM-DD')}`);
+
+  throw new Error(`No business day found within ${maxDaysAhead} days of ${fromDt.toFormat('yyyy-LL-dd')}`);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -361,19 +385,41 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
     maxDaysBack    = 14,
     timezone       = DEFAULT_TZ,
   } = defaults;
- 
+
   if (!attempts.length) {
     throw new Error('prevBusinessDay requires at least one attempt rule');
   }
- 
-  const anchor = moment.isMoment(anchorDate) ? anchorDate.clone() : moment(anchorDate);
-  const now    = moment();
- 
-  // Fetch a wide range once
-  const rangeStart = anchor.clone().subtract(maxDaysBack + 7, 'days');
-  const events     = await fetchHebcalEvents(rangeStart, anchor.clone().add(1, 'day'));
-  const restricted  = buildRestrictedSet(rangeStart, anchor.clone().add(1, 'day'), events);
- 
+
+  // Anchor everything in firm tz via Luxon. Day-of-week, dateStr, and
+  // target hour/minute are firm-local concerns; "is it in the past?"
+  // and "is the gap to anchor large enough?" are instant comparisons
+  // that work regardless of representation zone. Mirrors the
+  // nextBusinessDay rewrite (same family of bugs — UTC-frame
+  // .day()/.format() on moment when server TZ is UTC misidentified
+  // restricted days when the candidate's UTC date and firm-TZ date
+  // diverge late evening). Also fixes a latent DST bug in the walk-
+  // back time-preserve branch, which previously preserved UTC hour
+  // (causing the reminder to shift 1h across spring-forward / fall-
+  // back boundaries) instead of firm-TZ hour.
+  let anchorDt;
+  if (DateTime.isDateTime(anchorDate)) {
+    anchorDt = anchorDate.setZone(timezone);
+  } else if (moment.isMoment(anchorDate)) {
+    anchorDt = DateTime.fromJSDate(anchorDate.toDate(), { zone: timezone });
+  } else if (anchorDate instanceof Date) {
+    anchorDt = DateTime.fromJSDate(anchorDate, { zone: timezone });
+  } else {
+    anchorDt = DateTime.fromISO(String(anchorDate), { zone: timezone });
+  }
+  const nowDt = DateTime.now().setZone(timezone);
+
+  // Feed buildRestrictedSet firm-tz YYYY-MM-DD strings so its keys live
+  // in the same frame as our candidate iteration below.
+  const rangeStartStr = anchorDt.minus({ days: maxDaysBack + 7 }).toFormat('yyyy-LL-dd');
+  const rangeEndStr   = anchorDt.plus({ days: 1 }).toFormat('yyyy-LL-dd');
+  const events     = await fetchHebcalEvents(moment(rangeStartStr), moment(rangeEndStr));
+  const restricted = buildRestrictedSet(moment(rangeStartStr), moment(rangeEndStr), events);
+
   for (let ai = 0; ai < attempts.length; ai++) {
     const attempt = attempts[ai];
     const {
@@ -383,124 +429,109 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
       randomizeMinutes = 0,
       minHoursBefore:  attemptMin,
     } = attempt;
- 
+
     const effectiveMin = attemptMin ?? minHoursBefore;
- 
     if (hoursBack == null) continue;
- 
-    // Calculate raw candidate time
-    let candidate;
+
+    // ── Build raw candidate ──
+    let candidateDt;
     if (sameTimeAsAnchor) {
       const daysBack = Math.ceil(hoursBack / 24);
-      candidate = anchor.clone().subtract(daysBack, 'days');
+      candidateDt = anchorDt.minus({ days: daysBack });
     } else {
-      candidate = anchor.clone().subtract(hoursBack, 'hours');
+      candidateDt = anchorDt.minus({ hours: hoursBack });
       if (timeOfDay) {
         const [h, m] = timeOfDay.split(':').map(Number);
-        // Build in firm timezone, then convert candidate to moment for comparison
-        const localDt = DateTime.fromObject(
-          {
-            year:   candidate.year(),
-            month:  candidate.month() + 1,
-            day:    candidate.date(),
-            hour:   h,
-            minute: m,
-            second: 0,
-          },
-          { zone: timezone }
-        );
-        // Convert back to moment-UTC for the rest of the logic
-        candidate = moment(localDt.toUTC().toJSDate());
+        candidateDt = candidateDt.set({
+          hour: h, minute: m, second: 0, millisecond: 0,
+        });
       }
     }
- 
-    // Apply jitter
+
+    // ── Apply jitter via .plus (never field arithmetic — see jitter
+    //    comment in nextBusinessDay for the Luxon-rejects-out-of-range
+    //    rationale that crashed enrollment 61). ──
     if (randomizeMinutes > 0) {
       const jitter = Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes;
-      candidate.add(jitter, 'minutes');
+      candidateDt = candidateDt.plus({ minutes: jitter });
     }
- 
-    // Too close to appointment?
-    const hoursUntilAnchor = anchor.diff(candidate, 'hours', true);
+
+    // ── Too close to anchor? ──
+    const hoursUntilAnchor = anchorDt.diff(candidateDt, 'hours').hours;
     if (hoursUntilAnchor < effectiveMin) {
       console.log(`[calendar] Attempt ${ai + 1}: too close (${hoursUntilAnchor.toFixed(1)}h < ${effectiveMin}h min) — trying next`);
       continue;
     }
- 
-    // Already passed?
-    if (candidate.isBefore(now)) {
+
+    // ── Already in the past? ──
+    if (candidateDt < nowDt) {
       console.log(`[calendar] Attempt ${ai + 1}: already in the past — trying next`);
       continue;
     }
- 
-    // Is the candidate day restricted?
-    const dayOfWeek = candidate.day();
-    const dateStr   = candidate.format('YYYY-MM-DD');
- 
-    if (dayOfWeek === 0 || isDayRestricted(dateStr, restricted)) {
-      let walkBack = candidate.clone().subtract(1, 'day');
+
+    // ── Is the candidate's firm-tz day restricted? ──
+    const dayOfWeek = candidateDt.weekday;          // Luxon: 1=Mon..7=Sun
+    const dateStr   = candidateDt.toFormat('yyyy-LL-dd');
+
+    if (dayOfWeek === 7 || isDayRestricted(dateStr, restricted)) {
+      // Walk back day-by-day for a valid day, preserving the time of day.
+      let walkBackDt = candidateDt.minus({ days: 1 });
       let found = false;
       for (let d = 0; d < maxDaysBack; d++) {
-        const wStr  = walkBack.format('YYYY-MM-DD');
-        const wDay  = walkBack.day();
-        if (wDay !== 0 && !isDayRestricted(wStr, restricted)) {
-          // Preserve the time — rebuild in timezone then convert to UTC.
-          //
-          // Jitter is applied via `.plus({ minutes: jitter })`. See the
-          // matching comment in nextBusinessDay for the rationale; passing
-          // `minute: m + jitter` directly to Luxon's fromObject produces
-          // an invalid DateTime when jitter is negative or pushes minute >59.
+        const wStr = walkBackDt.toFormat('yyyy-LL-dd');
+        const wDay = walkBackDt.weekday;
+        if (wDay !== 7 && !isDayRestricted(wStr, restricted)) {
+          // Preserve the time-of-day in firm tz:
+          //   - timeOfDay branch: target time + fresh jitter, applied
+          //     via .plus (NOT minute field-arithmetic, which would
+          //     crash on negative or >59 minute values).
+          //   - else (sameTimeAsAnchor reached restricted day): keep
+          //     candidate's firm-tz hour/minute, so the reminder lands
+          //     at the same firm-TZ wall-clock time on the walked-back
+          //     day. DST-stable, unlike the prior moment-set-UTC-hour
+          //     path which shifted 1h across spring-forward / fall-back.
           if (timeOfDay && !sameTimeAsAnchor) {
             const [h, m] = timeOfDay.split(':').map(Number);
             const jitter = randomizeMinutes > 0
               ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
               : 0;
-            const localDt = DateTime.fromObject(
-              {
-                year:   walkBack.year(),
-                month:  walkBack.month() + 1,
-                day:    walkBack.date(),
-                hour:   h,
-                minute: m,
-                second: 0,
-              },
-              { zone: timezone }
-            ).plus({ minutes: jitter });
-            walkBack = moment(localDt.toUTC().toJSDate());
+            walkBackDt = walkBackDt
+              .set({ hour: h, minute: m, second: 0, millisecond: 0 })
+              .plus({ minutes: jitter });
           } else {
-            walkBack.set({
-              hour:        candidate.hour(),
-              minute:      candidate.minute(),
+            walkBackDt = walkBackDt.set({
+              hour:        candidateDt.hour,
+              minute:      candidateDt.minute,
               second:      0,
-              millisecond: 0
+              millisecond: 0,
             });
           }
- 
-          const hoursCheck = anchor.diff(walkBack, 'hours', true);
+
+          const hoursCheck = anchorDt.diff(walkBackDt, 'hours').hours;
           if (hoursCheck < effectiveMin) {
             console.log(`[calendar] Attempt ${ai + 1} walked back: still too close — trying next attempt`);
             break;
           }
- 
-          if (walkBack.isBefore(now)) {
+
+          if (walkBackDt < nowDt) {
             console.log(`[calendar] Attempt ${ai + 1} walked back: in the past — trying next attempt`);
             break;
           }
- 
-          candidate = walkBack;
+
+          candidateDt = walkBackDt;
           found = true;
           break;
         }
-        walkBack.subtract(1, 'day');
+        walkBackDt = walkBackDt.minus({ days: 1 });
       }
- 
+
       if (!found) continue;
     }
- 
-    console.log(`[calendar] Attempt ${ai + 1}: scheduled at ${candidate.toISOString()}`);
-    return { scheduledAt: candidate.toDate(), attemptIndex: ai };
+
+    console.log(`[calendar] Attempt ${ai + 1}: scheduled at ${candidateDt.toUTC().toISO()}`);
+    return { scheduledAt: candidateDt.toUTC().toJSDate(), attemptIndex: ai };
   }
- 
+
   console.log('[calendar] All reminder attempts blocked or in the past — returning null');
   return null;
 }
