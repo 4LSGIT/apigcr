@@ -389,6 +389,7 @@
         <th>Template</th>
         <th>Status</th>
         <th>Step</th>
+        <th>Next Step</th>
         <th>Enrolled</th>
         <th>Completed</th>
         <th></th>
@@ -1250,7 +1251,7 @@ async function loadContactSequences() {
   if (!tbody || !empty || !table || !count || !pager) return;
  
   // Inline spinner; tab is already visible so the table row swap is fine.
-  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>';
   table.style.display = '';
   empty.style.display = 'none';
  
@@ -1297,7 +1298,7 @@ async function loadContactSequences() {
     if (anySeqActive) startContactAutomationPolling();
     else              maybeStopAutomationPolling();
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="7" style="color:#991b1b;padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="color:#991b1b;padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
     pager.innerHTML = '';
     // Transient fetch errors don't force a polling stop — they're often
     // recoverable and the tick will retry on its own. But if the tab is
@@ -1313,6 +1314,13 @@ function renderContactSequenceRows(rows) {
     const isActive  = String(r.status).toLowerCase() === 'active';
     const stepCell  = (r.current_step != null && r.total_steps != null)
       ? `${cseqEsc(r.current_step)}/${cseqEsc(r.total_steps)}` : '—';
+    // Next-step time: only meaningful when the row is active AND the backend
+    // returned a non-null next_step_at (MIN scheduled_time of pending jobs).
+    // Belt-and-suspenders the isActive check too in case of transient race
+    // during a step transition (current step running, next not yet inserted).
+    const nextStepCell = (isActive && r.next_step_at)
+      ? cseqFmtDate(r.next_step_at)
+      : '—';
     const cancelBtn = isActive
       ? `<button type="button" class="cseq-cancel-btn"
                  onclick="cancelContactEnrollment(${r.enrollment_id})">
@@ -1331,6 +1339,7 @@ function renderContactSequenceRows(rows) {
         </td>
         <td>${cseqStatusBadge(r.status)}${cancelReasonLine}</td>
         <td>${stepCell}</td>
+        <td>${nextStepCell}</td>
         <td>${cseqFmtDateShort(r.enrolled_at)}</td>
         <td>${cseqFmtDateShort(r.completed_at)}</td>
         <td>

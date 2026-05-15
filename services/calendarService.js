@@ -301,23 +301,33 @@ async function nextBusinessDay(fromDate, options = {}) {
  
     // Skip Sunday (0), Saturday (Shabbos), restricted (Yom Tov)
     if (dayOfWeek !== 0 && !isDayRestricted(dateStr, restricted)) {
-      // Found a valid day — apply time + jitter in firm timezone, return UTC
+      // Found a valid day — apply time + jitter in firm timezone, return UTC.
+      //
+      // Jitter is applied via `.plus({ minutes: jitter })` (NOT by passing
+      // `minute: targetMin + jitter` to fromObject). Luxon rejects out-of-
+      // range field values — a negative or >59 minute makes the DateTime
+      // invalid, which silently becomes `Invalid Date` downstream and
+      // explodes when mysql2 tries to insert it as NULL into a NOT NULL
+      // scheduled_jobs.scheduled_time column. See enrollment 61 / step 3
+      // post-mortem (May 2026). The `.plus` path normalizes hour/day rollover
+      // correctly. Near day boundaries (e.g. target 00:30 with large jitter)
+      // this can push across a day; non-issue for business-hours targets.
       const jitter = randomizeMinutes > 0
         ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
         : 0;
- 
+
       const localDt = DateTime.fromObject(
         {
           year:   candidate.year(),
           month:  candidate.month() + 1,  // moment is 0-based, luxon is 1-based
           day:    candidate.date(),
           hour:   targetHour,
-          minute: targetMin + jitter,
+          minute: targetMin,
           second: 0,
         },
         { zone: timezone }
-      );
- 
+      ).plus({ minutes: jitter });
+
       return localDt.toUTC().toJSDate();
     }
  
@@ -434,22 +444,28 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
         const wStr  = walkBack.format('YYYY-MM-DD');
         const wDay  = walkBack.day();
         if (wDay !== 0 && !isDayRestricted(wStr, restricted)) {
-          // Preserve the time — rebuild in timezone then convert to UTC
+          // Preserve the time — rebuild in timezone then convert to UTC.
+          //
+          // Jitter is applied via `.plus({ minutes: jitter })`. See the
+          // matching comment in nextBusinessDay for the rationale; passing
+          // `minute: m + jitter` directly to Luxon's fromObject produces
+          // an invalid DateTime when jitter is negative or pushes minute >59.
           if (timeOfDay && !sameTimeAsAnchor) {
             const [h, m] = timeOfDay.split(':').map(Number);
+            const jitter = randomizeMinutes > 0
+              ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
+              : 0;
             const localDt = DateTime.fromObject(
               {
                 year:   walkBack.year(),
                 month:  walkBack.month() + 1,
                 day:    walkBack.date(),
                 hour:   h,
-                minute: m + (randomizeMinutes > 0
-                  ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
-                  : 0),
+                minute: m,
                 second: 0,
               },
               { zone: timezone }
-            );
+            ).plus({ minutes: jitter });
             walkBack = moment(localDt.toUTC().toJSDate());
           } else {
             walkBack.set({

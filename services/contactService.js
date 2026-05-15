@@ -2183,7 +2183,11 @@ async function listContactSequences(db, contactId, {
        se.completed_at,
        se.updated_at,
        st.name         AS template_name,
-       st.type         AS template_type
+       st.type         AS template_type,
+       (SELECT MIN(sj.scheduled_time)
+          FROM scheduled_jobs sj
+         WHERE sj.sequence_enrollment_id = se.id
+           AND sj.status = 'pending') AS next_step_at
      FROM sequence_enrollments se
      JOIN sequence_templates st ON st.id = se.template_id
      WHERE ${whereSQL}
