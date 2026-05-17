@@ -62,6 +62,8 @@
   .status .err { color: var(--danger); }
 
   .results { flex: 1; overflow: auto; min-height: 0; }
+  pre.report { margin: 0; padding: 12px 14px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.55; color: var(--text); white-space: pre-wrap; word-wrap: break-word; }
+  pre.report .qcount { color: var(--muted); }
   table.r { border-collapse: collapse; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   table.r th, table.r td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
   /* default: one-line cells with ellipsis — readable, user hovers for full value */
@@ -156,6 +158,7 @@
     <div class="toolbar">
       <button id="btnSidebar" title="Show/hide sidebar">☰</button>
       <button class="primary" id="btnRun">Run <span class="hint">⌘/Ctrl+⏎</span></button>
+      <button id="btnRunAll" title="Split on ; and run sequentially, building a markdown report you can paste into a chat">Run All <span class="hint">⇧⌘/Ctrl+⏎</span></button>
       <button id="btnExplain" title="Prepend EXPLAIN">EXPLAIN</button>
       <button id="btnWrap" title="Wrap long cells (multi-line)">Wrap</button>
       <button id="btnCsv" disabled>Export CSV</button>
@@ -247,11 +250,13 @@ const btnWrite = document.getElementById("btnWriteToggle");
 const btnCsv   = document.getElementById("btnCsv");
 const btnCopy  = document.getElementById("btnCopy");
 const btnRun   = document.getElementById("btnRun");
+const btnRunAll= document.getElementById("btnRunAll");
 const userHint = document.getElementById("userHint");
 const copyHint = document.getElementById("copyHint");
 
 let lastRows = null;
 let lastFields = null;
+let lastReportMarkdown = null;  // set by runBatch; flips btnCopy into "copy markdown report" mode
 let sortState = { key: null, dir: 1 };
 let writeMode = false;
 let wrapMode  = false;
@@ -294,6 +299,7 @@ btnWrite.addEventListener("click", () => {
 
 // ── editor keybindings ───────────────────────────────────────────────────────
 editor.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "Enter") { e.preventDefault(); runBatch(); return; }
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); runQuery(); return; }
   if (e.key === "Tab") {
     e.preventDefault();
@@ -303,6 +309,7 @@ editor.addEventListener("keydown", (e) => {
   }
 });
 btnRun.addEventListener("click", runQuery);
+btnRunAll.addEventListener("click", runBatch);
 
 // Sidebar collapse — frees up horizontal room for wide result tables.
 document.getElementById("btnSidebar").addEventListener("click", () => {
@@ -327,6 +334,7 @@ document.getElementById("btnExplain").addEventListener("click", () => {
 async function runQuery() {
   const query = editor.value.trim();
   if (!query) return;
+  lastReportMarkdown = null; // single-run: clear batch-report state so Copy reverts to TSV
   setStatus("Running…");
   btnRun.disabled = true;
   const t0 = performance.now();
@@ -355,6 +363,208 @@ async function runQuery() {
   } finally {
     btnRun.disabled = false;
   }
+}
+
+// ── batch run + markdown report ──────────────────────────────────────────────
+// The pool runs with multipleStatements off, so we split client-side and fire
+// statements one at a time. Output is a single markdown document optimized
+// for pasting into an LLM chat — each statement gets its SQL, a header line,
+// and a result block (markdown table, fenced ddl, or json).
+
+// State-machine splitter. Handles single/double/backtick string literals,
+// MySQL backslash escapes inside string literals, '' / "" doubled-quote
+// escapes, -- and # line comments, and /* */ block comments. Leading
+// comments before a statement stay attached to that statement, which is the
+// natural behaviour for the "annotated batch" pattern.
+function splitSql(sql) {
+  const stmts = [];
+  let buf = "";
+  let state = "NORMAL"; // NORMAL | LCOMMENT | BCOMMENT | SQ | DQ | BT
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i], next = sql[i + 1];
+    if (state === "NORMAL") {
+      if (ch === ";") { const t = buf.trim(); if (t) stmts.push(t); buf = ""; continue; }
+      // -- requires whitespace/eof after, per MySQL grammar
+      if (ch === "-" && next === "-" && (sql[i + 2] === undefined || /\s/.test(sql[i + 2]))) {
+        buf += "--"; i++; state = "LCOMMENT"; continue;
+      }
+      if (ch === "#") { buf += ch; state = "LCOMMENT"; continue; }
+      if (ch === "/" && next === "*") { buf += "/*"; i++; state = "BCOMMENT"; continue; }
+      if (ch === "'") { buf += ch; state = "SQ"; continue; }
+      if (ch === '"') { buf += ch; state = "DQ"; continue; }
+      if (ch === "`") { buf += ch; state = "BT"; continue; }
+      buf += ch;
+      continue;
+    }
+    if (state === "LCOMMENT") {
+      buf += ch;
+      if (ch === "\n") state = "NORMAL";
+      continue;
+    }
+    if (state === "BCOMMENT") {
+      buf += ch;
+      if (ch === "*" && next === "/") { buf += "/"; i++; state = "NORMAL"; }
+      continue;
+    }
+    // SQ | DQ | BT
+    const q = state === "SQ" ? "'" : state === "DQ" ? '"' : "`";
+    buf += ch;
+    if (ch === "\\" && state !== "BT" && next !== undefined) {
+      // backslash-escape next char (only inside ' and " — backticks don't honour \)
+      buf += next; i++; continue;
+    }
+    if (ch === q) {
+      if (next === q) { buf += next; i++; continue; } // doubled = literal quote
+      state = "NORMAL";
+    }
+  }
+  const tail = buf.trim();
+  if (tail) stmts.push(tail);
+  return stmts;
+}
+
+// Strip comments to decide if a chunk has any real SQL in it. Pure-comment
+// chunks (e.g. a trailing "-- end" after the last ;) would otherwise become
+// no-op queries that clutter the report.
+function hasSqlContent(stmt) {
+  return stmt
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/--[^\n]*/g, "")
+    .replace(/#[^\n]*/g, "")
+    .trim().length > 0;
+}
+
+// First non-comment token, uppercased — used as the kind label in the report
+// header ("SELECT", "SHOW", "INSERT", ...).
+function getStatementKind(stmt) {
+  const cleaned = stmt
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ")
+    .replace(/#[^\n]*/g, " ")
+    .trim();
+  const m = cleaned.match(/^(\w+)/);
+  return m ? m[1].toUpperCase() : "?";
+}
+
+const REPORT_ROW_CAP = 200;
+
+function renderMdTable(rows, cols) {
+  const cell = (v) => {
+    if (v === null || v === undefined) return "*NULL*";
+    let s = typeof v === "object" ? JSON.stringify(v) : String(v);
+    // markdown pipe tables: escape pipes, collapse line breaks/tabs
+    return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").replace(/\t/g, " ");
+  };
+  const header = "| " + cols.join(" | ") + " |";
+  const sep = "|" + cols.map(() => "---").join("|") + "|";
+  const body = rows.slice(0, REPORT_ROW_CAP)
+    .map(r => "| " + cols.map(c => cell(r[c])).join(" | ") + " |")
+    .join("\n");
+  let out = [header, sep, body].join("\n");
+  if (rows.length > REPORT_ROW_CAP) out += `\n\n_… and ${rows.length - REPORT_ROW_CAP} more row(s) omitted._`;
+  return out;
+}
+
+function renderResultMd(res) {
+  const rows = res.rows;
+  // OkPacket (DDL, INSERT/UPDATE/DELETE) — render as JSON
+  if (!Array.isArray(rows)) {
+    return "```json\n" + JSON.stringify(rows, null, 2) + "\n```";
+  }
+  if (rows.length === 0) return "_0 rows._";
+  const cols = res.fields?.length ? res.fields.map(f => f.name) : Object.keys(rows[0]);
+  // SHOW CREATE TABLE — special-case so the DDL renders as a sql block
+  // instead of being squashed into a pipe-table cell with escaped newlines.
+  if (rows.length === 1 && cols.length === 2 && /create.table/i.test(cols[1])) {
+    const tableName = rows[0][cols[0]];
+    const ddl = rows[0][cols[1]];
+    return `**Table:** \`${tableName}\`\n\n\`\`\`sql\n${ddl}\n\`\`\``;
+  }
+  return renderMdTable(rows, cols);
+}
+
+async function runBatch() {
+  const fullSql = editor.value.trim();
+  if (!fullSql) return;
+
+  let statements;
+  try {
+    statements = splitSql(fullSql).filter(hasSqlContent);
+  } catch (err) {
+    setStatus(`<span class="err">Could not split SQL:</span> ${escapeHtml(err.message)}`);
+    return;
+  }
+  if (!statements.length) { setStatus(`<span class="err">No statements found.</span>`); return; }
+
+  // Single statement? Defer to runQuery so the result lands in the table view
+  // (sortable, copyable as TSV) instead of a one-row markdown report.
+  if (statements.length === 1) { runQuery(); return; }
+
+  btnRun.disabled = true;
+  btnRunAll.disabled = true;
+  results.innerHTML = `<div class="empty">Running batch…</div>`;
+
+  const t0 = performance.now();
+  const parts = [];
+  let okCount = 0, errCount = 0;
+
+  for (let i = 0; i < statements.length; i++) {
+    const stmt = statements[i];
+    const kind = getStatementKind(stmt);
+    setStatus(`Running ${i + 1}/${statements.length}: <code>${escapeHtml(kind)}</code>…`);
+    const qt0 = performance.now();
+    let header, body;
+    try {
+      const res = await api("/admin/db/query", "POST", { query: stmt, allowWrite: writeMode });
+      const qms = res.durationMs ?? Math.round(performance.now() - qt0);
+      const rowsLabel = Array.isArray(res.rows)
+        ? `${res.rows.length} row${res.rows.length === 1 ? "" : "s"}`
+        : `${res.rows?.affectedRows ?? 0} affected`;
+      header = `## ${i + 1}. ✓ ${kind} · ${rowsLabel} · ${qms} ms`;
+      body = renderResultMd(res);
+      okCount++;
+    } catch (err) {
+      const qms = Math.round(performance.now() - qt0);
+      header = `## ${i + 1}. ✗ ${kind} · ERROR · ${qms} ms`;
+      body = "```\n" + (err.message || String(err)) + "\n```";
+      errCount++;
+    }
+    parts.push(`${header}\n\n\`\`\`sql\n${stmt};\n\`\`\`\n\n${body}`);
+  }
+
+  const totalMs = Math.round(performance.now() - t0);
+  const summary =
+    `# DB Console — Query Report\n\n` +
+    `_${new Date().toISOString()} · ${statements.length} statement${statements.length === 1 ? "" : "s"} · ` +
+    `${okCount} ✓ · ${errCount} ✗ · ${totalMs} ms total_`;
+  const md = summary + "\n\n---\n\n" + parts.join("\n\n---\n\n") + "\n";
+
+  lastReportMarkdown = md;
+  lastRows = null;
+  lastFields = null;
+  btnCsv.disabled = true;
+  btnCopy.disabled = false;
+
+  // Render the raw markdown into the results pane. We don't render it as
+  // HTML — what you see is what you copy. That's the whole point.
+  results.innerHTML = `<pre class="report">${escapeHtml(md)}</pre>`;
+
+  // Auto-copy. Failures here are non-fatal — Fred can still hit Copy.
+  let copied = false;
+  try { await navigator.clipboard.writeText(md); copied = true; } catch {}
+
+  setStatus(
+    `<span class="${errCount ? "err" : "ok"}">Batch done.</span> ` +
+    `${statements.length} statement(s) · ${okCount} OK · ${errCount} err · ${totalMs} ms` +
+    (copied ? ` · <span class="ok">report copied</span>` : ``)
+  );
+  if (copied) setCopyHint("Report copied (markdown).", "ok");
+
+  pushHistory(fullSql);
+  if (historyPanel.classList.contains("open")) renderHistory();
+
+  btnRun.disabled = false;
+  btnRunAll.disabled = false;
 }
 
 function setStatus(html) { status_.innerHTML = html; }
@@ -445,6 +655,17 @@ btnCsv.addEventListener("click", () => {
 // Notion without an import dialog. For write results (OkPacket) we copy JSON
 // since there's no row structure to transpose.
 btnCopy.addEventListener("click", async () => {
+  // Batch-report mode takes precedence — the report is what's on screen and
+  // what Fred is reaching for.
+  if (lastReportMarkdown) {
+    try {
+      await navigator.clipboard.writeText(lastReportMarkdown);
+      setCopyHint("Report copied (markdown).", "ok");
+    } catch (err) {
+      setCopyHint(`Copy failed: ${err.message}`, "err");
+    }
+    return;
+  }
   if (lastRows == null) return;
   let text;
   let label;
