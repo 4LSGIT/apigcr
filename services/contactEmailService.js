@@ -290,6 +290,21 @@ async function getContactEmail(db, emailId) {
  *     INSERT proceeds and yields a new active row alongside the
  *     historical ended one(s).
  *
+ * Cross-contact transfer donor-end rule (Slice 3.5):
+ * On the force=true cross-contact transfer path below, the donor's
+ * end_date is set to yesterday (DATE_SUB(CURDATE(), INTERVAL 1 DAY)) to
+ * guarantee no same-day ownership overlap with the recipient.
+ *
+ * Edge case: a row created today and transferred today produces
+ * end_date = today - 1 while start_date = today (i.e., end_date < start_date).
+ * This is intentional — the donor never owned the value across any
+ * meaningful interval. Reader queries using end_date >= log_created
+ * naturally attribute any log written during that zero-duration window
+ * to the recipient.
+ *
+ * No CHECK constraint exists on (end_date >= start_date) and none should be added
+ * without first deciding whether to backfill or to remove same-day-transfer artifacts.
+ *
  * @param {object} db
  * @param {number|string} contactId
  * @param {object} fields
@@ -353,9 +368,12 @@ async function createContactEmail(db, contactId, fields = {}, { force = false, c
         };
         throw err;
       }
+      // force=true: end the donor's row + recompute donor's mirror.
+      // Slice 3.5: donor ends YESTERDAY to guarantee no same-day
+      // ownership overlap with the recipient (see function JSDoc).
       await conn.query(
         `UPDATE contact_emails
-            SET end_date = CURDATE(),
+            SET end_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY),
                 is_primary = 0,
                 end_reason = 'transferred',
                 updated_by = ?

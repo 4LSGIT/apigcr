@@ -132,6 +132,23 @@ function normalizeEmail(email) {
  * `phones` array is present in the PATCH payload. The reconciler is
  * authoritative in that case.
  *
+ * Cross-contact transfer donor-end rule (Slice 3.5):
+ * The donor's end_date is set to yesterday (DATE_SUB(CURDATE(), INTERVAL 1 DAY))
+ * to guarantee no same-day ownership overlap with the recipient. This applies
+ * ONLY to the cross-contact collision branch below (end_reason = 'transferred').
+ * Same-contact end paths in this function (end_reason = 'replaced' for value
+ * change, 'ended' for clearing the scalar) keep CURDATE() — they cannot
+ * cause cross-contact overlap.
+ *
+ * Edge case: a row created today and transferred today produces end_date = today - 1
+ * while start_date = today (i.e., end_date < start_date). This is intentional —
+ * the donor never owned the value across any meaningful interval. Reader queries
+ * using end_date >= log_created naturally attribute any log written during that
+ * zero-duration window to the recipient.
+ *
+ * No CHECK constraint exists on (end_date >= start_date) and none should be added
+ * without first deciding whether to backfill or to remove same-day-transfer artifacts.
+ *
  * @param {object} conn      - transaction connection
  * @param {number} contactId
  * @param {string} newPhone  - already normalized (10 digits) or '' to clear
@@ -169,9 +186,12 @@ async function _propagatePhone(conn, contactId, newPhone, updatedBy) {
       [newPhone, cid]
     );
     if (collision) {
+      // Slice 3.5: cross-contact transfer — donor ends YESTERDAY to
+      // guarantee no same-day ownership overlap with the recipient.
       await conn.query(
         `UPDATE contact_phones
-            SET end_date = CURDATE(), is_primary = 0,
+            SET end_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY),
+                is_primary = 0,
                 end_reason = 'transferred', updated_by = ?
           WHERE id = ?`,
         [updatedBy, collision.id]
@@ -222,6 +242,23 @@ async function _propagatePhone(conn, contactId, newPhone, updatedBy) {
  * Slice 3 Stage A: this propagator is SKIPPED when the aggregate
  * `emails` array is present in the PATCH payload.
  *
+ * Cross-contact transfer donor-end rule (Slice 3.5):
+ * The donor's end_date is set to yesterday (DATE_SUB(CURDATE(), INTERVAL 1 DAY))
+ * to guarantee no same-day ownership overlap with the recipient. This applies
+ * ONLY to the cross-contact collision branch below (end_reason = 'transferred').
+ * Same-contact end paths in this function (end_reason = 'replaced' for value
+ * change, 'ended' for clearing the scalar) keep CURDATE() — they cannot
+ * cause cross-contact overlap.
+ *
+ * Edge case: a row created today and transferred today produces end_date = today - 1
+ * while start_date = today (i.e., end_date < start_date). This is intentional —
+ * the donor never owned the value across any meaningful interval. Reader queries
+ * using end_date >= log_created naturally attribute any log written during that
+ * zero-duration window to the recipient.
+ *
+ * No CHECK constraint exists on (end_date >= start_date) and none should be added
+ * without first deciding whether to backfill or to remove same-day-transfer artifacts.
+ *
  * @param {object} conn
  * @param {number} contactId
  * @param {string} newEmail  - already normalized (trim+lowercased) or '' to clear
@@ -257,9 +294,12 @@ async function _propagateEmail(conn, contactId, newEmail, updatedBy) {
       [newEmail, cid]
     );
     if (collision) {
+      // Slice 3.5: cross-contact transfer — donor ends YESTERDAY to
+      // guarantee no same-day ownership overlap with the recipient.
       await conn.query(
         `UPDATE contact_emails
-            SET end_date = CURDATE(), is_primary = 0,
+            SET end_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY),
+                is_primary = 0,
                 end_reason = 'transferred', updated_by = ?
           WHERE id = ?`,
         [updatedBy, collision.id]
@@ -774,15 +814,34 @@ async function _planPhones(conn, contactId, incoming, force) {
  * UPDATEd to is_primary=0, executing E first creates the new primary
  * row with is_primary=1; the existing primary was already demoted in
  * step B, so no uk_one_active_primary conflict.
+ *
+ * Cross-contact transfer donor-end rule (Slice 3.5):
+ * In Step A only, the donor's end_date is set to yesterday
+ * (DATE_SUB(CURDATE(), INTERVAL 1 DAY)) to guarantee no same-day ownership
+ * overlap with the recipient. Steps C and D (same-contact ENDs / replaces)
+ * keep CURDATE() — they cannot cause cross-contact overlap.
+ *
+ * Edge case: a row created today and transferred today produces
+ * end_date = today - 1 while start_date = today (i.e., end_date < start_date).
+ * This is intentional — the donor never owned the value across any
+ * meaningful interval. Reader queries using end_date >= log_created
+ * naturally attribute any log written during that zero-duration window
+ * to the recipient.
+ *
+ * No CHECK constraint exists on (end_date >= start_date) and none should be added
+ * without first deciding whether to backfill or to remove same-day-transfer artifacts.
  */
 async function _applyPhonePlan(conn, contactId, plan, userId) {
   const cid = parseInt(contactId, 10);
 
   // ── Step A: donor-ends ──
+  // Slice 3.5: cross-contact transfer — donor ends YESTERDAY to guarantee
+  // no same-day ownership overlap with the recipient (see function JSDoc).
   for (const de of plan.donorEnds) {
     await conn.query(
       `UPDATE contact_phones
-          SET end_date = CURDATE(), is_primary = 0,
+          SET end_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY),
+              is_primary = 0,
               end_reason = 'transferred', updated_by = ?
         WHERE id = ?`,
       [userId, de.donorPhoneId]
@@ -1145,14 +1204,37 @@ async function _planEmails(conn, contactId, incoming, force) {
 }
 
 
+/**
+ * Apply an emails plan. Mirror of _applyPhonePlan — see that JSDoc for
+ * the step ordering and rationale.
+ *
+ * Cross-contact transfer donor-end rule (Slice 3.5):
+ * In Step A only, the donor's end_date is set to yesterday
+ * (DATE_SUB(CURDATE(), INTERVAL 1 DAY)) to guarantee no same-day ownership
+ * overlap with the recipient. Steps C and D (same-contact ENDs / replaces)
+ * keep CURDATE() — they cannot cause cross-contact overlap.
+ *
+ * Edge case: a row created today and transferred today produces
+ * end_date = today - 1 while start_date = today (i.e., end_date < start_date).
+ * This is intentional — the donor never owned the value across any
+ * meaningful interval. Reader queries using end_date >= log_created
+ * naturally attribute any log written during that zero-duration window
+ * to the recipient.
+ *
+ * No CHECK constraint exists on (end_date >= start_date) and none should be added
+ * without first deciding whether to backfill or to remove same-day-transfer artifacts.
+ */
 async function _applyEmailPlan(conn, contactId, plan, userId) {
   const cid = parseInt(contactId, 10);
 
   // A: donor-ends
+  // Slice 3.5: cross-contact transfer — donor ends YESTERDAY to guarantee
+  // no same-day ownership overlap with the recipient (see function JSDoc).
   for (const de of plan.donorEnds) {
     await conn.query(
       `UPDATE contact_emails
-          SET end_date = CURDATE(), is_primary = 0,
+          SET end_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY),
+              is_primary = 0,
               end_reason = 'transferred', updated_by = ?
         WHERE id = ?`,
       [userId, de.donorEmailId]
@@ -1867,9 +1949,14 @@ async function createContact(db, {
         [normalizedPhone]
       );
       if (collision) {
+        // Slice 3.5: cross-contact transfer — donor ends YESTERDAY to
+        // guarantee no same-day ownership overlap with the recipient.
+        // Same rule as _propagatePhone's collision branch; see that
+        // function's JSDoc for the edge-case note.
         await conn.query(
           `UPDATE contact_phones
-              SET end_date = CURDATE(), is_primary = 0,
+              SET end_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY),
+                  is_primary = 0,
                   end_reason = 'transferred', updated_by = ?
             WHERE id = ?`,
           [userId, collision.id]
@@ -1894,9 +1981,13 @@ async function createContact(db, {
         [normalizedEmail]
       );
       if (collision) {
+        // Slice 3.5: cross-contact transfer — donor ends YESTERDAY to
+        // guarantee no same-day ownership overlap with the recipient.
+        // Same rule as _propagateEmail's collision branch.
         await conn.query(
           `UPDATE contact_emails
-              SET end_date = CURDATE(), is_primary = 0,
+              SET end_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY),
+                  is_primary = 0,
                   end_reason = 'transferred', updated_by = ?
             WHERE id = ?`,
           [userId, collision.id]
