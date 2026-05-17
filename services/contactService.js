@@ -2236,6 +2236,216 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
   }
 }
 
+// ─────────────────────────────────────────────────────────────
+// resolveContactsByValue — find contacts by phone/email value
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Find contact(s) matching a phone and/or email value.
+ *
+ * Pure read function with no side effects. Backs:
+ *   - GET /api/contact-lookup           (routes/api.contactLookup.js)
+ *   - find_contact internal function    (lib/internal_functions.js)
+ *
+ * Resolution rules:
+ *   - Inputs normalized via the same normalizePhone / normalizeEmail
+ *     used by the multi-value services, so value→row matching matches
+ *     the storage form.
+ *   - Phone search hits up to four sources:
+ *       child_active     — contact_phones.phone, end_date IS NULL
+ *       child_ended      — contact_phones.phone, end_date IS NOT NULL
+ *                          (include_ended=true; orphan-log re-adopt case)
+ *       legacy_primary   — contacts.contact_phone
+ *       legacy_secondary — contacts.contact_phone2
+ *                          (include_legacy_secondary=true)
+ *     Email search has the parallel structure against contact_emails /
+ *     contacts.contact_email / contact_email2.
+ *   - When a single contact matches via multiple sources of the SAME kind
+ *     (mirror-discipline case — child_active AND legacy_primary), the
+ *     strongest source wins, in this priority order:
+ *       child_active > child_ended > legacy_primary > legacy_secondary
+ *
+ * Fail-soft on invalid input:
+ *   - normalizePhone returning != 10 digits → phone search skipped,
+ *     summary.phone_normalized = null
+ *   - normalizeEmail returning a string without '@' (or <=2 chars) →
+ *     email search skipped, summary.email_normalized = null
+ *   - Both invalid → returns {matches:[], summary:{...}} (caller decides
+ *     whether absence is an error; the route still returns HTTP 200).
+ *
+ * Multi-contact result:
+ *   - Returns ALL matches; does NOT pick a winner among multiple
+ *     contacts. If phone matches contact A and email matches contact B
+ *     (the divergence case), the response contains two MatchEntries.
+ *     Callers (upsert in Track B.2, workflow steps) decide what to do.
+ *
+ * Performance notes (revisit at 10x scale):
+ *   - contact_phones.phone / contact_emails.email are indexed → fast.
+ *   - contacts.contact_phone, contact_email, *_2 are NOT indexed
+ *     (Slice 3 B.1 finding); full scan on ~1500 contacts is <10ms.
+ *   - One UNION-ALL query per kind keeps round trips to <=2 (one for
+ *     phone, one for email) + 1 hydration query for contact_name.
+ *
+ * @param {object} db
+ * @param {object} args
+ * @param {string|null} [args.phone]
+ * @param {string|null} [args.email]
+ * @param {object} [opts]
+ * @param {boolean} [opts.include_ended=true]
+ * @param {boolean} [opts.include_legacy_secondary=true]
+ * @returns {Promise<{status:'success', matches:object[], summary:object}>}
+ *
+ * MatchEntry shape:
+ *   {
+ *     contact_id:       <int>,
+ *     contact_name:     <string|null>,
+ *     matched_by_phone: { source: '<src>' } | null,
+ *     matched_by_email: { source: '<src>' } | null
+ *   }
+ */
+async function resolveContactsByValue(db, { phone, email } = {}, opts = {}) {
+  const include_ended            = opts.include_ended            !== false;
+  const include_legacy_secondary = opts.include_legacy_secondary !== false;
+
+  // ── Normalize + validate inputs (fail-soft) ──
+  let phoneNorm = null;
+  if (phone != null && phone !== '') {
+    const n = normalizePhone(String(phone));
+    if (n.length === 10) phoneNorm = n;
+  }
+  let emailNorm = null;
+  if (email != null && email !== '') {
+    const n = normalizeEmail(String(email));
+    if (n.length > 2 && n.includes('@')) emailNorm = n;
+  }
+
+  // ── Per-contact match aggregation ──
+  // Same rank table for both kinds; ordering is shared by design.
+  const SOURCE_RANK = {
+    child_active: 0, child_ended: 1, legacy_primary: 2, legacy_secondary: 3,
+  };
+  const byContact = new Map(); // contact_id => MatchEntry
+
+  function record(contactId, kind, source) {
+    const cid = parseInt(contactId, 10);
+    if (!Number.isInteger(cid)) return;
+    let entry = byContact.get(cid);
+    if (!entry) {
+      entry = {
+        contact_id:       cid,
+        contact_name:     null,
+        matched_by_phone: null,
+        matched_by_email: null,
+      };
+      byContact.set(cid, entry);
+    }
+    const slot = kind === 'phone' ? 'matched_by_phone' : 'matched_by_email';
+    const existing = entry[slot];
+    if (!existing || SOURCE_RANK[source] < SOURCE_RANK[existing.source]) {
+      entry[slot] = { source };
+    }
+  }
+
+  // ── Run searches ──
+  if (phoneNorm) {
+    const rows = await _resolveValueMatches(db, 'phone', phoneNorm, {
+      include_ended, include_legacy_secondary,
+    });
+    for (const r of rows) record(r.contact_id, 'phone', r.source);
+  }
+  if (emailNorm) {
+    const rows = await _resolveValueMatches(db, 'email', emailNorm, {
+      include_ended, include_legacy_secondary,
+    });
+    for (const r of rows) record(r.contact_id, 'email', r.source);
+  }
+
+  // ── Hydrate contact_name in one IN-list query ──
+  const ids = [...byContact.keys()];
+  if (ids.length) {
+    const placeholders = ids.map(() => '?').join(',');
+    const [nameRows] = await db.query(
+      `SELECT contact_id, contact_name
+         FROM contacts
+        WHERE contact_id IN (${placeholders})`,
+      ids
+    );
+    for (const r of nameRows) {
+      const entry = byContact.get(r.contact_id);
+      if (entry) entry.contact_name = r.contact_name;
+    }
+  }
+
+  const matches = [...byContact.values()]
+    .sort((a, b) => a.contact_id - b.contact_id);
+
+  return {
+    status:  'success',
+    matches,
+    summary: {
+      phone_normalized: phoneNorm,
+      email_normalized: emailNorm,
+      total_matches:    matches.length,
+    },
+  };
+}
+
+/**
+ * Private worker: run the UNION-ALL multi-source query for ONE kind.
+ * Returns rows shaped `[{contact_id, source}, ...]` — application-side
+ * dedup in resolveContactsByValue keeps the strongest source per contact.
+ *
+ * UNION ALL (not UNION) is intentional: dedup is cheap in JS and the
+ * source label needs to survive distinct-collapse for the rank logic
+ * to work.
+ */
+async function _resolveValueMatches(db, kind, value, opts) {
+  const { include_ended, include_legacy_secondary } = opts;
+
+  const childTable = kind === 'phone' ? 'contact_phones' : 'contact_emails';
+  const childCol   = kind === 'phone' ? 'phone'           : 'email';
+  const legacyCol1 = kind === 'phone' ? 'contact_phone'   : 'contact_email';
+  const legacyCol2 = kind === 'phone' ? 'contact_phone2'  : 'contact_email2';
+
+  const parts  = [];
+  const params = [];
+
+  parts.push(
+    `SELECT contact_id, 'child_active' AS source
+       FROM ${childTable}
+      WHERE ${childCol} = ? AND end_date IS NULL`
+  );
+  params.push(value);
+
+  if (include_ended) {
+    parts.push(
+      `SELECT contact_id, 'child_ended' AS source
+         FROM ${childTable}
+        WHERE ${childCol} = ? AND end_date IS NOT NULL`
+    );
+    params.push(value);
+  }
+
+  parts.push(
+    `SELECT contact_id, 'legacy_primary' AS source
+       FROM contacts
+      WHERE ${legacyCol1} = ?`
+  );
+  params.push(value);
+
+  if (include_legacy_secondary) {
+    parts.push(
+      `SELECT contact_id, 'legacy_secondary' AS source
+         FROM contacts
+        WHERE ${legacyCol2} = ?`
+    );
+    params.push(value);
+  }
+
+  const [rows] = await db.query(parts.join('\n      UNION ALL\n'), params);
+  return rows;
+}
+
 /**
  * List sequence enrollments for a contact with pagination, status filter,
  * and active/all scope.
@@ -2375,5 +2585,6 @@ module.exports = {
   normalizeEmail,
   listContactSequences,
   listContactWorkflows,
-  stripSsn
+  stripSsn,
+  resolveContactsByValue,
 };
