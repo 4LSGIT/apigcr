@@ -308,6 +308,68 @@
     }
     .json-toggle:hover { text-decoration: underline; }
 
+    /* ── Action-tools row (Placeholder reference + Edit-as-JSON) ── */
+    .action-tools {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 6px;
+    }
+    .action-tools > .json-toggle { margin-bottom: 0; }
+    .ph-help-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--blue); cursor: pointer;
+      user-select: none;
+    }
+    .ph-help-btn:hover { text-decoration: underline; }
+
+    /* ── Placeholder Reference popup ── */
+    .phr-doc { font-size: 12.5px; line-height: 1.55; color: #1f2937; text-align: left; }
+    .phr-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
+    .phr-section:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+    .phr-h {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: #475569; margin: 0 0 8px;
+    }
+    .phr-doc p { margin: 0 0 6px; }
+    .phr-doc code {
+      background: #eef2ff; padding: 1px 5px; border-radius: 4px;
+      font-family: ui-monospace, Menlo, monospace; font-size: 11.5px;
+      color: #3730a3; word-break: break-word;
+    }
+    .phr-doc table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+    .phr-doc th, .phr-doc td {
+      text-align: left; padding: 5px 8px; border-bottom: 1px solid #f1f5f9;
+      font-size: 12px; vertical-align: top;
+    }
+    .phr-doc th {
+      font-size: 10.5px; font-weight: 600; color: #64748b;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      background: #f8fafc;
+    }
+    .phr-muted { color: #9ca3af; font-size: 11.5px; }
+    .phr-bad { color: #dc2626; }
+    .phr-ctx {
+      padding: 10px 12px; background: #f0fdf4; border: 1px solid #bbf7d0;
+      border-radius: 6px; margin-bottom: 14px;
+    }
+    .phr-ctx-head { font-size: 13px; margin-bottom: 8px; }
+    .phr-ctx-row {
+      font-size: 12px; margin: 6px 0;
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start;
+    }
+    .phr-label { font-weight: 600; color: #475569; min-width: 210px; }
+    .phr-pf {
+      display: inline-block; padding: 2px 7px; background: #eef2ff;
+      color: #3730a3; border-radius: 10px; font-size: 11px;
+      font-family: ui-monospace, Menlo, monospace; margin-right: 4px;
+    }
+    .phr-pf b { color: #6366f1; font-weight: 700; }
+    .phr-ti {
+      flex: 1 1 100%; margin: 0; padding: 8px 10px; background: white;
+      border: 1px solid #e5e7eb; border-radius: 4px; font-size: 11.5px;
+      font-family: ui-monospace, Menlo, monospace;
+      max-height: 180px; overflow: auto; white-space: pre-wrap;
+    }
+
     /* ══════════════════════════════════════════════
        ENROLLMENTS TAB
        ══════════════════════════════════════════════ */
@@ -1048,7 +1110,10 @@ function seqRenderActionConfig(type, cfg) {
   // SEQ.jsonMode and re-renders this same area as a single textarea, where
   // the user can edit the entire action_config blob directly. Mirror of
   // workflows.html wfToggleJson pattern.
-  const toggle = `<div class="json-toggle" onclick="seqToggleJson()"><i class="fa-solid fa-code"></i> ${SEQ.jsonMode ? 'Switch to form' : 'Edit as JSON'}</div>`;
+  const toggle = `<div class="action-tools">
+    <span class="ph-help-btn" onclick="seqShowPlaceholderRef()" title="What placeholders can I use here?"><i class="fa-regular fa-circle-question"></i> Placeholder reference</span>
+    <div class="json-toggle" onclick="seqToggleJson()"><i class="fa-solid fa-code"></i> ${SEQ.jsonMode ? 'Switch to form' : 'Edit as JSON'}</div>
+  </div>`;
   if (SEQ.jsonMode) {
     return `${toggle}<div class="field"><label>Action Config (JSON)</label><textarea id="se-config-json" rows="14">${esc(JSON.stringify(cfg, null, 2))}</textarea></div>`;
   }
@@ -3589,6 +3654,170 @@ function seqShowExplain() {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// PLACEHOLDER REFERENCE POPUP
+//
+// Static cheat-sheet of what {{...}} placeholders are reachable from a
+// sequence step. Mirrors the runtime behavior of:
+//   - lib/sequenceEngine.js  buildRefsForStep()  — which tables are anchored
+//   - services/resolverService.js                — allow-list + blocked cols
+//
+// Top section is context-aware: when a template is selected, surfaces the
+// type's priority_fields and the template's documented test_input so the
+// author can see what trigger_data shape the caller is expected to send.
+//
+// If buildRefsForStep ever gains/loses an auto-anchored table, update both
+// the Auto-built refs table and the allow-list bold/muted split below.
+// ══════════════════════════════════════════════════════════════════
+function seqShowPlaceholderRef() {
+  // ── Context-aware preamble ──
+  let contextHtml = '';
+  if (SEQ.activeTemplate) {
+    const tpl = SEQ.activeTemplate;
+    const typeRow = SEQ_TYPES.list.find(t => t.type === tpl.type);
+    const pf = _seqPriorityFieldsOf(typeRow);
+    let ti = tpl.test_input;
+    if (typeof ti === 'string') ti = parseJson(ti);
+    const tiText = (ti && typeof ti === 'object' && !Array.isArray(ti))
+      ? JSON.stringify(ti, null, 2) : '';
+    const pfHtml = pf.length
+      ? pf.map((f, i) => `<span class="phr-pf"><b>${i + 1}.</b> ${esc(f)}</span>`).join('')
+      : '<span class="phr-muted">(none — cascade disabled for this type)</span>';
+    const tiHtml = tiText
+      ? `<pre class="phr-ti">${esc(tiText)}</pre>`
+      : '<span class="phr-muted">(not documented — edit the template to add a Test Input)</span>';
+
+    contextHtml = `
+      <div class="phr-ctx">
+        <div class="phr-ctx-head">
+          <strong>${esc(tpl.name)}</strong>
+          <span class="phr-muted">· type: ${esc(tpl.type || '—')}</span>
+        </div>
+        <div class="phr-ctx-row">
+          <span class="phr-label">Cascade priority_fields:</span>
+          <span style="flex:1">${pfHtml}</span>
+        </div>
+        <div class="phr-ctx-row">
+          <span class="phr-label">Expected trigger_data (test_input):</span>
+          ${tiHtml}
+        </div>
+      </div>`;
+  }
+
+  const html = `
+    <div class="phr-doc">
+      ${contextHtml}
+
+      <div class="phr-section">
+        <div class="phr-h">Auto-built refs in a sequence step</div>
+        <p>Use <code>{{table.column|modifier}}</code> in any text field (message bodies, subjects, webhook URLs, task fields). These refs are built by <code>buildRefsForStep()</code> from <code>trigger_data</code> at execution time:</p>
+        <table>
+          <thead><tr><th>Reference</th><th>Anchored by</th><th>When available</th></tr></thead>
+          <tbody>
+            <tr><td><code>{{contacts.X}}</code></td><td><code>enrollment.contact_id</code></td><td>Always</td></tr>
+            <tr><td><code>{{appts.X}}</code></td><td><code>trigger_data.appt_id</code></td><td>When caller passed appt_id</td></tr>
+            <tr><td><code>{{cases.X}}</code></td><td><code>trigger_data.case_id</code></td><td>When caller passed case_id</td></tr>
+            <tr><td><code>{{tasks.X}}</code></td><td><code>trigger_data.task_id</code></td><td>When caller passed task_id</td></tr>
+            <tr><td><code>{{users.X}}</code></td><td><code>trigger_data.user ?? user_id ?? appt_with</code></td><td>Fallback chain; users PK column is <code>user</code> (not <code>user_id</code>)</td></tr>
+            <tr><td><code>{{trigger_data.X}}</code></td><td><em>n/a — pseudo-table</em></td><td>Always; dot-paths supported (<code>{{trigger_data.a.b.c}}</code>)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="phr-section">
+        <div class="phr-h">Modifiers (chainable, left-to-right)</div>
+        <table>
+          <thead><tr><th>Modifier</th><th>Example</th><th>Result</th></tr></thead>
+          <tbody>
+            <tr><td><code>date:FORMAT</code></td><td><code>{{appts.appt_date|date:dddd MMM Do}}</code></td><td>Friday Mar 20th</td></tr>
+            <tr><td><code>time:FORMAT</code></td><td><code>{{appts.appt_date|time:h:mma}}</code></td><td>2:00pm</td></tr>
+            <tr><td><code>phone</code></td><td><code>{{contacts.contact_phone|phone}}</code></td><td>(313) 555-1234</td></tr>
+            <tr><td><code>email_mask</code></td><td><code>{{contacts.contact_email|email_mask}}</code></td><td>s***@e***.com</td></tr>
+            <tr><td><code>upper</code> / <code>lower</code> / <code>cap</code></td><td><code>{{contacts.contact_fname|cap}}</code></td><td>Stuart</td></tr>
+            <tr><td><code>default:VALUE</code></td><td><code>{{contacts.contact_pname|default:Sir/Madam}}</code></td><td>Sir/Madam (when empty)</td></tr>
+            <tr><td><em>chained / recursive</em></td><td colspan="2"><code>{{trigger_data.amount|default:{{contacts.contact_billing_default|default:0}}}}</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="phr-section">
+        <div class="phr-h">Date / time tokens</div>
+        <p>Tokens are substituted inside <code>date:</code>, <code>time:</code>, and <code>datetime:</code> modifier formats. Any non-token text in the format string passes through unchanged. Examples below all reference <strong>Friday, March 20, 2026 at 2:05:30&nbsp;PM</strong>:</p>
+        <table>
+          <thead><tr><th>Token</th><th>Result</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>YYYY</code></td><td>2026</td><td>4-digit year (no <code>YY</code> variant)</td></tr>
+            <tr><td><code>MMMM</code></td><td>March</td><td>Full month name</td></tr>
+            <tr><td><code>MMM</code></td><td>Mar</td><td>Abbreviated month</td></tr>
+            <tr><td><code>MM</code></td><td>03</td><td>Zero-padded month (no unpadded <code>M</code>)</td></tr>
+            <tr><td><code>DD</code></td><td>20</td><td>Zero-padded day of month</td></tr>
+            <tr><td><code>D</code></td><td>20</td><td>Unpadded day of month</td></tr>
+            <tr><td><code>Do</code></td><td>20th</td><td>Ordinal day of month</td></tr>
+            <tr><td><code>DoW</code></td><td>Twentieth</td><td>Day of month as ordinal word</td></tr>
+            <tr><td><code>dddd</code></td><td>Friday</td><td>Full weekday name</td></tr>
+            <tr><td><code>ddd</code></td><td>Fri</td><td>Abbreviated weekday (note: <em>Tues</em>/<em>Thurs</em>, not <em>Tue</em>/<em>Thu</em>)</td></tr>
+            <tr><td><code>HH</code></td><td>14</td><td>24-hour, zero-padded (00–23)</td></tr>
+            <tr><td><code>hh</code></td><td>02</td><td>12-hour, zero-padded (01–12)</td></tr>
+            <tr><td><code>h</code></td><td>2</td><td>12-hour, unpadded (1–12)</td></tr>
+            <tr><td><code>mm</code></td><td>05</td><td>Minutes, zero-padded</td></tr>
+            <tr><td><code>ss</code></td><td>30</td><td>Seconds, zero-padded</td></tr>
+            <tr><td><code>A</code></td><td>PM</td><td>AM/PM uppercase (no lowercase <code>a</code> variant)</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:6px;font-size:11.5px;color:#64748b">Putting it together — <code>{{appts.appt_date|date:dddd, MMMM Do at h:mm&nbsp;A}}</code> → <code>Friday, March 20th at 2:05&nbsp;PM</code></p>
+      </div>
+
+      <div class="phr-section">
+        <div class="phr-h">Real-table allow-list (12)</div>
+        <p>Sequences auto-anchor only the bolded 5. The greyed ones are on the resolver's allow-list but <strong>not reachable from a sequence step</strong> — no anchor is built for them, so referencing them yields a <code>missing_refs</code> failure.</p>
+        <p style="font-size:12px">
+          <strong>contacts</strong> · <strong>cases</strong> · <strong>appts</strong> · <strong>tasks</strong> · <strong>users</strong> ·
+          <span class="phr-muted">log · phone_lines · scheduled_jobs · workflows · workflow_executions · sequence_enrollments · sequence_templates</span>
+        </p>
+      </div>
+
+      <div class="phr-section">
+        <div class="phr-h">Blocked columns (hard-fail on reference)</div>
+        <p style="font-size:12px"><code>contacts.contact_ssn</code> · <code>users.password</code> · <code>users.password_hash</code></p>
+      </div>
+
+      <div class="phr-section">
+        <div class="phr-h">Conditions &amp; fire_guards use a different syntax</div>
+        <p>In action_config text, placeholders are <code>{{table.column}}</code>. In a step's (or template's) <em>condition.query</em>, params use SQL <code>:name</code> binds mapped via <code>condition.params</code> — and only <code>trigger_data</code> dot-paths are valid sources (no <code>contacts.X</code> here):</p>
+        <pre class="phr-ti" style="max-height:none">{
+  "query":  "SELECT appt_status FROM appts WHERE appt_id = :appt_id",
+  "params": { "appt_id": "trigger_data.appt_id" },
+  "assert": { "appt_status": { "in": ["No Show", "Canceled"] } },
+  "assert_mode": "all"
+}</pre>
+        <p style="margin-top:6px;font-size:11.5px"><code>fire_guard.min_hours_before_appt</code> reads <code>trigger_data.appt_time</code> directly — no SQL, no placeholders.</p>
+      </div>
+
+      <div class="phr-section">
+        <div class="phr-h">Failure modes</div>
+        <table>
+          <thead><tr><th>Situation</th><th>Outcome</th></tr></thead>
+          <tbody>
+            <tr><td>Unknown table (e.g. <code>{{bills.x}}</code>)</td><td><span class="phr-muted">Soft</span> — placeholder remains as <code>{{...}}</code>, status <code>partial_success</code></td></tr>
+            <tr><td>Blocked column (e.g. <code>{{contacts.contact_ssn}}</code>)</td><td><span class="phr-bad">Hard fail</span> — <code>errorType: 'security'</code></td></tr>
+            <tr><td>Referenced table has no ref (e.g. <code>{{log.x}}</code> in a sequence)</td><td><span class="phr-bad">Hard fail</span> — <code>errorType: 'missing_refs'</code></td></tr>
+            <tr><td>DB error during resolve</td><td>Throws — job system retries</td></tr>
+            <tr><td>Strict mode (campaigns &amp; similar) with any unresolved placeholder</td><td><span class="phr-bad">Hard fail</span> — permanent</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  Swal.fire({
+    title: 'Placeholder Reference',
+    html,
+    width: 760,
+    confirmButtonText: 'Close',
+    showCloseButton: true
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════
 // PANEL RESIZE HANDLES
 // ══════════════════════════════════════════════════════════════════
 
@@ -3694,6 +3923,7 @@ window.loadSequenceEnrollments    = loadSequenceEnrollments;
 window.seqEnrollPrevPage          = seqEnrollPrevPage;
 window.seqEnrollNextPage          = seqEnrollNextPage;
 window.viewSequenceEnrollment     = viewSequenceEnrollment;
+window.seqShowPlaceholderRef      = seqShowPlaceholderRef;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {
