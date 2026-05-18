@@ -2152,7 +2152,16 @@
         data = text;
       }
       if (!res.ok) {
-        throw new Error(data?.error || "API error");
+        const msg = (data && (data.message || data.error))
+                  || `HTTP ${res.status} ${res.statusText || ''}`.trim();
+        const err = new Error(msg);
+        err.name       = 'ApiError';
+        err.status     = res.status;
+        err.statusText = res.statusText;
+        err.body       = (data && typeof data === 'object') ? data : { _raw: data };
+        err.url        = url;
+        err.method     = options.method;
+        throw err;
       }
       return data;
     }
