@@ -79,6 +79,9 @@ router.post('/api/log', jwtOrApiKey, async (req, res) => {
     res.json({ status: 'success', ...result });
   } catch (err) {
     console.error('POST /api/log error:', err);
+    if (err.code === 'INVALID_LOG_LINK_ID') {
+      return res.status(400).json({ status: 'error', message: err.message });
+    }
     res.status(500).json({ status: 'error', message: 'Failed to create log entry' });
   }
 });

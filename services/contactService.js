@@ -1809,18 +1809,52 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
   }
 
   if (parts.includes('log')) {
+    // Track A.1 Phase A: contact log view unions four sources:
+    //   1. Direct contact-typed logs (log_link_type='contact')
+    //   2. Legacy NULL-typed logs (log_link_type IS NULL) — back-compat
+    //   3. Phone-typed logs whose log_link_id (a 10-digit phone) was
+    //      owned by THIS contact at the time the log was written
+    //      (per contact_phones date window).
+    //   4. Email-typed logs, same pattern via contact_emails.
+    //
+    // Date-window math: cp.start_date <= DATE(log_date)
+    //   AND (cp.end_date IS NULL OR cp.end_date >= DATE(log_date)).
+    //   Per Slice 3.5's "end day before transfer" rule, this yields
+    //   single attribution — no log surfaces under two contacts on
+    //   the transfer day.
+    //
+    // Logs predating a contact's earliest start_date for the phone/
+    // email do NOT surface — natural and intentional behavior of the
+    // inequality. Ended phone/email rows still attribute their
+    // historical logs to the prior owner via the row's end_date.
     const [log] = await db.query(
       `SELECT
          l.log_id, l.log_type, l.log_date, l.log_data,
          l.log_from, l.log_to, l.log_subject, l.log_direction,
+         l.log_link_type, l.log_link_id,
          u.user_name AS by_name
        FROM log l
        LEFT JOIN users u ON l.log_by = u.user
-       WHERE (l.log_link_type = 'contact' AND l.log_link_id = ?)
-          OR (l.log_link_type IS NULL AND l.log_link = ?)
+       WHERE
+            (l.log_link_type = 'contact' AND l.log_link_id = ?)
+         OR (l.log_link_type IS NULL    AND l.log_link    = ?)
+         OR (l.log_link_type = 'phone' AND EXISTS (
+               SELECT 1 FROM contact_phones cp
+                WHERE cp.contact_id = ?
+                  AND cp.phone      = l.log_link_id
+                  AND (cp.start_date IS NULL OR cp.start_date <= DATE(l.log_date))
+                  AND (cp.end_date   IS NULL OR cp.end_date   >= DATE(l.log_date))
+             ))
+         OR (l.log_link_type = 'email' AND EXISTS (
+               SELECT 1 FROM contact_emails ce
+                WHERE ce.contact_id = ?
+                  AND ce.email      = l.log_link_id
+                  AND (ce.start_date IS NULL OR ce.start_date <= DATE(l.log_date))
+                  AND (ce.end_date   IS NULL OR ce.end_date   >= DATE(l.log_date))
+             ))
        ORDER BY l.log_date DESC
        LIMIT ?`,
-      [String(contactId), String(contactId), logLimit]
+      [String(contactId), String(contactId), contactId, contactId, logLimit]
     );
     result.log = log;
   }

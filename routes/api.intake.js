@@ -3,19 +3,39 @@
 /**
  * TEMPORARY — Intake Routes (Contact & Case Creation)
  * ----------------------------------------
- * POST /api/intake/contact    create or update a contact by phone match
+ * POST /api/intake/contact    create or update a contact by phone/email match
  * POST /api/intake/case       find or create a case for a contact
  *
  * These are temporary routes replacing the Pabbly "newClient" and "newCase"
  * workflows. When the full /api/contacts and /api/cases routes are designed,
  * these should be incorporated or replaced.
  *
- * Contact creation:
- *   - Looks up by phone number
- *   - If found and duplicate != "duplicate" → update fname/mname/lname/phone/email
- *   - If not found or duplicate == "duplicate" → insert new contact
+ * Contact upsert (Slice 3 B.2 — multi-value-aware):
+ *   - Lookup via contactService.resolveContactsByValue (child tables + legacy
+ *     primary/secondary, include_ended=true so orphan-log auto-re-adopt works)
+ *   - 0 matches → CREATE (name fields required)
+ *   - 1 match  → UPDATE that contact (partial — only fields actually supplied)
+ *   - 2+ matches → divergence. 409 with full candidate summary unless
+ *     ?force_contact_id=N is supplied and matches one of the candidates.
+ *   - duplicate="duplicate" body field still forces CREATE path (legacy).
  *   - MySQL triggers auto-derive contact_name, contact_lfm_name, contact_rname
- *   - MySQL after-update trigger auto-logs field changes
+ *   - MySQL after_contact_update trigger auto-logs field changes
+ *   - On CREATE, this route also writes a manual "created" log row (the
+ *     after_update trigger only fires on UPDATE). Track A.1 may revisit.
+ *
+ * Three bugs closed by the rewrite:
+ *   1. Ended-row miss — legacy lookup was `WHERE contact_phone = ?` on the
+ *      mirror only, missing ended child_phones rows. resolveContactsByValue
+ *      with include_ended:true catches them.
+ *   2. Cross-contact email hijack — old code matched phone→contact A then
+ *      blindly propagated email which silently transferred from contact B
+ *      to A with no user consent. New code: if email belongs to a different
+ *      contact than phone, divergence → 409. User must explicitly pick a
+ *      contact via force_contact_id, which is the consent signal.
+ *   3. Partial-update overwrite — old code unconditionally wrote
+ *      fname/mname/lname on every update path, nulling fields when caller
+ *      sent only {phone, email}. New code only writes columns actually
+ *      supplied in the payload.
  *
  * Case creation:
  *   - Looks for existing active case of same type for this contact
@@ -42,149 +62,317 @@ const contactService = require('../services/contactService');
 // ─────────────────────────────────────────
 
 /**
- * Generate an 8-char alphanumeric case ID using crypto.
- * Replaces the old Math.random() version in create-case.js.
- 
-function generateCaseId() {
-  // 6 random bytes → base64url → take first 8 chars
-  // Gives ~48 bits of entropy, plenty for this use case
-  return crypto.randomBytes(6).toString("base64url").slice(0, 8);
-}*/
+ * Generate an 8-char alphanumeric case ID using crypto, excluding '-' and '_'
+ * (base64url's two non-alphanumeric characters) for URL/copy-paste cleanliness.
+ */
 function generateCaseId() {
   let id;
   do {
     // 6 random bytes → base64url → take first 8 chars
     id = crypto.randomBytes(6).toString("base64url").slice(0, 8);
-  } while (id.includes('-') || id.includes('_')); // retry if '-' or '_'
+  } while (id.includes('-') || id.includes('_'));
   return id;
 }
 
 /**
  * Normalize phone to 10-digit string.
- * Returns null if empty, false if invalid.
+ * Returns:
+ *   - null  when input is empty/missing/all non-digits
+ *   - false when input has digits but wrong count (caller surfaces 400)
+ *   - string of 10 digits on success
+ *
+ * Note: "abc" (no digits) returns null, not false — silently treated as
+ * "no phone supplied" rather than rejected. Pre-existing wart; preserved
+ * here for backward-compat.
  */
 function normalizePhone(raw) {
   if (!raw) return null;
   const digits = raw.replace(/\D/g, "");
   if (digits.length === 0) return null;
-  // Strip leading 1 for 11-digit US numbers
   if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
   if (digits.length !== 10) return false;
   return digits;
 }
 
-
-// ─────────────────────────────────────────
-// POST /api/intake/contact
-// Create or update a contact by phone match
-//
-// Body:
-//   name       string   required — full name (run through parseName)
-//   phone      string   required — phone number
-//   email      string   optional
-//   duplicate  string   "duplicate" to force new, otherwise "update" (default)
-// ─────────────────────────────────────────────────────────────────
-// PATCH: routes/api.intake.js — POST /api/intake/contact
-//
-// Changes:
-//   1. Accept firstName/middleName/lastName as alternative to name
-//   2. Make phone optional (co-debtors may not have one yet)
-//   3. Accept all optional contact_* fields for both create and update
-//   4. Use contactService.createContact() for inserts
-//   5. Return contact_id consistently
-// ─────────────────────────────────────────────────────────────────
-
-router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
-  const { name, firstName, middleName, lastName, phone, email, duplicate = "update" } = req.body;
-
-  // Parse name: accept either full name string or separate parts
-  let parsed;
-  if (firstName || lastName) {
-    parsed = {
-      firstName: firstName || '',
-      middleName: middleName || '',
-      lastName: lastName || '',
+/**
+ * Build the conflict candidates payload for 409/400 responses.
+ * Hydrates contact_phone and contact_email from the contacts mirror columns
+ * so callers see human-recognizable identifiers per candidate.
+ *
+ * Empty mirror values are returned as null (not '') for cleaner UX.
+ */
+async function buildConflicts(db, matches) {
+  if (!matches.length) return [];
+  const ids = matches.map(m => m.contact_id);
+  const placeholders = ids.map(() => '?').join(',');
+  const [extras] = await db.query(
+    `SELECT contact_id, contact_phone, contact_email
+       FROM contacts
+      WHERE contact_id IN (${placeholders})`,
+    ids
+  );
+  const extraMap = new Map(extras.map(r => [r.contact_id, r]));
+  return matches.map(m => {
+    const x = extraMap.get(m.contact_id);
+    return {
+      contact_id:       m.contact_id,
+      contact_name:     m.contact_name,
+      contact_phone:    x?.contact_phone || null,
+      contact_email:    x?.contact_email || null,
+      matched_by_phone: m.matched_by_phone,
+      matched_by_email: m.matched_by_email,
     };
-  } else if (name) {
-    parsed = parseName(name);
-  } else {
-    return res.status(400).json({ status: "error", message: "Name is required (provide name, or firstName + lastName)" });
+  });
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/intake/contact
+//
+// Body (all optional unless noted; CREATE path requires fname AND lname):
+//   name                   string   full name (run through parseName)
+//   firstName / fname      string   alternative to name (camelCase preferred)
+//   middleName / mname     string
+//   lastName / lname       string
+//   phone                  string   normalized to 10 digits
+//   email                  string   trimmed + lowercased downstream
+//   duplicate              string   "duplicate" to force new contact
+//   contact_address, contact_city, contact_state, contact_zip,
+//   contact_dob, contact_ssn, contact_phone2, contact_email2,
+//   contact_pname, contact_tags, contact_notes, contact_type — all optional
+//
+// Query:
+//   force_contact_id       int      disambiguates 2+ matches; must be among
+//                                    candidate ids or returns 400
+//
+// Response statuses:
+//   200 — created / updated
+//   400 — bad input (invalid phone digits, force_contact_id not among matches,
+//                    incoherent flag combo, name missing on CREATE path)
+//   409 — divergence: multiple candidate contacts, no force_contact_id given
+//   500 — unexpected
+// ─────────────────────────────────────────────────────────────
+router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
+  const {
+    name,
+    firstName, middleName, lastName,
+    phone, email,
+    duplicate = "update",
+  } = req.body;
+
+  // ── force_contact_id (query param, not body — matches Slice 3 ?force convention) ──
+  let forceContactId = null;
+  if (req.query.force_contact_id !== undefined && req.query.force_contact_id !== '') {
+    const n = parseInt(req.query.force_contact_id, 10);
+    if (!Number.isInteger(n) || n <= 0 || String(n) !== String(req.query.force_contact_id).trim()) {
+      return res.status(400).json({
+        status: "error",
+        message: "force_contact_id must be a positive integer",
+      });
+    }
+    forceContactId = n;
   }
 
-  if (!parsed.firstName && !parsed.lastName) {
-    return res.status(400).json({ status: "error", message: "At least firstName or lastName is required" });
+  // ── Incoherent flag combo: duplicate=duplicate forces CREATE, force_contact_id
+  //    targets a specific existing contact. They contradict each other. ──
+  if (duplicate === "duplicate" && forceContactId != null) {
+    return res.status(400).json({
+      status: "error",
+      message: "duplicate=duplicate and force_contact_id cannot be combined",
+    });
   }
 
-  // Phone is optional (co-debtors may not have one)
+  // ── Name fields — accept either camelCase (firstName/...) or db-style
+  //    (fname/...). camelCase wins if both supplied for a given slot. ──
+  const fName = (firstName  !== undefined) ? firstName  : req.body.fname;
+  const mName = (middleName !== undefined) ? middleName : req.body.mname;
+  const lName = (lastName   !== undefined) ? lastName   : req.body.lname;
+
+  const hasExplicitParts = fName !== undefined || mName !== undefined || lName !== undefined;
+  const hasName = typeof name === 'string' && name.trim() !== '';
+
+  // Resolve to a parsed shape (for CREATE) and an explicit-slot map (for UPDATE).
+  // nameForCreate is always {firstName, middleName, lastName} strings.
+  // nameInUpdate maps DB column → value, ONLY for slots the caller actually
+  // supplied (preserves partial-update fix).
+  let nameForCreate = null;
+  let nameInUpdate  = null;
+
+  if (hasExplicitParts) {
+    nameInUpdate = {};
+    // null and '' both coerced to '' for these NOT NULL VARCHAR columns
+    // (sending raw NULL would violate the schema's NOT NULL constraint
+    // under strict SQL mode). Absent slots are skipped entirely.
+    if (fName !== undefined) nameInUpdate.contact_fname = fName == null ? '' : String(fName);
+    if (mName !== undefined) nameInUpdate.contact_mname = mName == null ? '' : String(mName);
+    if (lName !== undefined) nameInUpdate.contact_lname = lName == null ? '' : String(lName);
+
+    nameForCreate = {
+      firstName:  fName == null ? '' : String(fName),
+      middleName: mName == null ? '' : String(mName),
+      lastName:   lName == null ? '' : String(lName),
+    };
+  } else if (hasName) {
+    const parsed = parseName(name);
+    nameInUpdate = {
+      contact_fname: parsed.firstName,
+      contact_mname: parsed.middleName,
+      contact_lname: parsed.lastName,
+    };
+    nameForCreate = parsed;
+  }
+
+  // ── Phone validation ──
   const normalizedPhone = phone ? normalizePhone(phone) : null;
   if (phone && normalizedPhone === false) {
     return res.status(400).json({ status: "error", message: "Invalid phone number" });
   }
 
+  // ── Email normalization (light — defer real normalization to the service) ──
+  const trimmedEmail = (typeof email === 'string' && email.trim() !== '') ? email.trim() : null;
+
   try {
-    // Look up existing contact by phone (only if phone provided)
-    let existing = [];
-    if (normalizedPhone && duplicate !== "duplicate") {
-      [existing] = await req.db.query(
-        "SELECT contact_id, contact_name, contact_email FROM contacts WHERE contact_phone = ? LIMIT 1",
-        [normalizedPhone]
+    // ── Resolve candidates (skip when forcing CREATE or no identifiers) ──
+    let matches = [];
+    if (duplicate !== "duplicate" && (normalizedPhone || trimmedEmail)) {
+      const result = await contactService.resolveContactsByValue(
+        req.db,
+        { phone: normalizedPhone, email: trimmedEmail },
+        { include_ended: true, include_legacy_secondary: true }
       );
+      matches = result.matches || [];
     }
 
-    if (existing.length && duplicate !== "duplicate") {
-      // ── UPDATE existing contact ──
-      const contact = existing[0];
+    // ── Disambiguation / branch selection ──
+    let targetContactId = null;
 
-      const updateFields = {
-        contact_fname: parsed.firstName,
-        contact_mname: parsed.middleName,
-        contact_lname: parsed.lastName,
-      };
-      if (normalizedPhone) updateFields.contact_phone = normalizedPhone;
-      if (email) updateFields.contact_email = email;
-
-      // Optional fields — only include if provided
-      const optionals = {
-        contact_address: req.body.contact_address,
-        contact_city:    req.body.contact_city,
-        contact_state:   req.body.contact_state,
-        contact_zip:     req.body.contact_zip,
-        contact_dob:     req.body.contact_dob,
-        contact_ssn:     req.body.contact_ssn,
-        contact_phone2:  req.body.contact_phone2,
-        contact_email2:  req.body.contact_email2,
-        contact_pname:   req.body.contact_pname,
-      };
-      for (const [col, val] of Object.entries(optionals)) {
-        if (val !== undefined && val !== null && val !== '') {
-          updateFields[col] = val;
-        }
+    if (matches.length >= 2) {
+      // Divergence path
+      if (forceContactId == null) {
+        const conflicts = await buildConflicts(req.db, matches);
+        return res.status(409).json({
+          status:  "error",
+          message: "Multiple contacts match — provide ?force_contact_id to disambiguate",
+          conflicts,
+        });
       }
+      const picked = matches.find(m => m.contact_id === forceContactId);
+      if (!picked) {
+        const conflicts = await buildConflicts(req.db, matches);
+        return res.status(400).json({
+          status:  "error",
+          message: `force_contact_id ${forceContactId} is not among matches`,
+          conflicts,
+        });
+      }
+      targetContactId = forceContactId;
 
-      await contactService.updateContact(req.db, contact.contact_id, updateFields);
+    } else if (matches.length === 1) {
+      // Single match — auto-update. Covers active-row, ended-row re-adopt,
+      // single contact matching by phone OR email OR both.
+      if (forceContactId != null && forceContactId !== matches[0].contact_id) {
+        // Strict: if caller explicitly named a contact and it's NOT the sole
+        // match, surface it rather than silently overriding intent.
+        const conflicts = await buildConflicts(req.db, matches);
+        return res.status(400).json({
+          status:  "error",
+          message: `force_contact_id ${forceContactId} is not among matches`,
+          conflicts,
+        });
+      }
+      targetContactId = matches[0].contact_id;
 
-      const [[updated]] = await req.db.query(
-        "SELECT contact_name FROM contacts WHERE contact_id = ?",
-        [contact.contact_id]
-      );
-
-      return res.json({
-        status: "success",
-        message: `client ${contact.contact_id} found and updated`,
-        action: "updated",
-        id: contact.contact_id,
-        contact_id: contact.contact_id,
-        name: updated.contact_name
+    } else if (forceContactId != null) {
+      // 0 matches but caller named a contact — treat as a 400 rather than
+      // silently creating something different from what the caller asked for.
+      return res.status(400).json({
+        status:  "error",
+        message: `force_contact_id ${forceContactId} is not among matches`,
+        conflicts: [],
       });
     }
 
-    // ── INSERT new contact ──
+    // ─────────────────────────────────────
+    // UPDATE branch
+    // ─────────────────────────────────────
+    if (targetContactId != null) {
+      const updateFields = {};
+
+      // Name fields — only slots the caller actually provided
+      if (nameInUpdate) {
+        Object.assign(updateFields, nameInUpdate);
+      }
+
+      // phone/email — only if non-empty truthy supplied. Empty/null does NOT
+      // clear (consistent with the legacy route's behavior). To clear a
+      // primary phone/email, use PATCH /api/contacts/:id or the multi-value
+      // child-table endpoints directly.
+      if (normalizedPhone) updateFields.contact_phone = normalizedPhone;
+      if (trimmedEmail)    updateFields.contact_email = trimmedEmail;
+
+      // Other optional fields — preserve the legacy route's exact set so the
+      // API surface doesn't expand under this slice. Skip undefined/null/''
+      // (no clear semantic via this route).
+      const UPDATE_OPTIONALS = [
+        'contact_address', 'contact_city', 'contact_state', 'contact_zip',
+        'contact_dob', 'contact_ssn',
+        'contact_phone2', 'contact_email2',
+        'contact_pname',
+      ];
+      for (const col of UPDATE_OPTIONALS) {
+        const v = req.body[col];
+        if (v !== undefined && v !== null && v !== '') {
+          updateFields[col] = v;
+        }
+      }
+
+      // INVARIANT: updateFields is non-empty whenever we reach here.
+      // The only way to reach the UPDATE branch is via a successful match
+      // in resolveContactsByValue (which requires phone or email in the
+      // payload) or via ?force_contact_id pointing at one of those matches.
+      // In all cases the identifying value lands in updateFields. If a
+      // future change breaks that invariant, updateContact will throw
+      // "updateContact requires at least one field" and surface as 500.
+
+      await contactService.updateContact(req.db, targetContactId, updateFields);
+
+      const [[updated]] = await req.db.query(
+        'SELECT contact_name FROM contacts WHERE contact_id = ?',
+        [targetContactId]
+      );
+
+      return res.json({
+        status:     "success",
+        message:    `client ${targetContactId} found and updated`,
+        action:     "updated",
+        id:         targetContactId,
+        contact_id: targetContactId,
+        name:       updated.contact_name,
+      });
+    }
+
+    // ─────────────────────────────────────
+    // CREATE branch
+    // ─────────────────────────────────────
+    if (!nameForCreate) {
+      return res.status(400).json({
+        status:  "error",
+        message: "Name is required to create a contact (provide name, or firstName + lastName)",
+      });
+    }
+    if (!nameForCreate.firstName || !nameForCreate.lastName) {
+      return res.status(400).json({
+        status:  "error",
+        message: "Both firstName and lastName are required to create a contact",
+      });
+    }
+
     const created = await contactService.createContact(req.db, {
-      fname:   parsed.firstName,
-      mname:   parsed.middleName,
-      lname:   parsed.lastName,
+      fname:   nameForCreate.firstName,
+      mname:   nameForCreate.middleName,
+      lname:   nameForCreate.lastName,
       phone:   normalizedPhone || '',
-      email:   email || '',
+      email:   trimmedEmail   || '',
       address: req.body.contact_address || '',
       city:    req.body.contact_city    || '',
       state:   req.body.contact_state   || '',
@@ -198,36 +386,37 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
       type:    req.body.contact_type    || 'Client',
     });
 
-    // SSN handled separately (createContact doesn't include it)
+    // SSN handled separately — createContact doesn't accept it.
     if (req.body.contact_ssn) {
       await contactService.updateContact(req.db, created.contact_id, {
-        contact_ssn: req.body.contact_ssn
+        contact_ssn: req.body.contact_ssn,
       });
     }
 
-    // Log
+    // Manual "created" log — the after_contact_update trigger only fires on
+    // UPDATE, so creations need an explicit log row. Track A.1 may revisit.
     await req.db.query(
       `INSERT INTO log (log_type, log_date, log_link, log_by, log_data)
        VALUES ('update', CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?, 0, ?)`,
       [
         created.contact_id,
         JSON.stringify({
-          contact_id: created.contact_id,
-          action: "created",
-          contact_name: created.contact_name,
+          contact_id:    created.contact_id,
+          action:        "created",
+          contact_name:  created.contact_name,
           contact_phone: normalizedPhone,
-          contact_email: email || null
-        })
+          contact_email: trimmedEmail || null,
+        }),
       ]
     );
 
     return res.json({
-      status: "success",
-      message: `client ${created.contact_id} added`,
-      action: "created",
-      id: created.contact_id,
+      status:     "success",
+      message:    `client ${created.contact_id} added`,
+      action:     "created",
+      id:         created.contact_id,
       contact_id: created.contact_id,
-      name: created.contact_name
+      name:       created.contact_name,
     });
 
   } catch (err) {
@@ -332,7 +521,6 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
     });
 
     // ── Post-response: Pabbly creates Dropbox folder and updates case_dropbox ──
-    // Fetch contact lfm_name for Dropbox folder naming
     const [[contact]] = await req.db.query(
       "SELECT contact_lfm_name FROM contacts WHERE contact_id = ?",
       [contact_id]

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Required Bankruptcy Course</title>
+  <meta name="description" content="Complete your required pre-filing credit counseling or post-filing debtor education course.">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      background: #f5f5f5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #222;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      background: #fff;
+      border-bottom: 1px solid #e0e0e0;
+      padding: 10px 20px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo {
+      height: 32px;
+      width: auto;
+      flex-shrink: 0;
+      display: block;
+    }
+    .titles {
+      flex: 1;
+      min-width: 0;
+    }
+    .titles h1 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      color: #222;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .titles .sub {
+      font-size: 12px;
+      color: #666;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .actions {
+      flex-shrink: 0;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 12px;
+      border: 1px solid #d0d0d0;
+      border-radius: 6px;
+      background: #fff;
+      color: #333;
+      font-size: 13px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .btn:hover {
+      background: #f3f3f3;
+      border-color: #bbb;
+    }
+    .btn:focus-visible {
+      outline: 2px solid #4a90e2;
+      outline-offset: 2px;
+    }
+    .btn svg {
+      flex-shrink: 0;
+    }
+    .frame-wrap {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: #fff;
+    }
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      display: block;
+    }
+    .loading {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f5f5f5;
+      color: #888;
+      font-size: 14px;
+      pointer-events: none;
+      transition: opacity 0.4s ease;
+    }
+    .loading.hidden {
+      opacity: 0;
+    }
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid #ddd;
+      border-top-color: #666;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-right: 10px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @media (max-width: 600px) {
+      .header { padding: 8px 12px; gap: 10px; }
+      .logo { height: 26px; }
+      .titles h1 { font-size: 13px; }
+      .titles .sub { font-size: 11px; }
+      .btn { padding: 7px 9px; font-size: 12px; }
+      .btn-text { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <img class="logo" src="https://iili.io/Jy2nXHv.md.png" alt="">
+    <div class="titles">
+      <h1 id="title">Required Bankruptcy Course</h1>
+      <div class="sub" id="sub">Course provided by Evergreen Financial Counseling, an approved nonprofit credit counseling agency.</div>
+    </div>
+    <div class="actions">
+      <a class="btn"
+         href="https://app.evergreenclass.com/registration?code=LSG"
+         target="_blank"
+         rel="noopener noreferrer"
+         title="Open the course site in a new tab">
+        <span class="btn-text">Open in new tab</span>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 3h7v7"/>
+          <path d="M10 14L21 3"/>
+          <path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"/>
+        </svg>
+      </a>
+    </div>
+  </header>
+  <div class="frame-wrap">
+    <div class="loading" id="loading"><div class="spinner"></div>Loading course&hellip;</div>
+    <iframe
+      src="https://app.evergreenclass.com/registration?code=LSG"
+      title="Evergreen credit counseling and debtor education registration"
+      allow="payment; clipboard-write"
+      referrerpolicy="no-referrer-when-downgrade"
+      onload="document.getElementById('loading').classList.add('hidden')"
+    ></iframe>
+  </div>
+
+  <script>
+    (function () {
+      // URL params:
+      //   ?name=John%20Smith            personalizes the subline
+      //   ?course=pre  |  ?course=post  sets the course title
+      //     aliases accepted: pre-filing, cc, credit-counseling
+      //                       post-filing, de, debtor-education
+      var COURSE_MAP = {
+        'pre':                 'Credit Counseling Course (Pre-Filing)',
+        'pre-filing':          'Credit Counseling Course (Pre-Filing)',
+        'cc':                  'Credit Counseling Course (Pre-Filing)',
+        'credit-counseling':   'Credit Counseling Course (Pre-Filing)',
+        'post':                'Debtor Education Course (Post-Filing)',
+        'post-filing':         'Debtor Education Course (Post-Filing)',
+        'de':                  'Debtor Education Course (Post-Filing)',
+        'debtor-education':    'Debtor Education Course (Post-Filing)'
+      };
+
+      var params = new URLSearchParams(window.location.search);
+      var name   = (params.get('name')   || '').trim();
+      var course = (params.get('course') || '').trim().toLowerCase();
+
+      var titleEl = document.getElementById('title');
+      var subEl   = document.getElementById('sub');
+      var baseSub = 'Course provided by Evergreen Financial Counseling, an approved nonprofit credit counseling agency.';
+
+      if (COURSE_MAP[course]) {
+        titleEl.textContent = COURSE_MAP[course];
+        document.title = COURSE_MAP[course];
+      }
+      if (name) {
+        // textContent prevents XSS from the URL param
+        subEl.textContent = 'For ' + name + ' \u00b7 ' + baseSub;
+      }
+    })();
+  </script>
+</body>
+</html>

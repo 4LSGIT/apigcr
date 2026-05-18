@@ -8,11 +8,51 @@
  * should go through this module (except the DB trigger on contacts,
  * which writes directly).
  *
+ * Track A.1 Phase A (logging foundation for pre-contact comms):
+ *   - createLogEntry now normalizes log_link_id when link_type is 'phone'
+ *     or 'email' (10-digit phone, trim+lowercase email). Invalid values
+ *     throw an Error with code 'INVALID_LOG_LINK_ID'.
+ *   - For phone/email-typed entries, the legacy log_link column is set
+ *     to '' (the value lives in log_link_id; log_link only makes sense
+ *     for entity-ID references).
+ *   - listLog's LEFT JOINs on contacts and cases are now gated on
+ *     log_link_type to prevent the H-bug (a non-contact/non-case row
+ *     whose log_link_id happened to numerically match a contact_id or
+ *     case_id was being incorrectly hydrated with that entity's name).
+ *
  * Usage:
  *   const logService = require('../services/logService');
  *   const entries = await logService.listLog(db, { link_type: 'contact', link_id: 123 });
  *   const entry  = await logService.createLogEntry(db, { type: 'note', ... });
  */
+
+// ─────────────────────────────────────────────────────────────
+// Local normalization helpers (mirror contactService.{normalizePhone,
+// normalizeEmail}; kept inline to avoid require-cycle risk and to be
+// self-contained for this service). If contactService's semantics
+// change, update here too.
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Normalize a phone string to 10 digits.
+ * Strips all non-digits; if 11 digits and leading '1', drops the '1'.
+ * Returns '' for falsy input. Does NOT validate length here — caller
+ * must check.
+ */
+function _normalizePhone(phone) {
+  if (!phone) return '';
+  const digits = String(phone).replace(/\D/g, '');
+  return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+}
+
+/**
+ * Normalize an email: trim + lowercase. Returns '' for falsy.
+ */
+function _normalizeEmail(email) {
+  if (!email && email !== 0) return '';
+  return String(email).trim().toLowerCase();
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // listLog
@@ -24,10 +64,16 @@
  * Reads from the new link columns (log_link_type / log_link_id) first,
  * falls back to legacy log_link for old rows that haven't been backfilled.
  *
+ * The LEFT JOINs to contacts and cases are gated on log_link_type so
+ * non-contact/non-case rows (phone, email, future task, etc.) don't
+ * accidentally hydrate contact/case fields when their log_link value
+ * coincidentally matches a contact_id or case_number. Legacy NULL-type
+ * rows still hydrate (back-compat).
+ *
  * @param {object} db
  * @param {object} opts
- * @param {string}  [opts.link_type]   - 'contact','case','appt','bill'
- * @param {string}  [opts.link_id]     - the ID to filter by
+ * @param {string}  [opts.link_type]   - 'contact','case','appt','bill','phone','email'
+ * @param {string}  [opts.link_id]     - the ID/value to filter by
  * @param {string}  [opts.type]        - log_type enum filter
  * @param {string}  [opts.direction]   - 'incoming' or 'outgoing'
  * @param {string}  [opts.from_date]   - ISO datetime lower bound
@@ -45,10 +91,10 @@ async function listLog(db, {
   const where = [];
   const params = [];
 
-if (by) {
-  where.push('l.log_by = ?');
-  params.push(by);
-}
+  if (by) {
+    where.push('l.log_by = ?');
+    params.push(by);
+  }
   if (link_type && link_id) {
     // Match on new columns OR legacy column for backward compat
     where.push(`(
@@ -90,6 +136,13 @@ if (by) {
 
   const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+  // H-bug fix (Track A.1 Phase A):
+  //   The contacts and cases LEFT JOINs are now gated on log_link_type.
+  //   Without the gate, a row whose log_link_id (or legacy log_link)
+  //   happens to coincide with a contact_id / case_id / case_number
+  //   from an unrelated entity type would get hydrated with the wrong
+  //   contact/case name. Legacy NULL-type rows preserved by the
+  //   `OR log_link_type IS NULL` branch.
   const [entries] = await db.query(
     `SELECT
      l.log_id, l.log_type, l.log_date, l.log_link,
@@ -103,10 +156,12 @@ if (by) {
    FROM log l
    LEFT JOIN users    u  ON l.log_by = u.user
    LEFT JOIN contacts c  ON l.log_link = c.contact_id
+                        AND (l.log_link_type = 'contact' OR l.log_link_type IS NULL)
    LEFT JOIN cases    ca ON (l.log_link = ca.case_id
                              OR l.log_link = ca.case_number
                              OR l.log_link = ca.case_number_full)
                          AND l.log_link != ''
+                         AND (l.log_link_type = 'case' OR l.log_link_type IS NULL)
    ${whereSQL}
    ORDER BY l.log_date DESC
    LIMIT ? OFFSET ?`,
@@ -157,11 +212,22 @@ async function getLogEntry(db, logId) {
  * The contacts table has a DB trigger that writes 'update' logs automatically
  * on contact changes — don't call this for contact field updates.
  *
+ * Track A.1 Phase A: when link_type is 'phone', link_id is normalized to
+ * 10 digits and validated (must be 10 digits after stripping non-digits;
+ * +1 country code is stripped). When link_type is 'email', link_id is
+ * trimmed and lowercased and validated (must contain '@' and be non-empty
+ * after trim). Invalid values throw `Error` with `err.code =
+ * 'INVALID_LOG_LINK_ID'` so routes can map to a 400.
+ *
+ * For phone/email types, the legacy log_link column is set to '' — the
+ * value lives in log_link_id; log_link is reserved for entity-ID
+ * references (contact/case/appt/bill).
+ *
  * @param {object} db
  * @param {object} opts
  * @param {string}  opts.type        - log_type enum (required)
- * @param {string}  [opts.link_type] - 'contact','case','appt','bill'
- * @param {string}  [opts.link_id]   - the linked entity ID
+ * @param {string}  [opts.link_type] - 'contact','case','appt','bill','phone','email'
+ * @param {string}  [opts.link_id]   - the linked entity ID, or phone/email value
  * @param {number}  [opts.by=0]      - user ID (0 = system/automation)
  * @param {string|object} [opts.data=''] - log_data (JSON string or object, auto-stringified)
  * @param {string}  [opts.from]      - log_from
@@ -185,8 +251,41 @@ async function createLogEntry(db, {
 }) {
   if (!type) throw new Error('createLogEntry requires type');
 
+  // Track A.1 Phase A: normalize/validate phone & email link_ids and
+  // suppress the legacy log_link mirror for those types.
+  let normalizedLinkId = link_id != null ? String(link_id) : null;
+  let logLink;
+
+  if (link_type === 'phone') {
+    const norm = _normalizePhone(normalizedLinkId);
+    if (!norm || norm.length !== 10) {
+      const err = new Error(
+        `Invalid phone for log_link_id: ${JSON.stringify(link_id)}. ` +
+        `Must normalize to exactly 10 digits.`
+      );
+      err.code = 'INVALID_LOG_LINK_ID';
+      throw err;
+    }
+    normalizedLinkId = norm;
+    logLink = '';
+  } else if (link_type === 'email') {
+    const norm = _normalizeEmail(normalizedLinkId);
+    if (!norm || !norm.includes('@')) {
+      const err = new Error(
+        `Invalid email for log_link_id: ${JSON.stringify(link_id)}. ` +
+        `Must be non-empty and contain '@'.`
+      );
+      err.code = 'INVALID_LOG_LINK_ID';
+      throw err;
+    }
+    normalizedLinkId = norm;
+    logLink = '';
+  } else {
+    // Unchanged behavior for contact/case/appt/bill/null link_types
+    logLink = link_id != null ? String(link_id) : '';
+  }
+
   const logData = typeof data === 'object' ? JSON.stringify(data) : data;
-  const logLink = link_id != null ? String(link_id) : '';
 
   const [result] = await db.query(
     `INSERT INTO log
@@ -198,7 +297,7 @@ async function createLogEntry(db, {
       type,
       logLink,
       link_type,
-      link_id != null ? String(link_id) : null,
+      normalizedLinkId,
       by,
       logData,
       from,

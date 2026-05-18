@@ -6,6 +6,15 @@ const U = (str) => encodeURIComponent( str.replace(/(["'`\\])/g, "\\\\$1").repla
 const X = (str) => str.replace(/(["'`\\])/g, "\\$1").replace(/\n/g, "\\n");
 const P = window.parent;
 
+enc=o=>btoa(JSON.stringify(o)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''),
+dec=s=>{try{return JSON.parse(atob(s.replace(/-/g,'+').replace(/_/g,'/')))}catch{return{}}}
+/*
+utility for making the url params stand out less
+usage:
+const url = `?v=${enc({ name: "bob" })}`;
+const p = dec(new URLSearchParams(location.search).get('v'));
+*/
+
 function resizeTextarea(textarea) {
   textarea.style.height = "auto"; // Reset height
   textarea.style.height = Math.min(textarea.scrollHeight, 300) + "px"; // Adjust but don't exceed max
