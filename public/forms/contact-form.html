@@ -442,16 +442,14 @@
    *
    * Departures from stock yc-forms.js:
    *
-   *  1. Full save() override. yc-forms.js's save() calls PATCH via _api()
-   *     (→ parent.apiSend), which throws Error("API error") with no body
-   *     access for 4xx responses. To handle the aggregate-PATCH's
-   *     structured 409 (conflicts) and 400 (errors) responses, we replace
-   *     save() with our own. Everything else (validate, getDiff,
+   *  1. Full save() override. The aggregate PATCH /api/contacts/:id endpoint
+   *     returns structured 409 (conflicts) and 400 (errors) bodies that
+   *     need custom UI flows (transfer modal, validation modal, force-retry
+   *     loop). yc-forms.js's stock save() can't drive those flows, so we
+   *     replace it with our own. Everything else (validate, getDiff,
    *     _buildPatchPayload, form_submissions/workflow/log dispatch via
    *     form._api) is reused from YF as-is. If yc-forms.js's save() changes
-   *     structurally, this override needs to be re-ported. Pattern follows
-   *     public/connections.html, which uses direct fetch with the parent's
-   *     JWT for the same reason.
+   *     structurally, this override needs to be re-ported.
    *
    *  2. Per-form glue (not in YF core):
    *     - Per-kind primary-checkbox exclusivity inside each repeater
@@ -649,8 +647,9 @@
     // CUSTOM SAVE — full override of YF's save()
     //
     // Mirrors yc-forms.js's save() (lines 559–693), with two changes:
-    //   - PATCH goes through `doRawPatch()` instead of form._api(), so we
-    //     get status codes + response bodies on 4xx.
+    //   - PATCH goes through `P.apiSend()` so we get status codes and
+    //     response bodies on 4xx (apiSend throws an ApiError with .status
+    //     and .body for non-2xx).
     //   - Before PATCH, run primaryGuard() — prompt user when any kind
     //     has rows but no primary marked.
     //   - Handle 409 (conflicts) with transfer modal + retry-with-force.
@@ -695,7 +694,7 @@
           while (true) {
             try {
               const url = `/api/contacts/${this.config.linkId}${force ? '?force=true' : ''}`;
-              patchResp = await doRawPatch(url, patchPayload);
+              patchResp = await P.apiSend(url, 'PATCH', patchPayload);
               break;
             } catch (e) {
               if (e.status === 409 && e.body && Array.isArray(e.body.conflicts) && e.body.conflicts.length) {
@@ -858,68 +857,6 @@
         this._showLoading(false);
       }
     };
-
-    // ────────────────────────────────────────────────────────────────
-    // doRawPatch — direct fetch with parent's JWT.
-    //
-    // Used in place of form._api for the contact PATCH so we can read the
-    // response body on 4xx. Pattern lifted from public/connections.html's
-    // api() helper. Returns parsed JSON on 2xx; throws Error with
-    // .status and .body on non-2xx.
-    // ────────────────────────────────────────────────────────────────
-    async function doRawPatch(url, body) {
-      const authWin = findAuthWindow();
-      if (!authWin || !authWin.AUTH_STATE || !authWin.AUTH_STATE.jwt) {
-        throw new Error('Not authenticated — please refresh the page.');
-      }
-
-      // Lazy-relogin (parent owns this flow). Only invoke once.
-      if (authWin.isJwtExpired && authWin.isJwtExpired(authWin.AUTH_STATE.jwt) && authWin.loginBlocking) {
-        await authWin.loginBlocking();
-      }
-
-      const doFetch = async () => fetch(url, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${authWin.AUTH_STATE.jwt}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      let res = await doFetch();
-      if (res.status === 401 && authWin.loginBlocking) {
-        await authWin.loginBlocking();
-        res = await doFetch();
-      }
-
-      if (res.status === 204) return null;
-      const text = await res.text();
-      let data;
-      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-
-      if (!res.ok) {
-        const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
-        const err = new Error(msg);
-        err.status = res.status;
-        err.body = data || {};
-        throw err;
-      }
-      return data;
-    }
-
-    /** Walk up window.parent chain looking for AUTH_STATE (defined on shell). */
-    function findAuthWindow() {
-      let w = window;
-      for (let i = 0; i < 5; i++) {
-        try {
-          if (w.parent === w) break;
-          w = w.parent;
-          if (w.AUTH_STATE) return w;
-        } catch (_) { break; }
-      }
-      return null;
-    }
 
     // ────────────────────────────────────────────────────────────────
     // PRIMARY GUARD — save-time at-least-one-primary check.
@@ -1461,7 +1398,7 @@
       while (true) {
         try {
           const url = endpointBase + (force && kind !== 'addresses' ? '?force=true' : '');
-          await doRawPost(url, body);
+          await P.apiSend(url, 'POST', body);
           break;
         } catch (e) {
           if (e.status === 409 && e.body && e.body.conflict && kind !== 'addresses') {
@@ -1532,46 +1469,6 @@
         timer: 1800,
         showConfirmButton: false,
       });
-    }
-
-    // ────────────────────────────────────────────────────────────────
-    // doRawPost — direct fetch POST for revive. Same auth pattern as
-    // doRawPatch; returns parsed JSON on 2xx, throws Error with
-    // .status + .body on 4xx.
-    // ────────────────────────────────────────────────────────────────
-    async function doRawPost(url, body) {
-      const authWin = findAuthWindow();
-      if (!authWin || !authWin.AUTH_STATE || !authWin.AUTH_STATE.jwt) {
-        throw new Error('Not authenticated — please refresh the page.');
-      }
-      if (authWin.isJwtExpired && authWin.isJwtExpired(authWin.AUTH_STATE.jwt) && authWin.loginBlocking) {
-        await authWin.loginBlocking();
-      }
-      const doFetch = async () => fetch(url, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${authWin.AUTH_STATE.jwt}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      let res = await doFetch();
-      if (res.status === 401 && authWin.loginBlocking) {
-        await authWin.loginBlocking();
-        res = await doFetch();
-      }
-      if (res.status === 204) return null;
-      const text = await res.text();
-      let data;
-      try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-      if (!res.ok) {
-        const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
-        const err = new Error(msg);
-        err.status = res.status;
-        err.body = data || {};
-        throw err;
-      }
-      return data;
     }
 
     // ────────────────────────────────────────────────────────────────

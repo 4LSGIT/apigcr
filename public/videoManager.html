@@ -647,9 +647,9 @@
 
 <script>
 // ════════════════════════════════════════════════════════════════════════════
-// Parent bridge — JWT-aware fetch wrappers. We bypass P.apiSend for JSON
-// because we want server `error`/`message` text surfaced, and bypass it
-// entirely for multipart because P.apiSend is JSON-only.
+// Parent bridge — uploadAsset uses XHR directly for multipart upload progress
+// events; ensureFreshJwt prompts re-login when the JWT is missing/expired.
+// JSON traffic goes through P.apiSend.
 // ════════════════════════════════════════════════════════════════════════════
 const P = window.parent;
 
@@ -669,49 +669,6 @@ async function ensureFreshJwt() {
   if (!P.AUTH_STATE.jwt || (P.isJwtExpired && P.isJwtExpired(P.AUTH_STATE.jwt))) {
     if (P.loginBlocking) await P.loginBlocking();
   }
-}
-
-/**
- * Authenticated JSON fetch.
- * @returns parsed JSON, or null for 204
- * @throws Error with the server's `error`/`message` field on non-2xx
- */
-async function api(endpoint, method = 'GET', payload = null) {
-  await ensureFreshJwt();
-
-  const opts = {
-    method: method.toUpperCase(),
-    headers: {
-      'Authorization': 'Bearer ' + P.AUTH_STATE.jwt,
-      'Content-Type':  'application/json',
-    },
-  };
-  let url = endpoint;
-  if (payload != null) {
-    if (opts.method === 'GET' || opts.method === 'HEAD') {
-      url += (url.includes('?') ? '&' : '?') + new URLSearchParams(payload).toString();
-    } else {
-      opts.body = JSON.stringify(payload);
-    }
-  }
-
-  let res = await fetch(url, opts);
-  if (res.status === 401 && P.loginBlocking) {
-    await P.loginBlocking();
-    opts.headers.Authorization = 'Bearer ' + P.AUTH_STATE.jwt;
-    res = await fetch(url, opts);
-  }
-
-  if (res.status === 204) return null;
-  const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-
-  if (!res.ok) {
-    const msg = (data && (data.error || data.message)) || ('HTTP ' + res.status);
-    throw new Error(msg);
-  }
-  return data;
 }
 
 /**
@@ -848,7 +805,7 @@ async function confirmDiscard(bodyText, confirmLabel) {
 async function loadList() {
   const container = document.getElementById('listItems');
   try {
-    const res = await api('/api/videos', 'GET');
+    const res = await P.apiSend('/api/videos', 'GET');
     state.videos = res.videos || [];
   } catch (err) {
     container.innerHTML = '<div class="empty-state" style="color:#ef4444">'
@@ -1013,8 +970,8 @@ async function selectVideo(id) {
     // Fetch video and analytics in parallel. Analytics is soft-required:
     // a failure there shouldn't block the editor from opening.
     const [v, a] = await Promise.all([
-      api('/api/videos/' + id, 'GET'),
-      api('/api/videos/' + id + '/analytics', 'GET').catch(err => ({
+      P.apiSend('/api/videos/' + id, 'GET'),
+      P.apiSend('/api/videos/' + id + '/analytics', 'GET').catch(err => ({
         _error: err.message || 'Analytics unavailable',
       })),
     ]);
@@ -1878,10 +1835,10 @@ async function onSave() {
   try {
     let saved;
     if (isNew) {
-      saved = await api('/api/videos', 'POST', payload);
+      saved = await P.apiSend('/api/videos', 'POST', payload);
       Toast.fire({ icon: 'success', title: 'Video created' });
     } else {
-      saved = await api('/api/videos/' + state.selected, 'PATCH', payload);
+      saved = await P.apiSend('/api/videos/' + state.selected, 'PATCH', payload);
       Toast.fire({ icon: 'success', title: 'Saved' });
     }
     // selectVideo() refreshes the editor with the persisted server state
@@ -1920,7 +1877,7 @@ async function onDelete() {
   });
   if (!r.isConfirmed) return;
   try {
-    await api('/api/videos/' + state.selected, 'DELETE');
+    await P.apiSend('/api/videos/' + state.selected, 'DELETE');
     Toast.fire({ icon: 'success', title: 'Deleted' });
     state.form        = null;
     state.selected    = null;
@@ -1966,10 +1923,10 @@ async function onResetAnalytics() {
   if (!r.isConfirmed) return;
 
   try {
-    await api('/api/videos/' + state.selected + '/reset-analytics', 'POST');
+    await P.apiSend('/api/videos/' + state.selected + '/reset-analytics', 'POST');
 
     // Re-fetch fresh analytics. Mirrors the catch pattern in selectVideo.
-    state.analytics = await api(
+    state.analytics = await P.apiSend(
       '/api/videos/' + state.selected + '/analytics', 'GET'
     ).catch(err => ({ _error: err.message || 'Analytics unavailable' }));
 

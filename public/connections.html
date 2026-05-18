@@ -385,60 +385,8 @@
  * server enforces this independently — the page-level guard is UX only.
  */
 
-// ── Parent bridge / direct-fetch wrapper ─────────────────────
-// We bypass P.apiSend because it throws Error("API error") for 4xx/5xx,
-// swallowing the server's `message` field. This page surfaces real errors
-// (test-email failures, decryption failures, OAuth refresh errors), so we
-// fetch directly with the parent's JWT and pull the message ourselves.
+// ── Parent bridge ────────────────────────────────────────────
 const P = window.parent;
-
-/**
- * Authenticated JSON fetch using the parent's JWT.
- * @returns parsed JSON, or null for 204
- * @throws Error with the server's `message`/`error` field on non-2xx
- */
-async function api(endpoint, method = 'GET', payload = null) {
-  if (!P || !P.AUTH_STATE) throw new Error('This page must be loaded inside the admin app.');
-
-  // Prompt re-login if missing/expired (parent owns this flow)
-  if (!P.AUTH_STATE.jwt || (P.isJwtExpired && P.isJwtExpired(P.AUTH_STATE.jwt))) {
-    if (P.loginBlocking) await P.loginBlocking();
-  }
-
-  const opts = {
-    method: method.toUpperCase(),
-    headers: {
-      'Authorization': `Bearer ${P.AUTH_STATE.jwt}`,
-      'Content-Type': 'application/json',
-    },
-  };
-  let url = endpoint;
-  if (payload != null) {
-    if (opts.method === 'GET' || opts.method === 'HEAD') {
-      url += '?' + new URLSearchParams(payload).toString();
-    } else {
-      opts.body = JSON.stringify(payload);
-    }
-  }
-
-  let res = await fetch(url, opts);
-  if (res.status === 401 && P.loginBlocking) {
-    await P.loginBlocking();
-    opts.headers.Authorization = `Bearer ${P.AUTH_STATE.jwt}`;
-    res = await fetch(url, opts);
-  }
-
-  if (res.status === 204) return null;
-  const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-
-  if (!res.ok) {
-    const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
-    throw new Error(msg);
-  }
-  return data;
-}
 
 // ── SU guard — UX only; server enforces authoritatively ──────
 (function checkSU() {
@@ -552,7 +500,7 @@ const CRED_TYPES = ['internal', 'bearer', 'api_key', 'basic', 'oauth2'];
 
 async function loadCreds() {
   try {
-    const r = await api('/api/credentials');
+    const r = await P.apiSend('/api/credentials');
     state.creds.rows = r.credentials || r.rows || [];
     if (state.creds.view === 'list') renderCreds();
   } catch (err) {
@@ -671,7 +619,7 @@ async function openCredEditor(id) {
     state.creds.original = null;
   } else {
     try {
-      const r = await api(`/api/credentials/${id}`);
+      const r = await P.apiSend(`/api/credentials/${id}`);
       const row = r.credential || r.row || r;
       state.creds.editing = JSON.parse(JSON.stringify(row));
       state.creds.original = JSON.parse(JSON.stringify(row));
@@ -975,7 +923,7 @@ function bindShowButton(inputId, credId, configKey, isNew) {
     btn.disabled = true;
     btn.textContent = 'Loading…';
     try {
-      const r = await api(`/api/credentials/${credId}/reveal`);
+      const r = await P.apiSend(`/api/credentials/${credId}/reveal`);
       // Reveal endpoint returns { status, revealed: { ... } }.
       // Old/legacy fallbacks kept for safety.
       const bag = r?.revealed || r?.config || r?.credential?.config || {};
@@ -1082,7 +1030,7 @@ function bindOauthActionButtons(e) {
 
 async function oauthConnect(id) {
   try {
-    const r = await api(`/api/credentials/${id}/authorize`, 'POST');
+    const r = await P.apiSend(`/api/credentials/${id}/authorize`, 'POST');
     if (!r.auth_url) throw new Error('No auth_url returned');
     window.open(r.auth_url, 'oauth_popup', 'width=600,height=700');
     // Wait for postMessage from the callback page (set up globally below).
@@ -1094,7 +1042,7 @@ async function oauthConnect(id) {
 
 async function oauthRefresh(id, asTest) {
   try {
-    await api(`/api/credentials/${id}/refresh`, 'POST');
+    await P.apiSend(`/api/credentials/${id}/refresh`, 'POST');
     toast(asTest ? 'Connection works — token refreshed.' : 'Refreshed.');
     await reloadCredEditor(id);
   } catch (err) {
@@ -1106,7 +1054,7 @@ async function oauthRefresh(id, asTest) {
 async function oauthRevoke(id) {
   if (!confirm('Revoke this connection? Local tokens will be cleared and the provider will be notified if revoke_url is set.')) return;
   try {
-    await api(`/api/credentials/${id}/revoke`, 'POST');
+    await P.apiSend(`/api/credentials/${id}/revoke`, 'POST');
     toast('Revoked.');
     await reloadCredEditor(id);
   } catch (err) {
@@ -1117,7 +1065,7 @@ async function oauthRevoke(id) {
 
 async function reloadCredEditor(id) {
   try {
-    const r = await api(`/api/credentials/${id}`);
+    const r = await P.apiSend(`/api/credentials/${id}`);
     const row = r.credential || r.row || r;
     state.creds.editing = JSON.parse(JSON.stringify(row));
     state.creds.original = JSON.parse(JSON.stringify(row));
@@ -1288,9 +1236,9 @@ async function saveCred() {
   state.creds.saving = true;
   try {
     if (isNew) {
-      await api('/api/credentials', 'POST', body);
+      await P.apiSend('/api/credentials', 'POST', body);
     } else {
-      await api(`/api/credentials/${e.id}`, 'PUT', body);
+      await P.apiSend(`/api/credentials/${e.id}`, 'PUT', body);
     }
     toast('Saved.');
     await loadCreds();
@@ -1306,7 +1254,7 @@ async function saveCred() {
 async function deleteCred(id, name) {
   if (!confirm(`Delete credential "${name}"?\n\nThis cannot be undone. Any hooks/sequences using it will start failing.`)) return;
   try {
-    await api(`/api/credentials/${id}`, 'DELETE');
+    await P.apiSend(`/api/credentials/${id}`, 'DELETE');
     toast('Deleted.');
     await loadCreds();
   } catch (err) {
@@ -1318,7 +1266,7 @@ async function deleteCredFromEditor() {
   const e = state.creds.editing;
   if (!confirm(`Delete credential "${e.name}"?\n\nThis cannot be undone. Any hooks/sequences using it will start failing.`)) return;
   try {
-    await api(`/api/credentials/${e.id}`, 'DELETE');
+    await P.apiSend(`/api/credentials/${e.id}`, 'DELETE');
     toast('Deleted.');
     await loadCreds();
     backToCredList();
@@ -1334,7 +1282,7 @@ async function deleteCredFromEditor() {
 
 async function loadEmails() {
   try {
-    const r = await api('/api/email-credentials');
+    const r = await P.apiSend('/api/email-credentials');
     state.email.rows = r.email_credentials || r.rows || [];
     if (state.email.view === 'list') renderEmail();
   } catch (err) {
@@ -1454,7 +1402,7 @@ async function openEmailEditor(id) {
     state.email.original = null;
   } else {
     try {
-      const r = await api(`/api/email-credentials/${id}`);
+      const r = await P.apiSend(`/api/email-credentials/${id}`);
       const row = r.email_credential || r;
       state.email.editing = JSON.parse(JSON.stringify(row));
       state.email.original = JSON.parse(JSON.stringify(row));
@@ -1679,7 +1627,7 @@ function renderEmailSmtpSection() {
 async function ensureCredentialsCache(force = false) {
   if (state.email.credentialsCache && !force) return state.email.credentialsCache;
   try {
-    const r = await api('/api/credentials');
+    const r = await P.apiSend('/api/credentials');
     state.email.credentialsCache = r.credentials || [];
   } catch (err) {
     state.email.credentialsCache = [];
@@ -1716,7 +1664,7 @@ function bindEmailShowButton(inputId, emailId, isNew) {
     btn.disabled = true;
     btn.textContent = 'Loading…';
     try {
-      const r = await api(`/api/email-credentials/${emailId}/reveal`);
+      const r = await P.apiSend(`/api/email-credentials/${emailId}/reveal`);
       const val = r?.revealed?.smtp_pass;
       if (val == null || val === '') {
         btn.disabled = false;
@@ -1822,9 +1770,9 @@ async function saveEmail() {
   try {
     let response;
     if (isNew) {
-      response = await api('/api/email-credentials', 'POST', body);
+      response = await P.apiSend('/api/email-credentials', 'POST', body);
     } else {
-      response = await api(`/api/email-credentials/${e.id}`, 'PUT', body);
+      response = await P.apiSend(`/api/email-credentials/${e.id}`, 'PUT', body);
     }
     toast('Saved.');
     await loadEmails();
@@ -1860,7 +1808,7 @@ async function saveEmail() {
 async function deleteEmail(id, email) {
   if (!confirm(`Delete email sender "${email}"?\n\nThis cannot be undone.`)) return;
   try {
-    await api(`/api/email-credentials/${id}`, 'DELETE');
+    await P.apiSend(`/api/email-credentials/${id}`, 'DELETE');
     toast('Deleted.');
     await loadEmails();
   } catch (err) {
@@ -1872,7 +1820,7 @@ async function deleteEmailFromEditor() {
   const e = state.email.editing;
   if (!confirm(`Delete email sender "${e.email}"?\n\nThis cannot be undone.`)) return;
   try {
-    await api(`/api/email-credentials/${e.id}`, 'DELETE');
+    await P.apiSend(`/api/email-credentials/${e.id}`, 'DELETE');
     toast('Deleted.');
     await loadEmails();
     backToEmailList();
@@ -1914,7 +1862,7 @@ E('testEmailSend').addEventListener('click', async () => {
   result.className = 'result';
   result.textContent = '';
   try {
-    const r = await api(`/api/email-credentials/${pendingTest.id}/test`, 'POST', { to });
+    const r = await P.apiSend(`/api/email-credentials/${pendingTest.id}/test`, 'POST', { to });
     result.className = 'result ok';
     result.textContent = `Test email sent to ${r.recipient || to} — check the inbox.`;
   } catch (err) {
@@ -1938,7 +1886,7 @@ async function verifyEmailAliases(id, fromEmail) {
   showAliasResultDialog({ kind: 'loading', rowEmail: fromEmail });
   let r;
   try {
-    r = await api(`/api/email-credentials/${id}/verify-aliases`);
+    r = await P.apiSend(`/api/email-credentials/${id}/verify-aliases`);
   } catch (err) {
     showAliasResultDialog({ kind: 'error', rowEmail: fromEmail, error: err.message });
     return;
@@ -2087,7 +2035,7 @@ function credentialMatchesRequirements(cred, requirements) {
 
 async function loadPhone() {
   try {
-    const r = await api('/api/phone-lines/admin');
+    const r = await P.apiSend('/api/phone-lines/admin');
     state.phone.rows      = r.phone_lines || r.rows || [];
     state.phone.providers = r.providers   || {};
     state.phone.error = null;
@@ -2223,7 +2171,7 @@ function phoneListRow(r) {
 async function ensurePhoneCredentialsCache(force = false) {
   if (state.phone.credentialsCache && !force) return state.phone.credentialsCache;
   try {
-    const r = await api('/api/credentials');
+    const r = await P.apiSend('/api/credentials');
     state.phone.credentialsCache = r.credentials || [];
   } catch (err) {
     state.phone.credentialsCache = [];
@@ -2484,9 +2432,9 @@ async function savePhone() {
   state.phone.saving = true;
   try {
     if (isNew) {
-      await api('/api/phone-lines/admin', 'POST', body);
+      await P.apiSend('/api/phone-lines/admin', 'POST', body);
     } else {
-      await api(`/api/phone-lines/admin/${e.id}`, 'PUT', body);
+      await P.apiSend(`/api/phone-lines/admin/${e.id}`, 'PUT', body);
     }
     toast('Saved.');
     E('phoneLineDialog').close();
@@ -2505,7 +2453,7 @@ async function savePhone() {
 async function togglePhoneActive(id, next, checkbox) {
   checkbox.disabled = true;
   try {
-    await api(`/api/phone-lines/admin/${id}/active`, 'PATCH', { active: next ? 1 : 0 });
+    await P.apiSend(`/api/phone-lines/admin/${id}/active`, 'PATCH', { active: next ? 1 : 0 });
     toast(`Line #${id} ${next ? 'activated' : 'deactivated'}.`);
     await loadPhone();
   } catch (err) {
@@ -2519,7 +2467,7 @@ async function togglePhoneActive(id, next, checkbox) {
 async function togglePhoneMms(id, next, checkbox) {
   checkbox.disabled = true;
   try {
-    await api(`/api/phone-lines/admin/${id}/mms-capable`, 'PATCH', { mms_capable: next ? 1 : 0 });
+    await P.apiSend(`/api/phone-lines/admin/${id}/mms-capable`, 'PATCH', { mms_capable: next ? 1 : 0 });
     toast(`Line #${id} MMS ${next ? 'enabled' : 'disabled'}.`);
     await loadPhone();
   } catch (err) {
@@ -2565,7 +2513,7 @@ E('phoneTestSmsSend').addEventListener('click', async () => {
   result.className = 'result';
   result.textContent = '';
   try {
-    await api(`/api/phone-lines/admin/${pendingPhoneTest.id}/test-sms`, 'POST', { to, message });
+    await P.apiSend(`/api/phone-lines/admin/${pendingPhoneTest.id}/test-sms`, 'POST', { to, message });
     result.className = 'result ok';
     result.textContent = `Test SMS sent from ${pendingPhoneTest.from} to ${to}.`;
   } catch (err) {
