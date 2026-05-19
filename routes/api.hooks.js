@@ -120,6 +120,13 @@ function stripSensitiveHeaders(headers) {
  * one capture; the others fall through to the normal pipeline.
  */
 router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
+  const validationToken = req.get('Validation-Token');
+  // RC subscription validation handshake — echo Validation-Token and return before any DB / auth work. Empty body required; fires once at subscription create. See manual/03-YisraFlow/09-yisrahook.md.
+  if (validationToken) {
+    res.set('Validation-Token', validationToken);
+    return res.status(200).end();
+  }
+
   const { slug } = req.params;
   const db = req.db;
 
