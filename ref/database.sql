@@ -1,5 +1,5 @@
 -- DB Console schema snapshot
--- Generated: 2026-05-07T23:05:34.855Z
+-- Generated: 2026-05-19T10:22:35.535Z
 -- Source: GET /admin/db/schema.sql
 -- Contains schema only (no data, no database identifier).
 
@@ -88,8 +88,7 @@ CREATE TABLE `appts` (
   `appt_platform` enum('telephone','Zoom','in-person') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `appt_create_date` datetime DEFAULT NULL,
   `appt_with` tinyint DEFAULT '1',
-  `appt_end` datetime GENERATED ALWAYS AS ((`appt_date` + interval `appt_length` minute)) STORED,
-  `appt_workflow_execution_id` bigint DEFAULT NULL
+  `appt_end` datetime GENERATED ALWAYS AS ((`appt_date` + interval `appt_length` minute)) STORED
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -365,6 +364,133 @@ CREATE TABLE `checklists1` (
   `checklist_link` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `checklist_status` enum('complete','incomplete') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'incomplete'
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `contact_addresses`
+--
+
+DROP TABLE IF EXISTS `contact_addresses`;
+CREATE TABLE `contact_addresses` (
+  `id` int unsigned NOT NULL,
+  `contact_id` int unsigned NOT NULL,
+  `address1` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `address2` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `city` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `state` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `zip` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `country` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'US',
+  `label` enum('Home','Work','Mailing','Other') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Home',
+  `is_primary` tinyint(1) NOT NULL DEFAULT '0',
+  `verified` tinyint(1) NOT NULL DEFAULT '0',
+  `start_date` date DEFAULT NULL,
+  `end_date` date DEFAULT NULL,
+  `end_reason` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `notes` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `created_by` int NOT NULL DEFAULT '0',
+  `updated_by` int NOT NULL DEFAULT '0',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_primary_uniq` int unsigned GENERATED ALWAYS AS (if(((`is_primary` = 1) and (`end_date` is null)),`contact_id`,NULL)) VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `contact_emails`
+--
+
+DROP TABLE IF EXISTS `contact_emails`;
+CREATE TABLE `contact_emails` (
+  `id` int unsigned NOT NULL,
+  `contact_id` int unsigned NOT NULL,
+  `email` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `label` enum('Personal','Work','Other') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Personal',
+  `is_primary` tinyint(1) NOT NULL DEFAULT '0',
+  `email_optout` tinyint(1) NOT NULL DEFAULT '0',
+  `verified` tinyint(1) NOT NULL DEFAULT '0',
+  `start_date` date DEFAULT NULL,
+  `end_date` date DEFAULT NULL,
+  `end_reason` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `notes` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `created_by` int NOT NULL DEFAULT '0',
+  `updated_by` int NOT NULL DEFAULT '0',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_primary_uniq` int unsigned GENERATED ALWAYS AS (if(((`is_primary` = 1) and (`end_date` is null)),`contact_id`,NULL)) VIRTUAL,
+  `email_active_uniq` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (if((`end_date` is null),`email`,NULL)) VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `contact_phones`
+--
+
+DROP TABLE IF EXISTS `contact_phones`;
+CREATE TABLE `contact_phones` (
+  `id` int unsigned NOT NULL,
+  `contact_id` int unsigned NOT NULL,
+  `phone` char(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `label` enum('Mobile','Home','Work','Office','Fax','Other') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Mobile',
+  `is_primary` tinyint(1) NOT NULL DEFAULT '0',
+  `sms_optout` tinyint(1) NOT NULL DEFAULT '0',
+  `mms_capable` tinyint(1) NOT NULL DEFAULT '1',
+  `verified` tinyint(1) NOT NULL DEFAULT '0',
+  `start_date` date DEFAULT NULL,
+  `end_date` date DEFAULT NULL,
+  `end_reason` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `notes` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `created_by` int NOT NULL DEFAULT '0',
+  `updated_by` int NOT NULL DEFAULT '0',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `is_primary_uniq` int unsigned GENERATED ALWAYS AS (if(((`is_primary` = 1) and (`end_date` is null)),`contact_id`,NULL)) VIRTUAL,
+  `phone_active_uniq` char(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci GENERATED ALWAYS AS (if((`end_date` is null),`phone`,NULL)) VIRTUAL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `contact_relation_types`
+--
+
+DROP TABLE IF EXISTS `contact_relation_types`;
+CREATE TABLE `contact_relation_types` (
+  `type_code` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `forward_label` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `reverse_label` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `is_symmetric` tinyint(1) NOT NULL DEFAULT '0',
+  `allowed_statuses` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `allowed_end_reasons` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `sort_order` smallint NOT NULL DEFAULT '0',
+  `active` tinyint(1) NOT NULL DEFAULT '1'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `contact_relations`
+--
+
+DROP TABLE IF EXISTS `contact_relations`;
+CREATE TABLE `contact_relations` (
+  `id` int unsigned NOT NULL,
+  `contact_a_id` int unsigned NOT NULL,
+  `contact_b_id` int unsigned NOT NULL,
+  `type_code` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `status` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `start_date` date DEFAULT NULL,
+  `end_date` date DEFAULT NULL,
+  `end_reason` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `notes` varchar(500) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `created_by` int NOT NULL DEFAULT '0',
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT `chk_no_self` CHECK ((`contact_a_id` <> `contact_b_id`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -661,7 +787,28 @@ CREATE TABLE `email_credentials` (
   `smtp_user` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
   `smtp_pass` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
   `smtp_secure` tinyint(1) NOT NULL DEFAULT '1',
-  `provider` enum('smtp','pabbly') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'smtp',
+  `provider` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'smtp',
+  `credential_id` int DEFAULT NULL,
+  `from_name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `email_credentials_backup_20260513`
+--
+
+DROP TABLE IF EXISTS `email_credentials_backup_20260513`;
+CREATE TABLE `email_credentials_backup_20260513` (
+  `id` int unsigned NOT NULL,
+  `email` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `smtp_host` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `smtp_port` int NOT NULL,
+  `smtp_user` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `smtp_pass` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `smtp_secure` tinyint(1) NOT NULL DEFAULT '1',
+  `provider` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'smtp',
+  `credential_id` int DEFAULT NULL,
   `from_name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -1028,8 +1175,8 @@ CREATE TABLE `log` (
   `log_type` enum('email','sms','call','other','form','status','note','court email','docs','appt','update','task') COLLATE utf8mb4_general_ci NOT NULL,
   `log_date` datetime NOT NULL,
   `log_link` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `log_link_type` enum('contact','case','appt','bill') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `log_link_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `log_link_type` enum('contact','case','appt','bill','phone','email') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `log_link_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_by` tinyint unsigned NOT NULL,
   `log_data` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_from` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -1146,9 +1293,7 @@ CREATE TABLE `phone_lines` (
   `display_name` varchar(50) DEFAULT NULL,
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `provider_id` varchar(50) DEFAULT NULL,
-  `driver_key` varchar(50) DEFAULT NULL,
-  `credential_id` int DEFAULT NULL,
-  `driver_config` json DEFAULT NULL,
+  `credential_id` int NOT NULL,
   `mms_capable` tinyint(1) NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -1181,8 +1326,6 @@ DROP TABLE IF EXISTS `rc_messages_log`;
 CREATE TABLE `rc_messages_log` (
   `id` int NOT NULL,
   `type` enum('sms','mms') COLLATE utf8mb4_general_ci NOT NULL,
-  `driver_key` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `credential_id` int DEFAULT NULL,
   `from_number` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
   `to_number` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
   `message` text COLLATE utf8mb4_general_ci,
@@ -1329,6 +1472,7 @@ CREATE TABLE `sequence_enrollments` (
   `id` bigint unsigned NOT NULL,
   `template_id` int unsigned NOT NULL,
   `contact_id` int unsigned NOT NULL,
+  `appt_id` int DEFAULT NULL,
   `trigger_data` json DEFAULT NULL,
   `status` enum('active','completed','cancelled') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
   `current_step` int unsigned DEFAULT '1',
@@ -1914,6 +2058,51 @@ ALTER TABLE `checklists1`
   ADD PRIMARY KEY (`checklist_id`);
 
 --
+-- Indexes for table `contact_addresses`
+--
+ALTER TABLE `contact_addresses`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_one_active_primary` (`is_primary_uniq`),
+  ADD KEY `idx_contact_active` (`contact_id`,`end_date`),
+  ADD KEY `idx_zip` (`zip`);
+
+--
+-- Indexes for table `contact_emails`
+--
+ALTER TABLE `contact_emails`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_one_active_primary` (`is_primary_uniq`),
+  ADD UNIQUE KEY `uk_email_active` (`email_active_uniq`),
+  ADD KEY `idx_email_history` (`email`,`start_date`,`end_date`),
+  ADD KEY `idx_contact_active` (`contact_id`,`end_date`);
+
+--
+-- Indexes for table `contact_phones`
+--
+ALTER TABLE `contact_phones`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_one_active_primary` (`is_primary_uniq`),
+  ADD UNIQUE KEY `uk_phone_active` (`phone_active_uniq`),
+  ADD KEY `idx_phone_history` (`phone`,`start_date`,`end_date`),
+  ADD KEY `idx_contact_active` (`contact_id`,`end_date`);
+
+--
+-- Indexes for table `contact_relation_types`
+--
+ALTER TABLE `contact_relation_types`
+  ADD PRIMARY KEY (`type_code`),
+  ADD KEY `idx_active_sort` (`active`,`sort_order`);
+
+--
+-- Indexes for table `contact_relations`
+--
+ALTER TABLE `contact_relations`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uc_relation` (`contact_a_id`,`contact_b_id`,`type_code`),
+  ADD KEY `idx_b` (`contact_b_id`),
+  ADD KEY `idx_type` (`type_code`);
+
+--
 -- Indexes for table `contacts`
 --
 ALTER TABLE `contacts`
@@ -1953,7 +2142,16 @@ ALTER TABLE `default`
 --
 ALTER TABLE `email_credentials`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `idx_email` (`email`);
+  ADD UNIQUE KEY `idx_email` (`email`),
+  ADD KEY `fk_email_credentials_credential` (`credential_id`);
+
+--
+-- Indexes for table `email_credentials_backup_20260513`
+--
+ALTER TABLE `email_credentials_backup_20260513`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `idx_email` (`email`),
+  ADD KEY `fk_email_credentials_credential` (`credential_id`);
 
 --
 -- Indexes for table `email_log`
@@ -2171,7 +2369,8 @@ ALTER TABLE `sequence_enrollments`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_contact_status` (`contact_id`,`status`),
   ADD KEY `idx_template_status` (`template_id`,`status`),
-  ADD KEY `idx_status` (`status`);
+  ADD KEY `idx_status` (`status`),
+  ADD KEY `idx_appt_id_status` (`appt_id`,`status`);
 
 --
 -- Indexes for table `sequence_step_log`
@@ -2386,6 +2585,30 @@ ALTER TABLE `checklists1`
   MODIFY `checklist_id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `contact_addresses`
+--
+ALTER TABLE `contact_addresses`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `contact_emails`
+--
+ALTER TABLE `contact_emails`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `contact_phones`
+--
+ALTER TABLE `contact_phones`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `contact_relations`
+--
+ALTER TABLE `contact_relations`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `contacts`
 --
 ALTER TABLE `contacts`
@@ -2413,6 +2636,12 @@ ALTER TABLE `default`
 -- AUTO_INCREMENT for table `email_credentials`
 --
 ALTER TABLE `email_credentials`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `email_credentials_backup_20260513`
+--
+ALTER TABLE `email_credentials_backup_20260513`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
@@ -2715,6 +2944,38 @@ ALTER TABLE `checkitems`
   ADD CONSTRAINT `checkitems_ibfk_1` FOREIGN KEY (`checklist_id`) REFERENCES `checklists` (`id`) ON DELETE CASCADE;
 
 --
+-- Constraints for table `contact_addresses`
+--
+ALTER TABLE `contact_addresses`
+  ADD CONSTRAINT `fk_contact_addresses_contact` FOREIGN KEY (`contact_id`) REFERENCES `contacts` (`contact_id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `contact_emails`
+--
+ALTER TABLE `contact_emails`
+  ADD CONSTRAINT `fk_contact_emails_contact` FOREIGN KEY (`contact_id`) REFERENCES `contacts` (`contact_id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `contact_phones`
+--
+ALTER TABLE `contact_phones`
+  ADD CONSTRAINT `fk_contact_phones_contact` FOREIGN KEY (`contact_id`) REFERENCES `contacts` (`contact_id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `contact_relations`
+--
+ALTER TABLE `contact_relations`
+  ADD CONSTRAINT `fk_cr_contact_a` FOREIGN KEY (`contact_a_id`) REFERENCES `contacts` (`contact_id`) ON DELETE RESTRICT,
+  ADD CONSTRAINT `fk_cr_contact_b` FOREIGN KEY (`contact_b_id`) REFERENCES `contacts` (`contact_id`) ON DELETE RESTRICT,
+  ADD CONSTRAINT `fk_cr_type_code` FOREIGN KEY (`type_code`) REFERENCES `contact_relation_types` (`type_code`) ON DELETE RESTRICT;
+
+--
+-- Constraints for table `email_credentials`
+--
+ALTER TABLE `email_credentials`
+  ADD CONSTRAINT `fk_email_credentials_credential` FOREIGN KEY (`credential_id`) REFERENCES `credentials` (`id`);
+
+--
 -- Constraints for table `feature_request_comments`
 --
 ALTER TABLE `feature_request_comments`
@@ -2744,7 +3005,7 @@ ALTER TABLE `hook_targets`
 -- Constraints for table `phone_lines`
 --
 ALTER TABLE `phone_lines`
-  ADD CONSTRAINT `fk_phone_lines_credential` FOREIGN KEY (`credential_id`) REFERENCES `credentials` (`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+  ADD CONSTRAINT `fk_phone_lines_credential` FOREIGN KEY (`credential_id`) REFERENCES `credentials` (`id`);
 
 --
 -- Constraints for table `sequence_enrollments`
