@@ -33,6 +33,9 @@ If you've never used the system before, read these in order:
 | 11 | [11-api-reference.md](11-api-reference.md) | Every endpoint across all five subsystems |
 | 12 | [12-database-schema.md](12-database-schema.md) | Every table, every column, every index |
 | 13 | [13-cookbook.md](13-cookbook.md) | Patterns and pitfalls catalog. Practical answers to "I need X — which engine, what shape, what gotchas." |
+| 14 | [14-connections-live-test.md](14-connections-live-test.md) | End-to-end test playbook for the Connections credential management system. Run once against a real OAuth provider before opening to production traffic. |
+| 15 | [15-connections.md](15-connections.md) | Connections — the firm-wide credential management system. Concepts, encryption format, OAuth lifecycle, usage recipes. |
+| 16 | [16-rc-subscription-bootstrap.md](16-rc-subscription-bootstrap.md) | One-time bootstrap to register RingCentral webhook subscriptions against the three RC hooks. Operator runbook for the "RC Subscription removed" IT alert lives here too. |
 
 Each chapter opens with a short **For operators** section — plain-English summary of what it does and how to use the UI — followed by **Technical reference** for everyone else.
 
