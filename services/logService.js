@@ -20,6 +20,22 @@
  *     whose log_link_id happened to numerically match a contact_id or
  *     case_id was being incorrectly hydrated with that entity's name).
  *
+ * Phase 2 (unified log_data shape):
+ *   - createLogEntry now folds typed display params (from / to / subject /
+ *     message) into the log_data JSON before insert. Result: every log row
+ *     has a self-describing JSON blob the renderer can iterate generically,
+ *     and new write paths inherit the convention without remembering to
+ *     stuff content into log_data themselves.
+ *   - Typed cols (log_from, log_to, log_subject, log_message) are still
+ *     written for back-compat / indexing — the JSON is now the source of
+ *     truth for display content; the cols are vestigial and slated for
+ *     removal in a later slice.
+ *   - log_direction is intentionally NOT folded into log_data — direction
+ *     is rendered as a separate UI affordance (icon/arrow), not as a
+ *     key/value line. It stays in the typed col.
+ *   - Direction normalization (Slice 4-C, lifted from internal_functions
+ *     create_log) now lives here so REST callers also benefit.
+ *
  * Usage:
  *   const logService = require('../services/logService');
  *   const entries = await logService.listLog(db, { link_type: 'contact', link_id: 123 });
@@ -51,6 +67,32 @@ function _normalizePhone(phone) {
 function _normalizeEmail(email) {
   if (!email && email !== 0) return '';
   return String(email).trim().toLowerCase();
+}
+
+/**
+ * Normalize direction strings from external providers to the
+ * log_direction ENUM('incoming','outgoing') values.
+ *
+ * External providers use varied labels ("Inbound"/"Outbound" from
+ * RingCentral, "incoming"/"outgoing" from internal callers). The DB
+ * enum rejects mismatched values — that's the bug this fixes.
+ *
+ * Unknown values pass through unchanged for forward compatibility:
+ * a future provider supplying a third direction label will be rejected
+ * loudly by the enum rather than silently dropped here. Originally
+ * shipped in lib/internal_functions.js create_log (Slice 4-C); lifted
+ * here so REST callers via /api/log also normalize.
+ */
+const _DIRECTION_NORMALIZATION = {
+  'inbound':  'incoming',
+  'incoming': 'incoming',
+  'outbound': 'outgoing',
+  'outgoing': 'outgoing',
+};
+function _normalizeDirection(d) {
+  if (d == null || d === '') return d;
+  const lower = String(d).toLowerCase();
+  return _DIRECTION_NORMALIZATION[lower] ?? d;
 }
 
 
@@ -223,6 +265,22 @@ async function getLogEntry(db, logId) {
  * value lives in log_link_id; log_link is reserved for entity-ID
  * references (contact/case/appt/bill).
  *
+ * Phase 2 — unified log_data shape:
+ *   The typed display params from/to/subject/message are folded into
+ *   the log_data JSON before insert. The renderer reads log_data
+ *   generically (one row per key); putting the message text into the
+ *   JSON makes new rows self-describing without changing the
+ *   renderer. The typed cols (log_from etc.) are still written for
+ *   back-compat / indexing. Caller-supplied keys in `data` win over
+ *   the typed-param folds (explicit data wins). Direction stays
+ *   column-only since the renderer surfaces it as a separate icon.
+ *
+ *   Plain-string `data` (a non-empty string that isn't JSON-parsable)
+ *   is left untouched — we can't safely splice typed params into an
+ *   opaque string. Such callers get the old behaviour and miss the
+ *   enrichment; in practice, all current callers pass an object or a
+ *   JSON-stringified object.
+ *
  * @param {object} db
  * @param {object} opts
  * @param {string}  opts.type        - log_type enum (required)
@@ -230,11 +288,12 @@ async function getLogEntry(db, logId) {
  * @param {string}  [opts.link_id]   - the linked entity ID, or phone/email value
  * @param {number}  [opts.by=0]      - user ID (0 = system/automation)
  * @param {string|object} [opts.data=''] - log_data (JSON string or object, auto-stringified)
- * @param {string}  [opts.from]      - log_from
- * @param {string}  [opts.to]        - log_to
- * @param {string}  [opts.subject]   - log_subject
- * @param {string}  [opts.message]   - log_message (legacy, still written)
- * @param {string}  [opts.direction] - 'incoming' or 'outgoing'
+ * @param {string}  [opts.from]      - log_from + folded into log_data.from
+ * @param {string}  [opts.to]        - log_to + folded into log_data.to
+ * @param {string}  [opts.subject]   - log_subject + folded into log_data.subject
+ * @param {string}  [opts.message]   - log_message + folded into log_data.message
+ * @param {string}  [opts.direction] - 'incoming' or 'outgoing' (normalized from
+ *                                     'Inbound'/'Outbound'/etc.) — column only
  * @returns {{ log_id: number }}
  */
 async function createLogEntry(db, {
@@ -285,7 +344,52 @@ async function createLogEntry(db, {
     logLink = link_id != null ? String(link_id) : '';
   }
 
-  const logData = typeof data === 'object' ? JSON.stringify(data) : data;
+  // Slice 4-C: normalize direction at the write boundary. The caller's
+  // workflow variable / API input retains its raw upstream value (useful
+  // for evaluate_condition branches in wf 15); only the DB write conforms
+  // to the log_direction ENUM.
+  const normalizedDirection = _normalizeDirection(direction);
+
+  // Phase 2: build the unified log_data shape.
+  //   - data is null/empty            → start with {}
+  //   - data is an object             → shallow-copy
+  //   - data is JSON-string-of-object → parse, shallow-copy
+  //   - data is plain string          → leave alone (can't enrich safely)
+  let dataObj = null;
+  if (data == null || data === '') {
+    dataObj = {};
+  } else if (typeof data === 'object' && !Array.isArray(data)) {
+    dataObj = { ...data };
+  } else if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        dataObj = { ...parsed };
+      }
+    } catch { /* not JSON — leave data as-is */ }
+  }
+
+  let logData;
+  if (dataObj !== null) {
+    // Fold typed display params into log_data without overwriting
+    // caller-supplied keys. Direction intentionally omitted — rendered
+    // separately by the UI.
+    if (from    != null && dataObj.from    === undefined) dataObj.from    = from;
+    if (to      != null && dataObj.to      === undefined) dataObj.to      = to;
+    if (subject != null && dataObj.subject === undefined) dataObj.subject = subject;
+    if (message != null && message !== '' && dataObj.message === undefined) {
+      dataObj.message = message;
+    }
+    logData = JSON.stringify(dataObj);
+  } else {
+    // Plain-string fallback path.
+    logData = data;
+  }
+
+  console.log(
+    `[CREATE_LOG] type=${type} link=${link_type}:${link_id} by=${by} ` +
+    `direction=${direction}\u2192${normalizedDirection}`
+  );
 
   const [result] = await db.query(
     `INSERT INTO log
@@ -304,7 +408,7 @@ async function createLogEntry(db, {
       to,
       subject,
       message || '',
-      direction
+      normalizedDirection
     ]
   );
 
