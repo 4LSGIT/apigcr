@@ -343,6 +343,32 @@ async function createLogEntry(db, {
     // Unchanged behavior for contact/case/appt/bill/null link_types
     logLink = link_id != null ? String(link_id) : '';
   }
+/* TEMP FIX FOR RC OUT: */
+// Phase 2 ext: canonicalize from/to for phone-bearing log types.
+  // External providers vary: RC inbound transform produces 10-digit (norm10
+  // in the transform), RC outbound path's wf 15 step 2 set_vars produces
+  // +1-prefixed E.164 from the fetched message-store response, Quo always
+  // ships +1-prefixed. Normalizing at the chokepoint means callers don't
+  // need to remember the convention; all phone-bearing rows land 10-digit.
+  //
+  // Conservative: only touch sms/call (unambiguously phone fields). Replace
+  // only if normalization yields exactly 10 digits — international numbers
+  // or malformed strings pass through unchanged rather than getting mangled.
+  // Email's from/to is left alone because "Name <addr@host>" formats would
+  // be destroyed by phone-style stripping.
+  let normalizedFrom = from;
+  let normalizedTo   = to;
+  if (type === 'sms' || type === 'call') {
+    if (from != null && from !== '') {
+      const n = _normalizePhone(from);
+      if (n.length === 10) normalizedFrom = n;
+    }
+    if (to != null && to !== '') {
+      const n = _normalizePhone(to);
+      if (n.length === 10) normalizedTo = n;
+    }
+  }
+  /*END TEMP FIX PART 1 */
 
   // Slice 4-C: normalize direction at the write boundary. The caller's
   // workflow variable / API input retains its raw upstream value (useful
@@ -374,8 +400,13 @@ async function createLogEntry(db, {
     // Fold typed display params into log_data without overwriting
     // caller-supplied keys. Direction intentionally omitted — rendered
     // separately by the UI.
+    /* TEMP FIX P2 
     if (from    != null && dataObj.from    === undefined) dataObj.from    = from;
     if (to      != null && dataObj.to      === undefined) dataObj.to      = to;
+*/
+    if (normalizedFrom != null && dataObj.from === undefined) dataObj.from = normalizedFrom;
+    if (normalizedTo   != null && dataObj.to   === undefined) dataObj.to   = normalizedTo;
+    /* END TEMP FIX P2 */
     if (subject != null && dataObj.subject === undefined) dataObj.subject = subject;
     if (message != null && message !== '' && dataObj.message === undefined) {
       dataObj.message = message;
@@ -404,8 +435,12 @@ async function createLogEntry(db, {
       normalizedLinkId,
       by,
       logData,
+      /* TEMP FIX P3
       from,
-      to,
+      to,*/
+      normalizedFrom,
+      normalizedTo,
+      /* END TEMP FIX P3 */
       subject,
       message || '',
       normalizedDirection
