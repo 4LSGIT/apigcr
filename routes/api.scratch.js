@@ -68,6 +68,21 @@ router.put("/api/scratch/:ns/:k", readonlyApiKeyAuth, async (req, res) => {
     return res.status(400).json({ error: "ns and k must match [A-Za-z0-9_-]{1,64}" });
   }
 
+  // Reject objects/arrays for v — they'd coerce to "[object Object]" or
+  // "1,2,3" via String(). Caller must JSON.stringify themselves so the
+  // storage shape is explicit at the call site. Strings/numbers/booleans
+  // pass through (String() coerces cleanly); null/undefined → NULL row.
+  if (v !== undefined && v !== null && typeof v === "object") {
+    logOp(req, {
+      sql_text: "UPSERT rw_scratch", params_json: { ns, k },
+      status: "rejected_v_not_string", duration_ms: Date.now() - started,
+    });
+    return res.status(400).json({
+      error: "v must be a string, number, boolean, or null. " +
+             "To store an object or array, JSON.stringify it first.",
+    });
+  }
+
   let metaJson = null;
   if (meta !== undefined && meta !== null) {
     try { metaJson = JSON.stringify(meta); }
