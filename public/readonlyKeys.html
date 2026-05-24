@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Readonly Keys</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161a23;
+    --border: #2a3040;
+    --fg: #d8dde6;
+    --muted: #8a93a3;
+    --accent: #07ADEF;
+    --danger: #d94c4c;
+    --ok: #4ad28b;
+    --warn: #e0b341;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+  }
+  body { padding: 12px; }
+  h2 { margin: 0 0 8px; font-size: 16px; }
+  .muted { color: var(--muted); font-size: 11px; }
+  button {
+    background: var(--accent); color: white; border: none;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer;
+    font-size: 12px;
+  }
+  button:hover { opacity: 0.85; }
+  button.danger { background: var(--danger); }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+  input, textarea {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    padding: 6px 8px; border-radius: 4px; font-size: 12px;
+    font-family: inherit;
+  }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; margin-bottom: 12px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td {
+    text-align: left; padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  th { color: var(--muted); font-weight: 500; }
+  tr.expired td, tr.revoked td { opacity: 0.5; }
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: 500;
+  }
+  .badge.active  { background: rgba(74,210,139,.15); color: var(--ok); }
+  .badge.expired { background: rgba(138,147,163,.15); color: var(--muted); }
+  .badge.revoked { background: rgba(217,76,76,.15); color: var(--danger); }
+  .key-display {
+    background: #1d2230; border: 1px solid var(--warn); padding: 12px;
+    border-radius: 6px; margin: 10px 0;
+  }
+  .key-display .key-value {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; word-break: break-all; user-select: all;
+    background: var(--bg); padding: 8px; border-radius: 4px; margin: 6px 0;
+  }
+  .warn-text { color: var(--warn); font-size: 11px; }
+  .log-cell-sql {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; max-width: 500px;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .status-success { color: var(--ok); }
+  .status-error,
+  .status-rejected_not_readonly,
+  .status-rejected_file_exfil,
+  .status-rejected_empty { color: var(--danger); }
+  details { margin-top: 8px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <h2>Create new key</h2>
+  <div class="row">
+    <input id="newLabel" placeholder="Label (e.g. 'Claude debug 2026-05-24')" style="flex:1;min-width:200px;">
+    <input id="newTtl"   placeholder="TTL minutes" type="number" min="1" style="width:120px;">
+    <input id="newIpAllow" placeholder="IP allowlist (optional, future)" style="width:200px;">
+    <button onclick="createKey()">Create</button>
+    <span class="muted" id="ttlHint">Default 1440 min (1 day). Max <span id="maxDays">3</span> days.</span>
+  </div>
+  <div id="newKeyArea"></div>
+</div>
+
+<div class="panel">
+  <h2>
+    Existing keys
+    <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;" onclick="loadKeys()">Refresh</button>
+    <label style="float:right;font-size:11px;margin-right:8px;color:var(--muted);">
+      <input type="checkbox" id="activeOnly" onchange="loadKeys()" checked> active only
+    </label>
+  </h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Prefix</th><th>Label</th><th>Created by</th>
+        <th>Created</th><th>Expires</th><th>Last used</th><th>Use #</th>
+        <th>Status</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="keysTbody">
+      <tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="panel" id="logPanel" style="display:none;">
+  <h2>
+    Query log for key #<span id="logKeyId"></span>
+    <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;" onclick="document.getElementById('logPanel').style.display='none'">Close</button>
+  </h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Time</th><th>Status</th><th>SQL</th><th>Rows</th><th>ms</th><th>IP</th>
+      </tr>
+    </thead>
+    <tbody id="logTbody"></tbody>
+  </table>
+</div>
+
+<script>
+  // Wait for parent's apiSend to be ready, then init.
+  (function waitForParent() {
+    if (window.parent && window.parent.apiSend) return init();
+    setTimeout(waitForParent, 100);
+  })();
+
+  const P = window.parent;
+
+  function init() {
+    loadKeys();
+  }
+
+  function esc(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function fmtDate(s) {
+    if (!s) return "—";
+    const d = new Date(s);
+    if (isNaN(d)) return esc(s);
+    return d.toLocaleString();
+  }
+
+  function keyStatus(row) {
+    if (row.revoked_at) return { cls: "revoked", label: "revoked" };
+    if (new Date(row.expires_at).getTime() < Date.now()) return { cls: "expired", label: "expired" };
+    return { cls: "active", label: "active" };
+  }
+
+  async function loadKeys() {
+    const tbody = document.getElementById("keysTbody");
+    tbody.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
+    try {
+      const activeOnly = document.getElementById("activeOnly").checked ? 1 : 0;
+      const data = await P.apiSend(`/api/readonly-keys?activeOnly=${activeOnly}`, "GET");
+
+      if (data.max_ttl_days) {
+        document.getElementById("maxDays").textContent = data.max_ttl_days;
+      }
+
+      if (!data.keys || !data.keys.length) {
+        tbody.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">No keys.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = data.keys.map(row => {
+        const s = keyStatus(row);
+        const canRevoke = !row.revoked_at && new Date(row.expires_at).getTime() >= Date.now();
+        return `
+          <tr class="${s.cls}">
+            <td>${row.id}</td>
+            <td><code>${esc(row.key_prefix)}…</code></td>
+            <td>${esc(row.label)}</td>
+            <td>${esc(row.created_by_username || row.created_by)}</td>
+            <td>${fmtDate(row.created_at)}</td>
+            <td>${fmtDate(row.expires_at)}</td>
+            <td>${fmtDate(row.last_used_at)}</td>
+            <td>${row.use_count}</td>
+            <td><span class="badge ${s.cls}">${s.label}</span></td>
+            <td>
+              <button class="ghost" style="font-size:11px;padding:2px 6px;" onclick="viewLog(${row.id})">log</button>
+              ${canRevoke ? `<button class="danger" style="font-size:11px;padding:2px 6px;" onclick="revokeKey(${row.id})">revoke</button>` : ""}
+            </td>
+          </tr>
+        `;
+      }).join("");
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="10" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
+    }
+  }
+
+  async function createKey() {
+    const label = document.getElementById("newLabel").value.trim();
+    const ttl   = document.getElementById("newTtl").value.trim();
+    const ipAllow = document.getElementById("newIpAllow").value.trim();
+    if (!label) { alert("Label required"); return; }
+
+    try {
+      const body = { label };
+      if (ttl) body.ttlMinutes = parseInt(ttl, 10);
+      if (ipAllow) body.ipAllowlist = ipAllow;
+      const data = await P.apiSend("/api/readonly-keys", "POST", body);
+
+      // Show plaintext once
+      const area = document.getElementById("newKeyArea");
+      area.innerHTML = `
+        <div class="key-display">
+          <div style="font-weight:600;margin-bottom:4px;">Key created — copy this now, it won't be shown again.</div>
+          <div class="key-value" id="rawKeyValue">${esc(data.key)}</div>
+          <div class="row">
+            <button onclick="copyKey()">Copy</button>
+            <button class="ghost" onclick="document.getElementById('newKeyArea').innerHTML=''">Dismiss</button>
+            <span class="warn-text">
+              Label: ${esc(data.label)} · Expires: ${fmtDate(data.expiresAt)} · TTL ${data.ttlMinutes} min
+            </span>
+          </div>
+        </div>
+      `;
+      document.getElementById("newLabel").value = "";
+      document.getElementById("newTtl").value   = "";
+      document.getElementById("newIpAllow").value = "";
+      loadKeys();
+    } catch (err) {
+      alert("Create failed: " + err.message);
+    }
+  }
+
+  function copyKey() {
+    const v = document.getElementById("rawKeyValue");
+    if (!v) return;
+    navigator.clipboard.writeText(v.textContent).then(
+      () => { v.style.outline = "1px solid var(--ok)"; setTimeout(() => v.style.outline = "", 600); },
+      () => alert("Copy failed — select and copy manually.")
+    );
+  }
+
+  async function revokeKey(id) {
+    if (!confirm(`Revoke key #${id}? This is immediate and cannot be undone.`)) return;
+    try {
+      await P.apiSend(`/api/readonly-keys/${id}`, "DELETE");
+      loadKeys();
+    } catch (err) {
+      alert("Revoke failed: " + err.message);
+    }
+  }
+
+  async function viewLog(id) {
+    document.getElementById("logKeyId").textContent = id;
+    document.getElementById("logPanel").style.display = "block";
+    const tbody = document.getElementById("logTbody");
+    tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
+    try {
+      const data = await P.apiSend(`/api/readonly-keys/${id}/log?limit=100`, "GET");
+      if (!data.log || !data.log.length) {
+        tbody.innerHTML = `<tr><td colspan="6" class="muted" style="text-align:center;padding:20px;">No queries yet.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = data.log.map(row => `
+        <tr>
+          <td>${fmtDate(row.created_at)}</td>
+          <td class="status-${esc(row.status)}">${esc(row.status)}</td>
+          <td class="log-cell-sql">${esc(row.sql_text)}${row.error_text ? `<div style="color:var(--danger);margin-top:4px;">${esc(row.error_text)}</div>` : ""}</td>
+          <td>${row.row_count ?? "—"}</td>
+          <td>${row.duration_ms ?? "—"}</td>
+          <td>${esc(row.ip || "")}</td>
+        </tr>
+      `).join("");
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
+    }
+  }
+</script>
+</body>
+</html>

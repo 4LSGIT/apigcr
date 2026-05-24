@@ -1474,18 +1474,11 @@
       });
     }
 
-    function testSwalPage() {
+    function readonlyKeysSwal() {
       Swal.fire({
-        title: `test swal page iframe`,
-        html: `
-      <iframe 
-        src="/testswalpage.html" 
-        width="100%" 
-        height="600" 
-        style="border:none;">
-      </iframe>
-    `,
-        width: "75%",
+        title: `Readonly API Keys`,
+        html: `<iframe src="/readonlyKeys.html" width="100%" height="700" style="border:none;"></iframe>`,
+        width: "85%",
         heightAuto: true,
         showConfirmButton: false,
         showCloseButton: true,
@@ -1520,7 +1513,7 @@
 <div id="tabAdmin" class="tab-main">
   <h2>Admin</h2>
   <button class="big-button" onclick="adminTask()">Button</button>
-  <button class="big-button" onclick="testSwalPage()">Swal Page</button>
+  <button class="big-button" onclick="readonlyKeysSwal()">Readonly Keys (SU)</button>
   <button class="big-button" data-target="dbConsoleDiv" data-exclusive-group="admin">DB Console (SU)</button>
   <button class="big-button" data-target="connectionsDiv" data-exclusive-group="admin">Connections (SU)</button>
   <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin">API Tester (SU)</button>
