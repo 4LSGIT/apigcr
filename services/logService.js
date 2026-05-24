@@ -36,6 +36,18 @@
  *   - Direction normalization (Slice 4-C, lifted from internal_functions
  *     create_log) now lives here so REST callers also benefit.
  *
+ * Phase 3 Slice 1 (log_extra column split):
+ *   - New optional `extra` param accepted by createLogEntry. Value (an
+ *     object or JSON-string-of-object) is written to the new `log_extra`
+ *     JSON column. Null/empty/non-object inputs write SQL NULL.
+ *   - log_extra carries IT-facing fields (provider, timestamps, provider
+ *     IDs, etc.); log_data is reduced to user-facing content. Old rows
+ *     stay legacy — no backfill.
+ *   - Empty attachments are stripped from log_data (Q4 ii-strict): null,
+ *     '', and [] are removed. The "[object Object],..." string produced
+ *     by the deferred Phase-2 fix #1 placeholder coercion stays visible
+ *     — intentional; hiding it would delay prioritizing the MMS fix.
+ *
  * Usage:
  *   const logService = require('../services/logService');
  *   const entries = await logService.listLog(db, { link_type: 'contact', link_id: 123 });
@@ -281,6 +293,12 @@ async function getLogEntry(db, logId) {
  *   enrichment; in practice, all current callers pass an object or a
  *   JSON-stringified object.
  *
+ * Phase 3 Slice 1 — log_extra split:
+ *   The new `extra` param (object or JSON-string-of-object) is written
+ *   to the log_extra JSON column. Use for IT-facing fields that should
+ *   not clutter the user-facing log_data render. Empty attachments are
+ *   stripped from log_data; see top-file docstring for the strip rules.
+ *
  * @param {object} db
  * @param {object} opts
  * @param {string}  opts.type        - log_type enum (required)
@@ -288,6 +306,8 @@ async function getLogEntry(db, logId) {
  * @param {string}  [opts.link_id]   - the linked entity ID, or phone/email value
  * @param {number}  [opts.by=0]      - user ID (0 = system/automation)
  * @param {string|object} [opts.data=''] - log_data (JSON string or object, auto-stringified)
+ * @param {object|string} [opts.extra]   - log_extra (JSON object or JSON-string-of-object).
+ *                                         Null/empty/non-object → SQL NULL.
  * @param {string}  [opts.from]      - log_from + folded into log_data.from
  * @param {string}  [opts.to]        - log_to + folded into log_data.to
  * @param {string}  [opts.subject]   - log_subject + folded into log_data.subject
@@ -302,6 +322,7 @@ async function createLogEntry(db, {
   link_id    = null,
   by         = 0,
   data       = '',
+  extra      = null,
   from       = null,
   to         = null,
   subject    = null,
@@ -411,23 +432,54 @@ async function createLogEntry(db, {
     if (message != null && message !== '' && dataObj.message === undefined) {
       dataObj.message = message;
     }
+
+    // Phase 3 Slice 1 (Q4 ii-strict): strip empty attachments from log_data.
+    // Empty includes null, '', and []. The "[object Object],[object Object]..."
+    // string produced by the deferred Phase-2 fix #1 placeholder coercion is
+    // intentionally NOT stripped — hiding it would delay prioritizing the MMS
+    // engine fix.
+    if ('attachments' in dataObj) {
+      const a = dataObj.attachments;
+      if (a == null || a === '' || (Array.isArray(a) && a.length === 0)) {
+        delete dataObj.attachments;
+      }
+    }
+
     logData = JSON.stringify(dataObj);
   } else {
     // Plain-string fallback path.
     logData = data;
   }
 
+  // Phase 3 Slice 1: coerce `extra` to a JSON string for the log_extra column.
+  // Mirrors the `data` handling: accept object or JSON-string-of-object,
+  // write SQL NULL for anything else (null, '', arrays, plain non-JSON strings,
+  // numbers). This is intentional — log_extra is for structured IT data only.
+  let logExtra = null;
+  if (extra != null && extra !== '') {
+    if (typeof extra === 'object' && !Array.isArray(extra)) {
+      logExtra = JSON.stringify(extra);
+    } else if (typeof extra === 'string') {
+      try {
+        const parsed = JSON.parse(extra);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          logExtra = JSON.stringify(parsed);
+        }
+      } catch { /* not JSON — leave null */ }
+    }
+  }
+
   console.log(
     `[CREATE_LOG] type=${type} link=${link_type}:${link_id} by=${by} ` +
-    `direction=${direction}\u2192${normalizedDirection}`
+    `direction=${direction}\u2192${normalizedDirection} extra=${logExtra ? 'set' : 'null'}`
   );
 
   const [result] = await db.query(
     `INSERT INTO log
        (log_type, log_date, log_link, log_link_type, log_link_id,
-        log_by, log_data, log_from, log_to, log_subject, log_message, log_direction)
+        log_by, log_data, log_extra, log_from, log_to, log_subject, log_message, log_direction)
      VALUES (?, CONVERT_TZ(NOW(), @@session.time_zone, 'EST5EDT'), ?, ?, ?,
-             ?, ?, ?, ?, ?, ?, ?)`,
+             ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       type,
       logLink,
@@ -435,6 +487,7 @@ async function createLogEntry(db, {
       normalizedLinkId,
       by,
       logData,
+      logExtra,
       /* TEMP FIX P3/3
       from,
       to,*/
