@@ -134,13 +134,13 @@
 </div>
 
 <script>
+  const P = window.parent;
+
   // Wait for parent's apiSend to be ready, then init.
   (function waitForParent() {
-    if (window.parent && window.parent.apiSend) return init();
+    if (P && P.apiSend) return init();
     setTimeout(waitForParent, 100);
   })();
-
-  const P = window.parent;
 
   function init() {
     loadKeys();
