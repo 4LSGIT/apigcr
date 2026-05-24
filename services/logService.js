@@ -433,6 +433,17 @@ async function createLogEntry(db, {
       dataObj.message = message;
     }
 
+
+    // Phase 3 Slice 1 follow-up: normalize data.direction. The workflow
+    // placeholder system passes raw provider values ("Outbound" from RC
+    // message-store, etc.) into data.direction when the workflow
+    // explicitly sets it (Q1(a) decision). Normalize here so the
+    // user-facing render stays consistent with the log_direction column.
+    // Unknown values pass through unchanged.
+    if (dataObj.direction != null && dataObj.direction !== '') {
+      dataObj.direction = _normalizeDirection(dataObj.direction);
+    }
+
     // Phase 3 Slice 1 (Q4 ii-strict): strip empty attachments from log_data.
     // Empty includes null, '', and []. The "[object Object],[object Object]..."
     // string produced by the deferred Phase-2 fix #1 placeholder coercion is
