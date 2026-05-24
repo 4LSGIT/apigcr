@@ -343,7 +343,7 @@ async function createLogEntry(db, {
     // Unchanged behavior for contact/case/appt/bill/null link_types
     logLink = link_id != null ? String(link_id) : '';
   }
-/* TEMP FIX FOR RC OUT: */
+/* TEMP FIX FOR RC OUT (1/3): */
 // Phase 2 ext: canonicalize from/to for phone-bearing log types.
   // External providers vary: RC inbound transform produces 10-digit (norm10
   // in the transform), RC outbound path's wf 15 step 2 set_vars produces
@@ -400,7 +400,7 @@ async function createLogEntry(db, {
     // Fold typed display params into log_data without overwriting
     // caller-supplied keys. Direction intentionally omitted — rendered
     // separately by the UI.
-    /* TEMP FIX P2 
+    /* TEMP FIX P2/3
     if (from    != null && dataObj.from    === undefined) dataObj.from    = from;
     if (to      != null && dataObj.to      === undefined) dataObj.to      = to;
 */
@@ -435,7 +435,7 @@ async function createLogEntry(db, {
       normalizedLinkId,
       by,
       logData,
-      /* TEMP FIX P3
+      /* TEMP FIX P3/3
       from,
       to,*/
       normalizedFrom,

@@ -1372,7 +1372,16 @@ function seqRenderParamField(spec, value, visible) {
       const opts = spec.enum || [];
       const includeBlank = !spec.required;
       const blank = includeBlank ? '<option value=""></option>' : '';
-      inputHtml = `<select id="${id}">${blank}${opts.map(o => `<option ${o === value ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+      // Preserve out-of-enum values (e.g. {{placeholders}} or legacy values
+      // not in the current enum list) by adding them as a "(custom)" option.
+      // Without this, the select renders nothing selected, and gather reads
+      // the first option's value — silently clobbering the stored value on
+      // save. Users wanting to author a new placeholder can use Edit-as-JSON.
+      const isOutOfEnum = typeof value === 'string' && value !== '' && !opts.includes(value);
+      const customOpt = isOutOfEnum
+        ? `<option value="${esc(value)}" selected>${esc(value)} (custom)</option>`
+        : '';
+      inputHtml = `<select id="${id}">${blank}${customOpt}${opts.map(o => `<option ${o === value ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
       break;
     }
     case 'integer':
@@ -1396,11 +1405,21 @@ function seqRenderParamField(spec, value, visible) {
     }
     default: {
       // string / iso_datetime / duration / placeholder_string
-      const v = (value === null || value === undefined) ? '' : String(value);
-      if (spec.multiline) {
-        inputHtml = `<textarea id="${id}" rows="4">${esc(v)}</textarea>`;
+      // Defensive: if a "string"-typed param actually holds an object/array
+      // (e.g. create_log.data carrying a nested {to, from, status, ...} blob,
+      // or any legacy/hand-edited config), render as JSON textarea instead
+      // of String()-ing it into "[object Object]". The data-json="1" marker
+      // tells gather to JSON.parse the value back on save.
+      if (value !== null && typeof value === 'object') {
+        const display = JSON.stringify(value, null, 2);
+        inputHtml = `<textarea id="${id}" rows="4" data-json="1">${esc(display)}</textarea>`;
       } else {
-        inputHtml = `<input id="${id}" value="${esc(v)}">`;
+        const v = (value === null || value === undefined) ? '' : String(value);
+        if (spec.multiline) {
+          inputHtml = `<textarea id="${id}" rows="4">${esc(v)}</textarea>`;
+        } else {
+          inputHtml = `<input id="${id}" value="${esc(v)}">`;
+        }
       }
     }
   }
@@ -1741,8 +1760,20 @@ function seqGatherActionConfig(actionType) {
         break;
       }
       default:
-        // string / enum / iso_datetime / duration / placeholder_string
-        params[spec.name] = raw;
+        // string / enum / iso_datetime / duration / placeholder_string.
+        // If render auto-promoted an object/array value to a JSON textarea
+        // (data-json="1"), parse it back here so we round-trip the original
+        // structure instead of saving the literal text. Without this, hitting
+        // Save from form view would clobber nested params to a string.
+        if (el.dataset && el.dataset.json === '1') {
+          try { params[spec.name] = JSON.parse(raw); }
+          catch {
+            Swal.fire('Error', `${spec.name} is not valid JSON`, 'error');
+            return null;
+          }
+        } else {
+          params[spec.name] = raw;
+        }
     }
   }
 

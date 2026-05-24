@@ -7,6 +7,9 @@
  * GET  /api/log       list with filters
  * GET  /api/log/:id   single entry
  * POST /api/log       create manual entry (note, call log, etc.)
+ *
+ * Phase 3 Slice 1: POST accepts optional `extra` (JSON object) for IT-facing
+ * fields kept separate from the user-facing log_data blob.
  */
 
 const express    = require('express');
@@ -18,7 +21,7 @@ const logService = require('../services/logService');
 router.get('/api/log', jwtOrApiKey, async (req, res) => {
   try {
     const { type, q, from_date, to_date } = req.query;
-    
+
     // Map 'Communication' → types array; 'All' → no filter
     let typeParam  = null;
     let typesParam = null;
@@ -31,7 +34,7 @@ router.get('/api/log', jwtOrApiKey, async (req, res) => {
     }
     // Apply same day-boundary fix as appts
     const fromDate = from_date ? `${from_date} 00:00:00` : null;
-    const toDate   = to_date   ? to_date : null; // service uses < DATE_ADD logic belo
+    const toDate   = to_date   ? to_date : null; // service uses < DATE_ADD logic below
     const result = await logService.listLog(req.db, {
       link_type: req.query.link_type,
       link_id:   req.query.link_id,
@@ -66,7 +69,8 @@ router.get('/api/log/:id', jwtOrApiKey, async (req, res) => {
 
 // ─── CREATE ───
 router.post('/api/log', jwtOrApiKey, async (req, res) => {
-  const { type, link_type, link_id, data, from, to, subject, message, direction } = req.body;
+  const { type, link_type, link_id, data, extra,
+          from, to, subject, message, direction } = req.body;
 
   if (!type) return res.status(400).json({ status: 'error', message: 'type is required' });
 
@@ -74,7 +78,7 @@ router.post('/api/log', jwtOrApiKey, async (req, res) => {
     const result = await logService.createLogEntry(req.db, {
       type, link_type, link_id,
       by: req.auth?.userId || 0,
-      data, from, to, subject, message, direction
+      data, extra, from, to, subject, message, direction
     });
     res.json({ status: 'success', ...result });
   } catch (err) {
