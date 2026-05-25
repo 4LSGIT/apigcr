@@ -884,15 +884,28 @@ async function send(action) {
       }
 
       // Log
-      const smsLogData = { from, to, message: body };
-      if (mmsAttachmentUrl) smsLogData.attachment = mmsAttachmentUrl;
-      if (action === 'logSms') smsLogData.note = 'Logged without sending';
-
-      await P.apiSend('/api/log', 'POST', {
-        type: mmsAttachmentUrl ? 'mms' : 'sms',
-        link_type: 'contact', link_id: contactId,
-        data: JSON.stringify(smsLogData), direction: 'outgoing'
-      });
+      //
+      // For real sends (action === 'sms'), the provider's webhook fires a
+      // message-delivered event back to YisraCase, which lands on the
+      // rc-message-out (wf 19) or quo-message (wf 18) hook and creates the
+      // authoritative log row with full provider metadata in log_extra.
+      // Posting /api/log from here too would produce a duplicate (one
+      // by=<user> from the frontend, one by=0 from the workflow ~5–30s
+      // later). So we ONLY write a frontend log row for 'Log Without
+      // Sending' — where there's no real send and therefore no webhook.
+      //
+      // log_type ENUM does not include 'mms' — log MMS rows as 'sms'
+      // (attachment URL in log_data.attachment is the distinguishing
+      // signal for renderers).
+      if (action === 'logSms') {
+        const smsLogData = { from, to, message: body, note: 'Logged without sending' };
+        if (mmsAttachmentUrl) smsLogData.attachment = mmsAttachmentUrl;
+        await P.apiSend('/api/log', 'POST', {
+          type: 'sms',
+          link_type: 'contact', link_id: contactId,
+          data: JSON.stringify(smsLogData), direction: 'outgoing'
+        });
+      }
 
       Swal.close();
       Toast.fire({ icon: 'success', title: action === 'sms' ? 'Message sent!' : 'Message logged!' });
