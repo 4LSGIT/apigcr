@@ -434,6 +434,31 @@ async function listLog(db, {
   //   from an unrelated entity type would get hydrated with the wrong
   //   contact/case name. Legacy NULL-type rows preserved by the
   //   `OR log_link_type IS NULL` branch.
+  //
+  // Slice 4 (entity hydration):
+  //   Added LEFT JOINs to contact_phones / contact_emails (date-windowed
+  //   on log_date) so phone- and email-typed rows arrive at the renderer
+  //   with contact_id/contact_name populated when resolvable. The gate
+  //   on l.log_link_type='phone'/'email' inside the JOIN ON clause is
+  //   load-bearing — without it, any row whose log_link_id happened to
+  //   be phone-shaped or email-shaped would spuriously hydrate (a phone/
+  //   email H-bug analogue).
+  //
+  //   Slice 3.5's single-attribution invariant (donor end_date set to
+  //   yesterday on cross-contact transfer) guarantees no row duplication
+  //   from the phone/email joins — verified at deploy time as 50,126
+  //   baseline preserved through both joins independently.
+  //
+  //   The contact_id / contact_name COALESCE resolves in priority order:
+  //   contact-typed direct match first (c), then phone-window (c_phone),
+  //   then email-window (c_email). Only one of these can be non-null per
+  //   row (mutually exclusive on log_link_type).
+  //
+  //   NOTE on pre-existing cases-JOIN inflation: the triple-OR in the
+  //   cases JOIN can multiply rows when two cases share case_number or
+  //   case_number_full (data-quality issue, not a JOIN-logic issue).
+  //   Slice 4 does NOT worsen this — verified pre/post COUNT(*) both
+  //   yield the same inflated total. Tracking separately.
   const [entries] = await db.query(
     `SELECT
      l.log_id, l.log_type, l.log_date, l.log_link,
@@ -441,7 +466,8 @@ async function listLog(db, {
      l.log_from, l.log_to, l.log_subject, l.log_direction,
      u.user_name AS by_name,
      DATE_FORMAT(l.log_date, '%M %e, %Y at %h:%i %p') AS formatted_date,
-     c.contact_name, c.contact_id,
+     COALESCE(c.contact_name, c_phone.contact_name, c_email.contact_name) AS contact_name,
+     COALESCE(c.contact_id,   c_phone.contact_id,   c_email.contact_id)   AS contact_id,
      ca.case_id,
      COALESCE(ca.case_number_full, ca.case_number) AS case_number
    FROM log l
@@ -453,6 +479,16 @@ async function listLog(db, {
                              OR l.log_link = ca.case_number_full)
                          AND l.log_link != ''
                          AND (l.log_link_type = 'case' OR l.log_link_type IS NULL)
+   LEFT JOIN contact_phones cp ON l.log_link_type = 'phone'
+                              AND cp.phone        = l.log_link_id
+                              AND (cp.start_date IS NULL OR cp.start_date <= DATE(l.log_date))
+                              AND (cp.end_date   IS NULL OR cp.end_date   >= DATE(l.log_date))
+   LEFT JOIN contacts c_phone  ON c_phone.contact_id = cp.contact_id
+   LEFT JOIN contact_emails ce ON l.log_link_type = 'email'
+                              AND ce.email        = l.log_link_id
+                              AND (ce.start_date IS NULL OR ce.start_date <= DATE(l.log_date))
+                              AND (ce.end_date   IS NULL OR ce.end_date   >= DATE(l.log_date))
+   LEFT JOIN contacts c_email  ON c_email.contact_id = ce.contact_id
    ${whereSQL}
    ORDER BY l.log_date DESC
    LIMIT ? OFFSET ?`,

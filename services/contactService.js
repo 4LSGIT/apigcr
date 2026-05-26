@@ -1815,17 +1815,51 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
     //
     // The four-source semantic (contact-typed + NULL-typed + date-
     // windowed phone + date-windowed email) lives in the helper; the
-    // SELECT shape below is the same one the inline block used.
+    // SELECT shape below mirrors listLog's enriched shape.
+    //
+    // Slice 4 (entity hydration): SELECT + JOIN tree brought up to
+    // listLog parity so phone/email-typed rows surfaced via the
+    // EXISTS filter also arrive hydrated with contact_id/contact_name
+    // (and, where applicable, case_id/case_number). Renderers consuming
+    // this payload (currently dormant — entity-view log tabs hit
+    // /api/log directly) get the same fields the global feed gets.
+    //
+    // Pre-existing dup-case-number caveat: the triple-OR cases JOIN
+    // can multiply rows whose log_link matches case_number or
+    // case_number_full shared by multiple cases. Acknowledged data
+    // debt; see logService listLog comment.
     const { whereFragment, params: logWhereParams } =
       logService._buildContactLogWhere(contactId);
     const [log] = await db.query(
       `SELECT
-         l.log_id, l.log_type, l.log_date, l.log_data,
+         l.log_id, l.log_type, l.log_date, l.log_link,
+         l.log_link_type, l.log_link_id, l.log_by, l.log_data,
          l.log_from, l.log_to, l.log_subject, l.log_direction,
-         l.log_link_type, l.log_link_id,
-         u.user_name AS by_name
+         u.user_name AS by_name,
+         DATE_FORMAT(l.log_date, '%M %e, %Y at %h:%i %p') AS formatted_date,
+         COALESCE(c.contact_name, c_phone.contact_name, c_email.contact_name) AS contact_name,
+         COALESCE(c.contact_id,   c_phone.contact_id,   c_email.contact_id)   AS contact_id,
+         ca.case_id,
+         COALESCE(ca.case_number_full, ca.case_number) AS case_number
        FROM log l
-       LEFT JOIN users u ON l.log_by = u.user
+       LEFT JOIN users    u  ON l.log_by = u.user
+       LEFT JOIN contacts c  ON l.log_link = c.contact_id
+                            AND (l.log_link_type = 'contact' OR l.log_link_type IS NULL)
+       LEFT JOIN cases    ca ON (l.log_link = ca.case_id
+                                 OR l.log_link = ca.case_number
+                                 OR l.log_link = ca.case_number_full)
+                             AND l.log_link != ''
+                             AND (l.log_link_type = 'case' OR l.log_link_type IS NULL)
+       LEFT JOIN contact_phones cp ON l.log_link_type = 'phone'
+                                  AND cp.phone        = l.log_link_id
+                                  AND (cp.start_date IS NULL OR cp.start_date <= DATE(l.log_date))
+                                  AND (cp.end_date   IS NULL OR cp.end_date   >= DATE(l.log_date))
+       LEFT JOIN contacts c_phone  ON c_phone.contact_id = cp.contact_id
+       LEFT JOIN contact_emails ce ON l.log_link_type = 'email'
+                                  AND ce.email        = l.log_link_id
+                                  AND (ce.start_date IS NULL OR ce.start_date <= DATE(l.log_date))
+                                  AND (ce.end_date   IS NULL OR ce.end_date   >= DATE(l.log_date))
+       LEFT JOIN contacts c_email  ON c_email.contact_id = ce.contact_id
        WHERE ${whereFragment}
        ORDER BY l.log_date DESC
        LIMIT ?`,

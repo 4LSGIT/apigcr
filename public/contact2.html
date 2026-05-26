@@ -585,7 +585,19 @@ async function tabLogGet(offset) {
           const jsonData = JSON.parse(entry.log_data.replace(/\n/g,"\\n").replace(/\r/g,"\\r"));
           cell_data = Object.keys(jsonData).map(key => `<b>${key}:</b> ${jsonData[key]}`).join('<br>');
         } catch (_) { cell_data = entry.log_data || ""; }
-        row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}</td><td>${entry.formatted_date}</td><td>${entry.log_link||""}</td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}</td>`;
+        // Slice 4: prefer server-resolved entity ids over raw log_link literal.
+        // Case branch first (case_id existed before phone/email hydration); else
+        // contact branch (covers contact-typed rows AND phone/email-typed rows
+        // hydrated via the date-windowed contact_phones/contact_emails JOINs).
+        let link = "";
+        if (entry.case_id && isNaN(entry.log_link)) {
+          const caseName = (entry.case_number || entry.case_id || "").toString().replace(/'/g, "\\'");
+          link = `<a href="#" onclick="P.addFile('${caseName}','case','${entry.case_id}');return false">${entry.case_number || entry.case_id}</a>`;
+        } else if (entry.contact_id) {
+          const cname = (entry.contact_name || "").replace(/'/g, "\\'");
+          link = `<a href="#" onclick="P.addFile('${cname}','client','${entry.contact_id}');return false">${entry.contact_name || "Name Error"}</a>`;
+        }
+        row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}</td><td>${entry.formatted_date}</td><td>${link}</td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}</td>`;
       });
       foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabLogGet(${offset-limit})">&lt;</a> ` : "";
       for (let i = 1; data.total >= (i-1)*limit; i++) {
