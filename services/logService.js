@@ -48,6 +48,23 @@
  *     by the deferred Phase-2 fix #1 placeholder coercion stays visible
  *     — intentional; hiding it would delay prioritizing the MMS fix.
  *
+ * Log reader semantic unification (Slice 1):
+ *   - Two private-but-exported helpers, _buildContactLogWhere and
+ *     _buildCaseLogWhere, produce the WHERE fragments (+ params) used by
+ *     listLog when link_type is 'contact' or 'case'. They are also called
+ *     directly by contactService.getContact and caseService.getCase so
+ *     all four log readers (global feed, contact view, case view, future
+ *     legacy-file conversions) produce consistent results.
+ *   - Underscore-prefixed but exported: "internal but cross-service usable."
+ *   - Contact view = contact-typed + NULL-typed legacy + phone/email logs
+ *     attributed to this contact via contact_phones/contact_emails date
+ *     windows.
+ *   - Case view = case-typed + NULL-typed legacy (matched against case_id,
+ *     case_number, and case_number_full until Slice 2 normalization lands)
+ *     + each related contact's contact-view fragment, gated by
+ *     case_relate_filter ('default' = Primary/Secondary/Other; 'all' = no
+ *     type filter; 'none' = case-only, no related-contact merge).
+ *
  * Usage:
  *   const logService = require('../services/logService');
  *   const entries = await logService.listLog(db, { link_type: 'contact', link_id: 123 });
@@ -109,6 +126,198 @@ function _normalizeDirection(d) {
 
 
 // ─────────────────────────────────────────────────────────────
+// Log-WHERE builders (semantic-unification helpers)
+//
+// Both helpers return { whereFragment, params } where whereFragment is
+// a parenthesized boolean expression suitable to drop into a WHERE
+// clause (or AND-joined with other predicates). They do NOT execute
+// queries themselves (except _buildCaseLogWhere, which needs two
+// lookups to resolve the case row and its related contacts).
+//
+// These helpers are exposed on the module exports as
+// _buildContactLogWhere / _buildCaseLogWhere so contactService.getContact
+// and caseService.getCase can share the exact same logic that
+// /api/log?link_type=contact|case uses.
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Build a WHERE fragment matching all log rows attributable to a
+ * single contact. Four sources:
+ *   1. log_link_type = 'contact' AND log_link_id = contactId
+ *   2. Legacy NULL-typed rows where log_link = contactId
+ *   3. log_link_type = 'phone' rows whose log_link_id (a 10-digit
+ *      phone) was owned by this contact at the time the log was
+ *      written (per contact_phones date window).
+ *   4. log_link_type = 'email' rows, same pattern via contact_emails.
+ *
+ * Date-window math: cp.start_date <= DATE(log_date)
+ *   AND (cp.end_date IS NULL OR cp.end_date >= DATE(log_date)).
+ *   Per the contact_phones/contact_emails "end day before transfer"
+ *   rule this yields single attribution — no log surfaces under two
+ *   contacts on the transfer day.
+ *
+ * Param-typing matches the existing contactService.getContact log
+ * block: first two params are stringified (log_link_id / log_link are
+ * varchar), latter two are raw (cp.contact_id / ce.contact_id are INT).
+ * Don't change this without verifying the column types haven't moved.
+ *
+ * @param {number|string} contactId
+ * @returns {{ whereFragment: string, params: (string|number)[] }}
+ */
+function _buildContactLogWhere(contactId) {
+  const whereFragment = `(
+       (l.log_link_type = 'contact' AND l.log_link_id = ?)
+    OR (l.log_link_type IS NULL    AND l.log_link    = ?)
+    OR (l.log_link_type = 'phone'  AND EXISTS (
+          SELECT 1 FROM contact_phones cp
+           WHERE cp.contact_id = ?
+             AND cp.phone      = l.log_link_id
+             AND (cp.start_date IS NULL OR cp.start_date <= DATE(l.log_date))
+             AND (cp.end_date   IS NULL OR cp.end_date   >= DATE(l.log_date))
+       ))
+    OR (l.log_link_type = 'email'  AND EXISTS (
+          SELECT 1 FROM contact_emails ce
+           WHERE ce.contact_id = ?
+             AND ce.email      = l.log_link_id
+             AND (ce.start_date IS NULL OR ce.start_date <= DATE(l.log_date))
+             AND (ce.end_date   IS NULL OR ce.end_date   >= DATE(l.log_date))
+       ))
+  )`;
+  return {
+    whereFragment,
+    params: [String(contactId), String(contactId), contactId, contactId]
+  };
+}
+
+/**
+ * Build a WHERE fragment matching all log rows attributable to a case.
+ *
+ * Case-scope:
+ *   - log_link_type = 'case' AND log_link_id IN (case_id, case_number, case_number_full)
+ *   - log_link_type IS NULL  AND log_link    IN (same 3 values)
+ *   The IN list against three case identifiers is the "Slice 2 hasn't
+ *   normalized log_link/log_link_id yet" workaround: court-email logs
+ *   write the docket-style case number, manual notes may write either,
+ *   and we want all of them surfacing on the case view.
+ *
+ * Related-contact merge:
+ *   - For each related contact (resolved via case_relate, filtered by
+ *     `relateFilter`), OR in the four-source contact fragment so the
+ *     case view also surfaces those contacts' logs (including
+ *     phone/email-typed rows attributed by date window).
+ *
+ * If case_number / case_number_full are NULL on the case row, they are
+ * substituted with '' in the IN list. log_link / log_link_id are never
+ * legitimately '' for case-scope rows (Phase-A wrote '' for phone/email
+ * rows only, and those carry log_link_type='phone'/'email', not 'case'
+ * or NULL), so the empty-string substitute can never spuriously match.
+ * Passing literal NULL into IN(...) would make the predicate
+ * un-matchable AND clutter the plan; the substitute keeps the SQL flat.
+ *
+ * If the case is not found, falls back to a minimal fragment matching
+ * the raw caseId — don't throw; the caller may pass a non-existent ID.
+ *
+ * @param {object} db                       - mysql2 pool/conn
+ * @param {string} caseId
+ * @param {object} [opts]
+ * @param {string} [opts.relateFilter='default']
+ *   'default' → case_relate_type IN ('Primary','Secondary','Other')
+ *   'all'     → all related contacts (includes 'Bystander')
+ *   'none'    → no related-contact merge; case-scope only
+ * @returns {Promise<{ whereFragment: string, params: (string|number)[] }>}
+ */
+async function _buildCaseLogWhere(db, caseId, { relateFilter = 'default' } = {}) {
+  // 1) Resolve case row for the three-ID IN-list scope.
+  const [[caseRow]] = await db.query(
+    'SELECT case_id, case_number, case_number_full FROM cases WHERE case_id = ?',
+    [caseId]
+  );
+
+  if (!caseRow) {
+    // Case not found: minimal fragment against the raw caseId.
+    const whereFragment = `(
+         (l.log_link_type = 'case' AND l.log_link_id = ?)
+      OR (l.log_link_type IS NULL  AND l.log_link    = ?)
+    )`;
+    return {
+      whereFragment,
+      params: [String(caseId), String(caseId)]
+    };
+  }
+
+  // NULL → '' sentinel for IN-list (see docstring rationale).
+  const caseIdsForIn = [
+    String(caseRow.case_id),
+    caseRow.case_number      != null ? String(caseRow.case_number)      : '',
+    caseRow.case_number_full != null ? String(caseRow.case_number_full) : ''
+  ];
+
+  // 2) Resolve related contacts per filter.
+  let relatedContactIds = [];
+  if (relateFilter !== 'none') {
+    let relateSQL;
+    const relateParams = [caseId];
+    if (relateFilter === 'all') {
+      relateSQL = `SELECT case_relate_client_id
+                     FROM case_relate
+                    WHERE case_relate_case_id = ?`;
+    } else {
+      // 'default'
+      relateSQL = `SELECT case_relate_client_id
+                     FROM case_relate
+                    WHERE case_relate_case_id = ?
+                      AND case_relate_type IN ('Primary','Secondary','Other')`;
+    }
+    const [relRows] = await db.query(relateSQL, relateParams);
+    relatedContactIds = relRows.map(r => r.case_relate_client_id);
+  }
+
+  // 3) Build the OR-list fragment dynamically.
+  const orParts = [];
+  const params = [];
+
+  // 3a. Case-scope: two clauses, three params each.
+  orParts.push(`(l.log_link_type = 'case' AND l.log_link_id IN (?, ?, ?))`);
+  params.push(...caseIdsForIn);
+  orParts.push(`(l.log_link_type IS NULL  AND l.log_link    IN (?, ?, ?))`);
+  params.push(...caseIdsForIn);
+
+  // 3b. Per-related-contact: four clauses, four params each (mirrors
+  //     _buildContactLogWhere). Inlined rather than calling the helper
+  //     so the OR-list is flat — one parens-deep, easier to read in
+  //     EXPLAIN.
+  for (const cid of relatedContactIds) {
+    orParts.push(`(l.log_link_type = 'contact' AND l.log_link_id = ?)`);
+    params.push(String(cid));
+
+    orParts.push(`(l.log_link_type IS NULL    AND l.log_link    = ?)`);
+    params.push(String(cid));
+
+    orParts.push(`(l.log_link_type = 'phone'  AND EXISTS (
+        SELECT 1 FROM contact_phones cp
+         WHERE cp.contact_id = ?
+           AND cp.phone      = l.log_link_id
+           AND (cp.start_date IS NULL OR cp.start_date <= DATE(l.log_date))
+           AND (cp.end_date   IS NULL OR cp.end_date   >= DATE(l.log_date))
+      ))`);
+    params.push(cid);
+
+    orParts.push(`(l.log_link_type = 'email'  AND EXISTS (
+        SELECT 1 FROM contact_emails ce
+         WHERE ce.contact_id = ?
+           AND ce.email      = l.log_link_id
+           AND (ce.start_date IS NULL OR ce.start_date <= DATE(l.log_date))
+           AND (ce.end_date   IS NULL OR ce.end_date   >= DATE(l.log_date))
+      ))`);
+    params.push(cid);
+  }
+
+  const whereFragment = `(\n    ${orParts.join('\n    OR ')}\n  )`;
+  return { whereFragment, params };
+}
+
+
+// ─────────────────────────────────────────────────────────────
 // listLog
 // ─────────────────────────────────────────────────────────────
 
@@ -118,6 +327,14 @@ function _normalizeDirection(d) {
  * Reads from the new link columns (log_link_type / log_link_id) first,
  * falls back to legacy log_link for old rows that haven't been backfilled.
  *
+ * Slice 1 semantic unification: when link_type is 'contact' or 'case',
+ * the WHERE fragment is delegated to _buildContactLogWhere /
+ * _buildCaseLogWhere so the global feed surfaces the same
+ * date-windowed phone/email matches (contact) and related-contact
+ * merge (case) that the entity views surface. Other link_types
+ * ('appt','bill','phone','email','task') retain the original literal
+ * match.
+ *
  * The LEFT JOINs to contacts and cases are gated on log_link_type so
  * non-contact/non-case rows (phone, email, future task, etc.) don't
  * accidentally hydrate contact/case fields when their log_link value
@@ -126,12 +343,19 @@ function _normalizeDirection(d) {
  *
  * @param {object} db
  * @param {object} opts
- * @param {string}  [opts.link_type]   - 'contact','case','appt','bill','phone','email'
- * @param {string}  [opts.link_id]     - the ID/value to filter by
- * @param {string}  [opts.type]        - log_type enum filter
- * @param {string}  [opts.direction]   - 'incoming' or 'outgoing'
- * @param {string}  [opts.from_date]   - ISO datetime lower bound
- * @param {string}  [opts.to_date]     - ISO datetime upper bound
+ * @param {string}  [opts.link_type]          - 'contact','case','appt','bill','phone','email'
+ * @param {string}  [opts.link_id]            - the ID/value to filter by
+ * @param {string}  [opts.type]               - log_type enum filter
+ * @param {string[]}[opts.types]              - array of log_types (OR-matched)
+ * @param {string}  [opts.q]                  - search across log_data/from/to/subject/link
+ * @param {string}  [opts.direction]          - 'incoming' or 'outgoing'
+ * @param {string}  [opts.from_date]          - ISO datetime lower bound
+ * @param {string}  [opts.to_date]            - ISO datetime upper bound
+ * @param {number}  [opts.by]                 - user ID filter
+ * @param {string}  [opts.case_relate_filter='default']
+ *   For link_type='case': 'default' = Primary/Secondary/Other,
+ *   'all' = include Bystander, 'none' = no related-contact merge.
+ *   Ignored for other link_types.
  * @param {number}  [opts.limit=50]
  * @param {number}  [opts.offset=0]
  * @returns {{ entries: object[], total: number }}
@@ -139,6 +363,7 @@ function _normalizeDirection(d) {
 async function listLog(db, {
   link_type = null, link_id = null, type = null, types = null,
   q = null, direction = null, from_date = null, to_date = null, by=null,
+  case_relate_filter = 'default',
   limit = 50, offset = 0
 } = {}) {
 
@@ -150,12 +375,24 @@ async function listLog(db, {
     params.push(by);
   }
   if (link_type && link_id) {
-    // Match on new columns OR legacy column for backward compat
-    where.push(`(
-      (l.log_link_type = ? AND l.log_link_id = ?)
-      OR (l.log_link_type IS NULL AND l.log_link = ?)
-    )`);
-    params.push(link_type, String(link_id), String(link_id));
+    if (link_type === 'contact') {
+      const { whereFragment, params: contactParams } = _buildContactLogWhere(link_id);
+      where.push(whereFragment);
+      params.push(...contactParams);
+    } else if (link_type === 'case') {
+      const { whereFragment, params: caseParams } =
+        await _buildCaseLogWhere(db, link_id, { relateFilter: case_relate_filter });
+      where.push(whereFragment);
+      params.push(...caseParams);
+    } else {
+      // Literal match preserved for appt/bill/phone/email/task and any
+      // future enum value.
+      where.push(`(
+        (l.log_link_type = ? AND l.log_link_id = ?)
+        OR (l.log_link_type IS NULL AND l.log_link = ?)
+      )`);
+      params.push(link_type, String(link_id), String(link_id));
+    }
   }
 
   if (types && types.length) {
@@ -492,5 +729,10 @@ async function createLogEntry(db, {
 module.exports = {
   listLog,
   getLogEntry,
-  createLogEntry
+  createLogEntry,
+  // Slice 1 semantic unification: exposed for contactService.getContact
+  // and caseService.getCase. Underscore-prefixed = "internal but
+  // cross-service usable" — please don't call from frontend or routes.
+  _buildContactLogWhere,
+  _buildCaseLogWhere
 };

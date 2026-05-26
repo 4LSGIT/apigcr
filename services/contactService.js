@@ -65,6 +65,7 @@ const {
 const phoneSvc = require('./contactPhoneService');
 const emailSvc = require('./contactEmailService');
 const addrSvc  = require('./contactAddressService');
+const logService = require('./logService');
 
 const DEFAULT_LOG_LIMIT = 200;
 const SSN_COLUMN = 'contact_ssn';
@@ -1809,24 +1810,14 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
   }
 
   if (parts.includes('log')) {
-    // Track A.1 Phase A: contact log view unions four sources:
-    //   1. Direct contact-typed logs (log_link_type='contact')
-    //   2. Legacy NULL-typed logs (log_link_type IS NULL) — back-compat
-    //   3. Phone-typed logs whose log_link_id (a 10-digit phone) was
-    //      owned by THIS contact at the time the log was written
-    //      (per contact_phones date window).
-    //   4. Email-typed logs, same pattern via contact_emails.
+    // Slice 1: delegated to logService._buildContactLogWhere so this
+    // matches /api/log?link_type=contact&link_id=... 1:1.
     //
-    // Date-window math: cp.start_date <= DATE(log_date)
-    //   AND (cp.end_date IS NULL OR cp.end_date >= DATE(log_date)).
-    //   Per Slice 3.5's "end day before transfer" rule, this yields
-    //   single attribution — no log surfaces under two contacts on
-    //   the transfer day.
-    //
-    // Logs predating a contact's earliest start_date for the phone/
-    // email do NOT surface — natural and intentional behavior of the
-    // inequality. Ended phone/email rows still attribute their
-    // historical logs to the prior owner via the row's end_date.
+    // The four-source semantic (contact-typed + NULL-typed + date-
+    // windowed phone + date-windowed email) lives in the helper; the
+    // SELECT shape below is the same one the inline block used.
+    const { whereFragment, params: logWhereParams } =
+      logService._buildContactLogWhere(contactId);
     const [log] = await db.query(
       `SELECT
          l.log_id, l.log_type, l.log_date, l.log_data,
@@ -1835,26 +1826,10 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
          u.user_name AS by_name
        FROM log l
        LEFT JOIN users u ON l.log_by = u.user
-       WHERE
-            (l.log_link_type = 'contact' AND l.log_link_id = ?)
-         OR (l.log_link_type IS NULL    AND l.log_link    = ?)
-         OR (l.log_link_type = 'phone' AND EXISTS (
-               SELECT 1 FROM contact_phones cp
-                WHERE cp.contact_id = ?
-                  AND cp.phone      = l.log_link_id
-                  AND (cp.start_date IS NULL OR cp.start_date <= DATE(l.log_date))
-                  AND (cp.end_date   IS NULL OR cp.end_date   >= DATE(l.log_date))
-             ))
-         OR (l.log_link_type = 'email' AND EXISTS (
-               SELECT 1 FROM contact_emails ce
-                WHERE ce.contact_id = ?
-                  AND ce.email      = l.log_link_id
-                  AND (ce.start_date IS NULL OR ce.start_date <= DATE(l.log_date))
-                  AND (ce.end_date   IS NULL OR ce.end_date   >= DATE(l.log_date))
-             ))
+       WHERE ${whereFragment}
        ORDER BY l.log_date DESC
        LIMIT ?`,
-      [String(contactId), String(contactId), contactId, contactId, logLimit]
+      [...logWhereParams, logLimit]
     );
     result.log = log;
   }

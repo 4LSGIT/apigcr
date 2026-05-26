@@ -10,12 +10,23 @@
  *
  * Phase 3 Slice 1: POST accepts optional `extra` (JSON object) for IT-facing
  * fields kept separate from the user-facing log_data blob.
+ *
+ * Slice 1 (log reader semantic unification):
+ *   GET /api/log accepts an optional `case_relate_filter` query param
+ *   that only takes effect when `link_type=case`. Whitelisted values:
+ *   'default' (Primary/Secondary/Other; the typical case view),
+ *   'all'     (include Bystander),
+ *   'none'    (case-scope only; no related-contact merge).
+ *   Anything else → 400.
  */
 
 const express    = require('express');
 const router     = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const logService = require('../services/logService');
+
+// Slice 1: whitelist for the new case_relate_filter query param.
+const VALID_RELATE_FILTERS = new Set(['default', 'all', 'none']);
 
 // ─── LIST ───
 router.get('/api/log', jwtOrApiKey, async (req, res) => {
@@ -35,6 +46,17 @@ router.get('/api/log', jwtOrApiKey, async (req, res) => {
     // Apply same day-boundary fix as appts
     const fromDate = from_date ? `${from_date} 00:00:00` : null;
     const toDate   = to_date   ? to_date : null; // service uses < DATE_ADD logic below
+
+    // Slice 1: validate case_relate_filter against whitelist.
+    const caseRelateFilter = req.query.case_relate_filter || 'default';
+    if (!VALID_RELATE_FILTERS.has(caseRelateFilter)) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Invalid case_relate_filter: "${caseRelateFilter}". ` +
+                 `Must be one of: default, all, none.`
+      });
+    }
+
     const result = await logService.listLog(req.db, {
       link_type: req.query.link_type,
       link_id:   req.query.link_id,
@@ -45,6 +67,7 @@ router.get('/api/log', jwtOrApiKey, async (req, res) => {
       from_date: fromDate,
       to_date:   toDate,
       by: req.query.by || null,
+      case_relate_filter: caseRelateFilter,
       limit:     req.query.limit  || 50,
       offset:    req.query.offset || 0
     });

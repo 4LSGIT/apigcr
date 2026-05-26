@@ -17,6 +17,15 @@
  *   - case_relate has a uniqueness trigger — catch SQLSTATE 45000
  *   - No DELETE for cases (legal records)
  *
+ * Slice 1 (log reader semantic unification):
+ *   - getCase's log block now delegates to logService._buildCaseLogWhere,
+ *     which produces the same WHERE fragment used by
+ *     /api/log?link_type=case&link_id=... The case log view includes
+ *     case-typed rows (matched on case_id/case_number/case_number_full),
+ *     legacy NULL-typed rows, and every related contact's contact-view
+ *     fragment (contact-typed + NULL-typed + date-windowed phone/email),
+ *     gated by `relateFilter`.
+ *
  * Usage:
  *   const caseService = require('../services/caseService');
  *   const result = await caseService.getCase(db, 'uT7EU36v');
@@ -24,6 +33,7 @@
 
 const crypto = require('crypto');
 const { stripSsn } = require('./contactService');
+const logService = require('./logService');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -149,9 +159,17 @@ const DEFAULT_LOG_LIMIT = 200;
  *                              If omitted/empty → returns ONLY the case row
  * @param {object} [opts]
  * @param {number} [opts.logLimit] — max log rows to return (default: DEFAULT_LOG_LIMIT)
+ * @param {string} [opts.relateFilter='default']
+ *   Controls which related contacts merge into the case log view.
+ *   'default' = Primary/Secondary/Other; 'all' = include Bystander;
+ *   'none' = case-scope only (no related-contact merge).
+ *   Only meaningful when `include` contains 'log'.
  * @returns {object|null} null if case not found
  */
-async function getCase(db, caseId, include = '', { logLimit = DEFAULT_LOG_LIMIT } = {}) {
+async function getCase(db, caseId, include = '', {
+  logLimit = DEFAULT_LOG_LIMIT,
+  relateFilter = 'default'
+} = {}) {
   // 1) Case record (always fetched)
   const [[caseRow]] = await db.query(
     'SELECT * FROM cases WHERE case_id = ?',
@@ -253,20 +271,24 @@ async function getCase(db, caseId, include = '', { logLimit = DEFAULT_LOG_LIMIT 
     }
   }
 
-  // 5) Log entries
+  // 5) Log entries — Slice 1: delegated to logService._buildCaseLogWhere
+  //    so case view = case-scope + each related contact's contact view,
+  //    consistent with /api/log?link_type=case.
   if (parts.includes('log')) {
+    const { whereFragment, params: logWhereParams } =
+      await logService._buildCaseLogWhere(db, caseId, { relateFilter });
     const [log] = await db.query(
       `SELECT
          l.log_id, l.log_type, l.log_date, l.log_data,
          l.log_from, l.log_to, l.log_subject, l.log_direction,
+         l.log_link_type, l.log_link_id,
          u.user_name AS by_name
        FROM log l
        LEFT JOIN users u ON l.log_by = u.user
-       WHERE (l.log_link_type = 'case' AND l.log_link_id = ?)
-          OR (l.log_link_type IS NULL AND l.log_link = ?)
+       WHERE ${whereFragment}
        ORDER BY l.log_date DESC
        LIMIT ?`,
-      [caseId, caseId, logLimit]
+      [...logWhereParams, logLimit]
     );
     result.log = log;
   }
