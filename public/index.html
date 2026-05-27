@@ -2218,7 +2218,7 @@ async function loadFirmData() {
       });
     }
 
-    function newContact() {
+    function newContact(prefill = {}, onSuccess = null) {
       Swal.fire({
         title: "Add New Client:",
         html: `<label class="input-label">Name:</label>
@@ -2250,6 +2250,16 @@ async function loadFirmData() {
         showLoaderOnConfirm: true,
         showLoaderOnDeny: true,
 
+        didOpen: () => {
+          if (prefill.phone) {
+            const p = String(prefill.phone).replace(/\D/g, "");
+            E("NCPhone").value = p.length === 10
+              ? `(${p.slice(0,3)}) ${p.slice(3,6)}-${p.slice(6)}`
+              : prefill.phone;
+          }
+          if (prefill.email) E("NCEmail").value = prefill.email;
+        },
+
         // ── ADD & OPEN CLIENT ──
         preConfirm: async () => {
           const name = E("NCName").value.trim();
@@ -2259,16 +2269,21 @@ async function loadFirmData() {
           const caseTypeRaw = E("NCType").value;
           const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
 
-          if (!name || !E("NCPhone").value) {
-            Swal.showValidationMessage("Please fill in all required fields");
+          // Relaxed validation: name + at least one of phone or email
+          if (!name || (!E("NCPhone").value && !email)) {
+            Swal.showValidationMessage("Name plus at least a phone or email is required");
             return false;
           }
           if (name.split(" ").length < 2) {
             Swal.showValidationMessage("Please fill in a valid full name");
             return false;
           }
-          if (phone.length !== 10) {
+          if (E("NCPhone").value && phone.length !== 10) {
             Swal.showValidationMessage("Please fill in a valid phone number");
+            return false;
+          }
+          if (email && !/^\S+@\S+\.\S+$/.test(email)) {
+            Swal.showValidationMessage("Please fill in a valid email address");
             return false;
           }
           if (caseTypeRaw === "Other" && !caseType) {
@@ -2317,8 +2332,9 @@ async function loadFirmData() {
           const caseTypeRaw = E("NCType").value;
           const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
 
-          if (!name || !E("NCPhone").value || !email) {
-            Swal.showValidationMessage("Please fill in all required fields");
+          // Relaxed validation: name + at least one of phone or email + case type
+          if (!name || (!E("NCPhone").value && !email)) {
+            Swal.showValidationMessage("Name plus at least a phone or email is required");
             return false;
           }
           if (!caseType) {
@@ -2333,11 +2349,11 @@ async function loadFirmData() {
             Swal.showValidationMessage("Please fill in a valid full name");
             return false;
           }
-          if (phone.length !== 10) {
+          if (E("NCPhone").value && phone.length !== 10) {
             Swal.showValidationMessage("Please fill in a valid phone number");
             return false;
           }
-          if (!/^\S+@\S+\.\S+$/.test(email)) {
+          if (email && !/^\S+@\S+\.\S+$/.test(email)) {
             Swal.showValidationMessage("Please fill in a valid email address");
             return false;
           }
@@ -2393,6 +2409,7 @@ async function loadFirmData() {
           } else if (type === "case") {
             addFile(data.id, "case", data.id);
           }
+          if (typeof onSuccess === "function") onSuccess();
         }
       });
     }

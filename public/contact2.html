@@ -583,7 +583,11 @@ async function tabLogGet(offset) {
         let cell_data;
         try {
           const jsonData = JSON.parse(entry.log_data.replace(/\n/g,"\\n").replace(/\r/g,"\\r"));
-          cell_data = Object.keys(jsonData).map(key => `<b>${key}:</b> ${jsonData[key]}`).join('<br>');
+          cell_data = Object.keys(jsonData).map(key => {
+            let v = jsonData[key];
+            try { v = decodeURIComponent(String(v)); } catch (_) { /* leave as-is if malformed */ }
+            return `<b>${key}:</b> ${v}`;
+          }).join('<br>');
         } catch (_) { cell_data = entry.log_data || ""; }
         // Slice 4: prefer server-resolved entity ids over raw log_link literal.
         // Case branch first (case_id existed before phone/email hydration); else
@@ -597,7 +601,16 @@ async function tabLogGet(offset) {
           const cname = (entry.contact_name || "").replace(/'/g, "\\'");
           link = `<a href="#" onclick="P.addFile('${cname}','client','${entry.contact_id}');return false">${entry.contact_name || "Name Error"}</a>`;
         }
-        row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}</td><td>${entry.formatted_date}</td><td>${link}</td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}</td>`;
+        // Slice B.2 (variant): direction icon trails the log_type on a second line,
+        // small + grey so the type word stays the primary read.
+        let dirIcon = "";
+        const isComm = ['sms','email','call','court email'].includes(entry.log_type);
+        if (isComm && entry.log_direction === 'outgoing') {
+          dirIcon = `<br><i class="fa-solid fa-arrow-right-from-bracket" title="Outgoing" style="font-size:0.85em;color:#888"></i>`;
+        } else if (isComm && entry.log_direction === 'incoming') {
+          dirIcon = `<br><i class="fa-solid fa-arrow-right-to-bracket" title="Incoming" style="font-size:0.85em;color:#888"></i>`;
+        }
+        row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}${dirIcon}</td><td>${entry.formatted_date}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${link}</div></td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}</td>`;
       });
       foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabLogGet(${offset-limit})">&lt;</a> ` : "";
       for (let i = 1; data.total >= (i-1)*limit; i++) {

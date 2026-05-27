@@ -56,8 +56,8 @@ function buildAttachments(attachments, attachmentUrls) {
 
 function logEmail(db, messageId, from, to, subject, body) {
   db.query(
-    `INSERT INTO email_log (message_id, from_email, to_email, subject, body, processed_at)
-     VALUES (?, ?, ?, ?, ?, NOW())`,
+    `INSERT INTO email_log (source, message_id, from_email, to_email, subject, body, processed_at)
+     VALUES ('outbound-smtp', ?, ?, ?, ?, ?, NOW())`,
     [messageId, from, to, subject, body]
   ).catch(e => console.error('Failed to log email:', e));
 }

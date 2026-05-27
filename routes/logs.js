@@ -140,13 +140,19 @@ router.post("/logEmail", trap("logEmail"), async (req, res) => {
   }
 
   try {
-    // ── 1. Duplicate check on message_id ──
+    // ── 1. Duplicate check on (source, message_id) ──
     // The pre-SELECT is the friendly path for normal Pabbly retries.
     // The INSERT below also catches ER_DUP_ENTRY for the race window
     // between this SELECT and the INSERT (two concurrent identical
     // messageIDs); both paths return the same "already processed" 200.
+    //
+    // Email Ingest Slice 1.1: filter is now scoped to source='gmail-firm'
+    // because the UNIQUE on email_log is composite (source, message_id).
+    // Without the source filter, a future ingest path (e.g. siteground-php)
+    // forwarding the same RFC message_id from a different in-route would
+    // be falsely flagged as a duplicate of this Gmail-side row.
     const [existing] = await db.query(
-      "SELECT message_id FROM email_log WHERE message_id = ?",
+      "SELECT message_id FROM email_log WHERE source = 'gmail-firm' AND message_id = ?",
       [messageID]
     );
     if (existing.length > 0) {
@@ -169,8 +175,8 @@ router.post("/logEmail", trap("logEmail"), async (req, res) => {
     try {
       await db.query(
         `INSERT INTO email_log
-           (message_id, from_email, to_email, subject, body, attachments, processed_at)
-         VALUES (?, ?, ?, ?, ?, ?,
+           (source, message_id, from_email, to_email, subject, body, attachments, processed_at)
+         VALUES ('gmail-firm', ?, ?, ?, ?, ?, ?,
                  CONVERT_TZ(NOW(), @@session.time_zone, 'EST5EDT'))`,
         [messageID, from, to, subject, body_plain, attachmentsStr]
       );

@@ -1002,6 +1002,28 @@ These are throttled per `(slug, sender_email)` with a default 1-hour window (env
 
 **Why not skip the router and let each adapter post to its own hook?** You can. The router is purely an organizational layer for when the inbound-email count grows past two or three. For a single inbound source, point the adapter directly at `/hooks/<slug>` and skip this entirely.
 
+### 3.17 Email Ingest (Slice 1.1)
+
+The `POST /api/email/ingest` endpoint is the new external entrypoint for inbound (and any-direction-tagged) email events. It replaces the load-bearing Pabbly→`/logEmail` path incrementally; both paths coexist during Phase 1.2 until the Gmail-side Apps Script forwarder is repointed.
+
+**Auth.** Per-source API key in the `X-Email-Ingest-Key` header. Sources are rows in `email_ingest_sources` (one per adapter — `siteground-php` already producing in prod; `gmail-firm` placeholder until Phase 1.2). Constant-time compare in `services/emailIngestService.authenticate`. Bad/missing key returns 401 and writes a `status='auth_failed'` row to `email_ingest_executions` with `source_id=NULL` for attack-pattern visibility.
+
+**Body.** The canonical envelope shape — `{schema_version, received_at, source, adapter_version, kind:'email', envelope:{...}, from, to, cc, reply_to, subject, date, text, html, attachments, auth, headers, raw, _parse_warnings}`. The PHP forwarder already emits this; GAS will be rewritten to match in Phase 1.2. The service tolerates sparse/missing fields — only `kind='email'`, `from.email`, and at least one recipient (via `to[].email` or `envelope.recipient`) are required.
+
+**Dedup.** `(email_log.source, email_log.message_id)` is the unique primitive. `message_id` resolves in priority order: `headers.message_id` → `envelope.exim_message_id` → 400. A pre-SELECT short-circuits known duplicates; `INSERT IGNORE` closes the concurrent-write race.
+
+**Direction.** `from.email`'s domain ∈ `EMAIL_DOMAINS` env list → `outgoing`, else `incoming`. Replaces `/logEmail`'s hardcoded `'incoming'` (safe there because that route only saw forwarded inbound traffic).
+
+**Firm-to-firm.** If `from + every to + every cc` is on a firm domain, the structured `log` row is suppressed (status `skipped_firm_to_firm`); the `email_log` forensic row is still written. The check fails open on any missing recipient — same conservative posture as `/logEmail`'s legacy check.
+
+**Auto-log default.** Every non-firm-to-firm, non-duplicate ingest produces one `log` row via `logService.createLogEntry` with `link_type='email'`, `link_id=<other party's email>`, `direction=<inferred>`. IT-facing forensics (source, message_id, cc list, auth verdicts, envelope.date) ride along in `log_extra`. Surfaces in `case2`/`contact2` via the Phase-A date-windowed `contact_emails` EXISTS join — no change to readers needed.
+
+**`log_date`.** The `log` row's `log_date` is `NOW()` at ingest time (logService doesn't accept an override). The original RFC `Date:` header lives in `log_extra.envelope_date` for cases where the difference matters (forwarded-from-archive scenarios).
+
+**Forensic continuity.** The four legacy `email_log` writers ([routes/logs.js](routes/logs.js), [adapters/email/pabbly.js](services/adapters/email/pabbly.js), [adapters/email/smtp.js](services/adapters/email/smtp.js), [adapters/email/gmail.js](services/adapters/email/gmail.js)) all stamp `source` in their INSERTs: `gmail-firm`, `outbound-pabbly`, `outbound-smtp`, `outbound-gmail` respectively. The composite UNIQUE means same RFC message_id from different sources is no longer a duplicate.
+
+**Forward-looking.** Rules table, transforms, dispatch (workflow/sequence/hook actions), code-mode eval, capture mode, and UI are Phase 2. The old `email_router_*` tables and `services/emailRouter.js` stay dead — they are not the foundation of the new system.
+
 ---
 
 ## 4. Step-by-Step Guide: Building a New Automation

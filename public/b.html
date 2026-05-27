@@ -1661,6 +1661,21 @@
             } else if (entry.contact_id) {
               const cname = (entry.contact_name || "").replace(/'/g, "\\'");
               link = `<a href="#" onclick="addFile('${cname}','client','${entry.contact_id}');return false">${entry.contact_name || "Name Error"}</a>`;
+            } else if (entry.log_link_type === "phone" && entry.log_link_id) {
+              const p = String(entry.log_link_id);
+              const formatted = p.length === 10
+                ? `(${p.slice(0,3)}) ${p.slice(3,6)}-${p.slice(6)}`
+                : p;
+              link = `${formatted} <br><a href="#" onclick="newContact({phone:'${p}'}, () => tabLogGet(0));return false" title="Add as new contact"><i class="fa-solid fa-user-plus"></i></a>`;
+            } else if (entry.log_link_type === "email" && entry.log_link_id) {
+              const e = String(entry.log_link_id).replace(/'/g, "\\'");
+              link = `${entry.log_link_id} <br><a href="#" onclick="newContact({email:'${e}'}, () => tabLogGet(0));return false" title="Add as new contact"><i class="fa-solid fa-user-plus"></i></a>`;
+            } else if (entry.log_link_type === "case" && entry.log_link_id) {
+              // Court email or other case-typed row that didn't resolve (no matching case row).
+              link = `<span title="No matching case">${entry.log_link_id}</span>`;
+            } else if (entry.log_link_type == null && entry.log_link) {
+              // Legacy NULL-typed row whose log_link didn't resolve via any JOIN.
+              link = `<span title="Unresolved legacy link">${entry.log_link}</span>`;
             }
 
             // Data cell — try to parse JSON, fall back to raw string
@@ -1674,11 +1689,21 @@
               cell_data = entry.log_data || "";
             }
 
+            // Slice B.2 (variant): direction icon trails the log_type on a second line,
+            // small + grey so the type word stays the primary read.
+            let dirIcon = "";
+            const isComm = ['sms','email','call','court email'].includes(entry.log_type);
+            if (isComm && entry.log_direction === 'outgoing') {
+              dirIcon = `<br><i class="fa-solid fa-arrow-right-from-bracket" title="Outgoing" style="font-size:0.85em;color:#888"></i>`;
+            } else if (isComm && entry.log_direction === 'incoming') {
+              dirIcon = `<br><i class="fa-solid fa-arrow-right-to-bracket" title="Incoming" style="font-size:0.85em;color:#888"></i>`;
+            }
+
             row.innerHTML = `
               <td>${entry.log_id}</td>
-              <td>${entry.log_type}</td>
+              <td>${entry.log_type}${dirIcon}</td>
               <td>${entry.formatted_date}</td>
-              <td>${link}</td>
+              <td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${link}</div></td>
               <td>${cell_data}</td>
               <td>${entry.by_name || entry.log_by || ""}</td>`;
           });
@@ -2543,7 +2568,7 @@ async function initAuth() {
       });
     }
 
-    function newContact() {
+    function newContact(prefill = {}, onSuccess = null) {
       Swal.fire({
         title: "Add New Client:",
         html: `<label class="input-label">Name:</label>
@@ -2575,6 +2600,16 @@ async function initAuth() {
         showLoaderOnConfirm: true,
         showLoaderOnDeny: true,
 
+        didOpen: () => {
+          if (prefill.phone) {
+            const p = String(prefill.phone).replace(/\D/g, "");
+            E("NCPhone").value = p.length === 10
+              ? `(${p.slice(0,3)}) ${p.slice(3,6)}-${p.slice(6)}`
+              : prefill.phone;
+          }
+          if (prefill.email) E("NCEmail").value = prefill.email;
+        },
+
         // ── ADD & OPEN CLIENT ──
         preConfirm: async () => {
           const name = E("NCName").value.trim();
@@ -2584,16 +2619,21 @@ async function initAuth() {
           const caseTypeRaw = E("NCType").value;
           const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
 
-          if (!name || !E("NCPhone").value) {
-            Swal.showValidationMessage("Please fill in all required fields");
+          // Relaxed validation: name + at least one of phone or email
+          if (!name || (!E("NCPhone").value && !email)) {
+            Swal.showValidationMessage("Name plus at least a phone or email is required");
             return false;
           }
           if (name.split(" ").length < 2) {
             Swal.showValidationMessage("Please fill in a valid full name");
             return false;
           }
-          if (phone.length !== 10) {
+          if (E("NCPhone").value && phone.length !== 10) {
             Swal.showValidationMessage("Please fill in a valid phone number");
+            return false;
+          }
+          if (email && !/^\S+@\S+\.\S+$/.test(email)) {
+            Swal.showValidationMessage("Please fill in a valid email address");
             return false;
           }
           if (caseTypeRaw === "Other" && !caseType) {
@@ -2642,8 +2682,9 @@ async function initAuth() {
           const caseTypeRaw = E("NCType").value;
           const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
 
-          if (!name || !E("NCPhone").value || !email) {
-            Swal.showValidationMessage("Please fill in all required fields");
+          // Relaxed validation: name + at least one of phone or email + case type
+          if (!name || (!E("NCPhone").value && !email)) {
+            Swal.showValidationMessage("Name plus at least a phone or email is required");
             return false;
           }
           if (!caseType) {
@@ -2658,11 +2699,11 @@ async function initAuth() {
             Swal.showValidationMessage("Please fill in a valid full name");
             return false;
           }
-          if (phone.length !== 10) {
+          if (E("NCPhone").value && phone.length !== 10) {
             Swal.showValidationMessage("Please fill in a valid phone number");
             return false;
           }
-          if (!/^\S+@\S+\.\S+$/.test(email)) {
+          if (email && !/^\S+@\S+\.\S+$/.test(email)) {
             Swal.showValidationMessage("Please fill in a valid email address");
             return false;
           }
@@ -2718,6 +2759,7 @@ async function initAuth() {
           } else if (type === "case") {
             addFile(data.id, "case", data.id);
           }
+          if (typeof onSuccess === "function") onSuccess();
         }
       });
     }
