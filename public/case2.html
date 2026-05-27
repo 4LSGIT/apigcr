@@ -514,6 +514,7 @@
           <option>Form</option>
           <option>Status</option>
           <option>Note</option>
+          <option>Court Email</option>
           <option>Other</option></select
         >
         <select id="logDirectionFilter" style="display:none">
@@ -645,7 +646,7 @@
                 dirIcon = `<br><i class="fa-solid fa-arrow-right-to-bracket" title="Incoming" style="font-size:0.85em;color:#888"></i>`;
               }
               // Slice B.3: leading link-type icon + trailing extras-inspector icon
-              const typeIcon = logLinkTypeIcon(entry.log_link_type);
+              const typeIcon = logEntryIcon(entry);
               const extrasIcon = logExtrasIcon(entry);
               row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}${dirIcon}</td><td>${entry.formatted_date}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}</div></td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}${extrasIcon}</td>`;
             });
@@ -862,7 +863,7 @@
 //const P      = window.parent;
 const caseID = new URLSearchParams(window.location.search).get("caseID") || prompt("case id");
 const tab    = new URLSearchParams(window.location.search).get("tab") || "";
-let limit    = P.limit || 100;
+let limit    = parseInt(getTabPref('log','limit', P.limit || 100), 10) || 100;
 
 window.apiSend = P.apiSend;   // relay for child form iframes
 window.firmData = P.firmData;

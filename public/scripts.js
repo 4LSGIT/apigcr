@@ -6,6 +6,22 @@ const U = (str) => encodeURIComponent( str.replace(/(["'`\\])/g, "\\\\$1").repla
 const X = (str) => str.replace(/(["'`\\])/g, "\\$1").replace(/\n/g, "\\n");
 const P = window.parent;
 
+/* localStorage-backed per-tab preference helpers.
+   Composed storage key: `yc.${tab}.${key}` (e.g. yc.log.limit, yc.log.expand).
+   Returns string or default; setTabPref coerces to String. Wrapped in
+   try/catch because localStorage can throw under privacy mode / quota /
+   disabled storage — silent degrade is fine for prefs. */
+function getTabPref(tab, key, dflt) {
+  try {
+    const v = localStorage.getItem(`yc.${tab}.${key}`);
+    return v == null ? dflt : v;
+  } catch { return dflt; }
+}
+function setTabPref(tab, key, value) {
+  try { localStorage.setItem(`yc.${tab}.${key}`, String(value)); }
+  catch { /* storage disabled or full — degrade silently */ }
+}
+
 enc=o=>btoa(JSON.stringify(o)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''),
 dec=s=>{try{return JSON.parse(atob(s.replace(/-/g,'+').replace(/_/g,'/')))}catch{return{}}}
 /*
@@ -329,6 +345,31 @@ function logLinkTypeIcon(linkType) {
     : '';
 }
 
+/* Pick the icon for a log row's Link cell.
+   The literal log_link_type carries information the resolved entity does not
+   (e.g. a phone-typed row that resolved to a contact still tells us the row
+   arrived via phone-number matching, which is useful for debugging). So we
+   honor the literal type whenever it exists.
+
+   The fallback only kicks in for legacy NULL-typed rows (~161 rows currently)
+   that predate the typed-enrichment migration. For those, there is no stored
+   type, so we infer from the resolved entity (case_id / contact_id, hydrated
+   server-side via JOIN on the legacy log_link column). */
+function logEntryIcon(entry) {
+  if (entry.log_link_type) {
+    return logLinkTypeIcon(entry.log_link_type);
+  }
+  // NULL-typed legacy row — derive from resolved entity, mirroring the
+  // link-rendering priority in tabLogGet.
+  if (entry.case_id && isNaN(entry.log_link)) {
+    return logLinkTypeIcon('case');
+  }
+  if (entry.contact_id) {
+    return logLinkTypeIcon('contact');
+  }
+  return '';
+}
+
 /* Whether a log_extra payload has anything worth inspecting.
    mysql2 returns JSON columns as parsed objects; pre-Slice4 rows may be strings. */
 function logHasExtras(extra) {
@@ -508,13 +549,14 @@ function renderLogPagination(containerEl, total, limit, offset, jumpFn) {
   }
 }
 
-/* Toggle the data-column collapse class on the log table. Wired by
-   renderLogFooter to the checkbox it injects. */
+/* Toggle the data-column collapse class on the log table and persist
+   to yc.log.expand. Wired by renderLogFooter to the checkbox it injects. */
 function toggleLogDataExpand() {
   const t = E('logTable');
   const cb = E('logExpandData');
   if (!t || !cb) return;
   t.classList.toggle('log-data-expanded', cb.checked);
+  setTabPref('log', 'expand', cb.checked ? 'true' : 'false');
 }
 
 /* Render the full log-table footer: pagination | meta | limit | toggle | print + export.
@@ -537,10 +579,10 @@ function renderLogFooter(containerEl, data, limit, offset, jumpFn, exportFn) {
   meta.innerHTML = `<span class="sep">|</span> Showing ${shownStart}–${shownEnd} of ${total}`;
   containerEl.appendChild(meta);
 
-  // 3. Limit dropdown
+  // 3. Limit dropdown — pref-backed (yc.log.limit)
   const limitWrap = document.createElement('span');
   limitWrap.innerHTML = `<span class="sep">|</span> Limit
-    <select style="width:auto" onchange="limit=this.value;tabLogGet(0)">
+    <select style="width:auto" onchange="setTabPref('log','limit',this.value);limit=this.value;tabLogGet(0)">
       <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
       <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
       <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
@@ -548,9 +590,12 @@ function renderLogFooter(containerEl, data, limit, offset, jumpFn, exportFn) {
     </select>`;
   containerEl.appendChild(limitWrap);
 
-  // 4. Expand toggle — CSS switch, preserves state across re-renders
+  // 4. Expand toggle — CSS switch; pref-backed (yc.log.expand).
+  // Read pref on every render and reflect on the table class so the source
+  // of truth is the pref, not the in-DOM class. Toggle handler writes back.
   const tbl = E('logTable');
-  const isExpanded = tbl && tbl.classList.contains('log-data-expanded');
+  const isExpanded = getTabPref('log', 'expand', 'false') === 'true';
+  if (tbl) tbl.classList.toggle('log-data-expanded', isExpanded);
   const toggleWrap = document.createElement('span');
   toggleWrap.innerHTML = `<span class="sep">|</span>
     <label class="log-expand-toggle" title="Expand data rows in the log table">

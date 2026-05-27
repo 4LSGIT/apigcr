@@ -1707,7 +1707,7 @@
             }
 
             // Slice B.3: leading link-type icon + trailing extras-inspector icon
-            const typeIcon = logLinkTypeIcon(entry.log_link_type);
+            const typeIcon = logEntryIcon(entry);
             const extrasIcon = logExtrasIcon(entry);
 
             row.innerHTML = `
@@ -2067,7 +2067,7 @@
     });
     // Top-level state used across tab handlers
     user = {};
-    limit = 100;
+    limit = parseInt(getTabPref('log','limit',100),10) || 100;
     fileCounter = 1;
     cases = "";
     contacts = "";
