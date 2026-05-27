@@ -515,7 +515,12 @@
           <option>Status</option>
           <option>Note</option>
           <option>Other</option></select
-        >Time:
+        >
+        <select id="logDirectionFilter" style="display:none">
+          <option value="">Any Direction</option>
+          <option value="outgoing">Outgoing</option>
+          <option value="incoming">Incoming</option>
+        </select>Time:
         <select
           id="tabLogTime"
           style="width: 150px"
@@ -574,27 +579,41 @@
         }
       }
 
-      async function tabLogGet(offset) {
-        E("tabLogButton").disabled = true;
-        E("tabLogLoad").style.display = "block";
+      // Slice B.4: factored out so exportLog can reuse without re-implementing.
+      // Returns current filter params WITHOUT limit/offset (callers add those).
+      // Includes link_type/link_id scoping to this case.
+      function getLogFilterParams() {
+        const params = { link_type: "case", link_id: caseID };
         const q     = E("tabLogQuery").value;
         const type  = E("tabLogType").value;
         const time  = E("tabLogTime").value;
         const date1 = E("tabLogDate1").value;
         const date2 = E("tabLogDate2").value;
+        const direction = E("logDirectionFilter").value;
+        if (q)              params.q        = q;
+        if (type !== "All") params.type     = type;
+        if (direction)      params.direction = direction;
+        if (time === "Before")  { params.to_date   = date1; }
+        if (time === "After")   { params.from_date = date1; }
+        if (time === "On")      { params.from_date = date1; params.to_date = date1; }
+        if (time === "Between") { params.from_date = date1; params.to_date = date2; }
+        return params;
+      }
+
+      function exportLog() {
+        return exportLogCsv(getLogFilterParams, `case-${caseID}-log`);
+      }
+
+      async function tabLogGet(offset) {
+        E("tabLogButton").disabled = true;
+        E("tabLogLoad").style.display = "block";
         const table = E("logTable");
         const foot  = E("logTableFoot");
         foot.innerHTML = "";
         const rows = table.getElementsByTagName("tr");
         for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
 
-        const params = { link_type: "case", link_id: caseID, limit, offset };
-        if (q)              params.q        = q;
-        if (type !== "All") params.type     = type;
-        if (time === "Before")  { params.to_date   = date1; }
-        if (time === "After")   { params.from_date = date1; }
-        if (time === "On")      { params.from_date = date1; params.to_date = date1; }
-        if (time === "Between") { params.from_date = date1; params.to_date = date2; }
+        const params = { ...getLogFilterParams(), limit, offset };
 
         try {
           const data = await P.apiSend("/api/log", "GET", params);
@@ -602,15 +621,8 @@
           if (data.total > 0) {
             logs.forEach(entry => {
               const row = table.insertRow();
-              let cell_data;
-              try {
-                const jsonData = JSON.parse(entry.log_data.replace(/\n/g,"\\n").replace(/\r/g,"\\r"));
-                cell_data = Object.keys(jsonData).map(k => {
-                  let v = jsonData[k];
-                  try { v = decodeURIComponent(String(v)); } catch (_) { /* leave as-is if malformed */ }
-                  return `<b>${k}:</b> ${v}`;
-                }).join("<br>");
-              } catch (_) { cell_data = entry.log_data || ""; }
+              // Slice B.4: Data cell collapsed by default (1 line per key + ellipsis).
+              const cell_data = buildLogDataCell(entry);
               // Slice 4: prefer server-resolved entity ids over raw log_link literal.
               // Case branch first (case_id existed before phone/email hydration); else
               // contact branch (covers contact-typed rows AND phone/email-typed rows
@@ -632,23 +644,19 @@
               } else if (isComm && entry.log_direction === 'incoming') {
                 dirIcon = `<br><i class="fa-solid fa-arrow-right-to-bracket" title="Incoming" style="font-size:0.85em;color:#888"></i>`;
               }
-              row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}${dirIcon}</td><td>${entry.formatted_date}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${link}</div></td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}</td>`;
+              // Slice B.3: leading link-type icon + trailing extras-inspector icon
+              const typeIcon = logLinkTypeIcon(entry.log_link_type);
+              const extrasIcon = logExtrasIcon(entry);
+              row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}${dirIcon}</td><td>${entry.formatted_date}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}</div></td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}${extrasIcon}</td>`;
             });
-            foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabLogGet(${offset-limit})">&lt;</a> ` : "";
-            for (let i = 1; data.total >= (i-1)*limit; i++) {
-              foot.innerHTML += offset/limit+1==i
-                ? `<a href="#" onclick="tabLogGet(${(i-1)*limit})">[${i}]</a> `
-                : `<a href="#" onclick="tabLogGet(${(i-1)*limit})">${i}</a> `;
-            }
-            foot.innerHTML += offset+limit < data.total ? `<a href="#" onclick="tabLogGet(${offset+limit})">&gt;</a> ` : "";
-            foot.innerHTML += ` | Results ${offset+1}–${offset+logs.length} of ${data.total}
-              <select style="width:auto" onchange="limit=this.value;tabLogGet(0)">
-                <option value="50"  ${limit==50?"selected":""}>50</option>
-                <option value="100" ${limit==100?"selected":""}>100</option>
-                <option value="200" ${limit==200?"selected":""}>200</option>
-                <option value="500" ${limit==500?"selected":""}>500</option>
-              </select> | <button onclick="window.print()">Print</button>`;
+            // Slice B.4: unified footer
+            renderLogFooter(foot, data, limit, offset,
+              (p) => tabLogGet((p - 1) * limit),
+              exportLog);
           } else {
+            renderLogFooter(foot, data, limit, offset,
+              (p) => tabLogGet((p - 1) * limit),
+              exportLog);
             Toast.fire({ icon: "error", title: "No log entries found!" });
           }
         } catch (err) {
@@ -657,6 +665,17 @@
         E("tabLogButton").disabled = false;
         E("tabLogLoad").style.display = "none";
       }
+
+      // Slice B.3: contextual visibility for direction filter
+      const LOG_COMM_TYPES = ['Communication', 'SMS', 'Email', 'Call', 'Court Email'];
+      function syncLogDirectionFilterVisibility() {
+        const t = E('tabLogType').value;
+        const show = LOG_COMM_TYPES.includes(t);
+        E('logDirectionFilter').style.display = show ? '' : 'none';
+        if (!show) E('logDirectionFilter').value = '';
+      }
+      E('tabLogType').addEventListener('change', syncLogDirectionFilterVisibility);
+      syncLogDirectionFilterVisibility();
 
       async function addLog() {
         Swal.fire({

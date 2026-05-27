@@ -1832,7 +1832,7 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
       logService._buildContactLogWhere(contactId);
     const [log] = await db.query(
       `SELECT
-         l.log_id, l.log_type, l.log_date, l.log_link,
+         l.log_id, l.log_type, l.log_date, l.log_link, l.log_extra,
          l.log_link_type, l.log_link_id, l.log_by, l.log_data,
          l.log_from, l.log_to, l.log_subject, l.log_direction,
          u.user_name AS by_name,
