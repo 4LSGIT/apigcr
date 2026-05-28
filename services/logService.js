@@ -762,10 +762,56 @@ async function createLogEntry(db, {
 }
 
 
+// ─────────────────────────────────────────────────────────────
+// getOrphanEarliestDate
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Find the earliest log_date for an orphan phone/email value — i.e. a
+ * log row whose log_link_type is 'phone' or 'email' and whose log_link_id
+ * holds the normalized value. Backs GET /api/log/orphan-earliest, which the
+ * OrphanAdoptDialog uses to default the "start date on contact" field to the
+ * first date the value was ever seen in the log.
+ *
+ * Normalization mirrors createLogEntry's link_id handling so the lookup form
+ * matches the stored form: phone → 10 digits via _normalizePhone, email →
+ * trim+lowercase via _normalizeEmail. An invalid/short value yields a null
+ * result rather than throwing (the route validates type; value shape is
+ * fail-soft here — a stale UI could pass a malformed value).
+ *
+ * @param {object} db
+ * @param {'phone'|'email'} type
+ * @param {string} value
+ * @returns {Promise<{ earliest_log_date: string|null }>}  date as 'YYYY-MM-DD'
+ */
+async function getOrphanEarliestDate(db, type, value) {
+  let normalized;
+  if (type === 'phone') {
+    normalized = _normalizePhone(value);
+    if (!normalized || normalized.length !== 10) return { earliest_log_date: null };
+  } else if (type === 'email') {
+    normalized = _normalizeEmail(value);
+    if (!normalized || !normalized.includes('@')) return { earliest_log_date: null };
+  } else {
+    return { earliest_log_date: null };
+  }
+
+  const [[row]] = await db.query(
+    `SELECT DATE_FORMAT(MIN(log_date), '%Y-%m-%d') AS earliest
+       FROM log
+      WHERE log_link_type = ? AND log_link_id = ?`,
+    [type, normalized]
+  );
+
+  return { earliest_log_date: (row && row.earliest) || null };
+}
+
+
 module.exports = {
   listLog,
   getLogEntry,
   createLogEntry,
+  getOrphanEarliestDate,
   // Slice 1 semantic unification: exposed for contactService.getContact
   // and caseService.getCase. Underscore-prefixed = "internal but
   // cross-service usable" — please don't call from frontend or routes.

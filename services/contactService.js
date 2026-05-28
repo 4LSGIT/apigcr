@@ -1948,7 +1948,14 @@ async function createContact(db, {
   phone2 = '',
   email2 = '',
   tags   = '',
-  notes  = ''
+  notes  = '',
+  // Phase 1 (dialog rationalization): optional start_date overrides for the
+  // primary phone/email child rows. 'YYYY-MM-DD' or null. When null, the
+  // INSERTs fall back to CURDATE() via COALESCE — behavior unchanged. Used by
+  // the orphan-adopt create-new branch to backdate ownership to the value's
+  // earliest-seen log date. Validated upstream in the intake route.
+  phone_start_date = null,
+  email_start_date = null
 }, { userId = 0 } = {}) {
   if (!fname) throw new Error('createContact requires fname');
   if (!lname) throw new Error('createContact requires lname');
@@ -2010,8 +2017,8 @@ async function createContact(db, {
       await conn.query(
         `INSERT INTO contact_phones
            (contact_id, phone, is_primary, start_date, created_by, updated_by)
-         VALUES (?, ?, 1, CURDATE(), ?, ?)`,
-        [newId, normalizedPhone, userId, userId]
+         VALUES (?, ?, 1, COALESCE(?, CURDATE()), ?, ?)`,
+        [newId, normalizedPhone, phone_start_date, userId, userId]
       );
       await recomputePrimaryPhone(conn, newId);
     }
@@ -2041,8 +2048,8 @@ async function createContact(db, {
       await conn.query(
         `INSERT INTO contact_emails
            (contact_id, email, is_primary, start_date, created_by, updated_by)
-         VALUES (?, ?, 1, CURDATE(), ?, ?)`,
-        [newId, normalizedEmail, userId, userId]
+         VALUES (?, ?, 1, COALESCE(?, CURDATE()), ?, ?)`,
+        [newId, normalizedEmail, email_start_date, userId, userId]
       );
       await recomputePrimaryEmail(conn, newId);
     }

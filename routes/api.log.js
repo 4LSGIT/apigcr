@@ -78,6 +78,40 @@ router.get('/api/log', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// ─── ORPHAN EARLIEST ───
+//
+// GET /api/log/orphan-earliest?type=phone|email&value=...
+//
+// Returns the earliest log_date for an orphan phone/email value (a log row
+// with log_link_type IN ('phone','email') and the normalized value in
+// log_link_id). Backs OrphanAdoptDialog's "start date on contact" default.
+//
+// MUST be declared BEFORE GET /api/log/:id, or Express would match
+// "orphan-earliest" as the :id param.
+//
+// Response: { earliest_log_date: 'YYYY-MM-DD' | null }
+router.get('/api/log/orphan-earliest', jwtOrApiKey, async (req, res) => {
+  const { type, value } = req.query;
+
+  if (type !== 'phone' && type !== 'email') {
+    return res.status(400).json({
+      status: 'error',
+      message: "Invalid type. Must be 'phone' or 'email'.",
+    });
+  }
+  if (value == null || value === '') {
+    return res.status(400).json({ status: 'error', message: 'value is required' });
+  }
+
+  try {
+    const result = await logService.getOrphanEarliestDate(req.db, type, value);
+    res.json(result);
+  } catch (err) {
+    console.error('GET /api/log/orphan-earliest error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to fetch earliest log date' });
+  }
+});
+
 // ─── GET ONE ───
 router.get('/api/log/:id', jwtOrApiKey, async (req, res) => {
   try {

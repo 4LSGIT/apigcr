@@ -801,3 +801,730 @@ function downloadFile(content, filename, mimeType) {
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Phase 1 — Dialog rationalization primitives
+   (ContactPicker, newContact, OrphanAdoptDialog) + shared helpers.
+
+   These live here (not in a shell) so they're usable from the shell
+   (a.html / b.html) and, in the future, from iframes. All network calls
+   go through P.apiSend: in the shell P === window so P.apiSend ===
+   window.apiSend; in an iframe P === parent and P.apiSend is the parent's
+   auth wrapper (iframes also alias window.apiSend = P.apiSend).
+
+   newContact opens the new contact/case file via the shell-global addFile
+   on success. addFile is resolved defensively (shell global, else P.addFile)
+   so a future iframe caller degrades to a toast rather than throwing.
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Format a 10-digit string as (###) ###-####. Non-10-digit input is
+   returned as-is (after digit-stripping for display). Shared by the
+   picker, the orphan dialog, and newContact's prefill. */
+function fmtPhone(v) {
+  const p = String(v == null ? '' : v).replace(/\D/g, '');
+  return p.length === 10
+    ? `(${p.slice(0, 3)}) ${p.slice(3, 6)}-${p.slice(6)}`
+    : String(v == null ? '' : v);
+}
+
+/* Resolve the shell's addFile regardless of shell/iframe context.
+   Returns a callable or null. */
+function _resolveAddFile() {
+  if (typeof addFile === 'function') return addFile;
+  if (P && typeof P.addFile === 'function') return P.addFile;
+  return null;
+}
+
+/* Inject styles for the ContactPicker dropdown once per document.
+   Mirrors the injectLogHelpersStyles IIFE pattern above (guarded by id). */
+(function injectContactPickerStyles() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById('contact-picker-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'contact-picker-styles';
+  style.textContent = `
+    .cp-wrap { position: relative; }
+    .cp-input { width: 100%; box-sizing: border-box; }
+    /* In-flow dropdown (no absolute/fixed positioning). Rendering it in the
+       normal document flow inside the SWAL popup guarantees result rows are
+       clickable — absolute/fixed/body-mounted variants fought SWAL's overflow
+       clipping and pointer trap. The dialog simply grows taller; the popup
+       scrolls if needed. */
+    .cp-dropdown {
+      background: #ffffff;
+      border: 1px solid #bbb;
+      border-top: none;
+      border-radius: 0 0 4px 4px;
+      max-height: 16em;
+      overflow-y: auto;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+      text-align: left;
+    }
+    .cp-dropdown:empty { display: none; }
+    .cp-row {
+      padding: 0.4em 0.6em;
+      cursor: pointer;
+      background: #ffffff;
+      border-bottom: 1px solid #eee;
+    }
+    .cp-row:last-child { border-bottom: none; }
+    .cp-row:hover, .cp-row.cp-active { background: #eef4fb; }
+    .cp-row .cp-name { font-weight: bold; }
+    .cp-row .cp-sub { font-size: 0.85em; color: #777; }
+    .cp-empty { padding: 0.4em 0.6em; color: #999; font-size: 0.9em; background: #fff; }
+
+    /* ── Header / value ── */
+    .oad-header { margin-bottom: 0.4em; }
+    .oad-value { font-size: 1.15em; font-weight: bold; }
+    .oad-earliest { font-size: 0.8em; color: #999; }
+
+    /* ── De-emphasized top half (the start-date is rarely touched) ──
+       Muted, smaller, set apart by a hairline below it so the eye drops
+       past it to the search/create area, which is the primary action. */
+    .oad-startdate-row {
+      margin: 0.3em 0 0.7em;
+      padding-bottom: 0.7em;
+      border-bottom: 1px solid #eee;
+      text-align: center;
+      color: #888;
+      font-size: 0.85em;
+    }
+    .oad-startdate-row input[type="date"] {
+      font-size: 0.85em;
+      padding: 0.15em 0.3em;
+      color: #555;
+    }
+
+    /* ── Primary area: matches, create, search ── */
+    .oad-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
+    .oad-match {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 0.5em; padding: 0.4em 0.5em; border: 1px solid #e0e0e0;
+      border-radius: 4px; margin-bottom: 0.3em; text-align: left;
+    }
+    .oad-match.oad-selected { border-color: #4a90e2; background: #eef4fb; }
+    .oad-match .oad-match-name { font-weight: bold; }
+    .oad-match .oad-match-src { font-size: 0.8em; color: #888; }
+
+    /* Create-new button — bolder than a plain SWAL secondary so it reads as
+       a real alternative to attaching. Outlined accent style. */
+    .oad-create-btn {
+      font-weight: bold;
+      font-size: 0.95em;
+      padding: 0.45em 1.1em;
+      color: #2563eb;
+      background: #fff;
+      border: 2px solid #2563eb;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .oad-create-btn:hover { background: #2563eb; color: #fff; }
+
+    /* Let the ContactPicker dropdown spill out of SWAL's html container
+       instead of being clipped by its overflow:auto / max-height. The
+       dropdown is position:absolute within .cp-wrap, so the ancestor must
+       not clip. SWAL sets overflow:auto inline via its stylesheet, hence
+       the override. */
+    .swal2-html-container.oad-html { overflow: visible; }
+    .oad-html .cp-dropdown { max-height: 12em; }
+  `;
+  document.head.appendChild(style);
+})();
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   ContactPicker(hostEl, options)
+
+   Mounts a typeahead <input> + results dropdown into hostEl.
+   options = {
+     onSelect(contactId, contactRow),   // called on row click
+     placeholder = 'Search contacts…',
+     initialQuery = ''
+   }
+   Returns { destroy(), getSelected() } where getSelected() returns the
+   last-clicked { contact_id, contact } or null.
+
+   Debounce 250ms. Cap 20. Empty input → empty dropdown (no fetch).
+   Does NOT mutate the input value on select (caller owns focus/state).
+   ────────────────────────────────────────────────────────────────────────── */
+function ContactPicker(hostEl, options = {}) {
+  const onSelect     = typeof options.onSelect === 'function' ? options.onSelect : () => {};
+  const placeholder  = options.placeholder || 'Search contacts…';
+  const initialQuery = options.initialQuery || '';
+
+  hostEl.classList.add('cp-wrap');
+  hostEl.innerHTML = '';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'cp-input';
+  input.placeholder = placeholder;
+  input.autocomplete = 'off';
+  input.value = initialQuery;
+
+  // In-flow dropdown appended directly under the input inside hostEl. No
+  // absolute/fixed positioning and no body/popup re-mounting: those variants
+  // fought SWAL's overflow clipping and pointer trap, which broke row clicks.
+  // An in-flow block inside the popup is always clickable; the dialog grows.
+  const dropdown = document.createElement('div');
+  dropdown.className = 'cp-dropdown';
+
+  hostEl.appendChild(input);
+  hostEl.appendChild(dropdown);
+
+  let selected = null;   // { contact_id, contact }
+  let timer = null;
+  let seq = 0;           // request sequence guard against out-of-order responses
+  let destroyed = false;
+
+  function clearDropdown() { dropdown.innerHTML = ''; }
+
+  function renderRows(rows) {
+    clearDropdown();
+    if (!rows || !rows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'cp-empty';
+      empty.textContent = 'No matches';
+      dropdown.appendChild(empty);
+      return;
+    }
+    rows.forEach((r) => {
+      const row = document.createElement('div');
+      row.className = 'cp-row';
+
+      const name = document.createElement('div');
+      name.className = 'cp-name';
+      name.textContent = r.contact_name || `Contact ${r.contact_id}`;
+      row.appendChild(name);
+
+      const phone = r.contact_phone ? fmtPhone(r.contact_phone) : '';
+      const email = r.contact_email || '';
+      if (phone || email) {
+        const sub = document.createElement('div');
+        sub.className = 'cp-sub';
+        sub.textContent = phone && email ? `${phone} · ${email}` : (phone || email);
+        row.appendChild(sub);
+      }
+
+      row.addEventListener('click', () => {
+        selected = { contact_id: r.contact_id, contact: r };
+        // Visual confirmation that the click registered: mark this row,
+        // write the chosen name into the input, and collapse the list.
+        dropdown.querySelectorAll('.cp-row').forEach((el) => el.classList.remove('cp-active'));
+        row.classList.add('cp-active');
+        input.value = r.contact_name || `Contact ${r.contact_id}`;
+        clearDropdown();
+        onSelect(r.contact_id, r);
+      });
+      dropdown.appendChild(row);
+    });
+  }
+
+  async function runSearch(q) {
+    const mySeq = ++seq;
+    try {
+      const data = await P.apiSend('/api/contacts', 'GET', { q, limit: 20 });
+      if (destroyed || mySeq !== seq) return; // stale response
+      renderRows((data && data.contacts) || []);
+    } catch (err) {
+      if (destroyed || mySeq !== seq) return;
+      clearDropdown();
+      const e = document.createElement('div');
+      e.className = 'cp-empty';
+      e.textContent = 'Search error';
+      dropdown.appendChild(e);
+    }
+  }
+
+  function onInput() {
+    const q = input.value.trim();
+    if (timer) clearTimeout(timer);
+    if (!q) { seq++; clearDropdown(); return; }   // empty → no fetch, bump seq to void in-flight
+    timer = setTimeout(() => runSearch(q), 250);
+  }
+
+  input.addEventListener('input', onInput);
+
+  if (initialQuery.trim()) runSearch(initialQuery.trim());
+
+  return {
+    destroy() {
+      destroyed = true;
+      if (timer) clearTimeout(timer);
+      input.removeEventListener('input', onInput);
+      hostEl.innerHTML = '';   // dropdown is a child of hostEl — cleared here
+    },
+    getSelected() { return selected; },
+    focus() { input.focus(); },
+  };
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   newContact(prefill = {}, onSuccess = null)
+
+   Moved out of the shells (a.html / b.html) verbatim, then extended for
+   the orphan-adopt create-new branch.
+
+   prefill keys:
+     name, phone, email                — pre-populate the matching field
+     phone_start_date (YYYY-MM-DD)      — when present, render an editable
+                                          date input next to phone, and send
+                                          phone_start_date in the POST body
+     email_start_date (YYYY-MM-DD)      — same for email
+     force_create (boolean)             — force CREATE on the intake route
+                                          (sends duplicate='duplicate' to skip
+                                          find-or-create match). Used by the
+                                          orphan-adopt create-new branch so a
+                                          value that matches an existing contact
+                                          still creates a fresh one.
+
+   When *_start_date is absent the date inputs are NOT rendered — the header
+   "+ New Client" UX is unchanged.
+
+   onSuccess() fires after a successful create (client or case), AFTER the
+   file is opened via addFile.
+   ────────────────────────────────────────────────────────────────────────── */
+function newContact(prefill = {}, onSuccess = null) {
+  const hasPhoneStart = Object.prototype.hasOwnProperty.call(prefill, 'phone_start_date')
+                        && prefill.phone_start_date != null;
+  const hasEmailStart = Object.prototype.hasOwnProperty.call(prefill, 'email_start_date')
+                        && prefill.email_start_date != null;
+  const forceCreate = prefill.force_create === true;
+
+  const phoneStartHtml = hasPhoneStart
+    ? `<label class="input-label">Phone start date:</label>
+       <input style="width:200px;" type="date" id="NCPhoneStart"><br>`
+    : '';
+  const emailStartHtml = hasEmailStart
+    ? `<label class="input-label">Email start date:</label>
+       <input style="width:200px;" type="date" id="NCEmailStart"><br>`
+    : '';
+
+  Swal.fire({
+    title: "Add New Client:",
+    html: `<label class="input-label">Name:</label>
+         <input style="width:200px;" type="text" id="NCName" placeholder="Full Name"><br>
+         <label class="input-label">Phone:</label>
+         <input style="width:200px;" id="NCPhone" type="text" placeholder="(###) ###-####" title="Enter a valid phone number"><br>
+         ${phoneStartHtml}
+         <label class="input-label">Email:</label>
+         <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
+         ${emailStartHtml}
+         <label class="input-label">Set Appointment:</label>
+         <input type="datetime-local" id="NCDate" style="width:200px;" disabled title="Coming soon"><br>
+         <label class="sub-label" style="color:#999;">Temporarily disabled - coming soon.</label><br>
+         <label class="input-label">Case Type:</label>
+         <select id="NCType" style="width:200px;" onchange="E('NCOtherType').style.display = this.value === 'Other' ? '' : 'none';">
+          <option selected value="">Select a case type</option>
+          <option>Bankruptcy</option>
+          <option>Other</option>
+         </select>
+         <input style="width:200px; display:none;" type="text" id="NCOtherType" placeholder="Enter case type"><br>
+         <label class="sub-label">Optional, select type to create lead.</label><br>
+         `,
+    showCancelButton: true,
+    showConfirmButton: true,
+    cancelButtonText: "Cancel",
+    confirmButtonText: "Add & Open Client",
+    showCloseButton: true,
+    showDenyButton: true,
+    denyButtonText: "Add & Open Case",
+    denyButtonColor: "#26abe2",
+    showLoaderOnConfirm: true,
+    showLoaderOnDeny: true,
+
+    didOpen: () => {
+      if (prefill.phone) {
+        const p = String(prefill.phone).replace(/\D/g, "");
+        E("NCPhone").value = p.length === 10
+          ? `(${p.slice(0,3)}) ${p.slice(3,6)}-${p.slice(6)}`
+          : prefill.phone;
+      }
+      if (prefill.email) E("NCEmail").value = prefill.email;
+      if (hasPhoneStart && E("NCPhoneStart")) E("NCPhoneStart").value = prefill.phone_start_date;
+      if (hasEmailStart && E("NCEmailStart")) E("NCEmailStart").value = prefill.email_start_date;
+    },
+
+    // ── ADD & OPEN CLIENT ──
+    preConfirm: async () => {
+      const name = E("NCName").value.trim();
+      const phone = E("NCPhone").value.replace(/\D/g, "");
+      const email = E("NCEmail").value.trim();
+      const date = E("NCDate").value;
+      const caseTypeRaw = E("NCType").value;
+      const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
+
+      // Relaxed validation: name + at least one of phone or email
+      if (!name || (!E("NCPhone").value && !email)) {
+        Swal.showValidationMessage("Name plus at least a phone or email is required");
+        return false;
+      }
+      if (name.split(" ").length < 2) {
+        Swal.showValidationMessage("Please fill in a valid full name");
+        return false;
+      }
+      if (E("NCPhone").value && phone.length !== 10) {
+        Swal.showValidationMessage("Please fill in a valid phone number");
+        return false;
+      }
+      if (email && !/^\S+@\S+\.\S+$/.test(email)) {
+        Swal.showValidationMessage("Please fill in a valid email address");
+        return false;
+      }
+      if (caseTypeRaw === "Other" && !caseType) {
+        Swal.showValidationMessage("Please enter a case type");
+        return false;
+      }
+
+      try {
+        const body = { name, phone, email };
+        if (hasPhoneStart && E("NCPhoneStart") && E("NCPhoneStart").value) {
+          body.phone_start_date = E("NCPhoneStart").value;
+        }
+        if (hasEmailStart && E("NCEmailStart") && E("NCEmailStart").value) {
+          body.email_start_date = E("NCEmailStart").value;
+        }
+        if (forceCreate) body.duplicate = "duplicate";
+
+        // 1. Create/update contact
+        const contactResult = await P.apiSend("/api/intake/contact", "POST", body);
+
+        // 2. If case type selected, create case too
+        let caseResult = null;
+        if (caseType) {
+          caseResult = await P.apiSend("/api/intake/case", "POST", {
+            contact_id: contactResult.id,
+            case_type: caseType
+          });
+        }
+
+        return { type: "client", data: contactResult };
+      } catch (err) {
+        Swal.showValidationMessage(err.message || "Failed to create client");
+        return false;
+      }
+    },
+
+    // ── ADD & OPEN CASE ──
+    preDeny: async () => {
+      const name = E("NCName").value.trim();
+      const phone = E("NCPhone").value.replace(/\D/g, "");
+      const email = E("NCEmail").value.trim();
+      const date = E("NCDate").value;
+      const caseTypeRaw = E("NCType").value;
+      const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
+
+      // Relaxed validation: name + at least one of phone or email + case type
+      if (!name || (!E("NCPhone").value && !email)) {
+        Swal.showValidationMessage("Name plus at least a phone or email is required");
+        return false;
+      }
+      if (!caseType) {
+        Swal.showValidationMessage("Please select a case type");
+        return false;
+      }
+      if (caseTypeRaw === "Other" && !caseType) {
+        Swal.showValidationMessage("Please enter a case type");
+        return false;
+      }
+      if (name.split(" ").length < 2) {
+        Swal.showValidationMessage("Please fill in a valid full name");
+        return false;
+      }
+      if (E("NCPhone").value && phone.length !== 10) {
+        Swal.showValidationMessage("Please fill in a valid phone number");
+        return false;
+      }
+      if (email && !/^\S+@\S+\.\S+$/.test(email)) {
+        Swal.showValidationMessage("Please fill in a valid email address");
+        return false;
+      }
+
+      try {
+        const body = { name, phone, email };
+        if (hasPhoneStart && E("NCPhoneStart") && E("NCPhoneStart").value) {
+          body.phone_start_date = E("NCPhoneStart").value;
+        }
+        if (hasEmailStart && E("NCEmailStart") && E("NCEmailStart").value) {
+          body.email_start_date = E("NCEmailStart").value;
+        }
+        if (forceCreate) body.duplicate = "duplicate";
+
+        // 1. Create/update contact
+        const contactResult = await P.apiSend("/api/intake/contact", "POST", body);
+
+        // 2. Create case
+        const caseResult = await P.apiSend("/api/intake/case", "POST", {
+          contact_id: contactResult.id,
+          case_type: caseType
+        });
+
+        return { type: "case", data: caseResult, contactData: contactResult };
+      } catch (err) {
+        Swal.showValidationMessage(err.message || "Failed to create case");
+        return false;
+      }
+    },
+
+    allowOutsideClick: () => !Swal.isLoading()
+
+  }).then((result) => {
+    if (!result.isConfirmed && !result.isDenied) return; // cancelled
+    if (!result.value) return;
+
+    const { type, data } = result.value;
+
+    Toast.fire({
+      icon: data.status || "success",
+      title: data.status === "success" ? "Success" : "Error",
+      text: data.message
+    });
+
+    if (data.status === "success") {
+      const openFile = _resolveAddFile();
+      if (type === "client") {
+        if (openFile) openFile(data.name, "client", data.id);
+      } else if (type === "case") {
+        if (openFile) openFile(data.id, "case", data.id);
+      }
+      if (typeof onSuccess === "function") onSuccess();
+    }
+  });
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   OrphanAdoptDialog(value, type, onDone)
+
+   type ∈ {'phone','email'}. Replaces the orphan-row "+ Add as new contact"
+   affordance with an attach-or-create dialog.
+
+   Flow:
+     1. Parallel: contact-lookup (suggested matches) + orphan-earliest
+        (default start date).
+     2. SWAL with: formatted value + "Earliest seen" line, editable start-date
+        input, suggested-match attach buttons, an embedded ContactPicker,
+        a "Create new contact" button, and [Cancel] [Attach].
+     3. Attach: POST /api/contact-{phones|emails} (force in query). On 409
+        conflict → confirm force-transfer → retry with ?force=true.
+        On success → onDone({action:'attached', contact_id, force_used}).
+     4. Create new: close, call newContact with the value + chosen start date
+        prefilled (and duplicate='duplicate' so a matching value still creates).
+
+   onDone is invoked ONLY on the attach success path. The create-new path
+   delegates file-opening to newContact's own addFile call.
+   ────────────────────────────────────────────────────────────────────────── */
+async function OrphanAdoptDialog(value, type, onDone = null) {
+  if (type !== 'phone' && type !== 'email') {
+    console.error('OrphanAdoptDialog: invalid type', type);
+    return;
+  }
+  const isPhone = type === 'phone';
+  const displayValue = isPhone ? fmtPhone(value) : value;
+  const lookupParam = isPhone ? { phone: value } : { email: value };
+
+  // ── Fire the two reads in parallel (fail-soft on either) ──
+  const [lookupRes, earliestRes] = await Promise.allSettled([
+    P.apiSend('/api/contact-lookup', 'GET', lookupParam),
+    P.apiSend('/api/log/orphan-earliest', 'GET', { type, value }),
+  ]);
+
+  const matches = (lookupRes.status === 'fulfilled' && lookupRes.value && Array.isArray(lookupRes.value.matches))
+    ? lookupRes.value.matches
+    : [];
+  const earliest = (earliestRes.status === 'fulfilled' && earliestRes.value)
+    ? (earliestRes.value.earliest_log_date || null)
+    : null;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const defaultStart = earliest || today;
+
+  // selected contact: { contact_id, contact_name } — set by suggested match
+  // OR by the ContactPicker. The two are mutually exclusive.
+  let selected = null;
+  let picker = null;
+
+  // Build suggested-matches HTML (only if ≥1)
+  function matchSourceLabel(m) {
+    const parts = [];
+    if (m.matched_by_phone) parts.push(`phone: ${m.matched_by_phone.source}`);
+    if (m.matched_by_email) parts.push(`email: ${m.matched_by_email.source}`);
+    return parts.join(', ');
+  }
+
+  const matchesHtml = matches.length
+    ? `<div class="oad-section-label">Suggested matches</div>` +
+      matches.map((m) => `
+        <div class="oad-match" data-cid="${m.contact_id}">
+          <div>
+            <div class="oad-match-name">${escAttr(m.contact_name || ('Contact ' + m.contact_id))}</div>
+            <div class="oad-match-src">${escAttr(matchSourceLabel(m))}</div>
+          </div>
+          <button type="button" class="oad-attach-suggested" data-cid="${m.contact_id}"
+                  data-cname="${escAttr(m.contact_name || ('Contact ' + m.contact_id))}">Attach</button>
+        </div>`).join('')
+    : '';
+
+  const earliestHtml = earliest
+    ? `<div class="oad-earliest">Earliest seen ${earliest}</div>`
+    : '';
+
+  // Capture the chosen start date at confirm time. Set by preConfirm so the
+  // post-dialog attach flow can read it after the modal closes.
+  let chosenStartDate = defaultStart;
+
+  const result = await Swal.fire({
+    title: isPhone ? 'Attach phone to contact' : 'Attach email to contact',
+    html: `
+      <div class="oad-header">
+        <div class="oad-value">${escAttr(displayValue)}</div>
+        ${earliestHtml}
+      </div>
+      <div class="oad-startdate-row">
+        <label for="oadStartDate">Start date on contact:&nbsp;</label>
+        <input type="date" id="oadStartDate" value="${defaultStart}">
+      </div>
+      <div id="oadMatches">${matchesHtml}</div>
+      <div style="margin:0.5em 0;">
+        <button type="button" id="oadCreateNew" class="oad-create-btn"><i class="fa-solid fa-user-plus"></i>&nbsp;Create new contact</button>
+      </div>
+      <div class="oad-section-label">Or search for another contact…</div>
+      <div id="oadPicker"></div>
+    `,
+    showCancelButton: true,
+    showConfirmButton: true,
+    confirmButtonText: 'Attach',
+    cancelButtonText: 'Cancel',
+    showCloseButton: true,
+    customClass: { htmlContainer: 'oad-html' },
+
+    didOpen: () => {
+      const confirmBtn = Swal.getConfirmButton();
+      if (confirmBtn) confirmBtn.disabled = true;
+
+      function markSelected(cid) {
+        document.querySelectorAll('#oadMatches .oad-match').forEach((el) => {
+          el.classList.toggle('oad-selected', String(el.getAttribute('data-cid')) === String(cid));
+        });
+      }
+
+      function setSelected(cid, cname) {
+        selected = { contact_id: cid, contact_name: cname };
+        if (confirmBtn) confirmBtn.disabled = false;
+      }
+
+      // Suggested-match attach buttons → set selection (mutually exclusive
+      // with picker). Clicking immediately also confirms for one-click attach.
+      document.querySelectorAll('.oad-attach-suggested').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const cid = parseInt(btn.getAttribute('data-cid'), 10);
+          const cname = btn.getAttribute('data-cname');
+          setSelected(cid, cname);
+          markSelected(cid);
+          Swal.clickConfirm();
+        });
+      });
+
+      // ContactPicker → selecting clears suggested-match highlight and enables Attach
+      picker = ContactPicker(E('oadPicker'), {
+        placeholder: 'Search contacts…',
+        onSelect: (cid, row) => {
+          setSelected(cid, row.contact_name);
+          markSelected(null);
+        },
+      });
+
+      // Create-new button: close this dialog, hand off to newContact.
+      // force_create makes intake skip find-or-create so a value that
+      // matches an existing contact still creates a fresh one. onSuccess
+      // bubbles a 'created' event up through onDone so the caller (the
+      // shell) can re-render the log tab at its current page.
+      E('oadCreateNew').addEventListener('click', () => {
+        const chosenDate = (E('oadStartDate') && E('oadStartDate').value) || defaultStart;
+        if (picker) picker.destroy();
+        Swal.close();
+        const prefill = { force_create: true };
+        if (isPhone) { prefill.phone = value; prefill.phone_start_date = chosenDate; }
+        else         { prefill.email = value; prefill.email_start_date = chosenDate; }
+        newContact(prefill, () => {
+          if (typeof onDone === 'function') onDone({ action: 'created' });
+        });
+      });
+    },
+
+    // No network here — capturing the start date and validating a selection
+    // exists. The attach POST runs AFTER this modal closes, so the 409
+    // force-confirm doesn't nest a second SWAL inside this one (nesting
+    // tears down the single shared modal instance).
+    preConfirm: () => {
+      if (!selected) {
+        Swal.showValidationMessage('Pick a contact to attach to, or Create new.');
+        return false;
+      }
+      chosenStartDate = (E('oadStartDate') && E('oadStartDate').value) || defaultStart;
+      return true;
+    },
+
+    // Dropdown is in-flow inside the popup now, so clicking it is an inside
+    // click — outside-click dismissal is safe to allow again.
+    allowOutsideClick: true,
+  });
+
+  if (picker) picker.destroy();
+
+  // Dialog dismissed (cancel / close / create-new path which called Swal.close()
+  // without confirming) → nothing to attach.
+  if (!result.isConfirmed || !selected) return;
+
+  // ── Attach flow (sequential, non-nested SWALs) ──
+  const endpoint = isPhone ? '/api/contact-phones' : '/api/contact-emails';
+  const body = { contact_id: selected.contact_id, start_date: chosenStartDate };
+  if (isPhone) body.phone = value; else body.email = value;
+
+  let forceUsed = false;
+  try {
+    await P.apiSend(endpoint, 'POST', body);
+  } catch (err) {
+    // apiSend throws ApiError with err.status + err.body (parsed JSON).
+    // The dedicated routes surface the service's conflict descriptor as
+    // response.conflict on a 409.
+    const conflict = (err && err.body && err.body.conflict) || null;
+    const isConflict = (err && err.status === 409) || !!conflict;
+    if (!isConflict) {
+      Toast.fire({ icon: 'error', title: 'Attach failed', text: err.message || '' });
+      return;
+    }
+
+    const donorName = (conflict && conflict.contact_name) ? conflict.contact_name : 'another contact';
+    const recipientName = selected.contact_name || ('contact ' + selected.contact_id);
+    const confirmForce = await Swal.fire({
+      title: 'Already in use',
+      html: `This ${isPhone ? 'phone' : 'email'} is active on <b>${escAttr(donorName)}</b>.<br>` +
+            `Force-transfer it to <b>${escAttr(recipientName)}</b>? ` +
+            `(Ends their ownership yesterday.)`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Force-transfer',
+      cancelButtonText: 'Back',
+    });
+    if (!confirmForce.isConfirmed) {
+      // User backed out of the transfer — re-open the picker dialog so they
+      // can choose a different contact or Create new.
+      return OrphanAdoptDialog(value, type, onDone);
+    }
+    try {
+      await P.apiSend(endpoint + '?force=true', 'POST', body);
+      forceUsed = true;
+    } catch (err2) {
+      Toast.fire({ icon: 'error', title: 'Force-transfer failed', text: err2.message || '' });
+      return;
+    }
+  }
+
+  Toast.fire({ icon: 'success', title: 'Attached' });
+  if (typeof onDone === 'function') {
+    onDone({ action: 'attached', contact_id: selected.contact_id, force_used: forceUsed });
+  }
+}

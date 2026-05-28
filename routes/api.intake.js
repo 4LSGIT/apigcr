@@ -231,6 +231,23 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
   // ── Email normalization (light — defer real normalization to the service) ──
   const trimmedEmail = (typeof email === 'string' && email.trim() !== '') ? email.trim() : null;
 
+  // ── Phase 1: optional start_date overrides for the primary phone/email
+  //    child rows (orphan-adopt create-new branch). Only consumed on the
+  //    CREATE path below; validated here so a malformed value fails fast.
+  //    Format: 'YYYY-MM-DD'. Absent → undefined → createContact defaults to
+  //    CURDATE() via COALESCE. ──
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const phoneStartDate = req.body.phone_start_date;
+  const emailStartDate = req.body.email_start_date;
+  if (phoneStartDate !== undefined && phoneStartDate !== null && phoneStartDate !== ''
+      && !DATE_RE.test(phoneStartDate)) {
+    return res.status(400).json({ status: 'error', message: 'phone_start_date must be YYYY-MM-DD' });
+  }
+  if (emailStartDate !== undefined && emailStartDate !== null && emailStartDate !== ''
+      && !DATE_RE.test(emailStartDate)) {
+    return res.status(400).json({ status: 'error', message: 'email_start_date must be YYYY-MM-DD' });
+  }
+
   try {
     // ── Resolve candidates (skip when forcing CREATE or no identifiers) ──
     let matches = [];
@@ -384,6 +401,10 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
       tags:    req.body.contact_tags    || '',
       notes:   req.body.contact_notes   || '',
       type:    req.body.contact_type    || 'Client',
+      // Phase 1: pass through only when a valid value was supplied; null/''
+      // falls through to createContact's COALESCE(?, CURDATE()) default.
+      phone_start_date: (phoneStartDate && DATE_RE.test(phoneStartDate)) ? phoneStartDate : null,
+      email_start_date: (emailStartDate && DATE_RE.test(emailStartDate)) ? emailStartDate : null,
     });
 
     // SSN handled separately — createContact doesn't accept it.
