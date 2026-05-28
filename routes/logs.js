@@ -1,5 +1,24 @@
 // routes/logs.js
 //
+// ─────────────────────────────────────────────────────────────────────────
+// Slice 1.2c CANARY (2026-05-28) — DEPRECATED ROUTE
+//
+// /logEmail was the legacy Pabbly-fed inbound email logger and (after the
+// Slice 1.2b GAS cutover) was kept active as a fallback. As of 2026-05-28,
+// verified zero traffic in the prior 24h: every gmail-firm email_log row
+// in the window had a corresponding email_ingest_executions reference
+// (via POST /api/email/ingest), proving the new path is the only writer.
+//
+// The handler below intercepts ANY hit on this route, logs a [CANARY-1.2c]
+// diagnostic to stderr (Cloud Run alerts Fred on the error), and returns
+// HTTP 410 Gone with a redirect message. After a watch period of silence
+// (~1 week), this entire route file is destructively removed.
+//
+// To temporarily restore the legacy handler: comment out the canary block
+// inside the route handler. The original handler body is preserved intact
+// below it, unreachable but unchanged.
+// ─────────────────────────────────────────────────────────────────────────
+//
 // Inbound email logger. Called by Pabbly's email-router when an email
 // arrives at one of the firm's monitored inboxes. Writes:
 //
@@ -132,6 +151,34 @@ function fitLogData(logObj, fromVal, toVal, subjectVal) {
 // ─────────────────────────────────────────────────────────────
 
 router.post("/logEmail", trap("logEmail"), async (req, res) => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // Slice 1.2c CANARY — DEPRECATED ROUTE
+  //
+  // If you're seeing this canary fire, an adapter is still POSTing to the
+  // legacy /logEmail endpoint. All gmail-firm inbound traffic must use
+  // POST /api/email/ingest with X-Email-Ingest-Key. The console.error below
+  // is the GCR alerting signal.
+  //
+  // To restore legacy behavior temporarily, comment out this entire block.
+  // ─────────────────────────────────────────────────────────────────────────
+  const canaryDiag = {
+    messageID: req.body && req.body.messageID ? String(req.body.messageID) : null,
+    from:      req.body && req.body.from      ? String(req.body.from)      : null,
+    to:        req.body && req.body.to        ? String(req.body.to)        : null,
+    subject:   req.body && req.body.subject   ? String(req.body.subject).slice(0, 80) : null,
+    remote_ip: req.ip,
+    ua:        req.headers && req.headers["user-agent"] ? req.headers["user-agent"].slice(0, 120) : null,
+  };
+  console.error(
+    `[logEmail][CANARY-1.2c] DEPRECATED ROUTE HIT — investigate caller. ${JSON.stringify(canaryDiag)}`
+  );
+  return res.status(410).json({
+    error:   "Gone",
+    message: "/logEmail is deprecated (Slice 1.2c canary). Use POST /api/email/ingest with X-Email-Ingest-Key. The legacy route will be removed after the watch period.",
+  });
+
+  // ── LEGACY HANDLER (UNREACHABLE during the canary; preserved for revert) ──
+
   const db = req.db;
   const { to, from, subject, body_plain, attachments, messageID } = req.body;
 

@@ -28,9 +28,15 @@
  *     ├── infer direction from from.email domain vs EMAIL_DOMAINS
  *     ├── firm-to-firm check (all addresses on a firm domain → skip log)
  *     ├── Layer 2 suppression eval (any matching rule → skip default log; Slice 2.1)
- *     ├── conditional logService.createLogEntry (skipped iff suppressed)
- *     └── Layer 3 automation eval (Slice 2.3 — ALWAYS runs, regardless of
- *         suppression; matching rules fire actions via lib/actionDispatchers)
+ *     ├── Layer 3 automation eval (Slice 2.3 — ALWAYS runs, regardless of
+ *     │   suppression OR downstream log-write outcome; matching rules' transforms
+ *     │   run and their actions fire via lib/actionDispatchers + hookService).
+ *     │   Slice 2.3.1 hoisted this above the log step so the architectural
+ *     │   invariant ("layers are independent") holds even on the
+ *     │   INVALID_LOG_LINK_ID error branch.
+ *     └── conditional logService.createLogEntry (skipped iff suppressed; failures
+ *         on INVALID_LOG_LINK_ID become 'error' status but still carry Layer 3
+ *         outcomes in executions.metadata).
  *   → emits an email_ingest_executions row in every path including
  *     auth failures (handled by the route, not by this module).
  *
@@ -302,6 +308,31 @@ async function _writeExecution(db, fields) {
   return r.insertId;
 }
 
+/**
+ * Build the executions.metadata JSON payload from suppression + automation
+ * results. Returns null when there's nothing to record (no suppressions
+ * matched, no automation rules matched, no parse warnings) — keeping the
+ * column NULL for the "nothing interesting" baseline.
+ *
+ * Used by both the success path (step 9) and the INVALID_LOG_LINK_ID error
+ * path inside the log-write catch (step 7d), so Layer 3 outcomes get
+ * recorded even when the structured log row couldn't be written.
+ */
+function _buildMetadata(suppression, automation) {
+  const m = {};
+  if (suppression && suppression.matchedRuleIds && suppression.matchedRuleIds.length) {
+    m.suppressed_by = suppression.matchedRuleIds;
+  }
+  if (automation && automation.matchedRuleIds && automation.matchedRuleIds.length) {
+    m.matched_rules   = automation.matchedRuleIds;
+    m.action_outcomes = automation.actionOutcomes;
+  }
+  if (automation && automation.parseWarnings && automation.parseWarnings.length) {
+    m._parse_warnings = automation.parseWarnings;
+  }
+  return Object.keys(m).length ? m : null;
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // Helpers — message-body building for the log row.
@@ -530,12 +561,37 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
   // ── 7b. Layer 2 — logging suppressions (decide the structured log row).
   //   Independent veto over the structured log row ONLY. Forensic email_log
   //   is already written above; suppression short-circuits createLogEntry but
-  //   does NOT gate Layer 3 automation (step 7d). Boolean OR across active
+  //   does NOT gate Layer 3 automation (step 7c). Boolean OR across active
   //   rules. Throwing rules fail-safe to non-match. Audit lands in
   //   executions.metadata as { suppressed_by: [<ruleId>...] }.
   const suppression = await emailIngestSuppressionService.evaluateSuppressions(db, envelope);
 
-  // ── 7c. Conditional default log.
+  // ── 7c. Layer 3 — automation rules (ALWAYS runs).
+  //   Hoisted in Slice 2.3.1 to before the log-write step so the layer-
+  //   independence invariant holds even when createLogEntry throws
+  //   INVALID_LOG_LINK_ID (or any other error). Independent of the logging
+  //   layer. Matching rules' transforms run and their actions fire via
+  //   lib/actionDispatchers (+ hook re-entry). Outcomes land in
+  //   executions.metadata via _buildMetadata.
+  //
+  //   evaluateRules is designed not to throw — action failures are captured
+  //   per-action in actionOutcomes. The defensive try/catch here covers the
+  //   case where the rule loader itself fails (e.g. DB hiccup): we don't
+  //   want to 500 a successfully-logged email because automation evaluation
+  //   blew up. Record the failure in _parse_warnings and continue.
+  let automation;
+  try {
+    automation = await emailIngestRuleService.evaluateRules(db, envelope);
+  } catch (autoErr) {
+    console.error('[emailIngest] Layer 3 evaluateRules threw:', autoErr.message);
+    automation = {
+      matchedRuleIds: [],
+      actionOutcomes: [],
+      parseWarnings: [`evaluateRules threw: ${autoErr.message}`],
+    };
+  }
+
+  // ── 7d. Conditional default log.
   //   link_id = the "other party" — for incoming, the sender; for outgoing,
   //   the first to-address (or envelope.recipient fallback). logService
   //   normalizes + validates the email. INVALID_LOG_LINK_ID is handled below
@@ -590,15 +646,20 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
         // Bad email shape on the "other party" side — happens for outbound
         // emails to address lists, malformed inbound senders, etc. The
         // email_log row above is the forensic trail; record 'error' status
-        // and return. We do NOT run Layer 3 here: a structured-log failure
-        // means the email is malformed enough that firing automation off it
-        // is unsafe, and this preserves the pre-2.3 behavior for this branch.
+        // and return.
+        //
+        // Slice 2.3.1: Layer 3 has already run above, so its outcomes are
+        // captured in metadata even on this branch. Layer independence holds:
+        // an automation rule that doesn't depend on log_id (which is none of
+        // them, since actions consume the envelope, not the log row) still
+        // fires for emails whose other-party address is malformed.
         const executionId = await _writeExecution(db, {
           source_id:    source.id,
           message_id:   messageId,
           status:       'error',
           error:        `createLogEntry INVALID_LOG_LINK_ID: ${logErr.message}`,
           email_log_id: emailLogId,
+          metadata:     _buildMetadata(suppression, automation),
           raw_input:    rawInputForLog,
           remote_ip:    remoteIp || null,
         });
@@ -611,42 +672,19 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
       }
       // Any other error from logService — surface to the caller as a 500.
       // The route's catch writes the execution row with 'error' status.
+      // Layer 3 has already fired; the route will not record automation
+      // outcomes on this path. Acceptable: unexpected logService errors are
+      // operator-attention events, and Layer 3's action_outcomes are still
+      // observable via the dispatched workflows/sequences/hooks themselves.
       throw logErr;
     }
-  }
-
-  // ── 7d. Layer 3 — automation rules (ALWAYS runs, regardless of suppression).
-  //   Independent of the logging layer. Matching rules' transforms run and
-  //   their actions fire via lib/actionDispatchers (+ hook re-entry). Outcomes
-  //   land in executions.metadata. evaluateRules never throws — action
-  //   failures are captured per-action.
-  let automation;
-  try {
-    automation = await emailIngestRuleService.evaluateRules(db, envelope);
-  } catch (autoErr) {
-    // Defensive: evaluateRules is designed not to throw, but if a loader query
-    // (DB) fails we don't want to lose the already-written log. Record the
-    // automation failure in metadata and continue with the logging-layer
-    // outcome rather than 500'ing a successfully-logged email.
-    console.error('[emailIngest] Layer 3 evaluateRules threw:', autoErr.message);
-    automation = { matchedRuleIds: [], actionOutcomes: [], parseWarnings: [`evaluateRules threw: ${autoErr.message}`] };
   }
 
   // ── 8. Determine final status (logging-layer outcome only).
   const status = suppression.suppressed ? 'skipped_suppression' : 'logged';
 
-  // ── 9. Build metadata. Always-valid JSON; null when nothing to record.
-  const metadata = {};
-  if (suppression.matchedRuleIds && suppression.matchedRuleIds.length) {
-    metadata.suppressed_by = suppression.matchedRuleIds;
-  }
-  if (automation.matchedRuleIds && automation.matchedRuleIds.length) {
-    metadata.matched_rules   = automation.matchedRuleIds;
-    metadata.action_outcomes = automation.actionOutcomes;
-  }
-  if (automation.parseWarnings && automation.parseWarnings.length) {
-    metadata._parse_warnings = automation.parseWarnings;
-  }
+  // ── 9. Build metadata via the shared helper.
+  const metadata = _buildMetadata(suppression, automation);
 
   // ── 10. Write the executions row + return.
   const executionId = await _writeExecution(db, {
@@ -655,7 +693,7 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
     status,
     log_id:       logId,
     email_log_id: emailLogId,
-    metadata:     Object.keys(metadata).length ? metadata : null,
+    metadata,
     raw_input:    rawInputForLog,
     remote_ip:    remoteIp || null,
   });
