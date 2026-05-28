@@ -1024,6 +1024,37 @@ The `POST /api/email/ingest` endpoint is the new external entrypoint for inbound
 
 **Forward-looking.** Rules table, transforms, dispatch (workflow/sequence/hook actions), code-mode eval, capture mode, and UI are Phase 2. The old `email_router_*` tables and `services/emailRouter.js` stay dead — they are not the foundation of the new system.
 
+### 3.18 Email Ingest Layer 2 — Logging Suppression (Slice 2.1)
+
+The suppression layer is an independent veto over the default `log` row written by the email-ingest pipeline. Forensic `email_log` writes are unconditional regardless of any rule outcome — suppression only short-circuits the user-facing log row.
+
+**Where rules live.** `email_ingest_log_suppressions` (one row per rule). Columns: `name`, `description`, `active`, `match_mode` (`conditions` or `code`), `match_config` (JSON), plus telemetry (`match_count`, `last_matched_at`). No CRUD UI yet — admin via direct SQL until Phase 3.
+
+**Pipeline position.** After firm-to-firm check, before `createLogEntry`. Duplicates and firm-to-firm hits short-circuit BEFORE suppression runs — no rule evaluation for emails the pipeline already isn't logging structurally.
+
+**Match grammar.** Reuses `services/hookFilter.evaluateConditions` for `match_mode='conditions'`, mirrors `hookService.runFilter`'s `new Function('input', code)(envelope)` for `match_mode='code'`. The match input is the canonical envelope **at the top level** — paths in `match_config.conditions[].path` are `from.email`, `subject`, `headers.message_id`, `to[0].email`, etc. NO `body.` prefix (the YisraHook receiver wraps inbound as `{body, headers, query, method, meta}`; the email-ingest endpoint does not).
+
+**Match semantics.** Boolean OR across active rules — any match wins. No ordering, no cascade. Rules that throw during evaluation log a warning and count as non-match (fail-safe: errors never suppress).
+
+**NULL match_config footgun.** `hookFilter.evaluateConditions(null, …)` returns `true` ("no filter = pass all"). In an inclusion filter that's correct; in a suppression context it would silently suppress every email. The suppression service defends against this: `match_mode='conditions'` with `match_config IS NULL` is treated as non-match and logs a warning. If you genuinely want a kill-switch rule that matches all emails, set `match_config` to `{"operator":"and","conditions":[]}` instead — an empty AND group is vacuously true under `.every(...)`.
+
+**Adding a rule via SQL.**
+```sql
+INSERT INTO email_ingest_log_suppressions
+  (name, description, active, match_mode, match_config)
+VALUES (
+  'Suppress GitHub notifications',
+  'No structured log for GitHub notification emails — handled by a dedicated automation in Layer 3.',
+  1,
+  'conditions',
+  '{"operator":"and","conditions":[{"path":"from.email","op":"ends_with","value":"@github.com"}]}'
+);
+```
+
+**Audit trail.** Suppressed ingests produce an `email_ingest_executions` row with `status='skipped_suppression'`, `log_id=NULL`, `email_log_id=<the forensic row id>`, and `metadata={"suppressed_by":[<ruleId>, ...]}`. Matched rules' `match_count` and `last_matched_at` are bumped fire-and-forget (failures logged, never block the response).
+
+**Layer 3.** Tables `email_ingest_rules` and `email_ingest_rule_actions` exist as empty tables for Slice 2.3 (automation rules + action dispatch). Not evaluated by the ingest pipeline yet. Do not insert rows until Slice 2.3 ships — they'd be inert until then anyway.
+
 ---
 
 ## 4. Step-by-Step Guide: Building a New Automation

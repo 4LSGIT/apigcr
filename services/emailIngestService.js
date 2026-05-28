@@ -27,6 +27,7 @@
  *     ├── INSERT IGNORE email_log (race-safe)
  *     ├── infer direction from from.email domain vs EMAIL_DOMAINS
  *     ├── firm-to-firm check (all addresses on a firm domain → skip log)
+ *     ├── Layer 2 suppression eval (any matching rule → skip log; Slice 2.1)
  *     └── logService.createLogEntry({ link_type:'email', link_id:<other party>, ... })
  *   → emits an email_ingest_executions row in every path including
  *     auth failures (handled by the route, not by this module).
@@ -46,6 +47,7 @@
 
 const crypto = require('crypto');
 const logService = require('./logService');
+const emailIngestSuppressionService = require('./emailIngestSuppressionService');
 
 const RAW_INPUT_LIMIT = 16 * 1024;            // 16 KB cap on raw_input snapshots
 const LOG_MESSAGE_SOFT_CAP = 50000;           // mirror routes/logs.js soft cap
@@ -271,6 +273,12 @@ function _truncateRawInput(body) {
   };
 }
 
+// JSON columns we explicitly stringify when the caller passes an object.
+// (mysql2 will auto-encode, but being explicit keeps stored bytes
+// predictable across mysql2 versions and avoids surprises if a future
+// caller passes something unusual like a Date.)
+const _JSON_COLS = new Set(['raw_input', 'metadata']);
+
 async function _writeExecution(db, fields) {
   const cols = [];
   const placeholders = [];
@@ -278,9 +286,7 @@ async function _writeExecution(db, fields) {
   for (const [k, v] of Object.entries(fields)) {
     cols.push(k);
     placeholders.push('?');
-    // JSON columns: mysql2 accepts either an object (auto-encodes) or
-    // a pre-stringified string. Be explicit to avoid surprises.
-    if (k === 'raw_input' && v != null && typeof v === 'object') {
+    if (_JSON_COLS.has(k) && v != null && typeof v === 'object') {
       values.push(JSON.stringify(v));
     } else {
       values.push(v);
@@ -358,6 +364,7 @@ function _validateEnvelope(envelope) {
 //   { status: 'logged',               executionId, logId, emailLogId }
 //   { status: 'duplicate',            executionId, emailLogId }
 //   { status: 'skipped_firm_to_firm', executionId, emailLogId }
+//   { status: 'skipped_suppression',  executionId, emailLogId }
 //   { status: 'validation_failed',    executionId, error }
 //   { status: 'error',                executionId, error }
 //
@@ -510,6 +517,26 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
       remote_ip:    remoteIp || null,
     });
     return { status: 'skipped_firm_to_firm', executionId, emailLogId };
+  }
+
+  // ── 7b. Layer 2 — logging suppressions.
+  //   Independent veto over the structured log row. Forensic email_log
+  //   already written above; suppression only short-circuits createLogEntry.
+  //   Boolean OR across active rules. Throwing rules fail-safe to non-match.
+  //   Audit data lands in executions.metadata as { suppressed_by: [<ruleId>...] }.
+  const suppression = await emailIngestSuppressionService.evaluateSuppressions(db, envelope);
+  if (suppression.suppressed) {
+    const executionId = await _writeExecution(db, {
+      source_id:    source.id,
+      message_id:   messageId,
+      status:       'skipped_suppression',
+      log_id:       null,
+      email_log_id: emailLogId,
+      metadata:     { suppressed_by: suppression.matchedRuleIds },
+      raw_input:    rawInputForLog,
+      remote_ip:    remoteIp || null,
+    });
+    return { status: 'skipped_suppression', executionId, emailLogId };
   }
 
   // ── 8. Write the structured log row via logService.
