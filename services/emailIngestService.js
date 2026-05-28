@@ -27,8 +27,10 @@
  *     ├── INSERT IGNORE email_log (race-safe)
  *     ├── infer direction from from.email domain vs EMAIL_DOMAINS
  *     ├── firm-to-firm check (all addresses on a firm domain → skip log)
- *     ├── Layer 2 suppression eval (any matching rule → skip log; Slice 2.1)
- *     └── logService.createLogEntry({ link_type:'email', link_id:<other party>, ... })
+ *     ├── Layer 2 suppression eval (any matching rule → skip default log; Slice 2.1)
+ *     ├── conditional logService.createLogEntry (skipped iff suppressed)
+ *     └── Layer 3 automation eval (Slice 2.3 — ALWAYS runs, regardless of
+ *         suppression; matching rules fire actions via lib/actionDispatchers)
  *   → emits an email_ingest_executions row in every path including
  *     auth failures (handled by the route, not by this module).
  *
@@ -48,6 +50,7 @@
 const crypto = require('crypto');
 const logService = require('./logService');
 const emailIngestSuppressionService = require('./emailIngestSuppressionService');
+const emailIngestRuleService = require('./emailIngestRuleService');
 
 const RAW_INPUT_LIMIT = 16 * 1024;            // 16 KB cap on raw_input snapshots
 const LOG_MESSAGE_SOFT_CAP = 50000;           // mirror routes/logs.js soft cap
@@ -364,9 +367,14 @@ function _validateEnvelope(envelope) {
 //   { status: 'logged',               executionId, logId, emailLogId }
 //   { status: 'duplicate',            executionId, emailLogId }
 //   { status: 'skipped_firm_to_firm', executionId, emailLogId }
-//   { status: 'skipped_suppression',  executionId, emailLogId }
+//   { status: 'skipped_suppression',  executionId, logId:null, emailLogId }
 //   { status: 'validation_failed',    executionId, error }
 //   { status: 'error',                executionId, error }
+//
+// Layer 3 automation (Slice 2.3) runs on BOTH the 'logged' and
+// 'skipped_suppression' paths; its outcomes are recorded in the executions
+// row's metadata, not in the return shape. The 'logged'/'skipped_suppression'
+// status reflects the LOGGING layer only.
 //
 // Always writes an email_ingest_executions row before returning
 // (auth failures excepted — the route writes those). The execution
@@ -519,32 +527,20 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
     return { status: 'skipped_firm_to_firm', executionId, emailLogId };
   }
 
-  // ── 7b. Layer 2 — logging suppressions.
-  //   Independent veto over the structured log row. Forensic email_log
-  //   already written above; suppression only short-circuits createLogEntry.
-  //   Boolean OR across active rules. Throwing rules fail-safe to non-match.
-  //   Audit data lands in executions.metadata as { suppressed_by: [<ruleId>...] }.
+  // ── 7b. Layer 2 — logging suppressions (decide the structured log row).
+  //   Independent veto over the structured log row ONLY. Forensic email_log
+  //   is already written above; suppression short-circuits createLogEntry but
+  //   does NOT gate Layer 3 automation (step 7d). Boolean OR across active
+  //   rules. Throwing rules fail-safe to non-match. Audit lands in
+  //   executions.metadata as { suppressed_by: [<ruleId>...] }.
   const suppression = await emailIngestSuppressionService.evaluateSuppressions(db, envelope);
-  if (suppression.suppressed) {
-    const executionId = await _writeExecution(db, {
-      source_id:    source.id,
-      message_id:   messageId,
-      status:       'skipped_suppression',
-      log_id:       null,
-      email_log_id: emailLogId,
-      metadata:     { suppressed_by: suppression.matchedRuleIds },
-      raw_input:    rawInputForLog,
-      remote_ip:    remoteIp || null,
-    });
-    return { status: 'skipped_suppression', executionId, emailLogId };
-  }
 
-  // ── 8. Write the structured log row via logService.
-  //   link_id = the "other party" — for incoming, the sender; for
-  //   outgoing, the first to-address (or envelope.recipient as
-  //   fallback). logService normalizes (trim+lowercase) and validates
-  //   the email; INVALID_LOG_LINK_ID is mapped to an execution error
-  //   here (forensic row exists, just no structured log).
+  // ── 7c. Conditional default log.
+  //   link_id = the "other party" — for incoming, the sender; for outgoing,
+  //   the first to-address (or envelope.recipient fallback). logService
+  //   normalizes + validates the email. INVALID_LOG_LINK_ID is handled below
+  //   as an execution error (forensic row exists; just no structured log).
+  //   Skipped entirely when suppressed.
   const otherParty = direction === 'incoming'
     ? fromEmail
     : (toEmailFirst || '');
@@ -573,64 +569,98 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
   };
 
   let logId = null;
-  try {
-    const r = await logService.createLogEntry(db, {
-      type:      'email',
-      link_type: 'email',
-      link_id:   otherParty,
-      by:        0,
-      data:      logData,
-      extra:     logExtra,
-      from:      fromEmail,
-      to:        toJoined,
-      subject,
-      message:   logData.Message,
-      direction,
-    });
-    logId = r.log_id;
-  } catch (logErr) {
-    if (logErr.code === 'INVALID_LOG_LINK_ID') {
-      // Bad email shape on the "other party" side — happens for
-      // outbound emails to address lists, malformed inbound senders,
-      // etc. The email_log row above is the forensic trail; record
-      // 'error' status on the execution and continue. We do NOT
-      // upgrade this to a 400 — the email IS logged, just not as a
-      // structured user-facing event.
-      const executionId = await _writeExecution(db, {
-        source_id:    source.id,
-        message_id:   messageId,
-        status:       'error',
-        error:        `createLogEntry INVALID_LOG_LINK_ID: ${logErr.message}`,
-        email_log_id: emailLogId,
-        raw_input:    rawInputForLog,
-        remote_ip:    remoteIp || null,
+  if (!suppression.suppressed) {
+    try {
+      const r = await logService.createLogEntry(db, {
+        type:      'email',
+        link_type: 'email',
+        link_id:   otherParty,
+        by:        0,
+        data:      logData,
+        extra:     logExtra,
+        from:      fromEmail,
+        to:        toJoined,
+        subject,
+        message:   logData.Message,
+        direction,
       });
-      return {
-        status:      'error',
-        executionId,
-        emailLogId,
-        error:       logErr.message,
-      };
+      logId = r.log_id;
+    } catch (logErr) {
+      if (logErr.code === 'INVALID_LOG_LINK_ID') {
+        // Bad email shape on the "other party" side — happens for outbound
+        // emails to address lists, malformed inbound senders, etc. The
+        // email_log row above is the forensic trail; record 'error' status
+        // and return. We do NOT run Layer 3 here: a structured-log failure
+        // means the email is malformed enough that firing automation off it
+        // is unsafe, and this preserves the pre-2.3 behavior for this branch.
+        const executionId = await _writeExecution(db, {
+          source_id:    source.id,
+          message_id:   messageId,
+          status:       'error',
+          error:        `createLogEntry INVALID_LOG_LINK_ID: ${logErr.message}`,
+          email_log_id: emailLogId,
+          raw_input:    rawInputForLog,
+          remote_ip:    remoteIp || null,
+        });
+        return {
+          status:      'error',
+          executionId,
+          emailLogId,
+          error:       logErr.message,
+        };
+      }
+      // Any other error from logService — surface to the caller as a 500.
+      // The route's catch writes the execution row with 'error' status.
+      throw logErr;
     }
-    // Any other error from logService — surface to the caller as
-    // a 500. The email_log row above is the forensic record; the
-    // structured log row failed. We do NOT write an execution row
-    // here because the route's catch will (with 'error' status and
-    // the same error string).
-    throw logErr;
   }
 
-  // ── 9. Success.
+  // ── 7d. Layer 3 — automation rules (ALWAYS runs, regardless of suppression).
+  //   Independent of the logging layer. Matching rules' transforms run and
+  //   their actions fire via lib/actionDispatchers (+ hook re-entry). Outcomes
+  //   land in executions.metadata. evaluateRules never throws — action
+  //   failures are captured per-action.
+  let automation;
+  try {
+    automation = await emailIngestRuleService.evaluateRules(db, envelope);
+  } catch (autoErr) {
+    // Defensive: evaluateRules is designed not to throw, but if a loader query
+    // (DB) fails we don't want to lose the already-written log. Record the
+    // automation failure in metadata and continue with the logging-layer
+    // outcome rather than 500'ing a successfully-logged email.
+    console.error('[emailIngest] Layer 3 evaluateRules threw:', autoErr.message);
+    automation = { matchedRuleIds: [], actionOutcomes: [], parseWarnings: [`evaluateRules threw: ${autoErr.message}`] };
+  }
+
+  // ── 8. Determine final status (logging-layer outcome only).
+  const status = suppression.suppressed ? 'skipped_suppression' : 'logged';
+
+  // ── 9. Build metadata. Always-valid JSON; null when nothing to record.
+  const metadata = {};
+  if (suppression.matchedRuleIds && suppression.matchedRuleIds.length) {
+    metadata.suppressed_by = suppression.matchedRuleIds;
+  }
+  if (automation.matchedRuleIds && automation.matchedRuleIds.length) {
+    metadata.matched_rules   = automation.matchedRuleIds;
+    metadata.action_outcomes = automation.actionOutcomes;
+  }
+  if (automation.parseWarnings && automation.parseWarnings.length) {
+    metadata._parse_warnings = automation.parseWarnings;
+  }
+
+  // ── 10. Write the executions row + return.
   const executionId = await _writeExecution(db, {
     source_id:    source.id,
     message_id:   messageId,
-    status:       'logged',
+    status,
     log_id:       logId,
     email_log_id: emailLogId,
+    metadata:     Object.keys(metadata).length ? metadata : null,
     raw_input:    rawInputForLog,
     remote_ip:    remoteIp || null,
   });
-  return { status: 'logged', executionId, logId, emailLogId };
+
+  return { status, executionId, logId, emailLogId };
 }
 
 

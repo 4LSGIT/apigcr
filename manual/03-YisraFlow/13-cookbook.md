@@ -1086,6 +1086,75 @@ Two things deliberately did **not** move: (1) the helper functions `parseTargetC
 
 Slice 2.3+ reuses this same module from the email-ingest pipeline: an `email_ingest_rule_actions` row will be shaped into a `target`-like object and passed to `dispatch` with the appropriate `actionType`, firing workflow / sequence / internal_function / http actions through the identical code path the hook system uses today.
 
+### 3.21 Email Ingest Layer 3 — Automation Rules (Slice 2.3)
+
+Layer 3 turns inbound email into automation triggers. It runs in
+`services/emailIngestRuleService.js`, called by `emailIngestService.ingestEmail`
+right after the conditional default-log step. Active rows in
+`email_ingest_rules` are matched against the canonical envelope; each matching
+rule may carry an ordered list of `email_ingest_rule_actions` that fire through
+the **same** dispatch path the YisraHook system uses (`lib/actionDispatchers.js`
+from §3.20), plus a fifth `hook` action type that re-enters the hook pipeline.
+
+**Layer independence is the core rule.** Layer 2 (suppression, §3.18) decides
+whether the default structured log row is written; Layer 3 decides which actions
+fire. Both layers always run against the same envelope — a rule's actions fire
+whether or not the default log was suppressed. The `email_ingest_executions`
+status reflects the *logging* layer only (`logged` or `skipped_suppression`);
+Layer 3 outcomes live in `metadata`. (Duplicate and firm-to-firm emails
+short-circuit before either layer, so neither evaluates for them — duplicates
+never re-fire actions.)
+
+**Rules.** `match_mode` is `conditions` (reuses `hookFilter.evaluateConditions`,
+same grammar as a hook filter — paths resolve against the envelope top level,
+e.g. `subject`, `from.email`) or `code` (a JS body run as
+`new Function('input', code)(envelope)`). A throwing match counts as non-match
+(fail-safe), and a NULL `match_config` on conditions mode is treated as
+non-match rather than match-all (an automation rule that silently fired on every
+email would almost always be a mistake — use `{"operator":"and","conditions":[]}`
+for an explicit always-match). `transform_mode` is `passthrough` (envelope
+unchanged), `mapper` (`hookMapper.executeMapper(transform_config, envelope)`,
+where `transform_config` is the mapping-rule array), or `code`. A transform that
+throws leaves the rule *matched* but fires no actions (they'd get garbage
+input); the diagnostic lands in `metadata._parse_warnings`.
+
+**Actions.** `action_type` ∈ `workflow | sequence | internal_function | http |
+hook`. The first four go through `actionDispatchers.dispatch`; the rule action's
+`config` is synthesized into a `target`-shaped object (with `target.id` set to
+the `rule_action_id` for audit), and the transformed envelope is passed flat as
+the dispatch input. `hook` is the exception: it calls
+`hookService.executeHook(db, config.slug, input)` and wraps the transformed
+envelope as `{ body, headers:{}, query:{}, method:'POST', meta:{source:'email_ingest', rule_id, rule_action_id, received_at} }`
+so ingest-invoked hooks use the **same** `body.*` path convention as
+webhook-invoked hooks. Action failures are isolated — one failing action does
+not abort the others in the same rule.
+
+**Metadata shape** on the executions row (always-valid JSON, omitted keys when
+empty):
+
+```json
+{
+  "suppressed_by":   [<ruleId>, ...],          // Layer 2 (§3.18); present iff suppressed
+  "matched_rules":   [<ruleId>, ...],          // Layer 3; present iff any rule matched
+  "action_outcomes": [
+    { "rule_id": N, "rule_action_id": M,
+      "action_type": "internal_function|workflow|sequence|http|hook",
+      "status": "success|failed",
+      "error":  "<message if failed>",
+      "result": { ... type-specific id, e.g. hook_execution_id / workflow_execution_id }
+    }
+  ],
+  "_parse_warnings": ["<transform-failure diagnostics>"]   // present iff any
+}
+```
+
+**Management.** No CRUD UI in this slice — rules and actions are managed via
+direct SQL until the Phase 3 admin UI lands. A side-effect-free test rule
+(`TEST: ingest layer 3 echo`, matches subjects containing
+`_EMAIL_INGEST_2_3_TEST_`, fires the `noop` internal function) is seeded for
+end-to-end verification and is safe to leave active or delete. See §3.18 for the
+suppression layer and §3.20 for the shared dispatcher this layer reuses.
+
 ---
 
 ## 4. Step-by-Step Guide: Building a New Automation
