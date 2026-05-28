@@ -71,10 +71,12 @@ sql() {
     -d "$(jq -n --arg q "$1" '{sql:$q}')" | jq -c '.rows'
 }
 
-# meta_for <message_id> → echoes the metadata JSON (or null) for the newest exec row
-exec_row_for() {
-  local mid="$1"
-  sql "SELECT status, metadata FROM email_ingest_executions WHERE message_id = '$mid' ORDER BY id DESC LIMIT 1"
+# exec_row_by_id <execution_id> → echoes a 1-element rows array [{status, metadata}]
+# Keyed on the execution_id returned by the POST — exact, and immune to the
+# angle-bracket stripping _resolveMessageId applies to stored message_ids.
+exec_row_by_id() {
+  local eid="$1"
+  sql "SELECT status, metadata FROM email_ingest_executions WHERE id = $eid LIMIT 1"
 }
 
 # Resolve rule ids we assert against.
@@ -82,9 +84,10 @@ TEST_RULE_ID="$(sql "SELECT id FROM email_ingest_rules WHERE name = 'TEST: inges
 COURT_RULE_ID="$(sql "SELECT id FROM email_ingest_log_suppressions WHERE name LIKE 'Court emails%' LIMIT 1" | jq -r '.[0].id // empty')"
 
 echo "BASE_URL=$BASE_URL"
-echo "test rule id  = ${TEST_RULE_ID:-<not found>}"
-echo "court rule id = ${COURT_RULE_ID:-<not found>}"
+echo "test rule id  (email_ingest_rules)            = ${TEST_RULE_ID:-<not found>}"
+echo "court rule id (email_ingest_log_suppressions) = ${COURT_RULE_ID:-<not found>}"
 echo
+echo "NOTE: these ids come from two different tables and may coincide (both 1)."
 
 if [[ -z "$TEST_RULE_ID" ]]; then
   red "Seed rule 'TEST: ingest layer 3 echo' not found — apply the seed migration first."
@@ -96,22 +99,20 @@ fi
 # (to is a firm address so the legacy-mimic suppression rule does NOT fire)
 # ─────────────────────────────────────────────────────────────
 echo "TEST 1 — baseline (no automation match)"
-MID1="<$RUN_TAG-t1@x>"
+MID1="$RUN_TAG-t1@x"
 R1="$(post "$MID1" "ext@example.com" "b@4lsg.com" "ordinary subject no sentinel")"
 echo "  response: $R1"
 [[ "$(jq -r '.status' <<<"$R1")" == "logged" ]] && ok "status=logged" || no "expected status=logged"
-ROW1="$(exec_row_for "$MID1")"
+EID1="$(jq -r '.execution_id' <<<"$R1")"
+ROW1="$(exec_row_by_id "$EID1")"
 [[ "$(jq -r '.[0].status' <<<"$ROW1")" == "logged" ]] && ok "exec status=logged" || no "exec status not logged: $ROW1"
 M1="$(jq -c '.[0].metadata' <<<"$ROW1")"
 if [[ "$M1" == "null" ]]; then
   ok "metadata is NULL (no rules matched, no suppression)"
 else
-  # Acceptable only if it has neither matched_rules nor action_outcomes
-  if [[ "$(jq -r '(.matched_rules//empty)|length' <<<"$M1")" == "" || "$(jq -r '.matched_rules // empty' <<<"$M1")" == "" ]]; then
-    ok "metadata present but no matched_rules"
-  else
-    no "metadata unexpectedly has matched_rules: $M1"
-  fi
+  [[ "$(jq -r '.matched_rules // empty | length' <<<"$M1")" == "" ]] \
+    && ok "metadata present but no matched_rules" \
+    || no "metadata unexpectedly has matched_rules: $M1"
 fi
 echo
 
@@ -119,14 +120,15 @@ echo
 # TEST 2 — Automation fires: sentinel subject → logged + matched_rules + action success
 # ─────────────────────────────────────────────────────────────
 echo "TEST 2 — automation fires (logged)"
-MID2="<$RUN_TAG-t2@x>"
+MID2="$RUN_TAG-t2@x"
 R2="$(post "$MID2" "ext@example.com" "b@4lsg.com" "subject with $SENTINEL here")"
 echo "  response: $R2"
 [[ "$(jq -r '.status' <<<"$R2")" == "logged" ]] && ok "status=logged" || no "expected status=logged"
-ROW2="$(exec_row_for "$MID2")"
+EID2="$(jq -r '.execution_id' <<<"$R2")"
+ROW2="$(exec_row_by_id "$EID2")"
 M2="$(jq -c '.[0].metadata' <<<"$ROW2")"
 echo "  metadata: $M2"
-[[ "$(jq -r --arg id "$TEST_RULE_ID" '.matched_rules // [] | index(($id|tonumber)) != null' <<<"$M2")" == "true" ]] \
+[[ "$(jq -r --argjson id "$TEST_RULE_ID" '.matched_rules // [] | index($id) != null' <<<"$M2")" == "true" ]] \
   && ok "matched_rules contains test rule $TEST_RULE_ID" || no "matched_rules missing $TEST_RULE_ID: $M2"
 [[ "$(jq -r '.action_outcomes[0].status' <<<"$M2")" == "success" ]] \
   && ok "action_outcomes[0].status=success" || no "first action not success: $M2"
@@ -141,21 +143,22 @@ echo
 #   to is firm addr → legacy-mimic rule does NOT fire (keeps suppressed_by clean)
 # ─────────────────────────────────────────────────────────────
 echo "TEST 3 — suppressed AND automation fires (KEY independence proof)"
-MID3="<$RUN_TAG-t3@x>"
+MID3="$RUN_TAG-t3@x"
 R3="$(post "$MID3" "clerk@txs.uscourts.gov" "b@4lsg.com" "court notice $SENTINEL")"
 echo "  response: $R3"
 [[ "$(jq -r '.status' <<<"$R3")" == "skipped_suppression" ]] && ok "status=skipped_suppression" || no "expected skipped_suppression"
-ROW3="$(exec_row_for "$MID3")"
+EID3="$(jq -r '.execution_id' <<<"$R3")"
+ROW3="$(exec_row_by_id "$EID3")"
 M3="$(jq -c '.[0].metadata' <<<"$ROW3")"
 echo "  metadata: $M3"
 if [[ -n "$COURT_RULE_ID" ]]; then
-  [[ "$(jq -r --arg id "$COURT_RULE_ID" '.suppressed_by // [] | index(($id|tonumber)) != null' <<<"$M3")" == "true" ]] \
+  [[ "$(jq -r --argjson id "$COURT_RULE_ID" '.suppressed_by // [] | index($id) != null' <<<"$M3")" == "true" ]] \
     && ok "suppressed_by contains court rule $COURT_RULE_ID" || no "suppressed_by missing court rule: $M3"
 else
   [[ "$(jq -r '.suppressed_by // [] | length > 0' <<<"$M3")" == "true" ]] \
     && ok "suppressed_by non-empty" || no "suppressed_by empty: $M3"
 fi
-[[ "$(jq -r --arg id "$TEST_RULE_ID" '.matched_rules // [] | index(($id|tonumber)) != null' <<<"$M3")" == "true" ]] \
+[[ "$(jq -r --argjson id "$TEST_RULE_ID" '.matched_rules // [] | index($id) != null' <<<"$M3")" == "true" ]] \
   && ok "matched_rules contains test rule $TEST_RULE_ID (automation ran despite suppression)" || no "matched_rules missing: $M3"
 [[ "$(jq -r '.action_outcomes[0].status' <<<"$M3")" == "success" ]] \
   && ok "action fired successfully under suppression" || no "action not success under suppression: $M3"
@@ -169,9 +172,9 @@ echo "TEST 4 — duplicate does not re-run rule eval"
 R4="$(post "$MID2" "ext@example.com" "b@4lsg.com" "subject with $SENTINEL here")"
 echo "  response: $R4"
 [[ "$(jq -r '.status' <<<"$R4")" == "duplicate" ]] && ok "status=duplicate" || no "expected duplicate"
-# Newest row for MID2 should be the duplicate row (id desc) with NULL metadata.
-ROW4="$(exec_row_for "$MID2")"
-[[ "$(jq -r '.[0].status' <<<"$ROW4")" == "duplicate" ]] && ok "newest exec row for MID2 is duplicate" || no "newest not duplicate: $ROW4"
+EID4="$(jq -r '.execution_id' <<<"$R4")"
+ROW4="$(exec_row_by_id "$EID4")"
+[[ "$(jq -r '.[0].status' <<<"$ROW4")" == "duplicate" ]] && ok "exec row is duplicate" || no "not duplicate: $ROW4"
 [[ "$(jq -c '.[0].metadata' <<<"$ROW4")" == "null" ]] && ok "duplicate row metadata is NULL" || no "duplicate row metadata not NULL: $ROW4"
 echo
 
