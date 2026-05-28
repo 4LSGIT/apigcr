@@ -1055,6 +1055,37 @@ VALUES (
 
 **Layer 3.** Tables `email_ingest_rules` and `email_ingest_rule_actions` exist as empty tables for Slice 2.3 (automation rules + action dispatch). Not evaluated by the ingest pipeline yet. Do not insert rows until Slice 2.3 ships — they'd be inert until then anyway.
 
+### 3.19 Suppression rule: legacy Gmail-filter mimic
+
+After the Gmail forwarder's filter widens from `from:@4lsg.com OR to:@4lsg.com` to `deliveredto:@4lsg.com` (true catch-all), every email delivered to a firm address arrives at `/api/email/ingest` — including BCC patterns, list expansions, and alias rewrites where the visible From/To doesn't reference a firm domain. The "legacy filter mimic" suppression rule reproduces the old narrow behavior at the DB layer instead of the Gmail layer: it suppresses default structured logging for any email whose From and To headers don't contain a firm-domain address. Forensic `email_log` rows are still written (per §3.17's two-layer rule — `email_log` is unconditional, structured `log` rows are policy-controlled).
+
+The rule is `match_mode='code'` because the conditions grammar (`hookFilter.evaluateConditions`) can't iterate the `to[]` array — a single condition leaf compares one path to one value. The rule body is short and reads naturally; trade-off is that the firm domain list is duplicated between `EMAIL_DOMAINS` env and the rule's JS. When adding a new firm domain to `EMAIL_DOMAINS`, update this rule's `match_config.code` in the same change.
+
+Reversal is two operations: `UPDATE email_ingest_log_suppressions SET active=0 WHERE name='Legacy filter mimic (no firm address in From/To)';` and swap the Gmail filter back to `from:@4lsg.com OR to:@4lsg.com`. Either direction (turn on / turn off) is safe to do independently — the Gmail filter narrows or widens what reaches the endpoint, and the suppression rule narrows or widens what gets a structured log row. They compose multiplicatively, not destructively.
+
+To check what the rule is catching after the filter swap:
+
+```sql
+SELECT e.id, el.from_email, el.to_email, el.subject, e.created_at
+  FROM email_ingest_executions e
+  JOIN email_log el ON el.id = e.email_log_id
+ WHERE e.status = 'skipped_suppression'
+   AND e.metadata->>'$.suppressed_by[0]' = ''
+ ORDER BY e.id DESC LIMIT 50;
+```
+
+Expect mostly automated notifications, marketing newsletters, and group-list mail.
+
+### 3.20 Action Dispatcher Extraction (Slice 2.2)
+
+The four per-target delivery functions — `http`, `workflow`, `sequence`, `internal_function` — were lifted verbatim out of `services/hookService.js` into a shared module, `lib/actionDispatchers.js`. `hookService.deliverToTarget` no longer contains the per-type switch; it runs the target-level transform (unchanged), parses the target config, and delegates to `actionDispatchers.dispatch(db, targetType, config, targetOutput, { target })`. The dispatch return is `{ status, result, error }`, where `result` is the same `logData` object the old `deliver*` functions returned — so the delivery-log write, retry queueing, and execution-status rollup in `executeHook` are untouched.
+
+The dispatchers still never throw: every failure path is caught internally and returned as `logData.status='failed'` with a human-readable `error`. The synthetic `internal://…` URLs, the 10 000-byte response truncation, and the workflow contact-resolution behavior are all preserved byte-for-byte (verified by an equivalence harness that diffs the pre- and post-extraction code paths across all four types and every error branch).
+
+Two things deliberately did **not** move: (1) the helper functions `parseTargetConfig`, `resolveParamsMapping`, `getByPath`, and `buildAuthHeaders` still live in `hookService` because `buildDryRunPreview` (which stays in hookService) uses them — `actionDispatchers` carries its own private copies to stand alone; (2) dry-run preview logic stays entirely in hookService. The dispatchers consume the full `hook_targets` row (the HTTP one reads `url`/`method`/`headers`/`body_*`/`credential_id` directly), so `dispatch` carries the row through `context.target` rather than inventing a normalized shape — keeping the extraction faithful rather than "improved."
+
+Slice 2.3+ reuses this same module from the email-ingest pipeline: an `email_ingest_rule_actions` row will be shaped into a `target`-like object and passed to `dispatch` with the appropriate `actionType`, firing workflow / sequence / internal_function / http actions through the identical code path the hook system uses today.
+
 ---
 
 ## 4. Step-by-Step Guide: Building a New Automation

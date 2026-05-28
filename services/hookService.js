@@ -29,7 +29,19 @@ const { evaluateConditions } = require('./hookFilter');
 const { executeMapper, resolveBodyTemplate } = require('./hookMapper');
 const { applyChain } = require('./hookTransforms');
 const credentialInjection = require('../lib/credentialInjection');
+const actionDispatchers = require('../lib/actionDispatchers');
 
+// Slice 2.2: the four per-target delivery functions (http / workflow /
+// sequence / internal_function) were extracted verbatim into
+// lib/actionDispatchers.js so the email-ingest pipeline can reuse them.
+// deliverToTarget now delegates to actionDispatchers.dispatch(). The helper
+// functions parseTargetConfig / resolveParamsMapping / getByPath /
+// buildAuthHeaders remain HERE because buildDryRunPreview (which stays in
+// hookService, untouched) still uses them; actionDispatchers carries its own
+// private copies. The four deliver* names are re-exported from the shared
+// module at the bottom of this file for backward-compat (testing only — no
+// production caller imports them directly).
+//
 // Lazy requires for the three delivery engines. These modules transitively
 // require hookService in rare paths (e.g. an internal function that itself
 // emits a webhook), so keep the require() calls inside the handlers.
@@ -323,375 +335,6 @@ function resolveParamsMapping(paramsMapping, targetOutput) {
 }
 
 
-// ─────────────────────────────────────────────────────────────
-// DELIVERY — HTTP (the original behavior)
-// ─────────────────────────────────────────────────────────────
-
-async function deliverHttp(target, targetOutput, db) {
-  // Build request body
-  let requestBody;
-  if (target.body_mode === 'template' && target.body_template) {
-    requestBody = resolveBodyTemplate(target.body_template, targetOutput);
-  } else {
-    requestBody = JSON.stringify(targetOutput);
-  }
-
-  // Build headers (oauth2 credentials may refresh tokens here)
-  const staticHeaders = typeof target.headers === 'string'
-    ? JSON.parse(target.headers) : (target.headers || {});
-  const authResult = await buildAuthHeaders(target, db);
-
-  // If credential setup failed, fail the delivery up front rather than
-  // sending an unauthenticated request and letting the upstream server
-  // return a generic 401/403. Retries can't fix a misconfigured credential,
-  // and the explicit reason is easier to debug than upstream "Unauthorized".
-  if (authResult.error) {
-    return {
-      target_id: target.id,
-      request_url: target.url,
-      request_method: target.method || 'POST',
-      request_body: requestBody,
-      response_status: null,
-      response_body: null,
-      status: 'failed',
-      error: `Auth setup failed: ${authResult.error}`,
-    };
-  }
-
-  const headers = {
-    'Content-Type': 'application/json',
-    ...staticHeaders,
-    ...authResult.headers,
-  };
-
-  const fetchOptions = {
-    method: target.method || 'POST',
-    headers,
-    timeout: 30000,
-  };
-
-  // GET/DELETE don't typically have bodies
-  if (!['GET', 'DELETE'].includes(target.method)) {
-    fetchOptions.body = requestBody;
-  }
-
-  const logData = {
-    target_id: target.id,
-    request_url: target.url,
-    request_method: target.method || 'POST',
-    request_body: requestBody,
-  };
-
-  try {
-    const response = await fetch(target.url, fetchOptions);
-    const responseText = await response.text();
-
-    logData.response_status = response.status;
-    logData.response_body = responseText.slice(0, 10000); // Truncate large responses
-    logData.status = response.ok ? 'success' : 'failed';
-    if (!response.ok) {
-      logData.error = `HTTP ${response.status}`;
-    }
-  } catch (err) {
-    logData.response_status = null;
-    logData.response_body = null;
-    logData.status = 'failed';
-    logData.error = err.message;
-  }
-
-  return logData;
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// DELIVERY — WORKFLOW
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Start a workflow execution. Transform output becomes both init_data and
- * the initial variables. Advance is fire-and-forget — hook delivery doesn't
- * wait for the workflow to complete. Mirrors apptService.createAppt step 7.
- *
- * Slice 4.3 Part B: if the target workflow has `default_contact_id_from` set,
- * we look that key up on the transform output (init_data) and stamp
- * contact_id onto the new execution row. Explicit override is NOT supported
- * on this path — hook config already has the full transform pipeline to
- * shape the payload; a second "top-level override" would just add another
- * thing to reason about. If a hook needs to contact-tie a non-default key,
- * the hook's mapper transforms the value into the template's expected key.
- *
- * Invalid values at the default key (non-integer, not positive) fall through
- * to NULL silently — matches the behaviour of the /start route's template-
- * default branch; a bad value shouldn't break hook delivery.
- */
-async function deliverWorkflow(target, targetConfig, targetOutput, db) {
-  const workflowId = targetConfig.workflow_id;
-  const initData = targetOutput;
-
-  const logData = {
-    target_id: target.id,
-    request_url: `internal://workflow/${workflowId != null ? workflowId : '?'}`,
-    request_method: 'INTERNAL',
-    request_body: JSON.stringify(initData),
-  };
-
-  if (workflowId == null) {
-    logData.response_status = 500;
-    logData.response_body = null;
-    logData.status = 'failed';
-    logData.error = 'workflow target missing config.workflow_id';
-    return logData;
-  }
-
-  try {
-    const { advanceWorkflow, resolveExecutionContactId } = require('../lib/workflow_engine');
-
-    // Look up the template default. One extra tiny SELECT per hook-started
-    // execution — acceptable overhead, and keeps the contact-tie wiring in
-    // one place (the workflow row) rather than duplicating it in hook config.
-    const [[wfRow]] = await db.query(
-      `SELECT default_contact_id_from FROM workflows WHERE id = ?`,
-      [workflowId]
-    );
-    const defaultKey = wfRow ? wfRow.default_contact_id_from : null;
-
-    // Resolve via the shared helper. No explicit override on this path
-    // (see JSDoc above). Errors are swallowed to NULL — hook config authors
-    // don't need their delivery pipeline to blow up over a bad payload.
-    let contactId = null;
-    try {
-      contactId = resolveExecutionContactId({
-        explicitContactId: undefined,
-        initData,
-        defaultKey,
-      });
-    } catch (e) {
-      // InvalidContactIdError can't happen here (we pass explicitContactId=undefined),
-      // but be defensive in case the helper changes in a future slice.
-      console.warn(`[HOOK→WF] contact_id resolution error, falling back to NULL:`, e.message);
-      contactId = null;
-    }
-
-    const [result] = await db.query(
-      `INSERT INTO workflow_executions
-       (workflow_id, contact_id, status, init_data, variables, current_step_number)
-       VALUES (?, ?, 'active', ?, ?, 1)`,
-      [workflowId, contactId, JSON.stringify(initData), JSON.stringify(initData)]
-    );
-    const executionId = result.insertId;
-
-    // Non-blocking advance — mirrors apptService.createAppt pattern.
-    // A background failure here does NOT cause the hook delivery to retry;
-    // the execution row itself will be marked 'failed' by markExecutionCompleted.
-    advanceWorkflow(executionId, db)
-      .then((r) => console.log(`[HOOK→WF] execution ${executionId}: ${r?.status || 'unknown'}`))
-      .catch((err) => console.error(`[HOOK→WF] execution ${executionId} failed:`, err.message));
-
-    logData.request_url = `internal://workflow/${workflowId}/execution/${executionId}`;
-    logData.response_status = 200;
-    logData.response_body = JSON.stringify({
-      executionId,
-      workflowId,
-      contactId,
-      status: 'started',
-    });
-    logData.status = 'success';
-    return logData;
-  } catch (err) {
-    logData.response_status = 500;
-    logData.response_body = null;
-    logData.status = 'failed';
-    logData.error = `workflow delivery failed: ${err.message}`;
-    return logData;
-  }
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// DELIVERY — SEQUENCE
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Enroll a contact in a sequence. Synchronous — enrollContact* just inserts
- * the enrollment row and schedules the first step job.
- *
- * Two modes, determined by targetConfig:
- *   - template_id set → enrollContactByTemplateId (direct)
- *   - template_type set → enrollContact (cascade)
- *
- * Cascade fields are no longer a separate config — the cascade reads them
- * from the resolved triggerData object. To get cascade specificity, list
- * the relevant fields (appt_type, appt_with, case_type, …) in
- * targetConfig.trigger_data_fields so they flow into triggerData.
- *
- * contact_id_field and trigger_data_fields entries support dot-paths — e.g.
- * "body.contactId" on a passthrough hook — so users don't need a mapper just
- * to flatten the shape. Consistent with how internal_function params_mapping
- * resolves sources.
- */
-async function deliverSequence(target, targetConfig, targetOutput, db) {
-  const templateId = targetConfig.template_id;
-  const templateType = targetConfig.template_type;
-  const contactIdField = targetConfig.contact_id_field || 'contact_id';
-  const triggerDataFields = Array.isArray(targetConfig.trigger_data_fields)
-    ? targetConfig.trigger_data_fields : [];
-
-  // Dot-path aware — handles both flat keys ("contactId") and nested paths
-  // ("body.contactId"), matching how hookMapper and resolveParamsMapping work.
-  const contactId = targetOutput == null ? undefined : getByPath(targetOutput, contactIdField);
-
-  // Build trigger_data from specified fields. Each field is resolved via
-  // getByPath and stored under the last path segment — so "body.appt_id"
-  // becomes triggerData.appt_id, which is what sequenceEngine expects.
-  const triggerData = {};
-  for (const field of triggerDataFields) {
-    const val = targetOutput == null ? undefined : getByPath(targetOutput, field);
-    if (val !== undefined) {
-      const key = field.includes('.') ? field.split('.').pop() : field;
-      triggerData[key] = val;
-    }
-  }
-
-  // Determine mode. Validation (api.hooks validateTargetPayload) already
-  // rejects "both set" at save time, so at delivery time at most one is live.
-  const useById = templateId !== undefined && templateId !== null && templateId !== '';
-
-  let callPayload;
-  let requestUrl;
-  if (useById) {
-    callPayload = {
-      contact_id: contactId,
-      template_id: templateId,
-      trigger_data: triggerData,
-    };
-    requestUrl = `internal://sequence/id/${templateId}`;
-  } else {
-    callPayload = {
-      contact_id: contactId,
-      template_type: templateType,
-      trigger_data: triggerData,
-    };
-    requestUrl = `internal://sequence/${templateType || '?'}`;
-  }
-
-  const logData = {
-    target_id: target.id,
-    request_url: requestUrl,
-    request_method: 'INTERNAL',
-    request_body: JSON.stringify(callPayload),
-  };
-
-  if (!useById && !templateType) {
-    logData.response_status = 500;
-    logData.response_body = null;
-    logData.status = 'failed';
-    logData.error = 'sequence target missing config.template_type or config.template_id';
-    return logData;
-  }
-
-  if (contactId == null || contactId === '') {
-    logData.response_status = 500;
-    logData.response_body = null;
-    logData.status = 'failed';
-    logData.error = `sequence target: missing contact_id from transform field "${contactIdField}"`;
-    return logData;
-  }
-
-  try {
-    const sequenceEngine = require('../lib/sequenceEngine');
-    let result;
-    if (useById) {
-      const idInt = parseInt(templateId, 10);
-      if (!Number.isInteger(idInt) || idInt <= 0) {
-        throw new Error(`config.template_id must be a positive integer (got ${templateId})`);
-      }
-      result = await sequenceEngine.enrollContactByTemplateId(
-        db,
-        contactId,
-        idInt,
-        triggerData
-      );
-    } else {
-      result = await sequenceEngine.enrollContact(
-        db,
-        contactId,
-        templateType,
-        triggerData
-      );
-    }
-
-    logData.response_status = 200;
-    logData.response_body = JSON.stringify(result);
-    logData.status = 'success';
-    return logData;
-  } catch (err) {
-    logData.response_status = 500;
-    logData.response_body = null;
-    logData.status = 'failed';
-    logData.error = `sequence delivery failed: ${err.message}`;
-    return logData;
-  }
-}
-
-
-// ─────────────────────────────────────────────────────────────
-// DELIVERY — INTERNAL FUNCTION
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Call a registered internal function directly. Synchronous — await the
- * function and capture its return value as the delivery response.
- */
-async function deliverInternalFunction(target, targetConfig, targetOutput, db) {
-  const functionName = targetConfig.function_name;
-  const paramsMapping = targetConfig.params_mapping || {};
-
-  const logData = {
-    target_id: target.id,
-    request_url: `internal://function/${functionName || '?'}`,
-    request_method: 'INTERNAL',
-    request_body: null,
-  };
-
-  if (!functionName) {
-    logData.request_body = JSON.stringify(targetOutput);
-    logData.response_status = 500;
-    logData.response_body = null;
-    logData.status = 'failed';
-    logData.error = 'internal_function target missing config.function_name';
-    return logData;
-  }
-
-  // Resolve params_mapping against targetOutput
-  const params = resolveParamsMapping(paramsMapping, targetOutput);
-  logData.request_body = JSON.stringify(params);
-
-  try {
-    const internalFunctions = require('../lib/internal_functions');
-    const fn = internalFunctions[functionName];
-    if (typeof fn !== 'function') {
-      logData.response_status = 500;
-      logData.response_body = null;
-      logData.status = 'failed';
-      logData.error = `Unknown internal function: ${functionName}`;
-      return logData;
-    }
-
-    const result = await fn(params, db);
-
-    logData.response_status = 200;
-    logData.response_body = JSON.stringify(result).slice(0, 10000);
-    logData.status = 'success';
-    return logData;
-  } catch (err) {
-    logData.response_status = 500;
-    logData.response_body = null;
-    logData.status = 'failed';
-    logData.error = `internal_function delivery failed: ${err.message}`;
-    return logData;
-  }
-}
-
 
 // ─────────────────────────────────────────────────────────────
 // DELIVERY — DISPATCHER
@@ -721,35 +364,22 @@ async function deliverToTarget(target, hookTransformOutput, db) {
 
   const targetType = target.target_type || 'http';
 
-  if (targetType === 'http') {
-    return deliverHttp(target, targetOutput, db);
-  }
-
+  // Slice 2.2: per-type dispatch lives in lib/actionDispatchers. We parse the
+  // config here (as before) and pass the full target row through context so
+  // the HTTP dispatcher can read url/method/headers/body_* off it, and all
+  // four can stamp target.id onto the delivery-log row. dispatch() returns
+  // { status, result, error }; `result` is the same logData object the old
+  // deliver* functions returned, so callers downstream are unaffected — we
+  // hand it straight back.
   const targetConfig = parseTargetConfig(target);
-
-  if (targetType === 'workflow') {
-    return deliverWorkflow(target, targetConfig, targetOutput, db);
-  }
-
-  if (targetType === 'sequence') {
-    return deliverSequence(target, targetConfig, targetOutput, db);
-  }
-
-  if (targetType === 'internal_function') {
-    return deliverInternalFunction(target, targetConfig, targetOutput, db);
-  }
-
-  // Unknown type — fail explicitly so the operator sees it in the logs
-  return {
-    target_id: target.id,
-    request_url: `unknown://${targetType}`,
-    request_method: 'UNKNOWN',
-    request_body: JSON.stringify(targetOutput),
-    response_status: 500,
-    response_body: null,
-    status: 'failed',
-    error: `Unknown target_type: ${targetType}`,
-  };
+  const { result } = await actionDispatchers.dispatch(
+    db,
+    targetType,
+    targetConfig,
+    targetOutput,
+    { target }
+  );
+  return result;
 }
 
 
@@ -1386,8 +1016,12 @@ module.exports = {
   parseTargetConfig,
   resolveParamsMapping,
   getByPath,
-  deliverHttp,
-  deliverWorkflow,
-  deliverSequence,
-  deliverInternalFunction,
+  // Slice 2.2: the four delivery functions now live in lib/actionDispatchers.
+  // Re-exported here under their historical names so existing test imports of
+  // hookService.deliverHttp etc. keep working. No production caller imports
+  // these directly (all delivery goes through executeHook → deliverToTarget).
+  deliverHttp: actionDispatchers.dispatchHttp,
+  deliverWorkflow: actionDispatchers.dispatchWorkflow,
+  deliverSequence: actionDispatchers.dispatchSequence,
+  deliverInternalFunction: actionDispatchers.dispatchInternalFunction,
 };
