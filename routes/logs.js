@@ -176,7 +176,9 @@ router.post("/logEmail", trap("logEmail"), async (req, res) => {
     error:   "Gone",
     message: "/logEmail is deprecated (Slice 1.2c canary). Use POST /api/email/ingest with X-Email-Ingest-Key. The legacy route will be removed after the watch period.",
   });
-
+throw new Error(
+  `[CANARY-1.2c] Deprecated /logEmail route hit: ${JSON.stringify(canaryDiag)}`
+);
   // ── LEGACY HANDLER (UNREACHABLE during the canary; preserved for revert) ──
 
   const db = req.db;
