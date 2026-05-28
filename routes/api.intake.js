@@ -452,9 +452,27 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
 // Find or create a case for a contact
 //
 // Body:
-//   contact_id  number   required
-//   case_type   string   required — e.g. "Bankruptcy", "Other"
-//   duplicate   string   "duplicate" to force new, otherwise "return" (default)
+//   contact_id   number   required
+//   case_type    string   required — e.g. "Bankruptcy", "Other"
+//   duplicate    string   "duplicate" to force new, otherwise "return" (default)
+//   case_number  string   optional (Phase 3) — short-form docket number,
+//                         varchar(20). Empty string treated as absent.
+//
+// case_number contract (Phase 3):
+//   - case_number provided  ⇒ ALWAYS create a new case carrying that number,
+//                             collision-checked against existing case_number
+//                             and case_number_full. The find-existing-by
+//                             (contact_id, case_type) path is bypassed because
+//                             it wouldn't apply the supplied number to the
+//                             matched case, silently dropping caller intent.
+//                             Equivalent to forcing duplicate='duplicate'.
+//   - case_number absent     ⇒ find-or-create per the `duplicate` flag
+//                             (existing behavior, unchanged).
+//
+//   On CREATE, case_number is stored in the short-form column only;
+//   case_number_full is left NULL (set later by the detail-form / Phase 4
+//   flows). New inserts store NULL — never empty string — when no number was
+//   supplied, for consistent downstream querying.
 // ─────────────────────────────────────────
 router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
   const { contact_id, case_type, duplicate = "return" } = req.body;
@@ -463,9 +481,52 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ status: "error", message: "contact_id and case_type are required" });
   }
 
+  // ── Optional case_number (Phase 3) ──
+  // Trim; empty-after-trim → NULL (absent). Enforce varchar(20) ceiling.
+  let caseNumber = req.body.case_number;
+  caseNumber = (typeof caseNumber === "string") ? caseNumber.trim() : "";
+  if (caseNumber === "") caseNumber = null;
+  if (caseNumber !== null && caseNumber.length > 20) {
+    return res.status(400).json({ status: "error", message: "case_number exceeds 20 chars" });
+  }
+
   try {
+    // ── Collision check (only when a case_number was supplied) ──
+    //    Guards the organic dedup invariant production has held without a DB
+    //    constraint. Checks BOTH the short and full columns. Fires regardless
+    //    of the duplicate flag, and BEFORE the find-existing path, so a
+    //    colliding number is always rejected (supersedes everything).
+    if (caseNumber !== null) {
+      const [clash] = await req.db.query(
+        `SELECT case_id, case_number, case_number_full, case_type
+           FROM cases
+          WHERE (case_number      IS NOT NULL AND case_number      <> '' AND case_number      = ?)
+             OR (case_number_full IS NOT NULL AND case_number_full <> '' AND case_number_full = ?)
+          LIMIT 1`,
+        [caseNumber, caseNumber]
+      );
+      if (clash.length) {
+        const c = clash[0];
+        return res.status(409).json({
+          status: "error",
+          message: `case_number "${caseNumber}" already in use by case ${c.case_id}`,
+          conflict: {
+            case_id:          c.case_id,
+            case_number:      c.case_number || null,
+            case_number_full: c.case_number_full || null,
+            case_type:        c.case_type,
+          },
+        });
+      }
+    }
+
+    // ── Effective duplicate flag ──
+    // Providing a case_number is an unambiguous "create a new case with this
+    // number" signal. Force CREATE so find-existing can't swallow the intent.
+    const effectiveDuplicate = (caseNumber !== null) ? "duplicate" : duplicate;
+
     // ── Check for existing active case of same type ──
-    if (duplicate !== "duplicate") {
+    if (effectiveDuplicate !== "duplicate") {
       const [existing] = await req.db.query(
         `SELECT cases.case_id
          FROM cases
@@ -499,11 +560,19 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
       attempts++;
 
       try {
-        await req.db.query(
-          `INSERT INTO cases (case_id, case_open_date, case_type)
-           VALUES (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?)`,
-          [case_id, case_type]
-        );
+        if (caseNumber !== null) {
+          await req.db.query(
+            `INSERT INTO cases (case_id, case_open_date, case_type, case_number)
+             VALUES (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?, ?)`,
+            [case_id, case_type, caseNumber]
+          );
+        } else {
+          await req.db.query(
+            `INSERT INTO cases (case_id, case_open_date, case_type)
+             VALUES (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?)`,
+            [case_id, case_type]
+          );
+        }
         inserted = true;
       } catch (err) {
         if (err.code !== "ER_DUP_ENTRY") throw err;

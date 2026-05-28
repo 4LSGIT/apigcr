@@ -442,10 +442,104 @@ async function removeCaseContact(db, caseId, contactId) {
 }
 
 
+// ─────────────────────────────────────────────────────────────
+// searchCases
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Typeahead case search for the CasePicker primitive (Phase 3).
+ *
+ * Deliberately SEPARATE from listCases — do not converge them later.
+ * listCases is display-oriented: it coalesces case_number_full/case_number/
+ * case_id into a single `case_number` alias and aggregates ALL related
+ * contacts via JSON_ARRAYAGG. The picker needs neither — it needs the raw
+ * case_number and case_number_full as distinct fields plus a single Primary
+ * contact. Two different consumers, two different shapes.
+ *
+ * Search targets (combined with OR):
+ *   - case_id           exact match on the typed query
+ *   - case_number       LIKE %q%
+ *   - case_number_full  LIKE %q%
+ *   - Primary contact name LIKE %q% (EXISTS subquery)
+ *
+ * Primary contact is resolved via a pre-aggregated subquery picking
+ * MIN(case_relate_client_id) among 'Primary' relations. This is
+ * deterministic (lowest contact_id), stable across calls, and
+ * ONLY_FULL_GROUP_BY-clean: every selected column is either a base column of
+ * `cases` (functionally dependent on its PK), or comes from the pre-grouped
+ * subquery `p`, or from `contacts pc` keyed on its PK via p.primary_contact_id.
+ * No outer GROUP BY is needed because no join in the SELECT can multiply rows:
+ *   - `p` is grouped by case_relate_case_id (one row per case)
+ *   - `pc` joins on its PK (one row)
+ * The name-match lives in an EXISTS subquery in the WHERE clause, so it never
+ * contributes rows to the result set.
+ *
+ * Note on multiple Primaries: case_relate's UNIQUE KEY is
+ * (case_id, contact_id, type), so a single contact can't be Primary twice on a
+ * case — but two DIFFERENT contacts can both be Primary. MIN(contact_id) picks
+ * deterministically among them. If the firm later needs "the actual lead
+ * debtor" semantics, that's a data-model change (e.g. a case_relate.is_lead
+ * flag), not a search-query change.
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {string} [opts.q]       - search term; empty/blank → no fetch
+ * @param {number} [opts.limit=20] - capped at 50
+ * @returns {{ cases: object[], total: number }}
+ */
+async function searchCases(db, { q = '', limit = 20 } = {}) {
+  q = (q == null ? '' : String(q)).trim();
+  if (!q) return { cases: [], total: 0 };
+
+  let lim = parseInt(limit, 10);
+  if (!Number.isInteger(lim) || lim <= 0) lim = 20;
+  if (lim > 50) lim = 50;
+
+  const like = `%${q}%`;
+
+  const [cases] = await db.query(
+    `SELECT
+       c.case_id,
+       c.case_number,
+       c.case_number_full,
+       c.case_type,
+       c.case_chapter,
+       c.case_stage,
+       pc.contact_id   AS primary_contact_id,
+       pc.contact_name AS primary_contact_name
+     FROM cases c
+     LEFT JOIN (
+       SELECT case_relate_case_id, MIN(case_relate_client_id) AS primary_contact_id
+         FROM case_relate
+        WHERE case_relate_type = 'Primary'
+        GROUP BY case_relate_case_id
+     ) p ON p.case_relate_case_id = c.case_id
+     LEFT JOIN contacts pc ON pc.contact_id = p.primary_contact_id
+     WHERE c.case_id = ?
+        OR c.case_number      LIKE ?
+        OR c.case_number_full LIKE ?
+        OR EXISTS (
+             SELECT 1
+               FROM case_relate cr2
+               JOIN contacts co2 ON co2.contact_id = cr2.case_relate_client_id
+              WHERE cr2.case_relate_case_id = c.case_id
+                AND cr2.case_relate_type = 'Primary'
+                AND co2.contact_name LIKE ?
+           )
+     ORDER BY (c.case_stage = 'Open') DESC, c.case_open_date DESC, c.case_id DESC
+     LIMIT ?`,
+    [q, like, like, like, lim]
+  );
+
+  return { cases, total: cases.length };
+}
+
+
 module.exports = {
   listCases,
   getCase,
   updateCase,
   addCaseContact,
-  removeCaseContact
+  removeCaseContact,
+  searchCases
 };

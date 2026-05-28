@@ -39,6 +39,24 @@ router.get('/api/cases', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// ─── SEARCH (typeahead for CasePicker) ───
+// MUST be registered before GET /api/cases/:id, or Express captures
+// the literal "search" as :id. Returns the picker-shaped payload
+// (raw case_number + case_number_full, single Primary contact) from
+// caseService.searchCases — deliberately distinct from the LIST shape.
+router.get('/api/cases/search', jwtOrApiKey, async (req, res) => {
+  try {
+    const result = await caseService.searchCases(req.db, {
+      q: req.query.q || '',
+      limit: req.query.limit || 20,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('GET /api/cases/search error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to search cases' });
+  }
+});
+
 // ─── GET ONE ───
 router.get('/api/cases/:id', jwtOrApiKey, async (req, res) => {
   try {

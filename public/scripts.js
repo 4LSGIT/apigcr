@@ -928,6 +928,9 @@ function _resolveAddFile() {
        the override. */
     .swal2-html-container.oad-html { overflow: visible; }
     .oad-html .cp-dropdown { max-height: 12em; }
+    /* ── CasePicker rows (Phase 3) ── */
+    .cp-case-row .cp-case-num { font-weight: bold; font-size: 1.05em; }
+    .cp-case-row .cp-sub { font-size: 0.85em; color: #777; }
   `;
   document.head.appendChild(style);
 })();
@@ -1056,6 +1059,153 @@ function ContactPicker(hostEl, options = {}) {
       hostEl.innerHTML = '';   // dropdown is a child of hostEl — cleared here
     },
     getSelected() { return selected; },
+    getQuery() { return input.value.trim(); },
+    focus() { input.focus(); },
+  };
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   CasePicker(hostEl, options)
+
+   Typeahead <input> + results dropdown for CASES. Sibling to ContactPicker
+   (Phase 3). Deliberately a structural copy, NOT a shared abstraction — a
+   _pickerBase earns itself at the third picker, not the second.
+
+   options = {
+     onSelect(caseId, caseRow),   // called on row click
+     placeholder = 'Search cases…',
+     initialQuery = ''
+   }
+   Returns { destroy(), getSelected(), getQuery(), focus() } where
+   getSelected() returns the last-clicked { case_id, case } or null and
+   getQuery() returns the trimmed current input value.
+
+   Hits GET /api/cases/search?q=&limit=20 (the picker-shaped endpoint).
+   Debounce 250ms. Cap 20. Empty input → empty dropdown (no fetch).
+   Does NOT mutate the input value on select (caller owns focus/state).
+
+   Row layout (3 lines, top-to-bottom):
+     L1 (prominent): case_number_full || case_number || '(no case#)'
+     L2 (muted):     case_id · case_type · case_stage
+     L3 (muted):     primary_contact_name || '(no primary contact)'
+
+   All text rendered via textContent (no innerHTML) → no escaping needed.
+   ────────────────────────────────────────────────────────────────────────── */
+function CasePicker(hostEl, options = {}) {
+  const onSelect     = typeof options.onSelect === 'function' ? options.onSelect : () => {};
+  const placeholder  = options.placeholder || 'Search cases…';
+  const initialQuery = options.initialQuery || '';
+
+  hostEl.classList.add('cp-wrap');
+  hostEl.innerHTML = '';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'cp-input';
+  input.placeholder = placeholder;
+  input.autocomplete = 'off';
+  input.value = initialQuery;
+
+  // In-flow dropdown (same rationale as ContactPicker — absolute/fixed/body
+  // variants fight SWAL overflow clipping and break row clicks).
+  const dropdown = document.createElement('div');
+  dropdown.className = 'cp-dropdown';
+
+  hostEl.appendChild(input);
+  hostEl.appendChild(dropdown);
+
+  let selected = null;   // { case_id, case }
+  let timer = null;
+  let seq = 0;           // request sequence guard against out-of-order responses
+  let destroyed = false;
+
+  function clearDropdown() { dropdown.innerHTML = ''; }
+
+  function renderRows(rows) {
+    clearDropdown();
+    if (!rows || !rows.length) {
+      const empty = document.createElement('div');
+      empty.className = 'cp-empty';
+      empty.textContent = 'No matches';
+      dropdown.appendChild(empty);
+      return;
+    }
+    rows.forEach((r) => {
+      const row = document.createElement('div');
+      row.className = 'cp-row cp-case-row';
+
+      // L1 — case number, prominent. Treat a case_number that merely echoes
+      // the case_id as "no real number" (defensive; searchCases returns raw
+      // columns so this normally won't happen, but the fallback chain stays
+      // honest).
+      const numRaw = r.case_number_full || r.case_number || '';
+      const num = (numRaw && numRaw !== r.case_id) ? numRaw : '(no case#)';
+      const line1 = document.createElement('div');
+      line1.className = 'cp-case-num';
+      line1.textContent = num;
+      row.appendChild(line1);
+
+      // L2 — case_id · case_type · case_stage
+      const meta = [r.case_id, r.case_type, r.case_stage].filter(Boolean).join('  ·  ');
+      const line2 = document.createElement('div');
+      line2.className = 'cp-sub';
+      line2.textContent = meta;
+      row.appendChild(line2);
+
+      // L3 — primary contact
+      const line3 = document.createElement('div');
+      line3.className = 'cp-sub';
+      line3.textContent = r.primary_contact_name || '(no primary contact)';
+      row.appendChild(line3);
+
+      row.addEventListener('click', () => {
+        selected = { case_id: r.case_id, case: r };
+        dropdown.querySelectorAll('.cp-row').forEach((el) => el.classList.remove('cp-active'));
+        row.classList.add('cp-active');
+        // Do NOT mutate input.value — caller owns input state for cases.
+        clearDropdown();
+        onSelect(r.case_id, r);
+      });
+      dropdown.appendChild(row);
+    });
+  }
+
+  async function runSearch(q) {
+    const mySeq = ++seq;
+    try {
+      const data = await P.apiSend('/api/cases/search', 'GET', { q, limit: 20 });
+      if (destroyed || mySeq !== seq) return; // stale response
+      renderRows((data && data.cases) || []);
+    } catch (err) {
+      if (destroyed || mySeq !== seq) return;
+      clearDropdown();
+      const e = document.createElement('div');
+      e.className = 'cp-empty';
+      e.textContent = 'Search error';
+      dropdown.appendChild(e);
+    }
+  }
+
+  function onInput() {
+    const q = input.value.trim();
+    if (timer) clearTimeout(timer);
+    if (!q) { seq++; clearDropdown(); return; }   // empty → no fetch, void in-flight
+    timer = setTimeout(() => runSearch(q), 250);
+  }
+
+  input.addEventListener('input', onInput);
+
+  if (initialQuery.trim()) runSearch(initialQuery.trim());
+
+  return {
+    destroy() {
+      destroyed = true;
+      if (timer) clearTimeout(timer);
+      input.removeEventListener('input', onInput);
+      hostEl.innerHTML = '';   // dropdown is a child of hostEl — cleared here
+    },
+    getSelected() { return selected; },
+    getQuery() { return input.value.trim(); },
     focus() { input.focus(); },
   };
 }
