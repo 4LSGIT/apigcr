@@ -1079,12 +1079,19 @@ function ContactPicker(hostEl, options = {}) {
                                           orphan-adopt create-new branch so a
                                           value that matches an existing contact
                                           still creates a fresh one.
+     suppressOpen (boolean)             — when truthy, skip the addFile/openFile
+                                          call so the user stays on the current
+                                          surface (e.g. case2's create-new
+                                          branch attaches the new contact to the
+                                          case instead of opening its tab).
+                                          onSuccess still fires.
 
    When *_start_date is absent the date inputs are NOT rendered — the header
    "+ New Client" UX is unchanged.
 
-   onSuccess() fires after a successful create (client or case), AFTER the
-   file is opened via addFile.
+   onSuccess(data) fires after a successful create (client or case), AFTER the
+   file is opened via addFile (unless suppressOpen). Receives the intake
+   response object (data.id, data.name, data.status, …).
    ────────────────────────────────────────────────────────────────────────── */
 function newContact(prefill = {}, onSuccess = null) {
   const hasPhoneStart = Object.prototype.hasOwnProperty.call(prefill, 'phone_start_date')
@@ -1136,6 +1143,7 @@ function newContact(prefill = {}, onSuccess = null) {
     showLoaderOnDeny: true,
 
     didOpen: () => {
+      if (prefill.name) E("NCName").value = prefill.name;
       if (prefill.phone) {
         const p = String(prefill.phone).replace(/\D/g, "");
         E("NCPhone").value = p.length === 10
@@ -1283,13 +1291,15 @@ function newContact(prefill = {}, onSuccess = null) {
     });
 
     if (data.status === "success") {
-      const openFile = _resolveAddFile();
-      if (type === "client") {
-        if (openFile) openFile(data.name, "client", data.id);
-      } else if (type === "case") {
-        if (openFile) openFile(data.id, "case", data.id);
+      if (!prefill.suppressOpen) {
+        const openFile = _resolveAddFile();
+        if (type === "client") {
+          if (openFile) openFile(data.name, "client", data.id);
+        } else if (type === "case") {
+          if (openFile) openFile(data.id, "case", data.id);
+        }
       }
-      if (typeof onSuccess === "function") onSuccess();
+      if (typeof onSuccess === "function") onSuccess(data);
     }
   });
 }

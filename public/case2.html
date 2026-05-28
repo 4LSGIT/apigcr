@@ -763,60 +763,131 @@
         });
       }
 
+      // Shared refresh: re-pull contacts for this case and re-render the table.
+      async function _refreshCaseClients() {
+        const refresh = await P.apiSend(`/api/cases/${caseID}`, "GET", { include: "contacts" });
+        window.entityData.clients = refresh.clients || [];
+        putClients();
+      }
+
+      // ContactPicker-driven add dialog. Attach an existing contact, or branch
+      // to newContact to create one when no match exists. relate_type is the
+      // case's view on the relation, so it stays captured here (not in
+      // newContact). Default-less relation select (must pick) is preserved from
+      // the prior dialog.
       async function addCaseClient() {
+        let selectedContact = null;   // { id, name } set by ContactPicker onSelect
+        let picker = null;
+
         Swal.fire({
-          title: "Add Person:",
-          html: `<p>Enter a Contact ID and press "Add Person" or enter a search term (name, phone number, or email) and press "Lookup"</p>
-              <input id="addCaseClientInput" style="width:300px"><br>
-              <select id="addCaseClientRelate" style="width:300px"><option value="" selected disabled>Select a relation to case</option><option>Primary</option><option>Secondary</option><option>Other</option><option>Bystander</option></select><br>
-              <select id="addCaseClientSelect" style="display:none;width:300px" onchange="E('addCaseClientInput').value = this.value"><option>this option</option></select>`,
+          title: "Add Person to Case",
+          html: `
+            <div style="text-align:left;">
+              <label class="input-label">Find a contact:</label>
+              <div id="acc-picker-mount"></div>
+              <br>
+              <label class="input-label">Relation to case:</label><br>
+              <select id="acc-relate" style="width:300px">
+                <option value="" selected disabled>Select a relation to case</option>
+                <option>Primary</option>
+                <option>Secondary</option>
+                <option>Other</option>
+                <option>Bystander</option>
+              </select>
+              <br><br>
+              <button type="button" id="acc-create-new" class="oad-create-btn">
+                <i class="fa-solid fa-user-plus"></i>&nbsp;Or create new contact
+              </button>
+            </div>`,
           showCancelButton: true,
           showLoaderOnConfirm: true,
-          showLoaderOnDeny: true,
-          confirmButtonText: "Add Person",
-          showDenyButton: true,
-          denyButtonText: "Lookup",
+          confirmButtonText: "Attach",
+          cancelButtonText: "Cancel",
+          showCloseButton: true,
+          allowOutsideClick: () => !Swal.isLoading(),
+
+          didOpen: () => {
+            const confirmBtn = Swal.getConfirmButton();
+            if (confirmBtn) confirmBtn.disabled = true;
+
+            picker = ContactPicker(E("acc-picker-mount"), {
+              placeholder: "Search by name, phone, or email…",
+              onSelect: (cid, c) => {
+                selectedContact = { id: cid, name: c.contact_name };
+                if (confirmBtn) confirmBtn.disabled = false;
+              },
+            });
+
+            // Create-new branch. Capture caseID (closure) and relate at click
+            // time — the dialog closes before onCreateSuccess runs, so reading
+            // #acc-relate later would fail.
+            E("acc-create-new").addEventListener("click", () => {
+              const relate = E("acc-relate").value;
+              if (!relate) {
+                Swal.showValidationMessage("Please select a relation to case");
+                return;
+              }
+              const capturedRelate = relate;
+
+              // Read the typed search term straight from the picker's input.
+              const pickerInput = E("acc-picker-mount").querySelector("input");
+              const term = (pickerInput && pickerInput.value || "").trim();
+
+              // Detect shape: 10 digits → phone; contains @ → email; else name.
+              const digits = term.replace(/\D/g, "");
+              const prefill = { suppressOpen: true, force_create: true };
+              if (digits.length === 10)      prefill.phone = digits;
+              else if (term.includes("@"))   prefill.email = term;
+              else if (term)                 prefill.name  = term;
+
+              if (picker) picker.destroy();
+              Swal.close();
+
+              newContact(prefill, async (data) => {
+                if (!data || data.status !== "success") return;
+                try {
+                  await P.apiSend(`/api/cases/${caseID}/contacts`, "POST",
+                    { contact_id: data.id, relate_type: capturedRelate });
+                  await _refreshCaseClients();
+                  Toast.fire({ icon: "success", title: "Created and added to case" });
+                } catch (err) {
+                  Toast.fire({
+                    icon: "error",
+                    title: `Created ${data.name || "contact"}, but failed to add to case`,
+                    text: err.message || ""
+                  });
+                }
+              });
+            });
+          },
+
+          // Attach branch.
           preConfirm: async () => {
-            const text   = E("addCaseClientInput").value;
-            const relate = E("addCaseClientRelate").value;
-            if (!text || isNaN(text)) {
-              Swal.showValidationMessage("Please enter a Client ID"); return false;
-            } else if (!relate) {
-              Swal.showValidationMessage("Please select a relation to case"); return false;
+            const relate = E("acc-relate").value;
+            if (!selectedContact) {
+              Swal.showValidationMessage("Pick a contact, or create a new one");
+              return false;
+            }
+            if (!relate) {
+              Swal.showValidationMessage("Please select a relation to case");
+              return false;
             }
             try {
               await P.apiSend(`/api/cases/${caseID}/contacts`, "POST",
-                { contact_id: parseInt(text), relate_type: relate });
-              // Refresh clients from API
-              const refresh = await P.apiSend(`/api/cases/${caseID}`, "GET", { include: "contacts" });
-              window.entityData.clients = refresh.clients || [];
-              putClients();
-              Toast.fire({ icon: "success", title: "Person added to case" });
+                { contact_id: selectedContact.id, relate_type: relate });
+              await _refreshCaseClients();
             } catch (err) {
-              Toast.fire({ icon: "error", title: "Error", text: err.message });
+              Swal.showValidationMessage(err.message || "Failed to add to case");
+              return false;
             }
           },
-          preDeny: async () => {
-            const text = E("addCaseClientInput").value;
-            if (!text) { Swal.showValidationMessage("Please enter a search term"); return false; }
-            try {
-              const data = await P.apiSend("/api/contacts", "GET", { q: text, limit: 20 });
-              if (data.contacts && data.contacts.length) {
-                E("addCaseClientSelect").style.display = "";
-                E("addCaseClientSelect").innerHTML =
-                  `<option selected disabled>Select a Contact:</option>` +
-                  data.contacts.map(c =>
-                    `<option value="${c.contact_id}">${c.contact_id} ${c.contact_name}</option>`
-                  ).join("");
-                Swal.resetValidationMessage();
-              } else {
-                Swal.showValidationMessage("No matching people found");
-              }
-            } catch (err) {
-              Swal.showValidationMessage(err.message);
-            }
-            return false;
-          },
+
+          willClose: () => { if (picker) picker.destroy(); },
+
+        }).then((result) => {
+          if (result.isConfirmed) {
+            Toast.fire({ icon: "success", title: "Added to case" });
+          }
         });
       }
     </script>
