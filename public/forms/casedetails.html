@@ -59,7 +59,8 @@
   <div class="yc-row">
     <div class="yc-field yc-2x">
       <label class="yc-label">Case Number</label>
-      <input type="text" name="case_number">
+      <input type="text" name="case_number" placeholder="25-44545 or 25-44545-mar">
+      <div class="yc-hint" id="caseNumberHint"></div>
     </div>
     <div class="yc-field yc-fixed-sm">
       <label class="yc-label">Chapter</label>
@@ -416,14 +417,34 @@
       },
     });
 
-    // Custom PATCH payload: map form field names back to DB column names
+    // Parse a typed docket into { short, full }.
+    //   "25-44545-mar" → { short:'25-44545', full:'25-44545-mar' }
+    //   "25-44545"     → { short:'25-44545', full:null }
+    //   unparseable    → { short:<raw>,      full:null }  (keep data; flag in UI)
+    // Shared by the save path and the live hint.
+    function splitDocket(raw) {
+      const v = (raw || '').trim();
+      if (!v) return { short: '', full: null, ok: true };
+      const m = /^(\d{2}-\d{5})(-[A-Za-z]+)$/.exec(v);
+      if (m) return { short: m[1], full: v, ok: true };
+      if (/^\d{2}-\d{5}$/.test(v)) return { short: v, full: null, ok: true };
+      // Doesn't match either shape — keep raw in the short column, leave full
+      // null so we never persist a malformed "full". ok:false drives the hint.
+      return { short: v, full: null, ok: false };
+    }
+
+    // Custom PATCH payload: map form field names back to DB column names.
+    //
+    // case_number is special: the single visible field holds whatever the user
+    // typed (short "25-44545" or full "25-44545-mar"). We split it into BOTH db
+    // columns — case_number (short ##-#####) and case_number_full (full docket
+    // incl. -judge suffix, or NULL when no suffix was typed).
     form._buildPatchPayload = function() {
       const diff = this.getDiff();
       const payload = {};
 
-      // Reverse map: form field name → DB column name
+      // Reverse map: form field name → DB column name (case_number handled below)
       const reverseApiMap = {
-        'case_number':   'case_number_full',
         'vehicle':       'case_issues_bk_vehicle',
         'garnishment':   'case_garnish',
         'other_issues':  'case_issues_bk_other',
@@ -436,6 +457,13 @@
       for (const [fieldName, [_oldVal, newVal]] of Object.entries(diff)) {
         const fieldConfig = this.config.fields[fieldName];
         if (fieldConfig && fieldConfig.readonly) continue;
+
+        if (fieldName === 'case_number') {
+          const { short, full } = splitDocket(newVal);
+          payload.case_number = short;
+          payload.case_number_full = full;
+          continue;
+        }
 
         const dbCol = reverseApiMap[fieldName] || fieldName;
         payload[dbCol] = newVal;
@@ -507,6 +535,30 @@ function dateFromDatetime(dtStr, offsetDays) {
           tgtEl.value = calc(srcEl.value);
         });
       });
+
+      // ── Live case-number parse preview ──
+      // Shows how the typed value will split into the short / full columns,
+      // and flags input that matches neither shape.
+      const cnInput = document.querySelector('[name="case_number"]');
+      const cnHint  = document.getElementById('caseNumberHint');
+      if (cnInput && cnHint) {
+        const renderCaseNumberHint = () => {
+          const raw = cnInput.value.trim();
+          if (!raw) { cnHint.textContent = ''; cnHint.style.color = ''; return; }
+          const { short, full, ok } = splitDocket(raw);
+          if (!ok) {
+            cnHint.textContent = 'Unrecognized format — expected ##-##### or ##-#####-abc';
+            cnHint.style.color = '#b02a37';
+            return;
+          }
+          cnHint.style.color = '';
+          cnHint.textContent = full
+            ? `Saves as: ${short} (short) + ${full} (full)`
+            : `Saves as: ${short} (short); no judge suffix yet`;
+        };
+        cnInput.addEventListener('input', renderCaseNumberHint);
+        renderCaseNumberHint(); // initial state from loaded value
+      }
     });
   }
 </script>
