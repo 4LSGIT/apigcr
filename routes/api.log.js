@@ -112,6 +112,68 @@ router.get('/api/log/orphan-earliest', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// ─── CASE DOCKET PREVIEW ───
+//
+// GET /api/log/case-docket-preview?case_number=...&case_number_full=...
+//
+// Impact preview for the docket-adopt flow (Phase 4.1). Counts case-typed log
+// rows whose log_link equals ANY of the submitted docket strings. These are
+// exactly the rows that will reattribute to a case once that case carries
+// these values in case_number / case_number_full, because listLog's JOIN
+// matches log_link against either column. The preview query and that JOIN both
+// key off log_link compared to the same strings, so "N rows" promised here
+// equals the rows actually reattributed by the adopt.
+//
+// SHAPE-AGNOSTIC: no docket-format parsing. Both params are opaque strings;
+// trim, drop empties, match by equality. At least one must be non-empty.
+//
+// MUST be declared BEFORE GET /api/log/:id, or Express matches
+// "case-docket-preview" as the :id param.
+//
+// Response: { count: <int>, earliest_log_date: 'YYYY-MM-DD'|null,
+//             latest_log_date: 'YYYY-MM-DD'|null }
+router.get('/api/log/case-docket-preview', jwtOrApiKey, async (req, res) => {
+  // Trim; treat '', 'null', 'undefined' (URLSearchParams stringifies those)
+  // as absent.
+  const norm = (v) => {
+    if (v == null) return '';
+    const s = String(v).trim();
+    return (s === '' || s === 'null' || s === 'undefined') ? '' : s;
+  };
+  const caseNumber     = norm(req.query.case_number);
+  const caseNumberFull = norm(req.query.case_number_full);
+
+  const submitted = [...new Set([caseNumber, caseNumberFull].filter(Boolean))];
+
+  if (!submitted.length) {
+    return res.json({ count: 0, earliest_log_date: null, latest_log_date: null });
+  }
+
+  try {
+    const placeholders = submitted.map(() => '?').join(', ');
+    // Format dates in SQL (codebase convention; avoids JS Date/UTC TZ shift).
+    const [rows] = await req.db.query(
+      `SELECT COUNT(*)                                       AS count,
+              DATE_FORMAT(MIN(log_date), '%Y-%m-%d')          AS earliest,
+              DATE_FORMAT(MAX(log_date), '%Y-%m-%d')          AS latest
+         FROM log
+        WHERE log_link_type = 'case'
+          AND log_link IN (${placeholders})`,
+      submitted
+    );
+
+    const r = rows[0] || {};
+    res.json({
+      count: Number(r.count) || 0,
+      earliest_log_date: r.earliest || null,
+      latest_log_date:   r.latest   || null,
+    });
+  } catch (err) {
+    console.error('GET /api/log/case-docket-preview error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to compute docket preview' });
+  }
+});
+
 // ─── GET ONE ───
 router.get('/api/log/:id', jwtOrApiKey, async (req, res) => {
   try {

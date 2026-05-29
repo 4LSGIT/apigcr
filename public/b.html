@@ -1687,7 +1687,9 @@
               link = `${entry.log_link_id} <br><a href="#" onclick="OrphanAdoptDialog('${e}', 'email', () => tabLogGet(offsets.logs));return false" title="Attach to contact"><i class="fa-solid fa-user-plus"></i></a>`;
             } else if (entry.log_link_type === "case" && entry.log_link_id) {
               // Court email or other case-typed row that didn't resolve (no matching case row).
-              link = `<span title="No matching case">${entry.log_link_id}</span>`;
+              // Phase 4.1: "+ Add" adopts the docket onto an existing case.
+              const d = String(entry.log_link_id).replace(/'/g, "\\'");
+              link = `<span title="No matching case">${entry.log_link_id}</span> <br><a href="#" onclick="CaseAdoptDialog('${d}', () => tabLogGet(offsets.logs));return false" title="Adopt this docket onto a case"><i class="fa-solid fa-folder-plus"></i></a>`;
             } else if (entry.log_link_type == null && entry.log_link) {
               // Legacy NULL-typed row whose log_link didn't resolve via any JOIN.
               link = `<span title="Unresolved legacy link">${entry.log_link}</span>`;

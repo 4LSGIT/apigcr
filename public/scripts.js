@@ -931,6 +931,25 @@ function _resolveAddFile() {
     /* ── CasePicker rows (Phase 3) ── */
     .cp-case-row .cp-case-num { font-weight: bold; font-size: 1.05em; }
     .cp-case-row .cp-sub { font-size: 0.85em; color: #777; }
+
+    /* ── CaseAdoptDialog (Phase 4.1) ── */
+    /* Same dropdown-spill fix as oad-html: let the CasePicker dropdown escape
+       SWAL's overflow:auto html container instead of being clipped. */
+    .swal2-html-container.cad-html { overflow: visible; }
+    .cad-html .cp-dropdown { max-height: 12em; }
+    .cad-fields { display: flex; gap: 0.6em; margin: 0.3em 0 0.6em; text-align: left; }
+    .cad-field { flex: 1; }
+    .cad-field label { display: block; font-size: 0.8em; color: #666; margin-bottom: 0.15em; }
+    .cad-field input { width: 100%; box-sizing: border-box; }
+    .cad-hint { font-size: 0.82em; color: #b58105; margin: 0 0 0.5em; text-align: left; }
+    .cad-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
+    .cad-preview {
+      margin-top: 0.6em; padding: 0.45em 0.6em; text-align: left;
+      font-size: 0.88em; color: #555; background: #f6f8fa;
+      border: 1px solid #e3e7ea; border-radius: 4px; min-height: 1.2em;
+    }
+    .cad-preview:empty { display: none; }
+    .cad-preview .cad-count { font-weight: bold; color: #1f2d3d; }
   `;
   document.head.appendChild(style);
 })();
@@ -1452,6 +1471,219 @@ function newContact(prefill = {}, onSuccess = null) {
       if (typeof onSuccess === "function") onSuccess(data);
     }
   });
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   splitDocket(raw)  (Phase 4.1 — moved here as the single JS source)
+
+   Parse a typed docket into { short, full, ok }.
+     "25-44545-mar" → { short:'25-44545', full:'25-44545-mar', ok:true }
+     "25-44545"     → { short:'25-44545', full:null,          ok:true }
+     ""             → { short:'',         full:null,          ok:true }
+     unparseable    → { short:<raw>,      full:null,          ok:false }
+
+   Pure (no DOM/closure deps). The ##-#####-@@@ docket shape is
+   BANKRUPTCY-SPECIFIC client-side convenience only — it is never a server
+   gate. CaseAdoptDialog uses it as a pre-fill. (casedetails.html keeps its
+   own copy by deliberate choice — accepted drift risk, see Phase 4.1 notes.)
+   ────────────────────────────────────────────────────────────────────────── */
+function splitDocket(raw) {
+  const v = (raw || '').trim();
+  if (!v) return { short: '', full: null, ok: true };
+  const m = /^(\d{2}-\d{5})(-[A-Za-z]+)$/.exec(v);
+  if (m) return { short: m[1], full: v, ok: true };
+  if (/^\d{2}-\d{5}$/.test(v)) return { short: v, full: null, ok: true };
+  // Doesn't match either shape — keep raw in the short column, leave full
+  // null so we never persist a malformed "full". ok:false drives the hint.
+  return { short: v, full: null, ok: false };
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   CaseAdoptDialog(value, onDone)  (Phase 4.1 — orphan-case adopt-existing)
+
+   value = the orphan log_link_id (a docket string). Attaches that docket to
+   an EXISTING case picked via CasePicker, by writing the case's
+   case_number / case_number_full columns. Once written, listLog's JOIN
+   (log_link = case_number OR = case_number_full) reattributes the orphan log
+   rows automatically — no log-row UPDATE.
+
+   Structural sibling of OrphanAdoptDialog. No force/overwrite path: collisions
+   and "target already has a different docket" both hard-block (409 → stay open).
+
+   Flow:
+     1. splitDocket(value) → pre-fill two editable fields.
+     2. SWAL: header + #cad-num / #cad-full inputs (+ soft hint if !ok),
+        embedded CasePicker, impact-preview area, [Cancel] [Adopt].
+        Adopt disabled until a case is picked.
+     3. On pick / on field-edit (debounced) → fetch case-docket-preview with
+        the CURRENT field values → render "N rows (DATE–DATE)".
+     4. Adopt: PATCH /api/cases/:case_id/docket. 409 → validation message,
+        stay open. Success → onDone({action:'adopted', case_id}).
+   ────────────────────────────────────────────────────────────────────────── */
+async function CaseAdoptDialog(value, onDone = null) {
+  const parts = splitDocket(value);
+
+  let selectedCase = null;   // { case_id, case }
+  let picker = null;
+  let previewTimer = null;
+  let previewSeq = 0;        // guard against out-of-order preview responses
+
+  const hintHtml = parts.ok
+    ? ''
+    : `<div class="cad-hint">Doesn't look like a standard docket — check the fields below.</div>`;
+
+  // Build the params object for the preview/patch from the CURRENT field
+  // values. Trim; omit empties entirely (URLSearchParams would otherwise
+  // serialize null as the literal "null").
+  function currentDocketVals() {
+    const num  = (E('cad-num')  && E('cad-num').value  || '').trim();
+    const full = (E('cad-full') && E('cad-full').value || '').trim();
+    return { num, full };
+  }
+
+  function renderPreview(text, isCount) {
+    const el = E('cad-preview');
+    if (!el) return;
+    el.textContent = '';
+    if (!text) return;
+    if (isCount) {
+      // text is { count, range, caseLabel } — build with spans, no innerHTML.
+      const strong = document.createElement('span');
+      strong.className = 'cad-count';
+      strong.textContent = String(text.count);
+      el.appendChild(document.createTextNode('Adopting this will link '));
+      el.appendChild(strong);
+      el.appendChild(document.createTextNode(
+        ` log row${text.count === 1 ? '' : 's'}` +
+        (text.range ? ` (${text.range})` : '') +
+        (text.caseLabel ? ` to ${text.caseLabel}.` : '.')
+      ));
+    } else {
+      el.textContent = text;
+    }
+  }
+
+  async function refreshPreview() {
+    if (!selectedCase) return;
+    const { num, full } = currentDocketVals();
+    if (!num && !full) {
+      renderPreview('Enter a case number to preview affected rows.', false);
+      return;
+    }
+    const params = {};
+    if (num)  params.case_number = num;
+    if (full) params.case_number_full = full;
+
+    const mySeq = ++previewSeq;
+    try {
+      const data = await P.apiSend('/api/log/case-docket-preview', 'GET', params);
+      if (mySeq !== previewSeq) return; // stale
+      const count = (data && Number(data.count)) || 0;
+      const c = selectedCase.case || {};
+      const caseLabel = c.case_number_full || c.case_number || c.case_id || 'the case';
+      if (count === 0) {
+        renderPreview('No log rows currently match these values (you can still adopt to pre-assign).', false);
+      } else {
+        const e = data.earliest_log_date, l = data.latest_log_date;
+        const range = (e && l) ? (e === l ? e : `${e}–${l}`) : '';
+        renderPreview({ count, range, caseLabel }, true);
+      }
+    } catch (err) {
+      if (mySeq !== previewSeq) return;
+      renderPreview('Preview unavailable.', false);
+    }
+  }
+
+  function schedulePreview() {
+    if (previewTimer) clearTimeout(previewTimer);
+    previewTimer = setTimeout(refreshPreview, 300);
+  }
+
+  const result = await Swal.fire({
+    title: 'Adopt case docket',
+    html: `
+      <div class="oad-header">
+        <div class="oad-value">${escAttr(value)}</div>
+      </div>
+      ${hintHtml}
+      <div class="cad-fields">
+        <div class="cad-field">
+          <label for="cad-num">Case number</label>
+          <input type="text" id="cad-num" value="${escAttr(parts.short || '')}">
+        </div>
+        <div class="cad-field">
+          <label for="cad-full">Case number (full)</label>
+          <input type="text" id="cad-full" value="${escAttr(parts.full || '')}">
+        </div>
+      </div>
+      <div class="cad-section-label">Find the case to attach this docket to</div>
+      <div id="cad-picker-mount"></div>
+      <div id="cad-preview" class="cad-preview"></div>
+    `,
+    showCancelButton: true,
+    showConfirmButton: true,
+    confirmButtonText: 'Adopt',
+    cancelButtonText: 'Cancel',
+    showCloseButton: true,
+    customClass: { htmlContainer: 'cad-html' },
+    allowOutsideClick: true,
+
+    didOpen: () => {
+      const confirmBtn = Swal.getConfirmButton();
+      if (confirmBtn) confirmBtn.disabled = true;
+
+      picker = CasePicker(E('cad-picker-mount'), {
+        placeholder: 'Search cases…',
+        onSelect: (cid, row) => {
+          selectedCase = { case_id: cid, case: row };
+          if (confirmBtn) confirmBtn.disabled = false;
+          refreshPreview();
+        },
+      });
+
+      // Recompute preview when either docket field is edited (debounced).
+      ['cad-num', 'cad-full'].forEach((id) => {
+        const inp = E(id);
+        if (inp) inp.addEventListener('input', schedulePreview);
+      });
+    },
+
+    preConfirm: async () => {
+      const { num, full } = currentDocketVals();
+      if (!num && !full) {
+        Swal.showValidationMessage('Enter at least one of case number / full');
+        return false;
+      }
+      if (!selectedCase) {
+        Swal.showValidationMessage('Pick a case to attach this docket to.');
+        return false;
+      }
+      const body = { case_number: num || null, case_number_full: full || null };
+      try {
+        await P.apiSend(`/api/cases/${encodeURIComponent(selectedCase.case_id)}/docket`, 'PATCH', body);
+        return true;
+      } catch (err) {
+        // ApiError: err.status + err.body (parsed JSON). 409 → conflict/guard.
+        const msg = (err && err.body && err.body.message) || err.message || 'Adopt failed';
+        Swal.showValidationMessage(msg);
+        return false;
+      }
+    },
+
+    willClose: () => {
+      if (previewTimer) clearTimeout(previewTimer);
+      if (picker) picker.destroy();
+    },
+  });
+
+  if (!result.isConfirmed) return;
+
+  Toast.fire({ icon: 'success', title: 'Docket adopted' });
+  if (typeof onDone === 'function') {
+    onDone({ action: 'adopted', case_id: selectedCase.case_id });
+  }
 }
 
 

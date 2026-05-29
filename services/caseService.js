@@ -443,6 +443,62 @@ async function removeCaseContact(db, caseId, contactId) {
 
 
 // ─────────────────────────────────────────────────────────────
+// checkCaseNumberCollision  (Phase 4.1 — adopt-existing)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Collision check for the docket-adopt flow.
+ *
+ * SHAPE-AGNOSTIC. case_number / case_number_full are opaque free-text
+ * varchar(20). This function never parses docket shape — it checks string
+ * EQUALITY only. The ##-#####-@@@ docket shape is bankruptcy-specific domain
+ * knowledge that lives client-side (splitDocket); the server treats both
+ * columns as opaque strings.
+ *
+ * For each non-empty submitted value, looks for ANY OTHER case
+ * (case_id <> :caseId) that already holds that value in EITHER the
+ * case_number OR the case_number_full column. Returns the first conflicting
+ * row, or null when the docket is free to adopt.
+ *
+ * NOTE: this is a separate, route-facing guard — it is deliberately NOT folded
+ * into updateCase (a generic column setter used by many callers). The route
+ * runs this first, then writes via updateCase only on a clean check.
+ *
+ * @param {object} db
+ * @param {string} caseId            - the target case (excluded from the search)
+ * @param {object} vals
+ * @param {?string} vals.case_number
+ * @param {?string} vals.case_number_full
+ * @returns {Promise<?object>} conflicting row
+ *   { case_id, case_number, case_number_full, case_type } or null
+ */
+async function checkCaseNumberCollision(db, caseId, { case_number = null, case_number_full = null } = {}) {
+  // Normalize: trim, treat empty as absent. No shape parsing.
+  const submitted = [case_number, case_number_full]
+    .map(v => (v == null ? '' : String(v).trim()))
+    .filter(v => v !== '');
+
+  // De-dupe (full === short would otherwise produce 2 identical placeholders)
+  const uniq = [...new Set(submitted)];
+  if (!uniq.length) return null;
+
+  const placeholders = uniq.map(() => '?').join(', ');
+
+  const [rows] = await db.query(
+    `SELECT case_id, case_number, case_number_full, case_type
+       FROM cases
+      WHERE case_id <> ?
+        AND ( (case_number      IS NOT NULL AND case_number      <> '' AND case_number      IN (${placeholders}))
+           OR (case_number_full IS NOT NULL AND case_number_full <> '' AND case_number_full IN (${placeholders})) )
+      LIMIT 1`,
+    [caseId, ...uniq, ...uniq]
+  );
+
+  return rows.length ? rows[0] : null;
+}
+
+
+// ─────────────────────────────────────────────────────────────
 // searchCases
 // ─────────────────────────────────────────────────────────────
 
@@ -541,5 +597,6 @@ module.exports = {
   updateCase,
   addCaseContact,
   removeCaseContact,
-  searchCases
+  searchCases,
+  checkCaseNumberCollision
 };
