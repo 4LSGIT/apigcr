@@ -34,6 +34,14 @@ const router    = express.Router();
 const rateLimit = require('express-rate-limit');
 const emailIngestService = require('../services/emailIngestService');
 
+// ── Management API (Phase 3 Slice 3.1) deps.
+const jwtOrApiKey            = require('../lib/auth.jwtOrApiKey');
+const { auditAdminAction }   = require('../lib/auth.superuser');
+const suppressionService     = require('../services/emailIngestSuppressionService');
+const ruleService            = require('../services/emailIngestRuleService');
+const executionsService      = require('../services/emailIngestExecutionsService');
+const metaService            = require('../services/emailIngestMetaService');
+
 
 // ─────────────────────────────────────────────────────────────
 // SENSITIVE HEADER STRIPPING
@@ -194,6 +202,299 @@ router.post('/api/email/ingest', receiveLimiter, async (req, res) => {
   if (result.error      != null) payload.error        = result.error;
 
   return res.status(200).json(payload);
+});
+
+
+// ═════════════════════════════════════════════════════════════
+// MANAGEMENT API (Phase 3 Slice 3.1)
+//
+// All endpoints below are mounted under /api/email-ingest/ and gated by
+// jwtOrApiKey (same as routes/api.hooks.js). The public receiver above
+// (/api/email/ingest, singular) is UNCHANGED and stays key-authed.
+//
+// Writes emit an admin_audit_log row via auditAdminAction(db, {...}),
+// matching the credentials endpoints in api.hooks.js. tool = 'email_ingest'.
+// last_modified_by is set server-side from req.auth.userId on suppression /
+// rule writes (action rows have no such column).
+//
+// Validation errors thrown by the services (ValidationError, carrying a
+// .validationErrors array) are translated to a structured 400 here.
+// ═════════════════════════════════════════════════════════════
+
+const EI_TOOL = 'email_ingest';
+
+function _reqMeta(req) {
+  return {
+    ip:        req.headers['x-forwarded-for']?.split(',').shift() || req.socket?.remoteAddress,
+    userAgent: req.headers['user-agent'] || 'unknown',
+  };
+}
+
+function auditEI(req, { status = 'success', errorMessage, details }) {
+  const meta = _reqMeta(req);
+  return auditAdminAction(req.db, {
+    tool:     EI_TOOL,
+    userId:   req.auth?.userId,
+    username: req.auth?.username,
+    route:    req.originalUrl,
+    method:   req.method,
+    status,
+    ...(errorMessage ? { errorMessage } : {}),
+    ...meta,
+    details: details || {},
+  }).catch((err) => console.error('[email-ingest] audit log failed:', err.message));
+}
+
+// Translate a thrown ValidationError into the structured 400 body. Returns
+// true if it handled the error (response sent), false otherwise.
+function _handleValidationError(err, res) {
+  if (err && err.name === 'ValidationError' && Array.isArray(err.validationErrors)) {
+    const errs = err.validationErrors;
+    if (errs.length === 1) {
+      res.status(400).json({
+        error:   'validation_failed',
+        field:   errs[0].field,
+        message: errs[0].message,
+      });
+    } else {
+      res.status(400).json({ error: 'validation_failed', errors: errs });
+    }
+    return true;
+  }
+  return false;
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// SUPPRESSIONS
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/email-ingest/suppressions', jwtOrApiKey, async (req, res) => {
+  try {
+    const suppressions = await suppressionService.listAll(req.db);
+    res.json({ status: 'success', suppressions });
+  } catch (err) {
+    console.error('[email-ingest] list suppressions error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.get('/api/email-ingest/suppressions/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const row = await suppressionService.getById(req.db, req.params.id);
+    if (!row) return res.status(404).json({ status: 'error', message: 'Suppression not found' });
+    res.json({ status: 'success', suppression: row });
+  } catch (err) {
+    console.error('[email-ingest] get suppression error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.post('/api/email-ingest/suppressions', jwtOrApiKey, async (req, res) => {
+  try {
+    const row = await suppressionService.create(req.db, req.body, req.auth.userId);
+    auditEI(req, { details: { entity: 'suppression', entity_id: row.id, after: row } });
+    res.status(201).json({ status: 'success', suppression: row });
+  } catch (err) {
+    if (_handleValidationError(err, res)) return;
+    console.error('[email-ingest] create suppression error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.put('/api/email-ingest/suppressions/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const before = await suppressionService.getById(req.db, req.params.id);
+    if (!before) return res.status(404).json({ status: 'error', message: 'Suppression not found' });
+
+    const after = await suppressionService.update(req.db, req.params.id, req.body, req.auth.userId);
+    auditEI(req, { details: { entity: 'suppression', entity_id: Number(req.params.id), before, after } });
+    res.json({ status: 'success', suppression: after });
+  } catch (err) {
+    if (_handleValidationError(err, res)) return;
+    console.error('[email-ingest] update suppression error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.delete('/api/email-ingest/suppressions/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const before = await suppressionService.getById(req.db, req.params.id);
+    if (!before) return res.status(404).json({ status: 'error', message: 'Suppression not found' });
+
+    await suppressionService.remove(req.db, req.params.id);
+    auditEI(req, { details: { entity: 'suppression', entity_id: Number(req.params.id), before } });
+    res.status(204).end();
+  } catch (err) {
+    console.error('[email-ingest] delete suppression error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// RULES
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/email-ingest/rules', jwtOrApiKey, async (req, res) => {
+  try {
+    const rules = await ruleService.listAll(req.db);
+    res.json({ status: 'success', rules });
+  } catch (err) {
+    console.error('[email-ingest] list rules error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.get('/api/email-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const rule = await ruleService.getById(req.db, req.params.id);
+    if (!rule) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+    res.json({ status: 'success', rule });
+  } catch (err) {
+    console.error('[email-ingest] get rule error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.post('/api/email-ingest/rules', jwtOrApiKey, async (req, res) => {
+  try {
+    const rule = await ruleService.createRule(req.db, req.body, req.auth.userId);
+    auditEI(req, { details: { entity: 'rule', entity_id: rule.id, after: rule } });
+    res.status(201).json({ status: 'success', rule });
+  } catch (err) {
+    if (_handleValidationError(err, res)) return;
+    console.error('[email-ingest] create rule error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.put('/api/email-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const before = await ruleService.getById(req.db, req.params.id);
+    if (!before) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+
+    const after = await ruleService.updateRule(req.db, req.params.id, req.body, req.auth.userId);
+    auditEI(req, { details: { entity: 'rule', entity_id: Number(req.params.id), before, after } });
+    res.json({ status: 'success', rule: after });
+  } catch (err) {
+    if (_handleValidationError(err, res)) return;
+    console.error('[email-ingest] update rule error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.delete('/api/email-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const before = await ruleService.getById(req.db, req.params.id);
+    if (!before) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+
+    await ruleService.deleteRule(req.db, req.params.id);
+    auditEI(req, { details: { entity: 'rule', entity_id: Number(req.params.id), before } });
+    res.status(204).end();
+  } catch (err) {
+    console.error('[email-ingest] delete rule error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// RULE ACTIONS
+// ─────────────────────────────────────────────────────────────
+
+router.post('/api/email-ingest/rules/:id/actions', jwtOrApiKey, async (req, res) => {
+  try {
+    const action = await ruleService.addAction(req.db, req.params.id, req.body);
+    if (action === null) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+    auditEI(req, { details: { entity: 'rule_action', entity_id: action.id, rule_id: Number(req.params.id), after: action } });
+    res.status(201).json({ status: 'success', action });
+  } catch (err) {
+    if (_handleValidationError(err, res)) return;
+    console.error('[email-ingest] add action error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.put('/api/email-ingest/rule-actions/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const before = await ruleService.getActionById(req.db, req.params.id);
+    if (!before) return res.status(404).json({ status: 'error', message: 'Action not found' });
+
+    const after = await ruleService.updateAction(req.db, req.params.id, req.body);
+    auditEI(req, { details: { entity: 'rule_action', entity_id: Number(req.params.id), before, after } });
+    res.json({ status: 'success', action: after });
+  } catch (err) {
+    if (_handleValidationError(err, res)) return;
+    console.error('[email-ingest] update action error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.delete('/api/email-ingest/rule-actions/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const before = await ruleService.getActionById(req.db, req.params.id);
+    if (!before) return res.status(404).json({ status: 'error', message: 'Action not found' });
+
+    await ruleService.deleteAction(req.db, req.params.id);
+    auditEI(req, { details: { entity: 'rule_action', entity_id: Number(req.params.id), before } });
+    res.status(204).end();
+  } catch (err) {
+    console.error('[email-ingest] delete action error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// EXECUTIONS (read-only)
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/email-ingest/executions', jwtOrApiKey, async (req, res) => {
+  try {
+    const hasMatch = req.query.has_match === 'true' ? true
+                   : req.query.has_match === 'false' ? false
+                   : undefined;
+    const { rows, total, page, page_size } = await executionsService.list(req.db, {
+      page:      req.query.page,
+      page_size: req.query.page_size,
+      status:    req.query.status,
+      source:    req.query.source,
+      since:     req.query.since,
+      until:     req.query.until,
+      has_match: hasMatch,
+    });
+    res.json({ executions: rows, page, page_size, total });
+  } catch (err) {
+    console.error('[email-ingest] list executions error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.get('/api/email-ingest/executions/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const result = await executionsService.getById(req.db, req.params.id);
+    if (!result) return res.status(404).json({ status: 'error', message: 'Execution not found' });
+    res.json(result); // { execution, linked }
+  } catch (err) {
+    console.error('[email-ingest] get execution error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// META
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/email-ingest/meta', jwtOrApiKey, async (req, res) => {
+  try {
+    const meta = await metaService.getMeta(req.db);
+    res.json(meta);
+  } catch (err) {
+    console.error('[email-ingest] meta error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
 });
 
 

@@ -214,9 +214,152 @@ async function evaluateSuppressions(db, envelope) {
 }
 
 
+// ─────────────────────────────────────────────────────────────
+// CRUD (Phase 3 Slice 3.1 — management API)
+//
+// Writes set last_modified_by from the caller-supplied userId. match_count
+// and last_matched_at are NEVER accepted from the client — they're owned by
+// the pipeline (_bumpMetrics). match_config is a json column; we stringify
+// on the way in (mysql2 would otherwise key-expand a plain object passed to
+// a `?` placeholder).
+//
+// Validation lives in services/emailIngestValidator.js. create()/update()
+// run it and throw a ValidationError the route translates to a 400. The
+// route could validate first instead, but keeping it in the service means
+// raw SQL callers (tests, future internal callers) get the same guard.
+// ─────────────────────────────────────────────────────────────
+
+const validator = require('./emailIngestValidator');
+
+class ValidationError extends Error {
+  constructor(errors) {
+    super('validation_failed');
+    this.name = 'ValidationError';
+    this.validationErrors = errors;
+  }
+}
+
+function _toJsonColumn(v) {
+  if (v == null) return null;
+  return typeof v === 'string' ? v : JSON.stringify(v);
+}
+
+/**
+ * All suppressions, active and inactive, newest first.
+ * @returns {Promise<Array>}
+ */
+async function listAll(db) {
+  const [rows] = await db.query(
+    `SELECT id, name, description, active, match_mode, match_config,
+            match_count, last_matched_at, last_modified_by,
+            created_at, updated_at
+       FROM email_ingest_log_suppressions
+      ORDER BY id DESC`
+  );
+  return rows;
+}
+
+/**
+ * Single suppression by id, or null.
+ */
+async function getById(db, id) {
+  const [[row]] = await db.query(
+    `SELECT id, name, description, active, match_mode, match_config,
+            match_count, last_matched_at, last_modified_by,
+            created_at, updated_at
+       FROM email_ingest_log_suppressions
+      WHERE id = ?`,
+    [id]
+  );
+  return row || null;
+}
+
+/**
+ * Validate + INSERT. Returns the created row.
+ * @throws {ValidationError}
+ */
+async function create(db, payload, userId) {
+  const { errors } = validator.validateSuppression(payload, true);
+  if (errors.length) throw new ValidationError(errors);
+
+  const [r] = await db.query(
+    `INSERT INTO email_ingest_log_suppressions
+       (name, description, active, match_mode, match_config, last_modified_by)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      payload.name,
+      payload.description ?? null,
+      payload.active !== undefined ? (payload.active ? 1 : 0) : 1,
+      payload.match_mode,
+      _toJsonColumn(payload.match_config),
+      userId ?? null,
+    ]
+  );
+  return getById(db, r.insertId);
+}
+
+/**
+ * Partial update (PATCH-style). Validates the MERGED record so a config-only
+ * change is checked against the row's existing match_mode (and vice versa).
+ * Returns the updated row, or null if the id doesn't exist.
+ * @throws {ValidationError}
+ */
+async function update(db, id, payload, userId) {
+  const existing = await getById(db, id);
+  if (!existing) return null;
+
+  // Merge present fields over the existing row, then validate the result as
+  // a full record. This closes the "PUT match_config without match_mode"
+  // gap the stateless validator can't see.
+  const merged = {
+    name:         payload.name         !== undefined ? payload.name         : existing.name,
+    description:  payload.description  !== undefined ? payload.description  : existing.description,
+    active:       payload.active        !== undefined ? payload.active       : existing.active,
+    match_mode:   payload.match_mode    !== undefined ? payload.match_mode   : existing.match_mode,
+    match_config: payload.match_config !== undefined ? payload.match_config : existing.match_config,
+  };
+  const { errors } = validator.validateSuppression(merged, true);
+  if (errors.length) throw new ValidationError(errors);
+
+  const sets = [];
+  const vals = [];
+  if (payload.name        !== undefined) { sets.push('name = ?');         vals.push(payload.name); }
+  if (payload.description !== undefined) { sets.push('description = ?');  vals.push(payload.description ?? null); }
+  if (payload.active      !== undefined) { sets.push('active = ?');       vals.push(payload.active ? 1 : 0); }
+  if (payload.match_mode  !== undefined) { sets.push('match_mode = ?');   vals.push(payload.match_mode); }
+  if (payload.match_config !== undefined){ sets.push('match_config = ?'); vals.push(_toJsonColumn(payload.match_config)); }
+  sets.push('last_modified_by = ?'); vals.push(userId ?? null);
+
+  vals.push(id);
+  await db.query(
+    `UPDATE email_ingest_log_suppressions SET ${sets.join(', ')} WHERE id = ?`,
+    vals
+  );
+  return getById(db, id);
+}
+
+/**
+ * Hard delete. Returns true if a row was removed.
+ */
+async function remove(db, id) {
+  const [r] = await db.query(
+    `DELETE FROM email_ingest_log_suppressions WHERE id = ?`,
+    [id]
+  );
+  return r.affectedRows > 0;
+}
+
+
 module.exports = {
   listActiveSuppressions,
   evaluateSuppressions,
+  // CRUD
+  listAll,
+  getById,
+  create,
+  update,
+  remove,
+  ValidationError,
   // Exported for testing
   _evaluateRule,
   _bumpMetrics,

@@ -590,9 +590,275 @@ async function evaluateRules(db, envelope) {
 }
 
 
+// ─────────────────────────────────────────────────────────────
+// CRUD (Phase 3 Slice 3.1 — management API)
+//
+// Rule listing uses the same two-query (rules + actions IN (...)) join shape
+// as listActiveRules to avoid JOIN fan-out, but returns ALL rows (active +
+// inactive) with the full column set, and ALL actions (active + inactive).
+//
+// json columns (match_config / transform_config / action.config) are
+// stringified on write. match_count / last_matched_at are pipeline-owned and
+// never accepted from the client. Actions are managed via their own
+// endpoints — createRule/updateRule never touch them.
+// ─────────────────────────────────────────────────────────────
+
+const validator = require('./emailIngestValidator');
+
+class ValidationError extends Error {
+  constructor(errors) {
+    super('validation_failed');
+    this.name = 'ValidationError';
+    this.validationErrors = errors;
+  }
+}
+
+function _toJsonColumn(v) {
+  if (v == null) return null;
+  return typeof v === 'string' ? v : JSON.stringify(v);
+}
+
+const _RULE_COLS =
+  `id, name, description, active, position, match_mode, match_config,
+   transform_mode, transform_config, match_count, last_matched_at,
+   last_modified_by, created_at, updated_at`;
+
+const _ACTION_COLS = `id, rule_id, position, active, action_type, config`;
+
+/**
+ * All rules (active + inactive), each with an `actions` array (all actions
+ * for the rule, active + inactive), ordered by position.
+ */
+async function listAll(db) {
+  const [rules] = await db.query(
+    `SELECT ${_RULE_COLS} FROM email_ingest_rules ORDER BY position ASC, id ASC`
+  );
+  if (!rules.length) return [];
+
+  const ruleIds = rules.map(r => r.id);
+  const placeholders = ruleIds.map(() => '?').join(',');
+  const [actions] = await db.query(
+    `SELECT ${_ACTION_COLS}
+       FROM email_ingest_rule_actions
+      WHERE rule_id IN (${placeholders})
+      ORDER BY rule_id ASC, position ASC, id ASC`,
+    ruleIds
+  );
+
+  const byRule = new Map();
+  for (const a of actions) {
+    if (!byRule.has(a.rule_id)) byRule.set(a.rule_id, []);
+    byRule.get(a.rule_id).push(a);
+  }
+  for (const r of rules) r.actions = byRule.get(r.id) || [];
+  return rules;
+}
+
+/**
+ * One rule + its actions, or null if absent.
+ */
+async function getById(db, id) {
+  const [[rule]] = await db.query(
+    `SELECT ${_RULE_COLS} FROM email_ingest_rules WHERE id = ?`,
+    [id]
+  );
+  if (!rule) return null;
+  const [actions] = await db.query(
+    `SELECT ${_ACTION_COLS}
+       FROM email_ingest_rule_actions
+      WHERE rule_id = ?
+      ORDER BY position ASC, id ASC`,
+    [id]
+  );
+  rule.actions = actions;
+  return rule;
+}
+
+/**
+ * Validate + INSERT a rule (no actions). Returns the row with actions: [].
+ * @throws {ValidationError}
+ */
+async function createRule(db, payload, userId) {
+  const { errors } = validator.validateRule(payload, true);
+  if (errors.length) throw new ValidationError(errors);
+
+  const transformMode = payload.transform_mode ?? 'passthrough';
+  const [r] = await db.query(
+    `INSERT INTO email_ingest_rules
+       (name, description, active, position, match_mode, match_config,
+        transform_mode, transform_config, last_modified_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      payload.name,
+      payload.description ?? null,
+      payload.active !== undefined ? (payload.active ? 1 : 0) : 1,
+      payload.position ?? 0,
+      payload.match_mode,
+      _toJsonColumn(payload.match_config),
+      transformMode,
+      transformMode === 'passthrough' ? null : _toJsonColumn(payload.transform_config),
+      userId ?? null,
+    ]
+  );
+  return getById(db, r.insertId);
+}
+
+/**
+ * Partial rule update. Validates the merged record. Does NOT touch actions.
+ * Returns the updated row, or null if absent.
+ * @throws {ValidationError}
+ */
+async function updateRule(db, id, payload, userId) {
+  const existing = await getById(db, id);
+  if (!existing) return null;
+
+  const merged = {
+    name:             payload.name             !== undefined ? payload.name             : existing.name,
+    description:      payload.description      !== undefined ? payload.description      : existing.description,
+    active:           payload.active           !== undefined ? payload.active           : existing.active,
+    position:         payload.position         !== undefined ? payload.position         : existing.position,
+    match_mode:       payload.match_mode       !== undefined ? payload.match_mode       : existing.match_mode,
+    match_config:     payload.match_config     !== undefined ? payload.match_config     : existing.match_config,
+    transform_mode:   payload.transform_mode   !== undefined ? payload.transform_mode   : existing.transform_mode,
+    transform_config: payload.transform_config !== undefined ? payload.transform_config : existing.transform_config,
+  };
+  const { errors } = validator.validateRule(merged, true);
+  if (errors.length) throw new ValidationError(errors);
+
+  const sets = [];
+  const vals = [];
+  if (payload.name             !== undefined) { sets.push('name = ?');             vals.push(payload.name); }
+  if (payload.description      !== undefined) { sets.push('description = ?');      vals.push(payload.description ?? null); }
+  if (payload.active           !== undefined) { sets.push('active = ?');           vals.push(payload.active ? 1 : 0); }
+  if (payload.position         !== undefined) { sets.push('position = ?');         vals.push(payload.position); }
+  if (payload.match_mode       !== undefined) { sets.push('match_mode = ?');       vals.push(payload.match_mode); }
+  if (payload.match_config     !== undefined) { sets.push('match_config = ?');     vals.push(_toJsonColumn(payload.match_config)); }
+  if (payload.transform_mode   !== undefined) { sets.push('transform_mode = ?');   vals.push(payload.transform_mode); }
+  if (payload.transform_config !== undefined) {
+    // passthrough forces NULL regardless of supplied value (validator already
+    // rejects a non-null config on passthrough, but be defensive).
+    const tmode = merged.transform_mode;
+    sets.push('transform_config = ?');
+    vals.push(tmode === 'passthrough' ? null : _toJsonColumn(payload.transform_config));
+  }
+  sets.push('last_modified_by = ?'); vals.push(userId ?? null);
+
+  vals.push(id);
+  await db.query(
+    `UPDATE email_ingest_rules SET ${sets.join(', ')} WHERE id = ?`,
+    vals
+  );
+  return getById(db, id);
+}
+
+/**
+ * Hard delete a rule. Actions cascade via FK. Returns true if removed.
+ */
+async function deleteRule(db, id) {
+  const [r] = await db.query(`DELETE FROM email_ingest_rules WHERE id = ?`, [id]);
+  return r.affectedRows > 0;
+}
+
+/**
+ * Single action by id (+ rule_id), or null.
+ */
+async function getActionById(db, actionId) {
+  const [[row]] = await db.query(
+    `SELECT ${_ACTION_COLS} FROM email_ingest_rule_actions WHERE id = ?`,
+    [actionId]
+  );
+  return row || null;
+}
+
+/**
+ * Add an action to a rule. Validates shape AND references (target exists +
+ * active). Returns the created action, or null if the parent rule is absent.
+ * @throws {ValidationError}
+ */
+async function addAction(db, ruleId, payload) {
+  const [[rule]] = await db.query(`SELECT id FROM email_ingest_rules WHERE id = ?`, [ruleId]);
+  if (!rule) return null;
+
+  const { errors } = validator.validateAction(payload, true);
+  if (errors.length) throw new ValidationError(errors);
+  const ref = await validator.validateActionReferences(db, payload.action_type, payload.config);
+  if (ref.errors.length) throw new ValidationError(ref.errors);
+
+  const [r] = await db.query(
+    `INSERT INTO email_ingest_rule_actions
+       (rule_id, position, active, action_type, config)
+     VALUES (?, ?, ?, ?, ?)`,
+    [
+      ruleId,
+      payload.position ?? 0,
+      payload.active !== undefined ? (payload.active ? 1 : 0) : 1,
+      payload.action_type,
+      _toJsonColumn(payload.config),
+    ]
+  );
+  return getActionById(db, r.insertId);
+}
+
+/**
+ * Partial action update. Validates the merged record (shape + references).
+ * Returns the updated action, or null if absent.
+ * @throws {ValidationError}
+ */
+async function updateAction(db, actionId, payload) {
+  const existing = await getActionById(db, actionId);
+  if (!existing) return null;
+
+  const merged = {
+    action_type: payload.action_type !== undefined ? payload.action_type : existing.action_type,
+    config:      payload.config      !== undefined ? payload.config      : existing.config,
+    position:    payload.position    !== undefined ? payload.position    : existing.position,
+    active:      payload.active      !== undefined ? payload.active      : existing.active,
+  };
+  const { errors } = validator.validateAction(merged, true);
+  if (errors.length) throw new ValidationError(errors);
+  const ref = await validator.validateActionReferences(db, merged.action_type, merged.config);
+  if (ref.errors.length) throw new ValidationError(ref.errors);
+
+  const sets = [];
+  const vals = [];
+  if (payload.action_type !== undefined) { sets.push('action_type = ?'); vals.push(payload.action_type); }
+  if (payload.config      !== undefined) { sets.push('config = ?');      vals.push(_toJsonColumn(payload.config)); }
+  if (payload.position    !== undefined) { sets.push('position = ?');    vals.push(payload.position); }
+  if (payload.active      !== undefined) { sets.push('active = ?');      vals.push(payload.active ? 1 : 0); }
+
+  if (!sets.length) return existing; // nothing to change
+
+  vals.push(actionId);
+  await db.query(
+    `UPDATE email_ingest_rule_actions SET ${sets.join(', ')} WHERE id = ?`,
+    vals
+  );
+  return getActionById(db, actionId);
+}
+
+/**
+ * Hard delete an action. Returns true if removed.
+ */
+async function deleteAction(db, actionId) {
+  const [r] = await db.query(`DELETE FROM email_ingest_rule_actions WHERE id = ?`, [actionId]);
+  return r.affectedRows > 0;
+}
+
+
 module.exports = {
   listActiveRules,
   evaluateRules,
+  // CRUD
+  listAll,
+  getById,
+  createRule,
+  updateRule,
+  deleteRule,
+  addAction,
+  updateAction,
+  deleteAction,
+  getActionById,
+  ValidationError,
   // Exported for testing
   _evaluateMatch,
   _runTransform,
