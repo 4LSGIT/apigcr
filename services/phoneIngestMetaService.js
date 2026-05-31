@@ -38,7 +38,24 @@
 const { listOperators } = require('./hookFilter');
 // Phone L3 reuses the table-agnostic email validator (same as
 // phoneIngestRuleService) for the internal_functions target list.
-const validator = require('./emailIngestValidator');
+//
+// CIRCULAR-DEPENDENCY NOTE: emailIngestValidator requires
+// ../lib/internal_functions, and the phone-log pipeline lives inside
+// internal_functions and pulls in the phone ingest services. A top-level
+// `const validator = require('./emailIngestValidator')` can therefore capture
+// emailIngestValidator's exports while it is still mid-load (the default empty
+// {}), leaving validator.internalFunctionNames undefined — the "Accessing
+// non-existent property ... inside circular dependency" warning + a runtime
+// TypeError when GET /api/phone-ingest/meta builds its target lists (which
+// breaks the whole phone-ingest UI, since every tab loads /meta first).
+// Resolve it lazily: require at CALL time, by which point the module graph has
+// finished initializing. (Same fix already applied to
+// phoneIngestSuppressionService and phoneIngestRuleService.)
+function _validator() {
+  // Lazy require — see CIRCULAR-DEPENDENCY NOTE above. Node caches the module,
+  // so this is a cheap registry lookup after first load, not a re-parse.
+  return require('./emailIngestValidator');
+}
 
 
 // ─────────────────────────────────────────────────────────────
@@ -210,7 +227,7 @@ async function _targets(db) {
     workflows,
     sequences,
     hooks,
-    internal_functions: validator.internalFunctionNames(),
+    internal_functions: _validator().internalFunctionNames(),
     credentials,
   };
 }

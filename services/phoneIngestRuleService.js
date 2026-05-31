@@ -586,9 +586,25 @@ async function evaluateRules(db, event) {
 // client. Actions are managed via their own endpoints — createRule/updateRule
 // never touch them. Validation reuses services/emailIngestValidator (table-
 // agnostic).
+//
+// CIRCULAR-DEPENDENCY NOTE: emailIngestValidator requires
+// ../lib/internal_functions, and the phone-log pipeline lives inside
+// internal_functions and pulls in the phone ingest services. That cycle means
+// a top-level `const validator = require('./emailIngestValidator')` can capture
+// emailIngestValidator's exports while it is still mid-load — i.e. the default
+// empty {} — so validator.validateRule / validateAction /
+// validateActionReferences come back undefined (the "Accessing non-existent
+// property ... inside circular dependency" warning + the runtime TypeError on
+// save). Resolve it lazily: require at CALL time, by which point every module
+// in the graph has finished initializing and module.exports is fully
+// populated. (Same fix already applied to phoneIngestSuppressionService.)
 // ─────────────────────────────────────────────────────────────
 
-const validator = require('./emailIngestValidator');
+function _validator() {
+  // Lazy require — see CIRCULAR-DEPENDENCY NOTE above. Node caches the module,
+  // so this is a cheap registry lookup after first load, not a re-parse.
+  return require('./emailIngestValidator');
+}
 
 class ValidationError extends Error {
   constructor(errors) {
@@ -664,7 +680,7 @@ async function getById(db, id) {
  * @throws {ValidationError}
  */
 async function createRule(db, payload, userId) {
-  const { errors } = validator.validateRule(payload, true);
+  const { errors } = _validator().validateRule(payload, true);
   if (errors.length) throw new ValidationError(errors);
 
   const transformMode = payload.transform_mode ?? 'passthrough';
@@ -707,7 +723,7 @@ async function updateRule(db, id, payload, userId) {
     transform_mode:   payload.transform_mode   !== undefined ? payload.transform_mode   : existing.transform_mode,
     transform_config: payload.transform_config !== undefined ? payload.transform_config : existing.transform_config,
   };
-  const { errors } = validator.validateRule(merged, true);
+  const { errors } = _validator().validateRule(merged, true);
   if (errors.length) throw new ValidationError(errors);
 
   const sets = [];
@@ -764,9 +780,9 @@ async function addAction(db, ruleId, payload) {
   const [[rule]] = await db.query(`SELECT id FROM phone_ingest_rules WHERE id = ?`, [ruleId]);
   if (!rule) return null;
 
-  const { errors } = validator.validateAction(payload, true);
+  const { errors } = _validator().validateAction(payload, true);
   if (errors.length) throw new ValidationError(errors);
-  const ref = await validator.validateActionReferences(db, payload.action_type, payload.config);
+  const ref = await _validator().validateActionReferences(db, payload.action_type, payload.config);
   if (ref.errors.length) throw new ValidationError(ref.errors);
 
   const [r] = await db.query(
@@ -799,9 +815,9 @@ async function updateAction(db, actionId, payload) {
     position:    payload.position    !== undefined ? payload.position    : existing.position,
     active:      payload.active      !== undefined ? payload.active      : existing.active,
   };
-  const { errors } = validator.validateAction(merged, true);
+  const { errors } = _validator().validateAction(merged, true);
   if (errors.length) throw new ValidationError(errors);
-  const ref = await validator.validateActionReferences(db, merged.action_type, merged.config);
+  const ref = await _validator().validateActionReferences(db, merged.action_type, merged.config);
   if (ref.errors.length) throw new ValidationError(ref.errors);
 
   const sets = [];
