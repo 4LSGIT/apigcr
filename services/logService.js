@@ -99,6 +99,22 @@ function _normalizeEmail(email) {
 }
 
 /**
+ * Case-insensitive own-key presence check on a plain object.
+ * Returns true if `obj` has any own key whose lowercase form equals
+ * `key.toLowerCase()`. Used by the createLogEntry typed-param fold so a
+ * caller-supplied {From} blocks the fold from adding a lowercase {from}
+ * twin (which the log renderer would print as a duplicate row).
+ */
+function _hasKeyCI(obj, key) {
+  if (!obj || typeof obj !== 'object') return false;
+  const want = String(key).toLowerCase();
+  for (const k of Object.keys(obj)) {
+    if (k.toLowerCase() === want) return true;
+  }
+  return false;
+}
+
+/**
  * Normalize direction strings from external providers to the
  * log_direction ENUM('incoming','outgoing') values.
  *
@@ -680,10 +696,17 @@ async function createLogEntry(db, {
     // Fold typed display params into log_data without overwriting
     // caller-supplied keys. Direction intentionally omitted — rendered
     // separately by the UI.
-    if (from    != null && dataObj.from    === undefined) dataObj.from    = from;
-    if (to      != null && dataObj.to      === undefined) dataObj.to      = to;
-    if (subject != null && dataObj.subject === undefined) dataObj.subject = subject;
-    if (message != null && message !== '' && dataObj.message === undefined) {
+    //
+    // CASE-INSENSITIVE: a caller may already carry the content under a
+    // differently-cased key (e.g. email ingest builds {From,To,Subject,
+    // Message}). The fold must not add a lowercase twin of an existing
+    // cased key, or the renderer prints both — the email log double-render
+    // bug. `_hasKeyCI` treats {From} as already satisfying `from`, so the
+    // fold no-ops and the existing cased key wins.
+    if (from    != null && !_hasKeyCI(dataObj, 'from'))    dataObj.from    = from;
+    if (to      != null && !_hasKeyCI(dataObj, 'to'))      dataObj.to      = to;
+    if (subject != null && !_hasKeyCI(dataObj, 'subject')) dataObj.subject = subject;
+    if (message != null && message !== '' && !_hasKeyCI(dataObj, 'message')) {
       dataObj.message = message;
     }
 

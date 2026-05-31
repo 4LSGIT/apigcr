@@ -403,7 +403,19 @@ function buildLogDataCell(entry) {
   try {
     const raw = (entry.log_data || '').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
     const jsonData = JSON.parse(raw);
-    inner = Object.keys(jsonData).map(key => {
+    // Case-insensitive de-dupe: some legacy/ingest rows carry both a cased
+    // and lowercase twin of the same field (e.g. From + from), which would
+    // otherwise render as two identical rows. Keep the first occurrence of
+    // each case-folded key; the canonical (usually cased) key wins because
+    // writers emit it first.
+    const seen = new Set();
+    const keys = Object.keys(jsonData).filter(k => {
+      const lc = k.toLowerCase();
+      if (seen.has(lc)) return false;
+      seen.add(lc);
+      return true;
+    });
+    inner = keys.map(key => {
       let v = jsonData[key];
       try { v = decodeURIComponent(String(v)); } catch { /* leave as-is */ }
       const titleSafe = escAttr(v);
@@ -428,11 +440,21 @@ async function showLogDetails(logId) {
     try {
       const raw = (e.log_data || '').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
       const parsed = JSON.parse(raw);
+      // Case-insensitive de-dupe to match buildLogDataCell — drop lowercase
+      // twins of cased keys so the inspector mirrors what the cell shows.
+      const seen = new Set();
       decodedData = Object.fromEntries(
-        Object.entries(parsed).map(([k, v]) => {
-          try { return [k, decodeURIComponent(String(v))]; }
-          catch { return [k, v]; }
-        })
+        Object.entries(parsed)
+          .filter(([k]) => {
+            const lc = k.toLowerCase();
+            if (seen.has(lc)) return false;
+            seen.add(lc);
+            return true;
+          })
+          .map(([k, v]) => {
+            try { return [k, decodeURIComponent(String(v))]; }
+            catch { return [k, v]; }
+          })
       );
     } catch {
       decodedData = e.log_data || null;

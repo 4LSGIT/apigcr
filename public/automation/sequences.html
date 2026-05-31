@@ -679,7 +679,17 @@ const fdEmailFromSelectHtml    = (id, val) => P.fdEmailFromSelectHtml(id, val);
 const SEQ = {
   templates: [], filtered: [],
   activeTemplateId: null, activeTemplate: null, steps: [],
-  activeStepIdx: null, tab: 'edit', editingNew: false, jsonMode: false
+  activeStepIdx: null, tab: 'edit', editingNew: false, jsonMode: false,
+  // Original action_config captured (deep-cloned) at edit-tab open. The
+  // metadata-driven internal_function form can only render/gather keys in
+  // meta.params MINUS SEQ_HIDDEN_PARAMS, so keys outside that set — `extra`
+  // forensic blocks, top-level `_comment`, and the hidden workflow-only
+  // params (output_var/count_var/date_var) — are invisible to the form and
+  // would vanish on a form-mode save. The gather seeds params FROM this clone
+  // (keep-then-overwrite) rather than rebuilding from {} (delete-then-restore),
+  // so unknown/hidden keys survive by construction. Re-snapshotted on every
+  // seqRenderEditTab. Mirrors WF.origConfig in workflows.html.
+  origConfig: null
 };
 
 const SEQENROLL = {
@@ -1079,6 +1089,10 @@ function seqRenderEditTab(step) {
   // the user explicitly toggled — confusing.
   SEQ.jsonMode = false;
   const cfg = step.action_config || {}, ep = step.error_policy || {};
+  // Snapshot pristine action_config so the form gather can preserve keys it
+  // cannot represent (see SEQ.origConfig docs). Deep clone; null on failure
+  // (gather then degrades to schema-only — the prior behaviour).
+  SEQ.origConfig = (() => { try { return JSON.parse(JSON.stringify(cfg)); } catch { return null; } })();
   const strategies = ['ignore', 'abort', 'retry_then_ignore', 'retry_then_abort'];
   document.getElementById('seq-editor-body').innerHTML = `
     <div class="field"><label>Action Type</label>
@@ -1708,7 +1722,19 @@ function seqGatherActionConfig(actionType) {
   const meta = FUNCTIONS.meta[fnName];
   const inner = document.getElementById('se-fn-body-inner');
   const activeMode = inner ? inner.dataset.mode : '';
-  const params = {};
+
+  // Keep-then-overwrite: seed from a clone of the original params (when the
+  // function hasn't changed) so keys the form can't represent survive — both
+  // out-of-schema keys (`extra`) and SEQ_HIDDEN_PARAMS (output_var/count_var/
+  // date_var, which the loop below deliberately skips). The form is
+  // authoritative for visible schema fields: each either overwrites its key
+  // or deletes it (when cleared). On function switch, start clean — carrying
+  // another function's params over would be wrong.
+  const sameFn = SEQ.origConfig && SEQ.origConfig.function_name === fnName;
+  const params = (() => {
+    if (!sameFn || !SEQ.origConfig.params) return {};
+    try { return JSON.parse(JSON.stringify(SEQ.origConfig.params)); } catch { return {}; }
+  })();
 
   for (const spec of meta.params) {
     if (SEQ_HIDDEN_PARAMS.has(spec.name)) continue;
@@ -1720,11 +1746,15 @@ function seqGatherActionConfig(actionType) {
     if (spec.type === 'boolean') {
       if (el.checked) params[spec.name] = true;
       else if (spec.default === true) params[spec.name] = false; // explicit override of true default
+      else delete params[spec.name]; // unchecked, no default → key absent
       continue;
     }
 
     const raw = (el.value || '').trim();
-    if (!raw) continue;
+    // Empty visible field owns its key: clearing it DELETES the seeded value.
+    // (Was a bare `continue` when rebuilding from {}; now must delete or the
+    // stale clone value persists.)
+    if (!raw) { delete params[spec.name]; continue; }
 
     switch (spec.type) {
       case 'integer': {
@@ -1779,6 +1809,19 @@ function seqGatherActionConfig(actionType) {
 
   const cfg = { function_name: fnName, params };
   if (sv) cfg.set_vars = sv;
+  // Out-of-schema params keys and SEQ_HIDDEN_PARAMS are already preserved:
+  // params was seeded from the original clone and only visible schema fields
+  // touched it. Top-level keys outside {function_name, params, set_vars}
+  // (e.g. `_comment`) still need carrying over — only when the function is
+  // unchanged, so another function's metadata isn't grafted on. set_vars is
+  // intentionally excluded: it's handled by the se-setvars-preserved path above.
+  if (sameFn) {
+    for (const k of Object.keys(SEQ.origConfig)) {
+      if (k !== 'function_name' && k !== 'params' && k !== 'set_vars' && !(k in cfg)) {
+        cfg[k] = SEQ.origConfig[k];
+      }
+    }
+  }
   return cfg;
 }
 

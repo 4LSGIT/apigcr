@@ -524,6 +524,15 @@ const WF = {
   workflows: [], filtered: [],
   activeWfId: null, activeWf: null, steps: [],
   activeStepIdx: null, tab: 'edit', editingNew: false, jsonMode: false,
+  // Original config captured (deep-cloned) at editor-open. The metadata-
+  // driven internal_function form can only render/gather keys declared in
+  // meta.params, so keys outside the schema — `extra` forensic blocks on
+  // phone_log, top-level `_comment` docs, any future out-of-schema nesting —
+  // are invisible to the form and would vanish on a form-mode save. The
+  // gather seeds params FROM this clone (keep-then-overwrite) rather than
+  // rebuilding from {} (delete-then-restore), so unknown keys survive by
+  // construction. Re-snapshotted on every wfRenderEditor.
+  origConfig: null,
   // Slice 2.1 — per-step tester state. Map<stepIdx, { rows:[{key,value}], touched:bool }>.
   // Preserves user-typed variable rows across tester re-renders (step switch,
   // tab switch). Cleared on workflow change and on steps refresh so stale
@@ -862,6 +871,10 @@ function wfRenderEditor(step) {
   document.getElementById('wf-editor-foot').style.display = 'flex';
   WF.jsonMode = false;
   const cfg = step.config || {}, ep = step.error_policy || {};
+  // Snapshot pristine config so the form gather can preserve keys it cannot
+  // represent (see WF.origConfig docs). Deep clone; null on clone failure
+  // (gather then degrades to schema-only, the prior behaviour).
+  WF.origConfig = (() => { try { return JSON.parse(JSON.stringify(cfg)); } catch { return null; } })();
   const strategies = ['ignore', 'abort', 'retry_then_ignore', 'retry_then_abort'];
   document.getElementById('wf-editor-body').innerHTML = `
     <div class="field">
@@ -1204,7 +1217,18 @@ function wfGatherConfig(type) {
     const meta = FUNCTIONS.meta[fnName];
     const inner = document.getElementById('e-fn-body-inner');
     const activeMode = inner ? inner.dataset.mode : '';
-    const params = {};
+
+    // Keep-then-overwrite: seed from a clone of the original params (when the
+    // function hasn't changed) so out-of-schema keys (`extra`, etc.) survive.
+    // The form is authoritative for keys it owns: each schema field below
+    // either overwrites its key or deletes it (when the field is cleared).
+    // When fnName differs from the original (user switched function), start
+    // clean — carrying another function's params over would be wrong.
+    const sameFn = WF.origConfig && WF.origConfig.function_name === fnName;
+    const params = (() => {
+      if (!sameFn || !WF.origConfig.params) return {};
+      try { return JSON.parse(JSON.stringify(WF.origConfig.params)); } catch { return {}; }
+    })();
 
     for (const spec of meta.params) {
       // Skip params that belong to a different mode group than the active one
@@ -1213,21 +1237,24 @@ function wfGatherConfig(type) {
       const el = document.getElementById(`e-pf-${spec.name}`);
       if (!el) continue;
 
-      // Boolean: checkbox.checked
+      // Boolean: checkbox.checked. This field owns its key — set, override
+      // a true default to false, or delete the seeded value entirely.
       if (spec.type === 'boolean') {
         if (el.checked) params[spec.name] = true;
         else if (spec.default === true) params[spec.name] = false; // explicit override of true default
+        else delete params[spec.name]; // unchecked, no default → key absent
         continue;
       }
 
       const raw = (el.value || '').trim();
 
-      // Empty value: omit the key entirely. The skip-block pattern (`at: null`,
-      // `resumeAt: null`) is server-written by callers like apptService.createAppt
-      // and is virtually never hand-edited; if a user needs that shape, they
-      // can drop into "Edit as JSON" mode. This avoids the footgun of "user
-      // picked Absolute mode and forgot to type anything → workflow always skips."
-      if (!raw) continue;
+      // Empty value: the field owns its key, so clearing it DELETES the
+      // seeded value (keep-then-overwrite: an empty visible field is an
+      // explicit "remove this"). Previously this rebuilt from {} so a bare
+      // `continue` sufficed; now we must delete or the stale clone persists.
+      // The skip-block pattern (`at: null`) is server-written and not hand-
+      // edited here; use Edit-as-JSON for that shape.
+      if (!raw) { delete params[spec.name]; continue; }
 
       // Type coercion
       switch (spec.type) {
@@ -1283,6 +1310,18 @@ function wfGatherConfig(type) {
 
     const cfg = { function_name: fnName, params };
     if (sv) cfg.set_vars = sv;
+    // Out-of-schema params keys (e.g. `extra`) are already preserved: params
+    // was seeded from the original clone and only schema fields touched it.
+    // Top-level config keys outside {function_name, params, set_vars} (e.g.
+    // `_comment`) still need carrying over — only when the function is
+    // unchanged, so we don't graft another function's metadata onto this one.
+    if (sameFn) {
+      for (const k of Object.keys(WF.origConfig)) {
+        if (k !== 'function_name' && k !== 'params' && k !== 'set_vars' && !(k in cfg)) {
+          cfg[k] = WF.origConfig[k];
+        }
+      }
+    }
     return cfg;
   }
   if (type === 'custom_code') {
