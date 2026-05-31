@@ -280,6 +280,83 @@
       font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
     }
 
+    /* ══════════════════════════════════════════════════════════════
+       MATCH-BUILDER (reusable condition-tree component, lifted from
+       hooks.html and namespaced .mb-* / .cond-* so 3.4 + a future
+       phone-ingest UI can reuse it unchanged). The component is
+       config-driven: fields + operators are passed in at render time.
+       ══════════════════════════════════════════════════════════════ */
+    .cond-group {
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px; margin-bottom: 8px; background: #fafbfc;
+    }
+    .cond-group-head {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    }
+    .cond-group-head select {
+      padding: 4px 8px; font-size: 11px;
+      border: 1px solid var(--border); border-radius: 4px; font-weight: 600;
+      background: #fff; color: var(--text);
+    }
+    .cond-group-head .cond-group-hint { font-size: 12px; color: var(--muted); }
+    .cond-row {
+      display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;
+    }
+    .cond-row input,
+    .cond-row select {
+      padding: 5px 8px; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: #fff; color: var(--text);
+    }
+    .cond-row input:focus,
+    .cond-row select:focus { outline: none; border-color: var(--blue); }
+    .cond-field        { flex: 2; min-width: 150px; }
+    .cond-path-custom  { flex: 2; min-width: 130px; }
+    .cond-op           { width: 130px; }
+    .cond-value        { flex: 2; min-width: 110px; }
+    .cond-value[disabled] { background: var(--bg); color: var(--muted); }
+
+    .mb-add-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      flex: 1; margin: 0; padding: 5px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+      color: var(--text2); font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.12s;
+    }
+    .mb-add-btn:hover { background: var(--border); color: var(--text); }
+    .cond-remove {
+      background: none; border: none; color: var(--muted);
+      cursor: pointer; padding: 6px; font-size: 13px; line-height: 1;
+    }
+    .cond-remove:hover { color: var(--red); }
+
+    /* ══ SUPPRESSION EDITOR FORM ══ */
+    .ei-form { max-width: 720px; }
+    .ei-form-row { margin-bottom: 16px; }
+    .ei-form-row label.ei-label {
+      display: block; font-size: 11px; font-weight: 700; color: var(--text2);
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
+    }
+    .ei-input, .ei-textarea, .ei-select {
+      width: 100%; padding: 8px 10px; font-size: 13px;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: #fff; color: var(--text); font-family: inherit;
+    }
+    .ei-input:focus, .ei-textarea:focus, .ei-select:focus { outline: none; border-color: var(--blue); }
+    .ei-textarea { resize: vertical; min-height: 72px; }
+    .ei-code-textarea {
+      min-height: 200px; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 12px; line-height: 1.5;
+    }
+    .ei-field-hint { font-size: 11px; color: var(--muted); margin-top: 5px; }
+    .ei-toggle-line { display: flex; align-items: center; gap: 8px; }
+    .ei-toggle-line input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+    .ei-toggle-line span { font-size: 13px; color: var(--text); }
+    .ei-meta-card {
+      background: #fff; border: 1px solid var(--border); border-radius: 8px;
+      padding: 0; margin-top: 20px; overflow: hidden;
+    }
+
     /* ── Read-only detail cards (suppressions/rules detail + drawer) ── */
     .ei-placeholder-banner {
       display: flex; align-items: center; gap: 8px;
@@ -548,6 +625,41 @@ window.eiToggleSidebar = eiToggleSidebar;
     executions:   { loaded: false, rows: [], offset: 0, limit: 50, total: 0, status: '', selId: null },
   };
 
+  // ── Suppression-editor form state ──
+  // isNew: editor is open for a not-yet-saved record (onNew). When false and
+  //   selectedId is set, the editor is editing an existing row (PUT on save).
+  // editorOpen: an editor form is currently mounted in #ei-detail-body.
+  // isDirty: any form input changed since load/save (drives discard guard).
+  let editorState = { isNew: false, editorOpen: false, isDirty: false };
+
+  // The available-fields catalog passed to the reusable match-builder.
+  // This lives in the EMAIL page; phone-ingest will define its own
+  // PHONE_MATCH_FIELDS and pass that instead. The component itself knows
+  // nothing about email — fields are an argument, not baked in.
+  const EMAIL_MATCH_FIELDS = [
+    { value: 'from.email',          label: 'From — email address' },
+    { value: 'from.name',           label: 'From — display name' },
+    { value: 'to',                  label: 'To (raw)' },
+    { value: 'subject',             label: 'Subject' },
+    { value: 'kind',                label: 'Kind (email)' },
+    { value: 'source',              label: 'Source (gmail-firm / siteground-php)' },
+    { value: 'headers.message_id',  label: 'Header — Message-ID' },
+    { value: 'headers.list_id',     label: 'Header — List-ID' },
+    { value: 'headers.in_reply_to', label: 'Header — In-Reply-To' },
+    { value: 'auth.spf',            label: 'Auth — SPF result' },
+    { value: 'auth.dkim',           label: 'Auth — DKIM result' },
+    { value: 'auth.dmarc',          label: 'Auth — DMARC result' },
+  ];
+
+  // Fallback operator list — mirrors hooks.html's hardcoded 15 operators,
+  // used when meta.match_operators is unavailable (same failure posture as 3.2).
+  const FALLBACK_OPERATORS = [
+    'equals','not_equals','contains','not_contains','starts_with','ends_with',
+    'gt','gte','lt','lte','exists','not_exists','in','not_in','matches',
+  ];
+  // Operators that take NO value input (value box hidden/disabled).
+  const VALUELESS_OPS = new Set(['exists','not_exists']);
+
   // ════════════════════════════════════════════════════════════════
   // META
   // ════════════════════════════════════════════════════════════════
@@ -579,8 +691,11 @@ window.eiToggleSidebar = eiToggleSidebar;
   // ════════════════════════════════════════════════════════════════
   // INTERNAL TAB SWITCHING
   // ════════════════════════════════════════════════════════════════
-  function eiSwitchTab(tab) {
+  async function eiSwitchTab(tab) {
     if (tab === activeTab) return;
+    // Guard unsaved suppression edits before navigating away.
+    if (activeTab === 'suppressions' && !(await confirmDiscardIfDirty())) return;
+    closeEditor();
     activeTab = tab;
     selectedId = null;
     const isExec = tab === 'executions';
@@ -618,6 +733,226 @@ window.eiToggleSidebar = eiToggleSidebar;
   }
 
   // ════════════════════════════════════════════════════════════════
+  // REUSABLE MATCH-BUILDER COMPONENT  (namespaced mb*)
+  //
+  // Lifted from hooks.html's conditions-builder and made config-driven:
+  // fields + operators are passed in at render time, so the same code
+  // serves the suppression editor (3.3), the rule editor (3.4), and a
+  // future phone-ingest UI. Zero email-specific logic lives here.
+  //
+  // Public interface:
+  //   mbRender(rootEl, state, opts)  — render a condition tree; mutates `state` live.
+  //     opts.availableFields : [{ value, label }]  (curated dropdown; '__custom__' escape hatch auto-added)
+  //     opts.operators       : [{ value, label }]  (from meta.match_operators; falls back internally)
+  //   mbCollect(rootEl)              — harvest current DOM → { operator, conditions }
+  //
+  // Handlers are bound via addEventListener inside the build functions
+  // (no inline onclick / no globals), keeping the IIFE clean.
+  // ════════════════════════════════════════════════════════════════
+  const MB_CUSTOM = '__custom__';
+
+  // Normalize an operators arg ([{value,label}] or ['equals',...] or undefined)
+  // into a stable [{value,label}] list, falling back to FALLBACK_OPERATORS.
+  function mbNormalizeOperators(operators) {
+    let list = Array.isArray(operators) && operators.length ? operators : FALLBACK_OPERATORS;
+    return list.map(o => {
+      if (typeof o === 'object' && o) {
+        const value = o.value ?? o.op ?? '';
+        return { value, label: o.label ?? String(value).replace(/_/g, ' ') };
+      }
+      return { value: o, label: String(o).replace(/_/g, ' ') };
+    });
+  }
+
+  // Render a match-builder into rootEl. `state` is the {operator, conditions}
+  // tree and is mutated live as the user edits. opts carries the field catalog
+  // and operator list (both injected — the reusability contract).
+  function mbRender(rootEl, state, opts) {
+    if (!rootEl) return;
+    const cfg = {
+      fields:    (opts && opts.availableFields) || [],
+      operators: mbNormalizeOperators(opts && opts.operators),
+      onChange:  (opts && typeof opts.onChange === 'function') ? opts.onChange : function () {},
+    };
+    rootEl.classList.add('cond-root');
+    rootEl._state = state;
+    rootEl._mbcfg = cfg;        // stash config so re-renders after mutation reuse it
+    rootEl.innerHTML = '';
+    rootEl.appendChild(mbBuildGroup(state, true, cfg));
+  }
+
+  // Re-render the nearest containing match-builder root after a structural
+  // mutation (add/remove condition or group). Reuses the stashed config.
+  function mbRerenderRoot(el) {
+    const root = el.closest('.cond-root');
+    if (root && root._state) mbRender(root, root._state, { availableFields: root._mbcfg.fields, operators: root._mbcfg.operators, onChange: root._mbcfg.onChange });
+  }
+
+  function mbBuildGroup(group, isRoot, cfg) {
+    const div = document.createElement('div');
+    div.className = 'cond-group';
+    div._group = group;
+
+    // head: AND/OR selector + hint + (remove, if subgroup)
+    const head = document.createElement('div');
+    head.className = 'cond-group-head';
+    const opSel = document.createElement('select');
+    opSel.innerHTML = `
+      <option value="and" ${group.operator === 'and' ? 'selected' : ''}>AND</option>
+      <option value="or"  ${group.operator === 'or'  ? 'selected' : ''}>OR</option>`;
+    opSel.addEventListener('change', e => { group.operator = e.target.value; cfg.onChange(); });
+    head.appendChild(opSel);
+    const hint = document.createElement('span');
+    hint.className = 'cond-group-hint';
+    hint.textContent = group.operator === 'or' ? 'Any condition may match' : 'All conditions must match';
+    opSel.addEventListener('change', () => { hint.textContent = group.operator === 'or' ? 'Any condition may match' : 'All conditions must match'; });
+    head.appendChild(hint);
+    if (!isRoot) {
+      const rm = document.createElement('button');
+      rm.className = 'cond-remove'; rm.title = 'Remove group';
+      rm.innerHTML = '<i class="fa-solid fa-times"></i>';
+      rm.addEventListener('click', () => { div.remove(); cfg.onChange(); });
+      head.appendChild(rm);
+    }
+    div.appendChild(head);
+
+    // body: child leaves + subgroups
+    const body = document.createElement('div');
+    body.className = 'cond-group-body';
+    (group.conditions || []).forEach(cond => {
+      if (cond && cond.operator) body.appendChild(mbBuildGroup(cond, false, cfg));
+      else body.appendChild(mbBuildLeaf(cond, cfg));
+    });
+    div.appendChild(body);
+
+    // foot: add-condition / add-group
+    const foot = document.createElement('div');
+    foot.style.cssText = 'display:flex;gap:6px;margin-top:6px';
+    foot._group = group;
+    const addC = document.createElement('button');
+    addC.className = 'mb-add-btn';
+    addC.innerHTML = '<i class="fa-solid fa-plus"></i> Condition';
+    addC.addEventListener('click', () => { group.conditions = group.conditions || []; group.conditions.push({ path: '', op: 'equals', value: '' }); cfg.onChange(); mbRerenderRoot(addC); });
+    const addG = document.createElement('button');
+    addG.className = 'mb-add-btn';
+    addG.innerHTML = '<i class="fa-solid fa-layer-group"></i> Group';
+    addG.addEventListener('click', () => { group.conditions = group.conditions || []; group.conditions.push({ operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] }); cfg.onChange(); mbRerenderRoot(addG); });
+    foot.appendChild(addC); foot.appendChild(addG);
+    div.appendChild(foot);
+
+    return div;
+  }
+
+  // A single condition row: curated field dropdown (+ custom escape hatch),
+  // operator dropdown (injected list), value input (hidden for valueless ops).
+  function mbBuildLeaf(cond, cfg) {
+    const row = document.createElement('div');
+    row.className = 'cond-row';
+    row._cond = cond;
+    const curPath = cond.path || '';
+    const known = cfg.fields.some(f => f.value === curPath);
+    const startCustom = curPath !== '' && !known;
+
+    // field <select>
+    const fieldSel = document.createElement('select');
+    fieldSel.className = 'cond-field';
+    fieldSel.innerHTML =
+      cfg.fields.map(f => `<option value="${esc(f.value)}" ${(!startCustom && f.value === curPath) ? 'selected' : ''}>${esc(f.label)}</option>`).join('') +
+      `<option value="${MB_CUSTOM}" ${startCustom ? 'selected' : ''}>Custom path…</option>`;
+    // if path is empty and there are fields, default the model to the first field
+    if (!startCustom && curPath === '' && cfg.fields.length) { cond.path = cfg.fields[0].value; fieldSel.value = cfg.fields[0].value; }
+    row.appendChild(fieldSel);
+
+    // custom-path free-text input (shown only in custom mode)
+    const customInput = document.createElement('input');
+    customInput.className = 'cond-path-custom';
+    customInput.placeholder = 'custom.path';
+    customInput.value = startCustom ? curPath : '';
+    customInput.style.display = startCustom ? '' : 'none';
+    row.appendChild(customInput);
+
+    // operator <select> (injected list)
+    const opSel = document.createElement('select');
+    opSel.className = 'cond-op';
+    opSel.innerHTML = cfg.operators.map(o => `<option value="${esc(o.value)}" ${cond.op === o.value ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
+    if (!cond.op) cond.op = cfg.operators[0]?.value || 'equals';
+    row.appendChild(opSel);
+
+    // value input
+    const valInput = document.createElement('input');
+    valInput.className = 'cond-value';
+    valInput.placeholder = 'value';
+    valInput.value = cond.value ?? '';
+    row.appendChild(valInput);
+
+    // remove button
+    const rm = document.createElement('button');
+    rm.className = 'cond-remove'; rm.title = 'Remove';
+    rm.innerHTML = '<i class="fa-solid fa-times"></i>';
+    row.appendChild(rm);
+
+    // ── wiring ──
+    const syncValueDisabled = () => {
+      const off = VALUELESS_OPS.has(opSel.value);
+      valInput.disabled = off;
+      valInput.style.display = off ? 'none' : '';
+      if (off) { cond.value = ''; valInput.value = ''; }
+    };
+    const syncPath = () => {
+      if (fieldSel.value === MB_CUSTOM) {
+        customInput.style.display = '';
+        cond.path = customInput.value.trim();
+      } else {
+        customInput.style.display = 'none';
+        cond.path = fieldSel.value;
+      }
+    };
+    fieldSel.addEventListener('change', () => { syncPath(); cfg.onChange(); });
+    customInput.addEventListener('input', () => { cond.path = customInput.value.trim(); cfg.onChange(); });
+    opSel.addEventListener('change', () => { cond.op = opSel.value; syncValueDisabled(); cfg.onChange(); });
+    valInput.addEventListener('input', () => { cond.value = valInput.value; cfg.onChange(); });
+    rm.addEventListener('click', () => { row.remove(); cfg.onChange(); });
+
+    syncValueDisabled();
+    return row;
+  }
+
+  // Harvest the live DOM back into a { operator, conditions } object. This is
+  // the authoritative save-time read (the live-mutated state can drift if a row
+  // was removed). Reads field from .cond-field (or .cond-path-custom when the
+  // field select is on the custom escape hatch). Valueless ops emit no value.
+  function mbCollect(rootEl) {
+    if (!rootEl) return { operator: 'and', conditions: [] };
+    const top = rootEl.querySelector(':scope > .cond-group') || rootEl.querySelector('.cond-group');
+    return mbCollectGroup(top);
+  }
+  function mbCollectGroup(groupEl) {
+    if (!groupEl) return { operator: 'and', conditions: [] };
+    const operator = groupEl.querySelector(':scope > .cond-group-head select')?.value || 'and';
+    const body = groupEl.querySelector(':scope > .cond-group-body');
+    const conditions = [];
+    if (body) {
+      for (const child of body.children) {
+        if (child.classList.contains('cond-group')) {
+          conditions.push(mbCollectGroup(child));
+        } else if (child.classList.contains('cond-row')) {
+          const fieldSel = child.querySelector('.cond-field');
+          const customInput = child.querySelector('.cond-path-custom');
+          const path = (fieldSel && fieldSel.value === MB_CUSTOM)
+            ? (customInput?.value?.trim() || '')
+            : (fieldSel?.value || '');
+          const op = child.querySelector('.cond-op')?.value;
+          if (!path || !op) continue;        // drop incomplete rows
+          const cond = { path, op };
+          if (!VALUELESS_OPS.has(op)) cond.value = child.querySelector('.cond-value')?.value ?? '';
+          conditions.push(cond);
+        }
+      }
+    }
+    return { operator, conditions };
+  }
+
+  // ════════════════════════════════════════════════════════════════
   // SUPPRESSIONS  (sidebar list + right detail)
   // ════════════════════════════════════════════════════════════════
   async function loadSuppressions(force = false) {
@@ -651,24 +986,139 @@ window.eiToggleSidebar = eiToggleSidebar;
       row = (data && data.suppression) ? data.suppression : (data || row);
     } catch (e) { /* keep cached */ }
     if (!row) { Toast.fire({ icon:'error', title:'Suppression not found' }); return; }
-    selectedId = id; renderSuppressionList(); renderSuppressionDetail(row);
+    selectedId = id;
+    editorState = { isNew: false, editorOpen: true, isDirty: false };
+    renderSuppressionList();
+    renderSuppressionDetail(row);
+    updateTopbarButtons();
   }
+
+  // Renders the EDITABLE suppression form into #ei-detail-body (Slice 3.3).
+  // Same name + call site as the old read-only placeholder. For a new record,
+  // pass a seeded blank row and set editorState.isNew=true before calling.
   function renderSuppressionDetail(r) {
-    setDetailHead(r.name || `Suppression #${r.id}`, `#${r.id} · suppression`);
-    const fields = [
-      ['Active', activeBadge(r.active)],
-      ['Match mode', esc(r.match_mode || '—')],
+    const isNew = editorState.isNew;
+    setDetailHead(isNew ? 'New suppression' : (r.name || `Suppression #${r.id}`),
+                  isNew ? 'unsaved' : `#${r.id} · suppression`);
+
+    const modes = (Array.isArray(meta.match_modes) && meta.match_modes.length)
+      ? meta.match_modes.map(m => (typeof m === 'object' ? (m.value ?? '') : m))
+      : ['conditions', 'code'];
+    const mode = r.match_mode || 'conditions';
+
+    // Seed the live condition-tree state for the match-builder. Harvest at save
+    // time reads the DOM (mbCollect), so this object only needs to seed render.
+    const mc = parseJson(r.match_config);
+    let condState;
+    if (mode === 'conditions') {
+      condState = (mc && mc.operator) ? mc : { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] };
+    } else {
+      condState = { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] };
+    }
+    // code-mode prefill: {code:'...'} or a bare string
+    const codeStr = (mode === 'code')
+      ? (typeof mc === 'string' ? mc : (mc && typeof mc.code === 'string' ? mc.code : ''))
+      : '';
+
+    const modeOpts = modes.map(m => `<option value="${esc(m)}" ${m === mode ? 'selected' : ''}>${esc(m)}</option>`).join('');
+
+    E('ei-detail-body').innerHTML = `
+      <div class="ei-form">
+        <div class="ei-form-row">
+          <label class="ei-label" for="sup-name">Name <span style="color:var(--red)">*</span></label>
+          <input class="ei-input" id="sup-name" maxlength="255" placeholder="e.g. Court emails (uscourts.gov)" value="${esc(r.name || '')}">
+        </div>
+        <div class="ei-form-row">
+          <label class="ei-label" for="sup-desc">Description</label>
+          <textarea class="ei-textarea" id="sup-desc" placeholder="Optional notes about what this suppresses">${esc(r.description || '')}</textarea>
+        </div>
+        <div class="ei-form-row">
+          <label class="ei-label">Active</label>
+          <label class="ei-toggle-line">
+            <input type="checkbox" id="sup-active" ${(r.active ?? 1) ? 'checked' : ''}>
+            <span>When on, matching emails are suppressed (not logged).</span>
+          </label>
+        </div>
+        <div class="ei-form-row">
+          <label class="ei-label" for="sup-mode">Match mode</label>
+          <select class="ei-select" id="sup-mode">${modeOpts}</select>
+        </div>
+
+        <div class="ei-form-row" id="sup-cond-wrap">
+          <label class="ei-label">Match conditions</label>
+          <div id="sup-cond-root"></div>
+        </div>
+
+        <div class="ei-form-row" id="sup-code-wrap">
+          <label class="ei-label" for="sup-code">Match code</label>
+          <textarea class="ei-textarea ei-code-textarea" id="sup-code" placeholder="// return truthy to suppress">${esc(codeStr)}</textarea>
+          <div class="ei-field-hint">Receives the email envelope as <code>input</code>. Return truthy to suppress.</div>
+        </div>
+      </div>
+      ${isNew ? '' : suppressionMetaCard(r)}
+    `;
+
+    // mount the reusable match-builder
+    const root = E('sup-cond-root');
+    mbRender(root, condState, { availableFields: EMAIL_MATCH_FIELDS, operators: meta.match_operators, onChange: markDirty });
+
+    // mode toggle (mirror hooks.html toggleFilterMode pattern)
+    const applyMode = () => {
+      const m = E('sup-mode').value;
+      E('sup-cond-wrap').classList.toggle('hidden', m !== 'conditions');
+      E('sup-code-wrap').classList.toggle('hidden', m !== 'code');
+    };
+    E('sup-mode').addEventListener('change', () => { applyMode(); markDirty(); });
+    applyMode();
+
+    // dirty tracking on the scalar fields (match-builder marks dirty itself)
+    ['sup-name','sup-desc','sup-code'].forEach(id => E(id).addEventListener('input', markDirty));
+    E('sup-active').addEventListener('change', markDirty);
+  }
+
+  function suppressionMetaCard(r) {
+    const rows = [
       ['Match count', String(r.match_count ?? 0)],
       ['Last matched', fmtDateOrNull(r.last_matched_at)],
-      ['Description', r.description ? esc(r.description) : nullSpan('none')],
       ['Last modified by', r.last_modified_by != null ? esc(String(r.last_modified_by)) : nullSpan('—')],
       ['Created', fmtDateOrNull(r.created_at)],
       ['Updated', fmtDateOrNull(r.updated_at)],
     ];
-    E('ei-detail-body').innerHTML =
-      placeholderBanner('Read-only preview — the suppression editor ships in Slice 3.3.') +
-      kvCard('Suppression', fields) + jsonCard('match_config', r.match_config);
+    const body = rows.map(([k, v]) => `<div class="kv-row"><div class="kv-key">${esc(k)}</div><div class="kv-val">${v}</div></div>`).join('');
+    return `<div class="ei-meta-card"><div class="kv-card-head">Metadata (read-only)</div>${body}</div>`;
   }
+
+  function markDirty() { editorState.isDirty = true; }
+
+  // Harvest the suppression form into a payload for POST/PUT.
+  function collectSuppressionForm() {
+    const name = E('sup-name').value.trim();
+    const description = E('sup-desc').value;
+    const active = E('sup-active').checked ? 1 : 0;
+    const match_mode = E('sup-mode').value;
+    let match_config;
+    if (match_mode === 'code') {
+      match_config = { code: E('sup-code').value };
+    } else {
+      match_config = mbCollect(E('sup-cond-root'));
+    }
+    return { name, description, active, match_mode, match_config };
+  }
+
+  // Guard against silently losing edits when navigating away from a dirty form.
+  // Returns a promise<boolean>: true = proceed, false = stay.
+  async function confirmDiscardIfDirty() {
+    if (!(editorState.editorOpen && editorState.isDirty)) return true;
+    const res = await Swal.fire({
+      icon: 'warning', title: 'Discard unsaved changes?',
+      text: 'You have unsaved edits to this suppression.',
+      showCancelButton: true, confirmButtonText: 'Discard', cancelButtonText: 'Keep editing',
+      confirmButtonColor: '#ef4444',
+    });
+    return !!res.isConfirmed;
+  }
+
+  function closeEditor() { editorState = { isNew: false, editorOpen: false, isDirty: false }; }
 
   // ════════════════════════════════════════════════════════════════
   // RULES  (sidebar list + right detail)
@@ -970,8 +1420,11 @@ window.eiToggleSidebar = eiToggleSidebar;
   // ════════════════════════════════════════════════════════════════
   // SELECTION DISPATCH
   // ════════════════════════════════════════════════════════════════
-  function eiSelect(id) {
+  async function eiSelect(id) {
     if (activeTab === 'executions') return selectExecution(id);
+    // Don't re-select the row already open in the editor (avoids clobbering edits).
+    if (activeTab === 'suppressions' && editorState.editorOpen && !editorState.isNew && id === selectedId) return;
+    if (activeTab === 'suppressions' && !(await confirmDiscardIfDirty())) return;
     showDetail();
     if (activeTab === 'suppressions') return selectSuppression(id);
     if (activeTab === 'rules')        return selectRule(id);
@@ -990,7 +1443,7 @@ window.eiToggleSidebar = eiToggleSidebar;
   // DETAIL / SIDEBAR HELPERS
   // ════════════════════════════════════════════════════════════════
   function showDetail() { E('ei-no-selection').style.display = 'none'; E('ei-detail-wrap').style.display = 'flex'; }
-  function clearDetail() { E('ei-detail-wrap').style.display = 'none'; E('ei-no-selection').style.display = ''; E('ei-detail-body').innerHTML = ''; }
+  function clearDetail() { closeEditor(); E('ei-detail-wrap').style.display = 'none'; E('ei-no-selection').style.display = ''; E('ei-detail-body').innerHTML = ''; }
   function setDetailHead(t, s) { E('ei-detail-title').textContent = t; E('ei-detail-subtitle').textContent = s || ''; }
   function setSidebarLoading() { E('ei-list').innerHTML = `<div class="panel-left-loading">Loading…</div>`; }
   function setSidebarEmpty(m) { E('ei-list').innerHTML = `<div class="panel-left-empty">${esc(m)}</div>`; }
@@ -1022,12 +1475,28 @@ window.eiToggleSidebar = eiToggleSidebar;
 
   // ════════════════════════════════════════════════════════════════
   // TOPBAR BUTTON STATE
-  // Suppressions & Rules: Refresh + New. Executions: Refresh only.
-  // Save/Delete hidden throughout (no editors this slice).
+  //   Executions: Refresh only.
+  //   Rules: Refresh + New (editor ships in 3.4).
+  //   Suppressions: Refresh + New always; Save when the editor is open;
+  //     Delete only when editing an existing record (hidden for a new one).
   // ════════════════════════════════════════════════════════════════
   function updateTopbarButtons() {
     if (!subPageActive) return;
-    P.setTopbarButtons({ refresh: true, new: activeTab !== 'executions', save: false, delete: false });
+    if (activeTab === 'executions') {
+      P.setTopbarButtons({ refresh: true, new: false, save: false, delete: false });
+      return;
+    }
+    if (activeTab === 'suppressions') {
+      const open = editorState.editorOpen;
+      P.setTopbarButtons({
+        refresh: true, new: true,
+        save: open,
+        delete: open && !editorState.isNew,
+      });
+      return;
+    }
+    // rules (3.4 placeholder behavior, unchanged from 3.2)
+    P.setTopbarButtons({ refresh: true, new: true, save: false, delete: false });
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -1041,27 +1510,126 @@ window.eiToggleSidebar = eiToggleSidebar;
   }
   function onShow() { subPageActive = true; updateTopbarButtons(); }
   function onHide() { subPageActive = false; }
-  function onSave()    { /* no editor in 3.2 */ }
-  function onDelete()  { /* no editor in 3.2 */ }
-  function onRefresh() {
+
+  async function onSave() {
+    if (activeTab !== 'suppressions' || !editorState.editorOpen) return; // rules = 3.4 no-op
+    const payload = collectSuppressionForm();
+
+    // hard validation
+    if (!payload.name) {
+      Swal.fire({ icon: 'error', title: 'Name required', text: 'Give the suppression a name.' });
+      return;
+    }
+    // soft warnings (allow, but confirm)
+    if (payload.match_mode === 'conditions' && (!payload.match_config.conditions || payload.match_config.conditions.length === 0)) {
+      const res = await Swal.fire({
+        icon: 'warning', title: 'No conditions',
+        text: 'An empty condition set matches every email. Save anyway?',
+        showCancelButton: true, confirmButtonText: 'Save anyway', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+    if (payload.match_mode === 'code' && !String(payload.match_config.code || '').trim()) {
+      const res = await Swal.fire({
+        icon: 'warning', title: 'Empty code',
+        text: 'The match code is empty (it will never suppress). Save anyway?',
+        showCancelButton: true, confirmButtonText: 'Save anyway', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+
+    try {
+      let saved;
+      if (editorState.isNew) {
+        saved = await api('/api/email-ingest/suppressions', 'POST', payload);
+      } else {
+        saved = await api(`/api/email-ingest/suppressions/${selectedId}`, 'PUT', payload);
+      }
+      const row = (saved && saved.suppression) ? saved.suppression : saved;
+      const newId = (row && row.id != null) ? row.id : selectedId;
+
+      Toast.fire({ icon: 'success', title: editorState.isNew ? 'Suppression created' : 'Saved' });
+
+      // refresh list, then re-select the saved record and re-render its editor
+      cache.suppressions.loaded = false;
+      await loadSuppressions(true);
+      if (newId != null) {
+        await selectSuppression(newId);    // sets editorState fresh (isNew=false, clean)
+      } else {
+        closeEditor(); clearDetail(); updateTopbarButtons();
+      }
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Save failed', text: e.message || 'The server rejected the suppression.' });
+      // keep the form open so the user can fix it
+    }
+  }
+
+  async function onDelete() {
+    if (activeTab !== 'suppressions' || !editorState.editorOpen || editorState.isNew || selectedId == null) return;
+    const row = cache.suppressions.rows.find(r => r.id === selectedId);
+    const name = row ? row.name : `#${selectedId}`;
+    const res = await Swal.fire({
+      icon: 'warning', title: 'Delete suppression?',
+      html: `Delete <strong>${esc(name)}</strong>? This cannot be undone.`,
+      showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel',
+      confirmButtonColor: '#ef4444',
+    });
+    if (!res.isConfirmed) return;
+    try {
+      await api(`/api/email-ingest/suppressions/${selectedId}`, 'DELETE');
+      Toast.fire({ icon: 'success', title: 'Deleted' });
+      closeEditor();
+      selectedId = null;
+      cache.suppressions.loaded = false;
+      await loadSuppressions(true);
+      clearDetail();
+      updateTopbarButtons();
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Delete failed', text: e.message || 'The server rejected the delete.' });
+    }
+  }
+
+  async function onRefresh() {
     if (activeTab === 'executions') { cache.executions.loaded = false; cache.executions.selId = null; eiCloseDrawer(); }
-    else { cache[activeTab].loaded = false; selectedId = null; clearDetail(); }
-    loadActiveTab(true);
+    else {
+      if (activeTab === 'suppressions' && !(await confirmDiscardIfDirty())) return;
+      if (activeTab === 'suppressions') closeEditor();
+      cache[activeTab].loaded = false; selectedId = null; clearDetail();
+    }
+    await loadActiveTab(true);
+    updateTopbarButtons();
     Toast.fire({ icon: 'success', title: 'Refreshed' });
   }
-  function onNew() {
+
+  async function onNew() {
     if (activeTab === 'executions') return; // shell hides New here anyway
+
+    // Suppressions: open a blank editor (Slice 3.3).
+    if (activeTab === 'suppressions') {
+      if (!(await confirmDiscardIfDirty())) return;
+      selectedId = null;
+      editorState = { isNew: true, editorOpen: true, isDirty: false };
+      renderSuppressionList();
+      showDetail();
+      renderSuppressionDetail({
+        name: '', description: '', active: 1,
+        match_mode: 'conditions',
+        match_config: { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] },
+      });
+      updateTopbarButtons();
+      return;
+    }
+
+    // Rules: keep the 3.4 placeholder behavior unchanged.
     selectedId = null;
-    if (activeTab === 'suppressions') renderSuppressionList(); else renderRuleList();
+    renderRuleList();
     showDetail();
-    const what = activeTab === 'suppressions' ? 'suppression' : 'rule';
-    const slice = activeTab === 'suppressions' ? '3.3' : '3.4';
-    setDetailHead(`New ${what}`, 'placeholder');
+    setDetailHead('New rule', 'placeholder');
     E('ei-detail-body').innerHTML =
-      placeholderBanner(`The "new ${what}" editor is not built yet — it ships in Slice ${slice}. This panel is a placeholder.`) +
+      placeholderBanner('The "new rule" editor is not built yet — it ships in Slice 3.4. This panel is a placeholder.') +
       `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:240px;color:var(--muted);gap:4px;text-align:center">
          <i class="fa-solid fa-pen-ruler" style="font-size:42px;opacity:0.2"></i>
-         <p style="font-size:14px;font-weight:500;margin:6px 0 0">${esc('New ' + what)} editor coming in Slice ${slice}</p>
+         <p style="font-size:14px;font-weight:500;margin:6px 0 0">New rule editor coming in Slice 3.4</p>
          <p style="font-size:12px">For now, select an existing record to inspect it read-only.</p>
        </div>`;
   }
@@ -1079,50 +1647,49 @@ window.eiToggleSidebar = eiToggleSidebar;
 
 <!--
 ══════════════════════════════════════════════════════════════════════
-MANUAL TEST PLAN (Phase 3.2 — rev 2: executions = center table + drawer)
+MANUAL TEST PLAN (Phase 3.3 — Suppression editor)
 
-Live data (readonly SQL, 2026-05-31):
-  suppressions = 2 rows; rules = 1 row (1 action);
-  executions = 396 rows. status: logged 198, duplicate 161,
-    skipped_firm_to_firm 23, skipped_suppression 5, auth_failed 6,
-    validation_failed 3.  (Prompt said ~295 — actual 396.)
+Live data (readonly SQL, 2026-05-31): suppressions table is
+email_ingest_log_suppressions — 2 rows:
+  #1 "Court emails (uscourts.gov)"  match_mode=conditions
+       match_config={operator:'and',conditions:[{op:'contains',path:'from.email',value:'uscourts.gov'}]}
+  #2 "Legacy filter mimic (no firm address in From/To)"  match_mode=code
+       match_config={code:"…firmDomains…return true;"}
 
-1. automationManager.html: last tab reads "Email Ingest", envelope icon.
-2. Click tab → loads, no console errors. Suppressions active by default
-   (sidebar three-panel layout).
-3. Suppressions: 2 rows in sidebar; click → right pane read-only detail +
-   match_config JSON. Search filters.
-4. Rules: 1 row "TEST: ingest layer 3 echo" (pos 100, 1 action). Click →
-   detail + match/transform_config + Actions(1) card.
-5. Executions: the fixed internal-tab bar stays put (no jump). Below it,
-   the supp/rules sidebar HIDES and the center fills full-width. Toolbar
-   (Status filter from meta, Limit dropdown 50/100/200/500). Table:
-   Created · Status(chip) · Source · Message ID · Match. Footer:
-   log-style windowed pager (for 8 pages @ 50: "1 2 … 4 5 6 … 7 8" with
-   the current page as a jump input) + "Showing 1–50 of 396".
-   - Page links + jump-to-page input work; offset re-fetches.
-   - Status=skipped_suppression → 5 rows, "Showing 1–5 of 5", single page.
-   - Limit=200 → "Showing 1–200 of 396", 2 pages. If the server caps
-     page_size, the UI reconciles from the response echo (limit dropdown
-     snaps to the served value, pager math stays correct).
-6. Click an execution row → DRAWER slides in from right. Execution KV card
-   (status badge, source, ids, remote_ip, error, created) + metadata +
-   raw_input JSON + hydrated Matched rules / Suppressed by + linked
-   email_log/log if present. Esc or backdrop closes; row highlight clears.
-7. Topbar: Refresh re-fetches active tab (toast). New visible on
-   Suppressions/Rules, hidden on Executions. Save/Delete hidden throughout.
-8. Switch internal tabs back and forth — the switcher bar never moves;
-   only the content below swaps (sidebar+detail ↔ exec surface). Caches
-   persist (no double load).
-9. Shell tab away and back — onHide/onShow clean.
-10. Old "Email Router" tab GONE from shell.
-11. Collapse button (topbar, right side) hides the supp/rules list so the
-    detail pane gets full width; click again to restore. Hidden on the
-    Executions tab.
+1. Open the Email Ingest tab → Suppressions. Click "Court emails (uscourts.gov)".
+   Editor opens (NOT the read-only placeholder). Name/description/active populated.
+   Match mode = conditions; match-builder shows from.email / contains / uscourts.gov
+   with the field dropdown set to "From — email address".
+2. Click "Legacy filter mimic…" — match_mode=code. Editor shows the code textarea
+   pre-filled with the JS body; match-builder hidden. Save/Delete visible in topbar.
+3. Toggle a conditions-mode rule's match mode to "code" and back — the right editor
+   shows/hides each time. (Conditions live-state and code textarea are independent;
+   neither is wiped by toggling.)
+4. Match-builder: add a condition, pick a field, pick an operator, enter a value.
+   Add a nested group (AND/OR). Pick "Custom path…" on a leaf — the free-text path
+   input appears next to the dropdown. Remove a condition. Remove a group.
+5. New suppression: topbar New → blank editor titled "New suppression" (subtitle
+   "unsaved"). No metadata card. Save is shown, Delete hidden. Fill name, add a
+   condition (from.email contains "newsletter"), Save → Toast "Suppression created";
+   the new row appears in the list and is auto-selected (now editing, Delete appears).
+6. Edit it: change the value, Save → PUT succeeds, list reflects the change.
+7. Delete it: topbar Delete → confirm dialog → deleted, list refreshes, detail clears.
+8. Validation: New suppression, leave name empty, Save → blocked with an error dialog.
+9. Empty conditions: New suppression, conditions mode, remove all conditions, Save →
+   warned "matches every email", allowed on confirm.
+10. exists/not_exists operator: pick it on a leaf → the value input hides/disables;
+    mbCollect emits {path,op} with no value for that row.
+11. Switch to Rules tab → still shows the 3.4 placeholder (untouched). New on Rules
+    still opens the 3.4 placeholder; Save/Delete stay hidden there.
+12. Switch to Executions → drawer + pager still work (untouched).
+13. Dirty guard: edit a field, then click another list row / switch internal tabs /
+    press New / Refresh → "Discard unsaved changes?" prompt. Cancel keeps editing.
+    Re-clicking the already-open row is a no-op (no prompt).
 
-Endpoint envelopes (/:id detail, executions list) are JWT-gated, runtime-
-only. Parsers handle {resource}/{...row}/{execution,linked} variants and
-reconcile paging from the response. Eyeball at deploy.
+Endpoints (POST/PUT/DELETE /api/email-ingest/suppressions[/:id]) are JWT-gated,
+runtime-only. Save/delete reconcile the saved id from the POST/PUT response
+({suppression:{…}} or bare row). Backend is the final validation guard (400s
+surfaced in a SweetAlert, form kept open). Eyeball at deploy.
 ══════════════════════════════════════════════════════════════════════
 -->
 </body>
