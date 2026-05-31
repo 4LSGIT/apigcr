@@ -444,6 +444,73 @@
     .text-muted { color: var(--muted); }
     .hidden { display: none !important; }
 
+    /* ══════════════════════════════════════════════════════════════
+       RULE EDITOR — transform builder (mapper rules) + action manager.
+       Added in Slice 3.4. The mapper UI is lifted from hooks.html's
+       renderMapperRules; the action manager mirrors hooks' target cards
+       and uses the existing .action-card / .action-type-pill styles plus
+       the interactive extensions below.
+       ══════════════════════════════════════════════════════════════ */
+
+    /* mapper rules (transform = mapper) */
+    .mapper-rule {
+      background: #fafbfc; border: 1px solid var(--border);
+      border-radius: 6px; padding: 8px; margin-bottom: 8px;
+    }
+    .mapper-rule-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .mapper-rule-row select,
+    .mapper-rule-row input {
+      padding: 5px 8px; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: #fff; color: var(--text);
+    }
+    .mapper-rule-row select:focus,
+    .mapper-rule-row input:focus { outline: none; border-color: var(--blue); }
+    .mr-type { width: 92px; }
+    .mr-from { flex: 2; min-width: 130px; }
+    .mr-to   { flex: 1; min-width: 110px; }
+    .mr-arrow { color: var(--muted); font-size: 15px; padding: 0 2px; }
+    .mr-remove {
+      background: none; border: none; color: var(--muted);
+      cursor: pointer; padding: 6px; font-size: 13px; line-height: 1;
+    }
+    .mr-remove:hover { color: var(--red); }
+    .mr-transforms {
+      margin-top: 6px; width: 100%; padding: 5px 8px; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 4px; color: var(--text);
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    }
+    .mr-empty { text-align: center; padding: 12px; color: var(--muted); font-size: 12px; }
+
+    /* action manager cards (interactive — extend the read-only .action-card) */
+    .action-card.interactive { padding: 12px 14px; }
+    .action-card .action-card-head { justify-content: flex-start; }
+    .action-icon { font-size: 14px; }
+    .action-title { font-weight: 600; font-size: 13px; color: var(--text); }
+    .action-summary { font-size: 12px; color: var(--text2); margin: 2px 0 0; }
+    .action-card-actions { margin-left: auto; display: flex; gap: 4px; }
+    .action-card-actions button {
+      background: none; border: 1px solid var(--border); border-radius: 5px;
+      color: var(--text2); cursor: pointer; padding: 4px 8px; font-size: 12px;
+      transition: all 0.12s;
+    }
+    .action-card-actions button:hover { background: var(--bg); color: var(--text); }
+    .action-card-actions button.danger:hover { color: var(--red); border-color: var(--red); }
+    .actions-note {
+      font-size: 11px; color: var(--muted); margin: 4px 0 10px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .ei-section-head {
+      font-size: 11px; font-weight: 700; color: var(--text2);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin: 22px 0 10px; padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* SweetAlert action-form field groups (mirror hooks' .fg / .hint) */
+    .fg { margin-bottom: 10px; }
+    .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -693,8 +760,8 @@ window.eiToggleSidebar = eiToggleSidebar;
   // ════════════════════════════════════════════════════════════════
   async function eiSwitchTab(tab) {
     if (tab === activeTab) return;
-    // Guard unsaved suppression edits before navigating away.
-    if (activeTab === 'suppressions' && !(await confirmDiscardIfDirty())) return;
+    // Guard unsaved edits (suppression OR rule) before navigating away.
+    if ((activeTab === 'suppressions' || activeTab === 'rules') && !(await confirmDiscardIfDirty())) return;
     closeEditor();
     activeTab = tab;
     selectedId = null;
@@ -1111,7 +1178,7 @@ window.eiToggleSidebar = eiToggleSidebar;
     if (!(editorState.editorOpen && editorState.isDirty)) return true;
     const res = await Swal.fire({
       icon: 'warning', title: 'Discard unsaved changes?',
-      text: 'You have unsaved edits to this suppression.',
+      text: 'You have unsaved edits.',
       showCancelButton: true, confirmButtonText: 'Discard', cancelButtonText: 'Keep editing',
       confirmButtonColor: '#ef4444',
     });
@@ -1158,37 +1225,730 @@ window.eiToggleSidebar = eiToggleSidebar;
       else if (data) { row = data; }
     } catch (e) { /* keep cached */ }
     if (!row) { Toast.fire({ icon:'error', title:'Rule not found' }); return; }
-    selectedId = id; renderRuleList(); renderRuleDetail(row);
+    selectedId = id;
+    editorState = { isNew: false, editorOpen: true, isDirty: false };
+    renderRuleList();
+    renderRuleDetail(row);
+    updateTopbarButtons();
   }
+
+  // ════════════════════════════════════════════════════════════════
+  // RULE EDITOR  (Slice 3.4) — replaces the 3.4 read-only placeholder.
+  //
+  // Structure mirrors the suppression editor (3.3) plus two new pieces:
+  //   - transform builder (passthrough / mapper / code), lifted from
+  //     hooks.html's renderMapperRules + toggleTransformMode.
+  //   - action manager (Deliverable 2), mirroring hooks.html's target
+  //     CRUD against the rule-action endpoints. Action-save model (b):
+  //     actions are saved independently of the rule's own Save.
+  //
+  // Live form state lives in ruleForm (below). Match-tree state is kept
+  // live for mbRender; the code textarea + mapper buffer are preserved
+  // across mode toggles (don't wipe on switch — mirrors 3.3's conditions
+  // vs. code independence).
+  // ════════════════════════════════════════════════════════════════
+
+  // ruleForm: the live editor buffer for the rule currently mounted.
+  //   id            — null while the rule is unsaved (new); set after first save.
+  //   actions       — local mirror of the rule's actions array (mutated by the
+  //                   action manager; re-rendered card list reads from here).
+  //   condState     — live {operator, conditions} tree for the match-builder.
+  //   mapperRules   — live mapper-rule buffer for transform=mapper (preserved
+  //                   across transform-mode toggles).
+  let ruleForm = { id: null, actions: [], condState: null, mapperRules: [] };
+
+  // Renders the EDITABLE rule form into #ei-detail-body. Same call site as
+  // the old read-only placeholder. For a new record, pass a seeded blank row
+  // and set editorState.isNew=true before calling.
   function renderRuleDetail(r) {
-    setDetailHead(r.name || `Rule #${r.id}`, `#${r.id} · rule`);
-    const fields = [
-      ['Active', activeBadge(r.active)],
-      ['Position', String(r.position ?? 0)],
-      ['Match mode', esc(r.match_mode || '—')],
-      ['Transform mode', esc(r.transform_mode || '—')],
+    const isNew = editorState.isNew;
+    setDetailHead(isNew ? 'New rule' : (r.name || `Rule #${r.id}`),
+                  isNew ? 'unsaved' : `#${r.id} · rule`);
+
+    // ── Match seed (identical handling to the suppression editor) ──
+    const matchModes = (Array.isArray(meta.match_modes) && meta.match_modes.length)
+      ? meta.match_modes.map(m => (typeof m === 'object' ? (m.value ?? '') : m))
+      : ['conditions', 'code'];
+    const matchMode = r.match_mode || 'conditions';
+    const mc = parseJson(r.match_config);
+    let condState;
+    if (matchMode === 'conditions') {
+      condState = (mc && mc.operator) ? mc : { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] };
+    } else {
+      condState = { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] };
+    }
+    const matchCodeStr = (matchMode === 'code')
+      ? (typeof mc === 'string' ? mc : (mc && typeof mc.code === 'string' ? mc.code : ''))
+      : '';
+
+    // ── Transform seed ──
+    const transformModes = (Array.isArray(meta.transform_modes) && meta.transform_modes.length)
+      ? meta.transform_modes.map(m => (typeof m === 'object' ? (m.value ?? '') : m))
+      : ['passthrough', 'mapper', 'code'];
+    const transformMode = r.transform_mode || 'passthrough';
+    const tc = parseJson(r.transform_config);
+    // mapper buffer: transform_config is an array for mapper mode
+    const mapperRules = (transformMode === 'mapper' && Array.isArray(tc))
+      ? tc.map(normalizeMapperRule)
+      : [];
+    // code buffer: {code:'...'} or a bare string
+    const transformCodeStr = (transformMode === 'code')
+      ? (typeof tc === 'string' ? tc : (tc && typeof tc.code === 'string' ? tc.code : ''))
+      : '';
+
+    // initialize live form state
+    ruleForm = {
+      id: isNew ? null : (r.id ?? null),
+      actions: Array.isArray(r.actions) ? r.actions.slice() : [],
+      condState,
+      mapperRules,
+    };
+
+    const matchModeOpts = matchModes.map(m => `<option value="${esc(m)}" ${m === matchMode ? 'selected' : ''}>${esc(m)}</option>`).join('');
+    const transformModeOpts = transformModes.map(m => `<option value="${esc(m)}" ${m === transformMode ? 'selected' : ''}>${esc(m)}</option>`).join('');
+
+    E('ei-detail-body').innerHTML = `
+      <div class="ei-form">
+        <div class="ei-form-row">
+          <label class="ei-label" for="rule-name">Name <span style="color:var(--red)">*</span></label>
+          <input class="ei-input" id="rule-name" maxlength="255" placeholder="e.g. Court docket notices → log + workflow" value="${esc(r.name || '')}">
+        </div>
+        <div class="ei-form-row">
+          <label class="ei-label" for="rule-desc">Description</label>
+          <textarea class="ei-textarea" id="rule-desc" placeholder="Optional notes about what this rule does">${esc(r.description || '')}</textarea>
+        </div>
+        <div class="ei-form-row">
+          <label class="ei-label">Active</label>
+          <label class="ei-toggle-line">
+            <input type="checkbox" id="rule-active" ${(r.active ?? 1) ? 'checked' : ''}>
+            <span>When on, matching emails run this rule's transform + actions.</span>
+          </label>
+        </div>
+        <div class="ei-form-row">
+          <label class="ei-label" for="rule-position">Position</label>
+          <input class="ei-input" id="rule-position" type="number" min="0" step="1" style="max-width:140px" value="${Number(r.position ?? 0)}">
+          <div class="ei-field-hint">Lower positions evaluate first.</div>
+        </div>
+
+        <!-- ═══ MATCH ═══ -->
+        <div class="ei-section-head">Match</div>
+        <div class="ei-form-row">
+          <label class="ei-label" for="rule-match-mode">Match mode</label>
+          <select class="ei-select" id="rule-match-mode" style="max-width:220px">${matchModeOpts}</select>
+        </div>
+        <div class="ei-form-row" id="rule-match-cond-wrap">
+          <label class="ei-label">Match conditions</label>
+          <div id="rule-match-cond-root"></div>
+        </div>
+        <div class="ei-form-row" id="rule-match-code-wrap">
+          <label class="ei-label" for="rule-match-code">Match code</label>
+          <textarea class="ei-textarea ei-code-textarea" id="rule-match-code" placeholder="// return truthy to match">${esc(matchCodeStr)}</textarea>
+          <div class="ei-field-hint">Receives the email envelope as <code>input</code>. Return truthy to match.</div>
+        </div>
+
+        <!-- ═══ TRANSFORM ═══ -->
+        <div class="ei-section-head">Transform</div>
+        <div class="ei-form-row">
+          <label class="ei-label" for="rule-transform-mode">Transform mode</label>
+          <select class="ei-select" id="rule-transform-mode" style="max-width:220px">${transformModeOpts}</select>
+        </div>
+        <div class="ei-form-row" id="rule-transform-passthrough-wrap">
+          <div class="ei-field-hint">The email envelope is passed to actions unchanged.</div>
+        </div>
+        <div class="ei-form-row" id="rule-transform-mapper-wrap">
+          <label class="ei-label">Mapping rules</label>
+          <div id="rule-mapper-rules"></div>
+          <button type="button" class="btn btn-outline btn-sm" id="rule-mapper-add" style="margin-top:6px"><i class="fa-solid fa-plus"></i> Add mapping</button>
+          <div class="ei-field-hint">Build the object passed to actions from envelope fields.</div>
+        </div>
+        <div class="ei-form-row" id="rule-transform-code-wrap">
+          <label class="ei-label" for="rule-transform-code">Transform code</label>
+          <textarea class="ei-textarea ei-code-textarea" id="rule-transform-code" placeholder="// return the transformed object">${esc(transformCodeStr)}</textarea>
+          <div class="ei-field-hint">Receives the envelope as <code>input</code>. Return the transformed object passed to actions.</div>
+        </div>
+
+        <!-- ═══ ACTIONS ═══ -->
+        <div class="ei-section-head">Actions</div>
+        <div class="actions-note"><i class="fa-solid fa-circle-info"></i> Actions are saved immediately when added or edited (separately from the rule's Save).</div>
+        <div id="rule-actions-list"></div>
+        <button type="button" class="btn btn-outline btn-sm" id="rule-action-add" style="margin-top:6px"><i class="fa-solid fa-plus"></i> Add action</button>
+        <div id="rule-action-disabled-note" class="ei-field-hint" style="display:none"><i class="fa-solid fa-lock"></i> Save the rule first, then add actions.</div>
+      </div>
+      ${isNew ? '' : ruleMetaCard(r)}
+    `;
+
+    // ── mount the reusable match-builder (REUSED UNCHANGED from 3.3) ──
+    mbRender(E('rule-match-cond-root'), ruleForm.condState,
+      { availableFields: EMAIL_MATCH_FIELDS, operators: meta.match_operators, onChange: markDirty });
+
+    // ── match mode toggle ──
+    const applyMatchMode = () => {
+      const m = E('rule-match-mode').value;
+      E('rule-match-cond-wrap').classList.toggle('hidden', m !== 'conditions');
+      E('rule-match-code-wrap').classList.toggle('hidden', m !== 'code');
+    };
+    E('rule-match-mode').addEventListener('change', () => { applyMatchMode(); markDirty(); });
+    applyMatchMode();
+
+    // ── transform mode toggle (preserves each sub-editor's state) ──
+    const applyTransformMode = () => {
+      const m = E('rule-transform-mode').value;
+      E('rule-transform-passthrough-wrap').classList.toggle('hidden', m !== 'passthrough');
+      E('rule-transform-mapper-wrap').classList.toggle('hidden', m !== 'mapper');
+      E('rule-transform-code-wrap').classList.toggle('hidden', m !== 'code');
+      if (m === 'mapper') renderMapperRules();
+    };
+    E('rule-transform-mode').addEventListener('change', () => { applyTransformMode(); markDirty(); });
+    E('rule-mapper-add').addEventListener('click', () => { ruleForm.mapperRules.push({ from: '', to: '' }); renderMapperRules(); markDirty(); });
+    applyTransformMode();
+
+    // ── dirty tracking on scalar + code fields (match-builder marks itself) ──
+    ['rule-name','rule-desc','rule-position','rule-match-code','rule-transform-code'].forEach(id => E(id).addEventListener('input', markDirty));
+    E('rule-active').addEventListener('change', markDirty);
+
+    // ── actions section ──
+    renderActionCards();
+    wireActionAddButton();
+  }
+
+  function ruleMetaCard(r) {
+    const rows = [
       ['Match count', String(r.match_count ?? 0)],
       ['Last matched', fmtDateOrNull(r.last_matched_at)],
-      ['Description', r.description ? esc(r.description) : nullSpan('none')],
+      ['Last modified by', r.last_modified_by != null ? esc(String(r.last_modified_by)) : nullSpan('—')],
       ['Created', fmtDateOrNull(r.created_at)],
       ['Updated', fmtDateOrNull(r.updated_at)],
     ];
-    const actions = Array.isArray(r.actions) ? r.actions : [];
-    const actionsHtml = actions.length
-      ? actions.map((a,i) => `
-          <div class="action-card">
-            <div class="action-card-head">
-              <span class="action-type-pill">${esc(a.action_type || 'action')}</span>
-              <span class="text-muted" style="font-size:12px">pos ${Number(a.position ?? i)}</span>
-              <span class="left-item-badge ${a.active ? 'badge-active':'badge-inactive'}" style="margin-left:auto">${a.active?'ON':'OFF'}</span>
+    const body = rows.map(([k, v]) => `<div class="kv-row"><div class="kv-key">${esc(k)}</div><div class="kv-val">${v}</div></div>`).join('');
+    return `<div class="ei-meta-card"><div class="kv-card-head">Metadata (read-only)</div>${body}</div>`;
+  }
+
+  // ── Transform: mapper-rules UI (lifted from hooks.html renderMapperRules) ──
+  // A mapper rule is one of: {from, to, transforms?} | {template, to} | {value, to}.
+  function normalizeMapperRule(r) {
+    if (!r || typeof r !== 'object') return { from: '', to: '' };
+    if (r.template !== undefined) return { template: r.template, to: r.to || '' };
+    if (r.value !== undefined)    return { value: r.value, to: r.to || '' };
+    return { from: r.from || '', to: r.to || '', transforms: Array.isArray(r.transforms) ? r.transforms : [] };
+  }
+  function renderMapperRules() {
+    const el = E('rule-mapper-rules');
+    if (!el) return;
+    const rules = ruleForm.mapperRules;
+    if (!rules.length) { el.innerHTML = `<div class="mr-empty">No mapping rules. Add one below.</div>`; return; }
+    el.innerHTML = rules.map((r, i) => {
+      const kind = r.from !== undefined ? 'from' : (r.template !== undefined ? 'template' : 'value');
+      const srcVal = r.from ?? r.template ?? (r.value !== undefined ? String(r.value) : '');
+      const ph = kind === 'template' ? '{{path|transform}} text' : (kind === 'value' ? 'static value' : 'subject  or  from.email');
+      return `
+        <div class="mapper-rule" data-idx="${i}">
+          <div class="mapper-rule-row">
+            <select class="mr-type">
+              <option value="from"     ${kind==='from'?'selected':''}>Path</option>
+              <option value="template" ${kind==='template'?'selected':''}>Template</option>
+              <option value="value"    ${kind==='value'?'selected':''}>Static</option>
+            </select>
+            <input class="mr-from" placeholder="${esc(ph)}" value="${esc(srcVal)}">
+            <span class="mr-arrow">→</span>
+            <input class="mr-to" placeholder="dest_field" value="${esc(r.to || '')}">
+            <button type="button" class="mr-remove" title="Remove"><i class="fa-solid fa-times"></i></button>
+          </div>
+          ${kind==='from' ? `<input class="mr-transforms" placeholder="transforms: lowercase, trim, date:yyyy-MM-dd …" value="${esc((r.transforms||[]).join(', '))}">` : ''}
+        </div>`;
+    }).join('');
+    // wire each rule's controls
+    el.querySelectorAll('.mapper-rule').forEach(card => {
+      const i = Number(card.getAttribute('data-idx'));
+      card.querySelector('.mr-type').addEventListener('change', e => {
+        const to = ruleForm.mapperRules[i].to || '';
+        const t = e.target.value;
+        if (t === 'from') ruleForm.mapperRules[i] = { from: '', to, transforms: [] };
+        else if (t === 'template') ruleForm.mapperRules[i] = { template: '', to };
+        else ruleForm.mapperRules[i] = { value: '', to };
+        renderMapperRules(); markDirty();
+      });
+      card.querySelector('.mr-remove').addEventListener('click', () => { ruleForm.mapperRules.splice(i, 1); renderMapperRules(); markDirty(); });
+      card.querySelector('.mr-from')?.addEventListener('input', markDirty);
+      card.querySelector('.mr-to')?.addEventListener('input', markDirty);
+      card.querySelector('.mr-transforms')?.addEventListener('input', markDirty);
+    });
+  }
+  // Harvest mapper rules from the live DOM → transform_config array.
+  function collectMapperRules() {
+    const el = E('rule-mapper-rules');
+    if (!el) return [];
+    return Array.from(el.querySelectorAll('.mapper-rule')).map(card => {
+      const kind = card.querySelector('.mr-type').value;
+      const source = card.querySelector('.mr-from').value;
+      const to = card.querySelector('.mr-to').value;
+      const rule = { to };
+      if (kind === 'from') {
+        rule.from = source;
+        const tf = card.querySelector('.mr-transforms');
+        if (tf && tf.value.trim()) rule.transforms = tf.value.split(',').map(s => s.trim()).filter(Boolean);
+      } else if (kind === 'template') {
+        rule.template = source;
+      } else {
+        rule.value = source;
+      }
+      return rule;
+    });
+  }
+
+  // Harvest the rule's scalar + match + transform fields into a POST/PUT payload.
+  // Actions are NOT included — they're managed independently (model (b)).
+  function collectRuleForm() {
+    const name = E('rule-name').value.trim();
+    const description = E('rule-desc').value;
+    const active = E('rule-active').checked ? 1 : 0;
+    const position = Math.max(0, parseInt(E('rule-position').value, 10) || 0);
+
+    const match_mode = E('rule-match-mode').value;
+    let match_config;
+    if (match_mode === 'code') match_config = { code: E('rule-match-code').value };
+    else match_config = mbCollect(E('rule-match-cond-root'));
+
+    const transform_mode = E('rule-transform-mode').value;
+    let transform_config;
+    if (transform_mode === 'mapper')      transform_config = collectMapperRules();
+    else if (transform_mode === 'code')   transform_config = { code: E('rule-transform-code').value };
+    else                                  transform_config = null; // passthrough
+
+    return { name, description, active, position, match_mode, match_config, transform_mode, transform_config };
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // ACTION MANAGER  (Deliverable 2) — mirrors hooks.html target CRUD.
+  //
+  // The five action types map ~1:1 to hook target types, plus a new
+  // 'hook' type (config {slug}) that hooks.html lacks. Config forms are
+  // hand-built per type (the recommended approach in the prompt) mirroring
+  // buildTargetForm's sections. Unlike hook targets, rule actions have NO
+  // per-action conditions (out of scope — the rule's match is the gate).
+  //
+  // New-rule action ordering: SAVE-FIRST (recommended). When the rule is
+  // unsaved (ruleForm.id == null), the "Add action" button is disabled with
+  // a "save the rule first" note. After the first POST returns an id,
+  // selectRule re-renders with the actions section enabled. Chosen over
+  // hooks' local-buffer approach because actions FK to rule_id — buffering
+  // unsaved actions would need a client-side replay after rule creation and
+  // can't pre-validate referentially; save-first matches the backend reality
+  // and is simpler + less error-prone.
+  // ════════════════════════════════════════════════════════════════
+  const ACTION_TYPE_LABELS = {
+    workflow:          { label: 'Workflow', icon: 'fa-diagram-project', color: '#8b5cf6' },
+    sequence:          { label: 'Sequence', icon: 'fa-list-ol',         color: '#f97316' },
+    hook:              { label: 'Hook',     icon: 'fa-bolt-lightning',  color: '#0ea5e9' },
+    internal_function: { label: 'Function', icon: 'fa-code',            color: '#10b981' },
+    http:              { label: 'HTTP',     icon: 'fa-globe',           color: 'var(--blue)' },
+  };
+
+  function summarizeAction(a) {
+    const type = a.action_type || 'http';
+    const cfg = parseJson(a.config) || {};
+    if (type === 'workflow') return `Start workflow #${cfg.workflow_id ?? '?'}`;
+    if (type === 'sequence') {
+      if (cfg.template_id != null && cfg.template_id !== '') {
+        const tpl = (meta.targets?.sequences || []).find(s => s.id == cfg.template_id);
+        return tpl ? `Enroll in template #${cfg.template_id} "${tpl.name}"` : `Enroll in template #${cfg.template_id}`;
+      }
+      return `Enroll in sequence "${cfg.template_type || '?'}"`;
+    }
+    if (type === 'hook') {
+      const h = (meta.targets?.hooks || []).find(x => x.slug === cfg.slug);
+      return h ? `Invoke hook '${cfg.slug}' (${h.name})` : `Invoke hook '${cfg.slug || '?'}'`;
+    }
+    if (type === 'internal_function') return `Call ${cfg.function_name || '?'}()`;
+    if (type === 'http') return `${cfg.method || 'POST'} ${cfg.url || '—'}`;
+    return `(${type})`;
+  }
+
+  function renderActionCards() {
+    const el = E('rule-actions-list');
+    if (!el) return;
+    const actions = ruleForm.actions;
+    if (!actions.length) {
+      el.innerHTML = `<div class="text-muted" style="font-size:13px;padding:4px 0">No actions configured.</div>`;
+      return;
+    }
+    el.innerHTML = actions.map((a, i) => {
+      const info = ACTION_TYPE_LABELS[a.action_type] || ACTION_TYPE_LABELS.http;
+      return `
+        <div class="action-card interactive">
+          <div class="action-card-head">
+            <i class="fa-solid ${info.icon} action-icon" style="color:${info.color}"></i>
+            <span class="action-title">${esc(info.label)}</span>
+            <span class="text-muted" style="font-size:12px">pos ${Number(a.position ?? i)}</span>
+            <span class="left-item-badge ${a.active ? 'badge-active':'badge-inactive'}">${a.active?'ON':'OFF'}</span>
+            <div class="action-card-actions">
+              <button data-act="edit" data-idx="${i}" title="Edit"><i class="fa-solid fa-pen"></i></button>
+              <button data-act="del" data-idx="${i}" class="danger" title="Delete"><i class="fa-solid fa-trash"></i></button>
             </div>
-            <pre class="json">${esc(prettyJson(a.config))}</pre>
-          </div>`).join('')
-      : `<div class="text-muted" style="font-size:13px">No actions configured.</div>`;
-    E('ei-detail-body').innerHTML =
-      placeholderBanner('Read-only preview — the rule editor ships in Slice 3.4.') +
-      kvCard('Rule', fields) + jsonCard('match_config', r.match_config) + jsonCard('transform_config', r.transform_config) +
-      `<div class="kv-card"><div class="kv-card-head">Actions (${actions.length})</div><div style="padding:14px">${actionsHtml}</div></div>`;
+          </div>
+          <div class="action-summary mono">${esc(summarizeAction(a))}</div>
+        </div>`;
+    }).join('');
+    el.querySelectorAll('button[data-act]').forEach(btn => {
+      const i = Number(btn.getAttribute('data-idx'));
+      if (btn.getAttribute('data-act') === 'edit') btn.addEventListener('click', () => editAction(i));
+      else btn.addEventListener('click', () => removeAction(i));
+    });
+  }
+
+  // Enable/disable the Add-action affordance based on whether the rule is saved.
+  function wireActionAddButton() {
+    const btn = E('rule-action-add');
+    const note = E('rule-action-disabled-note');
+    if (!btn) return;
+    const saved = ruleForm.id != null;
+    btn.disabled = !saved;
+    if (note) note.style.display = saved ? 'none' : '';
+    btn.onclick = saved ? () => addAction() : null;
+  }
+
+  async function addAction() {
+    if (ruleForm.id == null) return;
+    const { value } = await Swal.fire({
+      title: 'Add action',
+      html: buildActionForm({}),
+      width: 600,
+      showCancelButton: true,
+      confirmButtonText: 'Add',
+      didOpen: () => initActionFormHandlers({}),
+      preConfirm: () => collectActionForm(),
+    });
+    if (!value) return;
+    try {
+      const result = await api(`/api/email-ingest/rules/${ruleForm.id}/actions`, 'POST', value);
+      const row = (result && result.action) ? result.action : result;
+      ruleForm.actions.push(row);
+      renderActionCards();
+      Toast.fire({ icon: 'success', title: 'Action added' });
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Add failed', text: e.message || 'The server rejected the action.' });
+    }
+  }
+
+  async function editAction(i) {
+    const a = ruleForm.actions[i];
+    if (!a) return;
+    const { value } = await Swal.fire({
+      title: 'Edit action',
+      html: buildActionForm(a),
+      width: 600,
+      showCancelButton: true,
+      confirmButtonText: 'Update',
+      didOpen: () => initActionFormHandlers(a),
+      preConfirm: () => collectActionForm(),
+    });
+    if (!value) return;
+    try {
+      const result = await api(`/api/email-ingest/rule-actions/${a.id}`, 'PUT', value);
+      const row = (result && result.action) ? result.action : result;
+      // merge: keep id + rule_id, take updated fields
+      ruleForm.actions[i] = Object.assign({}, a, row, value);
+      renderActionCards();
+      Toast.fire({ icon: 'success', title: 'Action updated' });
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Update failed', text: e.message || 'The server rejected the action.' });
+    }
+  }
+
+  async function removeAction(i) {
+    const a = ruleForm.actions[i];
+    if (!a) return;
+    const res = await Swal.fire({
+      icon: 'warning', title: 'Delete action?',
+      html: `Delete this <strong>${esc((ACTION_TYPE_LABELS[a.action_type]||{}).label || a.action_type)}</strong> action?`,
+      showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel', confirmButtonColor: '#ef4444',
+    });
+    if (!res.isConfirmed) return;
+    try {
+      await api(`/api/email-ingest/rule-actions/${a.id}`, 'DELETE');
+      ruleForm.actions.splice(i, 1);
+      renderActionCards();
+      Toast.fire({ icon: 'success', title: 'Action deleted' });
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Delete failed', text: e.message || 'The server rejected the delete.' });
+    }
+  }
+
+  // ── Action config form (hand-built per type, mirroring buildTargetForm) ──
+  function buildActionForm(a) {
+    const type = a.action_type || 'workflow';
+    const cfg = parseJson(a.config) || {};
+    const t = meta.targets || {};
+    const wfOpts = (t.workflows || []).map(w => `<option value="${w.id}" ${cfg.workflow_id==w.id?'selected':''}>${esc(w.name || 'Workflow #'+w.id)} (id: ${w.id})</option>`).join('');
+    const seqList = t.sequences || [];
+    const seqTypes = [...new Set(seqList.map(s => s.type).filter(Boolean))];
+    const seqTypeOpts = seqTypes.map(tt => `<option value="${esc(tt)}" ${cfg.template_type===tt?'selected':''}>${esc(tt)}</option>`).join('');
+    const seqIdOpts = seqList.map(s => {
+      const tl = (s.type && String(s.type).trim()) ? ` (${esc(s.type)})` : '';
+      return `<option value="${s.id}" ${cfg.template_id==s.id?'selected':''}>${esc(s.name)}${tl}</option>`;
+    }).join('');
+    const seqModeInit = (cfg.template_id != null && cfg.template_id !== '') ? 'id' : 'type';
+    const hookOpts = (t.hooks || []).map(h => `<option value="${esc(h.slug)}" ${cfg.slug===h.slug?'selected':''}>${esc(h.name || h.slug)} (${esc(h.slug)})</option>`).join('');
+    const fnOpts = (t.internal_functions || []).map(fn => `<option value="${esc(fn)}" ${cfg.function_name===fn?'selected':''}>${esc(fn)}</option>`).join('');
+    const credOpts = (t.credentials || []).map(c => `<option value="${c.id}" ${cfg.credential_id==c.id?'selected':''}>${esc(c.name)} (${esc(c.type)})</option>`).join('');
+
+    return `
+      <div style="text-align:left;font-size:13px">
+        <div class="fg">
+          <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Action Type</label>
+          <select id="swal-a-type" class="swal2-select" style="margin:0;width:100%">
+            <option value="workflow"          ${type==='workflow'?'selected':''}>Workflow — start execution</option>
+            <option value="sequence"          ${type==='sequence'?'selected':''}>Sequence — enroll contact</option>
+            <option value="hook"              ${type==='hook'?'selected':''}>Hook — invoke by slug</option>
+            <option value="internal_function" ${type==='internal_function'?'selected':''}>Internal Function — call directly</option>
+            <option value="http"              ${type==='http'?'selected':''}>HTTP — external URL</option>
+          </select>
+        </div>
+
+        <!-- workflow -->
+        <div id="swal-a-sec-workflow" class="swal-a-section">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Workflow</label>
+            <select id="swal-a-wf" class="swal2-select" style="margin:0;width:100%"><option value="">— select a workflow —</option>${wfOpts}</select>
+          </div>
+        </div>
+
+        <!-- sequence -->
+        <div id="swal-a-sec-sequence" class="swal-a-section" style="display:none">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Enrollment mode</label>
+            <select id="swal-a-seq-mode" class="swal2-select" style="margin:0;width:100%">
+              <option value="type" ${seqModeInit==='type'?'selected':''}>By type (cascade match)</option>
+              <option value="id"   ${seqModeInit==='id'?'selected':''}>By specific template</option>
+            </select>
+          </div>
+          <div id="swal-a-seq-by-type">
+            <div class="fg">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Template Type</label>
+              <select id="swal-a-seq-type" class="swal2-select" style="margin:0;width:100%"><option value="">— select a template type —</option>${seqTypeOpts}</select>
+            </div>
+          </div>
+          <div id="swal-a-seq-by-id" style="display:none">
+            <div class="fg">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Template</label>
+              <select id="swal-a-seq-id" class="swal2-select" style="margin:0;width:100%"><option value="">— select a template —</option>${seqIdOpts}</select>
+            </div>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">contact_id field name</label>
+            <input id="swal-a-seq-cid" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.contact_id_field || 'contact_id')}" placeholder="contact_id">
+            <div class="hint">Field in the transform output holding the contact ID. Dot-paths supported.</div>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">trigger_data fields (comma-separated)</label>
+            <input id="swal-a-seq-td" class="swal2-input mono" style="margin:0;width:100%" value="${esc((cfg.trigger_data_fields || []).join(', '))}" placeholder="appt_id, case_id">
+            <div class="hint">Transform fields passed through as <code>trigger_data</code>.</div>
+          </div>
+        </div>
+
+        <!-- hook -->
+        <div id="swal-a-sec-hook" class="swal-a-section" style="display:none">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Hook</label>
+            <select id="swal-a-hook" class="swal2-select" style="margin:0;width:100%"><option value="">— select a hook —</option>${hookOpts}</select>
+            <div class="hint">The transform output is posted to this hook's receiver.</div>
+          </div>
+        </div>
+
+        <!-- internal_function -->
+        <div id="swal-a-sec-internal_function" class="swal-a-section" style="display:none">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Function</label>
+            <select id="swal-a-fn" class="swal2-select" style="margin:0;width:100%"><option value="">— select a function —</option>${fnOpts}</select>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Params Mapping</label>
+            <div id="swal-a-fn-params" style="border:1px solid var(--border);border-radius:6px;padding:8px;background:#f8fafc"></div>
+            <button type="button" id="swal-a-fn-add" class="btn btn-outline" style="margin-top:6px;padding:4px 10px;font-size:12px"><i class="fa-solid fa-plus"></i> Add param</button>
+            <div class="hint">Map function params to transform output fields. Dot-paths supported. Wrap literals in single quotes: <code>'SMS'</code>.</div>
+          </div>
+        </div>
+
+        <!-- http -->
+        <div id="swal-a-sec-http" class="swal-a-section" style="display:none">
+          <div style="display:flex;gap:8px">
+            <div class="fg" style="width:100px">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Method</label>
+              <select id="swal-a-method" class="swal2-select" style="margin:0;width:100%">${['POST','GET','PUT','PATCH','DELETE'].map(m=>`<option ${cfg.method===m?'selected':''}>${m}</option>`).join('')}</select>
+            </div>
+            <div class="fg" style="flex:1">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">URL</label>
+              <input id="swal-a-url" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.url || '')}" placeholder="https://...">
+            </div>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Credential</label>
+            <select id="swal-a-cred" class="swal2-select" style="margin:0;width:100%"><option value="">None</option>${credOpts}</select>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Mode</label>
+            <select id="swal-a-bodymode" class="swal2-select" style="margin:0;width:100%">
+              <option value="transform_output" ${cfg.body_mode!=='template'?'selected':''}>Full transform output</option>
+              <option value="template" ${cfg.body_mode==='template'?'selected':''}>Template</option>
+            </select>
+          </div>
+          <div class="fg" id="swal-a-template-wrap">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Template</label>
+            <textarea id="swal-a-template" class="swal2-textarea" style="margin:0;width:100%;font-family:monospace;font-size:12px;min-height:60px" placeholder='{"text": "{{subject}}"}'>${esc(cfg.body_template || '')}</textarea>
+            <div class="hint">Use <code>{{field}}</code> to reference transform output fields.</div>
+          </div>
+        </div>
+
+        <!-- shared: position + active -->
+        <div style="display:flex;gap:12px;align-items:flex-end;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <div class="fg" style="width:120px;margin:0">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Position</label>
+            <input id="swal-a-position" class="swal2-input" type="number" min="0" step="1" style="margin:0;width:100%" value="${Number(a.position ?? 0)}">
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;padding-bottom:8px">
+            <input type="checkbox" id="swal-a-active" ${a.active !== false && a.active !== 0 ? 'checked' : ''}>
+            <label for="swal-a-active" style="font-size:13px">Active</label>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function initActionFormHandlers(a) {
+    const typeEl = document.getElementById('swal-a-type');
+    if (!typeEl) return;
+    const updateSections = () => {
+      const type = typeEl.value;
+      document.querySelectorAll('.swal-a-section').forEach(sec => {
+        sec.style.display = sec.id === `swal-a-sec-${type}` ? '' : 'none';
+      });
+    };
+    typeEl.addEventListener('change', updateSections);
+    updateSections();
+
+    // sequence enrollment-mode toggle
+    const seqModeEl = document.getElementById('swal-a-seq-mode');
+    if (seqModeEl) {
+      const updateSeqMode = () => {
+        const mode = seqModeEl.value;
+        const byType = document.getElementById('swal-a-seq-by-type');
+        const byId   = document.getElementById('swal-a-seq-by-id');
+        if (byType) byType.style.display = mode === 'type' ? '' : 'none';
+        if (byId)   byId.style.display   = mode === 'id'   ? '' : 'none';
+      };
+      seqModeEl.addEventListener('change', updateSeqMode);
+      updateSeqMode();
+    }
+
+    // http body-mode toggle
+    const bodyModeEl = document.getElementById('swal-a-bodymode');
+    const bodyWrap   = document.getElementById('swal-a-template-wrap');
+    if (bodyModeEl && bodyWrap) {
+      const updateBody = () => { bodyWrap.style.display = bodyModeEl.value === 'template' ? '' : 'none'; };
+      bodyModeEl.addEventListener('change', updateBody);
+      updateBody();
+    }
+
+    // internal_function params mapping
+    const cfg = parseJson(a.config) || {};
+    renderActionParamsMapping(cfg.params_mapping || {});
+    const addBtn = document.getElementById('swal-a-fn-add');
+    if (addBtn) addBtn.addEventListener('click', () => {
+      document.getElementById('swal-a-fn-params').appendChild(buildActionParamRow('', ''));
+    });
+  }
+
+  function renderActionParamsMapping(mapping) {
+    const el = document.getElementById('swal-a-fn-params');
+    if (!el) return;
+    // Shell datalist helper (guarded — degrade to no datalist if absent).
+    let dl = '';
+    try { if (typeof P.fdParamSourceDatalistHtml === 'function') dl = P.fdParamSourceDatalistHtml('a-pm-source-datalist'); } catch {}
+    el.innerHTML = dl;
+    const entries = Object.entries(mapping || {});
+    if (!entries.length) el.appendChild(buildActionParamRow('', ''));
+    else for (const [k, v] of entries) el.appendChild(buildActionParamRow(k, v));
+  }
+
+  function buildActionParamRow(key, value) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
+    const displayValue = (typeof value === 'string') ? value : (value == null ? '' : JSON.stringify(value));
+    row.innerHTML = `
+      <input class="swal-apm-key" placeholder="param name" value="${esc(key)}" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+      <span style="color:var(--muted);font-size:14px">=</span>
+      <input class="swal-apm-val mono" list="a-pm-source-datalist" placeholder="field  or  a.b.c  or  'literal'" value="${esc(displayValue)}" style="flex:2;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+      <button type="button" class="swal-apm-del" style="padding:4px 8px;font-size:11px;background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:#ef4444" title="Remove"><i class="fa-solid fa-times"></i></button>`;
+    row.querySelector('.swal-apm-del').addEventListener('click', () => row.remove());
+    return row;
+  }
+
+  function collectActionParamsMapping() {
+    const rows = document.querySelectorAll('#swal-a-fn-params > div');
+    const mapping = {};
+    rows.forEach(row => {
+      const key = row.querySelector('.swal-apm-key')?.value?.trim();
+      const val = row.querySelector('.swal-apm-val')?.value;
+      if (!key) return;
+      mapping[key] = val == null ? '' : val;
+    });
+    return mapping;
+  }
+
+  // Harvest the action form → {action_type, config, position, active}.
+  function collectActionForm() {
+    const type = document.getElementById('swal-a-type').value;
+    const position = Math.max(0, parseInt(document.getElementById('swal-a-position').value, 10) || 0);
+    const active = document.getElementById('swal-a-active').checked ? 1 : 0;
+
+    if (type === 'workflow') {
+      const wfId = parseInt(document.getElementById('swal-a-wf').value, 10);
+      if (!Number.isInteger(wfId) || wfId <= 0) { Swal.showValidationMessage('Select a workflow'); return false; }
+      return { action_type: 'workflow', config: { workflow_id: wfId }, position, active };
+    }
+
+    if (type === 'sequence') {
+      const mode = document.getElementById('swal-a-seq-mode').value;
+      const cidField = document.getElementById('swal-a-seq-cid').value.trim() || 'contact_id';
+      const tdRaw = document.getElementById('swal-a-seq-td').value.trim();
+      const triggerDataFields = tdRaw ? tdRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      if (mode === 'id') {
+        const tplId = parseInt(document.getElementById('swal-a-seq-id').value, 10);
+        if (!Number.isInteger(tplId) || tplId <= 0) { Swal.showValidationMessage('Select a template'); return false; }
+        return { action_type: 'sequence', config: { template_id: tplId, contact_id_field: cidField, trigger_data_fields: triggerDataFields }, position, active };
+      }
+      const tt = document.getElementById('swal-a-seq-type').value.trim();
+      if (!tt) { Swal.showValidationMessage('Select a template type'); return false; }
+      return { action_type: 'sequence', config: { template_type: tt, contact_id_field: cidField, trigger_data_fields: triggerDataFields }, position, active };
+    }
+
+    if (type === 'hook') {
+      const slug = document.getElementById('swal-a-hook').value.trim();
+      if (!slug) { Swal.showValidationMessage('Select a hook'); return false; }
+      return { action_type: 'hook', config: { slug }, position, active };
+    }
+
+    if (type === 'internal_function') {
+      const fn = document.getElementById('swal-a-fn').value.trim();
+      if (!fn) { Swal.showValidationMessage('Select a function'); return false; }
+      return { action_type: 'internal_function', config: { function_name: fn, params_mapping: collectActionParamsMapping() }, position, active };
+    }
+
+    if (type === 'http') {
+      const url = document.getElementById('swal-a-url').value.trim();
+      if (!url) { Swal.showValidationMessage('HTTP actions require a URL'); return false; }
+      const cfg = {
+        url,
+        method: document.getElementById('swal-a-method').value,
+        body_mode: document.getElementById('swal-a-bodymode').value,
+      };
+      const tpl = document.getElementById('swal-a-template').value;
+      if (cfg.body_mode === 'template' && tpl) cfg.body_template = tpl;
+      const credVal = document.getElementById('swal-a-cred').value;
+      if (credVal) cfg.credential_id = parseInt(credVal, 10);
+      return { action_type: 'http', config: cfg, position, active };
+    }
+
+    Swal.showValidationMessage(`Unknown action type: ${type}`);
+    return false;
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -1423,8 +2183,8 @@ window.eiToggleSidebar = eiToggleSidebar;
   async function eiSelect(id) {
     if (activeTab === 'executions') return selectExecution(id);
     // Don't re-select the row already open in the editor (avoids clobbering edits).
-    if (activeTab === 'suppressions' && editorState.editorOpen && !editorState.isNew && id === selectedId) return;
-    if (activeTab === 'suppressions' && !(await confirmDiscardIfDirty())) return;
+    if ((activeTab === 'suppressions' || activeTab === 'rules') && editorState.editorOpen && !editorState.isNew && id === selectedId) return;
+    if ((activeTab === 'suppressions' || activeTab === 'rules') && !(await confirmDiscardIfDirty())) return;
     showDetail();
     if (activeTab === 'suppressions') return selectSuppression(id);
     if (activeTab === 'rules')        return selectRule(id);
@@ -1476,9 +2236,9 @@ window.eiToggleSidebar = eiToggleSidebar;
   // ════════════════════════════════════════════════════════════════
   // TOPBAR BUTTON STATE
   //   Executions: Refresh only.
-  //   Rules: Refresh + New (editor ships in 3.4).
-  //   Suppressions: Refresh + New always; Save when the editor is open;
-  //     Delete only when editing an existing record (hidden for a new one).
+  //   Suppressions & Rules (both editor tabs, identical at topbar level):
+  //     Refresh + New always; Save when the editor is open; Delete only
+  //     when editing an existing record (hidden for a new one).
   // ════════════════════════════════════════════════════════════════
   function updateTopbarButtons() {
     if (!subPageActive) return;
@@ -1486,17 +2246,13 @@ window.eiToggleSidebar = eiToggleSidebar;
       P.setTopbarButtons({ refresh: true, new: false, save: false, delete: false });
       return;
     }
-    if (activeTab === 'suppressions') {
-      const open = editorState.editorOpen;
-      P.setTopbarButtons({
-        refresh: true, new: true,
-        save: open,
-        delete: open && !editorState.isNew,
-      });
-      return;
-    }
-    // rules (3.4 placeholder behavior, unchanged from 3.2)
-    P.setTopbarButtons({ refresh: true, new: true, save: false, delete: false });
+    // suppressions + rules: same behavior
+    const open = editorState.editorOpen;
+    P.setTopbarButtons({
+      refresh: true, new: true,
+      save: open,
+      delete: open && !editorState.isNew,
+    });
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -1512,7 +2268,12 @@ window.eiToggleSidebar = eiToggleSidebar;
   function onHide() { subPageActive = false; }
 
   async function onSave() {
-    if (activeTab !== 'suppressions' || !editorState.editorOpen) return; // rules = 3.4 no-op
+    if (!editorState.editorOpen) return;
+    if (activeTab === 'suppressions') return onSaveSuppression();
+    if (activeTab === 'rules')        return onSaveRule();
+  }
+
+  async function onSaveSuppression() {
     const payload = collectSuppressionForm();
 
     // hard validation
@@ -1565,7 +2326,98 @@ window.eiToggleSidebar = eiToggleSidebar;
   }
 
   async function onDelete() {
-    if (activeTab !== 'suppressions' || !editorState.editorOpen || editorState.isNew || selectedId == null) return;
+    if (!editorState.editorOpen || editorState.isNew || selectedId == null) return;
+    if (activeTab === 'suppressions') return onDeleteSuppression();
+    if (activeTab === 'rules')        return onDeleteRule();
+  }
+
+  // ── Rule save (Slice 3.4) ──
+  async function onSaveRule() {
+    const payload = collectRuleForm();
+
+    // hard validation
+    if (!payload.name) {
+      Swal.fire({ icon: 'error', title: 'Name required', text: 'Give the rule a name.' });
+      return;
+    }
+    // soft warnings
+    if (payload.match_mode === 'conditions' && (!payload.match_config.conditions || payload.match_config.conditions.length === 0)) {
+      const res = await Swal.fire({
+        icon: 'warning', title: 'No conditions',
+        text: 'An empty condition set matches every email. Save anyway?',
+        showCancelButton: true, confirmButtonText: 'Save anyway', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+    if (payload.match_mode === 'code' && !String(payload.match_config.code || '').trim()) {
+      const res = await Swal.fire({
+        icon: 'warning', title: 'Empty match code',
+        text: 'The match code is empty (it will never match). Save anyway?',
+        showCancelButton: true, confirmButtonText: 'Save anyway', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+    if (payload.transform_mode === 'code' && !String((payload.transform_config && payload.transform_config.code) || '').trim()) {
+      const res = await Swal.fire({
+        icon: 'warning', title: 'Empty transform code',
+        text: 'The transform code is empty. Save anyway?',
+        showCancelButton: true, confirmButtonText: 'Save anyway', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+
+    try {
+      let saved;
+      if (editorState.isNew) {
+        saved = await api('/api/email-ingest/rules', 'POST', payload);
+      } else {
+        saved = await api(`/api/email-ingest/rules/${selectedId}`, 'PUT', payload);
+      }
+      const row = (saved && saved.rule) ? saved.rule : saved;
+      const newId = (row && row.id != null) ? row.id : selectedId;
+
+      Toast.fire({ icon: 'success', title: editorState.isNew ? 'Rule created' : 'Saved' });
+
+      // refresh list, then re-select the saved record and re-render its editor
+      // (this enables the actions section now that the rule has an id).
+      cache.rules.loaded = false;
+      await loadRules(true);
+      if (newId != null) {
+        await selectRule(newId);   // sets editorState fresh (isNew=false, clean)
+      } else {
+        closeEditor(); clearDetail(); updateTopbarButtons();
+      }
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Save failed', text: e.message || 'The server rejected the rule.' });
+    }
+  }
+
+  async function onDeleteRule() {
+    const row = cache.rules.rows.find(r => r.id === selectedId);
+    const name = row ? row.name : `#${selectedId}`;
+    const n = ruleForm.actions.length;
+    const res = await Swal.fire({
+      icon: 'warning', title: 'Delete rule?',
+      html: `Delete <strong>${esc(name)}</strong> and its ${n} action${n===1?'':'s'}? This cannot be undone.`,
+      showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel',
+      confirmButtonColor: '#ef4444',
+    });
+    if (!res.isConfirmed) return;
+    try {
+      await api(`/api/email-ingest/rules/${selectedId}`, 'DELETE');
+      Toast.fire({ icon: 'success', title: 'Deleted' });
+      closeEditor();
+      selectedId = null;
+      cache.rules.loaded = false;
+      await loadRules(true);
+      clearDetail();
+      updateTopbarButtons();
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Delete failed', text: e.message || 'The server rejected the delete.' });
+    }
+  }
+
+  async function onDeleteSuppression() {
     const row = cache.suppressions.rows.find(r => r.id === selectedId);
     const name = row ? row.name : `#${selectedId}`;
     const res = await Swal.fire({
@@ -1592,8 +2444,8 @@ window.eiToggleSidebar = eiToggleSidebar;
   async function onRefresh() {
     if (activeTab === 'executions') { cache.executions.loaded = false; cache.executions.selId = null; eiCloseDrawer(); }
     else {
-      if (activeTab === 'suppressions' && !(await confirmDiscardIfDirty())) return;
-      if (activeTab === 'suppressions') closeEditor();
+      if ((activeTab === 'suppressions' || activeTab === 'rules') && !(await confirmDiscardIfDirty())) return;
+      closeEditor();
       cache[activeTab].loaded = false; selectedId = null; clearDetail();
     }
     await loadActiveTab(true);
@@ -1620,18 +2472,24 @@ window.eiToggleSidebar = eiToggleSidebar;
       return;
     }
 
-    // Rules: keep the 3.4 placeholder behavior unchanged.
-    selectedId = null;
-    renderRuleList();
-    showDetail();
-    setDetailHead('New rule', 'placeholder');
-    E('ei-detail-body').innerHTML =
-      placeholderBanner('The "new rule" editor is not built yet — it ships in Slice 3.4. This panel is a placeholder.') +
-      `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:240px;color:var(--muted);gap:4px;text-align:center">
-         <i class="fa-solid fa-pen-ruler" style="font-size:42px;opacity:0.2"></i>
-         <p style="font-size:14px;font-weight:500;margin:6px 0 0">New rule editor coming in Slice 3.4</p>
-         <p style="font-size:12px">For now, select an existing record to inspect it read-only.</p>
-       </div>`;
+    // Rules: open a blank rule editor (Slice 3.4). Actions section is
+    // disabled until the rule's first save (actions FK to rule_id).
+    if (activeTab === 'rules') {
+      if (!(await confirmDiscardIfDirty())) return;
+      selectedId = null;
+      editorState = { isNew: true, editorOpen: true, isDirty: false };
+      renderRuleList();
+      showDetail();
+      renderRuleDetail({
+        name: '', description: '', active: 1, position: 0,
+        match_mode: 'conditions',
+        match_config: { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] },
+        transform_mode: 'passthrough', transform_config: null,
+        actions: [],
+      });
+      updateTopbarButtons();
+      return;
+    }
   }
 
   window.onShow = onShow; window.onHide = onHide;
@@ -1647,49 +2505,52 @@ window.eiToggleSidebar = eiToggleSidebar;
 
 <!--
 ══════════════════════════════════════════════════════════════════════
-MANUAL TEST PLAN (Phase 3.3 — Suppression editor)
+MANUAL TEST PLAN (Phase 3.4 — Rule editor)
 
-Live data (readonly SQL, 2026-05-31): suppressions table is
-email_ingest_log_suppressions — 2 rows:
-  #1 "Court emails (uscourts.gov)"  match_mode=conditions
-       match_config={operator:'and',conditions:[{op:'contains',path:'from.email',value:'uscourts.gov'}]}
-  #2 "Legacy filter mimic (no firm address in From/To)"  match_mode=code
-       match_config={code:"…firmDomains…return true;"}
+Live data (readonly SQL, 2026-05-31):
+  email_ingest_rules — 1 row (the sentinel):
+    #1 "TEST: ingest layer 3 echo"  active=1 position=100 match_mode=conditions
+       match_config={operator:'and',conditions:[{op:'contains',path:'subject',value:'_EMAIL_INGEST_2_3_TEST_'}]}
+       transform_mode=passthrough  transform_config=null
+  email_ingest_rule_actions — 1 row:
+    #1 rule_id=1 position=0 active=1 internal_function config={function_name:'noop',params_mapping:{}}
+  meta.targets backing counts: 12 workflows, 9 sequences, 20 hooks, 6 credentials.
 
-1. Open the Email Ingest tab → Suppressions. Click "Court emails (uscourts.gov)".
-   Editor opens (NOT the read-only placeholder). Name/description/active populated.
-   Match mode = conditions; match-builder shows from.email / contains / uscourts.gov
-   with the field dropdown set to "From — email address".
-2. Click "Legacy filter mimic…" — match_mode=code. Editor shows the code textarea
-   pre-filled with the JS body; match-builder hidden. Save/Delete visible in topbar.
-3. Toggle a conditions-mode rule's match mode to "code" and back — the right editor
-   shows/hides each time. (Conditions live-state and code textarea are independent;
-   neither is wiped by toggling.)
-4. Match-builder: add a condition, pick a field, pick an operator, enter a value.
-   Add a nested group (AND/OR). Pick "Custom path…" on a leaf — the free-text path
-   input appears next to the dropdown. Remove a condition. Remove a group.
-5. New suppression: topbar New → blank editor titled "New suppression" (subtitle
-   "unsaved"). No metadata card. Save is shown, Delete hidden. Fill name, add a
-   condition (from.email contains "newsletter"), Save → Toast "Suppression created";
-   the new row appears in the list and is auto-selected (now editing, Delete appears).
-6. Edit it: change the value, Save → PUT succeeds, list reflects the change.
-7. Delete it: topbar Delete → confirm dialog → deleted, list refreshes, detail clears.
-8. Validation: New suppression, leave name empty, Save → blocked with an error dialog.
-9. Empty conditions: New suppression, conditions mode, remove all conditions, Save →
-   warned "matches every email", allowed on confirm.
-10. exists/not_exists operator: pick it on a leaf → the value input hides/disables;
-    mbCollect emits {path,op} with no value for that row.
-11. Switch to Rules tab → still shows the 3.4 placeholder (untouched). New on Rules
-    still opens the 3.4 placeholder; Save/Delete stay hidden there.
-12. Switch to Executions → drawer + pager still work (untouched).
-13. Dirty guard: edit a field, then click another list row / switch internal tabs /
-    press New / Refresh → "Discard unsaved changes?" prompt. Cancel keeps editing.
-    Re-clicking the already-open row is a no-op (no prompt).
+⚠️ DO NOT delete/deactivate the sentinel rule (#1) — it's the Layer-3 production
+canary. Create a throwaway rule for destructive tests and clean it up (step 11).
 
-Endpoints (POST/PUT/DELETE /api/email-ingest/suppressions[/:id]) are JWT-gated,
-runtime-only. Save/delete reconcile the saved id from the POST/PUT response
-({suppression:{…}} or bare row). Backend is the final validation guard (400s
-surfaced in a SweetAlert, form kept open). Eyeball at deploy.
+1. Email Ingest → Rules. Click "TEST: ingest layer 3 echo". Editor opens (not the
+   placeholder): name/active/position(100) populated, match mode=conditions with the
+   subject-contains-sentinel condition shown, transform mode=passthrough.
+2. Actions section shows 1 card: "Call noop()" internal_function, active.
+3. Edit the rule's description, Save → PUT succeeds, list reflects it.
+4. Transform: switch mode to mapper → mapper-rules UI appears; add a rule
+   (Path: subject → subj); switch to code and back → mapper rule preserved.
+   Switch back to passthrough, Save → transform_config=null persists (verify SQL).
+5. Add action: click Add → modal. Pick type=workflow → workflow dropdown appears
+   (12 options). Select one, set position, Save → POST succeeds, card appears.
+6. Edit that action → modal pre-filled; change to type=hook → hook dropdown
+   (20 options, slug values); Save → PUT succeeds, card summary updates.
+7. Action validation: add a workflow action but pick nothing → blocked. (Or pick
+   a valid one, then the backend referential check passes.) A backend 400 (e.g.
+   referencing a deactivated workflow) surfaces in a Swal and keeps the modal open.
+8. Delete an action → confirm → DELETE, card removed.
+9. New rule: topbar New → blank editor "New rule". Actions section disabled with
+   "Save the rule first" note. Fill name + a match condition, Save → POST; editor
+   re-renders with actions section now enabled.
+10. Add an action to the newly-created rule → works (rule now has an id).
+11. Delete the test rule you created (NOT the sentinel!) → confirm mentions action
+    count → DELETE → list refreshes, actions cascade-deleted (verify via SQL).
+12. Dirty guard: edit rule name, click another rule → discard prompt.
+13. Suppressions tab still works (3.3 untouched). Executions drawer still works.
+14. exists/not_exists in the rule's match-builder → value input hides (3.3 behavior
+    inherited via the shared mbRender/mbCollect component, reused unchanged).
+
+Action-save model (b): rule scalars + match + transform save via POST/PUT on the
+rule; each action is added/edited/deleted immediately via its own endpoint
+(/rules/:id/actions, /rule-actions/:id). Backend is the final validation guard
+(referential checks 400 → surfaced in Swal, modal kept open). New-rule action
+ordering: SAVE-FIRST (actions FK to rule_id; add disabled until first save).
 ══════════════════════════════════════════════════════════════════════
 -->
 </body>
