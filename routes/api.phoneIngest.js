@@ -27,6 +27,8 @@ const router  = express.Router();
 const jwtOrApiKey          = require('../lib/auth.jwtOrApiKey');
 const { auditAdminAction } = require('../lib/auth.superuser');
 const suppressionService   = require('../services/phoneIngestSuppressionService');
+const ruleService          = require('../services/phoneIngestRuleService');
+const executionsService    = require('../services/phoneIngestExecutionsService');
 const metaService          = require('../services/phoneIngestMetaService');
 
 
@@ -146,6 +148,161 @@ router.delete('/api/phone-ingest/suppressions/:id', jwtOrApiKey, async (req, res
 
 
 // ─────────────────────────────────────────────────────────────
+// RULES
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/phone-ingest/rules', jwtOrApiKey, async (req, res) => {
+  try {
+    const rules = await ruleService.listAll(req.db);
+    res.json({ status: 'success', rules });
+  } catch (err) {
+    console.error('[phone-ingest] list rules error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.get('/api/phone-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const rule = await ruleService.getById(req.db, req.params.id);
+    if (!rule) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+    res.json({ status: 'success', rule });
+  } catch (err) {
+    console.error('[phone-ingest] get rule error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.post('/api/phone-ingest/rules', jwtOrApiKey, async (req, res) => {
+  try {
+    const rule = await ruleService.createRule(req.db, req.body, req.auth.userId);
+    auditPI(req, { details: { entity: 'rule', entity_id: rule.id, after: rule } });
+    res.status(201).json({ status: 'success', rule });
+  } catch (err) {
+    if (_handleValidationError(err, res)) return;
+    console.error('[phone-ingest] create rule error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.put('/api/phone-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const before = await ruleService.getById(req.db, req.params.id);
+    if (!before) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+
+    const after = await ruleService.updateRule(req.db, req.params.id, req.body, req.auth.userId);
+    auditPI(req, { details: { entity: 'rule', entity_id: Number(req.params.id), before, after } });
+    res.json({ status: 'success', rule: after });
+  } catch (err) {
+    if (_handleValidationError(err, res)) return;
+    console.error('[phone-ingest] update rule error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.delete('/api/phone-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const before = await ruleService.getById(req.db, req.params.id);
+    if (!before) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+
+    await ruleService.deleteRule(req.db, req.params.id);
+    auditPI(req, { details: { entity: 'rule', entity_id: Number(req.params.id), before } });
+    res.status(204).end();
+  } catch (err) {
+    console.error('[phone-ingest] delete rule error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// RULE ACTIONS
+// ─────────────────────────────────────────────────────────────
+
+router.post('/api/phone-ingest/rules/:id/actions', jwtOrApiKey, async (req, res) => {
+  try {
+    const action = await ruleService.addAction(req.db, req.params.id, req.body);
+    if (action === null) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+    auditPI(req, { details: { entity: 'rule_action', entity_id: action.id, rule_id: Number(req.params.id), after: action } });
+    res.status(201).json({ status: 'success', action });
+  } catch (err) {
+    if (_handleValidationError(err, res)) return;
+    console.error('[phone-ingest] add action error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.put('/api/phone-ingest/rule-actions/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const before = await ruleService.getActionById(req.db, req.params.id);
+    if (!before) return res.status(404).json({ status: 'error', message: 'Action not found' });
+
+    const after = await ruleService.updateAction(req.db, req.params.id, req.body);
+    auditPI(req, { details: { entity: 'rule_action', entity_id: Number(req.params.id), before, after } });
+    res.json({ status: 'success', action: after });
+  } catch (err) {
+    if (_handleValidationError(err, res)) return;
+    console.error('[phone-ingest] update action error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.delete('/api/phone-ingest/rule-actions/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const before = await ruleService.getActionById(req.db, req.params.id);
+    if (!before) return res.status(404).json({ status: 'error', message: 'Action not found' });
+
+    await ruleService.deleteAction(req.db, req.params.id);
+    auditPI(req, { details: { entity: 'rule_action', entity_id: Number(req.params.id), before } });
+    res.status(204).end();
+  } catch (err) {
+    console.error('[phone-ingest] delete action error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// EXECUTIONS (read-only)
+//
+// Phone-specific: NO `source` filter (phone has no sources table — events
+// arrive via YisraHooks→workflows, not multi-source HTTP receivers). Otherwise
+// identical to the email executions endpoints, including the flat list shape
+// and the flat {execution, linked} detail shape.
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/phone-ingest/executions', jwtOrApiKey, async (req, res) => {
+  try {
+    const hasMatch = req.query.has_match === 'true' ? true
+                   : req.query.has_match === 'false' ? false
+                   : undefined;
+    const { rows, total, page, page_size } = await executionsService.list(req.db, {
+      page:      req.query.page,
+      page_size: req.query.page_size,
+      status:    req.query.status,
+      since:     req.query.since,
+      until:     req.query.until,
+      has_match: hasMatch,
+    });
+    res.json({ executions: rows, page, page_size, total });
+  } catch (err) {
+    console.error('[phone-ingest] list executions error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.get('/api/phone-ingest/executions/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const result = await executionsService.getById(req.db, req.params.id);
+    if (!result) return res.status(404).json({ status: 'error', message: 'Execution not found' });
+    res.json(result); // { execution, linked }
+  } catch (err) {
+    console.error('[phone-ingest] get execution error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
 // META
 // ─────────────────────────────────────────────────────────────
 
@@ -153,9 +310,10 @@ router.get('/api/phone-ingest/meta', jwtOrApiKey, async (req, res) => {
   try {
     // Returned FLAT (not wrapped under {status, meta}) to match
     // /api/email-ingest/meta — the phone UI is copied from the email UI and
-    // expects the meta object at the top level. getMeta() is synchronous (no
-    // target-list queries, unlike email's).
-    res.json(metaService.getMeta());
+    // expects the meta object at the top level. getMeta(db) is async (it now
+    // queries the live target lists for the L3 action builder, mirroring email).
+    const meta = await metaService.getMeta(req.db);
+    res.json(meta);
   } catch (err) {
     console.error('[phone-ingest] meta error:', err);
     res.status(500).json({ status: 'error', message: err.message });
