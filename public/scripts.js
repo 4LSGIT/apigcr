@@ -950,6 +950,32 @@ function _resolveAddFile() {
     }
     .cad-preview:empty { display: none; }
     .cad-preview .cad-count { font-weight: bold; color: #1f2d3d; }
+
+    /* ── NewCaseForm (Phase 4.2) ── */
+    /* Same dropdown-spill fix as oad-html / cad-html: let the embedded
+       ContactPicker dropdown escape SWAL's overflow:auto html container. */
+    .swal2-html-container.ncf-html { overflow: visible; }
+    .ncf-html .cp-dropdown { max-height: 12em; }
+    .ncf-field { margin: 0 0 0.6em; text-align: left; }
+    .ncf-field label { display: block; font-size: 0.8em; color: #666; margin-bottom: 0.15em; }
+    .ncf-field input, .ncf-field select { width: 100%; box-sizing: border-box; }
+    .ncf-docket-row { display: flex; gap: 0.6em; }
+    .ncf-docket-row .ncf-field { flex: 1; }
+    .ncf-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
+    /* Mirror cad's create button so the adopt dialog's two buttons match. */
+    .cad-create-btn {
+      font-weight: bold;
+      font-size: 0.95em;
+      padding: 0.45em 1.1em;
+      color: #2563eb;
+      background: #fff;
+      border: 2px solid #2563eb;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .cad-create-btn:hover { background: #2563eb; color: #fff; }
+    .cad-create-row { margin: 0.6em 0 0.2em; text-align: left; }
   `;
   document.head.appendChild(style);
 })();
@@ -1501,6 +1527,182 @@ function splitDocket(raw) {
 
 
 /* ──────────────────────────────────────────────────────────────────────────
+   NewCaseForm(prefill, onSuccess)  (Phase 4.2 — orphan-case create-new)
+
+   Create a brand-new case from scratch, optionally pre-filled with a docket
+   carried over from CaseAdoptDialog's create-new branch. Structural sibling of
+   newContact's create path: it POSTs to the SAME known-good intake endpoint
+   (/api/intake/case) rather than writing a parallel INSERT — that endpoint is
+   the only path that correctly satisfies the cases table's ~45 mostly-NOT-NULL
+   columns (via implicit defaults under non-strict sql_mode) and inserts the
+   Primary case_relate row.
+
+   prefill (all keys optional):
+     case_number          string  → #ncf-num   (opaque, editable)
+     case_number_full     string  → #ncf-full  (opaque, editable)
+     primary_contact_id   number  → pre-select the ContactPicker
+     primary_contact_name string  → display label for the pre-selected contact
+     suppressOpen         bool    → if true, do NOT auto-open the new case file
+
+   Docket values are displayed as-is. NewCaseForm does NOT re-split — the caller
+   (CaseAdoptDialog) already applied splitDocket. case_number / case_number_full
+   stay OPAQUE here too: no shape parsing, client or server.
+
+   onSuccess(data) receives the raw /api/intake/case response
+   ({ status, action:'created', id, case_relate }).
+
+   Required to submit: a primary contact selected AND a non-empty case_type.
+   Docket fields are both optional. On 409 (collision) → validation message,
+   dialog stays open (no force path — collisions hard-block, matching the
+   adopt dialog).
+
+   Success/open behavior mirrors newContact: default opens the new case file
+   via the resolved addFile, UNLESS prefill.suppressOpen is set.
+   ────────────────────────────────────────────────────────────────────────── */
+function NewCaseForm(prefill = {}, onSuccess = null) {
+  let picker = null;
+  let selectedContactId = (prefill.primary_contact_id != null)
+    ? prefill.primary_contact_id
+    : null;
+
+  const COMMON_TYPES = ['Bankruptcy', 'Bankruptcy - Ch. 7', 'Bankruptcy - Ch. 13', 'Other'];
+  const typeOptions = COMMON_TYPES
+    .map(t => `<option${t === 'Bankruptcy' ? ' selected' : ''}>${escAttr(t)}</option>`)
+    .join('');
+
+  const prefName = prefill.primary_contact_name
+    ? escAttr(prefill.primary_contact_name)
+    : '';
+
+  Swal.fire({
+    title: 'Create new case',
+    html: `
+      <div class="ncf-section-label">Primary contact</div>
+      <div class="ncf-field"><div id="ncf-picker-mount"></div></div>
+
+      <div class="ncf-field">
+        <label for="ncf-type">Case type</label>
+        <select id="ncf-type"
+          onchange="E('ncf-other-type').style.display = this.value === 'Other' ? '' : 'none';">
+          ${typeOptions}
+        </select>
+      </div>
+      <div class="ncf-field">
+        <input type="text" id="ncf-other-type" placeholder="Enter case type" style="display:none;">
+      </div>
+
+      <div class="ncf-section-label">Docket (optional)</div>
+      <div class="ncf-docket-row">
+        <div class="ncf-field">
+          <label for="ncf-num">Case number</label>
+          <input type="text" id="ncf-num" value="${escAttr(prefill.case_number || '')}">
+        </div>
+        <div class="ncf-field">
+          <label for="ncf-full">Case number (full)</label>
+          <input type="text" id="ncf-full" value="${escAttr(prefill.case_number_full || '')}">
+        </div>
+      </div>
+    `,
+    showCancelButton: true,
+    showConfirmButton: true,
+    confirmButtonText: 'Create case',
+    cancelButtonText: 'Cancel',
+    showCloseButton: true,
+    showLoaderOnConfirm: true,
+    customClass: { htmlContainer: 'ncf-html' },
+    allowOutsideClick: () => !Swal.isLoading(),
+
+    didOpen: () => {
+      const confirmBtn = Swal.getConfirmButton();
+      // Enable confirm only once a contact is selected. If we have a prefill
+      // contact, start enabled and seed the picker's input with the name.
+      if (confirmBtn) confirmBtn.disabled = (selectedContactId == null);
+
+      picker = ContactPicker(E('ncf-picker-mount'), {
+        placeholder: 'Search contacts…',
+        initialQuery: prefName && (selectedContactId == null) ? prefName : '',
+        onSelect: (cid) => {
+          selectedContactId = cid;
+          if (confirmBtn) confirmBtn.disabled = false;
+        },
+      });
+
+      // If a primary contact was pre-supplied, show its name in the input so
+      // the user sees who's attached without re-searching. They can still type
+      // to change it (which re-runs the search and re-selects on click).
+      if (selectedContactId != null && prefName) {
+        const inp = E('ncf-picker-mount') && E('ncf-picker-mount').querySelector('.cp-input');
+        if (inp) inp.value = prefill.primary_contact_name;
+      }
+    },
+
+    preConfirm: async () => {
+      // Validate: a primary contact and a non-empty case_type.
+      if (selectedContactId == null) {
+        Swal.showValidationMessage('Pick a primary contact for the case.');
+        return false;
+      }
+      const typeRaw = E('ncf-type').value;
+      const caseType = (typeRaw === 'Other')
+        ? E('ncf-other-type').value.trim()
+        : typeRaw;
+      if (!caseType) {
+        Swal.showValidationMessage(typeRaw === 'Other'
+          ? 'Enter a case type.'
+          : 'Select a case type.');
+        return false;
+      }
+
+      // Docket fields — opaque, optional. Trim; empty → null (match intake's
+      // empty→null handling). No shape parsing.
+      const num  = (E('ncf-num')  && E('ncf-num').value  || '').trim();
+      const full = (E('ncf-full') && E('ncf-full').value || '').trim();
+
+      const body = {
+        contact_id: selectedContactId,
+        case_type:  caseType,
+        case_number:      num  || null,
+        case_number_full: full || null,
+      };
+
+      try {
+        const data = await P.apiSend('/api/intake/case', 'POST', body);
+        return { data };
+      } catch (err) {
+        // apiSend throws ApiError with err.status + err.body (parsed JSON).
+        // 409 = docket collision → surface the server message, stay open.
+        const msg = (err && err.body && err.body.message) || err.message || 'Failed to create case';
+        Swal.showValidationMessage(msg);
+        return false;
+      }
+    },
+
+    willClose: () => {
+      if (picker) picker.destroy();
+    },
+
+  }).then((result) => {
+    if (!result.isConfirmed || !result.value) return; // cancelled / closed
+    const { data } = result.value;
+
+    Toast.fire({
+      icon: data.status === 'success' ? 'success' : 'error',
+      title: data.status === 'success' ? 'Case created' : 'Error',
+      text: data.message,
+    });
+
+    if (data.status === 'success') {
+      if (!prefill.suppressOpen) {
+        const openFile = _resolveAddFile();
+        if (openFile) openFile(data.id, 'case', data.id);
+      }
+      if (typeof onSuccess === 'function') onSuccess(data);
+    }
+  });
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
    CaseAdoptDialog(value, onDone)  (Phase 4.1 — orphan-case adopt-existing)
 
    value = the orphan log_link_id (a docket string). Attaches that docket to
@@ -1620,6 +1822,9 @@ async function CaseAdoptDialog(value, onDone = null) {
       </div>
       <div class="cad-section-label">Find the case to attach this docket to</div>
       <div id="cad-picker-mount"></div>
+      <div class="cad-create-row">
+        <button type="button" id="cadCreateNew" class="cad-create-btn"><i class="fa-solid fa-folder-plus"></i>&nbsp;Create new case with this docket</button>
+      </div>
       <div id="cad-preview" class="cad-preview"></div>
     `,
     showCancelButton: true,
@@ -1648,6 +1853,31 @@ async function CaseAdoptDialog(value, onDone = null) {
         const inp = E(id);
         if (inp) inp.addEventListener('input', schedulePreview);
       });
+
+      // Create-new branch: close this dialog and hand off to NewCaseForm,
+      // carrying the CURRENT field values (the user may have edited the
+      // splitDocket pre-fill, or cleared one field for a partial docket).
+      // The picked case (if any) is irrelevant here — create always makes a
+      // NEW case — so we don't pass it. NewCaseForm opens the new case file on
+      // success (default behavior); onDone re-renders the log so the
+      // formerly-orphan rows now resolve to the new case.
+      const createBtn = E('cadCreateNew');
+      if (createBtn) {
+        createBtn.addEventListener('click', () => {
+          const { num, full } = currentDocketVals();
+          if (previewTimer) clearTimeout(previewTimer);
+          if (picker) picker.destroy();
+          Swal.close();
+          NewCaseForm(
+            { case_number: num || null, case_number_full: full || null },
+            (data) => {
+              if (typeof onDone === 'function') {
+                onDone({ action: 'created', case_id: data.id });
+              }
+            }
+          );
+        });
+      }
     },
 
     preConfirm: async () => {

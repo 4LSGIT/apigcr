@@ -455,24 +455,34 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
 //   contact_id   number   required
 //   case_type    string   required — e.g. "Bankruptcy", "Other"
 //   duplicate    string   "duplicate" to force new, otherwise "return" (default)
-//   case_number  string   optional (Phase 3) — short-form docket number,
-//                         varchar(20). Empty string treated as absent.
+//   case_number       string optional (Phase 3) — short-form docket number,
+//                            varchar(20). Empty string treated as absent.
+//   case_number_full  string optional (Phase 4.2) — full-form docket number,
+//                            varchar(20). Empty string treated as absent.
 //
-// case_number contract (Phase 3):
-//   - case_number provided  ⇒ ALWAYS create a new case carrying that number,
-//                             collision-checked against existing case_number
-//                             and case_number_full. The find-existing-by
-//                             (contact_id, case_type) path is bypassed because
-//                             it wouldn't apply the supplied number to the
-//                             matched case, silently dropping caller intent.
-//                             Equivalent to forcing duplicate='duplicate'.
-//   - case_number absent     ⇒ find-or-create per the `duplicate` flag
+// Docket contract (Phase 3 case_number + Phase 4.2 case_number_full):
+//   - EITHER field provided ⇒ ALWAYS create a new case carrying the supplied
+//                             value(s), collision-checked against existing
+//                             case_number AND case_number_full. The
+//                             find-existing-by (contact_id, case_type) path is
+//                             bypassed because it wouldn't apply the supplied
+//                             number to the matched case, silently dropping
+//                             caller intent. Equivalent to forcing
+//                             duplicate='duplicate'.
+//   - NEITHER field         ⇒ find-or-create per the `duplicate` flag
 //                             (existing behavior, unchanged).
 //
-//   On CREATE, case_number is stored in the short-form column only;
-//   case_number_full is left NULL (set later by the detail-form / Phase 4
-//   flows). New inserts store NULL — never empty string — when no number was
-//   supplied, for consistent downstream querying.
+//   Both fields are independently optional — all four combinations are legal
+//   (neither / short only / full only / both). Partial dockets are valid;
+//   the firm sometimes knows the full number before the short, or vice versa.
+//
+//   case_number / case_number_full are OPAQUE free-text. This route NEVER
+//   parses or validates docket SHAPE — only string length (≤20) and equality
+//   (collision). The ##-#####-@@@ split is bankruptcy-specific client-side
+//   convenience (splitDocket in scripts.js), never a server gate.
+//
+//   New inserts store NULL — never empty string — for any field not supplied,
+//   for consistent downstream querying.
 // ─────────────────────────────────────────
 router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
   const { contact_id, case_type, duplicate = "return" } = req.body;
@@ -490,26 +500,51 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ status: "error", message: "case_number exceeds 20 chars" });
   }
 
+  // ── Optional case_number_full (Phase 4.2) ──
+  // Same treatment as case_number: trim; empty → NULL; varchar(20) ceiling.
+  // Opaque free-text — no shape parsing.
+  let caseNumberFull = req.body.case_number_full;
+  caseNumberFull = (typeof caseNumberFull === "string") ? caseNumberFull.trim() : "";
+  if (caseNumberFull === "") caseNumberFull = null;
+  if (caseNumberFull !== null && caseNumberFull.length > 20) {
+    return res.status(400).json({ status: "error", message: "case_number_full exceeds 20 chars" });
+  }
+
   try {
-    // ── Collision check (only when a case_number was supplied) ──
+    // ── Collision check (only when a docket value was supplied) ──
     //    Guards the organic dedup invariant production has held without a DB
-    //    constraint. Checks BOTH the short and full columns. Fires regardless
-    //    of the duplicate flag, and BEFORE the find-existing path, so a
-    //    colliding number is always rejected (supersedes everything).
-    if (caseNumber !== null) {
+    //    constraint. Each SUPPLIED value (short and/or full) is checked against
+    //    BOTH the case_number and case_number_full columns — a short number
+    //    must not clash with another case's full, and vice versa. Fires
+    //    regardless of the duplicate flag, and BEFORE the find-existing path,
+    //    so a colliding number always wins (supersedes everything).
+    //
+    //    De-dupe the submitted values: if a caller sends the same string in
+    //    both fields (or only one field), we still build a single IN-list, so
+    //    the SQL has exactly as many placeholders as distinct values.
+    //    Mirrors caseService.checkCaseNumberCollision, but without the
+    //    `case_id <> ?` exclusion — there is no existing case on CREATE.
+    const submittedDockets = [...new Set(
+      [caseNumber, caseNumberFull].filter(v => v !== null)
+    )];
+    if (submittedDockets.length) {
+      const placeholders = submittedDockets.map(() => "?").join(", ");
       const [clash] = await req.db.query(
         `SELECT case_id, case_number, case_number_full, case_type
            FROM cases
-          WHERE (case_number      IS NOT NULL AND case_number      <> '' AND case_number      = ?)
-             OR (case_number_full IS NOT NULL AND case_number_full <> '' AND case_number_full = ?)
+          WHERE (case_number      IS NOT NULL AND case_number      <> '' AND case_number      IN (${placeholders}))
+             OR (case_number_full IS NOT NULL AND case_number_full <> '' AND case_number_full IN (${placeholders}))
           LIMIT 1`,
-        [caseNumber, caseNumber]
+        [...submittedDockets, ...submittedDockets]
       );
       if (clash.length) {
         const c = clash[0];
+        // Report the first supplied value in the message for a recognizable
+        // identifier; the conflict payload carries the colliding case's columns.
+        const reported = caseNumber || caseNumberFull;
         return res.status(409).json({
           status: "error",
-          message: `case_number "${caseNumber}" already in use by case ${c.case_id}`,
+          message: `case number "${reported}" already in use by case ${c.case_id}`,
           conflict: {
             case_id:          c.case_id,
             case_number:      c.case_number || null,
@@ -521,9 +556,11 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
     }
 
     // ── Effective duplicate flag ──
-    // Providing a case_number is an unambiguous "create a new case with this
+    // Providing ANY docket value is an unambiguous "create a new case with this
     // number" signal. Force CREATE so find-existing can't swallow the intent.
-    const effectiveDuplicate = (caseNumber !== null) ? "duplicate" : duplicate;
+    const effectiveDuplicate = (caseNumber !== null || caseNumberFull !== null)
+      ? "duplicate"
+      : duplicate;
 
     // ── Check for existing active case of same type ──
     if (effectiveDuplicate !== "duplicate") {
@@ -560,19 +597,33 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
       attempts++;
 
       try {
+        // Build the column/value lists conditionally. case_id, case_open_date,
+        // and case_type are always present; case_number / case_number_full are
+        // appended only when supplied. All four combinations are handled by
+        // the same construction (neither / short / full / both). Columns NOT
+        // listed rely on implicit defaults — the cases table is mostly
+        // NOT-NULL with no DB defaults, which works only because the session
+        // sql_mode is non-strict (STRICT_TRANS_TABLES absent). Do NOT add
+        // strict mode without giving these columns real defaults first.
+        const cols = ["case_id", "case_open_date", "case_type"];
+        const vals = ["?", "CONVERT_TZ(NOW(), 'UTC', 'America/New_York')", "?"];
+        const params = [case_id, case_type];
+
         if (caseNumber !== null) {
-          await req.db.query(
-            `INSERT INTO cases (case_id, case_open_date, case_type, case_number)
-             VALUES (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?, ?)`,
-            [case_id, case_type, caseNumber]
-          );
-        } else {
-          await req.db.query(
-            `INSERT INTO cases (case_id, case_open_date, case_type)
-             VALUES (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?)`,
-            [case_id, case_type]
-          );
+          cols.push("case_number");
+          vals.push("?");
+          params.push(caseNumber);
         }
+        if (caseNumberFull !== null) {
+          cols.push("case_number_full");
+          vals.push("?");
+          params.push(caseNumberFull);
+        }
+
+        await req.db.query(
+          `INSERT INTO cases (${cols.join(", ")}) VALUES (${vals.join(", ")})`,
+          params
+        );
         inserted = true;
       } catch (err) {
         if (err.code !== "ER_DUP_ENTRY") throw err;
