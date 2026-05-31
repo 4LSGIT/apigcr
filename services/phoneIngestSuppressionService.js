@@ -237,9 +237,25 @@ async function evaluateSuppressions(db, event) {
 // Validation reuses services/emailIngestValidator.validateSuppression — it is
 // table-agnostic (validates name / match_mode / match_config / active shape
 // only, no email coupling). Single source of suppression-shape truth.
+//
+// CIRCULAR-DEPENDENCY NOTE: emailIngestValidator requires
+// ../lib/internal_functions, and the phone-log pipeline lives inside
+// internal_functions and requires THIS service (for evaluateSuppressions).
+// That cycle means a top-level `const validator = require('./emailIngestValidator')`
+// captures emailIngestValidator's exports while it is still mid-load — i.e. the
+// default empty {} — so validator.validateSuppression is permanently undefined
+// (the exact "Accessing non-existent property ... inside circular dependency"
+// warning + the runtime TypeError on save). Resolve it lazily: require at CALL
+// time, by which point every module in the graph has finished initializing and
+// module.exports is fully populated. (Email's CRUD service isn't reachable from
+// internal_functions, so it never tripped this — phone is.)
 // ─────────────────────────────────────────────────────────────
 
-const validator = require('./emailIngestValidator');
+function _validator() {
+  // Lazy require — see CIRCULAR-DEPENDENCY NOTE above. Node caches the module,
+  // so this is a cheap registry lookup after first load, not a re-parse.
+  return require('./emailIngestValidator');
+}
 
 class ValidationError extends Error {
   constructor(errors) {
@@ -289,7 +305,7 @@ async function getById(db, id) {
  * @throws {ValidationError}
  */
 async function create(db, payload, userId) {
-  const { errors } = validator.validateSuppression(payload, true);
+  const { errors } = _validator().validateSuppression(payload, true);
   if (errors.length) throw new ValidationError(errors);
 
   const [r] = await db.query(
@@ -328,7 +344,7 @@ async function update(db, id, payload, userId) {
     match_mode:   payload.match_mode    !== undefined ? payload.match_mode   : existing.match_mode,
     match_config: payload.match_config !== undefined ? payload.match_config : existing.match_config,
   };
-  const { errors } = validator.validateSuppression(merged, true);
+  const { errors } = _validator().validateSuppression(merged, true);
   if (errors.length) throw new ValidationError(errors);
 
   const sets = [];

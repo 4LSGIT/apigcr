@@ -1,0 +1,2581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phone Ingest</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       PHONE INGEST SUB-PAGE — self-contained styles.
+       Tokens + base layout duplicated from hooks.html.
+
+       SLICE 3.2 = skeleton: three internal tabs (Suppressions /
+       Rules / Executions), list rendering, selection, /meta cache,
+       READ-ONLY detail. No editors — those are 3.3 / 3.4.
+
+       LAYOUT: Suppressions & Rules use the three-panel idiom (left
+       list + right read-only detail). Executions is a special case —
+       a center full-width table (the list can be 400+ rows), with a
+       toolbar (status filter + limit + log-style pager) and a
+       right-hand slide-over DRAWER for per-row detail. The sidebar is
+       hidden while the Executions tab is active.
+       ══════════════════════════════════════════════ */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:    #1a1a2e;
+      --navy2:   #16213e;
+      --blue:    #4f8ef7;
+      --blue2:   #3a7de8;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --amber:   #f59e0b;
+      --purple:  #8b5cf6;
+      --bg:      #f1f5f9;
+      --surface: #ffffff;
+      --border:  #e2e8f0;
+      --muted:   #94a3b8;
+      --text:    #1e293b;
+      --text2:   #475569;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Internal-tab bar — fixed, full-width, ABOVE the content row.
+       Single source of truth for the Suppressions/Rules/Executions
+       switch; doesn't move when the layout below it changes. ── */
+    .pi-topbar {
+      flex-shrink: 0;
+      display: flex; align-items: center; gap: 4px;
+      padding: 8px 12px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .pi-topbar .pi-topbar-collapse {
+      margin-left: auto;
+      background: none; border: 1px solid var(--border); border-radius: 5px;
+      color: var(--muted); cursor: pointer; padding: 5px 9px; font-size: 12px;
+      transition: all 0.12s;
+    }
+    .pi-topbar .pi-topbar-collapse:hover { color: var(--text); background: var(--bg); }
+    .pi-topbar .pi-topbar-collapse.hidden { display: none; }
+
+    /* content row sits below the topbar */
+    .pi-content { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+
+    /* ── Button family (duplicated from shell) ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: var(--blue2); }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Single internal-tab switcher (lives in the fixed topbar) ── */
+    .pi-tab {
+      flex: 0 0 auto; padding: 7px 14px; border: none; cursor: pointer;
+      background: var(--bg); color: var(--text2);
+      box-shadow: inset 0 0 0 1px var(--border);
+      font-size: 12px; font-weight: 600; border-radius: 6px;
+      transition: all 0.12s; white-space: nowrap;
+      display: inline-flex; flex-direction: row; align-items: center; gap: 6px;
+    }
+    .pi-tab i { font-size: 13px; }
+    .pi-tab:hover { color: var(--text); background: var(--border); }
+    .pi-tab.active {
+      color: var(--blue); background: rgba(79,142,247,0.08);
+      box-shadow: inset 0 0 0 1px var(--blue);
+    }
+
+    /* ── Supp/Rules content host (left list + right detail) ── */
+    .three-panel { flex: 1; overflow: hidden; display: flex; }
+
+    .panel-left {
+      width: 280px; min-width: 280px;
+      background: var(--navy2);
+      display: flex; flex-direction: column;
+      border-right: 1px solid rgba(255,255,255,0.06);
+      transition: width 0.15s, min-width 0.15s;
+    }
+    /* Hide the sidebar entirely on the Executions tab */
+    .panel-left.exec-mode { display: none; }
+    /* Collapsed = fully hidden (detail pane reclaims the space). The
+       re-expand control is the topbar collapse button. */
+    .panel-left.collapsed { display: none; }
+
+    .panel-left-head {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .panel-left-head .ph-title {
+      flex: 1; color: rgba(255,255,255,0.85); font-size: 12px;
+      font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .panel-left-tools {
+      padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .pi-tool-input {
+      width: 100%; background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 5px; padding: 5px 9px;
+      color: #fff; font-size: 12px; outline: none;
+    }
+    .pi-tool-input::placeholder { color: rgba(255,255,255,0.3); }
+    .pi-tool-input:focus { border-color: var(--blue); }
+
+    .panel-left-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+    .panel-left-loading { padding: 16px; color: rgba(255,255,255,0.3); font-size: 12px; }
+    .panel-left-empty { padding: 20px 12px; color: rgba(255,255,255,0.3); font-size: 12px; text-align: center; }
+    .panel-left-error { padding: 16px; color: #f87171; font-size: 12px; }
+
+    .left-item {
+      padding: 9px 12px; cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: all 0.12s;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+    .left-item:hover { background: rgba(255,255,255,0.05); }
+    .left-item.active { border-left-color: var(--blue); background: rgba(79,142,247,0.1); }
+    .left-item-name {
+      color: rgba(255,255,255,0.85); font-size: 13px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .left-item.active .left-item-name { color: #fff; }
+    .left-item-meta {
+      color: rgba(255,255,255,0.35); font-size: 11px; margin-top: 3px;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    .left-item-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; }
+    .badge-active   { background: rgba(34,197,94,0.15); color: #4ade80; }
+    .badge-inactive { background: rgba(239,68,68,0.15); color: #f87171; }
+
+    /* ── Right detail area (suppressions / rules) ── */
+    .pi-detail-area {
+      flex: 1; display: flex; flex-direction: column;
+      background: var(--bg); overflow: hidden; min-width: 0;
+    }
+    .pi-detail-head {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0 16px; height: 46px; display: flex; align-items: center;
+      flex-shrink: 0; gap: 10px;
+    }
+    .pi-detail-title {
+      font-size: 15px; font-weight: 700; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .pi-detail-subtitle { font-size: 12px; color: var(--muted); font-weight: 500; }
+    .pi-detail-body { flex: 1; overflow-y: auto; padding: 20px; min-height: 0; }
+
+    /* ══ EXECUTIONS CENTER SURFACE ══ */
+    .exec-surface {
+      display: none; flex: 1; flex-direction: column;
+      background: var(--bg); min-width: 0; overflow: hidden;
+    }
+    .exec-surface.active { display: flex; }
+
+    .exec-header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .exec-toolbar {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 10px 14px;
+    }
+    .exec-toolbar .tb-group { display: flex; align-items: center; gap: 6px; }
+    .exec-toolbar label {
+      font-size: 11px; font-weight: 600; color: var(--text2);
+      text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .exec-toolbar select {
+      padding: 5px 8px; font-size: 12px; border: 1px solid var(--border);
+      border-radius: 5px; background: #fff; color: var(--text); cursor: pointer;
+    }
+    .exec-toolbar select:focus { outline: none; border-color: var(--blue); }
+    .exec-toolbar .tb-spacer { flex: 1; }
+
+    .exec-body { flex: 1; overflow: auto; min-height: 0; }
+
+    /* Executions table */
+    .exec-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .exec-table thead th {
+      position: sticky; top: 0; z-index: 1;
+      text-align: left; padding: 9px 14px;
+      background: var(--bg); font-weight: 600; color: var(--text2);
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .exec-table tbody td {
+      padding: 9px 14px; border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .exec-table tbody tr { cursor: pointer; transition: background 0.1s; }
+    .exec-table tbody tr:hover { background: #eef2f7; }
+    .exec-table tbody tr.active { background: rgba(79,142,247,0.1); box-shadow: inset 3px 0 0 var(--blue); }
+    .exec-empty, .exec-loading, .exec-error {
+      padding: 40px 16px; text-align: center; color: var(--muted); font-size: 13px;
+    }
+    .exec-error { color: var(--red); }
+
+    .col-created { white-space: nowrap; color: var(--text2); }
+
+    /* Footer (pagination strip — ported from scripts.js log idiom) */
+    .exec-footer {
+      flex-shrink: 0; background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 8px 14px; display: flex; align-items: center;
+      gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text2);
+    }
+    .exec-footer .sep { color: var(--border); margin: 0 2px; }
+    .log-pagination { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .log-pagination a {
+      color: var(--blue); text-decoration: none; padding: 2px 7px;
+      border-radius: 4px; font-size: 12px;
+    }
+    .log-pagination a:hover { background: rgba(79,142,247,0.1); }
+    .log-pagination strong {
+      padding: 2px 8px; border-radius: 4px; background: var(--blue);
+      color: #fff; font-size: 12px;
+    }
+    .log-pagination-ellipsis { color: var(--muted); padding: 0 2px; }
+    .log-pagination .logPageInput {
+      width: 48px; padding: 2px 4px; font-size: 12px; text-align: center;
+      border: 1px solid var(--blue); border-radius: 4px;
+    }
+
+    /* Status chips */
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; vertical-align: middle; }
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 2px 9px; border-radius: 10px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+    }
+
+    /* ══════════════════════════════════════════════════════════════
+       MATCH-BUILDER (reusable condition-tree component, lifted from
+       hooks.html and namespaced .mb-* / .cond-* so 3.4 + a future
+       phone-ingest UI can reuse it unchanged). The component is
+       config-driven: fields + operators are passed in at render time.
+       ══════════════════════════════════════════════════════════════ */
+    .cond-group {
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px; margin-bottom: 8px; background: #fafbfc;
+    }
+    .cond-group-head {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    }
+    .cond-group-head select {
+      padding: 4px 8px; font-size: 11px;
+      border: 1px solid var(--border); border-radius: 4px; font-weight: 600;
+      background: #fff; color: var(--text);
+    }
+    .cond-group-head .cond-group-hint { font-size: 12px; color: var(--muted); }
+    .cond-row {
+      display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;
+    }
+    .cond-row input,
+    .cond-row select {
+      padding: 5px 8px; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: #fff; color: var(--text);
+    }
+    .cond-row input:focus,
+    .cond-row select:focus { outline: none; border-color: var(--blue); }
+    .cond-field        { flex: 2; min-width: 150px; }
+    .cond-path-custom  { flex: 2; min-width: 130px; }
+    .cond-op           { width: 130px; }
+    .cond-value        { flex: 2; min-width: 110px; }
+    .cond-value[disabled] { background: var(--bg); color: var(--muted); }
+
+    .mb-add-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+      flex: 1; margin: 0; padding: 5px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+      color: var(--text2); font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.12s;
+    }
+    .mb-add-btn:hover { background: var(--border); color: var(--text); }
+    .cond-remove {
+      background: none; border: none; color: var(--muted);
+      cursor: pointer; padding: 6px; font-size: 13px; line-height: 1;
+    }
+    .cond-remove:hover { color: var(--red); }
+
+    /* ══ SUPPRESSION EDITOR FORM ══ */
+    .pi-form { max-width: 720px; }
+    .pi-form-row { margin-bottom: 16px; }
+    .pi-form-row label.pi-label {
+      display: block; font-size: 11px; font-weight: 700; color: var(--text2);
+      text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;
+    }
+    .pi-input, .pi-textarea, .pi-select {
+      width: 100%; padding: 8px 10px; font-size: 13px;
+      border: 1px solid var(--border); border-radius: 6px;
+      background: #fff; color: var(--text); font-family: inherit;
+    }
+    .pi-input:focus, .pi-textarea:focus, .pi-select:focus { outline: none; border-color: var(--blue); }
+    .pi-textarea { resize: vertical; min-height: 72px; }
+    .pi-code-textarea {
+      min-height: 200px; font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+      font-size: 12px; line-height: 1.5;
+    }
+    .pi-field-hint { font-size: 11px; color: var(--muted); margin-top: 5px; }
+    .pi-toggle-line { display: flex; align-items: center; gap: 8px; }
+    .pi-toggle-line input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+    .pi-toggle-line span { font-size: 13px; color: var(--text); }
+    .pi-meta-card {
+      background: #fff; border: 1px solid var(--border); border-radius: 8px;
+      padding: 0; margin-top: 20px; overflow: hidden;
+    }
+
+    /* ── Read-only detail cards (suppressions/rules detail + drawer) ── */
+    .pi-placeholder-banner {
+      display: flex; align-items: center; gap: 8px;
+      background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+      border-radius: 6px; padding: 8px 12px; font-size: 12px; margin-bottom: 16px;
+    }
+    .kv-card {
+      background: #fff; border: 1px solid var(--border);
+      border-radius: 8px; padding: 0; margin-bottom: 14px; overflow: hidden;
+    }
+    .kv-card-head {
+      padding: 9px 14px; background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.5px; color: var(--text2);
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .kv-row {
+      display: flex; gap: 12px; padding: 8px 14px;
+      border-bottom: 1px solid var(--border); font-size: 13px;
+    }
+    .kv-row:last-child { border-bottom: none; }
+    .kv-key {
+      width: 150px; min-width: 150px; color: var(--text2);
+      font-weight: 600; font-size: 12px; text-transform: uppercase;
+      letter-spacing: 0.4px; padding-top: 1px;
+    }
+    .kv-val { flex: 1; min-width: 0; color: var(--text); word-break: break-word; }
+    .kv-val.null { color: var(--muted); font-style: italic; }
+
+    pre.json {
+      background: var(--navy); color: #e2e8f0; padding: 12px;
+      border-radius: 6px; font-size: 12px; overflow: auto;
+      white-space: pre-wrap; word-break: break-word;
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; margin: 0;
+    }
+
+    .action-card {
+      background: #fff; border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+    }
+    .action-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .action-type-pill {
+      font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px;
+      background: #e0e7ff; color: #3730a3; text-transform: uppercase; letter-spacing: 0.4px;
+    }
+
+    /* No-selection placeholder (suppressions/rules right pane) */
+    #pi-no-selection {
+      display: flex; flex: 1; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: var(--muted); gap: 4px; text-align: center;
+    }
+    #pi-no-selection i { font-size: 42px; opacity: 0.2; }
+
+    /* ══ DRAWER (execution detail) ══ */
+    .drawer-backdrop {
+      position: fixed; inset: 0; background: rgba(15,23,42,0.45);
+      opacity: 0; pointer-events: none; transition: opacity 0.18s; z-index: 40;
+    }
+    .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+    .drawer {
+      position: fixed; top: 0; right: 0; height: 100vh;
+      width: 520px; max-width: 92vw;
+      background: var(--bg); box-shadow: -8px 0 24px rgba(0,0,0,0.18);
+      transform: translateX(100%); transition: transform 0.2s ease;
+      z-index: 41; display: flex; flex-direction: column;
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-head {
+      flex-shrink: 0; background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 16px; height: 52px; display: flex; align-items: center; gap: 10px;
+    }
+    .drawer-title { font-size: 15px; font-weight: 700; flex: 1; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .drawer-close {
+      background: none; border: none; color: var(--muted); cursor: pointer;
+      font-size: 18px; padding: 4px 8px; border-radius: 5px; transition: all 0.12s;
+    }
+    .drawer-close:hover { background: var(--bg); color: var(--text); }
+    .drawer-body { flex: 1; overflow-y: auto; padding: 18px; min-height: 0; }
+
+    .mono { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; }
+    .text-muted { color: var(--muted); }
+    .hidden { display: none !important; }
+
+    /* ══════════════════════════════════════════════════════════════
+       RULE EDITOR — transform builder (mapper rules) + action manager.
+       Added in Slice 3.4. The mapper UI is lifted from hooks.html's
+       renderMapperRules; the action manager mirrors hooks' target cards
+       and uses the existing .action-card / .action-type-pill styles plus
+       the interactive extensions below.
+       ══════════════════════════════════════════════════════════════ */
+
+    /* mapper rules (transform = mapper) */
+    .mapper-rule {
+      background: #fafbfc; border: 1px solid var(--border);
+      border-radius: 6px; padding: 8px; margin-bottom: 8px;
+    }
+    .mapper-rule-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .mapper-rule-row select,
+    .mapper-rule-row input {
+      padding: 5px 8px; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: #fff; color: var(--text);
+    }
+    .mapper-rule-row select:focus,
+    .mapper-rule-row input:focus { outline: none; border-color: var(--blue); }
+    .mr-type { width: 92px; }
+    .mr-from { flex: 2; min-width: 130px; }
+    .mr-to   { flex: 1; min-width: 110px; }
+    .mr-arrow { color: var(--muted); font-size: 15px; padding: 0 2px; }
+    .mr-remove {
+      background: none; border: none; color: var(--muted);
+      cursor: pointer; padding: 6px; font-size: 13px; line-height: 1;
+    }
+    .mr-remove:hover { color: var(--red); }
+    .mr-transforms {
+      margin-top: 6px; width: 100%; padding: 5px 8px; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 4px; color: var(--text);
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    }
+    .mr-empty { text-align: center; padding: 12px; color: var(--muted); font-size: 12px; }
+
+    /* action manager cards (interactive — extend the read-only .action-card) */
+    .action-card.interactive { padding: 12px 14px; }
+    .action-card .action-card-head { justify-content: flex-start; }
+    .action-icon { font-size: 14px; }
+    .action-title { font-weight: 600; font-size: 13px; color: var(--text); }
+    .action-summary { font-size: 12px; color: var(--text2); margin: 2px 0 0; }
+    .action-card-actions { margin-left: auto; display: flex; gap: 4px; }
+    .action-card-actions button {
+      background: none; border: 1px solid var(--border); border-radius: 5px;
+      color: var(--text2); cursor: pointer; padding: 4px 8px; font-size: 12px;
+      transition: all 0.12s;
+    }
+    .action-card-actions button:hover { background: var(--bg); color: var(--text); }
+    .action-card-actions button.danger:hover { color: var(--red); border-color: var(--red); }
+    .actions-note {
+      font-size: 11px; color: var(--muted); margin: 4px 0 10px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .pi-section-head {
+      font-size: 11px; font-weight: 700; color: var(--text2);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin: 22px 0 10px; padding-bottom: 6px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* SweetAlert action-form field groups (mirror hooks' .fg / .hint) */
+    .fg { margin-bottom: 10px; }
+    .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Fixed internal-tab bar (single switcher, always on top) ── -->
+<div class="pi-topbar">
+  <button class="pi-tab active" id="pi-tab-suppressions" onclick="piSwitchTab('suppressions')">
+    <i class="fa-solid fa-filter-circle-xmark"></i> <span>Suppressions</span>
+  </button>
+  <button class="pi-tab" id="pi-tab-rules" onclick="piSwitchTab('rules')">
+    <i class="fa-solid fa-diagram-project"></i> <span>Rules</span>
+  </button>
+  <button class="pi-tab" id="pi-tab-executions" onclick="piSwitchTab('executions')">
+    <i class="fa-solid fa-list-check"></i> <span>Executions</span>
+  </button>
+  <!-- collapse toggle for the supp/rules sidebar; hidden in exec-mode -->
+  <button class="pi-topbar-collapse" id="pi-collapse-btn" onclick="piToggleSidebar(this)" title="Collapse list">
+    <i class="fa-solid fa-angles-left"></i>
+  </button>
+</div>
+
+<div class="pi-content">
+
+  <!-- ── Left panel (suppressions / rules). Hidden in exec-mode. ── -->
+  <div class="three-panel" id="pi-suprules">
+    <div class="panel-left" id="pi-sidebar">
+
+      <div class="panel-left-head">
+        <span class="ph-title" id="pi-panel-title">Suppressions</span>
+      </div>
+
+      <div class="panel-left-tools">
+        <input class="pi-tool-input" id="pi-search" placeholder="Search suppressions…"
+               oninput="piFilterList(this.value)">
+      </div>
+
+      <div class="panel-left-list" id="pi-list">
+        <div class="panel-left-loading">Loading…</div>
+      </div>
+
+    </div>
+
+    <!-- ── Right detail area (suppressions / rules read-only) ── -->
+    <div class="pi-detail-area" id="pi-detail-area">
+      <div id="pi-no-selection">
+        <i class="fa-solid fa-phone"></i>
+        <p style="font-size:14px;font-weight:500;margin:6px 0 0">Select a record to inspect</p>
+        <p style="font-size:12px">Suppressions and rules for phone events</p>
+      </div>
+      <div id="pi-detail-wrap" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden">
+        <div class="pi-detail-head">
+          <span class="pi-detail-title" id="pi-detail-title">—</span>
+          <span class="pi-detail-subtitle" id="pi-detail-subtitle"></span>
+        </div>
+        <div class="pi-detail-body" id="pi-detail-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Executions center surface (full-width; sidebar hidden) ── -->
+  <div class="exec-surface" id="pi-exec-surface">
+
+    <div class="exec-header">
+      <div class="exec-toolbar">
+        <div class="tb-group">
+          <label>Status</label>
+          <select id="pi-status-filter" onchange="piStatusFilterChanged(this.value)">
+            <option value="">All</option>
+          </select>
+        </div>
+        <div class="tb-group">
+          <label>Limit</label>
+          <select id="pi-limit" onchange="piLimitChanged(this.value)">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+          </select>
+        </div>
+        <div class="tb-spacer"></div>
+      </div>
+    </div>
+
+    <div class="exec-body" id="pi-exec-body">
+      <div class="exec-loading">Loading…</div>
+    </div>
+
+    <div class="exec-footer" id="pi-exec-footer" style="display:none"></div>
+  </div>
+
+</div>
+
+<!-- ── Drawer (execution detail) ── -->
+<div class="drawer-backdrop" id="pi-drawer-backdrop" onclick="piCloseDrawer()"></div>
+<div class="drawer" id="pi-drawer" role="dialog" aria-modal="true" aria-label="Execution detail">
+  <div class="drawer-head">
+    <span class="drawer-title" id="pi-drawer-title">Execution</span>
+    <button class="drawer-close" onclick="piCloseDrawer()" title="Close (Esc)"><i class="fa-solid fa-xmark"></i></button>
+  </div>
+  <div class="drawer-body" id="pi-drawer-body"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// PHONE INGEST SUB-PAGE  (ported from emailIngest.html)
+//
+// Communicates with the shell (automationManager.html) via:
+//   - P.apiSend(path, method?, data?)  — relayed to a.html
+//   - P.setTopbarButtons({...})        — request topbar button visibility
+//   - P.firmData / P.fd*()             — available, unused this slice
+//
+// Lifecycle hooks on window: onShow, onHide, onSave, onDelete,
+// onRefresh, onNew. init() is page-internal (boot via waitForShell).
+//
+// Slice scope: layout + list + selection + /meta cache + read-only
+// detail. NO editors (3.3 = suppression editor, 3.4 = rule editor).
+//
+// EXECUTIONS layout: center full-width table (400+ rows), toolbar
+// (status filter + limit + log-style windowed pager + "Showing N–M
+// of T"), row click → right-hand drawer. Pager algorithm is PORTED
+// from scripts.js renderLogPagination — the shell's copy isn't reachable
+// from inside the iframe (P exposes only apiSend/firmData/setTopbarButtons/fd*).
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function parseJson(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return null; }
+}
+// Collapse/expand the supp/rules list sidebar. Driven by the topbar
+// collapse button (which is hidden while Executions is active).
+function piToggleSidebar(btn) {
+  const panel = document.getElementById('pi-sidebar');
+  if (!panel) return;
+  const collapsed = panel.classList.toggle('collapsed');
+  btn.innerHTML = collapsed ? '<i class="fa-solid fa-angles-right"></i>' : '<i class="fa-solid fa-angles-left"></i>';
+  btn.title = collapsed ? 'Expand list' : 'Collapse list';
+}
+window.piToggleSidebar = piToggleSidebar;
+
+(function phoneIngestModule() {
+  const api = (...args) => P.apiSend(...args);
+  const E = id => document.getElementById(id);
+  const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
+
+  // Phone execution enum (phoneIngestExecutionsService.VALID_STATUSES):
+  // logged | suppressed | error. The dropdown labels come from
+  // meta.execution_statuses; this map drives the chip colors. Unknown values
+  // fall through to the gray default in statusMeta().
+  const STATUS_META = {
+    logged:     { label: 'Logged',     bg: '#dcfce7', fg: '#166534', dot: '#22c55e' },
+    suppressed: { label: 'Suppressed', bg: '#dbeafe', fg: '#1e40af', dot: '#3b82f6' },
+    error:      { label: 'Error',      bg: '#fef2f2', fg: '#991b1b', dot: '#ef4444' },
+  };
+  function statusMeta(s) {
+    return STATUS_META[s] || { label: s || '—', bg: '#f1f5f9', fg: '#475569', dot: '#94a3b8' };
+  }
+
+  // ── State ──
+  let subPageActive = false;
+  let metaLoaded = false;
+  let meta = {};
+
+  let activeTab = 'suppressions';
+  let selectedId = null;        // suppressions/rules sidebar selection
+
+  const cache = {
+    suppressions: { loaded: false, rows: [], filter: '' },
+    rules:        { loaded: false, rows: [], filter: '' },
+    // executions: offset/limit model (mirrors the log tab), total from server
+    executions:   { loaded: false, rows: [], offset: 0, limit: 50, total: 0, status: '', selId: null },
+  };
+
+  // ── Suppression-editor form state ──
+  // isNew: editor is open for a not-yet-saved record (onNew). When false and
+  //   selectedId is set, the editor is editing an existing row (PUT on save).
+  // editorOpen: an editor form is currently mounted in #pi-detail-body.
+  // isDirty: any form input changed since load/save (drives discard guard).
+  let editorState = { isNew: false, editorOpen: false, isDirty: false };
+
+  // The available-fields catalog passed to the reusable match-builder.
+  //
+  // PHONE divergence from email: the field catalog is SERVER-OWNED. The email
+  // page hardcoded its catalog; phone reads it from /meta (match_fields), so
+  // the server is the single source of truth and new fields (e.g.
+  // extra.firmToFirm) appear in the builder automatically with no UI change.
+  //
+  // SHAPE NOTE: meta.match_fields rows are { path, label, type, channels } —
+  // the catalog uses `path`, but the match-builder (field-agnostic by design)
+  // expects { value, label }. matchFields() maps path→value. A verbatim pass-
+  // through would render EMPTY field dropdowns — this map is load-bearing.
+  //
+  // Fallback (meta missing/empty) mirrors the email page's FALLBACK_OPERATORS
+  // defensive posture: a minimal inline catalog so the builder still renders.
+  const FALLBACK_MATCH_FIELDS = [
+    { value: 'link_id',        label: 'Other party number (link_id)' },
+    { value: 'type',           label: 'Event type (sms/call)' },
+    { value: 'direction',      label: 'Direction' },
+    { value: 'extra.provider', label: 'Provider' },
+  ];
+  function matchFields() {
+    const mf = meta && Array.isArray(meta.match_fields) ? meta.match_fields : null;
+    if (!mf || !mf.length) return FALLBACK_MATCH_FIELDS;
+    // map { path, label } → { value, label }; drop rows without a path.
+    return mf
+      .filter(f => f && (f.path != null && f.path !== ''))
+      .map(f => ({ value: String(f.path), label: f.label || String(f.path) }));
+  }
+
+  // Fallback operator list — mirrors hooks.html's hardcoded 15 operators,
+  // used when meta.match_operators is unavailable (same failure posture as 3.2).
+  const FALLBACK_OPERATORS = [
+    'equals','not_equals','contains','not_contains','starts_with','ends_with',
+    'gt','gte','lt','lte','exists','not_exists','in','not_in','matches',
+  ];
+  // Operators that take NO value input (value box hidden/disabled).
+  const VALUELESS_OPS = new Set(['exists','not_exists']);
+
+  // ════════════════════════════════════════════════════════════════
+  // META
+  // ════════════════════════════════════════════════════════════════
+  async function loadMeta() {
+    if (metaLoaded) return;
+    try {
+      meta = await api('/api/phone-ingest/meta') || {};
+      metaLoaded = true;
+    } catch (e) {
+      console.warn('[phone-ingest] meta load failed:', e.message);
+      meta = {};
+    }
+    populateStatusFilter();
+  }
+  function populateStatusFilter() {
+    const sel = E('pi-status-filter');
+    const statuses = (Array.isArray(meta.execution_statuses) && meta.execution_statuses.length)
+      ? meta.execution_statuses
+      : Object.keys(STATUS_META);
+    const opts = statuses.map(s => {
+      const val = (typeof s === 'object') ? (s.value ?? '') : s;
+      const lbl = (typeof s === 'object') ? (s.label ?? s.value ?? '') : statusMeta(s).label;
+      return `<option value="${esc(val)}">${esc(lbl)}</option>`;
+    }).join('');
+    sel.innerHTML = `<option value="">All</option>${opts}`;
+    sel.value = cache.executions.status || '';
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // INTERNAL TAB SWITCHING
+  // ════════════════════════════════════════════════════════════════
+  async function piSwitchTab(tab) {
+    if (tab === activeTab) return;
+    // Guard unsaved edits (suppression OR rule) before navigating away.
+    if ((activeTab === 'suppressions' || activeTab === 'rules') && !(await confirmDiscardIfDirty())) return;
+    closeEditor();
+    activeTab = tab;
+    selectedId = null;
+    const isExec = tab === 'executions';
+
+    // Toggle the two layouts
+    E('pi-suprules').classList.toggle('hidden', isExec);
+    E('pi-exec-surface').classList.toggle('active', isExec);
+
+    // Single switcher (in the fixed topbar)
+    ['suppressions','rules','executions'].forEach(t => {
+      E(`pi-tab-${t}`)?.classList.toggle('active', t === tab);
+    });
+
+    // Collapse toggle only applies to the supp/rules sidebar
+    E('pi-collapse-btn').classList.toggle('hidden', isExec);
+
+    if (!isExec) {
+      E('pi-panel-title').textContent = tab === 'suppressions' ? 'Suppressions' : 'Rules';
+      E('pi-search').placeholder = tab === 'suppressions' ? 'Search suppressions…' : 'Search rules…';
+      E('pi-search').value = cache[tab].filter || '';
+      clearDetail();
+    } else {
+      piCloseDrawer();
+    }
+
+    updateTopbarButtons();
+    loadActiveTab();
+  }
+  window.piSwitchTab = piSwitchTab;
+
+  async function loadActiveTab(force = false) {
+    if (activeTab === 'suppressions') return loadSuppressions(force);
+    if (activeTab === 'rules')        return loadRules(force);
+    if (activeTab === 'executions')   return loadExecutions(force);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // REUSABLE MATCH-BUILDER COMPONENT  (namespaced mb*)
+  //
+  // Lifted from hooks.html's conditions-builder and made config-driven:
+  // fields + operators are passed in at render time, so the same code
+  // serves the suppression editor (3.3), the rule editor (3.4), and a
+  // future phone-ingest UI. Zero email-specific logic lives here.
+  //
+  // Public interface:
+  //   mbRender(rootEl, state, opts)  — render a condition tree; mutates `state` live.
+  //     opts.availableFields : [{ value, label }]  (curated dropdown; '__custom__' escape hatch auto-added)
+  //     opts.operators       : [{ value, label }]  (from meta.match_operators; falls back internally)
+  //   mbCollect(rootEl)              — harvest current DOM → { operator, conditions }
+  //
+  // Handlers are bound via addEventListener inside the build functions
+  // (no inline onclick / no globals), keeping the IIFE clean.
+  // ════════════════════════════════════════════════════════════════
+  const MB_CUSTOM = '__custom__';
+
+  // Normalize an operators arg ([{value,label}] or ['equals',...] or undefined)
+  // into a stable [{value,label}] list, falling back to FALLBACK_OPERATORS.
+  function mbNormalizeOperators(operators) {
+    let list = Array.isArray(operators) && operators.length ? operators : FALLBACK_OPERATORS;
+    return list.map(o => {
+      if (typeof o === 'object' && o) {
+        const value = o.value ?? o.op ?? '';
+        return { value, label: o.label ?? String(value).replace(/_/g, ' ') };
+      }
+      return { value: o, label: String(o).replace(/_/g, ' ') };
+    });
+  }
+
+  // Render a match-builder into rootEl. `state` is the {operator, conditions}
+  // tree and is mutated live as the user edits. opts carries the field catalog
+  // and operator list (both injected — the reusability contract).
+  function mbRender(rootEl, state, opts) {
+    if (!rootEl) return;
+    const cfg = {
+      fields:    (opts && opts.availableFields) || [],
+      operators: mbNormalizeOperators(opts && opts.operators),
+      onChange:  (opts && typeof opts.onChange === 'function') ? opts.onChange : function () {},
+    };
+    rootEl.classList.add('cond-root');
+    rootEl._state = state;
+    rootEl._mbcfg = cfg;        // stash config so re-renders after mutation reuse it
+    rootEl.innerHTML = '';
+    rootEl.appendChild(mbBuildGroup(state, true, cfg));
+  }
+
+  // Re-render the nearest containing match-builder root after a structural
+  // mutation (add/remove condition or group). Reuses the stashed config.
+  function mbRerenderRoot(el) {
+    const root = el.closest('.cond-root');
+    if (root && root._state) mbRender(root, root._state, { availableFields: root._mbcfg.fields, operators: root._mbcfg.operators, onChange: root._mbcfg.onChange });
+  }
+
+  function mbBuildGroup(group, isRoot, cfg) {
+    const div = document.createElement('div');
+    div.className = 'cond-group';
+    div._group = group;
+
+    // head: AND/OR selector + hint + (remove, if subgroup)
+    const head = document.createElement('div');
+    head.className = 'cond-group-head';
+    const opSel = document.createElement('select');
+    opSel.innerHTML = `
+      <option value="and" ${group.operator === 'and' ? 'selected' : ''}>AND</option>
+      <option value="or"  ${group.operator === 'or'  ? 'selected' : ''}>OR</option>`;
+    opSel.addEventListener('change', e => { group.operator = e.target.value; cfg.onChange(); });
+    head.appendChild(opSel);
+    const hint = document.createElement('span');
+    hint.className = 'cond-group-hint';
+    hint.textContent = group.operator === 'or' ? 'Any condition may match' : 'All conditions must match';
+    opSel.addEventListener('change', () => { hint.textContent = group.operator === 'or' ? 'Any condition may match' : 'All conditions must match'; });
+    head.appendChild(hint);
+    if (!isRoot) {
+      const rm = document.createElement('button');
+      rm.className = 'cond-remove'; rm.title = 'Remove group';
+      rm.innerHTML = '<i class="fa-solid fa-times"></i>';
+      rm.addEventListener('click', () => { div.remove(); cfg.onChange(); });
+      head.appendChild(rm);
+    }
+    div.appendChild(head);
+
+    // body: child leaves + subgroups
+    const body = document.createElement('div');
+    body.className = 'cond-group-body';
+    (group.conditions || []).forEach(cond => {
+      if (cond && cond.operator) body.appendChild(mbBuildGroup(cond, false, cfg));
+      else body.appendChild(mbBuildLeaf(cond, cfg));
+    });
+    div.appendChild(body);
+
+    // foot: add-condition / add-group
+    const foot = document.createElement('div');
+    foot.style.cssText = 'display:flex;gap:6px;margin-top:6px';
+    foot._group = group;
+    const addC = document.createElement('button');
+    addC.className = 'mb-add-btn';
+    addC.innerHTML = '<i class="fa-solid fa-plus"></i> Condition';
+    addC.addEventListener('click', () => { group.conditions = group.conditions || []; group.conditions.push({ path: '', op: 'equals', value: '' }); cfg.onChange(); mbRerenderRoot(addC); });
+    const addG = document.createElement('button');
+    addG.className = 'mb-add-btn';
+    addG.innerHTML = '<i class="fa-solid fa-layer-group"></i> Group';
+    addG.addEventListener('click', () => { group.conditions = group.conditions || []; group.conditions.push({ operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] }); cfg.onChange(); mbRerenderRoot(addG); });
+    foot.appendChild(addC); foot.appendChild(addG);
+    div.appendChild(foot);
+
+    return div;
+  }
+
+  // A single condition row: curated field dropdown (+ custom escape hatch),
+  // operator dropdown (injected list), value input (hidden for valueless ops).
+  function mbBuildLeaf(cond, cfg) {
+    const row = document.createElement('div');
+    row.className = 'cond-row';
+    row._cond = cond;
+    const curPath = cond.path || '';
+    const known = cfg.fields.some(f => f.value === curPath);
+    const startCustom = curPath !== '' && !known;
+
+    // field <select>
+    const fieldSel = document.createElement('select');
+    fieldSel.className = 'cond-field';
+    fieldSel.innerHTML =
+      cfg.fields.map(f => `<option value="${esc(f.value)}" ${(!startCustom && f.value === curPath) ? 'selected' : ''}>${esc(f.label)}</option>`).join('') +
+      `<option value="${MB_CUSTOM}" ${startCustom ? 'selected' : ''}>Custom path…</option>`;
+    // if path is empty and there are fields, default the model to the first field
+    if (!startCustom && curPath === '' && cfg.fields.length) { cond.path = cfg.fields[0].value; fieldSel.value = cfg.fields[0].value; }
+    row.appendChild(fieldSel);
+
+    // custom-path free-text input (shown only in custom mode)
+    const customInput = document.createElement('input');
+    customInput.className = 'cond-path-custom';
+    customInput.placeholder = 'custom.path';
+    customInput.value = startCustom ? curPath : '';
+    customInput.style.display = startCustom ? '' : 'none';
+    row.appendChild(customInput);
+
+    // operator <select> (injected list)
+    const opSel = document.createElement('select');
+    opSel.className = 'cond-op';
+    opSel.innerHTML = cfg.operators.map(o => `<option value="${esc(o.value)}" ${cond.op === o.value ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
+    if (!cond.op) cond.op = cfg.operators[0]?.value || 'equals';
+    row.appendChild(opSel);
+
+    // value input
+    const valInput = document.createElement('input');
+    valInput.className = 'cond-value';
+    valInput.placeholder = 'value';
+    valInput.value = cond.value ?? '';
+    row.appendChild(valInput);
+
+    // remove button
+    const rm = document.createElement('button');
+    rm.className = 'cond-remove'; rm.title = 'Remove';
+    rm.innerHTML = '<i class="fa-solid fa-times"></i>';
+    row.appendChild(rm);
+
+    // ── wiring ──
+    const syncValueDisabled = () => {
+      const off = VALUELESS_OPS.has(opSel.value);
+      valInput.disabled = off;
+      valInput.style.display = off ? 'none' : '';
+      if (off) { cond.value = ''; valInput.value = ''; }
+    };
+    const syncPath = () => {
+      if (fieldSel.value === MB_CUSTOM) {
+        customInput.style.display = '';
+        cond.path = customInput.value.trim();
+      } else {
+        customInput.style.display = 'none';
+        cond.path = fieldSel.value;
+      }
+    };
+    fieldSel.addEventListener('change', () => { syncPath(); cfg.onChange(); });
+    customInput.addEventListener('input', () => { cond.path = customInput.value.trim(); cfg.onChange(); });
+    opSel.addEventListener('change', () => { cond.op = opSel.value; syncValueDisabled(); cfg.onChange(); });
+    valInput.addEventListener('input', () => { cond.value = valInput.value; cfg.onChange(); });
+    rm.addEventListener('click', () => { row.remove(); cfg.onChange(); });
+
+    syncValueDisabled();
+    return row;
+  }
+
+  // Harvest the live DOM back into a { operator, conditions } object. This is
+  // the authoritative save-time read (the live-mutated state can drift if a row
+  // was removed). Reads field from .cond-field (or .cond-path-custom when the
+  // field select is on the custom escape hatch). Valueless ops emit no value.
+  function mbCollect(rootEl) {
+    if (!rootEl) return { operator: 'and', conditions: [] };
+    const top = rootEl.querySelector(':scope > .cond-group') || rootEl.querySelector('.cond-group');
+    return mbCollectGroup(top);
+  }
+  function mbCollectGroup(groupEl) {
+    if (!groupEl) return { operator: 'and', conditions: [] };
+    const operator = groupEl.querySelector(':scope > .cond-group-head select')?.value || 'and';
+    const body = groupEl.querySelector(':scope > .cond-group-body');
+    const conditions = [];
+    if (body) {
+      for (const child of body.children) {
+        if (child.classList.contains('cond-group')) {
+          conditions.push(mbCollectGroup(child));
+        } else if (child.classList.contains('cond-row')) {
+          const fieldSel = child.querySelector('.cond-field');
+          const customInput = child.querySelector('.cond-path-custom');
+          const path = (fieldSel && fieldSel.value === MB_CUSTOM)
+            ? (customInput?.value?.trim() || '')
+            : (fieldSel?.value || '');
+          const op = child.querySelector('.cond-op')?.value;
+          if (!path || !op) continue;        // drop incomplete rows
+          const cond = { path, op };
+          if (!VALUELESS_OPS.has(op)) cond.value = child.querySelector('.cond-value')?.value ?? '';
+          conditions.push(cond);
+        }
+      }
+    }
+    return { operator, conditions };
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // SUPPRESSIONS  (sidebar list + right detail)
+  // ════════════════════════════════════════════════════════════════
+  async function loadSuppressions(force = false) {
+    const c = cache.suppressions;
+    if (c.loaded && !force) { renderSuppressionList(); return; }
+    setSidebarLoading();
+    try {
+      const data = await api('/api/phone-ingest/suppressions');
+      c.rows = (data && data.suppressions) || [];
+      c.loaded = true;
+      renderSuppressionList();
+    } catch (e) { setSidebarError(e.message); }
+  }
+  function renderSuppressionList() {
+    const c = cache.suppressions;
+    const q = (c.filter || '').toLowerCase();
+    const rows = q ? c.rows.filter(r => (r.name||'').toLowerCase().includes(q) || (r.description||'').toLowerCase().includes(q)) : c.rows;
+    if (!rows.length) { setSidebarEmpty('No suppressions.'); return; }
+    E('pi-list').innerHTML = rows.map(r => `
+      <div class="left-item${r.id === selectedId ? ' active' : ''}" onclick="piSelect(${r.id})">
+        <div class="left-item-name">${esc(r.name)}
+          <span class="left-item-badge ${r.active ? 'badge-active' : 'badge-inactive'}">${r.active ? 'ON' : 'OFF'}</span>
+        </div>
+        <div class="left-item-meta"><span>${esc(r.match_mode || '')}</span><span>matched ${Number(r.match_count||0)}×</span></div>
+      </div>`).join('');
+  }
+  async function selectSuppression(id) {
+    let row = cache.suppressions.rows.find(r => r.id === id);
+    try {
+      const data = await api(`/api/phone-ingest/suppressions/${id}`);
+      row = (data && data.suppression) ? data.suppression : (data || row);
+    } catch (e) { /* keep cached */ }
+    if (!row) { Toast.fire({ icon:'error', title:'Suppression not found' }); return; }
+    selectedId = id;
+    editorState = { isNew: false, editorOpen: true, isDirty: false };
+    renderSuppressionList();
+    renderSuppressionDetail(row);
+    updateTopbarButtons();
+  }
+
+  // Renders the EDITABLE suppression form into #pi-detail-body (Slice 3.3).
+  // Same name + call site as the old read-only placeholder. For a new record,
+  // pass a seeded blank row and set editorState.isNew=true before calling.
+  function renderSuppressionDetail(r) {
+    const isNew = editorState.isNew;
+    setDetailHead(isNew ? 'New suppression' : (r.name || `Suppression #${r.id}`),
+                  isNew ? 'unsaved' : `#${r.id} · suppression`);
+
+    const modes = (Array.isArray(meta.match_modes) && meta.match_modes.length)
+      ? meta.match_modes.map(m => (typeof m === 'object' ? (m.value ?? '') : m))
+      : ['conditions', 'code'];
+    const mode = r.match_mode || 'conditions';
+
+    // Seed the live condition-tree state for the match-builder. Harvest at save
+    // time reads the DOM (mbCollect), so this object only needs to seed render.
+    const mc = parseJson(r.match_config);
+    let condState;
+    if (mode === 'conditions') {
+      condState = (mc && mc.operator) ? mc : { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] };
+    } else {
+      condState = { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] };
+    }
+    // code-mode prefill: {code:'...'} or a bare string
+    const codeStr = (mode === 'code')
+      ? (typeof mc === 'string' ? mc : (mc && typeof mc.code === 'string' ? mc.code : ''))
+      : '';
+
+    const modeOpts = modes.map(m => `<option value="${esc(m)}" ${m === mode ? 'selected' : ''}>${esc(m)}</option>`).join('');
+
+    E('pi-detail-body').innerHTML = `
+      <div class="pi-form">
+        <div class="pi-form-row">
+          <label class="pi-label" for="sup-name">Name <span style="color:var(--red)">*</span></label>
+          <input class="pi-input" id="sup-name" maxlength="255" placeholder="e.g. Court calls / spam numbers" value="${esc(r.name || '')}">
+        </div>
+        <div class="pi-form-row">
+          <label class="pi-label" for="sup-desc">Description</label>
+          <textarea class="pi-textarea" id="sup-desc" placeholder="Optional notes about what this suppresses">${esc(r.description || '')}</textarea>
+        </div>
+        <div class="pi-form-row">
+          <label class="pi-label">Active</label>
+          <label class="pi-toggle-line">
+            <input type="checkbox" id="sup-active" ${(r.active ?? 1) ? 'checked' : ''}>
+            <span>When on, matching phone events are suppressed (not logged).</span>
+          </label>
+        </div>
+        <div class="pi-form-row">
+          <label class="pi-label" for="sup-mode">Match mode</label>
+          <select class="pi-select" id="sup-mode">${modeOpts}</select>
+        </div>
+
+        <div class="pi-form-row" id="sup-cond-wrap">
+          <label class="pi-label">Match conditions</label>
+          <div id="sup-cond-root"></div>
+        </div>
+
+        <div class="pi-form-row" id="sup-code-wrap">
+          <label class="pi-label" for="sup-code">Match code</label>
+          <textarea class="pi-textarea pi-code-textarea" id="sup-code" placeholder="// return truthy to suppress">${esc(codeStr)}</textarea>
+          <div class="pi-field-hint">Receives the phone event as <code>input</code>. Return truthy to suppress.</div>
+        </div>
+      </div>
+      ${isNew ? '' : suppressionMetaCard(r)}
+    `;
+
+    // mount the reusable match-builder
+    const root = E('sup-cond-root');
+    mbRender(root, condState, { availableFields: matchFields(), operators: meta.match_operators, onChange: markDirty });
+
+    // mode toggle (mirror hooks.html toggleFilterMode pattern)
+    const applyMode = () => {
+      const m = E('sup-mode').value;
+      E('sup-cond-wrap').classList.toggle('hidden', m !== 'conditions');
+      E('sup-code-wrap').classList.toggle('hidden', m !== 'code');
+    };
+    E('sup-mode').addEventListener('change', () => { applyMode(); markDirty(); });
+    applyMode();
+
+    // dirty tracking on the scalar fields (match-builder marks dirty itself)
+    ['sup-name','sup-desc','sup-code'].forEach(id => E(id).addEventListener('input', markDirty));
+    E('sup-active').addEventListener('change', markDirty);
+  }
+
+  function suppressionMetaCard(r) {
+    const rows = [
+      ['Match count', String(r.match_count ?? 0)],
+      ['Last matched', fmtDateOrNull(r.last_matched_at)],
+      ['Last modified by', r.last_modified_by != null ? esc(String(r.last_modified_by)) : nullSpan('—')],
+      ['Created', fmtDateOrNull(r.created_at)],
+      ['Updated', fmtDateOrNull(r.updated_at)],
+    ];
+    const body = rows.map(([k, v]) => `<div class="kv-row"><div class="kv-key">${esc(k)}</div><div class="kv-val">${v}</div></div>`).join('');
+    return `<div class="pi-meta-card"><div class="kv-card-head">Metadata (read-only)</div>${body}</div>`;
+  }
+
+  function markDirty() { editorState.isDirty = true; }
+
+  // Harvest the suppression form into a payload for POST/PUT.
+  function collectSuppressionForm() {
+    const name = E('sup-name').value.trim();
+    const description = E('sup-desc').value;
+    const active = E('sup-active').checked ? 1 : 0;
+    const match_mode = E('sup-mode').value;
+    let match_config;
+    if (match_mode === 'code') {
+      match_config = { code: E('sup-code').value };
+    } else {
+      match_config = mbCollect(E('sup-cond-root'));
+    }
+    return { name, description, active, match_mode, match_config };
+  }
+
+  // Guard against silently losing edits when navigating away from a dirty form.
+  // Returns a promise<boolean>: true = proceed, false = stay.
+  async function confirmDiscardIfDirty() {
+    if (!(editorState.editorOpen && editorState.isDirty)) return true;
+    const res = await Swal.fire({
+      icon: 'warning', title: 'Discard unsaved changes?',
+      text: 'You have unsaved edits.',
+      showCancelButton: true, confirmButtonText: 'Discard', cancelButtonText: 'Keep editing',
+      confirmButtonColor: '#ef4444',
+    });
+    return !!res.isConfirmed;
+  }
+
+  function closeEditor() { editorState = { isNew: false, editorOpen: false, isDirty: false }; }
+
+  // ════════════════════════════════════════════════════════════════
+  // RULES  (sidebar list + right detail)
+  // ════════════════════════════════════════════════════════════════
+  async function loadRules(force = false) {
+    const c = cache.rules;
+    if (c.loaded && !force) { renderRuleList(); return; }
+    setSidebarLoading();
+    try {
+      const data = await api('/api/phone-ingest/rules');
+      c.rows = (data && data.rules) || [];
+      c.loaded = true;
+      renderRuleList();
+    } catch (e) { setSidebarError(e.message); }
+  }
+  function renderRuleList() {
+    const c = cache.rules;
+    const q = (c.filter || '').toLowerCase();
+    const rows = q ? c.rows.filter(r => (r.name||'').toLowerCase().includes(q) || (r.description||'').toLowerCase().includes(q)) : c.rows;
+    if (!rows.length) { setSidebarEmpty('No rules.'); return; }
+    E('pi-list').innerHTML = rows.map(r => {
+      const n = Array.isArray(r.actions) ? r.actions.length : (r.action_count ?? 0);
+      return `
+        <div class="left-item${r.id === selectedId ? ' active' : ''}" onclick="piSelect(${r.id})">
+          <div class="left-item-name">${esc(r.name)}
+            <span class="left-item-badge ${r.active ? 'badge-active' : 'badge-inactive'}">${r.active ? 'ON' : 'OFF'}</span>
+          </div>
+          <div class="left-item-meta"><span>pos ${Number(r.position ?? 0)}</span><span>${n} action${n===1?'':'s'}</span><span>matched ${Number(r.match_count||0)}×</span></div>
+        </div>`;
+    }).join('');
+  }
+  async function selectRule(id) {
+    let row = cache.rules.rows.find(r => r.id === id);
+    try {
+      const data = await api(`/api/phone-ingest/rules/${id}`);
+      if (data && data.rule) { row = data.rule; if (!row.actions && Array.isArray(data.actions)) row.actions = data.actions; }
+      else if (data) { row = data; }
+    } catch (e) { /* keep cached */ }
+    if (!row) { Toast.fire({ icon:'error', title:'Rule not found' }); return; }
+    selectedId = id;
+    editorState = { isNew: false, editorOpen: true, isDirty: false };
+    renderRuleList();
+    renderRuleDetail(row);
+    updateTopbarButtons();
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // RULE EDITOR  (Slice 3.4) — replaces the 3.4 read-only placeholder.
+  //
+  // Structure mirrors the suppression editor (3.3) plus two new pieces:
+  //   - transform builder (passthrough / mapper / code), lifted from
+  //     hooks.html's renderMapperRules + toggleTransformMode.
+  //   - action manager (Deliverable 2), mirroring hooks.html's target
+  //     CRUD against the rule-action endpoints. Action-save model (b):
+  //     actions are saved independently of the rule's own Save.
+  //
+  // Live form state lives in ruleForm (below). Match-tree state is kept
+  // live for mbRender; the code textarea + mapper buffer are preserved
+  // across mode toggles (don't wipe on switch — mirrors 3.3's conditions
+  // vs. code independence).
+  // ════════════════════════════════════════════════════════════════
+
+  // ruleForm: the live editor buffer for the rule currently mounted.
+  //   id            — null while the rule is unsaved (new); set after first save.
+  //   actions       — local mirror of the rule's actions array (mutated by the
+  //                   action manager; re-rendered card list reads from here).
+  //   condState     — live {operator, conditions} tree for the match-builder.
+  //   mapperRules   — live mapper-rule buffer for transform=mapper (preserved
+  //                   across transform-mode toggles).
+  let ruleForm = { id: null, actions: [], condState: null, mapperRules: [] };
+
+  // Renders the EDITABLE rule form into #pi-detail-body. Same call site as
+  // the old read-only placeholder. For a new record, pass a seeded blank row
+  // and set editorState.isNew=true before calling.
+  function renderRuleDetail(r) {
+    const isNew = editorState.isNew;
+    setDetailHead(isNew ? 'New rule' : (r.name || `Rule #${r.id}`),
+                  isNew ? 'unsaved' : `#${r.id} · rule`);
+
+    // ── Match seed (identical handling to the suppression editor) ──
+    const matchModes = (Array.isArray(meta.match_modes) && meta.match_modes.length)
+      ? meta.match_modes.map(m => (typeof m === 'object' ? (m.value ?? '') : m))
+      : ['conditions', 'code'];
+    const matchMode = r.match_mode || 'conditions';
+    const mc = parseJson(r.match_config);
+    let condState;
+    if (matchMode === 'conditions') {
+      condState = (mc && mc.operator) ? mc : { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] };
+    } else {
+      condState = { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] };
+    }
+    const matchCodeStr = (matchMode === 'code')
+      ? (typeof mc === 'string' ? mc : (mc && typeof mc.code === 'string' ? mc.code : ''))
+      : '';
+
+    // ── Transform seed ──
+    const transformModes = (Array.isArray(meta.transform_modes) && meta.transform_modes.length)
+      ? meta.transform_modes.map(m => (typeof m === 'object' ? (m.value ?? '') : m))
+      : ['passthrough', 'mapper', 'code'];
+    const transformMode = r.transform_mode || 'passthrough';
+    const tc = parseJson(r.transform_config);
+    // mapper buffer: transform_config is an array for mapper mode
+    const mapperRules = (transformMode === 'mapper' && Array.isArray(tc))
+      ? tc.map(normalizeMapperRule)
+      : [];
+    // code buffer: {code:'...'} or a bare string
+    const transformCodeStr = (transformMode === 'code')
+      ? (typeof tc === 'string' ? tc : (tc && typeof tc.code === 'string' ? tc.code : ''))
+      : '';
+
+    // initialize live form state
+    ruleForm = {
+      id: isNew ? null : (r.id ?? null),
+      actions: Array.isArray(r.actions) ? r.actions.slice() : [],
+      condState,
+      mapperRules,
+    };
+
+    const matchModeOpts = matchModes.map(m => `<option value="${esc(m)}" ${m === matchMode ? 'selected' : ''}>${esc(m)}</option>`).join('');
+    const transformModeOpts = transformModes.map(m => `<option value="${esc(m)}" ${m === transformMode ? 'selected' : ''}>${esc(m)}</option>`).join('');
+
+    E('pi-detail-body').innerHTML = `
+      <div class="pi-form">
+        <div class="pi-form-row">
+          <label class="pi-label" for="rule-name">Name <span style="color:var(--red)">*</span></label>
+          <input class="pi-input" id="rule-name" maxlength="255" placeholder="e.g. Court docket notices → log + workflow" value="${esc(r.name || '')}">
+        </div>
+        <div class="pi-form-row">
+          <label class="pi-label" for="rule-desc">Description</label>
+          <textarea class="pi-textarea" id="rule-desc" placeholder="Optional notes about what this rule does">${esc(r.description || '')}</textarea>
+        </div>
+        <div class="pi-form-row">
+          <label class="pi-label">Active</label>
+          <label class="pi-toggle-line">
+            <input type="checkbox" id="rule-active" ${(r.active ?? 1) ? 'checked' : ''}>
+            <span>When on, matching phone events run this rule's transform + actions.</span>
+          </label>
+        </div>
+        <div class="pi-form-row">
+          <label class="pi-label" for="rule-position">Position</label>
+          <input class="pi-input" id="rule-position" type="number" min="0" step="1" style="max-width:140px" value="${Number(r.position ?? 0)}">
+          <div class="pi-field-hint">Lower positions evaluate first.</div>
+        </div>
+
+        <!-- ═══ MATCH ═══ -->
+        <div class="pi-section-head">Match</div>
+        <div class="pi-form-row">
+          <label class="pi-label" for="rule-match-mode">Match mode</label>
+          <select class="pi-select" id="rule-match-mode" style="max-width:220px">${matchModeOpts}</select>
+        </div>
+        <div class="pi-form-row" id="rule-match-cond-wrap">
+          <label class="pi-label">Match conditions</label>
+          <div id="rule-match-cond-root"></div>
+        </div>
+        <div class="pi-form-row" id="rule-match-code-wrap">
+          <label class="pi-label" for="rule-match-code">Match code</label>
+          <textarea class="pi-textarea pi-code-textarea" id="rule-match-code" placeholder="// return truthy to match">${esc(matchCodeStr)}</textarea>
+          <div class="pi-field-hint">Receives the phone event as <code>input</code>. Return truthy to match.</div>
+        </div>
+
+        <!-- ═══ TRANSFORM ═══ -->
+        <div class="pi-section-head">Transform</div>
+        <div class="pi-form-row">
+          <label class="pi-label" for="rule-transform-mode">Transform mode</label>
+          <select class="pi-select" id="rule-transform-mode" style="max-width:220px">${transformModeOpts}</select>
+        </div>
+        <div class="pi-form-row" id="rule-transform-passthrough-wrap">
+          <div class="pi-field-hint">The phone event is passed to actions unchanged.</div>
+        </div>
+        <div class="pi-form-row" id="rule-transform-mapper-wrap">
+          <label class="pi-label">Mapping rules</label>
+          <div id="rule-mapper-rules"></div>
+          <button type="button" class="btn btn-outline btn-sm" id="rule-mapper-add" style="margin-top:6px"><i class="fa-solid fa-plus"></i> Add mapping</button>
+          <div class="pi-field-hint">Build the object passed to actions from envelope fields.</div>
+        </div>
+        <div class="pi-form-row" id="rule-transform-code-wrap">
+          <label class="pi-label" for="rule-transform-code">Transform code</label>
+          <textarea class="pi-textarea pi-code-textarea" id="rule-transform-code" placeholder="// return the transformed object">${esc(transformCodeStr)}</textarea>
+          <div class="pi-field-hint">Receives the envelope as <code>input</code>. Return the transformed object passed to actions.</div>
+        </div>
+
+        <!-- ═══ ACTIONS ═══ -->
+        <div class="pi-section-head">Actions</div>
+        <div class="actions-note"><i class="fa-solid fa-circle-info"></i> Actions are saved immediately when added or edited (separately from the rule's Save).</div>
+        <div id="rule-actions-list"></div>
+        <button type="button" class="btn btn-outline btn-sm" id="rule-action-add" style="margin-top:6px"><i class="fa-solid fa-plus"></i> Add action</button>
+        <div id="rule-action-disabled-note" class="pi-field-hint" style="display:none"><i class="fa-solid fa-lock"></i> Save the rule first, then add actions.</div>
+      </div>
+      ${isNew ? '' : ruleMetaCard(r)}
+    `;
+
+    // ── mount the reusable match-builder (REUSED UNCHANGED from 3.3) ──
+    mbRender(E('rule-match-cond-root'), ruleForm.condState,
+      { availableFields: matchFields(), operators: meta.match_operators, onChange: markDirty });
+
+    // ── match mode toggle ──
+    const applyMatchMode = () => {
+      const m = E('rule-match-mode').value;
+      E('rule-match-cond-wrap').classList.toggle('hidden', m !== 'conditions');
+      E('rule-match-code-wrap').classList.toggle('hidden', m !== 'code');
+    };
+    E('rule-match-mode').addEventListener('change', () => { applyMatchMode(); markDirty(); });
+    applyMatchMode();
+
+    // ── transform mode toggle (preserves each sub-editor's state) ──
+    const applyTransformMode = () => {
+      const m = E('rule-transform-mode').value;
+      E('rule-transform-passthrough-wrap').classList.toggle('hidden', m !== 'passthrough');
+      E('rule-transform-mapper-wrap').classList.toggle('hidden', m !== 'mapper');
+      E('rule-transform-code-wrap').classList.toggle('hidden', m !== 'code');
+      if (m === 'mapper') renderMapperRules();
+    };
+    E('rule-transform-mode').addEventListener('change', () => { applyTransformMode(); markDirty(); });
+    E('rule-mapper-add').addEventListener('click', () => { ruleForm.mapperRules.push({ from: '', to: '' }); renderMapperRules(); markDirty(); });
+    applyTransformMode();
+
+    // ── dirty tracking on scalar + code fields (match-builder marks itself) ──
+    ['rule-name','rule-desc','rule-position','rule-match-code','rule-transform-code'].forEach(id => E(id).addEventListener('input', markDirty));
+    E('rule-active').addEventListener('change', markDirty);
+
+    // ── actions section ──
+    renderActionCards();
+    wireActionAddButton();
+  }
+
+  function ruleMetaCard(r) {
+    const rows = [
+      ['Match count', String(r.match_count ?? 0)],
+      ['Last matched', fmtDateOrNull(r.last_matched_at)],
+      ['Last modified by', r.last_modified_by != null ? esc(String(r.last_modified_by)) : nullSpan('—')],
+      ['Created', fmtDateOrNull(r.created_at)],
+      ['Updated', fmtDateOrNull(r.updated_at)],
+    ];
+    const body = rows.map(([k, v]) => `<div class="kv-row"><div class="kv-key">${esc(k)}</div><div class="kv-val">${v}</div></div>`).join('');
+    return `<div class="pi-meta-card"><div class="kv-card-head">Metadata (read-only)</div>${body}</div>`;
+  }
+
+  // ── Transform: mapper-rules UI (lifted from hooks.html renderMapperRules) ──
+  // A mapper rule is one of: {from, to, transforms?} | {template, to} | {value, to}.
+  function normalizeMapperRule(r) {
+    if (!r || typeof r !== 'object') return { from: '', to: '' };
+    if (r.template !== undefined) return { template: r.template, to: r.to || '' };
+    if (r.value !== undefined)    return { value: r.value, to: r.to || '' };
+    return { from: r.from || '', to: r.to || '', transforms: Array.isArray(r.transforms) ? r.transforms : [] };
+  }
+  function renderMapperRules() {
+    const el = E('rule-mapper-rules');
+    if (!el) return;
+    const rules = ruleForm.mapperRules;
+    if (!rules.length) { el.innerHTML = `<div class="mr-empty">No mapping rules. Add one below.</div>`; return; }
+    el.innerHTML = rules.map((r, i) => {
+      const kind = r.from !== undefined ? 'from' : (r.template !== undefined ? 'template' : 'value');
+      const srcVal = r.from ?? r.template ?? (r.value !== undefined ? String(r.value) : '');
+      const ph = kind === 'template' ? '{{path|transform}} text' : (kind === 'value' ? 'static value' : 'link_id  or  extra.provider');
+      return `
+        <div class="mapper-rule" data-idx="${i}">
+          <div class="mapper-rule-row">
+            <select class="mr-type">
+              <option value="from"     ${kind==='from'?'selected':''}>Path</option>
+              <option value="template" ${kind==='template'?'selected':''}>Template</option>
+              <option value="value"    ${kind==='value'?'selected':''}>Static</option>
+            </select>
+            <input class="mr-from" placeholder="${esc(ph)}" value="${esc(srcVal)}">
+            <span class="mr-arrow">→</span>
+            <input class="mr-to" placeholder="dest_field" value="${esc(r.to || '')}">
+            <button type="button" class="mr-remove" title="Remove"><i class="fa-solid fa-times"></i></button>
+          </div>
+          ${kind==='from' ? `<input class="mr-transforms" placeholder="transforms: lowercase, trim, date:yyyy-MM-dd …" value="${esc((r.transforms||[]).join(', '))}">` : ''}
+        </div>`;
+    }).join('');
+    // wire each rule's controls
+    el.querySelectorAll('.mapper-rule').forEach(card => {
+      const i = Number(card.getAttribute('data-idx'));
+      card.querySelector('.mr-type').addEventListener('change', e => {
+        const to = ruleForm.mapperRules[i].to || '';
+        const t = e.target.value;
+        if (t === 'from') ruleForm.mapperRules[i] = { from: '', to, transforms: [] };
+        else if (t === 'template') ruleForm.mapperRules[i] = { template: '', to };
+        else ruleForm.mapperRules[i] = { value: '', to };
+        renderMapperRules(); markDirty();
+      });
+      card.querySelector('.mr-remove').addEventListener('click', () => { ruleForm.mapperRules.splice(i, 1); renderMapperRules(); markDirty(); });
+      card.querySelector('.mr-from')?.addEventListener('input', markDirty);
+      card.querySelector('.mr-to')?.addEventListener('input', markDirty);
+      card.querySelector('.mr-transforms')?.addEventListener('input', markDirty);
+    });
+  }
+  // Harvest mapper rules from the live DOM → transform_config array.
+  function collectMapperRules() {
+    const el = E('rule-mapper-rules');
+    if (!el) return [];
+    return Array.from(el.querySelectorAll('.mapper-rule')).map(card => {
+      const kind = card.querySelector('.mr-type').value;
+      const source = card.querySelector('.mr-from').value;
+      const to = card.querySelector('.mr-to').value;
+      const rule = { to };
+      if (kind === 'from') {
+        rule.from = source;
+        const tf = card.querySelector('.mr-transforms');
+        if (tf && tf.value.trim()) rule.transforms = tf.value.split(',').map(s => s.trim()).filter(Boolean);
+      } else if (kind === 'template') {
+        rule.template = source;
+      } else {
+        rule.value = source;
+      }
+      return rule;
+    });
+  }
+
+  // Harvest the rule's scalar + match + transform fields into a POST/PUT payload.
+  // Actions are NOT included — they're managed independently (model (b)).
+  function collectRuleForm() {
+    const name = E('rule-name').value.trim();
+    const description = E('rule-desc').value;
+    const active = E('rule-active').checked ? 1 : 0;
+    const position = Math.max(0, parseInt(E('rule-position').value, 10) || 0);
+
+    const match_mode = E('rule-match-mode').value;
+    let match_config;
+    if (match_mode === 'code') match_config = { code: E('rule-match-code').value };
+    else match_config = mbCollect(E('rule-match-cond-root'));
+
+    const transform_mode = E('rule-transform-mode').value;
+    let transform_config;
+    if (transform_mode === 'mapper')      transform_config = collectMapperRules();
+    else if (transform_mode === 'code')   transform_config = { code: E('rule-transform-code').value };
+    else                                  transform_config = null; // passthrough
+
+    return { name, description, active, position, match_mode, match_config, transform_mode, transform_config };
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // ACTION MANAGER  (Deliverable 2) — mirrors hooks.html target CRUD.
+  //
+  // The five action types map ~1:1 to hook target types, plus a new
+  // 'hook' type (config {slug}) that hooks.html lacks. Config forms are
+  // hand-built per type (the recommended approach in the prompt) mirroring
+  // buildTargetForm's sections. Unlike hook targets, rule actions have NO
+  // per-action conditions (out of scope — the rule's match is the gate).
+  //
+  // New-rule action ordering: SAVE-FIRST (recommended). When the rule is
+  // unsaved (ruleForm.id == null), the "Add action" button is disabled with
+  // a "save the rule first" note. After the first POST returns an id,
+  // selectRule re-renders with the actions section enabled. Chosen over
+  // hooks' local-buffer approach because actions FK to rule_id — buffering
+  // unsaved actions would need a client-side replay after rule creation and
+  // can't pre-validate referentially; save-first matches the backend reality
+  // and is simpler + less error-prone.
+  // ════════════════════════════════════════════════════════════════
+  const ACTION_TYPE_LABELS = {
+    workflow:          { label: 'Workflow', icon: 'fa-diagram-project', color: '#8b5cf6' },
+    sequence:          { label: 'Sequence', icon: 'fa-list-ol',         color: '#f97316' },
+    hook:              { label: 'Hook',     icon: 'fa-bolt-lightning',  color: '#0ea5e9' },
+    internal_function: { label: 'Function', icon: 'fa-code',            color: '#10b981' },
+    http:              { label: 'HTTP',     icon: 'fa-globe',           color: 'var(--blue)' },
+  };
+
+  function summarizeAction(a) {
+    const type = a.action_type || 'http';
+    const cfg = parseJson(a.config) || {};
+    if (type === 'workflow') return `Start workflow #${cfg.workflow_id ?? '?'}`;
+    if (type === 'sequence') {
+      if (cfg.template_id != null && cfg.template_id !== '') {
+        const tpl = (meta.targets?.sequences || []).find(s => s.id == cfg.template_id);
+        return tpl ? `Enroll in template #${cfg.template_id} "${tpl.name}"` : `Enroll in template #${cfg.template_id}`;
+      }
+      return `Enroll in sequence "${cfg.template_type || '?'}"`;
+    }
+    if (type === 'hook') {
+      const h = (meta.targets?.hooks || []).find(x => x.slug === cfg.slug);
+      return h ? `Invoke hook '${cfg.slug}' (${h.name})` : `Invoke hook '${cfg.slug || '?'}'`;
+    }
+    if (type === 'internal_function') return `Call ${cfg.function_name || '?'}()`;
+    if (type === 'http') return `${cfg.method || 'POST'} ${cfg.url || '—'}`;
+    return `(${type})`;
+  }
+
+  function renderActionCards() {
+    const el = E('rule-actions-list');
+    if (!el) return;
+    const actions = ruleForm.actions;
+    if (!actions.length) {
+      el.innerHTML = `<div class="text-muted" style="font-size:13px;padding:4px 0">No actions configured.</div>`;
+      return;
+    }
+    el.innerHTML = actions.map((a, i) => {
+      const info = ACTION_TYPE_LABELS[a.action_type] || ACTION_TYPE_LABELS.http;
+      return `
+        <div class="action-card interactive">
+          <div class="action-card-head">
+            <i class="fa-solid ${info.icon} action-icon" style="color:${info.color}"></i>
+            <span class="action-title">${esc(info.label)}</span>
+            <span class="text-muted" style="font-size:12px">pos ${Number(a.position ?? i)}</span>
+            <span class="left-item-badge ${a.active ? 'badge-active':'badge-inactive'}">${a.active?'ON':'OFF'}</span>
+            <div class="action-card-actions">
+              <button data-act="edit" data-idx="${i}" title="Edit"><i class="fa-solid fa-pen"></i></button>
+              <button data-act="del" data-idx="${i}" class="danger" title="Delete"><i class="fa-solid fa-trash"></i></button>
+            </div>
+          </div>
+          <div class="action-summary mono">${esc(summarizeAction(a))}</div>
+        </div>`;
+    }).join('');
+    el.querySelectorAll('button[data-act]').forEach(btn => {
+      const i = Number(btn.getAttribute('data-idx'));
+      if (btn.getAttribute('data-act') === 'edit') btn.addEventListener('click', () => editAction(i));
+      else btn.addEventListener('click', () => removeAction(i));
+    });
+  }
+
+  // Enable/disable the Add-action affordance based on whether the rule is saved.
+  function wireActionAddButton() {
+    const btn = E('rule-action-add');
+    const note = E('rule-action-disabled-note');
+    if (!btn) return;
+    const saved = ruleForm.id != null;
+    btn.disabled = !saved;
+    if (note) note.style.display = saved ? 'none' : '';
+    btn.onclick = saved ? () => addAction() : null;
+  }
+
+  async function addAction() {
+    if (ruleForm.id == null) return;
+    const { value } = await Swal.fire({
+      title: 'Add action',
+      html: buildActionForm({}),
+      width: 600,
+      showCancelButton: true,
+      confirmButtonText: 'Add',
+      didOpen: () => initActionFormHandlers({}),
+      preConfirm: () => collectActionForm(),
+    });
+    if (!value) return;
+    try {
+      const result = await api(`/api/phone-ingest/rules/${ruleForm.id}/actions`, 'POST', value);
+      const row = (result && result.action) ? result.action : result;
+      ruleForm.actions.push(row);
+      renderActionCards();
+      Toast.fire({ icon: 'success', title: 'Action added' });
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Add failed', text: e.message || 'The server rejected the action.' });
+    }
+  }
+
+  async function editAction(i) {
+    const a = ruleForm.actions[i];
+    if (!a) return;
+    const { value } = await Swal.fire({
+      title: 'Edit action',
+      html: buildActionForm(a),
+      width: 600,
+      showCancelButton: true,
+      confirmButtonText: 'Update',
+      didOpen: () => initActionFormHandlers(a),
+      preConfirm: () => collectActionForm(),
+    });
+    if (!value) return;
+    try {
+      const result = await api(`/api/phone-ingest/rule-actions/${a.id}`, 'PUT', value);
+      const row = (result && result.action) ? result.action : result;
+      // merge: keep id + rule_id, take updated fields
+      ruleForm.actions[i] = Object.assign({}, a, row, value);
+      renderActionCards();
+      Toast.fire({ icon: 'success', title: 'Action updated' });
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Update failed', text: e.message || 'The server rejected the action.' });
+    }
+  }
+
+  async function removeAction(i) {
+    const a = ruleForm.actions[i];
+    if (!a) return;
+    const res = await Swal.fire({
+      icon: 'warning', title: 'Delete action?',
+      html: `Delete this <strong>${esc((ACTION_TYPE_LABELS[a.action_type]||{}).label || a.action_type)}</strong> action?`,
+      showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel', confirmButtonColor: '#ef4444',
+    });
+    if (!res.isConfirmed) return;
+    try {
+      await api(`/api/phone-ingest/rule-actions/${a.id}`, 'DELETE');
+      ruleForm.actions.splice(i, 1);
+      renderActionCards();
+      Toast.fire({ icon: 'success', title: 'Action deleted' });
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Delete failed', text: e.message || 'The server rejected the delete.' });
+    }
+  }
+
+  // ── Action config form (hand-built per type, mirroring buildTargetForm) ──
+  function buildActionForm(a) {
+    const type = a.action_type || 'workflow';
+    const cfg = parseJson(a.config) || {};
+    const t = meta.targets || {};
+    const wfOpts = (t.workflows || []).map(w => `<option value="${w.id}" ${cfg.workflow_id==w.id?'selected':''}>${esc(w.name || 'Workflow #'+w.id)} (id: ${w.id})</option>`).join('');
+    const seqList = t.sequences || [];
+    const seqTypes = [...new Set(seqList.map(s => s.type).filter(Boolean))];
+    const seqTypeOpts = seqTypes.map(tt => `<option value="${esc(tt)}" ${cfg.template_type===tt?'selected':''}>${esc(tt)}</option>`).join('');
+    const seqIdOpts = seqList.map(s => {
+      const tl = (s.type && String(s.type).trim()) ? ` (${esc(s.type)})` : '';
+      return `<option value="${s.id}" ${cfg.template_id==s.id?'selected':''}>${esc(s.name)}${tl}</option>`;
+    }).join('');
+    const seqModeInit = (cfg.template_id != null && cfg.template_id !== '') ? 'id' : 'type';
+    const hookOpts = (t.hooks || []).map(h => `<option value="${esc(h.slug)}" ${cfg.slug===h.slug?'selected':''}>${esc(h.name || h.slug)} (${esc(h.slug)})</option>`).join('');
+    const fnOpts = (t.internal_functions || []).map(fn => `<option value="${esc(fn)}" ${cfg.function_name===fn?'selected':''}>${esc(fn)}</option>`).join('');
+    const credOpts = (t.credentials || []).map(c => `<option value="${c.id}" ${cfg.credential_id==c.id?'selected':''}>${esc(c.name)} (${esc(c.type)})</option>`).join('');
+
+    return `
+      <div style="text-align:left;font-size:13px">
+        <div class="fg">
+          <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Action Type</label>
+          <select id="swal-a-type" class="swal2-select" style="margin:0;width:100%">
+            <option value="workflow"          ${type==='workflow'?'selected':''}>Workflow — start execution</option>
+            <option value="sequence"          ${type==='sequence'?'selected':''}>Sequence — enroll contact</option>
+            <option value="hook"              ${type==='hook'?'selected':''}>Hook — invoke by slug</option>
+            <option value="internal_function" ${type==='internal_function'?'selected':''}>Internal Function — call directly</option>
+            <option value="http"              ${type==='http'?'selected':''}>HTTP — external URL</option>
+          </select>
+        </div>
+
+        <!-- workflow -->
+        <div id="swal-a-sec-workflow" class="swal-a-section">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Workflow</label>
+            <select id="swal-a-wf" class="swal2-select" style="margin:0;width:100%"><option value="">— select a workflow —</option>${wfOpts}</select>
+          </div>
+        </div>
+
+        <!-- sequence -->
+        <div id="swal-a-sec-sequence" class="swal-a-section" style="display:none">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Enrollment mode</label>
+            <select id="swal-a-seq-mode" class="swal2-select" style="margin:0;width:100%">
+              <option value="type" ${seqModeInit==='type'?'selected':''}>By type (cascade match)</option>
+              <option value="id"   ${seqModeInit==='id'?'selected':''}>By specific template</option>
+            </select>
+          </div>
+          <div id="swal-a-seq-by-type">
+            <div class="fg">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Template Type</label>
+              <select id="swal-a-seq-type" class="swal2-select" style="margin:0;width:100%"><option value="">— select a template type —</option>${seqTypeOpts}</select>
+            </div>
+          </div>
+          <div id="swal-a-seq-by-id" style="display:none">
+            <div class="fg">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Template</label>
+              <select id="swal-a-seq-id" class="swal2-select" style="margin:0;width:100%"><option value="">— select a template —</option>${seqIdOpts}</select>
+            </div>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">contact_id field name</label>
+            <input id="swal-a-seq-cid" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.contact_id_field || 'contact_id')}" placeholder="contact_id">
+            <div class="hint">Field in the transform output holding the contact ID. Dot-paths supported.</div>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">trigger_data fields (comma-separated)</label>
+            <input id="swal-a-seq-td" class="swal2-input mono" style="margin:0;width:100%" value="${esc((cfg.trigger_data_fields || []).join(', '))}" placeholder="appt_id, case_id">
+            <div class="hint">Transform fields passed through as <code>trigger_data</code>.</div>
+          </div>
+        </div>
+
+        <!-- hook -->
+        <div id="swal-a-sec-hook" class="swal-a-section" style="display:none">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Hook</label>
+            <select id="swal-a-hook" class="swal2-select" style="margin:0;width:100%"><option value="">— select a hook —</option>${hookOpts}</select>
+            <div class="hint">The transform output is posted to this hook's receiver.</div>
+          </div>
+        </div>
+
+        <!-- internal_function -->
+        <div id="swal-a-sec-internal_function" class="swal-a-section" style="display:none">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Function</label>
+            <select id="swal-a-fn" class="swal2-select" style="margin:0;width:100%"><option value="">— select a function —</option>${fnOpts}</select>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Params Mapping</label>
+            <div id="swal-a-fn-params" style="border:1px solid var(--border);border-radius:6px;padding:8px;background:#f8fafc"></div>
+            <button type="button" id="swal-a-fn-add" class="btn btn-outline" style="margin-top:6px;padding:4px 10px;font-size:12px"><i class="fa-solid fa-plus"></i> Add param</button>
+            <div class="hint">Map function params to transform output fields. Dot-paths supported. Wrap literals in single quotes: <code>'SMS'</code>.</div>
+          </div>
+        </div>
+
+        <!-- http -->
+        <div id="swal-a-sec-http" class="swal-a-section" style="display:none">
+          <div style="display:flex;gap:8px">
+            <div class="fg" style="width:100px">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Method</label>
+              <select id="swal-a-method" class="swal2-select" style="margin:0;width:100%">${['POST','GET','PUT','PATCH','DELETE'].map(m=>`<option ${cfg.method===m?'selected':''}>${m}</option>`).join('')}</select>
+            </div>
+            <div class="fg" style="flex:1">
+              <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">URL</label>
+              <input id="swal-a-url" class="swal2-input" style="margin:0;width:100%" value="${esc(cfg.url || '')}" placeholder="https://...">
+            </div>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Credential</label>
+            <select id="swal-a-cred" class="swal2-select" style="margin:0;width:100%"><option value="">None</option>${credOpts}</select>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Mode</label>
+            <select id="swal-a-bodymode" class="swal2-select" style="margin:0;width:100%">
+              <option value="transform_output" ${cfg.body_mode!=='template'?'selected':''}>Full transform output</option>
+              <option value="template" ${cfg.body_mode==='template'?'selected':''}>Template</option>
+            </select>
+          </div>
+          <div class="fg" id="swal-a-template-wrap">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body Template</label>
+            <textarea id="swal-a-template" class="swal2-textarea" style="margin:0;width:100%;font-family:monospace;font-size:12px;min-height:60px" placeholder='{"text": "{{subject}}"}'>${esc(cfg.body_template || '')}</textarea>
+            <div class="hint">Use <code>{{field}}</code> to reference transform output fields.</div>
+          </div>
+        </div>
+
+        <!-- shared: position + active -->
+        <div style="display:flex;gap:12px;align-items:flex-end;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <div class="fg" style="width:120px;margin:0">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Position</label>
+            <input id="swal-a-position" class="swal2-input" type="number" min="0" step="1" style="margin:0;width:100%" value="${Number(a.position ?? 0)}">
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;padding-bottom:8px">
+            <input type="checkbox" id="swal-a-active" ${a.active !== false && a.active !== 0 ? 'checked' : ''}>
+            <label for="swal-a-active" style="font-size:13px">Active</label>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function initActionFormHandlers(a) {
+    const typeEl = document.getElementById('swal-a-type');
+    if (!typeEl) return;
+    const updateSections = () => {
+      const type = typeEl.value;
+      document.querySelectorAll('.swal-a-section').forEach(sec => {
+        sec.style.display = sec.id === `swal-a-sec-${type}` ? '' : 'none';
+      });
+    };
+    typeEl.addEventListener('change', updateSections);
+    updateSections();
+
+    // sequence enrollment-mode toggle
+    const seqModeEl = document.getElementById('swal-a-seq-mode');
+    if (seqModeEl) {
+      const updateSeqMode = () => {
+        const mode = seqModeEl.value;
+        const byType = document.getElementById('swal-a-seq-by-type');
+        const byId   = document.getElementById('swal-a-seq-by-id');
+        if (byType) byType.style.display = mode === 'type' ? '' : 'none';
+        if (byId)   byId.style.display   = mode === 'id'   ? '' : 'none';
+      };
+      seqModeEl.addEventListener('change', updateSeqMode);
+      updateSeqMode();
+    }
+
+    // http body-mode toggle
+    const bodyModeEl = document.getElementById('swal-a-bodymode');
+    const bodyWrap   = document.getElementById('swal-a-template-wrap');
+    if (bodyModeEl && bodyWrap) {
+      const updateBody = () => { bodyWrap.style.display = bodyModeEl.value === 'template' ? '' : 'none'; };
+      bodyModeEl.addEventListener('change', updateBody);
+      updateBody();
+    }
+
+    // internal_function params mapping
+    const cfg = parseJson(a.config) || {};
+    renderActionParamsMapping(cfg.params_mapping || {});
+    const addBtn = document.getElementById('swal-a-fn-add');
+    if (addBtn) addBtn.addEventListener('click', () => {
+      document.getElementById('swal-a-fn-params').appendChild(buildActionParamRow('', ''));
+    });
+  }
+
+  function renderActionParamsMapping(mapping) {
+    const el = document.getElementById('swal-a-fn-params');
+    if (!el) return;
+    // Shell datalist helper (guarded — degrade to no datalist if absent).
+    let dl = '';
+    try { if (typeof P.fdParamSourceDatalistHtml === 'function') dl = P.fdParamSourceDatalistHtml('a-pm-source-datalist'); } catch {}
+    el.innerHTML = dl;
+    const entries = Object.entries(mapping || {});
+    if (!entries.length) el.appendChild(buildActionParamRow('', ''));
+    else for (const [k, v] of entries) el.appendChild(buildActionParamRow(k, v));
+  }
+
+  function buildActionParamRow(key, value) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
+    const displayValue = (typeof value === 'string') ? value : (value == null ? '' : JSON.stringify(value));
+    row.innerHTML = `
+      <input class="swal-apm-key" placeholder="param name" value="${esc(key)}" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+      <span style="color:var(--muted);font-size:14px">=</span>
+      <input class="swal-apm-val mono" list="a-pm-source-datalist" placeholder="field  or  a.b.c  or  'literal'" value="${esc(displayValue)}" style="flex:2;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
+      <button type="button" class="swal-apm-del" style="padding:4px 8px;font-size:11px;background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:#ef4444" title="Remove"><i class="fa-solid fa-times"></i></button>`;
+    row.querySelector('.swal-apm-del').addEventListener('click', () => row.remove());
+    return row;
+  }
+
+  function collectActionParamsMapping() {
+    const rows = document.querySelectorAll('#swal-a-fn-params > div');
+    const mapping = {};
+    rows.forEach(row => {
+      const key = row.querySelector('.swal-apm-key')?.value?.trim();
+      const val = row.querySelector('.swal-apm-val')?.value;
+      if (!key) return;
+      mapping[key] = val == null ? '' : val;
+    });
+    return mapping;
+  }
+
+  // Harvest the action form → {action_type, config, position, active}.
+  function collectActionForm() {
+    const type = document.getElementById('swal-a-type').value;
+    const position = Math.max(0, parseInt(document.getElementById('swal-a-position').value, 10) || 0);
+    const active = document.getElementById('swal-a-active').checked ? 1 : 0;
+
+    if (type === 'workflow') {
+      const wfId = parseInt(document.getElementById('swal-a-wf').value, 10);
+      if (!Number.isInteger(wfId) || wfId <= 0) { Swal.showValidationMessage('Select a workflow'); return false; }
+      return { action_type: 'workflow', config: { workflow_id: wfId }, position, active };
+    }
+
+    if (type === 'sequence') {
+      const mode = document.getElementById('swal-a-seq-mode').value;
+      const cidField = document.getElementById('swal-a-seq-cid').value.trim() || 'contact_id';
+      const tdRaw = document.getElementById('swal-a-seq-td').value.trim();
+      const triggerDataFields = tdRaw ? tdRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      if (mode === 'id') {
+        const tplId = parseInt(document.getElementById('swal-a-seq-id').value, 10);
+        if (!Number.isInteger(tplId) || tplId <= 0) { Swal.showValidationMessage('Select a template'); return false; }
+        return { action_type: 'sequence', config: { template_id: tplId, contact_id_field: cidField, trigger_data_fields: triggerDataFields }, position, active };
+      }
+      const tt = document.getElementById('swal-a-seq-type').value.trim();
+      if (!tt) { Swal.showValidationMessage('Select a template type'); return false; }
+      return { action_type: 'sequence', config: { template_type: tt, contact_id_field: cidField, trigger_data_fields: triggerDataFields }, position, active };
+    }
+
+    if (type === 'hook') {
+      const slug = document.getElementById('swal-a-hook').value.trim();
+      if (!slug) { Swal.showValidationMessage('Select a hook'); return false; }
+      return { action_type: 'hook', config: { slug }, position, active };
+    }
+
+    if (type === 'internal_function') {
+      const fn = document.getElementById('swal-a-fn').value.trim();
+      if (!fn) { Swal.showValidationMessage('Select a function'); return false; }
+      return { action_type: 'internal_function', config: { function_name: fn, params_mapping: collectActionParamsMapping() }, position, active };
+    }
+
+    if (type === 'http') {
+      const url = document.getElementById('swal-a-url').value.trim();
+      if (!url) { Swal.showValidationMessage('HTTP actions require a URL'); return false; }
+      const cfg = {
+        url,
+        method: document.getElementById('swal-a-method').value,
+        body_mode: document.getElementById('swal-a-bodymode').value,
+      };
+      const tpl = document.getElementById('swal-a-template').value;
+      if (cfg.body_mode === 'template' && tpl) cfg.body_template = tpl;
+      const credVal = document.getElementById('swal-a-cred').value;
+      if (credVal) cfg.credential_id = parseInt(credVal, 10);
+      return { action_type: 'http', config: cfg, position, active };
+    }
+
+    Swal.showValidationMessage(`Unknown action type: ${type}`);
+    return false;
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // EXECUTIONS  (center table + drawer)
+  // ════════════════════════════════════════════════════════════════
+  async function loadExecutions(force = false) {
+    const c = cache.executions;
+    if (c.loaded && !force) { renderExecutionTable(); return; }
+    E('pi-exec-body').innerHTML = `<div class="exec-loading"><i class="fa-solid fa-spinner spin"></i> Loading…</div>`;
+    E('pi-exec-footer').style.display = 'none';
+    try {
+      const params = new URLSearchParams({ page: String(Math.floor(c.offset / c.limit) + 1), page_size: String(c.limit) });
+      if (c.status) params.set('status', c.status);
+      const data = await api(`/api/phone-ingest/executions?${params.toString()}`);
+      c.rows = (data && data.executions) || [];
+      // Reconcile from the server's own paging echo so the UI reflects
+      // what we actually got (handles a server-side page_size cap).
+      const srvPageSize = Number(data?.page_size ?? c.limit);
+      const srvPage     = Number(data?.page ?? (Math.floor(c.offset / c.limit) + 1));
+      c.limit  = srvPageSize > 0 ? srvPageSize : c.limit;
+      c.offset = (srvPage - 1) * c.limit;
+      c.total  = Number(data?.total ?? c.rows.length);
+      c.loaded = true;
+      // keep the limit dropdown honest if the server clamped it
+      if (E('pi-limit') && String(c.limit) !== E('pi-limit').value &&
+          [...E('pi-limit').options].some(o => o.value === String(c.limit))) {
+        E('pi-limit').value = String(c.limit);
+      }
+      renderExecutionTable();
+    } catch (e) {
+      E('pi-exec-body').innerHTML = `<div class="exec-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderExecutionTable() {
+    const c = cache.executions;
+    if (!c.rows.length) {
+      E('pi-exec-body').innerHTML = `<div class="exec-empty">No executions match.</div>`;
+    } else {
+      const rowsHtml = c.rows.map(r => {
+        const sm = statusMeta(r.status);
+        const md = parseJson(r.metadata);
+        const matched = md && Array.isArray(md.matched_rules) && md.matched_rules.length;
+        return `
+          <tr class="${r.id === c.selId ? 'active' : ''}" onclick="piSelect(${r.id})">
+            <td class="col-created">${esc(fmtDate(r.created_at))}</td>
+            <td><span class="status-badge" style="background:${sm.bg};color:${sm.fg}"><span class="status-dot" style="background:${sm.dot}"></span>${esc(sm.label)}</span></td>
+            <td class="mono" style="color:var(--text2)">${r.event_log_id != null ? '#' + esc(String(r.event_log_id)) : '<span class="text-muted">—</span>'}</td>
+            <td style="text-align:center">${matched ? '<i class="fa-solid fa-bullseye" title="Matched rule(s)" style="color:#16a34a"></i>' : '<span class="text-muted">—</span>'}</td>
+          </tr>`;
+      }).join('');
+      E('pi-exec-body').innerHTML = `
+        <table class="exec-table">
+          <thead><tr>
+            <th style="width:180px">Created</th>
+            <th style="width:160px">Status</th>
+            <th style="width:140px">Event log</th>
+            <th style="width:70px;text-align:center">Match</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>`;
+    }
+    renderExecFooter();
+  }
+
+  // Footer: ported log-style windowed pager + "Showing N–M of T".
+  function renderExecFooter() {
+    const c = cache.executions;
+    const foot = E('pi-exec-footer');
+    foot.style.display = 'flex';
+    foot.innerHTML = '';
+
+    const pagWrap = document.createElement('span');
+    pagWrap.className = 'log-pagination';
+    foot.appendChild(pagWrap);
+    renderLogPagination(pagWrap, c.total, c.limit, c.offset, (p) => piJumpPage(p));
+
+    const shownStart = c.total === 0 ? 0 : c.offset + 1;
+    const shownEnd = Math.min(c.total, c.offset + c.rows.length);
+    const metaSpan = document.createElement('span');
+    metaSpan.innerHTML = `<span class="sep">|</span> Showing ${shownStart}–${shownEnd} of ${c.total}`;
+    foot.appendChild(metaSpan);
+  }
+
+  // jumpFn: 1-based page → offset, re-fetch
+  function piJumpPage(p) {
+    const c = cache.executions;
+    const totalPages = Math.max(1, Math.ceil(c.total / c.limit));
+    p = Math.max(1, Math.min(totalPages, p));
+    c.offset = (p - 1) * c.limit;
+    c.loaded = false;
+    loadExecutions(true);
+  }
+
+  function piStatusFilterChanged(val) {
+    const c = cache.executions;
+    c.status = val || ''; c.offset = 0; c.loaded = false; c.selId = null;
+    loadExecutions(true);
+  }
+  window.piStatusFilterChanged = piStatusFilterChanged;
+
+  function piLimitChanged(val) {
+    const c = cache.executions;
+    const n = parseInt(val, 10);
+    if (!isNaN(n) && n > 0) c.limit = n;
+    c.offset = 0; c.loaded = false; c.selId = null;
+    loadExecutions(true);
+  }
+  window.piLimitChanged = piLimitChanged;
+
+  async function selectExecution(id) {
+    cache.executions.selId = id;
+    renderExecutionTable();
+    openDrawer(`Execution #${id}`, `<div class="text-muted"><i class="fa-solid fa-spinner spin"></i> Loading…</div>`);
+    try {
+      const data = await api(`/api/phone-ingest/executions/${id}`);
+      const exec = (data && data.execution) ? data.execution : (data || {});
+      const linked = (data && data.linked) ? data.linked : {};
+      renderExecutionDrawer(exec, linked);
+    } catch (e) {
+      E('pi-drawer-body').innerHTML = `<div class="pi-placeholder-banner" style="background:#fef2f2;border-color:#fecaca;color:#991b1b"><i class="fa-solid fa-triangle-exclamation"></i> ${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderExecutionDrawer(x, linked) {
+    const sm = statusMeta(x.status);
+    E('pi-drawer-title').textContent = `Execution #${x.id ?? cache.executions.selId}`;
+    const fields = [
+      ['Status', `<span class="status-badge" style="background:${sm.bg};color:${sm.fg}"><span class="status-dot" style="background:${sm.dot}"></span>${esc(sm.label)}</span>`],
+      ['Event log ID', x.event_log_id != null ? `<span class="mono">#${esc(String(x.event_log_id))}</span>` : nullSpan('—')],
+      ['Log ID', x.log_id != null ? esc(String(x.log_id)) : nullSpan('—')],
+      ['Error', x.error ? `<span style="color:var(--red)">${esc(x.error)}</span>` : nullSpan('none')],
+      ['Created', fmtDateOrNull(x.created_at)],
+    ];
+    const matchedNames    = Array.isArray(linked.matched_rule_details)  ? linked.matched_rule_details  : [];
+    const suppressedNames = Array.isArray(linked.suppressed_by_details) ? linked.suppressed_by_details : [];
+    let linkedHtml = '';
+    if (matchedNames.length)    linkedHtml += kvCard('Matched rules', matchedNames.map(r => [`#${r.id}`, esc(r.name || '')]));
+    if (suppressedNames.length) linkedHtml += kvCard('Suppressed by', suppressedNames.map(s => [`#${s.id}`, esc(s.name || '')]));
+    if (linked.phone_event_log) linkedHtml += jsonCard('linked.phone_event_log', linked.phone_event_log);
+    if (linked.log)             linkedHtml += jsonCard('linked.log', linked.log);
+
+    E('pi-drawer-body').innerHTML =
+      kvCard('Execution', fields) +
+      jsonCard('metadata', x.metadata) +
+      jsonCard('raw_input', x.raw_input) +
+      linkedHtml;
+  }
+
+  // ── Drawer open/close ──
+  function openDrawer(title, bodyHtml) {
+    E('pi-drawer-title').textContent = title;
+    E('pi-drawer-body').innerHTML = bodyHtml;
+    E('pi-drawer').classList.add('open');
+    E('pi-drawer-backdrop').classList.add('open');
+  }
+  function piCloseDrawer() {
+    E('pi-drawer').classList.remove('open');
+    E('pi-drawer-backdrop').classList.remove('open');
+    cache.executions.selId = null;
+    if (activeTab === 'executions') renderExecutionTable();
+  }
+  window.piCloseDrawer = piCloseDrawer;
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && E('pi-drawer').classList.contains('open')) piCloseDrawer();
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // PORTED PAGER — renderLogPagination (from scripts.js, May 2026).
+  // Verbatim algorithm: ≤7 pages = list all; >7 = {1,2 … cur±2 … last-1,
+  // last} with a number input on the current page. jumpFn = 1-based page.
+  // ════════════════════════════════════════════════════════════════
+  function renderLogPagination(containerEl, total, limit, offset, jumpFn) {
+    containerEl.innerHTML = '';
+    if (!total || total < 0) total = 0;
+    if (!limit || limit < 1) limit = 1;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const current = Math.min(totalPages, Math.max(1, Math.floor(offset / limit) + 1));
+    const parts = [];
+
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) {
+        parts.push(i === current ? `<strong>${i}</strong>` : `<a href="#" data-page="${i}">${i}</a>`);
+      }
+    } else {
+      const pages = new Set([1, 2, totalPages - 1, totalPages]);
+      for (let p = current - 2; p <= current + 2; p++) if (p >= 1 && p <= totalPages) pages.add(p);
+      const sorted = [...pages].sort((a, b) => a - b);
+      let prev = 0;
+      for (const p of sorted) {
+        if (prev && p > prev + 1) parts.push(`<span class="log-pagination-ellipsis">…</span>`);
+        if (p === current) {
+          parts.push(`<input type="number" min="1" max="${totalPages}" value="${current}" class="logPageInput" aria-label="Jump to page">`);
+        } else {
+          parts.push(`<a href="#" data-page="${p}">${p}</a>`);
+        }
+        prev = p;
+      }
+    }
+    containerEl.innerHTML = parts.join(' ');
+
+    containerEl.querySelectorAll('a[data-page]').forEach(a => {
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const p = parseInt(a.getAttribute('data-page'), 10);
+        if (!isNaN(p)) jumpFn(p);
+      });
+    });
+    const input = containerEl.querySelector('.logPageInput');
+    if (input) {
+      const submit = () => {
+        let p = parseInt(input.value, 10);
+        if (isNaN(p)) { input.value = current; return; }
+        p = Math.max(1, Math.min(totalPages, p));
+        if (p !== current) jumpFn(p); else input.value = current;
+      };
+      input.addEventListener('keypress', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); submit(); } });
+      input.addEventListener('blur', submit);
+      input.addEventListener('focus', () => input.select());
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // SELECTION DISPATCH
+  // ════════════════════════════════════════════════════════════════
+  async function piSelect(id) {
+    if (activeTab === 'executions') return selectExecution(id);
+    // Don't re-select the row already open in the editor (avoids clobbering edits).
+    if ((activeTab === 'suppressions' || activeTab === 'rules') && editorState.editorOpen && !editorState.isNew && id === selectedId) return;
+    if ((activeTab === 'suppressions' || activeTab === 'rules') && !(await confirmDiscardIfDirty())) return;
+    showDetail();
+    if (activeTab === 'suppressions') return selectSuppression(id);
+    if (activeTab === 'rules')        return selectRule(id);
+  }
+  window.piSelect = piSelect;
+
+  function piFilterList(q) {
+    if (activeTab === 'executions') return;
+    cache[activeTab].filter = q || '';
+    if (activeTab === 'suppressions') renderSuppressionList();
+    else if (activeTab === 'rules')   renderRuleList();
+  }
+  window.piFilterList = piFilterList;
+
+  // ════════════════════════════════════════════════════════════════
+  // DETAIL / SIDEBAR HELPERS
+  // ════════════════════════════════════════════════════════════════
+  function showDetail() { E('pi-no-selection').style.display = 'none'; E('pi-detail-wrap').style.display = 'flex'; }
+  function clearDetail() { closeEditor(); E('pi-detail-wrap').style.display = 'none'; E('pi-no-selection').style.display = ''; E('pi-detail-body').innerHTML = ''; }
+  function setDetailHead(t, s) { E('pi-detail-title').textContent = t; E('pi-detail-subtitle').textContent = s || ''; }
+  function setSidebarLoading() { E('pi-list').innerHTML = `<div class="panel-left-loading">Loading…</div>`; }
+  function setSidebarEmpty(m) { E('pi-list').innerHTML = `<div class="panel-left-empty">${esc(m)}</div>`; }
+  function setSidebarError(m) { E('pi-list').innerHTML = `<div class="panel-left-error">${esc(m)}</div>`; }
+
+  function placeholderBanner(t) { return `<div class="pi-placeholder-banner"><i class="fa-solid fa-circle-info"></i> ${esc(t)}</div>`; }
+  function kvCard(title, rows) {
+    const body = rows.map(([k, v]) => `<div class="kv-row"><div class="kv-key">${esc(k)}</div><div class="kv-val">${v}</div></div>`).join('');
+    return `<div class="kv-card"><div class="kv-card-head">${esc(title)}</div>${body}</div>`;
+  }
+  function jsonCard(title, raw) {
+    const obj = parseJson(raw);
+    const body = (obj === null)
+      ? `<div style="padding:12px 14px;color:var(--muted);font-style:italic;font-size:13px">null</div>`
+      : `<div style="padding:12px 14px"><pre class="json">${esc(prettyJson(obj))}</pre></div>`;
+    return `<div class="kv-card"><div class="kv-card-head">${esc(title)}</div>${body}</div>`;
+  }
+  function activeBadge(v) {
+    return `<span class="left-item-badge" style="color:${v ? '#166534':'#991b1b'};background:${v ? '#dcfce7':'#fef2f2'}">${v ? 'ON':'OFF'}</span>`;
+  }
+  function nullSpan(t) { return `<span class="kv-val null">${esc(t)}</span>`; }
+  function prettyJson(raw) {
+    const obj = parseJson(raw);
+    if (obj === null) return 'null';
+    try { return JSON.stringify(obj, null, 2); } catch { return String(raw); }
+  }
+  function fmtDate(d) { if (!d) return '—'; const dt = new Date(d); return isNaN(dt.getTime()) ? String(d) : dt.toLocaleString(); }
+  function fmtDateOrNull(d) { return d ? esc(fmtDate(d)) : nullSpan('—'); }
+
+  // ════════════════════════════════════════════════════════════════
+  // TOPBAR BUTTON STATE
+  //   Executions: Refresh only.
+  //   Suppressions & Rules (both editor tabs, identical at topbar level):
+  //     Refresh + New always; Save when the editor is open; Delete only
+  //     when editing an existing record (hidden for a new one).
+  // ════════════════════════════════════════════════════════════════
+  function updateTopbarButtons() {
+    if (!subPageActive) return;
+    if (activeTab === 'executions') {
+      P.setTopbarButtons({ refresh: true, new: false, save: false, delete: false });
+      return;
+    }
+    // suppressions + rules: same behavior
+    const open = editorState.editorOpen;
+    P.setTopbarButtons({
+      refresh: true, new: true,
+      save: open,
+      delete: open && !editorState.isNew,
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // LIFECYCLE HOOKS
+  // ════════════════════════════════════════════════════════════════
+  function init() {
+    subPageActive = true;
+    updateTopbarButtons();
+    loadMeta();
+    loadActiveTab();
+  }
+  function onShow() { subPageActive = true; updateTopbarButtons(); }
+  function onHide() { subPageActive = false; }
+
+  async function onSave() {
+    if (!editorState.editorOpen) return;
+    if (activeTab === 'suppressions') return onSaveSuppression();
+    if (activeTab === 'rules')        return onSaveRule();
+  }
+
+  async function onSaveSuppression() {
+    const payload = collectSuppressionForm();
+
+    // hard validation
+    if (!payload.name) {
+      Swal.fire({ icon: 'error', title: 'Name required', text: 'Give the suppression a name.' });
+      return;
+    }
+    // soft warnings (allow, but confirm)
+    if (payload.match_mode === 'conditions' && (!payload.match_config.conditions || payload.match_config.conditions.length === 0)) {
+      const res = await Swal.fire({
+        icon: 'warning', title: 'No conditions',
+        text: 'An empty condition set matches every phone event. Save anyway?',
+        showCancelButton: true, confirmButtonText: 'Save anyway', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+    if (payload.match_mode === 'code' && !String(payload.match_config.code || '').trim()) {
+      const res = await Swal.fire({
+        icon: 'warning', title: 'Empty code',
+        text: 'The match code is empty (it will never suppress). Save anyway?',
+        showCancelButton: true, confirmButtonText: 'Save anyway', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+
+    try {
+      let saved;
+      if (editorState.isNew) {
+        saved = await api('/api/phone-ingest/suppressions', 'POST', payload);
+      } else {
+        saved = await api(`/api/phone-ingest/suppressions/${selectedId}`, 'PUT', payload);
+      }
+      const row = (saved && saved.suppression) ? saved.suppression : saved;
+      const newId = (row && row.id != null) ? row.id : selectedId;
+
+      Toast.fire({ icon: 'success', title: editorState.isNew ? 'Suppression created' : 'Saved' });
+
+      // refresh list, then re-select the saved record and re-render its editor
+      cache.suppressions.loaded = false;
+      await loadSuppressions(true);
+      if (newId != null) {
+        await selectSuppression(newId);    // sets editorState fresh (isNew=false, clean)
+      } else {
+        closeEditor(); clearDetail(); updateTopbarButtons();
+      }
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Save failed', text: e.message || 'The server rejected the suppression.' });
+      // keep the form open so the user can fix it
+    }
+  }
+
+  async function onDelete() {
+    if (!editorState.editorOpen || editorState.isNew || selectedId == null) return;
+    if (activeTab === 'suppressions') return onDeleteSuppression();
+    if (activeTab === 'rules')        return onDeleteRule();
+  }
+
+  // ── Rule save (Slice 3.4) ──
+  async function onSaveRule() {
+    const payload = collectRuleForm();
+
+    // hard validation
+    if (!payload.name) {
+      Swal.fire({ icon: 'error', title: 'Name required', text: 'Give the rule a name.' });
+      return;
+    }
+    // soft warnings
+    if (payload.match_mode === 'conditions' && (!payload.match_config.conditions || payload.match_config.conditions.length === 0)) {
+      const res = await Swal.fire({
+        icon: 'warning', title: 'No conditions',
+        text: 'An empty condition set matches every phone event. Save anyway?',
+        showCancelButton: true, confirmButtonText: 'Save anyway', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+    if (payload.match_mode === 'code' && !String(payload.match_config.code || '').trim()) {
+      const res = await Swal.fire({
+        icon: 'warning', title: 'Empty match code',
+        text: 'The match code is empty (it will never match). Save anyway?',
+        showCancelButton: true, confirmButtonText: 'Save anyway', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+    if (payload.transform_mode === 'code' && !String((payload.transform_config && payload.transform_config.code) || '').trim()) {
+      const res = await Swal.fire({
+        icon: 'warning', title: 'Empty transform code',
+        text: 'The transform code is empty. Save anyway?',
+        showCancelButton: true, confirmButtonText: 'Save anyway', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+
+    try {
+      let saved;
+      if (editorState.isNew) {
+        saved = await api('/api/phone-ingest/rules', 'POST', payload);
+      } else {
+        saved = await api(`/api/phone-ingest/rules/${selectedId}`, 'PUT', payload);
+      }
+      const row = (saved && saved.rule) ? saved.rule : saved;
+      const newId = (row && row.id != null) ? row.id : selectedId;
+
+      Toast.fire({ icon: 'success', title: editorState.isNew ? 'Rule created' : 'Saved' });
+
+      // refresh list, then re-select the saved record and re-render its editor
+      // (this enables the actions section now that the rule has an id).
+      cache.rules.loaded = false;
+      await loadRules(true);
+      if (newId != null) {
+        await selectRule(newId);   // sets editorState fresh (isNew=false, clean)
+      } else {
+        closeEditor(); clearDetail(); updateTopbarButtons();
+      }
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Save failed', text: e.message || 'The server rejected the rule.' });
+    }
+  }
+
+  async function onDeleteRule() {
+    const row = cache.rules.rows.find(r => r.id === selectedId);
+    const name = row ? row.name : `#${selectedId}`;
+    const n = ruleForm.actions.length;
+    const res = await Swal.fire({
+      icon: 'warning', title: 'Delete rule?',
+      html: `Delete <strong>${esc(name)}</strong> and its ${n} action${n===1?'':'s'}? This cannot be undone.`,
+      showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel',
+      confirmButtonColor: '#ef4444',
+    });
+    if (!res.isConfirmed) return;
+    try {
+      await api(`/api/phone-ingest/rules/${selectedId}`, 'DELETE');
+      Toast.fire({ icon: 'success', title: 'Deleted' });
+      closeEditor();
+      selectedId = null;
+      cache.rules.loaded = false;
+      await loadRules(true);
+      clearDetail();
+      updateTopbarButtons();
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Delete failed', text: e.message || 'The server rejected the delete.' });
+    }
+  }
+
+  async function onDeleteSuppression() {
+    const row = cache.suppressions.rows.find(r => r.id === selectedId);
+    const name = row ? row.name : `#${selectedId}`;
+    const res = await Swal.fire({
+      icon: 'warning', title: 'Delete suppression?',
+      html: `Delete <strong>${esc(name)}</strong>? This cannot be undone.`,
+      showCancelButton: true, confirmButtonText: 'Delete', cancelButtonText: 'Cancel',
+      confirmButtonColor: '#ef4444',
+    });
+    if (!res.isConfirmed) return;
+    try {
+      await api(`/api/phone-ingest/suppressions/${selectedId}`, 'DELETE');
+      Toast.fire({ icon: 'success', title: 'Deleted' });
+      closeEditor();
+      selectedId = null;
+      cache.suppressions.loaded = false;
+      await loadSuppressions(true);
+      clearDetail();
+      updateTopbarButtons();
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Delete failed', text: e.message || 'The server rejected the delete.' });
+    }
+  }
+
+  async function onRefresh() {
+    if (activeTab === 'executions') { cache.executions.loaded = false; cache.executions.selId = null; piCloseDrawer(); }
+    else {
+      if ((activeTab === 'suppressions' || activeTab === 'rules') && !(await confirmDiscardIfDirty())) return;
+      closeEditor();
+      cache[activeTab].loaded = false; selectedId = null; clearDetail();
+    }
+    await loadActiveTab(true);
+    updateTopbarButtons();
+    Toast.fire({ icon: 'success', title: 'Refreshed' });
+  }
+
+  async function onNew() {
+    if (activeTab === 'executions') return; // shell hides New here anyway
+
+    // Suppressions: open a blank editor (Slice 3.3).
+    if (activeTab === 'suppressions') {
+      if (!(await confirmDiscardIfDirty())) return;
+      selectedId = null;
+      editorState = { isNew: true, editorOpen: true, isDirty: false };
+      renderSuppressionList();
+      showDetail();
+      renderSuppressionDetail({
+        name: '', description: '', active: 1,
+        match_mode: 'conditions',
+        match_config: { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] },
+      });
+      updateTopbarButtons();
+      return;
+    }
+
+    // Rules: open a blank rule editor (Slice 3.4). Actions section is
+    // disabled until the rule's first save (actions FK to rule_id).
+    if (activeTab === 'rules') {
+      if (!(await confirmDiscardIfDirty())) return;
+      selectedId = null;
+      editorState = { isNew: true, editorOpen: true, isDirty: false };
+      renderRuleList();
+      showDetail();
+      renderRuleDetail({
+        name: '', description: '', active: 1, position: 0,
+        match_mode: 'conditions',
+        match_config: { operator: 'and', conditions: [{ path: '', op: 'equals', value: '' }] },
+        transform_mode: 'passthrough', transform_config: null,
+        actions: [],
+      });
+      updateTopbarButtons();
+      return;
+    }
+  }
+
+  window.onShow = onShow; window.onHide = onHide;
+  window.onSave = onSave; window.onDelete = onDelete;
+  window.onRefresh = onRefresh; window.onNew = onNew;
+
+  (function waitForShell() {
+    if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') return init();
+    setTimeout(waitForShell, 50);
+  })();
+})();
+</script>
+
+<!--
+══════════════════════════════════════════════════════════════════════
+MANUAL TEST PLAN (phoneIngest.html — port of emailIngest.html)
+
+This file is a faithful port of public/automation/emailIngest.html. The
+match-builder (mbRender/mbCollect/mbBuildGroup/mbBuildLeaf) is reused
+UNCHANGED — it is field-agnostic and takes availableFields as an argument.
+
+Phone-specific deltas to verify (everything else is identical to email):
+
+A. Match fields are SERVER-OWNED. The hardcoded EMAIL_MATCH_FIELDS constant is
+   gone; matchFields() reads meta.match_fields and maps each row's `path` →
+   the builder's `value` (meta uses {path,label,type,channels}; the builder
+   wants {value,label}). Confirm the field dropdown in BOTH the suppression
+   editor and the rule editor lists the phone catalog (link_id, type,
+   direction, from, to, extra.provider, extra.line, extra.conversation_id,
+   extra.firmToFirm, extra.provider_status, data.status, data.duration_seconds,
+   message). extra.firmToFirm must appear with no code change here — it's
+   server-driven. If /meta fails, FALLBACK_MATCH_FIELDS (link_id, type,
+   direction, extra.provider) renders instead.
+
+B. Executions tab has NO source column/filter/param (phone has no sources
+   table). The list query sends only page/page_size/status. The table columns
+   are Created / Status / Event log / Match — NOTE the email "Message ID"
+   column is ALSO dropped (phone executions rows carry no message_id; the row
+   shape is id/event_log_id/status/log_id/error/metadata/raw_input/created_at).
+   "Event log" shows event_log_id (the phone forensic catch-all reference).
+
+C. Execution drawer renders the phone `linked` shape:
+   linked.phone_event_log (NOT email_log), linked.log,
+   linked.matched_rule_details, linked.suppressed_by_details. The Execution
+   kv-card drops Source / Message ID / Remote IP / Email-log-ID (none exist on
+   phone) and shows Status / Event log ID / Log ID / Error / Created.
+
+D. Status enum is logged | suppressed | error (meta.execution_statuses drives
+   the dropdown; STATUS_META drives chip colors). "suppressed" → blue chip.
+
+Smoke steps:
+1. Phone Ingest → Suppressions. List loads (GET /api/phone-ingest/suppressions).
+   Click a row → editor opens; match-builder field dropdown shows phone fields.
+2. New suppression → blank editor; add a condition (e.g. link_id equals
+   2485551234), Save → POST → list reflects it. Edit → PUT. Delete → confirm.
+3. Rules tab. New rule → name + match condition, Save → POST; actions section
+   enables after first save. Add a workflow action → modal → POST. Edit → PUT.
+   Delete action → DELETE. Delete rule → confirm mentions action count.
+4. exists/not_exists in the match-builder → value input hides (shared component).
+5. Executions tab → table loads (GET /api/phone-ingest/executions?page=…&
+   page_size=…[&status=…]). No Source column. Row click → drawer shows
+   linked.phone_event_log + linked.log + matched/suppressed names. Status filter
+   + limit + pager work. Esc / backdrop closes drawer.
+6. Dirty guard: edit a name, switch tab or click another row → discard prompt.
+
+MOUNTING (done separately by Fred in automationManager.html — NOT in scope here):
+  Add to the SUB_PAGES registry, e.g.:
+    { id: 'phoneIngest', title: 'Phone Ingest', icon: 'phone',
+      src: '/automation/phoneIngest.html', newLabel: 'New' }
+  Parent-helper contract this file depends on (must be satisfied by the shell):
+    - P.apiSend(path, method?, data?)        — relayed API calls
+    - P.setTopbarButtons({save,delete,refresh,new})
+    - P.firmData / P.fd*()                   — available (fdParamSourceDatalistHtml
+                                               used optionally in the action form)
+    - lifecycle hooks the shell invokes on this window: onShow, onHide, onSave,
+      onDelete, onRefresh, onNew
+    - boot gate (bottom of this file) waits for P.apiSend + P.setTopbarButtons.
+
+Action-save model (b): rule scalars + match + transform save via POST/PUT on the
+rule; each action is added/edited/deleted immediately via its own endpoint
+(/rules/:id/actions, /rule-actions/:id). Backend is the final validation guard
+(referential checks 400 → surfaced in Swal, modal kept open). New-rule action
+ordering: SAVE-FIRST (actions FK to rule_id; add disabled until first save).
+══════════════════════════════════════════════════════════════════════
+-->
+</body>
+</html>
