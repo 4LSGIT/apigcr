@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Ingest</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       EMAIL INGEST SUB-PAGE — self-contained styles.
+       Tokens + base layout duplicated from hooks.html.
+
+       SLICE 3.2 = skeleton: three internal tabs (Suppressions /
+       Rules / Executions), list rendering, selection, /meta cache,
+       READ-ONLY detail. No editors — those are 3.3 / 3.4.
+
+       LAYOUT: Suppressions & Rules use the three-panel idiom (left
+       list + right read-only detail). Executions is a special case —
+       a center full-width table (the list can be 400+ rows), with a
+       toolbar (status filter + limit + log-style pager) and a
+       right-hand slide-over DRAWER for per-row detail. The sidebar is
+       hidden while the Executions tab is active.
+       ══════════════════════════════════════════════ */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:    #1a1a2e;
+      --navy2:   #16213e;
+      --blue:    #4f8ef7;
+      --blue2:   #3a7de8;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --amber:   #f59e0b;
+      --purple:  #8b5cf6;
+      --bg:      #f1f5f9;
+      --surface: #ffffff;
+      --border:  #e2e8f0;
+      --muted:   #94a3b8;
+      --text:    #1e293b;
+      --text2:   #475569;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Internal-tab bar — fixed, full-width, ABOVE the content row.
+       Single source of truth for the Suppressions/Rules/Executions
+       switch; doesn't move when the layout below it changes. ── */
+    .ei-topbar {
+      flex-shrink: 0;
+      display: flex; align-items: center; gap: 4px;
+      padding: 8px 12px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .ei-topbar .ei-topbar-collapse {
+      margin-left: auto;
+      background: none; border: 1px solid var(--border); border-radius: 5px;
+      color: var(--muted); cursor: pointer; padding: 5px 9px; font-size: 12px;
+      transition: all 0.12s;
+    }
+    .ei-topbar .ei-topbar-collapse:hover { color: var(--text); background: var(--bg); }
+    .ei-topbar .ei-topbar-collapse.hidden { display: none; }
+
+    /* content row sits below the topbar */
+    .ei-content { flex: 1; display: flex; overflow: hidden; min-height: 0; }
+
+    /* ── Button family (duplicated from shell) ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: var(--blue2); }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Single internal-tab switcher (lives in the fixed topbar) ── */
+    .ei-tab {
+      flex: 0 0 auto; padding: 7px 14px; border: none; cursor: pointer;
+      background: var(--bg); color: var(--text2);
+      box-shadow: inset 0 0 0 1px var(--border);
+      font-size: 12px; font-weight: 600; border-radius: 6px;
+      transition: all 0.12s; white-space: nowrap;
+      display: inline-flex; flex-direction: row; align-items: center; gap: 6px;
+    }
+    .ei-tab i { font-size: 13px; }
+    .ei-tab:hover { color: var(--text); background: var(--border); }
+    .ei-tab.active {
+      color: var(--blue); background: rgba(79,142,247,0.08);
+      box-shadow: inset 0 0 0 1px var(--blue);
+    }
+
+    /* ── Supp/Rules content host (left list + right detail) ── */
+    .three-panel { flex: 1; overflow: hidden; display: flex; }
+
+    .panel-left {
+      width: 280px; min-width: 280px;
+      background: var(--navy2);
+      display: flex; flex-direction: column;
+      border-right: 1px solid rgba(255,255,255,0.06);
+      transition: width 0.15s, min-width 0.15s;
+    }
+    /* Hide the sidebar entirely on the Executions tab */
+    .panel-left.exec-mode { display: none; }
+    /* Collapsed = fully hidden (detail pane reclaims the space). The
+       re-expand control is the topbar collapse button. */
+    .panel-left.collapsed { display: none; }
+
+    .panel-left-head {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .panel-left-head .ph-title {
+      flex: 1; color: rgba(255,255,255,0.85); font-size: 12px;
+      font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .panel-left-tools {
+      padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .ei-tool-input {
+      width: 100%; background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 5px; padding: 5px 9px;
+      color: #fff; font-size: 12px; outline: none;
+    }
+    .ei-tool-input::placeholder { color: rgba(255,255,255,0.3); }
+    .ei-tool-input:focus { border-color: var(--blue); }
+
+    .panel-left-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+    .panel-left-loading { padding: 16px; color: rgba(255,255,255,0.3); font-size: 12px; }
+    .panel-left-empty { padding: 20px 12px; color: rgba(255,255,255,0.3); font-size: 12px; text-align: center; }
+    .panel-left-error { padding: 16px; color: #f87171; font-size: 12px; }
+
+    .left-item {
+      padding: 9px 12px; cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: all 0.12s;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+    }
+    .left-item:hover { background: rgba(255,255,255,0.05); }
+    .left-item.active { border-left-color: var(--blue); background: rgba(79,142,247,0.1); }
+    .left-item-name {
+      color: rgba(255,255,255,0.85); font-size: 13px; font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .left-item.active .left-item-name { color: #fff; }
+    .left-item-meta {
+      color: rgba(255,255,255,0.35); font-size: 11px; margin-top: 3px;
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    .left-item-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; font-weight: 600; }
+    .badge-active   { background: rgba(34,197,94,0.15); color: #4ade80; }
+    .badge-inactive { background: rgba(239,68,68,0.15); color: #f87171; }
+
+    /* ── Right detail area (suppressions / rules) ── */
+    .ei-detail-area {
+      flex: 1; display: flex; flex-direction: column;
+      background: var(--bg); overflow: hidden; min-width: 0;
+    }
+    .ei-detail-head {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 0 16px; height: 46px; display: flex; align-items: center;
+      flex-shrink: 0; gap: 10px;
+    }
+    .ei-detail-title {
+      font-size: 15px; font-weight: 700; color: var(--text);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ei-detail-subtitle { font-size: 12px; color: var(--muted); font-weight: 500; }
+    .ei-detail-body { flex: 1; overflow-y: auto; padding: 20px; min-height: 0; }
+
+    /* ══ EXECUTIONS CENTER SURFACE ══ */
+    .exec-surface {
+      display: none; flex: 1; flex-direction: column;
+      background: var(--bg); min-width: 0; overflow: hidden;
+    }
+    .exec-surface.active { display: flex; }
+
+    .exec-header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .exec-toolbar {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 10px 14px;
+    }
+    .exec-toolbar .tb-group { display: flex; align-items: center; gap: 6px; }
+    .exec-toolbar label {
+      font-size: 11px; font-weight: 600; color: var(--text2);
+      text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .exec-toolbar select {
+      padding: 5px 8px; font-size: 12px; border: 1px solid var(--border);
+      border-radius: 5px; background: #fff; color: var(--text); cursor: pointer;
+    }
+    .exec-toolbar select:focus { outline: none; border-color: var(--blue); }
+    .exec-toolbar .tb-spacer { flex: 1; }
+
+    .exec-body { flex: 1; overflow: auto; min-height: 0; }
+
+    /* Executions table */
+    .exec-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .exec-table thead th {
+      position: sticky; top: 0; z-index: 1;
+      text-align: left; padding: 9px 14px;
+      background: var(--bg); font-weight: 600; color: var(--text2);
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border); white-space: nowrap;
+    }
+    .exec-table tbody td {
+      padding: 9px 14px; border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+    .exec-table tbody tr { cursor: pointer; transition: background 0.1s; }
+    .exec-table tbody tr:hover { background: #eef2f7; }
+    .exec-table tbody tr.active { background: rgba(79,142,247,0.1); box-shadow: inset 3px 0 0 var(--blue); }
+    .exec-empty, .exec-loading, .exec-error {
+      padding: 40px 16px; text-align: center; color: var(--muted); font-size: 13px;
+    }
+    .exec-error { color: var(--red); }
+
+    .col-created { white-space: nowrap; color: var(--text2); }
+    .col-source  { color: var(--text2); }
+    .col-msgid   { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Footer (pagination strip — ported from scripts.js log idiom) */
+    .exec-footer {
+      flex-shrink: 0; background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 8px 14px; display: flex; align-items: center;
+      gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--text2);
+    }
+    .exec-footer .sep { color: var(--border); margin: 0 2px; }
+    .log-pagination { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .log-pagination a {
+      color: var(--blue); text-decoration: none; padding: 2px 7px;
+      border-radius: 4px; font-size: 12px;
+    }
+    .log-pagination a:hover { background: rgba(79,142,247,0.1); }
+    .log-pagination strong {
+      padding: 2px 8px; border-radius: 4px; background: var(--blue);
+      color: #fff; font-size: 12px;
+    }
+    .log-pagination-ellipsis { color: var(--muted); padding: 0 2px; }
+    .log-pagination .logPageInput {
+      width: 48px; padding: 2px 4px; font-size: 12px; text-align: center;
+      border: 1px solid var(--blue); border-radius: 4px;
+    }
+
+    /* Status chips */
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; vertical-align: middle; }
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 2px 9px; border-radius: 10px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px;
+    }
+
+    /* ── Read-only detail cards (suppressions/rules detail + drawer) ── */
+    .ei-placeholder-banner {
+      display: flex; align-items: center; gap: 8px;
+      background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+      border-radius: 6px; padding: 8px 12px; font-size: 12px; margin-bottom: 16px;
+    }
+    .kv-card {
+      background: #fff; border: 1px solid var(--border);
+      border-radius: 8px; padding: 0; margin-bottom: 14px; overflow: hidden;
+    }
+    .kv-card-head {
+      padding: 9px 14px; background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.5px; color: var(--text2);
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .kv-row {
+      display: flex; gap: 12px; padding: 8px 14px;
+      border-bottom: 1px solid var(--border); font-size: 13px;
+    }
+    .kv-row:last-child { border-bottom: none; }
+    .kv-key {
+      width: 150px; min-width: 150px; color: var(--text2);
+      font-weight: 600; font-size: 12px; text-transform: uppercase;
+      letter-spacing: 0.4px; padding-top: 1px;
+    }
+    .kv-val { flex: 1; min-width: 0; color: var(--text); word-break: break-word; }
+    .kv-val.null { color: var(--muted); font-style: italic; }
+
+    pre.json {
+      background: var(--navy); color: #e2e8f0; padding: 12px;
+      border-radius: 6px; font-size: 12px; overflow: auto;
+      white-space: pre-wrap; word-break: break-word;
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; margin: 0;
+    }
+
+    .action-card {
+      background: #fff; border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+    }
+    .action-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .action-type-pill {
+      font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px;
+      background: #e0e7ff; color: #3730a3; text-transform: uppercase; letter-spacing: 0.4px;
+    }
+
+    /* No-selection placeholder (suppressions/rules right pane) */
+    #ei-no-selection {
+      display: flex; flex: 1; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: var(--muted); gap: 4px; text-align: center;
+    }
+    #ei-no-selection i { font-size: 42px; opacity: 0.2; }
+
+    /* ══ DRAWER (execution detail) ══ */
+    .drawer-backdrop {
+      position: fixed; inset: 0; background: rgba(15,23,42,0.45);
+      opacity: 0; pointer-events: none; transition: opacity 0.18s; z-index: 40;
+    }
+    .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+    .drawer {
+      position: fixed; top: 0; right: 0; height: 100vh;
+      width: 520px; max-width: 92vw;
+      background: var(--bg); box-shadow: -8px 0 24px rgba(0,0,0,0.18);
+      transform: translateX(100%); transition: transform 0.2s ease;
+      z-index: 41; display: flex; flex-direction: column;
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-head {
+      flex-shrink: 0; background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 16px; height: 52px; display: flex; align-items: center; gap: 10px;
+    }
+    .drawer-title { font-size: 15px; font-weight: 700; flex: 1; min-width: 0;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .drawer-close {
+      background: none; border: none; color: var(--muted); cursor: pointer;
+      font-size: 18px; padding: 4px 8px; border-radius: 5px; transition: all 0.12s;
+    }
+    .drawer-close:hover { background: var(--bg); color: var(--text); }
+    .drawer-body { flex: 1; overflow-y: auto; padding: 18px; min-height: 0; }
+
+    .mono { font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; }
+    .text-muted { color: var(--muted); }
+    .hidden { display: none !important; }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Fixed internal-tab bar (single switcher, always on top) ── -->
+<div class="ei-topbar">
+  <button class="ei-tab active" id="ei-tab-suppressions" onclick="eiSwitchTab('suppressions')">
+    <i class="fa-solid fa-filter-circle-xmark"></i> <span>Suppressions</span>
+  </button>
+  <button class="ei-tab" id="ei-tab-rules" onclick="eiSwitchTab('rules')">
+    <i class="fa-solid fa-diagram-project"></i> <span>Rules</span>
+  </button>
+  <button class="ei-tab" id="ei-tab-executions" onclick="eiSwitchTab('executions')">
+    <i class="fa-solid fa-list-check"></i> <span>Executions</span>
+  </button>
+  <!-- collapse toggle for the supp/rules sidebar; hidden in exec-mode -->
+  <button class="ei-topbar-collapse" id="ei-collapse-btn" onclick="eiToggleSidebar(this)" title="Collapse list">
+    <i class="fa-solid fa-angles-left"></i>
+  </button>
+</div>
+
+<div class="ei-content">
+
+  <!-- ── Left panel (suppressions / rules). Hidden in exec-mode. ── -->
+  <div class="three-panel" id="ei-suprules">
+    <div class="panel-left" id="ei-sidebar">
+
+      <div class="panel-left-head">
+        <span class="ph-title" id="ei-panel-title">Suppressions</span>
+      </div>
+
+      <div class="panel-left-tools">
+        <input class="ei-tool-input" id="ei-search" placeholder="Search suppressions…"
+               oninput="eiFilterList(this.value)">
+      </div>
+
+      <div class="panel-left-list" id="ei-list">
+        <div class="panel-left-loading">Loading…</div>
+      </div>
+
+    </div>
+
+    <!-- ── Right detail area (suppressions / rules read-only) ── -->
+    <div class="ei-detail-area" id="ei-detail-area">
+      <div id="ei-no-selection">
+        <i class="fa-solid fa-envelope-open-text"></i>
+        <p style="font-size:14px;font-weight:500;margin:6px 0 0">Select a record to inspect</p>
+        <p style="font-size:12px">Suppressions and rules — read-only for now</p>
+      </div>
+      <div id="ei-detail-wrap" style="display:none;flex:1;flex-direction:column;min-height:0;overflow:hidden">
+        <div class="ei-detail-head">
+          <span class="ei-detail-title" id="ei-detail-title">—</span>
+          <span class="ei-detail-subtitle" id="ei-detail-subtitle"></span>
+        </div>
+        <div class="ei-detail-body" id="ei-detail-body"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Executions center surface (full-width; sidebar hidden) ── -->
+  <div class="exec-surface" id="ei-exec-surface">
+
+    <div class="exec-header">
+      <div class="exec-toolbar">
+        <div class="tb-group">
+          <label>Status</label>
+          <select id="ei-status-filter" onchange="eiStatusFilterChanged(this.value)">
+            <option value="">All</option>
+          </select>
+        </div>
+        <div class="tb-group">
+          <label>Limit</label>
+          <select id="ei-limit" onchange="eiLimitChanged(this.value)">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+            <option value="500">500</option>
+          </select>
+        </div>
+        <div class="tb-spacer"></div>
+      </div>
+    </div>
+
+    <div class="exec-body" id="ei-exec-body">
+      <div class="exec-loading">Loading…</div>
+    </div>
+
+    <div class="exec-footer" id="ei-exec-footer" style="display:none"></div>
+  </div>
+
+</div>
+
+<!-- ── Drawer (execution detail) ── -->
+<div class="drawer-backdrop" id="ei-drawer-backdrop" onclick="eiCloseDrawer()"></div>
+<div class="drawer" id="ei-drawer" role="dialog" aria-modal="true" aria-label="Execution detail">
+  <div class="drawer-head">
+    <span class="drawer-title" id="ei-drawer-title">Execution</span>
+    <button class="drawer-close" onclick="eiCloseDrawer()" title="Close (Esc)"><i class="fa-solid fa-xmark"></i></button>
+  </div>
+  <div class="drawer-body" id="ei-drawer-body"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// EMAIL INGEST SUB-PAGE  (Phase 3.2 — skeleton)
+//
+// Communicates with the shell (automationManager.html) via:
+//   - P.apiSend(path, method?, data?)  — relayed to a.html
+//   - P.setTopbarButtons({...})        — request topbar button visibility
+//   - P.firmData / P.fd*()             — available, unused this slice
+//
+// Lifecycle hooks on window: onShow, onHide, onSave, onDelete,
+// onRefresh, onNew. init() is page-internal (boot via waitForShell).
+//
+// Slice scope: layout + list + selection + /meta cache + read-only
+// detail. NO editors (3.3 = suppression editor, 3.4 = rule editor).
+//
+// EXECUTIONS layout: center full-width table (400+ rows), toolbar
+// (status filter + limit + log-style windowed pager + "Showing N–M
+// of T"), row click → right-hand drawer. Pager algorithm is PORTED
+// from scripts.js renderLogPagination — the shell's copy isn't reachable
+// from inside the iframe (P exposes only apiSend/firmData/setTopbarButtons/fd*).
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function parseJson(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'object') return val;
+  try { return JSON.parse(val); } catch { return null; }
+}
+// Collapse/expand the supp/rules list sidebar. Driven by the topbar
+// collapse button (which is hidden while Executions is active).
+function eiToggleSidebar(btn) {
+  const panel = document.getElementById('ei-sidebar');
+  if (!panel) return;
+  const collapsed = panel.classList.toggle('collapsed');
+  btn.innerHTML = collapsed ? '<i class="fa-solid fa-angles-right"></i>' : '<i class="fa-solid fa-angles-left"></i>';
+  btn.title = collapsed ? 'Expand list' : 'Collapse list';
+}
+window.eiToggleSidebar = eiToggleSidebar;
+
+(function emailIngestModule() {
+  const api = (...args) => P.apiSend(...args);
+  const E = id => document.getElementById(id);
+  const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
+
+  const STATUS_META = {
+    logged:               { label: 'Logged',           bg: '#dcfce7', fg: '#166534', dot: '#22c55e' },
+    duplicate:            { label: 'Duplicate',         bg: '#f1f5f9', fg: '#475569', dot: '#94a3b8' },
+    skipped_firm_to_firm: { label: 'Skip: firm→firm',   bg: '#dbeafe', fg: '#1e40af', dot: '#3b82f6' },
+    skipped_suppression:  { label: 'Skip: suppressed',  bg: '#dbeafe', fg: '#1e40af', dot: '#3b82f6' },
+    auth_failed:          { label: 'Auth failed',       bg: '#fef2f2', fg: '#991b1b', dot: '#ef4444' },
+    validation_failed:    { label: 'Validation failed', bg: '#fef2f2', fg: '#991b1b', dot: '#ef4444' },
+    error:                { label: 'Error',             bg: '#fef2f2', fg: '#991b1b', dot: '#ef4444' },
+  };
+  function statusMeta(s) {
+    return STATUS_META[s] || { label: s || '—', bg: '#f1f5f9', fg: '#475569', dot: '#94a3b8' };
+  }
+
+  // ── State ──
+  let subPageActive = false;
+  let metaLoaded = false;
+  let meta = {};
+
+  let activeTab = 'suppressions';
+  let selectedId = null;        // suppressions/rules sidebar selection
+
+  const cache = {
+    suppressions: { loaded: false, rows: [], filter: '' },
+    rules:        { loaded: false, rows: [], filter: '' },
+    // executions: offset/limit model (mirrors the log tab), total from server
+    executions:   { loaded: false, rows: [], offset: 0, limit: 50, total: 0, status: '', selId: null },
+  };
+
+  // ════════════════════════════════════════════════════════════════
+  // META
+  // ════════════════════════════════════════════════════════════════
+  async function loadMeta() {
+    if (metaLoaded) return;
+    try {
+      meta = await api('/api/email-ingest/meta') || {};
+      metaLoaded = true;
+    } catch (e) {
+      console.warn('[email-ingest] meta load failed:', e.message);
+      meta = {};
+    }
+    populateStatusFilter();
+  }
+  function populateStatusFilter() {
+    const sel = E('ei-status-filter');
+    const statuses = (Array.isArray(meta.execution_statuses) && meta.execution_statuses.length)
+      ? meta.execution_statuses
+      : Object.keys(STATUS_META);
+    const opts = statuses.map(s => {
+      const val = (typeof s === 'object') ? (s.value ?? '') : s;
+      const lbl = (typeof s === 'object') ? (s.label ?? s.value ?? '') : statusMeta(s).label;
+      return `<option value="${esc(val)}">${esc(lbl)}</option>`;
+    }).join('');
+    sel.innerHTML = `<option value="">All</option>${opts}`;
+    sel.value = cache.executions.status || '';
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // INTERNAL TAB SWITCHING
+  // ════════════════════════════════════════════════════════════════
+  function eiSwitchTab(tab) {
+    if (tab === activeTab) return;
+    activeTab = tab;
+    selectedId = null;
+    const isExec = tab === 'executions';
+
+    // Toggle the two layouts
+    E('ei-suprules').classList.toggle('hidden', isExec);
+    E('ei-exec-surface').classList.toggle('active', isExec);
+
+    // Single switcher (in the fixed topbar)
+    ['suppressions','rules','executions'].forEach(t => {
+      E(`ei-tab-${t}`)?.classList.toggle('active', t === tab);
+    });
+
+    // Collapse toggle only applies to the supp/rules sidebar
+    E('ei-collapse-btn').classList.toggle('hidden', isExec);
+
+    if (!isExec) {
+      E('ei-panel-title').textContent = tab === 'suppressions' ? 'Suppressions' : 'Rules';
+      E('ei-search').placeholder = tab === 'suppressions' ? 'Search suppressions…' : 'Search rules…';
+      E('ei-search').value = cache[tab].filter || '';
+      clearDetail();
+    } else {
+      eiCloseDrawer();
+    }
+
+    updateTopbarButtons();
+    loadActiveTab();
+  }
+  window.eiSwitchTab = eiSwitchTab;
+
+  async function loadActiveTab(force = false) {
+    if (activeTab === 'suppressions') return loadSuppressions(force);
+    if (activeTab === 'rules')        return loadRules(force);
+    if (activeTab === 'executions')   return loadExecutions(force);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // SUPPRESSIONS  (sidebar list + right detail)
+  // ════════════════════════════════════════════════════════════════
+  async function loadSuppressions(force = false) {
+    const c = cache.suppressions;
+    if (c.loaded && !force) { renderSuppressionList(); return; }
+    setSidebarLoading();
+    try {
+      const data = await api('/api/email-ingest/suppressions');
+      c.rows = (data && data.suppressions) || [];
+      c.loaded = true;
+      renderSuppressionList();
+    } catch (e) { setSidebarError(e.message); }
+  }
+  function renderSuppressionList() {
+    const c = cache.suppressions;
+    const q = (c.filter || '').toLowerCase();
+    const rows = q ? c.rows.filter(r => (r.name||'').toLowerCase().includes(q) || (r.description||'').toLowerCase().includes(q)) : c.rows;
+    if (!rows.length) { setSidebarEmpty('No suppressions.'); return; }
+    E('ei-list').innerHTML = rows.map(r => `
+      <div class="left-item${r.id === selectedId ? ' active' : ''}" onclick="eiSelect(${r.id})">
+        <div class="left-item-name">${esc(r.name)}
+          <span class="left-item-badge ${r.active ? 'badge-active' : 'badge-inactive'}">${r.active ? 'ON' : 'OFF'}</span>
+        </div>
+        <div class="left-item-meta"><span>${esc(r.match_mode || '')}</span><span>matched ${Number(r.match_count||0)}×</span></div>
+      </div>`).join('');
+  }
+  async function selectSuppression(id) {
+    let row = cache.suppressions.rows.find(r => r.id === id);
+    try {
+      const data = await api(`/api/email-ingest/suppressions/${id}`);
+      row = (data && data.suppression) ? data.suppression : (data || row);
+    } catch (e) { /* keep cached */ }
+    if (!row) { Toast.fire({ icon:'error', title:'Suppression not found' }); return; }
+    selectedId = id; renderSuppressionList(); renderSuppressionDetail(row);
+  }
+  function renderSuppressionDetail(r) {
+    setDetailHead(r.name || `Suppression #${r.id}`, `#${r.id} · suppression`);
+    const fields = [
+      ['Active', activeBadge(r.active)],
+      ['Match mode', esc(r.match_mode || '—')],
+      ['Match count', String(r.match_count ?? 0)],
+      ['Last matched', fmtDateOrNull(r.last_matched_at)],
+      ['Description', r.description ? esc(r.description) : nullSpan('none')],
+      ['Last modified by', r.last_modified_by != null ? esc(String(r.last_modified_by)) : nullSpan('—')],
+      ['Created', fmtDateOrNull(r.created_at)],
+      ['Updated', fmtDateOrNull(r.updated_at)],
+    ];
+    E('ei-detail-body').innerHTML =
+      placeholderBanner('Read-only preview — the suppression editor ships in Slice 3.3.') +
+      kvCard('Suppression', fields) + jsonCard('match_config', r.match_config);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // RULES  (sidebar list + right detail)
+  // ════════════════════════════════════════════════════════════════
+  async function loadRules(force = false) {
+    const c = cache.rules;
+    if (c.loaded && !force) { renderRuleList(); return; }
+    setSidebarLoading();
+    try {
+      const data = await api('/api/email-ingest/rules');
+      c.rows = (data && data.rules) || [];
+      c.loaded = true;
+      renderRuleList();
+    } catch (e) { setSidebarError(e.message); }
+  }
+  function renderRuleList() {
+    const c = cache.rules;
+    const q = (c.filter || '').toLowerCase();
+    const rows = q ? c.rows.filter(r => (r.name||'').toLowerCase().includes(q) || (r.description||'').toLowerCase().includes(q)) : c.rows;
+    if (!rows.length) { setSidebarEmpty('No rules.'); return; }
+    E('ei-list').innerHTML = rows.map(r => {
+      const n = Array.isArray(r.actions) ? r.actions.length : (r.action_count ?? 0);
+      return `
+        <div class="left-item${r.id === selectedId ? ' active' : ''}" onclick="eiSelect(${r.id})">
+          <div class="left-item-name">${esc(r.name)}
+            <span class="left-item-badge ${r.active ? 'badge-active' : 'badge-inactive'}">${r.active ? 'ON' : 'OFF'}</span>
+          </div>
+          <div class="left-item-meta"><span>pos ${Number(r.position ?? 0)}</span><span>${n} action${n===1?'':'s'}</span><span>matched ${Number(r.match_count||0)}×</span></div>
+        </div>`;
+    }).join('');
+  }
+  async function selectRule(id) {
+    let row = cache.rules.rows.find(r => r.id === id);
+    try {
+      const data = await api(`/api/email-ingest/rules/${id}`);
+      if (data && data.rule) { row = data.rule; if (!row.actions && Array.isArray(data.actions)) row.actions = data.actions; }
+      else if (data) { row = data; }
+    } catch (e) { /* keep cached */ }
+    if (!row) { Toast.fire({ icon:'error', title:'Rule not found' }); return; }
+    selectedId = id; renderRuleList(); renderRuleDetail(row);
+  }
+  function renderRuleDetail(r) {
+    setDetailHead(r.name || `Rule #${r.id}`, `#${r.id} · rule`);
+    const fields = [
+      ['Active', activeBadge(r.active)],
+      ['Position', String(r.position ?? 0)],
+      ['Match mode', esc(r.match_mode || '—')],
+      ['Transform mode', esc(r.transform_mode || '—')],
+      ['Match count', String(r.match_count ?? 0)],
+      ['Last matched', fmtDateOrNull(r.last_matched_at)],
+      ['Description', r.description ? esc(r.description) : nullSpan('none')],
+      ['Created', fmtDateOrNull(r.created_at)],
+      ['Updated', fmtDateOrNull(r.updated_at)],
+    ];
+    const actions = Array.isArray(r.actions) ? r.actions : [];
+    const actionsHtml = actions.length
+      ? actions.map((a,i) => `
+          <div class="action-card">
+            <div class="action-card-head">
+              <span class="action-type-pill">${esc(a.action_type || 'action')}</span>
+              <span class="text-muted" style="font-size:12px">pos ${Number(a.position ?? i)}</span>
+              <span class="left-item-badge ${a.active ? 'badge-active':'badge-inactive'}" style="margin-left:auto">${a.active?'ON':'OFF'}</span>
+            </div>
+            <pre class="json">${esc(prettyJson(a.config))}</pre>
+          </div>`).join('')
+      : `<div class="text-muted" style="font-size:13px">No actions configured.</div>`;
+    E('ei-detail-body').innerHTML =
+      placeholderBanner('Read-only preview — the rule editor ships in Slice 3.4.') +
+      kvCard('Rule', fields) + jsonCard('match_config', r.match_config) + jsonCard('transform_config', r.transform_config) +
+      `<div class="kv-card"><div class="kv-card-head">Actions (${actions.length})</div><div style="padding:14px">${actionsHtml}</div></div>`;
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // EXECUTIONS  (center table + drawer)
+  // ════════════════════════════════════════════════════════════════
+  async function loadExecutions(force = false) {
+    const c = cache.executions;
+    if (c.loaded && !force) { renderExecutionTable(); return; }
+    E('ei-exec-body').innerHTML = `<div class="exec-loading"><i class="fa-solid fa-spinner spin"></i> Loading…</div>`;
+    E('ei-exec-footer').style.display = 'none';
+    try {
+      const params = new URLSearchParams({ page: String(Math.floor(c.offset / c.limit) + 1), page_size: String(c.limit) });
+      if (c.status) params.set('status', c.status);
+      const data = await api(`/api/email-ingest/executions?${params.toString()}`);
+      c.rows = (data && data.executions) || [];
+      // Reconcile from the server's own paging echo so the UI reflects
+      // what we actually got (handles a server-side page_size cap).
+      const srvPageSize = Number(data?.page_size ?? c.limit);
+      const srvPage     = Number(data?.page ?? (Math.floor(c.offset / c.limit) + 1));
+      c.limit  = srvPageSize > 0 ? srvPageSize : c.limit;
+      c.offset = (srvPage - 1) * c.limit;
+      c.total  = Number(data?.total ?? c.rows.length);
+      c.loaded = true;
+      // keep the limit dropdown honest if the server clamped it
+      if (E('ei-limit') && String(c.limit) !== E('ei-limit').value &&
+          [...E('ei-limit').options].some(o => o.value === String(c.limit))) {
+        E('ei-limit').value = String(c.limit);
+      }
+      renderExecutionTable();
+    } catch (e) {
+      E('ei-exec-body').innerHTML = `<div class="exec-error">${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderExecutionTable() {
+    const c = cache.executions;
+    if (!c.rows.length) {
+      E('ei-exec-body').innerHTML = `<div class="exec-empty">No executions match.</div>`;
+    } else {
+      const rowsHtml = c.rows.map(r => {
+        const sm = statusMeta(r.status);
+        const md = parseJson(r.metadata);
+        const matched = md && Array.isArray(md.matched_rules) && md.matched_rules.length;
+        const src = r.source_name || (r.source_id != null ? 'src#' + r.source_id : '—');
+        return `
+          <tr class="${r.id === c.selId ? 'active' : ''}" onclick="eiSelect(${r.id})">
+            <td class="col-created">${esc(fmtDate(r.created_at))}</td>
+            <td><span class="status-badge" style="background:${sm.bg};color:${sm.fg}"><span class="status-dot" style="background:${sm.dot}"></span>${esc(sm.label)}</span></td>
+            <td class="col-source">${esc(src)}</td>
+            <td class="col-msgid mono" title="${esc(r.message_id || '')}">${esc(r.message_id || '(none)')}</td>
+            <td style="text-align:center">${matched ? '<i class="fa-solid fa-bullseye" title="Matched rule(s)" style="color:#16a34a"></i>' : '<span class="text-muted">—</span>'}</td>
+          </tr>`;
+      }).join('');
+      E('ei-exec-body').innerHTML = `
+        <table class="exec-table">
+          <thead><tr>
+            <th style="width:160px">Created</th>
+            <th style="width:150px">Status</th>
+            <th style="width:160px">Source</th>
+            <th>Message ID</th>
+            <th style="width:70px;text-align:center">Match</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>`;
+    }
+    renderExecFooter();
+  }
+
+  // Footer: ported log-style windowed pager + "Showing N–M of T".
+  function renderExecFooter() {
+    const c = cache.executions;
+    const foot = E('ei-exec-footer');
+    foot.style.display = 'flex';
+    foot.innerHTML = '';
+
+    const pagWrap = document.createElement('span');
+    pagWrap.className = 'log-pagination';
+    foot.appendChild(pagWrap);
+    renderLogPagination(pagWrap, c.total, c.limit, c.offset, (p) => eiJumpPage(p));
+
+    const shownStart = c.total === 0 ? 0 : c.offset + 1;
+    const shownEnd = Math.min(c.total, c.offset + c.rows.length);
+    const metaSpan = document.createElement('span');
+    metaSpan.innerHTML = `<span class="sep">|</span> Showing ${shownStart}–${shownEnd} of ${c.total}`;
+    foot.appendChild(metaSpan);
+  }
+
+  // jumpFn: 1-based page → offset, re-fetch
+  function eiJumpPage(p) {
+    const c = cache.executions;
+    const totalPages = Math.max(1, Math.ceil(c.total / c.limit));
+    p = Math.max(1, Math.min(totalPages, p));
+    c.offset = (p - 1) * c.limit;
+    c.loaded = false;
+    loadExecutions(true);
+  }
+
+  function eiStatusFilterChanged(val) {
+    const c = cache.executions;
+    c.status = val || ''; c.offset = 0; c.loaded = false; c.selId = null;
+    loadExecutions(true);
+  }
+  window.eiStatusFilterChanged = eiStatusFilterChanged;
+
+  function eiLimitChanged(val) {
+    const c = cache.executions;
+    const n = parseInt(val, 10);
+    if (!isNaN(n) && n > 0) c.limit = n;
+    c.offset = 0; c.loaded = false; c.selId = null;
+    loadExecutions(true);
+  }
+  window.eiLimitChanged = eiLimitChanged;
+
+  async function selectExecution(id) {
+    cache.executions.selId = id;
+    renderExecutionTable();
+    openDrawer(`Execution #${id}`, `<div class="text-muted"><i class="fa-solid fa-spinner spin"></i> Loading…</div>`);
+    try {
+      const data = await api(`/api/email-ingest/executions/${id}`);
+      const exec = (data && data.execution) ? data.execution : (data || {});
+      const linked = (data && data.linked) ? data.linked : {};
+      renderExecutionDrawer(exec, linked);
+    } catch (e) {
+      E('ei-drawer-body').innerHTML = `<div class="ei-placeholder-banner" style="background:#fef2f2;border-color:#fecaca;color:#991b1b"><i class="fa-solid fa-triangle-exclamation"></i> ${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderExecutionDrawer(x, linked) {
+    const sm = statusMeta(x.status);
+    E('ei-drawer-title').textContent = `Execution #${x.id ?? cache.executions.selId}`;
+    const fields = [
+      ['Status', `<span class="status-badge" style="background:${sm.bg};color:${sm.fg}"><span class="status-dot" style="background:${sm.dot}"></span>${esc(sm.label)}</span>`],
+      ['Source', x.source_name ? esc(x.source_name) : (x.source_id != null ? '#' + esc(String(x.source_id)) : nullSpan('—'))],
+      ['Message ID', x.message_id ? `<span class="mono">${esc(x.message_id)}</span>` : nullSpan('—')],
+      ['Log ID', x.log_id != null ? esc(String(x.log_id)) : nullSpan('—')],
+      ['Email log ID', x.email_log_id != null ? esc(String(x.email_log_id)) : nullSpan('—')],
+      ['Remote IP', x.remote_ip ? `<span class="mono">${esc(x.remote_ip)}</span>` : nullSpan('—')],
+      ['Error', x.error ? `<span style="color:var(--red)">${esc(x.error)}</span>` : nullSpan('none')],
+      ['Created', fmtDateOrNull(x.created_at)],
+    ];
+    const matchedNames    = Array.isArray(linked.matched_rule_details)  ? linked.matched_rule_details  : [];
+    const suppressedNames = Array.isArray(linked.suppressed_by_details) ? linked.suppressed_by_details : [];
+    let linkedHtml = '';
+    if (matchedNames.length)    linkedHtml += kvCard('Matched rules', matchedNames.map(r => [`#${r.id}`, esc(r.name || '')]));
+    if (suppressedNames.length) linkedHtml += kvCard('Suppressed by', suppressedNames.map(s => [`#${s.id}`, esc(s.name || '')]));
+    if (linked.email_log) linkedHtml += jsonCard('linked.email_log', linked.email_log);
+    if (linked.log)       linkedHtml += jsonCard('linked.log', linked.log);
+
+    E('ei-drawer-body').innerHTML =
+      kvCard('Execution', fields) +
+      jsonCard('metadata', x.metadata) +
+      jsonCard('raw_input', x.raw_input) +
+      linkedHtml;
+  }
+
+  // ── Drawer open/close ──
+  function openDrawer(title, bodyHtml) {
+    E('ei-drawer-title').textContent = title;
+    E('ei-drawer-body').innerHTML = bodyHtml;
+    E('ei-drawer').classList.add('open');
+    E('ei-drawer-backdrop').classList.add('open');
+  }
+  function eiCloseDrawer() {
+    E('ei-drawer').classList.remove('open');
+    E('ei-drawer-backdrop').classList.remove('open');
+    cache.executions.selId = null;
+    if (activeTab === 'executions') renderExecutionTable();
+  }
+  window.eiCloseDrawer = eiCloseDrawer;
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && E('ei-drawer').classList.contains('open')) eiCloseDrawer();
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // PORTED PAGER — renderLogPagination (from scripts.js, May 2026).
+  // Verbatim algorithm: ≤7 pages = list all; >7 = {1,2 … cur±2 … last-1,
+  // last} with a number input on the current page. jumpFn = 1-based page.
+  // ════════════════════════════════════════════════════════════════
+  function renderLogPagination(containerEl, total, limit, offset, jumpFn) {
+    containerEl.innerHTML = '';
+    if (!total || total < 0) total = 0;
+    if (!limit || limit < 1) limit = 1;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const current = Math.min(totalPages, Math.max(1, Math.floor(offset / limit) + 1));
+    const parts = [];
+
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) {
+        parts.push(i === current ? `<strong>${i}</strong>` : `<a href="#" data-page="${i}">${i}</a>`);
+      }
+    } else {
+      const pages = new Set([1, 2, totalPages - 1, totalPages]);
+      for (let p = current - 2; p <= current + 2; p++) if (p >= 1 && p <= totalPages) pages.add(p);
+      const sorted = [...pages].sort((a, b) => a - b);
+      let prev = 0;
+      for (const p of sorted) {
+        if (prev && p > prev + 1) parts.push(`<span class="log-pagination-ellipsis">…</span>`);
+        if (p === current) {
+          parts.push(`<input type="number" min="1" max="${totalPages}" value="${current}" class="logPageInput" aria-label="Jump to page">`);
+        } else {
+          parts.push(`<a href="#" data-page="${p}">${p}</a>`);
+        }
+        prev = p;
+      }
+    }
+    containerEl.innerHTML = parts.join(' ');
+
+    containerEl.querySelectorAll('a[data-page]').forEach(a => {
+      a.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        const p = parseInt(a.getAttribute('data-page'), 10);
+        if (!isNaN(p)) jumpFn(p);
+      });
+    });
+    const input = containerEl.querySelector('.logPageInput');
+    if (input) {
+      const submit = () => {
+        let p = parseInt(input.value, 10);
+        if (isNaN(p)) { input.value = current; return; }
+        p = Math.max(1, Math.min(totalPages, p));
+        if (p !== current) jumpFn(p); else input.value = current;
+      };
+      input.addEventListener('keypress', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); submit(); } });
+      input.addEventListener('blur', submit);
+      input.addEventListener('focus', () => input.select());
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // SELECTION DISPATCH
+  // ════════════════════════════════════════════════════════════════
+  function eiSelect(id) {
+    if (activeTab === 'executions') return selectExecution(id);
+    showDetail();
+    if (activeTab === 'suppressions') return selectSuppression(id);
+    if (activeTab === 'rules')        return selectRule(id);
+  }
+  window.eiSelect = eiSelect;
+
+  function eiFilterList(q) {
+    if (activeTab === 'executions') return;
+    cache[activeTab].filter = q || '';
+    if (activeTab === 'suppressions') renderSuppressionList();
+    else if (activeTab === 'rules')   renderRuleList();
+  }
+  window.eiFilterList = eiFilterList;
+
+  // ════════════════════════════════════════════════════════════════
+  // DETAIL / SIDEBAR HELPERS
+  // ════════════════════════════════════════════════════════════════
+  function showDetail() { E('ei-no-selection').style.display = 'none'; E('ei-detail-wrap').style.display = 'flex'; }
+  function clearDetail() { E('ei-detail-wrap').style.display = 'none'; E('ei-no-selection').style.display = ''; E('ei-detail-body').innerHTML = ''; }
+  function setDetailHead(t, s) { E('ei-detail-title').textContent = t; E('ei-detail-subtitle').textContent = s || ''; }
+  function setSidebarLoading() { E('ei-list').innerHTML = `<div class="panel-left-loading">Loading…</div>`; }
+  function setSidebarEmpty(m) { E('ei-list').innerHTML = `<div class="panel-left-empty">${esc(m)}</div>`; }
+  function setSidebarError(m) { E('ei-list').innerHTML = `<div class="panel-left-error">${esc(m)}</div>`; }
+
+  function placeholderBanner(t) { return `<div class="ei-placeholder-banner"><i class="fa-solid fa-circle-info"></i> ${esc(t)}</div>`; }
+  function kvCard(title, rows) {
+    const body = rows.map(([k, v]) => `<div class="kv-row"><div class="kv-key">${esc(k)}</div><div class="kv-val">${v}</div></div>`).join('');
+    return `<div class="kv-card"><div class="kv-card-head">${esc(title)}</div>${body}</div>`;
+  }
+  function jsonCard(title, raw) {
+    const obj = parseJson(raw);
+    const body = (obj === null)
+      ? `<div style="padding:12px 14px;color:var(--muted);font-style:italic;font-size:13px">null</div>`
+      : `<div style="padding:12px 14px"><pre class="json">${esc(prettyJson(obj))}</pre></div>`;
+    return `<div class="kv-card"><div class="kv-card-head">${esc(title)}</div>${body}</div>`;
+  }
+  function activeBadge(v) {
+    return `<span class="left-item-badge" style="color:${v ? '#166534':'#991b1b'};background:${v ? '#dcfce7':'#fef2f2'}">${v ? 'ON':'OFF'}</span>`;
+  }
+  function nullSpan(t) { return `<span class="kv-val null">${esc(t)}</span>`; }
+  function prettyJson(raw) {
+    const obj = parseJson(raw);
+    if (obj === null) return 'null';
+    try { return JSON.stringify(obj, null, 2); } catch { return String(raw); }
+  }
+  function fmtDate(d) { if (!d) return '—'; const dt = new Date(d); return isNaN(dt.getTime()) ? String(d) : dt.toLocaleString(); }
+  function fmtDateOrNull(d) { return d ? esc(fmtDate(d)) : nullSpan('—'); }
+
+  // ════════════════════════════════════════════════════════════════
+  // TOPBAR BUTTON STATE
+  // Suppressions & Rules: Refresh + New. Executions: Refresh only.
+  // Save/Delete hidden throughout (no editors this slice).
+  // ════════════════════════════════════════════════════════════════
+  function updateTopbarButtons() {
+    if (!subPageActive) return;
+    P.setTopbarButtons({ refresh: true, new: activeTab !== 'executions', save: false, delete: false });
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // LIFECYCLE HOOKS
+  // ════════════════════════════════════════════════════════════════
+  function init() {
+    subPageActive = true;
+    updateTopbarButtons();
+    loadMeta();
+    loadActiveTab();
+  }
+  function onShow() { subPageActive = true; updateTopbarButtons(); }
+  function onHide() { subPageActive = false; }
+  function onSave()    { /* no editor in 3.2 */ }
+  function onDelete()  { /* no editor in 3.2 */ }
+  function onRefresh() {
+    if (activeTab === 'executions') { cache.executions.loaded = false; cache.executions.selId = null; eiCloseDrawer(); }
+    else { cache[activeTab].loaded = false; selectedId = null; clearDetail(); }
+    loadActiveTab(true);
+    Toast.fire({ icon: 'success', title: 'Refreshed' });
+  }
+  function onNew() {
+    if (activeTab === 'executions') return; // shell hides New here anyway
+    selectedId = null;
+    if (activeTab === 'suppressions') renderSuppressionList(); else renderRuleList();
+    showDetail();
+    const what = activeTab === 'suppressions' ? 'suppression' : 'rule';
+    const slice = activeTab === 'suppressions' ? '3.3' : '3.4';
+    setDetailHead(`New ${what}`, 'placeholder');
+    E('ei-detail-body').innerHTML =
+      placeholderBanner(`The "new ${what}" editor is not built yet — it ships in Slice ${slice}. This panel is a placeholder.`) +
+      `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:240px;color:var(--muted);gap:4px;text-align:center">
+         <i class="fa-solid fa-pen-ruler" style="font-size:42px;opacity:0.2"></i>
+         <p style="font-size:14px;font-weight:500;margin:6px 0 0">${esc('New ' + what)} editor coming in Slice ${slice}</p>
+         <p style="font-size:12px">For now, select an existing record to inspect it read-only.</p>
+       </div>`;
+  }
+
+  window.onShow = onShow; window.onHide = onHide;
+  window.onSave = onSave; window.onDelete = onDelete;
+  window.onRefresh = onRefresh; window.onNew = onNew;
+
+  (function waitForShell() {
+    if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') return init();
+    setTimeout(waitForShell, 50);
+  })();
+})();
+</script>
+
+<!--
+══════════════════════════════════════════════════════════════════════
+MANUAL TEST PLAN (Phase 3.2 — rev 2: executions = center table + drawer)
+
+Live data (readonly SQL, 2026-05-31):
+  suppressions = 2 rows; rules = 1 row (1 action);
+  executions = 396 rows. status: logged 198, duplicate 161,
+    skipped_firm_to_firm 23, skipped_suppression 5, auth_failed 6,
+    validation_failed 3.  (Prompt said ~295 — actual 396.)
+
+1. automationManager.html: last tab reads "Email Ingest", envelope icon.
+2. Click tab → loads, no console errors. Suppressions active by default
+   (sidebar three-panel layout).
+3. Suppressions: 2 rows in sidebar; click → right pane read-only detail +
+   match_config JSON. Search filters.
+4. Rules: 1 row "TEST: ingest layer 3 echo" (pos 100, 1 action). Click →
+   detail + match/transform_config + Actions(1) card.
+5. Executions: the fixed internal-tab bar stays put (no jump). Below it,
+   the supp/rules sidebar HIDES and the center fills full-width. Toolbar
+   (Status filter from meta, Limit dropdown 50/100/200/500). Table:
+   Created · Status(chip) · Source · Message ID · Match. Footer:
+   log-style windowed pager (for 8 pages @ 50: "1 2 … 4 5 6 … 7 8" with
+   the current page as a jump input) + "Showing 1–50 of 396".
+   - Page links + jump-to-page input work; offset re-fetches.
+   - Status=skipped_suppression → 5 rows, "Showing 1–5 of 5", single page.
+   - Limit=200 → "Showing 1–200 of 396", 2 pages. If the server caps
+     page_size, the UI reconciles from the response echo (limit dropdown
+     snaps to the served value, pager math stays correct).
+6. Click an execution row → DRAWER slides in from right. Execution KV card
+   (status badge, source, ids, remote_ip, error, created) + metadata +
+   raw_input JSON + hydrated Matched rules / Suppressed by + linked
+   email_log/log if present. Esc or backdrop closes; row highlight clears.
+7. Topbar: Refresh re-fetches active tab (toast). New visible on
+   Suppressions/Rules, hidden on Executions. Save/Delete hidden throughout.
+8. Switch internal tabs back and forth — the switcher bar never moves;
+   only the content below swaps (sidebar+detail ↔ exec surface). Caches
+   persist (no double load).
+9. Shell tab away and back — onHide/onShow clean.
+10. Old "Email Router" tab GONE from shell.
+11. Collapse button (topbar, right side) hides the supp/rules list so the
+    detail pane gets full width; click again to restore. Hidden on the
+    Executions tab.
+
+Endpoint envelopes (/:id detail, executions list) are JWT-gated, runtime-
+only. Parsers handle {resource}/{...row}/{execution,linked} variants and
+reconcile paging from the response. Eyeball at deploy.
+══════════════════════════════════════════════════════════════════════
+-->
+</body>
+</html>

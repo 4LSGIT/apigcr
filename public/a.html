@@ -121,7 +121,9 @@
 
   <div id="tabCases" class="tab-main">
     <h1>This is the Cases Tab</h1>
-    <span>
+    <span><button onclick="NewCaseForm()">
+        <i class="fa-solid fa-folder-plus"></i> New Case
+      </button>
       Query:
       <input id="tabCasesQuery" type="text" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" />
       Case Type:
