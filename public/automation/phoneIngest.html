@@ -328,6 +328,78 @@
     }
     .cond-remove:hover { color: var(--red); }
 
+    /* ══ SAMPLE-EVENT REFERENCE PANEL (field-discovery aid) ══
+       SHARED sample-panel styles — the `pi-` prefix is INTENTIONAL on BOTH
+       phoneIngest.html AND emailIngest.html; keep these rules byte-identical
+       across the two pages (do NOT "tidy" email's pi- to ei- — that would break
+       the lifted-and-kept-identical parity the panel relies on).
+       A collapsible block under the match conditions paging through recent
+       events projected to the match-field catalog; every path is a click-to-
+       insert chip (absent paths included). Server-sourced (/sample-events). */
+    .pi-sample {
+      margin-top: 10px; border: 1px solid var(--border); border-radius: 8px;
+      background: #fbfdff; overflow: hidden;
+    }
+    .pi-sample-head {
+      display: flex; align-items: center; gap: 8px; cursor: pointer;
+      padding: 8px 12px; user-select: none;
+      font-size: 11px; font-weight: 700; color: var(--text2);
+      text-transform: uppercase; letter-spacing: 0.4px;
+    }
+    .pi-sample-head:hover { background: #f1f7ff; }
+    .pi-sample-head .chev { transition: transform 0.15s; font-size: 11px; color: var(--muted); }
+    .pi-sample.collapsed .chev { transform: rotate(-90deg); }
+    .pi-sample.collapsed .pi-sample-body { display: none; }
+    .pi-sample-head .pi-sample-hint { margin-left: auto; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--muted); font-size: 11px; }
+    .pi-sample-body { padding: 4px 12px 12px; }
+    /* stepper: ‹ prev  [n / total]  label  next › */
+    .pi-sample-stepper { display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; }
+    .pi-sample-nav {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px; border-radius: 6px; cursor: pointer;
+      border: 1px solid var(--border); background: #fff; color: var(--text2);
+      font-size: 11px; transition: all 0.12s;
+    }
+    .pi-sample-nav:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+    .pi-sample-nav:disabled { opacity: 0.35; cursor: not-allowed; }
+    .pi-sample-pos { font-size: 11px; font-weight: 600; color: var(--text2); white-space: nowrap; }
+    .pi-sample-label {
+      font-size: 11px; color: var(--muted); overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; flex: 1;
+    }
+    .pi-sample-grid { display: grid; grid-template-columns: 1fr; gap: 2px; }
+    .pi-sample-field {
+      display: flex; align-items: baseline; gap: 8px; padding: 4px 6px;
+      border-radius: 5px; font-size: 12px;
+    }
+    .pi-sample-field:hover { background: #eef5ff; }
+    .pi-sample-field.absent { opacity: 0.55; }
+    .pi-sample-path {
+      font-family: 'SF Mono','Cascadia Code','Consolas',monospace;
+      font-size: 11px; color: var(--blue2); cursor: pointer;
+      border: 1px solid transparent; border-radius: 4px; padding: 1px 5px;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    /* absent fields stay visually distinct but ARE click-to-insert (the catalog
+       defines what's matchable, not whichever sample is shown). */
+    .pi-sample-field.absent .pi-sample-path { color: var(--muted); }
+    .pi-sample-path:hover { border-color: var(--blue); background: #fff; }
+    .pi-sample-val {
+      font-family: 'SF Mono','Cascadia Code','Consolas',monospace;
+      font-size: 11px; color: var(--text); overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .pi-sample-val.muted { color: var(--muted); font-style: italic; }
+    .pi-sample-empty { font-size: 12px; color: var(--muted); padding: 6px; }
+
+    /* ══ ACTION-FORM schema-hint note (from meta.action_types config_schema_hint) ══ */
+    .swal-a-note {
+      font-size: 11px; color: var(--text2); background: #f1f7ff;
+      border: 1px solid #d6e6ff; border-radius: 6px; padding: 6px 9px;
+      margin: 2px 0 8px; line-height: 1.45;
+    }
+    .swal-a-note i { color: var(--blue); margin-right: 5px; }
+
     /* ══ SUPPRESSION EDITOR FORM ══ */
     .pi-form { max-width: 720px; }
     .pi-form-row { margin-bottom: 16px; }
@@ -720,10 +792,166 @@ window.piToggleSidebar = piToggleSidebar;
   function matchFields() {
     const mf = meta && Array.isArray(meta.match_fields) ? meta.match_fields : null;
     if (!mf || !mf.length) return FALLBACK_MATCH_FIELDS;
-    // map { path, label } → { value, label }; drop rows without a path.
+    // map { path, label, type, channels } → { value, label } for the field-
+    // agnostic match-builder (it renders a flat dropdown of {value,label}, so
+    // we fold the channel/type teaching INTO the label rather than touching the
+    // shared component). channels=['sms','call'] (both) gets no tag; a single-
+    // channel field is tagged so the operator sees "this only exists on calls".
     return mf
       .filter(f => f && (f.path != null && f.path !== ''))
-      .map(f => ({ value: String(f.path), label: f.label || String(f.path) }));
+      .map(f => {
+        const ch = Array.isArray(f.channels) ? f.channels : [];
+        const tags = [];
+        if (ch.length === 1) tags.push(ch[0]);          // 'sms' | 'call' only
+        if (f.type && f.type !== 'string') tags.push(f.type); // surface non-string types
+        const suffix = tags.length ? `  ·  ${tags.join(' · ')}` : '';
+        return { value: String(f.path), label: (f.label || String(f.path)) + suffix };
+      });
+  }
+
+  // ── SAMPLE-EVENT REFERENCE PANEL ────────────────────────────────────────
+  // Field-discovery aid: a collapsible block under the match conditions that
+  // pages through the newest-N real events, each projected to the match-field
+  // catalog. Each field path is click-to-insert into the match builder —
+  // INCLUDING absent fields (the catalog defines what's matchable, not whichever
+  // sample is shown; an operator may be building a rule precisely to catch
+  // events where a currently-absent field gains a value).
+  //
+  // ╔════════════════════════════════════════════════════════════════════════╗
+  // ║ SHARED PANEL — KEPT BYTE-IDENTICAL across phoneIngest.html AND           ║
+  // ║ emailIngest.html. The ONLY intended difference between the two copies is ║
+  // ║ SAMPLE_ENDPOINT (below). Functions in this block (sampleCache,           ║
+  // ║ loadSampleEvents, renderSamplePanelBody, mountSamplePanel,               ║
+  // ║ insertConditionPath) + the .pi-sample* CSS must stay in sync. If you     ║
+  // ║ change one page, change the other.                                       ║
+  // ╚════════════════════════════════════════════════════════════════════════╝
+  //
+  // Server shape: { samples: [{ exec_id, type, ts, label, fields:[{path,label,
+  // type,present,value}] }] }, newest first. `present` is key-chain existence:
+  //   present:false            → "not present on this event" (still clickable)
+  //   present:true, value:null → field exists but is empty → rendered as "null"
+  const SAMPLE_ENDPOINT = '/api/phone-ingest/sample-events';
+  const sampleCache = { loaded: false, loading: null, samples: [], idx: 0 };
+
+  async function loadSampleEvents() {
+    if (sampleCache.loaded) return sampleCache.samples;
+    if (sampleCache.loading) return sampleCache.loading;
+    sampleCache.loading = (async () => {
+      try {
+        const data = await api(SAMPLE_ENDPOINT);
+        sampleCache.samples = (data && Array.isArray(data.samples)) ? data.samples : [];
+      } catch (e) {
+        sampleCache.samples = []; // non-fatal — panel just shows an empty state
+      }
+      sampleCache.loaded = true;
+      sampleCache.loading = null;
+      sampleCache.idx = 0;
+      return sampleCache.samples;
+    })();
+    return sampleCache.loading;
+  }
+
+  // Render the panel body for the current sample index into `bodyEl`.
+  // `targetRootId` is the cond-root the field chips insert into.
+  function renderSamplePanelBody(bodyEl, targetRootId) {
+    const samples = sampleCache.samples;
+    if (!samples.length) {
+      bodyEl.innerHTML = `<div class="pi-sample-empty">No events captured yet — the field list in the builder above shows everything you can match on.</div>`;
+      return;
+    }
+    if (sampleCache.idx < 0) sampleCache.idx = 0;
+    if (sampleCache.idx > samples.length - 1) sampleCache.idx = samples.length - 1;
+    const active = samples[sampleCache.idx];
+
+    // Stepper: ‹ Prev   [n / total]  label   Next ›
+    const atStart = sampleCache.idx === 0;
+    const atEnd   = sampleCache.idx === samples.length - 1;
+    const stepper =
+      `<div class="pi-sample-stepper">
+         <button type="button" class="pi-sample-nav" data-nav="prev" ${atStart ? 'disabled' : ''} title="Newer event"><i class="fa-solid fa-chevron-left"></i></button>
+         <span class="pi-sample-pos">${sampleCache.idx + 1} / ${samples.length}</span>
+         <span class="pi-sample-label" title="${esc(active.label || active.type || '')}">${esc(active.label || active.type || '')}</span>
+         <button type="button" class="pi-sample-nav" data-nav="next" ${atEnd ? 'disabled' : ''} title="Older event"><i class="fa-solid fa-chevron-right"></i></button>
+       </div>`;
+
+    const rows = active.fields.map(f => {
+      // Value display: absent → em-dash; genuine null → explicit "null"
+      // (reads as "exists and is empty", distinct from missing); else the value.
+      const valClass = (!f.present || f.value === null) ? 'pi-sample-val muted' : 'pi-sample-val';
+      const valText  = !f.present ? '—'
+                     : (f.value === null) ? 'null'
+                     : (typeof f.value === 'boolean') ? String(f.value)
+                     : String(f.value);
+      const fieldCls = 'pi-sample-field' + (f.present ? '' : ' absent');
+      const title    = f.present
+        ? `Click to add a condition on ${esc(f.path)}`
+        : `not present on this event — click to add a condition on ${esc(f.path)} anyway`;
+      // Both present AND absent paths are click-to-insert (no .no-insert).
+      return `<div class="${fieldCls}">
+        <span class="pi-sample-path" data-path="${esc(f.path)}" title="${title}">${esc(f.path)}</span>
+        <span class="${valClass}">${esc(valText)}</span></div>`;
+    }).join('');
+
+    bodyEl.innerHTML = `${stepper}<div class="pi-sample-grid">${rows}</div>`;
+
+    // stepper nav
+    bodyEl.querySelectorAll('.pi-sample-nav[data-nav]').forEach(b => {
+      b.addEventListener('click', () => {
+        if (b.disabled) return;
+        sampleCache.idx += (b.getAttribute('data-nav') === 'next') ? 1 : -1;
+        renderSamplePanelBody(bodyEl, targetRootId);
+      });
+    });
+    // click-to-insert (present AND absent)
+    bodyEl.querySelectorAll('.pi-sample-path[data-path]').forEach(p => {
+      p.addEventListener('click', () => insertConditionPath(targetRootId, p.getAttribute('data-path')));
+    });
+  }
+
+  // Mount the collapsible panel into `hostEl` (an empty container placed under
+  // the cond-root) and lazy-load the samples.
+  function mountSamplePanel(hostEl, targetRootId) {
+    if (!hostEl) return;
+    hostEl.innerHTML =
+      `<div class="pi-sample collapsed" id="${targetRootId}-sample">
+         <div class="pi-sample-head">
+           <i class="fa-solid fa-chevron-down chev"></i>
+           <span><i class="fa-solid fa-flask" style="margin-right:6px;color:var(--muted)"></i>Sample events &amp; available fields</span>
+           <span class="pi-sample-hint">click a field to add a condition</span>
+         </div>
+         <div class="pi-sample-body"><div class="pi-sample-empty">Loading…</div></div>
+       </div>`;
+    const panel = hostEl.firstElementChild;
+    const head  = panel.querySelector('.pi-sample-head');
+    const body  = panel.querySelector('.pi-sample-body');
+    head.addEventListener('click', () => panel.classList.toggle('collapsed'));
+    loadSampleEvents().then(() => renderSamplePanelBody(body, targetRootId));
+  }
+
+  // Add a new condition row to the given cond-root, pre-set to `path`. Mirrors
+  // the match-builder's own "+ Condition" by appending to the root group's
+  // model and re-rendering via the component's stored config (mbRender re-run).
+  function insertConditionPath(rootId, path) {
+    const root = E(rootId);
+    if (!root || !root._state) return;
+    const grp = root._state;
+    if (!Array.isArray(grp.conditions)) grp.conditions = [];
+    // If the last row is a blank leaf, fill it instead of appending a new one.
+    const last = grp.conditions[grp.conditions.length - 1];
+    if (last && !last.operator && (last.path == null || last.path === '')) {
+      last.path = path; last.op = last.op || 'equals';
+    } else {
+      grp.conditions.push({ path, op: 'equals', value: '' });
+    }
+    // re-render through the component's stored cfg (set by mbRender)
+    const cfg = root._mbcfg || {};
+    mbRender(root, grp, { availableFields: cfg.fields || matchFields(), operators: cfg.operators || meta.match_operators, onChange: cfg.onChange || (()=>{}) });
+    if (cfg.onChange) cfg.onChange(); // mark dirty
+    // scroll the new row into view
+    const rows = root.querySelectorAll('.cond-row');
+    if (rows.length && typeof rows[rows.length - 1].scrollIntoView === 'function') {
+      rows[rows.length - 1].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
   }
 
   // Fallback operator list — mirrors hooks.html's hardcoded 15 operators,
@@ -1122,6 +1350,7 @@ window.piToggleSidebar = piToggleSidebar;
         <div class="pi-form-row" id="sup-cond-wrap">
           <label class="pi-label">Match conditions</label>
           <div id="sup-cond-root"></div>
+          <div id="sup-sample-host"></div>
         </div>
 
         <div class="pi-form-row" id="sup-code-wrap">
@@ -1136,6 +1365,7 @@ window.piToggleSidebar = piToggleSidebar;
     // mount the reusable match-builder
     const root = E('sup-cond-root');
     mbRender(root, condState, { availableFields: matchFields(), operators: meta.match_operators, onChange: markDirty });
+    mountSamplePanel(E('sup-sample-host'), 'sup-cond-root');
 
     // mode toggle (mirror hooks.html toggleFilterMode pattern)
     const applyMode = () => {
@@ -1347,11 +1577,12 @@ window.piToggleSidebar = piToggleSidebar;
         <div class="pi-form-row" id="rule-match-cond-wrap">
           <label class="pi-label">Match conditions</label>
           <div id="rule-match-cond-root"></div>
+          <div id="rule-sample-host"></div>
         </div>
         <div class="pi-form-row" id="rule-match-code-wrap">
           <label class="pi-label" for="rule-match-code">Match code</label>
           <textarea class="pi-textarea pi-code-textarea" id="rule-match-code" placeholder="// return truthy to match">${esc(matchCodeStr)}</textarea>
-          <div class="pi-field-hint">Receives the phone event as <code>input</code>. Return truthy to match.</div>
+          <div class="pi-field-hint">Receives the phone event as <code>input</code> (e.g. <code>input.link_id</code>, <code>input.extra.provider</code>). Return truthy to match.</div>
         </div>
 
         <!-- ═══ TRANSFORM ═══ -->
@@ -1361,18 +1592,18 @@ window.piToggleSidebar = piToggleSidebar;
           <select class="pi-select" id="rule-transform-mode" style="max-width:220px">${transformModeOpts}</select>
         </div>
         <div class="pi-form-row" id="rule-transform-passthrough-wrap">
-          <div class="pi-field-hint">The phone event is passed to actions unchanged.</div>
+          <div class="pi-field-hint">The phone event is passed to actions unchanged — so actions reference the event's own fields (<code>link_id</code>, <code>extra.provider</code>, <code>message</code>, …). See the sample panel above for the full list.</div>
         </div>
         <div class="pi-form-row" id="rule-transform-mapper-wrap">
           <label class="pi-label">Mapping rules</label>
           <div id="rule-mapper-rules"></div>
           <button type="button" class="btn btn-outline btn-sm" id="rule-mapper-add" style="margin-top:6px"><i class="fa-solid fa-plus"></i> Add mapping</button>
-          <div class="pi-field-hint">Build the object passed to actions from envelope fields.</div>
+          <div class="pi-field-hint">Build the object passed to actions from event fields (e.g. source <code>link_id</code> → <code>phone</code>). Unmapped fields are dropped.</div>
         </div>
         <div class="pi-form-row" id="rule-transform-code-wrap">
           <label class="pi-label" for="rule-transform-code">Transform code</label>
           <textarea class="pi-textarea pi-code-textarea" id="rule-transform-code" placeholder="// return the transformed object">${esc(transformCodeStr)}</textarea>
-          <div class="pi-field-hint">Receives the envelope as <code>input</code>. Return the transformed object passed to actions.</div>
+          <div class="pi-field-hint">Receives the phone event as <code>input</code>. Return the object passed to actions.</div>
         </div>
 
         <!-- ═══ ACTIONS ═══ -->
@@ -1388,6 +1619,7 @@ window.piToggleSidebar = piToggleSidebar;
     // ── mount the reusable match-builder (REUSED UNCHANGED from 3.3) ──
     mbRender(E('rule-match-cond-root'), ruleForm.condState,
       { availableFields: matchFields(), operators: meta.match_operators, onChange: markDirty });
+    mountSamplePanel(E('rule-sample-host'), 'rule-match-cond-root');
 
     // ── match mode toggle ──
     const applyMatchMode = () => {
@@ -1682,6 +1914,20 @@ window.piToggleSidebar = piToggleSidebar;
   }
 
   // ── Action config form (hand-built per type, mirroring buildTargetForm) ──
+  // Pull the human `note` from meta.action_types[type].config_schema_hint.
+  // Server-owned guidance (e.g. "Contact is resolved from the workflow's own
+  // default_contact_id_from; not set here") — surfaced in the action form so
+  // operators understand how data reaches the automation. Returns '' if none.
+  function actionNote(type) {
+    const at = (meta.action_types || []).find(a => a.value === type);
+    const note = at && at.config_schema_hint && at.config_schema_hint.note;
+    return note ? String(note) : '';
+  }
+  function actionNoteHtml(type) {
+    const n = actionNote(type);
+    return n ? `<div class="swal-a-note" data-note-for="${esc(type)}"><i class="fa-solid fa-circle-info"></i>${esc(n)}</div>` : '';
+  }
+
   function buildActionForm(a) {
     const type = a.action_type || 'workflow';
     const cfg = parseJson(a.config) || {};
@@ -1714,6 +1960,7 @@ window.piToggleSidebar = piToggleSidebar;
 
         <!-- workflow -->
         <div id="swal-a-sec-workflow" class="swal-a-section">
+          ${actionNoteHtml('workflow')}
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Workflow</label>
             <select id="swal-a-wf" class="swal2-select" style="margin:0;width:100%"><option value="">— select a workflow —</option>${wfOpts}</select>
@@ -1722,6 +1969,7 @@ window.piToggleSidebar = piToggleSidebar;
 
         <!-- sequence -->
         <div id="swal-a-sec-sequence" class="swal-a-section" style="display:none">
+          ${actionNoteHtml('sequence')}
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Enrollment mode</label>
             <select id="swal-a-seq-mode" class="swal2-select" style="margin:0;width:100%">
@@ -1755,6 +2003,7 @@ window.piToggleSidebar = piToggleSidebar;
 
         <!-- hook -->
         <div id="swal-a-sec-hook" class="swal-a-section" style="display:none">
+          ${actionNoteHtml('hook')}
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Hook</label>
             <select id="swal-a-hook" class="swal2-select" style="margin:0;width:100%"><option value="">— select a hook —</option>${hookOpts}</select>
@@ -1764,6 +2013,7 @@ window.piToggleSidebar = piToggleSidebar;
 
         <!-- internal_function -->
         <div id="swal-a-sec-internal_function" class="swal-a-section" style="display:none">
+          ${actionNoteHtml('internal_function')}
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Function</label>
             <select id="swal-a-fn" class="swal2-select" style="margin:0;width:100%"><option value="">— select a function —</option>${fnOpts}</select>
@@ -1778,6 +2028,7 @@ window.piToggleSidebar = piToggleSidebar;
 
         <!-- http -->
         <div id="swal-a-sec-http" class="swal-a-section" style="display:none">
+          ${actionNoteHtml('http')}
           <div style="display:flex;gap:8px">
             <div class="fg" style="width:100px">
               <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Method</label>

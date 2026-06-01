@@ -30,6 +30,7 @@ const suppressionService   = require('../services/phoneIngestSuppressionService'
 const ruleService          = require('../services/phoneIngestRuleService');
 const executionsService    = require('../services/phoneIngestExecutionsService');
 const metaService          = require('../services/phoneIngestMetaService');
+const sampleService        = require('../services/phoneIngestSampleService');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -316,6 +317,28 @@ router.get('/api/phone-ingest/meta', jwtOrApiKey, async (req, res) => {
     res.json(meta);
   } catch (err) {
     console.error('[phone-ingest] meta error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// SAMPLE EVENTS (read-only, UI field-discovery aid)
+//
+// Returns the newest-N captured phone events (across all types), each PROJECTED
+// to the match-field catalog — newest first, so the rule / suppression editor
+// can let operators page through real events and see shape variation (e.g.
+// data.duration_seconds present on some calls, absent on others). No value
+// redaction; the projection is limited to catalog paths for correctness, not
+// privacy. See services/phoneIngestSampleService.js + lib/ingestSampleProjection.js.
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/phone-ingest/sample-events', jwtOrApiKey, async (req, res) => {
+  try {
+    const result = await sampleService.getSampleEvents(req.db);
+    res.json(result); // { samples: [{ exec_id, type, ts, label, fields:[...] }] }
+  } catch (err) {
+    console.error('[phone-ingest] sample-events error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }
 });

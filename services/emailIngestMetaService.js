@@ -71,6 +71,48 @@ const EXECUTION_STATUSES = [
   { value: 'error',                label: 'Error' },
 ];
 
+// ─────────────────────────────────────────────────────────────
+// MATCH FIELD CATALOG (server-owned — mirrors phoneIngestMetaService.MATCH_FIELDS)
+//
+// Content = the 12 fields formerly HARDCODED as `EMAIL_MATCH_FIELDS` in
+// emailIngest.html. Converging email onto phone's server-owned pattern: the
+// server is now the single source of truth, and the frontend matchFields()
+// reads meta.match_fields (path→value), exactly like phone.
+//
+// Shape is { path, label, type } — same as phone MINUS `channels` (email has
+// no sms/call split, so no per-field channel tagging). The frontend's
+// matchFields() treats an absent `channels` as "both / no tag", so omitting it
+// is correct (a present-but-empty array would behave the same).
+//
+// This catalog is ALSO consumed by emailIngestSampleService as the projection
+// target (the sample panel shows real values for exactly these paths). The
+// sample adapter maps each path to a clean source:
+//   from.email / to / subject / body / source / headers.message_id / auth.*
+//     → always recoverable from email_log + log.log_extra.
+//   from.name / kind / headers.list_id / headers.in_reply_to → only present in
+//     intact (<16KB, parseable) raw_input rows (~25%); otherwise present:false.
+// ─────────────────────────────────────────────────────────────
+
+const MATCH_FIELDS = [
+  { path: 'from.email',          label: 'From — email address',                 type: 'string' },
+  { path: 'from.name',           label: 'From — display name',                  type: 'string' },
+  { path: 'to',                  label: 'To (raw)',                             type: 'string' },
+  { path: 'subject',             label: 'Subject',                              type: 'string' },
+  { path: 'kind',                label: 'Kind (email)',                         type: 'string' },
+  { path: 'source',              label: 'Source (gmail-firm / siteground-php)', type: 'string' },
+  { path: 'headers.message_id',  label: 'Header — Message-ID',                  type: 'string' },
+  { path: 'headers.list_id',     label: 'Header — List-ID',                     type: 'string' },
+  { path: 'headers.in_reply_to', label: 'Header — In-Reply-To',                 type: 'string' },
+  { path: 'auth.spf',            label: 'Auth — SPF result',                    type: 'string' },
+  { path: 'auth.dkim',           label: 'Auth — DKIM result',                   type: 'string' },
+  { path: 'auth.dmarc',          label: 'Auth — DMARC result',                  type: 'string' },
+  // Body is large free text (email_log.body, often HTML). Offered LAST — like
+  // phone's `message` — because content matching (contains) is the only sane
+  // use; equals/large-value matches against it are a footgun. The sample panel
+  // caps its displayed value to a snippet (see emailIngestSampleService).
+  { path: 'body',                label: 'Body (full text)',                     type: 'string' },
+];
+
 // config_schema_hint per action_type — verified against the dispatchers.
 const ACTION_TYPES = [
   {
@@ -181,6 +223,7 @@ async function getMeta(db) {
   return {
     match_operators,
     match_modes:        MATCH_MODES,
+    match_fields:       MATCH_FIELDS,
     transform_modes:    TRANSFORM_MODES,
     action_types:       ACTION_TYPES,
     targets,
@@ -191,4 +234,5 @@ async function getMeta(db) {
 
 module.exports = {
   getMeta,
+  MATCH_FIELDS,
 };

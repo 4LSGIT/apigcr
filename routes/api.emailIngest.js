@@ -41,6 +41,7 @@ const suppressionService     = require('../services/emailIngestSuppressionServic
 const ruleService            = require('../services/emailIngestRuleService');
 const executionsService      = require('../services/emailIngestExecutionsService');
 const metaService            = require('../services/emailIngestMetaService');
+const sampleService          = require('../services/emailIngestSampleService');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -493,6 +494,29 @@ router.get('/api/email-ingest/meta', jwtOrApiKey, async (req, res) => {
     res.json(meta);
   } catch (err) {
     console.error('[email-ingest] meta error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// SAMPLE EVENTS (read-only, UI field-discovery aid)
+//
+// Returns the newest-N logged email events, each RECONSTRUCTED from clean
+// columns (email_log + log.log_extra) and projected to the match-field catalog
+// — newest first. Email's raw_input is ~75% truncated/unparseable, so unlike
+// phone we cannot read it directly; the adapter rebuilds a synthetic envelope
+// (8/12 fields always; the other 4 overlaid only when raw_input is intact). No
+// value redaction; projection limited to catalog paths for correctness. See
+// services/emailIngestSampleService.js + lib/ingestSampleProjection.js.
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/email-ingest/sample-events', jwtOrApiKey, async (req, res) => {
+  try {
+    const result = await sampleService.getSampleEvents(req.db);
+    res.json(result); // { samples: [{ exec_id, type, ts, label, fields:[...] }] }
+  } catch (err) {
+    console.error('[email-ingest] sample-events error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }
 });
