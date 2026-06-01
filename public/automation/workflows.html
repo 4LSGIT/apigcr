@@ -102,6 +102,17 @@
     .panel-left-search::placeholder { color: rgba(255,255,255,0.3); }
     .panel-left-search:focus { border-color: var(--blue); }
 
+    /* "Show inactive" toggle row beneath the search box */
+    .panel-left-filter {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 12px 0;
+      font-size: 11px; color: rgba(255,255,255,0.45);
+      user-select: none;
+    }
+    .panel-left-filter label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .panel-left-filter input { cursor: pointer; margin: 0; }
+    .panel-left.collapsed .panel-left-filter { display: none; }
+
     .panel-left-list { flex: 1; overflow-y: auto; padding: 4px 0; }
 
     .left-item {
@@ -395,6 +406,9 @@
       <input class="panel-left-search" id="wf-search" placeholder="Search…" oninput="wfFilter(this.value)">
       <button class="panel-collapse-btn" onclick="togglePanelLeft(this)" title="Collapse"><i class="fa-solid fa-angles-left"></i></button>
     </div>
+    <div class="panel-left-filter">
+      <label><input type="checkbox" id="wf-show-inactive" onchange="wfToggleInactive(this.checked)"> Show inactive</label>
+    </div>
     <div class="panel-left-list" id="wf-list">
       <div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">Loading…</div>
     </div>
@@ -522,6 +536,7 @@ window.togglePanelLeft = togglePanelLeft;
 // ── State ──────────────────────────────────────────────────────
 const WF = {
   workflows: [], filtered: [],
+  showInactive: false,
   activeWfId: null, activeWf: null, steps: [],
   activeStepIdx: null, tab: 'edit', editingNew: false, jsonMode: false,
   // Original config captured (deep-cloned) at editor-open. The metadata-
@@ -677,14 +692,27 @@ function wfUpdateCredWarning() {
 
 async function loadWorkflows() {
   try {
-    const data = await api('/workflows?limit=100');
+    // Default hides inactive (active=true). Toggle on → omit the filter so
+    // inactive workflows are included.
+    const q = WF.showInactive ? '/workflows?limit=100' : '/workflows?limit=100&active=true';
+    const data = await api(q);
     WF.workflows = data.workflows || [];
-    WF.filtered  = WF.workflows;
+    // Re-apply any active search term so a reload (e.g. after edit) doesn't
+    // blow away the user's filter.
+    const term = (document.getElementById('wf-search')?.value || '').trim();
+    WF.filtered = term
+      ? WF.workflows.filter(w => w.name.toLowerCase().includes(term.toLowerCase()))
+      : WF.workflows;
     renderWfList();
   } catch (e) {
     document.getElementById('wf-list').innerHTML =
       `<div style="padding:16px;color:#f87171;font-size:12px">${esc(e.message)}</div>`;
   }
+}
+
+function wfToggleInactive(checked) {
+  WF.showInactive = !!checked;
+  loadWorkflows();
 }
 
 function renderWfList() {
@@ -696,7 +724,7 @@ function renderWfList() {
   el.innerHTML = WF.filtered.map(wf => `
     <div class="left-item${wf.id === WF.activeWfId ? ' active' : ''}" onclick="selectWorkflow(${wf.id})">
       <div class="left-item-name">${esc(wf.name)}</div>
-      <div class="left-item-meta">id: ${wf.id} · ${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}</div>
+      <div class="left-item-meta">id: ${wf.id} · ${wf.step_count || 0} step${wf.step_count !== 1 ? 's' : ''}${wf.active ? '' : ' · <span style="color:#f87171">inactive</span>'}</div>
       <div class="left-item-actions">
         <button class="left-act" onclick="event.stopPropagation();wfEdit()"><i class="fa-solid fa-pencil"></i></button>
         <button class="left-act" onclick="event.stopPropagation();wfDuplicate()"><i class="fa-regular fa-copy"></i></button>
@@ -1492,6 +1520,9 @@ async function wfEdit() {
     width: 560,
     html: `
       <input id="swal-wf-name" class="swal2-input" placeholder="Name" value="${esc(WF.activeWf.name || '')}" style="margin-bottom:6px">
+      <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:14px">
+        <input type="checkbox" id="swal-wf-active" ${WF.activeWf.active ? 'checked' : ''}> Active
+      </label>
       <div style="text-align:left;font-size:12px;color:#475569;margin:10px .875em 4px">
         <strong>Test Input (JSON)</strong>
         <span style="color:#94a3b8">— optional, leave blank to clear</span>
@@ -1523,12 +1554,19 @@ async function wfEdit() {
           return false;
         }
       }
-      return { name, test_input };
+      return { name, test_input, active: document.getElementById('swal-wf-active').checked };
     }
   });
   if (!vals) return;
   try {
     await api(`/workflows/${WF.activeWfId}`, 'PUT', vals);
+    // If this edit made the workflow inactive and the list is hiding inactive,
+    // auto-reveal so the user still sees what they just edited.
+    if (vals.active === false && !WF.showInactive) {
+      WF.showInactive = true;
+      const cb = document.getElementById('wf-show-inactive');
+      if (cb) cb.checked = true;
+    }
     await loadWorkflows();
     WF.activeWf = WF.workflows.find(w => w.id === WF.activeWfId) || WF.activeWf;
     // Re-fetch the single workflow to get the freshest test_input value for

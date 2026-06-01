@@ -286,7 +286,7 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     // Load id + default_contact_id_from in one shot. Adding the column to the
     // SELECT is cheap; skipping it would force a separate round-trip.
     const [wfRows] = await connection.query(
-      `SELECT id, default_contact_id_from FROM workflows WHERE id = ?`,
+      `SELECT id, active, default_contact_id_from FROM workflows WHERE id = ?`,
       [workflowId]
     );
     if (wfRows.length === 0) {
@@ -294,6 +294,14 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       return res.status(404).json({ error: "Workflow not found" });
     }
     const workflow = wfRows[0];
+
+    // Inactive workflows cannot be started — manual or otherwise. Toggle the
+    // workflow active in the editor first.
+    if (!workflow.active) {
+      await connection.rollback();
+      connection.release();
+      return res.status(409).json({ error: "Workflow is inactive", message: "Activate the workflow before starting it." });
+    }
 
     // Resolve contact_id via the shared helper. Throws on invalid explicit
     // override; we translate to a 400 below.
@@ -610,6 +618,13 @@ router.get("/workflows", jwtOrApiKey, async (req, res) => {
   const sortField = req.query.sort?.split(':')[0] || 'created_at';
   const sortDir = req.query.sort?.split(':')[1]?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
+  // Optional active filter. When `active=true` is passed, only active workflows
+  // are returned; `active=false` returns only inactive. Omitted → all.
+  // The frontend's "show inactive" toggle (default off) passes active=true.
+  const activeFilter = req.query.active === undefined
+    ? null
+    : (req.query.active === 'true' ? 1 : 0);
+
   // Valid sort fields to prevent injection
   const validSortFields = ['name', 'created_at', 'id'];
   const sort = validSortFields.includes(sortField) ? sortField : 'created_at';
@@ -617,7 +632,7 @@ router.get("/workflows", jwtOrApiKey, async (req, res) => {
   try {
     let query = `
       SELECT 
-        id, name, description, test_input, created_at, updated_at,
+        id, name, description, active, test_input, created_at, updated_at,
         (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id) as step_count
       FROM workflows w
       WHERE 1=1
@@ -628,20 +643,31 @@ router.get("/workflows", jwtOrApiKey, async (req, res) => {
       query += ` AND (name LIKE ? OR description LIKE ?)`;
       params.push(`%${search}%`, `%${search}%`);
     }
+    if (activeFilter !== null) {
+      query += ` AND active = ?`;
+      params.push(activeFilter);
+    }
 
     query += ` ORDER BY ${sort} ${sortDir} LIMIT ? OFFSET ?`;
     params.push(limit, offset);
 
     const [rows] = await db.query(query, params);
 
-    // Total count for pagination
-    const countQuery = `
+    // Total count for pagination — mirror the same WHERE filters.
+    let countQuery = `
       SELECT COUNT(*) as total 
       FROM workflows w
       WHERE 1=1
-      ${search ? 'AND (name LIKE ? OR description LIKE ?)' : ''}
     `;
-    const countParams = search ? [`%${search}%`, `%${search}%`] : [];
+    const countParams = [];
+    if (search) {
+      countQuery += ` AND (name LIKE ? OR description LIKE ?)`;
+      countParams.push(`%${search}%`, `%${search}%`);
+    }
+    if (activeFilter !== null) {
+      countQuery += ` AND active = ?`;
+      countParams.push(activeFilter);
+    }
     const [countRows] = await db.query(countQuery, countParams);
     const total = countRows[0].total;
 
@@ -685,7 +711,7 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
     const [wfRows] = await db.query(
       `
       SELECT 
-        id, name, description, test_input, created_at, updated_at,
+        id, name, description, active, test_input, created_at, updated_at,
         (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id) as step_count
       FROM workflows w
       WHERE id = ?
@@ -1325,7 +1351,7 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
 router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id } = req.params;
-  const { name, description, test_input } = req.body;
+  const { name, description, test_input, active } = req.body;
 
   const workflowId = parseInt(id, 10);
   if (isNaN(workflowId) || workflowId <= 0) {
@@ -1333,8 +1359,8 @@ router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
   }
 
   // At least one field must be provided for a meaningful update
-  if (name === undefined && description === undefined && test_input === undefined) {
-    return res.status(400).json({ error: "At least one field (name, description, or test_input) is required" });
+  if (name === undefined && description === undefined && test_input === undefined && active === undefined) {
+    return res.status(400).json({ error: "At least one field (name, description, test_input, or active) is required" });
   }
 
   // Slice 2.1 — test_input shape validation (only if present in body).
@@ -1373,6 +1399,10 @@ router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
     if (test_input !== undefined) {
       updates.push("test_input = ?");
       params.push(toJson(test_input));
+    }
+    if (active !== undefined) {
+      updates.push("active = ?");
+      params.push(active ? 1 : 0);
     }
 
     const query = `

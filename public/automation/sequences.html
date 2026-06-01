@@ -102,6 +102,17 @@
     .panel-left-search::placeholder { color: rgba(255,255,255,0.3); }
     .panel-left-search:focus { border-color: var(--blue); }
 
+    /* "Show inactive" toggle row beneath the search box */
+    .panel-left-filter {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 12px 0;
+      font-size: 11px; color: rgba(255,255,255,0.45);
+      user-select: none;
+    }
+    .panel-left-filter label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .panel-left-filter input { cursor: pointer; margin: 0; }
+    .panel-left.collapsed .panel-left-filter { display: none; }
+
     .panel-left-list { flex: 1; overflow-y: auto; padding: 4px 0; }
 
     .left-item {
@@ -547,6 +558,9 @@
       <input class="panel-left-search" id="seq-search" placeholder="Search…" oninput="seqFilter(this.value)">
       <button class="panel-collapse-btn" onclick="togglePanelLeft(this)" title="Collapse"><i class="fa-solid fa-angles-left"></i></button>
     </div>
+    <div class="panel-left-filter">
+      <label><input type="checkbox" id="seq-show-inactive" onchange="seqToggleInactive(this.checked)"> Show inactive</label>
+    </div>
     <div class="panel-left-list" id="seq-list">
       <div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">Loading…</div>
     </div>
@@ -678,6 +692,7 @@ const fdEmailFromSelectHtml    = (id, val) => P.fdEmailFromSelectHtml(id, val);
 // ── State ──────────────────────────────────────────────────────
 const SEQ = {
   templates: [], filtered: [],
+  showInactive: false,
   activeTemplateId: null, activeTemplate: null, steps: [],
   activeStepIdx: null, tab: 'edit', editingNew: false, jsonMode: false,
   // Original action_config captured (deep-cloned) at edit-tab open. The
@@ -863,13 +878,26 @@ function seqUpdateCredWarning() {
 
 async function loadSequences() {
   try {
-    const data = await api('/sequences/templates');
+    // Default hides inactive (active=true). Toggle on → omit filter so inactive
+    // templates are included (they still render with an "inactive" badge).
+    const data = await api(SEQ.showInactive ? '/sequences/templates' : '/sequences/templates?active=true');
     SEQ.templates = data.templates || [];
-    SEQ.filtered  = SEQ.templates;
+    // Re-apply any active search term so a reload doesn't blow away the filter.
+    const term = (document.getElementById('seq-search')?.value || '').trim().toLowerCase();
+    SEQ.filtered = term
+      ? SEQ.templates.filter(t =>
+          (t.name || '').toLowerCase().includes(term) ||
+          (t.type || '').toLowerCase().includes(term))
+      : SEQ.templates;
     renderSeqList();
   } catch (e) {
     document.getElementById('seq-list').innerHTML = `<div style="padding:16px;color:#f87171;font-size:12px">${esc(e.message)}</div>`;
   }
+}
+
+function seqToggleInactive(checked) {
+  SEQ.showInactive = !!checked;
+  loadSequences();
 }
 
 function renderSeqList() {
@@ -2895,9 +2923,19 @@ async function seqEdit() {
   if (!vals) return;
   try {
     await api(`/sequences/templates/${SEQ.activeTemplateId}`, 'PUT', vals);
+    // If this edit made the template inactive and the list is hiding inactive,
+    // the item would vanish (and selection go stale). Auto-reveal so the user
+    // still sees what they just edited.
+    if (vals.active === false && !SEQ.showInactive) {
+      SEQ.showInactive = true;
+      const cb = document.getElementById('seq-show-inactive');
+      if (cb) cb.checked = true;
+    }
     await loadSequences();
     SEQ.activeTemplate = SEQ.templates.find(t => t.id === SEQ.activeTemplateId);
-    document.getElementById('seq-canvas-title').textContent = seqTitleText(SEQ.activeTemplate);
+    if (SEQ.activeTemplate) {
+      document.getElementById('seq-canvas-title').textContent = seqTitleText(SEQ.activeTemplate);
+    }
   } catch (e) {
     Swal.fire('Error', e.message, 'error');
   }
