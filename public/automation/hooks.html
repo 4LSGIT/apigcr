@@ -100,6 +100,17 @@
     .panel-left-search::placeholder { color: rgba(255,255,255,0.3); }
     .panel-left-search:focus { border-color: var(--blue); }
 
+    /* "Show inactive" toggle row beneath the search box */
+    .panel-left-filter {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 12px 0;
+      font-size: 11px; color: rgba(255,255,255,0.45);
+      user-select: none;
+    }
+    .panel-left-filter label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+    .panel-left-filter input { cursor: pointer; margin: 0; }
+    .panel-left.collapsed .panel-left-filter { display: none; }
+
     .panel-left-list { flex: 1; overflow-y: auto; padding: 4px 0; }
 
     .left-item {
@@ -333,6 +344,9 @@
     <div class="panel-left-head">
       <input class="panel-left-search" id="hook-search" placeholder="Search hooks…" oninput="window.hookFilterList && window.hookFilterList(this.value)">
       <button class="panel-collapse-btn" onclick="togglePanelLeft(this)" title="Collapse"><i class="fa-solid fa-angles-left"></i></button>
+    </div>
+    <div class="panel-left-filter">
+      <label><input type="checkbox" id="hook-show-inactive" onchange="window.hookToggleInactive && window.hookToggleInactive(this.checked)"> Show inactive</label>
     </div>
     <div class="panel-left-list" id="hook-list">
       <div style="padding:16px;color:rgba(255,255,255,0.3);font-size:12px">Loading…</div>
@@ -617,6 +631,7 @@ window.togglePanelLeft = togglePanelLeft;
   // ── State ──
   let hooks = [];
   let filtered = [];
+  let showInactive = false;
   let activeHookId = null;
   let activeHook = null;
   let credentials = [];
@@ -652,7 +667,7 @@ window.togglePanelLeft = togglePanelLeft;
         api('/api/sequence-types').catch(() => ({ types: [] })),
       ]);
       hooks = hooksData.hooks || [];
-      filtered = hooks;
+      applyHookFilter();
       credentials = credsData.credentials || [];
       meta = metaData;
       workflowsList = wfData.workflows || wfData || [];
@@ -691,10 +706,26 @@ window.togglePanelLeft = togglePanelLeft;
     `).join('');
   }
 
-  function hookFilterList(q) {
-    const lower = (q || '').toLowerCase();
-    filtered = hooks.filter(h => h.name.toLowerCase().includes(lower) || h.slug.toLowerCase().includes(lower));
+  // Combined sidebar filter: search term (from #hook-search) AND active state
+  // (hidden unless "Show inactive" is checked). Both inputs route here so they
+  // compose rather than clobbering each other.
+  function applyHookFilter() {
+    const lower = (E('hook-search')?.value || '').toLowerCase();
+    filtered = hooks.filter(h => {
+      if (!showInactive && !h.active) return false;
+      if (lower && !(h.name.toLowerCase().includes(lower) || h.slug.toLowerCase().includes(lower))) return false;
+      return true;
+    });
     renderHookList();
+  }
+
+  function hookFilterList(q) {
+    applyHookFilter();
+  }
+
+  function hookToggleInactive(checked) {
+    showInactive = !!checked;
+    applyHookFilter();
   }
 
   // ── Select / load hook ──
@@ -2127,8 +2158,14 @@ async function runLiveTest() {
       }
       const hooksData = await api('/api/hooks');
       hooks = hooksData.hooks || [];
-      filtered = hooks;
-      renderHookList();
+      // If this save made the hook inactive while the list is hiding inactive,
+      // auto-reveal so the user still sees what they just edited.
+      if (payload.active === 0 && !showInactive) {
+        showInactive = true;
+        const cb = document.getElementById('hook-show-inactive');
+        if (cb) cb.checked = true;
+      }
+      applyHookFilter();
       if (activeHookId) selectHook(activeHookId);
     } catch (e) {
       Toast.fire({ icon: 'error', title: e.message });
@@ -2171,8 +2208,7 @@ async function runLiveTest() {
       hideEditor();
       const hooksData = await api('/api/hooks');
       hooks = hooksData.hooks || [];
-      filtered = hooks;
-      renderHookList();
+      applyHookFilter();
     } catch (e) {
       Toast.fire({ icon: 'error', title: e.message });
     }
@@ -2256,6 +2292,7 @@ async function runLiveTest() {
   window.hookSave                 = saveHook;
   window.hookDelete               = deleteHook;
   window.hookFilterList           = hookFilterList;
+  window.hookToggleInactive       = hookToggleInactive;
 
   window.hookToggleCapture        = hookToggleCapture;
   window.hookViewCapturedSample   = hookViewCapturedSample;
