@@ -44,6 +44,7 @@ async function search(db, { q, type = 'all', limit = 1 } = {}) {
   const looksLikeCaseId = /^[A-Za-z0-9]{6,8}$/.test(term) && /[A-Za-z]/.test(term);
   // case_number: "25-12345" or case_number_full: "2:25-bk-12345"
   const looksLikeCaseRef = /\d{2}-/.test(term) || term.includes(':');
+  const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(term);
 
   const results = [];
   const seen = new Set(); // "type:id" dedup key
@@ -113,6 +114,16 @@ async function search(db, { q, type = 'all', limit = 1 } = {}) {
       `SELECT contact_name, contact_id, contact_phone
        FROM contacts WHERE contact_phone = ? LIMIT ?`,
       [phone10, cap]
+    );
+    rows.forEach(addContact);
+  }
+
+  // Contact by email
+  if (wantContacts && isEmail && !done()) {
+    const [rows] = await db.query(
+      `SELECT contact_name, contact_id, contact_phone
+       FROM contacts WHERE contact_email = ? LIMIT ?`,
+      [term, cap]
     );
     rows.forEach(addContact);
   }

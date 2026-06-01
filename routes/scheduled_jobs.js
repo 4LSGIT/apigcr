@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const ms = require("ms"); //  for parsing "5m", "2h", etc.
+const { CronExpressionParser } = require("cron-parser"); // resume → next future tick
 
 // Helper: parse delay string to milliseconds
 function parseDelay(delayStr) {
@@ -377,12 +378,17 @@ router.get("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
   const db = req.db;
-  const { status, type, page = 1, limit = 30, search } = req.query;
+  const { status, type, page = 1, limit = 30, search, active } = req.query;
   const offset   = (Math.max(1, parseInt(page)) - 1) * Math.min(100, parseInt(limit));
   const limitInt = Math.min(100, Math.max(1, parseInt(limit)));
 
+  // Optional active filter. active=true → only active (non-paused) jobs;
+  // active=false → only paused. Omitted → all. The "show inactive" toggle is
+  // default-off, so the UI passes active=true to hide paused jobs.
+  const activeFilter = active === undefined ? null : (active === 'true' ? 1 : 0);
+
   try {
-    let query  = `SELECT id, type, status, name, scheduled_time, recurrence_rule,
+    let query  = `SELECT id, type, status, active, name, scheduled_time, recurrence_rule,
                     attempts, max_attempts, execution_count, created_at, updated_at
                   FROM scheduled_jobs WHERE 1=1`;
     const params = [];
@@ -390,6 +396,7 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
     if (status) { query += ` AND status = ?`;         params.push(status); }
     if (type)   { query += ` AND type = ?`;           params.push(type); }
     if (search) { query += ` AND name LIKE ?`;        params.push(`%${search}%`); }
+    if (activeFilter !== null) { query += ` AND active = ?`; params.push(activeFilter); }
 
     // Hide internal workflow/sequence jobs from the list by default
     if (!req.query.internal) {
@@ -401,7 +408,7 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
 
     const [rows] = await db.query(query, params);
 
-    const countQuery  = query.replace(/SELECT .* FROM/, 'SELECT COUNT(*) as total FROM').replace(/ORDER BY.*$/, '');
+    const countQuery  = query.replace(/SELECT [\s\S]* FROM/, 'SELECT COUNT(*) as total FROM').replace(/ORDER BY[\s\S]*$/, '');
     const countParams = params.slice(0, -2);
     const [[{ total }]] = await db.query(countQuery, countParams);
 
@@ -490,6 +497,92 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
   } catch (err) {
     console.error("Failed to edit job:", err);
     res.status(500).json({ error: "Failed to edit job", detail: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// PATCH /scheduled-jobs/:id/active — pause (active=0) or resume (active=1)
+//
+// Pause keeps the row intact (rule + history) but the processor's claim query
+// skips it. Resume re-enables it; for a recurring job, scheduled_time is
+// advanced to the next future cron tick so a paused-through occurrence is
+// skipped rather than fired as a stale catch-up. One-time jobs resume in place
+// (they fire on the next processor pass — the user chose to un-pause it).
+//
+// Eligibility: only user-facing one_time / recurring jobs in pending or failed
+// status. Internal engine-managed types (workflow_resume, sequence_step,
+// hook_retry) are never pausable — pausing one would strand a workflow,
+// sequence step, or retry.
+// ─────────────────────────────────────────────────────────────
+router.patch("/scheduled-jobs/:id/active", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+  const { active } = req.body;
+
+  if (typeof active !== 'boolean') {
+    return res.status(400).json({ error: "Body must include boolean 'active'" });
+  }
+
+  try {
+    const [[job]] = await db.query(
+      `SELECT id, type, status, active, scheduled_time, recurrence_rule
+       FROM scheduled_jobs WHERE id = ?`,
+      [id]
+    );
+    if (!job) return res.status(404).json({ error: "Job not found" });
+
+    // Only user-facing job types are pausable.
+    if (!['one_time', 'recurring'].includes(job.type)) {
+      return res.status(409).json({
+        error: `Cannot pause/resume a '${job.type}' job. Only one_time and recurring jobs support pausing.`
+      });
+    }
+
+    // Only pending/failed jobs are pausable — running/completed are out of scope.
+    if (!['pending', 'failed'].includes(job.status)) {
+      return res.status(409).json({
+        error: `Cannot pause/resume a job with status '${job.status}'. Only pending or failed jobs.`
+      });
+    }
+
+    const target = active ? 1 : 0;
+
+    // No-op if already in the requested state.
+    if (job.active === target) {
+      return res.json({ success: true, id: parseInt(id), active: !!target, message: "No change" });
+    }
+
+    const updates = ['active = ?'];
+    const params  = [target];
+
+    // Resume of a recurring job: skip to the next future cron tick so we don't
+    // fire a stale occurrence the moment the processor next runs.
+    if (active && job.type === 'recurring' && job.recurrence_rule) {
+      try {
+        const interval = CronExpressionParser.parse(job.recurrence_rule, { currentDate: new Date() });
+        const nextTime = interval.next().toDate();
+        updates.push('scheduled_time = ?');
+        params.push(nextTime);
+      } catch (e) {
+        return res.status(400).json({ error: `Invalid recurrence_rule, cannot compute next run: ${e.message}` });
+      }
+    }
+
+    params.push(id);
+    await db.query(
+      `UPDATE scheduled_jobs SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
+      params
+    );
+
+    res.json({
+      success: true,
+      id: parseInt(id),
+      active: !!target,
+      message: active ? "Job resumed" : "Job paused"
+    });
+  } catch (err) {
+    console.error("Failed to toggle job active:", err);
+    res.status(500).json({ error: "Failed to update job", detail: err.message });
   }
 });
 

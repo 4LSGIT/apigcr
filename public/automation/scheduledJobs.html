@@ -142,6 +142,7 @@
     .status-running   { background: #dbeafe; color: #1e40af; }
     .status-completed { background: #dcfce7; color: #166534; }
     .status-failed    { background: #fee2e2; color: #991b1b; }
+    .status-paused    { background: #e5e7eb; color: #4b5563; }
 
     /* Scrollbar */
     ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -170,6 +171,9 @@
   </select>
   <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text2);cursor:pointer;white-space:nowrap">
     <input type="checkbox" id="jobs-show-internal" onchange="loadJobs()"> Internal
+  </label>
+  <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text2);cursor:pointer;white-space:nowrap">
+    <input type="checkbox" id="jobs-show-inactive" onchange="loadJobs()"> Show inactive
   </label>
   <input class="jobs-search" id="jobs-search" placeholder="Search by name…" oninput="loadJobsDebounced()">
 </div>
@@ -331,6 +335,8 @@ async function loadJobs() {
   try {
     const params = { limit: 50, ...(status && { status }), ...(type && { type }), ...(search && { search }) };
     if (document.getElementById('jobs-show-internal')?.checked) params.internal = 'true';
+    // Default hides paused jobs (active=true). Toggle on → show all (omit filter).
+    if (!document.getElementById('jobs-show-inactive')?.checked) params.active = 'true';
     const data = await api('/scheduled-jobs', 'GET', params);
     const jobs = data.jobs || [];
     if (!jobs.length) {
@@ -353,8 +359,13 @@ function jobCardHTML(job) {
   const statusClass = { pending:'status-pending', running:'status-running', completed:'status-completed', failed:'status-failed' }[job.status] || 'status-pending';
   const typeClass = `type-${job.type}`;
   const when = job.scheduled_time ? new Date(job.scheduled_time).toLocaleString() : '—';
+  const isPaused = job.active === 0 || job.active === false;
+  // Pause/resume is only offered for user-facing job types in a pending/failed
+  // state — mirrors the server-side eligibility guard.
+  const canToggleActive = ['one_time', 'recurring'].includes(job.type)
+                       && ['pending', 'failed'].includes(job.status);
   return `
-    <div class="job-card">
+    <div class="job-card"${isPaused ? ' style="opacity:0.62"' : ''}>
       <div class="job-status-dot ${dotClass}"></div>
       <div class="job-info">
         <div class="job-name"><span class="job-id-tag">#${job.id}</span>${esc(job.name || 'Untitled')}</div>
@@ -366,9 +377,13 @@ function jobCardHTML(job) {
           ${job.expires_at ? `<span><i class="fa-solid fa-flag-checkered"></i> Expires ${new Date(job.expires_at).toLocaleDateString()}</span>` : ''}
         </div>
       </div>
+      ${isPaused ? '<span class="status-badge status-paused">paused</span>' : ''}
       <span class="status-badge ${statusClass}">${job.status}</span>
       <span class="job-type-badge ${typeClass}">${job.type.replace('_',' ')}</span>
       <div class="job-actions">
+        ${canToggleActive ? (isPaused
+          ? `<button class="btn btn-outline btn-sm" onclick="jobSetActive(${job.id}, true)" title="Resume"><i class="fa-solid fa-play"></i></button>`
+          : `<button class="btn btn-outline btn-sm" onclick="jobSetActive(${job.id}, false)" title="Pause"><i class="fa-solid fa-pause"></i></button>`) : ''}
         ${['pending','failed'].includes(job.status) ? `<button class="btn btn-outline btn-sm" onclick="jobEdit(${job.id})"><i class="fa-solid fa-pencil"></i></button>` : ''}
         ${job.status === 'failed' ? `<button class="btn btn-primary btn-sm" onclick="jobRetry(${job.id})" title="Reschedule now"><i class="fa-solid fa-rotate-right"></i></button>` : ''}
         <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border:none" onclick="jobDelete(${job.id})" title="Delete"><i class="fa-solid fa-trash"></i></button>
@@ -738,6 +753,16 @@ async function jobRetry(id) {
   }
 }
 
+async function jobSetActive(id, active) {
+  try {
+    await api(`/scheduled-jobs/${id}/active`, 'PATCH', { active });
+    await loadJobs();
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: active ? 'Job resumed' : 'Job paused', timer: 1800, showConfirmButton: false });
+  } catch (e) {
+    Swal.fire('Error', e.message, 'error');
+  }
+}
+
 async function jobDelete(id) {
   const r = await Swal.fire({ title: 'Delete this job?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
@@ -862,6 +887,7 @@ window.loadJobsDebounced = loadJobsDebounced;
 window.jobNew            = jobNew;
 window.jobEdit           = jobEdit;
 window.jobRetry          = jobRetry;
+window.jobSetActive      = jobSetActive;
 window.jobDelete         = jobDelete;
 window.jobView           = jobView;
 window.sjToggleFields    = sjToggleFields;

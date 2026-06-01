@@ -149,6 +149,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
       SELECT *
       FROM scheduled_jobs
       WHERE status = 'pending'
+        AND active = 1
         AND scheduled_time <= NOW()
         AND (expires_at IS NULL OR expires_at > NOW())
         AND (max_executions IS NULL OR execution_count < max_executions)
