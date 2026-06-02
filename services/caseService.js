@@ -441,6 +441,38 @@ async function removeCaseContact(db, caseId, contactId) {
   return { removed: result.affectedRows > 0 };
 }
 
+/**
+ * Fetch the contacts related to a case (via case_relate), in a minimal shape
+ * suitable for pickers/selects. Mirrors getCase's "clients" include but as a
+ * standalone, lightweight query — does NOT load the case row or other
+ * sub-entities.
+ *
+ * Returns rows ordered Primary → Secondary → Other → Bystander, then by name,
+ * so a "default to Primary" caller can just take the first row.
+ *
+ * @param {object} db
+ * @param {string} caseId
+ * @returns {Promise<Array<{contact_id, contact_name, contact_phone, contact_email, relate_type, relate_id}>>}
+ */
+async function getCaseContacts(db, caseId) {
+  const [rows] = await db.query(
+    `SELECT
+       co.contact_id,
+       co.contact_name,
+       co.contact_phone,
+       co.contact_email,
+       cr.case_relate_type AS relate_type,
+       cr.case_relate_id   AS relate_id
+     FROM case_relate cr
+     JOIN contacts co ON co.contact_id = cr.case_relate_client_id
+     WHERE cr.case_relate_case_id = ?
+     ORDER BY FIELD(cr.case_relate_type, 'Primary','Secondary','Other','Bystander'),
+              co.contact_name`,
+    [caseId]
+  );
+  return rows;
+}
+
 
 // ─────────────────────────────────────────────────────────────
 // checkCaseNumberCollision  (Phase 4.1 — adopt-existing)
@@ -597,6 +629,7 @@ module.exports = {
   updateCase,
   addCaseContact,
   removeCaseContact,
+  getCaseContacts,
   searchCases,
   checkCaseNumberCollision
 };

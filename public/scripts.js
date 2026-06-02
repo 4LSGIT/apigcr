@@ -998,6 +998,19 @@ function _resolveAddFile() {
     }
     .cad-create-btn:hover { background: #2563eb; color: #fff; }
     .cad-create-row { margin: 0.6em 0 0.2em; text-align: left; }
+
+    /* ── newApptDialog (shared appt creator) ── */
+    /* Same dropdown-spill fix: let embedded Contact/Case pickers escape SWAL's
+       overflow:auto html container instead of being clipped. */
+    .swal2-html-container.na-html { overflow: visible; }
+    .na-html .cp-dropdown { max-height: 12em; }
+    .na-field { margin: 0 0 0.5em; text-align: left; }
+    .na-field > label { display: block; font-size: 0.8em; color: #666; margin-bottom: 0.15em; }
+    .na-fixed { text-align: left; margin: 0 0 0.5em; font-size: 0.95em; }
+    .na-section-label { font-weight: bold; font-size: 0.9em; margin: 0.6em 0 0.2em; text-align: left; }
+    .na-chosen { font-size: 0.85em; color: #555; margin-top: 0.25em; text-align: left; }
+    .na-chosen:empty { display: none; }
+    .na-change { font-size: 0.82em; margin-left: 0.5em; color: #2563eb; }
   `;
   document.head.appendChild(style);
 })();
@@ -1337,8 +1350,8 @@ function newContact(prefill = {}, onSuccess = null) {
          <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
          ${emailStartHtml}
          <label class="input-label">Set Appointment:</label>
-         <input type="datetime-local" id="NCDate" style="width:200px;" disabled title="Coming soon"><br>
-         <label class="sub-label" style="color:#999;">Temporarily disabled - coming soon.</label><br>
+         <input type="datetime-local" id="NCDate" style="width:200px;" title="Optionally book a first appointment"><br>
+         <label class="sub-label">Optional — if set, you'll schedule the appointment next.</label><br>
          <label class="input-label">Case Type:</label>
          <select id="NCType" style="width:200px;" onchange="E('NCOtherType').style.display = this.value === 'Other' ? '' : 'none';">
           <option selected value="">Select a case type</option>
@@ -1425,7 +1438,7 @@ function newContact(prefill = {}, onSuccess = null) {
           });
         }
 
-        return { type: "client", data: contactResult };
+        return { type: "client", data: contactResult, apptDate: date, contactId: contactResult.id, contactName: name };
       } catch (err) {
         Swal.showValidationMessage(err.message || "Failed to create client");
         return false;
@@ -1486,7 +1499,7 @@ function newContact(prefill = {}, onSuccess = null) {
           case_type: caseType
         });
 
-        return { type: "case", data: caseResult, contactData: contactResult };
+        return { type: "case", data: caseResult, contactData: contactResult, apptDate: date, contactId: contactResult.id, contactName: name };
       } catch (err) {
         Swal.showValidationMessage(err.message || "Failed to create case");
         return false;
@@ -1499,7 +1512,7 @@ function newContact(prefill = {}, onSuccess = null) {
     if (!result.isConfirmed && !result.isDenied) return; // cancelled
     if (!result.value) return;
 
-    const { type, data } = result.value;
+    const { type, data, apptDate, contactId, contactName } = result.value;
 
     Toast.fire({
       icon: data.status || "success",
@@ -1517,6 +1530,803 @@ function newContact(prefill = {}, onSuccess = null) {
         }
       }
       if (typeof onSuccess === "function") onSuccess(data);
+
+      // Optional first appointment: if a date was entered, open the shared
+      // appt creator pre-filled with the new contact + date. Attach the new
+      // case when this was the "Add & Open Case" path; otherwise allow an
+      // optional case pick.
+      if (apptDate && contactId != null) {
+        const apptOpts = {
+          contactId,
+          contactLabel: contactName || ('Contact ' + contactId),
+          defaultDate:  apptDate,
+        };
+        if (type === "case" && data && data.id != null) {
+          apptOpts.caseId = data.id;
+        } else {
+          apptOpts.allowCasePick = true;
+        }
+        newApptDialog(apptOpts);
+      }
+    }
+  });
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   newContactInline(prefill, onSuccess)   (OPTION B — inline appt intake)
+
+   Same as newContact(), but instead of handing off to newApptDialog() after
+   the contact/case is created, it embeds a MINIMAL appointment block directly
+   in the intake modal, revealed by a "Schedule a first appointment" checkbox.
+   On submit it creates the contact (+ optional case), then POSTs the appt in
+   the same flow. The appt is attached to whatever case the intake created (the
+   Add & Open Case path, or the client path when a Case Type was chosen).
+
+   This exists alongside newContact() so the two intake flows can be compared.
+   Wire a header button to whichever wins; delete the other.
+
+   Inline appt fields are intentionally minimal: With, Type, datetime, Method.
+   Confirmation-message (SMS/email) is NOT offered inline — use the standalone
+   newApptDialog() for that. appt_with defaults to the lowest-id does_appts user
+   (Stuart today, resolved live).
+   ────────────────────────────────────────────────────────────────────────── */
+function newContactInline(prefill = {}, onSuccess = null) {
+  const hasPhoneStart = Object.prototype.hasOwnProperty.call(prefill, 'phone_start_date')
+                        && prefill.phone_start_date != null;
+  const hasEmailStart = Object.prototype.hasOwnProperty.call(prefill, 'email_start_date')
+                        && prefill.email_start_date != null;
+  const forceCreate = prefill.force_create === true;
+
+  const phoneStartHtml = hasPhoneStart
+    ? `<label class="input-label">Phone start date:</label>
+       <input style="width:200px;" type="date" id="NCPhoneStart"><br>`
+    : '';
+  const emailStartHtml = hasEmailStart
+    ? `<label class="input-label">Email start date:</label>
+       <input style="width:200px;" type="date" id="NCEmailStart"><br>`
+    : '';
+
+  // appt_with options (lowest-id does_appts user default)
+  const firm = (typeof window !== 'undefined' && window.firmData)
+    ? window.firmData
+    : ((P && P.firmData) || {});
+  const apptUsers = (firm.users || [])
+    .filter(u => u.does_appts)
+    .sort((a, b) => a.user - b.user);
+  const defaultWith = apptUsers.length ? String(apptUsers[0].user) : '';
+  const withOptions = apptUsers
+    .map(u => `<option value="${u.user}"${String(u.user) === defaultWith ? ' selected' : ''}>with ${escAttr(u.user_name)}</option>`)
+    .join('');
+
+  // Minimal inline appt block — hidden until the checkbox is ticked.
+  const apptBlockHtml = `
+    <label class="input-label">First appointment:</label>
+    <label class="sub-label" style="text-align:left;">
+      <input type="checkbox" id="NCApptOn" style="width:auto;"> Schedule one now
+    </label><br>
+    <div id="NCApptBox" style="display:none; border:1px solid #e3e7ea; border-radius:5px; padding:8px; margin:4px 0; text-align:left;">
+      <form onchange="newContactInline._recompute && newContactInline._recompute()">
+      <select id="NCApptWith" style="width:280px;">${withOptions}</select><br>
+      <select id="NCApptTypeSel" style="width:280px; margin-top:6px;"
+        onchange="[E('NCApptType').value,E('NCApptLen').value]=this.value.split(',');E('NCApptOtherSpan').style.display=this.value==','?'':'none'">
+        <option disabled selected>Appointment Type:</option>
+        <option value="Strategy Session,15">Strategy Session (15 min)</option>
+        <option value="Strategy Session Follow Up,15">Strategy Session Follow Up (15 min)</option>
+        <option value="Strategy Session Follow Up,30">Strategy Session Follow Up (30 min)</option>
+        <option value="Pre-filing Meeting,30">Pre-filing Meeting (30 min)</option>
+        <option value="Schedules Completion Meeting,45">Schedules Completion Meeting (45 min)</option>
+        <option value="Documents Completion Meeting,30">Documents Completion Meeting (30 min)</option>
+        <option value="Matrix Completion Meeting,15">Matrix Completion Meeting (15 min)</option>
+        <option value=",">Other</option>
+      </select><br>
+      <span id="NCApptOtherSpan" style="display:none;">
+        <input id="NCApptType" style="width:200px;" placeholder="Other type">
+        <input id="NCApptLen" style="width:60px;" maxlength="3" oninput="this.value=isNaN(this.value)?'':this.value" placeholder="min">
+      </span><br>
+      <span style="font-size:0.85em;">Method:
+        <input type="radio" name="NCApptPlatform" id="NCApptTel" value="telephone" style="width:auto;" checked><label for="NCApptTel">Tel</label>
+        <input type="radio" name="NCApptPlatform" id="NCApptZoom" value="Zoom" style="width:auto;"><label for="NCApptZoom">Zoom</label>
+        <input type="radio" name="NCApptPlatform" id="NCApptIP" value="in-person" style="width:auto;"><label for="NCApptIP">In-person</label>
+      </span><br>
+      <input type="datetime-local" id="NCApptDate" style="width:280px; margin-top:6px;"><br>
+      <textarea id="NCApptNote" placeholder="Appointment notes (optional)" style="width:280px; height:48px; margin-top:6px;"></textarea><br>
+      <span style="font-size:0.85em;">Confirmation:
+        <input type="checkbox" id="NCApptSMS" style="width:auto;"><label for="NCApptSMS">SMS</label>
+        <input type="checkbox" id="NCApptEmail" style="width:auto;"><label for="NCApptEmail">Email</label>
+      </span><br>
+      </form>
+      <textarea id="NCApptConfirmMsg" style="display:none; width:280px; height:54px; margin-top:4px; resize:none;"></textarea>
+    </div>`;
+
+  // Hidden mirror inputs (NCApptType/NCApptLen live in the Other span; the
+  // type-select writes into them even while hidden — same trick as newAppt).
+  // We DON'T add duplicate IDs here: NCApptType/NCApptLen exist once, inside
+  // the Other span. The preset options set their .value via the select.
+
+  Swal.fire({
+    title: "Add New Client:",
+    html: `<label class="input-label">Name:</label>
+         <input style="width:200px;" type="text" id="NCName" placeholder="Full Name"><br>
+         <label class="input-label">Phone:</label>
+         <input style="width:200px;" id="NCPhone" type="text" placeholder="(###) ###-####" title="Enter a valid phone number"><br>
+         ${phoneStartHtml}
+         <label class="input-label">Email:</label>
+         <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
+         ${emailStartHtml}
+         <label class="input-label">Case Type:</label>
+         <select id="NCType" style="width:200px;" onchange="E('NCOtherType').style.display = this.value === 'Other' ? '' : 'none';">
+          <option selected value="">Select a case type</option>
+          <option>Bankruptcy</option>
+          <option>Other</option>
+         </select>
+         <input style="width:200px; display:none;" type="text" id="NCOtherType" placeholder="Enter case type"><br>
+         <label class="sub-label">Optional, select type to create lead.</label><br>
+         ${apptBlockHtml}
+         `,
+    showCancelButton: true,
+    showConfirmButton: true,
+    cancelButtonText: "Cancel",
+    confirmButtonText: "Add & Open Client",
+    showCloseButton: true,
+    showDenyButton: true,
+    denyButtonText: "Add & Open Case",
+    denyButtonColor: "#26abe2",
+    showLoaderOnConfirm: true,
+    showLoaderOnDeny: true,
+
+    didOpen: () => {
+      if (prefill.name) E("NCName").value = prefill.name;
+      if (prefill.phone) {
+        const p = String(prefill.phone).replace(/\D/g, "");
+        E("NCPhone").value = p.length === 10
+          ? `(${p.slice(0,3)}) ${p.slice(3,6)}-${p.slice(6)}`
+          : prefill.phone;
+      }
+      if (prefill.email) E("NCEmail").value = prefill.email;
+      if (hasPhoneStart && E("NCPhoneStart")) E("NCPhoneStart").value = prefill.phone_start_date;
+      if (hasEmailStart && E("NCEmailStart")) E("NCEmailStart").value = prefill.email_start_date;
+      if (defaultWith && E("NCApptWith")) E("NCApptWith").value = defaultWith;
+      const on = E("NCApptOn");
+      if (on) on.addEventListener("change", () => {
+        E("NCApptBox").style.display = on.checked ? "" : "none";
+      });
+      // Confirmation-message auto-fill (parallels newApptDialog.recompute).
+      newContactInline._recompute = function () {
+        const dt = E("NCApptDate") ? E("NCApptDate").value : '';
+        const date = dt
+          ? new Date(dt).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).replace(',', ' at')
+          : '';
+        const hasCom = (E("NCApptSMS") && E("NCApptSMS").checked) || (E("NCApptEmail") && E("NCApptEmail").checked);
+        const box = E("NCApptConfirmMsg");
+        if (!box) return;
+        box.style.display = hasCom ? '' : 'none';
+        if (hasCom && dt) {
+          const len  = E("NCApptLen") ? E("NCApptLen").value : '';
+          const plat = (document.querySelector('input[name="NCApptPlatform"]:checked') || {}).value || '';
+          const type = E("NCApptType") ? E("NCApptType").value : '';
+          box.value = `This is to confirm that I scheduled you for a ${len} minute ${plat} ${type} on ${date}.`;
+        }
+      };
+    },
+
+    willClose: () => { delete newContactInline._recompute; },
+
+    // Shared validation + create. mode: 'client' | 'case'
+    preConfirm:  () => _ncInlineSubmit('client'),
+    preDeny:     () => _ncInlineSubmit('case'),
+    allowOutsideClick: () => !Swal.isLoading()
+
+  }).then((result) => {
+    if (!result.isConfirmed && !result.isDenied) return;
+    if (!result.value) return;
+    const { type, data, apptResult } = result.value;
+
+    Toast.fire({
+      icon: data.status || "success",
+      title: data.status === "success" ? "Success" : "Error",
+      text: data.message
+    });
+    if (apptResult) {
+      Toast.fire({
+        icon: apptResult.status || 'success',
+        title: apptResult.title || 'Appointment',
+        text: apptResult.message
+      });
+    }
+
+    if (data.status === "success") {
+      if (!prefill.suppressOpen) {
+        const openFile = _resolveAddFile();
+        if (type === "client") {
+          if (openFile) openFile(data.name, "client", data.id);
+        } else if (type === "case") {
+          if (openFile) openFile(data.id, "case", data.id);
+        }
+      }
+      if (typeof onSuccess === "function") onSuccess(data);
+    }
+  });
+
+  // ── shared submit for both buttons ──
+  async function _ncInlineSubmit(mode) {
+    const name = E("NCName").value.trim();
+    const phone = E("NCPhone").value.replace(/\D/g, "");
+    const email = E("NCEmail").value.trim();
+    const caseTypeRaw = E("NCType").value;
+    const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
+
+    // ── Contact validation (shared) ──
+    if (!name || (!E("NCPhone").value && !email)) {
+      Swal.showValidationMessage("Name plus at least a phone or email is required");
+      return false;
+    }
+    if (name.split(" ").length < 2) {
+      Swal.showValidationMessage("Please fill in a valid full name");
+      return false;
+    }
+    if (E("NCPhone").value && phone.length !== 10) {
+      Swal.showValidationMessage("Please fill in a valid phone number");
+      return false;
+    }
+    if (email && !/^\S+@\S+\.\S+$/.test(email)) {
+      Swal.showValidationMessage("Please fill in a valid email address");
+      return false;
+    }
+    // ── Case-type rules differ by button ──
+    if (mode === 'case' && !caseType) {
+      Swal.showValidationMessage("Please select a case type");
+      return false;
+    }
+    if (caseTypeRaw === "Other" && !caseType) {
+      Swal.showValidationMessage("Please enter a case type");
+      return false;
+    }
+
+    // ── Appt validation (only if scheduling) ──
+    const apptOn = E("NCApptOn") && E("NCApptOn").checked;
+    let apptType, apptLen, apptDate, apptWith, apptPlatform;
+    if (apptOn) {
+      apptType = E("NCApptType") ? E("NCApptType").value : '';
+      apptLen  = E("NCApptLen")  ? E("NCApptLen").value  : '';
+      apptWith = E("NCApptWith") ? E("NCApptWith").value : '';
+      apptPlatform = (document.querySelector('input[name="NCApptPlatform"]:checked') || {}).value || '';
+      const dtRaw = E("NCApptDate") ? E("NCApptDate").value : '';
+      if (!apptType || !apptLen || !dtRaw) {
+        Swal.showValidationMessage("Complete the appointment type, length, and date — or untick 'Schedule one now'.");
+        return false;
+      }
+      if (!apptWith) {
+        Swal.showValidationMessage("Pick who the appointment is with.");
+        return false;
+      }
+      apptDate = dtRaw.replace("T", " ") + ":00";
+      if (whenDate(apptDate) === "past") {
+        Swal.showValidationMessage("Please choose a future appointment date.");
+        return false;
+      }
+    }
+
+    try {
+      const body = { name, phone, email };
+      if (hasPhoneStart && E("NCPhoneStart") && E("NCPhoneStart").value) body.phone_start_date = E("NCPhoneStart").value;
+      if (hasEmailStart && E("NCEmailStart") && E("NCEmailStart").value) body.email_start_date = E("NCEmailStart").value;
+      if (forceCreate) body.duplicate = "duplicate";
+
+      // 1) contact
+      const contactResult = await P.apiSend("/api/intake/contact", "POST", body);
+
+      // 2) case (always for 'case' mode; for 'client' mode only if type chosen)
+      let caseResult = null;
+      if (mode === 'case' || caseType) {
+        caseResult = await P.apiSend("/api/intake/case", "POST", {
+          contact_id: contactResult.id,
+          case_type: caseType
+        });
+      }
+
+      // 3) appt (optional) — attach the created case if there is one
+      let apptResult = null;
+      if (apptOn) {
+        const apptBody = {
+          contact_id:    contactResult.id,
+          appt_type:     apptType,
+          appt_length:   apptLen,
+          appt_platform: apptPlatform,
+          appt_date:     apptDate,
+          appt_with:     apptWith,
+          note:            E("NCApptNote") ? E("NCApptNote").value : '',
+          confirm_sms:     E("NCApptSMS")   ? E("NCApptSMS").checked   : false,
+          confirm_email:   E("NCApptEmail") ? E("NCApptEmail").checked : false,
+          confirm_message: E("NCApptConfirmMsg") ? E("NCApptConfirmMsg").value : '',
+        };
+        if (caseResult && caseResult.id != null) apptBody.case_id = caseResult.id;
+        apptResult = await P.apiSend("/api/appts", "POST", apptBody);
+      }
+
+      const data = (mode === 'case') ? caseResult : contactResult;
+      return { type: mode, data, contactData: contactResult, caseData: caseResult, apptResult };
+    } catch (err) {
+      Swal.showValidationMessage(err.message || "Failed to create");
+      return false;
+    }
+  }
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   newApptDialog(opts)   (shared appointment creator)
+
+   One dialog for all surfaces (a/b shell appts tab, case2, contact2, and
+   newContact's date hand-off). Sends appt_with explicitly (the per-file SWALs
+   it replaced never did, so every booked appt defaulted server-side to user 1
+   / Stuart).
+
+   The dialog has two SIDES — contact and case — that cross-constrain:
+
+     CONTACT side (a client is always required):
+       contactFixed: { id, label }   — locked, shown as a line.
+       contactList:  [ {contact_id, contact_name, relate_type}, … ]  — <select>.
+         contactDefaultPrimary: true (default) → preselect the 'Primary' row.
+       contactPick:  true            — typeahead ContactPicker.
+       (legacy: contactId/contactLabel ⇒ contactFixed; caseContacts ⇒ list.)
+
+     CASE side (optional):
+       caseFixed: { id, label }      — locked, shown as a line.
+       caseList:  [ {case_id, case_number, case_number_full, case_type}, … ]
+         caseRequired: true → no '— none —' option (default false = optional).
+       casePick:  true               — typeahead CasePicker.
+       (omit all three ⇒ no case attach. legacy: caseId/caseLabel ⇒ caseFixed;
+        allowCasePick ⇒ casePick.)
+
+     CROSS-CONSTRAIN (shell two-sided): when a side is a picker and the OTHER
+     side resolves, this side is fetched and collapsed into a <select>:
+       pick a contact → GET /api/contacts/:id/cases  → case side becomes an
+                        optional <select> of that contact's cases.
+       pick a case    → GET /api/cases/:id/contacts  → contact side becomes a
+                        required <select> defaulting to Primary.
+     A 'change' link reverts a cross-populated side back to its picker.
+
+     defaultDate  'YYYY-MM-DDTHH:mm' — pre-fill the datetime.
+     onCreated    fn(data) — fired after a successful create; the caller
+                  refreshes its own surface (the dialog stays surface-agnostic).
+
+   appt_with: seeded from firmData.users where does_appts, sorted by user id,
+   lowest-id user preselected (Stuart today — resolved live, never hardcoded).
+   ────────────────────────────────────────────────────────────────────────── */
+function newApptDialog(opts = {}) {
+  // ── Normalize the two "sides" (contact, case) from caller opts. ──────────
+  // Each side ends up in one of three modes:
+  //   'fixed'  — locked id, just shown as a line.
+  //   'list'   — a preloaded array → <select>.
+  //   'pick'   — a typeahead picker (ContactPicker / CasePicker).
+  // On the shell, a side starts as 'pick'; resolving the OTHER side fetches
+  // this side's candidates and swaps it to 'list' (cross-constrain). A
+  // "change" link reverts a cross-populated side back to 'pick'.
+  //
+  // Back-compat shims for the prior flat opts (caseId/contactId/caseContacts/
+  // allowCasePick) so existing call sites keep working while we migrate them.
+  const contactSide = {
+    mode:   null,
+    fixedId: null, fixedLabel: '',
+    list:   null,            // [{contact_id, contact_name, relate_type}]
+    required: true,          // a contact is always required to book
+    defaultPrimary: false,
+    selectedId: null,
+    pickerHostId: 'naContactHost',
+    crossPopulated: false,   // was this side filled by resolving the case side?
+    drove: false,            // did the user pick this side (vs. caller-fixed)?
+  };
+  const caseSide = {
+    mode:   null,
+    fixedId: null, fixedLabel: '',
+    list:   null,            // [{case_id, case_number, case_number_full, ...}]
+    allowEmpty: true,        // a case is optional
+    selectedId: null,
+    pickerHostId: 'naCaseHost',
+    drove: false,            // did the user pick this side (vs. caller-fixed)?
+    crossPopulated: false,
+  };
+
+  // Contact side from opts
+  if (opts.contactFixed && opts.contactFixed.id != null) {
+    contactSide.mode = 'fixed';
+    contactSide.fixedId = opts.contactFixed.id;
+    contactSide.fixedLabel = opts.contactFixed.label || ('Contact ' + opts.contactFixed.id);
+    contactSide.selectedId = opts.contactFixed.id;
+  } else if (opts.contactId != null) {                       // legacy flat
+    contactSide.mode = 'fixed';
+    contactSide.fixedId = opts.contactId;
+    contactSide.fixedLabel = opts.contactLabel || ('Contact ' + opts.contactId);
+    contactSide.selectedId = opts.contactId;
+  } else if (Array.isArray(opts.contactList)) {
+    contactSide.mode = 'list';
+    contactSide.list = opts.contactList;
+    contactSide.defaultPrimary = opts.contactDefaultPrimary !== false;
+  } else if (Array.isArray(opts.caseContacts)) {             // legacy flat (case2)
+    contactSide.mode = 'list';
+    contactSide.list = opts.caseContacts;
+    contactSide.defaultPrimary = true;
+  } else {
+    contactSide.mode = 'pick';
+  }
+
+  // Case side from opts
+  if (opts.caseFixed && opts.caseFixed.id != null) {
+    caseSide.mode = 'fixed';
+    caseSide.fixedId = opts.caseFixed.id;
+    caseSide.fixedLabel = opts.caseFixed.label || ('Case ' + opts.caseFixed.id);
+    caseSide.selectedId = opts.caseFixed.id;
+  } else if (opts.caseId != null) {                          // legacy flat fixed
+    caseSide.mode = 'fixed';
+    caseSide.fixedId = opts.caseId;
+    caseSide.fixedLabel = opts.caseLabel || ('Case ' + opts.caseId);
+    caseSide.selectedId = opts.caseId;
+  } else if (Array.isArray(opts.caseList)) {
+    caseSide.mode = 'list';
+    caseSide.list = opts.caseList;
+    caseSide.allowEmpty = opts.caseRequired !== true;
+  } else if (opts.casePick || opts.allowCasePick) {          // pick (shell) / legacy
+    caseSide.mode = 'pick';
+  } else {
+    caseSide.mode = 'none';                                  // no case attach at all
+  }
+
+  // ── firmData / appt_with select (lowest-id does_appts user is default) ──
+  const firm = (typeof window !== 'undefined' && window.firmData)
+    ? window.firmData
+    : ((P && P.firmData) || {});
+  const apptUsers = (firm.users || [])
+    .filter(u => u.does_appts)
+    .sort((a, b) => a.user - b.user);
+  const defaultWith = apptUsers.length ? String(apptUsers[0].user) : '';
+  const withOptions = apptUsers
+    .map(u => `<option value="${u.user}"${String(u.user) === defaultWith ? ' selected' : ''}>with ${escAttr(u.user_name)}</option>`)
+    .join('');
+
+  // ── Render helpers for each side (into its host div) ─────────────────────
+  function caseLabelOf(row) {
+    const numRaw = (row && (row.case_number_full || row.case_number)) || '';
+    return (numRaw && numRaw !== row.case_id) ? numRaw : ('Case ' + (row.case_id ?? ''));
+  }
+
+  // Active picker handles (so we can destroy on close / on side-swap)
+  let contactPicker = null;
+  let casePicker = null;
+
+  function destroyContactPicker() { if (contactPicker) { contactPicker.destroy(); contactPicker = null; } }
+  function destroyCasePicker()    { if (casePicker)    { casePicker.destroy();    casePicker = null; } }
+
+  // Render the CONTACT side into its host according to contactSide.mode.
+  function renderContactSide() {
+    const host = E(contactSide.pickerHostId);
+    if (!host) return;
+    destroyContactPicker();
+    host.innerHTML = '';
+
+    if (contactSide.mode === 'fixed') {
+      const chgLink = contactSide.drove
+        ? ` <a href="#" id="naContactChange" class="na-change">change</a>` : '';
+      host.innerHTML = `<div class="na-fixed"><b>Client:</b> ${escAttr(contactSide.fixedLabel)}${chgLink}</div>`;
+      const chg = E('naContactChange');
+      if (chg) chg.addEventListener('click', (e) => { e.preventDefault(); revertToPickers(); });
+      return;
+    }
+    if (contactSide.mode === 'list') {
+      const list = contactSide.list || [];
+      const primary = contactSide.defaultPrimary
+        ? list.find(c => (c.relate_type || c.case_relate_type) === 'Primary')
+        : null;
+      const single = list.length === 1;
+      const lockNote = contactSide.crossPopulated
+        ? ` <a href="#" id="naContactChange" class="na-change">change</a>` : '';
+      let sel = `<select id="naContactSel" style="width:300px;">`;
+      if (!single && !primary) sel += `<option disabled selected value="">Select a client</option>`;
+      list.forEach(c => {
+        const rel = c.relate_type || c.case_relate_type || '';
+        const label = rel
+          ? `${c.contact_id} - ${escAttr(c.contact_name || '')} (${escAttr(rel)})`
+          : `${c.contact_id} - ${escAttr(c.contact_name || '')}`;
+        const isDefault = primary && c.contact_id === primary.contact_id;
+        sel += `<option value="${c.contact_id}"${isDefault ? ' selected' : ''}>${label}</option>`;
+      });
+      sel += `</select>`;
+      host.innerHTML = `<label>Client${contactSide.required ? '' : ' (optional)'}</label>${sel}${lockNote}`;
+      // Establish selectedId from the rendered select (default/primary/single).
+      const selEl = E('naContactSel');
+      contactSide.selectedId = selEl ? (selEl.value || null) : null;
+      if (selEl) selEl.addEventListener('change', () => {
+        contactSide.selectedId = selEl.value || null;
+        // Changing the contact (when it's the driving side) re-narrows cases.
+        maybeCrossPopulateCasesFromContact();
+      });
+      const chg = E('naContactChange');
+      if (chg) chg.addEventListener('click', (e) => { e.preventDefault(); revertToPickers(); });
+      return;
+    }
+    if (contactSide.mode === 'pick') {
+      host.innerHTML = `<label>Client</label><div id="naContactPick"></div>`;
+      contactPicker = ContactPicker(E('naContactPick'), {
+        placeholder: 'Search contacts…',
+        onSelect: (cid, row) => {
+          contactSide.selectedId = cid;
+          contactSide.fixedLabel = `${cid} - ${(row && row.contact_name) || ('Contact ' + cid)}`;
+          // Collapse this side to a confirmed line (with a change link).
+          contactSide.mode = 'fixed';
+          contactSide.drove = true;
+          renderContactSide();
+          maybeCrossPopulateCasesFromContact();
+        },
+      });
+    }
+  }
+
+  // Render the CASE side into its host according to caseSide.mode.
+  function renderCaseSide() {
+    const host = E(caseSide.pickerHostId);
+    if (!host) return;
+    destroyCasePicker();
+    host.innerHTML = '';
+
+    if (caseSide.mode === 'none') return;
+
+    if (caseSide.mode === 'fixed') {
+      const chgLink = caseSide.drove
+        ? ` <a href="#" id="naCaseChange" class="na-change">change</a>` : '';
+      host.innerHTML = `<div class="na-fixed"><b>Case:</b> ${escAttr(caseSide.fixedLabel)}${chgLink}</div>`;
+      const chg = E('naCaseChange');
+      if (chg) chg.addEventListener('click', (e) => { e.preventDefault(); revertToPickers(); });
+      return;
+    }
+    if (caseSide.mode === 'list') {
+      const list = caseSide.list || [];
+      const lockNote = caseSide.crossPopulated
+        ? ` <a href="#" id="naCaseChange" class="na-change">change</a>` : '';
+      let sel = `<select id="naCaseSel" style="width:300px;">`;
+      if (caseSide.allowEmpty) sel += `<option value="" selected>— none —</option>`;
+      list.forEach(c => {
+        const label = caseLabelOf(c) + (c.case_type ? `  ·  ${escAttr(c.case_type)}` : '');
+        sel += `<option value="${c.case_id}">${label}</option>`;
+      });
+      sel += `</select>`;
+      host.innerHTML = `<label>Case${caseSide.allowEmpty ? ' (optional)' : ''}</label>${sel}${lockNote}`;
+      const selEl = E('naCaseSel');
+      caseSide.selectedId = selEl ? (selEl.value || null) : null;
+      if (selEl) selEl.addEventListener('change', () => {
+        caseSide.selectedId = selEl.value || null;
+      });
+      const chg = E('naCaseChange');
+      if (chg) chg.addEventListener('click', (e) => { e.preventDefault(); revertToPickers(); });
+      return;
+    }
+    if (caseSide.mode === 'pick') {
+      host.innerHTML = `<label>Case (optional)</label><div id="naCasePick"></div>`;
+      casePicker = CasePicker(E('naCasePick'), {
+        placeholder: 'Search cases…',
+        onSelect: (cid, row) => {
+          caseSide.selectedId = cid;
+          caseSide.fixedLabel = caseLabelOf(row || { case_id: cid });
+          // Collapse this side to a confirmed line (with a change link) so the
+          // raw typed query no longer lingers in the input.
+          caseSide.mode = 'fixed';
+          caseSide.drove = true;
+          renderCaseSide();
+          maybeCrossPopulateContactsFromCase();
+        },
+      });
+    }
+  }
+
+  // ── Revert both sides to their pickers (shell two-sided "change") ────────
+  // Only affects sides that the user drove or that were cross-populated — a
+  // caller-fixed or caller-list side (case2 / contact2) is left untouched.
+  function revertToPickers() {
+    if (contactSide.drove || contactSide.crossPopulated) {
+      contactSide.mode = 'pick';
+      contactSide.drove = false;
+      contactSide.crossPopulated = false;
+      contactSide.selectedId = null;
+      contactSide.list = null;
+      renderContactSide();
+    }
+    if (caseSide.drove || caseSide.crossPopulated) {
+      caseSide.mode = 'pick';
+      caseSide.drove = false;
+      caseSide.crossPopulated = false;
+      caseSide.selectedId = null;
+      caseSide.list = null;
+      renderCaseSide();
+    }
+  }
+
+  // ── Cross-population (shell two-sided behavior) ──────────────────────────
+  // When the contact side resolves and the case side is a free picker OR an
+  // already cross-populated list, (re)fetch that contact's cases and present
+  // them as an optional select. Skip when the case side is caller-owned
+  // (fixed / caller list / none).
+  async function maybeCrossPopulateCasesFromContact() {
+    if (caseSide.mode !== 'pick' && !caseSide.crossPopulated) return;
+    const cid = contactSide.selectedId;
+    if (!cid) return;
+    try {
+      const data = await P.apiSend(`/api/contacts/${cid}/cases`, 'GET');
+      caseSide.list = (data && data.cases) || [];
+      caseSide.allowEmpty = true;
+      caseSide.crossPopulated = true;
+      caseSide.drove = false;
+      caseSide.mode = 'list';
+      caseSide.selectedId = null;
+      renderCaseSide();
+    } catch (err) {
+      // Soft-fail: leave the picker as-is.
+      console.error('[newApptDialog] load contact cases failed:', err && err.message);
+    }
+  }
+
+  // When the case side resolves and the contact side is a free picker OR an
+  // already cross-populated list, (re)fetch that case's contacts and present
+  // them as a required select defaulting to Primary. Skip when the contact
+  // side is caller-owned (fixed / caller list).
+  async function maybeCrossPopulateContactsFromCase() {
+    if (contactSide.mode !== 'pick' && !contactSide.crossPopulated) return;
+    const cid = caseSide.selectedId;
+    if (!cid) return;
+    try {
+      const data = await P.apiSend(`/api/cases/${cid}/contacts`, 'GET');
+      contactSide.list = (data && data.contacts) || [];
+      contactSide.required = true;
+      contactSide.defaultPrimary = true;
+      contactSide.crossPopulated = true;
+      contactSide.drove = false;
+      contactSide.mode = 'list';
+      contactSide.selectedId = null;
+      renderContactSide();
+    } catch (err) {
+      console.error('[newApptDialog] load case contacts failed:', err && err.message);
+    }
+  }
+
+  // ── Confirmation-message recompute (SMS/email auto-fill) ─────────────────
+  function recompute() {
+    const dt = E('naDate') ? E('naDate').value : '';
+    const date = dt
+      ? new Date(dt).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).replace(',', ' at')
+      : '';
+    const hasCom = (E('naSMS') && E('naSMS').checked) || (E('naEmail') && E('naEmail').checked);
+    if (E('naConfirmMsg')) {
+      E('naConfirmMsg').style.display = hasCom ? '' : 'none';
+      if (hasCom && dt) {
+        const len  = E('naLen') ? E('naLen').value : '';
+        const plat = (document.querySelector('input[name="naPlatform"]:checked') || {}).value || '';
+        const type = E('naType') ? E('naType').value : '';
+        E('naConfirmMsg').value = `This is to confirm that I scheduled you for a ${len} minute ${plat} ${type} on ${date}.`;
+      }
+    }
+  }
+
+  Swal.fire({
+    title: 'Schedule Appointment',
+    customClass: { htmlContainer: 'na-html' },
+    html: `
+      <div id="naContactHost" class="na-field"></div>
+      <div id="naCaseHost" class="na-field"></div>
+      <div class="na-section-label">With</div>
+      <select id="naWith" style="width:300px;">${withOptions}</select><br>
+      <form onchange="newApptDialog._recompute && newApptDialog._recompute()">
+      <select id="naTypeSelect" style="width:300px"
+        onchange="[E('naType').value,E('naLen').value]=this.value.split(',');E('naOtherSpan').style.display=this.value==','?'block':'none'">
+        <option disabled selected>Appointment Type:</option>
+        <option value="Strategy Session,15">Strategy Session (15 min)</option>
+        <option value="Strategy Session Follow Up,15">Strategy Session Follow Up (15 min)</option>
+        <option value="Strategy Session Follow Up,30">Strategy Session Follow Up (30 min)</option>
+        <option value="Pre-filing Meeting,30">Pre-filing Meeting (30 min)</option>
+        <option value="Schedules Completion Meeting,45">Schedules Completion Meeting (45 min)</option>
+        <option value="Documents Completion Meeting,30">Documents Completion Meeting (30 min)</option>
+        <option value="Matrix Completion Meeting,15">Matrix Completion Meeting (15 min)</option>
+        <option value="Schedules Completion Meeting,20">Schedules Completion Meeting (20 min)</option>
+        <option value=",">Other</option>
+      </select><br>
+      <span id="naOtherSpan" style="display:none">
+        <input id="naType" style="width:240px" placeholder="Other Appointment Type">
+        <input id="naLen" style="width:60px" maxlength="3" oninput="this.value=isNaN(this.value)?'':this.value" placeholder="length">
+      </span><br>
+      <label>Method: </label>
+      <input style="width:auto" type="radio" id="naTel" name="naPlatform" value="telephone" checked>
+      <label for="naTel">Telephone</label>
+      <input style="width:auto" type="radio" id="naZoom" name="naPlatform" value="Zoom">
+      <label for="naZoom">Zoom</label>
+      <input style="width:auto" type="radio" id="naInPerson" name="naPlatform" value="in-person">
+      <label for="naInPerson">In-person</label><br>
+      <input type="datetime-local" class="swal2-input" id="naDate"><br>
+      <textarea id="naNote" placeholder="Appointment Notes (optional)" style="height:60px;width:300px;"></textarea><br>
+      <label>Confirmation Message?</label>
+      <input style="width:auto" type="checkbox" id="naSMS"> <label for="naSMS">SMS</label>
+      <input style="width:auto" type="checkbox" id="naEmail"> <label for="naEmail">Email</label><br>
+      </form>
+      <textarea id="naConfirmMsg" style="display:none;height:60px;width:300px;resize:none;"></textarea>
+    `,
+    showCancelButton: true,
+    confirmButtonText: 'Schedule',
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+
+    didOpen: () => {
+      newApptDialog._recompute = recompute;
+      if (defaultWith && E('naWith')) E('naWith').value = defaultWith;
+      if (opts.defaultDate && E('naDate')) E('naDate').value = opts.defaultDate;
+      renderContactSide();
+      renderCaseSide();
+      recompute();
+    },
+
+    preConfirm: async () => {
+      // Resolve contact (always required)
+      const contactId = contactSide.selectedId;
+      if (!contactId) {
+        Swal.showValidationMessage('Pick a client for the appointment.');
+        return false;
+      }
+      const apptWith = E('naWith') ? E('naWith').value : '';
+      if (!apptWith) {
+        Swal.showValidationMessage('Pick who the appointment is with.');
+        return false;
+      }
+      const apptType = E('naType') ? E('naType').value : '';
+      const apptLen  = E('naLen')  ? E('naLen').value  : '';
+      const dtRaw    = E('naDate') ? E('naDate').value : '';
+      const platform = (document.querySelector('input[name="naPlatform"]:checked') || {}).value || '';
+      const note     = E('naNote') ? E('naNote').value : '';
+
+      if (!apptType || !apptLen || !dtRaw) {
+        Swal.showValidationMessage('Please complete all the mandatory fields.');
+        return false;
+      }
+      const apptDate = dtRaw.replace('T', ' ') + ':00';
+      if (whenDate(apptDate) === 'past') {
+        Swal.showValidationMessage('Please choose a future date.');
+        return false;
+      }
+
+      const body = {
+        contact_id:    contactId,
+        appt_type:     apptType,
+        appt_length:   apptLen,
+        appt_platform: platform,
+        appt_date:     apptDate,
+        appt_with:     apptWith,
+        note,
+        confirm_sms:     E('naSMS')   ? E('naSMS').checked   : false,
+        confirm_email:   E('naEmail') ? E('naEmail').checked : false,
+        confirm_message: E('naConfirmMsg') ? E('naConfirmMsg').value : '',
+      };
+      const useCaseId = caseSide.selectedId;
+      if (useCaseId != null && useCaseId !== '') body.case_id = useCaseId;
+
+      try {
+        const data = await P.apiSend('/api/appts', 'POST', body);
+        return { data };
+      } catch (err) {
+        Swal.showValidationMessage((err && err.message) || 'Failed to create appointment');
+        return false;
+      }
+    },
+
+    willClose: () => {
+      destroyContactPicker();
+      destroyCasePicker();
+      delete newApptDialog._recompute;
+    },
+
+  }).then((result) => {
+    if (!result.isConfirmed || !result.value) return;
+    const { data } = result.value;
+    Toast.fire({
+      icon:  data.status || 'success',
+      title: data.title || (data.status === 'success' ? 'Success' : 'Error'),
+      text:  data.message,
+    });
+    if (data.status === 'success' && typeof opts.onCreated === 'function') {
+      opts.onCreated(data);
     }
   });
 }

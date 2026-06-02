@@ -390,6 +390,7 @@
     <h1>Appointments</h1>
     <span>
       <button id="tabApptsCal" onclick="tabApptsCal()">Calendar</button>
+      <button id="tabApptsNew" onclick="newApptDialog({ contactPick: true, casePick: true, onCreated: () => tabApptsGet(0) })"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button>
       Type:
       <select id="tabApptsType" style="width: auto">
         <option>Default</option>
