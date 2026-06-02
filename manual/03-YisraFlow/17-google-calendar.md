@@ -25,7 +25,6 @@ There are two ways the firm uses it:
 |---|---|
 | `services/gcalService.js` | All logic. CRUD over the Google Calendar API v3 plus calendar discovery. |
 | `routes/api.gcal.js` | Thin REST wrapper over the service. Auto-mounted by the routes loader. |
-| `routes/internal/gcal.js` | Native `/internal/gcal/create` + `/delete` (replaces the old Pabbly endpoints). |
 | `lib/internal_functions.js` | Four thin `gcal_*` functions (category `calendar`) wrapping the service. |
 | `services/apptService.js` | Appointment lifecycle — calls `gcalService` on create / cancel / reschedule; owns the `appt_gcal` write-back and throttled IT failure alerts. |
 | `lib/credentialInjection.js` | Supplies the OAuth Authorization header (`buildHeadersForCredential`). |
@@ -238,8 +237,6 @@ Two implementation facts worth knowing:
 - **`appt_gcal` write-back is now owned by the app.** Under Pabbly the Zap wrote the event ID back out-of-band; natively, `apptService` does the `UPDATE appts SET appt_gcal = ?` itself.
 - **`appt_end` is never written.** It is a `STORED GENERATED` column (`appt_date + appt_length`); MySQL computes it. App code must not write it — doing so throws (error 3105). The event's end time for the calendar is computed in `apptService` (firm-local, DST-aware via Luxon) but is **not** persisted to `appt_end`.
 
-The standalone `POST /internal/gcal/create` and `/internal/gcal/delete` routes were also moved to the native service. `apptService` no longer calls them — it uses `gcalService` directly — but they remain for external/manual callers, with the same request shape. `/create` is now synchronous and returns the created event's `id` (and writes `appt_gcal` back when given an `appt_id`); the old version returned "queued" immediately and relied on the Zap.
-
-New server-side calendar work should call `gcalService` directly rather than posting to the internal routes.
+The old Pabbly-backed `POST /internal/gcal/create` and `/internal/gcal/delete` routes were **removed** — nothing called them once `apptService` moved to `gcalService`. All calendar access now goes through `gcalService` (server-side) or the `/api/gcal/...` REST routes (external/manual).
 
 Pabbly still serves non-calendar bridges (Gmail send, sequence enroll, Dropbox, court email ingest) — those are separate retirements tracked in AI_CONTEXT §3.
