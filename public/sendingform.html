@@ -190,6 +190,11 @@
     </div>
   </div>
 
+  <!-- ═══ PAYMENT OPTIONS ═══ -->
+  <div class="sf-section">
+    <div class="sf-section-title"><input type="checkbox" id="chkPaymentOptions"> Send Payment Options</div>
+  </div>
+
   <!-- ═══ OTHER MESSAGE ═══ -->
   <div class="sf-section">
     <div class="sf-section-title"><input type="checkbox" id="chkOther"> Other Message</div>
@@ -308,8 +313,7 @@ const Toast = Swal.mixin({
   timer: 2500, timerProgressBar: true
 });
 
-const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-const CURRENT_YEAR = new Date().getFullYear();
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];const CURRENT_YEAR = new Date().getFullYear();
 const TAX_YEARS = [CURRENT_YEAR - 4, CURRENT_YEAR - 3, CURRENT_YEAR - 2, CURRENT_YEAR - 1, CURRENT_YEAR];
 const IRS_YEARS = [];
 for (let y = CURRENT_YEAR; y >= 2015; y--) IRS_YEARS.push(y);
@@ -321,6 +325,23 @@ const BANKS = [
   'PNC','Public Service Credit Union','TCF','USAA','Wells Fargo','Wisely Card','Zeal',
   'CashApp','Chime','Netspend','PayPal','Varo','VenMo'
 ];
+
+const PAYMENT_OPTIONS_TEXT =
+`Please use one of these convenient options to submit a payment:
+  - Debit/Credit Card, Google Pay, or eCheck: app.4lsg.com/r/payment
+  - Zelle: Send to stuart@metrodetroitlitigation.com
+  - Cash App: Send to $stuartsandweiss
+
+Thank You`;
+
+const PAYMENT_OPTIONS_HTML =
+`<p>Please use one of these convenient options to submit a payment:</p>
+<ul>
+  <li>Debit/Credit Card, Google Pay, or eCheck: <a href="https://app.4lsg.com/r/payment">app.4lsg.com/r/payment</a></li>
+  <li>Zelle: Send to stuart@metrodetroitlitigation.com</li>
+  <li>Cash App: Send to $stuartsandweiss</li>
+</ul>
+<p>Thank You</p>`;
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -625,6 +646,7 @@ function collectActions() {
   if (document.getElementById('chkIrsIdme').checked) actions.push({ type: 'irs_idme' });
   if (document.getElementById('chkDocsNeeded').checked) actions.push({ type: 'docs_needed', ...collectDocsPayload() });
   if (document.getElementById('chkAllan').checked) actions.push({ type: 'allan_anchill' });
+  if (document.getElementById('chkPaymentOptions').checked) actions.push({ type: 'payment_options' });
   if (document.getElementById('chkQuestionnaire').checked) {
     actions.push({ type: 'questionnaire', enroll: document.getElementById('chkEnrollReminders').checked });
   }
@@ -705,6 +727,9 @@ async function preview() {
     }
     if (action.type === 'allan_anchill') {
       lines.push('── TAX APPOINTMENT ──\nPlease call Allan Anchill at (248) 320-3119 to set up an appointment to get your taxes done.');
+    }
+    if (action.type === 'payment_options') {
+      lines.push('── PAYMENT OPTIONS ──\n' + PAYMENT_OPTIONS_TEXT);
     }
     if (action.type === 'questionnaire') {
       lines.push('── DETAILED BK QUESTIONNAIRE ──\n[Link to questionnaire]' + (action.enroll ? '\n[Will enroll in reminder sequence]' : ''));
@@ -910,6 +935,14 @@ async function send() {
         for (const r of recipients) {
           if (smsOn && r.phone) { await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: msg }); successes.push(`Allan SMS → ${r.name}`); }
           if (emailOn && r.email) { await P.apiSend('/internal/email/send', 'POST', { from: emailFrom, to: r.email, subject: 'Tax Preparation Appointment', text: msg }); successes.push(`Allan Email → ${r.name}`); }
+        }
+      }
+
+      // ── PAYMENT OPTIONS ──
+      if (action.type === 'payment_options') {
+        for (const r of recipients) {
+          if (smsOn && r.phone) { await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: PAYMENT_OPTIONS_TEXT }); successes.push(`Payment Options SMS → ${r.name}`); }
+          if (emailOn && r.email) { await P.apiSend('/internal/email/send', 'POST', { from: emailFrom, to: r.email, subject: 'Payment Options', html: PAYMENT_OPTIONS_HTML, text: PAYMENT_OPTIONS_TEXT }); successes.push(`Payment Options Email → ${r.name}`); }
         }
       }
 
