@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-05-17T08:02:30.988Z_  
-_283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL: 2_
+_Generated 2026-06-02T21:19:38.000Z_  
+_344 routes total — DELETE: 33, GET: 143, PATCH: 28, POST: 117, PUT: 21, _ALL: 2_
 
 ## Global middleware chain
 
@@ -52,8 +52,10 @@ _283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL:
 | POST | `/api/cases/:id/contacts` | `jwtOrApiKey` | — |
 | DELETE | `/api/cases/:id/contacts/:contactId` | `jwtOrApiKey` | — |
 | PATCH | `/api/cases/:id/contacts/:contactId` | `jwtOrApiKey` | — |
+| PATCH | `/api/cases/:id/docket` | `jwtOrApiKey` | — |
 | GET | `/api/cases/:id/log` | `jwtOrApiKey` | — |
 | GET | `/api/cases/:id/tasks` | `jwtOrApiKey` | — |
+| GET | `/api/cases/search` | `jwtOrApiKey` | — |
 | GET | `/api/cause_error` | `jwtOrApiKey` | — |
 | POST | `/api/compose-docs-message` | `jwtOrApiKey` | — |
 | POST | `/api/contact-addresses` | `jwtOrApiKey` | — |
@@ -62,6 +64,7 @@ _283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL:
 | POST | `/api/contact-emails` | `jwtOrApiKey` | — |
 | DELETE | `/api/contact-emails/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/contact-emails/:id` | `jwtOrApiKey` | — |
+| GET | `/api/contact-lookup` | `jwtOrApiKey` | — |
 | POST | `/api/contact-phones` | `jwtOrApiKey` | — |
 | DELETE | `/api/contact-phones/:id` | `jwtOrApiKey` | — |
 | PATCH | `/api/contact-phones/:id` | `jwtOrApiKey` | — |
@@ -100,6 +103,23 @@ _283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL:
 | POST | `/api/email-credentials/:id/test` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/email-credentials/:id/verify-aliases` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/email-from` | `jwtOrApiKey` | — |
+| GET | `/api/email-ingest/executions` | `jwtOrApiKey` | — |
+| GET | `/api/email-ingest/executions/:id` | `jwtOrApiKey` | — |
+| GET | `/api/email-ingest/meta` | `jwtOrApiKey` | — |
+| DELETE | `/api/email-ingest/rule-actions/:id` | `jwtOrApiKey` | — |
+| PUT | `/api/email-ingest/rule-actions/:id` | `jwtOrApiKey` | — |
+| GET | `/api/email-ingest/rules` | `jwtOrApiKey` | — |
+| POST | `/api/email-ingest/rules` | `jwtOrApiKey` | — |
+| DELETE | `/api/email-ingest/rules/:id` | `jwtOrApiKey` | — |
+| GET | `/api/email-ingest/rules/:id` | `jwtOrApiKey` | — |
+| PUT | `/api/email-ingest/rules/:id` | `jwtOrApiKey` | — |
+| POST | `/api/email-ingest/rules/:id/actions` | `jwtOrApiKey` | — |
+| GET | `/api/email-ingest/sample-events` | `jwtOrApiKey` | — |
+| GET | `/api/email-ingest/suppressions` | `jwtOrApiKey` | — |
+| POST | `/api/email-ingest/suppressions` | `jwtOrApiKey` | — |
+| DELETE | `/api/email-ingest/suppressions/:id` | `jwtOrApiKey` | — |
+| GET | `/api/email-ingest/suppressions/:id` | `jwtOrApiKey` | — |
+| PUT | `/api/email-ingest/suppressions/:id` | `jwtOrApiKey` | — |
 | POST | `/api/email-router/capture/start` | `jwtOrApiKey` | — |
 | POST | `/api/email-router/capture/stop` | `jwtOrApiKey` | — |
 | GET | `/api/email-router/captured-sample` | `jwtOrApiKey` | — |
@@ -114,6 +134,7 @@ _283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL:
 | DELETE | `/api/email-router/routes/:id` | `jwtOrApiKey` | — |
 | GET | `/api/email-router/routes/:id` | `jwtOrApiKey` | — |
 | PUT | `/api/email-router/routes/:id` | `jwtOrApiKey` | — |
+| POST | `/api/email/ingest` | `<anonymous>` | — |
 | GET | `/api/events` | `jwtOrApiKey` | — |
 | GET | `/api/feature-requests` | `jwtOrApiKey` | — |
 | POST | `/api/feature-requests` | `jwtOrApiKey` | — |
@@ -127,6 +148,12 @@ _283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL:
 | GET | `/api/forms/history` | `jwtOrApiKey` | — |
 | GET | `/api/forms/latest` | `jwtOrApiKey` | — |
 | POST | `/api/forms/submit` | `jwtOrApiKey` | — |
+| GET | `/api/gcal/calendars` | `jwtOrApiKey` | — |
+| GET | `/api/gcal/events` | `jwtOrApiKey` | — |
+| POST | `/api/gcal/events` | `jwtOrApiKey` | — |
+| DELETE | `/api/gcal/events/:id` | `jwtOrApiKey` | — |
+| GET | `/api/gcal/events/:id` | `jwtOrApiKey` | — |
+| PATCH | `/api/gcal/events/:id` | `jwtOrApiKey` | — |
 | GET | `/api/hooks` | `jwtOrApiKey` | — |
 | POST | `/api/hooks` | `jwtOrApiKey` | — |
 | GET | `/api/hooks/:hookId/executions` | `jwtOrApiKey` | — |
@@ -153,7 +180,26 @@ _283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL:
 | GET | `/api/log` | `jwtOrApiKey` | — |
 | POST | `/api/log` | `jwtOrApiKey` | — |
 | GET | `/api/log/:id` | `jwtOrApiKey` | — |
+| GET | `/api/log/case-docket-preview` | `jwtOrApiKey` | — |
+| GET | `/api/log/orphan-earliest` | `jwtOrApiKey` | — |
 | POST | `/api/pdf/parse` | `jwtOrApiKey`, `multerMiddleware` | — |
+| GET | `/api/phone-ingest/executions` | `jwtOrApiKey` | — |
+| GET | `/api/phone-ingest/executions/:id` | `jwtOrApiKey` | — |
+| GET | `/api/phone-ingest/meta` | `jwtOrApiKey` | — |
+| DELETE | `/api/phone-ingest/rule-actions/:id` | `jwtOrApiKey` | — |
+| PUT | `/api/phone-ingest/rule-actions/:id` | `jwtOrApiKey` | — |
+| GET | `/api/phone-ingest/rules` | `jwtOrApiKey` | — |
+| POST | `/api/phone-ingest/rules` | `jwtOrApiKey` | — |
+| DELETE | `/api/phone-ingest/rules/:id` | `jwtOrApiKey` | — |
+| GET | `/api/phone-ingest/rules/:id` | `jwtOrApiKey` | — |
+| PUT | `/api/phone-ingest/rules/:id` | `jwtOrApiKey` | — |
+| POST | `/api/phone-ingest/rules/:id/actions` | `jwtOrApiKey` | — |
+| GET | `/api/phone-ingest/sample-events` | `jwtOrApiKey` | — |
+| GET | `/api/phone-ingest/suppressions` | `jwtOrApiKey` | — |
+| POST | `/api/phone-ingest/suppressions` | `jwtOrApiKey` | — |
+| DELETE | `/api/phone-ingest/suppressions/:id` | `jwtOrApiKey` | — |
+| GET | `/api/phone-ingest/suppressions/:id` | `jwtOrApiKey` | — |
+| PUT | `/api/phone-ingest/suppressions/:id` | `jwtOrApiKey` | — |
 | GET | `/api/phone-lines` | `jwtOrApiKey` | — |
 | GET | `/api/phone-lines/admin` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/phone-lines/admin` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
@@ -164,7 +210,20 @@ _283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL:
 | GET | `/api/public/docs/:caseId` | `<anonymous>` | — |
 | POST | `/api/public/get-upload-link` | `<anonymous>` | — |
 | POST | `/api/public/upload-complete` | `<anonymous>` | — |
+| GET | `/api/readonly-keys` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/readonly-keys` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
+| DELETE | `/api/readonly-keys/:id` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
+| GET | `/api/readonly-keys/:id/log` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/readonly/sql` | `readonlyApiKeyAuth` | — |
+| GET | `/api/redirects` | `jwtOrApiKey` | — |
+| POST | `/api/redirects` | `jwtOrApiKey` | — |
+| DELETE | `/api/redirects/:id` | `jwtOrApiKey` | — |
+| GET | `/api/redirects/:id` | `jwtOrApiKey` | — |
+| PUT | `/api/redirects/:id` | `jwtOrApiKey` | — |
 | GET | `/api/relation-types` | `jwtOrApiKey` | — |
+| DELETE | `/api/scratch/:ns` | `readonlyApiKeyAuth` | — |
+| DELETE | `/api/scratch/:ns/:k` | `readonlyApiKeyAuth` | — |
+| PUT | `/api/scratch/:ns/:k` | `readonlyApiKeyAuth` | — |
 | GET | `/api/search` | `jwtOrApiKey` | — |
 | GET | `/api/sequence-types` | `jwtOrApiKey` | — |
 | POST | `/api/sequence-types` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
@@ -382,6 +441,12 @@ _283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL:
 |--------|------|-------------|---------|
 | _ALL | `/process-jobs` | `jwtOrApiKey` | — |
 
+## /r
+
+| Method | Path | Middlewares | Handler |
+|--------|------|-------------|---------|
+| GET | `/r/:slug` | `<anonymous>` | — |
+
 ## /resolve
 
 | Method | Path | Middlewares | Handler |
@@ -405,6 +470,7 @@ _283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL:
 | DELETE | `/scheduled-jobs/:id` | `jwtOrApiKey` | — |
 | GET | `/scheduled-jobs/:id` | `jwtOrApiKey` | — |
 | PATCH | `/scheduled-jobs/:id` | `jwtOrApiKey` | — |
+| PATCH | `/scheduled-jobs/:id/active` | `jwtOrApiKey` | — |
 
 ## /sequences
 
@@ -483,4 +549,4 @@ _283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL:
 
 ---
 
-_283 routes total — DELETE: 22, GET: 115, PATCH: 25, POST: 106, PUT: 13, _ALL: 2_
+_344 routes total — DELETE: 33, GET: 143, PATCH: 28, POST: 117, PUT: 21, _ALL: 2_

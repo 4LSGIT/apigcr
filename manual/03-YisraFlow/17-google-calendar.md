@@ -2,7 +2,7 @@
 
 ## For operators
 
-YisraCase can read and write Google Calendar events directly — create an event, look one up, change it, or delete it. This is the native replacement for the old Pabbly bridge (which forwarded `gcal_create` / `gcal_delete` to a Zap). Nothing about how appointments behave today changes yet; this chapter describes the new direct integration that the rest of the system is being moved onto.
+YisraCase can read and write Google Calendar events directly — create an event, look one up, change it, or delete it. This is the native replacement for the old Pabbly bridge (which forwarded `gcal_create` / `gcal_delete` to a Zap). Appointment calendar sync now runs through this integration directly; the Pabbly path for calendar has been retired.
 
 There are two ways the firm uses it:
 
@@ -25,7 +25,9 @@ There are two ways the firm uses it:
 |---|---|
 | `services/gcalService.js` | All logic. CRUD over the Google Calendar API v3 plus calendar discovery. |
 | `routes/api.gcal.js` | Thin REST wrapper over the service. Auto-mounted by the routes loader. |
+| `routes/internal/gcal.js` | Native `/internal/gcal/create` + `/delete` (replaces the old Pabbly endpoints). |
 | `lib/internal_functions.js` | Four thin `gcal_*` functions (category `calendar`) wrapping the service. |
+| `services/apptService.js` | Appointment lifecycle — calls `gcalService` on create / cancel / reschedule; owns the `appt_gcal` write-back and throttled IT failure alerts. |
 | `lib/credentialInjection.js` | Supplies the OAuth Authorization header (`buildHeadersForCredential`). |
 | `services/oauthService.js` | Token refresh behind the header builder. |
 
@@ -222,6 +224,22 @@ Partial update — only the fields you supply change. Requires `event_id` plus a
 
 4. **Token refresh.** Handled by the existing Connections machinery — lazy refresh on every use plus the daily `refresh_expiring_oauth_credentials` job (chapter 15). No calendar-specific setup.
 
-### Relationship to appointments / Pabbly
+5. **Failure alerts (appointment sync).** When `apptService` fails to create or delete a calendar event, it emails IT — throttled to once per hour per failure type — using the `IT_EMAIL` (recipient) and `AUTO_EMAIL` (sender) env vars, the same pattern as the RingCentral legacy-route trap. If either var is unset the alert is skipped with a console warning; set both so silent calendar drift doesn't go unnoticed. The appointment record itself is never affected by a calendar failure — only the event doesn't sync.
 
-The legacy path — `apptService` calling `pabbly.send(db, 'gcal_create' | 'gcal_delete', …)` and `routes/internal/gcal.js` — is **still in place and unchanged**. This native service is the foundation for retiring it, but the appointment cutover (storing the returned event `id` into `appts.appt_gcal`, replacing the Pabbly calls on create / cancel / reschedule) is a separate change because it alters live appointment behavior. Until that lands, both paths coexist; new calendar work should use the native service.
+### Relationship to appointments
+
+Appointment calendar sync runs through this native service — the Pabbly bridge for `gcal_create` / `gcal_delete` has been retired. `apptService` calls `gcalService` directly:
+
+- **createAppt** creates the event and writes the returned event ID into `appts.appt_gcal`. This happens **after** the HTTP response (fire-and-forget), so a slow or failed calendar call never blocks or rolls back the appointment write. Because the write-back lands after `createAppt`'s final re-fetch, the row returned to the caller does not yet include the new `appt_gcal` — read it back from the DB if you need it immediately.
+- **cancelAppt**, **rescheduleAppt** (old event), **rescheduleLater**, and **341 supersession** delete the event by its `appt_gcal` ID. A Google `410 Gone` (event already deleted) is treated as success.
+
+Two implementation facts worth knowing:
+
+- **`appt_gcal` write-back is now owned by the app.** Under Pabbly the Zap wrote the event ID back out-of-band; natively, `apptService` does the `UPDATE appts SET appt_gcal = ?` itself.
+- **`appt_end` is never written.** It is a `STORED GENERATED` column (`appt_date + appt_length`); MySQL computes it. App code must not write it — doing so throws (error 3105). The event's end time for the calendar is computed in `apptService` (firm-local, DST-aware via Luxon) but is **not** persisted to `appt_end`.
+
+The standalone `POST /internal/gcal/create` and `/internal/gcal/delete` routes were also moved to the native service. `apptService` no longer calls them — it uses `gcalService` directly — but they remain for external/manual callers, with the same request shape. `/create` is now synchronous and returns the created event's `id` (and writes `appt_gcal` back when given an `appt_id`); the old version returned "queued" immediately and relied on the Zap.
+
+New server-side calendar work should call `gcalService` directly rather than posting to the internal routes.
+
+Pabbly still serves non-calendar bridges (Gmail send, sequence enroll, Dropbox, court email ingest) — those are separate retirements tracked in AI_CONTEXT §3.

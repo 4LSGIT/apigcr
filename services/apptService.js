@@ -16,7 +16,7 @@
 const { getSetting, getSettings } = require('./settingsService');
 const smsService   = require('./phoneService');
 const emailService = require('./emailService');
-const pabbly       = require('./pabblyService');
+const gcal         = require('./gcalService');
 const taskService  = require('./taskService');
 const logService   = require('./logService');
 const { localToUTC, FIRM_TZ } = require('./timezoneService');
@@ -26,6 +26,152 @@ const calendar = require('./calendarService');
 // Lazy-require to avoid circular dependency (sequenceEngine → job_executor → internal_functions)
 function getSequenceEngine() {
   return require('../lib/sequenceEngine');
+}
+
+// ─────────────────────────────────────────────────────────────
+// GOOGLE CALENDAR INTEGRATION (native — replaces the Pabbly bridge)
+//
+// Previously appointment calendar sync went through Pabbly:
+//   pabbly.send(db, 'gcal_create' | 'gcal_delete', {...})
+// The Zap created/deleted the event and wrote appt_gcal back to the DB
+// out-of-band. Going native inverts that: gcalService returns the event
+// synchronously and THIS service owns the appt_gcal write. (appt_end is a
+// STORED GENERATED column — MySQL computes it from appt_date + appt_length;
+// it is never written by app code.)
+//
+// All calendar work stays fire-and-forget (post-response) — a calendar
+// failure must never block or roll back an appointment write, matching the
+// prior behavior. On failure we email IT (throttled) until a real alert
+// service exists, following the ringcentral legacyTrap pattern.
+// ─────────────────────────────────────────────────────────────
+
+// In-memory throttle so a burst of calendar failures can't bury IT in email.
+// 1 hour per failure-kind. Process-local (one entry per Cloud Run instance) —
+// acceptable for a low-volume alert.
+const GCAL_ALERT_THROTTLE_MS = 60 * 60 * 1000;
+const _lastGcalAlertAt = new Map();
+
+/**
+ * Email IT about a calendar failure, throttled per `kind`. Never throws.
+ * Mirrors the ringcentral legacy-route alert: env IT_EMAIL / AUTO_EMAIL,
+ * skip with a warning if unset.
+ */
+function alertGcalFailure(db, kind, detail) {
+  const now = Date.now();
+  if ((now - (_lastGcalAlertAt.get(kind) || 0)) < GCAL_ALERT_THROTTLE_MS) return;
+  _lastGcalAlertAt.set(kind, now);
+
+  const to   = process.env.IT_EMAIL;
+  const from = process.env.AUTO_EMAIL;
+  if (!to || !from) {
+    console.warn('[APPT SERVICE] IT_EMAIL or AUTO_EMAIL not set; gcal alert skipped');
+    return;
+  }
+
+  emailService.sendEmail(db, {
+    from,
+    to,
+    subject: `[YisraCase] Google Calendar sync failed: ${kind}`,
+    text:
+      `A Google Calendar operation failed in apptService.\n\n` +
+      `Operation:    ${kind}\n` +
+      `Environment:  ${process.env.ENVIRONMENT || 'unknown'}\n` +
+      `Time:         ${new Date().toISOString()}\n` +
+      `Detail:       ${detail}\n\n` +
+      `The appointment record itself is unaffected — only the calendar event ` +
+      `did not sync. Check the connection (Connections → Google) and the ` +
+      `credential's allowed_urls if this repeats.\n\n` +
+      `Throttled to once per hour per operation type.`,
+  }).catch(e => console.error('[APPT SERVICE] gcal alert email failed:', e.message));
+}
+
+/**
+ * Compute the naive firm-local end-datetime string for an appointment, as
+ * 'YYYY-MM-DD HH:MM:SS'. Used ONLY to set the calendar event's end time —
+ * the appts.appt_end column is STORED GENERATED and must never be written.
+ * appt_date is stored naive-local; we add the length in FIRM_TZ so DST
+ * boundaries are handled, then emit the naive local form.
+ */
+function computeApptEndLocal(apptDateLocal, lengthMinutes) {
+  const len = Number(lengthMinutes) || 0;
+  // apptDateLocal may be a Date (read by mysql2 as fake-UTC) or a string.
+  const base = apptDateLocal instanceof Date
+    ? DateTime.fromISO(apptDateLocal.toISOString().slice(0, 19), { zone: FIRM_TZ })
+    : DateTime.fromISO(String(apptDateLocal).replace(' ', 'T').slice(0, 19), { zone: FIRM_TZ });
+  if (!base.isValid) return null;
+  return base.plus({ minutes: len }).toFormat('yyyy-MM-dd HH:mm:ss');
+}
+
+/**
+ * Build the calendar event summary/description/location for an appointment.
+ * Kept in one place so the event text is easy to tune. Title format:
+ *   "<appt_type> — <contact_name>"   (falls back gracefully if either is blank)
+ */
+function buildApptEventResource({ appt_type, contact_name, appt_platform, case_id, note }) {
+  const titleParts = [appt_type, contact_name].filter(Boolean);
+  const summary = titleParts.join(' — ') || 'Appointment';
+
+  const descLines = [];
+  if (case_id) descLines.push(`Case: ${case_id}`);
+  if (note)    descLines.push(note);
+
+  return {
+    summary,
+    ...(descLines.length && { description: descLines.join('\n') }),
+    ...(appt_platform && { location: appt_platform }),
+  };
+}
+
+/**
+ * Create the calendar event for a freshly-created appointment and write the
+ * event ID + computed end time back to the appt row. Fire-and-forget — never
+ * throws. Used post-commit in createAppt.
+ */
+async function syncApptToCalendar(db, { appt_id, appt_date, appt_length, appt_type,
+                                        appt_platform, case_id, note, contact_name,
+                                        contact_email }) {
+  try {
+    const endLocal = computeApptEndLocal(appt_date, appt_length);
+    const resource = buildApptEventResource({ appt_type, contact_name, appt_platform, case_id, note });
+
+    const event = await gcal.createEvent(db, {
+      ...resource,
+      start: typeof appt_date === 'string'
+        ? appt_date.replace(' ', 'T').slice(0, 19)
+        : appt_date.toISOString().slice(0, 19),     // naive local → FIRM_TZ in service
+      end: endLocal,
+      ...(contact_email && { attendees: [contact_email] }),
+    });
+
+    // Write back ONLY the event ID. appt_end is a STORED GENERATED column
+    // (appt_date + appt_length) — MySQL computes it; writing it throws 3105.
+    await db.query(
+      'UPDATE appts SET appt_gcal = ? WHERE appt_id = ?',
+      [event.id, appt_id]
+    );
+  } catch (err) {
+    console.error(`[APPT SERVICE] GCal create (appt ${appt_id}) failed:`, err.message);
+    alertGcalFailure(db, 'create', `appt_id=${appt_id}: ${err.message}`);
+  }
+}
+
+/**
+ * Delete a calendar event by ID. Fire-and-forget — never throws. Treats
+ * Google's 410 (already gone) as success.
+ */
+async function deleteApptCalendarEvent(db, eventId, contextLabel) {
+  if (!eventId) return;
+  try {
+    await gcal.deleteEvent(db, { eventId });
+  } catch (err) {
+    if (/→\s410:/.test(err.message)) {
+      // Already deleted on Google's side — nothing to do.
+      console.warn(`[APPT SERVICE] GCal delete (${contextLabel}) — event ${eventId} already gone`);
+      return;
+    }
+    console.error(`[APPT SERVICE] GCal delete (${contextLabel}) failed:`, err.message);
+    alertGcalFailure(db, 'delete', `${contextLabel} event=${eventId}: ${err.message}`);
+  }
 }
 
 
@@ -382,10 +528,7 @@ async function createAppt(db, {
       .catch(err => console.error('[APPT SERVICE] cancelApptAutomation (341 supersession) failed:', err.message));
 
     if (supersededAppt.appt_gcal) {
-      pabbly.send(db, 'gcal_delete', {
-        appt_gcal: supersededAppt.appt_gcal,
-        appt_id:   supersededAppt.appt_id,
-      });
+      deleteApptCalendarEvent(db, supersededAppt.appt_gcal, '341_superseded');
     }
 
     insertApptLog(db, supersededAppt.appt_id, actingUserId, {
@@ -432,18 +575,20 @@ async function createAppt(db, {
     })();
   }
 
-  // 6) GCal create via Pabbly (fire-and-forget)
-  const [[contactForGcal]] = await db.query(
-    'SELECT contact_name, contact_email FROM contacts WHERE contact_id = ?',
-    [contact_id]
-  );
-  pabbly.send(db, 'gcal_create', {
-    appt_id: apptId, appt_date, appt_length, appt_type,
-    appt_platform,
-    contact_name:  contactForGcal?.contact_name || '',
-    contact_email: contactForGcal?.contact_email || '',
-    case_id
-  });
+  // 6) GCal create (native) — fire-and-forget. Fetches contact, creates the
+  //    event, writes appt_gcal + appt_end back. Never blocks the response.
+  (async () => {
+    const [[contactForGcal]] = await db.query(
+      'SELECT contact_name, contact_email FROM contacts WHERE contact_id = ?',
+      [contact_id]
+    );
+    await syncApptToCalendar(db, {
+      appt_id: apptId, appt_date, appt_length, appt_type, appt_platform,
+      case_id, note,
+      contact_name:  contactForGcal?.contact_name || '',
+      contact_email: contactForGcal?.contact_email || '',
+    });
+  })().catch(err => console.error('[APPT SERVICE] GCal create wrapper failed:', err.message));
 
   // 7) Reminder automation — enroll in pre_appt + (if ISS) iss_intake sequences
   try {
@@ -747,11 +892,8 @@ async function cancelAppt(db, {
   }
 
   // 9) GCal delete
-  console.log(cancel_gcal);
-  console.log(appt.appt_gcal);
   if (cancel_gcal && appt.appt_gcal) {
-    console.log("sending gcal_delete");
-    pabbly.send(db, 'gcal_delete', { appt_gcal: appt.appt_gcal, appt_id });
+    deleteApptCalendarEvent(db, appt.appt_gcal, 'cancel');
   }
 
   // TODO: Cancel sequence enrollment — not yet designed.
@@ -807,8 +949,7 @@ async function rescheduleAppt(db, {
 
   // 3b) GCal delete for old appt (non-blocking)
   if (oldAppt.appt_gcal) {
-    pabbly.send(db, 'gcal_delete', { appt_gcal: oldAppt.appt_gcal, appt_id })
-      .catch(err => console.error('[APPT SERVICE] GCal delete (reschedule) failed:', err.message));
+    deleteApptCalendarEvent(db, oldAppt.appt_gcal, 'reschedule');
   }
 
   // 4) Create new appointment (handles enrollments, GCal, etc.)
@@ -885,8 +1026,7 @@ async function rescheduleLater(db, {
 
   // 2b) GCal delete (non-blocking)
   if (appt.appt_gcal) {
-    pabbly.send(db, 'gcal_delete', { appt_gcal: appt.appt_gcal, appt_id })
-      .catch(err => console.error('[APPT SERVICE] GCal delete (rescheduleLater) failed:', err.message));
+    deleteApptCalendarEvent(db, appt.appt_gcal, 'rescheduleLater');
   }
 
   // 3) Optional task
