@@ -5,66 +5,58 @@
  * ---------------------------------------------------------------
  * POST /api/intake/petition
  *
- * Consumes the data from a MIEB "Voluntary Petition" court email and either
- * STAMPS the docket onto the client's waiting (pre-filing) case or creates a
- * new filed case. This is the dedicated entry point for the filing event;
- * it deliberately does NOT reuse /api/intake/case, because that route's
- * "docket supplied ⇒ always insert" rule would skip the waiting Open case
- * and spawn a duplicate. The Calendly intake flow (find-or-reuse) keeps using
- * /api/intake/contact + /api/intake/case unchanged.
+ * Consumes a MIEB "Voluntary Petition" court email and either STAMPS the docket
+ * onto the client's waiting (pre-filing) case or creates a new filed case, then
+ * ensures BOTH debtors (primary + optional joint spouse) are linked to the case.
  *
- * WHY A SEPARATE ROUTE
- *   - The petition email is the moment of filing. The correct target is the
- *     existing 'Open'/'Pending' (pre-filing) case, which carries NO docket yet
- *     (verified in prod: 590 Open bankruptcy cases, 0 dockets). We stamp it
- *     and advance it to 'Filed'.
- *   - A 'Filed'/'Closed' case is a completed filing. A NEW petition for that
- *     same client is a NEW matter, so 'Filed'/'Closed' are excluded from the
- *     match set — a second filing opens a fresh case rather than reusing the
- *     old one.
+ * Does NOT reuse /api/intake/case (whose "docket ⇒ always insert" rule would
+ * skip the waiting Open case). The Calendly find-or-reuse flow is untouched.
  *
- * INPUT (JSON body)
- *   case_name    string  REQUIRED  the "Case Name:" cell. Single ("India Gragg")
- *                                  or joint ("John Smith and Jane Doe" / "...& ...").
- *                                  First-named debtor is the PRIMARY (filing
- *                                  convention), used first for matching.
- *   case_number  string  REQUIRED* short docket, e.g. "26-31193". The real case
- *                                  number. (case_number_full derived later from
- *                                  a subsequent email; stored NULL here.)
- *   chapter      string  REQUIRED* "7" | "11" | "13" (from subject "Ch N").
- *   file_date    string  optional  "YYYY-MM-DD" filing date. Defaults to today ET.
- *   subject      string  optional  raw email subject. If case_number and/or
- *                                  chapter are absent, they are parsed from this
- *                                  (`^(\d{2}-\d{5}) ... Ch (\d+)`). Lets the
- *                                  caller forward the subject and nothing else.
+ * ── DEBTOR ROLES (role-preserving) ──
+ *   case_name is "Primary" or "Primary and Joint" / "Primary & Joint". The
+ *   first-named debtor is the PRIMARY by filing convention. Primary and joint
+ *   are resolved INDEPENDENTLY to their own roles — the joint is never promoted
+ *   to Primary even if the primary name matches no contact.
  *
- *   * case_number and chapter are required EITHER directly OR via `subject`.
+ *   Primary debtor → case_relate 'Primary':
+ *     1 match  → use it.
+ *     0 match  → create contact, alert (filing for an unknown client).
+ *     2+ match → 409 + alert (don't guess which client a filing belongs to).
  *
- * DECISION TREE
- *   1. Parse case_name → primary (+ optional joint). Each via parseName.
- *   2. Resolve contact by name LIKE %first%lnameOnly% (primary, then joint):
- *        0 matches  → CREATE contact from primary, alert human, continue.
- *        1 match    → use it.
- *        2+ matches → 409 + alert (don't guess which client a filing belongs to).
- *   3. Docket collision (case_number against case_number + case_number_full):
- *        on THIS contact's case      → idempotent: return it, no-op.
- *        on a DIFFERENT contact's case → 409 + alert (docket↔wrong client).
- *        nowhere                     → continue.
- *   4. Find waiting case (stage IN Open/Pending, Bankruptcy type, newest):
- *        found    → UPDATE: case_number, case_type=Bankruptcy - Ch. N,
- *                   case_chapter, case_stage='Filed', case_file_date.
- *        not found→ INSERT new case @ 'Filed' + case_relate.
- *   5. Log the action.
+ *   Joint debtor (only when case_name has "and"/"&") → case_relate 'Secondary':
+ *     1 match  → link it.
+ *     0 match  → create contact, link it (routine — a new spouse, no alert).
+ *     2+ match → alert + link nothing (ambiguity on the spouse must not block
+ *                the filing). [answer 2b]
  *
- * RESPONSES
- *   200 — { action: "stamped" | "created" | "already_filed", id, case_id, ... }
- *   400 — bad/missing input
- *   409 — ambiguous contact, or docket collision on a different client
- *   500 — unexpected
+ * ── IDEMPOTENCY ──
+ *   Petition emails re-fire (Pabbly retries / GAS re-runs). All links go through
+ *   ensureRelate(), which skips insertion when a (case, client, type) link
+ *   already exists. The docket-collision path is no longer a blind no-op: it
+ *   BACKFILLS a missing secondary link (catches cases filed before this feature,
+ *   or first-fires that crashed after stamping but before linking the spouse).
  *
- * NOTE: case_type stored as "Bankruptcy - Ch. 7" / "Bankruptcy - Ch. 13"
- *       (period + space), matching the existing production format. Pre-filing
- *       cases are plain "Bankruptcy"; filing refines the type.
+ * ── STAGE SEMANTICS ──
+ *   Match set is 'Open'/'Pending' (pre-filing) only. 'Filed'/'Closed' are
+ *   completed matters → a new petition for that client opens a fresh case.
+ *
+ * ── INPUT (JSON body) ──
+ *   case_name    REQUIRED  "Case Name:" cell. Single or "X and Y" / "X & Y".
+ *   case_number  REQUIRED* short docket, e.g. "26-31193" (the real number).
+ *   chapter      REQUIRED* "7" | "11" | "13".
+ *   file_date    optional  "YYYY-MM-DD"; defaults to today ET.
+ *   subject      optional  raw subject; fills case_number/chapter if absent.
+ *   * required either directly or via a parseable `subject`.
+ *
+ * ── RESPONSES ──
+ *   200 { action: "stamped"|"created"|"already_filed", id, case_id, primary, secondary, ... }
+ *   400 bad/missing input
+ *   409 ambiguous PRIMARY contact, or docket collision on a different client
+ *   500 unexpected
+ *
+ * case_type stored as "Bankruptcy - Ch. 7" / "Bankruptcy - Ch. 13" (period +
+ * space), matching production. Pre-filing cases are plain "Bankruptcy".
+ * case_number_full left NULL here (derived later from a subsequent email).
  */
 
 const express = require("express");
@@ -78,11 +70,6 @@ const contactService = require("../services/contactService");
 // HELPERS
 // ─────────────────────────────────────────
 
-/**
- * Generate an 8-char alphanumeric case ID (crypto), excluding base64url's
- * '-' and '_' for URL/copy-paste cleanliness. Lifted from api.intake.js so
- * the two creation paths produce identically-shaped IDs.
- */
 function generateCaseId() {
   let id;
   do {
@@ -91,11 +78,6 @@ function generateCaseId() {
   return id;
 }
 
-/**
- * Split a "Case Name:" value into [primary, joint?] raw name strings.
- * Joint petitions are "X and Y" or "X & Y". The first-named debtor is the
- * PRIMARY by filing convention. Returns 1 or 2 trimmed strings.
- */
 function splitDebtors(caseName) {
   return String(caseName)
     .split(/\s+(?:and|&)\s+/i)
@@ -103,35 +85,24 @@ function splitDebtors(caseName) {
     .filter(Boolean);
 }
 
-/**
- * Parse short docket + chapter out of a MIEB subject line, e.g.
- *   25-50808 "Voluntary Petition (Chapter 7)" Ch 7
- * Returns { caseNumber, chapter } with nulls for anything not found.
- */
 function parseSubject(subject) {
   const out = { caseNumber: null, chapter: null };
   if (!subject || typeof subject !== "string") return out;
   const num = subject.match(/\b(\d{2}-\d{5})\b/);
   if (num) out.caseNumber = num[1];
-  // Prefer the trailing "Ch N"; fall back to "(Chapter N)".
   const ch = subject.match(/\bCh\.?\s*(\d{1,2})\b/i)
           || subject.match(/Chapter\s+(\d{1,2})/i);
   if (ch) out.chapter = ch[1];
   return out;
 }
 
-/** Normalize chapter to a bare digit string ("7"/"11"/"13"). */
 function normalizeChapter(raw) {
   if (raw == null) return null;
   const m = String(raw).match(/(\d{1,2})/);
   return m ? m[1] : null;
 }
 
-/**
- * Look up contacts whose name matches a parsed debtor, using the firm's
- * established pattern: contact_name LIKE %first%lnameOnly%. Returns rows
- * [{ contact_id, contact_name }]. Empty array on no usable name parts.
- */
+/** name-LIKE lookup: contact_name LIKE %first%lnameOnly%. */
 async function findContactsByName(db, parsed) {
   const first = (parsed.firstName || "").trim();
   const last = (parsed.lnameOnly || "").trim();
@@ -145,11 +116,91 @@ async function findContactsByName(db, parsed) {
   return rows;
 }
 
+/**
+ * Idempotent case_relate link. Inserts (case, client, type) only if absent.
+ * Returns { created: bool, case_relate_id? }.
+ */
+async function ensureRelate(db, caseId, clientId, type) {
+  const [exists] = await db.query(
+    `SELECT case_relate_id FROM case_relate
+      WHERE case_relate_case_id = ? AND case_relate_client_id = ? AND case_relate_type = ?
+      LIMIT 1`,
+    [caseId, clientId, type]
+  );
+  if (exists.length) return { created: false, case_relate_id: exists[0].case_relate_id };
+  const [r] = await db.query(
+    `INSERT INTO case_relate (case_relate_case_id, case_relate_client_id, case_relate_type)
+     VALUES (?, ?, ?)`,
+    [caseId, clientId, type]
+  );
+  return { created: true, case_relate_id: r.insertId };
+}
+
+/**
+ * Resolve the JOINT/secondary debtor against an already-resolved case, applying
+ * answer 2b (ambiguous → alert + link nothing). Creates the contact if absent.
+ * Skips if the joint resolves to the same contact as the primary, or its name
+ * doesn't parse to usable parts. Returns a summary object for the response.
+ */
+async function resolveAndLinkSecondary(db, jointParsed, caseId, primaryContactId, ctx) {
+  const result = { present: true, status: null, contact_id: null, linked: false, name: ctx.rawName };
+
+  if (!jointParsed || !jointParsed.firstName || !jointParsed.lnameOnly) {
+    result.status = "unparseable";
+    console.log(`[petition] joint debtor "${ctx.rawName}" did not parse to usable name parts (docket ${ctx.docket}) — skipped`);
+    return result;
+  }
+
+  const matches = await findContactsByName(db, jointParsed);
+
+  if (matches.length >= 2) {
+    // 2b: alert, link nothing, do not block.
+    result.status = "ambiguous";
+    console.log(
+      `[petition] AMBIGUOUS joint debtor "${ctx.rawName}" (docket ${ctx.docket}): ` +
+      `${matches.length} matches [${matches.map(m => m.contact_id).join(", ")}] — linked nothing; needs human review`
+    );
+    result.candidates = matches.map(m => ({ contact_id: m.contact_id, contact_name: m.contact_name }));
+    return result;
+  }
+
+  let secondaryId;
+  if (matches.length === 1) {
+    secondaryId = matches[0].contact_id;
+    result.status = "matched";
+  } else {
+    const created = await contactService.createContact(db, {
+      fname: jointParsed.firstName,
+      mname: jointParsed.middleName,
+      lname: jointParsed.lastName,
+      phone: "",
+      email: "",
+      type: "Client",
+    });
+    secondaryId = created.contact_id;
+    result.status = "created";
+  }
+
+  if (secondaryId === primaryContactId) {
+    // Same person parsed as both — don't link the same contact twice.
+    result.status = "same_as_primary";
+    result.contact_id = secondaryId;
+    console.log(`[petition] joint debtor resolved to the primary contact ${secondaryId} (docket ${ctx.docket}) — secondary link skipped`);
+    return result;
+  }
+
+  const link = await ensureRelate(db, caseId, secondaryId, "Secondary");
+  result.contact_id = secondaryId;
+  result.linked = link.created;            // false if it already existed (backfill no-op)
+  result.already_linked = !link.created;
+  return result;
+}
+
 // ─────────────────────────────────────────
 // POST /api/intake/petition
 // ─────────────────────────────────────────
 router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
-  // ── Gather + reconcile input (direct fields win; subject fills gaps) ──
+  // ── Input reconciliation ──
   const caseName = (typeof req.body.case_name === "string") ? req.body.case_name.trim() : "";
   const fromSubject = parseSubject(req.body.subject);
 
@@ -158,7 +209,6 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
 
   let chapter = normalizeChapter(req.body.chapter) || normalizeChapter(fromSubject.chapter);
 
-  // file_date: validate YYYY-MM-DD; else default to today ET at insert time.
   const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
   let fileDate = req.body.file_date;
   fileDate = (typeof fileDate === "string" && fileDate.trim() !== "") ? fileDate.trim() : null;
@@ -166,87 +216,65 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ status: "error", message: "file_date must be YYYY-MM-DD" });
   }
 
-  // ── Required fields ──
-  if (!caseName) {
-    return res.status(400).json({ status: "error", message: "case_name is required" });
-  }
-  if (!caseNumber) {
-    return res.status(400).json({ status: "error", message: "case_number is required (or supply a parseable subject)" });
-  }
-  if (caseNumber.length > 20) {
-    return res.status(400).json({ status: "error", message: "case_number exceeds 20 chars" });
-  }
-  if (!chapter) {
-    return res.status(400).json({ status: "error", message: "chapter is required (or supply a parseable subject)" });
-  }
+  if (!caseName)   return res.status(400).json({ status: "error", message: "case_name is required" });
+  if (!caseNumber) return res.status(400).json({ status: "error", message: "case_number is required (or supply a parseable subject)" });
+  if (caseNumber.length > 20) return res.status(400).json({ status: "error", message: "case_number exceeds 20 chars" });
+  if (!chapter)    return res.status(400).json({ status: "error", message: "chapter is required (or supply a parseable subject)" });
 
-  // "Bankruptcy - Ch. 13" (period + space) — matches production format. <=20 chars.
   const caseTypeFull = `Bankruptcy - Ch. ${chapter}`;
-
-  // SQL fragment + params for "filed date": supplied value, or today ET.
   const fileDateSql = fileDate ? "?" : "CONVERT_TZ(NOW(), 'UTC', 'America/New_York')";
   const fileDateParam = fileDate ? [fileDate] : [];
 
   try {
-    // ─────────────────────────────────────
-    // STEP 1+2 — Resolve the client contact
-    // ─────────────────────────────────────
-    const debtors = splitDebtors(caseName);            // [primary, joint?]
+    // ── Parse debtors ──
+    const debtors = splitDebtors(caseName);
     const primaryParsed = parseName(debtors[0] || "");
-    const jointParsed = debtors[1] ? parseName(debtors[1]) : null;
+    const jointRaw = debtors[1] || null;
+    const jointParsed = jointRaw ? parseName(jointRaw) : null;
 
+    // ─────────────────────────────────────
+    // STEP 1 — Resolve PRIMARY contact (role: Primary)
+    // ─────────────────────────────────────
     let contactId = null;
-    let matchedVia = null;   // 'primary' | 'joint' | 'created'
+    let primaryStatus = null;   // 'matched' | 'created'
+    const primaryMatches = await findContactsByName(req.db, primaryParsed);
 
-    // Try primary first, then joint (spouse may have booked the intake appt).
-    let matches = await findContactsByName(req.db, primaryParsed);
-    if (matches.length === 0 && jointParsed) {
-      const jm = await findContactsByName(req.db, jointParsed);
-      if (jm.length) { matches = jm; matchedVia = "joint"; }
-    } else if (matches.length) {
-      matchedVia = "primary";
-    }
-
-    if (matches.length >= 2) {
-      // Ambiguous — refuse to guess which client a filing belongs to.
-      // TODO(alert): route to the firm's review/alert channel.
+    if (primaryMatches.length >= 2) {
       console.log(
-        `[petition] AMBIGUOUS contact for "${caseName}" (docket ${caseNumber}): ` +
-        `${matches.length} matches [${matches.map(m => m.contact_id).join(", ")}] — needs human review`
+        `[petition] AMBIGUOUS primary contact for "${debtors[0]}" (docket ${caseNumber}): ` +
+        `${primaryMatches.length} matches [${primaryMatches.map(m => m.contact_id).join(", ")}] — needs human review`
       );
       return res.status(409).json({
         status: "error",
-        message: `multiple contacts match "${caseName}" — needs human review`,
-        candidates: matches.map(m => ({ contact_id: m.contact_id, contact_name: m.contact_name })),
+        message: `multiple contacts match primary debtor "${debtors[0]}" — needs human review`,
+        candidates: primaryMatches.map(m => ({ contact_id: m.contact_id, contact_name: m.contact_name })),
         docket: caseNumber,
       });
     }
 
-    if (matches.length === 1) {
-      contactId = matches[0].contact_id;
+    if (primaryMatches.length === 1) {
+      contactId = primaryMatches[0].contact_id;
+      primaryStatus = "matched";
     } else {
-      // ── 0 matches → CREATE contact from the PRIMARY debtor, alert human ──
-      // TODO(alert): a court filing arrived for a client we had no record of.
       console.log(
-        `[petition] NO contact match for "${caseName}" (docket ${caseNumber}) — ` +
-        `creating new contact from primary debtor; needs human review`
+        `[petition] NO primary contact match for "${debtors[0]}" (docket ${caseNumber}) — ` +
+        `creating new contact; needs human review`
       );
       const created = await contactService.createContact(req.db, {
         fname: primaryParsed.firstName,
         mname: primaryParsed.middleName,
-        lname: primaryParsed.lastName,   // full last incl. suffix, mirrors intake CREATE
+        lname: primaryParsed.lastName,
         phone: "",
         email: "",
         type: "Client",
       });
       contactId = created.contact_id;
-      matchedVia = "created";
+      primaryStatus = "created";
     }
 
     // ─────────────────────────────────────
-    // STEP 3 — Docket collision check
+    // STEP 2 — Docket collision check
     // ─────────────────────────────────────
-    // Does this short docket already live on a case (either docket column)?
     const [clash] = await req.db.query(
       `SELECT c.case_id, cr.case_relate_client_id AS client_id
          FROM cases c
@@ -262,19 +290,28 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
     if (clash.length) {
       const c = clash[0];
       if (c.client_id != null && c.client_id === contactId) {
-        // Same client already carries this docket → idempotent (retry/re-fire).
+        // Already filed under this client → idempotent, but BACKFILL secondary.
+        await ensureRelate(req.db, c.case_id, contactId, "Primary"); // safety; normally present
+        let secondary = { present: !!jointParsed };
+        if (jointParsed) {
+          secondary = await resolveAndLinkSecondary(
+            req.db, jointParsed, c.case_id, contactId,
+            { rawName: jointRaw, docket: caseNumber }
+          );
+        }
         return res.json({
           status: "success",
-          message: `case ${c.case_id} already filed under docket ${caseNumber}`,
+          message: `case ${c.case_id} already filed under docket ${caseNumber}` +
+            (secondary.linked ? "; backfilled secondary link" : ""),
           action: "already_filed",
           id: c.case_id,
           case_id: c.case_id,
           contact_id: contactId,
           docket: caseNumber,
+          primary: { contact_id: contactId, status: primaryStatus },
+          secondary,
         });
       }
-      // Docket on a DIFFERENT client → data-quality alarm, not a routine create.
-      // TODO(alert): docket assigned to the wrong client, or duplicate docket.
       console.log(
         `[petition] DOCKET COLLISION: ${caseNumber} already on case ${c.case_id} ` +
         `(client ${c.client_id}) but petition resolved to client ${contactId} — needs human review`
@@ -288,10 +325,8 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
     }
 
     // ─────────────────────────────────────
-    // STEP 4 — Find the waiting (pre-filing) case
+    // STEP 3 — Find the waiting (pre-filing) case
     // ─────────────────────────────────────
-    // Pre-filing posture only: Open/Pending. Filed/Closed are completed matters
-    // — a new petition for such a client opens a fresh case instead.
     const [existing] = await req.db.query(
       `SELECT c.case_id, c.case_type
          FROM cases c
@@ -305,9 +340,13 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
       [contactId]
     );
 
+    let caseId;
+    let action;
+
     if (existing.length) {
       // ── STAMP the waiting case ──
-      const caseId = existing[0].case_id;
+      caseId = existing[0].case_id;
+      action = "stamped";
       await req.db.query(
         `UPDATE cases
             SET case_number  = ?,
@@ -318,96 +357,78 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
           WHERE case_id = ?`,
         [caseNumber, caseTypeFull, chapter, ...fileDateParam, caseId]
       );
-
-      await req.db.query(
-        `INSERT INTO log (log_type, log_date, log_link, log_by, log_data)
-         VALUES ('update', CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?, 0, ?)`,
-        [
-          caseId,
-          JSON.stringify({
-            action: "petition_stamped",
-            case_number: caseNumber,
-            case_type: caseTypeFull,
-            chapter,
-            contact_id: contactId,
-            matched_via: matchedVia,
-          }),
-        ]
-      );
-
-      return res.json({
-        status: "success",
-        message: `docket ${caseNumber} stamped onto case ${caseId}; stage → Filed`,
-        action: "stamped",
-        id: caseId,
-        case_id: caseId,
-        contact_id: contactId,
-        case_type: caseTypeFull,
-        chapter,
-        matched_via: matchedVia,
-      });
-    }
-
-    // ─────────────────────────────────────
-    // STEP 4b — No waiting case → CREATE a new Filed case
-    // ─────────────────────────────────────
-    let caseId;
-    let inserted = false;
-    let attempts = 0;
-    while (!inserted && attempts < 10) {
-      caseId = generateCaseId();
-      attempts++;
-      try {
-        await req.db.query(
-          `INSERT INTO cases
-             (case_id, case_open_date, case_file_date, case_type, case_chapter, case_stage, case_number)
-           VALUES
-             (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ${fileDateSql}, ?, ?, 'Filed', ?)`,
-          [caseId, ...fileDateParam, caseTypeFull, chapter, caseNumber]
-        );
-        inserted = true;
-      } catch (err) {
-        if (err.code !== "ER_DUP_ENTRY") throw err;
-        // case_id collision — retry with a new id.
+      // Primary link already exists (case was found via it); ensure for safety.
+      await ensureRelate(req.db, caseId, contactId, "Primary");
+    } else {
+      // ── CREATE a new Filed case ──
+      action = "created";
+      let inserted = false, attempts = 0;
+      while (!inserted && attempts < 10) {
+        caseId = generateCaseId();
+        attempts++;
+        try {
+          await req.db.query(
+            `INSERT INTO cases
+               (case_id, case_open_date, case_file_date, case_type, case_chapter, case_stage, case_number)
+             VALUES
+               (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ${fileDateSql}, ?, ?, 'Filed', ?)`,
+            [caseId, ...fileDateParam, caseTypeFull, chapter, caseNumber]
+          );
+          inserted = true;
+        } catch (err) {
+          if (err.code !== "ER_DUP_ENTRY") throw err;
+        }
       }
-    }
-    if (!inserted) {
-      throw new Error("Failed to generate unique case ID after 10 attempts");
+      if (!inserted) throw new Error("Failed to generate unique case ID after 10 attempts");
+      await ensureRelate(req.db, caseId, contactId, "Primary");
     }
 
-    const [relateResult] = await req.db.query(
-      `INSERT INTO case_relate (case_relate_case_id, case_relate_client_id, case_relate_type)
-       VALUES (?, ?, 'Primary')`,
-      [caseId, contactId]
-    );
+    // ─────────────────────────────────────
+    // STEP 4 — Resolve + link SECONDARY debtor (role: Secondary)
+    // ─────────────────────────────────────
+    let secondary = { present: !!jointParsed };
+    if (jointParsed) {
+      secondary = await resolveAndLinkSecondary(
+        req.db, jointParsed, caseId, contactId,
+        { rawName: jointRaw, docket: caseNumber }
+      );
+    }
 
+    // ─────────────────────────────────────
+    // STEP 5 — Log
+    // ─────────────────────────────────────
     await req.db.query(
       `INSERT INTO log (log_type, log_date, log_link, log_by, log_data)
        VALUES ('update', CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?, 0, ?)`,
       [
         caseId,
         JSON.stringify({
-          action: "petition_case_created",
+          action: action === "stamped" ? "petition_stamped" : "petition_case_created",
           case_number: caseNumber,
           case_type: caseTypeFull,
           chapter,
-          contact_id: contactId,
-          matched_via: matchedVia,
+          primary: { contact_id: contactId, status: primaryStatus },
+          secondary: jointParsed
+            ? { status: secondary.status, contact_id: secondary.contact_id, linked: secondary.linked }
+            : null,
         }),
       ]
     );
 
     return res.json({
       status: "success",
-      message: `no waiting case found; created filed case ${caseId} under docket ${caseNumber}`,
-      action: "created",
+      message:
+        action === "stamped"
+          ? `docket ${caseNumber} stamped onto case ${caseId}; stage → Filed`
+          : `no waiting case found; created filed case ${caseId} under docket ${caseNumber}`,
+      action,
       id: caseId,
       case_id: caseId,
       contact_id: contactId,
-      case_relate: relateResult.insertId,
       case_type: caseTypeFull,
       chapter,
-      matched_via: matchedVia,
+      primary: { contact_id: contactId, status: primaryStatus },
+      secondary,
     });
 
   } catch (err) {
