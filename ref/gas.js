@@ -717,3 +717,65 @@ function testWithLastEmail() {
 //     volume against historical /logEmail traffic for parity.
 //
 // 12. When parity is confirmed, retire the /logEmail route on the receiver.
+// ============================================================
+// TEST TRIGGER — live end-to-end test without dedupe collision
+//
+// Bind a SEPARATE time-based trigger (or run manually) to this function.
+// Apply the label CONFIG.testTriggerLabelName ('Test Trigger') to any email
+// you want to re-run through ingest as if it were brand new.
+//
+// Differences vs forwardEmailsToIngest (all SAFER):
+//   - Overrides envelope.headers.message_id with a random suffix so the
+//     receiver's (source, message_id) dedupe treats it as a NEW message and
+//     Layer-3 rules actually fire. (Re-runnable: fresh suffix each run.)
+//   - Skips BOTH legacy side-jobs (no Pabbly docs@ relay, no Clio forward).
+//   - Does NOT remove the label, so you can re-run freely.
+//
+// The synthetic message_id is the ONLY non-production element. Everything
+// else — envelope build, endpoint, headers, Layer-3 — is identical to prod.
+// ============================================================
+function forwardTestTrigger() {
+  const labelName = 'IT/Test Trigger';
+  const label = GmailApp.getUserLabelByName(labelName);
+  if (!label) { Logger.log('ABORT: test label not found: ' + labelName); return; }
+
+  const threads = label.getThreads();
+  Logger.log('forwardTestTrigger: ' + threads.length + ' thread(s) under "' + labelName + '"');
+
+  for (let ti = 0; ti < threads.length; ti++) {
+    const messages = threads[ti].getMessages();
+    for (let mi = 0; mi < messages.length; mi++) {
+      const message = messages[mi];
+      let envelope;
+      try {
+        envelope = buildCanonicalEnvelope(message);
+      } catch (e) {
+        Logger.log('TEST envelope build failed on ' + message.getId() + ': ' + e);
+        continue;
+      }
+
+      // The ONLY change from prod: mangle the dedupe key so this re-runs.
+      const suffix = '-test-' + Date.now().toString(36) + '-' +
+                     Math.random().toString(36).slice(2, 8);
+      envelope.headers.message_id = message.getId() + suffix;
+      envelope._parse_warnings = (envelope._parse_warnings || []).concat(['TEST_TRIGGER_synthetic_message_id']);
+
+      const json = JSON.stringify(envelope);
+      const res = sendToEndpoint(CONFIG.endpoint, json, {
+        'Content-Type':       'application/json',
+        'X-Email-Ingest-Key': CONFIG.apiKey
+      });
+      let parsed = {};
+      try { parsed = JSON.parse(res.body) || {}; } catch (e) {}
+      Logger.log(
+        'TEST ingest msg=' + message.getId() + suffix +
+        ' http=' + res.status +
+        ' status=' + (parsed.status || 'unknown') +
+        ' execId=' + parsed.execution_id +
+        ' logId=' + parsed.log_id
+      );
+      // Deliberately NO label removal, NO side-jobs.
+    }
+  }
+  Logger.log('forwardTestTrigger: complete');
+}
