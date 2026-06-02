@@ -1291,287 +1291,33 @@ function CasePicker(hostEl, options = {}) {
 }
 
 
+
+
 /* ──────────────────────────────────────────────────────────────────────────
    newContact(prefill = {}, onSuccess = null)
 
-   Moved out of the shells (a.html / b.html) verbatim, then extended for
-   the orphan-adopt create-new branch.
+   The new-client intake dialog. Creates a contact and, optionally, a case
+   ("Add & Open Case" or any Case Type chosen on the client path) and an
+   optional first appointment — all in one flow, no hand-off.
 
-   prefill keys:
-     name, phone, email                — pre-populate the matching field
-     phone_start_date (YYYY-MM-DD)      — when present, render an editable
-                                          date input next to phone, and send
-                                          phone_start_date in the POST body
-     email_start_date (YYYY-MM-DD)      — same for email
-     force_create (boolean)             — force CREATE on the intake route
-                                          (sends duplicate='duplicate' to skip
-                                          find-or-create match). Used by the
-                                          orphan-adopt create-new branch so a
-                                          value that matches an existing contact
-                                          still creates a fresh one.
-     suppressOpen (boolean)             — when truthy, skip the addFile/openFile
-                                          call so the user stays on the current
-                                          surface (e.g. case2's create-new
-                                          branch attaches the new contact to the
-                                          case instead of opening its tab).
-                                          onSuccess still fires.
+   Appointment block: revealed by the "Schedule first appointment" checkbox.
+   Fields: With (does_appts users, default = lowest-id, i.e. Stuart, resolved
+   live), Type, Method, datetime, Notes, and confirmation SMS/Email with an
+   auto-filled message. The appt is attached to the case the intake created,
+   when there is one.
 
-   When *_start_date is absent the date inputs are NOT rendered — the header
-   "+ New Client" UX is unchanged.
-
-   onSuccess(data) fires after a successful create (client or case), AFTER the
-   file is opened via addFile (unless suppressOpen). Receives the intake
-   response object (data.id, data.name, data.status, …).
+   prefill (all optional):
+     name / phone / email      — pre-fill the fields.
+     phone_start_date /
+     email_start_date          — show + send the corresponding start-date input.
+     force_create              — intake skips find-or-create (sends duplicate flag).
+     suppressOpen              — don't open the new contact/case file after create
+                                 (used by the orphan-adopt "create new" flows).
+   onSuccess(data)             — fires after a successful create; data is the
+                                 contact result (client path) or case result
+                                 (case path). Callers read data.status/id/name.
    ────────────────────────────────────────────────────────────────────────── */
 function newContact(prefill = {}, onSuccess = null) {
-  const hasPhoneStart = Object.prototype.hasOwnProperty.call(prefill, 'phone_start_date')
-                        && prefill.phone_start_date != null;
-  const hasEmailStart = Object.prototype.hasOwnProperty.call(prefill, 'email_start_date')
-                        && prefill.email_start_date != null;
-  const forceCreate = prefill.force_create === true;
-
-  const phoneStartHtml = hasPhoneStart
-    ? `<label class="input-label">Phone start date:</label>
-       <input style="width:200px;" type="date" id="NCPhoneStart"><br>`
-    : '';
-  const emailStartHtml = hasEmailStart
-    ? `<label class="input-label">Email start date:</label>
-       <input style="width:200px;" type="date" id="NCEmailStart"><br>`
-    : '';
-
-  Swal.fire({
-    title: "Add New Client:",
-    html: `<label class="input-label">Name:</label>
-         <input style="width:200px;" type="text" id="NCName" placeholder="Full Name"><br>
-         <label class="input-label">Phone:</label>
-         <input style="width:200px;" id="NCPhone" type="text" placeholder="(###) ###-####" title="Enter a valid phone number"><br>
-         ${phoneStartHtml}
-         <label class="input-label">Email:</label>
-         <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
-         ${emailStartHtml}
-         <label class="input-label">Set Appointment:</label>
-         <input type="datetime-local" id="NCDate" style="width:200px;" title="Optionally book a first appointment"><br>
-         <label class="sub-label">Optional — if set, you'll schedule the appointment next.</label><br>
-         <label class="input-label">Case Type:</label>
-         <select id="NCType" style="width:200px;" onchange="E('NCOtherType').style.display = this.value === 'Other' ? '' : 'none';">
-          <option selected value="">Select a case type</option>
-          <option>Bankruptcy</option>
-          <option>Other</option>
-         </select>
-         <input style="width:200px; display:none;" type="text" id="NCOtherType" placeholder="Enter case type"><br>
-         <label class="sub-label">Optional, select type to create lead.</label><br>
-         `,
-    showCancelButton: true,
-    showConfirmButton: true,
-    cancelButtonText: "Cancel",
-    confirmButtonText: "Add & Open Client",
-    showCloseButton: true,
-    showDenyButton: true,
-    denyButtonText: "Add & Open Case",
-    denyButtonColor: "#26abe2",
-    showLoaderOnConfirm: true,
-    showLoaderOnDeny: true,
-
-    didOpen: () => {
-      if (prefill.name) E("NCName").value = prefill.name;
-      if (prefill.phone) {
-        const p = String(prefill.phone).replace(/\D/g, "");
-        E("NCPhone").value = p.length === 10
-          ? `(${p.slice(0,3)}) ${p.slice(3,6)}-${p.slice(6)}`
-          : prefill.phone;
-      }
-      if (prefill.email) E("NCEmail").value = prefill.email;
-      if (hasPhoneStart && E("NCPhoneStart")) E("NCPhoneStart").value = prefill.phone_start_date;
-      if (hasEmailStart && E("NCEmailStart")) E("NCEmailStart").value = prefill.email_start_date;
-    },
-
-    // ── ADD & OPEN CLIENT ──
-    preConfirm: async () => {
-      const name = E("NCName").value.trim();
-      const phone = E("NCPhone").value.replace(/\D/g, "");
-      const email = E("NCEmail").value.trim();
-      const date = E("NCDate").value;
-      const caseTypeRaw = E("NCType").value;
-      const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
-
-      // Relaxed validation: name + at least one of phone or email
-      if (!name || (!E("NCPhone").value && !email)) {
-        Swal.showValidationMessage("Name plus at least a phone or email is required");
-        return false;
-      }
-      if (name.split(" ").length < 2) {
-        Swal.showValidationMessage("Please fill in a valid full name");
-        return false;
-      }
-      if (E("NCPhone").value && phone.length !== 10) {
-        Swal.showValidationMessage("Please fill in a valid phone number");
-        return false;
-      }
-      if (email && !/^\S+@\S+\.\S+$/.test(email)) {
-        Swal.showValidationMessage("Please fill in a valid email address");
-        return false;
-      }
-      if (caseTypeRaw === "Other" && !caseType) {
-        Swal.showValidationMessage("Please enter a case type");
-        return false;
-      }
-
-      try {
-        const body = { name, phone, email };
-        if (hasPhoneStart && E("NCPhoneStart") && E("NCPhoneStart").value) {
-          body.phone_start_date = E("NCPhoneStart").value;
-        }
-        if (hasEmailStart && E("NCEmailStart") && E("NCEmailStart").value) {
-          body.email_start_date = E("NCEmailStart").value;
-        }
-        if (forceCreate) body.duplicate = "duplicate";
-
-        // 1. Create/update contact
-        const contactResult = await P.apiSend("/api/intake/contact", "POST", body);
-
-        // 2. If case type selected, create case too
-        let caseResult = null;
-        if (caseType) {
-          caseResult = await P.apiSend("/api/intake/case", "POST", {
-            contact_id: contactResult.id,
-            case_type: caseType
-          });
-        }
-
-        return { type: "client", data: contactResult, apptDate: date, contactId: contactResult.id, contactName: name };
-      } catch (err) {
-        Swal.showValidationMessage(err.message || "Failed to create client");
-        return false;
-      }
-    },
-
-    // ── ADD & OPEN CASE ──
-    preDeny: async () => {
-      const name = E("NCName").value.trim();
-      const phone = E("NCPhone").value.replace(/\D/g, "");
-      const email = E("NCEmail").value.trim();
-      const date = E("NCDate").value;
-      const caseTypeRaw = E("NCType").value;
-      const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
-
-      // Relaxed validation: name + at least one of phone or email + case type
-      if (!name || (!E("NCPhone").value && !email)) {
-        Swal.showValidationMessage("Name plus at least a phone or email is required");
-        return false;
-      }
-      if (!caseType) {
-        Swal.showValidationMessage("Please select a case type");
-        return false;
-      }
-      if (caseTypeRaw === "Other" && !caseType) {
-        Swal.showValidationMessage("Please enter a case type");
-        return false;
-      }
-      if (name.split(" ").length < 2) {
-        Swal.showValidationMessage("Please fill in a valid full name");
-        return false;
-      }
-      if (E("NCPhone").value && phone.length !== 10) {
-        Swal.showValidationMessage("Please fill in a valid phone number");
-        return false;
-      }
-      if (email && !/^\S+@\S+\.\S+$/.test(email)) {
-        Swal.showValidationMessage("Please fill in a valid email address");
-        return false;
-      }
-
-      try {
-        const body = { name, phone, email };
-        if (hasPhoneStart && E("NCPhoneStart") && E("NCPhoneStart").value) {
-          body.phone_start_date = E("NCPhoneStart").value;
-        }
-        if (hasEmailStart && E("NCEmailStart") && E("NCEmailStart").value) {
-          body.email_start_date = E("NCEmailStart").value;
-        }
-        if (forceCreate) body.duplicate = "duplicate";
-
-        // 1. Create/update contact
-        const contactResult = await P.apiSend("/api/intake/contact", "POST", body);
-
-        // 2. Create case
-        const caseResult = await P.apiSend("/api/intake/case", "POST", {
-          contact_id: contactResult.id,
-          case_type: caseType
-        });
-
-        return { type: "case", data: caseResult, contactData: contactResult, apptDate: date, contactId: contactResult.id, contactName: name };
-      } catch (err) {
-        Swal.showValidationMessage(err.message || "Failed to create case");
-        return false;
-      }
-    },
-
-    allowOutsideClick: () => !Swal.isLoading()
-
-  }).then((result) => {
-    if (!result.isConfirmed && !result.isDenied) return; // cancelled
-    if (!result.value) return;
-
-    const { type, data, apptDate, contactId, contactName } = result.value;
-
-    Toast.fire({
-      icon: data.status || "success",
-      title: data.status === "success" ? "Success" : "Error",
-      text: data.message
-    });
-
-    if (data.status === "success") {
-      if (!prefill.suppressOpen) {
-        const openFile = _resolveAddFile();
-        if (type === "client") {
-          if (openFile) openFile(data.name, "client", data.id);
-        } else if (type === "case") {
-          if (openFile) openFile(data.id, "case", data.id);
-        }
-      }
-      if (typeof onSuccess === "function") onSuccess(data);
-
-      // Optional first appointment: if a date was entered, open the shared
-      // appt creator pre-filled with the new contact + date. Attach the new
-      // case when this was the "Add & Open Case" path; otherwise allow an
-      // optional case pick.
-      if (apptDate && contactId != null) {
-        const apptOpts = {
-          contactId,
-          contactLabel: contactName || ('Contact ' + contactId),
-          defaultDate:  apptDate,
-        };
-        if (type === "case" && data && data.id != null) {
-          apptOpts.caseId = data.id;
-        } else {
-          apptOpts.allowCasePick = true;
-        }
-        newApptDialog(apptOpts);
-      }
-    }
-  });
-}
-
-
-/* ──────────────────────────────────────────────────────────────────────────
-   newContactInline(prefill, onSuccess)   (OPTION B — inline appt intake)
-
-   Same as newContact(), but instead of handing off to newApptDialog() after
-   the contact/case is created, it embeds a MINIMAL appointment block directly
-   in the intake modal, revealed by a "Schedule a first appointment" checkbox.
-   On submit it creates the contact (+ optional case), then POSTs the appt in
-   the same flow. The appt is attached to whatever case the intake created (the
-   Add & Open Case path, or the client path when a Case Type was chosen).
-
-   This exists alongside newContact() so the two intake flows can be compared.
-   Wire a header button to whichever wins; delete the other.
-
-   Inline appt fields are intentionally minimal: With, Type, datetime, Method.
-   Confirmation-message (SMS/email) is NOT offered inline — use the standalone
-   newApptDialog() for that. appt_with defaults to the lowest-id does_appts user
-   (Stuart today, resolved live).
-   ────────────────────────────────────────────────────────────────────────── */
-function newContactInline(prefill = {}, onSuccess = null) {
   const hasPhoneStart = Object.prototype.hasOwnProperty.call(prefill, 'phone_start_date')
                         && prefill.phone_start_date != null;
   const hasEmailStart = Object.prototype.hasOwnProperty.call(prefill, 'email_start_date')
@@ -1601,12 +1347,12 @@ function newContactInline(prefill = {}, onSuccess = null) {
 
   // Minimal inline appt block — hidden until the checkbox is ticked.
   const apptBlockHtml = `
-    <label class="input-label">First appointment:</label>
-    <label class="sub-label" style="text-align:left;">
-      <input type="checkbox" id="NCApptOn" style="width:auto;"> Schedule one now
+    <label class="input-label">Appt:</label>
+    <label class="sub-label" style="text-align:left; width:auto;">
+      <input type="checkbox" id="NCApptOn" style="width:auto;"> Schedule first appointment <i style="color:#888;">(optional)</i>
     </label><br>
-    <div id="NCApptBox" style="display:none; border:1px solid #e3e7ea; border-radius:5px; padding:8px; margin:4px 0; text-align:left;">
-      <form onchange="newContactInline._recompute && newContactInline._recompute()">
+    <div id="NCApptBox" style="display:none; border:1px solid #e3e7ea; border-radius:5px; padding:8px; margin:4px 0; text-align:center;">
+      <form onchange="newContact._recompute && newContact._recompute()">
       <select id="NCApptWith" style="width:280px;">${withOptions}</select><br>
       <select id="NCApptTypeSel" style="width:280px; margin-top:6px;"
         onchange="[E('NCApptType').value,E('NCApptLen').value]=this.value.split(',');E('NCApptOtherSpan').style.display=this.value==','?'':'none'">
@@ -1692,7 +1438,7 @@ function newContactInline(prefill = {}, onSuccess = null) {
         E("NCApptBox").style.display = on.checked ? "" : "none";
       });
       // Confirmation-message auto-fill (parallels newApptDialog.recompute).
-      newContactInline._recompute = function () {
+      newContact._recompute = function () {
         const dt = E("NCApptDate") ? E("NCApptDate").value : '';
         const date = dt
           ? new Date(dt).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }).replace(',', ' at')
@@ -1710,7 +1456,7 @@ function newContactInline(prefill = {}, onSuccess = null) {
       };
     },
 
-    willClose: () => { delete newContactInline._recompute; },
+    willClose: () => { delete newContact._recompute; },
 
     // Shared validation + create. mode: 'client' | 'case'
     preConfirm:  () => _ncInlineSubmit('client'),
@@ -1793,7 +1539,7 @@ function newContactInline(prefill = {}, onSuccess = null) {
       apptPlatform = (document.querySelector('input[name="NCApptPlatform"]:checked') || {}).value || '';
       const dtRaw = E("NCApptDate") ? E("NCApptDate").value : '';
       if (!apptType || !apptLen || !dtRaw) {
-        Swal.showValidationMessage("Complete the appointment type, length, and date — or untick 'Schedule one now'.");
+        Swal.showValidationMessage("Complete the appointment type, length, and date — or untick 'Schedule first appointment'.");
         return false;
       }
       if (!apptWith) {
@@ -1857,10 +1603,9 @@ function newContactInline(prefill = {}, onSuccess = null) {
 /* ──────────────────────────────────────────────────────────────────────────
    newApptDialog(opts)   (shared appointment creator)
 
-   One dialog for all surfaces (a/b shell appts tab, case2, contact2, and
-   newContact's date hand-off). Sends appt_with explicitly (the per-file SWALs
-   it replaced never did, so every booked appt defaulted server-side to user 1
-   / Stuart).
+   One dialog for the standalone appt surfaces (a/b shell appts tab, case2,
+   contact2). Sends appt_with explicitly (the per-file SWALs it replaced never
+   did, so every booked appt defaulted server-side to user 1 / Stuart).
 
    The dialog has two SIDES — contact and case — that cross-constrain:
 
