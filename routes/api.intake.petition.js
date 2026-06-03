@@ -144,6 +144,21 @@ async function findContactsByName(db, parsed) {
 }
 
 /**
+ * Fetch full contact rows by id (for get_contacts). Returns a Map id→row.
+ * Used only when the caller opts in, so Pabbly et al. don't need a second fetch.
+ */
+async function fetchContacts(db, ids) {
+  const clean = [...new Set(ids.filter(id => Number.isInteger(id)))];
+  if (clean.length === 0) return new Map();
+  const placeholders = clean.map(() => "?").join(",");
+  const [rows] = await db.query(
+    `SELECT * FROM contacts WHERE contact_id IN (${placeholders})`,
+    clean
+  );
+  return new Map(rows.map(r => [r.contact_id, r]));
+}
+
+/**
  * Idempotent case_relate link. Inserts (case, client, type) only if absent.
  * Returns { created: bool, case_relate_id? }.
  */
@@ -251,6 +266,11 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
   const fileDateSql = fileDate ? "?" : "CONVERT_TZ(NOW(), 'UTC', 'America/New_York')";
   const fileDateParam = fileDate ? [fileDate] : [];
 
+  // Opt-in: return full contact row(s) so the caller needn't re-fetch.
+  // Accepts get_contacts (preferred) or getContacts; truthy "true"/1/true.
+  const gcRaw = req.body.get_contacts != null ? req.body.get_contacts : req.body.getContacts;
+  const getContacts = gcRaw === true || gcRaw === 1 || gcRaw === "true" || gcRaw === "1";
+
   try {
     // ── Parse debtors ──
     const debtors = splitDebtors(caseName);
@@ -325,6 +345,14 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
             { rawName: jointRaw, docket: caseNumber }
           );
         }
+        let contactsBlock = {};
+        if (getContacts) {
+          const map = await fetchContacts(req.db, [contactId, secondary.contact_id]);
+          contactsBlock = {
+            primary_contact: map.get(contactId) || null,
+            secondary_contact: secondary.contact_id ? (map.get(secondary.contact_id) || null) : null,
+          };
+        }
         return res.json({
           status: "success",
           message: `case ${c.case_id} already filed under docket ${caseNumber}` +
@@ -336,6 +364,7 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
           docket: caseNumber,
           primary: { contact_id: contactId, status: primaryStatus },
           secondary,
+          ...contactsBlock,
         });
       }
       console.log(
@@ -442,6 +471,15 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
       ]
     );
 
+    let contactsBlock = {};
+    if (getContacts) {
+      const map = await fetchContacts(req.db, [contactId, secondary.contact_id]);
+      contactsBlock = {
+        primary_contact: map.get(contactId) || null,
+        secondary_contact: secondary.contact_id ? (map.get(secondary.contact_id) || null) : null,
+      };
+    }
+
     return res.json({
       status: "success",
       message:
@@ -456,6 +494,7 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
       chapter,
       primary: { contact_id: contactId, status: primaryStatus },
       secondary,
+      ...contactsBlock,
     });
 
   } catch (err) {

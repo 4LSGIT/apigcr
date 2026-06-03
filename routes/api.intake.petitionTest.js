@@ -66,6 +66,14 @@ async function findContactsByName(db, parsed) {
   );
   return rows;
 }
+/** fetch full contact rows by id (only real, existing ids). */
+async function fetchContacts(db, ids) {
+  const clean = [...new Set(ids.filter(id => Number.isInteger(id)))];
+  if (clean.length === 0) return new Map();
+  const placeholders = clean.map(() => "?").join(",");
+  const [rows] = await db.query(`SELECT * FROM contacts WHERE contact_id IN (${placeholders})`, clean);
+  return new Map(rows.map(r => [r.contact_id, r]));
+}
 /** read-only: does this (case, client, type) link already exist? */
 async function relateExists(db, caseId, clientId, type) {
   if (caseId == null || clientId == null) return false;
@@ -173,6 +181,9 @@ router.post("/api/intake/petitionTest", jwtOrApiKey, async (req, res) => {
   const caseTypeFull = `Bankruptcy - Ch. ${chapter}`;
   const fileDateDisplay = fileDate ? fileDate : "CONVERT_TZ(NOW(),'UTC','America/New_York') [today ET]";
 
+  const gcRaw = req.body.get_contacts != null ? req.body.get_contacts : req.body.getContacts;
+  const getContacts = gcRaw === true || gcRaw === 1 || gcRaw === "true" || gcRaw === "1";
+
   try {
     const debtors = splitDebtors(caseName);
     const primaryParsed = parseName(debtors[0] || "");
@@ -236,6 +247,15 @@ router.post("/api/intake/petitionTest", jwtOrApiKey, async (req, res) => {
         if (jointParsed) {
           secondary = await planSecondary(req.db, jointParsed, jointRaw, c.case_id, contactId, caseNumber, wouldWrite, notes);
         }
+        let contactsBlock = {};
+        if (getContacts) {
+          const realIds = [contactId, secondary.contact_id].filter(id => Number.isInteger(id));
+          const map = await fetchContacts(req.db, realIds);
+          contactsBlock = {
+            primary_contact: map.get(contactId) || null,
+            secondary_contact: Number.isInteger(secondary.contact_id) ? (map.get(secondary.contact_id) || null) : (secondary.contact_id || null),
+          };
+        }
         return res.json({
           status: "success", dry_run: true,
           message: `[DRY RUN] case ${c.case_id} already filed under docket ${caseNumber}` + (secondary.linked ? "; would backfill secondary link" : ""),
@@ -243,6 +263,7 @@ router.post("/api/intake/petitionTest", jwtOrApiKey, async (req, res) => {
           id: c.case_id, case_id: c.case_id, contact_id: contactId, docket: caseNumber,
           primary: { contact_id: contactId, status: primaryStatus },
           secondary,
+          ...contactsBlock,
           plan: { action: "already_filed_backfill", would_write_sql: wouldWrite, notes },
         });
       }
@@ -324,6 +345,16 @@ router.post("/api/intake/petitionTest", jwtOrApiKey, async (req, res) => {
       ],
     });
 
+    let contactsBlock = {};
+    if (getContacts) {
+      const realIds = [contactId, secondary.contact_id].filter(id => Number.isInteger(id));
+      const map = await fetchContacts(req.db, realIds);
+      contactsBlock = {
+        primary_contact: Number.isInteger(contactId) ? (map.get(contactId) || null) : "(new primary contact — not created in dry run)",
+        secondary_contact: Number.isInteger(secondary.contact_id) ? (map.get(secondary.contact_id) || null) : (secondary.contact_id || null),
+      };
+    }
+
     return res.json({
       status: "success", dry_run: true,
       message:
@@ -338,6 +369,7 @@ router.post("/api/intake/petitionTest", jwtOrApiKey, async (req, res) => {
       chapter,
       primary: { contact_id: contactId, status: primaryStatus },
       secondary,
+      ...contactsBlock,
       plan: {
         action: action === "stamped" ? "stamp_existing_case" : (primaryIsNew ? "create_contact_and_case" : "create_case"),
         would_write_sql: wouldWrite,
