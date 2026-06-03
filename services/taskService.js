@@ -581,6 +581,8 @@ function shapeRow(r) {
     link = { type: 'appt', id: r.task_link_id, title: `Appt #${r.task_link_id}` };
   else if (r.task_link_type === 'bill')
     link = { type: 'bill', id: r.task_link_id, title: `Bill #${r.task_link_id}` };
+  else if (r.task_link_type === 'event')
+    link = { type: 'event', id: r.task_link_id, title: `Event #${r.task_link_id}` };
 
   return {
     id:      r.task_id,

@@ -333,6 +333,7 @@
         <button class="tab" onclick="openTab(this, 'tabSend')"><i class="fa-solid fa-comments"></i> Communication</button>
         <button class="tab" onclick="openTab(this, 'tabSeq')"><i class="fa-solid fa-robot"></i> Automations</button>
         <button class="tab" onclick="openTab(this, 'tabAppts')"><i class="fa-solid fa-calendar-check"></i>&nbsp;&nbsp;Appointments</button>
+        <button class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();"><i class="fa-solid fa-calendar-day"></i>&nbsp;&nbsp;Events</button>
         <button class="tab" onclick="openTab(this, 'tabCases')"><i class="fa-solid fa-landmark"></i> Cases</button>
         <button class="tab" onclick="openTab(this, 'tabBills')"><i class="fa-solid fa-file-invoice-dollar"></i> Bills</button>
         <button class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Log</button>
@@ -432,6 +433,14 @@
     <button class="file-button" onclick="newAppt()"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button>
     <h2>No Appointments</h2>
     <table id="apptsTable" class="logTable" style="display:none"><tr><th>Appt ID:</th><th>Type:</th><th>Date:</th><th>Time:</th><th>Length:</th><th>status</th><th>Note:</th><th>Action:</th></tr></table>
+  </div>
+
+  <div id="tabEvents" class="tab-content">
+    <h1>Events connected to this contact:</h1>
+    <button class="file-button" onclick="newEvent()"><i class="fa-solid fa-calendar-plus"></i> New Event</button>
+    <table id="eventsTable" class="logTable">
+      <tr><th>ID</th><th>Type</th><th>Title</th><th>Date</th><th>Time</th><th>Status</th><th>Location</th><th>Action</th></tr>
+    </table>
   </div>
 
   <div id="tabCases" class="tab-content">
@@ -1084,6 +1093,80 @@ function newAppt() {
     contactFixed: { id: ct.contact_id, label: ct.contact_name || ('Contact ' + ct.contact_id) },
     caseList,
     onCreated: async () => { await refreshAppts(); }
+  });
+}
+
+// ── Events tab (contact-scoped) ─────────────────────────────
+// Mirrors the Appointments tab. Lazy-loaded on first tab open. Shared
+// dialog/helpers (newEventDialog, eventComplete, eventCancel) live in
+// scripts.js. Events on an entity page have a FIXED link to this contact.
+let events = [];
+
+function eventEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function newEvent() {
+  const ed = window.entityData || {};
+  const ct = ed.contact || {};
+  newEventDialog({
+    linkFixed: { type: 'contact', id: clientID, label: ct.contact_name || ('Contact ' + clientID) },
+    onSaved: () => refreshEvents()
+  });
+}
+
+async function refreshEvents() {
+  try {
+    const data = await P.apiSend('/api/events', 'GET',
+      { link_type: 'contact', link_id: clientID, status: 'all', sort: 'asc' });
+    events = data.data || [];
+    putEvents();
+  } catch (err) {
+    console.error('refreshEvents failed:', err.message);
+  }
+}
+// Exposed so the shell's 'event-updated' listener can refresh this iframe.
+window.refreshEvents = refreshEvents;
+
+function putEvents() {
+  const table = E('eventsTable');
+  // Clear rows after the header (full rebuild).
+  table.innerHTML =
+    '<tr><th>ID</th><th>Type</th><th>Title</th><th>Date</th><th>Time</th><th>Status</th><th>Location</th><th>Action</th></tr>';
+  events.forEach(ev => {
+    const row = table.insertRow();
+    const date = ev.event_date ? String(ev.event_date).slice(0, 10) : '';
+    const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
+    const timeStr = allDay
+      ? 'All day'
+      : (ev.event_time ? String(ev.event_time).slice(0, 5) : '');
+    row.innerHTML =
+      `<td>${ev.event_id}</td>` +
+      `<td>${eventEsc(ev.event_type)}</td>` +
+      `<td>${eventEsc(ev.event_title)}</td>` +
+      `<td>${date}</td>` +
+      `<td>${timeStr}</td>` +
+      `<td>${eventEsc(ev.event_status)}</td>` +
+      `<td>${eventEsc(ev.event_location)}</td>`;
+    // Action cell — Edit always; Complete + Cancel only when Scheduled.
+    const actionCell = row.insertCell();
+    const editBtn = document.createElement('button');
+    editBtn.innerHTML = '<i class="fa-solid fa-pen"></i> Edit';
+    editBtn.onclick = () => newEventDialog({ event: ev, onSaved: () => refreshEvents() });
+    actionCell.appendChild(editBtn);
+    if (ev.event_status === 'Scheduled') {
+      actionCell.appendChild(document.createTextNode(' '));
+      const compBtn = document.createElement('button');
+      compBtn.innerHTML = '<i class="fa-solid fa-check"></i> Complete';
+      compBtn.onclick = () => eventComplete(ev.event_id, () => refreshEvents());
+      actionCell.appendChild(compBtn);
+      actionCell.appendChild(document.createTextNode(' '));
+      const cancelBtn = document.createElement('button');
+      cancelBtn.innerHTML = '<i class="fa-solid fa-ban"></i> Cancel';
+      cancelBtn.onclick = () => eventCancel(ev.event_id, () => refreshEvents());
+      actionCell.appendChild(cancelBtn);
+    }
   });
 }
 

@@ -36,6 +36,9 @@
       <button class="tab" onclick="openTab(this, 'tabAppts')">
         <i class="fa-solid fa-calendar-check"></i> Appointments
       </button>
+      <button class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();">
+        <i class="fa-solid fa-calendar-day"></i> Events
+      </button>
       <button
         class="tab"
         id="checklistsButton"
@@ -246,6 +249,102 @@
             } catch (err) {
               Toast.fire({ icon: "error", title: "Error", text: err.message });
             }
+          }
+        });
+      }
+    </script>
+
+    <div id="tabEvents" class="tab-content">
+      <h1>Events connected to this case:</h1>
+      <button class="file-button" onclick="newEvent()">
+        <i class="fa-solid fa-calendar-plus"></i> New Event</button
+      ><br />
+      <table id="eventsTable" class="logTable">
+        <tr>
+          <th>ID</th>
+          <th>Type</th>
+          <th>Title</th>
+          <th>Date</th>
+          <th>Time</th>
+          <th>Status</th>
+          <th>Location</th>
+          <th>Action</th>
+        </tr>
+      </table>
+    </div>
+    <script>
+      // ── Events tab (case-scoped) ───────────────────────────────
+      // Mirrors the Appointments tab. Lazy-loaded on first tab open.
+      // The shared dialog/helpers (newEventDialog, eventComplete,
+      // eventCancel) live in scripts.js. Events on an entity page have a
+      // FIXED link to this case (linkFixed), never a picker.
+      let events = [];
+
+      function eventEsc(s) {
+        return String(s == null ? "" : s)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+
+      function newEvent() {
+        const ed = window.entityData || {};
+        const c  = ed.case || {};
+        const caseLabel = c.case_number_full || c.case_number || ("Case " + caseID);
+        newEventDialog({
+          linkFixed: { type: "case", id: caseID, label: caseLabel },
+          onSaved: () => refreshEvents()
+        });
+      }
+
+      async function refreshEvents() {
+        try {
+          const data = await P.apiSend("/api/events", "GET",
+            { link_type: "case", link_id: caseID, status: "all", sort: "asc" });
+          events = data.data || [];
+          putEvents();
+        } catch (err) {
+          console.error("refreshEvents failed:", err.message);
+        }
+      }
+      // Exposed so the shell's 'event-updated' listener can refresh this iframe.
+      window.refreshEvents = refreshEvents;
+
+      function putEvents() {
+        const table = E("eventsTable");
+        // Clear rows after the header (mirror putAppts' full-rebuild).
+        table.innerHTML =
+          "<tr><th>ID</th><th>Type</th><th>Title</th><th>Date</th><th>Time</th><th>Status</th><th>Location</th><th>Action</th></tr>";
+        events.forEach(ev => {
+          const row = table.insertRow();
+          const date = ev.event_date ? String(ev.event_date).slice(0, 10) : "";
+          const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
+          const timeStr = allDay
+            ? "All day"
+            : (ev.event_time ? String(ev.event_time).slice(0, 5) : "");
+          row.innerHTML =
+            `<td>${ev.event_id}</td>` +
+            `<td>${eventEsc(ev.event_type)}</td>` +
+            `<td>${eventEsc(ev.event_title)}</td>` +
+            `<td>${date}</td>` +
+            `<td>${timeStr}</td>` +
+            `<td>${eventEsc(ev.event_status)}</td>` +
+            `<td>${eventEsc(ev.event_location)}</td>`;
+          // Action cell — Edit always; Complete + Cancel only when Scheduled.
+          const actionCell = row.insertCell();
+          const editBtn = document.createElement("button");
+          editBtn.innerHTML = '<i class="fa-solid fa-pen"></i> Edit';
+          editBtn.onclick = () => newEventDialog({ event: ev, onSaved: () => refreshEvents() });
+          actionCell.appendChild(editBtn);
+          if (ev.event_status === "Scheduled") {
+            actionCell.appendChild(document.createTextNode(" "));
+            const compBtn = document.createElement("button");
+            compBtn.innerHTML = '<i class="fa-solid fa-check"></i> Complete';
+            compBtn.onclick = () => eventComplete(ev.event_id, () => refreshEvents());
+            actionCell.appendChild(compBtn);
+            actionCell.appendChild(document.createTextNode(" "));
+            const cancelBtn = document.createElement("button");
+            cancelBtn.innerHTML = '<i class="fa-solid fa-ban"></i> Cancel';
+            cancelBtn.onclick = () => eventCancel(ev.event_id, () => refreshEvents());
+            actionCell.appendChild(cancelBtn);
           }
         });
       }
