@@ -1639,7 +1639,7 @@ window.piToggleSidebar = piToggleSidebar;
       if (m === 'mapper') renderMapperRules();
     };
     E('rule-transform-mode').addEventListener('change', () => { applyTransformMode(); markDirty(); });
-    E('rule-mapper-add').addEventListener('click', () => { ruleForm.mapperRules.push({ from: '', to: '' }); renderMapperRules(); markDirty(); });
+    E('rule-mapper-add').addEventListener('click', () => { syncMapperRulesFromDom(); ruleForm.mapperRules.push({ from: '', to: '' }); renderMapperRules(); markDirty(); });
     applyTransformMode();
 
     // ── dirty tracking on scalar + code fields (match-builder marks itself) ──
@@ -1700,6 +1700,7 @@ window.piToggleSidebar = piToggleSidebar;
     el.querySelectorAll('.mapper-rule').forEach(card => {
       const i = Number(card.getAttribute('data-idx'));
       card.querySelector('.mr-type').addEventListener('change', e => {
+        syncMapperRulesFromDom();
         const to = ruleForm.mapperRules[i].to || '';
         const t = e.target.value;
         if (t === 'from') ruleForm.mapperRules[i] = { from: '', to, transforms: [] };
@@ -1707,7 +1708,7 @@ window.piToggleSidebar = piToggleSidebar;
         else ruleForm.mapperRules[i] = { value: '', to };
         renderMapperRules(); markDirty();
       });
-      card.querySelector('.mr-remove').addEventListener('click', () => { ruleForm.mapperRules.splice(i, 1); renderMapperRules(); markDirty(); });
+      card.querySelector('.mr-remove').addEventListener('click', () => { syncMapperRulesFromDom(); ruleForm.mapperRules.splice(i, 1); renderMapperRules(); markDirty(); });
       card.querySelector('.mr-from')?.addEventListener('input', markDirty);
       card.querySelector('.mr-to')?.addEventListener('input', markDirty);
       card.querySelector('.mr-transforms')?.addEventListener('input', markDirty);
@@ -1733,6 +1734,14 @@ window.piToggleSidebar = piToggleSidebar;
       }
       return rule;
     });
+  }
+
+  // Sync the live DOM input values back into ruleForm.mapperRules WITHOUT
+  // re-rendering. Must run before any handler that mutates the buffer and
+  // re-renders (type change, add, remove), or unsaved edits in sibling rows
+  // are lost (they live only in the DOM until Save calls collectMapperRules).
+  function syncMapperRulesFromDom() {
+    if (E('rule-mapper-rules')) ruleForm.mapperRules = collectMapperRules();
   }
 
   // Harvest the rule's scalar + match + transform fields into a POST/PUT payload.

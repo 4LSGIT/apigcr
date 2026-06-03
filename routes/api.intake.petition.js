@@ -102,6 +102,33 @@ function normalizeChapter(raw) {
   return m ? m[1] : null;
 }
 
+/**
+ * Normalize a filing date to 'YYYY-MM-DD'. Accepts:
+ *   - "YYYY-MM-DD"  (already canonical)
+ *   - "M/D/YYYY" / "MM/DD/YYYY"  (US format, as the MIEB email gives it, e.g. "5/18/2026")
+ * Returns the canonical string, or null if absent/unparseable (caller then
+ * falls back to today ET). Validates real calendar ranges to reject garbage.
+ */
+function normalizeFileDate(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (s === "") return null;
+
+  let y, mo, d;
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);      // YYYY-MM-DD
+  if (m) {
+    y = +m[1]; mo = +m[2]; d = +m[3];
+  } else if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))) {  // M/D/YYYY
+    mo = +m[1]; d = +m[2]; y = +m[3];
+  } else {
+    return null;
+  }
+
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1900 || y > 2999) return null;
+  const pad = n => String(n).padStart(2, "0");
+  return `${y}-${pad(mo)}-${pad(d)}`;
+}
+
 /** name-LIKE lookup: contact_name LIKE %first%lnameOnly%. */
 async function findContactsByName(db, parsed) {
   const first = (parsed.firstName || "").trim();
@@ -209,11 +236,10 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
 
   let chapter = normalizeChapter(req.body.chapter) || normalizeChapter(fromSubject.chapter);
 
-  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-  let fileDate = req.body.file_date;
-  fileDate = (typeof fileDate === "string" && fileDate.trim() !== "") ? fileDate.trim() : null;
-  if (fileDate !== null && !DATE_RE.test(fileDate)) {
-    return res.status(400).json({ status: "error", message: "file_date must be YYYY-MM-DD" });
+  // file_date: accept M/D/YYYY or YYYY-MM-DD; null → fall back to today ET.
+  const fileDate = normalizeFileDate(req.body.file_date);
+  if (req.body.file_date != null && String(req.body.file_date).trim() !== "" && fileDate === null) {
+    return res.status(400).json({ status: "error", message: "file_date must be YYYY-MM-DD or M/D/YYYY" });
   }
 
   if (!caseName)   return res.status(400).json({ status: "error", message: "case_name is required" });
@@ -353,6 +379,7 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
                 case_type    = ?,
                 case_chapter = ?,
                 case_stage   = 'Filed',
+                case_status  = 'Case Filed',
                 case_file_date = ${fileDateSql}
           WHERE case_id = ?`,
         [caseNumber, caseTypeFull, chapter, ...fileDateParam, caseId]
@@ -369,9 +396,9 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
         try {
           await req.db.query(
             `INSERT INTO cases
-               (case_id, case_open_date, case_file_date, case_type, case_chapter, case_stage, case_number)
+               (case_id, case_open_date, case_file_date, case_type, case_chapter, case_stage, case_status, case_number)
              VALUES
-               (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ${fileDateSql}, ?, ?, 'Filed', ?)`,
+               (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ${fileDateSql}, ?, ?, 'Filed', 'Case Filed', ?)`,
             [caseId, ...fileDateParam, caseTypeFull, chapter, caseNumber]
           );
           inserted = true;
