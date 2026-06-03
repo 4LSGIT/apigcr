@@ -11,6 +11,8 @@
  *   phoneLines   — active phone lines
  *   emailFrom    — email sender addresses
  *   users        — active staff users (user_type = true)
+ *   settings     — frontend settings map: every app_settings row keyed 'fe-*'
+ *                  (prefix stripped, value JSON-parsed, raw-string fallback)
  *
  * This replaces the need for separate calls to:
  *   GET /api/phone-lines
@@ -43,7 +45,8 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       [meRows],
       [lines],
       [emails],
-      [users]
+      [users],
+      [settingsRows]
     ] = await Promise.all([
       req.db.query('SELECT * FROM users WHERE user = ?', [userId]),
       req.db.query(
@@ -62,17 +65,40 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
          user_type, does_appts
          FROM users
          ORDER BY user_name ASC`
+      ),
+      // Frontend-destined settings: any app_settings row whose key starts with
+      // 'fe-'. New client settings need NO backend change — just add a row.
+      // ('fe-%' uses a hyphen on purpose: in LIKE, '_' is a single-char
+      //  wildcard, so 'fe_%' would also match 'feature…'. The hyphen has no
+      //  wildcard meaning and matches the literal prefix.)
+      req.db.query(
+        "SELECT `key`, `value` FROM app_settings WHERE `key` LIKE 'fe-%'"
       )
     ]);
 
     const currentUser = meRows[0] ? stripUser(meRows[0]) : null;
+
+    // Build the settings map: strip the 'fe-' prefix and JSON-parse each value
+    // (so a row can ship an array/object/number/bool). If a value isn't valid
+    // JSON it's passed through as the raw string, so plain scalars work without
+    // needing to be quoted. Client reads these via window.firmData.settings.
+    const settings = {};
+    for (const row of settingsRows) {
+      const k = row.key.slice(3); // drop 'fe-'
+      let v = row.value;
+      if (typeof v === 'string') {
+        try { v = JSON.parse(v); } catch { /* keep raw string */ }
+      }
+      settings[k] = v;
+    }
 
     res.json({
       status: 'success',
       currentUser,
       phoneLines: lines,
       emailFrom: emails,
-      users
+      users,
+      settings
     });
   } catch (err) {
     console.error('GET /api/firm-data error:', err);

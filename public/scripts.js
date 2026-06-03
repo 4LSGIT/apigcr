@@ -31,6 +31,35 @@ const url = `?v=${enc({ name: "bob" })}`;
 const p = dec(new URLSearchParams(location.search).get('v'));
 */
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Event types — single source of truth.
+
+   getEventTypeOptions() is the ONE place the create/edit dialog and the
+   shell's Events-tab filter both read from, so they can never drift apart.
+
+   Source: firmData.settings.event_types (shipped down by /api/firm-data from
+   the app_settings row 'fe-event_types'). Tolerates either a JSON array
+   (preferred) or a CSV string. Empty/missing → the built-in default below, so
+   the UI always has a list even before the setting is configured.
+   ────────────────────────────────────────────────────────────────────────── */
+const EVENT_TYPE_OPTIONS_DEFAULT = [
+  'Confirmation Hearing', 'Docs Deadline', 'Deadline',
+  'Court Date', 'Hearing', 'Internal',
+];
+function getEventTypeOptions() {
+  const firm = (typeof window !== 'undefined' && window.firmData)
+    ? window.firmData
+    : ((typeof P !== 'undefined' && P && P.firmData) || {});
+  const raw = firm && firm.settings && firm.settings.event_types;
+  let list = [];
+  if (Array.isArray(raw)) {
+    list = raw.map(s => String(s).trim()).filter(Boolean);
+  } else if (typeof raw === 'string') {
+    list = raw.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  return list.length ? list : EVENT_TYPE_OPTIONS_DEFAULT.slice();
+}
+
 function resizeTextarea(textarea) {
   textarea.style.height = "auto"; // Reset height
   textarea.style.height = Math.min(textarea.scrollHeight, 300) + "px"; // Adjust but don't exceed max
@@ -644,6 +673,45 @@ function renderLogFooter(containerEl, data, limit, offset, jumpFn, exportFn) {
   }
 }
 
+/* Footer for the Events tab — log-style pagination (reuses renderLogPagination)
+   plus a "Showing N–M of T" meta, a limit dropdown, and Print. Deliberately
+   leaner than renderLogFooter (no expand toggle / export). jumpFn(pageNum) is
+   1-based; limitChange(newLimit) lets the caller re-fetch at a new page size. */
+function renderEventsFooter(containerEl, total, limit, offset, shownCount, jumpFn, limitChange) {
+  containerEl.innerHTML = '';
+  total = total || 0;
+  const shownStart = total === 0 ? 0 : offset + 1;
+  const shownEnd = Math.min(total, offset + (shownCount || 0));
+
+  const pagWrap = document.createElement('span');
+  pagWrap.className = 'log-pagination';
+  containerEl.appendChild(pagWrap);
+  renderLogPagination(pagWrap, total, limit, offset, jumpFn);
+
+  const meta = document.createElement('span');
+  meta.innerHTML = `<span class="sep">|</span> Showing ${shownStart}–${shownEnd} of ${total}`;
+  containerEl.appendChild(meta);
+
+  const limitWrap = document.createElement('span');
+  limitWrap.innerHTML = `<span class="sep">|</span> Limit
+    <select style="width:auto">
+      <option value="50"  ${limit == 50 ? 'selected' : ''}>50</option>
+      <option value="100" ${limit == 100 ? 'selected' : ''}>100</option>
+      <option value="200" ${limit == 200 ? 'selected' : ''}>200</option>
+      <option value="500" ${limit == 500 ? 'selected' : ''}>500</option>
+    </select>`;
+  containerEl.appendChild(limitWrap);
+  const limSel = limitWrap.querySelector('select');
+  if (limSel && typeof limitChange === 'function') {
+    limSel.addEventListener('change', () => limitChange(limSel.value));
+  }
+
+  const btnWrap = document.createElement('span');
+  btnWrap.innerHTML = `<span class="sep">|</span> <button type="button" class="log-print-btn">Print</button>`;
+  containerEl.appendChild(btnWrap);
+  btnWrap.querySelector('.log-print-btn').addEventListener('click', () => window.print());
+}
+
 /* CSV export — three-step flow:
      1. Probe (limit=1) to learn the total under current filters.
      2. Ask the user via Swal: export a from–to range, or export all (with a
@@ -1011,6 +1079,32 @@ function _resolveAddFile() {
     .na-chosen { font-size: 0.85em; color: #555; margin-top: 0.25em; text-align: left; }
     .na-chosen:empty { display: none; }
     .na-change { font-size: 0.82em; margin-left: 0.5em; color: #2563eb; }
+
+    /* ── newEventDialog (shared event creator/editor) ── */
+    .ne-form { text-align: left; max-width: 460px; margin: 0 auto; }
+    .ne-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em 0.8em; }
+    .ne-row  { display: flex; flex-direction: column; }
+    .ne-row.ne-full { grid-column: 1 / -1; }
+    .ne-row > label {
+      font-size: 0.75em; font-weight: 600; color: #555;
+      text-transform: uppercase; letter-spacing: 0.03em; margin: 0 0 0.15em;
+    }
+    .ne-form input:not([type=checkbox]),
+    .ne-form select,
+    .ne-form textarea {
+      width: 100%; box-sizing: border-box; margin: 0;
+      font-size: 0.95em; padding: 0.4em 0.5em;
+    }
+    .ne-form textarea { height: 56px; resize: vertical; }
+    .ne-allday { flex-direction: row; align-items: center; gap: 0.4em; }
+    .ne-allday > label { font-size: 0.9em; font-weight: 500; color: #333;
+      text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 0.4em; margin: 0; }
+    .ne-allday input[type=checkbox] { width: auto; }
+    .ne-section { grid-column: 1 / -1; font-weight: 700; font-size: 0.8em;
+      color: #374151; text-transform: uppercase; letter-spacing: 0.04em;
+      margin: 0.5em 0 -0.1em; border-top: 1px solid #eee; padding-top: 0.6em; }
+    .ne-form .na-fixed { font-size: 0.92em; margin: 0; }
+    .na-html.ne-html .cp-dropdown { max-height: 11em; }
   `;
   document.head.appendChild(style);
 })();
@@ -2073,6 +2167,472 @@ function newApptDialog(opts = {}) {
     if (data.status === 'success' && typeof opts.onCreated === 'function') {
       opts.onCreated(data);
     }
+  });
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   newEventDialog(opts)   (shared event creator / editor)
+
+   One dialog for creating OR editing an "event" — a first-class dated
+   case/contact obligation (confirmation hearing, docs deadline, internal
+   milestone). DISTINCT from appts: an event links to ONE target — a case, OR
+   a contact, OR nothing (internal). So there is a SINGLE optional link picker,
+   NOT newApptDialog's two-sided cross-constrain.
+
+   opts (all optional):
+     // ── link target — pick ONE form: ──
+     linkFixed: { type:'case'|'contact', id, label }
+                  Locked link line (entity pages pass this). No picker shown.
+     linkPick:  true
+                  Shell mode: user chooses None / Case / Contact, then a
+                  CasePicker / ContactPicker is mounted.
+     (neither ⇒ treated as linkPick.)
+
+     event:       <existing event row>   EDIT mode (prefill + PATCH). Omit = CREATE.
+     defaultDate: 'YYYY-MM-DD'           prefill the date on create.
+     onSaved:     fn(data)               after success (create OR edit).
+
+   Reminder (verified editable via PATCH — the route threads body.reminder to
+   updateEvent's { reminder } option): a reminder is offered in BOTH create and
+   edit mode. In edit mode the existing reminder task is NOT shown (reminders
+   are separate task rows); leaving the reminder user blank = reminders left
+   untouched; choosing a user = (re)spawn one reminder task.
+   ────────────────────────────────────────────────────────────────────────── */
+function newEventDialog(opts = {}) {
+  const isEdit = !!(opts.event && opts.event.event_id);
+  const ev     = opts.event || {};
+
+  // ── Date/time helpers (DB returns event_date as an ISO datetime string and
+  //    event_time as 'HH:MM:SS' | null). Normalize for the inputs. ──────────
+  const toDateInput = (d) => {
+    if (!d) return '';
+    const s = String(d);
+    const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : '';
+  };
+  const toTimeInput = (t) => {
+    if (t == null || t === '') return '';
+    const m = String(t).match(/(\d{2}:\d{2})/);
+    return m ? m[1] : '';
+  };
+
+  // ── Link side ────────────────────────────────────────────────────────────
+  // mode: 'fixed' (locked line) | 'pick' (None/Case/Contact chooser + picker)
+  const link = {
+    mode:        opts.linkFixed && opts.linkFixed.id != null ? 'fixed' : 'pick',
+    fixedType:   opts.linkFixed ? opts.linkFixed.type : null,
+    fixedId:     opts.linkFixed ? opts.linkFixed.id : null,
+    fixedLabel:  opts.linkFixed ? (opts.linkFixed.label || `${opts.linkFixed.type} ${opts.linkFixed.id}`) : '',
+    // 'pick' working state:
+    kind:        'none',     // 'none' | 'case' | 'contact'  (the chosen link type)
+    selId:       null,       // resolved id
+    selLabel:    '',         // resolved label (for the confirmed line)
+  };
+
+  // EDIT prefill of the pick side from the existing event's link.
+  if (!isEdit) {
+    // create — nothing to prefill
+  } else if (link.mode === 'pick') {
+    if (ev.event_link_type === 'case' && ev.event_link_id != null) {
+      link.kind = 'case';
+      link.selId = String(ev.event_link_id);
+      link.selLabel = ev.link_label || ev.case_number_display || String(ev.event_link_id);
+    } else if (ev.event_link_type === 'contact' && ev.event_link_id != null) {
+      link.kind = 'contact';
+      link.selId = String(ev.event_link_id);
+      link.selLabel = ev.link_label || ev.contact_name || `Contact #${ev.event_link_id}`;
+    }
+  }
+
+  // ── Type select (single source — see getEventTypeOptions) ────────────────
+  const TYPE_OPTIONS = getEventTypeOptions();
+  const existingType = isEdit ? (ev.event_type || '') : '';
+  const typeIsOther  = !!existingType && !TYPE_OPTIONS.includes(existingType);
+
+  // ── firmData users for the reminder "to" select ──────────────────────────
+  const firm = (typeof window !== 'undefined' && window.firmData)
+    ? window.firmData
+    : ((P && P.firmData) || {});
+  const reminderUsers = (firm.users || []).slice().sort((a, b) => a.user - b.user);
+  const reminderUserOptions = reminderUsers
+    .map(u => `<option value="${u.user}">${escAttr(u.user_name)}</option>`)
+    .join('');
+
+  // ── Active picker handle (destroy on close / on link-kind switch) ────────
+  let picker = null;
+  function destroyPicker() { if (picker) { picker.destroy(); picker = null; } }
+
+  // Render the link area according to link.mode / link.kind.
+  function renderLink() {
+    const host = E('neLinkHost');
+    if (!host) return;
+    destroyPicker();
+    host.innerHTML = '';
+
+    if (link.mode === 'fixed') {
+      const noun = link.fixedType === 'case' ? 'Case' : 'Contact';
+      host.innerHTML = `<div class="na-fixed"><b>${noun}:</b> ${escAttr(link.fixedLabel)}</div>`;
+      return;
+    }
+
+    // pick mode: kind chooser + (confirmed line | picker)
+    const chooser = `
+      <label>Link to</label>
+      <select id="neLinkKind">
+        <option value="none"${link.kind === 'none' ? ' selected' : ''}>— none (internal) —</option>
+        <option value="case"${link.kind === 'case' ? ' selected' : ''}>Case</option>
+        <option value="contact"${link.kind === 'contact' ? ' selected' : ''}>Contact</option>
+      </select>
+      <div id="neLinkPickHost" style="margin-top:0.35em;"></div>`;
+    host.innerHTML = chooser;
+
+    const kindSel = E('neLinkKind');
+    if (kindSel) kindSel.addEventListener('change', () => {
+      link.kind = kindSel.value;
+      link.selId = null;
+      link.selLabel = '';
+      renderLinkPick();
+    });
+    renderLinkPick();
+  }
+
+  // Render the picker / confirmed-line inside neLinkPickHost for the chosen kind.
+  function renderLinkPick() {
+    const ph = E('neLinkPickHost');
+    if (!ph) return;
+    destroyPicker();
+    ph.innerHTML = '';
+
+    if (link.kind === 'none') return;
+
+    // Already resolved → confirmed line + change link.
+    if (link.selId != null) {
+      const noun = link.kind === 'case' ? 'Case' : 'Contact';
+      ph.innerHTML = `<div class="na-fixed"><b>${noun}:</b> ${escAttr(link.selLabel)}`
+        + ` <a href="#" id="neLinkChange" class="na-change">change</a></div>`;
+      const chg = E('neLinkChange');
+      if (chg) chg.addEventListener('click', (e) => {
+        e.preventDefault();
+        link.selId = null;
+        link.selLabel = '';
+        renderLinkPick();
+      });
+      return;
+    }
+
+    // Mount the appropriate picker.
+    const pickDiv = document.createElement('div');
+    ph.appendChild(pickDiv);
+    if (link.kind === 'case') {
+      picker = CasePicker(pickDiv, {
+        placeholder: 'Search cases…',
+        onSelect: (cid, row) => {
+          link.selId = String(cid);
+          const numRaw = (row && (row.case_number_full || row.case_number)) || '';
+          link.selLabel = (numRaw && numRaw !== cid) ? numRaw : `Case ${cid}`;
+          renderLinkPick();
+        },
+      });
+    } else if (link.kind === 'contact') {
+      picker = ContactPicker(pickDiv, {
+        placeholder: 'Search contacts…',
+        onSelect: (cid, row) => {
+          link.selId = String(cid);
+          link.selLabel = `${cid} - ${(row && row.contact_name) || ('Contact ' + cid)}`;
+          renderLinkPick();
+        },
+      });
+    }
+  }
+
+  // ── All-day toggle: show/hide Time + Length ──────────────────────────────
+  function applyAllDay() {
+    const chk = E('neAllDay');
+    const on  = chk ? chk.checked : false;
+    const tw  = E('neTimeWrap');
+    if (tw) tw.style.display = on ? 'none' : '';
+  }
+
+  // ── Type "Other" toggle ──────────────────────────────────────────────────
+  function applyTypeOther() {
+    const sel = E('neTypeSelect');
+    const otherWrap = E('neTypeOtherWrap');
+    if (!sel || !otherWrap) return;
+    otherWrap.style.display = sel.value === '__other__' ? '' : 'none';
+  }
+
+  const initAllDay = isEdit
+    ? (ev.event_all_day === 1 || ev.event_all_day === '1' || ev.event_all_day === true)
+    : false;
+
+  Swal.fire({
+    title: isEdit ? 'Edit Event' : 'New Event',
+    customClass: { htmlContainer: 'na-html ne-html' },
+    width: 560,
+    html: `
+      <div class="ne-form">
+        <div class="ne-grid">
+          <div class="ne-row ne-full">
+            <label>Title</label>
+            <input id="neTitle" placeholder="Event title"
+                   value="${escAttr(isEdit ? (ev.event_title || '') : '')}">
+          </div>
+
+          <div class="ne-row">
+            <label>Type</label>
+            <select id="neTypeSelect"
+                    onchange="newEventDialog._applyTypeOther && newEventDialog._applyTypeOther()">
+              <option value=""${!existingType ? ' selected' : ''}>— select —</option>
+              ${TYPE_OPTIONS.map(t =>
+                `<option value="${escAttr(t)}"${(!typeIsOther && existingType === t) ? ' selected' : ''}>${escAttr(t)}</option>`
+              ).join('')}
+              <option value="__other__"${typeIsOther ? ' selected' : ''}>Other…</option>
+            </select>
+            <span id="neTypeOtherWrap" style="display:${typeIsOther ? '' : 'none'};margin-top:0.3em;">
+              <input id="neTypeOther" placeholder="Custom type"
+                     value="${escAttr(typeIsOther ? existingType : '')}">
+            </span>
+          </div>
+
+          <div class="ne-row">
+            <label>Date</label>
+            <input id="neDate" type="date"
+                   value="${toDateInput(isEdit ? ev.event_date : (opts.defaultDate || ''))}">
+          </div>
+
+          <div id="neLinkHost" class="ne-row ne-full"></div>
+
+          <div class="ne-row ne-allday ne-full">
+            <label>
+              <input type="checkbox" id="neAllDay"
+                     onchange="newEventDialog._applyAllDay && newEventDialog._applyAllDay()"${initAllDay ? ' checked' : ''}>
+              All-day event
+            </label>
+          </div>
+
+          <div id="neTimeWrap" class="ne-row ne-full" style="display:${initAllDay ? 'none' : ''};">
+            <div class="ne-grid" style="gap:0.5em 0.8em;">
+              <div class="ne-row">
+                <label>Time</label>
+                <input id="neTime" type="time"
+                       value="${toTimeInput(isEdit ? ev.event_time : '')}">
+              </div>
+              <div class="ne-row">
+                <label>Length (min, optional)</label>
+                <input id="neLength" inputmode="numeric"
+                       oninput="this.value=this.value.replace(/[^0-9]/g,'')"
+                       placeholder="e.g. 60"
+                       value="${escAttr(isEdit && ev.event_length != null ? ev.event_length : '')}">
+              </div>
+            </div>
+          </div>
+
+          <div class="ne-row">
+            <label>Location (optional)</label>
+            <input id="neLocation"
+                   value="${escAttr(isEdit ? (ev.event_location || '') : '')}">
+          </div>
+
+          <div class="ne-row">
+            <label>Link / URL (optional)</label>
+            <input id="neLink"
+                   value="${escAttr(isEdit ? (ev.event_link || '') : '')}">
+          </div>
+
+          <div class="ne-row ne-full">
+            <label>Note (optional)</label>
+            <textarea id="neNote">${escAttr(isEdit ? (ev.event_note || '') : '')}</textarea>
+          </div>
+
+          <div class="ne-section">Reminder${isEdit ? ' — leave blank to keep existing' : ' (optional)'}</div>
+          <div class="ne-row">
+            <label>Remind</label>
+            <select id="neRemindTo">
+              <option value="">— no reminder —</option>
+              ${reminderUserOptions}
+            </select>
+          </div>
+          <div class="ne-row">
+            <label>On date</label>
+            <input id="neRemindDate" type="date">
+          </div>
+        </div>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: isEdit ? 'Save' : 'Create',
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+
+    didOpen: () => {
+      newEventDialog._applyAllDay   = applyAllDay;
+      newEventDialog._applyTypeOther = applyTypeOther;
+      renderLink();
+      applyTypeOther();
+      applyAllDay();
+    },
+
+    preConfirm: async () => {
+      const title = E('neTitle') ? E('neTitle').value.trim() : '';
+      if (!title) { Swal.showValidationMessage('Title is required.'); return false; }
+
+      // Type (select value, or the Other free-text)
+      let type = '';
+      const typeSel = E('neTypeSelect');
+      if (typeSel) {
+        type = typeSel.value === '__other__'
+          ? (E('neTypeOther') ? E('neTypeOther').value.trim() : '')
+          : typeSel.value;
+      }
+
+      const date = E('neDate') ? E('neDate').value : '';
+      if (!date) { Swal.showValidationMessage('Date is required.'); return false; }
+
+      const allDay = E('neAllDay') ? E('neAllDay').checked : false;
+      let time = '';
+      let length = '';
+      if (!allDay) {
+        time = E('neTime') ? E('neTime').value : '';
+        if (!time) { Swal.showValidationMessage('Time is required (or check All day).'); return false; }
+        length = E('neLength') ? E('neLength').value.trim() : '';
+      }
+
+      const location = E('neLocation') ? E('neLocation').value.trim() : '';
+      const urlLink  = E('neLink')     ? E('neLink').value.trim()     : '';
+      const note     = E('neNote')     ? E('neNote').value            : '';
+
+      // Reminder
+      const remindTo   = E('neRemindTo')   ? E('neRemindTo').value   : '';
+      const remindDate = E('neRemindDate') ? E('neRemindDate').value : '';
+      if (remindTo && !remindDate) {
+        Swal.showValidationMessage('Pick a reminder date (or clear the reminder user).');
+        return false;
+      }
+
+      // Resolve link target
+      let linkType = null, linkId = null;
+      if (link.mode === 'fixed') {
+        linkType = link.fixedType;
+        linkId   = String(link.fixedId);
+      } else if (link.kind === 'case' || link.kind === 'contact') {
+        if (!link.selId) {
+          Swal.showValidationMessage(`Pick a ${link.kind} to link, or choose "none".`);
+          return false;
+        }
+        linkType = link.kind;
+        linkId   = String(link.selId);
+      }
+
+      const body = {
+        event_title:    title,
+        event_type:     type || null,
+        event_date:     date,
+        event_all_day:  allDay ? 1 : 0,
+        event_time:     allDay ? null : time,
+        event_length:   allDay ? null : (length !== '' ? Number(length) : null),
+        event_location: location || null,
+        event_link:     urlLink || null,
+        event_note:     note || null,
+      };
+      if (linkType) {
+        body.event_link_type = linkType;
+        body.event_link_id   = linkId;
+      } else if (isEdit) {
+        // Allow clearing a link on edit (whitelist permits these columns).
+        body.event_link_type = null;
+        body.event_link_id   = null;
+      }
+      if (remindTo) {
+        body.reminder = { to: Number(remindTo), date: remindDate };
+      }
+
+      try {
+        const data = isEdit
+          ? await P.apiSend(`/api/events/${ev.event_id}`, 'PATCH', body)
+          : await P.apiSend('/api/events', 'POST', body);
+        return { data };
+      } catch (err) {
+        Swal.showValidationMessage((err && err.message) || 'Failed to save event');
+        return false;
+      }
+    },
+
+    willClose: () => {
+      destroyPicker();
+      delete newEventDialog._applyAllDay;
+      delete newEventDialog._applyTypeOther;
+    },
+
+  }).then((result) => {
+    if (!result.isConfirmed || !result.value) return;
+    const { data } = result.value;
+    Toast.fire({
+      icon:  data.status || 'success',
+      title: data.title || (data.status === 'success' ? 'Success' : 'Error'),
+      text:  data.message,
+    });
+    if (data.status === 'success' && typeof opts.onSaved === 'function') {
+      opts.onSaved(data);
+    }
+  });
+}
+
+
+/* ──────────────────────────────────────────────────────────────────────────
+   eventComplete(id, onDone)  /  eventCancel(id, onDone)
+
+   Shared row-action helpers (shell now, entity pages later). Each confirms,
+   then PATCHes the status endpoint, Toasts the result, and on success calls
+   onDone?.(). Mirror how apptUpdate is invoked from the tables (callback).
+   ────────────────────────────────────────────────────────────────────────── */
+function eventComplete(id, onDone) {
+  Swal.fire({
+    title: 'Mark this event complete?',
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Mark complete',
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async () => {
+      try {
+        return { data: await P.apiSend(`/api/events/${id}/complete`, 'PATCH') };
+      } catch (err) {
+        Swal.showValidationMessage((err && err.message) || 'Failed to complete event');
+        return false;
+      }
+    },
+  }).then((result) => {
+    if (!result.isConfirmed || !result.value) return;
+    const { data } = result.value;
+    Toast.fire({ icon: data.status || 'success', title: data.title || 'Done!', text: data.message });
+    if (data.status === 'success' && typeof onDone === 'function') onDone();
+  });
+}
+
+function eventCancel(id, onDone) {
+  Swal.fire({
+    title: 'Cancel this event?',
+    text: 'This also removes it from the calendar.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Cancel event',
+    cancelButtonText: 'Keep',
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async () => {
+      try {
+        return { data: await P.apiSend(`/api/events/${id}/cancel`, 'PATCH', { delete_gcal: true }) };
+      } catch (err) {
+        Swal.showValidationMessage((err && err.message) || 'Failed to cancel event');
+        return false;
+      }
+    },
+  }).then((result) => {
+    if (!result.isConfirmed || !result.value) return;
+    const { data } = result.value;
+    Toast.fire({ icon: data.status || 'success', title: data.title || 'Canceled', text: data.message });
+    if (data.status === 'success' && typeof onDone === 'function') onDone();
   });
 }
 

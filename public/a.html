@@ -54,33 +54,43 @@
   <hr /> <!-- End of the header hr as requested-->
 
   <div id="tabHome" class="tab-main">
-    <button style="width: 100px; height: 100px" onclick="cases?'':tabCasesGet(0);openMainTab('tabCases', this)">
+    <button class="home-btn" onclick="cases?'':tabCasesGet(0);openMainTab('tabCases', this)">
       <i class="fa-solid fa-landmark fa-2xl"></i><br /><br />Cases
     </button>
-    <button style="width: 100px; height: 100px" onclick="contacts?'':tabContactsGet(0);openMainTab('tabContacts')">
+    <button class="home-btn" onclick="contacts?'':tabContactsGet(0);openMainTab('tabContacts')">
       <i class="fa-solid fa-users fa-2xl"></i><br /><br />Contacts
     </button>
-    <button style="width: 100px; height: 100px" onclick="appts?'':tabApptsGet(0);openMainTab('tabAppts')">
+    <button class="home-btn" onclick="appts?'':tabApptsGet(0);openMainTab('tabAppts')">
       <i class="fa-solid fa-calendar-days fa-2xl"></i><br /><br />Appointments
     </button>
     <div style="height: 5px"></div>
-    <button style="width: 100px; height: 100px" onclick="tasks?'':tabTasksGet(0);openMainTab('tabTasks')">
-      <i class="fa-solid fa-list fa-2xl"></i><br /><br />Tasks
+    <button class="home-btn" onclick="openMainTab('tabBills')">
+      <i class="fa-solid fa-file-invoice-dollar fa-2xl"></i><br /><br />Bills
     </button>
-    <button style="width: 100px; height: 100px" onclick="newContact()">
+    <button class="home-btn" onclick="newContact()">
       <i class="fa-solid fa-user-plus fa-2xl"></i><br /><br />New Client
     </button>
-    <button style="width: 100px; height: 100px" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')">
+    <button class="home-btn" onclick="events?'':tabEventsGet(0);openMainTab('tabEvents')">
+      <i class="fa-solid fa-flag fa-2xl"></i><br /><br />Events
+    </button>
+    <div style="height: 5px"></div>
+    <button class="home-btn" onclick="tasks?'':tabTasksGet(0);openMainTab('tabTasks')">
+      <i class="fa-solid fa-list fa-2xl"></i><br /><br />Tasks
+    </button>
+    <button class="home-btn" onclick="openMainTab('tabCampaigns')">
+      <i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br /><br />Campaigns
+    </button>
+    <button class="home-btn" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')">
       <i class="fa-solid fa-box-archive fa-2xl"></i><br /><br />Log
     </button>
     <div style="height: 5px"></div>
-    <button id="tabCustomButton" style="width: 100px; height: 100px" onclick="openMainTab('tabCustom')">
+    <button id="tabCustomButton" class="home-btn" onclick="openMainTab('tabCustom')">
       <i class="fa-solid fa-clock fa-2xl"></i><br /><br />Custom Tab
     </button>
-    <button style="width: 100px; height: 100px" onclick="openMainTab('tabCampaigns')">
-      <i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br /><br />Campaigns
+    <button class="home-btn" onclick="openMainTab('tabMore')">
+      <i class="fa-solid fa-gear fa-2xl"></i><br /><br />More Features
     </button>
-    <button style="width: 100px; height: 100px" onclick="openMainTab('tabMyAccount')">
+    <button class="home-btn" onclick="openMainTab('tabMyAccount')">
       <i class="fa-solid fa-circle-user fa-2xl"></i><br /><br />My Account
     </button>
     <p
@@ -446,6 +456,61 @@
       <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
     </div>
   </div>
+
+  <div id="tabEvents" class="tab-main">
+    <h1>Events</h1>
+    <span>
+      <button id="tabEventsNew" onclick="newEventDialog({ linkPick: true, onSaved: () => tabEventsGet(0) })"><i class="fa-solid fa-flag"></i> New Event</button>
+      Type:
+      <select id="tabEventsType" class="eventtypelist" style="width: auto">
+        <option value="">All types</option>
+      </select>
+      Status:
+      <select id="tabEventsStatus" style="width: auto">
+        <option selected>Scheduled</option>
+        <option>Completed</option>
+        <option>Canceled</option>
+        <option value="all">All</option>
+      </select>
+      Time:
+      <select id="tabEventsTime" style="width: auto" onchange="tabEventsTimeChange(this.value)">
+        <option>All</option>
+        <option>Before</option>
+        <option>On</option>
+        <option>After</option>
+        <option>Between</option>
+      </select>
+      <input id="tabEventsDate1" type="date" style="width: auto; display: none" />
+      <label id="tabEventsDateLabel"></label>
+      <input id="tabEventsDate2" type="date" style="width: auto; display: none" />
+      Search:
+      <input id="tabEventsQ" style="width: auto" placeholder="title…"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();tabEventsGet(0);}" />
+      Sort:
+      <select id="tabEventsSort" style="width: auto" onchange="tabEventsGet(0)">
+        <option value="asc" selected>Soonest first</option>
+        <option value="desc">Latest first</option>
+      </select>
+      <button id="tabEventsButton" onclick="tabEventsGet(0)">Search</button>
+    </span>
+    <table id="eventsTable" class="logTable">
+      <tr>
+        <th>ID</th>
+        <th>Type</th>
+        <th>Title</th>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Status</th>
+        <th>Linked</th>
+        <th>Location</th>
+        <th>Action</th>
+      </tr>
+    </table>
+    <div id="eventsTableFoot"></div>
+    <div id="tabEventsLoad" style="display: none">
+      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </div>
+  </div>
   <script>
     function tabApptsCal() {
       Swal.fire({
@@ -472,6 +537,140 @@
         } catch (_) { }
       }
     });
+
+    // Refresh any visible event lists (entity-page iframes define refreshEvents)
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'event-updated') {
+        try {
+          document.querySelectorAll('iframe').forEach(frame => {
+            try {
+              if (frame.contentWindow.refreshEvents) frame.contentWindow.refreshEvents();
+            } catch (_) { }
+          });
+        } catch (_) { }
+      }
+    });
+
+    // Broadcast an event change so open entity iframes refresh, then refresh
+    // this tab. Used as the onSaved/onDone callback for the shell Events tab.
+    function eventsChanged() {
+      try { window.postMessage({ type: 'event-updated' }, '*'); } catch (_) { }
+      tabEventsGet(offsets.events || 0);
+    }
+
+    function tabEventsTimeChange(time) {
+      if (time == "All") {
+        E("tabEventsDate1").style.display = "none";
+        E("tabEventsDateLabel").innerHTML = "";
+        E("tabEventsDate2").style.display = "none";
+      } else if (time != "Between") {
+        E("tabEventsDate1").style.display = "inline-block";
+        E("tabEventsDateLabel").innerHTML = "";
+        E("tabEventsDate2").style.display = "none";
+      } else {
+        E("tabEventsDate1").style.display = "inline-block";
+        E("tabEventsDateLabel").innerHTML = "and ";
+        E("tabEventsDate2").style.display = "inline-block";
+      }
+    }
+
+    async function tabEventsGet(offset) {
+      offsets.events = offset;
+      E("tabEventsButton").disabled = true;
+      E("tabEventsLoad").style.display = "block";
+
+      const typeVal = E("tabEventsType").value.trim();
+      const status = E("tabEventsStatus").value;
+      const time = E("tabEventsTime").value;
+      const date1 = E("tabEventsDate1").value;
+      const date2 = E("tabEventsDate2").value;
+      const q = E("tabEventsQ").value.trim();
+      const sort = E("tabEventsSort").value;
+
+      const params = { limit, offset, status, sort };
+      if (typeVal) params.type = typeVal;
+      if (q) params.q = q;
+
+      if (time === "Before") { params.to = date1; }
+      if (time === "After") { params.from = date1; }
+      if (time === "On") { params.from = date1; params.to = date1; }
+      if (time === "Between") { params.from = date1; params.to = date2; }
+
+      const table = E("eventsTable");
+      const foot = E("eventsTableFoot");
+      foot.innerHTML = "";
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
+
+      try {
+        const data = await apiSend("/api/events", "GET", params);
+        const total = data.total || 0;
+
+        if (total > 0 && data.data && data.data.length) {
+          events = data.data;
+          events.forEach((ev) => {
+            const row = table.insertRow();
+            const date = ev.event_date ? String(ev.event_date).slice(0, 10) : "";
+            const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
+            const timeStr = allDay ? "All day" : (ev.event_time ? String(ev.event_time).slice(0, 5) : "");
+            const esc = (s) => escHtml(s == null ? "" : String(s));
+            // Linked cell → addFile link (matches the rest of the page).
+            let linked = "";
+            if (ev.link_label && ev.event_link_id != null) {
+              const jsLabel = String(ev.link_label).replace(/'/g, "\\'");
+              const ft = ev.event_link_type === "case" ? "case" : "contact";
+              const noun = ev.event_link_type === "case" ? "Case" : "Contact";
+              linked = `${noun}: <a href="#" onclick="addFile('${jsLabel}','${ft}','${ev.event_link_id}');return false">${esc(ev.link_label)}</a>`;
+            }
+            row.innerHTML = `
+              <td>${ev.event_id}</td>
+              <td>${esc(ev.event_type)}</td>
+              <td>${esc(ev.event_title)}</td>
+              <td>${date}</td>
+              <td>${timeStr}</td>
+              <td>${esc(ev.event_status)}</td>
+              <td>${linked}</td>
+              <td>${esc(ev.event_location)}</td>`;
+
+            const buttons = [];
+            buttons.push(`<button onclick='newEventDialog({ event: ${escAttrJSON(ev)}, onSaved: eventsChanged })'><i class="fa-solid fa-pen"></i> Edit</button>`);
+            if (ev.event_status === "Scheduled") {
+              buttons.push(`<button onclick="eventComplete(${ev.event_id}, eventsChanged)"><i class="fa-solid fa-check"></i> Complete</button>`);
+              buttons.push(`<button onclick="eventCancel(${ev.event_id}, eventsChanged)"><i class="fa-solid fa-ban"></i> Cancel</button>`);
+            }
+            row.innerHTML += `<td>${buttons.join(" ")}</td>`;
+          });
+
+          // Footer — log-style pagination + meta + limit + print.
+          renderEventsFooter(foot, total, limit, offset, events.length,
+            (p) => tabEventsGet((p - 1) * limit),
+            (newLimit) => { limit = newLimit; tabEventsGet(0); });
+        } else {
+          events = "";
+          foot.innerHTML = "";
+          Toast.fire({ icon: "info", title: "No events found." });
+        }
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error loading events", text: err.message });
+      }
+
+      E("tabEventsLoad").style.display = "none";
+      E("tabEventsButton").disabled = false;
+    }
+
+    // Small HTML-escape helpers local to the shell for the events table.
+    function escHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    // JSON for an inline single-quoted onclick attribute: escape &, <, and the
+    // single quotes that would close the attribute. (newEventDialog reads the
+    // row object back via JSON.parse.)
+    function escAttrJSON(obj) {
+      return JSON.stringify(obj)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/'/g, "&#39;");
+    }
+
     function showAppt(apptID) {
       Swal.fire({
         title: `Appointment ${apptID}`,
@@ -584,7 +783,7 @@
               buttons.push(`<button onclick="apptUpdate(${appt.id},'Cancel','${apptDateTime}',null,'${s}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
             }
             if (s !== "Rescheduled") {
-              buttons.push(`<button onclick="apptUpdate(${appt.id},'Reschedule','${appt.appt_datetime_local}',null,'${s}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+              buttons.push(`<button onclick="apptUpdate(${appt.id},'Reschedule','${appt.appt_datetime_local}',null,'${s}')"><i class="fa-solid fa-user-clock"> Reschedule</button>`);
             }
             row.innerHTML += `<td>${buttons.join(" ")}</td>`;
           });
@@ -1629,9 +1828,10 @@
     cases = "";
     contacts = "";
     appts = "";
+    events = "";
     tasks = "";
     logs = "";
-    offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0, custom: 0,  };
+    offsets = { cases: 0, contacts: 0, appts: 0, events: 0, tasks: 0, logs: 0, custom: 0,  };
     customTabVar = ""
 
     function openMainTab(tabName) {
@@ -1734,7 +1934,7 @@
     }
 
     // ── Firm-wide data — loaded once after auth, available to all child iframes ──
-    window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [] };
+    window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [], settings: {} };
 
 async function loadFirmData() {
   const data = await apiSend('/api/firm-data', 'GET');  // let it throw
@@ -1742,6 +1942,7 @@ async function loadFirmData() {
   window.firmData.emailFrom   = data.emailFrom   || [];
   window.firmData.currentUser = data.currentUser || null;
   window.firmData.users       = data.users       || [];
+  window.firmData.settings    = data.settings    || {};
   if (!window.firmData.currentUser) throw new Error("No user data returned");
 }
 
@@ -1950,6 +2151,24 @@ async function initAuth() {
           sel.appendChild(opt);
         });
       });
+
+      // Populate event-type selects (filter bar) from the same single source
+      // as the create/edit dialog (getEventTypeOptions in scripts.js). Static
+      // options in the markup (e.g. "All types") are preserved; the current
+      // value is restored so a re-populate never clobbers a user's choice.
+      document.querySelectorAll('select.eventtypelist').forEach(sel => {
+        const prev = sel.value;
+        // Drop any previously-appended dynamic options (keep static markup).
+        sel.querySelectorAll('option[data-dyn="1"]').forEach(o => o.remove());
+        (typeof getEventTypeOptions === 'function' ? getEventTypeOptions() : []).forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          opt.setAttribute('data-dyn', '1');
+          sel.appendChild(opt);
+        });
+        if (prev) sel.value = prev;
+      });
     }
 
     initAuth();
@@ -1978,10 +2197,11 @@ async function initAuth() {
       cases = "";
       contacts = "";
       appts = "";
+      events = "";
       tasks = "";
       logs = "";
 
-      offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0, custom: 0,  };
+      offsets = { cases: 0, contacts: 0, appts: 0, events: 0, tasks: 0, logs: 0, custom: 0,  };
 
       // --- UI reset (minimal, non-destructive) ---
       try {

@@ -223,3 +223,15 @@ body.swal2-shown > [aria-hidden="true"] {
     .campaign-hidden {
       display: none;
     }
+    
+/* Home tile buttons: keep the original look, just make long labels
+   (e.g. "More Features") wrap inside the fixed tile instead of overflowing. */
+#tabHome .home-btn {
+  width: 100px;
+  height: 100px;
+  box-sizing: border-box;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}

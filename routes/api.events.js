@@ -4,7 +4,7 @@
  * Events API
  * routes/api.events.js
  *
- * GET    /api/events                 list with filters
+ * GET    /api/events                 list with filters (sort=asc|desc)
  * GET    /api/events/:id             single event (with resolved link label)
  * POST   /api/events                 create
  * PATCH  /api/events/:id             update fields (whitelisted)
@@ -32,6 +32,7 @@ router.get('/api/events', jwtOrApiKey, async (req, res) => {
       from:      req.query.from      || null,
       to:        req.query.to        || null,
       q:         req.query.q || req.query.query || '',
+      sort:      req.query.sort || 'asc',
       limit:     req.query.limit  || 100,
       offset:    req.query.offset || 0,
     });

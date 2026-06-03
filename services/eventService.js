@@ -436,6 +436,7 @@ async function getEvent(db, eventId) {
  *   from      {string?}  event_date >= (YYYY-MM-DD)
  *   to        {string?}  event_date <= (YYYY-MM-DD)
  *   q         {string?}  LIKE on event_title
+ *   sort      {string?}  'asc' (soonest first, default) | 'desc' (latest first)
  *   limit     {number?}  default 100
  *   offset    {number?}  default 0
  * @returns {Promise<{ data: object[], total: number }>}
@@ -448,6 +449,7 @@ async function listEvents(db, {
   from      = null,
   to        = null,
   q         = '',
+  sort      = 'asc',
   limit     = 100,
   offset    = 0,
 } = {}) {
@@ -474,6 +476,12 @@ async function listEvents(db, {
 
   const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
+  // Whitelisted sort (no interpolation of user input). 'asc' = soonest first
+  // (default, preserves prior behavior); 'desc' = latest first.
+  const orderSQL = String(sort).toLowerCase() === 'desc'
+    ? 'ORDER BY e.event_date DESC, e.event_time IS NULL ASC, e.event_time DESC'
+    : 'ORDER BY e.event_date ASC, e.event_time IS NULL DESC, e.event_time ASC';
+
   const [[{ total }]] = await db.query(
     `SELECT COUNT(*) AS total FROM events e ${whereSQL}`,
     params
@@ -488,7 +496,7 @@ async function listEvents(db, {
      LEFT JOIN contacts co ON (e.event_link_type = 'contact' AND e.event_link_id = co.contact_id)
      LEFT JOIN cases    ca ON (e.event_link_type = 'case'    AND e.event_link_id = ca.case_id)
      ${whereSQL}
-     ORDER BY e.event_date ASC, e.event_time IS NULL DESC, e.event_time ASC
+     ${orderSQL}
      LIMIT ? OFFSET ?`,
     [...params, Number(limit), Number(offset)]
   );
