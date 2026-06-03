@@ -1,0 +1,120 @@
+# Events
+
+An event is a dated obligation or milestone — a confirmation hearing, a document deadline, an internal due date. Events are distinct from the other two date-driven records in the system: an **appointment** is a meeting between a client and a staff member; a **task** is a to-do assigned to one person. An event is simply a fact on the timeline that the firm must not miss. Events go on the firm's Google Calendar, can carry an optional reminder, and are swept by a daily digest email so upcoming deadlines are never a surprise.
+
+---
+
+## What Belongs on an Event
+
+Every event must have:
+
+- **A title** — what the event is ("Confirmation Hearing — Smith", "Docs due to trustee")
+- **A date** — when it happens or is due
+
+Everything else is optional:
+
+- **A type** — categorizes the event (see Event Types below)
+- **A time and length** — for events that happen at a specific time, like a hearing at 10:00 AM. Events without a time are **all-day** entries, which is the right shape for deadlines.
+- **A link to a case or a contact** — most events belong to a case. Some belong to a contact. Internal events (a filing-system milestone, a license renewal) can be linked to nothing at all.
+- **A location** — courtroom, address, or "Telephone"
+- **A URL** — a Zoom link, dial-in page, or docket link
+- **A note** — free text
+
+A few fields are managed by the system and should not be edited manually: the Google Calendar event ID and the calendar override. These are set automatically.
+
+Unlike an appointment, an event links to **one** thing — a case, *or* a contact, *or* nothing. It never has both a client and a case side.
+
+---
+
+## Event Types
+
+The type list is configurable and currently includes values like:
+
+- Confirmation Hearing
+- Docs Deadline
+- Deadline
+- Court Date
+- Hearing
+- Internal
+
+Choosing **Other** lets you type a one-off type. The blessed list lives in a settings row (`fe-event_types`, a JSON array in app settings) — an administrator can add or remove types there and the dropdown updates everywhere with no deployment.
+
+---
+
+## Event Status
+
+| Status | Meaning |
+|---|---|
+| **Scheduled** | Upcoming; not yet resolved |
+| **Completed** | The event happened / the obligation was met |
+| **Canceled** | No longer happening |
+
+Status changes are made from the event list with the **Complete** and **Cancel** buttons, which appear only on Scheduled events. Each change writes a log entry on the linked case or contact.
+
+---
+
+## What Happens When You…
+
+### Create an event
+- The record is saved and a log entry is written on the linked case or contact
+- A Google Calendar entry is created — a timed block for timed events, an all-day banner for deadlines
+- If you set a reminder (see below), a task is created for the chosen staff member
+
+### Edit an event
+- If the date, time, title, location, or link changed, the old calendar entry is deleted and a fresh one is created — the calendar always matches the record
+- The reminder can be changed or cleared
+- A log entry records what changed
+
+### Complete an event
+- Status becomes Completed
+- The calendar entry is **left in place** — it really happened, and the calendar is the historical record
+- Any open reminder task for the event is cleared
+
+### Cancel an event
+- Status becomes Canceled
+- The calendar entry is **deleted**
+- Any open reminder task for the event is cleared
+
+---
+
+## Reminders
+
+When creating or editing an event you can attach one reminder: pick a staff member and a date. This creates a **task** assigned to that person, due on that date — so the reminder flows through everything the task system already does: the morning task digest, due-today emails, and SMS. The task shows up linked as "Event #N".
+
+Completing or canceling the event automatically clears its reminder task.
+
+For obligations that need more than one nudge, the automation engine can layer additional reminders — see Automation below.
+
+---
+
+## The Daily Events Digest
+
+Every workday afternoon, the system emails a digest of **tomorrow's scheduled events** to the configured recipients. This is the safety net that makes sure no deadline arrives unannounced.
+
+The digest is aware of the firm's calendar:
+
+- It never sends on Shabbos or Yom Tov.
+- On the last workday before a closure, the digest **extends its window across the closed days through the next workday**. Before a three-day Yom Tov/Shabbos stretch, for example, Thursday's digest covers Friday, Saturday, Sunday, *and* Monday — so nothing falls into the gap.
+
+Recipients come from the `event_digest_recipients` setting (a list of staff user IDs). If that is not set, the digest falls back to the firm's default inbound address. If there are no events in the window, no email is sent.
+
+---
+
+## Where Events Appear
+
+- **The Events tab** in the main interface — all events, filterable by type, status, date range, and text search, sortable by date. New events created here can be linked to a case, a contact, or left unlinked.
+- **A case's Events tab** — every event linked to that case. New events created here are locked to the case.
+- **A contact's Events tab** — every event linked to that contact, locked the same way.
+
+Edit, Complete, and Cancel are available wherever the event is listed.
+
+---
+
+## Automation
+
+Events are first-class citizens of the automation engine. Workflows and sequences can create, update, complete, and look up events through internal functions (`create_event`, `update_event`, `complete_event`, `lookup_event`, `get_events`). This is the foundation for automations like:
+
+- Creating a **docs deadline** event automatically when a 341 Meeting is scheduled, dated a set number of business days before it
+- Creating a **confirmation hearing** event automatically from the court's email, using the explicit date in the email text
+
+These automations run in the background; the events they create behave exactly like manually entered ones — calendar entry, digest coverage, reminders and all.

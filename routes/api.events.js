@@ -77,6 +77,60 @@ router.post('/api/events', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// ─── CREATE (BATCH) ───────────────────────────────────────────────────────────
+// One call, many events — e.g. the Ch 13 set (341, confirmation hearing, docs
+// deadline) spawned from Pabbly or a workflow. Body:
+//   {
+//     event_link_type?, event_link_id?, acting_user_id?,   // defaults for all items
+//     events: [ { event_title, event_date, ... }, ... ]    // per-item fields win
+//   }
+// Items run SEQUENTIALLY through eventService.createEvent so each one gets its
+// log entry, GCal sync, and optional reminder, and a failure is attributable
+// to its item without killing the rest. Returns per-item results.
+router.post('/api/events/batch', jwtOrApiKey, async (req, res) => {
+  const body  = req.body || {};
+  const items = Array.isArray(body.events) ? body.events : null;
+
+  if (!items || !items.length) {
+    return res.status(400).json({ status: 'error', title: 'Error', message: 'events array required' });
+  }
+  if (items.length > 50) {
+    return res.status(400).json({ status: 'error', title: 'Error', message: 'Max 50 events per batch' });
+  }
+
+  // Top-level defaults applied to every item unless the item sets its own.
+  const defaults = {};
+  if (body.event_link_type !== undefined) defaults.event_link_type = body.event_link_type;
+  if (body.event_link_id   !== undefined) defaults.event_link_id   = body.event_link_id;
+
+  const results = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i] || {};
+    try {
+      const result = await eventService.createEvent(req.db, {
+        ...defaults,
+        ...item,
+        acting_user_id: req.auth?.userId ?? item.acting_user_id ?? body.acting_user_id,
+      });
+      results.push({ ok: true, index: i, event_id: result.event_id });
+    } catch (err) {
+      console.error(`POST /api/events/batch item ${i} error:`, err);
+      results.push({ ok: false, index: i, error: err.message, event_title: item.event_title || null });
+    }
+  }
+
+  const created = results.filter(r => r.ok).length;
+  const failed  = results.length - created;
+  res.status(failed && !created ? 400 : 200).json({
+    status:  failed ? (created ? 'warning' : 'error') : 'success',
+    title:   failed ? (created ? 'Partial' : 'Error') : 'Events Created!',
+    message: `${created} created, ${failed} failed`,
+    created,
+    failed,
+    results,
+  });
+});
+
 // ─── UPDATE (whitelisted patch + optional reminder swap) ───────────────────────
 router.patch('/api/events/:id(\\d+)', jwtOrApiKey, async (req, res) => {
   const eventId = parseInt(req.params.id, 10);
