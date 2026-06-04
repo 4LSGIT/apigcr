@@ -60,7 +60,7 @@
 
 const express = require("express");
 const router = express.Router();
-const dropbox = require("../services/dropboxService");
+const dropbox = require("../services/dropboxServiceLegacy");
 const trap = require("../lib/legacyTrap");
 
 const API_KEY = process.env.API_KEY;

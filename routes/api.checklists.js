@@ -21,7 +21,7 @@ const express      = require('express');
 const router       = express.Router();
 const rateLimit    = require('express-rate-limit');
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
-const dropbox      = require('../services/dropboxService');
+const dropbox      = require('../services/dropboxServiceLegacy');
 const emailService = require('../services/emailService');
 const logService   = require('../services/logService');
 
