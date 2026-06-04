@@ -402,10 +402,10 @@ function _validateEnvelope(envelope) {
 //   { status: 'validation_failed',    executionId, error }
 //   { status: 'error',                executionId, error }
 //
-// Layer 3 automation (Slice 2.3) runs on BOTH the 'logged' and
-// 'skipped_suppression' paths; its outcomes are recorded in the executions
-// row's metadata, not in the return shape. The 'logged'/'skipped_suppression'
-// status reflects the LOGGING layer only.
+// Layer 3 automation (Slice 2.3) runs on EVERY path that survives
+// validation + dedup — including 'skipped_firm_to_firm' — its outcomes are
+// recorded in the executions row's metadata, not in the return shape. The
+// 'logged'/'skipped_*' status reflects the LOGGING layer only.
 //
 // Always writes an email_ingest_executions row before returning
 // (auth failures excepted — the route writes those). The execution
@@ -542,37 +542,15 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
   // ── 6. Direction inference.
   const direction = inferDirection(fromEmail, FIRM_DOMAINS);
 
-  // ── 7. Firm-to-firm check.
-  //   Requires from + all to + all cc all on a firm domain.
-  const allAddresses = _collectAllAddresses(envelope);
-  if (isFirmToFirm(allAddresses, FIRM_DOMAINS)) {
-    const executionId = await _writeExecution(db, {
-      source_id:    source.id,
-      message_id:   messageId,
-      status:       'skipped_firm_to_firm',
-      log_id:       null,
-      email_log_id: emailLogId,
-      raw_input:    rawInputForLog,
-      remote_ip:    remoteIp || null,
-    });
-    return { status: 'skipped_firm_to_firm', executionId, emailLogId };
-  }
-
-  // ── 7b. Layer 2 — logging suppressions (decide the structured log row).
-  //   Independent veto over the structured log row ONLY. Forensic email_log
-  //   is already written above; suppression short-circuits createLogEntry but
-  //   does NOT gate Layer 3 automation (step 7c). Boolean OR across active
-  //   rules. Throwing rules fail-safe to non-match. Audit lands in
-  //   executions.metadata as { suppressed_by: [<ruleId>...] }.
-  const suppression = await emailIngestSuppressionService.evaluateSuppressions(db, envelope);
-
-  // ── 7c. Layer 3 — automation rules (ALWAYS runs).
+  // ── 6b. Layer 3 — automation rules (ALWAYS runs).
   //   Hoisted in Slice 2.3.1 to before the log-write step so the layer-
   //   independence invariant holds even when createLogEntry throws
-  //   INVALID_LOG_LINK_ID (or any other error). Independent of the logging
-  //   layer. Matching rules' transforms run and their actions fire via
-  //   lib/actionDispatchers (+ hook re-entry). Outcomes land in
-  //   executions.metadata via _buildMetadata.
+  //   INVALID_LOG_LINK_ID (or any other error). Hoisted again (above the
+  //   firm-to-firm check) so automation also fires on internal
+  //   firm-to-firm mail — the logging skip must not gate automation.
+  //   Independent of the logging layer. Matching rules' transforms run
+  //   and their actions fire via lib/actionDispatchers (+ hook re-entry).
+  //   Outcomes land in executions.metadata via _buildMetadata.
   //
   //   evaluateRules is designed not to throw — action failures are captured
   //   per-action in actionOutcomes. The defensive try/catch here covers the
@@ -590,6 +568,31 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
       parseWarnings: [`evaluateRules threw: ${autoErr.message}`],
     };
   }
+
+  // ── 7. Firm-to-firm check (logging skip ONLY — Layer 3 already ran at 6b).
+  //   Requires from + all to + all cc all on a firm domain.
+  const allAddresses = _collectAllAddresses(envelope);
+  if (isFirmToFirm(allAddresses, FIRM_DOMAINS)) {
+    const executionId = await _writeExecution(db, {
+      source_id:    source.id,
+      message_id:   messageId,
+      status:       'skipped_firm_to_firm',
+      log_id:       null,
+      email_log_id: emailLogId,
+      metadata:     _buildMetadata(null, automation),
+      raw_input:    rawInputForLog,
+      remote_ip:    remoteIp || null,
+    });
+    return { status: 'skipped_firm_to_firm', executionId, emailLogId };
+  }
+
+  // ── 7b. Layer 2 — logging suppressions (decide the structured log row).
+  //   Independent veto over the structured log row ONLY. Forensic email_log
+  //   is already written above; suppression short-circuits createLogEntry but
+  //   does NOT gate Layer 3 automation (step 6b). Boolean OR across active
+  //   rules. Throwing rules fail-safe to non-match. Audit lands in
+  //   executions.metadata as { suppressed_by: [<ruleId>...] }.
+  const suppression = await emailIngestSuppressionService.evaluateSuppressions(db, envelope);
 
   // ── 7d. Conditional default log.
   //   link_id = the "other party" — for incoming, the sender; for outgoing,
