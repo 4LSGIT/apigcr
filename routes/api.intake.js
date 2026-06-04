@@ -41,11 +41,14 @@
  *   - Looks for existing active case of same type for this contact
  *   - If found and duplicate != "duplicate" → return existing case_id
  *   - If not found or duplicate == "duplicate" → create new case + case_relate
- *   - Fire-and-forget Pabbly webhook for Dropbox folder creation
+ *   - Fire-and-forget native Dropbox folder creation (dropboxService) +
+ *     shared link saved to cases.case_dropbox; folder path from app_settings
+ *     'dropbox_case_folder_templates' (per-case_type map) with hardcoded fallback
  *
  * Replaces:
  *   - Pabbly mode=newClient workflow
- *   - Pabbly mode=newCase workflow (partly — Dropbox still via Pabbly)
+ *   - Pabbly mode=newCase workflow
+ *   - Pabbly create_dropbox_folder workflow (now native via dropboxService)
  *   - routes/create-case.js (old auth pattern, string interpolation)
  */
 
@@ -54,7 +57,8 @@ const crypto = require("crypto");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { parseName } = require("../lib/parseName");
-const pabbly = require("../services/pabblyService");
+const dropboxService = require("../services/dropboxService");
+const { nowLocal } = require("../services/timezoneService");
 const contactService = require('../services/contactService');
 
 // ─────────────────────────────────────────
@@ -72,6 +76,50 @@ function generateCaseId() {
     id = crypto.randomBytes(6).toString("base64url").slice(0, 8);
   } while (id.includes('-') || id.includes('_'));
   return id;
+}
+
+// ─────────────────────────────────────────
+// Dropbox case-folder convention
+// ─────────────────────────────────────────
+
+// Templates live in app_settings 'dropbox_case_folder_templates' — a JSON map
+// of case_type → template string, with an optional "default" entry:
+//   { "default": "...", "Bankruptcy - Ch. 7": "..." }
+// Resolution: templates[case_type] ?? templates.default ?? the constant below.
+// No settings row exists today, so everyone gets the constant (one template
+// for all types, {{case_type}} substituted). Per-type conventions later are a
+// settings insert, not a deploy.
+// LEADING SPACES ARE SIGNIFICANT (the firm's manual-sort convention) — do not
+// "clean" them. Placeholders: {{case_type}} {{lfm_name}} {{contact_name}}
+// {{case_id}} {{date}}
+const DEFAULT_CASE_FOLDER_TEMPLATE =
+  "/  Law Office/   Cases/  Potential Cases/  Potential - {{case_type}}/ {{lfm_name}} - {{case_id}} - {{date}}";
+
+async function buildCaseFolderPath(db, { case_type, contact_name, lfm_name, case_id }) {
+  let template = null;
+  try {
+    const [[row]] = await db.query(
+      "SELECT `value` FROM app_settings WHERE `key` = 'dropbox_case_folder_templates' LIMIT 1"
+    );
+    if (row?.value) {
+      const map = JSON.parse(row.value);
+      if (map && typeof map === 'object') {
+        template = map[case_type] ?? map.default ?? null;
+      }
+    }
+  } catch (err) {
+    console.warn(`[INTAKE] dropbox_case_folder_templates lookup failed, using default: ${err.message}`);
+  }
+  if (!template) template = DEFAULT_CASE_FOLDER_TEMPLATE;
+
+  const values = {
+    case_type:    case_type || "Other",
+    contact_name: contact_name || "Unknown",
+    lfm_name:     lfm_name || "Unknown",
+    case_id:      String(case_id),
+    date:         nowLocal().toFormat("yyyy-LL-dd"),
+  };
+  return template.replace(/\{\{(\w+)\}\}/g, (m, key) => (key in values ? values[key] : m));
 }
 
 /**
@@ -661,17 +709,37 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
       case_relate: relateResult.insertId
     });
 
-    // ── Post-response: Pabbly creates Dropbox folder and updates case_dropbox ──
-    const [[contact]] = await req.db.query(
-      "SELECT contact_lfm_name FROM contacts WHERE contact_id = ?",
-      [contact_id]
-    );
+    // ── Post-response: create Dropbox case folder natively + save shared link ──
+    // (replaces the Pabbly 'create_dropbox_folder' bridge). Fully detached
+    // fire-and-forget: response is already sent, so failures must log only —
+    // never reach the route's catch (which would attempt a second response).
+    (async () => {
+      const [[contact]] = await req.db.query(
+        "SELECT contact_name, contact_lfm_name FROM contacts WHERE contact_id = ?",
+        [contact_id]
+      );
 
-    pabbly.send(req.db, "create_dropbox_folder", {
-      case_id,
-      contact_lfm_name: contact?.contact_lfm_name || "Unknown",
-      case_type
-    }).catch(err => console.error("Dropbox webhook failed:", err.message));
+      const folderPath = await buildCaseFolderPath(req.db, {
+        case_type,
+        contact_name: contact?.contact_name,
+        lfm_name:     contact?.contact_lfm_name,
+        case_id,
+      });
+
+      const result = await dropboxService.createFolderWithOptions(req.db, {
+        path: folderPath,
+        subfolders: ["Client Uploads"],
+        shareLink: true,
+      });
+
+      if (result.shared_link) {
+        await req.db.query(
+          "UPDATE cases SET case_dropbox = ? WHERE case_id = ?",
+          [result.shared_link, case_id]
+        );
+      }
+      console.log(`[INTAKE] Dropbox folder ready for case ${case_id}: ${result.path}`);
+    })().catch(err => console.error(`Dropbox folder creation failed for case ${case_id}:`, err.message));
 
   } catch (err) {
     console.error("POST /api/intake/case error:", err);

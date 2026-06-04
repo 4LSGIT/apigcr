@@ -21,7 +21,7 @@ const express      = require('express');
 const router       = express.Router();
 const rateLimit    = require('express-rate-limit');
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
-const dropbox      = require('../services/dropboxServiceLegacy');
+const dropbox      = require('../services/dropboxService');
 const emailService = require('../services/emailService');
 const logService   = require('../services/logService');
 
@@ -383,15 +383,24 @@ router.post('/api/public/get-upload-link', uploadRateLimit, async (req, res) => 
       return res.status(400).json({ status: 'error', message: 'No Dropbox folder linked to this case' });
     }
  
-    // Resolve the shared link to get the actual Dropbox path
-    const meta = await dropbox.getSharedLinkMetadata(sharedLink);
-    if (meta['.tag'] !== 'folder') {
-      return res.status(400).json({ status: 'error', message: 'Shared link is not a folder' });
+    // Resolve link → folder → temp upload link in one service call. The
+    // service validates the link resolves to a folder; subfolder preserves
+    // the legacy "Client Uploads" destination (no longer hardcoded in the
+    // service).
+    let link;
+    try {
+      ({ link } = await dropbox.getTemporaryUploadLink(req.db, {
+        sharedLink,
+        filename,
+        subfolder: 'Client Uploads',
+      }));
+    } catch (err) {
+      if ((err.message || '').includes('expected a folder')) {
+        return res.status(400).json({ status: 'error', message: 'Shared link is not a folder' });
+      }
+      throw err;
     }
 
-    const folderPath = meta.path_lower;
-    const link = await dropbox.getTemporaryUploadLink(folderPath, filename);
- 
     res.json({ link });
   } catch (err) {
     console.error('POST /api/public/get-upload-link error:', err);

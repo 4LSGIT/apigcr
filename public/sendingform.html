@@ -921,7 +921,7 @@ async function send() {
           if (emailOn && r.email) {
             await P.apiSend('/internal/email/send', 'POST', {
               from: emailFrom, to: r.email,
-              subject: 'Documents Needed — ' + (caseData.case_number_full || caseData.case_number || caseId),
+              subject: 'Documents Needed - Case ' + (caseData.case_number_full || caseData.case_number || caseId),
               html: composed.email_html, text: composed.email_text,
             });
             successes.push(`Docs Email → ${r.name}`);
