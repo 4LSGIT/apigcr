@@ -515,7 +515,7 @@ async function notifyAssignment(db, task, verb = 'assigned') {
       const smsFrom = await getSmsFrom(db);
       if (smsFrom) {
         const url  = taskActionUrl(task);
-        const tail = url ? ` Complete: ${url}` : ' Log in to YisraCase.';
+        const tail = url ? ` Mark complete: ${url}` : ' Log in to YisraCase.';
         await smsSvc().sendSms(db, smsFrom, toUser.phone,
           `New task assigned to you: "${task.title}".${task.due ? ` Due ${fmtDate(task.due)}.` : ''}${tail}`
         );

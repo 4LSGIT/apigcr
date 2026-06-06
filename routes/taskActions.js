@@ -244,12 +244,18 @@ router.post('/t/:token([A-Za-z0-9_\\-]{10,40})/complete', async (req, res) => {
 // GET /t/:token/status.svg — live status badge for emails
 // ─────────────────────────────────────────────────────────────────────────────
 
-function badgeSvg(label, bg) {
+function badgeSvg(label, bg, withCheck = false) {
   const textWidth = Math.max(40, Math.round(label.length * 7.2));
-  const w = textWidth + 24;
+  const checkW    = withCheck ? 16 : 0;
+  const w         = textWidth + 24 + checkW;
+  const checkPath = withCheck
+    ? `<path d="M10 11.5 l3.5 3.5 l6.5 -7" stroke="#ffffff" stroke-width="2.5"
+             fill="none" stroke-linecap="round" stroke-linejoin="round"/>`
+    : '';
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="22" role="img" aria-label="${htmlEscape(label)}">
   <rect width="${w}" height="22" rx="11" fill="${bg}"/>
-  <text x="${w / 2}" y="15" text-anchor="middle"
+  ${checkPath}
+  <text x="${12 + checkW + textWidth / 2}" y="15" text-anchor="middle"
         font-family="Segoe UI,Arial,sans-serif" font-size="12" font-weight="600" fill="#ffffff">${htmlEscape(label)}</text>
 </svg>`;
 }
@@ -265,8 +271,7 @@ router.get('/t/:token([A-Za-z0-9_\\-]{10,40})/status.svg', async (req, res) => {
     if (!row) return res.send(badgeSvg('—', '#9ca3af'));
 
     const status = row.task_status;
-    const label  = status === 'Completed' ? '✓ Completed' : status;
-    return res.send(badgeSvg(label, STATUS_COLORS[status] || '#6b7280'));
+    return res.send(badgeSvg(status, STATUS_COLORS[status] || '#6b7280', status === 'Completed'));
   } catch (err) {
     console.error('GET /t/:token/status.svg error:', err);
     return res.send(badgeSvg('—', '#9ca3af'));
