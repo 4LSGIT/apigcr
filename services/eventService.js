@@ -13,8 +13,17 @@
  *   - appts  = a meeting WITH a person (attendee, platform, attendance lifecycle)
  *   - tasks  = a single user's to-do (assignee, due date, digest)
  * An event is a fact on a timeline. It goes on Google Calendar, links to a
- * case OR a contact OR nothing (internal), and may optionally spawn ONE
- * reminder task.
+ * case OR a contact OR a DOCKET (case_number) OR nothing (internal), and may
+ * optionally spawn ONE reminder task.
+ *
+ * event_link_type='case_number': event_link_id holds the docket string
+ * VERBATIM (opaque free text — equality match only, never parsed/validated,
+ * never trimmed beyond whitespace). Used when a court email carries a docket
+ * before any internal case exists. Resolution to a case is QUERY-SIDE and
+ * self-healing: the row is never rewritten to 'case'; instead reads resolve
+ * the docket against cases.case_number / cases.case_number_full via a
+ * correlated subquery (LIMIT 1 — case_number is NOT unique-constrained, so a
+ * JOIN would fan out rows if two cases ever shared a docket).
  *
  * This service mirrors apptService's conventions:
  *   - Core writes happen synchronously; calendar work and reminder spawning
@@ -135,6 +144,150 @@ function _timeOnly(t) {
   const m = s.match(/(\d{2}:\d{2}(?::\d{2})?)/);
   if (!m) return null;
   return m[1].length === 5 ? `${m[1]}:00` : m[1];
+}
+
+// ─────────────────────────────────────────────────────────────
+// LINK TYPES
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Valid event_link_type values (mirrors the events.event_link_type ENUM).
+ * Enforced on write because the session sql_mode lacks STRICT_TRANS_TABLES —
+ * an invalid enum value would otherwise be stored as '' silently.
+ */
+const EVENT_LINK_TYPES = new Set(['case', 'contact', 'case_number']);
+
+/**
+ * Normalize an (event_link_type, event_link_id) pair for a write, or throw.
+ *   - no/empty link_type        → { type:null, id:null }
+ *   - unknown link_type         → throw (enum-safe)
+ *   - link_type w/o non-empty id → throw
+ * event_link_id is OPAQUE for every type: String(...).trim() only — never
+ * shape-checked (dockets included).
+ */
+function _normalizeLink(event_link_type, event_link_id) {
+  if (event_link_type == null || event_link_type === '') {
+    return { type: null, id: null };
+  }
+  if (!EVENT_LINK_TYPES.has(event_link_type)) {
+    throw new Error(`Invalid event_link_type "${event_link_type}" — use case, contact, or case_number`);
+  }
+  const id = event_link_id != null ? String(event_link_id).trim() : '';
+  if (!id) throw new Error(`event_link_id is required when event_link_type is "${event_link_type}"`);
+  return { type: event_link_type, id };
+}
+
+/**
+ * SQL fragment: resolve a 'case_number' row's docket to a case_id.
+ * Correlated subquery with LIMIT 1 — deliberately NOT a JOIN, because
+ * case_number is not unique-constrained and a JOIN would fan out rows if two
+ * cases ever shared a docket. Matches BOTH docket columns (both indexed:
+ * idx_cases_case_number, idx_cases_case_number_full). Requires the events
+ * table to be aliased `e`. NULL for non-case_number rows and unresolved dockets.
+ */
+const RESOLVED_CASE_SUBQUERY =
+  `(SELECT c.case_id FROM cases c
+     WHERE e.event_link_type = 'case_number'
+       AND (c.case_number = e.event_link_id OR c.case_number_full = e.event_link_id)
+     LIMIT 1) AS resolved_case_id`;
+
+
+// ─────────────────────────────────────────────────────────────
+// INPUT NORMALIZATION (dates & times)
+//
+// The session sql_mode lacks STRICT_TRANS_TABLES, so malformed input reaching
+// MySQL is stored as silent garbage instead of erroring:
+//   '9/9/2024'  → DATE 0000-00-00   (Y/M/D parse → invalid)
+//   '4:00 PM'   → TIME 04:00:00     (suffix truncated: 12h early!)
+//   '2024-09-09 10:00:00' in event_date → time dropped → all-day event
+// These helpers normalize accepted formats and THROW on anything else, so bad
+// input fails the request (or the batch item) loudly.
+// Accepted:  date 'YYYY-MM-DD' | 'M/D/YYYY' (MIEB court format)
+//            time 'H:MM[:SS]' 24h | 'h:MM[:SS] AM/PM'
+//            combined (in event_date): '<date> <time>' or '<date>T<time>'
+// Timezone suffixes (Z, +HH:MM) are rejected — times are firm-local.
+//
+// FOLLOW-UP: apptService writes dates/times the same way and has the identical
+// silent-garbage exposure (sql_mode lacks STRICT_TRANS_TABLES). Consider
+// hoisting these helpers into a shared util and reusing them there.
+// ─────────────────────────────────────────────────────────────
+
+/** Validate calendar reality (rejects 2/30, 13/5, etc.). */
+function _isRealDate(y, m, d) {
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+}
+
+/** Normalize a date-only input to 'YYYY-MM-DD', or throw. */
+function _normalizeEventDate(input, label = 'event_date') {
+  if (input instanceof Date && !isNaN(input)) return input.toISOString().slice(0, 10);
+  const s = String(input ?? '').trim();
+
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) {
+    if (_isRealDate(Number(m[1]), Number(m[2]), Number(m[3]))) return s;
+    throw new Error(`Invalid ${label} "${input}" — not a real calendar date`);
+  }
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);          // M/D/YYYY (MIEB)
+  if (m) {
+    const mo = Number(m[1]), d = Number(m[2]), y = Number(m[3]);
+    if (_isRealDate(y, mo, d))
+      return `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    throw new Error(`Invalid ${label} "${input}" — not a real calendar date`);
+  }
+  throw new Error(`Invalid ${label} "${input}" — use YYYY-MM-DD or M/D/YYYY`);
+}
+
+/** Normalize a time input to 'HH:MM:SS', or throw. null/'' → null. */
+function _normalizeEventTime(input, label = 'event_time') {
+  if (input == null || input === '') return null;
+  const s = String(input).trim();
+
+  if (/[Zz]$|[+-]\d{2}:?\d{2}$/.test(s))
+    throw new Error(`Invalid ${label} "${input}" — timezone suffixes not supported; provide firm-local time`);
+
+  let m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp])\.?\s*[Mm]\.?$/);   // 12h
+  if (m) {
+    let h = Number(m[1]);
+    const mm = Number(m[2]), ss = Number(m[3] || 0), pm = /p/i.test(m[4]);
+    if (h < 1 || h > 12 || mm > 59 || ss > 59) throw new Error(`Invalid ${label} "${input}"`);
+    if (h === 12) h = pm ? 12 : 0;            // 12 PM = noon, 12 AM = midnight
+    else if (pm) h += 12;
+    return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+  }
+  m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);                               // 24h
+  if (m) {
+    const h = Number(m[1]), mm = Number(m[2]), ss = Number(m[3] || 0);
+    if (h > 23 || mm > 59 || ss > 59) throw new Error(`Invalid ${label} "${input}"`);
+    return `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+  }
+  throw new Error(`Invalid ${label} "${input}" — use HH:MM[:SS] (24h) or h:mm AM/PM`);
+}
+
+/**
+ * Normalize the (event_date, event_time) input pair, or throw.
+ * event_date may carry a combined datetime ('<date> <time>' or '<date>T<time>');
+ * its time part populates event_time. Supplying a time BOTH ways is an error.
+ */
+function _normalizeEventDateTime({ event_date, event_time }) {
+  const timeProvided = event_time != null && event_time !== '';
+  let date = event_date;
+  let time = timeProvided ? _normalizeEventTime(event_time)
+                          : (event_time === '' ? null : event_time);
+
+  if (date != null && !(date instanceof Date)) {
+    const parts = String(date).trim().split(/[T\s]+/);
+    if (parts.length > 1) {                              // combined datetime
+      if (timeProvided)
+        throw new Error(`event_date "${event_date}" contains a time and event_time was also provided — supply the time once`);
+      return {
+        event_date: _normalizeEventDate(parts[0]),
+        event_time: _normalizeEventTime(parts.slice(1).join(' ')),  // rejoins '10:00 AM'
+      };
+    }
+  }
+  if (date != null) date = _normalizeEventDate(date);
+  return { event_date: date, event_time: time };
 }
 
 /**
@@ -268,9 +421,15 @@ async function syncEventToCalendar(db, event, { skip_gcal = false } = {}) {
  * log_link_type / log_link_id.
  *
  * Link mapping:
- *   event_link_type 'case'    → log link_type 'case',    link_id = event_link_id
- *   event_link_type 'contact' → log link_type 'contact', link_id = event_link_id
- *   unlinked (both NULL)      → log_link_type/id NULL (allowed)
+ *   event_link_type 'case'        → log link_type 'case',    link_id = event_link_id
+ *   event_link_type 'contact'     → log link_type 'contact', link_id = event_link_id
+ *   event_link_type 'case_number' → log link_type 'case',    link_id = the DOCKET
+ *       (the log enum has NO 'case_number' value, on purpose — this is the
+ *        log system's existing court-email convention: log_link_type='case'
+ *        with the docket string in log_link_id. The log reader's case-scope
+ *        expansion already matches docket strings, so these rows surface on
+ *        the case exactly like court emails do.)
+ *   unlinked (both NULL)          → log_link_type/id NULL (allowed)
  *
  * @param {object} db
  * @param {object} event       - an events row (must include id/type/date/link cols)
@@ -291,8 +450,13 @@ async function insertEventLog(db, event, actingUserId, action, extra = {}) {
   let linkType = null;
   let linkId   = null;
   if (event.event_link_type && event.event_link_id != null && event.event_link_id !== '') {
-    linkType = event.event_link_type;   // 'case' | 'contact'
-    linkId   = event.event_link_id;
+    if (event.event_link_type === 'case_number') {
+      linkType = 'case';                  // court-email convention (see JSDoc)
+      linkId   = event.event_link_id;     // the docket, verbatim
+    } else {
+      linkType = event.event_link_type;   // 'case' | 'contact'
+      linkId   = event.event_link_id;
+    }
   }
 
   await logService.createLogEntry(db, {
@@ -384,10 +548,14 @@ async function cancelReminderTasks(db, eventId, actingUserId = 0) {
 /**
  * Fetch a single event with its resolved link label.
  *
+ * 'case_number' rows additionally carry `resolved_case_id` — the case the
+ * docket resolves to right now (query-side, self-healing), or NULL when no
+ * case matches yet. Their link_label is the docket string verbatim.
+ *
  * @param {object} db
  * @param {number} eventId
  * @returns {Promise<object|null>} the event row plus link_label / link_id /
- *          link_type fields, or null if not found.
+ *          link_type / resolved_case_id fields, or null if not found.
  */
 async function getEvent(db, eventId) {
   const [[row]] = await db.query(
@@ -395,7 +563,8 @@ async function getEvent(db, eventId) {
        e.*,
        co.contact_name,
        ca.case_id AS joined_case_id,
-       COALESCE(ca.case_number_full, ca.case_number) AS case_number_display
+       COALESCE(ca.case_number_full, ca.case_number) AS case_number_display,
+       ${RESOLVED_CASE_SUBQUERY}
      FROM events e
      LEFT JOIN contacts co ON (e.event_link_type = 'contact' AND e.event_link_id = co.contact_id)
      LEFT JOIN cases    ca ON (e.event_link_type = 'case'    AND e.event_link_id = ca.case_id)
@@ -409,6 +578,8 @@ async function getEvent(db, eventId) {
     link_label = row.contact_name || (row.event_link_id != null ? `Contact #${row.event_link_id}` : null);
   } else if (row.event_link_type === 'case') {
     link_label = row.case_number_display || row.event_link_id || null;
+  } else if (row.event_link_type === 'case_number') {
+    link_label = row.event_link_id || null;   // the docket, verbatim (opaque)
   }
 
   return {
@@ -427,9 +598,19 @@ async function getEvent(db, eventId) {
 /**
  * List events with filters.
  *
+ * Case-scope expansion (self-healing docket linking): when called with
+ * link_type='case' AND link_id, the result ALSO includes 'case_number'
+ * events whose docket equals that case's case_number or case_number_full —
+ * so case2's Events tab shows docket-linked events with zero frontend
+ * change. Direct filtering with link_type='case_number' & link_id=<docket>
+ * is plain equality. No expansion for link_type='contact'.
+ *
+ * 'case_number' rows carry `resolved_case_id` (see getEvent) and
+ * link_label = the docket string verbatim.
+ *
  * @param {object} db
  * @param {object} opts
- *   link_type {string?}  'case' | 'contact'
+ *   link_type {string?}  'case' | 'contact' | 'case_number'
  *   link_id   {string?}
  *   status    {string?}  default 'Scheduled'; 'all' => no status filter
  *   type      {string?}  event_type
@@ -456,7 +637,33 @@ async function listEvents(db, {
   const where  = [];
   const params = [];
 
-  if (link_type && link_id != null && link_id !== '') {
+  if (link_type === 'case' && link_id != null && link_id !== '') {
+    // Case-scope expansion: include docket-linked ('case_number') events whose
+    // docket equals this case's case_number / case_number_full. Equality only —
+    // dockets are opaque. Skip the OR entirely when the case has no docket.
+    const [[caseRow]] = await db.query(
+      'SELECT case_number, case_number_full FROM cases WHERE case_id = ?',
+      [String(link_id)]
+    );
+    const dockets = [];
+    if (caseRow) {
+      for (const v of [caseRow.case_number, caseRow.case_number_full]) {
+        const s = v != null ? String(v).trim() : '';
+        if (s && !dockets.includes(s)) dockets.push(s);
+      }
+    }
+    if (dockets.length) {
+      where.push(
+        `( (e.event_link_type = 'case' AND e.event_link_id = ?)
+           OR (e.event_link_type = 'case_number' AND e.event_link_id IN (${dockets.map(() => '?').join(',')})) )`
+      );
+      params.push(String(link_id), ...dockets);
+    } else {
+      where.push("e.event_link_type = 'case' AND e.event_link_id = ?");
+      params.push(String(link_id));
+    }
+  } else if (link_type && link_id != null && link_id !== '') {
+    // 'contact' and 'case_number' (direct docket filter): plain equality.
     where.push('e.event_link_type = ? AND e.event_link_id = ?');
     params.push(link_type, String(link_id));
   } else if (link_type) {
@@ -491,7 +698,8 @@ async function listEvents(db, {
     `SELECT
        e.*,
        co.contact_name,
-       COALESCE(ca.case_number_full, ca.case_number) AS case_number_display
+       COALESCE(ca.case_number_full, ca.case_number) AS case_number_display,
+       ${RESOLVED_CASE_SUBQUERY}
      FROM events e
      LEFT JOIN contacts co ON (e.event_link_type = 'contact' AND e.event_link_id = co.contact_id)
      LEFT JOIN cases    ca ON (e.event_link_type = 'case'    AND e.event_link_id = ca.case_id)
@@ -507,6 +715,8 @@ async function listEvents(db, {
       link_label = r.contact_name || (r.event_link_id != null ? `Contact #${r.event_link_id}` : null);
     } else if (r.event_link_type === 'case') {
       link_label = r.case_number_display || r.event_link_id || null;
+    } else if (r.event_link_type === 'case_number') {
+      link_label = r.event_link_id || null;   // the docket, verbatim (opaque)
     }
     return { ...r, link_type: r.event_link_type, link_id: r.event_link_id, link_label };
   });
@@ -554,6 +764,22 @@ async function createEvent(db, {
   if (!event_title || !String(event_title).trim()) throw new Error('createEvent requires event_title');
   if (!event_date) throw new Error('createEvent requires event_date');
 
+  // Normalize/validate the link pair (enum-safe: 'case'|'contact'|'case_number';
+  // id trimmed, required when a type is given; opaque otherwise). Throws on
+  // garbage so a bad link_type fails the request loudly instead of being
+  // stored as '' under the non-strict sql_mode.
+  const normLink = _normalizeLink(event_link_type, event_link_id);
+  event_link_type = normLink.type;
+  event_link_id   = normLink.id;
+
+  // Normalize/validate date & time (ISO, M/D/YYYY, h:mm AM/PM, or a combined
+  // "date time" in event_date). Throws on garbage so bad input fails loudly
+  // instead of storing 0000-00-00 / a silently 12h-shifted time.
+  ({ event_date, event_time } = _normalizeEventDateTime({ event_date, event_time }));
+  if (reminder && reminder.date) {
+    reminder = { ...reminder, date: _normalizeEventDate(reminder.date, 'reminder.date') };
+  }
+
   // Normalize all-day/time consistency
   const { event_all_day: allDay, event_time: time } =
     _normalizeAllDay({ event_all_day, event_time });
@@ -574,7 +800,7 @@ async function createEvent(db, {
     [
       event_type,
       event_link_type,
-      event_link_id != null && event_link_id !== '' ? String(event_link_id) : null,
+      event_link_id,   // normalized above: trimmed string or null
       String(event_title).trim(),
       _dateOnly(event_date),
       time,
@@ -595,7 +821,7 @@ async function createEvent(db, {
     event_id:          eventId,
     event_type,
     event_link_type,
-    event_link_id:     event_link_id != null && event_link_id !== '' ? String(event_link_id) : null,
+    event_link_id,     // normalized above: trimmed string or null
     event_title:       String(event_title).trim(),
     event_date:        _dateOnly(event_date),
     event_time:        time,
@@ -687,6 +913,26 @@ async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder } =
     if (blocked.length) throw new Error(`updateEvent: blocked fields: ${blocked.join(', ')}`);
   }
 
+  // Normalize/validate date & time inputs (same rules as createEvent). A
+  // combined "date time" in event_date populates event_time as if supplied,
+  // which then drives the all_day/time invariant below.
+  if (hasFields && ('event_date' in fields || 'event_time' in fields)) {
+    if ('event_date' in fields && (fields.event_date == null || fields.event_date === '')) {
+      throw new Error('event_date cannot be empty');
+    }
+    const norm = _normalizeEventDateTime({
+      event_date: 'event_date' in fields ? fields.event_date : undefined,
+      event_time: 'event_time' in fields ? fields.event_time : undefined,
+    });
+    if ('event_date' in fields) fields.event_date = norm.event_date;
+    if (norm.event_time !== undefined && (norm.event_time != null || 'event_time' in fields)) {
+      fields.event_time = norm.event_time;   // combined-datetime path adds it
+    }
+  }
+  if (reminder && reminder.date) {
+    reminder = { ...reminder, date: _normalizeEventDate(reminder.date, 'reminder.date') };
+  }
+
   const existing = await getEvent(db, eventId);
   if (!existing) throw new Error(`Event ${eventId} not found`);
 
@@ -723,10 +969,18 @@ async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder } =
     if ('event_date' in merged && merged.event_date) {
       merged.event_date = _dateOnly(merged.event_date);
     }
-    // Stringify link id if present
+    // Link fields: enum-safe type ('' → null, unknown → throw), trimmed id
+    // (opaque — never shape-checked; empty after trim → null).
+    if ('event_link_type' in merged) {
+      if (merged.event_link_type == null || merged.event_link_type === '') {
+        merged.event_link_type = null;
+      } else if (!EVENT_LINK_TYPES.has(merged.event_link_type)) {
+        throw new Error(`Invalid event_link_type "${merged.event_link_type}" — use case, contact, or case_number`);
+      }
+    }
     if ('event_link_id' in merged) {
-      merged.event_link_id =
-        merged.event_link_id != null && merged.event_link_id !== '' ? String(merged.event_link_id) : null;
+      const v = merged.event_link_id != null ? String(merged.event_link_id).trim() : '';
+      merged.event_link_id = v || null;
     }
 
     const keys = Object.keys(merged);
@@ -900,13 +1154,16 @@ async function getEventsForDigest(db, { from, to } = {}) {
   //     utf8mb4_general_ci) → collation-safe.
   //   - contact join: varchar event_link_id = int contacts.contact_id →
   //     implicit numeric cast (same as getEvent, proven in production).
+  //   - case_number rows: resolved_case_id via correlated subquery (LIMIT 1,
+  //     not a JOIN — see RESOLVED_CASE_SUBQUERY). Label = the docket itself.
   const [rows] = await db.query(
     `SELECT
        e.event_id, e.event_type, e.event_title, e.event_date, e.event_time,
        e.event_all_day, e.event_location, e.event_link,
        e.event_link_type, e.event_link_id,
        co.contact_name,
-       ca.case_number_full, ca.case_number, ca.case_id
+       ca.case_number_full, ca.case_number, ca.case_id,
+       ${RESOLVED_CASE_SUBQUERY}
      FROM events e
      LEFT JOIN contacts co ON (e.event_link_type = 'contact' AND e.event_link_id = co.contact_id)
      LEFT JOIN cases    ca ON (e.event_link_type = 'case'    AND e.event_link_id = ca.case_id)
@@ -962,6 +1219,17 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
       if (!name) return '';
       return `<a href="${APP_URL}?case=${row.case_id || row.event_link_id || ''}" `
            + `style="color:${HEADER};text-decoration:none">${name}</a>`;
+    }
+    if (row.event_link_type === 'case_number') {
+      // Label = the docket verbatim. Linked only when the docket currently
+      // resolves to a case (query-side, self-healing); otherwise plain text.
+      const name = row.event_link_id || '';
+      if (!name) return '';
+      if (row.resolved_case_id) {
+        return `<a href="${APP_URL}?case=${row.resolved_case_id}" `
+             + `style="color:${HEADER};text-decoration:none">${name}</a>`;
+      }
+      return name;
     }
     return '';
   }

@@ -15,14 +15,14 @@ Everything else is optional:
 
 - **A type** — categorizes the event (see Event Types below)
 - **A time and length** — for events that happen at a specific time, like a hearing at 10:00 AM. Events without a time are **all-day** entries, which is the right shape for deadlines.
-- **A link to a case or a contact** — most events belong to a case. Some belong to a contact. Internal events (a filing-system milestone, a license renewal) can be linked to nothing at all.
+- **A link to a case, a contact, or a case number** — most events belong to a case. Some belong to a contact. Internal events (a filing-system milestone, a license renewal) can be linked to nothing at all. The **Case #** option links by docket number alone — useful when a court email announces a deadline before the case exists in the system, or for an unfiled case. The deadline still goes on the calendar and into the digest, and the moment a case with that docket number exists, the event appears on its Events tab automatically.
 - **A location** — courtroom, address, or "Telephone"
 - **A URL** — a Zoom link, dial-in page, or docket link
 - **A note** — free text
 
 A few fields are managed by the system and should not be edited manually: the Google Calendar event ID and the calendar override. These are set automatically.
 
-Unlike an appointment, an event links to **one** thing — a case, *or* a contact, *or* nothing. It never has both a client and a case side.
+Unlike an appointment, an event links to **one** thing — a case, a contact, a case number, *or* nothing. It never has both a client and a case side.
 
 ---
 

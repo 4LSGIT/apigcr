@@ -1,7 +1,7 @@
 # Routes
 
-_Generated 2026-06-02T21:19:38.000Z_  
-_344 routes total — DELETE: 33, GET: 143, PATCH: 28, POST: 117, PUT: 21, _ALL: 2_
+_Generated 2026-06-06T19:27:35.378Z_  
+_362 routes total — DELETE: 33, GET: 145, PATCH: 31, POST: 130, PUT: 21, _ALL: 2_
 
 ## Global middleware chain
 
@@ -94,6 +94,18 @@ _344 routes total — DELETE: 33, GET: 143, PATCH: 28, POST: 117, PUT: 21, _ALL:
 | POST | `/api/credentials/:id/refresh` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
 | GET | `/api/credentials/:id/reveal` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
 | POST | `/api/credentials/:id/revoke` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
+| POST | `/api/dropbox/create-folder` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/delete` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/download` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/list` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/move` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/rename` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/save-url` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/save-url-status` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/shared-link` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/shared-link-metadata` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/upload` | `jwtOrApiKey` | — |
+| POST | `/api/dropbox/upload-link` | `jwtOrApiKey` | — |
 | GET | `/api/email-credentials` | `jwtOrApiKey` | — |
 | POST | `/api/email-credentials` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
 | DELETE | `/api/email-credentials/:id` | `jwtOrApiKey`, `superuserCheck`, `rateLimitMiddleware` | — |
@@ -136,6 +148,13 @@ _344 routes total — DELETE: 33, GET: 143, PATCH: 28, POST: 117, PUT: 21, _ALL:
 | PUT | `/api/email-router/routes/:id` | `jwtOrApiKey` | — |
 | POST | `/api/email/ingest` | `<anonymous>` | — |
 | GET | `/api/events` | `jwtOrApiKey` | — |
+| GET | `/api/events` | `jwtOrApiKey` | — |
+| POST | `/api/events` | `jwtOrApiKey` | — |
+| GET | `/api/events/:id(\d+)` | `jwtOrApiKey` | — |
+| PATCH | `/api/events/:id(\d+)` | `jwtOrApiKey` | — |
+| PATCH | `/api/events/:id(\d+)/cancel` | `jwtOrApiKey` | — |
+| PATCH | `/api/events/:id(\d+)/complete` | `jwtOrApiKey` | — |
+| POST | `/api/events/batch` | `jwtOrApiKey` | — |
 | GET | `/api/feature-requests` | `jwtOrApiKey` | — |
 | POST | `/api/feature-requests` | `jwtOrApiKey` | — |
 | PATCH | `/api/feature-requests/:id` | `jwtOrApiKey`, `requireAdmin` | — |
@@ -175,6 +194,7 @@ _344 routes total — DELETE: 33, GET: 143, PATCH: 28, POST: 117, PUT: 21, _ALL:
 | DELETE | `/api/image-library/:id` | `jwtOrApiKey` | — |
 | POST | `/api/intake/case` | `jwtOrApiKey` | — |
 | POST | `/api/intake/contact` | `jwtOrApiKey` | — |
+| POST | `/api/intake/petition` | `jwtOrApiKey` | — |
 | GET | `/api/judges` | `jwtOrApiKey` | — |
 | GET | `/api/leads` | `jwtOrApiKey` | — |
 | GET | `/api/log` | `jwtOrApiKey` | — |
@@ -369,8 +389,6 @@ _344 routes total — DELETE: 33, GET: 143, PATCH: 28, POST: 117, PUT: 21, _ALL:
 | GET | `/internal/email-test/credentials/oauth` | `jwtOrApiKey` | — |
 | POST | `/internal/email-test/send` | `jwtOrApiKey` | — |
 | POST | `/internal/email/send` | `jwtOrApiKey` | — |
-| POST | `/internal/gcal/create` | `jwtOrApiKey` | — |
-| POST | `/internal/gcal/delete` | `jwtOrApiKey` | — |
 | GET | `/internal/hello` | — | — |
 | POST | `/internal/mms/send` | `jwtOrApiKey` | — |
 | GET | `/internal/phone-test/lines` | `jwtOrApiKey` | — |
@@ -549,4 +567,4 @@ _344 routes total — DELETE: 33, GET: 143, PATCH: 28, POST: 117, PUT: 21, _ALL:
 
 ---
 
-_344 routes total — DELETE: 33, GET: 143, PATCH: 28, POST: 117, PUT: 21, _ALL: 2_
+_362 routes total — DELETE: 33, GET: 145, PATCH: 31, POST: 130, PUT: 21, _ALL: 2_

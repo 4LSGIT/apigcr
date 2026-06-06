@@ -1074,8 +1074,19 @@
             const timeStr = allDay ? "All day" : (ev.event_time ? String(ev.event_time).slice(0, 5) : "");
             const esc = (s) => escHtml(s == null ? "" : String(s));
             // Linked cell → addFile link (matches the rest of the page).
+            // case_number rows: docket verbatim; clickable only when the
+            // docket currently resolves to a case (resolved_case_id from the
+            // API's query-side resolution) — otherwise plain text.
             let linked = "";
-            if (ev.link_label && ev.event_link_id != null) {
+            if (ev.event_link_type === "case_number" && ev.event_link_id != null) {
+              const docket = String(ev.link_label || ev.event_link_id);
+              if (ev.resolved_case_id) {
+                const jsLabel = docket.replace(/'/g, "\\'");
+                linked = `Case #: <a href="#" onclick="addFile('${jsLabel}','case','${ev.resolved_case_id}');return false">${esc(docket)}</a>`;
+              } else {
+                linked = `Case #: ${esc(docket)}`;
+              }
+            } else if (ev.link_label && ev.event_link_id != null) {
               const jsLabel = String(ev.link_label).replace(/'/g, "\\'");
               const ft = ev.event_link_type === "case" ? "case" : "contact";
               const noun = ev.event_link_type === "case" ? "Case" : "Contact";

@@ -2185,8 +2185,10 @@ function newApptDialog(opts = {}) {
      linkFixed: { type:'case'|'contact', id, label }
                   Locked link line (entity pages pass this). No picker shown.
      linkPick:  true
-                  Shell mode: user chooses None / Case / Contact, then a
-                  CasePicker / ContactPicker is mounted.
+                  Shell mode: user chooses None / Case / Contact / Case #
+                  (docket), then a CasePicker / ContactPicker is mounted —
+                  Case # is a plain opaque text input (no picker, no shape
+                  validation).
      (neither ⇒ treated as linkPick.)
 
      event:       <existing event row>   EDIT mode (prefill + PATCH). Omit = CREATE.
@@ -2242,6 +2244,11 @@ function newEventDialog(opts = {}) {
       link.kind = 'contact';
       link.selId = String(ev.event_link_id);
       link.selLabel = ev.link_label || ev.contact_name || `Contact #${ev.event_link_id}`;
+    } else if (ev.event_link_type === 'case_number' && ev.event_link_id != null) {
+      // Docket link — opaque free text, prefills the Case # input.
+      link.kind = 'case_number';
+      link.selId = String(ev.event_link_id);
+      link.selLabel = String(ev.event_link_id);
     }
   }
 
@@ -2283,6 +2290,7 @@ function newEventDialog(opts = {}) {
         <option value="none"${link.kind === 'none' ? ' selected' : ''}>— none (internal) —</option>
         <option value="case"${link.kind === 'case' ? ' selected' : ''}>Case</option>
         <option value="contact"${link.kind === 'contact' ? ' selected' : ''}>Contact</option>
+        <option value="case_number"${link.kind === 'case_number' ? ' selected' : ''}>Case #</option>
       </select>
       <div id="neLinkPickHost" style="margin-top:0.35em;"></div>`;
     host.innerHTML = chooser;
@@ -2305,6 +2313,17 @@ function newEventDialog(opts = {}) {
     ph.innerHTML = '';
 
     if (link.kind === 'none') return;
+
+    // Case # (docket): plain opaque text input — NO picker, NO shape
+    // validation (equality-only matching server-side). Must precede the
+    // confirmed-line block so an edit-prefilled docket renders as the input.
+    if (link.kind === 'case_number') {
+      ph.innerHTML = `<input id="neDocketInput" placeholder="24-46274-mlo"
+        value="${escAttr(link.selId || '')}" style="width:100%;">`;
+      const inp = E('neDocketInput');
+      if (inp) inp.addEventListener('input', () => { link.selId = inp.value; });
+      return;
+    }
 
     // Already resolved → confirmed line + change link.
     if (link.selId != null) {
@@ -2515,6 +2534,15 @@ function newEventDialog(opts = {}) {
       if (link.mode === 'fixed') {
         linkType = link.fixedType;
         linkId   = String(link.fixedId);
+      } else if (link.kind === 'case_number') {
+        const inp = E('neDocketInput');
+        const docket = String((inp ? inp.value : link.selId) || '').trim();
+        if (!docket) {
+          Swal.showValidationMessage('Enter a case # (docket), or choose "none".');
+          return false;
+        }
+        linkType = 'case_number';
+        linkId   = docket;   // opaque — sent verbatim (trimmed only)
       } else if (link.kind === 'case' || link.kind === 'contact') {
         if (!link.selId) {
           Swal.showValidationMessage(`Pick a ${link.kind} to link, or choose "none".`);
