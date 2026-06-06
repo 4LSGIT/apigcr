@@ -17,8 +17,16 @@
  * Link strategy:
  *   Writes: always set task_link + task_link_type + task_link_id (all three)
  *   Reads:  prefer task_link_type/task_link_id, fall back to task_link for old rows.
+ *
+ * Action tokens:
+ *   Every task gets a random url-safe token (tasks.task_action_token) at
+ *   creation. It powers the public one-click-complete links served by
+ *   routes/taskActions.js (GET /t/:token confirm page, POST .../complete,
+ *   GET .../status.svg live badge). Token authorizes the assignee's
+ *   complete action — acceptable threat model for internal staff tasks.
  */
 
+const crypto       = require('crypto');
 const { DateTime } = require('luxon');
 const { FIRM_TZ }  = require('./timezoneService');
 const logService   = require('./logService');
@@ -31,6 +39,18 @@ function settings() { return require('./settingsService'); }
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
+
+const APP_URL = process.env.APP_URL || 'https://app.4lsg.com';
+
+/** Random url-safe action token (22 chars), stored in tasks.task_action_token. */
+function newActionToken() {
+  return crypto.randomBytes(16).toString('base64url');
+}
+
+/** Public one-click action URL for a shaped task, or null if no token. */
+function taskActionUrl(task) {
+  return task?.action_token ? `${APP_URL}/t/${task.action_token}` : null;
+}
 
 /**
  * Given a DATE string, return the status it should have right now.
@@ -130,6 +150,43 @@ function metaRow(label, value) {
 }
 
 /**
+ * One-click complete button + live status badge for single-task emails.
+ * Falls back to the old "log in" line when the task has no action token
+ * (pre-migration rows).
+ *
+ * The badge <img> is fetched at open time so the email reflects current
+ * status (caveats: Apple MPP caches at delivery; Outlook blocks remote
+ * images by default — it's decorative, the button/landing page is the
+ * real mechanism).
+ */
+function buildActionBlock(task) {
+  const url = taskActionUrl(task);
+  if (!url) {
+    return `<p style="margin:20px 0 0;font-size:13px;color:#9ca3af">
+      Log in to YisraCase to view or complete this task.
+    </p>`;
+  }
+  return `
+    <table cellpadding="0" cellspacing="0" style="margin:22px 0 0">
+      <tr>
+        <td>
+          <a href="${url}"
+             style="display:inline-block;background:#059669;color:#ffffff;text-decoration:none;
+                    border-radius:6px;padding:12px 24px;font-size:15px;font-weight:700">
+            ✓ Mark Complete
+          </a>
+        </td>
+        <td style="vertical-align:middle;padding-left:14px">
+          <img src="${url}/status.svg" height="22" alt="Task status" style="vertical-align:middle">
+        </td>
+      </tr>
+    </table>
+    <p style="margin:10px 0 0;font-size:12px;color:#9ca3af">
+      Or log in to YisraCase to view or complete this task.
+    </p>`;
+}
+
+/**
  * Assignment / transfer notification email (to task_to).
  * @param {object} task  - from getTask()
  * @param {string} [verb] - "assigned" | "transferred to you"
@@ -165,9 +222,7 @@ function buildAssignmentEmail(task, verb = 'assigned') {
       ${task.notify ? metaRow('Notification', 'Assigner will be notified on completion') : ''}
     </table>
 
-    <p style="margin:20px 0 0;font-size:13px;color:#9ca3af">
-      Log in to YisraCase to view or complete this task.
-    </p>
+    ${buildActionBlock(task)}
   `;
 
   return emailWrap('Task Assignment', `New Task ${verb}: ${task.title}`, body);
@@ -239,9 +294,7 @@ function buildDueReminderEmail(task) {
       ${metaRow('Assigned by', task.from.name || '—')}
     </table>
 
-    <p style="margin:20px 0 0;font-size:13px;color:#9ca3af">
-      Log in to YisraCase to complete this task.
-    </p>
+    ${buildActionBlock(task)}
   `;
 
   return emailWrap('Due Today Reminder', `⏰ Task Due Today: ${task.title}`, body);
@@ -260,7 +313,6 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
   const total = overdue.length + dueToday.length + pending.length;
 
   function taskRow(t, color) {
-    const APP_URL = process.env.APP_URL || 'https://app.4lsg.com';
     let linkHtml = '';
     const linkName = t.contact_name || t.case_number_full || t.case_number || '';
     if (linkName) {
@@ -269,13 +321,19 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
       else if (t.case_number_full || t.case_number|| t.case_id) href += `?case=${t.case_id || ''}`;
       linkHtml = `<a href="${href}" style="color:#4f46e5;text-decoration:none">${linkName}</a>`;
     }
+    // One-click complete link (requires the digest query to SELECT t.task_action_token)
+    const doneHtml = t.task_action_token
+      ? `<a href="${APP_URL}/t/${t.task_action_token}" title="Mark complete"
+            style="color:#059669;text-decoration:none;font-weight:700;font-size:14px">✓</a>`
+      : '';
     return `<tr style="border-bottom:1px solid #f3f4f6">
       <td style="padding:8px 4px 8px 0;font-size:13px;color:#111827;font-weight:500;
-                 max-width:300px">${t.task_title}</td>
+                 max-width:280px">${t.task_title}</td>
       <td style="padding:8px 6px;font-size:12px;color:#6b7280;white-space:nowrap">
         ${fmtDateShort(t.task_due)}
       </td>
       <td style="padding:8px 0 8px 4px;font-size:12px;color:#6b7280">${linkHtml}</td>
+      <td style="padding:8px 0 8px 6px;text-align:center;white-space:nowrap">${doneHtml}</td>
     </tr>`;
   }
 
@@ -294,6 +352,8 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
                        text-align:left;border-bottom:1px solid #e5e7eb;white-space:nowrap">Due</th>
             <th style="padding:6px 0 6px 4px;font-size:11px;color:#9ca3af;font-weight:600;
                        text-align:left;border-bottom:1px solid #e5e7eb">Linked to</th>
+            <th style="padding:6px 0 6px 6px;font-size:11px;color:#9ca3af;font-weight:600;
+                       text-align:center;border-bottom:1px solid #e5e7eb;white-space:nowrap">Done</th>
           </tr>
         </thead>
         <tbody>
@@ -325,6 +385,7 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
     ${section('Pending',   '#4f46e5', '⚪', pending)}
 
     <p style="margin:20px 0 0;font-size:13px;color:#9ca3af">
+      The ✓ link marks a task complete (one confirmation click).
       Log in to YisraCase to manage your tasks reminder preferences.
     </p>
   `;
@@ -453,8 +514,10 @@ async function notifyAssignment(db, task, verb = 'assigned') {
     if (toUser.allow_sms && toUser.phone) {
       const smsFrom = await getSmsFrom(db);
       if (smsFrom) {
+        const url  = taskActionUrl(task);
+        const tail = url ? ` Complete: ${url}` : ' Log in to YisraCase.';
         await smsSvc().sendSms(db, smsFrom, toUser.phone,
-          `New task assigned to you: "${task.title}".${task.due ? ` Due ${fmtDate(task.due)}.` : ''} Log in to YisraCase.`
+          `New task assigned to you: "${task.title}".${task.due ? ` Due ${fmtDate(task.due)}.` : ''}${tail}`
         );
       }
     }
@@ -595,7 +658,8 @@ function shapeRow(r) {
     notify:  !!r.task_notification,
     from:    { id: r.from_id, name: r.from_name },
     to:      { id: r.to_id,   name: r.to_name   },
-    link
+    link,
+    action_token: r.task_action_token || null
   };
 }
 
@@ -656,15 +720,16 @@ async function createTask(db, {
     `INSERT INTO tasks
        (task_from, task_to, task_title, task_desc, task_start, task_due,
         task_notification, task_status, task_date, task_last_update,
-        task_link, task_link_type, task_link_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', NOW(), NOW(), ?, ?, ?)`,
+        task_link, task_link_type, task_link_id, task_action_token)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', NOW(), NOW(), ?, ?, ?, ?)`,
     [
       taskFrom, to, title, desc,
       start || null, due || null,
       notify ? 1 : 0,
       link_id != null ? String(link_id) : '',  // task_link — legacy
       link_type,
-      link_id != null ? String(link_id) : null
+      link_id != null ? String(link_id) : null,
+      newActionToken()
     ]
   );
 
@@ -735,7 +800,7 @@ async function updateTask(db, taskId, fields, actingUserId = 0) {
 // STATUS TRANSITIONS
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function completeTask(db, taskId, actingUserId = 0) {
+async function completeTask(db, taskId, actingUserId = 0, logExtra = {}) {
   const task = await getTask(db, taskId);
   if (!task) throw new Error(`Task ${taskId} not found`);
   if (task.status === 'Completed') throw new Error('Task is already completed');
@@ -746,7 +811,7 @@ async function completeTask(db, taskId, actingUserId = 0) {
     [taskId]
   );
 
-  await logTaskEvent(db, taskId, actingUserId, 'completed', {});
+  await logTaskEvent(db, taskId, actingUserId, 'completed', logExtra);
   await cancelDueReminder(db, taskId);
 
   // Notify assigner if task_notification = 1 and assigner ≠ completor
