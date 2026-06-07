@@ -2350,6 +2350,105 @@ async function initAuth() {
       });
     }
   </script>
+
+  <!-- ── System status banner (error-alerting Slice 2) ──────────────────────
+       Polls GET /api/system-status on load + every 10 min. Shows a fixed red
+       top bar when the automation poller heartbeat or error sweep is stale,
+       or open critical alerts exist. Self-contained: inline styles only, no
+       dependency on shell CSS. Reuses the shell's JWT (AUTH_STATE.jwt) via a
+       direct fetch — deliberately NOT apiSend(), whose 401/expired path pops
+       the loginBlocking() modal; a background poll must never do that. If the
+       JWT is missing/expired the poll is skipped quietly.
+       Failure posture: any fetch/parse error or ok:false → no banner. -->
+  <script>
+    (function systemStatusBanner() {
+      const POLL_MS = 10 * 60 * 1000;
+      let bar = null, msgEl = null;
+      // Dismiss semantics: ✕ hides the bar until the fired-CONDITION set
+      // changes (not the message text — ages in the text change every poll).
+      let dismissedSig = null;
+
+      function ensureBar() {
+        if (bar) return;
+        bar = document.createElement('div');
+        bar.id = 'ycSystemAlertBar';
+        // z-index 999: above shell chrome (≤100), below SweetAlert2 modals (1060)
+        bar.style.cssText =
+          'position:fixed;top:0;left:0;right:0;z-index:999;display:none;' +
+          'background:#c0392b;color:#fff;padding:6px 36px;text-align:center;' +
+          'font:13px/1.5 Arial,Helvetica,sans-serif;' +
+          'box-shadow:0 1px 4px rgba(0,0,0,0.35);';
+        msgEl = document.createElement('span');
+        const x = document.createElement('button');
+        x.textContent = '\u2715';
+        x.setAttribute('aria-label', 'Dismiss system alert');
+        x.style.cssText =
+          'position:absolute;right:8px;top:50%;transform:translateY(-50%);' +
+          'background:none;border:none;color:#fff;font-size:14px;' +
+          'cursor:pointer;padding:2px 6px;line-height:1;';
+        x.onclick = function () {
+          dismissedSig = bar.dataset.sig || null;
+          bar.style.display = 'none';
+        };
+        bar.appendChild(msgEl);
+        bar.appendChild(x);
+        document.body.appendChild(bar);
+      }
+
+      function hide() { if (bar) bar.style.display = 'none'; }
+
+      function show(sig, message) {
+        if (sig === dismissedSig) return;   // same condition set → stay hidden
+        dismissedSig = null;                // condition set changed → re-arm
+        ensureBar();
+        bar.dataset.sig = sig;
+        msgEl.textContent = message;        // textContent only — never innerHTML
+        bar.style.display = 'block';
+      }
+
+      async function poll() {
+        try {
+          const jwt = window.AUTH_STATE && window.AUTH_STATE.jwt;
+          if (!jwt || (typeof isJwtExpired === 'function' && isJwtExpired(jwt))) {
+            console.debug('[sysBanner] no valid JWT — skipping poll');
+            return; // leave current banner state untouched
+          }
+          const res = await fetch('/api/system-status', {
+            headers: { 'Authorization': 'Bearer ' + jwt }
+          });
+          if (!res.ok) { console.debug('[sysBanner] HTTP ' + res.status); return hide(); }
+          const data = await res.json();
+          if (!data || data.ok !== true) { console.debug('[sysBanner] ok:false'); return hide(); }
+          if (!data.banner) return hide();
+
+          const sigParts = [], parts = [];
+          if (data.process_jobs && data.process_jobs.stale) {
+            sigParts.push('hb');
+            parts.push('Automation engine stalled \u2014 last run ' +
+              data.process_jobs.age_minutes + ' min ago.');
+          }
+          if (data.error_sweep && data.error_sweep.stale) {
+            sigParts.push('sweep');
+            parts.push('Error sweep stalled \u2014 last success ' +
+              data.error_sweep.age_minutes + ' min ago.');
+          }
+          const crit = (data.alerts && data.alerts.open_criticals) || 0;
+          if (crit > 0) {
+            sigParts.push('crit:' + crit); // count change = condition change
+            parts.push(crit + ' open critical alert(s).');
+          }
+          if (!parts.length) return hide(); // banner:true but nothing fired — defensive
+          show(sigParts.join('|'), '\u26A0 YisraCase system alert: ' + parts.join(' '));
+        } catch (err) {
+          console.debug('[sysBanner] poll failed:', err && err.message);
+          hide(); // a broken status check must never disturb a healthy shell
+        }
+      }
+
+      poll();
+      setInterval(poll, POLL_MS);
+    })();
+  </script>
 </body>
 
 </html>

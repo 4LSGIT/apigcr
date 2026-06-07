@@ -8,6 +8,21 @@ const { executeJob }      = require("../lib/job_executor");
 const { executeStep }     = require("../lib/sequenceEngine");
 
 
+/**
+ * Heartbeat: "the poll cycle ran" — NOT "jobs succeeded". Individual job
+ * failures are the error sweep's domain. Stamped on every successful exit
+ * of the poll handler, including 0-jobs-claimed and batches with failures.
+ * Fire-and-forget: must never delay or break the poller.
+ */
+function stampHeartbeat(db) {
+  db.query(
+    `INSERT INTO app_settings (\`key\`, \`value\`, is_secret, is_editable)
+     VALUES ('process_jobs_last_heartbeat_at', ?, 0, 0)
+     ON DUPLICATE KEY UPDATE \`value\` = VALUES(\`value\`)`,
+    [new Date().toISOString()]
+  ).catch(err => console.error('[process-jobs] heartbeat stamp failed:', err.message));
+}
+
 async function recordResult(
   connection,
   jobId,
@@ -162,6 +177,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
     if (rows.length === 0) {
       await connection.commit();
+      stampHeartbeat(db); // fire-and-forget — poll cycle ran (common path)
       return res.json({ processed: 0, results: [] });
     }
 
@@ -460,6 +476,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
     }
   }
 
+  stampHeartbeat(db); // fire-and-forget — poll cycle ran (even if some jobs failed)
   res.json({ processed: jobs.length, results });
 });
 
