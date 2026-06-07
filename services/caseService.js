@@ -659,8 +659,12 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
 //     "potential": { "default": "...", "Bankruptcy": "...", "subfolders": [...] },
 //     "active":    { "default": "...", "subfolders": [...] }
 //   }
-// Resolution per stage: map[stage][case_type] ?? map[stage].default ??
-// hardcoded default; subfolders: map[stage].subfolders ?? hardcoded.
+// Resolution per stage, most-specific first:
+//   map[stage]["Type:Subtype"] ?? map[stage]["Type"] ?? map[stage].default ??
+//   hardcoded default; subfolders: map[stage].subfolders ?? hardcoded.
+// Composite keys use a colon, e.g. "Bankruptcy:Chapter 7". Note that within
+// one template {{case_subtype}} already varies per case — composite keys are
+// only needed when the path STRUCTURE differs by subtype.
 // No settings row → the constants below. Convention changes are a settings
 // edit, not a deploy.
 //
@@ -768,7 +772,8 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
 
   const settingsMap = await _loadCaseFolderTemplates(db);
   const stageMap    = settingsMap[stage] || {};
-  const template    = stageMap[values.case_type]
+  const template    = stageMap[`${values.case_type}:${values.case_subtype}`]
+                   ?? stageMap[values.case_type]
                    ?? stageMap.default
                    ?? DEFAULT_CASE_FOLDER_TEMPLATES[stage].default;
   const subTemplates = Array.isArray(stageMap.subfolders)
