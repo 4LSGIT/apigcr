@@ -110,7 +110,7 @@ async function listCases(db, {
     `SELECT
      c.case_id,
      COALESCE(c.case_number_full, c.case_number, c.case_id) AS case_number,
-     c.case_type, c.case_stage, c.case_status,
+     c.case_type, c.case_subtype, c.case_stage, c.case_status,
      c.case_judge, c.case_trustee, c.case_chapter,
      IFNULL(DATE_FORMAT(c.case_open_date,  '%b. %e, %Y'), '') AS open,
      IFNULL(DATE_FORMAT(c.case_file_date,  '%b. %e, %Y'), '') AS file,
@@ -591,6 +591,7 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
        c.case_number,
        c.case_number_full,
        c.case_type,
+       c.case_subtype,
        c.case_chapter,
        c.case_stage,
        pc.contact_id   AS primary_contact_id,

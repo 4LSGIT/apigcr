@@ -502,6 +502,9 @@ router.post("/api/intake/contact", jwtOrApiKey, async (req, res) => {
 // Body:
 //   contact_id   number   required
 //   case_type    string   required — e.g. "Bankruptcy", "Other"
+//   case_subtype string   optional (2026-06 split) — category refinement,
+//                            varchar(40), e.g. "Chapter 7". Empty treated as
+//                            absent (column DB default '').
 //   duplicate    string   "duplicate" to force new, otherwise "return" (default)
 //   case_number       string optional (Phase 3) — short-form docket number,
 //                            varchar(20). Empty string treated as absent.
@@ -558,6 +561,17 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ status: "error", message: "case_number_full exceeds 20 chars" });
   }
 
+  // ── Optional case_subtype (2026-06 type/subtype split) ──
+  // Opaque free-text category refinement (e.g. "Chapter 7"). Trim; empty →
+  // NULL (absent → column's DB default ''). varchar(40) ceiling. No shape
+  // validation — same opacity rule as case_type/case_number.
+  let caseSubtype = req.body.case_subtype;
+  caseSubtype = (typeof caseSubtype === "string") ? caseSubtype.trim() : "";
+  if (caseSubtype === "") caseSubtype = null;
+  if (caseSubtype !== null && caseSubtype.length > 40) {
+    return res.status(400).json({ status: "error", message: "case_subtype exceeds 40 chars" });
+  }
+
   try {
     // ── Collision check (only when a docket value was supplied) ──
     //    Guards the organic dedup invariant production has held without a DB
@@ -611,6 +625,10 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
       : duplicate;
 
     // ── Check for existing active case of same type ──
+    // Plain equality on case_type. The former
+    // `OR cases.case_type LIKE CONCAT(?, ' - Ch%')` branch matched the legacy
+    // combined "Bankruptcy - Ch. X" format, removed after the 2026-06
+    // case_type/case_subtype split (backfill + triggers normalized the data).
     if (effectiveDuplicate !== "duplicate") {
       const [existing] = await req.db.query(
         `SELECT cases.case_id
@@ -619,10 +637,10 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
          WHERE cr.case_relate_client_id = ?
            AND cr.case_relate_type = 'Primary'
            AND cases.case_stage IN ('Lead', 'Open', 'Pending', 'Filed')
-           AND (cases.case_type = ? OR cases.case_type LIKE CONCAT(?, ' - Ch%'))
+           AND cases.case_type = ?
          ORDER BY cases.case_open_date DESC
          LIMIT 1`,
-        [contact_id, case_type, case_type]
+        [contact_id, case_type]
       );
 
       if (existing.length) {
@@ -657,6 +675,11 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
         const vals = ["?", "CONVERT_TZ(NOW(), 'UTC', 'America/New_York')", "?"];
         const params = [case_id, case_type];
 
+        if (caseSubtype !== null) {
+          cols.push("case_subtype");
+          vals.push("?");
+          params.push(caseSubtype);
+        }
         if (caseNumber !== null) {
           cols.push("case_number");
           vals.push("?");
@@ -696,7 +719,7 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
        VALUES ('update', CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ?, 0, ?)`,
       [
         case_id,
-        JSON.stringify({ action: "case_created", case_type, contact_id })
+        JSON.stringify({ action: "case_created", case_type, case_subtype: caseSubtype, contact_id })
       ]
     );
 

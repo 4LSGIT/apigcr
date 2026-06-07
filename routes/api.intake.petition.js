@@ -54,8 +54,12 @@
  *   409 ambiguous PRIMARY contact, or docket collision on a different client
  *   500 unexpected
  *
- * case_type stored as "Bankruptcy - Ch. 7" / "Bankruptcy - Ch. 13" (period +
- * space), matching production. Pre-filing cases are plain "Bankruptcy".
+ * case_type / case_subtype (2026-06 split): case_type stores the CATEGORY
+ * ("Bankruptcy"), case_subtype stores the chapter label ("Chapter 7" /
+ * "Chapter 13"). The legacy combined format "Bankruptcy - Ch. X" is no longer
+ * written here; DB triggers normalize any stragglers and keep case_chapter
+ * (the machine field for BK automation) in sync. Pre-filing cases are plain
+ * "Bankruptcy" with an empty subtype.
  * case_number_full left NULL here (derived later from a subsequent email).
  */
 
@@ -262,7 +266,10 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
   if (caseNumber.length > 20) return res.status(400).json({ status: "error", message: "case_number exceeds 20 chars" });
   if (!chapter)    return res.status(400).json({ status: "error", message: "chapter is required (or supply a parseable subject)" });
 
-  const caseTypeFull = `Bankruptcy - Ch. ${chapter}`;
+  // 2026-06 split: category in case_type, chapter label in case_subtype.
+  // case_chapter (set separately below) remains the machine field.
+  const caseType    = "Bankruptcy";
+  const caseSubtype = `Chapter ${chapter}`;
   const fileDateSql = fileDate ? "?" : "CONVERT_TZ(NOW(), 'UTC', 'America/New_York')";
   const fileDateParam = fileDate ? [fileDate] : [];
 
@@ -382,6 +389,10 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
     // ─────────────────────────────────────
     // STEP 3 — Find the waiting (pre-filing) case
     // ─────────────────────────────────────
+    // case_type match is plain equality. The former
+    // `OR c.case_type LIKE 'Bankruptcy - Ch%'` branch matched the legacy
+    // combined format, removed after the 2026-06 case_type/case_subtype split
+    // (backfill + normalize triggers guarantee the plain category).
     const [existing] = await req.db.query(
       `SELECT c.case_id, c.case_type
          FROM cases c
@@ -389,7 +400,7 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
         WHERE cr.case_relate_client_id = ?
           AND cr.case_relate_type = 'Primary'
           AND c.case_stage IN ('Open', 'Pending')
-          AND (c.case_type = 'Bankruptcy' OR c.case_type LIKE 'Bankruptcy - Ch%')
+          AND c.case_type = 'Bankruptcy'
         ORDER BY c.case_open_date DESC
         LIMIT 1`,
       [contactId]
@@ -406,12 +417,13 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
         `UPDATE cases
             SET case_number  = ?,
                 case_type    = ?,
+                case_subtype = ?,
                 case_chapter = ?,
                 case_stage   = 'Filed',
                 case_status  = 'Case Filed',
                 case_file_date = ${fileDateSql}
           WHERE case_id = ?`,
-        [caseNumber, caseTypeFull, chapter, ...fileDateParam, caseId]
+        [caseNumber, caseType, caseSubtype, chapter, ...fileDateParam, caseId]
       );
       // Primary link already exists (case was found via it); ensure for safety.
       await ensureRelate(req.db, caseId, contactId, "Primary");
@@ -425,10 +437,10 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
         try {
           await req.db.query(
             `INSERT INTO cases
-               (case_id, case_open_date, case_file_date, case_type, case_chapter, case_stage, case_status, case_number)
+               (case_id, case_open_date, case_file_date, case_type, case_subtype, case_chapter, case_stage, case_status, case_number)
              VALUES
-               (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ${fileDateSql}, ?, ?, 'Filed', 'Case Filed', ?)`,
-            [caseId, ...fileDateParam, caseTypeFull, chapter, caseNumber]
+               (?, CONVERT_TZ(NOW(), 'UTC', 'America/New_York'), ${fileDateSql}, ?, ?, ?, 'Filed', 'Case Filed', ?)`,
+            [caseId, ...fileDateParam, caseType, caseSubtype, chapter, caseNumber]
           );
           inserted = true;
         } catch (err) {
@@ -461,7 +473,8 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
         JSON.stringify({
           action: action === "stamped" ? "petition_stamped" : "petition_case_created",
           case_number: caseNumber,
-          case_type: caseTypeFull,
+          case_type: caseType,
+          case_subtype: caseSubtype,
           chapter,
           primary: { contact_id: contactId, status: primaryStatus },
           secondary: jointParsed
@@ -490,7 +503,8 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
       id: caseId,
       case_id: caseId,
       contact_id: contactId,
-      case_type: caseTypeFull,
+      case_type: caseType,
+      case_subtype: caseSubtype,
       chapter,
       primary: { contact_id: contactId, status: primaryStatus },
       secondary,

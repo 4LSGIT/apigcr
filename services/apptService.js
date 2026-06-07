@@ -696,7 +696,8 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
     `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_date,
             a.appt_type, a.appt_with, a.appt_status,
             c.contact_phone,
-            cs.case_type
+            cs.case_type,
+            cs.case_subtype
      FROM appts a
      LEFT JOIN contacts c ON c.contact_id = a.appt_client_id
      LEFT JOIN cases    cs ON cs.case_id  = a.appt_case_id
@@ -751,7 +752,8 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
             case_id:     appt.appt_case_id,
             appt_type:   appt.appt_type,
             appt_with:   appt.appt_with,
-            case_type:   appt.case_type,
+            case_type:    appt.case_type,
+            case_subtype: appt.case_subtype,
             enrolled_by: 'no_show_handler'
           });
           enrolled = true;

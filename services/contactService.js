@@ -1700,8 +1700,9 @@ async function listContacts(db, {
      JSON_ARRAYAGG(
        JSON_OBJECT(
          'case_number', COALESCE(ca.case_number_full, ca.case_number, ca.case_id),
-         'case_id',     ca.case_id,
-         'case_type',   ca.case_type
+         'case_id',      ca.case_id,
+         'case_type',    ca.case_type,
+         'case_subtype', ca.case_subtype
        )
      ) AS cases
    FROM contacts c
@@ -1758,7 +1759,7 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
     const [cases] = await db.query(
       `SELECT
        ca.case_id, ca.case_number, ca.case_number_full,
-       ca.case_type, ca.case_stage, ca.case_status,
+       ca.case_type, ca.case_subtype, ca.case_stage, ca.case_status,
        cr.case_relate_type AS relate_type,
        IFNULL(DATE_FORMAT(ca.case_open_date,  '%b. %e, %Y'), '') AS open,
        IFNULL(DATE_FORMAT(ca.case_file_date,  '%b. %e, %Y'), '') AS file,
