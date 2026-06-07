@@ -440,7 +440,7 @@
     </div>
     <div class="hdr-spacer"></div>
     <div class="hdr-right" id="hdrUserArea" style="display:none">
-      <span class="hdr-greeting" onclick="openMainTab('tabMyAccount')" title="My Account">Hi, <b id="myNameIs"></b>!</span>
+      <span class="hdr-greeting" onclick="openMainTab('tabSettings')" title="Settings">Hi, <b id="myNameIs"></b>!</span>
       <button class="hdr-btn" onclick="E('tabTasksTo').value=user.user;tabTasksGet(0);openMainTab('tabTasks')" title="My Tasks">
         <i class="fa-solid fa-list-check"></i><span>My Tasks</span>
       </button>
@@ -508,8 +508,8 @@
     </div>
 
     <div class="sb-section-label">Settings</div>
-    <div class="sb-item" data-tab="tabMyAccount" onclick="openMainTab('tabMyAccount')" title="My Account">
-      <i class="fa-solid fa-circle-user"></i><span>My Account</span>
+    <div class="sb-item" data-tab="tabSettings" onclick="openMainTab('tabSettings')" title="Settings">
+      <i class="fa-solid fa-gear"></i><span>Settings</span>
     </div>
     <div class="sb-item" id="sbAdmin" data-tab="tabAdmin" onclick="openMainTab('tabAdmin')" style="display:none" title="Admin">
       <i class="fa-solid fa-crown"></i><span>Admin</span>
@@ -568,10 +568,10 @@
       <i class="fa-solid fa-clock fa-2xl"></i><br /><br />Custom Tab
     </button>
     <button class="home-btn" onclick="openMainTab('tabMore')">
-      <i class="fa-solid fa-gear fa-2xl"></i><br /><br />More Features
+      <i class="fa-solid fa-grip fa-2xl"></i><br /><br />More Features
     </button>
-    <button class="home-btn" onclick="openMainTab('tabMyAccount')">
-      <i class="fa-solid fa-circle-user fa-2xl"></i><br /><br />My Account
+    <button class="home-btn" onclick="openMainTab('tabSettings')">
+      <i class="fa-solid fa-gear fa-2xl"></i><br /><br />Settings
     </button>
   </div>
 
@@ -1976,174 +1976,11 @@
     syncLogDirectionFilterVisibility();
   </script>
 
-  <div id="tabMyAccount" class="tab-main">
-    <h2>My Account:</h2>
-    <p>Hello <span id="myNameIs"></span>.</p>
-    <button class="big-button" onclick="updateUserInfo()">
-      Update Information
-    </button>
-    <button class="big-button" onclick="updateUserPass()">
-      Change Password
-    </button>
+  <div id="tabSettings" class="tab-main">
+    <iframe data-src="/settings.html"></iframe>
   </div>
 
   <script>
-    function updateUserInfo() {
-      Swal.fire({
-        title: "Update User Information",
-        html: `<label class="input-label-top">First Name:*</label><span class="spacer"></span><label class="input-label-top">Last Name:*</label><br>
-              <input id="userFirstName" value="${user.user_fname
-          }"><span class="spacer"></span><input id="userLastName" value="${user.user_lname
-          }"><br>
-              <label class="input-label-top">Username:*</label><span class="spacer"></span><label class="input-label-top">Email:*</label><br>
-              <input id="userUsername" value="${user.username
-          }"><span class="spacer"></span><input id="userEmail" value="${user.email
-          }"><br>
-              <label class="input-label-top">SMS reminders:</label><span class="spacer"></span><label class="input-label-top" id="userPhoneLabel">Phone Number:${user.allow_sms == "1" ? "*" : ""
-          }</label><br>
-              <span style="display:inline-block;width:200px;text-align:left">
-              <label><input style="width:auto;" type="radio" name="smsReminder" onchange="E('userPhoneLabel').innerHTML=this.checked?'Phone Number:*':'Phone Number:'" ${user.allow_sms == 1 ? "checked" : ""
-          } value="yes" id="userSMSyes"> Yes</label>
-              <label><input style="width:auto;" type="radio" name="smsReminder" onchange="E('userPhoneLabel').innerHTML=this.checked?'Phone Number:':'Phone Number:*'" ${user.allow_sms == 0 ? "checked" : ""
-          } value="no"> No</label>
-              </span>
-              <span class="spacer"></span><input id="userPhone" value="${user.phone || ""
-          }"><br>
-              <label class="input-label-top">Task Reminders:</label><span class="spacer"></span><label class="input-label-top"></label><br>
-              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Sunday" ${user.task_remind_freq?.includes("Sunday") ? "checked" : ""
-          }> Sunday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Monday" ${user.task_remind_freq?.includes("Monday") ? "checked" : ""
-          }> Monday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Tuesday" ${user.task_remind_freq?.includes("Tuesday") ? "checked" : ""
-          }> Tuesday</label></div>
-              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Wednesday" ${user.task_remind_freq?.includes("Wednesday") ? "checked" : ""
-          }> Wednesday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Thursday" ${user.task_remind_freq?.includes("Thursday") ? "checked" : ""
-          }> Thursday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Friday" ${user.task_remind_freq?.includes("Friday") ? "checked" : ""
-          }> Friday</label></div>
-              `,
-        showCancelButton: true,
-        confirmButtonText: "Update",
-        confirmButtonColor: "#07ADEF",
-        showLoaderOnConfirm: true,
-        preConfirm: async () => {
-          const userFirstName = E("userFirstName").value.trim();
-          const userLastName = E("userLastName").value.trim();
-          const userUsername = E("userUsername").value.trim();
-          const userEmail = E("userEmail").value.trim();
-          const userPhone = E("userPhone").value.replace(/\D/g, "");
-          const smsreminder = E("userSMSyes").checked ? 1 : 0;
-          const selectedDays = Array.from(
-            document.querySelectorAll('input[name="taskReminderFreq"]:checked')
-          ).map(d => d.value).join(",");
-
-          if (!userFirstName || !userLastName || !userUsername || !userEmail) {
-            Swal.showValidationMessage("Please enter all the mandatory fields");
-            return false;
-          }
-          if (smsreminder === 1 && !userPhone) {
-            Swal.showValidationMessage("Phone number is required when SMS reminders are enabled");
-            return false;
-          }
-          if (userPhone && userPhone.length !== 10) {
-            Swal.showValidationMessage("Please enter a valid 10-digit phone number");
-            return false;
-          }
-
-          try {
-            const data = await apiSend("/api/auth/update-profile", "POST", {
-              user_fname: userFirstName,
-              user_lname: userLastName,
-              username: userUsername,
-              email: userEmail,
-              phone: userPhone || null,
-              allow_sms: smsreminder,
-              task_remind_freq: selectedDays
-            });
-            return data;
-          } catch (err) {
-            Swal.showValidationMessage(err.message || "Failed to update profile");
-            return false;
-          }
-        },
-        allowOutsideClick: () => !Swal.isLoading()
-      }).then((result) => {
-        if (result.isConfirmed && result.value) {
-          const updated = result.value.user;
-
-          // Refresh in-memory user object
-          Object.assign(user, updated);
-
-          AUTH_STATE.username = updated.username;
-
-          E("myNameIs").innerHTML = updated.user_name;
-
-          Toast.fire({
-            icon: "success",
-            title: "Profile updated successfully",
-            timer: 2000
-          });
-        }
-      });
-    }
-
-    function updateUserPass() {
-      Swal.fire({
-        title: "Change Password",
-        html: `
-          <label class="input-label-top">Current Password:</label>
-          <input type="password" id="currentPass" class="swal2-input" placeholder="Current password">
-          <label class="input-label-top">New Password:</label>
-          <input type="password" id="newPass" class="swal2-input" placeholder="New password">
-          <label class="input-label-top">Confirm New Password:</label>
-          <input type="password" id="confirmPass" class="swal2-input" placeholder="Confirm new password">
-        `,
-        showCancelButton: true,
-        confirmButtonText: "Change Password",
-        confirmButtonColor: "#07ADEF",
-        showLoaderOnConfirm: true,
-        preConfirm: async () => {
-          const currentPass = E("currentPass").value;
-          const newPass = E("newPass").value;
-          const confirmPass = E("confirmPass").value;
-
-          if (!currentPass || !newPass || !confirmPass) {
-            Swal.showValidationMessage("Please fill in all fields");
-            return false;
-          }
-          if (newPass.length < 4) {
-            Swal.showValidationMessage("New password must be at least 4 characters");
-            return false;
-          }
-          if (newPass !== confirmPass) {
-            Swal.showValidationMessage("New passwords do not match");
-            return false;
-          }
-
-          try {
-            const data = await apiSend("/api/auth/change-password", "POST", {
-              current_password: currentPass,
-              new_password: newPass
-            });
-            return data;
-          } catch (err) {
-            Swal.showValidationMessage(err.message || "Failed to change password");
-            return false;
-          }
-        },
-        allowOutsideClick: () => !Swal.isLoading()
-      }).then((result) => {
-        if (result.isConfirmed) {
-          Toast.fire({
-            icon: "success",
-            title: "Password changed successfully",
-            timer: 2000
-          });
-        }
-      });
-    }
-
     function readonlyKeysSwal() {
       Swal.fire({
         title: `Readonly API Keys`,

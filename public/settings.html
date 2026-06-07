@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings</title>
+<style>
+  /* Palette matches redirects.html / connections.html / dbConsole.html */
+  :root {
+    --bg: #0f1117;
+    --panel: #161a22;
+    --panel-2: #1d2230;
+    --border: #2a3040;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+    --accent: #6ea8fe;
+    --accent-2: #82c0ff;
+    --danger: #ff6b6b;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  .page { max-width: 860px; margin: 0 auto; padding: 14px 16px 60px; }
+  h1 { font-size: 17px; font-weight: 600; margin: 4px 0 14px; }
+
+  .section {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; margin-bottom: 16px; overflow: hidden;
+  }
+  .section > .sec-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; background: var(--panel-2);
+    border-bottom: 1px solid var(--border);
+  }
+  .sec-head h2 { margin: 0; font-size: 13.5px; font-weight: 600; }
+  .sec-head .hint { color: var(--muted); font-size: 11.5px; }
+  .sec-body { padding: 14px; }
+
+  label.fld { display: block; color: var(--muted); font-size: 11px; margin: 8px 0 3px; text-transform: uppercase; letter-spacing: .05em; }
+  input[type=text], input[type=password], input[type=email] {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px;
+    padding: 7px 9px; font-size: 13px; outline: none;
+  }
+  input:focus { border-color: var(--accent); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+  @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .checks { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 4px; }
+  .checks label, .radios label {
+    color: var(--text); font-size: 12.5px; display: inline-flex;
+    align-items: center; gap: 5px; cursor: pointer;
+  }
+  .radios { display: flex; gap: 16px; margin-top: 4px; }
+
+  .btn {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+    transition: border-color .12s, background .12s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.primary:disabled { opacity: .45; cursor: default; filter: none; }
+  .btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .btn.tiny { padding: 2px 7px; font-size: 11px; }
+  .btn-row { margin-top: 12px; display: flex; align-items: center; gap: 10px; }
+
+  .status { font-size: 12px; min-height: 16px; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--danger); }
+
+  .note { color: var(--muted); font-size: 11.5px; margin: 0 0 10px; }
+  .note.warn { color: var(--warn); }
+
+  /* ── Type editor ── */
+  .type-card {
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); padding: 10px; margin-bottom: 8px;
+  }
+  .type-head { display: flex; align-items: center; gap: 6px; }
+  .type-head input { flex: 1; }
+  .sub-list { margin: 8px 0 0 18px; }
+  .sub-row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+  .sub-row input { flex: 1; }
+  .icon-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 4px; width: 24px; height: 24px; cursor: pointer;
+    font-size: 12px; line-height: 1; flex: none;
+  }
+  .icon-btn:hover { border-color: var(--accent); color: var(--text); }
+  .icon-btn.del:hover { border-color: var(--danger); color: var(--danger); }
+
+  /* ── Scalar settings rows ── */
+  .scalar-row {
+    display: grid; grid-template-columns: 190px 1fr auto; gap: 10px;
+    align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border);
+  }
+  .scalar-row:last-child { border-bottom: none; }
+  .scalar-row .lbl { font-size: 12.5px; }
+  .scalar-row .lbl .sub { display: block; color: var(--muted); font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+  .ws-badge {
+    display: none; color: var(--warn); font-size: 10.5px; margin-top: 2px;
+  }
+  .ws-badge.show { display: block; }
+  @media (max-width: 560px) { .scalar-row { grid-template-columns: 1fr; } }
+
+  .loading { color: var(--muted); padding: 30px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Settings</h1>
+  <div id="loading" class="loading">Loading…</div>
+  <div id="content" style="display:none">
+
+    <!-- ── My Account ─────────────────────────────────────────── -->
+    <div class="section">
+      <div class="sec-head"><h2>My Account</h2><span class="hint" id="acctHint"></span></div>
+      <div class="sec-body">
+        <div class="grid2">
+          <div><label class="fld">First Name *</label><input type="text" id="pFname"></div>
+          <div><label class="fld">Last Name *</label><input type="text" id="pLname"></div>
+          <div><label class="fld">Username *</label><input type="text" id="pUsername"></div>
+          <div><label class="fld">Email *</label><input type="email" id="pEmail"></div>
+          <div>
+            <label class="fld">SMS Reminders</label>
+            <div class="radios">
+              <label><input type="radio" name="pSms" value="1"> Yes</label>
+              <label><input type="radio" name="pSms" value="0"> No</label>
+            </div>
+          </div>
+          <div><label class="fld" id="pPhoneLabel">Phone Number</label><input type="text" id="pPhone"></div>
+        </div>
+        <label class="fld">Task Reminder Days</label>
+        <div class="checks" id="pDays"></div>
+        <div class="btn-row">
+          <button class="btn primary" id="profileSave">Save Profile</button>
+          <span class="status" id="profileStatus"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Change Password ────────────────────────────────────── -->
+    <div class="section">
+      <div class="sec-head"><h2>Change Password</h2></div>
+      <div class="sec-body">
+        <div class="grid2">
+          <div><label class="fld">Current Password</label><input type="password" id="pwCurrent" autocomplete="current-password"></div>
+          <div></div>
+          <div><label class="fld">New Password</label><input type="password" id="pwNew" autocomplete="new-password"></div>
+          <div><label class="fld">Confirm New Password</label><input type="password" id="pwConfirm" autocomplete="new-password"></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" id="pwSave">Change Password</button>
+          <span class="status" id="pwStatus"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Case Types ─────────────────────────────────────────── -->
+    <div class="section" id="caseTypesSection" style="display:none">
+      <div class="sec-head"><h2>Case Types</h2><span class="hint" id="ctUpdated"></span></div>
+      <div class="sec-body">
+        <p class="note warn">Renaming or removing a type/subtype does <b>not</b> update existing cases — they keep their old value.</p>
+        <div id="ctList"></div>
+        <button class="btn" id="ctAddType">+ Add Type</button>
+        <div class="btn-row">
+          <button class="btn primary" id="ctSave" disabled>Save Case Types</button>
+          <span class="status" id="ctStatus"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Event Types ────────────────────────────────────────── -->
+    <div class="section" id="eventTypesSection" style="display:none">
+      <div class="sec-head"><h2>Event Types</h2><span class="hint" id="etUpdated"></span></div>
+      <div class="sec-body">
+        <p class="note warn">Renaming or removing an event type does <b>not</b> update existing events — they keep their old value.</p>
+        <div id="etList"></div>
+        <button class="btn" id="etAdd">+ Add Event Type</button>
+        <div class="btn-row">
+          <button class="btn primary" id="etSave" disabled>Save Event Types</button>
+          <span class="status" id="etStatus"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Other Settings ─────────────────────────────────────── -->
+    <div class="section" id="scalarSection" style="display:none">
+      <div class="sec-head"><h2>Other Settings</h2></div>
+      <div class="sec-body">
+        <p class="note">Values are saved exactly as typed — leading/trailing spaces are preserved on purpose.</p>
+        <div id="scalarList"></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+const E = id => document.getElementById(id);
+// All shell pages expose window.top.apiSend(path, method, data?).
+const api = (path, method = 'GET', data) => window.top.apiSend(path, method, data);
+
+/* ── Registry: key → label / dedicated editor ───────────────────
+   Keys with a `custom` editor render in their own section; everything
+   else editable falls through to a plain text row in Other Settings. */
+const REGISTRY = {
+  'fe-case_types':      { label: 'Case Types',          custom: 'caseTypes' },
+  'fe-event_types':     { label: 'Event Types',         custom: 'eventTypes' },
+  'email_default_from': { label: 'Default Email From' },
+  'email_default_to':   { label: 'Default Email To' },
+  'gcal_calendar_id':   { label: 'Google Calendar ID' },
+  'sms_default_from':   { label: 'Default SMS From' },
+  'sms_staff_from':     { label: 'Staff SMS From' }
+};
+
+function prettify(key) {
+  return key.replace(/^fe-/, '').replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+function fmtDate(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  return isNaN(d) ? '' : 'updated ' + d.toLocaleString('en-US', {
+    month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  });
+}
+function setStatus(id, msg, ok) {
+  const el = E(id);
+  el.textContent = msg;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+  if (ok) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 3000);
+}
+// HTML-escape for attribute/text injection of user data
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* ════════════════ MY ACCOUNT ════════════════ */
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+
+function renderProfile() {
+  const u = window.top.firmData?.currentUser || window.top.user || {};
+  E('acctHint').textContent = u.user_name ? 'Hello, ' + u.user_name : '';
+  E('pFname').value    = u.user_fname || '';
+  E('pLname').value    = u.user_lname || '';
+  E('pUsername').value = u.username   || '';
+  E('pEmail').value    = u.email      || '';
+  E('pPhone').value    = u.phone      || '';
+  const sms = String(u.allow_sms) === '1' ? '1' : '0';
+  document.querySelectorAll('input[name=pSms]').forEach(r => r.checked = r.value === sms);
+  E('pPhoneLabel').textContent = 'Phone Number' + (sms === '1' ? ' *' : '');
+  E('pDays').innerHTML = DAYS.map(d =>
+    `<label><input type="checkbox" value="${d}" ${u.task_remind_freq?.includes(d) ? 'checked' : ''}> ${d}</label>`
+  ).join('');
+}
+
+document.addEventListener('change', e => {
+  if (e.target.name === 'pSms') {
+    E('pPhoneLabel').textContent = 'Phone Number' + (e.target.value === '1' && e.target.checked ? ' *' : '');
+  }
+});
+
+async function saveProfile() {
+  const fname = E('pFname').value.trim();
+  const lname = E('pLname').value.trim();
+  const username = E('pUsername').value.trim();
+  const email = E('pEmail').value.trim();
+  const phone = E('pPhone').value.replace(/\D/g, '');
+  const sms = document.querySelector('input[name=pSms]:checked')?.value === '1' ? 1 : 0;
+  const days = [...document.querySelectorAll('#pDays input:checked')].map(c => c.value).join(',');
+
+  if (!fname || !lname || !username || !email) return setStatus('profileStatus', 'Please fill all required fields', false);
+  if (sms === 1 && !phone) return setStatus('profileStatus', 'Phone required when SMS reminders are on', false);
+  if (phone && phone.length !== 10) return setStatus('profileStatus', 'Phone must be 10 digits', false);
+
+  E('profileSave').disabled = true;
+  try {
+    const data = await api('/api/auth/update-profile', 'POST', {
+      user_fname: fname, user_lname: lname, username, email,
+      phone: phone || null, allow_sms: sms, task_remind_freq: days
+    });
+    syncParentUser(data.user);
+    renderProfile();
+    setStatus('profileStatus', 'Profile updated', true);
+  } catch (err) {
+    setStatus('profileStatus', err.message || 'Failed to update profile', false);
+  } finally {
+    E('profileSave').disabled = false;
+  }
+}
+
+// Push the updated row into the parent shell so the header greeting,
+// in-memory user object, and firmData stay current without a reload.
+function syncParentUser(u) {
+  if (!u) return;
+  try {
+    const T = window.top;
+    if (T.user) Object.assign(T.user, u);
+    if (T.firmData) T.firmData.currentUser = Object.assign(T.firmData.currentUser || {}, u);
+    if (T.AUTH_STATE) T.AUTH_STATE.username = u.username;
+    const mn = T.document.getElementById('myNameIs');
+    if (mn) mn.innerHTML = u.user_name || '';
+  } catch (e) { /* cross-frame issues — non-fatal */ }
+}
+
+async function savePassword() {
+  const cur = E('pwCurrent').value, nw = E('pwNew').value, cf = E('pwConfirm').value;
+  if (!cur || !nw || !cf) return setStatus('pwStatus', 'Please fill in all fields', false);
+  if (nw.length < 4) return setStatus('pwStatus', 'New password must be at least 4 characters', false);
+  if (nw !== cf) return setStatus('pwStatus', 'New passwords do not match', false);
+
+  E('pwSave').disabled = true;
+  try {
+    await api('/api/auth/change-password', 'POST', { current_password: cur, new_password: nw });
+    E('pwCurrent').value = E('pwNew').value = E('pwConfirm').value = '';
+    setStatus('pwStatus', 'Password changed', true);
+  } catch (err) {
+    setStatus('pwStatus', err.message || 'Failed to change password', false);
+  } finally {
+    E('pwSave').disabled = false;
+  }
+}
+
+/* ════════════════ CASE TYPES EDITOR ════════════════
+   fe-case_types: { "Type": ["Subtype", ...], ... }
+   State: ordered array [{ name, subs: [...] }] — object key insertion
+   order is preserved on serialize. Values are kept VERBATIM (no trim);
+   whitespace-only names are treated as empty for validation. */
+let ctState = null;        // working copy
+let ctOriginalNames = [];  // for removed/renamed warning on save
+
+function ctMarkDirty() { E('ctSave').disabled = false; }
+
+function ctRender() {
+  const host = E('ctList');
+  host.innerHTML = '';
+  ctState.forEach((t, ti) => {
+    const card = document.createElement('div');
+    card.className = 'type-card';
+    card.innerHTML = `
+      <div class="type-head">
+        <input type="text" data-ct-type="${ti}" value="${esc(t.name)}" placeholder="Type name">
+        <button class="icon-btn" data-ct-up="${ti}" title="Move up">↑</button>
+        <button class="icon-btn" data-ct-down="${ti}" title="Move down">↓</button>
+        <button class="icon-btn del" data-ct-del="${ti}" title="Delete type">✕</button>
+      </div>
+      <div class="sub-list">
+        ${t.subs.map((s, si) => `
+          <div class="sub-row">
+            <input type="text" data-ct-sub="${ti}:${si}" value="${esc(s)}" placeholder="Subtype name">
+            <button class="icon-btn" data-ct-subup="${ti}:${si}" title="Move up">↑</button>
+            <button class="icon-btn" data-ct-subdown="${ti}:${si}" title="Move down">↓</button>
+            <button class="icon-btn del" data-ct-subdel="${ti}:${si}" title="Delete subtype">✕</button>
+          </div>`).join('')}
+        <button class="btn tiny" data-ct-addsub="${ti}">+ Subtype</button>
+      </div>`;
+    host.appendChild(card);
+  });
+}
+
+function ctBind() {
+  E('ctList').addEventListener('input', e => {
+    const inp = e.target;
+    if (inp.dataset.ctType !== undefined) {
+      ctState[+inp.dataset.ctType].name = inp.value; // verbatim — no trim
+      ctMarkDirty();
+    } else if (inp.dataset.ctSub !== undefined) {
+      const [ti, si] = inp.dataset.ctSub.split(':').map(Number);
+      ctState[ti].subs[si] = inp.value; // verbatim — no trim
+      ctMarkDirty();
+    }
+  });
+  E('ctList').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const d = b.dataset;
+    const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
+    let changed = false;
+    if (d.ctUp !== undefined)        changed = swap(ctState, +d.ctUp, +d.ctUp - 1);
+    else if (d.ctDown !== undefined) changed = swap(ctState, +d.ctDown, +d.ctDown + 1);
+    else if (d.ctDel !== undefined)  { ctState.splice(+d.ctDel, 1); changed = true; }
+    else if (d.ctAddsub !== undefined) { ctState[+d.ctAddsub].subs.push(''); changed = true; }
+    else if (d.ctSubup !== undefined)   { const [ti, si] = d.ctSubup.split(':').map(Number);   changed = swap(ctState[ti].subs, si, si - 1); }
+    else if (d.ctSubdown !== undefined) { const [ti, si] = d.ctSubdown.split(':').map(Number); changed = swap(ctState[ti].subs, si, si + 1); }
+    else if (d.ctSubdel !== undefined)  { const [ti, si] = d.ctSubdel.split(':').map(Number);  ctState[ti].subs.splice(si, 1); changed = true; }
+    if (changed) { ctMarkDirty(); ctRender(); }
+  });
+  E('ctAddType').addEventListener('click', () => { ctState.push({ name: '', subs: [] }); ctMarkDirty(); ctRender(); });
+}
+
+function ctValidate() {
+  const names = ctState.map(t => t.name);
+  if (names.some(n => !n.trim())) return 'Type names cannot be empty';
+  if (new Set(names).size !== names.length) return 'Duplicate type names are not allowed';
+  for (const t of ctState) {
+    if (t.subs.some(s => !s.trim())) return `Subtype names cannot be empty (under "${t.name}")`;
+    if (new Set(t.subs).size !== t.subs.length) return `Duplicate subtypes under "${t.name}"`;
+  }
+  return null;
+}
+
+async function ctSave() {
+  const err = ctValidate();
+  if (err) return setStatus('ctStatus', err, false);
+
+  // Warn about names that existed before and are now gone (removed or renamed)
+  const nowNames = new Set();
+  ctState.forEach(t => { nowNames.add('T:' + t.name); t.subs.forEach(s => nowNames.add('S:' + t.name + '|' + s)); });
+  const gone = ctOriginalNames.filter(n => !nowNames.has(n)).map(n => n.replace(/^T:/, '').replace(/^S:[^|]*\|/, ''));
+  if (gone.length && !confirm(
+    `These types/subtypes were removed or renamed:\n  ${[...new Set(gone)].join(', ')}\n\nExisting cases keep their old value. Save anyway?`
+  )) return;
+
+  const obj = {};
+  ctState.forEach(t => { obj[t.name] = t.subs.slice(); });
+
+  E('ctSave').disabled = true;
+  try {
+    const data = await api('/api/app-settings/fe-case_types', 'PUT', { value: JSON.stringify(obj) });
+    ctOriginalNames = [...nowNames];
+    E('ctUpdated').textContent = fmtDate(data.setting?.updated_at);
+    setStatus('ctStatus', 'Case types saved', true);
+    window.top.loadFirmData?.(); // refresh dropdown sources shell-wide
+  } catch (e2) {
+    E('ctSave').disabled = false;
+    setStatus('ctStatus', e2.message || 'Failed to save', false);
+  }
+}
+
+function ctInit(rawValue, updatedAt) {
+  let map;
+  try { map = JSON.parse(rawValue); } catch { map = null; }
+  if (!map || Array.isArray(map) || typeof map !== 'object') {
+    // Unexpected shape — fall back to a raw scalar row so it's still fixable
+    scalarAddRow('fe-case_types', rawValue, updatedAt, 'Case Types (raw — unexpected format)');
+    return;
+  }
+  ctState = Object.entries(map).map(([name, subs]) => ({
+    name, subs: Array.isArray(subs) ? subs.map(String) : []
+  }));
+  ctOriginalNames = [];
+  ctState.forEach(t => { ctOriginalNames.push('T:' + t.name); t.subs.forEach(s => ctOriginalNames.push('S:' + t.name + '|' + s)); });
+  E('ctUpdated').textContent = fmtDate(updatedAt);
+  E('caseTypesSection').style.display = '';
+  ctRender();
+  ctBind();
+}
+
+/* ════════════════ EVENT TYPES EDITOR ════════════════
+   fe-event_types: ["Name", ...] */
+let etState = null;
+let etOriginal = [];
+
+function etMarkDirty() { E('etSave').disabled = false; }
+
+function etRender() {
+  E('etList').innerHTML = etState.map((s, i) => `
+    <div class="sub-row">
+      <input type="text" data-et="${i}" value="${esc(s)}" placeholder="Event type name">
+      <button class="icon-btn" data-et-up="${i}" title="Move up">↑</button>
+      <button class="icon-btn" data-et-down="${i}" title="Move down">↓</button>
+      <button class="icon-btn del" data-et-del="${i}" title="Delete">✕</button>
+    </div>`).join('');
+}
+
+function etBind() {
+  E('etList').addEventListener('input', e => {
+    if (e.target.dataset.et !== undefined) {
+      etState[+e.target.dataset.et] = e.target.value; // verbatim — no trim
+      etMarkDirty();
+    }
+  });
+  E('etList').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const d = b.dataset;
+    const swap = (i, j) => { if (j < 0 || j >= etState.length) return false; [etState[i], etState[j]] = [etState[j], etState[i]]; return true; };
+    let changed = false;
+    if (d.etUp !== undefined)        changed = swap(+d.etUp, +d.etUp - 1);
+    else if (d.etDown !== undefined) changed = swap(+d.etDown, +d.etDown + 1);
+    else if (d.etDel !== undefined)  { etState.splice(+d.etDel, 1); changed = true; }
+    if (changed) { etMarkDirty(); etRender(); }
+  });
+  E('etAdd').addEventListener('click', () => { etState.push(''); etMarkDirty(); etRender(); });
+}
+
+async function etSave() {
+  if (etState.some(s => !s.trim())) return setStatus('etStatus', 'Event type names cannot be empty', false);
+  if (new Set(etState).size !== etState.length) return setStatus('etStatus', 'Duplicate event types are not allowed', false);
+
+  const gone = etOriginal.filter(n => !etState.includes(n));
+  if (gone.length && !confirm(
+    `These event types were removed or renamed:\n  ${gone.join(', ')}\n\nExisting events keep their old value. Save anyway?`
+  )) return;
+
+  E('etSave').disabled = true;
+  try {
+    const data = await api('/api/app-settings/fe-event_types', 'PUT', { value: JSON.stringify(etState) });
+    etOriginal = etState.slice();
+    E('etUpdated').textContent = fmtDate(data.setting?.updated_at);
+    setStatus('etStatus', 'Event types saved', true);
+    window.top.loadFirmData?.();
+  } catch (e2) {
+    E('etSave').disabled = false;
+    setStatus('etStatus', e2.message || 'Failed to save', false);
+  }
+}
+
+function etInit(rawValue, updatedAt) {
+  let arr;
+  try { arr = JSON.parse(rawValue); } catch { arr = null; }
+  if (!Array.isArray(arr)) {
+    scalarAddRow('fe-event_types', rawValue, updatedAt, 'Event Types (raw — unexpected format)');
+    return;
+  }
+  etState = arr.map(String);
+  etOriginal = etState.slice();
+  E('etUpdated').textContent = fmtDate(updatedAt);
+  E('eventTypesSection').style.display = '';
+  etRender();
+  etBind();
+}
+
+/* ════════════════ SCALAR SETTINGS ════════════════
+   Any editable key without a dedicated editor. Saved VERBATIM —
+   leading/trailing whitespace is load-bearing for some values. */
+let scalarSeq = 0;
+
+function wsHint(v) {
+  const lead = (v.match(/^\s*/) || [''])[0].length;
+  const trail = (v.match(/\s*$/) || [''])[0].length;
+  if (!lead && !trail) return '';
+  const parts = [];
+  if (lead) parts.push(`${lead} leading space${lead > 1 ? 's' : ''}`);
+  if (trail) parts.push(`${trail} trailing space${trail > 1 ? 's' : ''}`);
+  return '⚠ ' + parts.join(', ') + ' — preserved on save';
+}
+
+function scalarAddRow(key, value, updatedAt, labelOverride) {
+  const id = 'sc' + (scalarSeq++);
+  const label = labelOverride || REGISTRY[key]?.label || prettify(key);
+  const row = document.createElement('div');
+  row.className = 'scalar-row';
+  row.innerHTML = `
+    <div class="lbl">${esc(label)}<span class="sub">${esc(key)}</span></div>
+    <div>
+      <input type="text" class="mono" id="${id}">
+      <div class="ws-badge" id="${id}ws"></div>
+    </div>
+    <div style="text-align:right">
+      <button class="btn" id="${id}btn">Save</button>
+      <div class="status" id="${id}st" style="margin-top:3px"></div>
+      <div class="note" style="margin:2px 0 0">${fmtDate(updatedAt)}</div>
+    </div>`;
+  E('scalarList').appendChild(row);
+  E('scalarSection').style.display = '';
+
+  const inp = E(id);
+  inp.value = value ?? ''; // set via .value, never innerHTML — preserves everything
+  const updateWs = () => {
+    const h = wsHint(inp.value);
+    const b = E(id + 'ws');
+    b.textContent = h;
+    b.className = 'ws-badge' + (h ? ' show' : '');
+  };
+  updateWs();
+  inp.addEventListener('input', updateWs);
+  E(id + 'btn').addEventListener('click', async () => {
+    E(id + 'btn').disabled = true;
+    try {
+      await api('/api/app-settings/' + encodeURIComponent(key), 'PUT', { value: inp.value });
+      setStatus(id + 'st', 'Saved', true);
+      if (key.startsWith('fe-')) window.top.loadFirmData?.();
+    } catch (err) {
+      setStatus(id + 'st', err.message || 'Failed', false);
+    } finally {
+      E(id + 'btn').disabled = false;
+    }
+  });
+}
+
+/* ════════════════ BOOT ════════════════ */
+async function init() {
+  renderProfile();
+  E('profileSave').addEventListener('click', saveProfile);
+  E('pwSave').addEventListener('click', savePassword);
+  E('ctSave').addEventListener('click', ctSave);
+  E('etSave').addEventListener('click', etSave);
+
+  try {
+    const data = await api('/api/app-settings');
+    for (const row of (data.settings || [])) {
+      const reg = REGISTRY[row.key];
+      if (reg?.custom === 'caseTypes')       ctInit(row.value, row.updated_at);
+      else if (reg?.custom === 'eventTypes') etInit(row.value, row.updated_at);
+      else                                   scalarAddRow(row.key, row.value, row.updated_at);
+    }
+  } catch (err) {
+    E('scalarSection').style.display = '';
+    E('scalarList').innerHTML = `<p class="note" style="color:var(--danger)">Failed to load settings: ${esc(err.message || err)}</p>`;
+  }
+
+  E('loading').style.display = 'none';
+  E('content').style.display = '';
+}
+
+(function waitForParent() {
+  if (window.top && window.top.apiSend && window.top.firmData) return init();
+  setTimeout(waitForParent, 100);
+})();
+</script>
+</body>
+</html>

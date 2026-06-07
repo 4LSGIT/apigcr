@@ -16,11 +16,25 @@
  *   phone               string   optional (10-digit, or empty)
  *   allow_sms           0 | 1
  *   task_remind_freq    string   comma-separated days, or empty
+ *
+ * TODO: audit-log profile changes (changed fields, acting user) via the
+ *       upcoming jwtOrApiKey middleware logging once it lands.
  */
 
 const express = require("express");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
+
+// Fields that must never leave the server in a user-row response.
+// Mirrors USER_STRIP in routes/api.firmData.js.
+const USER_STRIP = ["password", "password_hash", "reset_token", "reset_expires"];
+
+function stripUser(row) {
+  if (!row) return row;
+  const clean = { ...row };
+  for (const f of USER_STRIP) delete clean[f];
+  return clean;
+}
 
 // ─────────────────────────────────────────
 // HELPERS
@@ -121,6 +135,8 @@ router.post("/api/auth/update-profile", jwtOrApiKey, async (req, res) => {
     // Column is SET type, so MySQL expects comma-separated or empty
     const freq = task_remind_freq || "";
 
+    // TODO: audit-log this change via the upcoming jwtOrApiKey middleware logging.
+
     // ── Update ──
     await req.db.query(
       `UPDATE users
@@ -137,7 +153,9 @@ router.post("/api/auth/update-profile", jwtOrApiKey, async (req, res) => {
       [user_fname, user_lname, user_name, user_initials, username, email, normalizedPhone, sms, freq, userId]
     );
 
-    // ── Return updated user row (mirrors what Pabbly used to return) ──
+    // ── Return updated user row, stripped of credential fields ──
+    // (Previously returned SELECT * raw, which leaked password, password_hash,
+    //  and reset_token to the client. Stripped to match api.firmData.js.)
     const [[updated]] = await req.db.query(
       "SELECT * FROM users WHERE user = ?",
       [userId]
@@ -146,7 +164,7 @@ router.post("/api/auth/update-profile", jwtOrApiKey, async (req, res) => {
     res.json({
       status: "success",
       message: "Profile updated successfully",
-      user: updated
+      user: stripUser(updated)
     });
 
   } catch (err) {

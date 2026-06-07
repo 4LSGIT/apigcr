@@ -187,7 +187,6 @@ router.post("/api/auth/change-password", jwtOrApiKey, async (req, res) => {
 
   // req.auth.sub is the user PK from the JWT
   const userId = req.auth.userId;
-console.log(req.auth.userId);
   try {
     const [rows] = await req.db.query(
       "SELECT password_hash FROM users WHERE user = ?",
@@ -204,6 +203,7 @@ console.log(req.auth.userId);
     }
 
     const hash = await bcrypt.hash(new_password, BCRYPT_ROUNDS);
+    // TODO: audit-log password changes via the upcoming jwtOrApiKey middleware logging.
 
     await req.db.query(
       `UPDATE users
