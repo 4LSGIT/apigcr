@@ -1,4 +1,4 @@
-# 16 — RC Subscription Bootstrap
+# 3 — RC Subscription Bootstrap
 
 ## For operators
 

@@ -1,4 +1,4 @@
-# Connections — Credential Management
+# 1 — Connections: Credential Management
 
 YisraCase's "Connections" system manages firm-wide credentials used by outbound HTTP requests in YisraFlow (hooks, workflows, sequences, scheduled jobs) and by the admin API Tester.
 
@@ -209,7 +209,7 @@ The daily refresh isn't auto-seeded on startup (no seeder pattern exists in this
 
 # Connections — Usage Recipes
 
-Append to or alongside `manual/03-YisraFlow/15-connections.md`. Concrete patterns
+Append to or alongside `manual/04-Integrations/01-connections.md`. Concrete patterns
 for using a Connection-stored credential in YisraCase code.
 
 ## Recipe 0 — When to use Connections at all
