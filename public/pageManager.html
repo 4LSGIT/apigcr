@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Landing Pages</title>
+<style>
+  /* Palette matches redirects.html / connections.html — admin tools share this. */
+  :root {
+    --bg: #0f1117;
+    --panel: #161a22;
+    --panel-2: #1d2230;
+    --border: #2a3040;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+    --accent: #6ea8fe;
+    --accent-2: #82c0ff;
+    --danger: #ff6b6b;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+  .panel-host { flex: 1; overflow: auto; min-height: 0; }
+  .panel { padding: 14px 16px; }
+
+  /* ── List ──────────────────────────────────────────────────── */
+  .list-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .list-header h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .list-header .right { display: flex; gap: 6px; align-items: center; }
+
+  table.list {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    border: 1px solid var(--border); background: var(--panel);
+  }
+  table.list th, table.list td {
+    border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left;
+    vertical-align: middle;
+  }
+  table.list th {
+    background: var(--panel-2); color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; font-weight: 600;
+  }
+  table.list tbody tr { cursor: pointer; }
+  table.list tbody tr:hover { background: var(--panel-2); }
+  table.list .actions-cell { white-space: nowrap; }
+  table.list .actions-cell button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; margin-right: 4px;
+  }
+  table.list .actions-cell button:hover { border-color: var(--accent); }
+  table.list .actions-cell button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .empty-row td { color: var(--muted); padding: 16px; text-align: center; font-style: italic; }
+  .slug-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent-2); }
+  .host-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+    max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .muted { color: var(--muted); }
+
+  /* ── Buttons ───────────────────────────────────────────────── */
+  .btn {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn.danger:hover { background: var(--danger); color: #fff; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.small { padding: 3px 8px; font-size: 11px; }
+
+  /* ── Badges ────────────────────────────────────────────────── */
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    padding: 2px 7px; border-radius: 10px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    border: 1px solid var(--border);
+  }
+  .badge.on   { background: rgba(74, 222, 128, 0.15); color: var(--ok);    border-color: rgba(74,222,128,0.4); }
+  .badge.off  { background: rgba(138, 147, 166, 0.15); color: var(--muted); border-color: var(--border); }
+  .badge.hook { background: rgba(110, 168, 254, 0.15); color: var(--accent-2); border-color: rgba(110,168,254,0.4);
+    text-transform: none; font-family: ui-monospace, Menlo, monospace; }
+  .badge.nohook { background: rgba(251, 191, 36, 0.12); color: var(--warn); border-color: rgba(251,191,36,0.4); }
+
+  /* ── Instructions panel ────────────────────────────────────── */
+  details.instructions {
+    border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
+    margin-bottom: 12px;
+  }
+  details.instructions summary {
+    cursor: pointer; padding: 9px 12px; font-weight: 600; color: var(--accent-2);
+    user-select: none;
+  }
+  details.instructions .body { padding: 0 14px 14px; color: var(--muted); line-height: 1.55; }
+  details.instructions pre {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 10px 12px; font-size: 11.5px; white-space: pre-wrap; color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 280px; overflow: auto;
+  }
+
+  /* ── Modals (editor + preview) ─────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: none; align-items: flex-start; justify-content: center;
+    z-index: 100; padding: 24px 16px; overflow: auto;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    width: 100%; max-width: 880px; padding: 20px;
+  }
+  .modal.preview-modal { max-width: 1100px; }
+  .modal h3 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; }
+  .field input[type="text"], .field select, .field textarea {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; font-size: 13px;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .field textarea.html-box {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px; min-height: 280px; resize: vertical; white-space: pre;
+  }
+  .field .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .modal-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 14px; }
+  .modal-actions .right { display: flex; gap: 8px; margin-left: auto; }
+  .modal-err {
+    display: none; background: rgba(255,107,107,0.12); border: 1px solid rgba(255,107,107,0.4);
+    color: var(--danger); border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 12px;
+  }
+  .modal-err.show { display: block; }
+  .hook-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  .preview-frame {
+    width: 100%; height: 70vh; border: 1px solid var(--border); border-radius: 4px;
+    background: #fff;
+  }
+  .preview-note { font-size: 11px; color: var(--warn); margin: 6px 0 0; }
+
+  .inline-error {
+    background: rgba(255,107,107,0.12); border: 1px solid rgba(255,107,107,0.4);
+    color: var(--danger); border-radius: 4px; padding: 10px 12px; font-size: 12px;
+  }
+
+  /* ── Toast ─────────────────────────────────────────────────── */
+  .toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--panel-2); border: 1px solid var(--accent); color: var(--text);
+    padding: 8px 16px; border-radius: 6px; font-size: 12px;
+    opacity: 0; pointer-events: none; transition: opacity 0.15s, transform 0.15s; z-index: 200;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="panel-host">
+  <div class="panel">
+
+    <details class="instructions" id="instructions">
+      <summary>How landing pages work / AI page prompt</summary>
+      <div class="body">
+        <p>
+          Paste a complete, self-contained HTML file into a page record. A <b>live</b> page is served
+          publicly at <code>/p/&lt;slug&gt;</code>, and — if a host (and optional path) is mapped — at that
+          vanity domain. Form POSTs to the same URL are forwarded to the page's YisraHook and the visitor
+          is redirected to the thank-you target. Use <b>Create hook</b> on a page to bootstrap a hook
+          (spam-filtered, lead fields mapped), then wire its targets in Automation &rarr; Hooks.
+        </p>
+        <p style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <b style="color:var(--text)">AI prompt template</b>
+          <button class="btn small" id="copy-prompt-btn" type="button">Copy to clipboard</button>
+        </p>
+        <pre id="ai-prompt-template">Create a single, self-contained HTML5 landing page file. Requirements:
+- One complete HTML document. All CSS and JavaScript inline. No external
+  resources (no CDN scripts, no web fonts — use a system font stack).
+  Images only by absolute URL if provided.
+- Mobile responsive.
+- Lead capture form: &lt;form method="post"&gt; with NO action attribute.
+  The server handles submission and redirects — do not add any JavaScript
+  form handling, fetch, or onsubmit logic.
+- Use these exact input names for fields you include: `name`, `email`, `phone`.
+- Include this honeypot exactly, inside the form:
+  &lt;div style="position:absolute;left:-9999px" aria-hidden="true"&gt;&lt;label&gt;Website&lt;input type="text" name="website" autocomplete="off" tabindex="-1"&gt;&lt;/label&gt;&lt;/div&gt;
+- If the page URL contains `?submitted=1`, show a thank-you message instead of
+  (or above) the form. A few lines of inline JS reading location.search is fine
+  for this one purpose.
+- Page purpose / copy / branding: [DESCRIBE YOUR OFFER, AUDIENCE, AND CTA HERE]</pre>
+      </div>
+    </details>
+
+    <div id="list-region"><div class="muted" style="padding:16px;">Loading…</div></div>
+  </div>
+</div>
+
+<!-- Editor modal -->
+<div class="modal-backdrop" id="edit-backdrop">
+  <div class="modal">
+    <h3 id="modal-title">New Page</h3>
+    <div class="modal-err" id="modal-err"></div>
+
+    <div class="grid-3">
+      <div class="field">
+        <label for="f-slug">Slug</label>
+        <input type="text" id="f-slug" placeholder="ch7-offer" autocomplete="off" spellcheck="false">
+        <div class="hint">Lowercase letters, numbers, hyphens. Public URL: <code>/p/&lt;slug&gt;</code></div>
+      </div>
+      <div class="field">
+        <label for="f-status">Status</label>
+        <select id="f-status">
+          <option value="draft">Draft</option>
+          <option value="live">Live</option>
+        </select>
+        <div class="hint">Drafts 404 publicly.</div>
+      </div>
+      <div class="field">
+        <label for="f-meta-title">Meta title <span style="text-transform:none">(optional)</span></label>
+        <input type="text" id="f-meta-title" autocomplete="off">
+        <div class="hint">Reference only in this slice.</div>
+      </div>
+    </div>
+
+    <div class="grid-3">
+      <div class="field">
+        <label for="f-host">Vanity host <span style="text-transform:none">(optional)</span></label>
+        <input type="text" id="f-host" placeholder="offers.720debtfree.com" autocomplete="off" spellcheck="false">
+        <div class="hint">Bare hostname, no scheme/port. DNS + proxy mapping set up separately.</div>
+      </div>
+      <div class="field">
+        <label for="f-path">Path on host <span style="text-transform:none">(optional)</span></label>
+        <input type="text" id="f-path" placeholder="/ch7 (blank = root)" autocomplete="off" spellcheck="false">
+        <div class="hint">Requires a host. Blank serves the domain root.</div>
+      </div>
+      <div class="field">
+        <label for="f-thankyou">Thank-you target <span style="text-transform:none">(optional)</span></label>
+        <input type="text" id="f-thankyou" placeholder="https://… or a page slug" autocomplete="off" spellcheck="false">
+        <div class="hint">Absolute URL, a page slug, or blank (= back to page with <code>?submitted=1</code>).</div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Hook</label>
+      <div class="hook-row" id="hook-row">
+        <span class="muted">Save the page first, then create or attach a hook.</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="f-html">Page HTML</label>
+      <textarea id="f-html" class="html-box" placeholder="<!DOCTYPE html> …" spellcheck="false"></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn" id="f-preview-unsaved" type="button" title="Preview the HTML currently in the editor">Preview</button>
+      <div class="right">
+        <button class="btn" id="f-cancel" type="button">Cancel</button>
+        <button class="btn primary" id="f-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Preview modal -->
+<div class="modal-backdrop" id="preview-backdrop">
+  <div class="modal preview-modal">
+    <h3 id="preview-title">Preview</h3>
+    <iframe id="preview-frame" class="preview-frame" sandbox="allow-scripts"></iframe>
+    <p class="preview-note">Preview is sandboxed — form submission is disabled here. Use the live URL to test submits.</p>
+    <div class="modal-actions">
+      <div class="right">
+        <button class="btn" id="preview-close" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Parent bridge ───────────────────────────────────────────
+// Iframe may load before the parent shell finishes auth/boot — the boot
+// block at the BOTTOM of this script waits for apiSend. (It must run last:
+// if the parent is already ready it calls init() synchronously, which would
+// hit the const declarations below in their temporal dead zone.)
+let api = null;
+
+// ── State ───────────────────────────────────────────────────
+const state = { pages: [], editingId: null };
+
+// ── Helpers ─────────────────────────────────────────────────
+const E = (id) => document.getElementById(id);
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+function showToast(msg) {
+  const t = E('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 1800);
+}
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(okMsg);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try { document.execCommand('copy'); showToast(okMsg); }
+    catch { showToast('Copy failed'); }
+    document.body.removeChild(ta);
+  }
+}
+function publicUrl(p) {
+  return `${window.location.origin}/p/${p.slug}`;
+}
+function statusBadge(p) {
+  return p.status === 'live'
+    ? '<span class="badge on">Live</span>'
+    : '<span class="badge off">Draft</span>';
+}
+function hookBadge(p) {
+  return p.hook_slug
+    ? `<span class="badge hook" title="Hook slug">${esc(p.hook_slug)}</span>`
+    : '<span class="badge nohook">no hook</span>';
+}
+function fmtDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  return isNaN(dt.getTime()) ? '' : dt.toLocaleString();
+}
+
+// ── List ────────────────────────────────────────────────────
+async function loadPages() {
+  const region = E('list-region');
+  try {
+    const data = await api('/api/pages', 'GET');
+    state.pages = data.pages || [];
+    renderList();
+  } catch (err) {
+    region.innerHTML = `<div class="inline-error">Failed to load pages: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderList() {
+  const region = E('list-region');
+  const rows = state.pages;
+  const body = rows.length === 0
+    ? `<tr class="empty-row"><td colspan="6">No landing pages yet — click "+ New Page" to add one.</td></tr>`
+    : rows.map(listRow).join('');
+
+  region.innerHTML = `
+    <div class="list-header">
+      <h2>Landing Pages</h2>
+      <div class="right">
+        <button class="btn primary" id="new-btn">+ New Page</button>
+      </div>
+    </div>
+    <table class="list">
+      <thead>
+        <tr>
+          <th>Slug</th>
+          <th>Host / Path</th>
+          <th>Status</th>
+          <th>Hook</th>
+          <th>Updated</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+
+  E('new-btn').addEventListener('click', () => openEditor(null));
+
+  region.querySelectorAll('tr[data-id]').forEach(tr => {
+    const id = Number(tr.dataset.id);
+    tr.addEventListener('click', e => {
+      if (e.target.closest('.actions-cell')) return;
+      openEditor(id);
+    });
+    tr.querySelector('button[data-action=copy]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      const p = state.pages.find(x => x.id === id);
+      copyText(publicUrl(p), 'Public URL copied');
+    });
+    tr.querySelector('button[data-action=preview]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      previewSaved(id);
+    });
+    tr.querySelector('button[data-action=edit]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      openEditor(id);
+    });
+    tr.querySelector('button[data-action=delete]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      deletePage(id);
+    });
+  });
+}
+
+function listRow(p) {
+  const hostPath = p.host
+    ? esc(p.host) + (p.path ? esc(p.path) : '')
+    : '<span class="muted">—</span>';
+  return `
+    <tr data-id="${p.id}">
+      <td class="slug-cell">${esc(p.slug)}</td>
+      <td class="host-cell" title="${p.host ? esc(p.host + (p.path || '')) : ''}">${hostPath}</td>
+      <td>${statusBadge(p)}</td>
+      <td>${hookBadge(p)}</td>
+      <td class="muted">${esc(fmtDate(p.updated_at))}</td>
+      <td class="actions-cell">
+        <button data-action="copy" title="Copy /p/ URL">Copy URL</button>
+        <button data-action="preview">Preview</button>
+        <button data-action="edit">Edit</button>
+        <button data-action="delete" class="danger">Delete</button>
+      </td>
+    </tr>
+  `;
+}
+
+// ── Editor ──────────────────────────────────────────────────
+async function openEditor(id) {
+  state.editingId = id;
+  hideErr();
+  E('modal-title').textContent = id ? 'Edit Page' : 'New Page';
+
+  let full = null;
+  if (id) {
+    try {
+      const data = await api(`/api/pages/${id}`, 'GET'); // full row incl. html
+      full = data.page;
+    } catch (err) {
+      showToast('Load failed: ' + (err.message || 'unknown error'));
+      return;
+    }
+  }
+
+  E('f-slug').value       = full ? full.slug : '';
+  E('f-status').value     = full ? full.status : 'draft';
+  E('f-meta-title').value = full && full.meta_title ? full.meta_title : '';
+  E('f-host').value       = full && full.host ? full.host : '';
+  E('f-path').value       = full && full.path ? full.path : '';
+  E('f-thankyou').value   = full && full.thankyou_url ? full.thankyou_url : '';
+  E('f-html').value       = full ? full.html : '';
+
+  renderHookRow(full);
+  E('edit-backdrop').classList.add('open');
+  E('f-slug').focus();
+}
+
+function renderHookRow(page) {
+  const row = E('hook-row');
+  if (!page) {
+    row.innerHTML = '<span class="muted">Save the page first, then create or attach a hook.</span>';
+    return;
+  }
+  if (page.hook_slug) {
+    row.innerHTML = `
+      <span class="badge hook">${esc(page.hook_slug)}</span>
+      <span class="muted">Submissions are forwarded to this hook. Configure its targets in
+        <b>More Features &rarr; Automations &rarr; Hooks</b>.</span>
+    `;
+    return;
+  }
+  row.innerHTML = `
+    <button class="btn small" id="create-hook-btn" type="button">Create hook for this page</button>
+    <span class="muted">No hook yet — submissions will be logged to console and discarded.</span>
+  `;
+  E('create-hook-btn').addEventListener('click', () => createHook(page.id));
+}
+
+async function createHook(pageId) {
+  const btn = E('create-hook-btn');
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api(`/api/pages/${pageId}/create-hook`, 'POST', {});
+    showToast(`Hook "${data.hook.slug}" created — wire its targets in Automations → Hooks`);
+    await loadPages();
+    const refreshed = await api(`/api/pages/${pageId}`, 'GET');
+    renderHookRow(refreshed.page);
+  } catch (err) {
+    showToast('Create hook failed: ' + (err.message || 'unknown error'));
+    if (btn) btn.disabled = false;
+  }
+}
+
+function closeEditor() {
+  E('edit-backdrop').classList.remove('open');
+  state.editingId = null;
+}
+function showErr(msg) { const el = E('modal-err'); el.textContent = msg; el.classList.add('show'); }
+function hideErr() { E('modal-err').classList.remove('show'); }
+
+async function savePage() {
+  hideErr();
+  const slug = E('f-slug').value.trim().toLowerCase();
+  const html = E('f-html').value;
+
+  if (!slug) return showErr('Slug is required.');
+  if (!/^[a-z0-9-]{1,100}$/.test(slug)) {
+    return showErr('Slug may contain only lowercase letters, numbers and hyphens (max 100).');
+  }
+  if (!html.trim()) return showErr('Page HTML is required.');
+  const path = E('f-path').value.trim();
+  const host = E('f-host').value.trim();
+  if (path && !host) return showErr('A path requires a vanity host.');
+
+  const payload = {
+    slug,
+    html,
+    status: E('f-status').value,
+    meta_title: E('f-meta-title').value.trim() || null,
+    host: host || null,
+    path: path || null,
+    thankyou_url: E('f-thankyou').value.trim() || null,
+  };
+
+  const saveBtn = E('f-save');
+  saveBtn.disabled = true;
+  try {
+    let data;
+    if (state.editingId) {
+      data = await api(`/api/pages/${state.editingId}`, 'PATCH', payload);
+    } else {
+      data = await api('/api/pages', 'POST', payload);
+    }
+    const saved = data.page;
+    await loadPages();
+    if (saved && !saved.hook_slug) {
+      // Stay in the editor so "Create hook" is one click away — hook creation
+      // needs a persisted page (id + final slug), so it can only happen here.
+      state.editingId = saved.id;
+      E('modal-title').textContent = 'Edit Page';
+      renderHookRow(saved);
+      showToast('Saved — create the hook below when ready');
+    } else {
+      closeEditor();
+      showToast('Saved');
+    }
+  } catch (err) {
+    showErr(err.message || 'Save failed.');
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+async function deletePage(id) {
+  const p = state.pages.find(x => x.id === id);
+  const ok = window.confirm(`Delete landing page "${p ? p.slug : id}"? The public URL will 404. This cannot be undone.`);
+  if (!ok) return;
+  try {
+    await api(`/api/pages/${id}`, 'DELETE');
+    await loadPages();
+    showToast('Deleted');
+  } catch (err) {
+    showToast('Delete failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+// ── Preview ─────────────────────────────────────────────────
+function openPreview(title, html) {
+  E('preview-title').textContent = title;
+  E('preview-frame').srcdoc = html;
+  E('preview-backdrop').classList.add('open');
+}
+function closePreview() {
+  E('preview-backdrop').classList.remove('open');
+  E('preview-frame').srcdoc = '';
+}
+async function previewSaved(id) {
+  try {
+    const data = await api(`/api/pages/${id}`, 'GET');
+    openPreview(`Preview — ${data.page.slug}`, data.page.html);
+  } catch (err) {
+    showToast('Preview failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+// ── Init / wiring ───────────────────────────────────────────
+function init() {
+  E('f-cancel').addEventListener('click', closeEditor);
+  E('f-save').addEventListener('click', savePage);
+  E('f-preview-unsaved').addEventListener('click', () => {
+    const html = E('f-html').value;
+    if (!html.trim()) return showErr('Nothing to preview — paste HTML first.');
+    openPreview('Preview — unsaved editor contents', html);
+  });
+  E('preview-close').addEventListener('click', closePreview);
+  E('edit-backdrop').addEventListener('click', e => {
+    if (e.target === E('edit-backdrop')) closeEditor();
+  });
+  E('preview-backdrop').addEventListener('click', e => {
+    if (e.target === E('preview-backdrop')) closePreview();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if (E('preview-backdrop').classList.contains('open')) return closePreview();
+    if (E('edit-backdrop').classList.contains('open')) return closeEditor();
+  });
+  E('copy-prompt-btn').addEventListener('click', () => {
+    // textContent gives back the un-escaped template (real < > chars).
+    copyText(E('ai-prompt-template').textContent, 'Prompt copied');
+  });
+
+  loadPages();
+}
+
+// ── Boot ────────────────────────────────────────────────────
+(function waitForParent() {
+  const P = window.top;
+  if (P && P.apiSend) {
+    api = (path, method = 'GET', data) => P.apiSend(path, method, data);
+    return init();
+  }
+  setTimeout(waitForParent, 100);
+})();
+</script>
+
+</body>
+</html>

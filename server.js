@@ -15,6 +15,10 @@ app.use('/hooks', express.json({
 }));
 app.use(express.json({ limit: '10mb' }));//maybe limit to /upload?
 app.use(express.urlencoded({ extended: true }));
+// Landing pages: vanity-host middleware must run BEFORE express.static so a
+// mapped domain's root doesn't fall into public/index.html.
+const db = require("./startup/db");
+app.use(require("./routes/pageLanding").pageHostMiddleware(db));
 app.use(
   express.static(path.join(__dirname, "public"), {
     setHeaders: (res, path, stat) => {
@@ -27,7 +31,7 @@ app.use(
   })
 );
 
-const db = require("./startup/db");//and we are going to attach it to each route
+//const db = require("./startup/db");//and we are going to attach it to each route
 
 
 const routesPath = path.join(__dirname, "routes");
