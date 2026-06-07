@@ -634,6 +634,176 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
 }
 
 
+// ─────────────────────────────────────────────────────────────
+// Dropbox case-folder convention + ensure
+// ─────────────────────────────────────────────────────────────
+//
+// One operation — ensureCaseDropboxFolder — guarantees a case has a Dropbox
+// folder and a shared link saved in cases.case_dropbox. Called from:
+//   - routes/api.intake.js        (post-response, after case creation)
+//   - routes/internal/dropbox.js  (the case-page "Create Dropbox Folder"
+//                                  repair button — shown when case_dropbox
+//                                  is empty)
+//   - internal function dropbox_ensure_case_folder (workflows; e.g. the
+//     Voluntary Petition pipeline for filed cases that never got a folder)
+//
+// STAGE-AWARE: a case with a docket number (case_number or case_number_full,
+// per filing convention short form lands first) is 'active' and gets the
+// Active-tree convention + the four staff subfolders; otherwise 'potential'.
+// This replaces the old Pabbly behavior of always creating in Potential-BK.
+//
+// Templates live in app_settings 'dropbox_case_folder_templates' — a JSON
+// map keyed by stage, each stage holding per-case_type templates, a
+// "default", and a "subfolders" array:
+//   {
+//     "potential": { "default": "...", "Bankruptcy": "...", "subfolders": [...] },
+//     "active":    { "default": "...", "subfolders": [...] }
+//   }
+// Resolution per stage: map[stage][case_type] ?? map[stage].default ??
+// hardcoded default; subfolders: map[stage].subfolders ?? hardcoded.
+// No settings row → the constants below. Convention changes are a settings
+// edit, not a deploy.
+//
+// LEADING SPACES IN TEMPLATES ARE SIGNIFICANT (the firm's manual-sort
+// convention, e.g. "/  Law Office/   Cases/") — never trim or "clean" them,
+// in templates or in substituted values.
+//
+// Placeholders: {{case_id}} {{case_type}} {{case_subtype}} {{case_number}}
+// {{case_number_full}} {{number}} (full ‖ short ‖ case_id) {{lfm_name}}
+// {{contact_name}} {{date}} (firm-local YYYY-MM-DD). Unknown placeholders
+// pass through literally (visible in the folder name — easy to spot).
+
+const DEFAULT_CASE_FOLDER_TEMPLATES = {
+  potential: {
+    default: "/  Law Office/   Cases/  Potential Cases/  Potential - {{case_type}}/ {{lfm_name}} - {{case_id}} - {{date}}",
+    subfolders: ["Client Uploads"],
+  },
+  active: {
+    default: "/  Law Office/   Cases/  Active Cases/  Active - {{case_type}}/ {{case_id}} - {{lfm_name}} - {{number}} - {{case_subtype}}",
+    subfolders: [
+      "Docket - {{contact_name}} - {{case_subtype}} - {{case_number}}",
+      "Drafts - {{contact_name}}",
+      "Client Docs - {{contact_name}}",
+      "Correspondence - {{contact_name}}",
+    ],
+  },
+};
+
+function _substituteTemplate(template, values) {
+  return String(template).replace(/\{\{(\w+)\}\}/g, (m, key) => (key in values ? values[key] : m));
+}
+
+async function _loadCaseFolderTemplates(db) {
+  try {
+    const [[row]] = await db.query(
+      "SELECT `value` FROM app_settings WHERE `key` = 'dropbox_case_folder_templates' LIMIT 1"
+    );
+    if (row?.value) {
+      const map = JSON.parse(row.value);
+      if (map && typeof map === 'object') return map;
+    }
+  } catch (err) {
+    console.warn(`[CASE_DROPBOX] dropbox_case_folder_templates lookup failed, using defaults: ${err.message}`);
+  }
+  return {};
+}
+
+/**
+ * Ensure a case has a Dropbox folder + shared link in cases.case_dropbox.
+ * Stage-aware (potential vs active by docket-number presence). Idempotent:
+ * if case_dropbox is already set, returns it without touching Dropbox
+ * (pass force: true to create anyway and overwrite the saved link).
+ *
+ * Names come from the case's PRIMARY contact (case_relate_type 'Primary',
+ * falling back to the lowest contact id — the petition-intake convention).
+ *
+ * @param {object} db
+ * @param {string} caseId
+ * @param {object} [opts] — { force?: boolean }
+ * @returns {Promise<{existed:boolean, stage:string|null, path:string|null,
+ *                    shared_link:string|null, folder_existed?:boolean,
+ *                    subfolders_created?:Array}>}
+ * @throws on unknown case, Dropbox failure, or missing shared link
+ */
+async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
+  const dropboxService = require('./dropboxService');     // deferred require (convention)
+  const { nowLocal } = require('./timezoneService');
+
+  const [[caseRow]] = await db.query(
+    `SELECT case_id, case_type, case_subtype, case_number, case_number_full, case_dropbox
+       FROM cases WHERE case_id = ?`,
+    [caseId]
+  );
+  if (!caseRow) throw new Error(`ensureCaseDropboxFolder: case ${caseId} not found`);
+
+  if (caseRow.case_dropbox && !force) {
+    return { existed: true, stage: null, path: null, shared_link: caseRow.case_dropbox };
+  }
+
+  const [[contact]] = await db.query(
+    `SELECT c.contact_name, c.contact_lfm_name
+       FROM case_relate cr
+       JOIN contacts c ON c.contact_id = cr.case_relate_client_id
+      WHERE cr.case_relate_case_id = ?
+      ORDER BY (cr.case_relate_type = 'Primary') DESC, cr.case_relate_client_id ASC
+      LIMIT 1`,
+    [caseId]
+  );
+
+  const shortNum = caseRow.case_number || '';
+  const fullNum  = caseRow.case_number_full || '';
+  const stage    = (shortNum || fullNum) ? 'active' : 'potential';
+
+  const values = {
+    case_id:          caseRow.case_id,
+    case_type:        caseRow.case_type || 'Other',
+    case_subtype:     caseRow.case_subtype || '',
+    case_number:      shortNum,
+    case_number_full: fullNum,
+    number:           fullNum || shortNum || caseRow.case_id,
+    lfm_name:         contact?.contact_lfm_name || 'Unknown',
+    contact_name:     contact?.contact_name || 'Unknown',
+    date:             nowLocal().toFormat('yyyy-LL-dd'),
+  };
+
+  const settingsMap = await _loadCaseFolderTemplates(db);
+  const stageMap    = settingsMap[stage] || {};
+  const template    = stageMap[values.case_type]
+                   ?? stageMap.default
+                   ?? DEFAULT_CASE_FOLDER_TEMPLATES[stage].default;
+  const subTemplates = Array.isArray(stageMap.subfolders)
+    ? stageMap.subfolders
+    : DEFAULT_CASE_FOLDER_TEMPLATES[stage].subfolders;
+
+  const path       = _substituteTemplate(template, values);
+  const subfolders = subTemplates.map((t) => _substituteTemplate(t, values));
+
+  const result = await dropboxService.createFolderWithOptions(db, {
+    path,
+    subfolders,
+    shareLink: true,
+  });
+  if (!result.shared_link) {
+    throw new Error(`ensureCaseDropboxFolder: folder created at "${result.path}" but no shared link returned`);
+  }
+
+  await db.query(
+    'UPDATE cases SET case_dropbox = ? WHERE case_id = ?',
+    [result.shared_link, caseId]
+  );
+
+  console.log(`[CASE_DROPBOX] ${stage} folder ensured for case ${caseId}: ${result.path}${result.existed ? ' (folder pre-existed)' : ''}`);
+  return {
+    existed: false,
+    stage,
+    path: result.path,
+    shared_link: result.shared_link,
+    folder_existed: result.existed,
+    subfolders_created: result.subfolders_created,
+  };
+}
+
+
 module.exports = {
   listCases,
   getCase,
@@ -642,5 +812,6 @@ module.exports = {
   removeCaseContact,
   getCaseContacts,
   searchCases,
-  checkCaseNumberCollision
+  checkCaseNumberCollision,
+  ensureCaseDropboxFolder
 };
