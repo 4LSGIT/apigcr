@@ -119,6 +119,29 @@
   @media (max-width: 560px) { .scalar-row { grid-template-columns: 1fr; } }
 
   .loading { color: var(--muted); padding: 30px; text-align: center; }
+
+  /* ── Dropbox template editor ── */
+  .tpl-stage {
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); padding: 10px; margin-bottom: 10px;
+  }
+  .tpl-stage h3 {
+    margin: 0 0 8px; font-size: 12px; font-weight: 600;
+    color: var(--accent-2); text-transform: uppercase; letter-spacing: .06em;
+  }
+  .space-preview {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px; color: var(--muted); margin: 3px 0 0 2px;
+    white-space: pre; overflow-x: auto;
+  }
+  .space-preview .dot { color: var(--warn); }
+  textarea.raw {
+    width: 100%; min-height: 180px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 5px; padding: 7px 9px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    outline: none; resize: vertical; white-space: pre;
+  }
+  textarea.raw:focus { border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -199,6 +222,20 @@
       </div>
     </div>
 
+    <!-- ── Dropbox Folder Templates ───────────────────────────── -->
+    <div class="section collapsed" id="dropboxTplSection" style="display:none">
+      <div class="sec-head"><h2><span class="chev">▸</span>Dropbox Folder Templates</h2><span class="hint" id="dtUpdated"></span></div>
+      <div class="sec-body">
+        <p class="note warn">Spaces in folder names are <b>load-bearing</b> (manual sort order) and shown below as <span class="dot" style="color:var(--warn)">·</span> dots. They are preserved exactly on save.</p>
+        <p class="note">Placeholders like <span class="mono">{{case_type}}</span> are substituted when the folder is created. Stage names are fixed — add/remove stages via the DB console.</p>
+        <div id="dtList"></div>
+        <div class="btn-row">
+          <button class="btn primary" id="dtSave" disabled>Save Folder Templates</button>
+          <span class="status" id="dtStatus"></span>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Other Settings ─────────────────────────────────────── -->
     <div class="section collapsed" id="scalarSection" style="display:none">
       <div class="sec-head"><h2><span class="chev">▸</span>Other Settings</h2></div>
@@ -223,6 +260,7 @@ const api = (path, method = 'GET', data) => window.top.apiSend(path, method, dat
 const REGISTRY = {
   'fe-case_types':      { label: 'Case Types',          custom: 'caseTypes' },
   'fe-event_types':     { label: 'Event Types',         custom: 'eventTypes' },
+  'dropbox_case_folder_templates': { label: 'Dropbox Folder Templates', custom: 'dropboxTpl' },
   'email_default_from': { label: 'Default Email From' },
   'email_default_to':   { label: 'Default Email To' },
   'gcal_calendar_id':   { label: 'Google Calendar ID' },
@@ -449,7 +487,7 @@ function ctInit(rawValue, updatedAt) {
   try { map = JSON.parse(rawValue); } catch { map = null; }
   if (!map || Array.isArray(map) || typeof map !== 'object') {
     // Unexpected shape — fall back to a raw scalar row so it's still fixable
-    scalarAddRow('fe-case_types', rawValue, updatedAt, 'Case Types (raw — unexpected format)');
+    rawJsonAddRow('fe-case_types', rawValue, updatedAt, 'Case Types (raw — unexpected format)');
     return;
   }
   ctState = Object.entries(map).map(([name, subs]) => ({
@@ -526,7 +564,7 @@ function etInit(rawValue, updatedAt) {
   let arr;
   try { arr = JSON.parse(rawValue); } catch { arr = null; }
   if (!Array.isArray(arr)) {
-    scalarAddRow('fe-event_types', rawValue, updatedAt, 'Event Types (raw — unexpected format)');
+    rawJsonAddRow('fe-event_types', rawValue, updatedAt, 'Event Types (raw — unexpected format)');
     return;
   }
   etState = arr.map(String);
@@ -535,6 +573,155 @@ function etInit(rawValue, updatedAt) {
   E('eventTypesSection').style.display = '';
   etRender();
   etBind();
+}
+
+/* ════════════════ DROPBOX FOLDER TEMPLATES ════════════════
+   dropbox_case_folder_templates: { stage: { default: path, subfolders: [] } }
+   Stage keys are a code contract (looked up by name) — read-only here.
+   WHITESPACE IS LOAD-BEARING: values kept verbatim, spaces previewed as dots. */
+let dtState = null; // [{ stage, path, subs: [] }]
+
+function dtMarkDirty() { E('dtSave').disabled = false; }
+
+function dotPreview(v) {
+  // escape, then mark every space visibly
+  return esc(v).replace(/ /g, '<span class="dot">·</span>');
+}
+
+function dtRender() {
+  const host = E('dtList');
+  host.innerHTML = '';
+  dtState.forEach((st, si) => {
+    const card = document.createElement('div');
+    card.className = 'tpl-stage';
+    card.innerHTML = `
+      <h3>${esc(st.stage)}</h3>
+      <label class="fld">Folder Path Template</label>
+      <input type="text" class="mono" data-dt-path="${si}" value="${esc(st.path)}">
+      <div class="space-preview" data-dt-pathprev="${si}">${dotPreview(st.path)}</div>
+      <label class="fld">Subfolders</label>
+      <div>
+        ${st.subs.map((sub, bi) => `
+          <div class="sub-row">
+            <div style="flex:1; min-width:0">
+              <input type="text" class="mono" data-dt-sub="${si}:${bi}" value="${esc(sub)}" placeholder="Subfolder name">
+              <div class="space-preview" data-dt-subprev="${si}:${bi}" style="${/^\s|\s{2,}|\s$/.test(sub) ? '' : 'display:none'}">${dotPreview(sub)}</div>
+            </div>
+            <button class="icon-btn" data-dt-subup="${si}:${bi}" title="Move up">↑</button>
+            <button class="icon-btn" data-dt-subdown="${si}:${bi}" title="Move down">↓</button>
+            <button class="icon-btn del" data-dt-subdel="${si}:${bi}" title="Delete subfolder">✕</button>
+          </div>`).join('')}
+        <button class="btn tiny" data-dt-addsub="${si}">+ Subfolder</button>
+      </div>`;
+    host.appendChild(card);
+  });
+}
+
+function dtBind() {
+  E('dtList').addEventListener('input', e => {
+    const inp = e.target;
+    if (inp.dataset.dtPath !== undefined) {
+      const si = +inp.dataset.dtPath;
+      dtState[si].path = inp.value; // verbatim — no trim
+      document.querySelector(`[data-dt-pathprev="${si}"]`).innerHTML = dotPreview(inp.value);
+      dtMarkDirty();
+    } else if (inp.dataset.dtSub !== undefined) {
+      const [si, bi] = inp.dataset.dtSub.split(':').map(Number);
+      dtState[si].subs[bi] = inp.value; // verbatim — no trim
+      const prev = document.querySelector(`[data-dt-subprev="${si}:${bi}"]`);
+      const show = /^\s|\s{2,}|\s$/.test(inp.value);
+      prev.style.display = show ? '' : 'none';
+      prev.innerHTML = dotPreview(inp.value);
+      dtMarkDirty();
+    }
+  });
+  E('dtList').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const d = b.dataset;
+    const swap = (arr, i, j) => { if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; };
+    let changed = false;
+    if (d.dtAddsub !== undefined)       { dtState[+d.dtAddsub].subs.push(''); changed = true; }
+    else if (d.dtSubup !== undefined)   { const [si, bi] = d.dtSubup.split(':').map(Number);   changed = swap(dtState[si].subs, bi, bi - 1); }
+    else if (d.dtSubdown !== undefined) { const [si, bi] = d.dtSubdown.split(':').map(Number); changed = swap(dtState[si].subs, bi, bi + 1); }
+    else if (d.dtSubdel !== undefined)  { const [si, bi] = d.dtSubdel.split(':').map(Number);  dtState[si].subs.splice(bi, 1); changed = true; }
+    if (changed) { dtMarkDirty(); dtRender(); }
+  });
+}
+
+async function dtSave() {
+  for (const st of dtState) {
+    if (!st.path.trim()) return setStatus('dtStatus', `Path for "${st.stage}" cannot be empty`, false);
+    if (st.subs.some(x => !x.trim())) return setStatus('dtStatus', `Subfolder names cannot be empty (under "${st.stage}")`, false);
+    if (new Set(st.subs).size !== st.subs.length) return setStatus('dtStatus', `Duplicate subfolders under "${st.stage}"`, false);
+  }
+  const obj = {};
+  dtState.forEach(st => { obj[st.stage] = { default: st.path, subfolders: st.subs.slice() }; });
+
+  E('dtSave').disabled = true;
+  try {
+    // Pretty-printed so the row stays readable in the DB console.
+    const data = await api('/api/app-settings/dropbox_case_folder_templates', 'PUT', { value: JSON.stringify(obj, null, 2) });
+    E('dtUpdated').textContent = fmtDate(data.setting?.updated_at);
+    setStatus('dtStatus', 'Folder templates saved', true);
+  } catch (e2) {
+    E('dtSave').disabled = false;
+    setStatus('dtStatus', e2.message || 'Failed to save', false);
+  }
+}
+
+function dtInit(rawValue, updatedAt) {
+  let map;
+  try { map = JSON.parse(rawValue); } catch { map = null; }
+  const valid = map && !Array.isArray(map) && typeof map === 'object' &&
+    Object.values(map).every(v => v && typeof v === 'object' && typeof v.default === 'string');
+  if (!valid) {
+    rawJsonAddRow('dropbox_case_folder_templates', rawValue, updatedAt, 'Dropbox Folder Templates (raw — unexpected format)');
+    return;
+  }
+  dtState = Object.entries(map).map(([stage, cfg]) => ({
+    stage,
+    path: cfg.default,
+    subs: Array.isArray(cfg.subfolders) ? cfg.subfolders.map(String) : []
+  }));
+  E('dtUpdated').textContent = fmtDate(updatedAt);
+  E('dropboxTplSection').style.display = '';
+  dtRender();
+  dtBind();
+}
+
+/* ════════════════ RAW JSON FALLBACK ════════════════
+   Used when a JSON-typed setting has an unexpected shape: a textarea
+   (multi-line safe — a plain input would destroy newlines) with a
+   JSON-validity check before save. */
+function rawJsonAddRow(key, value, updatedAt, label) {
+  const id = 'raw' + (scalarSeq++);
+  const row = document.createElement('div');
+  row.style.padding = '9px 0';
+  row.innerHTML = `
+    <div class="lbl" style="margin-bottom:5px">${esc(label)}<span class="sub" style="display:block;color:var(--muted);font-size:10.5px;font-family:ui-monospace,Menlo,monospace">${esc(key)}</span></div>
+    <textarea class="raw" id="${id}"></textarea>
+    <div class="btn-row">
+      <button class="btn" id="${id}btn">Save</button>
+      <span class="status" id="${id}st"></span>
+      <span class="note" style="margin:0">${fmtDate(updatedAt)}</span>
+    </div>`;
+  E('scalarList').appendChild(row);
+  E('scalarSection').style.display = '';
+  E(id).value = value ?? '';
+  E(id + 'btn').addEventListener('click', async () => {
+    try { JSON.parse(E(id).value); }
+    catch (e) { return setStatus(id + 'st', 'Not valid JSON: ' + e.message, false); }
+    E(id + 'btn').disabled = true;
+    try {
+      await api('/api/app-settings/' + encodeURIComponent(key), 'PUT', { value: E(id).value });
+      setStatus(id + 'st', 'Saved', true);
+      if (key.startsWith('fe-')) window.top.loadFirmData?.();
+    } catch (err) {
+      setStatus(id + 'st', err.message || 'Failed', false);
+    } finally {
+      E(id + 'btn').disabled = false;
+    }
+  });
 }
 
 /* ════════════════ SCALAR SETTINGS ════════════════
@@ -613,6 +800,7 @@ async function init() {
   E('pwSave').addEventListener('click', savePassword);
   E('ctSave').addEventListener('click', ctSave);
   E('etSave').addEventListener('click', etSave);
+  E('dtSave').addEventListener('click', dtSave);
 
   try {
     const data = await api('/api/app-settings');
@@ -620,6 +808,7 @@ async function init() {
       const reg = REGISTRY[row.key];
       if (reg?.custom === 'caseTypes')       ctInit(row.value, row.updated_at);
       else if (reg?.custom === 'eventTypes') etInit(row.value, row.updated_at);
+      else if (reg?.custom === 'dropboxTpl') dtInit(row.value, row.updated_at);
       else                                   scalarAddRow(row.key, row.value, row.updated_at);
     }
   } catch (err) {
