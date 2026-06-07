@@ -1620,7 +1620,7 @@
     }
 </script>
   
-<div id="tabAdmin" class="tab-main">
+<div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-crown"></i>'>
   <h2>Admin</h2>
   <button class="big-button" onclick="adminTask()">Button</button>
   <button class="big-button" onclick="readonlyKeysSwal()">Readonly Keys (SU)</button>
@@ -1641,15 +1641,39 @@
     <iframe data-src="/apiTester.html"></iframe>
   </div>
 </div>
+<style>
+  /* Drill-in pill strip for big-button tabs */
+  .feature-strip { display:none; align-items:center; flex-wrap:wrap; gap:6px; margin:0 0 12px; }
+  .drill-active .feature-strip { display:flex; }
+  .drill-active > .big-button, .drill-active > br { display:none; }
+  .pill-button {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:5px 12px; border-radius:999px;
+    border:1px solid #b9c2cf; background:transparent;
+    color:inherit; cursor:pointer; font-size:13px; line-height:1.2;
+  }
+  .pill-button i { font-size:13px; }
+  .pill-button .pill-label { display:none; }
+  .pill-button.active .pill-label,
+  .pill-button.no-icon .pill-label { display:inline; }
+  .pill-button:hover { border-color:#1d7fe0; }
+  .pill-button.active { background:#1d7fe0; border-color:#1d7fe0; color:#fff; }
+</style>
 <script>
   function adminTask(){
     alert("admin task executed!")
   }
-  // Generic panel toggle + lazy iframe loader.
-  // Any button with data-target="someDivId" toggles that div.
-  // If the panel contains an <iframe data-src="...">, it gets loaded on first show.
-  // Optional: data-exclusive-group="groupName" makes buttons in the same group
-  // hide their siblings (the old #tabMore "only one open at a time" behavior).
+  // ── Panel toggle + drill-in pill strip ── HOW TO USE ──────────────────
+  // Panel button:  <button class="big-button" data-target="myDiv" data-exclusive-group="more">
+  //                + sibling <div id="myDiv" style="display:none"><iframe data-src="/x.html"></iframe></div>
+  //   Click = open panel (iframe lazy-loads once), hide the grid, show pill strip.
+  //   One panel open per group; re-clicking the active pill returns to the grid.
+  // Action button (no data-target): its pill proxies the original onclick.
+  // Pills auto-build from ALL .big-buttons in the tab — zero wiring per feature.
+  //   Icon-only (cloned from button, fa-2xl stripped); label shows when active,
+  //   or always if the button has no icon. Hover = tooltip.
+  // "All" pill exits to the grid; its icons come from data-all-icons on the
+  //   tab div (HTML string), default: back-arrow + grip.
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-target]');
     if (!btn) return;
@@ -1678,7 +1702,87 @@
         delete iframe.dataset.src;
       }
     }
+
+    if (group) syncDrillState(btn.closest('.tab-main'), group);
   });
+
+  // Build the pill strip once per tab (lazy, on first drill-in).
+  function ensureStrip(tab) {
+    let strip = tab.querySelector(':scope > .feature-strip');
+    if (strip) return strip;
+
+    strip = document.createElement('div');
+    strip.className = 'feature-strip';
+
+    // "All" pill - back to the grid
+    const allPill = document.createElement('button');
+    allPill.className = 'pill-button';
+    // Icons configurable per tab via data-all-icons (HTML string); default = back-arrow + grip
+    const homeIcons = tab.dataset.allIcons || '<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-grip"></i>';
+    allPill.innerHTML = homeIcons + '<span class="pill-label">All</span>';
+    allPill.title = 'All';
+    allPill.addEventListener('click', () => {
+      // Hide any open panels referenced by this tab's grid buttons
+      tab.querySelectorAll(':scope > .big-button[data-target]').forEach(b => {
+        const panel = document.getElementById(b.dataset.target);
+        if (panel) panel.style.display = 'none';
+      });
+      tab.classList.remove('drill-active');
+      strip.querySelectorAll('.pill-button').forEach(p => p.classList.remove('active'));
+    });
+    strip.appendChild(allPill);
+
+    // One pill per grid button (panel buttons AND action buttons)
+    tab.querySelectorAll(':scope > .big-button').forEach(src => {
+      const pill = document.createElement('button');
+      pill.className = 'pill-button';
+
+      const icon = src.querySelector('i');
+      if (icon) {
+        const i = icon.cloneNode(false);
+        i.classList.remove('fa-2xl');
+        pill.appendChild(i);
+      } else {
+        pill.classList.add('no-icon');
+      }
+      const label = document.createElement('span');
+      label.className = 'pill-label';
+      label.textContent = src.textContent.trim();
+      pill.title = label.textContent;
+      pill.appendChild(label);
+
+      if (src.dataset.target) {
+        // Let the generic handler above drive panel switching
+        pill.dataset.target = src.dataset.target;
+        pill.dataset.exclusiveGroup = src.dataset.exclusiveGroup || '';
+      } else {
+        // Action button: proxy the original click
+        pill.addEventListener('click', () => src.click());
+      }
+      strip.appendChild(pill);
+    });
+
+    const h2 = tab.querySelector(':scope > h2');
+    if (h2) h2.after(strip); else tab.prepend(strip);
+    return strip;
+  }
+
+  // After any panel toggle: enter/exit drilled mode and highlight the active pill.
+  function syncDrillState(tab, group) {
+    if (!tab) return;
+    const strip = ensureStrip(tab);
+
+    let openId = null;
+    document.querySelectorAll(`[data-target][data-exclusive-group="${group}"]`).forEach(b => {
+      const panel = document.getElementById(b.dataset.target);
+      if (panel && getComputedStyle(panel).display !== 'none') openId = panel.id;
+    });
+
+    tab.classList.toggle('drill-active', !!openId);
+    strip.querySelectorAll('.pill-button').forEach(p =>
+      p.classList.toggle('active', p.dataset.target === openId)
+    );
+  }
 </script>
   <script>
     params = {};
