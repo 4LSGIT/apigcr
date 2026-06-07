@@ -464,7 +464,12 @@
           payload.case_number_full = full;
           continue;
         }
-
+        if (fieldName === 'case_chapter') {
+          const ch = String(newVal || '').trim();
+          payload.case_chapter = ch;
+          payload.case_subtype = ch ? `Chapter ${ch}` : '';
+          continue;
+        }
         const dbCol = reverseApiMap[fieldName] || fieldName;
         payload[dbCol] = newVal;
       }
