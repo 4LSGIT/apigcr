@@ -38,8 +38,13 @@
     padding: 10px 14px; background: var(--panel-2);
     border-bottom: 1px solid var(--border);
   }
-  .sec-head h2 { margin: 0; font-size: 13.5px; font-weight: 600; }
+  .sec-head { cursor: pointer; user-select: none; }
+  .sec-head h2 { margin: 0; font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
   .sec-head .hint { color: var(--muted); font-size: 11.5px; }
+  .chev { display: inline-block; color: var(--muted); font-size: 11px; transition: transform .12s; }
+  .section:not(.collapsed) .chev { transform: rotate(90deg); }
+  .section.collapsed .sec-body { display: none; }
+  .section.collapsed > .sec-head { border-bottom: none; }
   .sec-body { padding: 14px; }
 
   label.fld { display: block; color: var(--muted); font-size: 11px; margin: 8px 0 3px; text-transform: uppercase; letter-spacing: .05em; }
@@ -123,8 +128,8 @@
   <div id="content" style="display:none">
 
     <!-- ── My Account ─────────────────────────────────────────── -->
-    <div class="section">
-      <div class="sec-head"><h2>My Account</h2><span class="hint" id="acctHint"></span></div>
+    <div class="section collapsed">
+      <div class="sec-head"><h2><span class="chev">▸</span>My Account</h2><span class="hint" id="acctHint"></span></div>
       <div class="sec-body">
         <div class="grid2">
           <div><label class="fld">First Name *</label><input type="text" id="pFname"></div>
@@ -150,8 +155,8 @@
     </div>
 
     <!-- ── Change Password ────────────────────────────────────── -->
-    <div class="section">
-      <div class="sec-head"><h2>Change Password</h2></div>
+    <div class="section collapsed">
+      <div class="sec-head"><h2><span class="chev">▸</span>Change Password</h2></div>
       <div class="sec-body">
         <div class="grid2">
           <div><label class="fld">Current Password</label><input type="password" id="pwCurrent" autocomplete="current-password"></div>
@@ -167,8 +172,8 @@
     </div>
 
     <!-- ── Case Types ─────────────────────────────────────────── -->
-    <div class="section" id="caseTypesSection" style="display:none">
-      <div class="sec-head"><h2>Case Types</h2><span class="hint" id="ctUpdated"></span></div>
+    <div class="section collapsed" id="caseTypesSection" style="display:none">
+      <div class="sec-head"><h2><span class="chev">▸</span>Case Types</h2><span class="hint" id="ctUpdated"></span></div>
       <div class="sec-body">
         <p class="note warn">Renaming or removing a type/subtype does <b>not</b> update existing cases — they keep their old value.</p>
         <div id="ctList"></div>
@@ -181,8 +186,8 @@
     </div>
 
     <!-- ── Event Types ────────────────────────────────────────── -->
-    <div class="section" id="eventTypesSection" style="display:none">
-      <div class="sec-head"><h2>Event Types</h2><span class="hint" id="etUpdated"></span></div>
+    <div class="section collapsed" id="eventTypesSection" style="display:none">
+      <div class="sec-head"><h2><span class="chev">▸</span>Event Types</h2><span class="hint" id="etUpdated"></span></div>
       <div class="sec-body">
         <p class="note warn">Renaming or removing an event type does <b>not</b> update existing events — they keep their old value.</p>
         <div id="etList"></div>
@@ -195,8 +200,8 @@
     </div>
 
     <!-- ── Other Settings ─────────────────────────────────────── -->
-    <div class="section" id="scalarSection" style="display:none">
-      <div class="sec-head"><h2>Other Settings</h2></div>
+    <div class="section collapsed" id="scalarSection" style="display:none">
+      <div class="sec-head"><h2><span class="chev">▸</span>Other Settings</h2></div>
       <div class="sec-body">
         <p class="note">Values are saved exactly as typed — leading/trailing spaces are preserved on purpose.</p>
         <div id="scalarList"></div>
@@ -589,6 +594,17 @@ function scalarAddRow(key, value, updatedAt, labelOverride) {
     }
   });
 }
+
+/* ════════════════ ACCORDION ════════════════
+   All sections start collapsed; opening one closes the others. */
+document.querySelectorAll('.sec-head').forEach(h => {
+  h.addEventListener('click', () => {
+    const sec = h.parentElement;
+    const wasCollapsed = sec.classList.contains('collapsed');
+    document.querySelectorAll('.section').forEach(x => x.classList.add('collapsed'));
+    if (wasCollapsed) sec.classList.remove('collapsed');
+  });
+});
 
 /* ════════════════ BOOT ════════════════ */
 async function init() {
