@@ -111,15 +111,10 @@
   <div id="tabOverview" class="tab-content">
     <div style="margin: 0 auto; max-width: 650px; border: 3px solid black">
       <br /><label class="input-label">Case Type:</label>
-      <select
-        id="caseTypeSelect"
-        onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_type:this.value}).then(()=>Toast.fire({icon:'success',title:'Case type updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
-      >
-        <option selected disabled>Select a Case Type</option>
-        <option>Bankruptcy</option>
-        <option>Bankruptcy - Ch. 7</option>
-        <option>Bankruptcy - Ch. 13</option>
-        <option>Other</option></select
+      <!-- Options populated from fe-case_types (syncCaseTypeSelects below);
+           subtype select hidden when the chosen type has no subtypes. -->
+      <select id="caseTypeSelect" onchange="caseTypeChanged(this.value)"></select>
+      <select id="caseSubtypeSelect" onchange="caseSubtypeChanged(this.value)" style="display:none"></select
       ><br />
       <label class="input-label">Stage:</label>
       <select
@@ -986,10 +981,10 @@ function updateHeader() {
   E("phone").innerHTML       = PC?.contact_phone
     ? PC.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3") : "";
   E("case").innerHTML        = c.case_number_full || c.case_number || "Not Filed";
-  E("type").innerHTML        = c.case_type || "N/A";
+  E("type").innerHTML        = fmtCaseType(c) || "N/A";
 
   // Overview form fields
-  E("caseTypeSelect").value  = c.case_type   || "";
+  syncCaseTypeSelects(c);
   E("caseStageSelect").value = c.case_stage  || "";
   E("caseStatusInput").value = c.case_status || "N/A";
   E("caseRecInput").value    = c.case_rec    || "N/A";
@@ -998,13 +993,65 @@ function updateHeader() {
   resizeTextarea(E("overviewCaseNotes"));
 }
 
+// ── Case type / subtype cascading selects ───────────────────
+// Driven by fe-case_types (getCaseTypeMap in scripts.js — same single source
+// as NewCaseForm and the shells' Cases-tab filter). Types/subtypes stay
+// opaque free text: stored values absent from the map are rendered anyway,
+// prepended as a selected-but-unlisted option.
+function syncCaseTypeSelects(c) {
+  const map = getCaseTypeMap();
+  const curType = c.case_type || "";
+  const keys = Object.keys(map);
+  if (curType && !keys.includes(curType)) keys.unshift(curType);
+  E("caseTypeSelect").innerHTML =
+    `<option value="" disabled${curType ? "" : " selected"}>Select a Case Type</option>` +
+    keys.map(t => `<option${t === curType ? " selected" : ""}>${escAttr(t)}</option>`).join("");
+  syncSubtypeSelect(curType, c.case_subtype || "");
+}
+function syncSubtypeSelect(type, curSub) {
+  const map = getCaseTypeMap();
+  const subs = (map[type] || []).slice();
+  if (curSub && !subs.includes(curSub)) subs.unshift(curSub);
+  const sel = E("caseSubtypeSelect");
+  sel.innerHTML =
+    `<option value=""${curSub ? "" : " selected"}>— subtype —</option>` +
+    subs.map(s => `<option${s === curSub ? " selected" : ""}>${escAttr(s)}</option>`).join("");
+  sel.style.display = subs.length ? "" : "none";
+}
+async function caseTypeChanged(type) {
+  // Changing the category resets the subtype — a refinement never carries
+  // across types. One PATCH writes both columns.
+  try {
+    await P.apiSend('/api/cases/' + caseID, 'PATCH', { case_type: type, case_subtype: '' });
+    window.entityData.case.case_type = type;
+    window.entityData.case.case_subtype = '';
+    syncSubtypeSelect(type, '');
+    E("type").innerHTML = fmtCaseType(window.entityData.case) || "N/A";
+    Toast.fire({ icon: 'success', title: 'Case type updated' });
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: 'Error', text: e.message });
+  }
+}
+async function caseSubtypeChanged(sub) {
+  try {
+    await P.apiSend('/api/cases/' + caseID, 'PATCH', { case_subtype: sub });
+    window.entityData.case.case_subtype = sub;
+    E("type").innerHTML = fmtCaseType(window.entityData.case) || "N/A";
+    Toast.fire({ icon: 'success', title: 'Subtype updated' });
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: 'Error', text: e.message });
+  }
+}
+
 // ── Iframe loading (called once on initial load) ────────────
 function loadIframes() {
   const c = window.entityData.case;
   if (!c) return;
 
-  const isBK = c.case_type === "Bankruptcy" ||
-               (c.case_type && c.case_type.startsWith("Bankruptcy - Ch"));
+  // Post type/subtype split: BK-ness is the category alone — Chapter 7/13
+  // live in case_subtype, so every chapter matches. (Existing rows were
+  // migrated; compat triggers catch stragglers — no old-shape tolerance here.)
+  const isBK = c.case_type === "Bankruptcy";
 
   if (isBK) {
     S("bkButtons").display = "";

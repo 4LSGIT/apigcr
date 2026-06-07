@@ -50,6 +50,9 @@ const logService = require('./logService');
  * @param {object} opts
  * @param {string}  [opts.query]       - text search
  * @param {string}  [opts.type]        - case_type filter (use '%' for all)
+ * @param {string}  [opts.subtype]     - case_subtype filter (EXACT match;
+ *                                       only applied when non-empty — there is
+ *                                       deliberately no '%'-means-all here)
  * @param {string}  [opts.stage]       - case_stage filter (use '%' for all)
  * @param {string}  [opts.status]      - case_status filter (use '%' for all)
  * @param {number}  [opts.limit=50]
@@ -59,6 +62,7 @@ const logService = require('./logService');
 async function listCases(db, {
   query  = '',
   type   = '%',
+  subtype = '',
   stage  = '%',
   status = '%',
   sort_by  = 'c.case_open_date',
@@ -84,6 +88,12 @@ async function listCases(db, {
   // Type/stage/status use LIKE so '%' means "all"
   where.push('c.case_type LIKE ?');
   params.push(type);
+  // Subtype (2026-06 type/subtype split) is EXACT match, applied only when
+  // present — values are opaque free text and may legitimately contain '%'.
+  if (subtype != null && subtype !== '') {
+    where.push('c.case_subtype = ?');
+    params.push(subtype);
+  }
   where.push('c.case_stage LIKE ?');
   params.push(stage);
   where.push('c.case_status LIKE ?');

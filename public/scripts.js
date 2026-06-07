@@ -60,6 +60,104 @@ function getEventTypeOptions() {
   return list.length ? list : EVENT_TYPE_OPTIONS_DEFAULT.slice();
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+   Case types — single source of truth (2026-06 type/subtype split).
+
+   cases.case_type is a CATEGORY ("Bankruptcy", "Appeal", …) and
+   cases.case_subtype the refinement ("Chapter 7", …). The valid combinations
+   live in the app_settings row 'fe-case_types' and ship down exactly like
+   'fe-event_types': /api/firm-data JSON-parses every fe-* row into
+   firmData.settings, so the map is at firmData.settings.case_types — a plain
+   object of type → array-of-subtypes. Missing/malformed → the default below.
+
+   Values stay OPAQUE free text: nothing here validates shape, and stored
+   values absent from the map must still render (and appear as a
+   selected-but-unlisted option when editing).
+   ────────────────────────────────────────────────────────────────────────── */
+const CASE_TYPE_MAP_DEFAULT = {
+  'Bankruptcy': ['Chapter 7', 'Chapter 13'],
+  'Adversary Proceeding': ['Bankruptcy', 'Criminal'],
+  'Appeal': ['Bankruptcy', 'Litigation'],
+  'Litigation': [],
+  'Other': [],
+};
+function getCaseTypeMap() {
+  const firm = (typeof window !== 'undefined' && window.firmData)
+    ? window.firmData
+    : ((typeof P !== 'undefined' && P && P.firmData) || {});
+  const raw = firm && firm.settings && firm.settings.case_types;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const map = {};
+    let any = false;
+    for (const [t, subs] of Object.entries(raw)) {
+      const key = String(t).trim();
+      if (!key) continue;
+      map[key] = Array.isArray(subs)
+        ? subs.map(s => String(s).trim()).filter(Boolean)
+        : [];
+      any = true;
+    }
+    if (any) return map;
+  }
+  // Deep-ish copy so callers can't mutate the default
+  const copy = {};
+  for (const [t, subs] of Object.entries(CASE_TYPE_MAP_DEFAULT)) copy[t] = subs.slice();
+  return copy;
+}
+
+/* Display convention: "Type: Subtype" when both present, plain type when
+   subtype empty. Takes a case-shaped row ({case_type, case_subtype}). */
+function fmtCaseType(c) {
+  if (!c) return '';
+  const t = c.case_type || '';
+  const s = c.case_subtype || '';
+  return s ? `${t}: ${s}` : t;
+}
+
+/* Populate a case-type FILTER <select> from the map. Mirrors the shells'
+   eventtypelist populate: static options in the markup (e.g. value="%" All)
+   are preserved, dynamic options are tagged data-dyn and replaced on
+   re-populate, and the current value is restored so a re-populate never
+   clobbers a user's choice.
+
+   Option encoding (types/subtypes are opaque — no delimiter parsing):
+     option.value          = visible label (unique, restore-by-value safe)
+     option.dataset.type    = case_type to filter on
+     option.dataset.subtype = case_subtype to filter on ('' / absent = all)
+   A type WITH subtypes yields "Type (all)" + one "Type: Sub" per subtype;
+   a type WITHOUT subtypes yields a plain "Type" option.
+
+   Readers should use the selected option's dataset, falling back to value
+   for the static options:
+     const opt = sel.selectedOptions[0];
+     const type = opt ? (opt.dataset.type ?? opt.value) : '%';
+     const subtype = (opt && opt.dataset.subtype) || ''; */
+function populateCaseTypeFilter(sel) {
+  if (!sel) return;
+  const prev = sel.value;
+  sel.querySelectorAll('option[data-dyn="1"]').forEach(o => o.remove());
+  const map = getCaseTypeMap();
+  for (const [type, subs] of Object.entries(map)) {
+    const add = (label, subtype) => {
+      const opt = document.createElement('option');
+      opt.value = label;
+      opt.textContent = label;
+      opt.setAttribute('data-dyn', '1');
+      opt.dataset.type = type;
+      if (subtype) opt.dataset.subtype = subtype;
+      sel.appendChild(opt);
+    };
+    if (subs.length) {
+      add(`${type} (all)`, '');
+      subs.forEach(s => add(`${type}: ${s}`, s));
+    } else {
+      add(type, '');
+    }
+  }
+  if (prev) sel.value = prev;
+  if (!sel.value) sel.selectedIndex = 0; // prev label no longer exists
+}
+
 function resizeTextarea(textarea) {
   textarea.style.height = "auto"; // Reset height
   textarea.style.height = Math.min(textarea.scrollHeight, 300) + "px"; // Adjust but don't exceed max
@@ -1319,8 +1417,8 @@ function CasePicker(hostEl, options = {}) {
       line1.textContent = num;
       row.appendChild(line1);
 
-      // L2 — case_id · case_type · case_stage
-      const meta = [r.case_id, r.case_type, r.case_stage].filter(Boolean).join('  ·  ');
+      // L2 — case_id · case_type[: case_subtype] · case_stage
+      const meta = [r.case_id, fmtCaseType(r), r.case_stage].filter(Boolean).join('  ·  ');
       const line2 = document.createElement('div');
       line2.className = 'cp-sub';
       line2.textContent = meta;
@@ -1924,7 +2022,8 @@ function newApptDialog(opts = {}) {
       let sel = `<select id="naCaseSel" style="width:300px;">`;
       if (caseSide.allowEmpty) sel += `<option value="" selected>— none —</option>`;
       list.forEach(c => {
-        const label = caseLabelOf(c) + (c.case_type ? `  ·  ${escAttr(c.case_type)}` : '');
+        const typeLabel = fmtCaseType(c);
+        const label = caseLabelOf(c) + (typeLabel ? `  ·  ${escAttr(typeLabel)}` : '');
         sel += `<option value="${c.case_id}">${label}</option>`;
       });
       sel += `</select>`;
@@ -2730,9 +2829,14 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
     ? prefill.primary_contact_id
     : null;
 
-  const COMMON_TYPES = ['Bankruptcy', 'Bankruptcy - Ch. 7', 'Bankruptcy - Ch. 13', 'Other'];
-  const typeOptions = COMMON_TYPES
-    .map(t => `<option${t === 'Bankruptcy' ? ' selected' : ''}>${escAttr(t)}</option>`)
+  // Type select is map-driven (fe-case_types via getCaseTypeMap). The 'Other'
+  // free-text override is preserved: selecting 'Other' reveals an input that,
+  // when non-empty, replaces case_type (types stay opaque free text). Subtype
+  // select cascades from the chosen type; hidden when the type has none.
+  const typeMap = getCaseTypeMap();
+  const typeKeys = Object.keys(typeMap);
+  const typeOptions = typeKeys
+    .map((t, i) => `<option${i === 0 ? ' selected' : ''}>${escAttr(t)}</option>`)
     .join('');
 
   const prefName = prefill.primary_contact_name
@@ -2747,10 +2851,13 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
 
       <div class="ncf-field">
         <label for="ncf-type">Case type</label>
-        <select id="ncf-type"
-          onchange="E('ncf-other-type').style.display = this.value === 'Other' ? '' : 'none';">
+        <select id="ncf-type">
           ${typeOptions}
         </select>
+      </div>
+      <div class="ncf-field" id="ncf-subtype-wrap" style="display:none;">
+        <label for="ncf-subtype">Subtype</label>
+        <select id="ncf-subtype"></select>
       </div>
       <div class="ncf-field">
         <input type="text" id="ncf-other-type" placeholder="Enter case type" style="display:none;">
@@ -2783,6 +2890,21 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
       // contact, start enabled and seed the picker's input with the name.
       if (confirmBtn) confirmBtn.disabled = (selectedContactId == null);
 
+      // Cascading subtype: repopulate from the map on every type change.
+      // Blank first option = "no subtype" (subtype is always optional).
+      // 'Other' additionally reveals the free-text type override.
+      const syncNcfType = () => {
+        const t = E('ncf-type').value;
+        const subs = typeMap[t] || [];
+        const subSel = E('ncf-subtype');
+        subSel.innerHTML = `<option value="" selected>—</option>`
+          + subs.map(s => `<option>${escAttr(s)}</option>`).join('');
+        E('ncf-subtype-wrap').style.display = subs.length ? '' : 'none';
+        E('ncf-other-type').style.display = (t === 'Other') ? '' : 'none';
+      };
+      E('ncf-type').addEventListener('change', syncNcfType);
+      syncNcfType();
+
       picker = ContactPicker(E('ncf-picker-mount'), {
         placeholder: 'Search contacts…',
         initialQuery: prefName && (selectedContactId == null) ? prefName : '',
@@ -2808,15 +2930,18 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
         return false;
       }
       const typeRaw = E('ncf-type').value;
-      const caseType = (typeRaw === 'Other')
-        ? E('ncf-other-type').value.trim()
-        : typeRaw;
+      // 'Other' + non-empty free text = custom opaque type. Empty free text
+      // falls back to the literal 'Other' (it's a real category now).
+      const otherTxt = (E('ncf-other-type') && E('ncf-other-type').value || '').trim();
+      const caseType = (typeRaw === 'Other' && otherTxt) ? otherTxt : typeRaw;
       if (!caseType) {
-        Swal.showValidationMessage(typeRaw === 'Other'
-          ? 'Enter a case type.'
-          : 'Select a case type.');
+        Swal.showValidationMessage('Select a case type.');
         return false;
       }
+      // Subtype select only carries a value when the chosen type has subtypes
+      // (it's repopulated blank-first on every type change), so a stale value
+      // can't leak across types.
+      const caseSubtype = (E('ncf-subtype') && E('ncf-subtype').value || '').trim();
 
       // Docket fields — opaque, optional. Trim; empty → null (match intake's
       // empty→null handling). No shape parsing.

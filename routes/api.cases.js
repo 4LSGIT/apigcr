@@ -25,6 +25,7 @@ router.get('/api/cases', jwtOrApiKey, async (req, res) => {
     const result = await caseService.listCases(req.db, {
       query: req.query.q || req.query.query || "",
       type: req.query.type || "%",
+      subtype: req.query.subtype || "",
       stage: req.query.stage || "%",
       status: req.query.status || "%",
       sort_by: req.query.sort_by || "c.case_open_date",

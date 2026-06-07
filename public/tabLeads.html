@@ -13,11 +13,8 @@
     Case Type:
     <select id="tabLeadsType" style="width: auto">
       <option value="%">All</option>
-      <option value="Bankruptcy - Ch%" selected>Bankruptcy - all chapters</option>
-      <option>Bankruptcy</option>
-      <option>Bankruptcy - Ch. 7</option>
-      <option>Bankruptcy - Ch. 13</option>
-      <option>Criminal</option>
+      <!-- Type / "Type: Subtype" options populated from fe-case_types via the
+           parent's populateCaseTypeFilter (scripts.js); see init below. -->
     </select>
     Stage:
     <select id="tabLeadsStage" style="width: auto">
@@ -84,6 +81,16 @@
   const P = window.parent;
   const E = (id) => document.getElementById(id);
   let limit = P.limit || 100;
+
+  // Populate the type filter from fe-case_types via the parent's shared
+  // helper (scripts.js loads in the shell, not in this iframe). Default to
+  // "Bankruptcy (all)" to match the old "Bankruptcy - all chapters" default.
+  (function initLeadsTypeFilter() {
+    const sel = E("tabLeadsType");
+    if (P.populateCaseTypeFilter) P.populateCaseTypeFilter(sel);
+    const bk = [...sel.options].find(o => o.dataset.type === "Bankruptcy" && !o.dataset.subtype);
+    if (bk) sel.value = bk.value;
+  })();
 
   function resizeTextarea(textarea) {
     textarea.style.height = "auto";
@@ -234,7 +241,12 @@
     P.offsets.leads = offset;
     E("tabLeadsLoad").style.display = "block";
     let query = E("tabLeadsQuery").value;
-    let type = E("tabLeadsType").value;
+    // Selected option carries the filter in data attrs (data-type /
+    // data-subtype); the static "All" option falls through to value '%'.
+    if (P.populateCaseTypeFilter) P.populateCaseTypeFilter(E("tabLeadsType"));
+    const typeOpt = E("tabLeadsType").selectedOptions[0];
+    let type = typeOpt ? (typeOpt.dataset.type ?? typeOpt.value) : "%";
+    let subtype = (typeOpt && typeOpt.dataset.subtype) || "";
     let stage = E("tabLeadsStage").value;
     let status = E("tabLeadsStatus").value ? `%${E("tabLeadsStatus").value}%` : "%";
     let course = E("tabLeadsCourse").value;
@@ -251,7 +263,7 @@
 
     try {
       const result = await P.apiSend("/api/leads", "GET", {
-        query, type, stage, status, course, pre, order, order2, offset, limit
+        query, type, subtype, stage, status, course, pre, order, order2, offset, limit
       });
       const leads = result.leads;
       const counter = result.counter;
@@ -272,7 +284,7 @@
             rowHTML += `<a href="#" onclick="P.addFile('${client.contact_name.replace(/'/g, "\\'")}', 'client', '${client.contact_id}')">${client.contact_name}</a> (${client.contact_relate})<br>`;
           }
         });
-        rowHTML += `</td><td>${L.case_type}</td><td>${L.case_stage}</td><td>${L.case_status}</td><td>${L.open}</td>`;
+        rowHTML += `</td><td>${P.fmtCaseType ? P.fmtCaseType(L) : (L.case_type || "")}</td><td>${L.case_stage}</td><td>${L.case_status}</td><td>${L.open}</td>`;
         rowHTML += `<td><select onchange="updateCase('${L.case_id}', 'case_1st_course', this.value)">
           <option value="" ${L.case_1st_course === '' ? 'selected' : ''}></option>
           <option value="Sent Info" ${L.case_1st_course === 'Sent Info' ? 'selected' : ''}>Sent Info</option>

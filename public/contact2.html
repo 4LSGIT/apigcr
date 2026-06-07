@@ -913,7 +913,7 @@ function putCases() {
     row.innerHTML = `<td><a href="#" onclick="P.addFile('${C.case_id}','case','${C.case_id}');return false">${C.case_id}</a></td>
       <td>${C.relate_type}</td>
       <td>${C.case_number_full||C.case_number||"No Case Number"}</td>
-      <td>${C.case_type}</td><td>${C.case_stage}</td><td>${C.case_status}</td>
+      <td>${fmtCaseType(C)}</td><td>${C.case_stage}</td><td>${C.case_status}</td>
       <td>${C.open||""}</td><td>${C.file||""}</td><td>${C.close||""}</td>`;
   });
 }
@@ -1049,31 +1049,20 @@ window.addEventListener('message', async (e) => {
 });
 
 // ── Cases tab — create new case ─────────────────────────────
-async function newCase() {
-  Swal.fire({
-    title: "Create New Case:",
-    html: `<label class="input-label">Case Type:</label>
-           <select id="newCaseType">
-             <option>Bankruptcy - Ch. 7</option>
-             <option>Bankruptcy - Ch. 13</option>
-             <option>Other</option>
-           </select>`,
-    showCancelButton: true,
-    confirmButtonText: 'Create',
-    showLoaderOnConfirm: true,
-    preConfirm: async () => {
-      const type = E("newCaseType").value;
-      if (!type) { Swal.showValidationMessage("Please select a case type"); return false; }
-      try {
-        const data = await P.apiSend("/api/intake/case", "POST",
-          { contact_id: window.entityData.contact.contact_id, case_type: type });
-        Toast.fire({ icon: "success", title: "Case Created!", text: `Case ID: ${data.id}` });
-        P.addFile(data.id, 'case', data.id);
-      } catch (err) {
-        Toast.fire({ icon: "error", title: "Error", text: err.message });
-      }
-    }
-  });
+// Delegates to the shared NewCaseForm (scripts.js, Phase 4.2) with this
+// contact pre-selected as Primary. The bespoke dialog this replaces posted
+// pre-split case_type values ("Bankruptcy - Ch. 7") — a live old-shape
+// writer after the 2026-06 type/subtype split. NewCaseForm opens the new
+// case file itself on success; we just refresh this contact's case list.
+function newCase() {
+  const ct = window.entityData.contact || {};
+  NewCaseForm(
+    {
+      primary_contact_id:   ct.contact_id,
+      primary_contact_name: ct.contact_name || '',
+    },
+    async () => { await loadEntityData(); putCases(); }
+  );
 }
 
 // ── Appointments tab — confirmation message builder ─────────

@@ -140,13 +140,8 @@
       Case Type:
       <select id="tabCasesType" style="width: auto">
         <option value="%">All</option>
-        <option>Bankruptcy</option>
-        <option>Bankruptcy - Ch. 7</option>
-        <option>Bankruptcy - Ch. 13</option>
-        <option value="Bankruptcy - Ch%" default>
-          Bankruptcy - all chapters
-        </option>
-        <option>Criminal</option>
+        <!-- Type / "Type: Subtype" options are populated from fe-case_types
+             (populateCaseTypeFilter in scripts.js) after firmData loads. -->
       </select>
       Stage:
       <select id="tabCasesStage" style="width: auto">
@@ -201,7 +196,16 @@
       E("tabCasesLoad").style.display = "block";
 
       const q = E("tabCasesQuery").value;
-      const type = E("tabCasesType").value;
+      // Type filter options come from fe-case_types (populateCaseTypeFilter
+      // is idempotent and preserves the selection — safe to re-run here in
+      // case this fires before the post-auth populate). The selected option
+      // carries the filter in data attrs: data-type (case_type) and
+      // data-subtype (exact case_subtype, '' = all). The static "All"
+      // option has neither and falls through to its value '%'.
+      populateCaseTypeFilter(E("tabCasesType"));
+      const typeOpt = E("tabCasesType").selectedOptions[0];
+      const type = typeOpt ? (typeOpt.dataset.type ?? typeOpt.value) : "%";
+      const subtype = (typeOpt && typeOpt.dataset.subtype) || "";
       const stage = E("tabCasesStage").value;
       const status = E("tabCasesStatus").value;
       const sort_by = E("tabCasesOrder").value;
@@ -216,6 +220,7 @@
       const params = { limit, offset, sort_by, sort_dir };
       if (q) params.q = q;
       if (type !== '%') params.type = type;
+      if (subtype) params.subtype = subtype;
       if (stage !== '%') params.stage = stage;
       if (status) params.status = `%${status}%`;
 
@@ -237,7 +242,7 @@
         <td><a href="#" onclick="addFile('${C.case_number || C.case_id}','case','${C.case_id}')">${C.case_id}</a></td>
         <td>${clientsHTML}</td>
         <td>${C.case_number}</td>
-        <td>${C.case_type}</td>
+        <td>${fmtCaseType(C)}</td>
         <td>${C.case_stage}</td>
         <td>${C.case_status}</td>
         <td>${C.open}</td>
@@ -2184,6 +2189,12 @@ async function initAuth() {
         });
         if (prev) sel.value = prev;
       });
+
+      // Populate the Cases-tab type filter from fe-case_types — same single
+      // source as NewCaseForm and case2's overview selects
+      // (populateCaseTypeFilter in scripts.js). Re-run on every init for the
+      // same restore-don't-clobber behavior as the event-type selects above.
+      populateCaseTypeFilter(E('tabCasesType'));
     }
 
     initAuth();
