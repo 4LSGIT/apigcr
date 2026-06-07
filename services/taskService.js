@@ -324,7 +324,7 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
     // One-click complete link (requires the digest query to SELECT t.task_action_token)
     const doneHtml = t.task_action_token
       ? `<a href="${APP_URL}/t/${t.task_action_token}" title="Mark complete"
-            style="color:#059669;text-decoration:none;font-weight:700;font-size:14px">✓</a>`
+            style="color:#059669;text-decoration:underline;font-weight:600;font-size:12px;white-space:nowrap">mark&nbsp;done</a>`
       : '';
     return `<tr style="border-bottom:1px solid #f3f4f6">
       <td style="padding:8px 4px 8px 0;font-size:13px;color:#111827;font-weight:500;
@@ -353,7 +353,7 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
             <th style="padding:6px 0 6px 4px;font-size:11px;color:#9ca3af;font-weight:600;
                        text-align:left;border-bottom:1px solid #e5e7eb">Linked to</th>
             <th style="padding:6px 0 6px 6px;font-size:11px;color:#9ca3af;font-weight:600;
-                       text-align:center;border-bottom:1px solid #e5e7eb;white-space:nowrap">Done</th>
+                       text-align:center;border-bottom:1px solid #e5e7eb;white-space:nowrap"></th>
           </tr>
         </thead>
         <tbody>
@@ -385,7 +385,7 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
     ${section('Pending',   '#4f46e5', '⚪', pending)}
 
     <p style="margin:20px 0 0;font-size:13px;color:#9ca3af">
-      The ✓ link marks a task complete (one confirmation click).
+      The mark done link completes a task (one confirmation click).
       Log in to YisraCase to manage your tasks reminder preferences.
     </p>
   `;

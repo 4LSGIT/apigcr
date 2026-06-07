@@ -20,7 +20,9 @@
  * @param {string}  opts.q       — search term (required)
  * @param {string}  [opts.type='all']  — 'contact', 'case', or 'all'
  * @param {number}  [opts.limit=1]     — max results (1 = best match)
- * @returns {{ results: Array<{ name, type, id, detail }> }}
+ * @returns {{ results: Array<{ name, type, id, detail, case_type?, case_subtype? }> }}
+ *   Case rows additionally carry case_type / case_subtype so the picker UI
+ *   can label them "Type: Subtype" (fmtCaseType) instead of a generic "Case".
  */
 async function search(db, { q, type = 'all', limit = 1 } = {}) {
   if (!q || !q.trim()) return { results: [] };
@@ -69,6 +71,8 @@ async function search(db, { q, type = 'all', limit = 1 } = {}) {
       name: row.case_display || row.case_number_full || row.case_number || row.case_id,
       type: 'case',
       id: row.case_id,
+      case_type: row.case_type || '',
+      case_subtype: row.case_subtype || '',
       detail: '' // enriched later
     });
   }
@@ -94,7 +98,7 @@ async function search(db, { q, type = 'all', limit = 1 } = {}) {
   // Case by case_id (simple lookup — no JOINs)
   if (wantCases && looksLikeCaseId && !done()) {
     const [rows] = await db.query(
-      `SELECT case_id,
+      `SELECT case_id, case_type, case_subtype,
               COALESCE(case_number_full, case_number, case_id) AS case_display
        FROM cases WHERE case_id = ? LIMIT 1`,
       [term]
@@ -131,7 +135,7 @@ async function search(db, { q, type = 'all', limit = 1 } = {}) {
   // Case by case_number or case_number_full (simple lookup — no JOINs)
   if (wantCases && looksLikeCaseRef && !done()) {
     const [rows] = await db.query(
-      `SELECT case_id,
+      `SELECT case_id, case_type, case_subtype,
               COALESCE(case_number_full, case_number, case_id) AS case_display
        FROM cases
        WHERE case_number = ? OR case_number_full = ?
@@ -144,7 +148,7 @@ async function search(db, { q, type = 'all', limit = 1 } = {}) {
   // Also try case_id for short numbers (e.g. someone types a numeric case_id)
   if (wantCases && isShortNumber && !done()) {
     const [rows] = await db.query(
-      `SELECT case_id,
+      `SELECT case_id, case_type, case_subtype,
               COALESCE(case_number_full, case_number, case_id) AS case_display
        FROM cases WHERE case_id = ? LIMIT 1`,
       [term]
@@ -191,7 +195,7 @@ async function search(db, { q, type = 'all', limit = 1 } = {}) {
     queryParams.push(remaining);
 
     const [rows] = await db.query(
-      `SELECT DISTINCT c.case_id,
+      `SELECT DISTINCT c.case_id, c.case_type, c.case_subtype,
               COALESCE(c.case_number_full, c.case_number, c.case_id) AS case_display
        FROM cases c
        JOIN case_relate cr ON c.case_id = cr.case_relate_case_id

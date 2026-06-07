@@ -1527,56 +1527,9 @@
     <button class="big-button" onclick="updateUserPass()">
       Change Password
     </button>
-    <button class="big-button" onclick="showClioCode()">
-      Get Clio Code
-    </button>
   </div>
 
   <script>
-    async function showClioCode() {
-      try {
-        const data = await apiSend("/clio-code");
-
-        const updatedAt = new Date(data.updated_at);
-        const formattedTime = updatedAt.toLocaleString("en-US", {
-          timeZone: "America/New_York",
-          year: "numeric",
-          month: "short",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-          timeZoneName: "short"
-        });
-
-        const secondsOld = Math.floor((Date.now() - updatedAt.getTime()) / 1000);
-        let freshnessLabel = "";
-        if (secondsOld < 60) freshnessLabel = "Just updated";
-        else if (secondsOld < 300) freshnessLabel = "Recently updated";
-        else freshnessLabel = `${Math.floor(secondsOld / 60)} min ago`;
-
-        Swal.fire({
-          title: "Clio Login Code",
-          html: `
-            <div style="font-size: 24px; font-weight: bold; margin: 10px 0;"> ${data.value}</div>
-            <div style="font-size: 13px; color: #666;"> Updated ${formattedTime}</div>
-            <div style="font-size: 12px; color: #888;">${freshnessLabel}</div>`,
-          showCancelButton: true,
-          confirmButtonText: "Copy Code",
-          cancelButtonText: "Close",
-          icon: "info",
-          }).then(result => {
-          if (result.isConfirmed) {
-            navigator.clipboard.writeText(data.value);
-          }
-        });
-
-      } catch (err) {
-        console.error(err);
-        Swal.fire({ title: "Error", text: "Unable to fetch login code", icon: "error", });
-      }
-    }
-
     function updateUserInfo() {
       Swal.fire({
         title: "Update User Information",
@@ -1754,6 +1707,7 @@
   <button class="big-button" data-target="videoManagerDiv"    data-exclusive-group="more">Video Manager</button>
   <button class="big-button" data-target="redirectsDiv"    data-exclusive-group="more">Redirects Manager</button>
   <button class="big-button" data-target="landingPagesDiv" data-exclusive-group="more">Landing Pages</button>
+  <button class="big-button" onclick="showClioCode()">Get Clio Code</button>
 
   <div id="manualsDiv"         class="more-panel" style="display:none">
     <iframe data-src="/manuals.html"></iframe>
@@ -1774,7 +1728,51 @@
     <iframe data-src="/pageManager.html"></iframe>
   </div>
 </div>
+<script>
+      async function showClioCode() {
+      try {
+        const data = await apiSend("/clio-code");
 
+        const updatedAt = new Date(data.updated_at);
+        const formattedTime = updatedAt.toLocaleString("en-US", {
+          timeZone: "America/New_York",
+          year: "numeric",
+          month: "short",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true,
+          timeZoneName: "short"
+        });
+
+        const secondsOld = Math.floor((Date.now() - updatedAt.getTime()) / 1000);
+        let freshnessLabel = "";
+        if (secondsOld < 60) freshnessLabel = "Just updated";
+        else if (secondsOld < 300) freshnessLabel = "Recently updated";
+        else freshnessLabel = `${Math.floor(secondsOld / 60)} min ago`;
+
+        Swal.fire({
+          title: "Clio Login Code",
+          html: `
+            <div style="font-size: 24px; font-weight: bold; margin: 10px 0;"> ${data.value}</div>
+            <div style="font-size: 13px; color: #666;"> Updated ${formattedTime}</div>
+            <div style="font-size: 12px; color: #888;">${freshnessLabel}</div>`,
+          showCancelButton: true,
+          confirmButtonText: "Copy Code",
+          cancelButtonText: "Close",
+          icon: "info",
+          }).then(result => {
+          if (result.isConfirmed) {
+            navigator.clipboard.writeText(data.value);
+          }
+        });
+
+      } catch (err) {
+        console.error(err);
+        Swal.fire({ title: "Error", text: "Unable to fetch login code", icon: "error", });
+      }
+    }
+</script>
   
 <div id="tabAdmin" class="tab-main">
   <h2>Admin</h2>
@@ -2374,7 +2372,10 @@ async function initAuth() {
     function showSearchPicker(results, tab) {
       const rows = results.map(r => {
         const icon = r.type === 'contact' ? 'fa-user' : 'fa-landmark';
-        const label = r.type === 'contact' ? 'Contact' : 'Case';
+        // Case rows label with "Type: Subtype" (fmtCaseType, scripts.js) —
+        // the landmark icon + contact-name line already convey case-ness.
+        // Untyped cases (and older cached results) fall back to 'Case'.
+        const label = r.type === 'contact' ? 'Contact' : (fmtCaseType(r) || 'Case');
         const safeName = (r.name || '').replace(/'/g, "\\'");
         const fileType = r.type === 'contact' ? 'client' : r.type;
         const fileId = r.id + (tab ? `&tab=${tab}` : '');
