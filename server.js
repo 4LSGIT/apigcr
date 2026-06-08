@@ -4,6 +4,7 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
 require("dotenv").config();
+const { alert } = require("./lib/alerting");
 
 const app = express();
 var corsOptions = { origin: "*" };
@@ -48,6 +49,44 @@ app.use((req, res, next) => {
   req.db = db;
   next();
 });
+
+// 500-response observer — must mount BEFORE the route loop so every
+// route's res is wrapped. Records ANY outgoing 5xx regardless of whether
+// the route self-handled or called next(err). See lib/responseObserver.js.
+app.use(require("./lib/responseObserver")(db));
+
+// Process-level guards — registered once. unhandledRejection is the ONLY
+// thing that catches async route handlers without try/catch (Express 4
+// never routes those rejections to error middleware).
+if (!global.__ycProcessGuards) {
+  global.__ycProcessGuards = true;
+  process.on("unhandledRejection", (reason) => {
+    try {
+      alert(db, {
+        source: "app", kind: "unhandled_rejection", severity: "error",
+        group_key: "app:unhandled_rejection",
+        title: "Unhandled promise rejection",
+        message: reason?.stack || String(reason),
+      });
+    } catch (_) {}
+    console.error("[unhandledRejection]", reason);
+    // do NOT exit — the process is still coherent; the request just hangs.
+  });
+  process.on("uncaughtException", (err) => {
+    try {
+      alert(db, {
+        source: "app", kind: "uncaught_exception", severity: "critical",
+        group_key: "app:uncaught_exception",
+        title: "Uncaught exception",
+        message: err?.stack || String(err),
+      });
+    } catch (_) {}
+    console.error("[uncaughtException]", err);
+    // Continuing after an uncaught exception is unsafe; Cloud Run restarts
+    // the instance. 2s lets the alert insert / critical-path send flush.
+    setTimeout(() => process.exit(1), 2000);
+  });
+}
 
 fs.readdirSync(routesPath).forEach((file) => {
   if (file.endsWith(".js")) {
