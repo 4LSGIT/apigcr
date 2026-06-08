@@ -1980,19 +1980,6 @@
     <iframe data-src="/settings.html"></iframe>
   </div>
 
-  <script>
-    function readonlyKeysSwal() {
-      Swal.fire({
-        title: `Readonly API Keys`,
-        html: `<iframe src="/readonlyKeys.html" width="100%" height="700" style="border:none;"></iframe>`,
-        width: "85%",
-        heightAuto: true,
-        showConfirmButton: false,
-        showCloseButton: true,
-      });
-    }
-  </script>
-
 
 <div id="tabMore" class="tab-main">
   <h2>More Features</h2>
@@ -2080,14 +2067,18 @@
   
 <div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-crown"></i>'>
   <h2>Admin</h2>
-  <button class="big-button" onclick="adminTask()">Button</button>
-  <button class="big-button" onclick="readonlyKeysSwal()">Readonly Keys (SU)</button>
-  <button class="big-button" data-target="dbConsoleDiv" data-exclusive-group="admin">DB Console (SU)</button>
+  <button class="big-button" onclick="etchSwal()"><i class="fa-solid fa-pen-ruler fa-2xl"></i><br><br>Etch</button>
+  <button class="big-button" data-target="readonlyKeysDiv" data-exclusive-group="admin"><i class="fa-solid fa-key fa-2xl"></i><br><br>Readonly Keys (SU)</button>
+  <button class="big-button" data-target="dbConsoleDiv" data-exclusive-group="admin"><i class="fa-solid fa-database fa-2xl"></i><br><br>DB Console (SU)</button>
   <br><br>
-  <button class="big-button" data-target="connectionsDiv" data-exclusive-group="admin">Connections (SU)</button>
-  <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin">API Tester (SU)</button>
+  <button class="big-button" data-target="connectionsDiv" data-exclusive-group="admin"><i class="fa-solid fa-plug fa-2xl"></i><br><br>Connections (SU)</button>
+  <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin"><i class="fa-solid fa-vial fa-2xl"></i><br><br>API Tester (SU)</button>
 
   <div id="sequencesDiv" style="display:none"></div>
+  <div id="readonlyKeysDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/readonlyKeys.html"
+            style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
+  </div>
   <div id="dbConsoleDiv" style="display:none; margin-top:10px;">
     <iframe data-src="/dbConsole.html"
             style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
@@ -2121,6 +2112,21 @@
 <script>
   function adminTask(){
     alert("admin task executed!")
+  }
+
+  // ── iframe-in-Swal popout pattern ────────────────────────────────────
+  // Pops a SweetAlert modal hosting a full page in an <iframe>. Good for
+  // one-off tools you want as a modal rather than a drill-in panel.
+  // (Contrast: the data-target/data-src panels below lazy-load inline.)
+  function etchSwal() {
+    Swal.fire({
+      title: `Etch`,
+      html: `<iframe src="/etch.html" width="100%" height="700" style="border:none;"></iframe>`,
+      width: "85%",
+      heightAuto: true,
+      showConfirmButton: false,
+      showCloseButton: true,
+    });
   }
   // ── Panel toggle + drill-in pill strip ── HOW TO USE ──────────────────
   // Panel button:  <button class="big-button" data-target="myDiv" data-exclusive-group="more">
