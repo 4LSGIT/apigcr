@@ -56,6 +56,11 @@ fs.readdirSync(routesPath).forEach((file) => {
   }
 });
 
+// Error middleware — must mount AFTER all route mounts so next(err) from
+// any route/middleware lands here. See lib/errorMiddleware.js for the
+// coverage limitation note (most routes self-handle 500s and never reach it).
+app.use(require("./lib/errorMiddleware")(db));
+
 require("./startup/init")(db);
 console.log("db ready");
 

@@ -21,11 +21,14 @@
 //      rather than serializing on the SQL lock.
 //
 // Refresh-failure alerting: at exactly the alert threshold (1 → 2 transition)
-// we flip oauth_status to 'refresh_failed' AND fire one Pabbly alert. The
+// we flip oauth_status to 'refresh_failed' AND fire one critical alert via
+// lib/alerting (immediate email, 1h per-group throttle, SMS fallback). The
 // status flip naturally dedups subsequent failures in the same chain — count > 2
 // won't refire because the threshold check is `=== ALERT_THRESHOLD`. A
 // successful refresh resets count to 0, so a future failure run gets a fresh
-// alert.
+// alert. The inserted row doubles as the sweep's open incident row
+// (source='oauth', group_key='oauth:{id}'); runErrorSweep's close pass
+// resolves it on recovery.
 //
 // Logging: never log access_token, refresh_token, code, code_verifier, or
 // client_secret values. Verbose mode (per-credential `verbose` flag) logs
@@ -34,17 +37,11 @@
 const crypto = require('crypto');
 const fetch = require('node-fetch');
 const { encrypt, decrypt } = require('../lib/credentialCrypto');
+const { alert } = require('../lib/alerting');
 
 // ─────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────
-
-// Reuse the same Pabbly endpoint as services/ringcentralService.js. Inlined
-// rather than imported from RC so this module stands alone, and not factored
-// into a shared lib/pabblyAlert.js because the slice deliverable is exactly
-// two files. Decision noted in slice report.
-const PABBLY_ALERT_URL =
-  'https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTZhMDYzMTA0M2Q1MjY5NTUzNjUxMzUi_pc';
 
 const REFRESH_WINDOW_SECONDS = 120;     // refresh if expiry within this window
 const SECONDARY_OK_SECONDS   = 60;      // post-lock recheck threshold
@@ -53,26 +50,6 @@ const ALERT_THRESHOLD        = 2;       // consecutive failures → alert + stat
 
 // In-process dedup of in-flight refresh promises. Cleared on settle.
 const inFlightRefreshes = new Map();
-
-// ─────────────────────────────────────────────────────────────
-// Pabbly alert (best-effort; failures swallowed, never block)
-// ─────────────────────────────────────────────────────────────
-
-async function sendAlert(type, message, extra = {}) {
-  try {
-    await fetch(PABBLY_ALERT_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        error_type: type,
-        alert: message,
-        environment: process.env.ENVIRONMENT || 'unknown',
-        timestamp: new Date().toISOString(),
-        ...extra,
-      }),
-    });
-  } catch (_) { /* best-effort */ }
-}
 
 // ─────────────────────────────────────────────────────────────
 // Logging helpers
@@ -278,7 +255,7 @@ async function applyTokenResponse(db, credentialId, response, existingRefreshTok
 
 /**
  * Increment failure counter, stamp oauth_last_error, and at exactly the
- * alert threshold flip status to 'refresh_failed' and fire one Pabbly alert.
+ * alert threshold flip status to 'refresh_failed' and fire one critical alert via lib/alerting.
  * The threshold check is `=== ALERT_THRESHOLD` so subsequent failures in
  * the same chain don't refire — the status flip naturally dedups, and a
  * successful refresh resets count to 0 for fresh alerting later.
@@ -306,11 +283,24 @@ async function recordRefreshFailure(db, credentialId, credentialName, error) {
       `UPDATE credentials SET oauth_status = 'refresh_failed' WHERE id = ?`,
       [credentialId]
     );
-    sendAlert(
-      'oauth_refresh_failed',
-      `OAuth credential "${credentialName}" (id=${credentialId}) failed to refresh ${ALERT_THRESHOLD} times consecutively — manual reauthorization may be required`,
-      { credential_id: credentialId, credential_name: credentialName, last_error: errMsg }
-    );
+    // Critical → lib/alerting sends the email immediately (1h per-group
+    // throttle, SMS fallback). The inserted row IS the open incident row:
+    // the sweep's oauth open-check (source='oauth', group_key, resolved_at
+    // IS NULL) sees it and will not open a duplicate; the sweep's close
+    // pass resolves it on recovery. dedup_key intentionally omitted
+    // (stateful-style row, matching _scanOauth's own inserts). alert()
+    // never throws/rejects — fire-and-forget is safe.
+    alert(db, {
+      source: 'oauth',
+      kind: 'refresh_failed',
+      group_key: `oauth:${credentialId}`,
+      severity: 'critical',
+      title: `OAuth credential ${credentialId} (${credentialName}) refresh failed`,
+      message:
+        `Failed to refresh ${ALERT_THRESHOLD} times consecutively — manual ` +
+        `reauthorization may be required.\nLast error: ${errMsg}`,
+      context: { credential_id: credentialId, name: credentialName, strike_count: newCount },
+    });
   }
 }
 
@@ -511,7 +501,7 @@ async function _refreshUnderLock(db, credentialId) {
  *
  * On failure: increments refresh_failure_count, stamps oauth_last_error.
  * At exactly ALERT_THRESHOLD consecutive failures, sets
- * oauth_status = 'refresh_failed' and fires one Pabbly alert. Re-throws.
+ * oauth_status = 'refresh_failed' and fires one critical alert via lib/alerting. Re-throws.
  *
  * @param {object} db
  * @param {number} credentialId

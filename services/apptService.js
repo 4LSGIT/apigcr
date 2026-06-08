@@ -22,6 +22,7 @@ const logService   = require('./logService');
 const { localToUTC, FIRM_TZ } = require('./timezoneService');
 const { DateTime } = require('luxon');
 const calendar = require('./calendarService');
+const { alert } = require('../lib/alerting');
 
 // Lazy-require to avoid circular dependency (sequenceEngine → job_executor → internal_functions)
 function getSequenceEngine() {
@@ -41,48 +42,34 @@ function getSequenceEngine() {
 //
 // All calendar work stays fire-and-forget (post-response) — a calendar
 // failure must never block or roll back an appointment write, matching the
-// prior behavior. On failure we email IT (throttled) until a real alert
-// service exists, following the ringcentral legacyTrap pattern.
+// prior behavior. On failure we record an alert via lib/alerting; it rides
+// the hourly digest with the DB-backed 6h per-group cooldown.
 // ─────────────────────────────────────────────────────────────
 
-// In-memory throttle so a burst of calendar failures can't bury IT in email.
-// 1 hour per failure-kind. Process-local (one entry per Cloud Run instance) —
-// acceptable for a low-volume alert.
-const GCAL_ALERT_THROTTLE_MS = 60 * 60 * 1000;
-const _lastGcalAlertAt = new Map();
-
 /**
- * Email IT about a calendar failure, throttled per `kind`. Never throws.
- * Mirrors the ringcentral legacy-route alert: env IT_EMAIL / AUTO_EMAIL,
- * skip with a warning if unset.
+ * Record a calendar sync failure via lib/alerting. Never throws (alert()
+ * swallows internally); fire-and-forget. Replaces the old in-memory 1h
+ * email throttle — alert_state's DB-backed 6h per-group cooldown is
+ * multi-instance safe, which the per-process Map never was. Behavior
+ * change: notification rides the hourly digest instead of an instant
+ * IT_EMAIL send.
  */
 function alertGcalFailure(db, kind, detail) {
-  const now = Date.now();
-  if ((now - (_lastGcalAlertAt.get(kind) || 0)) < GCAL_ALERT_THROTTLE_MS) return;
-  _lastGcalAlertAt.set(kind, now);
-
-  const to   = process.env.IT_EMAIL;
-  const from = process.env.AUTO_EMAIL;
-  if (!to || !from) {
-    console.warn('[APPT SERVICE] IT_EMAIL or AUTO_EMAIL not set; gcal alert skipped');
-    return;
-  }
-
-  emailService.sendEmail(db, {
-    from,
-    to,
-    subject: `[YisraCase] Google Calendar sync failed: ${kind}`,
-    text:
-      `A Google Calendar operation failed in apptService.\n\n` +
-      `Operation:    ${kind}\n` +
-      `Environment:  ${process.env.ENVIRONMENT || 'unknown'}\n` +
-      `Time:         ${new Date().toISOString()}\n` +
-      `Detail:       ${detail}\n\n` +
+  alert(db, {
+    source: 'app',
+    kind: `gcal_${kind}_failed`,        // gcal_create_failed | gcal_delete_failed
+    group_key: `gcal_sync:${kind}`,
+    severity: 'error',
+    title: `Google Calendar sync failed: ${kind}`,
+    message:
+      `A Google Calendar operation failed in apptService.\n` +
+      `Operation: ${kind}\n` +
+      `Detail: ${detail}\n\n` +
       `The appointment record itself is unaffected — only the calendar event ` +
       `did not sync. Check the connection (Connections → Google) and the ` +
-      `credential's allowed_urls if this repeats.\n\n` +
-      `Throttled to once per hour per operation type.`,
-  }).catch(e => console.error('[APPT SERVICE] gcal alert email failed:', e.message));
+      `credential's allowed_urls if this repeats.`,
+    context: { operation: kind, detail: String(detail).slice(0, 500) },
+  });
 }
 
 /**
