@@ -137,6 +137,38 @@ function isDayRestricted(dateStr, restrictedSet) {
   return restrictedSet.has(dateStr);
 }
 
+/**
+ * Time-aware restriction check for a scheduling candidate.
+ *
+ * A slot is restricted when EITHER:
+ *   - its firm-tz civil date is in the restricted set (Saturday + Yom Tov), OR
+ *   - it falls in an "erev" evening window — from START_HOUR (6 PM) onward on
+ *     the day BEFORE a restricted date. This catches Friday evening (erev
+ *     Shabbos) and erev Yom Tov, which the date-only `isDayRestricted` misses
+ *     because Friday's (or erev-YT's) civil date is not itself in the set.
+ *
+ * Sunday is NOT restricted — the firm works Sundays (matches isWorkday).
+ * Saturday is handled wholesale via the restricted set (all day off), so we
+ * deliberately do not carve out a motzaei-Shabbos late-Saturday send window.
+ *
+ * @param {DateTime} dt          luxon DateTime already anchored in firm tz
+ * @param {Set}      restricted  from buildRestrictedSet
+ * @returns {boolean}
+ */
+function isSlotRestricted(dt, restricted) {
+  const dateStr = dt.toFormat('yyyy-LL-dd');
+  if (isDayRestricted(dateStr, restricted)) return true;
+
+  // Erev Shabbos / erev Yom Tov: 6 PM onward, when the NEXT civil day is
+  // restricted, the restriction has already begun.
+  if (dt.hour >= START_HOUR) {
+    const nextStr = dt.plus({ days: 1 }).toFormat('yyyy-LL-dd');
+    if (isDayRestricted(nextStr, restricted)) return true;
+  }
+
+  return false;
+}
+
 // ─────────────────────────────────────────────────────────────
 // isWorkday — check a specific datetime
 // ─────────────────────────────────────────────────────────────
@@ -327,31 +359,30 @@ async function nextBusinessDay(fromDate, options = {}) {
   }
 
   for (let i = 0; i < maxDaysAhead; i++) {
-    const dateStr   = candidateDt.toFormat('yyyy-LL-dd');
-    const dayOfWeek = candidateDt.weekday;   // Luxon: 1=Mon..7=Sun
+    // Build the candidate AT its target time first, so the restriction check
+    // is time-aware: a Friday-evening (erev Shabbos) or erev-Yom-Tov slot is
+    // rejected even though its civil date is not itself in the restricted
+    // set. Sunday is a normal workday and is NOT skipped (matches isWorkday);
+    // Saturday + Yom Tov are caught by isSlotRestricted via the restricted set.
+    //
+    // Jitter is applied via `.plus({ minutes: jitter })` (NOT by passing
+    // `minute: targetMin + jitter` to fromObject). Luxon rejects out-of-range
+    // field values — a negative or >59 minute makes the DateTime invalid,
+    // which silently becomes `Invalid Date` downstream and explodes when
+    // mysql2 tries to insert it as NULL into a NOT NULL
+    // scheduled_jobs.scheduled_time column. See enrollment 61 / step 3
+    // post-mortem (May 2026). The `.plus` path normalizes hour/day rollover
+    // correctly. Near day boundaries this can push across a day; non-issue
+    // for business-hours targets.
+    const jitter = randomizeMinutes > 0
+      ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
+      : 0;
 
-    // Skip Sunday (7 in Luxon), Saturday (handled via restricted set as
-    // Shabbos by buildRestrictedSet), Yom Tov (also in restricted).
-    if (dayOfWeek !== 7 && !isDayRestricted(dateStr, restricted)) {
-      // Found a valid day — apply time + jitter in firm timezone, return UTC.
-      //
-      // Jitter is applied via `.plus({ minutes: jitter })` (NOT by passing
-      // `minute: targetMin + jitter` to fromObject). Luxon rejects out-of-
-      // range field values — a negative or >59 minute makes the DateTime
-      // invalid, which silently becomes `Invalid Date` downstream and
-      // explodes when mysql2 tries to insert it as NULL into a NOT NULL
-      // scheduled_jobs.scheduled_time column. See enrollment 61 / step 3
-      // post-mortem (May 2026). The `.plus` path normalizes hour/day rollover
-      // correctly. Near day boundaries (e.g. target 00:30 with large jitter)
-      // this can push across a day; non-issue for business-hours targets.
-      const jitter = randomizeMinutes > 0
-        ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
-        : 0;
+    const localDt = candidateDt
+      .set({ hour: targetHour, minute: targetMin, second: 0, millisecond: 0 })
+      .plus({ minutes: jitter });
 
-      const localDt = candidateDt
-        .set({ hour: targetHour, minute: targetMin, second: 0, millisecond: 0 })
-        .plus({ minutes: jitter });
-
+    if (!isSlotRestricted(localDt, restricted)) {
       return localDt.toUTC().toJSDate();
     }
 
@@ -457,76 +488,74 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
     }
 
     // ── Too close to anchor? ──
+    // Checked on the raw candidate. Walking back over restricted days only
+    // moves earlier (gap grows), so this never newly trips post-walk.
     const hoursUntilAnchor = anchorDt.diff(candidateDt, 'hours').hours;
     if (hoursUntilAnchor < effectiveMin) {
       console.log(`[calendar] Attempt ${ai + 1}: too close (${hoursUntilAnchor.toFixed(1)}h < ${effectiveMin}h min) — trying next`);
       continue;
     }
 
-    // ── Already in the past? ──
-    if (candidateDt < nowDt) {
-      console.log(`[calendar] Attempt ${ai + 1}: already in the past — trying next`);
-      continue;
-    }
+    // ── Walk back over restricted slots (Shabbos / Yom Tov and their eves) ──
+    // Time-aware via isSlotRestricted: candidateDt carries its target
+    // time-of-day, so a Friday-evening (erev Shabbos) or erev-Yom-Tov slot is
+    // rejected even though its civil date is not itself in the restricted set
+    // — this is the fix for reminders landing Friday night during Shabbos.
+    // Sunday is a normal workday and is NOT skipped (matches isWorkday).
+    // Each walked-back day re-applies the intended firm-tz wall-clock time so
+    // the reminder lands at the same local time (DST-stable), via `.plus`
+    // (NOT minute field-arithmetic, which crashes Luxon on out-of-range mins).
+    let placed = !isSlotRestricted(candidateDt, restricted);
 
-    // ── Is the candidate's firm-tz day restricted? ──
-    const dayOfWeek = candidateDt.weekday;          // Luxon: 1=Mon..7=Sun
-    const dateStr   = candidateDt.toFormat('yyyy-LL-dd');
-
-    if (dayOfWeek === 7 || isDayRestricted(dateStr, restricted)) {
-      // Walk back day-by-day for a valid day, preserving the time of day.
-      let walkBackDt = candidateDt.minus({ days: 1 });
-      let found = false;
+    if (!placed) {
+      let walkBackDt = candidateDt;
       for (let d = 0; d < maxDaysBack; d++) {
-        const wStr = walkBackDt.toFormat('yyyy-LL-dd');
-        const wDay = walkBackDt.weekday;
-        if (wDay !== 7 && !isDayRestricted(wStr, restricted)) {
-          // Preserve the time-of-day in firm tz:
-          //   - timeOfDay branch: target time + fresh jitter, applied
-          //     via .plus (NOT minute field-arithmetic, which would
-          //     crash on negative or >59 minute values).
-          //   - else (sameTimeAsAnchor reached restricted day): keep
-          //     candidate's firm-tz hour/minute, so the reminder lands
-          //     at the same firm-TZ wall-clock time on the walked-back
-          //     day. DST-stable, unlike the prior moment-set-UTC-hour
-          //     path which shifted 1h across spring-forward / fall-back.
-          if (timeOfDay && !sameTimeAsAnchor) {
-            const [h, m] = timeOfDay.split(':').map(Number);
-            const jitter = randomizeMinutes > 0
-              ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
-              : 0;
-            walkBackDt = walkBackDt
-              .set({ hour: h, minute: m, second: 0, millisecond: 0 })
-              .plus({ minutes: jitter });
-          } else {
-            walkBackDt = walkBackDt.set({
-              hour:        candidateDt.hour,
-              minute:      candidateDt.minute,
-              second:      0,
-              millisecond: 0,
-            });
-          }
+        walkBackDt = walkBackDt.minus({ days: 1 });
 
-          const hoursCheck = anchorDt.diff(walkBackDt, 'hours').hours;
-          if (hoursCheck < effectiveMin) {
-            console.log(`[calendar] Attempt ${ai + 1} walked back: still too close — trying next attempt`);
-            break;
-          }
+        if (timeOfDay && !sameTimeAsAnchor) {
+          const [h, m] = timeOfDay.split(':').map(Number);
+          const jitter = randomizeMinutes > 0
+            ? Math.floor(Math.random() * (randomizeMinutes * 2 + 1)) - randomizeMinutes
+            : 0;
+          walkBackDt = walkBackDt
+            .set({ hour: h, minute: m, second: 0, millisecond: 0 })
+            .plus({ minutes: jitter });
+        } else {
+          walkBackDt = walkBackDt.set({
+            hour:        candidateDt.hour,
+            minute:      candidateDt.minute,
+            second:      0,
+            millisecond: 0,
+          });
+        }
 
-          if (walkBackDt < nowDt) {
-            console.log(`[calendar] Attempt ${ai + 1} walked back: in the past — trying next attempt`);
-            break;
-          }
+        if (isSlotRestricted(walkBackDt, restricted)) continue;
 
-          candidateDt = walkBackDt;
-          found = true;
+        // Valid slot — enforce gap + not-in-past on the walked-back slot.
+        const hoursCheck = anchorDt.diff(walkBackDt, 'hours').hours;
+        if (hoursCheck < effectiveMin) {
+          console.log(`[calendar] Attempt ${ai + 1} walked back: still too close — trying next attempt`);
           break;
         }
-        walkBackDt = walkBackDt.minus({ days: 1 });
-      }
+        if (walkBackDt < nowDt) {
+          console.log(`[calendar] Attempt ${ai + 1} walked back: in the past — trying next attempt`);
+          break;
+        }
 
-      if (!found) continue;
+        candidateDt = walkBackDt;
+        placed = true;
+        break;
+      }
+    } else {
+      // Raw candidate is a valid slot. Too-close already passed above; still
+      // enforce not-in-past (possible when the anchor itself is near-now).
+      if (candidateDt < nowDt) {
+        console.log(`[calendar] Attempt ${ai + 1}: already in the past — trying next`);
+        continue;
+      }
     }
+
+    if (!placed) continue;   // restricted run exhausted maxDaysBack — next attempt
 
     console.log(`[calendar] Attempt ${ai + 1}: scheduled at ${candidateDt.toUTC().toISO()}`);
     return { scheduledAt: candidateDt.toUTC().toJSDate(), attemptIndex: ai };
