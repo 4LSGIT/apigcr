@@ -13,7 +13,7 @@
  *   const result = await apptService.createAppt(db, { ... });
  */
 
-const { getSetting, getSettings } = require('./settingsService');
+const { getSettings } = require('./settingsService');
 const smsService   = require('./phoneService');
 const emailService = require('./emailService');
 const gcal         = require('./gcalService');
@@ -274,17 +274,68 @@ async function fetchApptWithContact(db, apptId) {
 }
 
 /**
+ * Send appointment confirmation SMS and/or email. Fire-and-forget — never
+ * throws; each channel failure is logged and swallowed so a messaging problem
+ * never affects the appointment write. Senders come from app_settings
+ * (sms_default_from / email_default_from); recipient phone/email are looked up
+ * from the contact.
+ *
+ * Shared by createAppt and cancelAppt so the two paths can't drift. The
+ * "message required when a channel is requested" check lives in the calling
+ * mutation, which throws BEFORE any state change — so by the time we get here
+ * the message is already present (the guard below is just defensive).
+ *
+ * @param {object}  db
+ * @param {object}  opts
+ * @param {number}  opts.contactId
+ * @param {boolean} opts.sms
+ * @param {boolean} opts.email
+ * @param {string}  opts.message
+ * @param {string}  [opts.subject]  email subject (ignored for SMS)
+ */
+async function sendApptConfirmation(db, { contactId, sms, email, message, subject }) {
+  if (!sms && !email) return;
+  if (!message || !message.trim()) return;   // defensive — caller already validated
+  try {
+    const settings = await getSettings(db, ['sms_default_from', 'email_default_from']);
+    const [[contact]] = await db.query(
+      'SELECT contact_phone, contact_email FROM contacts WHERE contact_id = ?',
+      [contactId]
+    );
+
+    if (sms && contact?.contact_phone && settings.sms_default_from) {
+      smsService.sendSms(db, settings.sms_default_from, contact.contact_phone, message)
+        .catch(err => console.error('[APPT SERVICE] Confirmation SMS failed:', err.message));
+    }
+
+    if (email && contact?.contact_email && settings.email_default_from) {
+      emailService.sendEmail(db, {
+        from:    settings.email_default_from,
+        to:      contact.contact_email,
+        subject: subject || 'Appointment Confirmation',
+        text:    message,
+      }).catch(err => console.error('[APPT SERVICE] Confirmation email failed:', err.message));
+    }
+  } catch (err) {
+    console.error('[APPT SERVICE] Confirmation settings/contact lookup failed:', err.message);
+  }
+}
+
+/**
  * Enroll the appropriate appt-reminder sequences for a new appointment.
  *
  * Always enrolls pre_appt (cascade-matched on appt_type × appt_with).
  * If appt_type is 'Initial Strategy Session', ALSO enrolls iss_intake.
  *
- * Pre-computes timing ISOs that the templates reference in trigger_data:
- *   - day_before_6pm_at  (341 only — 6 PM firm-local the day before)
- *   - trustee_link       (341 only — looked up by case_trustee name)
- *   - welcome_at         (ISS only — nextFriendlyTime, daytime-safe)
- *   - reminder1_at       (ISS only — 12h after welcome, capped 4 PM, skip Sat)
- *   - reminder2_at       (ISS only — 24h after reminder1, skip weekend to Mon 1 PM)
+ * Pre-computes ISS-only timing ISOs the iss_intake template references in
+ * trigger_data:
+ *   - welcome_at         (nextFriendlyTime, daytime-safe)
+ *   - reminder1_at       (12h after welcome, capped 4 PM, skip Sat)
+ *   - reminder2_at       (24h after reminder1, skip weekend to Mon 1 PM)
+ *
+ * 341 reminders no longer pre-compute anything here: T19 uses before_appt
+ * timing (engine computes the 6 PM-day-before slot with Shabbos/YT walk-back)
+ * and reads the meeting link from cases.case_341_link directly.
  *
  * Non-blocking — any failure is logged and swallowed.
  */
@@ -297,34 +348,6 @@ async function enrollApptReminderSequences(db, {
   appt_date,
   appt_date_utc,
 }) {
-  // ── 341-only: 6 PM day-before (firm-local), trustee link
-  let day_before_6pm_at = null;
-  let trustee_link = null;
-  if (appt_type === '341 Meeting') {
-    const apptDt = DateTime.fromJSDate(appt_date_utc, { zone: FIRM_TZ });
-    day_before_6pm_at = apptDt
-      .minus({ days: 1 })
-      .set({ hour: 18, minute: 0, second: 0, millisecond: 0 })
-      .toUTC()
-      .toISO();
-
-    if (case_id) {
-      try {
-        const [[row]] = await db.query(
-          `SELECT t.trustee_link
-           FROM cases c
-           LEFT JOIN trustees t ON t.trustee_full_name = c.case_trustee
-           WHERE c.case_id = ? AND c.case_trustee != ''
-           LIMIT 1`,
-          [case_id]
-        );
-        trustee_link = row?.trustee_link || null;
-      } catch (err) {
-        console.error('[APPT SERVICE] Trustee link lookup failed:', err.message);
-      }
-    }
-  }
-
   // ── ISS-only: welcome + intake-nag times
   let welcome_at = null;
   let reminder1_at = null;
@@ -363,9 +386,6 @@ async function enrollApptReminderSequences(db, {
     appt_with:   Number(appt_with),
     case_id:     case_id || null,
     enrolled_by: 'createAppt',
-    // 341-only (null for non-341)
-    day_before_6pm_at,
-    trustee_link,
     // ISS-only (null for non-ISS)
     welcome_at,
     reminder1_at,
@@ -410,12 +430,12 @@ async function enrollApptReminderSequences(db, {
  *   - 341 supersession: cancel old appt's automation + GCal-delete + log
  *   - Cancel active no_show sequences for this contact
  *   - Send confirmation SMS / email if provided
- *   - GCal create via Pabbly
+ *   - GCal create (native gcalService — no longer Pabbly)
  *   - Enroll in pre_appt + (if ISS) iss_intake sequences
  *
  * @param {object} db
  * @param {object} opts
- * @returns {{ appt_id, appt, appt_date_utc, workflow_execution_id }}
+ * @returns {{ appt_id, appt, appt_date_utc }}
  */
 async function createAppt(db, {
   contact_id,
@@ -437,6 +457,9 @@ async function createAppt(db, {
   if (!appt_length || isNaN(appt_length) || appt_length <= 0) throw new Error('Invalid appt_length');
   if (!appt_type)     throw new Error('Missing appt_type');
   if (!appt_platform) throw new Error('Missing appt_platform');
+  if ((confirm_sms || confirm_email) && (!confirm_message || !confirm_message.trim())) {
+    throw new Error('Confirmation message required when sending SMS or email');
+  }
 
   // Compute real UTC from local firm time
   const apptDateUTC = localToUTC(new Date(appt_date));
@@ -533,33 +556,15 @@ async function createAppt(db, {
     console.error('[APPT SERVICE] Cancel no_show sequences failed:', err.message);
   }
 
-  // 5) Confirmation SMS / email (fully non-blocking — consistent with cancelAppt)
-  if ((confirm_sms || confirm_email) && confirm_message && confirm_message.trim()) {
-    (async () => {
-      try {
-        const settings = await getSettings(db, ['sms_default_from', 'email_default_from']);
-        const [[contact]] = await db.query(
-          'SELECT contact_phone, contact_email FROM contacts WHERE contact_id = ?',
-          [contact_id]
-        );
-
-        if (confirm_sms && contact?.contact_phone && settings.sms_default_from) {
-          smsService.sendSms(db, settings.sms_default_from, contact.contact_phone, confirm_message)
-            .catch(err => console.error('[APPT SERVICE] Confirm SMS failed:', err.message));
-        }
-
-        if (confirm_email && contact?.contact_email && settings.email_default_from) {
-          emailService.sendEmail(db, {
-            from:    settings.email_default_from,
-            to:      contact.contact_email,
-            subject: 'Appointment Confirmation',
-            text:    confirm_message
-          }).catch(err => console.error('[APPT SERVICE] Confirm email failed:', err.message));
-        }
-      } catch (err) {
-        console.error('[APPT SERVICE] Confirm SMS/email settings lookup failed:', err.message);
-      }
-    })();
+  // 5) Confirmation SMS / email (fire-and-forget via shared helper)
+  if (confirm_sms || confirm_email) {
+    sendApptConfirmation(db, {
+      contactId: contact_id,
+      sms:       confirm_sms,
+      email:     confirm_email,
+      message:   confirm_message,
+      subject:   'Appointment Confirmation',
+    }).catch(err => console.error('[APPT SERVICE] Confirmation wrapper failed:', err.message));
   }
 
   // 6) GCal create (native) — fire-and-forget. Fetches contact, creates the
@@ -599,7 +604,6 @@ async function createAppt(db, {
     appt_id: apptId,
     appt,
     appt_date_utc: apptDateUTC,
-    workflow_execution_id: null   // kept for API shape compat with prior callers
   };
 }
 
@@ -851,36 +855,18 @@ async function cancelAppt(db, {
 
   // ---- Non-blocking side effects below ----
 
-  // 7) SMS confirmation — outer .catch guards against unhandled rejection
-  //    if getSetting itself throws (e.g., DB error on app_settings).
-  if (sms && appt.contact_phone) {
-    getSetting(db, 'sms_default_from')
-      .then(fromNumber => {
-        if (fromNumber) {
-          smsService.sendSms(db, fromNumber, appt.contact_phone, confirm_message)
-            .catch(err => console.error('[APPT SERVICE] Cancel SMS failed:', err.message));
-        }
-      })
-      .catch(err => console.error('[APPT SERVICE] Cancel SMS settings lookup failed:', err.message));
+  // 7) Confirmation SMS / email (fire-and-forget via shared helper)
+  if (sms || email) {
+    sendApptConfirmation(db, {
+      contactId: appt.appt_client_id,
+      sms,
+      email,
+      message:   confirm_message,
+      subject:   'Appointment Cancellation Confirmation',
+    }).catch(err => console.error('[APPT SERVICE] Confirmation wrapper failed:', err.message));
   }
 
-  // 8) Email confirmation
-  if (email && appt.client_email) {
-    getSetting(db, 'email_default_from')
-      .then(fromEmail => {
-        if (fromEmail) {
-          emailService.sendEmail(db, {
-            from:    fromEmail,
-            to:      appt.client_email,
-            subject: 'Appointment Cancellation Confirmation',
-            text:    confirm_message
-          }).catch(err => console.error('[APPT SERVICE] Cancel email failed:', err.message));
-        }
-      })
-      .catch(err => console.error('[APPT SERVICE] Cancel email settings lookup failed:', err.message));
-  }
-
-  // 9) GCal delete
+  // 8) GCal delete
   if (cancel_gcal && appt.appt_gcal) {
     deleteApptCalendarEvent(db, appt.appt_gcal, 'cancel');
   }
@@ -917,6 +903,9 @@ async function rescheduleAppt(db, {
 }) {
   if (!appt_id) throw new Error('rescheduleAppt requires appt_id');
   if (!newDate)  throw new Error('rescheduleAppt requires newDate');
+  if ((sms || email) && (!confirm_message || !confirm_message.trim())) {
+    throw new Error('Confirmation message required when sending SMS or email');
+  }
 
   // 1) Fetch old appointment
   const [[oldAppt]] = await db.query('SELECT * FROM appts WHERE appt_id = ?', [appt_id]);
@@ -926,9 +915,9 @@ async function rescheduleAppt(db, {
   await db.query(
     `UPDATE appts
      SET appt_status = 'Rescheduled',
-         appt_note   = CONCAT(COALESCE(appt_note,''), ' ', ?)
+         appt_note   = CONCAT(IFNULL(appt_note,''), ?)
      WHERE appt_id = ?`,
-    [note, appt_id]
+    [note ? ` ${note}` : '', appt_id]
   );
 
   // 3) Cancel old appt's automation (workflow + pre_appt/iss_intake sequences).
@@ -1004,9 +993,9 @@ async function rescheduleLater(db, {
   await db.query(
     `UPDATE appts
      SET appt_status = 'Rescheduled',
-         appt_note   = CONCAT(COALESCE(appt_note,''), ' ', ?)
+         appt_note   = CONCAT(IFNULL(appt_note,''), ?)
      WHERE appt_id = ?`,
-    [note, appt_id]
+    [note ? ` ${note}` : '', appt_id]
   );
 
   // 2) Cancel appt-scoped automation
