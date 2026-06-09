@@ -513,6 +513,7 @@
       const sel = trusteeSelect();
       if (!sel) return;
       const list = trusteeList();
+      const name = selectedName || '';
 
       const groups = {};
       list.forEach(t => {
@@ -523,6 +524,16 @@
         .filter(c => groups[c] && groups[c].length);
 
       let html = '<option value="">— select trustee —</option>';
+
+      // A stored value that isn't in the list (legacy/dirty data) gets a flagged
+      // option so it still displays and is never silently dropped. Built into the
+      // HTML string (a direct child of <select>) — NOT inserted via insertBefore,
+      // which throws once <optgroup>s are present (its options aren't direct
+      // children of the select).
+      if (name && !list.some(t => String(t.name) === name)) {
+        html += `<option value="${escHtml(name)}" data-unlisted="1">⚠ ${escHtml(name)} (not in trustee list)</option>`;
+      }
+
       for (const ct of groupOrder) {
         html += `<optgroup label="${escHtml(T_GROUP_LABEL[ct] || ('Chapter ' + ct))}">`;
         for (const t of groups[ct]) {
@@ -532,16 +543,6 @@
         html += '</optgroup>';
       }
       sel.innerHTML = html;
-
-      const name = selectedName || '';
-      if (name && !list.some(t => String(t.name) === name)) {
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = `⚠ ${name} (not in trustee list)`;
-        opt.dataset.unlisted = '1';
-        // insert right after the placeholder
-        sel.insertBefore(opt, sel.options[1] || null);
-      }
       sel.value = name;
     }
 
@@ -560,12 +561,21 @@
       hint.textContent = t.link ? '341 link auto-set from trustee' : '⚠ This trustee has no 341 link on file';
     }
 
-    // User picked a trustee → set the hidden 341 link from that trustee.
-    // (Navigating to the flagged "unlisted" option leaves the link untouched.)
+    // User changed the trustee:
+    //   • blank "— select trustee —"  → clear the 341 link
+    //   • a listed trustee            → set the 341 link from that trustee
+    //   • the flagged unlisted option → leave the existing link untouched
     function onTrusteeChange() {
       const sel = trusteeSelect();
-      const t = findTrustee(sel.value);
-      if (t && trusteeLinkEl()) trusteeLinkEl().value = t.link || '';
+      const linkEl = trusteeLinkEl();
+      const name = sel.value;
+      if (name === '') {
+        if (linkEl) linkEl.value = '';
+      } else {
+        const t = findTrustee(name);
+        if (t && linkEl) linkEl.value = t.link || '';
+        // else: unlisted legacy value — leave link as-is
+      }
       renderTrusteeHint();
     }
 
