@@ -68,7 +68,9 @@
     </div>
     <div class="yc-field">
       <label class="yc-label">Trustee</label>
-      <input type="text" name="case_trustee">
+      <select name="case_trustee"></select>
+      <input type="hidden" name="case_341_link">
+      <div class="yc-hint" id="trusteeHint"></div>
     </div>
     <div class="yc-field yc-field-locked">
       <label class="yc-label">Case ID</label>
@@ -322,7 +324,8 @@
         // Case details
         case_number:      { el: '[name="case_number"]',    type: 'text' },
         case_chapter:     { el: '[name="case_chapter"]',   type: 'text' },
-        case_trustee:     { el: '[name="case_trustee"]',   type: 'text' },
+        case_trustee:     { el: '[name="case_trustee"]',   type: 'select' },
+        case_341_link:    { el: '[name="case_341_link"]',  type: 'text' },
         case_file_date:   { el: '[name="case_file_date"]', type: 'date' },
         case_341_initial: { el: '[name="case_341_initial"]', type: 'date' },
         case_341_current: { el: '[name="case_341_current"]', type: 'text', readonly: true },
@@ -410,6 +413,13 @@
         // Case number fallback: if case_number_full was empty, try case_number
         const cnEl = document.querySelector('[name="case_number"]');
         if (!cnEl.value) cnEl.value = caseData.case_number || '';
+
+        // Trustee dropdown: build options from firmData and select the stored
+        // value (injecting a flagged option if it isn't in the list). The 341
+        // link (case_341_link) is left as-loaded here — it's only overwritten
+        // when the user actively changes the trustee (see onTrusteeChange).
+        buildTrusteeOptions(caseData.case_trustee || '');
+        renderTrusteeHint();
       },
 
       onSave: () => {
@@ -477,7 +487,93 @@
       return payload;
     };
 
+    // ── Trustee dropdown + 341-link auto-fill ──
+    // Source of truth is firmData.settings.trustees (app_settings 'fe-trustees',
+    // editable in Settings → Trustees). The selected trustee's `link` is written
+    // to the hidden case_341_link field, which the appointment automation (T19)
+    // reads as the 341 meeting link.
+    const T_GROUP_LABEL = { 7: 'Chapter 7', 13: 'Chapter 13', 12: 'Chapter 12' };
+    const trusteeList    = () => (P.firmData && P.firmData.settings && P.firmData.settings.trustees) || [];
+    const trusteeSelect  = () => document.querySelector('[name="case_trustee"]');
+    const trusteeLinkEl  = () => document.querySelector('[name="case_341_link"]');
+    const trusteeHintEl  = () => document.getElementById('trusteeHint');
+
+    function escHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function findTrustee(name) {
+      return trusteeList().find(t => String(t.name) === String(name)) || null;
+    }
+
+    // Render the <select>, grouped by chapter, and select `selectedName`.
+    // If the stored name isn't in the list (legacy/dirty data), inject a
+    // flagged option so the value still shows and is never silently dropped.
+    function buildTrusteeOptions(selectedName) {
+      const sel = trusteeSelect();
+      if (!sel) return;
+      const list = trusteeList();
+
+      const groups = {};
+      list.forEach(t => {
+        const ct = Number(t.case_type) || 0;
+        (groups[ct] = groups[ct] || []).push(t);
+      });
+      const groupOrder = [...new Set([7, 13, 12, ...Object.keys(groups).map(Number)])]
+        .filter(c => groups[c] && groups[c].length);
+
+      let html = '<option value="">— select trustee —</option>';
+      for (const ct of groupOrder) {
+        html += `<optgroup label="${escHtml(T_GROUP_LABEL[ct] || ('Chapter ' + ct))}">`;
+        for (const t of groups[ct]) {
+          const nm = String(t.name || '');
+          html += `<option value="${escHtml(nm)}">${escHtml(nm)}</option>`;
+        }
+        html += '</optgroup>';
+      }
+      sel.innerHTML = html;
+
+      const name = selectedName || '';
+      if (name && !list.some(t => String(t.name) === name)) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = `⚠ ${name} (not in trustee list)`;
+        opt.dataset.unlisted = '1';
+        // insert right after the placeholder
+        sel.insertBefore(opt, sel.options[1] || null);
+      }
+      sel.value = name;
+    }
+
+    function renderTrusteeHint() {
+      const hint = trusteeHintEl();
+      if (!hint) return;
+      const name = trusteeSelect() ? trusteeSelect().value : '';
+      if (!name) { hint.textContent = ''; hint.style.color = ''; return; }
+      const t = findTrustee(name);
+      if (!t) {
+        hint.textContent = 'Not in trustee list — 341 link not auto-set. Pick a listed trustee, or add them in Settings → Trustees.';
+        hint.style.color = '#b02a37';
+        return;
+      }
+      hint.style.color = '';
+      hint.textContent = t.link ? '341 link auto-set from trustee' : '⚠ This trustee has no 341 link on file';
+    }
+
+    // User picked a trustee → set the hidden 341 link from that trustee.
+    // (Navigating to the flagged "unlisted" option leaves the link untouched.)
+    function onTrusteeChange() {
+      const sel = trusteeSelect();
+      const t = findTrustee(sel.value);
+      if (t && trusteeLinkEl()) trusteeLinkEl().value = t.link || '';
+      renderTrusteeHint();
+    }
+
     form.init().then(() => {
+      // Trustee change → auto-fill the hidden 341 link
+      const trusteeSel = trusteeSelect();
+      if (trusteeSel) trusteeSel.addEventListener('change', onTrusteeChange);
+
       // ── Auto-calculate derived date fields ──
 
 function addDays(dateStr, days) {

@@ -222,6 +222,21 @@
       </div>
     </div>
 
+    <!-- ── Trustees ───────────────────────────────────────────── -->
+    <div class="section collapsed" id="trusteesSection" style="display:none">
+      <div class="sec-head"><h2><span class="chev">▸</span>Trustees</h2><span class="hint" id="tUpdated"></span></div>
+      <div class="sec-body">
+        <p class="note warn">The trustee <b>name</b> is the lookup key — it's stored on the case and used to auto-fill the 341 meeting link. Renaming or removing a trustee here does <b>not</b> change existing cases.</p>
+        <p class="note">When a trustee is picked on a case, <span class="mono">case_341_link</span> is set to that trustee's meeting link. <b>Name</b> and <b>Link</b> are required; the rest is reference info.</p>
+        <div id="tList"></div>
+        <button class="btn" id="tAdd">+ Add Trustee</button>
+        <div class="btn-row">
+          <button class="btn primary" id="tSave" disabled>Save Trustees</button>
+          <span class="status" id="tStatus"></span>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Dropbox Folder Templates ───────────────────────────── -->
     <div class="section collapsed" id="dropboxTplSection" style="display:none">
       <div class="sec-head"><h2><span class="chev">▸</span>Dropbox Folder Templates</h2><span class="hint" id="dtUpdated"></span></div>
@@ -260,6 +275,7 @@ const api = (path, method = 'GET', data) => window.top.apiSend(path, method, dat
 const REGISTRY = {
   'fe-case_types':      { label: 'Case Types',          custom: 'caseTypes' },
   'fe-event_types':     { label: 'Event Types',         custom: 'eventTypes' },
+  'fe-trustees':        { label: 'Trustees',            custom: 'trustees' },
   'dropbox_case_folder_templates': { label: 'Dropbox Folder Templates', custom: 'dropboxTpl' },
   'email_default_from': { label: 'Default Email From' },
   'email_default_to':   { label: 'Default Email To' },
@@ -575,6 +591,157 @@ function etInit(rawValue, updatedAt) {
   etBind();
 }
 
+/* ════════════════ TRUSTEES EDITOR ════════════════
+   fe-trustees: [ { name, link, lname, case_type, email, phone,
+                    address1, address2, city, state, zip }, ... ]
+   name + link are required. `name` is the canonical value written to
+   cases.case_trustee and the lookup key for cases.case_341_link, so it
+   must stay unique. Values kept VERBATIM (no trim) like the other editors. */
+let tState = null;
+let tOriginalNames = [];
+
+const T_CASE_TYPES = [7, 13, 12];
+const T_EXTRA = [
+  ['lname',    'Last Name'],
+  ['email',    'Email'],
+  ['phone',    'Phone'],
+  ['address1', 'Address 1'],
+  ['address2', 'Address 2'],
+  ['city',     'City'],
+  ['state',    'State'],
+  ['zip',      'Zip']
+];
+
+function tMarkDirty() { E('tSave').disabled = false; }
+
+function tBlank() {
+  return { name: '', link: '', lname: '', case_type: 7, email: '', phone: '',
+           address1: '', address2: '', city: '', state: '', zip: '' };
+}
+
+function tRender() {
+  const host = E('tList');
+  host.innerHTML = '';
+  tState.forEach((t, ti) => {
+    const card = document.createElement('div');
+    card.className = 'type-card';
+    card.innerHTML = `
+      <div class="type-head">
+        <input type="text" data-tf="${ti}:name" value="${esc(t.name)}" placeholder="Full name (canonical)">
+        <select data-tf="${ti}:case_type" style="flex:none; width:auto">
+          ${T_CASE_TYPES.map(c => `<option value="${c}" ${Number(t.case_type) === c ? 'selected' : ''}>Ch ${c}</option>`).join('')}
+        </select>
+        <button class="icon-btn" data-t-up="${ti}" title="Move up">↑</button>
+        <button class="icon-btn" data-t-down="${ti}" title="Move down">↓</button>
+        <button class="icon-btn del" data-t-del="${ti}" title="Delete trustee">✕</button>
+      </div>
+      <label class="fld">341 / Meeting Link *</label>
+      <input type="text" class="mono" data-tf="${ti}:link" value="${esc(t.link)}" placeholder="https://…">
+      <div class="grid2">
+        ${T_EXTRA.map(([f, lbl]) => `
+          <div>
+            <label class="fld">${lbl}</label>
+            <input type="text" data-tf="${ti}:${f}" value="${esc(t[f] || '')}">
+          </div>`).join('')}
+      </div>`;
+    host.appendChild(card);
+  });
+}
+
+function tFieldEdit(e) {
+  const k = e.target.dataset.tf;
+  if (k === undefined) return;
+  const [ti, field] = k.split(':');
+  // case_type is numeric; everything else verbatim (no trim)
+  tState[+ti][field] = field === 'case_type' ? Number(e.target.value) : e.target.value;
+  tMarkDirty();
+}
+
+function tBind() {
+  E('tList').addEventListener('input', tFieldEdit);
+  E('tList').addEventListener('change', tFieldEdit); // selects
+  E('tList').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const d = b.dataset;
+    const swap = (i, j) => { if (j < 0 || j >= tState.length) return false; [tState[i], tState[j]] = [tState[j], tState[i]]; return true; };
+    let changed = false;
+    if (d.tUp !== undefined)        changed = swap(+d.tUp, +d.tUp - 1);
+    else if (d.tDown !== undefined) changed = swap(+d.tDown, +d.tDown + 1);
+    else if (d.tDel !== undefined)  { tState.splice(+d.tDel, 1); changed = true; }
+    if (changed) { tMarkDirty(); tRender(); }
+  });
+  E('tAdd').addEventListener('click', () => { tState.push(tBlank()); tMarkDirty(); tRender(); });
+}
+
+function tValidate() {
+  for (let i = 0; i < tState.length; i++) {
+    const t = tState[i];
+    if (!String(t.name).trim()) return `Trustee #${i + 1}: name is required`;
+    if (!String(t.link).trim()) return `Trustee "${String(t.name).trim() || ('#' + (i + 1))}": meeting link is required`;
+  }
+  const names = tState.map(t => String(t.name).trim());
+  if (new Set(names).size !== names.length) {
+    return 'Duplicate trustee names are not allowed — the name is the case lookup key';
+  }
+  return null;
+}
+
+async function tSave() {
+  const err = tValidate();
+  if (err) return setStatus('tStatus', err, false);
+
+  // Warn about names that existed before and are now gone (removed/renamed).
+  const nowNames = new Set(tState.map(t => String(t.name).trim()));
+  const gone = tOriginalNames.filter(n => !nowNames.has(n));
+  if (gone.length && !confirm(
+    `These trustee names were removed or renamed:\n  ${[...new Set(gone)].join(', ')}\n\n` +
+    `Cases already pointing at them keep their stored trustee + 341 link. Save anyway?`
+  )) return;
+
+  // Serialize with a stable key order (case_type coerced to a number).
+  const out = tState.map(t => ({
+    name: t.name, link: t.link, lname: t.lname || '',
+    case_type: Number(t.case_type) || 0,
+    email: t.email || '', phone: t.phone || '',
+    address1: t.address1 || '', address2: t.address2 || '',
+    city: t.city || '', state: t.state || '', zip: t.zip || ''
+  }));
+
+  E('tSave').disabled = true;
+  try {
+    // Pretty-printed so the row stays readable in the DB console.
+    const data = await api('/api/app-settings/fe-trustees', 'PUT', { value: JSON.stringify(out, null, 2) });
+    tOriginalNames = [...nowNames];
+    E('tUpdated').textContent = fmtDate(data.setting?.updated_at);
+    setStatus('tStatus', 'Trustees saved', true);
+    window.top.loadFirmData?.(); // refresh the trustee dropdown source shell-wide
+  } catch (e2) {
+    E('tSave').disabled = false;
+    setStatus('tStatus', e2.message || 'Failed to save', false);
+  }
+}
+
+function tInit(rawValue, updatedAt) {
+  let arr;
+  try { arr = JSON.parse(rawValue); } catch { arr = null; }
+  if (!Array.isArray(arr)) {
+    rawJsonAddRow('fe-trustees', rawValue, updatedAt, 'Trustees (raw — unexpected format)');
+    return;
+  }
+  tState = arr.map(o => ({
+    name: String(o?.name ?? ''), link: String(o?.link ?? ''), lname: String(o?.lname ?? ''),
+    case_type: Number(o?.case_type) || 7,
+    email: String(o?.email ?? ''), phone: String(o?.phone ?? ''),
+    address1: String(o?.address1 ?? ''), address2: String(o?.address2 ?? ''),
+    city: String(o?.city ?? ''), state: String(o?.state ?? ''), zip: String(o?.zip ?? '')
+  }));
+  tOriginalNames = tState.map(t => String(t.name).trim());
+  E('tUpdated').textContent = fmtDate(updatedAt);
+  E('trusteesSection').style.display = '';
+  tRender();
+  tBind();
+}
+
 /* ════════════════ DROPBOX FOLDER TEMPLATES ════════════════
    dropbox_case_folder_templates: { stage: { default: path, subfolders: [] } }
    Stage keys are a code contract (looked up by name) — read-only here.
@@ -800,6 +967,7 @@ async function init() {
   E('pwSave').addEventListener('click', savePassword);
   E('ctSave').addEventListener('click', ctSave);
   E('etSave').addEventListener('click', etSave);
+  E('tSave').addEventListener('click', tSave);
   E('dtSave').addEventListener('click', dtSave);
 
   try {
@@ -808,6 +976,7 @@ async function init() {
       const reg = REGISTRY[row.key];
       if (reg?.custom === 'caseTypes')       ctInit(row.value, row.updated_at);
       else if (reg?.custom === 'eventTypes') etInit(row.value, row.updated_at);
+      else if (reg?.custom === 'trustees')   tInit(row.value, row.updated_at);
       else if (reg?.custom === 'dropboxTpl') dtInit(row.value, row.updated_at);
       else                                   scalarAddRow(row.key, row.value, row.updated_at);
     }
