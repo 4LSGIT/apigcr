@@ -415,6 +415,7 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
     minHoursBefore = 2,
     maxDaysBack    = 14,
     timezone       = DEFAULT_TZ,
+    notBefore      = null,   // floor: reject slots before this instant (default = now)
   } = defaults;
 
   if (!attempts.length) {
@@ -443,6 +444,15 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
     anchorDt = DateTime.fromISO(String(anchorDate), { zone: timezone });
   }
   const nowDt = DateTime.now().setZone(timezone);
+  // Past-rejection floor: a candidate before this instant is "behind us" and
+  // rejected. Defaults to now. The sequence engine passes the prior scheduled
+  // step's time (always <= now), so a same-offset conditional twin lands on
+  // the same slot instead of being rejected as "past" the moment its sibling
+  // fired. Short-notice bookings still skip out-of-runway offsets (the natural
+  // slot is < the enrollment-time floor).
+  const floorDt = notBefore
+    ? DateTime.fromJSDate(notBefore instanceof Date ? notBefore : new Date(notBefore), { zone: timezone })
+    : nowDt;
 
   // Feed buildRestrictedSet firm-tz YYYY-MM-DD strings so its keys live
   // in the same frame as our candidate iteration below.
@@ -537,7 +547,7 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
           console.log(`[calendar] Attempt ${ai + 1} walked back: still too close — trying next attempt`);
           break;
         }
-        if (walkBackDt < nowDt) {
+        if (walkBackDt < floorDt) {
           console.log(`[calendar] Attempt ${ai + 1} walked back: in the past — trying next attempt`);
           break;
         }
@@ -549,7 +559,7 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
     } else {
       // Raw candidate is a valid slot. Too-close already passed above; still
       // enforce not-in-past (possible when the anchor itself is near-now).
-      if (candidateDt < nowDt) {
+      if (candidateDt < floorDt) {
         console.log(`[calendar] Attempt ${ai + 1}: already in the past — trying next`);
         continue;
       }
@@ -592,6 +602,94 @@ async function prevBusinessDay(anchorDate, attempts = [], defaults = {}) {
  * @param {string}      [opts.fallbackTime='09:00']        — H:MM, applied on the rolled day
  * @returns {Date}  JS Date in UTC; call .toISOString() for trigger_data
  */
+/**
+ * nextOpenTime — next "open" send time for an ENROLLMENT-anchored step
+ * (e.g. the ISS welcome). Walks FORWARD from `from + delay` (contrast
+ * prevBusinessDay, which walks backward from an appointment).
+ *
+ * Behavior:
+ *   - base = from + delayMs, with ± jitterMin applied.
+ *   - If base lands in a Shabbos/Yom Tov block (incl. the erev evening from
+ *     START_HOUR before a restricted date), roll FORWARD to just after the
+ *     block ends — the last contiguous restricted date at END_HOUR — plus a
+ *     small FORWARD jitter, so it reads like an organic "saw this Saturday
+ *     night" message rather than a havdalah-sharp blast.
+ *   - Optional `dayWindow {start,end}` (hours): a result outside the window
+ *     rolls to `rollTime` (else `start`:00); before-window → same day,
+ *     at/after → next day. OFF by default (sends any hour that isn't blocked).
+ *   - Optional `noSunday`: roll a Sunday result to Monday. OFF by default
+ *     (Sunday is a workday for this firm).
+ *
+ * Async because it builds the Shabbos/YT set from Hebcal, like prevBusinessDay.
+ *
+ * @param {Date|string|number} from
+ * @param {object} opts {delayMs, jitterMin, rollTime, dayWindow, noSunday, timezone}
+ * @returns {Promise<Date>}
+ */
+async function nextOpenTime(from, opts = {}) {
+  const {
+    delayMs   = 0,
+    jitterMin = 0,
+    rollTime  = null,
+    dayWindow = null,
+    noSunday  = false,
+    timezone  = DEFAULT_TZ,
+  } = opts;
+
+  const fromMs = from instanceof Date ? from.getTime() : new Date(from).getTime();
+  const jit = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+
+  let base = DateTime.fromJSDate(new Date(fromMs + delayMs), { zone: timezone });
+  if (jitterMin > 0) base = base.plus({ minutes: jit(-jitterMin, jitterMin) });
+
+  // Restricted set over a forward window wide enough for any YT block + roll.
+  const rangeStartStr = base.minus({ days: 1 }).toFormat('yyyy-LL-dd');
+  const rangeEndStr   = base.plus({ days: 16 }).toFormat('yyyy-LL-dd');
+  const events     = await fetchHebcalEvents(moment(rangeStartStr), moment(rangeEndStr));
+  const restricted = buildRestrictedSet(moment(rangeStartStr), moment(rangeEndStr), events);
+
+  // Roll out of a Shabbos/YT block to just after it ends.
+  if (isSlotRestricted(base, restricted)) {
+    let cursor = base.startOf('day');
+    // erev evening: base's own date is open, the block starts the next day
+    if (!isDayRestricted(cursor.toFormat('yyyy-LL-dd'), restricted)) {
+      cursor = cursor.plus({ days: 1 });
+    }
+    // walk to the last contiguous restricted date
+    let guard = 0;
+    while (guard < 16 && isDayRestricted(cursor.plus({ days: 1 }).toFormat('yyyy-LL-dd'), restricted)) {
+      cursor = cursor.plus({ days: 1 });
+      guard++;
+    }
+    base = cursor.set({ hour: END_HOUR, minute: 0, second: 0, millisecond: 0 });
+    if (jitterMin > 0) base = base.plus({ minutes: jit(0, jitterMin) }); // forward only — never back into the block
+  }
+
+  // Optional sending-hours window.
+  if (dayWindow && (base.hour < dayWindow.start || base.hour >= dayWindow.end)) {
+    const [rh, rm] = (rollTime || `${String(dayWindow.start).padStart(2, '0')}:00`).split(':').map(Number);
+    let target = base.hour >= dayWindow.end ? base.plus({ days: 1 }) : base;
+    base = target.set({ hour: rh, minute: rm, second: 0, millisecond: 0 });
+    let guard = 0;
+    while (guard < 16 && isSlotRestricted(base, restricted)) {
+      base = base.plus({ days: 1 }).set({ hour: rh, minute: rm, second: 0, millisecond: 0 });
+      guard++;
+    }
+  }
+
+  // Optional Sunday skip.
+  if (noSunday && base.weekday === 7) {
+    const [rh, rm] = (rollTime || '09:00').split(':').map(Number);
+    let guard = 0;
+    do {
+      base = base.plus({ days: 1 }).set({ hour: rh, minute: rm, second: 0, millisecond: 0 });
+      guard++;
+    } while (guard < 16 && (base.weekday === 7 || isSlotRestricted(base, restricted)));
+  }
+
+  return base.toUTC().toJSDate();
+}
+
 function nextFriendlyTime(from, offsetMs, opts = {}) {
   const {
     timezone      = DEFAULT_TZ,
@@ -627,6 +725,7 @@ module.exports = {
   isWorkday,
   nextBusinessDay,
   prevBusinessDay,
+  nextOpenTime,
   fetchHebcalEvents,
   buildRestrictedSet,
   isDayRestricted,

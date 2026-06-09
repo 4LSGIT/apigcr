@@ -21,7 +21,6 @@ const taskService  = require('./taskService');
 const logService   = require('./logService');
 const { localToUTC, FIRM_TZ } = require('./timezoneService');
 const { DateTime } = require('luxon');
-const calendar = require('./calendarService');
 const { alert } = require('../lib/alerting');
 
 // Lazy-require to avoid circular dependency (sequenceEngine → job_executor → internal_functions)
@@ -324,18 +323,11 @@ async function sendApptConfirmation(db, { contactId, sms, email, message, subjec
 /**
  * Enroll the appropriate appt-reminder sequences for a new appointment.
  *
- * Always enrolls pre_appt (cascade-matched on appt_type × appt_with).
- * If appt_type is 'Initial Strategy Session', ALSO enrolls iss_intake.
- *
- * Pre-computes ISS-only timing ISOs the iss_intake template references in
- * trigger_data:
- *   - welcome_at         (nextFriendlyTime, daytime-safe)
- *   - reminder1_at       (12h after welcome, capped 4 PM, skip Sat)
- *   - reminder2_at       (24h after reminder1, skip weekend to Mon 1 PM)
- *
- * 341 reminders no longer pre-compute anything here: T19 uses before_appt
- * timing (engine computes the 6 PM-day-before slot with Shabbos/YT walk-back)
- * and reads the meeting link from cases.case_341_link directly.
+ * Enrolls the appt in the pre_appt sequence. The cascade matches the right
+ * template by appt_type × appt_with (341 → T19, ISS → ISS template, else the
+ * generic fallback). No per-type pre-computation: templates own all timing
+ * (341 day-before via before_appt; ISS welcome via open_delay, nags via
+ * before_appt). trigger_data carries only IDs + appt_time.
  *
  * Non-blocking — any failure is logged and swallowed.
  */
@@ -348,37 +340,11 @@ async function enrollApptReminderSequences(db, {
   appt_date,
   appt_date_utc,
 }) {
-  // ── ISS-only: welcome + intake-nag times
-  let welcome_at = null;
-  let reminder1_at = null;
-  let reminder2_at = null;
-
-  if (appt_type === 'Initial Strategy Session') {
-    // Welcome: now + 11 min, rolled to Mon 9 AM if Fri-late or weekend.
-    const welcomeAt = calendar.nextFriendlyTime(new Date(), 11 * 60 * 1000);
-    welcome_at = welcomeAt.toISOString();
-
-    // reminder1: welcome + 12h, capped at 4 PM same day, Sat → Sun.
-    const welcomeDt = DateTime.fromJSDate(welcomeAt, { zone: FIRM_TZ });
-    let r1 = welcomeDt.plus({ hours: 12 });
-    if (r1.hour >= 16) {
-      r1 = r1.set({ hour: 16, minute: 0, second: 0, millisecond: 0 });
-    }
-    if (r1.weekday === 6) {
-      r1 = r1.plus({ days: 1 });
-    }
-    reminder1_at = r1.toUTC().toISO();
-
-    // reminder2: reminder1 + 24h. If lands Sat/Sun, jump to next Mon at 1 PM.
-    let r2 = r1.plus({ hours: 24 });
-    if (r2.weekday === 6 || r2.weekday === 7) {
-      while (r2.weekday !== 1) r2 = r2.plus({ days: 1 });
-      r2 = r2.set({ hour: 13, minute: 0, second: 0, millisecond: 0 });
-    }
-    reminder2_at = r2.toUTC().toISO();
-  }
-
   // ── Build trigger_data (frozen at enrollment) ──
+  // Generic for every appt type. No per-type pre-computation: the templates
+  // own all timing now (341 via before_appt; ISS welcome via open_delay, nags
+  // via before_appt). The cascade picks the right pre_appt template by
+  // appt_type × appt_with.
   const triggerData = {
     appt_id,
     appt_time:   appt_date_utc.toISOString(),
@@ -386,30 +352,15 @@ async function enrollApptReminderSequences(db, {
     appt_with:   Number(appt_with),
     case_id:     case_id || null,
     enrolled_by: 'createAppt',
-    // ISS-only (null for non-ISS)
-    welcome_at,
-    reminder1_at,
-    reminder2_at,
   };
 
   const seq = getSequenceEngine();
 
-  // ── Enroll pre_appt (always) ──
   try {
     await seq.enrollContact(db, contact_id, 'pre_appt', triggerData);
     console.log(`[APPT SERVICE] Enrolled appt ${appt_id} in pre_appt sequence`);
   } catch (err) {
     console.error(`[APPT SERVICE] pre_appt enrollment failed for appt ${appt_id}:`, err.message);
-  }
-
-  // ── Enroll iss_intake (ISS only) ──
-  if (appt_type === 'Initial Strategy Session') {
-    try {
-      await seq.enrollContact(db, contact_id, 'iss_intake', triggerData);
-      console.log(`[APPT SERVICE] Enrolled appt ${appt_id} in iss_intake sequence`);
-    } catch (err) {
-      console.error(`[APPT SERVICE] iss_intake enrollment failed for appt ${appt_id}:`, err.message);
-    }
   }
 }
 
