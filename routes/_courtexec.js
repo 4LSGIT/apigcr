@@ -5,21 +5,26 @@
 //   X-Courtexec-Key: <COURTEXEC_KEY env value>
 // so it can't be poked by randoms even if the flag is left on.
 //
-// Slice 5 (ingest internal_function) will call executeCourtActions() directly —
-// services/courtExecutor.js is the real entry point; this route is only a way
-// to drive payloads through it during testing. Delete after the court action
-// layer is wired into ingest.
+// Slice 5 (ingest internal_function) will call executeCourtActions() /
+// revertCourtActions() directly — services/courtExecutor.js is the real entry
+// point; this route is only a way to drive payloads through them during
+// testing. Delete after the court action layer is wired into ingest.
 //
 //   POST /courtexec   body { payload, subject, body, dryRun }
 //     → executeCourtActions(req.db, { payload, subject, body, dryRun })
 //
-// NOTE: dryRun defaults true inside the service. A message_id containing
-// '-test-' FORCES dry-run regardless of the dryRun flag.
+//   POST /courtexec   body { op:'revert', messageId | changeLogIds, dryRun, actingUserId }
+//     → revertCourtActions(req.db, { messageId, changeLogIds, dryRun, actingUserId })
+//
+// NOTE: execute dryRun defaults true inside the service; a message_id containing
+// '-test-' FORCES dry-run. revert dryRun ALSO defaults true (preview).
+//
+// op-less (or op !== 'revert') bodies take the execute path, unchanged.
 
 const express = require('express');
 const router = express.Router();
 
-const { executeCourtActions } = require('../services/courtExecutor');
+const { executeCourtActions, revertCourtActions } = require('../services/courtExecutor');
 
 const ENABLED = process.env.COURTEXEC_ENABLED === '1';
 const KEY = process.env.COURTEXEC_KEY || '';
@@ -34,11 +39,33 @@ function gate(req, res, next) {
 if (ENABLED) {
   router.post('/courtexec', gate, async (req, res) => {
     try {
-      const { payload, subject, body, dryRun } = req.body || {};
+      const body = req.body || {};
+
+      // ── REVERT PATH ──────────────────────────────────────────────────
+      if (body.op === 'revert') {
+        const { messageId, changeLogIds, dryRun, actingUserId } = body;
+        const hasIds = Array.isArray(changeLogIds) && changeLogIds.length > 0;
+        if (!messageId && !hasIds) {
+          return res.status(400).json({
+            status: 'error',
+            message: 'revert requires messageId or non-empty changeLogIds[]',
+          });
+        }
+        const result = await revertCourtActions(req.db, {
+          messageId,
+          changeLogIds,
+          dryRun,                 // undefined → service default (true)
+          actingUserId: actingUserId != null ? actingUserId : 0,
+        });
+        return res.json({ status: 'ok', result });
+      }
+
+      // ── EXECUTE PATH (existing) ──────────────────────────────────────
+      const { payload, subject, body: emailBody, dryRun } = body;
       if (!payload || typeof payload !== 'object') {
         return res.status(400).json({ status: 'error', message: 'payload (object) is required' });
       }
-      const result = await executeCourtActions(req.db, { payload, subject, body, dryRun });
+      const result = await executeCourtActions(req.db, { payload, subject, body: emailBody, dryRun });
       return res.json({ status: 'ok', result });
     } catch (err) {
       console.error('[courtexec] error:', err.message);

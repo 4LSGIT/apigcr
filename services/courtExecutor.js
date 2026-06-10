@@ -332,6 +332,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
     return eventId;
   }
 
+  try {
   for (let i = 0; i < actions.length; i++) {
     const act = actions[i] || {};
     const type = act.type;
@@ -409,7 +410,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
       const newLoc = fields.location || null;
       // FUTURE Scheduled events of this type for the case.
       const [matches] = await db.query(
-        `SELECT event_id, event_date, event_time, event_location FROM events
+        `SELECT event_id, event_date, event_time, event_all_day, event_location FROM events
           WHERE event_link_type='case_number' AND event_link_id=? AND event_type<=>?
             AND event_status='Scheduled' AND event_date >= CURDATE()`,
         [resolved.case_number, eventType]
@@ -425,7 +426,22 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
             [newDate, newTime, newTime ? 0 : 1, newLoc, old.event_id]
           );
         }
-        pushChange('event', String(old.event_id), 'update', oldSummary, newSummary);
+        // Slice 4b D4: persist STRUCTURED before/after state (not lossy summaries)
+        // so revertCourtActions can reconstruct the row. Summaries stay in
+        // applied[] for human readability.
+        const oldState = JSON.stringify({
+          date: toDatePart(old.event_date),
+          time: toTimePart(old.event_time),
+          all_day: old.event_all_day,
+          location: old.event_location == null ? null : old.event_location,
+        });
+        const newState = JSON.stringify({
+          date: toDatePart(newDate) || newDate,
+          time: toTimePart(newTime),
+          all_day: newTime ? 0 : 1,
+          location: newLoc == null ? null : newLoc,
+        });
+        pushChange('event', String(old.event_id), 'update', oldState, newState);
         applied.push({ action_index: i, type, entity_type: 'event', entity_id: String(old.event_id),
           summary: `reschedule ${oldSummary} -> ${newSummary}` });
         appliedOrIntended++;
@@ -498,6 +514,41 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
     // Unknown action type — record, don't apply.
     skipped.push({ action_index: i, type: type || '(none)', reason: 'unknown_action_type' });
   }
+  } catch (err) {
+    // ── HARDEN #1: AUDIT-ON-ERROR ───────────────────────────────────────
+    // A mid-dispatch throw must NEVER leave per-action autocommitted entity
+    // writes with zero audit. Record an 'error' court_ai_log row (with the
+    // normal actions/citations/raw_response) and flush whatever change rows
+    // were buffered before the throw, then return.
+    const reviewReason = ('error:' + (err && err.message ? err.message : String(err))).slice(0, 255);
+    const courtLogId = await insertCourtAiLog(db, {
+      message_id: messageId,
+      ai_call_id: aiCallId,
+      dry_run: effectiveDryRun,
+      classification,
+      case_number: caseNumber,
+      resolved_case_id: resolved.case_id,
+      case_name: caseName,
+      actions_json: payload.actions || null,
+      citations_json: citation,
+      outcome: 'error',
+      review_reason: reviewReason,
+      raw_response: payload,
+    });
+    try {
+      await flushChangeRows(db, changeRows, courtLogId);
+    } catch (flushErr) {
+      console.error('[courtExecutor] flush after dispatch error failed:', flushErr.message);
+    }
+    return {
+      outcome: 'error',
+      court_ai_log_id: courtLogId,
+      applied,
+      skipped,
+      review_reason: reviewReason,
+      error: true,
+    };
+  }
 
   // ── STEP 6: OUTCOME + LOGS ────────────────────────────────────────────
   let outcome;
@@ -527,8 +578,227 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
   return { outcome, court_ai_log_id: courtLogId, applied, skipped, review_reason: reviewReason };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// revertCourtActions  (Slice 4b — Deliverable 5)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** mysql DATE/TIME/text → normalized comparable string|null (date|time aware). */
+function _eqNullable(a, b) {
+  const na = a == null ? null : String(a);
+  const nb = b == null ? null : String(b);
+  return na === nb;
+}
+
+/**
+ * Reverse previously-APPLIED (dry_run=0), not-yet-undone (undone_at IS NULL)
+ * ai_change_log rows for a target — selected by source_message_id OR an explicit
+ * list of change-log ids. dryRun defaults TRUE (preview: plan only, no writes,
+ * no stamp).
+ *
+ * Per-row behavior by entity_type/field:
+ *   - case/<col>  : MODIFIED-SINCE GUARD. Read current cases.<col>; revert only
+ *                   if current === new_value (date-normalized for date cols).
+ *                   Match → restore old_value (NULL if old_value was null).
+ *                   Differ → skip {reason:'modified_since'}. <col> not in the
+ *                   write allowlist → skip {reason:'unrevertable'}.
+ *   - event/create: event_status='Scheduled' → set 'Canceled'; else skip
+ *                   {reason:'already_gone'}.
+ *   - event/update: parse old_value/new_value JSON {date,time,all_day,location}.
+ *                   MODIFIED-SINCE GUARD vs current row compared to new_value;
+ *                   match → restore date/time/all_day/location from old JSON;
+ *                   differ → skip 'modified_since'. Unparseable JSON (legacy
+ *                   lossy summary) → skip {reason:'unrevertable'}.
+ *   - appt/create : SILENT cancel via apptService.cancelAppt (sms:false,
+ *                   email:false — NO client-facing comms). Non-Scheduled appt →
+ *                   skip {reason:'already_gone'}.
+ *   - anything else → skip {reason:'unrevertable'}.
+ *
+ * On a real (non-dry) revert each reverted row is stamped undone_at=NOW(),
+ * undone_by=actingUserId. dryRun=true stamps nothing and writes nothing.
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {string} [opts.messageId]      source_message_id selector
+ * @param {Array<number>} [opts.changeLogIds]  explicit ai_change_log id list (takes precedence)
+ * @param {boolean} [opts.dryRun=true]
+ * @param {number}  [opts.actingUserId=0]
+ * @returns {Promise<{ dryRun:boolean,
+ *   reverted:Array<{change_log_id:number, entity_type:string, entity_id:string, field:string, action:string}>,
+ *   skipped:Array<{change_log_id:(number|null), reason:string}> }>}
+ */
+async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, actingUserId = 0 } = {}) {
+  const hasIds = Array.isArray(changeLogIds) && changeLogIds.length > 0;
+  if (!hasIds && !messageId) {
+    throw new Error('revertCourtActions requires messageId or changeLogIds');
+  }
+
+  // Target set: live (dry_run=0) and not-yet-undone. Explicit ids win over
+  // messageId. Newest-first so chained writes to one column unwind correctly.
+  let rows;
+  if (hasIds) {
+    [rows] = await db.query(
+      `SELECT id, entity_type, entity_id, field, old_value, new_value
+         FROM ai_change_log
+        WHERE id IN (?) AND dry_run=0 AND undone_at IS NULL
+        ORDER BY id DESC`,
+      [changeLogIds]
+    );
+  } else {
+    [rows] = await db.query(
+      `SELECT id, entity_type, entity_id, field, old_value, new_value
+         FROM ai_change_log
+        WHERE source_message_id=? AND dry_run=0 AND undone_at IS NULL
+        ORDER BY id DESC`,
+      [messageId]
+    );
+  }
+
+  const reverted = [];
+  const skipped = [];
+
+  const stamp = async (id) => {
+    if (dryRun) return;
+    await db.query(
+      `UPDATE ai_change_log SET undone_at=NOW(), undone_by=? WHERE id=?`,
+      [actingUserId, id]
+    );
+  };
+
+  for (const row of rows) {
+    const { id, entity_type, entity_id, field, old_value, new_value } = row;
+
+    // ── case/<col> ──────────────────────────────────────────────────────
+    if (entity_type === 'case') {
+      const policy = CASE_FIELD_POLICY[field];
+      if (!policy) { skipped.push({ change_log_id: id, reason: 'unrevertable' }); continue; }
+
+      const [cur] = await db.query(
+        `SELECT \`${field}\` AS v FROM cases WHERE case_id=? LIMIT 1`,
+        [entity_id]
+      );
+      if (!cur.length) { skipped.push({ change_log_id: id, reason: 'entity_missing' }); continue; }
+
+      const isDate = CASE_DATE_FIELDS.has(field);
+      const curVal = cur[0].v;
+      let matches;
+      if (isDate) {
+        matches = toDatePart(curVal) === toDatePart(new_value);
+      } else {
+        matches = (curVal == null ? '' : String(curVal).trim()) === (new_value == null ? '' : String(new_value).trim());
+      }
+      if (!matches) { skipped.push({ change_log_id: id, reason: 'modified_since' }); continue; }
+
+      if (!dryRun) {
+        const writeBack = (old_value == null || old_value === '') && isDate ? null : old_value;
+        await db.query(`UPDATE cases SET \`${field}\`=? WHERE case_id=?`, [writeBack, entity_id]);
+      }
+      await stamp(id);
+      reverted.push({ change_log_id: id, entity_type, entity_id: String(entity_id), field, action: 'restored' });
+      continue;
+    }
+
+    // ── event/create ────────────────────────────────────────────────────
+    if (entity_type === 'event' && field === 'create') {
+      const [cur] = await db.query(
+        `SELECT event_status FROM events WHERE event_id=? LIMIT 1`,
+        [entity_id]
+      );
+      if (!cur.length) { skipped.push({ change_log_id: id, reason: 'already_gone' }); continue; }
+      if (cur[0].event_status !== 'Scheduled') { skipped.push({ change_log_id: id, reason: 'already_gone' }); continue; }
+      if (!dryRun) {
+        await db.query(`UPDATE events SET event_status='Canceled' WHERE event_id=?`, [entity_id]);
+      }
+      await stamp(id);
+      reverted.push({ change_log_id: id, entity_type, entity_id: String(entity_id), field, action: 'canceled' });
+      continue;
+    }
+
+    // ── event/update ────────────────────────────────────────────────────
+    if (entity_type === 'event' && field === 'update') {
+      let oldState, newState;
+      try {
+        oldState = JSON.parse(old_value);
+        newState = JSON.parse(new_value);
+      } catch (_) {
+        skipped.push({ change_log_id: id, reason: 'unrevertable' });
+        continue;
+      }
+      const [cur] = await db.query(
+        `SELECT event_date, event_time, event_all_day, event_location FROM events WHERE event_id=? LIMIT 1`,
+        [entity_id]
+      );
+      if (!cur.length) { skipped.push({ change_log_id: id, reason: 'entity_missing' }); continue; }
+      const c = cur[0];
+      const matches =
+        _eqNullable(toDatePart(c.event_date), newState.date) &&
+        _eqNullable(toTimePart(c.event_time), newState.time) &&
+        Number(c.event_all_day) === Number(newState.all_day) &&
+        _eqNullable(c.event_location, newState.location);
+      if (!matches) { skipped.push({ change_log_id: id, reason: 'modified_since' }); continue; }
+
+      if (!dryRun) {
+        await db.query(
+          `UPDATE events SET event_date=?, event_time=?, event_all_day=?, event_location=? WHERE event_id=?`,
+          [oldState.date, oldState.time, oldState.all_day, oldState.location, entity_id]
+        );
+      }
+      await stamp(id);
+      reverted.push({ change_log_id: id, entity_type, entity_id: String(entity_id), field, action: 'restored' });
+      continue;
+    }
+
+    // ── appt/create ─────────────────────────────────────────────────────
+    if (entity_type === 'appt' && field === 'create') {
+      const [cur] = await db.query(
+        `SELECT appt_status FROM appts WHERE appt_id=? LIMIT 1`,
+        [entity_id]
+      );
+      if (!cur.length || cur[0].appt_status !== 'Scheduled') {
+        skipped.push({ change_log_id: id, reason: 'already_gone' });
+        continue;
+      }
+      if (!dryRun) {
+        // SILENT cancel — sms:false, email:false means apptService fires NO
+        // client-facing SMS/email. GCal cleanup + automation teardown are
+        // firm-side and desirable when unwinding a create.
+        //
+        // The status SELECT above is check-then-act: an appt could be killed by
+        // another path (e.g. superseded by a later 341) between the read and
+        // here, and cancelAppt throws on an already-Canceled appt. Isolate that
+        // throw so one bad row skips instead of aborting the whole batch. The
+        // row is NOT stamped, so it stays eligible for a later retry.
+        const apptService = require('./apptService');
+        try {
+          await apptService.cancelAppt(db, {
+            appt_id: entity_id,
+            sms: false,
+            email: false,
+            cancel_gcal: true,
+            note: 'court action revert',
+            actingUserId,
+          });
+        } catch (cancelErr) {
+          console.error(`[courtExecutor] revert cancelAppt(${entity_id}) failed:`, cancelErr.message);
+          skipped.push({ change_log_id: id, reason: 'cancel_failed' });
+          continue;
+        }
+      }
+      await stamp(id);
+      reverted.push({ change_log_id: id, entity_type, entity_id: String(entity_id), field, action: 'canceled' });
+      continue;
+    }
+
+    // ── unknown ─────────────────────────────────────────────────────────
+    skipped.push({ change_log_id: id, reason: 'unrevertable' });
+  }
+
+  return { dryRun, reverted, skipped };
+}
+
+
 module.exports = {
   executeCourtActions,
+  revertCourtActions,
   CASE_FIELD_POLICY,
   CASE_DATE_FIELDS,
   // exported for tests

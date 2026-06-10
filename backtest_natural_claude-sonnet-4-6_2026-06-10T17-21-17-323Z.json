@@ -1,0 +1,2197 @@
+{
+  "generated_at": "2026-06-10T17:25:13.490Z",
+  "args": {
+    "source": "log",
+    "mode": "natural",
+    "model": "claude-sonnet-4-6",
+    "perCategory": 5,
+    "sampleSize": 40,
+    "out": "backtest_natural_claude-sonnet-4-6_2026-06-10T17-21-17-323Z.json"
+  },
+  "aggregate": {
+    "source": "log",
+    "mode": "natural",
+    "model": "claude-sonnet-4-6",
+    "sample_param": {
+      "sampleSize": 40
+    },
+    "sampled": 40,
+    "sampled_subject_doctypes": {
+      "continued_meeting": 3,
+      "adjourned": 5,
+      "meeting_ch7": 3,
+      "other": 5,
+      "meeting_ch13": 1,
+      "hearing": 1,
+      "pleading": 4,
+      "discharge_close": 2,
+      "certificate": 4,
+      "show_cause": 1,
+      "proof_of_claim": 5,
+      "voluntary_petition": 2,
+      "filing_doc": 3,
+      "order": 1
+    },
+    "usable_json": {
+      "count": 40,
+      "rate_pct": 100
+    },
+    "citation_pass": {
+      "count": 39,
+      "of_usable": 40,
+      "rate_pct": 97.5
+    },
+    "case_resolve": {
+      "count": 29,
+      "of_usable": 40,
+      "rate_pct": 72.5
+    },
+    "primary_contact_resolve_among_341s": {
+      "count": 7,
+      "of_341s": 7,
+      "case_found_341s": 7,
+      "rate_pct": 100
+    },
+    "classification_counts": {
+      "none": 21,
+      "hearing_adjourned": 6,
+      "meeting_continued": 2,
+      "meeting_ch7": 3,
+      "meeting_ch13": 2,
+      "hearing_notice": 1,
+      "discharge_or_close": 2,
+      "order_to_show_cause": 1,
+      "voluntary_petition": 2
+    },
+    "needs_review_count": 8,
+    "field_agreement": {
+      "case_file_date": {
+        "no_extract": 27,
+        "no_case": 11,
+        "agree": 2
+      },
+      "case_trustee": {
+        "no_extract": 20,
+        "no_case": 11,
+        "agree": 6,
+        "db_empty": 1,
+        "disagree": 2
+      },
+      "case_objection": {
+        "no_extract": 24,
+        "no_case": 11,
+        "agree": 2,
+        "db_empty": 1,
+        "disagree": 2
+      },
+      "appt_date_vs_341_current": {
+        "no_extract": 22,
+        "no_case": 11,
+        "agree": 3,
+        "db_empty": 1,
+        "disagree": 3
+      }
+    },
+    "total_cost_cents": 56.783,
+    "avg_latency_ms": 4715
+  },
+  "emails": [
+    {
+      "message_id": "19eb20ed69ab63c0",
+      "email_id": 30540,
+      "sample_category": "continued_meeting",
+      "subject": "26-44743-mlo Meeting of Creditors Not Held",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": true,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "T19Z4P7z",
+        "primary_contact_id": 1752
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1181,
+      "latency_ms": 2492,
+      "call_id": 61,
+      "raw_output": {
+        "message_id": "19eb20ed69ab63c0",
+        "case_number": "26-44743-mlo",
+        "case_name": "Nechama Kramer",
+        "chapter": null,
+        "classification": "none",
+        "needs_review": true,
+        "review_reason": "341 meeting not held on 6/9/2026; the scheduled meeting did not occur — watch for a continued/rescheduled notice.",
+        "actions": [],
+        "notes": "Meeting of Creditors Not Held — informational; no new date to act on."
+      }
+    },
+    {
+      "message_id": "19eb210649cd6e7d",
+      "email_id": 30539,
+      "sample_category": "adjourned",
+      "subject": "21-50019-prh \"Order to Adjourn/Reschedule/Continue Hearing\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "hearing_adjourned",
+      "needs_review": true,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 1.9194,
+      "latency_ms": 9549,
+      "call_id": 62,
+      "raw_output": {
+        "message_id": "19eb210649cd6e7d",
+        "case_number": "21-50019-prh",
+        "case_name": "Kristine Estridge",
+        "chapter": "13",
+        "classification": "hearing_adjourned",
+        "needs_review": true,
+        "review_reason": "Hearing adjourned to new date 8/27/2026; a prior hearing event for this Trustee's Motion to Dismiss may need to be canceled or updated.",
+        "actions": [
+          {
+            "type": "update_event",
+            "fields": {
+              "event_type": "Hearing",
+              "event_title": "Hearing on Trustee's Motion to Dismiss Case",
+              "date": "2026-08-27",
+              "time": "10:00",
+              "all_day": false,
+              "location": "Courtroom 1925, 211 W. Fort St."
+            },
+            "citations": {
+              "event_type": "Order for Adjourning Hearing",
+              "event_title": "Trustee's Motion to Dismiss Case with 21 day Notice and Certificate of Service(batch)",
+              "date": "Hearing to be held on 8/27/2026 at 10:00 AM",
+              "time": "at 10:00 AM",
+              "all_day": "at 10:00 AM",
+              "location": "Courtroom 1925, 211 W. Fort St."
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "13",
+              "case_trustee": "Tammy L. Terry"
+            },
+            "citations": {
+              "case_chapter": "21-50019-prh \"Order to Adjourn/Reschedule/Continue Hearing\" Ch 13",
+              "case_trustee": "Tammy L. Terry"
+            }
+          }
+        ],
+        "notes": "Order adjourns hearing on Trustee's Motion to Dismiss (doc 72) per stipulation (doc 83). New hearing set for 8/27/2026 at 10:00 AM in Courtroom 1925, 211 W. Fort St. Prior hearing date not stated in this email."
+      }
+    },
+    {
+      "message_id": "19963aa89dbfecb4-test-mq84okpc-t144rk",
+      "email_id": 30516,
+      "sample_category": "meeting_ch7",
+      "subject": "25-48634-lsg \"Notice of a Rescheduled 341 Meeting of Creditors\" Ch 7",
+      "model": "claude-sonnet-4-6",
+      "classification": "meeting_continued",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "hj4EBzaT",
+        "primary_contact_id": 1743
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "agree",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "agree"
+      },
+      "cost_cents": 1.7852999999999999,
+      "latency_ms": 5817,
+      "call_id": 63,
+      "raw_output": {
+        "message_id": "19963aa89dbfecb4-test-mq84okpc-t144rk",
+        "case_number": "25-48634-lsg",
+        "case_name": "Antonio Penick and Arena Penick",
+        "chapter": "7",
+        "classification": "meeting_continued",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "create_appointment",
+            "fields": {
+              "appt_type": "341 Meeting",
+              "date": "2025-10-23",
+              "time": "10:00",
+              "platform": "Zoom",
+              "trustee": "Basil T. Simon",
+              "connection_info": "Meeting ID 931 641 2796, Passcode 0827744230, Phone 1 313 391 5508"
+            },
+            "citations": {
+              "date": "341(a) meeting to be held on 10/23/2025 at 10:00 AM",
+              "time": "at 10:00 AM",
+              "platform": "via Zoom - Simon",
+              "trustee": "Basil T. Simon",
+              "connection_info": "Meeting ID 931 641 2796, Passcode 0827744230, Phone 1 313 391 5508"
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "7",
+              "case_trustee": "Basil T. Simon"
+            },
+            "citations": {
+              "case_chapter": "Ch 7",
+              "case_trustee": "Basil T. Simon"
+            }
+          }
+        ],
+        "notes": "Rescheduled 341 meeting per court order reinstating case. Prior 341 appointment (if any) should be superseded by this new date. case_file_date NOT set — this is a rescheduled 341 notice, not the petition."
+      }
+    },
+    {
+      "message_id": "19dd9ecb39256ae0-test-mq84ois2-yw3s4b",
+      "email_id": 30514,
+      "sample_category": "other",
+      "subject": "26-44883-mlo \"Meeting (Chapter 7)\" Ch 7",
+      "model": "claude-sonnet-4-6",
+      "classification": "meeting_ch7",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "OqhAC08t",
+        "primary_contact_id": 1500
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "agree",
+        "case_objection": "agree",
+        "appt_date_vs_341_current": "agree"
+      },
+      "cost_cents": 1.8231000000000002,
+      "latency_ms": 5495,
+      "call_id": 64,
+      "raw_output": {
+        "message_id": "19dd9ecb39256ae0-test-mq84ois2-yw3s4b",
+        "case_number": "26-44883-mlo",
+        "case_name": "Zenobia A. Dandridge",
+        "chapter": "7",
+        "classification": "meeting_ch7",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "create_appointment",
+            "fields": {
+              "appt_type": "341 Meeting",
+              "date": "2026-06-04",
+              "time": "09:00",
+              "platform": "Zoom",
+              "trustee": "Stuart A. Gold",
+              "connection_info": "Meeting ID 415 931 8463, Passcode 8677448153, Phone 1 947 214 6027"
+            },
+            "citations": {
+              "date": "341(a) meeting to be held on 6/4/2026 at 09:00 AM",
+              "time": "at 09:00 AM",
+              "platform": "via Zoom - Gold",
+              "trustee": "Appointment of Interim Trustee Stuart A. Gold",
+              "connection_info": "Meeting ID 415 931 8463, Passcode 8677448153, Phone 1 947 214 6027"
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "7",
+              "case_trustee": "Stuart A. Gold",
+              "case_objection": "2026-08-03"
+            },
+            "citations": {
+              "case_chapter": "Notice of Chapter 7 Bankruptcy Case",
+              "case_trustee": "Appointment of Interim Trustee Stuart A. Gold",
+              "case_objection": "Last day to oppose discharge or dischargeability is 8/3/2026"
+            }
+          }
+        ],
+        "notes": "case_file_date NOT set — this is a 341 notice, not the petition; its 'filed on' is the notice date."
+      }
+    },
+    {
+      "message_id": "19df39d0dffa2453-test-mq84ohnd-n00yoc",
+      "email_id": 30512,
+      "sample_category": "meeting_ch13",
+      "subject": "26-44937-mar \"Meeting of Creditors Chapter 13\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "meeting_ch13",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "tLfSP42H",
+        "primary_contact_id": 1969
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "agree",
+        "case_objection": "agree",
+        "appt_date_vs_341_current": "agree"
+      },
+      "cost_cents": 2.2227,
+      "latency_ms": 9241,
+      "call_id": 65,
+      "raw_output": {
+        "message_id": "19df39d0dffa2453-test-mq84ohnd-n00yoc",
+        "case_number": "26-44937-mar",
+        "case_name": "Trezette M. Johnson",
+        "chapter": "13",
+        "classification": "meeting_ch13",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "create_appointment",
+            "fields": {
+              "appt_type": "341 Meeting",
+              "date": "2026-06-05",
+              "time": "09:00",
+              "platform": "Zoom",
+              "trustee": "Krispen S. Carroll",
+              "connection_info": "Meeting ID 949 724 7977, Passcode 2718849134, Phone 1 313 331 6488"
+            },
+            "citations": {
+              "date": "341(a) meeting to be held on 6/5/2026 at 09:00 AM",
+              "time": "at 09:00 AM",
+              "platform": "via Zoom - Carroll",
+              "trustee": "Appointment of Trustee Krispen S. Carroll",
+              "connection_info": "Meeting ID 949 724 7977, Passcode 2718849134, Phone 1 313 331 6488"
+            }
+          },
+          {
+            "type": "create_event",
+            "fields": {
+              "event_type": "Confirmation Hearing",
+              "event_title": "Confirmation Hearing – Trezette M. Johnson",
+              "date": "2026-07-15",
+              "time": "09:00",
+              "all_day": false,
+              "location": "Courtroom 1825, 211 W. Fort St."
+            },
+            "citations": {
+              "date": "Confirmation hearing to be held on 7/15/2026 at 09:00 AM",
+              "time": "at 09:00 AM",
+              "location": "Courtroom 1825, 211 W. Fort St."
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "13",
+              "case_trustee": "Krispen S. Carroll",
+              "case_objection": "2026-08-04"
+            },
+            "citations": {
+              "case_chapter": "Notice of Chapter 13 Bankruptcy Case",
+              "case_trustee": "Appointment of Trustee Krispen S. Carroll",
+              "case_objection": "Last day to oppose dischargeability of certain debts is 8/4/2026"
+            }
+          }
+        ],
+        "notes": "case_file_date NOT set — this is a 341/confirmation notice, not the petition; its 'filed on' is the notice date. Additional deadlines noted: Proofs of Claims due by 7/9/2026, Government Proof of Claim due by 10/27/2026, Last day to Object to Confirmation 6/26/2026 — not mapped to case fields as no matching allowed columns exist."
+      }
+    },
+    {
+      "message_id": "19e3ac5185c4f229-test-mq84ogrn-zum0n4",
+      "email_id": 30511,
+      "sample_category": "other",
+      "subject": "26-31193-jda \"Meeting (AutoAssign Chapter 13)\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "meeting_ch13",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "YSHZLitl",
+        "primary_contact_id": 1983
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "db_empty",
+        "case_objection": "db_empty",
+        "appt_date_vs_341_current": "db_empty"
+      },
+      "cost_cents": 2.2632000000000003,
+      "latency_ms": 9545,
+      "call_id": 66,
+      "raw_output": {
+        "message_id": "19e3ac5185c4f229-test-mq84ogrn-zum0n4",
+        "case_number": "26-31193-jda",
+        "case_name": "India Gragg",
+        "chapter": "13",
+        "classification": "meeting_ch13",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "create_appointment",
+            "fields": {
+              "appt_type": "341 Meeting",
+              "date": "2026-07-07",
+              "time": "13:00",
+              "platform": "Zoom",
+              "trustee": "Melissa A Caouette",
+              "connection_info": "Meeting ID 741 812 1144, Passcode 8079024454, Phone 1 810 476 5686"
+            },
+            "citations": {
+              "date": "341(a) meeting to be held on 7/7/2026 at 01:00 PM",
+              "time": "at 01:00 PM",
+              "platform": "via Zoom - Caouette",
+              "trustee": "Appointment of Trustee Melissa A Caouette",
+              "connection_info": "Meeting ID 741 812 1144, Passcode 8079024454, Phone 1 810 476 5686"
+            }
+          },
+          {
+            "type": "create_event",
+            "fields": {
+              "event_type": "Confirmation Hearing",
+              "event_title": "Confirmation Hearing – India Gragg",
+              "date": "2026-08-18",
+              "time": "09:00",
+              "all_day": false,
+              "location": "Courtroom, Flint, 226 West Second St."
+            },
+            "citations": {
+              "event_type": "Confirmation hearing to be held on 8/18/2026 at 09:00 AM",
+              "date": "Confirmation hearing to be held on 8/18/2026",
+              "time": "at 09:00 AM",
+              "location": "Courtroom, Flint, 226 West Second St."
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "13",
+              "case_trustee": "Melissa A Caouette",
+              "case_objection": "2026-09-08"
+            },
+            "citations": {
+              "case_chapter": "Notice of Chapter 13 Bankruptcy Case",
+              "case_trustee": "Appointment of Trustee Melissa A Caouette",
+              "case_objection": "Last day to oppose dischargeability of certain debts is 9/8/2026"
+            }
+          }
+        ],
+        "notes": "case_file_date NOT set — this is a 341/confirmation notice, not the petition; the 'filed on' date is the notice filing date. Additional deadlines noted: Government Proof of Claim due 11/16/2026, Last day to Object to Confirmation 7/28/2026, Proofs of Claims due 7/27/2026 — these are not mapped to case fields but may warrant calendar entries."
+      }
+    },
+    {
+      "message_id": "19e4af7c71949a88-test-mq84ofuk-o5ho9w",
+      "email_id": 30510,
+      "sample_category": "hearing",
+      "subject": "26-44475-mar \"Notice of Hearing (BK)\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "hearing_notice",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "wyRj8Rou",
+        "primary_contact_id": 1972
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.6488,
+      "latency_ms": 9297,
+      "call_id": 67,
+      "raw_output": {
+        "message_id": "19e4af7c71949a88-test-mq84ofuk-o5ho9w",
+        "case_number": "26-44475-mar",
+        "case_name": "Jordan D. Armstrong",
+        "chapter": "13",
+        "classification": "hearing_notice",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "create_event",
+            "fields": {
+              "event_type": "Hearing",
+              "event_title": "Hearing on Motion for Relief from Stay (Parc on 12) [Doc 22]",
+              "date": "2026-05-27",
+              "time": "09:00",
+              "all_day": false,
+              "location": "Courtroom 1825, 211 W. Fort St."
+            },
+            "citations": {
+              "event_type": "Notice of Hearing",
+              "event_title": "Motion for Relief from Stay and Waiving FRBP 4001 (a)(3) filed by Creditor Parc on 12",
+              "date": "Hearing to be held on 5/27/2026 at 09:00 AM",
+              "time": "at 09:00 AM",
+              "location": "Courtroom 1825, 211 W. Fort St."
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "13",
+              "case_judge": "mar"
+            },
+            "citations": {
+              "case_chapter": "Chapter 13",
+              "case_judge": "26-44475-mar"
+            }
+          }
+        ],
+        "notes": "Hearing is on Motion for Relief from Stay filed by Creditor Parc on 12 (Doc 22). Trustee Krispen S. Carroll noted as recipient. The notice also references a contested docket telephonic line at (202) 503-1666, Conference ID 231 911 059# for unresolved matters before Judge Randon, but no separate hearing date is specified for that."
+      }
+    },
+    {
+      "message_id": "19e8a20885869bf4-test-mq84odd4-tv6zjc",
+      "email_id": 30509,
+      "sample_category": "pleading",
+      "subject": "25-04172-prh \"Motion for Sanctions\" Ch",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 1.1991,
+      "latency_ms": 2914,
+      "call_id": 68,
+      "raw_output": {
+        "message_id": "19e8a20885869bf4-test-mq84odd4-tv6zjc",
+        "case_number": "25-04172-prh",
+        "case_name": "Brohl, Jr v. Sobel et al",
+        "chapter": null,
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Motion for Sanctions filing — informational only, no hearing date or 341 meeting present."
+      }
+    },
+    {
+      "message_id": "19e8a486863a185d-test-mq84obpb-pefq1c",
+      "email_id": 30508,
+      "sample_category": "discharge_close",
+      "subject": "26-42202-lsg \"Order Discharging Debtor(s)\" Ch 7",
+      "model": "claude-sonnet-4-6",
+      "classification": "discharge_or_close",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "IlKyPZXg",
+        "primary_contact_id": 1511
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "agree",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.3413,
+      "latency_ms": 3870,
+      "call_id": 69,
+      "raw_output": {
+        "message_id": "19e8a486863a185d-test-mq84obpb-pefq1c",
+        "case_number": "26-42202-lsg",
+        "case_name": "Shamika L. Kidd",
+        "chapter": "7",
+        "classification": "discharge_or_close",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "7",
+              "case_close_date": "2026-06-02",
+              "case_trustee": "Stuart A. Gold"
+            },
+            "citations": {
+              "case_chapter": "Discharge Ch 7",
+              "case_close_date": "entered on 06/02/2026",
+              "case_trustee": "Stuart A. Gold"
+            }
+          }
+        ],
+        "notes": "Order Discharging Debtor filed 06/02/2026. Trustee inferred from notification list (Stuart A. Gold, trusteegold@glmpc.com)."
+      }
+    },
+    {
+      "message_id": "19e93813b6886bcb-test-mq84o9yn-bkzack",
+      "email_id": 30507,
+      "sample_category": "continued_meeting",
+      "subject": "26-43652-prh Meeting of Creditors Not Held",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": true,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "LM6g2qcY",
+        "primary_contact_id": 1973
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.17,
+      "latency_ms": 2297,
+      "call_id": 70,
+      "raw_output": {
+        "message_id": "19e93813b6886bcb-test-mq84o9yn-bkzack",
+        "case_number": "26-43652-prh",
+        "case_name": "Barbara Jean Tuck",
+        "chapter": null,
+        "classification": "none",
+        "needs_review": true,
+        "review_reason": "341 meeting not held on 6/3/2026; the scheduled meeting did not occur — watch for a continued/rescheduled notice.",
+        "actions": [],
+        "notes": "Meeting of Creditors Not Held — informational; no new date to act on."
+      }
+    },
+    {
+      "message_id": "19e93f89acbf901f-test-mq84o87t-8vivxl",
+      "email_id": 30506,
+      "sample_category": "continued_meeting",
+      "subject": "26-44883-mlo Continuance of Meeting of Creditors",
+      "model": "claude-sonnet-4-6",
+      "classification": "meeting_continued",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "OqhAC08t",
+        "primary_contact_id": 1500
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "disagree"
+      },
+      "cost_cents": 1.2681000000000002,
+      "latency_ms": 3559,
+      "call_id": 71,
+      "raw_output": {
+        "message_id": "19e93f89acbf901f-test-mq84o87t-8vivxl",
+        "case_number": "26-44883-mlo",
+        "case_name": "Zenobia A. Dandridge",
+        "chapter": null,
+        "classification": "meeting_continued",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "create_appointment",
+            "fields": {
+              "appt_type": "341 Meeting",
+              "date": "2026-06-18",
+              "time": "08:30",
+              "trustee": "Stuart A. Gold"
+            },
+            "citations": {
+              "date": "341(a) meeting to be held on 6/18/2026 at 08:30 AM",
+              "time": "at 08:30 AM",
+              "trustee": "Stuart A. Gold"
+            }
+          }
+        ],
+        "notes": "Platform not stated; continued meeting. Trustee identified from email recipient list as Stuart A. Gold."
+      }
+    },
+    {
+      "message_id": "19e9761698fccd8e-test-mq84o6ik-8harss",
+      "email_id": 30505,
+      "sample_category": "discharge_close",
+      "subject": "26-42202-lsg \"Final Decree and Case Closed\" Ch 7",
+      "model": "claude-sonnet-4-6",
+      "classification": "discharge_or_close",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "IlKyPZXg",
+        "primary_contact_id": 1511
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "agree",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.4391,
+      "latency_ms": 4846,
+      "call_id": 72,
+      "raw_output": {
+        "message_id": "19e9761698fccd8e-test-mq84o6ik-8harss",
+        "case_number": "26-42202-lsg",
+        "case_name": "Shamika L. Kidd",
+        "chapter": "7",
+        "classification": "discharge_or_close",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "7",
+              "case_trustee": "Stuart A. Gold",
+              "case_close_date": "2026-06-05"
+            },
+            "citations": {
+              "case_chapter": "the chapter 7 case is closed",
+              "case_trustee": "Trustee Stuart A. Gold is discharged as trustee of the estate",
+              "case_close_date": "entered on 06/05/2026 at 06:23 AM EDT and filed on 06/05/2026"
+            }
+          }
+        ],
+        "notes": "Final Decree entered; trustee discharged and case closed. Close date taken from the filing/entry date of the Final Decree order itself."
+      }
+    },
+    {
+      "message_id": "19e9b34d35841ae2-test-mq84o40c-m2wuag",
+      "email_id": 30504,
+      "sample_category": "certificate",
+      "subject": "26-40794-mar \"BNC Certificate of Mailing\" Ch 7",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "TtkwFCkQ",
+        "primary_contact_id": 1825
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.2201,
+      "latency_ms": 3124,
+      "call_id": 73,
+      "raw_output": {
+        "message_id": "19e9b34d35841ae2-test-mq84o40c-m2wuag",
+        "case_number": "26-40794-mar",
+        "case_name": "Charles Penny",
+        "chapter": "7",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Certificate of mailing — informational. Related to an Order to Show Cause on Dismissal of Case for Failure to Pay, but this document is merely the BNC mailing certificate, not the order itself."
+      }
+    },
+    {
+      "message_id": "19ea71eac6e11ec8-test-mq84o2d6-fczl9t",
+      "email_id": 30502,
+      "sample_category": "show_cause",
+      "subject": "26-42040-mar \"Order to Show Cause on Dismissal of Case for Failure to Pay\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "order_to_show_cause",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "LCspjrRL",
+        "primary_contact_id": 1929
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "agree",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.6233,
+      "latency_ms": 6050,
+      "call_id": 74,
+      "raw_output": {
+        "message_id": "19ea71eac6e11ec8-test-mq84o2d6-fczl9t",
+        "case_number": "26-42040-mar",
+        "case_name": "Aimee Gail Crittenden",
+        "chapter": "13",
+        "classification": "order_to_show_cause",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "create_event",
+            "fields": {
+              "event_type": "Show Cause",
+              "event_title": "Order to Show Cause on Dismissal of Case for Failure to Pay Filing Fee",
+              "date": "2026-08-10",
+              "time": "10:00",
+              "all_day": false,
+              "location": "Courtroom 1825, 211 W. Fort St."
+            },
+            "citations": {
+              "event_type": "Order to Show Cause on Dismissal of Case for Failure to Pay",
+              "event_title": "Order to Show Cause on Dismissal of Case for Failure to Pay Filing Fee",
+              "date": "Show Cause hearing to be held on 8/10/2026 at 10:00 AM",
+              "time": "at 10:00 AM",
+              "location": "Courtroom 1825, 211 W. Fort St."
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "13",
+              "case_trustee": "Krispen S. Carroll"
+            },
+            "citations": {
+              "case_chapter": "Ch 13",
+              "case_trustee": "Krispen S. Carroll"
+            }
+          }
+        ],
+        "notes": "Chapter derived from subject line 'Ch 13'. Trustee Krispen S. Carroll identified from notice recipients list (known Ch 13 trustee address notice@det13ksc.com)."
+      }
+    },
+    {
+      "message_id": "19eac7a99a480f5b-test-mq84o0p5-1btetm",
+      "email_id": 30501,
+      "sample_category": "meeting_ch7",
+      "subject": "26-42040-mar \"Meeting of Creditors Chapter 7 No Asset\" Ch 7",
+      "model": "claude-sonnet-4-6",
+      "classification": "meeting_ch7",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "LCspjrRL",
+        "primary_contact_id": 1929
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "disagree",
+        "case_objection": "disagree",
+        "appt_date_vs_341_current": "disagree"
+      },
+      "cost_cents": 1.6505999999999998,
+      "latency_ms": 7571,
+      "call_id": 75,
+      "raw_output": {
+        "message_id": "19eac7a99a480f5b-test-mq84o0p5-1btetm",
+        "case_number": "26-42040-mar",
+        "case_name": "Aimee Gail Crittenden",
+        "chapter": "7",
+        "classification": "meeting_ch7",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "create_appointment",
+            "fields": {
+              "appt_type": "341 Meeting",
+              "date": "2026-07-09",
+              "time": "10:00",
+              "platform": "Zoom",
+              "trustee": "Basil T. Simon",
+              "connection_info": "Meeting ID 931 641 2796, Passcode 0827744230, Phone 1 313 391 5508"
+            },
+            "citations": {
+              "date": "341(a) meeting to be held on 7/9/2026 at 10:00 AM",
+              "time": "at 10:00 AM",
+              "platform": "via Zoom - Simon",
+              "trustee": "Appointment of Interim Trustee Basil T. Simon",
+              "connection_info": "Meeting ID 931 641 2796, Passcode 0827744230, Phone 1 313 391 5508"
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "7",
+              "case_trustee": "Basil T. Simon",
+              "case_objection": "2026-09-08"
+            },
+            "citations": {
+              "case_chapter": "Notice of Chapter 7 Bankruptcy Case",
+              "case_trustee": "Appointment of Interim Trustee Basil T. Simon",
+              "case_objection": "Last day to oppose discharge or dischargeability is 9/8/2026"
+            }
+          }
+        ],
+        "notes": "case_file_date NOT set — this is a 341 notice, not the petition; its 'filed on' is the notice date."
+      }
+    },
+    {
+      "message_id": "19eade53dc8c761f-test-mq84ny83-eureew",
+      "email_id": 30500,
+      "sample_category": "proof_of_claim",
+      "subject": "Proof of Claim 26-44274-mar \"\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "d1B2iB_q",
+        "primary_contact_id": 1961
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1757,
+      "latency_ms": 5149,
+      "call_id": 76,
+      "raw_output": {
+        "message_id": "19eade53dc8c761f-test-mq84ny83-eureew",
+        "case_number": "26-44274-mar",
+        "case_name": "Denise Nicole Roth-Childs",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Notice of Electronic Claims Filing — informational only. Claim #11 filed by Commerce Urgent Care Walk-In Clinic PC for $470.20. No hearings, meetings, or deadlines to act on."
+      }
+    },
+    {
+      "message_id": "19eadef6d7851f81-test-mq84nuun-jngv54",
+      "email_id": 30499,
+      "sample_category": "adjourned",
+      "subject": "25-47781-prh \"Order to Adjourn/Reschedule/Continue Hearing\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "hearing_adjourned",
+      "needs_review": true,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 2.0867999999999998,
+      "latency_ms": 8894,
+      "call_id": 77,
+      "raw_output": {
+        "message_id": "19eadef6d7851f81-test-mq84nuun-jngv54",
+        "case_number": "25-47781-prh",
+        "case_name": "Gary Lee Brohl, Jr",
+        "chapter": "13",
+        "classification": "hearing_adjourned",
+        "needs_review": true,
+        "review_reason": "Hearing adjourned to new date 8/27/2026 — a prior hearing event for the Objection to Rana Group's Proof of Claim may need to be canceled or updated.",
+        "actions": [
+          {
+            "type": "update_event",
+            "fields": {
+              "event_type": "Hearing",
+              "event_title": "Hearing on Objection to Rana Group's Proof of Claim",
+              "date": "2026-08-27",
+              "time": "10:00",
+              "all_day": false,
+              "location": "Courtroom 1925, 211 W. Fort St."
+            },
+            "citations": {
+              "event_type": "Order Adjourning Hearing on Objection to Rana Group's Proof of Claim",
+              "event_title": "Order Adjourning Hearing on Objection to Rana Group's Proof of Claim",
+              "date": "Hearing to be held on 8/27/2026 at 10:00 AM",
+              "time": "at 10:00 AM",
+              "location": "Courtroom 1925, 211 W. Fort St."
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "13",
+              "case_trustee": "David Wm Ruskin"
+            },
+            "citations": {
+              "case_chapter": "25-47781-prh \"Order to Adjourn/Reschedule/Continue Hearing\" Ch 13",
+              "case_trustee": "Trustee David Wm Ruskin"
+            }
+          }
+        ],
+        "notes": "Hearing on Objection to Claim (doc 77) adjourned per stipulation (doc 95) to 8/27/2026 at 10:00 AM in Courtroom 1925, 211 W. Fort St. Prior hearing date not stated in this email — prior event should be reviewed for cancellation."
+      }
+    },
+    {
+      "message_id": "19eacf44d983bd37-test-mq84nthj-benng5",
+      "email_id": 30497,
+      "sample_category": "adjourned",
+      "subject": "25-47781-prh \"Order to Adjourn/Reschedule/Continue Hearing\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "hearing_adjourned",
+      "needs_review": true,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 2.0523000000000002,
+      "latency_ms": 8486,
+      "call_id": 78,
+      "raw_output": {
+        "message_id": "19eacf44d983bd37-test-mq84nthj-benng5",
+        "case_number": "25-47781-prh",
+        "case_name": "Gary Lee Brohl, Jr",
+        "chapter": "13",
+        "classification": "hearing_adjourned",
+        "needs_review": true,
+        "review_reason": "Hearing adjourned to a new date — a prior event for this hearing on Objection to State of Michigan's Proof of Claim #10 may need to be canceled or updated.",
+        "actions": [
+          {
+            "type": "update_event",
+            "fields": {
+              "event_type": "Hearing",
+              "event_title": "Hearing on Objection to State of Michigan's Proof of Claim #10",
+              "date": "2026-08-27",
+              "time": "10:00",
+              "all_day": false,
+              "location": "Courtroom 1925, 211 W. Fort St."
+            },
+            "citations": {
+              "event_type": "Order Adjourning Hearing on Objection to State of Michigan's Proof of Claim #10",
+              "event_title": "Order Adjourning Hearing on Objection to State of Michigan's Proof of Claim #10",
+              "date": "Hearing to be held on 8/27/2026 at 10:00 AM",
+              "time": "at 10:00 AM",
+              "all_day": "Hearing to be held on 8/27/2026 at 10:00 AM",
+              "location": "Courtroom 1925, 211 W. Fort St."
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "13",
+              "case_trustee": "David Wm Ruskin"
+            },
+            "citations": {
+              "case_chapter": "Ch 13",
+              "case_trustee": "Trustee David Wm Ruskin"
+            }
+          }
+        ],
+        "notes": "Order adjourning a hearing on an objection to a proof of claim. New hearing date is 8/27/2026 at 10:00 AM in Courtroom 1925. Prior hearing event should be canceled."
+      }
+    },
+    {
+      "message_id": "19eaefbed06ecd93-test-mq84nq16-uj0aub",
+      "email_id": 30496,
+      "sample_category": "voluntary_petition",
+      "subject": "26-46639 \"Voluntary Petition (Chapter 13)\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "voluntary_petition",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "SUTCdsPn",
+        "primary_contact_id": 1988
+      },
+      "field_agreement": {
+        "case_file_date": "agree",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.2666,
+      "latency_ms": 3236,
+      "call_id": 79,
+      "raw_output": {
+        "message_id": "19eaefbed06ecd93-test-mq84nq16-uj0aub",
+        "case_number": "26-46639",
+        "case_name": "Moneika Nashay Brown",
+        "chapter": "13",
+        "classification": "voluntary_petition",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_file_date": "2026-06-09",
+              "case_chapter": "13"
+            },
+            "citations": {
+              "case_file_date": "filed on 6/9/2026",
+              "case_chapter": "Chapter 13 Voluntary Petition"
+            }
+          }
+        ],
+        "notes": "Voluntary petition filing; case_file_date set from the petition's own filing date."
+      }
+    },
+    {
+      "message_id": "19eb1af5f47bfbca",
+      "email_id": 30490,
+      "sample_category": "certificate",
+      "subject": "26-44937-mar \"Certificate of Service (batch)\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "tLfSP42H",
+        "primary_contact_id": 1969
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1442,
+      "latency_ms": 2786,
+      "call_id": 80,
+      "raw_output": {
+        "message_id": "19eb1af5f47bfbca",
+        "case_number": "26-44937-mar",
+        "case_name": "Trezette M. Johnson",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Certificate of Service — informational only, no actionable dates or events."
+      }
+    },
+    {
+      "message_id": "19eb1674ee27a578",
+      "email_id": 30469,
+      "sample_category": "pleading",
+      "subject": "21-50019-prh \"Stipulation(batch)\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "hearing_adjourned",
+      "needs_review": true,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": false,
+      "citation_misses": [
+        {
+          "action_index": 0,
+          "field": "date",
+          "value": null
+        },
+        {
+          "action_index": 0,
+          "field": "time",
+          "value": null
+        },
+        {
+          "action_index": 0,
+          "field": "location",
+          "value": null
+        }
+      ],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 1.3862999999999999,
+      "latency_ms": 5276,
+      "call_id": 81,
+      "raw_output": {
+        "message_id": "19eb1674ee27a578",
+        "case_number": "21-50019-prh",
+        "case_name": "Kristine Estridge",
+        "chapter": "13",
+        "classification": "hearing_adjourned",
+        "needs_review": true,
+        "review_reason": "Hearing adjourned per stipulation; no new date/time stated in the email — prior hearing event may need to be updated or canceled. Review document 83 for the rescheduled hearing date.",
+        "actions": [
+          {
+            "type": "update_event",
+            "fields": {
+              "event_type": "Hearing",
+              "event_title": "Adjourned Hearing (Stipulation)",
+              "date": null,
+              "time": null,
+              "all_day": true,
+              "location": null
+            },
+            "citations": {
+              "event_type": "Stipulation ADJOURNING HEARING W/EXHIBIT"
+            }
+          }
+        ],
+        "notes": "The email confirms a stipulation adjourning a hearing but does not state the new hearing date or time. Document 83 should be reviewed for the rescheduled date. No 341 meeting involved."
+      }
+    },
+    {
+      "message_id": "19eaefbe9479c1d7",
+      "email_id": 30446,
+      "sample_category": "filing_doc",
+      "subject": "26-46639 \"Statement About Your Social Security Numbers\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "SUTCdsPn",
+        "primary_contact_id": 1988
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1154,
+      "latency_ms": 3554,
+      "call_id": 82,
+      "raw_output": {
+        "message_id": "19eaefbe9479c1d7",
+        "case_number": "26-46639",
+        "case_name": "Moneika Nashay Brown",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Statement About Your Social Security Numbers — informational filing, no actionable dates or events."
+      }
+    },
+    {
+      "message_id": "19eaefbed06ecd93",
+      "email_id": 30445,
+      "sample_category": "voluntary_petition",
+      "subject": "26-46639 \"Voluntary Petition (Chapter 13)\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "voluntary_petition",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "SUTCdsPn",
+        "primary_contact_id": 1988
+      },
+      "field_agreement": {
+        "case_file_date": "agree",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1885999999999999,
+      "latency_ms": 3417,
+      "call_id": 83,
+      "raw_output": {
+        "message_id": "19eaefbed06ecd93",
+        "case_number": "26-46639",
+        "case_name": "Moneika Nashay Brown",
+        "chapter": "13",
+        "classification": "voluntary_petition",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_file_date": "2026-06-09",
+              "case_chapter": "13"
+            },
+            "citations": {
+              "case_file_date": "filed on 6/9/2026",
+              "case_chapter": "Chapter 13 Voluntary Petition"
+            }
+          }
+        ],
+        "notes": ""
+      }
+    },
+    {
+      "message_id": "19eaefc0b149426c",
+      "email_id": 30443,
+      "sample_category": "certificate",
+      "subject": "26-46639 \"Certificate of Budget and Credit Counseling Course\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "SUTCdsPn",
+        "primary_contact_id": 1988
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1226,
+      "latency_ms": 2468,
+      "call_id": 84,
+      "raw_output": {
+        "message_id": "19eaefc0b149426c",
+        "case_number": "26-46639",
+        "case_name": "Moneika Nashay Brown",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Certificate of Budget and Credit Counseling Course — informational document filing, no actionable dates or events."
+      }
+    },
+    {
+      "message_id": "19eaefbf6af9426c",
+      "email_id": 30442,
+      "sample_category": "certificate",
+      "subject": "26-46639 \"Certificate of Budget and Credit Counseling Course\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "SUTCdsPn",
+        "primary_contact_id": 1988
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1247,
+      "latency_ms": 2310,
+      "call_id": 85,
+      "raw_output": {
+        "message_id": "19eaefbf6af9426c",
+        "case_number": "26-46639",
+        "case_name": "Moneika Nashay Brown",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Certificate of Budget and Credit Counseling Course — informational filing, no actionable dates."
+      }
+    },
+    {
+      "message_id": "19eaefc9bf9377e9",
+      "email_id": 30441,
+      "sample_category": "filing_doc",
+      "subject": "26-46639 \"Application for Individuals to Pay the Filing Fee in Installments\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "SUTCdsPn",
+        "primary_contact_id": 1988
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1367,
+      "latency_ms": 2727,
+      "call_id": 86,
+      "raw_output": {
+        "message_id": "19eaefc9bf9377e9",
+        "case_number": "26-46639",
+        "case_name": "Moneika Nashay Brown",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Application for Individuals to Pay the Filing Fee in Installments — informational filing, no actionable dates or hearings."
+      }
+    },
+    {
+      "message_id": "19eaefc9e2aebc05",
+      "email_id": 30440,
+      "sample_category": "filing_doc",
+      "subject": "26-46639 \"Bankruptcy Cover Sheet\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "SUTCdsPn",
+        "primary_contact_id": 1988
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1265,
+      "latency_ms": 2863,
+      "call_id": 87,
+      "raw_output": {
+        "message_id": "19eaefc9e2aebc05",
+        "case_number": "26-46639",
+        "case_name": "Moneika Nashay Brown",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Bankruptcy Petition Cover Sheet filing — informational document, not the petition itself. No appointments or events to create."
+      }
+    },
+    {
+      "message_id": "19eae6d16aad4b02",
+      "email_id": 30422,
+      "sample_category": "proof_of_claim",
+      "subject": "Proof of Claim 26-31193-jda \"\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "YSHZLitl",
+        "primary_contact_id": 1983
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.0968,
+      "latency_ms": 2557,
+      "call_id": 88,
+      "raw_output": {
+        "message_id": "19eae6d16aad4b02",
+        "case_number": "26-31193-jda",
+        "case_name": "India Gragg",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Proof of claim filing notice — informational only. Creditor T-MOBILE USA INC (Jefferson Capital Systems, LLC Assignee) filed claim #17 for $1116.61."
+      }
+    },
+    {
+      "message_id": "19eae56aef5c174d",
+      "email_id": 30420,
+      "sample_category": "proof_of_claim",
+      "subject": "Proof of Claim 26-31193-jda \"\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "YSHZLitl",
+        "primary_contact_id": 1983
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.0692,
+      "latency_ms": 2358,
+      "call_id": 89,
+      "raw_output": {
+        "message_id": "19eae56aef5c174d",
+        "case_number": "26-31193-jda",
+        "case_name": "India Gragg",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Proof of claim filing notice — informational only. No hearings, meetings, or deadlines to act on."
+      }
+    },
+    {
+      "message_id": "19eae5308cb33b3b",
+      "email_id": 30419,
+      "sample_category": "proof_of_claim",
+      "subject": "Proof of Claim 26-31193-jda \"\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "YSHZLitl",
+        "primary_contact_id": 1983
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.065,
+      "latency_ms": 2410,
+      "call_id": 90,
+      "raw_output": {
+        "message_id": "19eae5308cb33b3b",
+        "case_number": "26-31193-jda",
+        "case_name": "India Gragg",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Proof of claim filing notice — informational only. No hearing, meeting, or deadline to act on."
+      }
+    },
+    {
+      "message_id": "19eadef6d7851f81",
+      "email_id": 30407,
+      "sample_category": "adjourned",
+      "subject": "25-47781-prh \"Order to Adjourn/Reschedule/Continue Hearing\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "hearing_adjourned",
+      "needs_review": true,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 2.0604,
+      "latency_ms": 8367,
+      "call_id": 91,
+      "raw_output": {
+        "message_id": "19eadef6d7851f81",
+        "case_number": "25-47781-prh",
+        "case_name": "Gary Lee Brohl, Jr",
+        "chapter": "13",
+        "classification": "hearing_adjourned",
+        "needs_review": true,
+        "review_reason": "Hearing adjourned to new date 8/27/2026 — a prior hearing event on this objection may need to be canceled or updated.",
+        "actions": [
+          {
+            "type": "update_event",
+            "fields": {
+              "event_type": "Hearing",
+              "event_title": "Hearing on Objection to Rana Group's Proof of Claim",
+              "date": "2026-08-27",
+              "time": "10:00",
+              "all_day": false,
+              "location": "Courtroom 1925, 211 W. Fort St."
+            },
+            "citations": {
+              "event_type": "Order Adjourning Hearing on Objection to Rana Group's Proof of Claim",
+              "event_title": "Order Adjourning Hearing on Objection to Rana Group's Proof of Claim",
+              "date": "Hearing to be held on 8/27/2026 at 10:00 AM",
+              "time": "at 10:00 AM",
+              "all_day": "Hearing to be held on 8/27/2026 at 10:00 AM",
+              "location": "Courtroom 1925, 211 W. Fort St."
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "13",
+              "case_trustee": "David Wm Ruskin",
+              "case_judge": "prh"
+            },
+            "citations": {
+              "case_chapter": "Ch 13",
+              "case_trustee": "David Wm Ruskin",
+              "case_judge": "25-47781-prh"
+            }
+          }
+        ],
+        "notes": "Order adjourns hearing on objection to Rana Group's Proof of Claim to 8/27/2026 at 10:00 AM in Courtroom 1925. Prior hearing date not explicitly stated in the email body. Judge suffix 'prh' used for case_judge."
+      }
+    },
+    {
+      "message_id": "19eade53dc8c761f",
+      "email_id": 30406,
+      "sample_category": "proof_of_claim",
+      "subject": "Proof of Claim 26-44274-mar \"\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "d1B2iB_q",
+        "primary_contact_id": 1961
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1346,
+      "latency_ms": 2850,
+      "call_id": 92,
+      "raw_output": {
+        "message_id": "19eade53dc8c761f",
+        "case_number": "26-44274-mar",
+        "case_name": "Denise Nicole Roth-Childs",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Notice of Electronic Claims Filing — a proof of claim was filed by Commerce Urgent Care Walk-In Clinic PC for $470.20. Informational only; no hearing, meeting, or deadline to act on."
+      }
+    },
+    {
+      "message_id": "19ead329e792e11f",
+      "email_id": 30382,
+      "sample_category": "order",
+      "subject": "26-04162-mar \"Order Striking Document (text)\" Ch",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "YhuS5rOp",
+        "primary_contact_id": 1031
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.1016,
+      "latency_ms": 2868,
+      "call_id": 93,
+      "raw_output": {
+        "message_id": "19ead329e792e11f",
+        "case_number": "26-04162-mar",
+        "case_name": "Moore v. Westlake Financial Services",
+        "chapter": null,
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Order striking a document from the record — administrative/procedural order, no hearing or deadline to calendar."
+      }
+    },
+    {
+      "message_id": "19ead20efb9f1156",
+      "email_id": 30374,
+      "sample_category": "pleading",
+      "subject": "25-47781-prh \"Stipulation\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 1.4196,
+      "latency_ms": 3493,
+      "call_id": 94,
+      "raw_output": {
+        "message_id": "19ead20efb9f1156",
+        "case_number": "25-47781-prh",
+        "case_name": "Gary Lee Brohl, Jr",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "This is a stipulation filing (with proposed order) to adjourn a hearing on an objection to a proof of claim — informational/procedural document. No hearing date is specified in the email body; no actionable dates present."
+      }
+    },
+    {
+      "message_id": "19ead212df25d9d2",
+      "email_id": 30373,
+      "sample_category": "other",
+      "subject": "Proposed Order: 25-47781",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 0.9321,
+      "latency_ms": 2354,
+      "call_id": 95,
+      "raw_output": {
+        "message_id": "19ead212df25d9d2",
+        "case_number": "25-47781",
+        "case_name": null,
+        "chapter": null,
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Attorney receipt acknowledgment for proposed order submission — informational only, no actionable content."
+      }
+    },
+    {
+      "message_id": "19eacf44d983bd37",
+      "email_id": 30356,
+      "sample_category": "adjourned",
+      "subject": "25-47781-prh \"Order to Adjourn/Reschedule/Continue Hearing\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "hearing_adjourned",
+      "needs_review": true,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 2.0439,
+      "latency_ms": 8884,
+      "call_id": 96,
+      "raw_output": {
+        "message_id": "19eacf44d983bd37",
+        "case_number": "25-47781-prh",
+        "case_name": "Gary Lee Brohl, Jr",
+        "chapter": "13",
+        "classification": "hearing_adjourned",
+        "needs_review": true,
+        "review_reason": "Hearing has been adjourned/rescheduled to 8/27/2026 — a prior event for this hearing on Objection to Claim #10 may need to be canceled or updated.",
+        "actions": [
+          {
+            "type": "update_event",
+            "fields": {
+              "event_type": "Hearing",
+              "event_title": "Hearing on Objection to State of Michigan's Proof of Claim #10",
+              "date": "2026-08-27",
+              "time": "10:00",
+              "all_day": false,
+              "location": "Courtroom 1925, 211 W. Fort St."
+            },
+            "citations": {
+              "event_type": "Order Adjourning Hearing on Objection to State of Michigan's Proof of Claim #10",
+              "event_title": "Order Adjourning Hearing on Objection to State of Michigan's Proof of Claim #10",
+              "date": "Hearing to be held on 8/27/2026 at 10:00 AM",
+              "time": "at 10:00 AM",
+              "all_day": "Hearing to be held on 8/27/2026 at 10:00 AM",
+              "location": "Courtroom 1925, 211 W. Fort St."
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "13",
+              "case_trustee": "David Wm Ruskin"
+            },
+            "citations": {
+              "case_chapter": "Ch 13",
+              "case_trustee": "Trustee David Wm Ruskin"
+            }
+          }
+        ],
+        "notes": "The order adjourns a previously scheduled hearing on Debtor's Objection to State of Michigan's Proof of Claim #10 (doc #84) to 8/27/2026 at 10:00 AM per stipulation (doc #93). Prior hearing date not stated in this email."
+      }
+    },
+    {
+      "message_id": "19eacd76e89b28df",
+      "email_id": 30342,
+      "sample_category": "pleading",
+      "subject": "25-47781-prh \"Stipulation\" Ch 13",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 1.3986,
+      "latency_ms": 2962,
+      "call_id": 97,
+      "raw_output": {
+        "message_id": "19eacd76e89b28df",
+        "case_number": "25-47781-prh",
+        "case_name": "Gary Lee Brohl, Jr",
+        "chapter": "13",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "This is a stipulation to adjourn a hearing on an objection to claim, with a proposed order attached. No new hearing date is stated in the email body; document is informational only."
+      }
+    },
+    {
+      "message_id": "19eacd7e11a9d892",
+      "email_id": 30341,
+      "sample_category": "other",
+      "subject": "Proposed Order: 25-47781 [93]",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": false,
+        "primary_contact_found": false,
+        "case_id": null,
+        "primary_contact_id": null
+      },
+      "field_agreement": {
+        "case_file_date": "no_case",
+        "case_trustee": "no_case",
+        "case_objection": "no_case",
+        "appt_date_vs_341_current": "no_case"
+      },
+      "cost_cents": 0.9366,
+      "latency_ms": 2557,
+      "call_id": 98,
+      "raw_output": {
+        "message_id": "19eacd7e11a9d892",
+        "case_number": "25-47781",
+        "case_name": null,
+        "chapter": null,
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "Attorney receipt acknowledgment for proposed order submission — informational only, no actionable content."
+      }
+    },
+    {
+      "message_id": "19eac79ee3d630d8",
+      "email_id": 30315,
+      "sample_category": "other",
+      "subject": "26-42040-mar \"Convert Case\" Ch 7",
+      "model": "claude-sonnet-4-6",
+      "classification": "none",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "LCspjrRL",
+        "primary_contact_id": 1929
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "no_extract",
+        "case_objection": "no_extract",
+        "appt_date_vs_341_current": "no_extract"
+      },
+      "cost_cents": 1.3017,
+      "latency_ms": 5258,
+      "call_id": 99,
+      "raw_output": {
+        "message_id": "19eac79ee3d630d8",
+        "case_number": "26-42040-mar",
+        "case_name": "Aimee Gail Crittenden",
+        "chapter": "7",
+        "classification": "none",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [],
+        "notes": "This is a docket entry recording the conversion of the case from Chapter 13 to Chapter 7, with a deadline for Form 122A-1 due 6/23/2026. No hearing, 341 meeting, or other directly actionable calendar event is stated in this notice — it is an administrative conversion entry. The Form 122A-1 due date is an internal filing deadline for the debtor, not a court hearing or 341 meeting, so no create_event action is emitted; flagged for awareness only."
+      }
+    },
+    {
+      "message_id": "19eac7a99a480f5b",
+      "email_id": 30314,
+      "sample_category": "meeting_ch7",
+      "subject": "26-42040-mar \"Meeting of Creditors Chapter 7 No Asset\" Ch 7",
+      "model": "claude-sonnet-4-6",
+      "classification": "meeting_ch7",
+      "needs_review": false,
+      "usable_json": true,
+      "call_error": null,
+      "citation_pass": true,
+      "citation_misses": [],
+      "resolve": {
+        "case_found": true,
+        "primary_contact_found": true,
+        "case_id": "LCspjrRL",
+        "primary_contact_id": 1929
+      },
+      "field_agreement": {
+        "case_file_date": "no_extract",
+        "case_trustee": "disagree",
+        "case_objection": "disagree",
+        "appt_date_vs_341_current": "disagree"
+      },
+      "cost_cents": 1.6040999999999999,
+      "latency_ms": 4853,
+      "call_id": 100,
+      "raw_output": {
+        "message_id": "19eac7a99a480f5b",
+        "case_number": "26-42040-mar",
+        "case_name": "Aimee Gail Crittenden",
+        "chapter": "7",
+        "classification": "meeting_ch7",
+        "needs_review": false,
+        "review_reason": null,
+        "actions": [
+          {
+            "type": "create_appointment",
+            "fields": {
+              "appt_type": "341 Meeting",
+              "date": "2026-07-09",
+              "time": "10:00",
+              "platform": "Zoom",
+              "trustee": "Basil T. Simon",
+              "connection_info": "Meeting ID 931 641 2796, Passcode 0827744230, Phone 1 313 391 5508"
+            },
+            "citations": {
+              "date": "341(a) meeting to be held on 7/9/2026 at 10:00 AM",
+              "time": "at 10:00 AM",
+              "platform": "via Zoom - Simon",
+              "trustee": "Appointment of Interim Trustee Basil T. Simon",
+              "connection_info": "Meeting ID 931 641 2796, Passcode 0827744230, Phone 1 313 391 5508"
+            }
+          },
+          {
+            "type": "update_case_fields",
+            "fields": {
+              "case_chapter": "7",
+              "case_trustee": "Basil T. Simon",
+              "case_objection": "2026-09-08"
+            },
+            "citations": {
+              "case_chapter": "Notice of Chapter 7 Bankruptcy Case",
+              "case_trustee": "Notice of Appointment of Interim Trustee Basil T. Simon",
+              "case_objection": "Last day to oppose discharge or dischargeability is 9/8/2026"
+            }
+          }
+        ],
+        "notes": "case_file_date NOT set — this is a 341 notice, not the petition; its 'filed on' is the notice date."
+      }
+    }
+  ]
+}
