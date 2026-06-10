@@ -522,7 +522,8 @@ router.post("/admin/db/schema/save-to-ref", ...superuserOnly, async (req, res) =
     return res.status(400).json({ error: "save-to-ref is only available when ENVIRONMENT=development (Cloud Run's filesystem is ephemeral)." });
   }
   try {
-    const { body, fileName, tableCount } = await buildSchemaDump(req.db, "POST /admin/db/schema/save-to-ref");
+    const { body, tableCount } = await buildSchemaDump(req.db, "POST /admin/db/schema/save-to-ref");
+    const fileName = "database.sql";  // canonical ref file — overwrite in place, not a timestamped drop
     const refDir = path.join(__dirname, "..", "ref");
     await fs.mkdir(refDir, { recursive: true });
     const filePath = path.join(refDir, fileName);

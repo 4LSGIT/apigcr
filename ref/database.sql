@@ -1,6 +1,6 @@
 -- DB Console schema snapshot
--- Generated: 2026-05-19T10:22:35.535Z
--- Source: GET /admin/db/schema.sql
+-- Generated: 2026-06-10T12:01:31.507Z
+-- Source: POST /admin/db/schema/save-to-ref
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -12,6 +12,64 @@ SET FOREIGN_KEY_CHECKS = 0;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
 /*!40101 SET NAMES utf8mb4 */;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `_dead_email_router_config`
+--
+
+DROP TABLE IF EXISTS `_dead_email_router_config`;
+CREATE TABLE `_dead_email_router_config` (
+  `id` int NOT NULL DEFAULT '1',
+  `auth_type` enum('none','api_key') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'api_key',
+  `auth_config` json DEFAULT NULL,
+  `capture_mode` enum('off','capturing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
+  `captured_sample` json DEFAULT NULL,
+  `captured_at` datetime DEFAULT NULL,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `_dead_email_router_executions`
+--
+
+DROP TABLE IF EXISTS `_dead_email_router_executions`;
+CREATE TABLE `_dead_email_router_executions` (
+  `id` bigint NOT NULL,
+  `raw_input` json DEFAULT NULL,
+  `matched_route_id` int DEFAULT NULL,
+  `resolved_slug` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `hook_execution_id` bigint DEFAULT NULL,
+  `status` enum('routed','unrouted','captured','error') COLLATE utf8mb4_general_ci NOT NULL,
+  `error` text COLLATE utf8mb4_general_ci,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `_dead_email_routes`
+--
+
+DROP TABLE IF EXISTS `_dead_email_routes`;
+CREATE TABLE `_dead_email_routes` (
+  `id` int NOT NULL,
+  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text COLLATE utf8mb4_general_ci,
+  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `match_mode` enum('conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
+  `match_config` json NOT NULL,
+  `position` int NOT NULL DEFAULT '100',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `last_matched_at` datetime DEFAULT NULL,
+  `match_count` int NOT NULL DEFAULT '0',
+  `last_modified_by` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -55,6 +113,70 @@ CREATE TABLE `admin_saved_queries` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `ai_calls`
+--
+
+DROP TABLE IF EXISTS `ai_calls`;
+CREATE TABLE `ai_calls` (
+  `id` int NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `prompt_key` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `prompt_version` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `model` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `mode` enum('sync','async') COLLATE utf8mb4_unicode_ci DEFAULT 'sync',
+  `output_type` enum('text','json','html') COLLATE utf8mb4_unicode_ci DEFAULT 'text',
+  `consumer_ref` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `status` enum('ok','error','timeout') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `error` text COLLATE utf8mb4_unicode_ci,
+  `input_tokens` int DEFAULT NULL,
+  `output_tokens` int DEFAULT NULL,
+  `cost_cents` decimal(10,4) DEFAULT NULL,
+  `latency_ms` int DEFAULT NULL,
+  `request_excerpt` text COLLATE utf8mb4_unicode_ci,
+  `response` mediumtext COLLATE utf8mb4_unicode_ci
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `ai_change_log`
+--
+
+DROP TABLE IF EXISTS `ai_change_log`;
+CREATE TABLE `ai_change_log` (
+  `id` int NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `source_message_id` varchar(190) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `ai_call_id` int DEFAULT NULL,
+  `court_ai_log_id` int DEFAULT NULL,
+  `entity_type` enum('case','appt','event','workflow') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `entity_id` varchar(40) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `field` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `old_value` text COLLATE utf8mb4_unicode_ci,
+  `new_value` text COLLATE utf8mb4_unicode_ci,
+  `dry_run` tinyint(1) NOT NULL DEFAULT '0',
+  `undone_at` datetime DEFAULT NULL,
+  `undone_by` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `alert_state`
+--
+
+DROP TABLE IF EXISTS `alert_state`;
+CREATE TABLE `alert_state` (
+  `group_key` varchar(200) COLLATE utf8mb4_general_ci NOT NULL,
+  `first_seen` datetime NOT NULL,
+  `last_seen` datetime NOT NULL,
+  `last_alerted_at` datetime DEFAULT NULL,
+  `occurrence_count` int NOT NULL DEFAULT '0'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `app_settings`
 --
 
@@ -62,6 +184,8 @@ DROP TABLE IF EXISTS `app_settings`;
 CREATE TABLE `app_settings` (
   `key` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `value` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `is_secret` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'never returned by any settings API',
+  `is_editable` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'exposed in settings.html',
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -203,7 +327,8 @@ CREATE TABLE `cases` (
   `case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_number_full` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `case_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `case_type` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `case_subtype` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `case_stage` enum('Open','Pending','Filed','Concluded','Closed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Open',
   `case_status` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_rec` varchar(128) COLLATE utf8mb4_general_ci NOT NULL,
@@ -242,6 +367,7 @@ CREATE TABLE `cases` (
   `case_primary_reason` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_judge` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_trustee` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `case_341_link` varchar(255) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `case_chapter` char(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_341_current` datetime DEFAULT NULL,
   `case_341_initial` date DEFAULT NULL,
@@ -259,6 +385,50 @@ CREATE TABLE `cases` (
   `case_notes` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_alerts` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Triggers for table `cases`
+--
+DELIMITER $$
+CREATE TRIGGER `trg_cases_ct_compat_ins` BEFORE INSERT ON `cases` FOR EACH ROW BEGIN
+  -- Block A: legacy normalize
+  IF NEW.case_type LIKE 'Bankruptcy - Ch%' THEN
+    SET NEW.case_subtype = CONCAT('Chapter ', TRIM(SUBSTRING_INDEX(NEW.case_type, '.', -1)));
+    SET NEW.case_type = 'Bankruptcy';
+  END IF;
+  -- Block B: fill whichever side is missing
+  IF NEW.case_type = 'Bankruptcy' THEN
+    IF NEW.case_chapter <> '' AND NEW.case_subtype = '' THEN
+      SET NEW.case_subtype = CONCAT('Chapter ', NEW.case_chapter);
+    ELSEIF NEW.case_subtype LIKE 'Chapter %' AND NEW.case_chapter = '' THEN
+      SET NEW.case_chapter = SUBSTRING(NEW.case_subtype, 9);
+    END IF;
+  END IF;
+END
+$$
+DELIMITER ;
+DELIMITER $$
+CREATE TRIGGER `trg_cases_ct_compat_upd` BEFORE UPDATE ON `cases` FOR EACH ROW BEGIN
+  -- Block A: legacy normalize
+  IF NEW.case_type LIKE 'Bankruptcy - Ch%' THEN
+    SET NEW.case_subtype = CONCAT('Chapter ', TRIM(SUBSTRING_INDEX(NEW.case_type, '.', -1)));
+    SET NEW.case_type = 'Bankruptcy';
+  END IF;
+  -- Block B: changed field wins
+  IF NEW.case_type = 'Bankruptcy' THEN
+    IF NEW.case_chapter <> OLD.case_chapter AND NEW.case_chapter <> '' THEN
+      SET NEW.case_subtype = CONCAT('Chapter ', NEW.case_chapter);
+    ELSEIF NEW.case_subtype <> OLD.case_subtype THEN
+      IF NEW.case_subtype LIKE 'Chapter %' THEN
+        SET NEW.case_chapter = SUBSTRING(NEW.case_subtype, 9);
+      ELSEIF NEW.case_subtype = '' THEN
+        SET NEW.case_chapter = '';
+      END IF;
+    END IF;
+  END IF;
+END
+$$
+DELIMITER ;
 
 -- --------------------------------------------------------
 
@@ -290,7 +460,7 @@ CREATE TABLE `checkitems1` (
   `checkitem_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `checkitem_list_id` int unsigned NOT NULL,
   `checkitem_status` enum('complete','incomplete') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'incomplete'
-) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
 -- Triggers for table `checkitems1`
@@ -363,7 +533,7 @@ CREATE TABLE `checklists1` (
   `checklist_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `checklist_link` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `checklist_status` enum('complete','incomplete') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'incomplete'
-) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -709,6 +879,30 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `court_ai_log`
+--
+
+DROP TABLE IF EXISTS `court_ai_log`;
+CREATE TABLE `court_ai_log` (
+  `id` int NOT NULL,
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `message_id` varchar(190) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `ai_call_id` int DEFAULT NULL,
+  `dry_run` tinyint(1) NOT NULL DEFAULT '1',
+  `classification` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `case_number` varchar(40) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `resolved_case_id` varchar(8) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `case_name` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `actions_json` json DEFAULT NULL,
+  `citations_json` json DEFAULT NULL,
+  `outcome` enum('executed','queued','none','error') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `review_reason` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `raw_response` mediumtext COLLATE utf8mb4_unicode_ci
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `court_emails`
 --
 
@@ -726,7 +920,6 @@ CREATE TABLE `court_emails` (
 
 DROP TABLE IF EXISTS `court_emails2`;
 CREATE TABLE `court_emails2` (
-  `id` int unsigned NOT NULL,
   `subject` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `count` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
@@ -770,7 +963,7 @@ DROP TABLE IF EXISTS `default`;
 CREATE TABLE `default` (
   `default_id` int NOT NULL,
   `default_response` enum('no results found') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -815,12 +1008,112 @@ CREATE TABLE `email_credentials_backup_20260513` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `email_ingest_executions`
+--
+
+DROP TABLE IF EXISTS `email_ingest_executions`;
+CREATE TABLE `email_ingest_executions` (
+  `id` bigint unsigned NOT NULL,
+  `source_id` int unsigned DEFAULT NULL,
+  `message_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `status` enum('logged','duplicate','skipped_firm_to_firm','skipped_suppression','auth_failed','validation_failed','error') COLLATE utf8mb4_general_ci NOT NULL,
+  `log_id` int unsigned DEFAULT NULL,
+  `email_log_id` int unsigned DEFAULT NULL,
+  `error` text COLLATE utf8mb4_general_ci,
+  `metadata` json DEFAULT NULL,
+  `raw_input` json DEFAULT NULL,
+  `remote_ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `email_ingest_log_suppressions`
+--
+
+DROP TABLE IF EXISTS `email_ingest_log_suppressions`;
+CREATE TABLE `email_ingest_log_suppressions` (
+  `id` int unsigned NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text COLLATE utf8mb4_general_ci,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `match_mode` enum('conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
+  `match_config` json DEFAULT NULL,
+  `match_count` int NOT NULL DEFAULT '0',
+  `last_matched_at` datetime DEFAULT NULL,
+  `last_modified_by` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `email_ingest_rule_actions`
+--
+
+DROP TABLE IF EXISTS `email_ingest_rule_actions`;
+CREATE TABLE `email_ingest_rule_actions` (
+  `id` int unsigned NOT NULL,
+  `rule_id` int unsigned NOT NULL,
+  `position` int NOT NULL DEFAULT '0',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `action_type` enum('workflow','sequence','hook','internal_function','http') COLLATE utf8mb4_general_ci NOT NULL,
+  `config` json NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `email_ingest_rules`
+--
+
+DROP TABLE IF EXISTS `email_ingest_rules`;
+CREATE TABLE `email_ingest_rules` (
+  `id` int unsigned NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text COLLATE utf8mb4_general_ci,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `position` int NOT NULL DEFAULT '0',
+  `match_mode` enum('conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
+  `match_config` json DEFAULT NULL,
+  `transform_mode` enum('passthrough','mapper','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
+  `transform_config` json DEFAULT NULL,
+  `match_count` int NOT NULL DEFAULT '0',
+  `last_matched_at` datetime DEFAULT NULL,
+  `last_modified_by` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `email_ingest_sources`
+--
+
+DROP TABLE IF EXISTS `email_ingest_sources`;
+CREATE TABLE `email_ingest_sources` (
+  `id` int unsigned NOT NULL,
+  `name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `api_key` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `description` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `last_used_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `email_log`
 --
 
 DROP TABLE IF EXISTS `email_log`;
 CREATE TABLE `email_log` (
   `id` int NOT NULL,
+  `source` varchar(64) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `message_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `from_email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `to_email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -833,59 +1126,29 @@ CREATE TABLE `email_log` (
 -- --------------------------------------------------------
 
 --
--- Table structure for table `email_router_config`
+-- Table structure for table `events`
 --
 
-DROP TABLE IF EXISTS `email_router_config`;
-CREATE TABLE `email_router_config` (
-  `id` int NOT NULL DEFAULT '1',
-  `auth_type` enum('none','api_key') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'api_key',
-  `auth_config` json DEFAULT NULL,
-  `capture_mode` enum('off','capturing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
-  `captured_sample` json DEFAULT NULL,
-  `captured_at` datetime DEFAULT NULL,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `email_router_executions`
---
-
-DROP TABLE IF EXISTS `email_router_executions`;
-CREATE TABLE `email_router_executions` (
-  `id` bigint NOT NULL,
-  `raw_input` json DEFAULT NULL,
-  `matched_route_id` int DEFAULT NULL,
-  `resolved_slug` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `hook_execution_id` bigint DEFAULT NULL,
-  `status` enum('routed','unrouted','captured','error') COLLATE utf8mb4_general_ci NOT NULL,
-  `error` text COLLATE utf8mb4_general_ci,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `email_routes`
---
-
-DROP TABLE IF EXISTS `email_routes`;
-CREATE TABLE `email_routes` (
-  `id` int NOT NULL,
-  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
-  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `match_mode` enum('conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
-  `match_config` json NOT NULL,
-  `position` int NOT NULL DEFAULT '100',
-  `active` tinyint(1) NOT NULL DEFAULT '1',
-  `last_matched_at` datetime DEFAULT NULL,
-  `match_count` int NOT NULL DEFAULT '0',
-  `last_modified_by` int DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+DROP TABLE IF EXISTS `events`;
+CREATE TABLE `events` (
+  `event_id` int unsigned NOT NULL,
+  `event_type` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_link_type` enum('case','contact','case_number') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_link_id` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_title` varchar(200) COLLATE utf8mb4_general_ci NOT NULL,
+  `event_date` date NOT NULL,
+  `event_time` time DEFAULT NULL,
+  `event_all_day` tinyint(1) NOT NULL DEFAULT '0',
+  `event_length` int DEFAULT NULL,
+  `event_location` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_link` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_note` text COLLATE utf8mb4_general_ci,
+  `event_status` enum('Scheduled','Completed','Canceled') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Scheduled',
+  `event_gcal` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_calendar_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_create_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `event_created_by` tinyint DEFAULT NULL,
+  `event_updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1172,13 +1435,14 @@ CREATE TABLE `legacy_route_log` (
 DROP TABLE IF EXISTS `log`;
 CREATE TABLE `log` (
   `log_id` int NOT NULL,
-  `log_type` enum('email','sms','call','other','form','status','note','court email','docs','appt','update','task') COLLATE utf8mb4_general_ci NOT NULL,
+  `log_type` enum('email','sms','call','other','form','status','note','court email','docs','appt','update','task','event') COLLATE utf8mb4_general_ci NOT NULL,
   `log_date` datetime NOT NULL,
   `log_link` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `log_link_type` enum('contact','case','appt','bill','phone','email') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `log_link_type` enum('contact','case','appt','bill','phone','email','task','event') COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_link_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_by` tinyint unsigned NOT NULL,
   `log_data` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `log_extra` json DEFAULT NULL,
   `log_from` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_to` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_subject` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -1209,7 +1473,7 @@ CREATE TABLE `logtemp` (
   `log_form_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_form_sub` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_direction` enum('incoming','outgoing') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='text, includes email body, sms message, note, etc';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='text, includes email body, sms message, note, etc';
 
 -- --------------------------------------------------------
 
@@ -1267,6 +1531,27 @@ CREATE TABLE `mytable` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `pages`
+--
+
+DROP TABLE IF EXISTS `pages`;
+CREATE TABLE `pages` (
+  `id` int unsigned NOT NULL,
+  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `host` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `path` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `html` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('draft','live') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft',
+  `hook_slug` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `thankyou_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `meta_title` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `payment_failed`
 --
 
@@ -1277,6 +1562,104 @@ CREATE TABLE `payment_failed` (
   `amount` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `date` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `clio` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `phase_c_backup_20260526`
+--
+
+DROP TABLE IF EXISTS `phase_c_backup_20260526`;
+CREATE TABLE `phase_c_backup_20260526` (
+  `log_id` int NOT NULL,
+  `orig_log_link_type` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `orig_log_link_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `orig_log_link` varchar(30) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `backed_up_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `phone_event_log`
+--
+
+DROP TABLE IF EXISTS `phone_event_log`;
+CREATE TABLE `phone_event_log` (
+  `id` int unsigned NOT NULL,
+  `provider` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `provider_ref` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `provider_event_id` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `event_type` enum('sms','call') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `direction` varchar(16) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `from_number` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `to_number` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `other_party` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `body` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `suppressed` tinyint(1) NOT NULL DEFAULT '0',
+  `suppressed_by` json DEFAULT NULL,
+  `log_id` int DEFAULT NULL,
+  `raw_extra` json DEFAULT NULL,
+  `processed_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `phone_ingest_executions`
+--
+
+DROP TABLE IF EXISTS `phone_ingest_executions`;
+CREATE TABLE `phone_ingest_executions` (
+  `id` bigint unsigned NOT NULL,
+  `event_log_id` int unsigned DEFAULT NULL,
+  `status` enum('logged','suppressed','error') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `log_id` int DEFAULT NULL,
+  `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `metadata` json DEFAULT NULL,
+  `raw_input` json DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `phone_ingest_rule_actions`
+--
+
+DROP TABLE IF EXISTS `phone_ingest_rule_actions`;
+CREATE TABLE `phone_ingest_rule_actions` (
+  `id` int unsigned NOT NULL,
+  `rule_id` int unsigned NOT NULL,
+  `position` int NOT NULL DEFAULT '0',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `action_type` enum('workflow','sequence','hook','internal_function','http') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `config` json NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `phone_ingest_rules`
+--
+
+DROP TABLE IF EXISTS `phone_ingest_rules`;
+CREATE TABLE `phone_ingest_rules` (
+  `id` int unsigned NOT NULL,
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `position` int NOT NULL DEFAULT '0',
+  `match_mode` enum('conditions','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
+  `match_config` json DEFAULT NULL,
+  `transform_mode` enum('passthrough','mapper','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'passthrough',
+  `transform_config` json DEFAULT NULL,
+  `match_count` int NOT NULL DEFAULT '0',
+  `last_matched_at` datetime DEFAULT NULL,
+  `last_modified_by` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1296,6 +1679,27 @@ CREATE TABLE `phone_lines` (
   `credential_id` int NOT NULL,
   `mms_capable` tinyint(1) NOT NULL DEFAULT '0'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `phone_log_suppressions`
+--
+
+DROP TABLE IF EXISTS `phone_log_suppressions`;
+CREATE TABLE `phone_log_suppressions` (
+  `id` int unsigned NOT NULL,
+  `name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `description` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `match_mode` enum('conditions','code') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
+  `match_config` json DEFAULT NULL,
+  `match_count` int NOT NULL DEFAULT '0',
+  `last_matched_at` datetime DEFAULT NULL,
+  `last_modified_by` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -1359,6 +1763,68 @@ CREATE TABLE `rc_sms_log` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `readonly_api_keys`
+--
+
+DROP TABLE IF EXISTS `readonly_api_keys`;
+CREATE TABLE `readonly_api_keys` (
+  `id` int NOT NULL,
+  `key_hash` char(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `key_prefix` varchar(16) COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `created_by` int NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `expires_at` datetime NOT NULL,
+  `revoked_at` datetime DEFAULT NULL,
+  `last_used_at` datetime DEFAULT NULL,
+  `use_count` int NOT NULL DEFAULT '0',
+  `ip_allowlist` text COLLATE utf8mb4_general_ci
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `readonly_query_log`
+--
+
+DROP TABLE IF EXISTS `readonly_query_log`;
+CREATE TABLE `readonly_query_log` (
+  `id` bigint NOT NULL,
+  `api_key_id` int NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `user_agent` varchar(512) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `sql_text` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
+  `params_json` json DEFAULT NULL,
+  `row_count` int DEFAULT NULL,
+  `duration_ms` int DEFAULT NULL,
+  `status` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
+  `error_text` text COLLATE utf8mb4_general_ci
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `redirects`
+--
+
+DROP TABLE IF EXISTS `redirects`;
+CREATE TABLE `redirects` (
+  `id` int unsigned NOT NULL,
+  `slug` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `target_url` text COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `hit_count` int unsigned NOT NULL DEFAULT '0',
+  `expires_at` datetime DEFAULT NULL,
+  `created_by` int unsigned DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `ringcentral_temp`
 --
 
@@ -1367,6 +1833,23 @@ CREATE TABLE `ringcentral_temp` (
   `id` int NOT NULL,
   `data` json NOT NULL,
   `time` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `rw_scratch`
+--
+
+DROP TABLE IF EXISTS `rw_scratch`;
+CREATE TABLE `rw_scratch` (
+  `id` bigint NOT NULL,
+  `ns` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'default',
+  `k` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `v` mediumtext COLLATE utf8mb4_general_ci,
+  `meta` json DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1381,6 +1864,7 @@ CREATE TABLE `scheduled_jobs` (
   `type` enum('one_time','recurring','workflow_resume','sequence_step','hook_retry') COLLATE utf8mb4_general_ci NOT NULL,
   `scheduled_time` datetime NOT NULL,
   `status` enum('pending','running','completed','failed') COLLATE utf8mb4_general_ci DEFAULT 'pending',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
   `name` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `data` json NOT NULL,
   `recurrence_rule` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -1596,6 +2080,32 @@ CREATE TABLE `settings` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `system_alerts`
+--
+
+DROP TABLE IF EXISTS `system_alerts`;
+CREATE TABLE `system_alerts` (
+  `id` bigint unsigned NOT NULL,
+  `source` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
+  `kind` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `group_key` varchar(200) COLLATE utf8mb4_general_ci NOT NULL,
+  `severity` enum('info','warning','error','critical') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'error',
+  `title` varchar(500) COLLATE utf8mb4_general_ci NOT NULL,
+  `message` text COLLATE utf8mb4_general_ci,
+  `context` json DEFAULT NULL,
+  `ref_table` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `ref_id` bigint DEFAULT NULL,
+  `dedup_key` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `digested_at` datetime DEFAULT NULL,
+  `resolved_at` datetime DEFAULT NULL,
+  `acked_at` datetime DEFAULT NULL,
+  `acked_by` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `tasks`
 --
 
@@ -1609,13 +2119,14 @@ CREATE TABLE `tasks` (
   `task_start` date DEFAULT NULL,
   `task_due` date DEFAULT NULL,
   `task_link` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `task_link_type` enum('contact','case','appt','bill') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `task_link_type` enum('contact','case','appt','bill','event') COLLATE utf8mb4_general_ci DEFAULT NULL,
   `task_link_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `task_title` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_desc` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_notification` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'notify task assigner upon completion?',
   `task_last_update` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `task_due_job_id` bigint DEFAULT NULL
+  `task_due_job_id` bigint DEFAULT NULL,
+  `task_action_token` char(22) COLLATE utf8mb4_general_ci DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -1966,6 +2477,30 @@ CREATE TABLE `workflows` (
 --
 
 --
+-- Indexes for table `_dead_email_router_config`
+--
+ALTER TABLE `_dead_email_router_config`
+  ADD PRIMARY KEY (`id`);
+
+--
+-- Indexes for table `_dead_email_router_executions`
+--
+ALTER TABLE `_dead_email_router_executions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_created_at` (`created_at`),
+  ADD KEY `idx_status` (`status`),
+  ADD KEY `idx_route` (`matched_route_id`),
+  ADD KEY `idx_hook_exec` (`hook_execution_id`);
+
+--
+-- Indexes for table `_dead_email_routes`
+--
+ALTER TABLE `_dead_email_routes`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_active_position` (`active`,`position`),
+  ADD KEY `idx_slug` (`slug`);
+
+--
 -- Indexes for table `admin_audit_log`
 --
 ALTER TABLE `admin_audit_log`
@@ -1980,6 +2515,28 @@ ALTER TABLE `admin_audit_log`
 ALTER TABLE `admin_saved_queries`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_admin_saved_queries_user` (`user_id`,`name`);
+
+--
+-- Indexes for table `ai_calls`
+--
+ALTER TABLE `ai_calls`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_ai_calls_consumer_ref` (`consumer_ref`),
+  ADD KEY `idx_ai_calls_created_at` (`created_at`);
+
+--
+-- Indexes for table `ai_change_log`
+--
+ALTER TABLE `ai_change_log`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_ai_change_log_source_message_id` (`source_message_id`),
+  ADD KEY `idx_ai_change_log_entity` (`entity_type`,`entity_id`);
+
+--
+-- Indexes for table `alert_state`
+--
+ALTER TABLE `alert_state`
+  ADD PRIMARY KEY (`group_key`);
 
 --
 -- Indexes for table `app_settings`
@@ -2028,7 +2585,9 @@ ALTER TABLE `case_relate`
 -- Indexes for table `cases`
 --
 ALTER TABLE `cases`
-  ADD PRIMARY KEY (`case_id`);
+  ADD PRIMARY KEY (`case_id`),
+  ADD KEY `idx_cases_case_number` (`case_number`),
+  ADD KEY `idx_cases_case_number_full` (`case_number_full`);
 
 --
 -- Indexes for table `checkitems`
@@ -2111,6 +2670,15 @@ ALTER TABLE `contacts`
   ADD FULLTEXT KEY `contact_name` (`contact_name`);
 
 --
+-- Indexes for table `court_ai_log`
+--
+ALTER TABLE `court_ai_log`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_court_ai_log_message_id` (`message_id`),
+  ADD KEY `idx_court_ai_log_outcome` (`outcome`),
+  ADD KEY `idx_court_ai_log_created_at` (`created_at`);
+
+--
 -- Indexes for table `court_emails`
 --
 ALTER TABLE `court_emails`
@@ -2120,7 +2688,6 @@ ALTER TABLE `court_emails`
 -- Indexes for table `court_emails2`
 --
 ALTER TABLE `court_emails2`
-  ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `subject` (`subject`);
 
 --
@@ -2154,36 +2721,59 @@ ALTER TABLE `email_credentials_backup_20260513`
   ADD KEY `fk_email_credentials_credential` (`credential_id`);
 
 --
+-- Indexes for table `email_ingest_executions`
+--
+ALTER TABLE `email_ingest_executions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_source_created` (`source_id`,`created_at`),
+  ADD KEY `idx_status_created` (`status`,`created_at`),
+  ADD KEY `idx_message_id` (`message_id`);
+
+--
+-- Indexes for table `email_ingest_log_suppressions`
+--
+ALTER TABLE `email_ingest_log_suppressions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_active` (`active`);
+
+--
+-- Indexes for table `email_ingest_rule_actions`
+--
+ALTER TABLE `email_ingest_rule_actions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_rule_position` (`rule_id`,`position`);
+
+--
+-- Indexes for table `email_ingest_rules`
+--
+ALTER TABLE `email_ingest_rules`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_active` (`active`);
+
+--
+-- Indexes for table `email_ingest_sources`
+--
+ALTER TABLE `email_ingest_sources`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `ux_name` (`name`),
+  ADD UNIQUE KEY `ux_api_key` (`api_key`);
+
+--
 -- Indexes for table `email_log`
 --
 ALTER TABLE `email_log`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `message_id` (`message_id`),
-  ADD KEY `idx_message_id` (`message_id`);
+  ADD UNIQUE KEY `ux_email_log_source_message` (`source`,`message_id`),
+  ADD KEY `idx_email_log_message_id` (`message_id`);
 
 --
--- Indexes for table `email_router_config`
+-- Indexes for table `events`
 --
-ALTER TABLE `email_router_config`
-  ADD PRIMARY KEY (`id`);
-
---
--- Indexes for table `email_router_executions`
---
-ALTER TABLE `email_router_executions`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_created_at` (`created_at`),
-  ADD KEY `idx_status` (`status`),
-  ADD KEY `idx_route` (`matched_route_id`),
-  ADD KEY `idx_hook_exec` (`hook_execution_id`);
-
---
--- Indexes for table `email_routes`
---
-ALTER TABLE `email_routes`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_active_position` (`active`,`position`),
-  ADD KEY `idx_slug` (`slug`);
+ALTER TABLE `events`
+  ADD PRIMARY KEY (`event_id`),
+  ADD KEY `idx_events_link` (`event_link_type`,`event_link_id`),
+  ADD KEY `idx_events_date` (`event_date`),
+  ADD KEY `idx_events_status_date` (`event_status`,`event_date`);
 
 --
 -- Indexes for table `feature_request_comments`
@@ -2301,10 +2891,55 @@ ALTER TABLE `logtemp`
   ADD PRIMARY KEY (`log_id`);
 
 --
+-- Indexes for table `pages`
+--
+ALTER TABLE `pages`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_pages_slug` (`slug`),
+  ADD KEY `idx_pages_host_path` (`host`,`path`);
+
+--
 -- Indexes for table `payment_failed`
 --
 ALTER TABLE `payment_failed`
   ADD PRIMARY KEY (`id`);
+
+--
+-- Indexes for table `phase_c_backup_20260526`
+--
+ALTER TABLE `phase_c_backup_20260526`
+  ADD PRIMARY KEY (`log_id`);
+
+--
+-- Indexes for table `phone_event_log`
+--
+ALTER TABLE `phone_event_log`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `ux_phone_event_provider_ref` (`provider`,`provider_ref`),
+  ADD KEY `idx_phone_event_other_party` (`other_party`),
+  ADD KEY `idx_phone_event_processed_at` (`processed_at`);
+
+--
+-- Indexes for table `phone_ingest_executions`
+--
+ALTER TABLE `phone_ingest_executions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_status_created` (`status`,`created_at`),
+  ADD KEY `idx_event_log` (`event_log_id`);
+
+--
+-- Indexes for table `phone_ingest_rule_actions`
+--
+ALTER TABLE `phone_ingest_rule_actions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_rule_position` (`rule_id`,`position`);
+
+--
+-- Indexes for table `phone_ingest_rules`
+--
+ALTER TABLE `phone_ingest_rules`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_active` (`active`);
 
 --
 -- Indexes for table `phone_lines`
@@ -2313,6 +2948,13 @@ ALTER TABLE `phone_lines`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `uk_phone_number` (`phone_number`),
   ADD KEY `fk_phone_lines_credential` (`credential_id`);
+
+--
+-- Indexes for table `phone_log_suppressions`
+--
+ALTER TABLE `phone_log_suppressions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_active` (`active`);
 
 --
 -- Indexes for table `query_log`
@@ -2337,10 +2979,41 @@ ALTER TABLE `rc_sms_log`
   ADD KEY `idx_from_number` (`from_number`);
 
 --
+-- Indexes for table `readonly_api_keys`
+--
+ALTER TABLE `readonly_api_keys`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `key_hash` (`key_hash`),
+  ADD KEY `idx_expires` (`expires_at`),
+  ADD KEY `idx_created_by` (`created_by`,`created_at`);
+
+--
+-- Indexes for table `readonly_query_log`
+--
+ALTER TABLE `readonly_query_log`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_key_time` (`api_key_id`,`created_at`);
+
+--
+-- Indexes for table `redirects`
+--
+ALTER TABLE `redirects`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_slug` (`slug`);
+
+--
 -- Indexes for table `ringcentral_temp`
 --
 ALTER TABLE `ringcentral_temp`
   ADD PRIMARY KEY (`id`);
+
+--
+-- Indexes for table `rw_scratch`
+--
+ALTER TABLE `rw_scratch`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_ns_k` (`ns`,`k`),
+  ADD KEY `idx_ns_upd` (`ns`,`updated_at`);
 
 --
 -- Indexes for table `scheduled_jobs`
@@ -2416,10 +3089,21 @@ ALTER TABLE `settings`
   ADD UNIQUE KEY `uniq_setting_name` (`setting_name`);
 
 --
+-- Indexes for table `system_alerts`
+--
+ALTER TABLE `system_alerts`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_sa_dedup` (`dedup_key`),
+  ADD KEY `idx_sa_digested` (`digested_at`),
+  ADD KEY `idx_sa_group` (`group_key`),
+  ADD KEY `idx_sa_created` (`created_at`);
+
+--
 -- Indexes for table `tasks`
 --
 ALTER TABLE `tasks`
   ADD PRIMARY KEY (`task_id`),
+  ADD UNIQUE KEY `uq_tasks_action_token` (`task_action_token`),
   ADD KEY `task_to` (`task_to`),
   ADD KEY `idx_task_link_type_id` (`task_link_type`,`task_link_id`);
 
@@ -2519,6 +3203,18 @@ ALTER TABLE `workflows`
 --
 
 --
+-- AUTO_INCREMENT for table `_dead_email_router_executions`
+--
+ALTER TABLE `_dead_email_router_executions`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `_dead_email_routes`
+--
+ALTER TABLE `_dead_email_routes`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `admin_audit_log`
 --
 ALTER TABLE `admin_audit_log`
@@ -2528,6 +3224,18 @@ ALTER TABLE `admin_audit_log`
 -- AUTO_INCREMENT for table `admin_saved_queries`
 --
 ALTER TABLE `admin_saved_queries`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `ai_calls`
+--
+ALTER TABLE `ai_calls`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `ai_change_log`
+--
+ALTER TABLE `ai_change_log`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
@@ -2615,10 +3323,10 @@ ALTER TABLE `contacts`
   MODIFY `contact_id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
--- AUTO_INCREMENT for table `court_emails2`
+-- AUTO_INCREMENT for table `court_ai_log`
 --
-ALTER TABLE `court_emails2`
-  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+ALTER TABLE `court_ai_log`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `credentials`
@@ -2645,22 +3353,46 @@ ALTER TABLE `email_credentials_backup_20260513`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `email_ingest_executions`
+--
+ALTER TABLE `email_ingest_executions`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `email_ingest_log_suppressions`
+--
+ALTER TABLE `email_ingest_log_suppressions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `email_ingest_rule_actions`
+--
+ALTER TABLE `email_ingest_rule_actions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `email_ingest_rules`
+--
+ALTER TABLE `email_ingest_rules`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `email_ingest_sources`
+--
+ALTER TABLE `email_ingest_sources`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `email_log`
 --
 ALTER TABLE `email_log`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
--- AUTO_INCREMENT for table `email_router_executions`
+-- AUTO_INCREMENT for table `events`
 --
-ALTER TABLE `email_router_executions`
-  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT for table `email_routes`
---
-ALTER TABLE `email_routes`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+ALTER TABLE `events`
+  MODIFY `event_id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `feature_request_comments`
@@ -2759,9 +3491,39 @@ ALTER TABLE `logtemp`
   MODIFY `log_id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `pages`
+--
+ALTER TABLE `pages`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `payment_failed`
 --
 ALTER TABLE `payment_failed`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `phone_event_log`
+--
+ALTER TABLE `phone_event_log`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `phone_ingest_executions`
+--
+ALTER TABLE `phone_ingest_executions`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `phone_ingest_rule_actions`
+--
+ALTER TABLE `phone_ingest_rule_actions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `phone_ingest_rules`
+--
+ALTER TABLE `phone_ingest_rules`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
@@ -2769,6 +3531,12 @@ ALTER TABLE `payment_failed`
 --
 ALTER TABLE `phone_lines`
   MODIFY `id` tinyint unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `phone_log_suppressions`
+--
+ALTER TABLE `phone_log_suppressions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `query_log`
@@ -2789,10 +3557,34 @@ ALTER TABLE `rc_sms_log`
   MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `readonly_api_keys`
+--
+ALTER TABLE `readonly_api_keys`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `readonly_query_log`
+--
+ALTER TABLE `readonly_query_log`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `redirects`
+--
+ALTER TABLE `redirects`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `ringcentral_temp`
 --
 ALTER TABLE `ringcentral_temp`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `rw_scratch`
+--
+ALTER TABLE `rw_scratch`
+  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `scheduled_jobs`
@@ -2847,6 +3639,12 @@ ALTER TABLE `sequences`
 --
 ALTER TABLE `settings`
   MODIFY `setting_id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `system_alerts`
+--
+ALTER TABLE `system_alerts`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `tasks`
@@ -2976,6 +3774,18 @@ ALTER TABLE `email_credentials`
   ADD CONSTRAINT `fk_email_credentials_credential` FOREIGN KEY (`credential_id`) REFERENCES `credentials` (`id`);
 
 --
+-- Constraints for table `email_ingest_executions`
+--
+ALTER TABLE `email_ingest_executions`
+  ADD CONSTRAINT `fk_eie_source` FOREIGN KEY (`source_id`) REFERENCES `email_ingest_sources` (`id`) ON DELETE SET NULL;
+
+--
+-- Constraints for table `email_ingest_rule_actions`
+--
+ALTER TABLE `email_ingest_rule_actions`
+  ADD CONSTRAINT `fk_eira_rule` FOREIGN KEY (`rule_id`) REFERENCES `email_ingest_rules` (`id`) ON DELETE CASCADE;
+
+--
 -- Constraints for table `feature_request_comments`
 --
 ALTER TABLE `feature_request_comments`
@@ -3002,10 +3812,22 @@ ALTER TABLE `hook_targets`
   ADD CONSTRAINT `fk_hook_targets_hook` FOREIGN KEY (`hook_id`) REFERENCES `hooks` (`id`) ON DELETE CASCADE;
 
 --
+-- Constraints for table `phone_ingest_rule_actions`
+--
+ALTER TABLE `phone_ingest_rule_actions`
+  ADD CONSTRAINT `fk_pira_rule` FOREIGN KEY (`rule_id`) REFERENCES `phone_ingest_rules` (`id`) ON DELETE CASCADE;
+
+--
 -- Constraints for table `phone_lines`
 --
 ALTER TABLE `phone_lines`
   ADD CONSTRAINT `fk_phone_lines_credential` FOREIGN KEY (`credential_id`) REFERENCES `credentials` (`id`);
+
+--
+-- Constraints for table `readonly_query_log`
+--
+ALTER TABLE `readonly_query_log`
+  ADD CONSTRAINT `fk_rqlog_key` FOREIGN KEY (`api_key_id`) REFERENCES `readonly_api_keys` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `sequence_enrollments`
