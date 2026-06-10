@@ -2079,7 +2079,7 @@ function _seqRenderFilterFields(typeName, currentFilters, droppedKeys) {
     ? `<div class="tfe-notice-info">Filter${orphans.length > 1 ? 's' : ''} for ${orphans.map(esc).join(', ')} — no longer in this type's priority list. Will be cleared on save.</div>`
     : '';
   el.innerHTML = `
-    <div class="tfe-label">Filters <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(blank = match anything)</span></div>
+    <div class="tfe-label">Filters <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(blank = match anything · separate multiple values with | )</span></div>
     ${orphanHtml}
     ${pf.map(field => `
       <div class="tfe-row">
