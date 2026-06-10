@@ -796,9 +796,49 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
 }
 
 
+// ─────────────────────────────────────────────────────────────────────────
+// logExtractFailure  (Slice 5 — ingest extract-failure audit)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Record a court_ai_log row for an email whose LLM extraction never produced a
+ * usable payload (aiService returned !ok / no json, or the court_extract
+ * internal_function threw). Outcome 'queued' with review_reason
+ * 'extract_failed:<msg>' so it surfaces in the dry-run review queue. The
+ * forensic email_log row already exists upstream — nothing is lost.
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {string|null} opts.messageId
+ * @param {boolean}     opts.dryRun
+ * @param {string}      opts.error      short failure reason
+ * @param {number|null} [opts.aiCallId] linking ai_calls.id when one was written
+ * @returns {Promise<{outcome:'queued', court_ai_log_id:number, review_reason:string}>}
+ */
+async function logExtractFailure(db, { messageId, dryRun, error, aiCallId } = {}) {
+  const reason = ('extract_failed:' + (error == null ? 'unknown' : String(error))).slice(0, 255);
+  const courtLogId = await insertCourtAiLog(db, {
+    message_id:       messageId || null,
+    ai_call_id:       aiCallId ?? null,
+    dry_run:          !!dryRun,
+    classification:   null,
+    case_number:      null,
+    resolved_case_id: null,
+    case_name:        null,
+    actions_json:     null,
+    citations_json:   null,
+    outcome:          'queued',
+    review_reason:    reason,
+    raw_response:     null,
+  });
+  return { outcome: 'queued', court_ai_log_id: courtLogId, review_reason: reason };
+}
+
+
 module.exports = {
   executeCourtActions,
   revertCourtActions,
+  logExtractFailure,
   CASE_FIELD_POLICY,
   CASE_DATE_FIELDS,
   // exported for tests
