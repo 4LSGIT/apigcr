@@ -140,16 +140,32 @@ async function flushChangeRows(db, rows, courtLogId) {
  * @returns {Promise<{ outcome:string, court_ai_log_id:(number|null),
  *   applied:Array, skipped:Array, review_reason:(string|null), already_processed?:boolean }>}
  */
-async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) {
+async function executeCourtActions(db, { payload, subject, body, dryRun, preview = false } = {}) {
   payload = payload || {};
   const messageId = payload.message_id || null;
   const aiCallId = payload.ai_call_id ?? null;
   const classification = payload.classification || null;
   const caseNumber = payload.case_number || null;
 
-  // Effective dry-run: -test- ids force dry-run; otherwise default true.
+  // Effective dry-run: preview OR -test- ids force dry-run; otherwise default true.
   const isTestId = !!(messageId && /-test-/.test(messageId));
-  const effectiveDryRun = isTestId ? true : (dryRun === false ? false : true);
+  const effectiveDryRun = preview ? true : (isTestId ? true : (dryRun === false ? false : true));
+
+  // ── PREVIEW MODE ──────────────────────────────────────────────────────
+  // preview===true: run the FULL plan (resolve -> review -> citation ->
+  // dispatch planning, building applied[]/skipped[]) but write NOTHING to
+  // court_ai_log or ai_change_log. doLog/doFlush become no-ops; every return
+  // is augmented with resolved{} + citation via finish(). ai_calls (cost) is
+  // still written by aiService upstream — that's wanted. court_ai_log_id null.
+  const doLog   = async (row)      => (preview ? null : insertCourtAiLog(db, row));
+  const doFlush = async (rows, id) => { if (!preview) await flushChangeRows(db, rows, id); };
+  const resolvedSummary = (r) => ({
+    found:                !!(r && r.found),
+    case_id:              (r && r.case_id) ?? null,
+    case_number:          (r && r.case_number) ?? null,
+    primary_contact_id:   (r && r.primary_contact_id) ?? null,
+    primary_contact_name: (r && r.primary_contact_name) ?? null,
+  });
 
   // ── STEP 1: PROCESSED MARKER (live only) ──────────────────────────────
   if (!effectiveDryRun && messageId) {
@@ -176,8 +192,16 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
   const caseName =
     payload.case_name || (resolved.found ? resolved.primary_contact_name : null) || null;
 
+  // In preview, every return carries resolved{} + citation; live returns are
+  // unchanged (base object only).
+  const finish = (base, citationArg = null) =>
+    preview
+      ? { ...base, court_ai_log_id: null,
+          resolved: resolvedSummary(resolved), citation: citationArg }
+      : base;
+
   if (!resolved.found) {
-    const courtLogId = await insertCourtAiLog(db, {
+    const courtLogId = await doLog({
       message_id: messageId,
       ai_call_id: aiCallId,
       dry_run: effectiveDryRun,
@@ -191,19 +215,19 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
       review_reason: 'case_not_found',
       raw_response: payload,
     });
-    return {
+    return finish({
       outcome: 'queued',
       court_ai_log_id: courtLogId,
       applied: [],
       skipped: [],
       review_reason: 'case_not_found',
-    };
+    }, null);
   }
 
   // ── STEP 3: MODEL-FLAGGED REVIEW ──────────────────────────────────────
   if (payload.needs_review === true) {
     const reason = payload.review_reason || 'model_flagged';
-    const courtLogId = await insertCourtAiLog(db, {
+    const courtLogId = await doLog({
       message_id: messageId,
       ai_call_id: aiCallId,
       dry_run: effectiveDryRun,
@@ -217,13 +241,13 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
       review_reason: reason,
       raw_response: payload,
     });
-    return {
+    return finish({
       outcome: 'queued',
       court_ai_log_id: courtLogId,
       applied: [],
       skipped: [],
       review_reason: reason,
-    };
+    }, null);
   }
 
   // ── STEP 4: CITATIONS ─────────────────────────────────────────────────
@@ -232,7 +256,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
   if (!citation.pass) {
     const first = citation.misses[0];
     const reason = `citation_miss:${first ? first.field : 'unknown'}`;
-    const courtLogId = await insertCourtAiLog(db, {
+    const courtLogId = await doLog({
       message_id: messageId,
       ai_call_id: aiCallId,
       dry_run: effectiveDryRun,
@@ -246,13 +270,13 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
       review_reason: reason,
       raw_response: payload,
     });
-    return {
+    return finish({
       outcome: 'queued',
       court_ai_log_id: courtLogId,
       applied: [],
       skipped: [],
       review_reason: reason,
-    };
+    }, citation);
   }
 
   // ── STEP 5: DISPATCH ──────────────────────────────────────────────────
@@ -521,7 +545,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
     // normal actions/citations/raw_response) and flush whatever change rows
     // were buffered before the throw, then return.
     const reviewReason = ('error:' + (err && err.message ? err.message : String(err))).slice(0, 255);
-    const courtLogId = await insertCourtAiLog(db, {
+    const courtLogId = await doLog({
       message_id: messageId,
       ai_call_id: aiCallId,
       dry_run: effectiveDryRun,
@@ -536,18 +560,18 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
       raw_response: payload,
     });
     try {
-      await flushChangeRows(db, changeRows, courtLogId);
+      await doFlush(changeRows, courtLogId);
     } catch (flushErr) {
       console.error('[courtExecutor] flush after dispatch error failed:', flushErr.message);
     }
-    return {
+    return finish({
       outcome: 'error',
       court_ai_log_id: courtLogId,
       applied,
       skipped,
       review_reason: reviewReason,
       error: true,
-    };
+    }, citation);
   }
 
   // ── STEP 6: OUTCOME + LOGS ────────────────────────────────────────────
@@ -558,7 +582,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
 
   const reviewReason = reviewReasons.length ? [...new Set(reviewReasons)].join('; ') : null;
 
-  const courtLogId = await insertCourtAiLog(db, {
+  const courtLogId = await doLog({
     message_id: messageId,
     ai_call_id: aiCallId,
     dry_run: effectiveDryRun,
@@ -573,9 +597,9 @@ async function executeCourtActions(db, { payload, subject, body, dryRun } = {}) 
     raw_response: payload,
   });
 
-  await flushChangeRows(db, changeRows, courtLogId);
+  await doFlush(changeRows, courtLogId);
 
-  return { outcome, court_ai_log_id: courtLogId, applied, skipped, review_reason: reviewReason };
+  return finish({ outcome, court_ai_log_id: courtLogId, applied, skipped, review_reason: reviewReason }, citation);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

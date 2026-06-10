@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<!--
+  public/courtPreview.html  —  TEMPORARY. Commit-and-delete-later tuning tool.
+
+  Court-email tuning tool: pick (or paste) a court email, optionally tweak the
+  system prompt + model, run a NO-WRITES preview, and see exactly what the AI
+  would do (classification, citations, resolved case, intended plan).
+
+  Mounted inside the shell (a.html / b.html) so window.top.apiSend exists.
+  ALL network goes through window.top.apiSend — no fetch(), no localStorage.
+
+  Backed by routes/courtPreview.js:
+    GET  /api/court-preview/prompt
+    GET  /api/court-preview/emails?q=
+    POST /api/court-preview/run
+
+  Delete this file (and routes/courtPreview.js) once tuning is done.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Court Email Preview (temp)</title>
+<style>
+  :root { --bd:#d4d7dd; --bg:#f6f7f9; --ink:#1d2330; --muted:#6b7280;
+          --accent:#2563eb; --good:#15803d; --bad:#b91c1c; --warn:#b45309; }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+         color: var(--ink); margin: 0; padding: 16px; background:#fff; }
+  h2 { margin: 0 0 4px; font-size: 18px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 880px){ .grid { grid-template-columns: 1fr; } }
+  fieldset { border: 1px solid var(--bd); border-radius: 8px; padding: 12px; margin: 0 0 14px; }
+  legend { font-weight: 600; padding: 0 6px; font-size: 13px; }
+  label { display:block; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+  input[type=text], select, textarea {
+    width: 100%; padding: 7px 8px; border: 1px solid var(--bd); border-radius: 6px;
+    font: inherit; background:#fff; }
+  textarea { resize: vertical; font-family: ui-monospace,Menlo,Consolas,monospace; font-size: 12px; }
+  #prompt { min-height: 220px; }
+  .row { display: flex; gap: 8px; align-items: flex-end; }
+  .row > * { flex: 1; }
+  .row > button { flex: 0 0 auto; }
+  button { padding: 7px 12px; border: 1px solid var(--bd); border-radius: 6px; background: var(--bg);
+           cursor: pointer; font: inherit; }
+  button.primary { background: var(--accent); color:#fff; border-color: var(--accent); font-weight: 600; }
+  button:disabled { opacity:.5; cursor: default; }
+  .hide { display: none !important; }
+  .muted { color: var(--muted); }
+  .pill { display:inline-block; padding:1px 8px; border-radius: 999px; font-size: 11px; font-weight:600;
+          border:1px solid var(--bd); margin-right:6px; }
+  .pill.good { color: var(--good); border-color: var(--good); background:#f0fdf4; }
+  .pill.bad  { color: var(--bad);  border-color: var(--bad);  background:#fef2f2; }
+  .pill.warn { color: var(--warn); border-color: var(--warn); background:#fffbeb; }
+  .card { border:1px solid var(--bd); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .card h3 { margin:0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing:.04em; color: var(--muted); }
+  .kv { display:grid; grid-template-columns: 150px 1fr; gap: 2px 10px; font-size: 13px; }
+  .kv div:nth-child(odd){ color: var(--muted); }
+  ul.plan { margin: 0; padding-left: 18px; }
+  ul.plan li { margin: 3px 0; }
+  code { background:#f3f4f6; padding: 1px 4px; border-radius: 4px; font-size: 12px; }
+  pre { background:#0f172a; color:#e2e8f0; padding: 12px; border-radius: 8px; overflow:auto;
+        font-size: 12px; max-height: 400px; }
+  details summary { cursor: pointer; font-weight: 600; font-size: 13px; }
+  .err { color: var(--bad); font-weight: 600; }
+  .arrow { color: var(--muted); }
+</style>
+</head>
+<body>
+  <h2>Court Email Preview <span class="pill warn">TEMP</span></h2>
+  <p class="sub">No-writes preview. Runs extraction (logs an <code>ai_calls</code> cost row) then plans
+     the executor with <code>preview:true</code> — nothing is written to court_ai_log / ai_change_log / cases / appts / events.</p>
+
+  <div class="grid">
+    <!-- LEFT: inputs -->
+    <div>
+      <fieldset>
+        <legend>Prompt &amp; model</legend>
+        <label for="model">Model</label>
+        <select id="model"></select>
+        <label for="prompt">System prompt (blank or unchanged → use registered <code>court_extract</code>)</label>
+        <textarea id="prompt" spellcheck="false"></textarea>
+      </fieldset>
+
+      <fieldset>
+        <legend>Email source</legend>
+        <div id="logSrc">
+          <div class="row">
+            <div>
+              <label for="q">Search (id or subject — mieb only)</label>
+              <input type="text" id="q" placeholder="e.g. 25-47781 or 30597">
+            </div>
+            <button id="searchBtn" type="button">Search</button>
+          </div>
+          <label for="emailPick">Pick an email</label>
+          <select id="emailPick"></select>
+        </div>
+
+        <div style="margin-top:10px;">
+          <button id="pasteToggle" type="button">Paste instead ▾</button>
+        </div>
+        <div id="pasteSrc" class="hide" style="margin-top:8px;">
+          <label for="pSubject">Subject</label>
+          <input type="text" id="pSubject" placeholder="25-47781-prh &quot;Stipulation&quot; Ch 13">
+          <label for="pBody">Body</label>
+          <textarea id="pBody" style="min-height:140px;" spellcheck="false"></textarea>
+        </div>
+      </fieldset>
+
+      <button id="runBtn" class="primary" type="button">Run preview</button>
+      <span id="status" class="muted" style="margin-left:10px;"></span>
+    </div>
+
+    <!-- RIGHT: results -->
+    <div id="results">
+      <p class="muted">Results will appear here.</p>
+    </div>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+
+  var maxTokens = null;          // stashed from /prompt
+  var defaultModel = null;
+  var defaultPrompt = '';
+  var sourceMode = 'log';        // 'log' | 'paste'
+  var activeEmailLogId = null;
+
+  function api() { return window.top.apiSend.apply(window.top, arguments); }
+  function E(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function pill(text, cls) { return '<span class="pill ' + (cls||'') + '">' + esc(text) + '</span>'; }
+
+  // ── boot: load prompt + model prefill ─────────────────────────────────
+  async function loadPrompt() {
+    var p = await api('/api/court-preview/prompt', 'GET');
+    defaultPrompt = p.system || '';
+    defaultModel  = p.model;
+    maxTokens     = p.max_tokens;
+    E('prompt').value = defaultPrompt;
+    var sel = E('model');
+    sel.innerHTML = (p.models || []).map(function (m) {
+      return '<option value="' + esc(m) + '"' + (m === p.model ? ' selected' : '') + '>' + esc(m) + '</option>';
+    }).join('');
+  }
+
+  // ── email picker ──────────────────────────────────────────────────────
+  async function searchEmails() {
+    var q = E('q').value.trim();
+    E('status').textContent = 'searching…';
+    try {
+      var rows = await api('/api/court-preview/emails', 'GET', q ? { q: q } : null);
+      var sel = E('emailPick');
+      if (!rows.length) {
+        sel.innerHTML = '<option value="">(no matches)</option>';
+        activeEmailLogId = null;
+      } else {
+        sel.innerHTML = rows.map(function (r) {
+          return '<option value="' + r.id + '">#' + r.id + ' · ' + esc(r.subject || '(no subject)') + '</option>';
+        }).join('');
+        activeEmailLogId = rows[0].id;
+      }
+      E('status').textContent = rows.length + ' email(s)';
+    } catch (e) {
+      E('status').innerHTML = '<span class="err">' + esc(e.message) + '</span>';
+    }
+  }
+
+  // ── run ────────────────────────────────────────────────────────────────
+  async function run() {
+    E('runBtn').disabled = true;
+    E('status').textContent = 'running…';
+    E('results').innerHTML = '<p class="muted">Running…</p>';
+    try {
+      var body = {
+        sourceType:     sourceMode,
+        emailLogId:     sourceMode === 'log' ? activeEmailLogId : null,
+        subject:        sourceMode === 'paste' ? E('pSubject').value : null,
+        body:           sourceMode === 'paste' ? E('pBody').value : null,
+        promptOverride: E('prompt').value,
+        model:          E('model').value,
+      };
+      if (sourceMode === 'log' && !activeEmailLogId) {
+        throw new Error('Pick an email first (or use Paste instead).');
+      }
+      var res = await api('/api/court-preview/run', 'POST', body);
+      renderResult(res);
+      E('status').textContent = 'done';
+    } catch (e) {
+      E('results').innerHTML = '<div class="card"><span class="err">Error: ' + esc(e.message) + '</span></div>';
+      E('status').textContent = 'error';
+    } finally {
+      E('runBtn').disabled = false;
+    }
+  }
+
+  // ── render ──────────────────────────────────────────────────────────────
+  function renderResult(res) {
+    if (!res.ok) {
+      E('results').innerHTML =
+        '<div class="card"><h3>Extraction failed</h3>' +
+        '<div class="kv">' +
+        '<div>error</div><div class="err">' + esc(res.error) + '</div>' +
+        '<div>ai_call id</div><div>' + esc(res.callId == null ? '—' : res.callId) + '</div>' +
+        '<div>usage</div><div>' + esc(res.usage ? JSON.stringify(res.usage) : '—') + '</div>' +
+        '</div></div>';
+      return;
+    }
+
+    var ex = res.extract || {};
+    var plan = res.plan || {};
+    var json = ex.json || {};
+    var cite = plan.citation;
+    var resolved = plan.resolved || {};
+    var html = '';
+
+    // header
+    var citePill = cite ? (cite.pass ? pill('citations ✓', 'good') : pill('citations ✗', 'bad'))
+                        : pill('citations n/a', 'warn');
+    var revPill  = plan.review_reason ? pill('needs review', 'warn') : pill('no review flag', 'good');
+    html += '<div class="card"><h3>Summary</h3><div class="kv">' +
+      '<div>classification</div><div>' + esc(json.classification || '—') + '</div>' +
+      '<div>outcome</div><div>' + esc(plan.outcome || '—') + '</div>' +
+      '<div>review</div><div>' + revPill + (plan.review_reason ? ' <code>' + esc(plan.review_reason) + '</code>' : '') + '</div>' +
+      '<div>citations</div><div>' + citePill + '</div>' +
+      '<div>used override</div><div>' + (res.used_override ? 'yes' : 'no') + '</div>' +
+      '<div>model</div><div><code>' + esc(res.model) + '</code></div>' +
+      '<div>cost</div><div>' + (ex.cost_cents != null ? ex.cost_cents.toFixed(4) + '¢' : '—') +
+        (ex.usage ? ' <span class="muted">(' + esc(ex.usage.input_tokens) + ' in / ' + esc(ex.usage.output_tokens) + ' out)</span>' : '') + '</div>' +
+      '<div>latency</div><div>' + (ex.latency_ms != null ? ex.latency_ms + ' ms' : '—') + '</div>' +
+      '<div>ai_call id</div><div>' + esc(ex.callId == null ? '—' : ex.callId) + '</div>' +
+      '</div></div>';
+
+    // citations
+    html += '<div class="card"><h3>Citations</h3>';
+    if (!cite) {
+      html += '<p class="muted">Not reached (returned before the citation step — e.g. case_not_found / needs_review).</p>';
+    } else if (cite.pass) {
+      html += '<p>' + pill('PASS', 'good') + ' all citable fields verified against the email.</p>';
+    } else {
+      html += '<p>' + pill('FAIL', 'bad') + '</p><ul class="plan">';
+      (cite.misses || []).forEach(function (m) {
+        html += '<li>action #' + esc(m.action_index) + ' · <code>' + esc(m.field) + '</code>' +
+          (m.value == null ? ' <span class="muted">(missing citation)</span>'
+                           : ' <span class="muted">quote not found:</span> ' + esc(m.value)) + '</li>';
+      });
+      html += '</ul>';
+    }
+    html += '</div>';
+
+    // resolved
+    html += '<div class="card"><h3>Resolved case</h3><div class="kv">' +
+      '<div>found</div><div>' + (resolved.found ? pill('yes','good') : pill('no','bad')) + '</div>' +
+      '<div>case_id</div><div>' + esc(resolved.case_id || '—') + '</div>' +
+      '<div>case_number</div><div>' + esc(resolved.case_number || '—') + '</div>' +
+      '<div>primary contact</div><div>' +
+        (resolved.primary_contact_id
+          ? esc(resolved.primary_contact_name || '(unnamed)') + ' <span class="muted">#' + esc(resolved.primary_contact_id) + '</span>'
+          : '—') + '</div>' +
+      '</div></div>';
+
+    // intended plan
+    html += '<div class="card"><h3>Intended plan</h3>';
+    var applied = plan.applied || [];
+    if (!applied.length) {
+      html += '<p class="muted">Nothing would be applied.</p>';
+    } else {
+      html += '<ul class="plan">';
+      applied.forEach(function (a) {
+        if (a.type === 'update_case_fields') {
+          html += '<li><code>' + esc(a.field) + '</code>: ' +
+            (a.old_value == null || a.old_value === '' ? '<span class="muted">(empty)</span>' : esc(a.old_value)) +
+            ' <span class="arrow">→</span> ' + esc(a.new_value) + '</li>';
+        } else {
+          html += '<li>' + esc(a.type) + ': ' + esc(a.summary || '') +
+            ' <span class="muted">(' + esc(a.entity_type) + ' ' + esc(a.entity_id) + ')</span></li>';
+        }
+      });
+      html += '</ul>';
+    }
+    var skipped = plan.skipped || [];
+    if (skipped.length) {
+      html += '<h3 style="margin-top:12px;">Skipped</h3><ul class="plan">';
+      skipped.forEach(function (s) {
+        var bits = [];
+        if (s.type) bits.push(esc(s.type));
+        if (s.field) bits.push('<code>' + esc(s.field) + '</code>');
+        html += '<li>' + (bits.length ? bits.join(' · ') + ' — ' : '') +
+          '<span class="muted">' + esc(s.reason) + '</span></li>';
+      });
+      html += '</ul>';
+    }
+    html += '</div>';
+
+    // raw model JSON
+    html += '<details class="card"><summary>Raw model JSON</summary><pre>' +
+      esc(JSON.stringify(json, null, 2)) + '</pre></details>';
+
+    E('results').innerHTML = html;
+  }
+
+  // ── wire up ──────────────────────────────────────────────────────────────
+  function init() {
+    E('searchBtn').addEventListener('click', searchEmails);
+    E('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') searchEmails(); });
+    E('emailPick').addEventListener('change', function () {
+      activeEmailLogId = this.value ? Number(this.value) : null;
+    });
+    E('pasteToggle').addEventListener('click', function () {
+      var paste = E('pasteSrc');
+      var showing = paste.classList.toggle('hide') === false;
+      sourceMode = showing ? 'paste' : 'log';
+      E('logSrc').classList.toggle('hide', showing);
+      this.textContent = showing ? 'Use email picker ▴' : 'Paste instead ▾';
+    });
+    E('runBtn').addEventListener('click', run);
+
+    loadPrompt().catch(function (e) {
+      E('results').innerHTML = '<div class="card"><span class="err">Failed to load prompt: ' + esc(e.message) + '</span></div>';
+    });
+    searchEmails();  // prefill picker with latest 50
+  }
+
+  // boot guard — shell provides window.top.apiSend
+  (function w(){ if (window.top && window.top.apiSend) return init(); setTimeout(w, 100); })();
+})();
+</script>
+</body>
+</html>
