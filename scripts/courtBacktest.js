@@ -29,6 +29,7 @@ const path = require('path');
 const db = require('../startup/db');
 const aiService = require('../services/aiService');
 const { resolveCase } = require('../lib/courtResolve');
+const { checkCitations } = require('../lib/courtCitation');
 
 // ─────────────────────────────────────────────────────────────
 // Args
@@ -162,42 +163,9 @@ function normWs(s) {
   return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
 }
 
-// Fields that are MODEL-COMPOSED labels / constants / booleans, not values
-// extracted verbatim from the email — so a citation for them can never be an
-// exact substring. They are exempt from the substring check. (event_type and
-// event_title are concise labels the model writes; appt_type is the constant
-// "341 Meeting"; all_day is a boolean.)
-const NON_CITABLE_FIELDS = new Set(['event_type', 'event_title', 'appt_type', 'all_day']);
-
-/**
- * Verify every CITABLE citation in every action is a verbatim (ws-normalized)
- * substring of the email text. Haystack is subject + body: the subject is
- * trusted metadata shown to the model ({{subject}}) and reliably carries the
- * docket + chapter (e.g. '..." Ch 13'), so a citation may legitimately come
- * from it. Composed/constant fields (NON_CITABLE_FIELDS) are skipped. An action
- * with no citations object counts as a miss for the action itself.
- */
-function checkCitations(json, body, subject) {
-  const normBody = normWs(`${subject || ''} ${body || ''}`);
-  const misses = [];
-  const actions = Array.isArray(json && json.actions) ? json.actions : [];
-  for (let i = 0; i < actions.length; i++) {
-    const act = actions[i] || {};
-    const cites = act.citations;
-    if (!cites || typeof cites !== 'object') {
-      misses.push({ action_index: i, field: '<no_citations>', value: null });
-      continue;
-    }
-    for (const [field, value] of Object.entries(cites)) {
-      if (NON_CITABLE_FIELDS.has(field)) continue;
-      const needle = normWs(value);
-      if (!needle || !normBody.includes(needle)) {
-        misses.push({ action_index: i, field, value: value == null ? null : String(value) });
-      }
-    }
-  }
-  return { pass: misses.length === 0, misses };
-}
+// checkCitations + NON_CITABLE_FIELDS now live in lib/courtCitation.js so the
+// live executor (services/courtExecutor.js) and this harness score citations
+// identically. Imported above. normWs (below/above) stays local.
 
 /** Extract the first create_appointment action's date (YYYY-MM-DD) or null. */
 function firstApptDate(json) {
@@ -375,7 +343,7 @@ async function main() {
 
     // Citations.
     const citation = usableJson
-      ? checkCitations(json, e.body, e.subject)
+      ? checkCitations(e.subject, e.body, json && json.actions)
       : { pass: false, misses: [] };
 
     // Resolve (read-only) off the extracted case_number.
