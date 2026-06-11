@@ -714,7 +714,9 @@ async function createTask(db, {
   if (!title) throw new Error('createTask requires title');
   if (!to)    throw new Error('createTask requires to');
 
-  const taskFrom = from || to;
+  // null/undefined `from` → self-assign to the recipient; a legitimate 0
+  // (the automations user) is preserved, NOT coerced to `to`.
+  const taskFrom = (from == null) ? to : from;
 
   const [result] = await db.query(
     `INSERT INTO tasks

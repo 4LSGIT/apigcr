@@ -499,7 +499,7 @@ async function spawnReminderTask(db, event, reminder, actingUserId = 0) {
     || `Reminder: ${event.event_title}`;
 
   const result = await taskService.createTask(db, {
-    from:      actingUserId || reminder.to,
+    from:      actingUserId || 0,   // automation (no acting user) → automations user (0)
     to:        reminder.to,
     title,
     desc:      '',
