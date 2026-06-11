@@ -1177,19 +1177,6 @@ function _resolveAddFile() {
     .na-chosen { font-size: 0.85em; color: #555; margin-top: 0.25em; text-align: left; }
     .na-chosen:empty { display: none; }
     .na-change { font-size: 0.82em; margin-left: 0.5em; color: #2563eb; }
-    /* slot picker (scheduler slice 4) */
-    .na-slot-row { display: flex; align-items: center; gap: 0.5em; margin: 0.5em 0 0.2em; text-align: left; }
-    .na-slot-row > label { font-size: 0.9em; }
-    .na-slots { display: flex; flex-wrap: wrap; gap: 0.35em; margin: 0.4em 0 0.2em;
-      text-align: left; max-height: 9.5em; overflow-y: auto; }
-    .na-slot { font-size: 0.85em; padding: 0.3em 0.6em; border: 1px solid #2563eb;
-      border-radius: 4px; background: #fff; color: #2563eb; cursor: pointer;
-      transition: background 0.12s, color 0.12s; }
-    .na-slot:hover { background: #eff6ff; }
-    .na-slot.na-slot-sel { background: #2563eb; color: #fff; }
-    .na-slot-msg { font-size: 0.85em; color: #666; text-align: left; margin: 0.3em 0; }
-    .na-slot-msg:empty { display: none; }
-    .na-manual-toggle { font-size: 0.82em; color: #2563eb; display: inline-block; margin: 0.2em 0 0.4em; }
 
     /* ── newEventDialog (shared event creator/editor) ── */
     .ne-form { text-align: left; max-width: 460px; margin: 0 auto; }
@@ -2155,93 +2142,6 @@ function newApptDialog(opts = {}) {
     }
   }
 
-  // ── Slot picker (scheduler slice 4) ───────────────────────────────────────
-  // Primary path: pick a date → fetch GET /api/availability for that single
-  // day (provider = naWith, length = naLen, granularity 15, buffer 0,
-  // min_notice 0 — staff deliberately book tighter than clients) → tap a slot.
-  // Selecting a slot writes the same hidden #naDate datetime-local value the
-  // dialog has always submitted, so recompute() and preConfirm() are
-  // untouched. "Enter time manually" reveals #naDate and bypasses the picker
-  // entirely — internal users may book over blocks/conflicts deliberately.
-  const slotState = { seq: 0, timer: null, manual: false };
-
-  function renderSlotMsg(msg) {
-    const el = E('naSlotMsg');
-    if (el) el.textContent = msg || '';
-  }
-
-  function renderSlots(starts) {
-    const host = E('naSlots');
-    if (!host) return;
-    host.innerHTML = '';
-    const cur = E('naDate') ? E('naDate').value : '';
-    (starts || []).forEach((s) => {            // s = 'YYYY-MM-DD HH:mm' firm-local
-      const iso = s.replace(' ', 'T');
-      const btn = document.createElement('button');
-      btn.type = 'button';                      // inside the <form> — never submit
-      btn.className = 'na-slot' + (iso === cur ? ' na-slot-sel' : '');
-      // Zone-less ISO parses as browser-local and prints browser-local, so the
-      // wall-clock digits round-trip regardless of the viewer's timezone.
-      btn.textContent = new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-      btn.addEventListener('click', () => {
-        if (E('naDate')) E('naDate').value = iso; // same underlying submit value
-        host.querySelectorAll('.na-slot-sel').forEach(b => b.classList.remove('na-slot-sel'));
-        btn.classList.add('na-slot-sel');
-        recompute();
-      });
-      host.appendChild(btn);
-    });
-  }
-
-  async function fetchSlots() {
-    const date = E('naSlotDate') ? E('naSlotDate').value : '';
-    const prov = E('naWith') ? E('naWith').value : '';
-    const len  = E('naLen') ? parseInt(E('naLen').value, 10) : NaN;
-
-    renderSlots([]);
-    if (!date) { renderSlotMsg('Pick a date.'); return; }
-    if (!prov) { renderSlotMsg('Pick who the appointment is with.'); return; }
-    if (!Number.isInteger(len) || len < 1) {
-      renderSlotMsg('Pick an appointment type (or enter a length) to see open slots.');
-      return;
-    }
-
-    const seq = ++slotState.seq;
-    renderSlotMsg('Loading open slots…');
-    try {
-      const data = await P.apiSend('/api/availability', 'GET', {
-        providers: prov, length: len, from: date, to: date,
-        granularity: 15, buffer: 0, min_notice: 0,
-      });
-      if (seq !== slotState.seq) return;        // superseded — don't clobber
-      const starts = (data && data.slots && data.slots[prov]) || [];
-      if (starts.length === 0) {
-        renderSlots([]);
-        renderSlotMsg('No open slots this day — "enter time manually" below to override.');
-      } else {
-        renderSlotMsg('');
-        renderSlots(starts);
-      }
-    } catch (err) {
-      if (seq !== slotState.seq) return;
-      renderSlotMsg('Could not load slots: ' + ((err && err.message) || 'error'));
-    }
-  }
-
-  function scheduleSlotFetch() {
-    if (slotState.manual) return;
-    clearTimeout(slotState.timer);
-    slotState.timer = setTimeout(fetchSlots, 250);
-  }
-
-  function setManualMode(on) {
-    slotState.manual = on;
-    if (E('naSlotPicker'))   E('naSlotPicker').style.display = on ? 'none' : '';
-    if (E('naDate'))         E('naDate').style.display       = on ? '' : 'none';
-    if (E('naManualToggle')) E('naManualToggle').textContent = on ? 'use slot picker' : 'enter time manually';
-    if (!on) scheduleSlotFetch();
-  }
-
   Swal.fire({
     title: 'Schedule Appointment',
     customClass: { htmlContainer: 'na-html' },
@@ -2275,16 +2175,7 @@ function newApptDialog(opts = {}) {
       <label for="naZoom">Zoom</label>
       <input style="width:auto" type="radio" id="naInPerson" name="naPlatform" value="in-person">
       <label for="naInPerson">In-person</label><br>
-      <div id="naSlotPicker">
-        <div class="na-slot-row">
-          <label for="naSlotDate">Date:</label>
-          <input type="date" id="naSlotDate" style="width:160px;">
-        </div>
-        <div id="naSlots" class="na-slots"></div>
-        <div id="naSlotMsg" class="na-slot-msg"></div>
-      </div>
-      <a href="#" id="naManualToggle" class="na-manual-toggle">enter time manually</a><br>
-      <input type="datetime-local" class="swal2-input" id="naDate" style="display:none;"><br>
+      <input type="datetime-local" class="swal2-input" id="naDate"><br>
       <textarea id="naNote" placeholder="Appointment Notes (optional)" style="height:60px;width:300px;"></textarea><br>
       <label>Confirmation Message?</label>
       <input style="width:auto" type="checkbox" id="naSMS"> <label for="naSMS">SMS</label>
@@ -2304,28 +2195,6 @@ function newApptDialog(opts = {}) {
       renderContactSide();
       renderCaseSide();
       recompute();
-
-      // Slot picker wiring (scheduler slice 4)
-      const toggle = E('naManualToggle');
-      if (toggle) toggle.addEventListener('click', (e) => {
-        e.preventDefault();
-        setManualMode(!slotState.manual);
-      });
-      if (E('naSlotDate')) {
-        // Default the picker date: defaultDate's date part, else today
-        // (en-CA → YYYY-MM-DD in the browser's local zone).
-        E('naSlotDate').value = opts.defaultDate
-          ? String(opts.defaultDate).slice(0, 10)
-          : new Date().toLocaleDateString('en-CA');
-        E('naSlotDate').addEventListener('change', scheduleSlotFetch);
-      }
-      // Provider / type / custom-length changes re-query. The inline
-      // onchange attributes (which write naType/naLen) run before these
-      // listeners, so naLen is current when fetchSlots reads it.
-      if (E('naWith'))       E('naWith').addEventListener('change', scheduleSlotFetch);
-      if (E('naTypeSelect')) E('naTypeSelect').addEventListener('change', scheduleSlotFetch);
-      if (E('naLen'))        E('naLen').addEventListener('input', scheduleSlotFetch);
-      scheduleSlotFetch();
     },
 
     preConfirm: async () => {
@@ -2383,8 +2252,6 @@ function newApptDialog(opts = {}) {
     willClose: () => {
       destroyContactPicker();
       destroyCasePicker();
-      clearTimeout(slotState.timer);
-      slotState.seq++;                 // invalidate any in-flight fetch
       delete newApptDialog._recompute;
     },
 
