@@ -316,7 +316,9 @@ async function main() {
           subject: e.subject,
           from_email: e.from_email,
         },
-        userInput: e.body,
+        // SECURITY (prompt v3): subject + sender ride INSIDE <untrusted_user_input>,
+        // matching the court_extract internal_function + courtPreview call sites.
+        userInput: `SUBJECT: ${e.subject || ''}\nFROM: ${e.from_email || ''}\n\n${e.body || ''}`,
         model: MODEL,
         outputType: 'json',
         consumerRef: 'backtest',
@@ -334,7 +336,7 @@ async function main() {
     if (callResult.usage &&
         (callResult.usage.input_tokens != null || callResult.usage.output_tokens != null)) {
       costCents = aiService.computeCostCents(
-        callResult.usage.input_tokens, callResult.usage.output_tokens);
+        callResult.usage.input_tokens, callResult.usage.output_tokens, MODEL);
     } else if (meta.cost_cents != null) {
       costCents = meta.cost_cents;
     }

@@ -119,7 +119,10 @@ router.post('/api/court-preview/run', jwtOrApiKey, async (req, res) => {
     const extract = await aiService.call(req.db, {
       ...(usingOverride ? { inlineSystem: promptOverride } : { promptKey: 'court_extract' }),
       vars:       { message_id: messageId, subject, from_email: fromEmail },
-      userInput:  body,
+      // SECURITY (prompt v3): subject + sender ride INSIDE <untrusted_user_input>
+      // (prepended to the body), not the trusted system block. Mirrors the
+      // court_extract internal_function + backtest call sites.
+      userInput:  `SUBJECT: ${subject}\nFROM: ${fromEmail}\n\n${body}`,
       model:      model || def.model,
       max_tokens: def.max_tokens,
       outputType: 'json',
@@ -154,7 +157,7 @@ router.post('/api/court-preview/run', jwtOrApiKey, async (req, res) => {
       extract: {
         json:       extract.json,
         usage:      extract.usage,
-        cost_cents: aiService.computeCostCents(inTok, outTok),
+        cost_cents: aiService.computeCostCents(inTok, outTok, model || def.model),
         callId:     extract.callId,
         latency_ms,
       },

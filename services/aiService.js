@@ -42,9 +42,17 @@ const ANTHROPIC_VERSION       = '2023-06-01';
 const TIMEOUT_MS              = 20000;        // 20s via AbortController
 const DEFAULT_MAX_TOKENS      = 1024;         // inline calls that omit max_tokens
 
-// Pricing per 1M tokens (claude-sonnet-4-6): input $3, output $15.
-const PRICE_INPUT_PER_M  = 3;
-const PRICE_OUTPUT_PER_M = 15;
+// Pricing per 1M tokens, keyed by model. Add new models here; an unknown
+// model (one passed to computeCostCents but absent from this map) yields a
+// null cost rather than a wrong number.
+const MODEL_PRICING = {
+  'claude-sonnet-4-6':         { in: 3, out: 15 },
+  'claude-haiku-4-5-20251001': { in: 1, out: 5  },
+};
+// Legacy 2-arg computeCostCents(in, out) callers (no model) are priced at this
+// model's rates — sonnet was the only model when the signature was 2-arg, so
+// this preserves historical numbers. Documented in computeCostCents below.
+const DEFAULT_PRICING_MODEL = 'claude-sonnet-4-6';
 
 // Storage caps. request_excerpt is a TEXT column (~64KB) but we keep it short;
 // response is MEDIUMTEXT (~16MB) but we cap defensively.
@@ -63,11 +71,33 @@ const JSON_RETRY_GUARD =
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
-/** cost in cents from token counts (nulls treated as 0). */
-function computeCostCents(inputTokens, outputTokens) {
+/**
+ * Cost in cents from token counts (nulls treated as 0), priced per model.
+ *
+ * Backward-compat contract:
+ *   - model omitted/null  → priced at DEFAULT_PRICING_MODEL (sonnet) rates.
+ *     This keeps legacy 2-arg callers producing the same numbers they always
+ *     did (sonnet was the only model when this was 2-arg).
+ *   - model present but NOT in MODEL_PRICING → returns null (never guess a
+ *     price for an unknown model).
+ *   - model present and known → that model's rates.
+ *
+ * @param {number|null} inputTokens
+ * @param {number|null} outputTokens
+ * @param {string} [model]
+ * @returns {number|null} cents, or null for an unknown model
+ */
+function computeCostCents(inputTokens, outputTokens, model) {
+  let pricing;
+  if (model == null) {
+    pricing = MODEL_PRICING[DEFAULT_PRICING_MODEL];
+  } else {
+    pricing = MODEL_PRICING[model];
+    if (!pricing) return null; // unknown model → no cost rather than a wrong one
+  }
   const i = Number(inputTokens) || 0;
   const o = Number(outputTokens) || 0;
-  return (i / 1e6) * PRICE_INPUT_PER_M * 100 + (o / 1e6) * PRICE_OUTPUT_PER_M * 100;
+  return (i / 1e6) * pricing.in * 100 + (o / 1e6) * pricing.out * 100;
 }
 
 /** {{var}} substitution from a plain object. Unknown vars are left intact. */
@@ -305,7 +335,7 @@ async function call(db, {
       }
 
       const cost = (inTok != null || outTok != null)
-        ? computeCostCents(inTok, outTok)
+        ? computeCostCents(inTok, outTok, resolvedModel)
         : null;
 
       const callId = await logCall(db, {

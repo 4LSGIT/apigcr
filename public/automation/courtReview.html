@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Court Review</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --navy:#1a1a2e; --navy2:#16213e; --blue:#4f8ef7; --blue2:#3a7de8;
+      --green:#22c55e; --red:#ef4444; --amber:#f59e0b; --purple:#8b5cf6;
+      --bg:#f1f5f9; --surface:#fff; --border:#e2e8f0; --muted:#94a3b8;
+      --text:#1e293b; --text2:#475569;
+    }
+    body {
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      font-size:14px; color:var(--text); background:var(--bg);
+      display:flex; flex-direction:column; height:100vh; overflow:hidden;
+    }
+    .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .btn {
+      display:inline-flex; align-items:center; gap:6px; padding:6px 12px;
+      border-radius:6px; border:none; font-size:12px; font-weight:500;
+      cursor:pointer; transition:all .15s; white-space:nowrap;
+    }
+    .btn-primary{background:var(--blue);color:#fff;} .btn-primary:hover{background:var(--blue2);}
+    .btn-green{background:var(--green);color:#fff;} .btn-green:hover{background:#16a34a;}
+    .btn-danger{background:var(--red);color:#fff;} .btn-danger:hover{background:#dc2626;}
+    .btn-outline{background:var(--surface);border:1px solid var(--border);color:var(--text2);}
+    .btn-outline:hover{background:var(--border);}
+    .btn-sm{padding:4px 9px;font-size:11px;}
+    .btn:disabled{opacity:.4;cursor:not-allowed;}
+    .spin{animation:spin .8s linear infinite;display:inline-block;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+
+    /* ── Top filter bar ── */
+    .topbar {
+      display:flex; align-items:center; gap:10px; padding:8px 14px;
+      background:var(--navy2); color:#fff; flex-shrink:0;
+    }
+    .topbar h1 { font-size:14px; font-weight:600; margin-right:auto; display:flex; align-items:center; gap:8px; }
+    .topbar select {
+      background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.12);
+      color:#fff; border-radius:5px; padding:5px 9px; font-size:12px; outline:none;
+    }
+    .topbar select option { color:#111; }
+    .pill { font-size:11px; background:rgba(255,255,255,.1); padding:3px 8px; border-radius:10px; }
+
+    /* ── Two-pane body ── */
+    .body { flex:1; display:flex; overflow:hidden; }
+    .pane-list { width:380px; min-width:300px; border-right:1px solid var(--border);
+                 background:var(--surface); overflow-y:auto; }
+    .pane-detail { flex:1; overflow-y:auto; padding:16px 18px; }
+
+    .group { border-bottom:1px solid var(--border); }
+    .group-head {
+      display:flex; align-items:center; gap:8px; padding:9px 12px; cursor:pointer;
+      background:#f8fafc; font-weight:600; font-size:12.5px;
+      position:sticky; top:0; z-index:1;
+    }
+    .group-head:hover { background:#eef4fb; }
+    .group-head .gh-count { color:var(--muted); font-weight:500; }
+    .group-head .gh-actions { margin-left:auto; display:flex; gap:6px; }
+    .group-head .caret { width:12px; color:var(--muted); transition:transform .12s; }
+    .group.collapsed .caret { transform:rotate(-90deg); }
+    .group.collapsed .group-rows { display:none; }
+
+    .qrow {
+      padding:8px 12px 8px 26px; cursor:pointer; border-bottom:1px solid #f1f5f9;
+      transition:background .1s;
+    }
+    .qrow:hover { background:#f8fafc; }
+    .qrow.active { background:#eef4fb; border-left:3px solid var(--blue); padding-left:23px; }
+    .qrow .qr-top { display:flex; align-items:center; gap:6px; }
+    .qrow .qr-subj { font-size:12.5px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .qrow .qr-meta { font-size:10.5px; color:var(--muted); margin-top:2px; display:flex; gap:8px; flex-wrap:wrap; }
+    .reason-chip {
+      font-size:9.5px; font-weight:600; padding:1px 6px; border-radius:8px; text-transform:uppercase;
+      letter-spacing:.02em; white-space:nowrap;
+    }
+    .reason-case_not_found { background:#fef3c7; color:#92400e; }
+    .reason-citation_miss { background:#fee2e2; color:#991b1b; }
+    .reason-extract_failed { background:#ede9fe; color:#5b21b6; }
+    .reason-model_flagged { background:#dbeafe; color:#1e40af; }
+
+    /* ── Detail pane ── */
+    .empty-detail { color:var(--muted); text-align:center; margin-top:60px; font-size:13px; }
+    .d-head { display:flex; align-items:flex-start; gap:10px; margin-bottom:10px; }
+    .d-head .d-subj { font-size:15px; font-weight:600; flex:1; }
+    .d-actions-bar { display:flex; gap:8px; margin:12px 0; flex-wrap:wrap; }
+    .resolve-box { padding:8px 12px; border-radius:7px; font-size:12.5px; margin:8px 0; }
+    .resolve-ok { background:#dcfce7; color:#166534; }
+    .resolve-no { background:#fef3c7; color:#92400e; }
+    .sec-label { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em;
+                 color:var(--muted); margin:14px 0 6px; }
+    .email-body {
+      background:var(--surface); border:1px solid var(--border); border-radius:7px;
+      padding:10px 12px; font-size:12px; white-space:pre-wrap; word-break:break-word;
+      max-height:260px; overflow-y:auto; color:var(--text2);
+    }
+    .action-card { border:1px solid var(--border); border-radius:7px; padding:9px 11px; margin-bottom:8px; background:var(--surface); }
+    .action-type { font-size:11px; font-weight:700; color:var(--blue2); text-transform:uppercase; letter-spacing:.03em; }
+    .kv { display:flex; gap:6px; font-size:12px; margin-top:3px; }
+    .kv .k { color:var(--muted); min-width:120px; }
+    .kv .v { color:var(--text); word-break:break-word; }
+    .cite { font-size:11px; color:var(--muted); font-style:italic; margin-top:2px; padding-left:120px; }
+    .meta-row { font-size:11.5px; color:var(--muted); margin-top:4px; }
+    .meta-row code { background:#f1f5f9; padding:1px 5px; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1><i class="fa-solid fa-gavel"></i> Court Review Queue <span class="pill" id="cr-count">0</span></h1>
+    <label style="font-size:12px;display:flex;align-items:center;gap:6px">
+      Reason
+      <select id="cr-reason" onchange="window.crReload()">
+        <option value="">All</option>
+        <option value="case_not_found">Case not found</option>
+        <option value="citation_miss">Citation miss</option>
+        <option value="model_flagged">Model flagged</option>
+        <option value="extract_failed">Extract failed</option>
+      </select>
+    </label>
+    <button class="btn btn-outline btn-sm" style="background:rgba(255,255,255,.08);color:#fff;border-color:rgba(255,255,255,.15)" onclick="window.crReload()">
+      <i class="fa-solid fa-rotate"></i> Refresh
+    </button>
+  </div>
+
+  <div class="body">
+    <div class="pane-list" id="cr-list"></div>
+    <div class="pane-detail" id="cr-detail">
+      <div class="empty-detail">Select a queued item to review.</div>
+    </div>
+  </div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// COURT REVIEW sub-page. Iframe inside automationManager.html (itself iframed
+// in a.html/b.html). Talks to the shell via window.parent.apiSend etc., same
+// contract as hooks.html. The CASE PICKER for "Adopt" uses the SHELL's
+// scripts.js CasePicker via window.top.CasePicker mounted in a window.top.Swal
+// (so the shell's cp-* CSS + P.apiSend apply) — no per-page picker fork.
+// ═══════════════════════════════════════════════════════════════
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = id => document.getElementById(id);
+const Toast = Swal.mixin({ toast:true, position:'top-end', showConfirmButton:false, timer:2600 });
+
+function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function reasonCategory(r){
+  r = r || '';
+  if (r === 'case_not_found') return 'case_not_found';
+  if (r.indexOf('citation_miss:') === 0) return 'citation_miss';
+  if (r.indexOf('extract_failed:') === 0) return 'extract_failed';
+  return 'model_flagged';
+}
+function reasonLabel(cat){
+  return { case_not_found:'no case', citation_miss:'citation', extract_failed:'extract fail', model_flagged:'flagged' }[cat] || cat;
+}
+
+(function crModule(){
+  let queue = { rows:[], groups:[] };
+  let activeId = null;
+  const collapsed = new Set(); // collapsed group keys persist across reloads
+
+  // ── Load + render queue ──────────────────────────────────────
+  async function load(){
+    const reason = E('cr-reason').value || '';
+    E('cr-list').innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px">Loading…</div>';
+    try {
+      queue = await api('/api/court-review/queue', 'GET', { reason });
+    } catch (e) {
+      E('cr-list').innerHTML = `<div style="padding:16px;color:var(--red);font-size:12px">${esc(e.message)}</div>`;
+      return;
+    }
+    E('cr-count').textContent = queue.rows.length;
+    renderList();
+  }
+
+  function rowsForGroup(key){
+    return queue.rows.filter(r => ((r.case_number && String(r.case_number).trim()) || '(no docket)') === key);
+  }
+
+  function renderList(){
+    const el = E('cr-list');
+    if (!queue.rows.length){
+      el.innerHTML = '<div style="padding:24px 14px;color:var(--muted);font-size:12.5px;text-align:center">Queue is empty 🎉</div>';
+      return;
+    }
+    el.innerHTML = queue.groups.map(g => {
+      const key = g.case_number;
+      const isColl = collapsed.has(key);
+      const rows = rowsForGroup(key);
+      const rowsHtml = rows.map(r => {
+        const cat = reasonCategory(r.review_reason);
+        const subj = r.email_subject || '(no subject)';
+        return `
+          <div class="qrow${r.id===activeId?' active':''}" onclick="window.crSelect(${r.id})">
+            <div class="qr-top">
+              <span class="reason-chip reason-${cat}">${esc(reasonLabel(cat))}</span>
+              <span class="qr-subj" title="${esc(subj)}">${esc(subj)}</span>
+            </div>
+            <div class="qr-meta">
+              <span>${esc(r.classification || '—')}</span>
+              <span>#${r.id}</span>
+              <span>${r.dry_run ? 'dry' : 'live'}</span>
+            </div>
+          </div>`;
+      }).join('');
+      return `
+        <div class="group${isColl?' collapsed':''}" data-key="${esc(key)}">
+          <div class="group-head" onclick="window.crToggleGroup('${esc(key).replace(/'/g,"\\'")}')">
+            <i class="fa-solid fa-chevron-down caret"></i>
+            <span class="mono">${esc(key)}</span>
+            <span class="gh-count">— ${g.count} email${g.count===1?'':'s'}</span>
+            <span class="gh-actions">
+              <button class="btn btn-green btn-sm" onclick="event.stopPropagation();window.crGroupAdopt('${esc(key).replace(/'/g,"\\'")}')" title="Adopt this docket onto a case, then re-run every row in the group">
+                <i class="fa-solid fa-folder-plus"></i> Adopt all
+              </button>
+            </span>
+          </div>
+          <div class="group-rows">${rowsHtml}</div>
+        </div>`;
+    }).join('');
+  }
+
+  // ── Detail pane ──────────────────────────────────────────────
+  async function select(id){
+    activeId = id;
+    renderList();
+    const d = E('cr-detail');
+    d.innerHTML = '<div class="empty-detail">Loading…</div>';
+    let item;
+    try { item = await api('/api/court-review/item/' + id, 'GET'); }
+    catch (e) { d.innerHTML = `<div class="empty-detail" style="color:var(--red)">${esc(e.message)}</div>`; return; }
+    renderDetail(item);
+  }
+
+  function renderActions(payload){
+    const actions = (payload && Array.isArray(payload.actions)) ? payload.actions : [];
+    if (!actions.length) return '<div style="color:var(--muted);font-size:12px">No actions in payload.</div>';
+    return actions.map(a => {
+      const fields = a.fields || {};
+      const cites = a.citations || {};
+      const fieldRows = Object.keys(fields).map(k => {
+        const cite = cites[k];
+        return `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(fields[k])}</span></div>` +
+               (cite ? `<div class="cite">“${esc(cite)}”</div>` : '');
+      }).join('');
+      return `<div class="action-card"><div class="action-type">${esc(a.type || '(no type)')}</div>${fieldRows}</div>`;
+    }).join('');
+  }
+
+  function renderDetail(item){
+    const r = item.row, res = item.resolve, payload = item.payload;
+    const cat = reasonCategory(r.review_reason);
+    const docket = r.case_number || '(no docket)';
+    const resolvesNow = res && res.found;
+    const caseLabel = resolvesNow ? (res.case_number_full || res.case_number || res.case_id) : null;
+
+    // Re-run is enabled when the case now resolves, OR the row is a needs_review
+    // flavor (citation_miss / model_flagged) — those re-run as-is. A still-
+    // unresolved case_not_found row needs an Adopt, not a re-run.
+    const rerunEnabled = resolvesNow || cat === 'citation_miss' || cat === 'model_flagged' || cat === 'extract_failed';
+
+    const resolveHtml = resolvesNow
+      ? `<div class="resolve-box resolve-ok"><i class="fa-solid fa-circle-check"></i> Docket resolves to <b>${esc(caseLabel)}</b>${res.primary_contact_name ? ' · '+esc(res.primary_contact_name) : ''} (case_id ${esc(res.case_id)})</div>`
+      : `<div class="resolve-box resolve-no"><i class="fa-solid fa-triangle-exclamation"></i> No case resolves for <b class="mono">${esc(docket)}</b> — adopt the docket onto a case to proceed.</div>`;
+
+    E('cr-detail').innerHTML = `
+      <div class="d-head">
+        <div class="d-subj">${esc(item.email.subject || '(no subject)')}</div>
+      </div>
+      <div class="meta-row">
+        <code>${esc(r.classification || '—')}</code>
+        <code class="mono">${esc(docket)}</code>
+        <span class="reason-chip reason-${cat}">${esc(reasonLabel(cat))}</span>
+        ${r.dry_run ? '<code>dry</code>' : '<code>live</code>'}
+        <span>row #${r.id} · ${esc(new Date(r.created_at).toLocaleString())}</span>
+      </div>
+      <div class="meta-row" style="margin-top:4px">${esc(r.review_reason || '')}</div>
+
+      ${resolveHtml}
+
+      <div class="d-actions-bar">
+        <button class="btn btn-primary btn-sm" id="cr-btn-rerun" ${rerunEnabled?'':'disabled'} onclick="window.crRerun(${r.id})">
+          <i class="fa-solid fa-play"></i> Re-run
+        </button>
+        <button class="btn btn-green btn-sm" onclick="window.crAdopt(${r.id})" ${docket==='(no docket)'?'disabled':''}>
+          <i class="fa-solid fa-folder-plus"></i> Adopt → case…
+        </button>
+        <button class="btn btn-danger btn-sm" onclick="window.crDismiss(${r.id})">
+          <i class="fa-solid fa-xmark"></i> Dismiss
+        </button>
+      </div>
+
+      <div class="sec-label">Planned actions</div>
+      ${renderActions(payload)}
+
+      <div class="sec-label">Email body</div>
+      <div class="email-body">${esc(item.email.body || '(no body)')}</div>
+    `;
+  }
+
+  // ── Resolutions ──────────────────────────────────────────────
+  async function rerun(id){
+    try {
+      const r = await api('/api/court-review/rerun', 'POST', { court_ai_log_id: id });
+      reportRerun(r);
+      await load();
+    } catch (e) { Toast.fire({ icon:'error', title: e.message }); }
+  }
+
+  function reportRerun(r){
+    const out = r.result || {};
+    const live = r.dry_run === false;
+    if (out.outcome === 'executed' && live) Toast.fire({ icon:'success', title:'Executed (live)' });
+    else if (out.outcome === 'executed')    Toast.fire({ icon:'info', title:'Dry-run executed — still queued (court_ingest_live is off)' });
+    else if (out.outcome === 'none')        Toast.fire({ icon:'info', title:'Re-ran: nothing to apply' });
+    else                                    Toast.fire({ icon:'info', title:'Re-ran: still queued ('+(out.review_reason||'review')+')' });
+  }
+
+  // Open the SHELL's CasePicker in a SHELL Swal; resolve to { case_id, case } | null.
+  function pickCase(docket){
+    const top = window.top;
+    if (!top || typeof top.CasePicker !== 'function' || !top.Swal){
+      Toast.fire({ icon:'error', title:'Case picker unavailable (open inside the app shell).' });
+      return Promise.resolve(null);
+    }
+    let chosen = null, picker = null;
+    return top.Swal.fire({
+      title: 'Adopt docket onto case',
+      html: `<div style="font-size:12.5px;color:#475569;margin-bottom:8px">Docket to write: <b class="mono">${esc(docket)}</b></div>
+             <div id="cr-cad-mount"></div>
+             <div id="cr-cad-info" style="font-size:12px;color:#16a34a;margin-top:8px;min-height:18px"></div>`,
+      showCancelButton: true, confirmButtonText: 'Adopt & re-run', showCloseButton: true,
+      didOpen: () => {
+        const cb = top.Swal.getConfirmButton(); if (cb) cb.disabled = true;
+        const mount = top.document.getElementById('cr-cad-mount');
+        const info  = top.document.getElementById('cr-cad-info');
+        picker = top.CasePicker(mount, {
+          placeholder: 'Search cases…',
+          onSelect: (cid, row) => {
+            chosen = { case_id: cid, case: row };
+            if (cb) cb.disabled = false;
+            const lbl = (row && (row.case_number_full || row.case_number || row.case_id)) || cid;
+            if (info) info.textContent = '✓ ' + lbl + (row && row.primary_contact_name ? ' · ' + row.primary_contact_name : '');
+          },
+        });
+      },
+      preConfirm: () => {
+        if (!chosen){ top.Swal.showValidationMessage('Pick a case first'); return false; }
+        return chosen;
+      },
+    }).then(res => { if (picker) try { picker.destroy(); } catch(_){} return res.isConfirmed ? chosen : null; });
+  }
+
+  async function adopt(id){
+    const row = queue.rows.find(x => x.id === id);
+    const docket = (row && row.case_number) || '';
+    const chosen = await pickCase(docket);
+    if (!chosen) return;
+    await doAdoptRerun(id, chosen.case_id);
+    await load();
+  }
+
+  async function doAdoptRerun(id, caseId){
+    try {
+      const r = await api('/api/court-review/adopt-rerun', 'POST', { court_ai_log_id: id, case_id: caseId });
+      reportRerun(r);
+      return true;
+    } catch (e) {
+      // adopt-rerun returns 409 on docket conflict — apiSend surfaces the body message.
+      Toast.fire({ icon:'error', title: e.message || 'Adopt failed' });
+      return false;
+    }
+  }
+
+  // Group adopt: pick a case ONCE, adopt+rerun the first row, then re-run the
+  // rest sequentially (they share the docket, so the case now resolves).
+  async function groupAdopt(key){
+    const rows = rowsForGroup(key);
+    if (!rows.length) return;
+    const chosen = await pickCase(key);
+    if (!chosen) return;
+
+    let ok = 0, fail = 0;
+    // First row carries the adopt; abort the batch if the adopt itself conflicts.
+    const first = await doAdoptRerun(rows[0].id, chosen.case_id);
+    if (!first){ await load(); return; }
+    ok++;
+    for (let i = 1; i < rows.length; i++){
+      try { await api('/api/court-review/rerun', 'POST', { court_ai_log_id: rows[i].id }); ok++; }
+      catch (e) { fail++; }
+    }
+    Toast.fire({ icon: fail?'warning':'success', title:`Group re-run: ${ok} ok${fail?', '+fail+' failed':''}` });
+    await load();
+  }
+
+  async function dismiss(id){
+    const { value: note, isConfirmed } = await Swal.fire({
+      title:'Dismiss item', input:'text', inputPlaceholder:'Reason / note (optional)',
+      showCancelButton:true, confirmButtonText:'Dismiss', confirmButtonColor:'#ef4444',
+    });
+    if (!isConfirmed) return;
+    try {
+      await api('/api/court-review/dismiss', 'POST', { court_ai_log_id: id, note: note || '' });
+      Toast.fire({ icon:'success', title:'Dismissed' });
+      if (activeId === id){ activeId = null; E('cr-detail').innerHTML = '<div class="empty-detail">Select a queued item to review.</div>'; }
+      await load();
+    } catch (e) { Toast.fire({ icon:'error', title: e.message }); }
+  }
+
+  function toggleGroup(key){
+    if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+    renderList();
+  }
+
+  // ── Shell lifecycle + boot ───────────────────────────────────
+  function init(){
+    if (P.setTopbarButtons) P.setTopbarButtons({ save:false, delete:false, refresh:true, new:false });
+    load();
+  }
+  window.onShow    = () => { if (!queue.rows.length) load(); };
+  window.onRefresh = () => load();
+  window.onNew     = () => {};
+
+  // Inline-handler entry points
+  window.crReload      = load;
+  window.crSelect      = select;
+  window.crRerun       = rerun;
+  window.crAdopt       = adopt;
+  window.crGroupAdopt  = groupAdopt;
+  window.crDismiss     = dismiss;
+  window.crToggleGroup = toggleGroup;
+
+  (function waitForShell(){
+    if (P && typeof P.apiSend === 'function') return init();
+    setTimeout(waitForShell, 50);
+  })();
+})();
+</script>
+</body>
+</html>
