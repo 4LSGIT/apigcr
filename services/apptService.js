@@ -56,7 +56,7 @@ function getSequenceEngine() {
 function alertGcalFailure(db, kind, detail) {
   alert(db, {
     source: 'app',
-    kind: `gcal_${kind}_failed`,        // gcal_create_failed | gcal_delete_failed
+    kind: `gcal_${kind}_failed`,        // gcal_create_failed | gcal_delete_failed | gcal_create_user_failed | gcal_delete_user_failed
     group_key: `gcal_sync:${kind}`,
     severity: 'error',
     title: `Google Calendar sync failed: ${kind}`,
@@ -109,22 +109,63 @@ function buildApptEventResource({ appt_type, contact_name, appt_platform, case_i
 }
 
 /**
- * Create the calendar event for a freshly-created appointment and write the
- * event ID + computed end time back to the appt row. Fire-and-forget — never
- * throws. Used post-commit in createAppt.
+ * Resolve a provider's secondary calendar ID from users.user_gcal_id.
+ * Returns the trimmed calendar ID string, or null when the user has none
+ * (or apptWith is invalid). Trimming matters: the column has been observed
+ * to carry trailing newlines from copy-paste, which would 404 every API
+ * call after encodeURIComponent.
+ */
+async function resolveProviderCalendarId(db, apptWith) {
+  const n = Number(apptWith);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  const [[row]] = await db.query(
+    'SELECT user_gcal_id FROM users WHERE user = ?',
+    [n]
+  );
+  const id = row && row.user_gcal_id ? String(row.user_gcal_id).trim() : '';
+  return id || null;
+}
+
+/**
+ * Create the calendar event(s) for a freshly-created appointment and write
+ * the event ID(s) back to the appt row. Fire-and-forget — never throws.
+ * Used post-commit in createAppt.
+ *
+ * Slice 5: double-write. Two independent targets, same oauth2 credential:
+ *   1. FIRM calendar (existing binding via gcalService._resolveTarget) —
+ *      behavior unchanged, attendee attached, event id → appt_gcal.
+ *   2. PROVIDER calendar (users.user_gcal_id for appt_with) — written BARE,
+ *      no attendees, so Google can never notify a client from it. Client
+ *      confirmations are template/SMS/email driven, never Google invites.
+ *      Event id → appt_gcal_user.
+ * The provider write is skipped when user_gcal_id is NULL/blank or equals
+ * the firm calendar id (duplicate guard). Each write has its own catch +
+ * alert kind; one failing never blocks the other. sendUpdates is never
+ * passed → gcalService default 'none' on both.
  */
 async function syncApptToCalendar(db, { appt_id, appt_date, appt_length, appt_type,
                                         appt_platform, case_id, note, contact_name,
-                                        contact_email }) {
+                                        contact_email, appt_with }) {
+  // Shared event content (pure functions — but keep the guard anyway so a
+  // malformed date can't kill both writes silently without an alert).
+  let resource, startLocal, endLocal;
   try {
-    const endLocal = computeApptEndLocal(appt_date, appt_length);
-    const resource = buildApptEventResource({ appt_type, contact_name, appt_platform, case_id, note });
+    endLocal = computeApptEndLocal(appt_date, appt_length);
+    resource = buildApptEventResource({ appt_type, contact_name, appt_platform, case_id, note });
+    startLocal = typeof appt_date === 'string'
+      ? appt_date.replace(' ', 'T').slice(0, 19)
+      : appt_date.toISOString().slice(0, 19);       // naive local → FIRM_TZ in service
+  } catch (err) {
+    console.error(`[APPT SERVICE] GCal create (appt ${appt_id}) — event build failed:`, err.message);
+    alertGcalFailure(db, 'create', `appt_id=${appt_id}: event build failed: ${err.message}`);
+    return;
+  }
 
+  // ── 1) Firm calendar (unchanged behavior, attendee attached) ──
+  try {
     const event = await gcal.createEvent(db, {
       ...resource,
-      start: typeof appt_date === 'string'
-        ? appt_date.replace(' ', 'T').slice(0, 19)
-        : appt_date.toISOString().slice(0, 19),     // naive local → FIRM_TZ in service
+      start: startLocal,
       end: endLocal,
       ...(contact_email && { attendees: [contact_email] }),
     });
@@ -139,24 +180,77 @@ async function syncApptToCalendar(db, { appt_id, appt_date, appt_length, appt_ty
     console.error(`[APPT SERVICE] GCal create (appt ${appt_id}) failed:`, err.message);
     alertGcalFailure(db, 'create', `appt_id=${appt_id}: ${err.message}`);
   }
+
+  // ── 2) Provider calendar (bare — NO attendees, internal-only) ──
+  try {
+    const providerCalId = await resolveProviderCalendarId(db, appt_with);
+    if (!providerCalId) return;                       // user has no calendar — clean skip
+
+    // Duplicate guard: if the provider's calendar IS the firm calendar,
+    // skip — the firm write above already covered it.
+    const { calendarId: firmCalId } = await gcal._resolveTarget(db, {});
+    if (providerCalId === String(firmCalId).trim()) return;
+
+    const event = await gcal.createEvent(db, {
+      ...resource,
+      start: startLocal,
+      end: endLocal,
+      calendarId: providerCalId,
+      // deliberately NO attendees / sendUpdates / reminders
+    });
+
+    await db.query(
+      'UPDATE appts SET appt_gcal_user = ? WHERE appt_id = ?',
+      [event.id, appt_id]
+    );
+  } catch (err) {
+    console.error(`[APPT SERVICE] GCal provider create (appt ${appt_id}, with=${appt_with}) failed:`, err.message);
+    alertGcalFailure(db, 'create_user', `appt_id=${appt_id} appt_with=${appt_with}: ${err.message}`);
+  }
 }
 
 /**
- * Delete a calendar event by ID. Fire-and-forget — never throws. Treats
- * Google's 410 (already gone) as success.
+ * Delete a firm-calendar event by ID. Fire-and-forget — never throws.
+ * Treats Google's 404/410 (already gone) as success.
  */
 async function deleteApptCalendarEvent(db, eventId, contextLabel) {
   if (!eventId) return;
   try {
     await gcal.deleteEvent(db, { eventId });
   } catch (err) {
-    if (/→\s410:/.test(err.message)) {
+    if (/→\s(404|410):/.test(err.message)) {
       // Already deleted on Google's side — nothing to do.
       console.warn(`[APPT SERVICE] GCal delete (${contextLabel}) — event ${eventId} already gone`);
       return;
     }
     console.error(`[APPT SERVICE] GCal delete (${contextLabel}) failed:`, err.message);
     alertGcalFailure(db, 'delete', `${contextLabel} event=${eventId}: ${err.message}`);
+  }
+}
+
+/**
+ * Delete a provider-calendar event (appts.appt_gcal_user) by ID.
+ * Fire-and-forget — never throws. The provider's calendar is re-resolved
+ * from users.user_gcal_id at delete time; if the binding was removed since
+ * the event was created, the delete can't locate the calendar and alerts
+ * (kind gcal_delete_user_failed) so the orphan can be cleaned up manually.
+ * Treats Google's 404/410 (already gone) as success.
+ */
+async function deleteApptProviderCalendarEvent(db, eventId, apptWith, contextLabel) {
+  if (!eventId) return;
+  try {
+    const providerCalId = await resolveProviderCalendarId(db, apptWith);
+    if (!providerCalId) {
+      throw new Error(`no user_gcal_id for user ${apptWith} — cannot locate provider event`);
+    }
+    await gcal.deleteEvent(db, { eventId, calendarId: providerCalId });
+  } catch (err) {
+    if (/→\s(404|410):/.test(err.message)) {
+      console.warn(`[APPT SERVICE] GCal provider delete (${contextLabel}) — event ${eventId} already gone`);
+      return;
+    }
+    console.error(`[APPT SERVICE] GCal provider delete (${contextLabel}) failed:`, err.message);
+    alertGcalFailure(db, 'delete_user', `${contextLabel} event=${eventId} appt_with=${apptWith}: ${err.message}`);
   }
 }
 
@@ -422,7 +516,7 @@ async function createAppt(db, {
   // ────────────────────────────────────────────────────────────
   const conn = await db.getConnection();
   let apptId;
-  let supersededAppt = null; // { appt_id, appt_gcal } for any prior 341 we're replacing
+  let supersededAppt = null; // { appt_id, appt_gcal, appt_gcal_user, appt_with } for any prior 341 we're replacing
   try {
     await conn.beginTransaction();
 
@@ -450,7 +544,7 @@ async function createAppt(db, {
       //     teardown if it's the caller; in that case the prior is already
       //     Rescheduled and we skip the inner UPDATE + post-commit work.
       const [[prior]] = await conn.query(
-        `SELECT a.appt_id, a.appt_gcal, a.appt_status
+        `SELECT a.appt_id, a.appt_gcal, a.appt_gcal_user, a.appt_with, a.appt_status
          FROM cases c
          JOIN appts a ON a.appt_id = c.\`341_appt_id\`
          WHERE c.case_id = ? AND c.\`341_appt_id\` != 0 AND c.\`341_appt_id\` != ?
@@ -462,7 +556,12 @@ async function createAppt(db, {
           `UPDATE appts SET appt_status = 'Rescheduled' WHERE appt_id = ?`,
           [prior.appt_id]
         );
-        supersededAppt = { appt_id: prior.appt_id, appt_gcal: prior.appt_gcal };
+        supersededAppt = {
+          appt_id:        prior.appt_id,
+          appt_gcal:      prior.appt_gcal,
+          appt_gcal_user: prior.appt_gcal_user,
+          appt_with:      prior.appt_with,
+        };
       }
 
       // 3b) Point the case at the new 341
@@ -490,6 +589,9 @@ async function createAppt(db, {
 
     if (supersededAppt.appt_gcal) {
       deleteApptCalendarEvent(db, supersededAppt.appt_gcal, '341_superseded');
+    }
+    if (supersededAppt.appt_gcal_user) {
+      deleteApptProviderCalendarEvent(db, supersededAppt.appt_gcal_user, supersededAppt.appt_with, '341_superseded');
     }
 
     insertApptLog(db, supersededAppt.appt_id, actingUserId, {
@@ -527,7 +629,7 @@ async function createAppt(db, {
     );
     await syncApptToCalendar(db, {
       appt_id: apptId, appt_date, appt_length, appt_type, appt_platform,
-      case_id, note,
+      case_id, note, appt_with,
       contact_name:  contactForGcal?.contact_name || '',
       contact_email: contactForGcal?.contact_email || '',
     });
@@ -821,6 +923,9 @@ async function cancelAppt(db, {
   if (cancel_gcal && appt.appt_gcal) {
     deleteApptCalendarEvent(db, appt.appt_gcal, 'cancel');
   }
+  if (cancel_gcal && appt.appt_gcal_user) {
+    deleteApptProviderCalendarEvent(db, appt.appt_gcal_user, appt.appt_with, 'cancel');
+  }
 
   // TODO: Cancel sequence enrollment — not yet designed.
   // When a 'cancel' sequence template exists, wire it here:
@@ -880,6 +985,9 @@ async function rescheduleAppt(db, {
   if (oldAppt.appt_gcal) {
     deleteApptCalendarEvent(db, oldAppt.appt_gcal, 'reschedule');
   }
+  if (oldAppt.appt_gcal_user) {
+    deleteApptProviderCalendarEvent(db, oldAppt.appt_gcal_user, oldAppt.appt_with, 'reschedule');
+  }
 
   // 4) Create new appointment (handles enrollments, GCal, etc.)
   const newAppt = await createAppt(db, {
@@ -935,7 +1043,7 @@ async function rescheduleLater(db, {
   if (!appt_id) throw new Error('rescheduleLater requires appt_id');
 
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id, appt_gcal FROM appts WHERE appt_id = ?',
+    'SELECT appt_id, appt_client_id, appt_gcal, appt_gcal_user, appt_with FROM appts WHERE appt_id = ?',
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
@@ -956,6 +1064,9 @@ async function rescheduleLater(db, {
   // 2b) GCal delete (non-blocking)
   if (appt.appt_gcal) {
     deleteApptCalendarEvent(db, appt.appt_gcal, 'rescheduleLater');
+  }
+  if (appt.appt_gcal_user) {
+    deleteApptProviderCalendarEvent(db, appt.appt_gcal_user, appt.appt_with, 'rescheduleLater');
   }
 
   // 3) Optional task
