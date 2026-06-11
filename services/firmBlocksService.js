@@ -126,13 +126,18 @@ async function fetchHebcalCandleEvents(windowStart, windowEnd, leadMin, endMin) 
 // ─────────────────────────────────────────────────────────────
 
 /**
- * Same matching rules as calendarService.buildRestrictedSet: holiday-category
- * items, excluding 'Erev *', where the title is in YOM_TOV_HOLIDAYS (Rosh
- * Hashana matched by substring to catch "Rosh Hashana 5787" / "Rosh Hashana II").
+ * Matching rules derived from calendarService.buildRestrictedSet:
+ * holiday-category items, excluding 'Erev *', where the title is in
+ * YOM_TOV_HOLIDAYS. Rosh Hashana is matched as "Rosh Hashana <year>" /
+ * "Rosh Hashana II" — NOT by bare substring, which falsely matches the
+ * minor observance "Rosh Hashana LaBehemot" (calendarService still has
+ * that substring bug; fixing it there is a separate slice).
  *
  * @param {object[]} items — merged Hebcal items
  * @returns {Map<string,string>} 'yyyy-LL-dd' → holiday title
  */
+const ROSH_HASHANA_RE = /^Rosh Hashana (\d|II$)/;
+
 function buildYomTovDateMap(items) {
   const map = new Map();
   for (const ev of items) {
@@ -140,7 +145,7 @@ function buildYomTovDateMap(items) {
     if (!ev.title || ev.title.startsWith('Erev')) continue;
     const isYomTov = YOM_TOV_HOLIDAYS.some(h =>
       h === 'Rosh Hashana'
-        ? ev.title.includes('Rosh Hashana')
+        ? ROSH_HASHANA_RE.test(ev.title)
         : ev.title === h
     );
     if (!isYomTov) continue;
