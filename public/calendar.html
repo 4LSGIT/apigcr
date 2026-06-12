@@ -2,103 +2,342 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <title>Appointments Calendar</title>
+  <title>Calendar</title>
 
-  <!-- FullCalendar -->
-  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css" rel="stylesheet">
+  <!-- SweetAlert2 BEFORE scripts.js — scripts.js touches Swal at load time
+       (window.Toast = Swal.mixin). Same load order as contact2/case2. -->
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <!-- Shared dialogs (newApptDialog + pickers). Runs IN this iframe so its
+       Swal stacks here and never replaces the shell modal hosting us. -->
+  <script src="/scripts.js"></script>
+  <!-- FullCalendar 6 ships its CSS inside the global JS bundle — no separate
+       stylesheet exists for v6 (the old index.global.min.css link 404'd). -->
   <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js"></script>
 
   <style>
     body {
       margin: 0;
-      padding: 10px;
+      padding: 8px 10px;
       font-family: Arial, sans-serif;
       background: #fff;
+      font-size: 14px;
     }
 
-    #calendar {
-      max-width: 100%;
+    /* ── Top bar: provider filter + kind toggles + legend ── */
+    #calBar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.4em 1.2em;
+      margin-bottom: 6px;
+      font-size: 0.9em;
     }
+    #calBar label { cursor: pointer; user-select: none; white-space: nowrap; }
+    #calBar input[type="checkbox"] { vertical-align: -2px; margin-right: 2px; }
+    .cal-swatch {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 2px;
+      margin-right: 3px;
+      vertical-align: -1px;
+    }
+    .cal-group-label { color: #666; font-size: 0.92em; }
+    #calNote { color: #92400e; font-size: 0.9em; }
+    #calNote:empty { display: none; }
 
-    .fc-toolbar-title {
-      font-size: 1.2rem;
+    /* ── FullCalendar overrides — keep the app's plain Arial/white/blue look ── */
+    #calendar { max-width: 100%; }
+    .fc { font-size: 0.88em; }
+    .fc .fc-toolbar-title { font-size: 1.15rem; }
+    .fc .fc-button {
+      background: #fff; color: #2563eb;
+      border: 1px solid #2563eb;
+      box-shadow: none !important;
+      text-transform: capitalize;
+      padding: 0.25em 0.6em;
     }
+    .fc .fc-button:hover { background: #eff6ff; color: #2563eb; }
+    .fc .fc-button-primary:not(:disabled).fc-button-active,
+    .fc .fc-button-primary:not(:disabled):active {
+      background: #2563eb; color: #fff; border-color: #2563eb;
+    }
+    .fc .fc-button:disabled { background: #fff; color: #93c5fd; border-color: #93c5fd; }
+    .fc .fc-timegrid-slot { height: 1.6em; }
+    .fc-event { cursor: pointer; }
+    .fc-bg-event { opacity: 0.28; }
+
+    /* detail popover body */
+    .cal-pop { text-align: left; font-size: 0.95em; line-height: 1.5; }
+    .cal-pop b { display: inline-block; min-width: 5.2em; }
   </style>
 </head>
 <body>
 
+<div id="calBar">
+  <span class="cal-group-label">Providers:</span>
+  <span id="calProviders"><span style="color:#999">loading…</span></span>
+  <span class="cal-group-label">Show:</span>
+  <label><input type="checkbox" id="tglTaken" checked> Taken</label>
+  <label><input type="checkbox" id="tglEvents" checked> <span class="cal-swatch" style="background:#64748b"></span>Events</label>
+  <label><input type="checkbox" id="tglBlocked" checked> <span class="cal-swatch" style="background:#9ca3af"></span>Blocked</label>
+  <label><input type="checkbox" id="tglFree"> <span class="cal-swatch" style="background:#22c55e"></span>Free</label>
+  <span id="calNote"></span>
+</div>
+
 <div id="calendar"></div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function () {
+// P = window.parent (from scripts.js). All API traffic rides parent.apiSend;
+// the feed itself comes from /api/calendar-feed (Scheduler Slice 7).
 
-  const calendarEl = document.getElementById('calendar');
+const calState = {
+  calendar: null,
+  seq: 0,                  // stale-response guard for feed fetches
+  providersRendered: false // provider checkboxes built from the first response
+};
 
-  const calendar = new FullCalendar.Calendar(calendarEl, {
-    initialView: 'timeGridWeek',
-    height: 'auto',
-    editable: false,
-    selectable: false,
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
 
-    headerToolbar: {
-      left: 'prev,next today',
-      center: 'title',
-      right: 'dayGridMonth,timeGridWeek,timeGridDay'
-    },
+// ── Filter state readers ─────────────────────────────────────
+function checkedProviderIds() {
+  return Array.from(document.querySelectorAll('#calProviders input[type="checkbox"]:checked'))
+    .map(cb => Number(cb.value));
+}
 
-    events: async function(fetchInfo, successCallback, failureCallback) {
-      try {
-        const data = await parent.window.apiSend(
-          '/api/events',
-          'GET',
-          {
-            start: fetchInfo.startStr,
-            end: fetchInfo.endStr
-          }
-        );
+function showTokens() {
+  const t = [];
+  if (E('tglTaken').checked)   t.push('taken');
+  if (E('tglEvents').checked)  t.push('events');
+  if (E('tglBlocked').checked) t.push('blocked');
+  if (E('tglFree').checked)    t.push('free');
+  return t;
+}
 
-        successCallback(data);
-      } catch (err) {
-        console.error(err);
-        failureCallback(err);
-      }
-    },
+// ── Provider checkbox bar (built once, from the feed's providers array) ──
+function renderProviderBar(providers) {
+  const host = E('calProviders');
+  host.innerHTML = '';
+  (providers || []).forEach(p => {
+    const label = document.createElement('label');
+    label.innerHTML =
+      `<input type="checkbox" value="${p.id}" checked>` +
+      `<span class="cal-swatch" style="background:${esc(p.color)}"></span>${esc(p.name)}`;
+    label.querySelector('input').addEventListener('change', () => {
+      if (calState.calendar) calState.calendar.refetchEvents();
+    });
+    host.appendChild(label);
+  });
+  calState.providersRendered = true;
+}
 
-    eventClick: function(info) {
-  const apptId = info.event.id;
-  parent.showAppt(apptId);
-  /*      const event = info.event;
+// ── Feed fetch (FullCalendar `events` function) ──────────────
+// fetchInfo.end is EXCLUSIVE midnight; the feed's `to` is inclusive → -1 day.
+// en-CA toLocaleDateString → YYYY-MM-DD in the browser's local zone (= firm
+// local by app convention; all naive datetimes render as wall time).
+async function fetchFeed(fetchInfo, successCallback, failureCallback) {
+  const seq = ++calState.seq;
+  try {
+    const from = fetchInfo.start.toLocaleDateString('en-CA');
+    const to   = new Date(fetchInfo.end.getTime() - 86400000).toLocaleDateString('en-CA');
 
-      parent.Swal.fire({
-        title: event.extendedProps.contact_name || 'Appointment',
-        html: `
-          <div style="text-align:left">
-            <b>Type:</b> ${event.title}<br><br>
-            <b>Status:</b> ${event.extendedProps.appt_status || 'N/A'}<br><br>
-            <b>Platform:</b> ${event.extendedProps.appt_platform || 'N/A'}<br><br>
-            <b>Start:</b> ${event.start.toLocaleString()}<br><br>
-            <b>End:</b> ${event.end ? event.end.toLocaleString() : 'N/A'}<br><br>
-            <b>Notes:</b><br>
-            ${event.extendedProps.appt_note || 'None'}
-          </div>
-        `,
-        width: 500
-      });*/
-    },
+    const params = { from, to, show: showTokens().join(',') };
+    if (calState.providersRendered) {
+      const ids = checkedProviderIds();
+      if (!ids.length) { successCallback([]); return; } // nothing selected
+      params.providers = ids.join(',');
+    } // before first response: omit → server default (all does_appts users)
 
-    eventDidMount: function(info) {
-      // Simple tooltip on hover
-      info.el.title = 
-        (info.event.extendedProps.contact_name || '') +
-        " | " +
-        (info.event.extendedProps.appt_platform || '');
-    }
+    const data = await P.apiSend('/api/calendar-feed', 'GET', params);
+    if (seq !== calState.seq) return; // superseded — the newer fetch owns the canvas
 
+    if (!calState.providersRendered) renderProviderBar(data.providers);
+    E('calNote').textContent = data.free_skipped
+      ? 'Free shading is limited to views of 14 days or less.' : '';
+
+    successCallback(data.items || []);
+  } catch (err) {
+    console.error('[calendar] feed fetch failed:', err);
+    if (seq === calState.seq) failureCallback(err);
+  }
+}
+
+// ── Click an empty slot → prefilled newApptDialog ────────────
+// timeGrid slot click carries a time (dateStr 'YYYY-MM-DDTHH:mm:ss±hh:mm' →
+// slice 16). Month / all-day clicks are date-only: newApptDialog uses the
+// date part for the slot-picker day, and a date-only value is a no-op on the
+// hidden datetime-local (#naDate) — exactly the prefill we want.
+function onDateClick(info) {
+  const defaultDate = info.allDay ? info.dateStr : info.dateStr.slice(0, 16);
+  const checked = checkedProviderIds();
+
+  newApptDialog({
+    contactPick: true,
+    casePick:    true,
+    defaultDate,
+    onCreated:   () => { if (calState.calendar) calState.calendar.refetchEvents(); },
   });
 
+  // Provider preselect: no opts param exists for appt_with, but Swal renders
+  // synchronously (didOpen has already set the default) — so when exactly one
+  // provider is checked, set #naWith after open and fire 'change' so the slot
+  // picker re-queries for that provider. Restore on a non-matching option
+  // (select.value = unknown → '').
+  if (checked.length === 1) {
+    const sel = document.getElementById('naWith');
+    if (sel) {
+      const prev = sel.value;
+      sel.value = String(checked[0]);
+      if (sel.value === String(checked[0])) {
+        sel.dispatchEvent(new Event('change'));
+      } else {
+        sel.value = prev; // provider not in the does_appts list — keep default
+      }
+    }
+  }
+}
+
+// ── Click an appt / event → detail popover (Swal IN THIS IFRAME, so the
+//    shell modal hosting the calendar stays open underneath) ──
+function fmtRange(ev) {
+  if (ev.allDay) return ev.start.toLocaleDateString() + ' (all day)';
+  const opts = { hour: 'numeric', minute: '2-digit' };
+  let s = ev.start.toLocaleDateString() + ' ' + ev.start.toLocaleTimeString([], opts);
+  if (ev.end) s += ' – ' + ev.end.toLocaleTimeString([], opts);
+  return s;
+}
+
+// Deep-link helper: close the shell modal hosting this calendar, then open
+// the file tab — same `Swal.close(); addFile(...)` pattern as quick search.
+function openFile(label, fileType, id) {
+  try { P.Swal.close(); } catch (_) {}
+  P.addFile(String(label), fileType, String(id));
+}
+
+function apptPopover(ev) {
+  const xp   = ev.extendedProps;
+  const prov = providerNameOf(xp.provider);
+  Swal.fire({
+    title: 'Appointment #' + xp.appt_id,
+    html: `<div class="cal-pop">
+             <b>Type:</b> ${esc(ev.title.split(' — ')[0])}<br>
+             <b>When:</b> ${esc(fmtRange(ev))}<br>
+             <b>Client:</b> ${esc(xp.contact_name)}<br>
+             <b>With:</b> ${esc(prov)}
+           </div>`,
+    showCancelButton:  true,
+    showDenyButton:    !!xp.contact_id,
+    confirmButtonText: 'Open Appointment',
+    denyButtonText:    'Open Contact',
+    cancelButtonText:  'Close',
+  }).then((r) => {
+    if (r.isConfirmed) {
+      // apptform2 modal in the shell — replaces the calendar modal (the
+      // pre-existing showAppt behavior; cancel/reschedule live there).
+      P.showAppt(xp.appt_id);
+    } else if (r.isDenied && xp.contact_id) {
+      openFile(xp.contact_name, 'client', xp.contact_id);
+    }
+  });
+}
+
+function eventPopover(ev) {
+  const xp = ev.extendedProps;
+
+  // Linked line + deep-link target, mirroring the shell Events tab:
+  // case → case file; contact → contact file; case_number → case file only
+  // when the docket currently resolves (resolved_case_id).
+  let linkedHtml = '';
+  let open = null; // { label, fileType, id, button }
+  if (xp.link_type === 'case' && xp.link_id != null) {
+    linkedHtml = `<b>Case:</b> ${esc(xp.link_label || xp.link_id)}<br>`;
+    open = { label: xp.link_label || xp.link_id, fileType: 'case', id: xp.link_id, button: 'Open Case' };
+  } else if (xp.link_type === 'contact' && xp.link_id != null) {
+    linkedHtml = `<b>Contact:</b> ${esc(xp.link_label || xp.link_id)}<br>`;
+    open = { label: xp.link_label || xp.link_id, fileType: 'contact', id: xp.link_id, button: 'Open Contact' };
+  } else if (xp.link_type === 'case_number' && xp.link_id != null) {
+    linkedHtml = `<b>Case #:</b> ${esc(xp.link_label || xp.link_id)}<br>`;
+    if (xp.resolved_case_id) {
+      open = { label: xp.link_label || xp.link_id, fileType: 'case', id: xp.resolved_case_id, button: 'Open Case' };
+    }
+  }
+
+  Swal.fire({
+    title: esc(ev.title),
+    html: `<div class="cal-pop">
+             ${xp.event_type ? `<b>Type:</b> ${esc(xp.event_type)}<br>` : ''}
+             <b>When:</b> ${esc(fmtRange(ev))}<br>
+             ${linkedHtml}
+             ${xp.event_with != null ? `<b>With:</b> ${esc(providerNameOf(xp.event_with))}<br>` : ''}
+             ${xp.event_location ? `<b>Location:</b> ${esc(xp.event_location)}<br>` : ''}
+           </div>`,
+    showCancelButton:  true,
+    showConfirmButton: !!open,
+    confirmButtonText: open ? open.button : 'OK',
+    cancelButtonText:  'Close',
+  }).then((r) => {
+    if (r.isConfirmed && open) openFile(open.label, open.fileType, open.id);
+  });
+}
+
+function providerNameOf(id) {
+  if (id == null) return 'Firm-wide';
+  const cb = document.querySelector(`#calProviders input[value="${id}"]`);
+  if (cb) return cb.parentElement.textContent.trim();
+  const u = ((P.firmData && P.firmData.users) || []).find(u => Number(u.user) === Number(id));
+  return u ? u.user_name : ('User ' + id);
+}
+
+// ── Init ─────────────────────────────────────────────────────
+function init() {
+  const calendar = new FullCalendar.Calendar(E('calendar'), {
+    initialView: 'timeGridWeek',
+    height: 560,            // shell modal iframe is 600px tall
+    editable: false,
+    selectable: false,
+    nowIndicator: true,
+    headerToolbar: {
+      left:   'prev,next today',
+      center: 'title',
+      right:  'dayGridMonth,timeGridWeek,timeGridDay',
+    },
+    scrollTime: '08:00:00',
+    events: fetchFeed,      // re-invoked on every view/date-range change (datesSet)
+    dateClick: onDateClick,
+    eventClick: (info) => {
+      const kind = info.event.extendedProps.kind;
+      if (kind === 'appt')  apptPopover(info.event);
+      else if (kind === 'event') eventPopover(info.event);
+      // blocks/free are display:'background' — FullCalendar never routes
+      // clicks to them; the guard above is belt-and-braces.
+    },
+    eventDidMount: (info) => {
+      const xp = info.event.extendedProps;
+      if (xp.kind === 'appt') {
+        info.el.title = `${xp.contact_name} | ${providerNameOf(xp.provider)}`;
+      } else if (xp.kind === 'event') {
+        info.el.title = info.event.title + (xp.link_label ? ` | ${xp.link_label}` : '');
+      } else if (xp.kind === 'block') {
+        info.el.title = xp.label || 'Blocked';
+      }
+    },
+  });
+
+  calState.calendar = calendar;
   calendar.render();
 
-});
+  ['tglTaken', 'tglEvents', 'tglBlocked', 'tglFree'].forEach(id => {
+    E(id).addEventListener('change', () => calendar.refetchEvents());
+  });
+}
+
+// Boot — standard iframe pattern: wait for the shell's apiSend + firmData
+// (newApptDialog seeds its appt_with list from P.firmData.users).
+(function waitForParent() {
+  if (P.apiSend && P.firmData && Array.isArray(P.firmData.users) && P.firmData.users.length) return init();
+  setTimeout(waitForParent, 100);
+})();
 </script>
 
 </body>
