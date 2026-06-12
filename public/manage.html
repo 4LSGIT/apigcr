@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manage Your Appointment</title>
+<!-- Firm favicon (same assets as b.html / book.html). -->
+<link rel="icon" type="image/png" sizes="32x32" href="https://legalsolutions.group/assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="https://legalsolutions.group/assets/favicon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="https://legalsolutions.group/assets/favicon-180.png">
+<style>
+  /*
+   * Client manage page — Scheduler Slice 9.
+   * Visual language from public/book.html (6b.1). Self-contained,
+   * mobile-first; default accent (no per-view branding — this page is
+   * view-independent by design).
+   */
+  :root {
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --bg: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --panel: #f9fafb;
+    --danger: #b91c1c;
+    --danger-bg: #fef2f2;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.45;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 16px 14px 40px; }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  .head { text-align: center; margin-bottom: 14px; }
+  .head img.logo { max-height: 84px; max-width: 300px; margin-bottom: 8px; }
+  .head h1 { margin: 0; font-size: 20px; font-weight: 700; }
+  .head .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+
+  /* ── Appointment card ───────────────────────────────────── */
+  .appt-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 14px;
+  }
+  .appt-card .type { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .appt-card .when { font-size: 15px; font-weight: 600; }
+  .appt-card .meta { font-size: 13.5px; color: var(--muted); margin-top: 4px; }
+  .appt-card.terminal { text-align: center; color: var(--muted); }
+
+  .section-label {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin: 14px 0 8px;
+  }
+  .tz-note { font-size: 11.5px; color: var(--muted); font-weight: 400;
+    text-transform: none; letter-spacing: 0; }
+
+  /* ── Action buttons ─────────────────────────────────────── */
+  .actions { display: flex; gap: 10px; margin-top: 4px; }
+  .btn {
+    flex: 1; padding: 13px; border-radius: 10px; font-size: 15px;
+    font-weight: 700; cursor: pointer; font-family: inherit;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  }
+  .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .btn.danger-outline { color: var(--danger); border-color: #fecaca; }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn.full { width: 100%; flex: none; margin-top: 8px; }
+
+  /* ── Date strip / slots (book.html mechanics) ───────────── */
+  .date-strip {
+    display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 8px;
+    -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+  }
+  .date-chip {
+    flex: 0 0 auto; min-width: 58px; padding: 7px 6px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); cursor: pointer; text-align: center;
+    font-size: 12px; color: var(--text);
+  }
+  .date-chip .dow { display: block; font-size: 11px; color: var(--muted); }
+  .date-chip .dom { display: block; font-size: 15px; font-weight: 600; margin-top: 1px; }
+  .date-chip.selected {
+    border-color: var(--accent); background: var(--accent); color: var(--accent-text);
+  }
+  .date-chip.selected .dow { color: var(--accent-text); opacity: 0.85; }
+
+  .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  @media (min-width: 420px) { .slots { grid-template-columns: repeat(4, 1fr); } }
+  .slot {
+    padding: 10px 4px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); cursor: pointer; text-align: center;
+    font-size: 14px; font-weight: 500; color: var(--text);
+  }
+  .slot.selected {
+    border-color: var(--accent); background: var(--accent); color: var(--accent-text);
+  }
+  .slots-msg { color: var(--muted); font-size: 14px; padding: 8px 2px; }
+
+  /* ── Messages ───────────────────────────────────────────── */
+  .msg {
+    border-radius: 8px; padding: 10px 12px; font-size: 14px; margin: 12px 0;
+    display: none;
+  }
+  .msg.show { display: block; }
+  .msg.error { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; }
+  .msg.info  { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+
+  .call-note { color: var(--muted); font-size: 14px; margin-top: 10px; text-align: center; }
+
+  /* ── Cancel confirm ─────────────────────────────────────── */
+  .confirm-box {
+    border: 1px solid #fecaca; background: var(--danger-bg);
+    border-radius: 10px; padding: 14px 16px; margin-top: 12px;
+  }
+  .confirm-box p { margin: 0 0 10px; font-size: 14.5px; color: var(--text); }
+
+  /* ── States ─────────────────────────────────────────────── */
+  .state { text-align: center; padding: 48px 16px; color: var(--muted); }
+  .hidden { display: none !important; }
+
+  .spinner {
+    display: inline-block; width: 18px; height: 18px;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <!-- Boot / error states -->
+  <div class="state" id="state-loading"><span class="spinner"></span>&nbsp; Loading…</div>
+  <div class="state hidden" id="state-invalid">
+    Sorry — this link isn't valid. It may have expired or been replaced.
+    <div class="call-note" id="invalid-call"></div>
+  </div>
+
+  <!-- Main -->
+  <div class="hidden" id="main">
+    <div class="head">
+      <a id="logo-link" class="hidden" target="_blank" rel="noopener">
+        <img class="logo" id="logo" alt="">
+      </a>
+      <img class="logo hidden" id="logo-plain" alt="">
+      <h1>Your Appointment</h1>
+      <p class="subtitle hidden" id="greeting"></p>
+    </div>
+
+    <div class="msg info" id="info-msg"></div>
+
+    <!-- Appointment card -->
+    <div class="appt-card" id="appt-card">
+      <div class="type" id="appt-type"></div>
+      <div class="when" id="appt-when"></div>
+      <div class="meta" id="appt-meta"></div>
+    </div>
+
+    <!-- Actions (only when can_modify) -->
+    <div id="actions-region" class="hidden">
+      <div class="actions">
+        <button class="btn primary" id="btn-resched">Reschedule</button>
+        <button class="btn danger-outline" id="btn-cancel">Cancel</button>
+      </div>
+    </div>
+
+    <!-- Scheduled but inside cutoff: call us -->
+    <div class="call-note hidden" id="locked-note"></div>
+
+    <!-- Cancel confirm -->
+    <div class="confirm-box hidden" id="cancel-confirm">
+      <p>Cancel this appointment? This can't be undone from this page.</p>
+      <div class="actions">
+        <button class="btn" id="btn-keep">Keep it</button>
+        <button class="btn danger-outline" id="btn-cancel-yes">Yes, cancel</button>
+      </div>
+    </div>
+
+    <!-- Reschedule picker -->
+    <div id="resched-region" class="hidden">
+      <div class="section-label">Pick a new date</div>
+      <div class="date-strip" id="date-strip"></div>
+      <div class="msg error" id="slots-err"></div>
+      <div id="time-section" class="hidden">
+        <div class="section-label">Pick a new time <span class="tz-note">— Times shown in Eastern Time</span></div>
+        <div id="slots-region"><div class="slots-msg">Pick a date above.</div></div>
+        <button class="btn primary full" id="btn-resched-go" disabled>Select a time</button>
+      </div>
+    </div>
+
+    <div class="msg error" id="err-msg"></div>
+  </div>
+
+  <!-- Terminal state (canceled / rescheduled / past) -->
+  <div class="state hidden" id="state-terminal">
+    <div id="terminal-text"></div>
+    <div class="call-note" id="terminal-call"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Context from the URL: /m/<token> ────────────────────────
+  var token = location.pathname.split('/').filter(Boolean).pop() || '';
+
+  var FIRM_TZ = 'America/New_York'; // matches the server's FIRM_TZ; labels say Eastern
+
+  // ── State ───────────────────────────────────────────────────
+  var data = null;            // /api/m/:token payload
+  var selectedDate = null;    // 'YYYY-MM-DD'
+  var selectedSlot = null;    // 'YYYY-MM-DD HH:mm'
+  var slotFetchSeq = 0;       // stale-response guard
+  var slotDebounce = null;
+  var busy = false;           // POST in flight
+
+  // ── DOM helpers ─────────────────────────────────────────────
+  function E(id) { return document.getElementById(id); }
+  function show(id) { E(id).classList.remove('hidden'); }
+  function hide(id) { E(id).classList.add('hidden'); }
+  function esc(s) {
+    var d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+  }
+  function setMsg(id, msg) {
+    var el = E(id);
+    if (msg) { el.textContent = msg; el.classList.add('show'); }
+    else el.classList.remove('show');
+  }
+  function setErr(msg)  { setMsg('err-msg', msg); }
+  function setInfo(msg) { setMsg('info-msg', msg); }
+
+  // ── Date / time formatting (wall-clock digits, NO TZ math) ──
+  function fmtTime(hhmm) {
+    var h = parseInt(hhmm.slice(0, 2), 10);
+    var m = hhmm.slice(3, 5);
+    var ampm = h < 12 ? 'AM' : 'PM';
+    var h12 = ((h + 11) % 12) + 1;
+    return h12 + ':' + m + ' ' + ampm;
+  }
+  function dateObj(ymd) {
+    var p = ymd.split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);
+  }
+  function fmtDateFull(ymd) { // 'Tuesday, Jun 16'
+    return dateObj(ymd).toLocaleDateString(undefined,
+      { weekday: 'long', month: 'short', day: 'numeric' });
+  }
+  function fmtDateLong(ymd) { // 'Tue, Jun 16'
+    return dateObj(ymd).toLocaleDateString(undefined,
+      { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  function fmtSlotLong(slot) { // 'Tue, Jun 16 · 2:30 PM'
+    return fmtDateLong(slot.slice(0, 10)) + ' \u00B7 ' + fmtTime(slot.slice(11, 16));
+  }
+  function firmToday() {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: FIRM_TZ, year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(new Date()); // 'YYYY-MM-DD'
+  }
+  function addDays(ymd, n) {
+    var p = ymd.split('-');
+    var d = new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]) + n));
+    return d.toISOString().slice(0, 10);
+  }
+  function platformLabel(p) {
+    return { 'telephone': 'Phone call', 'Zoom': 'Zoom', 'in-person': 'In person' }[p] || p || '';
+  }
+
+  // ── API ─────────────────────────────────────────────────────
+  function apiGet(path) {
+    return fetch(path, { headers: { 'Accept': 'application/json' } })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; })
+          .then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
+      });
+  }
+  function apiPost(path, payload) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; })
+        .then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
+    });
+  }
+
+  // ── Boot ────────────────────────────────────────────────────
+  function boot() {
+    if (!token) return showInvalid();
+    apiGet('/api/m/' + encodeURIComponent(token))
+      .then(function (r) {
+        if (!r.ok) return showInvalid();
+        data = r.body;
+        render();
+      })
+      .catch(showInvalid);
+  }
+
+  function callUsLine(prefix) {
+    var phone = data && data.firm_phone;
+    return phone ? (prefix + ' ' + phone + '.') : (prefix + ' our office.');
+  }
+
+  function showInvalid() {
+    hide('state-loading');
+    hide('main');
+    show('state-invalid');
+    if (data && data.firm_phone) {
+      E('invalid-call').textContent = 'Need help? Call us at ' + data.firm_phone + '.';
+    }
+  }
+
+  function showTerminal(text) {
+    hide('state-loading');
+    hide('main');
+    E('terminal-text').textContent = text;
+    E('terminal-call').textContent = callUsLine('Need to book a new time? Call');
+    show('state-terminal');
+    try { window.scrollTo(0, 0); } catch (e) {}
+  }
+
+  // ── Render ──────────────────────────────────────────────────
+  function render() {
+    hide('state-loading');
+
+    // Terminal statuses — the page lives only while Scheduled.
+    if (data.status !== 'Scheduled') {
+      var terminalText = {
+        'Canceled':    'This appointment was canceled.',
+        'Rescheduled': 'This appointment was rescheduled — your new confirmation link was sent to you.',
+        'Attended':    'This appointment has already taken place.',
+        'No Show':     'This appointment has passed.',
+      }[data.status] || 'This appointment is no longer active.';
+      return showTerminal(terminalText);
+    }
+
+    // Branding (firm settings; default accent).
+    if (data.logo_url) {
+      if (data.logo_link_url && /^https?:\/\//i.test(data.logo_link_url)) {
+        E('logo').src = data.logo_url;
+        E('logo-link').href = data.logo_link_url;
+        show('logo-link');
+      } else {
+        E('logo-plain').src = data.logo_url;
+        show('logo-plain');
+      }
+    }
+    if (data.appt && data.appt.contact_first) {
+      E('greeting').textContent = 'Hi ' + data.appt.contact_first + ' — here are your appointment details.';
+      show('greeting');
+    }
+
+    renderCard();
+
+    if (data.can_modify) {
+      show('actions-region');
+      hide('locked-note');
+    } else {
+      hide('actions-region');
+      E('locked-note').textContent = callUsLine('Need to change this appointment? Please call');
+      show('locked-note');
+    }
+
+    wire();
+    show('main');
+  }
+
+  function renderCard() {
+    var a = data.appt;
+    E('appt-type').textContent = a.type || 'Appointment';
+    E('appt-when').textContent =
+      fmtDateFull(a.start.slice(0, 10)) + ' \u00B7 ' +
+      fmtTime(a.start.slice(11, 16)) + ' Eastern';
+    var meta = [];
+    if (a.provider_name) meta.push('With ' + a.provider_name);
+    if (a.platform)      meta.push(platformLabel(a.platform));
+    if (a.length)        meta.push(a.length + ' min');
+    E('appt-meta').textContent = meta.join(' \u00B7 ');
+  }
+
+  // ── Wiring ──────────────────────────────────────────────────
+  var wired = false;
+  function wire() {
+    if (wired) return;
+    wired = true;
+    E('btn-resched').addEventListener('click', toggleResched);
+    E('btn-cancel').addEventListener('click', function () {
+      hideResched();
+      show('cancel-confirm');
+    });
+    E('btn-keep').addEventListener('click', function () { hide('cancel-confirm'); });
+    E('btn-cancel-yes').addEventListener('click', doCancel);
+    E('btn-resched-go').addEventListener('click', doReschedule);
+  }
+
+  // ── Reschedule picker (book.html mechanics) ─────────────────
+  function toggleResched() {
+    hide('cancel-confirm');
+    var region = E('resched-region');
+    if (!region.classList.contains('hidden')) { hideResched(); return; }
+    buildDateStrip();
+    show('resched-region');
+  }
+
+  function hideResched() {
+    hide('resched-region');
+    hide('time-section');
+    selectedDate = null;
+    selectedSlot = null;
+    updateGoBtn();
+  }
+
+  function buildDateStrip() {
+    var strip = E('date-strip');
+    var today = firmToday();
+    var horizon = Math.max(0, Number(data.horizon_days) || 0);
+    var html = '';
+    for (var i = 0; i <= horizon; i++) {
+      var ymd = addDays(today, i);
+      var d = dateObj(ymd);
+      var dow = d.toLocaleDateString(undefined, { weekday: 'short' });
+      var dom = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      html += '<div class="date-chip" data-date="' + ymd + '">' +
+              '<span class="dow">' + esc(dow) + '</span>' +
+              '<span class="dom">' + esc(dom) + '</span></div>';
+    }
+    strip.innerHTML = html;
+    if (!strip._wired) {
+      strip._wired = true;
+      strip.addEventListener('click', function (e) {
+        var chip = e.target.closest('.date-chip');
+        if (chip) selectDate(chip.dataset.date);
+      });
+    }
+  }
+
+  function selectDate(ymd) {
+    selectedDate = ymd;
+    selectedSlot = null;
+    updateGoBtn();
+    var chips = E('date-strip').querySelectorAll('.date-chip');
+    chips.forEach(function (c) {
+      c.classList.toggle('selected', c.dataset.date === ymd);
+    });
+    show('time-section');
+    scheduleSlotFetch();
+  }
+
+  function scheduleSlotFetch() {
+    clearTimeout(slotDebounce);
+    setMsg('slots-err', null);
+    E('slots-region').innerHTML =
+      '<div class="slots-msg"><span class="spinner"></span>&nbsp; Loading times…</div>';
+    slotDebounce = setTimeout(fetchSlots, 250);
+  }
+
+  function fetchSlots() {
+    if (!selectedDate) return;
+    var seq = ++slotFetchSeq;
+    apiGet('/api/m/' + encodeURIComponent(token) + '/slots?date=' + selectedDate)
+      .then(function (r) {
+        if (seq !== slotFetchSeq) return; // stale — a newer fetch is in flight
+        if (!r.ok) {
+          var msg = r.status === 429
+            ? 'Too many requests — please wait a moment and pick the date again.'
+            : 'Could not load times — please try again.';
+          E('slots-region').innerHTML = '<div class="slots-msg">' + esc(msg) + '</div>';
+          return;
+        }
+        renderSlots(r.body.slots || []);
+      })
+      .catch(function () {
+        if (seq !== slotFetchSeq) return;
+        E('slots-region').innerHTML =
+          '<div class="slots-msg">Could not load times — please try again.</div>';
+      });
+  }
+
+  function renderSlots(slots) {
+    var region = E('slots-region');
+    if (!slots.length) {
+      region.innerHTML = '<div class="slots-msg">No times available this day — pick another date.</div>';
+      return;
+    }
+    region.innerHTML = '<div class="slots">' + slots.map(function (s) {
+      return '<div class="slot" data-slot="' + esc(s) + '">' + fmtTime(s.slice(11, 16)) + '</div>';
+    }).join('') + '</div>';
+    region.querySelector('.slots').addEventListener('click', function (e) {
+      var el = e.target.closest('.slot');
+      if (!el) return;
+      selectedSlot = el.dataset.slot;
+      region.querySelectorAll('.slot').forEach(function (x) {
+        x.classList.toggle('selected', x === el);
+      });
+      setErr(null);
+      updateGoBtn();
+    });
+  }
+
+  function updateGoBtn() {
+    var btn = E('btn-resched-go');
+    if (busy) { btn.disabled = true; return; }
+    if (!selectedSlot) {
+      btn.disabled = true;
+      btn.textContent = 'Select a time';
+      return;
+    }
+    btn.textContent = 'Reschedule to ' + fmtSlotLong(selectedSlot);
+    btn.disabled = false;
+  }
+
+  // ── Mutations ───────────────────────────────────────────────
+  function doCancel() {
+    if (busy) return;
+    busy = true;
+    var btn = E('btn-cancel-yes');
+    btn.disabled = true;
+    btn.textContent = 'Canceling\u2026';
+    apiPost('/api/m/' + encodeURIComponent(token) + '/cancel')
+      .then(function (r) {
+        busy = false;
+        btn.disabled = false;
+        btn.textContent = 'Yes, cancel';
+        if (r.ok && r.body && r.body.success) {
+          showTerminal('Your appointment has been canceled.');
+          return;
+        }
+        hide('cancel-confirm');
+        handleMutationError(r);
+      })
+      .catch(function () {
+        busy = false;
+        btn.disabled = false;
+        btn.textContent = 'Yes, cancel';
+        setErr('Something went wrong — please try again, or call us.');
+      });
+  }
+
+  function doReschedule() {
+    if (!selectedSlot || busy) return;
+    setErr(null); setInfo(null);
+    busy = true;
+    var btn = E('btn-resched-go');
+    btn.disabled = true;
+    btn.textContent = 'Rescheduling\u2026';
+
+    apiPost('/api/m/' + encodeURIComponent(token) + '/reschedule', { start: selectedSlot })
+      .then(function (r) {
+        busy = false;
+        if (r.ok && r.body && r.body.success) {
+          // New appt → new token. Rewrite the URL so refresh/bookmark keep
+          // working, then re-fetch so the card shows authoritative state.
+          if (r.body.new_token) {
+            token = r.body.new_token;
+            try {
+              history.replaceState(null, '', '/m/' + token);
+            } catch (e) {}
+          }
+          hideResched();
+          apiGet('/api/m/' + encodeURIComponent(token)).then(function (r2) {
+            if (r2.ok) {
+              data = r2.body;
+              renderCard();
+              if (data.can_modify) { show('actions-region'); hide('locked-note'); }
+              else {
+                hide('actions-region');
+                E('locked-note').textContent = callUsLine('Need to change this appointment? Please call');
+                show('locked-note');
+              }
+            }
+            setInfo('Your appointment has been rescheduled. Your confirmation link has been updated.');
+            try { window.scrollTo(0, 0); } catch (e) {}
+          });
+          return;
+        }
+        updateGoBtn();
+        var code = r.body && r.body.code;
+        if (r.status === 409 && code === 'slot_taken') {
+          selectedSlot = null;
+          updateGoBtn();
+          setMsg('slots-err', 'Sorry — that time was just taken. Please pick another.');
+          scheduleSlotFetch();
+          return;
+        }
+        handleMutationError(r);
+      })
+      .catch(function () {
+        busy = false;
+        updateGoBtn();
+        setErr('Something went wrong — please try again, or call us.');
+      });
+  }
+
+  function handleMutationError(r) {
+    var code = r.body && r.body.code;
+    if (r.status === 409 && code === 'not_modifiable') {
+      // Cutoff crossed (or status changed) since the page loaded — refresh
+      // the authoritative state.
+      apiGet('/api/m/' + encodeURIComponent(token)).then(function (r2) {
+        if (r2.ok) { data = r2.body; hideResched(); render(); }
+        setErr(callUsLine('This appointment can no longer be changed online — please call'));
+      });
+      return;
+    }
+    var friendly = {
+      rate_limited:    'Too many requests — please wait a moment and try again.',
+      outside_horizon: 'That date is no longer available — please pick another.',
+      invalid_start:   'That time is no longer valid — please pick another.',
+      not_found:       'This link is no longer valid.',
+    };
+    setErr(friendly[code] || 'Something went wrong — please try again, or call us.');
+  }
+
+  boot();
+})();
+</script>
+
+</body>
+</html>
