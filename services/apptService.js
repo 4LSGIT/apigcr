@@ -22,6 +22,7 @@ const logService   = require('./logService');
 const { localToUTC, FIRM_TZ } = require('./timezoneService');
 const { DateTime } = require('luxon');
 const { alert } = require('../lib/alerting');
+const crypto = require('crypto');
 
 // Lazy-require to avoid circular dependency (sequenceEngine → job_executor → internal_functions)
 function getSequenceEngine() {
@@ -491,6 +492,7 @@ async function createAppt(db, {
   appt_date,
   appt_with       = 1,
   note            = '',
+  appt_source     = null,
   confirm_sms     = false,
   confirm_email   = false,
   confirm_message = '',
@@ -520,15 +522,20 @@ async function createAppt(db, {
   try {
     await conn.beginTransaction();
 
-    // 1) INSERT appointment — includes both local and UTC times
+    // 1) INSERT appointment — includes both local and UTC times.
+    //    appt_manage_token: minted on EVERY insert (char(32) UNIQUE hex).
+    //    Unused until the slice-9 client manage page; resolver-visible as a
+    //    plain column so templates can later embed /m/{{appts.appt_manage_token}}.
+    const manageToken = crypto.randomBytes(16).toString('hex');
     const [result] = await conn.query(
       `INSERT INTO appts
          (appt_client_id, appt_case_id, appt_type, appt_length,
           appt_platform, appt_date, appt_date_utc, appt_status, appt_with,
-          appt_note, appt_create_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, NOW())`,
+          appt_note, appt_source, appt_manage_token, appt_create_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?, ?, NOW())`,
       [contact_id, case_id, appt_type, appt_length,
-       appt_platform, appt_date, apptDateUTC, appt_with, note]
+       appt_platform, appt_date, apptDateUTC, appt_with, note,
+       appt_source, manageToken]
     );
     apptId = result.insertId;
 
