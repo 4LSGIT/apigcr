@@ -53,7 +53,7 @@ const FIELDS = [
   'buffer_min', 'min_notice_min', 'horizon_days', 'granularity_min',
   'identity_mode', 'source_tag', 'collect_note',
   'confirm_template', 'confirm_sms', 'confirm_email', 'hook_id',
-  'title', 'subtitle', 'accent_color', 'logo_url', 'thankyou_html',
+  'title', 'subtitle', 'accent_color', 'logo_url', 'logo_link_url', 'thankyou_html',
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -192,6 +192,7 @@ async function validateView(db, v) {
   out.subtitle         = trimOrNull(v.subtitle, 500);
   out.accent_color     = trimOrNull(v.accent_color, 20);
   out.logo_url         = trimOrNull(v.logo_url, 500);
+  out.logo_link_url    = trimOrNull(v.logo_link_url, 500);
   out.confirm_template = (v.confirm_template == null || String(v.confirm_template).trim() === '')
     ? null : String(v.confirm_template);
   out.thankyou_html    = (v.thankyou_html == null || String(v.thankyou_html).trim() === '')
@@ -199,6 +200,9 @@ async function validateView(db, v) {
 
   if (out.logo_url && !/^https?:\/\//i.test(out.logo_url)) {
     return { error: 'logo_url must be an http(s) URL.' };
+  }
+  if (out.logo_link_url && !/^https?:\/\//i.test(out.logo_link_url)) {
+    return { error: 'logo_link_url must be an http(s) URL.' };
   }
 
   return { values: out };

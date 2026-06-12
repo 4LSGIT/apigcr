@@ -274,6 +274,7 @@ router.get('/api/book/:slug/config', async (req, res) => {
       subtitle:      view.subtitle,
       accent_color:  view.accent_color,
       logo_url:      view.logo_url,
+      logo_link_url: view.logo_link_url,
       platform:      view.platform,
       appt_type:     view.appt_type,
       appt_length:   view.appt_length,

@@ -4,11 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Book an Appointment</title>
+<!-- Firm favicon (same assets as b.html): 32 = browser tab/bookmark,
+     192 = Android home screen / PWA, apple-touch-icon 180 = iOS
+     "Add to Home Screen". Only matters when the page is opened directly
+     (direct/token links) — iframes inherit the host page's icon. -->
+<link rel="icon" type="image/png" sizes="32x32" href="https://legalsolutions.group/assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="https://legalsolutions.group/assets/favicon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="https://legalsolutions.group/assets/favicon-180.png">
 <style>
   /*
-   * Public booking widget — Scheduler Slice 6b.
+   * Public booking widget — Scheduler Slice 6b.1 (staged flow).
    * Self-contained: runs inside third-party iframes, zero shell deps.
    * Light, neutral theme; --accent is overridden from view config.
+   *
+   * Flow: ① Date (provider + date)  ② Time  ③ Details.
+   * Selecting a date auto-advances to ②; selecting a time to ③.
+   * Back via the step bar or the "change" links in summaries.
    */
   :root {
     --accent: #2563eb;
@@ -20,7 +31,6 @@
     --panel: #f9fafb;
     --danger: #b91c1c;
     --danger-bg: #fef2f2;
-    --ok-bg: #f0fdf4;
   }
   *, *::before, *::after { box-sizing: border-box; }
   html, body {
@@ -34,17 +44,60 @@
 
   /* ── Header ─────────────────────────────────────────────── */
   .head { text-align: center; margin-bottom: 14px; }
-  .head img.logo { max-height: 56px; max-width: 220px; margin-bottom: 8px; }
+  .head img.logo { max-height: 84px; max-width: 300px; margin-bottom: 8px; }
   .head h1 { margin: 0; font-size: 20px; font-weight: 700; }
   .head .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+
+  /* ── Step bar ───────────────────────────────────────────── */
+  .stepbar {
+    display: flex; align-items: center; justify-content: center;
+    gap: 0; margin: 6px 0 18px; user-select: none;
+  }
+  .stepbar .step {
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    min-width: 72px; cursor: default;
+  }
+  .stepbar .step .num {
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid var(--border); color: var(--muted);
+    font-size: 13px; font-weight: 700; background: var(--bg);
+  }
+  .stepbar .step .lbl { font-size: 11px; color: var(--muted); font-weight: 600; }
+  .stepbar .step.active .num {
+    border-color: var(--accent); color: var(--accent);
+  }
+  .stepbar .step.active .lbl { color: var(--text); }
+  .stepbar .step.done { cursor: pointer; }
+  .stepbar .step.done .num {
+    border-color: var(--accent); background: var(--accent); color: var(--accent-text);
+  }
+  .stepbar .connector {
+    flex: 0 1 48px; height: 2px; background: var(--border);
+    margin: 0 4px 16px;
+  }
+  .stepbar .connector.done { background: var(--accent); }
 
   .section-label {
     font-size: 12px; font-weight: 600; color: var(--muted);
     text-transform: uppercase; letter-spacing: 0.05em;
-    margin: 18px 0 8px;
+    margin: 14px 0 8px;
   }
   .tz-note { font-size: 11.5px; color: var(--muted); font-weight: 400;
     text-transform: none; letter-spacing: 0; }
+
+  /* Step summary lines ("Tue, Jun 16 · change") */
+  .summary {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 12px; margin-bottom: 4px; font-size: 14px;
+  }
+  .summary .val { font-weight: 600; }
+  .summary a.change {
+    color: var(--accent); font-size: 13px; text-decoration: none; cursor: pointer;
+    margin-left: auto;
+  }
+  .summary a.change:hover { text-decoration: underline; }
 
   /* ── Date strip ─────────────────────────────────────────── */
   .date-strip {
@@ -64,7 +117,7 @@
   }
   .date-chip.selected .dow { color: var(--accent-text); opacity: 0.85; }
 
-  /* ── Provider ───────────────────────────────────────────── */
+  /* ── Inputs ─────────────────────────────────────────────── */
   select, input[type="text"], input[type="tel"], input[type="email"], textarea {
     width: 100%; padding: 10px 12px; font-size: 15px;
     border: 1px solid var(--border); border-radius: 8px;
@@ -75,9 +128,7 @@
   }
 
   /* ── Slots ──────────────────────────────────────────────── */
-  .slots {
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
-  }
+  .slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   @media (min-width: 420px) { .slots { grid-template-columns: repeat(4, 1fr); } }
   .slot {
     padding: 10px 4px; border: 1px solid var(--border); border-radius: 8px;
@@ -97,7 +148,7 @@
   .field label .req { color: var(--danger); }
   .saved-note {
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
-    padding: 10px 12px; font-size: 14px; color: var(--muted);
+    padding: 10px 12px; font-size: 14px; color: var(--muted); margin-bottom: 12px;
   }
 
   /* Honeypot: off-screen, NOT display:none (some bots skip hidden inputs). */
@@ -148,25 +199,55 @@
   <!-- Main flow -->
   <div class="hidden" id="main">
     <div class="head">
-      <img class="logo hidden" id="logo" alt="">
+      <a id="logo-link" class="hidden" target="_blank" rel="noopener">
+        <img class="logo" id="logo" alt="">
+      </a>
+      <img class="logo hidden" id="logo-plain" alt="">
       <h1 id="title"></h1>
       <p class="subtitle hidden" id="subtitle"></p>
     </div>
 
-    <div class="hidden" id="provider-section">
-      <div class="section-label">With</div>
-      <select id="provider"></select>
+    <!-- Step bar -->
+    <div class="stepbar" id="stepbar">
+      <div class="step" data-step="1"><span class="num">1</span><span class="lbl">Date</span></div>
+      <div class="connector" data-conn="1"></div>
+      <div class="step" data-step="2"><span class="num">2</span><span class="lbl">Time</span></div>
+      <div class="connector" data-conn="2"></div>
+      <div class="step" data-step="3"><span class="num">3</span><span class="lbl">Details</span></div>
     </div>
 
-    <div class="section-label">Pick a date</div>
-    <div class="date-strip" id="date-strip"></div>
+    <!-- ── Step 1: provider + date ─────────────────────────── -->
+    <div id="step-1">
+      <div class="hidden" id="provider-section">
+        <div class="section-label">With</div>
+        <select id="provider"></select>
+      </div>
 
-    <div class="section-label">Pick a time <span class="tz-note">— Times shown in Eastern Time</span></div>
-    <div id="slots-region">
-      <div class="slots-msg">Select a date.</div>
+      <div class="section-label">Pick a date</div>
+      <div class="date-strip" id="date-strip"></div>
     </div>
 
-    <div id="details-section">
+    <!-- ── Step 2: time ────────────────────────────────────── -->
+    <div id="step-2" class="hidden">
+      <div class="summary">
+        <span class="val" id="sum2-date"></span>
+        <span class="muted" id="sum2-provider"></span>
+        <a class="change" data-goto="1">change date</a>
+      </div>
+      <div class="msg error" id="step2-msg"></div>
+      <div class="section-label">Pick a time <span class="tz-note">— Times shown in Eastern Time</span></div>
+      <div id="slots-region">
+        <div class="slots-msg">Loading…</div>
+      </div>
+    </div>
+
+    <!-- ── Step 3: details + confirm ───────────────────────── -->
+    <div id="step-3" class="hidden">
+      <div class="summary">
+        <span class="val" id="sum3-slot"></span>
+        <a class="change" data-goto="2">change time</a>
+      </div>
+
       <div class="section-label">Your details</div>
 
       <div class="saved-note hidden" id="saved-note">
@@ -202,12 +283,12 @@
         <label for="website">Website</label>
         <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
       </div>
+
+      <div class="msg error" id="err-msg"></div>
+      <div class="msg info" id="info-msg"></div>
+
+      <button class="book-btn" id="book-btn" disabled>Select a time</button>
     </div>
-
-    <div class="msg error" id="err-msg"></div>
-    <div class="msg info" id="info-msg"></div>
-
-    <button class="book-btn" id="book-btn" disabled>Select a time</button>
   </div>
 
   <!-- Thank-you (replaces #main on success) -->
@@ -228,6 +309,7 @@
 
   // ── State ───────────────────────────────────────────────────
   var cfg = null;             // /config payload (incl. ts/sig)
+  var step = 1;               // current wizard step
   var selectedDate = null;    // 'YYYY-MM-DD'
   var selectedSlot = null;    // 'YYYY-MM-DD HH:mm'
   var slotFetchSeq = 0;       // stale-response guard
@@ -244,16 +326,13 @@
     d.textContent = s == null ? '' : String(s);
     return d.innerHTML;
   }
-  function setErr(msg) {
-    var el = E('err-msg');
+  function setMsg(id, msg) {
+    var el = E(id);
     if (msg) { el.textContent = msg; el.classList.add('show'); }
     else el.classList.remove('show');
   }
-  function setInfo(msg) {
-    var el = E('info-msg');
-    if (msg) { el.textContent = msg; el.classList.add('show'); }
-    else el.classList.remove('show');
-  }
+  function setErr(msg)  { setMsg('err-msg', msg); }
+  function setInfo(msg) { setMsg('info-msg', msg); }
 
   // ── Date / time formatting (wall-clock digits, NO TZ math) ──
   // Server slots are firm-local 'YYYY-MM-DD HH:mm' strings. We format the
@@ -270,10 +349,12 @@
     var p = ymd.split('-');
     return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);
   }
+  function fmtDateLong(ymd) { // 'Tue, Jun 16'
+    return dateObj(ymd).toLocaleDateString(undefined,
+      { weekday: 'short', month: 'short', day: 'numeric' });
+  }
   function fmtSlotLong(slot) { // 'Tue, Jun 16 · 2:30 PM'
-    var d = dateObj(slot.slice(0, 10));
-    var day = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-    return day + ' \u00B7 ' + fmtTime(slot.slice(11, 16));
+    return fmtDateLong(slot.slice(0, 10)) + ' \u00B7 ' + fmtTime(slot.slice(11, 16));
   }
 
   // Firm-local "today" via Intl — the horizon window is firm-local, and a
@@ -308,6 +389,50 @@
     });
   }
 
+  // ── Wizard navigation ───────────────────────────────────────
+  // Step 2 reachable once a date is picked; step 3 once a time is picked.
+  function maxReachable() {
+    if (selectedSlot) return 3;
+    if (selectedDate) return 2;
+    return 1;
+  }
+
+  function goStep(n) {
+    if (n > maxReachable()) return;
+    step = n;
+    [1, 2, 3].forEach(function (i) {
+      E('step-' + i).classList.toggle('hidden', i !== n);
+    });
+    // Step bar: done = before current, active = current.
+    var bar = E('stepbar');
+    bar.querySelectorAll('.step').forEach(function (el) {
+      var s = Number(el.dataset.step);
+      el.classList.toggle('done', s < n);
+      el.classList.toggle('active', s === n);
+    });
+    bar.querySelectorAll('.connector').forEach(function (el) {
+      el.classList.toggle('done', Number(el.dataset.conn) < n);
+    });
+    // Refresh summaries.
+    if (n === 2) {
+      E('sum2-date').textContent = fmtDateLong(selectedDate);
+      E('sum2-provider').textContent = providerLabel();
+      setMsg('step2-msg', null);
+    }
+    if (n === 3) {
+      E('sum3-slot').textContent = fmtSlotLong(selectedSlot);
+      updateBookBtn();
+    }
+    try { window.scrollTo(0, 0); } catch (e) {}
+  }
+
+  function providerLabel() {
+    if (!Array.isArray(cfg.providers) || !cfg.providers.length) return '';
+    var sel = E('provider');
+    var p = cfg.providers.find(function (x) { return String(x.id) === sel.value; });
+    return p ? 'with ' + p.name : '';
+  }
+
   // ── Boot ────────────────────────────────────────────────────
   function boot() {
     if (!slug) return showUnavailable();
@@ -331,9 +456,18 @@
     if (cfg.accent_color && /^#?[a-zA-Z0-9(),.% #-]{1,20}$/.test(cfg.accent_color)) {
       document.documentElement.style.setProperty('--accent', cfg.accent_color);
     }
+    // Logo: linked when logo_link_url is configured, plain otherwise.
+    // (logo_link_url is additive in the config response — absent on an older
+    // backend, the plain path just renders.)
     if (cfg.logo_url) {
-      E('logo').src = cfg.logo_url;
-      show('logo');
+      if (cfg.logo_link_url && /^https?:\/\//i.test(cfg.logo_link_url)) {
+        E('logo').src = cfg.logo_url;
+        E('logo-link').href = cfg.logo_link_url;
+        show('logo-link');
+      } else {
+        E('logo-plain').src = cfg.logo_url;
+        show('logo-plain');
+      }
     }
     E('title').textContent = cfg.title || 'Book an Appointment';
     document.title = cfg.title || 'Book an Appointment';
@@ -348,7 +482,11 @@
       sel.innerHTML = cfg.providers.map(function (p) {
         return '<option value="' + Number(p.id) + '">' + esc(p.name) + '</option>';
       }).join('');
-      sel.addEventListener('change', function () { scheduleSlotFetch(); });
+      sel.addEventListener('change', function () {
+        // New provider invalidates any chosen time; slots refetch when (re)entering step 2.
+        selectedSlot = null;
+        if (selectedDate) scheduleSlotFetch();
+      });
       show('provider-section');
     }
 
@@ -361,15 +499,28 @@
     if (cfg.collect_note) show('note-field');
 
     buildDateStrip();
+    wireNav();
     wireDetails();
     E('book-btn').addEventListener('click', submit);
     show('main');
-
-    // Auto-select today.
-    selectDate(firmToday());
+    goStep(1);
   }
 
-  // ── Date strip ──────────────────────────────────────────────
+  function wireNav() {
+    // Step-bar circles: completed steps navigate back.
+    E('stepbar').addEventListener('click', function (e) {
+      var el = e.target.closest('.step');
+      if (!el) return;
+      var n = Number(el.dataset.step);
+      if (n < step) goStep(n);
+    });
+    // "change date" / "change time" links.
+    document.querySelectorAll('a.change[data-goto]').forEach(function (a) {
+      a.addEventListener('click', function () { goStep(Number(a.dataset.goto)); });
+    });
+  }
+
+  // ── Date strip (step 1) ─────────────────────────────────────
   function buildDateStrip() {
     var strip = E('date-strip');
     var today = firmToday();
@@ -394,15 +545,15 @@
   function selectDate(ymd) {
     selectedDate = ymd;
     selectedSlot = null;
-    updateBookBtn();
     var chips = E('date-strip').querySelectorAll('.date-chip');
     chips.forEach(function (c) {
       c.classList.toggle('selected', c.dataset.date === ymd);
     });
     scheduleSlotFetch();
+    goStep(2); // auto-advance
   }
 
-  // ── Slots (debounce + stale guard) ──────────────────────────
+  // ── Slots (step 2; debounce + stale guard) ──────────────────
   function scheduleSlotFetch() {
     clearTimeout(slotDebounce);
     E('slots-region').innerHTML = '<div class="slots-msg"><span class="spinner"></span>&nbsp; Loading times…</div>';
@@ -436,7 +587,7 @@
   function renderSlots(slots) {
     var region = E('slots-region');
     if (!slots.length) {
-      region.innerHTML = '<div class="slots-msg">No times available this day.</div>';
+      region.innerHTML = '<div class="slots-msg">No times available this day — pick another date.</div>';
       return;
     }
     region.innerHTML = '<div class="slots">' + slots.map(function (s) {
@@ -450,11 +601,11 @@
         x.classList.toggle('selected', x === el);
       });
       setErr(null);
-      updateBookBtn();
+      goStep(3); // auto-advance
     });
   }
 
-  // ── Details / button state ──────────────────────────────────
+  // ── Details / button state (step 3) ─────────────────────────
   function wireDetails() {
     ['f-first', 'f-last', 'f-phone', 'f-email'].forEach(function (id) {
       E(id).addEventListener('input', updateBookBtn);
@@ -544,10 +695,11 @@
     var code = r.body && r.body.code;
 
     if (r.status === 409 && code === 'slot_taken') {
-      setErr('Sorry — that time was just taken. Please pick another.');
+      // Bounce back to the time step with a fresh slot list.
       selectedSlot = null;
-      updateBookBtn();
-      scheduleSlotFetch(); // auto-refresh the day's slots
+      goStep(2);
+      setMsg('step2-msg', 'Sorry — that time was just taken. Please pick another.');
+      scheduleSlotFetch();
       return;
     }
 
@@ -580,7 +732,7 @@
 
     var friendly = {
       invalid_phone:    'Please enter a valid 10-digit phone number.',
-      missing_name:     'Please enter your first name.',
+      missing_name:     'Please enter your first and last name.',
       invalid_email:    'Please enter a valid email address (or leave it blank).',
       invalid_provider: 'Please choose who you\u2019d like to meet with.',
       outside_horizon:  'That date is no longer available — please pick another.',

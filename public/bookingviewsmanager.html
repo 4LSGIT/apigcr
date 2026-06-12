@@ -180,13 +180,15 @@
 <div class="panel-host">
   <div class="panel">
 
-    <!-- Prefill (token) link helper -->
+    <!-- Client booking-link helper (tokens are minted at contact creation;
+         this fetches the existing token — and lazily mints for pre-backfill
+         stragglers via the same mint-or-return endpoint). -->
     <div class="mint-card">
-      <h3>Prefill booking link</h3>
+      <h3>Client booking link</h3>
       <div class="mint-row">
         <input type="number" id="mint-contact" placeholder="Contact ID" min="1" style="width:120px">
         <select id="mint-view" style="min-width:200px"></select>
-        <button class="btn" id="mint-btn">Mint link</button>
+        <button class="btn" id="mint-btn">Get link</button>
       </div>
       <div class="mint-result" id="mint-result">
         <code id="mint-url"></code>
@@ -228,7 +230,13 @@
       <div class="field">
         <label for="f-logo">Logo URL (optional)</label>
         <input type="url" id="f-logo" placeholder="https://..." maxlength="500">
+        <div class="hint">Leave empty for no logo. New views prefill the firm default.</div>
       </div>
+    </div>
+    <div class="field">
+      <label for="f-logo-link">Logo click-through URL (optional)</label>
+      <input type="url" id="f-logo-link" placeholder="https://..." maxlength="500">
+      <div class="hint">Where the logo links to (opens a new tab). Empty = logo isn't a link.</div>
     </div>
     <div class="field inline">
       <input type="checkbox" id="f-active" checked>
@@ -562,7 +570,11 @@ function openEditor(id) {
   E('f-title').value    = v ? v.title : '';
   E('f-subtitle').value = v && v.subtitle ? v.subtitle : '';
   E('f-accent').value   = v && v.accent_color ? v.accent_color : '';
-  E('f-logo').value     = v && v.logo_url ? v.logo_url : '';
+  // New views prefill the firm defaults from fe- settings (carried into the
+  // shell as window.top.firmData.settings.*). Clearing the field = no logo.
+  const fd = (window.top.firmData && window.top.firmData.settings) || {};
+  E('f-logo').value      = v ? (v.logo_url || '')      : (fd.firm_logo_url || '');
+  E('f-logo-link').value = v ? (v.logo_link_url || '') : (fd.firm_site_url || '');
   E('f-active').checked = v ? !!v.active : true;
 
   E('f-appt-type').value   = v ? v.appt_type : '';
@@ -615,6 +627,7 @@ function collectPayload() {
     subtitle:         E('f-subtitle').value.trim() || null,
     accent_color:     E('f-accent').value.trim() || null,
     logo_url:         E('f-logo').value.trim() || null,
+    logo_link_url:    E('f-logo-link').value.trim() || null,
     active:           E('f-active').checked ? 1 : 0,
     appt_type:        E('f-appt-type').value.trim(),
     platform:         E('f-platform').value,
@@ -686,7 +699,7 @@ async function saveView() {
   }
 }
 
-// ── Mint-link helper ────────────────────────────────────────
+// ── Client booking-link helper (get-or-mint) ────────────────
 function renderMintViewSelect() {
   const sel = E('mint-view');
   const prev = sel.value;
@@ -713,7 +726,7 @@ async function mintLink() {
     E('mint-url').textContent = url;
     E('mint-result').classList.add('show');
   } catch (err) {
-    showToast('Mint failed: ' + (err.message || 'unknown error'));
+    showToast('Failed to get link: ' + (err.message || 'unknown error'));
   } finally {
     btn.disabled = false;
   }
@@ -733,7 +746,7 @@ function init() {
     if (e.key === 'Escape' && E('modal-backdrop').classList.contains('open')) closeEditor();
   });
   E('mint-btn').addEventListener('click', mintLink);
-  E('mint-copy').addEventListener('click', () => copyText(E('mint-url').textContent, 'Prefill link copied'));
+  E('mint-copy').addEventListener('click', () => copyText(E('mint-url').textContent, 'Booking link copied'));
 
   Promise.all([loadProviders(), loadHooks()])
     .catch(() => {}) // reference data failures shouldn't block the list

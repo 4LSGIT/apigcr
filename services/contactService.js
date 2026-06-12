@@ -66,6 +66,7 @@ const phoneSvc = require('./contactPhoneService');
 const emailSvc = require('./contactEmailService');
 const addrSvc  = require('./contactAddressService');
 const logService = require('./logService');
+const crypto = require('crypto');
 
 const DEFAULT_LOG_LIMIT = 200;
 const SSN_COLUMN = 'contact_ssn';
@@ -1914,6 +1915,9 @@ async function getContact(db, contactId, include = '', { logLimit = DEFAULT_LOG_
  *
  * DB triggers auto-compute contact_name, contact_lfm_name, contact_rname.
  *
+ * Mints contacts.booking_token (32 hex) at creation so booking links
+ * ({{contacts.booking_token}}) resolve without a separate mint step.
+ *
  * SLICE 2 DUAL-WRITE: after the contacts INSERT, propagate the primary
  * phone/email/address into the corresponding child tables as primary-
  * active rows. force=true semantics for phone/email on cross-contact
@@ -1970,6 +1974,11 @@ async function createContact(db, {
   try {
     await conn.beginTransaction();
 
+    // Booking token minted at birth — same format as the mint-or-return
+    // endpoint in routes/booking.js (32 lowercase hex, TOKEN_RE-compatible).
+    // Lets templates use {{contacts.booking_token}} without a mint step.
+    const bookingToken = crypto.randomBytes(16).toString('hex');
+
     // 1. Insert the contacts row
     const [result] = await conn.query(
       `INSERT INTO contacts
@@ -1978,15 +1987,15 @@ async function createContact(db, {
           contact_address, contact_city, contact_state, contact_zip,
           contact_dob, contact_marital_status,
           contact_phone2, contact_email2,
-          contact_tags, contact_notes, contact_created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+          contact_tags, contact_notes, booking_token, contact_created)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         fname, mname, lname, pname,
         normalizedPhone, normalizedEmail, type,
         address, city, state, zip,
         dob, marital_status,
         normalizedPhone2, normalizedEmail2,
-        tags, notes
+        tags, notes, bookingToken
       ]
     );
 
