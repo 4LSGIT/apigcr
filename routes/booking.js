@@ -292,6 +292,66 @@ router.get('/api/book/:slug/config', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// GET /api/book/:slug/contact?c=<token> — masked saved details
+// ─────────────────────────────────────────────────────────────
+//
+// Lets the tokened widget show "Booking as Fred R. · (•••) •••-2400 ·
+// f•••@4lsg.com" so the visitor can confirm the prefill is theirs.
+// Masking happens HERE — full PII never leaves the server on token paths
+// (the 6a no-PII stance is narrowed to masked-display-only, no writes).
+// Invalid/unknown token → the same 404 shape as a missing view.
+
+function maskBookingName(fname, lname) {
+  const first = String(fname || '').trim();
+  if (!first) return null;
+  const li = String(lname || '').trim().charAt(0);
+  // '-' is the public-create lname placeholder — don't surface it.
+  return (li && li !== '-') ? `${first} ${li.toUpperCase()}.` : first;
+}
+function maskBookingPhone(phone) {
+  const d = String(phone || '').replace(/\D/g, '');
+  return d.length >= 4 ? `(•••) •••-${d.slice(-4)}` : null;
+}
+function maskBookingEmail(email) {
+  const s = String(email || '').trim();
+  const at = s.indexOf('@');
+  return at >= 1 ? `${s[0]}•••@${s.slice(at + 1)}` : null;
+}
+
+router.get('/api/book/:slug/contact', async (req, res) => {
+  try {
+    if (readLimited(clientIp(req))) {
+      return res.status(429).json({ status: 'error', code: 'rate_limited' });
+    }
+    const view = await loadView(req.db, req.params.slug);
+    if (!view) return res.status(404).json({ status: 'error', code: 'not_found' });
+
+    const token = String(req.query.c || '');
+    if (!TOKEN_RE.test(token)) {
+      return res.status(404).json({ status: 'error', code: 'not_found' });
+    }
+    const [[row]] = await req.db.query(
+      `SELECT contact_fname, contact_lname, contact_phone, contact_email
+         FROM contacts WHERE booking_token = ? LIMIT 1`,
+      [token]
+    );
+    if (!row) return res.status(404).json({ status: 'error', code: 'not_found' });
+
+    res.json({
+      success: true,
+      display: {
+        name:  maskBookingName(row.contact_fname, row.contact_lname),
+        phone: maskBookingPhone(row.contact_phone),
+        email: maskBookingEmail(row.contact_email),
+      },
+    });
+  } catch (err) {
+    console.error('GET /api/book/:slug/contact error:', err);
+    res.status(500).json({ status: 'error', message: 'Internal error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // GET /api/book/:slug/slots?date=YYYY-MM-DD&provider=N
 // ─────────────────────────────────────────────────────────────
 

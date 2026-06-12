@@ -150,6 +150,12 @@
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     padding: 10px 12px; font-size: 14px; color: var(--muted); margin-bottom: 12px;
   }
+  .saved-note #saved-details { color: var(--text); }
+  .saved-note a {
+    display: block; margin-top: 6px; font-size: 13px;
+    color: var(--accent); text-decoration: none; cursor: pointer;
+  }
+  .saved-note a:hover { text-decoration: underline; }
 
   /* Honeypot: off-screen, NOT display:none (some bots skip hidden inputs). */
   .hp-field {
@@ -251,7 +257,8 @@
       <div class="section-label">Your details</div>
 
       <div class="saved-note hidden" id="saved-note">
-        Booking with your saved details.
+        <span id="saved-details">Booking with your saved details.</span>
+        <a id="not-you">Not you, or details changed?</a>
       </div>
 
       <div id="identity-fields">
@@ -315,6 +322,7 @@
   var slotFetchSeq = 0;       // stale-response guard
   var slotDebounce = null;
   var tokenMode = false;      // true → no identity fields rendered
+  var useToken = false;       // send c on POST; dropped by "Not you / changed"
   var submitting = false;
 
   // ── DOM helpers ─────────────────────────────────────────────
@@ -490,11 +498,18 @@
       show('provider-section');
     }
 
-    // Identity: token in URL → no PII fields at all.
+    // Identity: token in URL → no PII fields; show masked saved details
+    // (server-masked — full PII never reaches the page on token paths) with
+    // a "Not you / changed?" escape hatch to the public form.
     tokenMode = !!token;
+    useToken = tokenMode;
     if (tokenMode) {
       show('saved-note');
       hide('identity-fields');
+      E('not-you').addEventListener('click', function () {
+        switchToPublic(null);
+      });
+      fetchSavedDetails();
     }
     if (cfg.collect_note) show('note-field');
 
@@ -504,6 +519,35 @@
     E('book-btn').addEventListener('click', submit);
     show('main');
     goStep(1);
+  }
+
+  // Masked saved-details fetch — best-effort upgrade of the generic note.
+  // 404 / older backend / network error → generic note stays; a truly
+  // invalid token also fails at POST and lands in switchToPublic there.
+  function fetchSavedDetails() {
+    apiGet('/api/book/' + encodeURIComponent(slug) + '/contact?c=' + encodeURIComponent(token))
+      .then(function (r) {
+        if (!r.ok || !r.body || !r.body.display) return;
+        var d = r.body.display;
+        var parts = [d.name, d.phone, d.email].filter(Boolean);
+        if (parts.length) {
+          E('saved-details').textContent = 'Booking as ' + parts.join(' \u00B7 ');
+        }
+      })
+      .catch(function () { /* keep generic note */ });
+  }
+
+  // Drop the token and switch to the public identity form. Used by the
+  // "Not you / changed?" link and by an invalid_token POST response.
+  function switchToPublic(errMsg) {
+    tokenMode = false;
+    useToken = false;
+    hide('saved-note');
+    show('identity-fields');
+    setErr(errMsg);
+    updateBookBtn();
+    var f = E('f-first');
+    if (f) f.focus();
   }
 
   function wireNav() {
@@ -655,7 +699,7 @@
     if (!E('provider-section').classList.contains('hidden')) {
       payload.provider = Number(E('provider').value);
     }
-    if (token) payload.c = token;
+    if (useToken) payload.c = token;
     if (!tokenMode) {
       payload.first = E('f-first').value.trim();
       payload.last  = E('f-last').value.trim();
@@ -719,14 +763,9 @@
     }
 
     if (code === 'invalid_token' || code === 'invalid_client') {
-      // Saved-details link didn't resolve — reveal the public fields and let
-      // them proceed (backend falls through to the public path when the
-      // fields are present alongside the token).
-      tokenMode = false;
-      hide('saved-note');
-      show('identity-fields');
-      setErr('We couldn\u2019t find your saved details — please enter your name and phone number below.');
-      updateBookBtn();
+      // Saved-details link didn't resolve — drop the token, reveal the
+      // public fields, and let them proceed on the public path.
+      switchToPublic('We couldn\u2019t find your saved details — please enter your name and phone number below.');
       return;
     }
 
