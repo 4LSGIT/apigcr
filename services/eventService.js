@@ -317,6 +317,39 @@ function _normalizeAllDay({ event_all_day, event_time }) {
 }
 
 /**
+ * Normalize/validate event_with for a write, or throw.
+ *
+ * event_with scopes which provider's booking availability a timed event
+ * blocks: NULL = blocks ALL providers (firm-wide, the historic default);
+ * an id = blocks ONLY that provider. Consumed by availabilityService's
+ * normalizeBusyForProvider — semantics defined there, not here.
+ *
+ *   - null / '' / undefined → null (firm-wide)
+ *   - integer               → must be a users.user with does_appts = 1
+ *                             (a non-provider id would be a silent no-op
+ *                             for every provider — reject loudly instead)
+ *   - anything else         → throw
+ *
+ * @param {object} db
+ * @param {*} v
+ * @returns {Promise<number|null>}
+ */
+async function _normalizeEventWith(db, v) {
+  if (v === undefined || v === null || v === '') return null;
+  const id = Number(v);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error('event_with must be a positive integer user id or null');
+  }
+  const [[row]] = await db.query(
+    'SELECT user FROM users WHERE user = ? AND does_appts = 1 LIMIT 1', [id]
+  );
+  if (!row) {
+    throw new Error(`event_with ${id} is not an appointment provider (users.does_appts = 1)`);
+  }
+  return id;
+}
+
+/**
  * Compose the calendar start/end objects for an event row.
  * Exported for testing.
  *
@@ -757,6 +790,7 @@ async function createEvent(db, {
   event_link        = null,
   event_note        = null,
   event_calendar_id = null,
+  event_with        = null,
   acting_user_id,
   reminder          = null,
   skip_gcal         = false,
@@ -787,6 +821,10 @@ async function createEvent(db, {
   // event_length applies to timed events only
   const lengthVal = allDay === 1 ? null : (event_length != null ? Number(event_length) : null);
 
+  // event_with: null = blocks all providers' availability (firm-wide);
+  // an id = blocks only that provider. Validated against does_appts users.
+  const withVal = await _normalizeEventWith(db, event_with);
+
   const createdBy = (acting_user_id != null && acting_user_id !== '' && Number(acting_user_id) !== 0)
     ? Number(acting_user_id)
     : null;
@@ -795,8 +833,8 @@ async function createEvent(db, {
     `INSERT INTO events
        (event_type, event_link_type, event_link_id, event_title, event_date,
         event_time, event_all_day, event_length, event_location, event_link,
-        event_note, event_status, event_calendar_id, event_create_date, event_created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, NOW(), ?)`,
+        event_note, event_status, event_calendar_id, event_with, event_create_date, event_created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, NOW(), ?)`,
     [
       event_type,
       event_link_type,
@@ -810,6 +848,7 @@ async function createEvent(db, {
       event_link,
       event_note,
       event_calendar_id,
+      withVal,
       createdBy,
     ]
   );
@@ -831,6 +870,7 @@ async function createEvent(db, {
     event_link,
     event_note,
     event_calendar_id,
+    event_with:        withVal,
   };
 
   // Log entry
@@ -866,7 +906,7 @@ const UPDATE_ALLOWED = new Set([
   'event_type', 'event_link_type', 'event_link_id', 'event_title',
   'event_date', 'event_time', 'event_all_day', 'event_length',
   'event_location', 'event_link', 'event_note', 'event_status',
-  'event_calendar_id',
+  'event_calendar_id', 'event_with',
 ]);
 
 // Fields whose change requires a calendar re-sync (delete + recreate).
@@ -981,6 +1021,12 @@ async function updateEvent(db, eventId, fields, actingUserId = 0, { reminder } =
     if ('event_link_id' in merged) {
       const v = merged.event_link_id != null ? String(merged.event_link_id).trim() : '';
       merged.event_link_id = v || null;
+    }
+
+    // event_with: presence in the patch means "set it" (null = back to
+    // firm-wide); absence leaves it untouched. Same validation as create.
+    if ('event_with' in merged) {
+      merged.event_with = await _normalizeEventWith(db, merged.event_with);
     }
 
     const keys = Object.keys(merged);
@@ -1500,4 +1546,5 @@ module.exports = {
   // exported for testing / reuse
   _gcalTimes,
   _normalizeAllDay,
+  _normalizeEventWith,
 };

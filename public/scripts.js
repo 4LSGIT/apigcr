@@ -2432,6 +2432,12 @@ function newApptDialog(opts = {}) {
    edit mode. In edit mode the existing reminder task is NOT shown (reminders
    are separate task rows); leaving the reminder user blank = reminders left
    untouched; choosing a user = (re)spawn one reminder task.
+
+   Blocks calendar of (events.event_with): timed events block booking
+   availability. Default "Everyone (firm-wide)" = event_with NULL = blocks
+   every provider (historic behavior); picking a provider blocks only theirs.
+   All-day events never block availability — the field hides with the time
+   row and is sent null, like event_length.
    ────────────────────────────────────────────────────────────────────────── */
 function newEventDialog(opts = {}) {
   const isEdit = !!(opts.event && opts.event.event_id);
@@ -2496,6 +2502,19 @@ function newEventDialog(opts = {}) {
   const reminderUsers = (firm.users || []).slice().sort((a, b) => a.user - b.user);
   const reminderUserOptions = reminderUsers
     .map(u => `<option value="${u.user}">${escAttr(u.user_name)}</option>`)
+    .join('');
+
+  // ── "Blocks calendar of" (events.event_with) ─────────────────────────────
+  // Scopes which provider's booking availability a timed event blocks:
+  // '' → NULL = blocks EVERYONE (firm-wide — the historic default);
+  // a does_appts user id = blocks only that provider. All-day events never
+  // block availability, so the field lives inside neTimeWrap (hidden when
+  // all-day) and is sent null for all-day events, same as event_length.
+  const existingWith = isEdit && ev.event_with != null ? String(ev.event_with) : '';
+  const blocksWithOptions = (firm.users || [])
+    .filter(u => u.does_appts)
+    .sort((a, b) => a.user - b.user)
+    .map(u => `<option value="${u.user}"${String(u.user) === existingWith ? ' selected' : ''}>${escAttr(u.user_name)} only</option>`)
     .join('');
 
   // ── Active picker handle (destroy on close / on link-kind switch) ────────
@@ -2676,6 +2695,13 @@ function newEventDialog(opts = {}) {
                        placeholder="e.g. 60"
                        value="${escAttr(isEdit && ev.event_length != null ? ev.event_length : '')}">
               </div>
+              <div class="ne-row ne-full">
+                <label>Blocks calendar of</label>
+                <select id="neBlocksWith">
+                  <option value=""${!existingWith ? ' selected' : ''}>Everyone (firm-wide)</option>
+                  ${blocksWithOptions}
+                </select>
+              </div>
             </div>
           </div>
 
@@ -2743,10 +2769,12 @@ function newEventDialog(opts = {}) {
       const allDay = E('neAllDay') ? E('neAllDay').checked : false;
       let time = '';
       let length = '';
+      let blocksWith = '';
       if (!allDay) {
         time = E('neTime') ? E('neTime').value : '';
         if (!time) { Swal.showValidationMessage('Time is required (or check All day).'); return false; }
         length = E('neLength') ? E('neLength').value.trim() : '';
+        blocksWith = E('neBlocksWith') ? E('neBlocksWith').value : '';
       }
 
       const location = E('neLocation') ? E('neLocation').value.trim() : '';
@@ -2791,6 +2819,7 @@ function newEventDialog(opts = {}) {
         event_all_day:  allDay ? 1 : 0,
         event_time:     allDay ? null : time,
         event_length:   allDay ? null : (length !== '' ? Number(length) : null),
+        event_with:     allDay ? null : (blocksWith !== '' ? Number(blocksWith) : null),
         event_location: location || null,
         event_link:     urlLink || null,
         event_note:     note || null,

@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Availability</title>
+<style>
+  /* Palette matches bookingviewsmanager.html / redirects.html / pageManager.html —
+     staff feature pages share this. */
+  :root {
+    --bg: #0f1117;
+    --panel: #161a22;
+    --panel-2: #1d2230;
+    --border: #2a3040;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+    --accent: #6ea8fe;
+    --accent-2: #82c0ff;
+    --danger: #ff6b6b;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+
+  .panel-host { flex: 1; overflow: auto; min-height: 0; }
+  .panel { padding: 14px 16px; max-width: 1000px; }
+
+  /* ── Section cards ─────────────────────────────────────────── */
+  .section {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 16px;
+  }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; flex-wrap: wrap; margin-bottom: 8px;
+  }
+  .section-header h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .section-header .right { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .section-note { font-size: 11.5px; color: var(--muted); margin: 0 0 10px; line-height: 1.45; }
+
+  select.ctl, input.ctl {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 6px 9px; font-size: 12.5px;
+  }
+  select.ctl:focus, input.ctl:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Tables ────────────────────────────────────────────────── */
+  table.list {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    border: 1px solid var(--border); background: var(--panel);
+  }
+  table.list th, table.list td {
+    border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left;
+    vertical-align: middle;
+  }
+  table.list th {
+    background: var(--panel-2); color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; font-weight: 600;
+  }
+  table.list .actions-cell { white-space: nowrap; text-align: right; }
+  table.list .actions-cell button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; margin-left: 4px;
+  }
+  table.list .actions-cell button:hover { border-color: var(--accent); }
+  table.list .actions-cell button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .empty-row td { color: var(--muted); padding: 14px; text-align: center; font-style: italic; }
+  tr.inactive td { opacity: 0.55; }
+  .muted { color: var(--muted); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* ── Buttons / badges ──────────────────────────────────────── */
+  .btn {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.small { padding: 3px 8px; font-size: 11px; }
+
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    padding: 2px 7px; border-radius: 10px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    border: 1px solid var(--border);
+  }
+  .badge.on      { background: rgba(74, 222, 128, 0.15);  color: var(--ok);     border-color: rgba(74,222,128,0.4); }
+  .badge.off     { background: rgba(138, 147, 166, 0.15); color: var(--muted);  border-color: var(--border); }
+  .badge.shabbos { background: rgba(110, 168, 254, 0.15); color: var(--accent-2); border-color: rgba(110,168,254,0.4); }
+  .badge.yom_tov { background: rgba(251, 191, 36, 0.15);  color: var(--warn);   border-color: rgba(251,191,36,0.4); }
+  .badge.manual  { background: rgba(74, 222, 128, 0.15);  color: var(--ok);     border-color: rgba(74,222,128,0.4); }
+
+  .toggle-all { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+
+  /* ── Modals ────────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: none; align-items: flex-start; justify-content: center;
+    z-index: 100; padding: 30px 16px; overflow: auto;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    width: 100%; max-width: 460px; padding: 20px;
+  }
+  .modal h3 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+  @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; }
+  .field input, .field select {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; font-size: 13px;
+    font-family: inherit;
+  }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+  .field .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  /* dark-theme native pickers */
+  input[type="time"], input[type="date"], input[type="datetime-local"] { color-scheme: dark; }
+
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .modal-err {
+    background: rgba(255,107,107,0.12); border: 1px solid rgba(255,107,107,0.4);
+    color: var(--danger); border-radius: 4px; padding: 8px 10px; font-size: 12px;
+    margin-bottom: 14px; display: none;
+  }
+  .modal-err.show { display: block; }
+
+  .inline-error {
+    background: rgba(255,107,107,0.12); border: 1px solid rgba(255,107,107,0.4);
+    color: var(--danger); border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px;
+  }
+
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--panel-2); border: 1px solid var(--accent); color: var(--text);
+    padding: 8px 16px; border-radius: 6px; font-size: 12px; z-index: 200;
+    opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="panel-host">
+  <div class="panel">
+
+    <!-- ── 1. Weekly hours ──────────────────────────────────── -->
+    <div class="section">
+      <div class="section-header">
+        <h2>Weekly hours</h2>
+        <div class="right">
+          <select id="ua-provider" class="ctl"></select>
+          <button class="btn primary" id="ua-new">+ Add hours</button>
+        </div>
+      </div>
+      <p class="section-note">
+        Engine truth: overlapping rows for the same weekday <b>union</b> into one
+        working window; <b>no rows for a weekday = not bookable</b> that day.
+        Valid from/to bounds a row to a date range (e.g. a temporary schedule);
+        empty = always.
+      </p>
+      <div id="ua-region"></div>
+    </div>
+
+    <!-- ── 2. Personal blocks ───────────────────────────────── -->
+    <div class="section">
+      <div class="section-header">
+        <h2>Personal blocks (time off)</h2>
+        <div class="right">
+          <label class="toggle-all"><input type="checkbox" id="ab-all"> show past</label>
+          <select id="ab-provider" class="ctl"></select>
+          <button class="btn primary" id="ab-new">+ Add block</button>
+        </div>
+      </div>
+      <p class="section-note">
+        Carves the provider's booking availability for the exact interval.
+        All times are firm-local wall time.
+      </p>
+      <div id="ab-region"></div>
+    </div>
+
+    <!-- ── 3. Firm closures ─────────────────────────────────── -->
+    <div class="section">
+      <div class="section-header">
+        <h2>Firm closures</h2>
+        <div class="right">
+          <label class="toggle-all"><input type="checkbox" id="fb-all"> show past</label>
+          <button class="btn primary" id="fb-new">+ Add closure</button>
+        </div>
+      </div>
+      <p class="section-note">
+        Blocks <b>every</b> provider. Shabbos / Yom Tov rows are regenerated monthly
+        from Hebcal — their times are not editable (an edit would be overwritten on
+        the next run); deactivate/reactivate is allowed and survives regeneration.
+        Manual closures are fully editable.
+      </p>
+      <div id="fb-region"></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Weekly-hours editor ──────────────────────────────────── -->
+<div class="modal-backdrop" id="ua-backdrop">
+  <div class="modal">
+    <h3 id="ua-title">Add hours</h3>
+    <div class="modal-err" id="ua-err"></div>
+    <div class="field">
+      <label for="ua-f-weekday">Weekday</label>
+      <select id="ua-f-weekday">
+        <option value="0">Sunday</option><option value="1">Monday</option>
+        <option value="2">Tuesday</option><option value="3">Wednesday</option>
+        <option value="4">Thursday</option><option value="5">Friday</option>
+        <option value="6">Saturday</option>
+      </select>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label for="ua-f-start">Start</label>
+        <input type="time" id="ua-f-start">
+      </div>
+      <div class="field">
+        <label for="ua-f-end">End</label>
+        <input type="time" id="ua-f-end">
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label for="ua-f-from">Valid from (optional)</label>
+        <input type="date" id="ua-f-from">
+      </div>
+      <div class="field">
+        <label for="ua-f-to">Valid to (optional)</label>
+        <input type="date" id="ua-f-to">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="ua-cancel" type="button">Cancel</button>
+      <button class="btn primary" id="ua-save" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Personal-block editor ────────────────────────────────── -->
+<div class="modal-backdrop" id="ab-backdrop">
+  <div class="modal">
+    <h3 id="ab-title">Add block</h3>
+    <div class="modal-err" id="ab-err"></div>
+    <div class="field">
+      <label for="ab-f-start">From</label>
+      <input type="datetime-local" id="ab-f-start">
+    </div>
+    <div class="field">
+      <label for="ab-f-end">To</label>
+      <input type="datetime-local" id="ab-f-end">
+    </div>
+    <div class="field">
+      <label for="ab-f-reason">Reason (optional)</label>
+      <input type="text" id="ab-f-reason" maxlength="120" placeholder="vacation, CLE, court…">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="ab-cancel" type="button">Cancel</button>
+      <button class="btn primary" id="ab-save" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Manual-closure editor ────────────────────────────────── -->
+<div class="modal-backdrop" id="fb-backdrop">
+  <div class="modal">
+    <h3 id="fb-title">Add closure</h3>
+    <div class="modal-err" id="fb-err"></div>
+    <div class="field">
+      <label for="fb-f-start">From</label>
+      <input type="datetime-local" id="fb-f-start">
+    </div>
+    <div class="field">
+      <label for="fb-f-end">To</label>
+      <input type="datetime-local" id="fb-f-end">
+    </div>
+    <div class="field">
+      <label for="fb-f-label">Label (optional)</label>
+      <input type="text" id="fb-f-label" maxlength="120" placeholder="Office closed — holiday">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="fb-cancel" type="button">Cancel</button>
+      <button class="btn primary" id="fb-save" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Parent bridge ───────────────────────────────────────────
+// Iframe may load before the parent shell finishes auth/boot — the boot
+// block at the BOTTOM of this script waits for apiSend (same pattern as
+// bookingviewsmanager.html / pageManager.html).
+let api = null;
+
+// ── State ───────────────────────────────────────────────────
+const state = {
+  providers: [],           // [{id, name}] — does_appts users
+  ua: [],                  // current provider's user_availability rows
+  ab: [],                  // current provider's availability_blocks rows
+  fb: [],                  // firm_blocks rows
+  uaEditingId: null,
+  abEditingId: null,
+  fbEditingId: null,
+};
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// ── Helpers ─────────────────────────────────────────────────
+const E = (id) => document.getElementById(id);
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+function showToast(msg) {
+  const t = E('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 1800);
+}
+function statusBadge(active) {
+  return active
+    ? '<span class="badge on">Active</span>'
+    : '<span class="badge off">Inactive</span>';
+}
+/** 'YYYY-MM-DD HH:MM' → 'YYYY-MM-DDTHH:MM' for datetime-local inputs. */
+function toLocalInput(s) { return s ? String(s).replace(' ', 'T') : ''; }
+/** 'HH:MM[:SS]' → 'HH:MM' for time inputs / display. */
+function hm(t) { return t ? String(t).slice(0, 5) : ''; }
+/** Friendly datetime: 'YYYY-MM-DD HH:MM' → 'Fri Jun 12, 3:40 PM'. */
+function fmtDT(s) {
+  if (!s) return '';
+  const d = new Date(String(s).replace(' ', 'T'));
+  if (isNaN(d.getTime())) return esc(s);
+  return d.toLocaleString(undefined, {
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+}
+function fmtTime12(t) {
+  if (!t) return '';
+  const [h, m] = String(t).split(':').map(Number);
+  const ap = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${ap}`;
+}
+function providerName(id) {
+  const p = state.providers.find(x => x.id === Number(id));
+  return p ? p.name : `#${id}`;
+}
+
+// ── Reference data ──────────────────────────────────────────
+async function loadProviders() {
+  // Reuses booking-views' reference endpoint — same does_appts list.
+  const data = await api('/api/booking-views/providers', 'GET');
+  state.providers = data.providers || [];
+  const opts = state.providers.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  E('ua-provider').innerHTML = opts || '<option value="">(no providers)</option>';
+  E('ab-provider').innerHTML = opts || '<option value="">(no providers)</option>';
+}
+
+// ─────────────────────────────────────────────────────────────
+// 1. Weekly hours
+// ─────────────────────────────────────────────────────────────
+
+async function loadUA() {
+  const uid = E('ua-provider').value;
+  const region = E('ua-region');
+  if (!uid) { region.innerHTML = ''; return; }
+  try {
+    const data = await api(`/api/user-availability?user=${uid}`, 'GET');
+    state.ua = data.rows || [];
+    renderUA();
+  } catch (err) {
+    region.innerHTML = `<div class="inline-error">Failed to load hours: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderUA() {
+  const region = E('ua-region');
+  const rows = state.ua;
+  const body = rows.length === 0
+    ? `<tr class="empty-row"><td colspan="5">No weekly hours — this provider is not bookable on any day.</td></tr>`
+    : rows.map(r => `
+      <tr class="${r.active ? '' : 'inactive'}">
+        <td>${WEEKDAYS[r.weekday] || r.weekday}</td>
+        <td class="mono">${fmtTime12(r.start_time)} – ${fmtTime12(r.end_time)}</td>
+        <td class="muted">${r.valid_from || r.valid_to
+            ? `${r.valid_from || '…'} → ${r.valid_to || '…'}`
+            : 'always'}</td>
+        <td>${statusBadge(r.active)}</td>
+        <td class="actions-cell">
+          <button data-action="edit" data-id="${r.id}">Edit</button>
+          <button data-action="toggle" data-id="${r.id}" class="${r.active ? 'danger' : ''}">${r.active ? 'Deactivate' : 'Activate'}</button>
+        </td>
+      </tr>`).join('');
+
+  region.innerHTML = `
+    <table class="list">
+      <thead><tr><th>Weekday</th><th>Hours</th><th>Valid window</th><th>Status</th><th></th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+
+  region.querySelectorAll('button[data-action]').forEach(btn => {
+    const id = Number(btn.dataset.id);
+    btn.addEventListener('click', () => {
+      if (btn.dataset.action === 'edit') openUAEditor(id);
+      else toggleUA(id);
+    });
+  });
+}
+
+function openUAEditor(id) {
+  state.uaEditingId = id || null;
+  const r = id ? state.ua.find(x => x.id === id) : null;
+  E('ua-title').textContent = r
+    ? `Edit hours — ${providerName(E('ua-provider').value)}`
+    : `Add hours — ${providerName(E('ua-provider').value)}`;
+  E('ua-f-weekday').value = r ? String(r.weekday) : '1';
+  E('ua-f-start').value   = r ? hm(r.start_time) : '09:00';
+  E('ua-f-end').value     = r ? hm(r.end_time)   : '17:00';
+  E('ua-f-from').value    = r && r.valid_from ? r.valid_from : '';
+  E('ua-f-to').value      = r && r.valid_to   ? r.valid_to   : '';
+  E('ua-err').classList.remove('show');
+  E('ua-backdrop').classList.add('open');
+}
+
+async function saveUA() {
+  const payload = {
+    user:       Number(E('ua-provider').value),
+    weekday:    Number(E('ua-f-weekday').value),
+    start_time: E('ua-f-start').value,
+    end_time:   E('ua-f-end').value,
+    valid_from: E('ua-f-from').value || null,
+    valid_to:   E('ua-f-to').value || null,
+  };
+  if (!payload.start_time || !payload.end_time) return uaErr('Start and end times are required.');
+  if (payload.end_time <= payload.start_time)   return uaErr('End must be after start.');
+  if (payload.valid_from && payload.valid_to && payload.valid_to < payload.valid_from) {
+    return uaErr('Valid-to must be on or after valid-from.');
+  }
+  const btn = E('ua-save');
+  btn.disabled = true;
+  try {
+    if (state.uaEditingId) await api(`/api/user-availability/${state.uaEditingId}`, 'PATCH', payload);
+    else await api('/api/user-availability', 'POST', payload);
+    E('ua-backdrop').classList.remove('open');
+    showToast('Saved');
+    await loadUA();
+  } catch (err) {
+    uaErr(err.message || 'Save failed.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+function uaErr(msg) { const el = E('ua-err'); el.textContent = msg; el.classList.add('show'); }
+
+async function toggleUA(id) {
+  const r = state.ua.find(x => x.id === id);
+  if (!r) return;
+  try {
+    if (r.active) await api(`/api/user-availability/${id}`, 'DELETE');
+    else await api(`/api/user-availability/${id}`, 'PATCH', { active: 1 });
+    await loadUA();
+  } catch (err) {
+    showToast('Update failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 2. Personal blocks
+// ─────────────────────────────────────────────────────────────
+
+async function loadAB() {
+  const uid = E('ab-provider').value;
+  const region = E('ab-region');
+  if (!uid) { region.innerHTML = ''; return; }
+  const all = E('ab-all').checked ? '&all=1' : '';
+  try {
+    const data = await api(`/api/availability-blocks?user=${uid}${all}`, 'GET');
+    state.ab = data.rows || [];
+    renderAB();
+  } catch (err) {
+    region.innerHTML = `<div class="inline-error">Failed to load blocks: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderAB() {
+  const region = E('ab-region');
+  const rows = state.ab;
+  const body = rows.length === 0
+    ? `<tr class="empty-row"><td colspan="4">No ${E('ab-all').checked ? '' : 'upcoming '}blocks.</td></tr>`
+    : rows.map(r => `
+      <tr class="${r.active ? '' : 'inactive'}">
+        <td>${fmtDT(r.block_start)} <span class="muted">→</span> ${fmtDT(r.block_end)}</td>
+        <td>${esc(r.reason || '')}</td>
+        <td>${statusBadge(r.active)}</td>
+        <td class="actions-cell">
+          <button data-action="edit" data-id="${r.id}">Edit</button>
+          <button data-action="toggle" data-id="${r.id}" class="${r.active ? 'danger' : ''}">${r.active ? 'Deactivate' : 'Activate'}</button>
+        </td>
+      </tr>`).join('');
+
+  region.innerHTML = `
+    <table class="list">
+      <thead><tr><th>When</th><th>Reason</th><th>Status</th><th></th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+
+  region.querySelectorAll('button[data-action]').forEach(btn => {
+    const id = Number(btn.dataset.id);
+    btn.addEventListener('click', () => {
+      if (btn.dataset.action === 'edit') openABEditor(id);
+      else toggleAB(id);
+    });
+  });
+}
+
+function openABEditor(id) {
+  state.abEditingId = id || null;
+  const r = id ? state.ab.find(x => x.id === id) : null;
+  E('ab-title').textContent = r
+    ? `Edit block — ${providerName(E('ab-provider').value)}`
+    : `Add block — ${providerName(E('ab-provider').value)}`;
+  E('ab-f-start').value  = r ? toLocalInput(r.block_start) : '';
+  E('ab-f-end').value    = r ? toLocalInput(r.block_end)   : '';
+  E('ab-f-reason').value = r && r.reason ? r.reason : '';
+  E('ab-err').classList.remove('show');
+  E('ab-backdrop').classList.add('open');
+}
+
+async function saveAB() {
+  const payload = {
+    user:        Number(E('ab-provider').value),
+    block_start: E('ab-f-start').value,
+    block_end:   E('ab-f-end').value,
+    reason:      E('ab-f-reason').value.trim() || null,
+  };
+  if (!payload.block_start || !payload.block_end) return abErr('From and to are required.');
+  if (payload.block_end <= payload.block_start)   return abErr('To must be after from.');
+  const btn = E('ab-save');
+  btn.disabled = true;
+  try {
+    if (state.abEditingId) await api(`/api/availability-blocks/${state.abEditingId}`, 'PATCH', payload);
+    else await api('/api/availability-blocks', 'POST', payload);
+    E('ab-backdrop').classList.remove('open');
+    showToast('Saved');
+    await loadAB();
+  } catch (err) {
+    abErr(err.message || 'Save failed.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+function abErr(msg) { const el = E('ab-err'); el.textContent = msg; el.classList.add('show'); }
+
+async function toggleAB(id) {
+  const r = state.ab.find(x => x.id === id);
+  if (!r) return;
+  try {
+    if (r.active) await api(`/api/availability-blocks/${id}`, 'DELETE');
+    else await api(`/api/availability-blocks/${id}`, 'PATCH', { active: 1 });
+    await loadAB();
+  } catch (err) {
+    showToast('Update failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// 3. Firm closures
+// ─────────────────────────────────────────────────────────────
+
+async function loadFB() {
+  const region = E('fb-region');
+  const all = E('fb-all').checked ? '?all=1' : '';
+  try {
+    const data = await api(`/api/firm-blocks${all}`, 'GET');
+    state.fb = data.rows || [];
+    renderFB();
+  } catch (err) {
+    region.innerHTML = `<div class="inline-error">Failed to load closures: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderFB() {
+  const region = E('fb-region');
+  const rows = state.fb;
+  const body = rows.length === 0
+    ? `<tr class="empty-row"><td colspan="5">No ${E('fb-all').checked ? '' : 'upcoming '}closures.</td></tr>`
+    : rows.map(r => {
+      const isManual = r.source === 'manual';
+      return `
+      <tr class="${r.active ? '' : 'inactive'}">
+        <td>${fmtDT(r.block_start)} <span class="muted">→</span> ${fmtDT(r.block_end)}</td>
+        <td>${esc(r.label || '')}</td>
+        <td><span class="badge ${esc(r.source)}">${esc(r.source.replace('_', ' '))}</span></td>
+        <td>${statusBadge(r.active)}</td>
+        <td class="actions-cell">
+          ${isManual ? `<button data-action="edit" data-id="${r.id}">Edit</button>` : ''}
+          <button data-action="toggle" data-id="${r.id}" class="${r.active ? 'danger' : ''}"
+                  ${isManual ? '' : 'title="Shabbos/Yom Tov times come from Hebcal — only on/off is editable; the setting survives regeneration."'}
+          >${r.active ? 'Deactivate' : 'Activate'}</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+  region.innerHTML = `
+    <table class="list">
+      <thead><tr><th>When</th><th>Label</th><th>Source</th><th>Status</th><th></th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+
+  region.querySelectorAll('button[data-action]').forEach(btn => {
+    const id = Number(btn.dataset.id);
+    btn.addEventListener('click', () => {
+      if (btn.dataset.action === 'edit') openFBEditor(id);
+      else toggleFB(id);
+    });
+  });
+}
+
+function openFBEditor(id) {
+  state.fbEditingId = id || null;
+  const r = id ? state.fb.find(x => x.id === id) : null;
+  E('fb-title').textContent = r ? 'Edit closure' : 'Add closure';
+  E('fb-f-start').value = r ? toLocalInput(r.block_start) : '';
+  E('fb-f-end').value   = r ? toLocalInput(r.block_end)   : '';
+  E('fb-f-label').value = r && r.label ? r.label : '';
+  E('fb-err').classList.remove('show');
+  E('fb-backdrop').classList.add('open');
+}
+
+async function saveFB() {
+  const payload = {
+    block_start: E('fb-f-start').value,
+    block_end:   E('fb-f-end').value,
+    label:       E('fb-f-label').value.trim() || null,
+  };
+  if (!payload.block_start || !payload.block_end) return fbErr('From and to are required.');
+  if (payload.block_end <= payload.block_start)   return fbErr('To must be after from.');
+  const btn = E('fb-save');
+  btn.disabled = true;
+  try {
+    if (state.fbEditingId) await api(`/api/firm-blocks/${state.fbEditingId}`, 'PATCH', payload);
+    else await api('/api/firm-blocks', 'POST', payload);
+    E('fb-backdrop').classList.remove('open');
+    showToast('Saved');
+    await loadFB();
+  } catch (err) {
+    fbErr(err.message || 'Save failed.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+function fbErr(msg) { const el = E('fb-err'); el.textContent = msg; el.classList.add('show'); }
+
+async function toggleFB(id) {
+  const r = state.fb.find(x => x.id === id);
+  if (!r) return;
+  if (r.active && r.source !== 'manual') {
+    const ok = window.confirm(
+      `Deactivate this ${r.source.replace('_', ' ')} closure (${r.label || ''})? ` +
+      `The booking engine will offer slots during it. The setting survives Hebcal regeneration.`);
+    if (!ok) return;
+  }
+  try {
+    if (r.active) await api(`/api/firm-blocks/${id}`, 'DELETE');
+    else await api(`/api/firm-blocks/${id}`, 'PATCH', { active: 1 });
+    await loadFB();
+  } catch (err) {
+    showToast('Update failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+// ── Init / boot ─────────────────────────────────────────────
+function wireModal(prefix, onSave) {
+  E(`${prefix}-cancel`).addEventListener('click', () => E(`${prefix}-backdrop`).classList.remove('open'));
+  E(`${prefix}-save`).addEventListener('click', onSave);
+  E(`${prefix}-backdrop`).addEventListener('click', e => {
+    if (e.target === E(`${prefix}-backdrop`)) E(`${prefix}-backdrop`).classList.remove('open');
+  });
+}
+
+function init() {
+  wireModal('ua', saveUA);
+  wireModal('ab', saveAB);
+  wireModal('fb', saveFB);
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    ['ua', 'ab', 'fb'].forEach(p => E(`${p}-backdrop`).classList.remove('open'));
+  });
+
+  E('ua-provider').addEventListener('change', loadUA);
+  E('ab-provider').addEventListener('change', loadAB);
+  E('ab-all').addEventListener('change', loadAB);
+  E('fb-all').addEventListener('change', loadFB);
+  E('ua-new').addEventListener('click', () => openUAEditor(null));
+  E('ab-new').addEventListener('click', () => openABEditor(null));
+  E('fb-new').addEventListener('click', () => openFBEditor(null));
+
+  loadProviders()
+    .then(() => Promise.all([loadUA(), loadAB(), loadFB()]))
+    .catch(err => {
+      E('ua-region').innerHTML = `<div class="inline-error">Failed to load providers: ${esc(err.message)}</div>`;
+    });
+}
+
+(function waitForParent() {
+  const P = window.top;
+  if (P && P.apiSend) {
+    api = (path, method = 'GET', data) => P.apiSend(path, method, data);
+    return init();
+  }
+  setTimeout(waitForParent, 100);
+})();
+</script>
+
+</body>
+</html>
