@@ -51,6 +51,11 @@
   .appt-card .when { font-size: 15px; font-weight: 600; }
   .appt-card .meta { font-size: 13.5px; color: var(--muted); margin-top: 4px; }
   .appt-card.terminal { text-align: center; color: var(--muted); }
+  .canceled-banner {
+    background: var(--danger-bg); border: 1px solid #fecaca; color: var(--danger);
+    border-radius: 10px; padding: 10px 14px; margin-bottom: 12px;
+    font-size: 14.5px; text-align: center; font-weight: 600;
+  }
 
   .section-label {
     font-size: 12px; font-weight: 600; color: var(--muted);
@@ -155,6 +160,9 @@
 
     <div class="msg info" id="info-msg"></div>
 
+    <!-- Canceled banner (rebookable state) -->
+    <div class="canceled-banner hidden" id="canceled-banner"></div>
+
     <!-- Appointment card -->
     <div class="appt-card" id="appt-card">
       <div class="type" id="appt-type"></div>
@@ -168,6 +176,11 @@
         <button class="btn primary" id="btn-resched">Reschedule</button>
         <button class="btn danger-outline" id="btn-cancel">Cancel</button>
       </div>
+    </div>
+
+    <!-- Rebook action (Canceled appts) -->
+    <div id="rebook-region" class="hidden">
+      <button class="btn primary full" id="btn-rebook">Pick a new time</button>
     </div>
 
     <!-- Scheduled but inside cutoff: call us -->
@@ -333,10 +346,10 @@
   function render() {
     hide('state-loading');
 
-    // Terminal statuses — the page lives only while Scheduled.
-    if (data.status !== 'Scheduled') {
+    // Terminal statuses. Canceled is NOT terminal — it renders the main
+    // view in rebook mode (banner + "pick a new time" picker).
+    if (data.status !== 'Scheduled' && data.status !== 'Canceled') {
       var terminalText = {
-        'Canceled':    'This appointment was canceled.',
         'Rescheduled': 'This appointment was rescheduled — your new confirmation link was sent to you.',
         'Attended':    'This appointment has already taken place.',
         'No Show':     'This appointment has passed.',
@@ -344,7 +357,11 @@
       return showTerminal(terminalText);
     }
 
-    // Branding (firm settings; default accent).
+    // Branding: view accent when the appt came through a booking view
+    // (same sanitize regex as book.html), else the default stays.
+    if (data.accent_color && /^#?[a-zA-Z0-9(),.% #-]{1,20}$/.test(data.accent_color)) {
+      document.documentElement.style.setProperty('--accent', data.accent_color);
+    }
     if (data.logo_url) {
       if (data.logo_link_url && /^https?:\/\//i.test(data.logo_link_url)) {
         E('logo').src = data.logo_url;
@@ -361,18 +378,33 @@
     }
 
     renderCard();
-
-    if (data.can_modify) {
-      show('actions-region');
-      hide('locked-note');
-    } else {
-      hide('actions-region');
-      E('locked-note').textContent = callUsLine('Need to change this appointment? Please call');
-      show('locked-note');
-    }
-
+    renderActionState();
     wire();
     show('main');
+  }
+
+  // Decide which action affordances show, from authoritative data.
+  function renderActionState() {
+    hide('actions-region'); hide('rebook-region');
+    hide('locked-note'); hide('canceled-banner'); hide('cancel-confirm');
+    if (data.status === 'Canceled') {
+      // Past-tense and specific: a client who already rebooked must read
+      // this as a statement about THIS old appointment, never as their
+      // rebooking having failed.
+      var when = data.canceled_on ? (' on ' + fmtDateFull(data.canceled_on)) : '';
+      E('canceled-banner').textContent = 'This appointment was canceled' + when + '.'
+        + (data.can_rebook ? ' Want to book a new time?' : '');
+      show('canceled-banner');
+      if (data.can_rebook) show('rebook-region');
+      else {
+        E('locked-note').textContent = callUsLine('To book a new time, please call');
+        show('locked-note');
+      }
+      return;
+    }
+    if (data.can_modify) { show('actions-region'); return; }
+    E('locked-note').textContent = callUsLine('Need to change this appointment? Please call');
+    show('locked-note');
   }
 
   function renderCard() {
@@ -394,6 +426,7 @@
     if (wired) return;
     wired = true;
     E('btn-resched').addEventListener('click', toggleResched);
+    E('btn-rebook').addEventListener('click', toggleResched);
     E('btn-cancel').addEventListener('click', function () {
       hideResched();
       show('cancel-confirm');
@@ -515,7 +548,8 @@
       btn.textContent = 'Select a time';
       return;
     }
-    btn.textContent = 'Reschedule to ' + fmtSlotLong(selectedSlot);
+    btn.textContent = (data.status === 'Canceled' ? 'Book ' : 'Reschedule to ')
+      + fmtSlotLong(selectedSlot);
     btn.disabled = false;
   }
 
@@ -532,7 +566,13 @@
         btn.disabled = false;
         btn.textContent = 'Yes, cancel';
         if (r.ok && r.body && r.body.success) {
-          showTerminal('Your appointment has been canceled.');
+          // Same token still resolves (row is Canceled) — re-fetch and
+          // render the rebookable state so a change of heart is one tap.
+          apiGet('/api/m/' + encodeURIComponent(token)).then(function (r2) {
+            if (r2.ok) { data = r2.body; hideResched(); renderCard(); renderActionState(); }
+            setInfo('Your appointment has been canceled.');
+            try { window.scrollTo(0, 0); } catch (e) {}
+          });
           return;
         }
         hide('cancel-confirm');
@@ -566,19 +606,17 @@
               history.replaceState(null, '', '/m/' + token);
             } catch (e) {}
           }
+          var rebooked = r.body.mode === 'rebooked';
           hideResched();
           apiGet('/api/m/' + encodeURIComponent(token)).then(function (r2) {
             if (r2.ok) {
               data = r2.body;
               renderCard();
-              if (data.can_modify) { show('actions-region'); hide('locked-note'); }
-              else {
-                hide('actions-region');
-                E('locked-note').textContent = callUsLine('Need to change this appointment? Please call');
-                show('locked-note');
-              }
+              renderActionState();
             }
-            setInfo('Your appointment has been rescheduled. Your confirmation link has been updated.');
+            setInfo(rebooked
+              ? 'Your new appointment is booked. Your confirmation link has been updated.'
+              : 'Your appointment has been rescheduled. Your confirmation link has been updated.');
             try { window.scrollTo(0, 0); } catch (e) {}
           });
           return;
@@ -607,7 +645,7 @@
       // Cutoff crossed (or status changed) since the page loaded — refresh
       // the authoritative state.
       apiGet('/api/m/' + encodeURIComponent(token)).then(function (r2) {
-        if (r2.ok) { data = r2.body; hideResched(); render(); }
+        if (r2.ok) { data = r2.body; hideResched(); renderCard(); renderActionState(); }
         setErr(callUsLine('This appointment can no longer be changed online — please call'));
       });
       return;

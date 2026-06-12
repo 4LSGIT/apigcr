@@ -11,7 +11,8 @@
  *   GET  /api/book/:slug/slots    — open slot starts for one civil day
  *   POST /api/book/:slug          — book a slot (identity → provider →
  *                                   lock → re-verify → createAppt →
- *                                   fire-and-forget confirmations/hook)
+ *                                   fire-and-forget confirmations; the
+ *                                   view hook fires inside createAppt)
  *
  * INTERNAL (jwtOrApiKey):
  *   POST /api/contacts/:id/booking-link — mint-or-return contacts.booking_token
@@ -79,7 +80,6 @@ const jwtOrApiKey      = require('../lib/auth.jwtOrApiKey');
 const { getSlots }     = require('../services/availabilityService');
 const apptService      = require('../services/apptService');
 const contactService   = require('../services/contactService');
-const hookService      = require('../services/hookService');
 const emailService     = require('../services/emailService');
 const phoneService     = require('../services/phoneService');
 const { resolve: resolveTemplate } = require('../services/resolverService');
@@ -597,6 +597,7 @@ async function bookUnderLock(db, view, providerId, dateStr, start, contactId, no
       appt_with:     providerId,
       note:          note,
       appt_source:   view.source_tag || null,
+      appt_view_id:  view.id,         // slice 9b: branding + lifecycle hooks
       confirm_sms:   false,           // confirmations are template-driven below
       confirm_email: false,
       actingUserId:  0,
@@ -669,32 +670,9 @@ function fireSideEffects(db, view, { apptId, contactId, providerId, start }) {
     }));
   }
 
-  // ── Hook (booking_views.hook_id → hooks.slug → executeHook) ──
-  if (view.hook_id) {
-    (async () => {
-      const [[hook]] = await db.query(
-        'SELECT slug FROM hooks WHERE id = ? AND active = 1 LIMIT 1',
-        [view.hook_id]
-      );
-      if (!hook) {
-        console.warn(`[booking] view "${view.slug}" hook_id=${view.hook_id} not found/inactive — payload discarded`);
-        return;
-      }
-      await hookService.executeHook(db, hook.slug, {
-        appt_id:    apptId,
-        contact_id: contactId,
-        provider:   providerId,
-        start,
-        view_slug:  view.slug,
-        source:     view.source_tag || null,
-      });
-    })().catch(err => alert(db, {
-      source: 'app', kind: 'booking_hook_failed', severity: 'error',
-      group_key: `booking_hook:${view.slug}`,
-      title: 'Booking hook pipeline failed',
-      message: `view=${view.slug} appt=${apptId} hook_id=${view.hook_id}: ${err.message}`,
-    }));
-  }
+  // (View hook firing moved into apptService.createAppt — slice 9b. The
+  // hook now fires centrally off appts.appt_view_id with an `event` field,
+  // covering staff reschedules/cancels and manage-page rebooks too.)
 }
 
 router.post('/api/book/:slug', async (req, res) => {

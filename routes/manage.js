@@ -9,7 +9,8 @@
  *   GET  /api/m/:token                — appt summary (first name only, no PII)
  *   GET  /api/m/:token/slots?date=    — reschedule picker slots
  *   POST /api/m/:token/cancel         — cancel (full apptService side effects)
- *   POST /api/m/:token/reschedule     — reschedule, same provider/type/length
+ *   POST /api/m/:token/reschedule     — reschedule (Scheduled) or rebook
+ *                                       (Canceled); same provider/type/length
  *
  * ── Authorization model ──────────────────────────────────────
  * Every request resolves :token → one appt row via appts.appt_manage_token
@@ -20,11 +21,24 @@
  * touch" so the future portal can feed session→contact→appt into the same
  * handlers.
  *
- * ── View-independence (locked) ───────────────────────────────
+ * ── View-independence for CONSTRAINTS; view linkage for BRANDING ──
  * Constraints come from the appt row (appt_with / appt_length / appt_type)
- * + app_settings — NEVER from booking_views (source_tag is non-unique;
- * internally-booked appts have none). Reschedule keeps provider, type,
- * length identical; changing those = call the office.
+ * + app_settings — never from booking_views. Slice 9b adds
+ * appts.appt_view_id (stored at booking time — no source_tag inference),
+ * used here ONLY for branding: the originating view's logo / accent / link
+ * win over the firm-wide fe-* defaults, so each part of the firm sees its
+ * own look. A deleted view degrades to firm branding, never breaks.
+ * Reschedule/rebook keep provider, type, length identical; changing those
+ * = call the office.
+ *
+ * ── Rebook-from-Canceled (unbounded) ─────────────────────────
+ * A Canceled appt's page is NOT terminal: it offers "pick a new time".
+ * POST /reschedule on a Canceled appt does a direct createAppt copy
+ * (provider/type/length/platform/case/view carried over; hook event
+ * 'rebooked' with rescheduled_from) — it must NOT call rescheduleAppt,
+ * which would flip the Canceled row to 'Rescheduled' and falsify history.
+ * The old row stays Canceled and gets a log entry pointing at the new
+ * appt. Rescheduled / Attended / No Show remain terminal.
  *
  * ── Settings (seeded by the slice-9 migration, is_editable=1) ─
  *   manage_cutoff_min          240  — no self-service inside this window
@@ -157,14 +171,19 @@ async function loadManageSettings(db) {
 async function loadApptByToken(db, token) {
   if (!TOKEN_RE.test(String(token || ''))) return null;
   const [[row]] = await db.query(
-    `SELECT a.appt_id, a.appt_client_id, a.appt_status, a.appt_type,
-            a.appt_platform, a.appt_length, a.appt_with,
+    `SELECT a.appt_id, a.appt_client_id, a.appt_case_id, a.appt_status,
+            a.appt_type, a.appt_platform, a.appt_length, a.appt_with,
+            a.appt_view_id,
             DATE_FORMAT(a.appt_date, '%Y-%m-%d %H:%i') AS appt_start,
             c.contact_fname,
-            u.user_real_name, u.user_name
+            u.user_real_name, u.user_name,
+            bv.logo_url      AS view_logo_url,
+            bv.logo_link_url AS view_logo_link_url,
+            bv.accent_color  AS view_accent_color
        FROM appts a
-       LEFT JOIN contacts c ON c.contact_id = a.appt_client_id
-       LEFT JOIN users    u ON u.user = a.appt_with
+       LEFT JOIN contacts      c  ON c.contact_id = a.appt_client_id
+       LEFT JOIN users         u  ON u.user = a.appt_with
+       LEFT JOIN booking_views bv ON bv.id = a.appt_view_id
       WHERE a.appt_manage_token = ?
       LIMIT 1`,
     [token]
@@ -198,6 +217,17 @@ function computeCanModify(appt, cutoffMin) {
   if (!startDt.isValid) return false;
   const earliest = DateTime.now().setZone(FIRM_TZ).plus({ minutes: cutoffMin });
   return startDt > earliest;
+}
+
+/**
+ * can_rebook = Canceled AND sane appt_length (same getSlots requirement).
+ * Unbounded by design — an old canceled appt's link booking a fresh slot
+ * is lead reactivation; the log records the client-initiated provenance.
+ */
+function computeCanRebook(appt) {
+  if (appt.appt_status !== 'Canceled') return false;
+  const len = Number(appt.appt_length);
+  return Number.isInteger(len) && len >= 1;
 }
 
 const NOT_FOUND = { status: 'error', code: 'not_found' };
@@ -269,6 +299,33 @@ router.get('/api/m/:token', async (req, res) => {
 
     const cfg = await loadManageSettings(req.db);
 
+    // Canceled appts: surface the cancel date so the banner reads as a
+    // past-tense statement about THIS appt — a client who already rebooked
+    // must not misread it as their rebooking having failed. Source: the
+    // latest 'Canceled' appt-log entry (appts has no status timestamp).
+    // Indexed via idx_log_link_type_id; runs only on Canceled page loads.
+    let canceledOn = null;
+    if (appt.appt_status === 'Canceled') {
+      try {
+        const [[row]] = await req.db.query(
+          `SELECT DATE_FORMAT(log_date, '%Y-%m-%d') AS d
+             FROM log
+            WHERE log_type = 'appt'
+              AND ((log_link_type = 'case'    AND log_link_id = ?)
+                OR (log_link_type = 'contact' AND log_link_id = ?))
+              AND log_data LIKE ?
+              AND log_data LIKE '%"Status":"Canceled"%'
+            ORDER BY log_id DESC
+            LIMIT 1`,
+          [String(appt.appt_case_id || ''), String(appt.appt_client_id || ''),
+           `%"Appt ID":"${appt.appt_id}"%`]
+        );
+        canceledOn = row?.d || null;
+      } catch (e) {
+        console.warn('[manage] canceled_on lookup failed:', e.message); // copy degrades, page works
+      }
+    }
+
     // First name ONLY — no last name, phone, email, or ids anywhere here.
     res.json({
       status: appt.appt_status,
@@ -281,11 +338,15 @@ router.get('/api/m/:token', async (req, res) => {
         contact_first: appt.contact_fname || null,
       },
       can_modify:   computeCanModify(appt, cfg.cutoff_min),
+      can_rebook:   computeCanRebook(appt),
+      canceled_on:  canceledOn,                    // 'YYYY-MM-DD' | null (Canceled only)
       cutoff_min:   cfg.cutoff_min,
       horizon_days: cfg.horizon_days,
-      // Branding (firm-wide settings, 6b.1) — not appt data.
-      logo_url:      cfg.firm_logo_url,
-      logo_link_url: cfg.firm_site_url,
+      // Branding: originating view (appt_view_id) wins; firm-wide fe-*
+      // settings are the fallback for internal/legacy/view-deleted appts.
+      logo_url:      appt.view_logo_url      || cfg.firm_logo_url,
+      logo_link_url: appt.view_logo_link_url || cfg.firm_site_url,
+      accent_color:  appt.view_accent_color  || null,   // null → page default
       firm_phone:    cfg.firm_phone,               // null → page omits the number
     });
   } catch (err) {
@@ -307,7 +368,7 @@ router.get('/api/m/:token/slots', async (req, res) => {
     if (!appt) return res.status(404).json(NOT_FOUND);
 
     const cfg = await loadManageSettings(req.db);
-    if (!computeCanModify(appt, cfg.cutoff_min)) {
+    if (!computeCanModify(appt, cfg.cutoff_min) && !computeCanRebook(appt)) {
       return res.status(409).json({ status: 'error', code: 'not_modifiable' });
     }
 
@@ -398,7 +459,9 @@ router.post('/api/m/:token/reschedule', async (req, res) => {
     if (!appt) return res.status(404).json(NOT_FOUND);
 
     const cfg = await loadManageSettings(req.db);
-    if (!computeCanModify(appt, cfg.cutoff_min)) {
+    const mayReschedule = computeCanModify(appt, cfg.cutoff_min); // Scheduled path
+    const mayRebook     = computeCanRebook(appt);                 // Canceled path
+    if (!mayReschedule && !mayRebook) {
       return res.status(409).json({ status: 'error', code: 'not_modifiable' });
     }
 
@@ -439,14 +502,18 @@ router.post('/api/m/:token/reschedule', async (req, res) => {
       }
       locked = true;
 
-      // Status re-read on the locked session — rescheduleAppt itself does
-      // NOT guard status, and rescheduling a Canceled/Rescheduled appt
-      // would resurrect it as a fresh appt.
+      // Status re-read on the locked session decides the branch —
+      // rescheduleAppt itself does NOT guard status, and calling it on a
+      // Canceled row would flip it to 'Rescheduled' (falsified history).
+      // Scheduled → reschedule; Canceled → rebook (direct createAppt copy);
+      // anything else (raced into Rescheduled/Attended/No Show) → 409.
       const [[freshAppt]] = await conn.query(
         'SELECT appt_status FROM appts WHERE appt_id = ? LIMIT 1',
         [appt.appt_id]
       );
-      if (!freshAppt || freshAppt.appt_status !== 'Scheduled') {
+      const freshStatus = freshAppt && freshAppt.appt_status;
+      if (!((freshStatus === 'Scheduled' && mayReschedule) ||
+            (freshStatus === 'Canceled'  && mayRebook))) {
         return res.status(409).json({ status: 'error', code: 'not_modifiable' });
       }
 
@@ -464,16 +531,44 @@ router.post('/api/m/:token/reschedule', async (req, res) => {
         return res.status(409).json({ status: 'error', code: 'slot_taken' });
       }
 
-      // Same provider, type, length, platform — rescheduleAppt copies them
-      // from the old row into createAppt. The named lock (held on `conn`)
-      // is what serializes check+insert; createAppt's own transaction runs
-      // on its own pool connection, same as the booking pipeline.
-      result = await apptService.rescheduleAppt(req.db, {
-        appt_id:      appt.appt_id,
-        newDate:      `${start}:00`,
-        note:         '[Rescheduled by client via manage link]',
-        actingUserId: 0,
-      });
+      // Same provider, type, length, platform on both branches. The named
+      // lock (held on `conn`) serializes check+insert; createAppt's own
+      // transaction runs on its own pool connection, same as booking.
+      if (freshStatus === 'Scheduled') {
+        // rescheduleAppt forwards appt_view_id + fires the view hook with
+        // event 'rescheduled' (slice 9b — centralized in apptService).
+        const r = await apptService.rescheduleAppt(req.db, {
+          appt_id:      appt.appt_id,
+          newDate:      `${start}:00`,
+          note:         '[Rescheduled by client via manage link]',
+          actingUserId: 0,
+        });
+        result = { new_appt_id: r.new_appt_id, mode: 'rescheduled' };
+      } else {
+        // Rebook: old row stays Canceled (its 'canceled' hook event already
+        // fired). Direct createAppt copy; hook event 'rebooked' references
+        // the canceled appt.
+        const r = await apptService.createAppt(req.db, {
+          contact_id:    appt.appt_client_id,
+          case_id:       appt.appt_case_id || '',
+          appt_length:   Number(appt.appt_length),
+          appt_type:     appt.appt_type,
+          appt_platform: appt.appt_platform,
+          appt_date:     `${start}:00`,
+          appt_with:     Number(appt.appt_with),
+          note:          '[Rebooked by client via manage link]',
+          appt_view_id:  appt.appt_view_id,
+          hook_event:    'rebooked',
+          hook_rescheduled_from: appt.appt_id,
+          actingUserId:  0,
+        });
+        result = { new_appt_id: r.appt_id, mode: 'rebooked' };
+        // Log on the old (still-Canceled) appt so staff see the link.
+        apptService.insertApptLog(req.db, appt.appt_id, 0, {
+          'New Appt': r.appt_id,
+          Note: 'Rebooked by client via manage link',
+        }).catch(e => console.error('[manage] rebook log failed:', e.message));
+      }
     } finally {
       if (locked) {
         await conn.query('SELECT RELEASE_LOCK(?)', [lockKey])
@@ -488,7 +583,8 @@ router.post('/api/m/:token/reschedule', async (req, res) => {
       [result.new_appt_id]
     );
 
-    // Optional reschedule SMS — resolved against the NEW appt.
+    // Optional reschedule SMS — resolved against the NEW appt (covers
+    // rebooks too; one client-facing template for "you have a new time").
     fireManageSms(req.db, cfg.reschedule_template, {
       contactId: appt.appt_client_id,
       apptId:    result.new_appt_id,
@@ -497,6 +593,7 @@ router.post('/api/m/:token/reschedule', async (req, res) => {
 
     res.json({
       success:   true,
+      mode:      result.mode,            // 'rescheduled' | 'rebooked'
       new_token: newRow?.appt_manage_token || null,
       start,
     });

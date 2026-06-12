@@ -368,6 +368,98 @@ async function fetchApptWithContact(db, apptId) {
   return appt || null;
 }
 
+// ─────────────────────────────────────────────────────────────
+// VIEW LIFECYCLE HOOKS (Scheduler Slice 9b)
+//
+// Appts carry appts.appt_view_id — the booking_views row they were booked
+// (or rebooked) through; NULL for internal/legacy/court-created appts.
+// When that view has a hook_id, lifecycle events fire the SAME hook the
+// original booking fired, tagged with an `event` field so one external
+// endpoint sees the full slot lifecycle:
+//
+//   created           — new appt (public booking, or any createAppt caller
+//                       that passes appt_view_id)
+//   rescheduled       — rescheduleAppt successor; payload carries
+//                       rescheduled_from = old appt_id. The old appt gets
+//                       no separate event — one event describes the move.
+//   rebooked          — new appt created from a Canceled one (client manage
+//                       page); rescheduled_from = the canceled appt_id.
+//                       Distinct from `rescheduled` because the consumer
+//                       already received that appt's `canceled` event.
+//   canceled          — cancelAppt on a view-originated appt
+//   rescheduled_later — rescheduleLater teardown (slot freed, no successor)
+//
+// markAttended / markNoShow deliberately do NOT fire — these hooks describe
+// slot lifecycle for the booking-page owner, not outcome tracking.
+//
+// Centralized HERE (not in routes/booking.js, which previously fired the
+// create event itself) so staff-initiated reschedules/cancels and the
+// future portal all notify identically. Fire-and-forget; failures alert.
+// Payload keys are a superset of the old booking.js payload
+// ({appt_id, contact_id, provider, start, view_slug, source}) + event
+// [+ rescheduled_from], so any hook filter written against the old shape
+// keeps working.
+// ─────────────────────────────────────────────────────────────
+
+// Lazy-require to avoid circular dependency
+// (hookService → internal_functions → apptService)
+function getHookService() {
+  return require('./hookService');
+}
+
+/** 'YYYY-MM-DD HH:mm' wall string from a naive-local string or fake-UTC Date. */
+function wallClockStr(dt) {
+  if (!dt) return null;
+  if (dt instanceof Date) return dt.toISOString().slice(0, 16).replace('T', ' ');
+  return String(dt).replace('T', ' ').slice(0, 16);
+}
+
+/**
+ * Fire the appt's originating view hook for a lifecycle event.
+ * No-op when appt_view_id is NULL, the view is gone, or it has no hook_id.
+ * The view's `active` flag is deliberately NOT checked — an appt booked
+ * while the view was live should still report its cancel/reschedule after
+ * the view is retired. The hook row itself must be active (same rule as
+ * the old booking.js firing).
+ */
+function fireViewHook(db, { appt_view_id, event, appt_id, contact_id,
+                            provider, start, rescheduled_from = null }) {
+  const viewId = Number(appt_view_id);
+  if (!Number.isInteger(viewId) || viewId <= 0) return;
+  (async () => {
+    const [[view]] = await db.query(
+      'SELECT slug, source_tag, hook_id FROM booking_views WHERE id = ? LIMIT 1',
+      [viewId]
+    );
+    if (!view || !view.hook_id) return;
+    const [[hook]] = await db.query(
+      'SELECT slug FROM hooks WHERE id = ? AND active = 1 LIMIT 1',
+      [view.hook_id]
+    );
+    if (!hook) {
+      console.warn(`[APPT SERVICE] view hook_id=${view.hook_id} (view=${view.slug}) not found/inactive — '${event}' event discarded`);
+      return;
+    }
+    const payload = {
+      event,
+      appt_id,
+      contact_id: contact_id ?? null,
+      provider:   provider ?? null,
+      start:      start || null,
+      view_slug:  view.slug,
+      source:     view.source_tag || null,
+    };
+    if (rescheduled_from) payload.rescheduled_from = rescheduled_from;
+    await getHookService().executeHook(db, hook.slug, payload);
+  })().catch(err => alert(db, {
+    source: 'app', kind: 'appt_view_hook_failed', severity: 'error',
+    group_key: `appt_view_hook:${viewId}`,
+    title: 'Appointment lifecycle hook failed',
+    message: `view_id=${viewId} appt=${appt_id} event=${event}: ${err.message}`,
+  }));
+}
+
+
 /**
  * Send appointment confirmation SMS and/or email. Fire-and-forget — never
  * throws; each channel failure is logged and swallowed so a messaging problem
@@ -497,7 +589,15 @@ async function createAppt(db, {
   confirm_sms     = false,
   confirm_email   = false,
   confirm_message = '',
-  actingUserId    = 0
+  actingUserId    = 0,
+  // Scheduler Slice 9b — view linkage + lifecycle hook context.
+  // appt_view_id: booking_views.id this appt was booked through (NULL for
+  // internal callers). hook_event/hook_rescheduled_from let rescheduleAppt
+  // and the manage-page rebook tag the view hook correctly; defaults give
+  // plain bookings a 'created' event.
+  appt_view_id    = null,
+  hook_event      = 'created',
+  hook_rescheduled_from = null
 }) {
   // Validation
   if (!contact_id) throw new Error('Missing contact_id');
@@ -532,11 +632,14 @@ async function createAppt(db, {
       `INSERT INTO appts
          (appt_client_id, appt_case_id, appt_type, appt_length,
           appt_platform, appt_date, appt_date_utc, appt_status, appt_with,
-          appt_note, appt_source, appt_manage_token, appt_create_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?, ?, NOW())`,
+          appt_note, appt_source, appt_manage_token, appt_view_id,
+          appt_create_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?, ?, ?, NOW())`,
       [contact_id, case_id, appt_type, appt_length,
        appt_platform, appt_date, apptDateUTC, appt_with, note,
-       appt_source, manageToken]
+       appt_source, manageToken,
+       Number.isInteger(Number(appt_view_id)) && Number(appt_view_id) > 0
+         ? Number(appt_view_id) : null]
     );
     apptId = result.insertId;
 
@@ -657,6 +760,17 @@ async function createAppt(db, {
   } catch (err) {
     console.error('[APPT SERVICE] Reminder automation failed:', err.message);
   }
+
+  // 7b) View lifecycle hook (fire-and-forget; no-op without appt_view_id)
+  fireViewHook(db, {
+    appt_view_id,
+    event:            hook_event,
+    appt_id:          apptId,
+    contact_id,
+    provider:         Number(appt_with),
+    start:            wallClockStr(appt_date),
+    rescheduled_from: hook_rescheduled_from,
+  });
 
   // 8) Re-fetch the created appointment
   const [[appt]] = await db.query('SELECT * FROM appts WHERE appt_id = ?', [apptId]);
@@ -927,6 +1041,17 @@ async function cancelAppt(db, {
     }).catch(err => console.error('[APPT SERVICE] Confirmation wrapper failed:', err.message));
   }
 
+  // 7b) View lifecycle hook (appt came from fetchApptWithContact —
+  //     appts.* includes appt_view_id; NULL → no-op)
+  fireViewHook(db, {
+    appt_view_id: appt.appt_view_id,
+    event:        'canceled',
+    appt_id,
+    contact_id:   appt.appt_client_id,
+    provider:     Number(appt.appt_with),
+    start:        wallClockStr(appt.appt_date),
+  });
+
   // 8) GCal delete
   if (cancel_gcal && appt.appt_gcal) {
     deleteApptCalendarEvent(db, appt.appt_gcal, 'cancel');
@@ -1010,7 +1135,12 @@ async function rescheduleAppt(db, {
     confirm_sms:     sms,
     confirm_email:   email,
     confirm_message: (sms || email) ? confirm_message : '',
-    actingUserId
+    actingUserId,
+    // Slice 9b: branding/hook linkage survives the move; the successor
+    // fires ONE 'rescheduled' event referencing the old appt.
+    appt_view_id:          oldAppt.appt_view_id,
+    hook_event:            'rescheduled',
+    hook_rescheduled_from: appt_id
   });
 
   // 5) Log on old appointment
@@ -1051,7 +1181,7 @@ async function rescheduleLater(db, {
   if (!appt_id) throw new Error('rescheduleLater requires appt_id');
 
   const [[appt]] = await db.query(
-    'SELECT appt_id, appt_client_id, appt_gcal, appt_gcal_user, appt_with FROM appts WHERE appt_id = ?',
+    'SELECT appt_id, appt_client_id, appt_gcal, appt_gcal_user, appt_with, appt_view_id, appt_date FROM appts WHERE appt_id = ?',
     [appt_id]
   );
   if (!appt) throw new Error('Appointment not found');
@@ -1068,6 +1198,16 @@ async function rescheduleLater(db, {
   // 2) Cancel appt-scoped automation
   cancelApptAutomation(db, appt_id, 'appointment_rescheduled_later')
     .catch(err => console.error('[APPT SERVICE] cancelApptAutomation (rescheduleLater) failed:', err.message));
+
+  // 2c) View lifecycle hook — slot freed with no successor
+  fireViewHook(db, {
+    appt_view_id: appt.appt_view_id,
+    event:        'rescheduled_later',
+    appt_id,
+    contact_id:   appt.appt_client_id,
+    provider:     Number(appt.appt_with),
+    start:        wallClockStr(appt.appt_date),
+  });
 
   // 2b) GCal delete (non-blocking)
   if (appt.appt_gcal) {
