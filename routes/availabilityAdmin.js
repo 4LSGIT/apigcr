@@ -11,13 +11,13 @@
  *     GET    /api/user-availability            ?user=<id> filters; all rows incl. inactive
  *     POST   /api/user-availability
  *     PATCH  /api/user-availability/:id        (merged-row validation)
- *     DELETE /api/user-availability/:id        SOFT (active=0)
+ *     DELETE /api/user-availability/:id        SOFT (active=0); ?hard=1 → real DELETE
  *
  *   availability_blocks (personal time off, per provider)
  *     GET    /api/availability-blocks          ?user=<id>; upcoming by default, ?all=1 for history
  *     POST   /api/availability-blocks
  *     PATCH  /api/availability-blocks/:id
- *     DELETE /api/availability-blocks/:id      SOFT
+ *     DELETE /api/availability-blocks/:id      SOFT; ?hard=1 → real DELETE
  *
  *   firm_blocks (firm-wide closures)
  *     GET    /api/firm-blocks                  upcoming by default, ?all=1 for history
@@ -29,11 +29,18 @@
  *                                              (firmBlocksService upserts those columns on
  *                                              every run; `active` is never touched, so a
  *                                              deactivation survives regeneration).
- *     DELETE /api/firm-blocks/:id              SOFT, any row
+ *     DELETE /api/firm-blocks/:id              SOFT, any row — NO hard option:
+ *                                              hard-deleting a generated row would
+ *                                              just be re-inserted (active=1) by the
+ *                                              next Hebcal run; deactivation is the
+ *                                              only durable off-switch.
  *
- * Soft delete throughout (mirrors booking-views): the availability engine
- * reads active=1 only, so deactivation takes effect immediately while the
- * row survives for re-activation (PATCH {active:1}).
+ * Soft delete is the default throughout (mirrors booking-views): the
+ * availability engine reads active=1 only, so deactivation takes effect
+ * immediately while the row survives for re-activation (PATCH {active:1}).
+ * user_availability and availability_blocks additionally accept ?hard=1 on
+ * DELETE for permanent removal — pure config rows, no FKs, nothing
+ * regenerates them.
  *
  * All datetimes are firm-local naive wall time — the same convention as
  * every availability-engine source (see availabilityService's timezone
@@ -253,13 +260,14 @@ router.patch('/api/user-availability/:id', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// Soft delete by default; ?hard=1 removes the row permanently.
 router.delete('/api/user-availability/:id', jwtOrApiKey, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (!id) return err400(res, 'Invalid id');
-    const [upd] = await req.db.query(
-      'UPDATE user_availability SET active = 0 WHERE id = ?', [id]
-    );
+    const [upd] = req.query.hard === '1'
+      ? await req.db.query('DELETE FROM user_availability WHERE id = ?', [id])
+      : await req.db.query('UPDATE user_availability SET active = 0 WHERE id = ?', [id]);
     if (upd.affectedRows === 0) return res.status(404).json({ status: 'error', message: 'Row not found' });
     res.json({ status: 'success' });
   } catch (err) {
@@ -384,13 +392,14 @@ router.patch('/api/availability-blocks/:id', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// Soft delete by default; ?hard=1 removes the row permanently.
 router.delete('/api/availability-blocks/:id', jwtOrApiKey, async (req, res) => {
   try {
     const id = parseId(req.params.id);
     if (!id) return err400(res, 'Invalid id');
-    const [upd] = await req.db.query(
-      'UPDATE availability_blocks SET active = 0 WHERE id = ?', [id]
-    );
+    const [upd] = req.query.hard === '1'
+      ? await req.db.query('DELETE FROM availability_blocks WHERE id = ?', [id])
+      : await req.db.query('UPDATE availability_blocks SET active = 0 WHERE id = ?', [id]);
     if (upd.affectedRows === 0) return res.status(404).json({ status: 'error', message: 'Block not found' });
     res.json({ status: 'success' });
   } catch (err) {

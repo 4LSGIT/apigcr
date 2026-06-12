@@ -321,11 +321,17 @@ function _normalizeAllDay({ event_all_day, event_time }) {
  *
  * event_with scopes which provider's booking availability a timed event
  * blocks: NULL = blocks ALL providers (firm-wide, the historic default);
- * an id = blocks ONLY that provider. Consumed by availabilityService's
- * normalizeBusyForProvider — semantics defined there, not here.
+ * a provider id = blocks ONLY that provider; 0 = blocks NOBODY (a timed
+ * event that should not carve any calendar — 0 is the automation user,
+ * which can never be a bookable provider, and the availability engine's
+ * filters `event_with IS NULL OR event_with IN (providerIds)` /
+ * `event_with !== pid` naturally exclude it with no engine change).
+ * Consumed by availabilityService's normalizeBusyForProvider — semantics
+ * defined there, not here.
  *
  *   - null / '' / undefined → null (firm-wide)
- *   - integer               → must be a users.user with does_appts = 1
+ *   - 0                     → 0 (blocks nobody)
+ *   - positive integer      → must be a users.user with does_appts = 1
  *                             (a non-provider id would be a silent no-op
  *                             for every provider — reject loudly instead)
  *   - anything else         → throw
@@ -337,9 +343,10 @@ function _normalizeAllDay({ event_all_day, event_time }) {
 async function _normalizeEventWith(db, v) {
   if (v === undefined || v === null || v === '') return null;
   const id = Number(v);
-  if (!Number.isInteger(id) || id <= 0) {
-    throw new Error('event_with must be a positive integer user id or null');
+  if (!Number.isInteger(id) || id < 0) {
+    throw new Error('event_with must be a provider user id, 0 (blocks nobody), or null (blocks everyone)');
   }
+  if (id === 0) return 0; // sentinel: blocks NOBODY
   const [[row]] = await db.query(
     'SELECT user FROM users WHERE user = ? AND does_appts = 1 LIMIT 1', [id]
   );

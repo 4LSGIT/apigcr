@@ -965,6 +965,7 @@
         <th>Title</th>
         <th>Date</th>
         <th>Time</th>
+        <th>Blocks</th>
         <th>Status</th>
         <th>Linked</th>
         <th>Location</th>
@@ -1079,6 +1080,21 @@
             const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
             const timeStr = allDay ? "All day" : (ev.event_time ? String(ev.event_time).slice(0, 5) : "");
             const esc = (s) => escHtml(s == null ? "" : String(s));
+            // Blocks cell (events.event_with): whose booking availability this
+            // timed event carves. NULL = everyone (firm-wide); an id = that
+            // provider only. All-day events never block → blank.
+            let blocks = "";
+            if (!allDay) {
+              if (ev.event_with == null) {
+                blocks = "Everyone";
+              } else if (Number(ev.event_with) === 0) {
+                blocks = "Nobody";
+              } else {
+                const wu = (window.firmData?.users || [])
+                  .find(u => Number(u.user) === Number(ev.event_with));
+                blocks = esc(wu ? wu.user_name : `#${ev.event_with}`);
+              }
+            }
             // Linked cell → addFile link (matches the rest of the page).
             // case_number rows: docket verbatim; clickable only when the
             // docket currently resolves to a case (resolved_case_id from the
@@ -1104,6 +1120,7 @@
               <td>${esc(ev.event_title)}</td>
               <td>${date}</td>
               <td>${timeStr}</td>
+              <td>${blocks}</td>
               <td>${esc(ev.event_status)}</td>
               <td>${linked}</td>
               <td>${esc(ev.event_location)}</td>`;
@@ -1995,7 +2012,7 @@
   <button class="big-button" onclick="showClioCode()"><i class="fa-solid fa-c fa-2xl"></i><br><br>Get Clio Code</button>
   <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
   <br><br>
-  <button class="big-button" onclick=""><i class="fa-solid fa-pizza-slice fa-2xl"></i><br><br>hold it!</button>
+  <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
   <button class="big-button" onclick=""><i class="fa-solid fa-burger fa-2xl"></i><br><br>hold what?</button>
   <button class="big-button" onclick=""><i class="fa-solid fa-cat fa-2xl"></i><br><br>the place!</button>
 
@@ -2023,6 +2040,9 @@
   </div>
   <div id="courtPreviewDiv" class="more-panel" style="display:none">
     <iframe data-src="/courtpreview.html"></iframe>
+  </div>
+  <div id="availabilityDiv" class="more-panel" style="display:none">
+    <iframe data-src="/availabilitymanager.html"></iframe>
   </div>
 </div>
 <script>

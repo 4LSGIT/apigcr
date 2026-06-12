@@ -2435,7 +2435,9 @@ function newApptDialog(opts = {}) {
 
    Blocks calendar of (events.event_with): timed events block booking
    availability. Default "Everyone (firm-wide)" = event_with NULL = blocks
-   every provider (historic behavior); picking a provider blocks only theirs.
+   every provider (historic behavior); picking a provider blocks only theirs;
+   "Nobody" = event_with 0 = a timed event that carves no calendar at all
+   (the engine's NULL-or-provider-id filters naturally exclude 0).
    All-day events never block availability — the field hides with the time
    row and is sent null, like event_length.
    ────────────────────────────────────────────────────────────────────────── */
@@ -2699,6 +2701,7 @@ function newEventDialog(opts = {}) {
                 <label>Blocks calendar of</label>
                 <select id="neBlocksWith">
                   <option value=""${!existingWith ? ' selected' : ''}>Everyone (firm-wide)</option>
+                  <option value="0"${existingWith === '0' ? ' selected' : ''}>Nobody (doesn't block)</option>
                   ${blocksWithOptions}
                 </select>
               </div>

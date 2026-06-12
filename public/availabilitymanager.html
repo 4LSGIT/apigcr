@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Availability</title>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
   /* Palette matches bookingviewsmanager.html / redirects.html / pageManager.html —
      staff feature pages share this. */
@@ -338,6 +339,28 @@ function showToast(msg) {
   clearTimeout(showToast._t);
   showToast._t = setTimeout(() => t.classList.remove('show'), 1800);
 }
+/**
+ * Dark-themed SweetAlert2 confirm matching the page palette.
+ * @returns {Promise<boolean>} true if confirmed
+ */
+async function confirmSwal({ title, html, confirmText = 'OK', danger = false }) {
+  const res = await Swal.fire({
+    title,
+    html,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: confirmText,
+    cancelButtonText: 'Cancel',
+    background: '#161a22',
+    color: '#e6e9ef',
+    iconColor: danger ? '#ff6b6b' : '#fbbf24',
+    confirmButtonColor: danger ? '#ff6b6b' : '#6ea8fe',
+    cancelButtonColor: '#1d2230',
+    reverseButtons: true,
+    focusCancel: danger,
+  });
+  return res.isConfirmed;
+}
 function statusBadge(active) {
   return active
     ? '<span class="badge on">Active</span>'
@@ -412,6 +435,7 @@ function renderUA() {
         <td class="actions-cell">
           <button data-action="edit" data-id="${r.id}">Edit</button>
           <button data-action="toggle" data-id="${r.id}" class="${r.active ? 'danger' : ''}">${r.active ? 'Deactivate' : 'Activate'}</button>
+          <button data-action="delete" data-id="${r.id}" class="danger">Delete</button>
         </td>
       </tr>`).join('');
 
@@ -425,6 +449,7 @@ function renderUA() {
     const id = Number(btn.dataset.id);
     btn.addEventListener('click', () => {
       if (btn.dataset.action === 'edit') openUAEditor(id);
+      else if (btn.dataset.action === 'delete') deleteUA(id);
       else toggleUA(id);
     });
   });
@@ -487,6 +512,27 @@ async function toggleUA(id) {
   }
 }
 
+async function deleteUA(id) {
+  const r = state.ua.find(x => x.id === id);
+  if (!r) return;
+  const ok = await confirmSwal({
+    title: 'Delete hours?',
+    html: `<b>${WEEKDAYS[r.weekday]} ${fmtTime12(r.start_time)} – ${fmtTime12(r.end_time)}</b> ` +
+          `for ${esc(providerName(E('ua-provider').value))}<br>` +
+          `<span style="color:#8a93a6;font-size:12px">This cannot be undone — use Deactivate to keep the row.</span>`,
+    confirmText: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/user-availability/${id}?hard=1`, 'DELETE');
+    showToast('Deleted');
+    await loadUA();
+  } catch (err) {
+    showToast('Delete failed: ' + (err.message || 'unknown error'));
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
 // 2. Personal blocks
 // ─────────────────────────────────────────────────────────────
@@ -518,6 +564,7 @@ function renderAB() {
         <td class="actions-cell">
           <button data-action="edit" data-id="${r.id}">Edit</button>
           <button data-action="toggle" data-id="${r.id}" class="${r.active ? 'danger' : ''}">${r.active ? 'Deactivate' : 'Activate'}</button>
+          <button data-action="delete" data-id="${r.id}" class="danger">Delete</button>
         </td>
       </tr>`).join('');
 
@@ -531,6 +578,7 @@ function renderAB() {
     const id = Number(btn.dataset.id);
     btn.addEventListener('click', () => {
       if (btn.dataset.action === 'edit') openABEditor(id);
+      else if (btn.dataset.action === 'delete') deleteAB(id);
       else toggleAB(id);
     });
   });
@@ -583,6 +631,28 @@ async function toggleAB(id) {
     await loadAB();
   } catch (err) {
     showToast('Update failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+async function deleteAB(id) {
+  const r = state.ab.find(x => x.id === id);
+  if (!r) return;
+  const ok = await confirmSwal({
+    title: 'Delete block?',
+    html: `<b>${fmtDT(r.block_start)} → ${fmtDT(r.block_end)}</b>` +
+          `${r.reason ? ` (${esc(r.reason)})` : ''} ` +
+          `for ${esc(providerName(E('ab-provider').value))}<br>` +
+          `<span style="color:#8a93a6;font-size:12px">This cannot be undone — use Deactivate to keep the row.</span>`,
+    confirmText: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/availability-blocks/${id}?hard=1`, 'DELETE');
+    showToast('Deleted');
+    await loadAB();
+  } catch (err) {
+    showToast('Delete failed: ' + (err.message || 'unknown error'));
   }
 }
 
@@ -678,9 +748,13 @@ async function toggleFB(id) {
   const r = state.fb.find(x => x.id === id);
   if (!r) return;
   if (r.active && r.source !== 'manual') {
-    const ok = window.confirm(
-      `Deactivate this ${r.source.replace('_', ' ')} closure (${r.label || ''})? ` +
-      `The booking engine will offer slots during it. The setting survives Hebcal regeneration.`);
+    const ok = await confirmSwal({
+      title: `Deactivate ${r.source.replace('_', ' ')} closure?`,
+      html: `<b>${esc(r.label || '')}</b><br>${fmtDT(r.block_start)} → ${fmtDT(r.block_end)}<br>` +
+            `<span style="color:#8a93a6;font-size:12px">The booking engine will offer slots during it. ` +
+            `The setting survives Hebcal regeneration.</span>`,
+      confirmText: 'Deactivate',
+    });
     if (!ok) return;
   }
   try {
