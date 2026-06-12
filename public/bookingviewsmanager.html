@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Booking Views</title>
+<style>
+  /* Palette matches redirects.html / pageManager.html — staff feature pages share this. */
+  :root {
+    --bg: #0f1117;
+    --panel: #161a22;
+    --panel-2: #1d2230;
+    --border: #2a3040;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+    --accent: #6ea8fe;
+    --accent-2: #82c0ff;
+    --danger: #ff6b6b;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+  }
+  body { display: flex; flex-direction: column; min-height: 100vh; }
+
+  .panel-host { flex: 1; overflow: auto; min-height: 0; }
+  .panel { padding: 14px 16px; }
+
+  /* ── List ──────────────────────────────────────────────────── */
+  .list-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .list-header h2 { margin: 0; font-size: 14px; font-weight: 600; }
+  .list-header .right { display: flex; gap: 6px; align-items: center; }
+
+  table.list {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    border: 1px solid var(--border); background: var(--panel);
+  }
+  table.list th, table.list td {
+    border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left;
+    vertical-align: middle;
+  }
+  table.list th {
+    background: var(--panel-2); color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; font-weight: 600;
+  }
+  table.list tbody tr { cursor: pointer; }
+  table.list tbody tr:hover { background: var(--panel-2); }
+  table.list .actions-cell { white-space: nowrap; }
+  table.list .actions-cell button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; margin-right: 4px;
+  }
+  table.list .actions-cell button:hover { border-color: var(--accent); }
+  table.list .actions-cell button.danger:hover { border-color: var(--danger); color: var(--danger); }
+  .empty-row td { color: var(--muted); padding: 16px; text-align: center; font-style: italic; }
+
+  .slug-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent-2); }
+  .muted { color: var(--muted); }
+
+  /* ── Buttons / badges ──────────────────────────────────────── */
+  .btn {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+    transition: border-color 0.12s, background 0.12s;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: #001; border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn.small { padding: 3px 8px; font-size: 11px; }
+
+  .badge {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    padding: 2px 7px; border-radius: 10px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    border: 1px solid var(--border);
+  }
+  .badge.on  { background: rgba(74, 222, 128, 0.15); color: var(--ok);    border-color: rgba(74,222,128,0.4); }
+  .badge.off { background: rgba(138, 147, 166, 0.15); color: var(--muted); border-color: var(--border); }
+
+  /* ── Mint-link helper card ─────────────────────────────────── */
+  .mint-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 14px;
+  }
+  .mint-card h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em; }
+  .mint-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .mint-row input, .mint-row select {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 7px 10px; font-size: 12.5px;
+  }
+  .mint-row input:focus, .mint-row select:focus { outline: none; border-color: var(--accent); }
+  .mint-result {
+    margin-top: 8px; display: none; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  .mint-result.show { display: flex; }
+  .mint-result code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+    color: var(--accent-2); background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 8px; word-break: break-all;
+  }
+
+  /* ── Editor modal ──────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+    display: none; align-items: flex-start; justify-content: center;
+    z-index: 100; padding: 30px 16px; overflow: auto;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    width: 100%; max-width: 760px; padding: 20px;
+  }
+  .modal h3 { margin: 0 0 14px; font-size: 15px; font-weight: 600; }
+  .modal h4 {
+    margin: 18px 0 10px; font-size: 11px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border); padding-bottom: 5px;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0 12px; }
+  @media (max-width: 640px) { .grid2, .grid4 { grid-template-columns: 1fr; } }
+
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 11px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px; }
+  .field input[type="text"], .field input[type="url"], .field input[type="number"],
+  .field select, .field textarea {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; font-size: 13px;
+    font-family: inherit;
+  }
+  .field textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .field .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .field.inline { display: flex; align-items: center; gap: 8px; }
+  .field.inline label { margin: 0; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text); }
+
+  .provider-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 4px 0; }
+  .provider-checks label {
+    display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text);
+    text-transform: none; letter-spacing: 0; cursor: pointer; margin: 0;
+  }
+
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  .modal-err {
+    background: rgba(255,107,107,0.12); border: 1px solid rgba(255,107,107,0.4);
+    color: var(--danger); border-radius: 4px; padding: 8px 10px; font-size: 12px;
+    margin-bottom: 14px; display: none;
+  }
+  .modal-err.show { display: block; }
+
+  .inline-error {
+    background: rgba(255,107,107,0.12); border: 1px solid rgba(255,107,107,0.4);
+    color: var(--danger); border-radius: 4px; padding: 8px 10px; font-size: 12px; margin-bottom: 10px;
+  }
+
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--panel-2); border: 1px solid var(--accent); color: var(--text);
+    padding: 8px 16px; border-radius: 6px; font-size: 12px; z-index: 200;
+    opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="panel-host">
+  <div class="panel">
+
+    <!-- Prefill (token) link helper -->
+    <div class="mint-card">
+      <h3>Prefill booking link</h3>
+      <div class="mint-row">
+        <input type="number" id="mint-contact" placeholder="Contact ID" min="1" style="width:120px">
+        <select id="mint-view" style="min-width:200px"></select>
+        <button class="btn" id="mint-btn">Mint link</button>
+      </div>
+      <div class="mint-result" id="mint-result">
+        <code id="mint-url"></code>
+        <button class="btn small" id="mint-copy">Copy</button>
+      </div>
+    </div>
+
+    <div id="list-region"></div>
+  </div>
+</div>
+
+<!-- Editor modal -->
+<div class="modal-backdrop" id="modal-backdrop">
+  <div class="modal">
+    <h3 id="modal-title">New Booking View</h3>
+    <div class="modal-err" id="modal-err"></div>
+
+    <h4>Page</h4>
+    <div class="grid2">
+      <div class="field">
+        <label for="f-slug">Slug</label>
+        <input type="text" id="f-slug" placeholder="consult" autocomplete="off" spellcheck="false">
+        <div class="hint">Public URL: /book/&lt;slug&gt;. Letters, numbers, _ and - only.</div>
+      </div>
+      <div class="field">
+        <label for="f-title">Title</label>
+        <input type="text" id="f-title" placeholder="Book a Consultation" maxlength="200">
+      </div>
+    </div>
+    <div class="field">
+      <label for="f-subtitle">Subtitle (optional)</label>
+      <input type="text" id="f-subtitle" maxlength="500">
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label for="f-accent">Accent color (optional)</label>
+        <input type="text" id="f-accent" placeholder="#2563eb" maxlength="20">
+      </div>
+      <div class="field">
+        <label for="f-logo">Logo URL (optional)</label>
+        <input type="url" id="f-logo" placeholder="https://..." maxlength="500">
+      </div>
+    </div>
+    <div class="field inline">
+      <input type="checkbox" id="f-active" checked>
+      <label for="f-active">Active (public page is live)</label>
+    </div>
+
+    <h4>Appointment</h4>
+    <div class="grid2">
+      <div class="field">
+        <label for="f-appt-type">Appointment type</label>
+        <input type="text" id="f-appt-type" placeholder="Consultation" maxlength="60">
+      </div>
+      <div class="field">
+        <label for="f-platform">Platform</label>
+        <select id="f-platform">
+          <option value="telephone">telephone</option>
+          <option value="Zoom">Zoom</option>
+          <option value="in-person">in-person</option>
+        </select>
+      </div>
+    </div>
+    <div class="grid4">
+      <div class="field">
+        <label for="f-length">Length (min)</label>
+        <input type="number" id="f-length" min="1" max="127" value="30">
+      </div>
+      <div class="field">
+        <label for="f-granularity">Granularity (min)</label>
+        <input type="number" id="f-granularity" min="5" value="15">
+      </div>
+      <div class="field">
+        <label for="f-buffer">Buffer (min)</label>
+        <input type="number" id="f-buffer" min="0" value="0">
+      </div>
+      <div class="field">
+        <label for="f-notice">Min notice (min)</label>
+        <input type="number" id="f-notice" min="0" value="120">
+      </div>
+    </div>
+    <div class="grid2">
+      <div class="field">
+        <label for="f-horizon">Horizon (days)</label>
+        <input type="number" id="f-horizon" min="1" max="365" value="30">
+      </div>
+      <div class="field">
+        <label for="f-source">Source tag (optional → appts.appt_source)</label>
+        <input type="text" id="f-source" maxlength="60">
+      </div>
+    </div>
+
+    <h4>Providers</h4>
+    <div class="grid2">
+      <div class="field">
+        <label for="f-provider-mode">Provider mode</label>
+        <select id="f-provider-mode">
+          <option value="fixed_one">fixed_one — one provider, never shown</option>
+          <option value="client_choice">client_choice — client picks from a list</option>
+          <option value="any_auto">any_auto — auto-assign, least loaded</option>
+        </select>
+        <div class="hint" id="provider-mode-hint"></div>
+      </div>
+      <div class="field">
+        <label>Providers</label>
+        <div class="provider-checks" id="f-providers"></div>
+      </div>
+    </div>
+
+    <h4>Identity &amp; form</h4>
+    <div class="grid2">
+      <div class="field">
+        <label for="f-identity">Identity mode</label>
+        <select id="f-identity">
+          <option value="public">public — name/phone form</option>
+          <option value="prefill">prefill — token links (?c=)</option>
+        </select>
+        <div class="hint">Token links always work either way; this records the view's intent.</div>
+      </div>
+      <div class="field inline" style="margin-top:22px">
+        <input type="checkbox" id="f-collect-note">
+        <label for="f-collect-note">Collect a note ("Anything we should know?")</label>
+      </div>
+    </div>
+
+    <h4>Confirmation &amp; hook</h4>
+    <div class="field">
+      <label for="f-confirm-template">Confirmation template (optional)</label>
+      <textarea id="f-confirm-template" rows="3"></textarea>
+      <div class="hint">Placeholders: <code>{{contacts.contact_fname}}</code>, <code>{{appts.appt_date}}</code>, <code>{{appts.appt_type}}</code></div>
+    </div>
+    <div class="grid2">
+      <div class="field inline">
+        <input type="checkbox" id="f-confirm-sms">
+        <label for="f-confirm-sms">Send confirmation SMS</label>
+      </div>
+      <div class="field inline">
+        <input type="checkbox" id="f-confirm-email">
+        <label for="f-confirm-email">Send confirmation email</label>
+      </div>
+    </div>
+    <div class="field">
+      <label for="f-hook">Hook (optional, fires after booking)</label>
+      <select id="f-hook"><option value="">— none —</option></select>
+    </div>
+
+    <h4>Thank-you</h4>
+    <div class="field">
+      <label for="f-thankyou">Thank-you HTML (optional)</label>
+      <textarea id="f-thankyou" rows="3" placeholder="&lt;p&gt;Thank you — your appointment has been booked.&lt;/p&gt;"></textarea>
+      <div class="hint">Rendered as trusted HTML in the widget after a successful booking.</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn" id="f-cancel" type="button">Cancel</button>
+      <button class="btn primary" id="f-save" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Parent bridge ───────────────────────────────────────────
+// Iframe may load before the parent shell finishes auth/boot — the boot
+// block at the BOTTOM of this script waits for apiSend (same pattern as
+// pageManager.html; must run last to avoid the const TDZ).
+let api = null;
+
+// ── State ───────────────────────────────────────────────────
+const state = { views: [], providers: [], hooks: [], editingId: null };
+
+// ── Helpers ─────────────────────────────────────────────────
+const E = (id) => document.getElementById(id);
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s == null ? '' : String(s);
+  return d.innerHTML;
+}
+function showToast(msg) {
+  const t = E('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => t.classList.remove('show'), 1800);
+}
+async function copyText(text, okMsg) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(okMsg);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try { document.execCommand('copy'); showToast(okMsg); }
+    catch { showToast('Copy failed'); }
+    document.body.removeChild(ta);
+  }
+}
+function publicUrl(v) {
+  return `${window.location.origin}/book/${v.slug}`;
+}
+function embedSnippet(v) {
+  return `<iframe src="${publicUrl(v)}" style="width:100%;height:700px;border:0"></iframe>`;
+}
+function statusBadge(v) {
+  return v.active
+    ? '<span class="badge on">Active</span>'
+    : '<span class="badge off">Inactive</span>';
+}
+function fmtDate(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  return isNaN(dt.getTime()) ? '' : dt.toLocaleDateString();
+}
+function providerNames(v) {
+  const ids = Array.isArray(v.provider_ids) ? v.provider_ids : [];
+  const byId = new Map(state.providers.map(p => [p.id, p.name]));
+  return ids.map(id => byId.get(id) || `#${id}`).join(', ');
+}
+
+// ── Reference data ──────────────────────────────────────────
+async function loadProviders() {
+  const data = await api('/api/booking-views/providers', 'GET');
+  state.providers = data.providers || [];
+}
+async function loadHooks() {
+  try {
+    const data = await api('/api/hooks', 'GET');
+    state.hooks = (data.hooks || []).filter(h => h.active);
+  } catch {
+    state.hooks = []; // hook dropdown just stays empty
+  }
+}
+
+// ── List ────────────────────────────────────────────────────
+async function loadViews() {
+  const region = E('list-region');
+  try {
+    const data = await api('/api/booking-views', 'GET');
+    state.views = data.views || [];
+    renderList();
+    renderMintViewSelect();
+  } catch (err) {
+    region.innerHTML = `<div class="inline-error">Failed to load booking views: ${esc(err.message)}</div>`;
+  }
+}
+
+function renderList() {
+  const region = E('list-region');
+  const rows = state.views;
+  const body = rows.length === 0
+    ? `<tr class="empty-row"><td colspan="7">No booking views yet — click "+ New View" to add one.</td></tr>`
+    : rows.map(listRow).join('');
+
+  region.innerHTML = `
+    <div class="list-header">
+      <h2>Booking Views</h2>
+      <div class="right">
+        <button class="btn primary" id="new-btn">+ New View</button>
+      </div>
+    </div>
+    <table class="list">
+      <thead>
+        <tr>
+          <th>Slug</th>
+          <th>Title</th>
+          <th>Type / Length</th>
+          <th>Providers</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  `;
+
+  E('new-btn').addEventListener('click', () => openEditor(null));
+
+  region.querySelectorAll('tr[data-id]').forEach(tr => {
+    const id = Number(tr.dataset.id);
+    const v = state.views.find(x => x.id === id);
+    tr.addEventListener('click', e => {
+      if (e.target.closest('.actions-cell')) return;
+      openEditor(id);
+    });
+    tr.querySelector('button[data-action=embed]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      copyText(embedSnippet(v), 'Embed snippet copied');
+    });
+    tr.querySelector('button[data-action=link]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      copyText(publicUrl(v), 'Link copied');
+    });
+    tr.querySelector('button[data-action=test]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      window.open(publicUrl(v), '_blank');
+    });
+    tr.querySelector('button[data-action=toggle]')?.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleActive(v);
+    });
+  });
+}
+
+function listRow(v) {
+  const mode = { fixed_one: 'fixed', client_choice: 'choice', any_auto: 'auto' }[v.provider_mode] || v.provider_mode;
+  return `
+    <tr data-id="${v.id}">
+      <td class="slug-cell">${esc(v.slug)}</td>
+      <td>${esc(v.title)}</td>
+      <td>${esc(v.appt_type)} <span class="muted">· ${v.appt_length}m</span></td>
+      <td title="${esc(providerNames(v))}">${esc(mode)} <span class="muted">(${(v.provider_ids || []).length})</span></td>
+      <td>${statusBadge(v)}</td>
+      <td class="muted">${fmtDate(v.created_at)}</td>
+      <td class="actions-cell">
+        <button data-action="embed" title="Copy iframe embed snippet">Embed</button>
+        <button data-action="link" title="Copy direct link">Link</button>
+        <button data-action="test" title="Open in a new tab">Test</button>
+        <button data-action="toggle" class="${v.active ? 'danger' : ''}">${v.active ? 'Deactivate' : 'Activate'}</button>
+      </td>
+    </tr>
+  `;
+}
+
+async function toggleActive(v) {
+  if (v.active) {
+    const ok = window.confirm(`Deactivate "${v.slug}"? The public page /book/${v.slug} will stop working immediately. The config is kept and can be re-activated.`);
+    if (!ok) return;
+  }
+  try {
+    if (v.active) {
+      await api(`/api/booking-views/${v.id}`, 'DELETE'); // soft delete = active 0
+    } else {
+      await api(`/api/booking-views/${v.id}`, 'PATCH', { active: 1 });
+    }
+    await loadViews();
+  } catch (err) {
+    alert('Update failed: ' + (err.message || 'unknown error'));
+  }
+}
+
+// ── Editor ──────────────────────────────────────────────────
+const PROVIDER_MODE_HINTS = {
+  fixed_one:     'Exactly one provider. Never shown to the visitor.',
+  client_choice: 'Visitor picks from the checked providers ("With" dropdown).',
+  any_auto:      'Visitor never sees providers; least-loaded checked provider gets the booking.',
+};
+
+function renderProviderChecks(selectedIds) {
+  const sel = new Set((selectedIds || []).map(Number));
+  E('f-providers').innerHTML = state.providers.map(p => `
+    <label><input type="checkbox" value="${p.id}" ${sel.has(p.id) ? 'checked' : ''}> ${esc(p.name)}</label>
+  `).join('') || '<span class="muted">No appointment providers found (users.does_appts=1).</span>';
+}
+
+function renderHookSelect(selectedId) {
+  E('f-hook').innerHTML = '<option value="">— none —</option>' +
+    state.hooks.map(h =>
+      `<option value="${h.id}" ${Number(selectedId) === h.id ? 'selected' : ''}>${h.id} — ${esc(h.slug)}</option>`
+    ).join('');
+}
+
+function openEditor(id) {
+  state.editingId = id;
+  const v = id ? state.views.find(x => x.id === id) : null;
+
+  E('modal-title').textContent = v ? `Edit Booking View — ${v.slug}` : 'New Booking View';
+  E('f-slug').value     = v ? v.slug : '';
+  E('f-title').value    = v ? v.title : '';
+  E('f-subtitle').value = v && v.subtitle ? v.subtitle : '';
+  E('f-accent').value   = v && v.accent_color ? v.accent_color : '';
+  E('f-logo').value     = v && v.logo_url ? v.logo_url : '';
+  E('f-active').checked = v ? !!v.active : true;
+
+  E('f-appt-type').value   = v ? v.appt_type : '';
+  E('f-platform').value    = v ? v.platform : 'telephone';
+  E('f-length').value      = v ? v.appt_length : 30;
+  E('f-granularity').value = v ? v.granularity_min : 15;
+  E('f-buffer').value      = v ? v.buffer_min : 0;
+  E('f-notice').value      = v ? v.min_notice_min : 120;
+  E('f-horizon').value     = v ? v.horizon_days : 30;
+  E('f-source').value      = v && v.source_tag ? v.source_tag : '';
+
+  E('f-provider-mode').value = v ? v.provider_mode : 'client_choice';
+  E('provider-mode-hint').textContent = PROVIDER_MODE_HINTS[E('f-provider-mode').value];
+  renderProviderChecks(v ? v.provider_ids : []);
+
+  E('f-identity').value         = v ? v.identity_mode : 'public';
+  E('f-collect-note').checked   = v ? !!v.collect_note : false;
+  E('f-confirm-template').value = v && v.confirm_template ? v.confirm_template : '';
+  E('f-confirm-sms').checked    = v ? !!v.confirm_sms : false;
+  E('f-confirm-email').checked  = v ? !!v.confirm_email : false;
+  renderHookSelect(v ? v.hook_id : null);
+  E('f-thankyou').value = v && v.thankyou_html ? v.thankyou_html : '';
+
+  hideErr();
+  E('modal-backdrop').classList.add('open');
+  E('f-slug').focus();
+}
+
+function closeEditor() {
+  E('modal-backdrop').classList.remove('open');
+  state.editingId = null;
+}
+
+function showErr(msg) {
+  const el = E('modal-err');
+  el.textContent = msg;
+  el.classList.add('show');
+  el.scrollIntoView({ block: 'nearest' });
+}
+function hideErr() {
+  E('modal-err').classList.remove('show');
+}
+
+function collectPayload() {
+  const providerIds = [...E('f-providers').querySelectorAll('input:checked')]
+    .map(cb => Number(cb.value));
+  return {
+    slug:             E('f-slug').value.trim(),
+    title:            E('f-title').value.trim(),
+    subtitle:         E('f-subtitle').value.trim() || null,
+    accent_color:     E('f-accent').value.trim() || null,
+    logo_url:         E('f-logo').value.trim() || null,
+    active:           E('f-active').checked ? 1 : 0,
+    appt_type:        E('f-appt-type').value.trim(),
+    platform:         E('f-platform').value,
+    appt_length:      Number(E('f-length').value),
+    granularity_min:  Number(E('f-granularity').value),
+    buffer_min:       Number(E('f-buffer').value),
+    min_notice_min:   Number(E('f-notice').value),
+    horizon_days:     Number(E('f-horizon').value),
+    source_tag:       E('f-source').value.trim() || null,
+    provider_mode:    E('f-provider-mode').value,
+    provider_ids:     providerIds,
+    identity_mode:    E('f-identity').value,
+    collect_note:     E('f-collect-note').checked ? 1 : 0,
+    confirm_template: E('f-confirm-template').value.trim() || null,
+    confirm_sms:      E('f-confirm-sms').checked ? 1 : 0,
+    confirm_email:    E('f-confirm-email').checked ? 1 : 0,
+    hook_id:          E('f-hook').value ? Number(E('f-hook').value) : null,
+    thankyou_html:    E('f-thankyou').value.trim() || null,
+  };
+}
+
+function clientValidate(p) {
+  if (!p.slug) return 'Slug is required.';
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(p.slug)) {
+    return 'Slug may contain only letters, numbers, _ and - (max 100).';
+  }
+  if (!p.title) return 'Title is required.';
+  if (!p.appt_type) return 'Appointment type is required.';
+  if (!Number.isInteger(p.appt_length) || p.appt_length < 1 || p.appt_length > 127) {
+    return 'Length must be 1–127 minutes.';
+  }
+  if (!Number.isInteger(p.granularity_min) || p.granularity_min < 5) {
+    return 'Granularity must be at least 5 minutes.';
+  }
+  if (!Number.isInteger(p.horizon_days) || p.horizon_days < 1 || p.horizon_days > 365) {
+    return 'Horizon must be 1–365 days.';
+  }
+  if (!p.provider_ids.length) return 'Check at least one provider.';
+  if (p.provider_mode === 'fixed_one' && p.provider_ids.length !== 1) {
+    return 'fixed_one mode requires exactly one provider checked.';
+  }
+  if ((p.confirm_sms || p.confirm_email) && !p.confirm_template) {
+    return 'Confirmation SMS/email is on but the template is empty — nothing would be sent.';
+  }
+  return null;
+}
+
+async function saveView() {
+  hideErr();
+  const payload = collectPayload();
+  const errMsg = clientValidate(payload);
+  if (errMsg) return showErr(errMsg);
+
+  const saveBtn = E('f-save');
+  saveBtn.disabled = true;
+  try {
+    if (state.editingId) {
+      await api(`/api/booking-views/${state.editingId}`, 'PATCH', payload);
+    } else {
+      await api('/api/booking-views', 'POST', payload);
+    }
+    closeEditor();
+    await loadViews();
+    showToast('Saved');
+  } catch (err) {
+    showErr(err.message || 'Save failed.');
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+// ── Mint-link helper ────────────────────────────────────────
+function renderMintViewSelect() {
+  const sel = E('mint-view');
+  const prev = sel.value;
+  sel.innerHTML = state.views
+    .filter(v => v.active)
+    .map(v => `<option value="${esc(v.slug)}">${esc(v.slug)} — ${esc(v.title)}</option>`)
+    .join('') || '<option value="">(no active views)</option>';
+  if (prev) sel.value = prev;
+}
+
+async function mintLink() {
+  const contactId = parseInt(E('mint-contact').value, 10);
+  const viewSlug = E('mint-view').value;
+  E('mint-result').classList.remove('show');
+  if (!Number.isInteger(contactId) || contactId <= 0) {
+    return showToast('Enter a valid contact ID');
+  }
+  if (!viewSlug) return showToast('Pick a view');
+  const btn = E('mint-btn');
+  btn.disabled = true;
+  try {
+    const data = await api(`/api/contacts/${contactId}/booking-link`, 'POST', {});
+    const url = `${window.location.origin}/book/${viewSlug}?c=${data.token}`;
+    E('mint-url').textContent = url;
+    E('mint-result').classList.add('show');
+  } catch (err) {
+    showToast('Mint failed: ' + (err.message || 'unknown error'));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Init / boot ─────────────────────────────────────────────
+function init() {
+  E('f-cancel').addEventListener('click', closeEditor);
+  E('f-save').addEventListener('click', saveView);
+  E('f-provider-mode').addEventListener('change', () => {
+    E('provider-mode-hint').textContent = PROVIDER_MODE_HINTS[E('f-provider-mode').value];
+  });
+  E('modal-backdrop').addEventListener('click', e => {
+    if (e.target === E('modal-backdrop')) closeEditor();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && E('modal-backdrop').classList.contains('open')) closeEditor();
+  });
+  E('mint-btn').addEventListener('click', mintLink);
+  E('mint-copy').addEventListener('click', () => copyText(E('mint-url').textContent, 'Prefill link copied'));
+
+  Promise.all([loadProviders(), loadHooks()])
+    .catch(() => {}) // reference data failures shouldn't block the list
+    .then(loadViews);
+}
+
+(function waitForParent() {
+  const P = window.top;
+  if (P && P.apiSend) {
+    api = (path, method = 'GET', data) => P.apiSend(path, method, data);
+    return init();
+  }
+  setTimeout(waitForParent, 100);
+})();
+</script>
+
+</body>
+</html>

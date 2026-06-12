@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Book an Appointment</title>
+<style>
+  /*
+   * Public booking widget — Scheduler Slice 6b.
+   * Self-contained: runs inside third-party iframes, zero shell deps.
+   * Light, neutral theme; --accent is overridden from view config.
+   */
+  :root {
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --bg: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --panel: #f9fafb;
+    --danger: #b91c1c;
+    --danger-bg: #fef2f2;
+    --ok-bg: #f0fdf4;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.45;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 16px 14px 40px; }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  .head { text-align: center; margin-bottom: 14px; }
+  .head img.logo { max-height: 56px; max-width: 220px; margin-bottom: 8px; }
+  .head h1 { margin: 0; font-size: 20px; font-weight: 700; }
+  .head .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+
+  .section-label {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: 0.05em;
+    margin: 18px 0 8px;
+  }
+  .tz-note { font-size: 11.5px; color: var(--muted); font-weight: 400;
+    text-transform: none; letter-spacing: 0; }
+
+  /* ── Date strip ─────────────────────────────────────────── */
+  .date-strip {
+    display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 8px;
+    -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+  }
+  .date-chip {
+    flex: 0 0 auto; min-width: 58px; padding: 7px 6px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); cursor: pointer; text-align: center;
+    font-size: 12px; color: var(--text);
+  }
+  .date-chip .dow { display: block; font-size: 11px; color: var(--muted); }
+  .date-chip .dom { display: block; font-size: 15px; font-weight: 600; margin-top: 1px; }
+  .date-chip.selected {
+    border-color: var(--accent); background: var(--accent); color: var(--accent-text);
+  }
+  .date-chip.selected .dow { color: var(--accent-text); opacity: 0.85; }
+
+  /* ── Provider ───────────────────────────────────────────── */
+  select, input[type="text"], input[type="tel"], input[type="email"], textarea {
+    width: 100%; padding: 10px 12px; font-size: 15px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-family: inherit;
+  }
+  select:focus, input:focus, textarea:focus {
+    outline: none; border-color: var(--accent);
+  }
+
+  /* ── Slots ──────────────────────────────────────────────── */
+  .slots {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  }
+  @media (min-width: 420px) { .slots { grid-template-columns: repeat(4, 1fr); } }
+  .slot {
+    padding: 10px 4px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); cursor: pointer; text-align: center;
+    font-size: 14px; font-weight: 500; color: var(--text);
+  }
+  .slot.selected {
+    border-color: var(--accent); background: var(--accent); color: var(--accent-text);
+  }
+  .slots-msg { color: var(--muted); font-size: 14px; padding: 8px 2px; }
+
+  /* ── Details ────────────────────────────────────────────── */
+  .field { margin-bottom: 12px; }
+  .field label {
+    display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px;
+  }
+  .field label .req { color: var(--danger); }
+  .saved-note {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 12px; font-size: 14px; color: var(--muted);
+  }
+
+  /* Honeypot: off-screen, NOT display:none (some bots skip hidden inputs). */
+  .hp-field {
+    position: absolute; left: -9999px; top: -9999px;
+    height: 1px; width: 1px; overflow: hidden;
+  }
+
+  /* ── Messages / button ──────────────────────────────────── */
+  .msg {
+    border-radius: 8px; padding: 10px 12px; font-size: 14px; margin: 12px 0;
+    display: none;
+  }
+  .msg.show { display: block; }
+  .msg.error { background: var(--danger-bg); color: var(--danger); border: 1px solid #fecaca; }
+  .msg.info  { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+
+  .book-btn {
+    width: 100%; padding: 14px; margin-top: 8px;
+    background: var(--accent); color: var(--accent-text);
+    border: none; border-radius: 10px;
+    font-size: 16px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  .book-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* ── States ─────────────────────────────────────────────── */
+  .state { text-align: center; padding: 48px 16px; color: var(--muted); }
+  .thankyou { padding: 24px 4px; }
+  .hidden { display: none !important; }
+
+  .spinner {
+    display: inline-block; width: 18px; height: 18px;
+    border: 2px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <!-- Boot / unavailable states -->
+  <div class="state" id="state-loading"><span class="spinner"></span>&nbsp; Loading…</div>
+  <div class="state hidden" id="state-unavailable">
+    Sorry — this booking page isn't available.
+  </div>
+
+  <!-- Main flow -->
+  <div class="hidden" id="main">
+    <div class="head">
+      <img class="logo hidden" id="logo" alt="">
+      <h1 id="title"></h1>
+      <p class="subtitle hidden" id="subtitle"></p>
+    </div>
+
+    <div class="hidden" id="provider-section">
+      <div class="section-label">With</div>
+      <select id="provider"></select>
+    </div>
+
+    <div class="section-label">Pick a date</div>
+    <div class="date-strip" id="date-strip"></div>
+
+    <div class="section-label">Pick a time <span class="tz-note">— Times shown in Eastern Time</span></div>
+    <div id="slots-region">
+      <div class="slots-msg">Select a date.</div>
+    </div>
+
+    <div id="details-section">
+      <div class="section-label">Your details</div>
+
+      <div class="saved-note hidden" id="saved-note">
+        Booking with your saved details.
+      </div>
+
+      <div id="identity-fields">
+        <div class="field">
+          <label for="f-first">First name <span class="req">*</span></label>
+          <input type="text" id="f-first" autocomplete="given-name" maxlength="20">
+        </div>
+        <div class="field">
+          <label for="f-last">Last name <span class="req">*</span></label>
+          <input type="text" id="f-last" autocomplete="family-name" maxlength="30">
+        </div>
+        <div class="field">
+          <label for="f-phone">Phone <span class="req">*</span></label>
+          <input type="tel" id="f-phone" autocomplete="tel" inputmode="tel">
+        </div>
+        <div class="field">
+          <label for="f-email">Email</label>
+          <input type="email" id="f-email" autocomplete="email" maxlength="50">
+        </div>
+      </div>
+
+      <div class="field hidden" id="note-field">
+        <label for="f-note">Anything we should know?</label>
+        <textarea id="f-note" rows="3" maxlength="500"></textarea>
+      </div>
+
+      <!-- Honeypot -->
+      <div class="hp-field" aria-hidden="true">
+        <label for="website">Website</label>
+        <input type="text" id="website" name="website" tabindex="-1" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="msg error" id="err-msg"></div>
+    <div class="msg info" id="info-msg"></div>
+
+    <button class="book-btn" id="book-btn" disabled>Select a time</button>
+  </div>
+
+  <!-- Thank-you (replaces #main on success) -->
+  <div class="thankyou hidden" id="thankyou"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Context from the URL ────────────────────────────────────
+  // /book/<slug> — slug is the last path segment.
+  var slug = location.pathname.split('/').filter(Boolean).pop() || '';
+  var qs = new URLSearchParams(location.search);
+  var token = qs.get('c') || '';
+
+  var FIRM_TZ = 'America/New_York'; // matches the server's FIRM_TZ; label says Eastern
+
+  // ── State ───────────────────────────────────────────────────
+  var cfg = null;             // /config payload (incl. ts/sig)
+  var selectedDate = null;    // 'YYYY-MM-DD'
+  var selectedSlot = null;    // 'YYYY-MM-DD HH:mm'
+  var slotFetchSeq = 0;       // stale-response guard
+  var slotDebounce = null;
+  var tokenMode = false;      // true → no identity fields rendered
+  var submitting = false;
+
+  // ── DOM helpers ─────────────────────────────────────────────
+  function E(id) { return document.getElementById(id); }
+  function show(id) { E(id).classList.remove('hidden'); }
+  function hide(id) { E(id).classList.add('hidden'); }
+  function esc(s) {
+    var d = document.createElement('div');
+    d.textContent = s == null ? '' : String(s);
+    return d.innerHTML;
+  }
+  function setErr(msg) {
+    var el = E('err-msg');
+    if (msg) { el.textContent = msg; el.classList.add('show'); }
+    else el.classList.remove('show');
+  }
+  function setInfo(msg) {
+    var el = E('info-msg');
+    if (msg) { el.textContent = msg; el.classList.add('show'); }
+    else el.classList.remove('show');
+  }
+
+  // ── Date / time formatting (wall-clock digits, NO TZ math) ──
+  // Server slots are firm-local 'YYYY-MM-DD HH:mm' strings. We format the
+  // digits as-is; the section is labeled "Eastern Time".
+  function fmtTime(hhmm) {
+    var h = parseInt(hhmm.slice(0, 2), 10);
+    var m = hhmm.slice(3, 5);
+    var ampm = h < 12 ? 'AM' : 'PM';
+    var h12 = ((h + 11) % 12) + 1;
+    return h12 + ':' + m + ' ' + ampm;
+  }
+  // 'YYYY-MM-DD' → local-safe Date (noon avoids DST/UTC day-shift) for labels.
+  function dateObj(ymd) {
+    var p = ymd.split('-');
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);
+  }
+  function fmtSlotLong(slot) { // 'Tue, Jun 16 · 2:30 PM'
+    var d = dateObj(slot.slice(0, 10));
+    var day = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    return day + ' \u00B7 ' + fmtTime(slot.slice(11, 16));
+  }
+
+  // Firm-local "today" via Intl — the horizon window is firm-local, and a
+  // visitor in another timezone shouldn't see an off-by-one first day.
+  function firmToday() {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: FIRM_TZ, year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(new Date()); // 'YYYY-MM-DD'
+  }
+  function addDays(ymd, n) {
+    var p = ymd.split('-');
+    var d = new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2]) + n));
+    return d.toISOString().slice(0, 10);
+  }
+
+  // ── API ─────────────────────────────────────────────────────
+  function apiGet(path) {
+    return fetch(path, { headers: { 'Accept': 'application/json' } })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; })
+          .then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
+      });
+  }
+  function apiPost(path, data) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(data),
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; })
+        .then(function (j) { return { ok: r.ok, status: r.status, body: j }; });
+    });
+  }
+
+  // ── Boot ────────────────────────────────────────────────────
+  function boot() {
+    if (!slug) return showUnavailable();
+    apiGet('/api/book/' + encodeURIComponent(slug) + '/config')
+      .then(function (r) {
+        if (!r.ok) return showUnavailable();
+        cfg = r.body;
+        renderShell();
+      })
+      .catch(showUnavailable);
+  }
+
+  function showUnavailable() {
+    hide('state-loading');
+    show('state-unavailable');
+  }
+
+  function renderShell() {
+    hide('state-loading');
+
+    if (cfg.accent_color && /^#?[a-zA-Z0-9(),.% #-]{1,20}$/.test(cfg.accent_color)) {
+      document.documentElement.style.setProperty('--accent', cfg.accent_color);
+    }
+    if (cfg.logo_url) {
+      E('logo').src = cfg.logo_url;
+      show('logo');
+    }
+    E('title').textContent = cfg.title || 'Book an Appointment';
+    document.title = cfg.title || 'Book an Appointment';
+    if (cfg.subtitle) {
+      E('subtitle').textContent = cfg.subtitle;
+      show('subtitle');
+    }
+
+    // Provider select — only in client_choice mode (cfg.providers non-null).
+    if (Array.isArray(cfg.providers) && cfg.providers.length) {
+      var sel = E('provider');
+      sel.innerHTML = cfg.providers.map(function (p) {
+        return '<option value="' + Number(p.id) + '">' + esc(p.name) + '</option>';
+      }).join('');
+      sel.addEventListener('change', function () { scheduleSlotFetch(); });
+      show('provider-section');
+    }
+
+    // Identity: token in URL → no PII fields at all.
+    tokenMode = !!token;
+    if (tokenMode) {
+      show('saved-note');
+      hide('identity-fields');
+    }
+    if (cfg.collect_note) show('note-field');
+
+    buildDateStrip();
+    wireDetails();
+    E('book-btn').addEventListener('click', submit);
+    show('main');
+
+    // Auto-select today.
+    selectDate(firmToday());
+  }
+
+  // ── Date strip ──────────────────────────────────────────────
+  function buildDateStrip() {
+    var strip = E('date-strip');
+    var today = firmToday();
+    var horizon = Math.max(0, Number(cfg.horizon_days) || 0);
+    var html = '';
+    for (var i = 0; i <= horizon; i++) {
+      var ymd = addDays(today, i);
+      var d = dateObj(ymd);
+      var dow = d.toLocaleDateString(undefined, { weekday: 'short' });
+      var dom = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      html += '<div class="date-chip" data-date="' + ymd + '">' +
+              '<span class="dow">' + esc(dow) + '</span>' +
+              '<span class="dom">' + esc(dom) + '</span></div>';
+    }
+    strip.innerHTML = html;
+    strip.addEventListener('click', function (e) {
+      var chip = e.target.closest('.date-chip');
+      if (chip) selectDate(chip.dataset.date);
+    });
+  }
+
+  function selectDate(ymd) {
+    selectedDate = ymd;
+    selectedSlot = null;
+    updateBookBtn();
+    var chips = E('date-strip').querySelectorAll('.date-chip');
+    chips.forEach(function (c) {
+      c.classList.toggle('selected', c.dataset.date === ymd);
+    });
+    scheduleSlotFetch();
+  }
+
+  // ── Slots (debounce + stale guard) ──────────────────────────
+  function scheduleSlotFetch() {
+    clearTimeout(slotDebounce);
+    E('slots-region').innerHTML = '<div class="slots-msg"><span class="spinner"></span>&nbsp; Loading times…</div>';
+    slotDebounce = setTimeout(fetchSlots, 250);
+  }
+
+  function fetchSlots() {
+    if (!selectedDate) return;
+    var seq = ++slotFetchSeq;
+    var url = '/api/book/' + encodeURIComponent(slug) + '/slots?date=' + selectedDate;
+    var provSel = E('provider');
+    if (!E('provider-section').classList.contains('hidden') && provSel.value) {
+      url += '&provider=' + encodeURIComponent(provSel.value);
+    }
+    apiGet(url).then(function (r) {
+      if (seq !== slotFetchSeq) return; // stale response — a newer fetch is in flight
+      if (!r.ok) {
+        var msg = r.status === 429
+          ? 'Too many requests — please wait a moment and pick the date again.'
+          : 'Could not load times — please try again.';
+        E('slots-region').innerHTML = '<div class="slots-msg">' + esc(msg) + '</div>';
+        return;
+      }
+      renderSlots(r.body.slots || []);
+    }).catch(function () {
+      if (seq !== slotFetchSeq) return;
+      E('slots-region').innerHTML = '<div class="slots-msg">Could not load times — please try again.</div>';
+    });
+  }
+
+  function renderSlots(slots) {
+    var region = E('slots-region');
+    if (!slots.length) {
+      region.innerHTML = '<div class="slots-msg">No times available this day.</div>';
+      return;
+    }
+    region.innerHTML = '<div class="slots">' + slots.map(function (s) {
+      return '<div class="slot" data-slot="' + esc(s) + '">' + fmtTime(s.slice(11, 16)) + '</div>';
+    }).join('') + '</div>';
+    region.querySelector('.slots').addEventListener('click', function (e) {
+      var el = e.target.closest('.slot');
+      if (!el) return;
+      selectedSlot = el.dataset.slot;
+      region.querySelectorAll('.slot').forEach(function (x) {
+        x.classList.toggle('selected', x === el);
+      });
+      setErr(null);
+      updateBookBtn();
+    });
+  }
+
+  // ── Details / button state ──────────────────────────────────
+  function wireDetails() {
+    ['f-first', 'f-last', 'f-phone', 'f-email'].forEach(function (id) {
+      E(id).addEventListener('input', updateBookBtn);
+    });
+  }
+
+  function identityValid() {
+    if (tokenMode) return true;
+    var first = E('f-first').value.trim();
+    var last  = E('f-last').value.trim();
+    var phoneDigits = E('f-phone').value.replace(/\D/g, '');
+    return !!(first && last && phoneDigits.length >= 10);
+  }
+
+  function updateBookBtn() {
+    var btn = E('book-btn');
+    if (submitting) { btn.disabled = true; return; }
+    if (!selectedSlot) {
+      btn.disabled = true;
+      btn.textContent = 'Select a time';
+      return;
+    }
+    btn.textContent = 'Book ' + fmtSlotLong(selectedSlot);
+    btn.disabled = !identityValid();
+  }
+
+  // ── Submit ──────────────────────────────────────────────────
+  function submit() {
+    if (!selectedSlot || submitting) return;
+    if (!identityValid()) {
+      setErr(tokenMode ? 'Something went wrong — please try again.'
+                       : 'Please fill in your first name, last name, and phone number.');
+      return;
+    }
+    setErr(null); setInfo(null);
+    submitting = true;
+    var btn = E('book-btn');
+    btn.disabled = true;
+    btn.textContent = 'Booking\u2026';
+
+    var payload = {
+      start: selectedSlot,
+      website: E('website').value, // honeypot — humans leave it empty
+      ts: cfg.ts,
+      sig: cfg.sig,
+    };
+    if (!E('provider-section').classList.contains('hidden')) {
+      payload.provider = Number(E('provider').value);
+    }
+    if (token) payload.c = token;
+    if (!tokenMode) {
+      payload.first = E('f-first').value.trim();
+      payload.last  = E('f-last').value.trim();
+      payload.phone = E('f-phone').value.trim();
+      var em = E('f-email').value.trim();
+      if (em) payload.email = em;
+    }
+    if (cfg.collect_note) {
+      var note = E('f-note').value.trim();
+      if (note) payload.note = note;
+    }
+
+    apiPost('/api/book/' + encodeURIComponent(slug), payload)
+      .then(handleBookResponse)
+      .catch(function () {
+        finishSubmit();
+        setErr('Something went wrong — please try again, or call us.');
+      });
+  }
+
+  function finishSubmit() {
+    submitting = false;
+    updateBookBtn();
+  }
+
+  function handleBookResponse(r) {
+    if (r.ok && r.body && r.body.success) {
+      // thankyou_html is trusted admin content (booking_views.thankyou_html).
+      E('thankyou').innerHTML = r.body.thankyou_html || '<p>Thank you — your appointment has been booked.</p>';
+      hide('main');
+      show('thankyou');
+      try { window.scrollTo(0, 0); } catch (e) {}
+      return;
+    }
+
+    finishSubmit();
+    var code = r.body && r.body.code;
+
+    if (r.status === 409 && code === 'slot_taken') {
+      setErr('Sorry — that time was just taken. Please pick another.');
+      selectedSlot = null;
+      updateBookBtn();
+      scheduleSlotFetch(); // auto-refresh the day's slots
+      return;
+    }
+
+    if (r.status === 400 && code === 'stale_form') {
+      // Old tab: re-fetch config for a fresh ts/sig — keep every entered
+      // field — and let them press Book again.
+      setInfo('This page sat open a while — we refreshed it. Please press Book again.');
+      apiGet('/api/book/' + encodeURIComponent(slug) + '/config').then(function (cr) {
+        if (cr.ok) {
+          cfg.ts = cr.body.ts;
+          cfg.sig = cr.body.sig;
+        } else {
+          setErr('Could not refresh the page — please reload and try again.');
+        }
+      });
+      return;
+    }
+
+    if (code === 'invalid_token' || code === 'invalid_client') {
+      // Saved-details link didn't resolve — reveal the public fields and let
+      // them proceed (backend falls through to the public path when the
+      // fields are present alongside the token).
+      tokenMode = false;
+      hide('saved-note');
+      show('identity-fields');
+      setErr('We couldn\u2019t find your saved details — please enter your name and phone number below.');
+      updateBookBtn();
+      return;
+    }
+
+    var friendly = {
+      invalid_phone:    'Please enter a valid 10-digit phone number.',
+      missing_name:     'Please enter your first name.',
+      invalid_email:    'Please enter a valid email address (or leave it blank).',
+      invalid_provider: 'Please choose who you\u2019d like to meet with.',
+      outside_horizon:  'That date is no longer available — please pick another.',
+      invalid_start:    'That time is no longer valid — please pick another.',
+      invalid_request:  'This page has expired — please reload and try again.',
+      rate_limited:     'Too many requests — please wait a moment and try again.',
+    };
+    setErr(friendly[code] || 'Something went wrong — please try again, or call us.');
+  }
+
+  boot();
+})();
+</script>
+
+</body>
+</html>

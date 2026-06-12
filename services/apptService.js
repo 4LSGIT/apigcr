@@ -74,7 +74,8 @@ function alertGcalFailure(db, kind, detail) {
 
 /**
  * Compute the naive firm-local end-datetime string for an appointment, as
- * 'YYYY-MM-DD HH:MM:SS'. Used ONLY to set the calendar event's end time —
+ * 'YYYY-MM-DDTHH:MM:SS' (RFC3339-shaped, no offset — gcalService attaches
+ * timeZone: FIRM_TZ). Used ONLY to set the calendar event's end time —
  * the appts.appt_end column is STORED GENERATED and must never be written.
  * appt_date is stored naive-local; we add the length in FIRM_TZ so DST
  * boundaries are handled, then emit the naive local form.
@@ -86,7 +87,7 @@ function computeApptEndLocal(apptDateLocal, lengthMinutes) {
     ? DateTime.fromISO(apptDateLocal.toISOString().slice(0, 19), { zone: FIRM_TZ })
     : DateTime.fromISO(String(apptDateLocal).replace(' ', 'T').slice(0, 19), { zone: FIRM_TZ });
   if (!base.isValid) return null;
-  return base.plus({ minutes: len }).toFormat('yyyy-MM-dd HH:mm:ss');
+  return base.plus({ minutes: len }).toFormat("yyyy-MM-dd'T'HH:mm:ss");
 }
 
 /**
