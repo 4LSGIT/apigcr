@@ -51,12 +51,17 @@
  * ── Identity (POST, priority order) ──────────────────────────
  *   1. c (booking_token, 32 hex)  → contact lookup; invalid → fall through
  *      to the public path when public-identity fields were also sent, else
- *      400 invalid_token. No contact PII is EVER echoed on token/id paths.
- *   2. client (raw contact id — discouraged fallback) → same rules.
- *   3. public: first + phone required (phone must normalize to 10 digits —
- *      contactService.normalizePhone), email/last/note optional.
+ *      400 invalid_token. No contact PII is EVER echoed on the token path
+ *      (masked display via GET /contact is the only, deliberate exception).
+ *   2. public: first + last + phone required (phone must normalize to 10
+ *      digits — contactService.normalizePhone), email/note optional.
  *      Find-or-create via resolveContactsByValue → createContact. Existing
  *      match (strongest source, phone over email) is reused — no dupes.
+ *
+ * (The raw-contact-id `client` fallback was removed: with booking_token
+ * minted at contact creation + backfilled, it had no legitimate use left
+ * and was an enumeration/impersonation surface — sequential ids, books on
+ * behalf of arbitrary contacts, fires their confirmation SMS.)
  *
  * Auto-mounts via the routes/ scan in server.js. /book/:slug and
  * /api/book/:slug are ≥2 segments so the single-segment GET /:page static
@@ -441,7 +446,7 @@ function fakeSuccess(res, view) {
  * Resolve the contact for this booking. Returns
  *   { contactId }                    — resolved
  *   { error: { status, code } }      — hard failure
- * Token/id paths NEVER echo contact PII; errors carry codes only.
+ * The token path NEVER echoes contact PII; errors carry codes only.
  */
 async function resolveBookingContact(db, body) {
   const hasPublicFields =
@@ -462,24 +467,10 @@ async function resolveBookingContact(db, body) {
     // fall through to public path
   }
 
-  // ── 2. raw contact id (discouraged fallback) ──
-  else if (body.client != null && body.client !== '') {
-    const id = parseInt(body.client, 10);
-    if (Number.isInteger(id) && id > 0 && String(id) === String(body.client).trim()) {
-      const [[row]] = await db.query(
-        'SELECT contact_id FROM contacts WHERE contact_id = ? LIMIT 1',
-        [id]
-      );
-      if (row) return { contactId: row.contact_id };
-    }
-    if (!hasPublicFields) return { error: { status: 400, code: 'invalid_client' } };
-    // fall through to public path
-  }
-
-  // ── 3. public find-or-create ──
+  // ── 2. public find-or-create ──
   const first = String(body.first || '').trim();
   const last  = String(body.last  || '').trim();
-  if (!first) return { error: { status: 400, code: 'missing_name' } };
+  if (!first || !last) return { error: { status: 400, code: 'missing_name' } };
 
   const phoneNorm = contactService.normalizePhone(String(body.phone || ''));
   if (phoneNorm.length !== 10) {
@@ -513,11 +504,11 @@ async function resolveBookingContact(db, body) {
   const match = best('phone') || best('email');
   if (match) return { contactId: match.contact_id };
 
-  // Create. contact_lname is NOT NULL + required by createContact; public
-  // bookings may omit last name, so we store '-' as the placeholder.
+  // Create. contact_lname is NOT NULL + required by createContact;
+  // last is validated above, so no placeholder needed.
   const created = await contactService.createContact(db, {
     fname: first.slice(0, 20),
-    lname: (last || '-').slice(0, 30),
+    lname: last.slice(0, 30),
     phone: phoneNorm,
     email: emailNorm,
     type:  'person',                 // dominant contact_type in live data
