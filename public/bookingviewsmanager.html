@@ -367,6 +367,17 @@ let api = null;
 // ── State ───────────────────────────────────────────────────
 const state = { views: [], providers: [], hooks: [], editingId: null };
 
+// New-view defaults (existing views always show their own stored values).
+// Lifted from the test-consult view: confirmation SMS on with a templated
+// message, and a friendly thank-you. Leaving thank-you blank is fine — the
+// server falls back to a generic "your appointment has been booked" line.
+const DEFAULT_CONFIRM_TEMPLATE =
+  'Hi {{contacts.contact_fname}}, your {{appts.appt_type}} is confirmed for ' +
+  '{{appts.appt_date|date:dddd MMMM Do}} at {{appts.appt_date|time:h:mm A}}. ' +
+  'We will call you at {{contacts.contact_phone|phone}}. Reply with any questions.';
+const DEFAULT_THANKYOU_HTML =
+  '<p><strong>You\u2019re booked!</strong> We\u2019ll call you at the time you selected.</p>';
+
 // ── Helpers ─────────────────────────────────────────────────
 const E = (id) => document.getElementById(id);
 function esc(s) {
@@ -592,11 +603,11 @@ function openEditor(id) {
 
   E('f-identity').value         = v ? v.identity_mode : 'public';
   E('f-collect-note').checked   = v ? !!v.collect_note : false;
-  E('f-confirm-template').value = v && v.confirm_template ? v.confirm_template : '';
-  E('f-confirm-sms').checked    = v ? !!v.confirm_sms : false;
+  E('f-confirm-template').value = v ? (v.confirm_template || '') : DEFAULT_CONFIRM_TEMPLATE;
+  E('f-confirm-sms').checked    = v ? !!v.confirm_sms : true;
   E('f-confirm-email').checked  = v ? !!v.confirm_email : false;
   renderHookSelect(v ? v.hook_id : null);
-  E('f-thankyou').value = v && v.thankyou_html ? v.thankyou_html : '';
+  E('f-thankyou').value = v ? (v.thankyou_html || '') : DEFAULT_THANKYOU_HTML;
 
   hideErr();
   E('modal-backdrop').classList.add('open');
