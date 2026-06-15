@@ -290,8 +290,13 @@ function formatApptDate(dt) {
  *                                 All values are coerced to strings for backward
  *                                 compatibility with existing log_data consumers.
  *                                 Keys with null/undefined values are dropped.
+ * @param {string} [source]      - origin of the action ('client'|'staff'|'court'|
+ *                                 'internal'|'system'). Persisted to log_extra.source
+ *                                 (structured IT metadata — NOT folded into the
+ *                                 user-facing log_data render). Omitted/null → no
+ *                                 source key written.
  */
-async function insertApptLog(db, apptId, actingUserId, extraFields = {}) {
+async function insertApptLog(db, apptId, actingUserId, extraFields = {}, source = null) {
   // Fetch the appt row — we need type/date/link info for the log payload.
   const [[appt]] = await db.query(
     'SELECT appt_client_id, appt_case_id, appt_type, appt_date FROM appts WHERE appt_id = ?',
@@ -327,6 +332,9 @@ async function insertApptLog(db, apptId, actingUserId, extraFields = {}) {
     link_id:   linkId,
     by:        actingUserId,
     data,  // createLogEntry handles JSON.stringify internally
+    // Persist full-fidelity action origin to log_extra (structured IT data).
+    // Skipped when null so legacy/un-sourced callers leave log_extra NULL.
+    extra:     source ? { source } : null,
   });
 }
 
@@ -457,6 +465,155 @@ function fireViewHook(db, { appt_view_id, event, appt_id, contact_id,
     group_key: `appt_view_hook:${viewId}`,
     title: 'Appointment lifecycle hook failed',
     message: `view_id=${viewId} appt=${appt_id} event=${event}: ${err.message}`,
+  }));
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// STAFF OPS ALERT — client-initiated appt actions
+//
+// When a CLIENT (public booking widget or the /m/ manage page) creates,
+// reschedules, rebooks, or cancels an appointment, fire an internal FYI SMS
+// to the staff listed in app_setting `office_alerts_to` (comma-separated
+// users.user ids). Staff / court / internal / system actions send nothing.
+//
+// This is NOT a hook (hooks are view-gated and fire for ~0 appts in prod) and
+// NOT a task (FYI only). Standalone, fire-and-forget, never blocks the write.
+//
+// Single-fire dedup: a client reschedule flows rescheduleAppt → createAppt
+// (hook_event:'rescheduled'); rescheduleAppt does NOT call cancelAppt. So the
+// createAppt fire point keyed on `event` already fires exactly once per move.
+// We fire here at the SAME points the view hook fires:
+//   - createAppt: event ∈ {created, rescheduled, rebooked}
+//   - cancelAppt: event = canceled
+// each guarded by source==='client'.
+//
+// Recipients gate on a present phone only — NOT users.allow_sms. Membership in
+// office_alerts_to is itself an explicit admin opt-in (an assigned ops duty),
+// distinct from allow_sms which governs a user's own task-reminder spam.
+// Empty/unset office_alerts_to ⇒ no recipients ⇒ feature OFF.
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Friendly firm-local datetime for an ops SMS, e.g. "Mon Jun 15, 2:30 PM".
+ * Input is the naive firm-local appt_date (string 'YYYY-MM-DD HH:mm[:ss]' or a
+ * mysql2 fake-UTC Date). No timezone math — the stored value IS firm-local.
+ */
+function friendlyApptDateTime(dt) {
+  if (!dt) return '';
+  const naive = dt instanceof Date
+    ? dt.toISOString().slice(0, 19)               // fake-UTC → naive wall string
+    : String(dt).replace(' ', 'T').slice(0, 19);
+  const d = DateTime.fromISO(naive);              // zone-agnostic; treat as wall time
+  return d.isValid ? d.toFormat('ccc LLL d, h:mm a') : String(dt);
+}
+
+/**
+ * Notify office staff of a client-initiated appt action via internal SMS.
+ * Fire-and-forget — mirrors fireViewHook structurally (async IIFE, .catch→alert,
+ * never blocks the response). No-op unless source==='client'.
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {'created'|'rescheduled'|'rebooked'|'canceled'} opts.event
+ * @param {string} opts.source     - acting source; only 'client' fires
+ * @param {number} opts.apptId     - the appt the message describes (the NEW
+ *                                   successor on reschedule/rebook; the canceled
+ *                                   row on cancel)
+ * @param {string} [opts.oldStart]   - prior wall-time string (reschedule only)
+ * @param {number} [opts.oldApptId]  - prior appt id; if given and oldStart is
+ *                                     not, the prior start is looked up from it
+ */
+function notifyStaffOfClientAction(db, { event, source, apptId, oldStart = null, oldApptId = null }) {
+  if (source !== 'client') return;            // staff/court/internal/system → silent
+  (async () => {
+    const settings = await getSettings(db, ['office_alerts_to', 'sms_default_from']);
+    const rawList  = (settings.office_alerts_to || '').trim();
+    if (!rawList) return;                       // empty recipients = feature OFF
+    const smsFrom = settings.sms_default_from;
+    if (!smsFrom) {
+      console.warn('[APPT SERVICE] office alert skipped: sms_default_from unset');
+      return;
+    }
+
+    // Parse recipient user ids (comma-separated, tolerate spaces/blanks/dupes).
+    const userIds = [...new Set(
+      rawList.split(',').map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0)
+    )];
+    if (!userIds.length) return;
+
+    // Gather the appt + contact + provider facts in ONE query.
+    const [[info]] = await db.query(
+      `SELECT a.appt_type, a.appt_date, a.appt_with,
+              c.contact_name,
+              u.user_real_name AS provider_name, u.user_fname AS provider_fname
+       FROM appts a
+       LEFT JOIN contacts c ON a.appt_client_id = c.contact_id
+       LEFT JOIN users    u ON a.appt_with      = u.user
+       WHERE a.appt_id = ? LIMIT 1`,
+      [apptId]
+    );
+    if (!info) {
+      console.warn(`[APPT SERVICE] office alert: appt ${apptId} not found, skipping`);
+      return;
+    }
+
+    // Resolve the prior start for a reschedule message, if not supplied.
+    let resolvedOldStart = oldStart;
+    if (!resolvedOldStart && oldApptId) {
+      const [[old]] = await db.query(
+        'SELECT appt_date FROM appts WHERE appt_id = ? LIMIT 1', [oldApptId]
+      );
+      if (old) resolvedOldStart = old.appt_date;
+    }
+
+    const client   = (info.contact_name || '').trim() || `contact for appt ${apptId}`;
+    const provider = (info.provider_name || info.provider_fname || '').trim() || `provider ${info.appt_with}`;
+    const type     = (info.appt_type || 'appointment').trim();
+    const when     = friendlyApptDateTime(info.appt_date);
+    const oldWhen  = resolvedOldStart ? friendlyApptDateTime(resolvedOldStart) : '';
+
+    let body;
+    switch (event) {
+      case 'created':
+        body = `New booking: ${client} booked ${type} with ${provider} for ${when}`;
+        break;
+      case 'rebooked':
+        body = `Rebooking: ${client} rebooked ${type} with ${provider} for ${when} (after a prior cancellation)`;
+        break;
+      case 'rescheduled':
+        body = `Client reschedule: ${client} moved ${type} with ${provider} to ${when}` +
+               (oldWhen ? ` (was ${oldWhen})` : '');
+        break;
+      case 'canceled':
+        body = `Client cancel: ${client} canceled ${type} with ${provider}, was ${when}`;
+        break;
+      default:
+        console.warn(`[APPT SERVICE] office alert: unknown event '${event}' — not sending`);
+        return;
+    }
+
+    // Resolve each user id → phone (NOT gated on allow_sms — see header note).
+    const [rows] = await db.query(
+      `SELECT user, phone FROM users WHERE user IN (?)`,
+      [userIds]
+    );
+    const byId = new Map(rows.map(r => [Number(r.user), r.phone]));
+
+    for (const uid of userIds) {
+      const phone = byId.get(uid);
+      if (!phone) {
+        console.warn(`[APPT SERVICE] office alert: user ${uid} has no phone — skipped`);
+        continue;
+      }
+      smsService.sendSms(db, smsFrom, phone, body)
+        .catch(err => console.error(`[APPT SERVICE] office alert SMS to user ${uid} failed:`, err.message));
+    }
+  })().catch(err => alert(db, {
+    source: 'app', kind: 'office_alert_failed', severity: 'warning',
+    group_key: 'office_alert',
+    title: 'Office staff appt alert failed',
+    message: `event=${event} appt=${apptId}: ${err.message}`,
   }));
 }
 
@@ -664,6 +821,11 @@ async function createAppt(db, {
   confirm_email   = false,
   confirm_message = '',
   actingUserId    = 0,
+  // Origin of this action — threaded for log_extra persistence + the office
+  // staff alert. 'client' (public booking / manage-page rebook/reschedule) is
+  // the only value that triggers notifyStaffOfClientAction. Reschedule forwards
+  // its own source through here so the successor carries it.
+  source          = 'system',
   // Scheduler Slice 9b — view linkage + lifecycle hook context.
   // appt_view_id: booking_views.id this appt was booked through (NULL for
   // internal callers). hook_event/hook_rescheduled_from let rescheduleAppt
@@ -720,7 +882,7 @@ async function createAppt(db, {
     // 2) Log entry
     const logExtras = { Status: 'Created' };
     if (note) logExtras.Note = note;
-    await insertApptLog(conn, apptId, actingUserId, logExtras);
+    await insertApptLog(conn, apptId, actingUserId, logExtras, source);
 
     // 3) 341 Meeting: supersede prior 341 for this case + update case pointer
     if (appt_type === '341 Meeting' && case_id) {
@@ -849,6 +1011,17 @@ async function createAppt(db, {
     rescheduled_from: hook_rescheduled_from,
   });
 
+  // 7c) Office staff ops alert — client-initiated only (no-op otherwise).
+  //     hook_event is the single discriminator: created | rescheduled | rebooked.
+  //     For a reschedule, oldApptId = the superseded row so the SMS can show
+  //     "was <old time>". Fire-and-forget.
+  notifyStaffOfClientAction(db, {
+    event:     hook_event,
+    source,
+    apptId:    apptId,
+    oldApptId: hook_rescheduled_from,
+  });
+
   // 8) Re-fetch the created appointment
   const [[appt]] = await db.query('SELECT * FROM appts WHERE appt_id = ?', [apptId]);
 
@@ -872,7 +1045,7 @@ async function createAppt(db, {
  *   - Cancel contact-level no_show sequences
  *   - Log entry
  */
-async function markAttended(db, { appt_id, note = '', actingUserId = 0 }) {
+async function markAttended(db, { appt_id, note = '', actingUserId = 0, source = 'system' }) {
   if (!appt_id) throw new Error('markAttended requires appt_id');
 
   const [[appt]] = await db.query(
@@ -897,7 +1070,7 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0 }) {
   const logExtras = { Status: 'Attended' };
   if (appt.appt_status !== 'Scheduled') logExtras.From = appt.appt_status;
   if (note) logExtras.Note = note;
-  await insertApptLog(db, appt_id, actingUserId, logExtras);
+  await insertApptLog(db, appt_id, actingUserId, logExtras, source);
 
   // Cancel appt-scoped automation (workflow + pre_appt/iss_intake sequences)
   cancelApptAutomation(db, appt_id, 'appointment_attended')
@@ -928,7 +1101,7 @@ async function markAttended(db, { appt_id, note = '', actingUserId = 0 }) {
  *   - If enroll=true and first no-show for contact: enroll in no_show sequence
  *   - Log entry
  */
-async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId = 0 }) {
+async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId = 0, source = 'system' }) {
   if (!appt_id) throw new Error('markNoShow requires appt_id');
 
   // SELECT extended: pull contact_phone for pre-check, JOIN cases for case_type.
@@ -1019,7 +1192,7 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
   if (priorStatus !== 'Scheduled') logExtras.From = priorStatus;
   if (note) logExtras.Note = note;
   if (skipReason) logExtras.SkipReason = skipReason;
-  await insertApptLog(db, appt_id, actingUserId, logExtras);
+  await insertApptLog(db, appt_id, actingUserId, logExtras, source);
 
   return { appt_id, enrolled, skipReason };
 }
@@ -1045,7 +1218,8 @@ async function cancelAppt(db, {
   confirm_message = '',
   cancel_gcal     = true,
   create_task     = false,
-  actingUserId    = 0
+  actingUserId    = 0,
+  source          = 'system'
 }) {
   if (!appt_id) throw new Error('cancelAppt requires appt_id');
   if ((sms || email) && !confirm_message.trim()) {
@@ -1105,7 +1279,7 @@ async function cancelAppt(db, {
   if (priorStatus !== 'Scheduled') logExtras.From = priorStatus;
   if (taskId) logExtras.Task = taskId;
   if (note)   logExtras.Note = note;
-  await insertApptLog(db, appt_id, actingUserId, logExtras);
+  await insertApptLog(db, appt_id, actingUserId, logExtras, source);
 
   // 6) Return result (before non-blocking side effects)
   const result = { appt_id, taskId };
@@ -1134,6 +1308,15 @@ async function cancelAppt(db, {
     contact_id:   appt.appt_client_id,
     provider:     Number(appt.appt_with),
     start:        wallClockStr(appt.appt_date),
+  });
+
+  // 7c) Office staff ops alert — client cancels only. A client reschedule does
+  //     NOT pass through cancelAppt (rescheduleAppt UPDATEs status directly),
+  //     so this only fires on a true client cancel — no double-send.
+  notifyStaffOfClientAction(db, {
+    event:  'canceled',
+    source,
+    apptId: appt_id,
   });
 
   // 8) GCal delete
@@ -1172,7 +1355,8 @@ async function rescheduleAppt(db, {
   sms             = false,
   email           = false,
   confirm_message = '',
-  actingUserId    = 0
+  actingUserId    = 0,
+  source          = 'system'
 }) {
   if (!appt_id) throw new Error('rescheduleAppt requires appt_id');
   if (!newDate)  throw new Error('rescheduleAppt requires newDate');
@@ -1220,6 +1404,9 @@ async function rescheduleAppt(db, {
     confirm_email:   email,
     confirm_message: (sms || email) ? confirm_message : '',
     actingUserId,
+    // Carry the action source onto the successor so its createAppt fires the
+    // office alert (event 'rescheduled') and persists source on the new log.
+    source,
     // Slice 9b: branding/hook linkage survives the move; the successor
     // fires ONE 'rescheduled' event referencing the old appt.
     appt_view_id:          oldAppt.appt_view_id,
@@ -1234,7 +1421,7 @@ async function rescheduleAppt(db, {
     'New Time': newDate,
   };
   if (note) logExtras.Note = note;
-  await insertApptLog(db, appt_id, actingUserId, logExtras);
+  await insertApptLog(db, appt_id, actingUserId, logExtras, source);
 
   return { old_appt_id: appt_id, new_appt_id: newAppt.appt_id };
 }
@@ -1260,7 +1447,8 @@ async function rescheduleLater(db, {
   appt_id,
   note         = '',
   create_task  = false,
-  actingUserId = 0
+  actingUserId = 0,
+  source       = 'system'
 }) {
   if (!appt_id) throw new Error('rescheduleLater requires appt_id');
 
@@ -1323,7 +1511,7 @@ async function rescheduleLater(db, {
   const logExtras = { Status: 'Rescheduled' };
   if (taskId) logExtras.Task = taskId;
   if (note)   logExtras.Note = note;
-  await insertApptLog(db, appt_id, actingUserId, logExtras);
+  await insertApptLog(db, appt_id, actingUserId, logExtras, source);
 
   return { appt_id, taskId };
 }
@@ -1338,5 +1526,7 @@ module.exports = {
   rescheduleLater,
   cancelApptAutomation,
   insertApptLog,
-  fetchApptWithContact
+  fetchApptWithContact,
+  notifyStaffOfClientAction,
+  friendlyApptDateTime
 };

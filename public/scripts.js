@@ -1656,7 +1656,7 @@ function newContact(prefill = {}, onSuccess = null) {
           const len  = E("NCApptLen") ? E("NCApptLen").value : '';
           const plat = (document.querySelector('input[name="NCApptPlatform"]:checked') || {}).value || '';
           const type = E("NCApptType") ? E("NCApptType").value : '';
-          box.value = `This is to confirm that I scheduled you for a ${len} minute ${plat} ${type} on ${date}.`;
+          box.value = `This is to confirm that I scheduled you for a ${len} minute ${plat} ${type} on ${date}.  To view or change it: https://app.4lsg.com/m/{{appts.appt_manage_token|default:}}`;
         }
       };
     },
@@ -2150,7 +2150,7 @@ function newApptDialog(opts = {}) {
         const len  = E('naLen') ? E('naLen').value : '';
         const plat = (document.querySelector('input[name="naPlatform"]:checked') || {}).value || '';
         const type = E('naType') ? E('naType').value : '';
-        E('naConfirmMsg').value = `This is to confirm that I scheduled you for a ${len} minute ${plat} ${type} on ${date}.`;
+        E('naConfirmMsg').value = `This is to confirm that I scheduled you for a ${len} minute ${plat} ${type} on ${date}.  To view or change it: https://app.4lsg.com/m/{{appts.appt_manage_token|default:}}`;
       }
     }
   }

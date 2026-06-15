@@ -179,7 +179,8 @@ router.post('/api/appts', jwtOrApiKey, async (req, res) => {
   try {
     const result = await apptService.createAppt(req.db, {
       ...req.body,
-      actingUserId: req.auth?.userId || 0
+      actingUserId: req.auth?.userId || 0,
+      source:       'staff'   // after spread — staff shell, body can't override
     });
     res.json({
       status: 'success',
@@ -202,7 +203,8 @@ router.post('/api/appts/:id/attended', jwtOrApiKey, async (req, res) => {
     await apptService.markAttended(req.db, {
       appt_id:      apptId,
       note:         (req.body.note || '').trim(),
-      actingUserId: req.auth?.userId || 0
+      actingUserId: req.auth?.userId || 0,
+      source:       'staff'
     });
     res.json({ status: 'success', title: 'Success!', message: 'Appointment marked Attended!' });
   } catch (err) {
@@ -222,7 +224,8 @@ router.post('/api/appts/:id/no-show', jwtOrApiKey, async (req, res) => {
       appt_id:      apptId,
       note:         (req.body.note || '').trim(),
       enroll:       req.body.enroll === true,
-      actingUserId: req.auth?.userId || 0
+      actingUserId: req.auth?.userId || 0,
+      source:       'staff'
     });
 
     const message =
@@ -266,7 +269,8 @@ router.post('/api/appts/cancel', jwtOrApiKey, async (req, res) => {
       confirm_message,
       cancel_gcal,
       create_task,
-      actingUserId: req.auth?.userId || 0
+      actingUserId: req.auth?.userId || 0,
+      source:       'staff'
     });
 
     // Non-blocking side effects (SMS, email, GCal) already fired inside service.
@@ -313,7 +317,8 @@ router.post('/api/appts/reschedule', jwtOrApiKey, async (req, res) => {
         sms,
         email,
         confirm_message: msg,
-        actingUserId:    req.auth?.userId || 0
+        actingUserId:    req.auth?.userId || 0,
+        source:          'staff'
       });
 
       res.json({
@@ -328,7 +333,8 @@ router.post('/api/appts/reschedule', jwtOrApiKey, async (req, res) => {
         appt_id:      apptId,
         note,
         create_task:  createTask,
-        actingUserId: req.auth?.userId || 0
+        actingUserId: req.auth?.userId || 0,
+        source:       'staff'
       });
 
       const message = result.taskId

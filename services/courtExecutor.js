@@ -424,6 +424,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
           appt_platform: platform,
           appt_date: apptLocal,
           note: apptNote,
+          source: 'court',
         });
         apptId = res.appt_id;
       }
@@ -821,6 +822,7 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
             cancel_gcal: true,
             note: 'court action revert',
             actingUserId,
+            source: 'court',
           });
         } catch (cancelErr) {
           console.error(`[courtExecutor] revert cancelAppt(${entity_id}) failed:`, cancelErr.message);

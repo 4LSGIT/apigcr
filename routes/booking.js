@@ -601,6 +601,7 @@ async function bookUnderLock(db, view, providerId, dateStr, start, contactId, no
       confirm_sms:   false,           // confirmations are template-driven below
       confirm_email: false,
       actingUserId:  0,
+      source:        'client',        // public booking widget — fires office alert
     });
     return { apptId: result.appt_id };
   } finally {

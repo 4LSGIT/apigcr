@@ -570,6 +570,7 @@ router.post('/api/m/:token/cancel', async (req, res) => {
         note:         '[Canceled by client via manage link]',
         cancel_gcal:  true,
         actingUserId: 0,
+        source:       'client',
       });
     } catch (err) {
       // Two-tab race: the guard above read 'Scheduled' but another request
@@ -689,6 +690,7 @@ router.post('/api/m/:token/reschedule', async (req, res) => {
           newDate:      `${start}:00`,
           note:         '[Rescheduled by client via manage link]',
           actingUserId: 0,
+          source:       'client',
         });
         result = { new_appt_id: r.new_appt_id, mode: 'rescheduled' };
       } else {
@@ -708,6 +710,7 @@ router.post('/api/m/:token/reschedule', async (req, res) => {
           hook_event:    'rebooked',
           hook_rescheduled_from: appt.appt_id,
           actingUserId:  0,
+          source:        'client',
         });
         result = { new_appt_id: r.appt_id, mode: 'rebooked' };
         // Log on the old (still-Canceled) appt so staff see the link.
