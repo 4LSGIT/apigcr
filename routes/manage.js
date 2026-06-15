@@ -67,7 +67,9 @@
  *
  * Auto-mounts via the routes/ scan in server.js. /m/:token and /api/m/…
  * are ≥2 path segments, so the single-segment GET /:page static catch-all
- * never intercepts them (same reasoning as /p/:slug, /book/:slug).
+ * never intercepts them (same reasoning as /p/:slug, /book/:slug). The
+ * tokenless GET /m IS single-segment, but /:page calls next() for it
+ * (no public/m.html), so it still reaches this router → branded fallback.
  */
 
 const express = require('express');
@@ -359,18 +361,31 @@ function fireManageSms(db, template, { contactId, apptId, kind }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// GET /m/:token — page shell
+// GET /m/:token  AND  GET /m  — page shell
 // ─────────────────────────────────────────────────────────────
 
-router.get('/m/:token', (req, res) => {
+function serveManageShell(req, res) {
   // Serve the shell even for garbage tokens — the page itself renders the
   // friendly invalid-link state after its API fetch 404s. (Cheaper than a
   // DB hit per page load, and the API is the uniform oracle anyway.)
+  //
+  // Slice 10: also served for the TOKENLESS /m and /m/ forms — a truncated
+  // link, or an empty-token template URL like https://app.4lsg.com/m/
+  // produced by {{appts.appt_manage_token|default:}} on a NULL-token appt.
+  // Without this they'd hit a bare 404; instead the page boots, finds no
+  // (or a bad) token, and shows the branded invalid-link fallback.
+  // Reachability: /m is single-segment, but server.js's /:page catch-all
+  // calls next() because public/m.html doesn't exist, so this route (mounted
+  // in the routes/ scan) is reached. /m/<token> is ≥2 segments and never
+  // touches the catch-all (same reasoning as /p/:slug, /book/:slug).
   const file = path.join(__dirname, '..', 'public', 'manage.html');
   res.sendFile(file, err => {
     if (err) res.status(404).type('text').send('Not found');
   });
-});
+}
+
+router.get('/m/:token', serveManageShell);
+router.get('/m', serveManageShell);   // tokenless / empty-token → branded fallback
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/manage-config — public, token-less (slice 10)
