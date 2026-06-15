@@ -211,6 +211,10 @@
           <option value="{{contacts.contact_city}}">City</option>
           <option value="{{contacts.contact_state}}">State</option>
           <option value="{{contacts.contact_zip}}">Zip</option>
+          <optgroup label="Booking (set slug)">
+            <option value="https://app.4lsg.com/book/your-booking-slug?c={{contacts.booking_token}}">Booking Link — edit slug</option>
+            <option value="{{contacts.booking_token}}">Booking Token (raw)</option>
+          </optgroup>
         </select>
       </div>
     </div>
@@ -225,6 +229,7 @@
       </button>
       <span class="text-muted" style="margin-left:8px;">File will be sent as an email attachment</span>
     </div>
+    <span class="text-muted" style="display:block; margin-top:6px;">Booking Link inserts a prefill URL — replace <code>your-booking-slug</code> with your live booking view's slug. Each recipient's token fills in automatically.</span>
     <div id="email-attach-preview" class="hidden" style="margin-top:8px; font-size:13px; display:flex; align-items:center; gap:8px;">
       <span id="email-attach-name"></span>
       <button class="btn btn-danger btn-sm" onclick="removeEmailAttachment()">&times;</button>
@@ -243,10 +248,15 @@
         <option value="{{contacts.contact_pname}}">Preferred Name</option>
         <option value="{{contacts.contact_phone|phone}}">Phone</option>
         <option value="{{contacts.contact_email}}">Email</option>
+        <optgroup label="Booking (set slug)">
+          <option value="https://app.4lsg.com/book/your-booking-slug?c={{contacts.booking_token}}">Booking Link — edit slug</option>
+          <option value="{{contacts.booking_token}}">Booking Token (raw)</option>
+        </optgroup>
       </select>
     </div>
     <textarea id="c-sms-body" rows="4" placeholder="Type your SMS message..." style="width:100%;"></textarea>
     <span class="text-muted">SMS messages over 160 characters may be split into multiple segments.</span>
+    <span class="text-muted" style="display:block; margin-top:4px;">Booking Link inserts a prefill URL — replace <code>your-booking-slug</code> with your live booking view's slug. Each recipient's token fills in automatically.</span>
 
     <!-- MMS attachment (visible only when RingCentral sender selected) -->
     <div id="mms-section" style="margin-top:10px;">

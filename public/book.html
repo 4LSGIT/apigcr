@@ -182,6 +182,9 @@
 
   /* ── States ─────────────────────────────────────────────── */
   .state { text-align: center; padding: 48px 16px; color: var(--muted); }
+  .state-logo { display: block; margin: 0 auto 16px; max-height: 84px; max-width: 300px; }
+  a.book-btn { display: block; box-sizing: border-box; text-decoration: none; text-align: center; }
+  .call-note { color: var(--muted); font-size: 14px; margin-top: 12px; }
   .thankyou { padding: 24px 4px; }
   .hidden { display: none !important; }
 
@@ -199,7 +202,12 @@
   <!-- Boot / unavailable states -->
   <div class="state" id="state-loading"><span class="spinner"></span>&nbsp; Loading…</div>
   <div class="state hidden" id="state-unavailable">
-    Sorry — this booking page isn't available.
+    <img class="state-logo hidden" id="unavailable-logo" alt="">
+    Sorry — this booking page isn't available. It may have expired or been replaced.
+    <div id="unavailable-cta-wrap" class="hidden" style="margin-top:14px;">
+      <a id="unavailable-cta" class="book-btn"></a>
+    </div>
+    <div class="call-note" id="unavailable-call"></div>
   </div>
 
   <!-- Main flow -->
@@ -453,9 +461,65 @@
       .catch(showUnavailable);
   }
 
+  // Parse the booking-view slug out of a /book/<slug> URL (any origin).
+  // Returns null when the URL isn't a /book/ link.
+  function bookingUrlSlug(url) {
+    try {
+      var u = new URL(url, location.origin);
+      var m = u.pathname.match(/^\/book\/([^\/?#]+)/);
+      return m ? decodeURIComponent(m[1]) : null;
+    } catch (e) { return null; }
+  }
+
+  // Render a fallback CTA into the unavailable state from the token-less
+  // /api/manage-config payload ({ fallback:{kind,url,button_text}, logo_url,
+  // logo_link_url, firm_phone }). Mirrors the slice-10 manage invalid state.
+  //
+  // Self-loop guard: a 'book' fallback can point at /book/<slug>. If that slug
+  // is the SAME one that just failed (e.g. manage_fallback_url targets the very
+  // view that's inactive), the CTA would loop the user back to this dead page.
+  // Detect that and degrade to the firm site (logo_link_url) or the call-us note.
+  function applyBookingFallback(c) {
+    var fb  = (c && c.fallback) || {};
+    var cta = E('unavailable-cta');
+    var url = (fb.url && /^https?:\/\//i.test(fb.url)) ? fb.url : '';
+
+    if (fb.kind === 'book' && url && bookingUrlSlug(url) === slug) {
+      var site = (c && c.logo_link_url && /^https?:\/\//i.test(c.logo_link_url)) ? c.logo_link_url : '';
+      if (site) {
+        cta.textContent = 'Visit our website \u2192';
+        cta.href = site;
+        show('unavailable-cta-wrap');
+        return;
+      }
+      url = ''; // no site to degrade to → fall through to call-us
+    }
+
+    if ((fb.kind === 'book' || fb.kind === 'site') && url) {
+      cta.textContent = fb.button_text ||
+        (fb.kind === 'book' ? 'Book a new time \u2192' : 'Visit our website \u2192');
+      cta.href = url;
+      show('unavailable-cta-wrap');
+      return;
+    }
+
+    var phone = c && c.firm_phone;
+    E('unavailable-call').textContent = phone ? ('Need help? Call us at ' + phone + '.') : '';
+  }
+
   function showUnavailable() {
     hide('state-loading');
     show('state-unavailable');
+    // No view config on a dead/inactive slug (its /config 404s), so there's no
+    // branding to render from. Fetch the token-less firm config for the logo +
+    // a general fallback CTA so the dead end is branded, not a bare message.
+    apiGet('/api/manage-config')
+      .then(function (r) {
+        var c = (r.ok && r.body) ? r.body : {};
+        if (c.logo_url) { E('unavailable-logo').src = c.logo_url; show('unavailable-logo'); }
+        applyBookingFallback(c);
+      })
+      .catch(function () {});
   }
 
   function renderShell() {
