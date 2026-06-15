@@ -352,16 +352,37 @@ async function resolve({ db, text, refs = {}, strict = false }) {
     return { status: 'success', text, unresolved: [] };
   }
 
-  // ── Step 2: Validate refs (real tables only — trigger_data is not a SQL table) ──
+  // ── Step 2: Partition referenced tables into resolvable vs. unresolvable ──
+  //
+  // A referenced table is "resolvable" only if its ref is present AND carries a
+  // usable anchor value (the first ref key's value is not null/undefined/'').
+  // Empty string and null mean "no such entity for this row" (e.g. an appt with
+  // no case → refs.cases absent, or case_id ''). Such tables are NOT an error:
+  // we simply drop them from the SQL below and let their placeholders resolve to
+  // null in Step 5 (→ a |default: fills them; otherwise they remain unresolved,
+  // same soft-fail as a null column).
+  //
+  // Why this is safe (was previously a hard 'missing_refs' failure): the prior
+  // behavior aborted the ENTIRE resolve and returned the text with every
+  // {{token}} intact, which then flowed downstream as a literal (e.g. a raw
+  // "{{users.default_phone}}" reaching send_sms). Required fields are guarded at
+  // the send boundary instead — send_sms/send_email throw on a falsy `to`/`from`
+  // — so a genuinely-missing required value still fails loudly, with a clean
+  // empty value rather than a raw placeholder. Optional/informational fields
+  // (e.g. {{cases.case_number}} in a staff email) just blank out.
+  //
+  // Note: 0 is treated as a valid anchor (kept), so a legitimate id of 0 still
+  // attempts its JOIN rather than being silently dropped.
+  const isUsableRef = (t) => {
+    const ref = refs[t];
+    if (!ref) return false;
+    const refCol = Object.keys(ref)[0];
+    if (!refCol) return false;            // ref is {} — no anchor column
+    const refVal = ref[refCol];
+    return refVal !== null && refVal !== undefined && refVal !== '';
+  };
 
-  const missingRefs = [...tableColumns.keys()].filter(t => !refs[t]);
-  if (missingRefs.length) {
-    return {
-      status: 'failed', text, unresolved: [],
-      errors: [`Missing refs for tables: ${missingRefs.join(', ')}`],
-      errorType: 'missing_refs'
-    };
-  }
+  const resolvableTables = [...tableColumns.keys()].filter(isUsableRef);
 
   // ── Step 3 & 4: Build + execute SQL (skipped entirely when only trigger_data is referenced) ──
   //
@@ -372,9 +393,11 @@ async function resolve({ db, text, refs = {}, strict = false }) {
 
   let row = null;
 
-  if (tableColumns.size > 0) {
-    // First table in the map → FROM. All others → LEFT JOIN.
-    // LEFT JOIN ensures a missing anchor in one table doesn't null the whole row.
+  if (resolvableTables.length > 0) {
+    // First resolvable table → FROM. All others → LEFT JOIN.
+    // Tables referenced in the text but without a usable ref are skipped here;
+    // their columns resolve to null in Step 5. LEFT JOIN ensures a non-matching
+    // secondary anchor nulls only its own columns rather than the whole row.
     // All columns aliased as `table__column` to prevent name collisions.
 
     const selectParts = [];
@@ -384,7 +407,7 @@ async function resolve({ db, text, refs = {}, strict = false }) {
     let   baseRefCol  = null;
     let   baseRefVal  = null;
 
-    for (const tableName of tableColumns.keys()) {
+    for (const tableName of resolvableTables) {
       const ref    = refs[tableName];
       const refCol = Object.keys(ref)[0];
       const refVal = ref[refCol];

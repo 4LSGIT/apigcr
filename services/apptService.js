@@ -539,6 +539,14 @@ async function enrollApptReminderSequences(db, {
     appt_type,
     appt_with:   Number(appt_with),
     case_id:     case_id || null,
+    // entity_ref: the most-specific entity this appt is about, as a ready-made
+    // shell query-param fragment ("case=ABC" when a case exists, else
+    // "contact=123"). Templates link with {{trigger_data.entity_ref}} so a
+    // staff reminder opens the case when there is one and the contact otherwise.
+    // Resolved here (not in the template) because the resolver can't switch the
+    // query-param KEY conditionally, and {{cases.case_id}} hard-fails when an
+    // appt has no case (e.g. consults/leads). trigger_data always resolves.
+    entity_ref:  case_id ? `case=${case_id}` : `contact=${contact_id}`,
     enrolled_by: 'createAppt',
   };
 
@@ -920,6 +928,11 @@ async function markNoShow(db, { appt_id, note = '', enroll = false, actingUserId
             appt_with:   appt.appt_with,
             case_type:    appt.case_type,
             case_subtype: appt.case_subtype,
+            // entity_ref: ready-made shell query-param fragment for staff links
+            // — "case=ABC" if the no-showed appt had a case, else "contact=123".
+            // Same rationale as the pre_appt path: the resolver can't switch the
+            // param key, and {{cases.case_id}} hard-fails on a case-less no-show.
+            entity_ref:  appt.appt_case_id ? `case=${appt.appt_case_id}` : `contact=${appt.appt_client_id}`,
             enrolled_by: 'no_show_handler'
           });
           enrolled = true;
