@@ -19,6 +19,7 @@ const emailService = require('./emailService');
 const gcal         = require('./gcalService');
 const taskService  = require('./taskService');
 const logService   = require('./logService');
+const { resolve: resolveTemplate } = require('./resolverService');
 const { localToUTC, FIRM_TZ } = require('./timezoneService');
 const { DateTime } = require('luxon');
 const { alert } = require('../lib/alerting');
@@ -475,15 +476,22 @@ function fireViewHook(db, { appt_view_id, event, appt_id, contact_id,
  * @param {object}  db
  * @param {object}  opts
  * @param {number}  opts.contactId
+ * @param {number}  opts.apptId    appt the message describes (resolve target).
+ *                                 createAppt → the new row (successor on a
+ *                                 reschedule, so its live token is embedded);
+ *                                 cancelAppt → the cancelled row.
  * @param {boolean} opts.sms
  * @param {boolean} opts.email
  * @param {string}  opts.message
  * @param {string}  [opts.subject]  email subject (ignored for SMS)
  */
-async function sendApptConfirmation(db, { contactId, sms, email, message, subject }) {
+async function sendApptConfirmation(db, { contactId, apptId, sms, email, message, subject }) {
   if (!sms && !email) return;
   if (!message || !message.trim()) return;   // defensive — caller already validated
   try {
+    // Resolve ONCE — both channels send identical text.
+    const resolvedMessage = await resolveConfirmationMessage(db, message, contactId, apptId);
+
     const settings = await getSettings(db, ['sms_default_from', 'email_default_from']);
     const [[contact]] = await db.query(
       'SELECT contact_phone, contact_email FROM contacts WHERE contact_id = ?',
@@ -491,7 +499,7 @@ async function sendApptConfirmation(db, { contactId, sms, email, message, subjec
     );
 
     if (sms && contact?.contact_phone && settings.sms_default_from) {
-      smsService.sendSms(db, settings.sms_default_from, contact.contact_phone, message)
+      smsService.sendSms(db, settings.sms_default_from, contact.contact_phone, resolvedMessage)
         .catch(err => console.error('[APPT SERVICE] Confirmation SMS failed:', err.message));
     }
 
@@ -500,11 +508,69 @@ async function sendApptConfirmation(db, { contactId, sms, email, message, subjec
         from:    settings.email_default_from,
         to:      contact.contact_email,
         subject: subject || 'Appointment Confirmation',
-        text:    message,
+        text:    resolvedMessage,
       }).catch(err => console.error('[APPT SERVICE] Confirmation email failed:', err.message));
     }
   } catch (err) {
     console.error('[APPT SERVICE] Confirmation settings/contact lookup failed:', err.message);
+  }
+}
+
+/**
+ * Resolve a staff-authored confirmation message through resolverService,
+ * NON-STRICT, against the contact + the appt the confirmation describes.
+ *
+ * Non-strict is mandatory here: a staff typo in a placeholder must degrade to
+ * literal text, never silently drop a cancellation/reschedule SMS. Two layers
+ * of safety:
+ *   1. resolverService non-strict leaves any single unresolvable placeholder
+ *      as its literal {{...}} and resolves the rest (status 'partial_success').
+ *   2. resolverService CAN throw — notably a typo in a COLUMN name of a valid
+ *      table builds a SELECT that MySQL rejects (Unknown column), and the
+ *      resolver deliberately re-throws DB errors rather than masking them. On
+ *      ANY throw we fall back to sending the raw caller text (placeholders
+ *      literal) + alert, so the SMS/email is NEVER dropped.
+ *
+ * Mirrors routes/manage.js fireManageSms (the client manage path) so the two
+ * confirmation paths can't drift: same resolver, same refs shape, same
+ * non-strict semantics, same {{appts.appt_date|date:…}} / {{…appt_manage_token
+ * |default:}} conventions used by the manage_*_template settings.
+ *
+ * @param {object} db
+ * @param {string} message  staff-authored text (may contain {{placeholders}})
+ * @param {number} contactId
+ * @param {number} apptId    the appt the message describes — cancel: the
+ *                           cancelled appt (keeps its token); reschedule/rebook:
+ *                           the NEW successor appt (its token is the live one).
+ * @returns {Promise<string>} text to send (resolved, or raw on resolver throw)
+ */
+async function resolveConfirmationMessage(db, message, contactId, apptId) {
+  try {
+    const r = await resolveTemplate({
+      db,
+      text:   message,
+      refs:   { contacts: { contact_id: contactId }, appts: { appt_id: apptId } },
+      strict: false,
+    });
+    if (r.unresolved?.length) {
+      console.warn(`[APPT SERVICE] Confirmation (appt ${apptId}) left unresolved placeholders:`, r.unresolved);
+    }
+    const out = (r.text ?? '').trim();
+    // r.text equals the input when there are no placeholders, and is never
+    // empty for a non-empty input — but guard so a pathological empty resolve
+    // still sends the original rather than nothing.
+    return out || message;
+  } catch (err) {
+    // DB blip / column typo / deadlock mid-resolve — never drop the message.
+    // Send raw text (placeholders literal) and alert so it doesn't pass silently.
+    console.error(`[APPT SERVICE] Confirmation resolve failed (appt ${apptId}) — sending raw text:`, err.message);
+    alert(db, {
+      source: 'app', kind: 'appt_confirm_resolve_failed', severity: 'warning',
+      group_key: 'appt_confirm_resolve',
+      title: 'Appointment confirmation placeholder resolution failed',
+      message: `appt=${apptId} contact=${contactId}: ${err.message}\nSent the raw (unresolved) message instead.`,
+    });
+    return message;
   }
 }
 
@@ -732,6 +798,9 @@ async function createAppt(db, {
   if (confirm_sms || confirm_email) {
     sendApptConfirmation(db, {
       contactId: contact_id,
+      apptId:    apptId,           // the row just created — successor on a
+                                   // reschedule-now, so its live manage token
+                                   // is what gets embedded (NOT the old appt's).
       sms:       confirm_sms,
       email:     confirm_email,
       message:   confirm_message,
@@ -1047,6 +1116,8 @@ async function cancelAppt(db, {
   if (sms || email) {
     sendApptConfirmation(db, {
       contactId: appt.appt_client_id,
+      apptId:    appt_id,          // cancelled row keeps its manage token —
+                                   // client can rebook from /m/<that token>.
       sms,
       email,
       message:   confirm_message,

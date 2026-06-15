@@ -851,19 +851,14 @@
     }
 
     function rescheduledConfMsg(date1, date2, apptype) {
-      if (date2) {
-        const fmt = (d) => new Intl.DateTimeFormat("en-US", {
-          weekday: "short", month: "short", day: "numeric",
-          hour: "numeric", minute: "numeric", hour12: true,
-        }).format(new Date(d))
-          .replace(/, /g, " ")
-          .replace(/ (\d{1,2}:\d{2} [AP]M)$/, " at $1")
-          .replace(/\bat at\b/g, "at");
-        E("rescheduleConfirmMessage").innerHTML = `This is to confirm that I rescheduled our appointment from ${fmt(date1)} to ${fmt(date2)}.`;
-      } else if (!date1) {
-        E("rescheduleConfirmMessage").style.display =
-          (E("apptRescSMS").checked || E("apptRescEmail").checked) ? "" : "none";
-      }
+      // The confirmation default now uses server-side resolver placeholders
+      // ({{appts.appt_date|date:…}} + the /m/{{appts.appt_manage_token}} manage
+      // link), resolved against the NEW successor appt in apptService. So we no
+      // longer interpolate the date client-side or overwrite the textarea on
+      // date pick — doing so would clobber the placeholder default (and any
+      // staff edits) with verbatim text. This now only toggles visibility.
+      E("rescheduleConfirmMessage").style.display =
+        (E("apptRescSMS").checked || E("apptRescEmail").checked) ? "" : "none";
     }
 
     /**
@@ -917,7 +912,7 @@
             onchange="E('cancelConfirmMessage').style.display=(this.checked||E('cancelConfirmSMS').checked)?'':'none'"
             name="confirmEmail">
           <label for="cancelConfirmEmail">Email</label><br>
-          <textarea id="cancelConfirmMessage" style="display:none;height:60px;width:300px;resize:none;">This is to confirm that I canceled our appointment on ${date}.</textarea>`,
+          <textarea id="cancelConfirmMessage" style="display:none;height:60px;width:300px;resize:none;">Hi {{contacts.contact_fname}}, this is to confirm that your appointment on {{appts.appt_date|date:dddd MMMM Do}} at {{appts.appt_date|time:h:mm A}} has been canceled. To book a new time: https://app.4lsg.com/m/{{appts.appt_manage_token|default:}}</textarea>`,
           confirmButtonText: "Yes, Cancel it!",
           cancelButtonText: "No, leave it alone!",
           showCancelButton: true,
@@ -979,7 +974,7 @@
             <label for="apptRescEmail"><input type="checkbox" id="apptRescEmail" style="width:auto;"
               onchange="rescheduledConfMsg()"> Email</label>
           </div>
-          <textarea id="rescheduleConfirmMessage" style="display:none;height:60px;width:300px;resize:none;"></textarea>`,
+          <textarea id="rescheduleConfirmMessage" style="display:none;height:60px;width:300px;resize:none;">Hi {{contacts.contact_fname}}, this is to confirm that your appointment is now {{appts.appt_date|date:dddd MMMM Do}} at {{appts.appt_date|time:h:mm A}}. To view or change it: https://app.4lsg.com/m/{{appts.appt_manage_token|default:}}</textarea>`,
           showCancelButton: true,
           confirmButtonText: "Reschedule",
           showDenyButton: true,
