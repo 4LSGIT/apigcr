@@ -55,6 +55,14 @@ const CASE_DATE_FIELDS = new Set(['case_file_date', 'case_close_date', 'case_obj
 const { resolveCase } = require('../lib/courtResolve');
 const { checkCitations } = require('../lib/courtCitation');
 
+// Minimal, present provenance marker stamped on the NOTE field of every
+// entity the court executor creates (events + 341 appts). Notes only — never
+// titles (the event natural-key dedupe includes event_title; a prefix there
+// would break cross-run dedupe). source_message_id / court_ai_log traceability
+// already lives in ai_change_log; this is the human-facing "don't trust blindly"
+// flag that appears in BOTH dry-run plans and live writes.
+const AI_DISCLAIMER = '[AI] Auto-created from a court email — verify.';
+
 // ─────────────────────────────────────────────────────────────────────────
 // small helpers
 // ─────────────────────────────────────────────────────────────────────────
@@ -316,6 +324,10 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       event_status: 'Scheduled',
       event_calendar_id: 'none',
       event_created_by: null,
+      // Provenance marker. The model does not supply an event note, so this is
+      // the whole note. Built here (not inside the dry-run branch) so preview
+      // plans reflect the exact string a live write would persist.
+      event_note: AI_DISCLAIMER,
     };
     if (!ev.event_date) {
       reviewReasons.push('event_missing_date');
@@ -340,18 +352,18 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         `INSERT INTO events
            (event_type, event_link_type, event_link_id, event_title, event_date,
             event_time, event_all_day, event_location, event_status,
-            event_calendar_id, event_created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+            event_calendar_id, event_created_by, event_note)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         [ev.event_type, ev.event_link_type, ev.event_link_id, ev.event_title,
          ev.event_date, ev.event_time, ev.event_all_day, ev.event_location,
-         ev.event_status, ev.event_calendar_id, ev.event_created_by]
+         ev.event_status, ev.event_calendar_id, ev.event_created_by, ev.event_note]
       );
       eventId = r.insertId;
     }
     const eid = eventId != null ? String(eventId) : '(dry)';
     const summary = `${ev.event_type || 'event'}: ${ev.event_title} @ ${eventSummary(ev.event_date, ev.event_time, ev.event_location)}`;
     pushChange('event', eid, 'create', null, summary);
-    applied.push({ action_index: idx, type: 'create_event', entity_type: 'event', entity_id: eid, summary });
+    applied.push({ action_index: idx, type: 'create_event', entity_type: 'event', entity_id: eid, summary, event_note: ev.event_note });
     appliedOrIntended++;
     return eventId;
   }
@@ -378,6 +390,14 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       const apptLocal = `${date} ${time}:00`;
       const platform = fields.platform || 'Zoom';
 
+      // Provenance marker + dial-in. Built BEFORE the dry-run branch so preview
+      // plans show the exact appt_note a live write would persist. The dial-in
+      // (connection_info) MUST follow the disclaimer; disclaimer-only when absent.
+      const connInfo = (fields.connection_info || '').trim();
+      const apptNote = connInfo
+        ? `${AI_DISCLAIMER}\n\n${connInfo}`
+        : AI_DISCLAIMER;
+
       // NATURAL-KEY GUARD: Scheduled 341 at the same datetime for this case.
       const [dupe] = await db.query(
         `SELECT appt_id FROM appts
@@ -403,16 +423,17 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
           appt_with: 1,
           appt_platform: platform,
           appt_date: apptLocal,
-          note: fields.connection_info || '',
+          note: apptNote,
         });
         apptId = res.appt_id;
       }
       const eid = apptId != null ? String(apptId) : '(dry)';
       const summary =
         `341 Meeting @ ${apptLocal} platform=${platform} contact=${resolved.primary_contact_id}` +
-        (fields.trustee ? ` trustee=${fields.trustee}` : '');
+        (fields.trustee ? ` trustee=${fields.trustee}` : '') +
+        ` note=${JSON.stringify(apptNote)}`;
       pushChange('appt', eid, 'create', null, summary);
-      applied.push({ action_index: i, type, entity_type: 'appt', entity_id: eid, summary });
+      applied.push({ action_index: i, type, entity_type: 'appt', entity_id: eid, summary, appt_note: apptNote });
       appliedOrIntended++;
       continue;
     }
