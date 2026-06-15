@@ -127,6 +127,7 @@
 
   /* ── States ─────────────────────────────────────────────── */
   .state { text-align: center; padding: 48px 16px; color: var(--muted); }
+  .state-logo { display: block; margin: 0 auto 16px; }
   .hidden { display: none !important; }
 
   .spinner {
@@ -135,6 +136,17 @@
     border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Other upcoming appointments (slice 10) ─────────────── */
+  .other-item {
+    display: block; padding: 10px 12px; margin-bottom: 8px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); text-decoration: none;
+  }
+  a.other-item { cursor: pointer; }
+  a.other-item:hover { border-color: var(--accent); }
+  .other-item .ot-type { font-weight: 600; font-size: 14.5px; }
+  .other-item .ot-meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -143,7 +155,11 @@
   <!-- Boot / error states -->
   <div class="state" id="state-loading"><span class="spinner"></span>&nbsp; Loading…</div>
   <div class="state hidden" id="state-invalid">
+    <img class="logo state-logo hidden" id="invalid-logo" alt="">
     Sorry — this link isn't valid. It may have expired or been replaced.
+    <div id="invalid-cta-wrap" class="hidden" style="margin-top:14px;">
+      <a id="invalid-cta" class="btn primary full"></a>
+    </div>
     <div class="call-note" id="invalid-call"></div>
   </div>
 
@@ -183,6 +199,12 @@
       <button class="btn primary full" id="btn-rebook">Pick a new time</button>
     </div>
 
+    <!-- No-action fallback CTA (slice 10): non-rebookable Canceled, when a
+         booking/site URL is configured. Plain "call us" stays in #locked-note. -->
+    <div id="fallback-region" class="hidden">
+      <a id="fallback-cta" class="btn primary full"></a>
+    </div>
+
     <!-- Scheduled but inside cutoff: call us -->
     <div class="call-note hidden" id="locked-note"></div>
 
@@ -207,12 +229,23 @@
       </div>
     </div>
 
+    <!-- Other upcoming appointments for the same contact (slice 10).
+         Header text differs by state; omitted entirely when empty. -->
+    <div id="others-region" class="hidden">
+      <div class="section-label" id="others-label"></div>
+      <div id="others-list"></div>
+    </div>
+
     <div class="msg error" id="err-msg"></div>
   </div>
 
   <!-- Terminal state (canceled / rescheduled / past) -->
   <div class="state hidden" id="state-terminal">
+    <img class="logo state-logo hidden" id="terminal-logo" alt="">
     <div id="terminal-text"></div>
+    <div id="terminal-cta-wrap" class="hidden" style="margin-top:14px;">
+      <a id="terminal-cta" class="btn primary full"></a>
+    </div>
     <div class="call-note" id="terminal-call"></div>
   </div>
 </div>
@@ -324,20 +357,63 @@
     return phone ? (prefix + ' ' + phone + '.') : (prefix + ' our office.');
   }
 
+  // Slice 10 — render the booking-CTA into a no-action state.
+  // fb = { kind:'book'|'site'|'none', url, button_text }; firmPhone for the
+  // "call us" degrade. When a usable book/site URL is present it renders a
+  // button-link (label = fb.button_text) and clears the phone note; otherwise
+  // it falls back to the phone note. `callId` may be null (no note in that
+  // state). The page never overrides its own message copy here.
+  function applyFallbackCta(ctaId, wrapId, callId, fb, firmPhone, isInvalid) {
+    var cta  = E(ctaId);
+    var wrap = wrapId ? E(wrapId) : null;
+    var call = callId ? E(callId) : null;
+    fb = fb || {};
+    if ((fb.kind === 'book' || fb.kind === 'site') && fb.url && /^https?:\/\//i.test(fb.url)) {
+      cta.textContent = fb.button_text ||
+        (fb.kind === 'book' ? 'Book a new time \u2192' : 'Visit our website \u2192');
+      cta.href = fb.url;
+      if (wrap) show(wrapId); else cta.classList.remove('hidden');
+      if (call) call.textContent = ''; // the link replaces the phone note
+      return;
+    }
+    if (wrap) hide(wrapId); else cta.classList.add('hidden');
+    if (call) {
+      call.textContent = firmPhone
+        ? (isInvalid ? 'Need help? Call us at ' + firmPhone + '.'
+                     : 'Need to book a new time? Call ' + firmPhone + '.')
+        : (isInvalid ? '' : 'Need to book a new time? Call our office.');
+    }
+  }
+
+  // Show a firm/view logo at the top of a state block (invalid / terminal).
+  function setStateLogo(imgId, url) {
+    if (url) { E(imgId).src = url; show(imgId); }
+  }
+
   function showInvalid() {
     hide('state-loading');
     hide('main');
     show('state-invalid');
-    if (data && data.firm_phone) {
-      E('invalid-call').textContent = 'Need help? Call us at ' + data.firm_phone + '.';
-    }
+    // No appt to read here — fetch the token-less config for the firm logo +
+    // resolved booking/site CTA so the dead link is branded, not a dead end.
+    apiGet('/api/manage-config')
+      .then(function (r) {
+        var c = (r.ok && r.body) ? r.body : {};
+        setStateLogo('invalid-logo', c.logo_url);
+        applyFallbackCta('invalid-cta', 'invalid-cta-wrap', 'invalid-call', c.fallback, c.firm_phone, true);
+      })
+      .catch(function () {});
   }
 
   function showTerminal(text) {
     hide('state-loading');
     hide('main');
+    // Keep the status-specific line; brand it with the appt's logo (view or
+    // firm) and offer the resolved booking/site CTA (rides on `data`).
+    setStateLogo('terminal-logo', data && data.logo_url);
     E('terminal-text').textContent = text;
-    E('terminal-call').textContent = callUsLine('Need to book a new time? Call');
+    applyFallbackCta('terminal-cta', 'terminal-cta-wrap', 'terminal-call',
+      data && data.fallback, data && data.firm_phone, false);
     show('state-terminal');
     try { window.scrollTo(0, 0); } catch (e) {}
   }
@@ -379,13 +455,14 @@
 
     renderCard();
     renderActionState();
+    renderOthers();
     wire();
     show('main');
   }
 
   // Decide which action affordances show, from authoritative data.
   function renderActionState() {
-    hide('actions-region'); hide('rebook-region');
+    hide('actions-region'); hide('rebook-region'); hide('fallback-region');
     hide('locked-note'); hide('canceled-banner'); hide('cancel-confirm');
     if (data.status === 'Canceled') {
       // Past-tense and specific: a client who already rebooked must read
@@ -395,8 +472,16 @@
       E('canceled-banner').textContent = 'This appointment was canceled' + when + '.'
         + (data.can_rebook ? ' Want to book a new time?' : '');
       show('canceled-banner');
-      if (data.can_rebook) show('rebook-region');
-      else {
+      if (data.can_rebook) {
+        // PRECEDENCE (slice 10): a valid token resolving to a rebookable
+        // Canceled appt ALWAYS shows its own rebook picker — the scoped page
+        // wins; the booking-CTA fallback never overrides it.
+        show('rebook-region');
+      } else if (data.fallback && (data.fallback.kind === 'book' || data.fallback.kind === 'site') && data.fallback.url) {
+        // No in-page action (not rebookable — legacy/odd length) AND a
+        // booking/site URL is configured → offer it instead of dead "call us".
+        applyFallbackCta('fallback-cta', 'fallback-region', null, data.fallback, data.firm_phone, false);
+      } else {
         E('locked-note').textContent = callUsLine('To book a new time, please call');
         show('locked-note');
       }
@@ -418,6 +503,34 @@
     if (a.platform)      meta.push(platformLabel(a.platform));
     if (a.length)        meta.push(a.length + ' min');
     E('appt-meta').textContent = meta.join(' \u00B7 ');
+  }
+
+  // Slice 10 — same-contact upcoming appts. Each LINKED item points at its
+  // OWN /m/<token>; a NULL-token row (legacy/Pabbly) renders as plain TEXT and
+  // never borrows the current page's token. Empty list → section omitted
+  // (no empty header). This projection is the portal's future appt-list read.
+  function renderOthers() {
+    hide('others-region');
+    var list = (data && data.others) || [];
+    if (!list.length) return;
+    E('others-label').textContent = (data.status === 'Canceled')
+      ? 'You also have:'
+      : 'Your other upcoming appointments';
+    E('others-list').innerHTML = list.map(function (o) {
+      var meta = [];
+      if (o.provider_name) meta.push('With ' + esc(o.provider_name));
+      var when = fmtDateFull(o.start.slice(0, 10)) + ' \u00B7 ' +
+                 fmtTime(o.start.slice(11, 16)) + ' Eastern';
+      var inner = '<div class="ot-type">' + esc(o.type || 'Appointment') + '</div>' +
+                  '<div class="ot-meta">' + when +
+                  (meta.length ? ' \u00B7 ' + meta.join(' \u00B7 ') : '') + '</div>';
+      if (o.manage_token && /^[0-9a-f]{32}$/.test(o.manage_token)) {
+        return '<a class="other-item" href="/m/' + encodeURIComponent(o.manage_token) + '">' +
+               inner + '</a>';
+      }
+      return '<div class="other-item">' + inner + '</div>';
+    }).join('');
+    show('others-region');
   }
 
   // ── Wiring ──────────────────────────────────────────────────
@@ -569,7 +682,7 @@
           // Same token still resolves (row is Canceled) — re-fetch and
           // render the rebookable state so a change of heart is one tap.
           apiGet('/api/m/' + encodeURIComponent(token)).then(function (r2) {
-            if (r2.ok) { data = r2.body; hideResched(); renderCard(); renderActionState(); }
+            if (r2.ok) { data = r2.body; hideResched(); renderCard(); renderActionState(); renderOthers(); }
             setInfo('Your appointment has been canceled.');
             try { window.scrollTo(0, 0); } catch (e) {}
           });
@@ -613,6 +726,7 @@
               data = r2.body;
               renderCard();
               renderActionState();
+              renderOthers();
             }
             setInfo(rebooked
               ? 'Your new appointment is booked. Your confirmation link has been updated.'
@@ -645,7 +759,7 @@
       // Cutoff crossed (or status changed) since the page loaded — refresh
       // the authoritative state.
       apiGet('/api/m/' + encodeURIComponent(token)).then(function (r2) {
-        if (r2.ok) { data = r2.body; hideResched(); renderCard(); renderActionState(); }
+        if (r2.ok) { data = r2.body; hideResched(); renderCard(); renderActionState(); renderOthers(); }
         setErr(callUsLine('This appointment can no longer be changed online — please call'));
       });
       return;

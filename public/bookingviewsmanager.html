@@ -371,10 +371,15 @@ const state = { views: [], providers: [], hooks: [], editingId: null };
 // Lifted from the test-consult view: confirmation SMS on with a templated
 // message, and a friendly thank-you. Leaving thank-you blank is fine — the
 // server falls back to a generic "your appointment has been booked" line.
+// The trailing manage link lets the client self-reschedule/cancel; it's last
+// so a (practically impossible) empty token degrades to a harmless trailing
+// URL rather than breaking the sentence — every new booking mints a token, so
+// it is always populated. The resolver has no conditionals, only |default:.
 const DEFAULT_CONFIRM_TEMPLATE =
   'Hi {{contacts.contact_fname}}, your {{appts.appt_type}} is confirmed for ' +
   '{{appts.appt_date|date:dddd MMMM Do}} at {{appts.appt_date|time:h:mm A}}. ' +
-  'We will call you at {{contacts.contact_phone|phone}}. Reply with any questions.';
+  'We will call you at {{contacts.contact_phone|phone}}. Reply with any questions. ' +
+  'Manage or cancel: https://app.4lsg.com/m/{{appts.appt_manage_token|default:}}';
 const DEFAULT_THANKYOU_HTML =
   '<p><strong>You\u2019re booked!</strong> We\u2019ll call you at the time you selected.</p>';
 

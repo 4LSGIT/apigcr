@@ -142,6 +142,7 @@ async function loadManageSettings(db) {
     'manage_horizon_days',
     'manage_reschedule_template',
     'manage_cancel_template',
+    'manage_fallback_url',
     'fe-firm_logo_url',
     'fe-firm_site_url',
     'fe-firm_phone',
@@ -155,10 +156,96 @@ async function loadManageSettings(db) {
     horizon_days:        num(s.manage_horizon_days, DEFAULT_HORIZON_DAYS),
     reschedule_template: (s.manage_reschedule_template || '').trim(),
     cancel_template:     (s.manage_cancel_template || '').trim(),
+    fallback_url_raw:    (s.manage_fallback_url || '').trim() || null,  // slice 10: JSON {url, button_text}
     firm_logo_url:       s['fe-firm_logo_url'] || null,
     firm_site_url:       s['fe-firm_site_url'] || null,
     firm_phone:          s['fe-firm_phone'] || null,   // optional — omit when unset
   };
+}
+
+/**
+ * Slice 10 — booking-CTA fallback for any state with NO in-page action
+ * (invalid/unknown token, or a terminal/non-rebookable appt). Resolution
+ * chain: manage_fallback_url → fe-firm_site_url → none ("call us").
+ *
+ * manage_fallback_url has ONE canonical shape — a JSON object
+ *   { "url": "https://…", "button_text": "Book now!" }   (button_text optional)
+ * There is NO bare-URL form. A missing/blank setting, invalid JSON, or a url
+ * that isn't http(s) is treated as unset and falls through to the firm site,
+ * then to the call-us copy. The page never customizes the *message* — it keeps
+ * its own per-state copy (invalid-link line / status-specific terminal line);
+ * the setting controls only the button label + destination.
+ *
+ * PRECEDENCE (load-bearing): consulted ONLY when a token resolves to nothing
+ * actionable. A valid token resolving to a Canceled+rebookable appt ALWAYS
+ * shows its own rebook picker — the scoped page wins; the fallback never
+ * overrides it. See renderActionState() in manage.html.
+ */
+function resolveFallback(cfg) {
+  if (cfg.fallback_url_raw) {
+    try {
+      const o = JSON.parse(cfg.fallback_url_raw);
+      const url = o && typeof o.url === 'string' ? o.url.trim() : '';
+      if (/^https?:\/\//i.test(url)) {
+        const bt = (o && typeof o.button_text === 'string' && o.button_text.trim())
+          ? o.button_text.trim()
+          : 'Book a new time \u2192';
+        return { kind: 'book', url, button_text: bt };
+      }
+      console.warn('[manage] manage_fallback_url has no valid http(s) "url" — ignoring');
+    } catch (e) {
+      console.warn('[manage] manage_fallback_url is not valid JSON — ignoring:', e.message);
+    }
+  }
+  if (cfg.firm_site_url) {
+    return { kind: 'site', url: cfg.firm_site_url, button_text: 'Visit our website \u2192' };
+  }
+  return { kind: 'none', url: null, button_text: null };
+}
+
+/**
+ * Slice 10 — the token-contact's OTHER upcoming Scheduled appts.
+ *
+ * Portal-stable projection — expose ONLY type / start / provider_name /
+ * manage_token. NEVER an id or any contact PII: it is the SAME contact, so
+ * there is nothing new to echo. A row whose appt_manage_token is NULL
+ * (legacy / Pabbly — 2141 of 2146 rows today) is returned with
+ * manage_token:null and MUST render as plain text; the page must never
+ * borrow the current page's token for it.
+ *
+ * "now" is computed firm-local (Luxon, FIRM_TZ) and compared against
+ * appt_date, which is a firm-local naive datetime — so the `>` is correct
+ * regardless of the MySQL session timezone (same reasoning the rest of the
+ * scheduler uses for appt_date). Ascending, capped at 10.
+ *
+ * This is the read the future client portal will reuse for its appt list
+ * (session→contact→appt feeds the same projection) — keep it minimal.
+ */
+async function loadOtherUpcoming(db, appt) {
+  const clientId = appt.appt_client_id;
+  if (!clientId) return [];
+  const nowLocal = DateTime.now().setZone(FIRM_TZ).toFormat('yyyy-MM-dd HH:mm:ss');
+  const [rows] = await db.query(
+    `SELECT a.appt_type AS type,
+            DATE_FORMAT(a.appt_date, '%Y-%m-%d %H:%i') AS start,
+            a.appt_manage_token AS manage_token,
+            u.user_real_name, u.user_name
+       FROM appts a
+       LEFT JOIN users u ON u.user = a.appt_with
+      WHERE a.appt_client_id = ?
+        AND a.appt_status    = 'Scheduled'
+        AND a.appt_date      > ?
+        AND a.appt_id       <> ?
+      ORDER BY a.appt_date ASC
+      LIMIT 10`,
+    [clientId, nowLocal, appt.appt_id]
+  );
+  return rows.map(r => ({
+    type:          r.type || null,
+    start:         r.start,                              // 'YYYY-MM-DD HH:mm' firm-local
+    provider_name: r.user_real_name || r.user_name || null,
+    manage_token:  r.manage_token || null,               // null → page renders text, no link
+  }));
 }
 
 /**
@@ -286,6 +373,37 @@ router.get('/m/:token', (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// GET /api/manage-config — public, token-less (slice 10)
+//
+// The invalid-token page has NO appt to read (its /api/m/:token GET 404s),
+// so it fetches the resolved booking-CTA fallback here instead of dead-ending.
+// Returns ONLY firm-public config (a booking/site URL + the office phone —
+// both already public on the firm website); no per-appt or contact data, so
+// no token and no rate limit. Distinct 2-segment path → never shadows
+// /api/m/:token or the single-segment static catch-all.
+// ─────────────────────────────────────────────────────────────
+
+router.get('/api/manage-config', async (req, res) => {
+  try {
+    const cfg = await loadManageSettings(req.db);
+    const fb  = resolveFallback(cfg);
+    res.json({
+      fallback: {                 // { kind:'book'|'site'|'none', url, button_text }
+        kind:        fb.kind,
+        url:         fb.url,
+        button_text: fb.button_text,
+      },
+      logo_url:      cfg.firm_logo_url,   // firm logo (no view to brand from on a bad token)
+      logo_link_url: cfg.firm_site_url,
+      firm_phone:    cfg.firm_phone,
+    });
+  } catch (err) {
+    console.error('GET /api/manage-config error:', err);
+    res.status(500).json({ status: 'error', message: 'Internal error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // GET /api/m/:token — appt summary
 // ─────────────────────────────────────────────────────────────
 
@@ -326,6 +444,13 @@ router.get('/api/m/:token', async (req, res) => {
       }
     }
 
+    // Slice 10: same-contact other upcoming appts (portal-stable projection)
+    // + resolved booking-CTA fallback (used by terminal/non-rebookable
+    // states; never overrides a rebookable Canceled appt — see precedence
+    // note on resolveFallback()).
+    const others = await loadOtherUpcoming(req.db, appt);
+    const fb     = resolveFallback(cfg);
+
     // First name ONLY — no last name, phone, email, or ids anywhere here.
     res.json({
       status: appt.appt_status,
@@ -342,6 +467,13 @@ router.get('/api/m/:token', async (req, res) => {
       canceled_on:  canceledOn,                    // 'YYYY-MM-DD' | null (Canceled only)
       cutoff_min:   cfg.cutoff_min,
       horizon_days: cfg.horizon_days,
+      others,                                      // [] or [{type,start,provider_name,manage_token}]
+      // Booking-CTA fallback for no-action states (page decides when to use).
+      fallback: {                                  // { kind, url, button_text }
+        kind:        fb.kind,
+        url:         fb.url,
+        button_text: fb.button_text,
+      },
       // Branding: originating view (appt_view_id) wins; firm-wide fe-*
       // settings are the fallback for internal/legacy/view-deleted appts.
       logo_url:      appt.view_logo_url      || cfg.firm_logo_url,
