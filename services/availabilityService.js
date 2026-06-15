@@ -58,11 +58,14 @@
  *   unionIntervals, subtractIntervals,    — pure interval math
  *   walkSlots, computeProviderDaySlots,   — pure compose (offline-testable)
  *   normalizeBusyForProvider,             — row shapes → busy intervals
- *   localStrToMs, fetchGcalBusy           — helpers / phase-2 stub
+ *   localStrToMs, fetchGcalBusy           — helpers + live GCal freeBusy (phase 2)
  */
 
 const { DateTime } = require('luxon');
 const { FIRM_TZ } = require('./timezoneService');
+const fetch = require('node-fetch');
+const { buildHeadersForCredential } = require('../lib/credentialInjection');
+const gcalService = require('./gcalService'); // reuse _resolveTarget for firm-cred resolution
 
 const DEFAULT_EVENT_LENGTH_MIN = 60; // must match eventService._gcalTimes default
 const DEFAULT_APPT_LENGTH_MIN  = 60; // defensive: legacy rows may have NULL appt_length
@@ -306,6 +309,39 @@ function normalizeBusyForProvider(providerId, {
  * @param {string} [o.zone=FIRM_TZ]
  * @returns {string[]} 'yyyy-MM-dd HH:mm' starts for that day
  */
+/**
+ * Build a provider's working windows across [fromDay, toDay] (inclusive) as
+ * epoch-ms intervals — the same weekday/valid_from/valid_to filtering
+ * computeProviderDaySlots applies, hoisted here so freeBusy's all-day (c) rule
+ * can test whether a busy block swallows a whole working day. Pure.
+ *
+ * @param {object[]} workingRows — provider's user_availability rows
+ * @param {DateTime} fromDay     — firm-local start-of-day
+ * @param {DateTime} toDay       — firm-local start-of-day (inclusive)
+ * @param {string}   [zone=FIRM_TZ]
+ * @returns {{start:number,end:number}[]} unmerged windows
+ */
+function _providerWorkingWindows(workingRows, fromDay, toDay, zone = FIRM_TZ) {
+  const out = [];
+  for (let d = fromDay; d <= toDay; d = d.plus({ days: 1 })) {
+    const dayStr = d.toFormat('yyyy-MM-dd');
+    const weekday = d.weekday % 7; // luxon 1=Mon…7=Sun → 0=Sun…6=Sat
+    for (const r of workingRows || []) {
+      if (Number(r.weekday) !== weekday) continue;
+      if (r.active !== undefined && Number(r.active) !== 1) continue;
+      const vf = r.valid_from ? String(r.valid_from).slice(0, 10) : null;
+      const vt = r.valid_to   ? String(r.valid_to).slice(0, 10)   : null;
+      if (vf && dayStr < vf) continue;
+      if (vt && dayStr > vt) continue;
+      const start = localStrToMs(`${dayStr} ${r.start_time}`, zone);
+      const end   = localStrToMs(`${dayStr} ${r.end_time}`, zone);
+      if (start == null || end == null || end <= start) continue;
+      out.push({ start, end });
+    }
+  }
+  return out;
+}
+
 function computeProviderDaySlots({
   dayStr, workingRows, busy, lengthMin, granularityMin,
   earliestStartMs = -Infinity, zone = FIRM_TZ,
@@ -334,19 +370,276 @@ function computeProviderDaySlots({
 }
 
 // ─────────────────────────────────────────────────────────────
-// GCal freeBusy — phase 2 stub
+// GCal freeBusy — live read, short-cached, fail-open (phase 2)
 // ─────────────────────────────────────────────────────────────
+//
+// During slot computation the engine reads each provider's designated Google
+// calendars via the firm OAuth credential's freeBusy API and subtracts the
+// returned busy intervals as one more source — alongside appts/events/blocks.
+//
+// Design constraints (binding):
+//   - LIVE read, not synced. The provider's calendar changes intraday; a
+//     precomputed mirror would reintroduce double-booking. So freeBusy is
+//     called inside getSlots, wrapped in a short in-process cache (~90s) so a
+//     burst of slot fetches collapses to one Google call.
+//   - HARD timeout (~5s) + FAIL-OPEN. On timeout/error the engine proceeds
+//     WITHOUT the freeBusy blocks (availability just misses the extra
+//     blocking). fetchGcalBusy NEVER throws and NEVER hangs getSlots.
+//   - CREDENTIAL-PARAMETERIZED. The "which credential reads freebusy" question
+//     resolves through gcalService._resolveTarget — i.e. app_settings
+//     'gcal_credential_id' with the gcalService hard-default fallback. No
+//     hardcoded id here. A future per-provider gcal_credential_id slots in
+//     with zero engine change (pass opts.credentialId).
+//   - PURE BUSY-INTERVAL UNION, no source attribution. The same appt
+//     legitimately appears on several of a provider's calendars AND in the
+//     appts table; overlapping intervals union-merge harmlessly. We do NOT
+//     dedupe freeBusy against appts — just union everything and subtract.
+//   - ALL-DAY / FULL-DAY spans are DROPPED (see _isAllDaySpan). freeBusy
+//     reports all-day events (e.g. court "Schedules Deadline") as a whole-day
+//     busy block; honoring those would wrongly close the entire day to client
+//     booking. Mirrors the slice-3 rule that all-day *events* never block.
+//     Documented limitation: real closures (vacation) must be entered as
+//     YisraCase availability_blocks, not Google all-day events.
+
+const GCAL_FREEBUSY_URL   = 'https://www.googleapis.com/calendar/v3/freeBusy';
+const FREEBUSY_TIMEOUT_MS = 5000;   // hard cap; fail-open on abort
+const FREEBUSY_CACHE_MS   = 90000;  // ~90s in-process cache window
+const ALLDAY_MS           = 24 * 60 * 60 * 1000;
+
+// In-process cache: key → { at:epochMs, intervals:[{start,end}] }. Keyed on
+// provider + sorted calendar-id set + from + to. A short TTL bounds staleness;
+// fail-open results are NOT cached (so a transient outage self-heals on the
+// next fetch rather than sticking an empty result for 90s).
+const _freeBusyCache = new Map();
+
+function _freeBusyCacheKey(providerId, calendarIds, fromMs, toMs) {
+  const cals = [...calendarIds].map(String).sort().join(',');
+  return `${providerId}|${cals}|${fromMs}|${toMs}`;
+}
 
 /**
- * Google Calendar freeBusy lookup for a provider over [fromMs, toMs).
- * // phase 2 — will call gcalService freeBusy per provider calendar and
- * // return busy intervals as { start, end } epoch ms. Until then, GCal
- * // adds no busy time beyond what appts/events already mirror.
+ * Parse a provider's freebusy_calendar_ids column value into a clean string[].
+ * mysql2 returns a native json column already-parsed; tolerate a string too
+ * (defensive — e.g. if the column is ever varchar/text). NULL/empty → [].
  *
+ * @param {*} raw — users.freebusy_calendar_ids
+ * @returns {string[]}
+ */
+function parseFreebusyCalendarIds(raw) {
+  if (raw == null) return [];
+  let arr = raw;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (!t) return [];
+    try { arr = JSON.parse(t); } catch { return []; }
+  }
+  if (!Array.isArray(arr)) return [];
+  return arr.map(x => String(x).trim()).filter(Boolean);
+}
+
+/**
+ * Decide whether a busy interval [startMs, endMs) is an all-day / full-day
+ * span that must be DROPPED (never blocks client booking).
+ *
+ * Drop when ANY of:
+ *   (a) duration ≥ 24h, OR
+ *   (b) it is a date-aligned span: both ends land exactly on firm-local
+ *       midnight (00:00:00.000) — i.e. a date-only all-day event, even on a
+ *       23h DST-spring day where (a) wouldn't trigger, OR
+ *   (c) it fully covers one of the provider's working windows in range (a
+ *       timed block long enough to swallow a whole working day — defensive;
+ *       real all-day events are already caught by (a)/(b)).
+ *
+ * A TIMED block of any duration < 24h that is NOT midnight-aligned and does
+ * NOT swallow a working window is HONORED (kept), per spec — multi-hour and
+ * even partial-day blocks carve availability.
+ *
+ * @param {number} startMs
+ * @param {number} endMs
+ * @param {string} zone
+ * @param {{start:number,end:number}[]} [workingUnion] provider working windows
+ * @returns {boolean} true → drop
+ */
+function _isAllDaySpan(startMs, endMs, zone, workingUnion) {
+  if (endMs - startMs >= ALLDAY_MS) return true;                 // (a)
+  const s = DateTime.fromMillis(startMs, { zone });
+  const e = DateTime.fromMillis(endMs,   { zone });
+  const atMidnight = (d) => d.hour === 0 && d.minute === 0 && d.second === 0 && d.millisecond === 0;
+  if (atMidnight(s) && atMidnight(e)) return true;               // (b)
+  if (workingUnion && workingUnion.length) {                     // (c)
+    for (const w of workingUnion) {
+      if (startMs <= w.start && endMs >= w.end) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Pure parse of a Google freeBusy response body into kept busy intervals
+ * (epoch ms, firm-local). All-day/full-day spans are dropped; per-calendar
+ * `errors` entries are collected and that calendar skipped (the rest of the
+ * batch still parses). Exported for offline testing.
+ *
+ * Google returns busy start/end as RFC3339 with an explicit offset (usually
+ * Z). We parse with setZone:true to honor that offset, then take epoch ms —
+ * the engine's interval representation. Firm-local conversion only matters for
+ * the all-day midnight test, which _isAllDaySpan does against `zone`.
+ *
+ * @param {object} body — parsed freeBusy JSON
+ * @param {string} zone
+ * @param {{start:number,end:number}[]} [workingUnion]
+ * @returns {{intervals:{start:number,end:number}[], dropped:object[], calErrors:object[]}}
+ */
+function parseFreeBusyResponse(body, zone, workingUnion) {
+  const intervals = [];
+  const dropped = [];
+  const calErrors = [];
+  const cals = (body && body.calendars) || {};
+  for (const [cid, v] of Object.entries(cals)) {
+    if (v && Array.isArray(v.errors) && v.errors.length) {
+      calErrors.push({ calendarId: cid, errors: v.errors });
+      continue; // lost access etc. — skip this calendar, keep the batch
+    }
+    for (const iv of (v && v.busy) || []) {
+      const s = DateTime.fromISO(iv.start, { setZone: true });
+      const e = DateTime.fromISO(iv.end,   { setZone: true });
+      if (!s.isValid || !e.isValid) continue;
+      const startMs = s.toMillis();
+      const endMs   = e.toMillis();
+      if (endMs <= startMs) continue;
+      if (_isAllDaySpan(startMs, endMs, zone, workingUnion)) {
+        dropped.push({ calendarId: cid, start: iv.start, end: iv.end });
+        continue;
+      }
+      intervals.push({ start: startMs, end: endMs });
+    }
+  }
+  return { intervals: unionIntervals(intervals), dropped, calErrors };
+}
+
+/**
+ * Fire a fail-open alert about a freeBusy outage. Never throws (wrapped).
+ */
+function _alertFreeBusyFailure(db, providerId, detail) {
+  try {
+    // Lazy require — circular-dep safety convention (matches gcalService/oauthService).
+    const { alert } = require('../lib/alerting');
+    alert(db, {
+      source: 'scheduler',
+      kind: 'gcal_freebusy_failed',
+      group_key: `gcal_freebusy_failed:${providerId}`,
+      severity: 'warning', // rides the digest; not a per-slot critical email storm
+      title: `GCal freeBusy read failed for provider ${providerId}`,
+      message: detail,
+      context: { providerId },
+    }).catch(() => {});
+  } catch (_) { /* alerting unavailable — swallow, fail-open is the priority */ }
+}
+
+/**
+ * Google Calendar freeBusy lookup for one provider over [fromMs, toMs).
+ *
+ * ONE batched POST covering all the provider's calendars. Returns kept busy
+ * intervals as { start, end } epoch ms (all-day spans dropped). Short-cached.
+ * FAIL-OPEN: any timeout/error → alert (fire-and-forget) + return []. Never
+ * throws; never hangs longer than FREEBUSY_TIMEOUT_MS.
+ *
+ * @param {object} db — mysql2 pool
+ * @param {object} o
+ * @param {number}   o.providerId
+ * @param {string[]} o.calendarIds   — this provider's freebusy_calendar_ids
+ * @param {number}   o.from          — range start, epoch ms (firm-local day 00:00)
+ * @param {number}   o.to            — range end, epoch ms (exclusive)
+ * @param {number}  [o.credentialId] — override; default resolves via gcalService
+ * @param {{start:number,end:number}[]} [o.workingUnion] — for the all-day (c) rule
+ * @param {string}  [o.zone=FIRM_TZ]
  * @returns {Promise<{start:number,end:number}[]>}
  */
-async function fetchGcalBusy(/* db, providerId, fromMs, toMs */) {
-  return [];
+async function fetchGcalBusy(db, {
+  providerId, calendarIds, from, to, credentialId, workingUnion, zone = FIRM_TZ,
+} = {}) {
+  const cals = (calendarIds || []).map(String).map(s => s.trim()).filter(Boolean);
+  if (!cals.length) return []; // feature off for this provider — no call
+
+  const cacheKey = _freeBusyCacheKey(providerId, cals, from, to);
+  const cached = _freeBusyCache.get(cacheKey);
+  if (cached && (Date.now() - cached.at) < FREEBUSY_CACHE_MS) {
+    return cached.intervals;
+  }
+
+  // Resolve the firm credential id through gcalService's indirection
+  // (params → app_settings 'gcal_credential_id' → hard default). calendarId is
+  // irrelevant to freeBusy (we pass items[] ourselves) but _resolveTarget
+  // returns it harmlessly.
+  let credId = credentialId;
+  if (credId == null) {
+    try {
+      ({ credentialId: credId } = await gcalService._resolveTarget(db, {}));
+    } catch (err) {
+      _alertFreeBusyFailure(db, providerId, `credential resolve failed: ${err.message}`);
+      return [];
+    }
+  }
+
+  let headers;
+  try {
+    headers = await buildHeadersForCredential(db, credId, GCAL_FREEBUSY_URL);
+  } catch (err) {
+    _alertFreeBusyFailure(db, providerId, `auth header build failed (cred ${credId}): ${err.message}`);
+    return [];
+  }
+  if (!headers || !headers.Authorization) {
+    // Not connected, or URL out of allowed_urls scope (needs googleapis host).
+    _alertFreeBusyFailure(db, providerId,
+      `no Authorization for credential ${credId} — not connected, or freeBusy URL out of allowed_urls scope`);
+    return [];
+  }
+
+  const timeMin = DateTime.fromMillis(from, { zone }).toISO();
+  const timeMax = DateTime.fromMillis(to,   { zone }).toISO();
+  const reqBody = { timeMin, timeMax, items: cals.map(id => ({ id })) };
+
+  const controller = new AbortController();
+  const tHandle = setTimeout(() => controller.abort(), FREEBUSY_TIMEOUT_MS);
+  let res, text;
+  try {
+    res = await fetch(GCAL_FREEBUSY_URL, {
+      method: 'POST',
+      headers: { ...headers, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(reqBody),
+      signal: controller.signal,
+    });
+    text = await res.text();
+  } catch (err) {
+    _alertFreeBusyFailure(db, providerId,
+      err.name === 'AbortError'
+        ? `freeBusy timed out after ${FREEBUSY_TIMEOUT_MS}ms`
+        : `freeBusy request failed: ${err.message}`);
+    return []; // fail-open
+  } finally {
+    clearTimeout(tHandle);
+  }
+
+  let parsed = null;
+  if (text) { try { parsed = JSON.parse(text); } catch { /* non-JSON */ } }
+
+  if (!res.ok) {
+    const gErr = parsed && parsed.error;
+    const detail = gErr ? (gErr.message || JSON.stringify(gErr)) : (text ? text.slice(0, 300) : '(empty)');
+    _alertFreeBusyFailure(db, providerId, `freeBusy ${res.status}: ${detail}`);
+    return []; // fail-open
+  }
+
+  const { intervals, dropped, calErrors } = parseFreeBusyResponse(parsed, zone, workingUnion);
+  if (calErrors.length) {
+    // Partial failure — some calendars lost access. Warn but keep the rest.
+    _alertFreeBusyFailure(db, providerId,
+      `freeBusy partial: ${calErrors.map(c => `${c.calendarId}(${(c.errors[0]||{}).reason || '?'})`).join(', ')}`);
+  }
+  void dropped; // (kept for clarity / future debug logging)
+
+  _freeBusyCache.set(cacheKey, { at: Date.now(), intervals });
+  return intervals;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -457,6 +750,13 @@ async function getSlots(db, {
     [pids]
   );
 
+  // Per-provider freebusy_calendar_ids (native json → mysql2 returns parsed).
+  // One query for all providers; parsed per-provider in the compose loop.
+  const [fbCalRows] = await db.query(
+    `SELECT user, freebusy_calendar_ids FROM users WHERE user IN (?)`,
+    [pids]
+  );
+
   const [fbRows] = await db.query(
     `SELECT DATE_FORMAT(block_start, '%Y-%m-%d %H:%i:%s') AS block_start,
             DATE_FORMAT(block_end,   '%Y-%m-%d %H:%i:%s') AS block_end
@@ -502,8 +802,29 @@ async function getSlots(db, {
   const result = {};
   for (const pid of pids) {
     const workingRows = uaRows.filter(r => Number(r.user) === pid);
-    const gcalBusy = await fetchGcalBusy(db, pid, fromDay.toMillis(),
-                                         toDay.plus({ days: 1 }).toMillis()); // phase 2: []
+
+    // Provider's freebusy calendars (per-user JSON column). Read inside the
+    // loop so getSlots' signature is unchanged — callers (slices 4/6/9/manage)
+    // are unaffected. NULL/empty → no freeBusy reads for this provider.
+    const fbCalendarIds = parseFreebusyCalendarIds(
+      (fbCalRows.find(r => Number(r.user) === pid) || {}).freebusy_calendar_ids
+    );
+
+    // Working-window union over the whole range — feeds the freeBusy all-day
+    // (c) drop rule (a timed block that swallows a whole working day).
+    const workingUnion = unionIntervals(
+      _providerWorkingWindows(workingRows, fromDay, toDay, zone)
+    );
+
+    // Live, short-cached, fail-open. One batched call per provider per range.
+    const gcalBusy = await fetchGcalBusy(db, {
+      providerId:   pid,
+      calendarIds:  fbCalendarIds,
+      from:         fromDay.toMillis(),
+      to:           toDay.plus({ days: 1 }).toMillis(),
+      workingUnion,
+      zone,
+    });
     const busy = normalizeBusyForProvider(pid, {
       firmBlocks: fbRows,
       events:     evRows,
@@ -537,6 +858,10 @@ module.exports = {
   localStrToMs,
   snapUpToGrid,
   fetchGcalBusy,
+  parseFreeBusyResponse,
+  parseFreebusyCalendarIds,
+  _isAllDaySpan,
+  _providerWorkingWindows,
   DEFAULT_EVENT_LENGTH_MIN,
   DEFAULT_APPT_LENGTH_MIN,
 };

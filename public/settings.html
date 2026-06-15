@@ -174,6 +174,17 @@
           <button class="btn primary" id="profileSave">Save Profile</button>
           <span class="status" id="profileStatus"></span>
         </div>
+
+        <!-- Booking Calendars (Google freeBusy) — scheduler phase 2 -->
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+          <label class="fld">Booking Calendars (Google freeBusy)</label>
+          <p class="note">These Google calendars block <b>your</b> booking availability when they have <b>timed</b> events. All-day events do <b>not</b> block — mark time off in YisraCase availability blocks. One calendar ID per line; leave empty to disable.</p>
+          <textarea id="fbCals" class="raw" style="min-height:104px;white-space:pre" spellcheck="false" placeholder="you@example.com&#10;abc123@group.calendar.google.com"></textarea>
+          <div class="btn-row">
+            <button class="btn primary" id="fbSave">Save Booking Calendars</button>
+            <span class="status" id="fbStatus"></span>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -960,10 +971,46 @@ document.querySelectorAll('.sec-head').forEach(h => {
   });
 });
 
+/* ── Booking Calendars (Google freeBusy) — self-only, scheduler phase 2 ──
+   Loads the current user's freebusy_calendar_ids from /api/users/me and saves
+   via PATCH /api/users/:id/freebusy-calendars. One calendar id per line. */
+let _fbUserId = null;
+
+async function loadFreebusyCals() {
+  try {
+    const r = await api('/api/users/me');
+    const u = (r && (r.user || r.data)) || {};
+    _fbUserId = u.user ?? null;
+    let cals = u.freebusy_calendar_ids;
+    if (typeof cals === 'string') { try { cals = JSON.parse(cals); } catch { cals = []; } }
+    if (!Array.isArray(cals)) cals = [];
+    E('fbCals').value = cals.join('\n');
+  } catch (err) {
+    setStatus('fbStatus', 'Failed to load: ' + (err.message || err), false);
+  }
+}
+
+async function saveFreebusyCals() {
+  if (_fbUserId == null) { setStatus('fbStatus', 'User not loaded — reload the page', false); return; }
+  const ids = E('fbCals').value.split('\n').map(x => x.trim()).filter(Boolean);
+  E('fbSave').disabled = true;
+  try {
+    const r = await api('/api/users/' + _fbUserId + '/freebusy-calendars', 'PATCH', { calendar_ids: ids });
+    const saved = (r && r.freebusy_calendar_ids) || ids;
+    E('fbCals').value = saved.join('\n'); // reflect server-normalized list (trim/dedupe)
+    setStatus('fbStatus', 'Saved', true);
+  } catch (err) {
+    setStatus('fbStatus', 'Save failed: ' + (err.message || err), false);
+  }
+  E('fbSave').disabled = false;
+}
+
 /* ════════════════ BOOT ════════════════ */
 async function init() {
   renderProfile();
   E('profileSave').addEventListener('click', saveProfile);
+  E('fbSave').addEventListener('click', saveFreebusyCals);
+  loadFreebusyCals(); // self-only booking calendars (fire-and-forget)
   E('pwSave').addEventListener('click', savePassword);
   E('ctSave').addEventListener('click', ctSave);
   E('etSave').addEventListener('click', etSave);
