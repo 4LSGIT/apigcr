@@ -175,15 +175,20 @@ async function list(db, opts = {}) {
     limit = 30,
     offset = 0,
     includeDeleted = false,
+    collectionOrNull = false, // when true (with `collection` set): match that collection OR NULL
+    maxLimit,                 // optional cap override for the limit clamp; default 100
   } = opts;
-
   const where  = [];
   const params = [];
 
   if (!includeDeleted) where.push('il.deleted_at IS NULL');
 
   if (collection != null && collection !== '') {
-    where.push('il.collection = ?');
+    if (collectionOrNull) {
+      where.push('(il.collection = ? OR il.collection IS NULL)');
+    } else {
+      where.push('il.collection = ?');
+    }
     params.push(collection);
   }
 
@@ -208,8 +213,10 @@ async function list(db, opts = {}) {
 
   // limit/offset are validated integers → safe to inline (avoids mysql2 LIMIT
   // placeholder quirks). Never interpolate the raw opt.
+  let cap = Number.isFinite(Number(maxLimit)) ? Math.floor(Number(maxLimit)) : 100;
+  cap = Math.min(Math.max(cap, 1), 1000);
   let lim = Number.isFinite(Number(limit)) ? Math.floor(Number(limit)) : 30;
-  lim = Math.min(Math.max(lim, 1), 100);
+  lim = Math.min(Math.max(lim, 1), cap);
   let off = Number.isFinite(Number(offset)) ? Math.floor(Number(offset)) : 0;
   off = Math.max(off, 0);
 
