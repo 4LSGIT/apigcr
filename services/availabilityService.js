@@ -558,7 +558,11 @@ function _alertFreeBusyFailure(db, providerId, detail) {
 async function fetchGcalBusy(db, {
   providerId, calendarIds, from, to, credentialId, workingUnion, zone = FIRM_TZ,
 } = {}) {
-  const cals = (calendarIds || []).map(String).map(s => s.trim()).filter(Boolean);
+  // Normalize + dedupe: the freeBusy batch must never list a calendar twice
+  // (a provider whose user_gcal_id is also in their explicit list → one item).
+  const cals = [...new Set(
+    (calendarIds || []).map(String).map(s => s.trim()).filter(Boolean)
+  )];
   if (!cals.length) return []; // feature off for this provider — no call
 
   const cacheKey = _freeBusyCacheKey(providerId, cals, from, to);
@@ -753,7 +757,7 @@ async function getSlots(db, {
   // Per-provider freebusy_calendar_ids (native json → mysql2 returns parsed).
   // One query for all providers; parsed per-provider in the compose loop.
   const [fbCalRows] = await db.query(
-    `SELECT user, freebusy_calendar_ids FROM users WHERE user IN (?)`,
+    `SELECT user, freebusy_calendar_ids, user_gcal_id FROM users WHERE user IN (?)`,
     [pids]
   );
 
@@ -806,9 +810,19 @@ async function getSlots(db, {
     // Provider's freebusy calendars (per-user JSON column). Read inside the
     // loop so getSlots' signature is unchanged — callers (slices 4/6/9/manage)
     // are unaffected. NULL/empty → no freeBusy reads for this provider.
-    const fbCalendarIds = parseFreebusyCalendarIds(
-      (fbCalRows.find(r => Number(r.user) === pid) || {}).freebusy_calendar_ids
-    );
+    const fbRow = fbCalRows.find(r => Number(r.user) === pid) || {};
+    const explicitCals = parseFreebusyCalendarIds(fbRow.freebusy_calendar_ids);
+
+    // Auto-include the provider's OWN YisraCase write-target calendar
+    // (users.user_gcal_id, slice 5). Native appts on it are already blocked via
+    // the appts table, but a manually-added Google event lives only there and
+    // would otherwise never block. Only the provider's own write-target — NOT
+    // the shared main YisraCase calendar (auto-including a shared cal would
+    // cross-block providers). Deduped against the explicit list below.
+    const selfCal = (fbRow.user_gcal_id == null ? '' : String(fbRow.user_gcal_id)).trim();
+    const fbCalendarIds = selfCal && !explicitCals.includes(selfCal)
+      ? [...explicitCals, selfCal]
+      : explicitCals;
 
     // Working-window union over the whole range — feeds the freeBusy all-day
     // (c) drop rule (a timed block that swallows a whole working day).

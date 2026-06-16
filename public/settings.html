@@ -179,6 +179,7 @@
         <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
           <label class="fld">Booking Calendars (Google freeBusy)</label>
           <p class="note">These Google calendars block <b>your</b> booking availability when they have <b>timed</b> events. All-day events do <b>not</b> block — mark time off in YisraCase availability blocks. One calendar ID per line; leave empty to disable.</p>
+          <p class="note" style="margin-bottom:8px"><b>Always included:</b> your YisraCase calendar (<span class="mono" id="fbSelfCal">…</span>) — read automatically, no need to list it below.</p>
           <textarea id="fbCals" class="raw" style="min-height:104px;white-space:pre" spellcheck="false" placeholder="you@example.com&#10;abc123@group.calendar.google.com"></textarea>
           <div class="btn-row">
             <button class="btn primary" id="fbSave">Save Booking Calendars</button>
@@ -981,6 +982,8 @@ async function loadFreebusyCals() {
     const r = await api('/api/users/me');
     const u = (r && (r.user || r.data)) || {};
     _fbUserId = u.user ?? null;
+    const selfCal = (u.user_gcal_id == null ? '' : String(u.user_gcal_id)).trim();
+    E('fbSelfCal').textContent = selfCal || 'none set';
     let cals = u.freebusy_calendar_ids;
     if (typeof cals === 'string') { try { cals = JSON.parse(cals); } catch { cals = []; } }
     if (!Array.isArray(cals)) cals = [];
