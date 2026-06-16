@@ -203,7 +203,16 @@ async function list(db, opts = {}) {
   }
 
   if (q != null && String(q).length) {
-    const like = '%' + q + '%';
+    // Search is LITERAL: escape LIKE wildcards in user input so '%', '_', and
+    // '\' match themselves instead of acting as pattern metacharacters. Order
+    // matters — escape the escape char (backslash) FIRST, then '%' and '_'.
+    // We rely on MySQL's default LIKE escape character ('\'); this server's
+    // sql_mode does NOT include NO_BACKSLASH_ESCAPES, so the default is active
+    // and no explicit `ESCAPE` clause is needed.
+    const escaped = String(q)
+      .replace(/\\/g, '\\\\')   // \  -> \\
+      .replace(/[%_]/g, '\\$&'); // %|_ -> \%|\_
+    const like = '%' + escaped + '%';
     where.push('(il.title LIKE ? OR il.original_name LIKE ? OR il.filename LIKE ? OR il.tags LIKE ?)');
     params.push(like, like, like, like);
   }
