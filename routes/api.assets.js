@@ -445,7 +445,6 @@ router.get('/api/image-library', jwtOrApiKey, async (req, res) => {
   try {
     const { assets } = await assetService.list(req.db, {
       collection:       'comms-images',
-      collectionOrNull: true, // also match legacy rows where collection IS NULL
       sort:             'newest',
       limit:            500,
       maxLimit:         1000, // lift the default 100 cap for this internal shim
