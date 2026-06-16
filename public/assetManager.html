@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Asset Manager</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:    #1a1a2e;
+      --navy2:   #16213e;
+      --blue:    #4f8ef7;
+      --blue2:   #3a7de8;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --amber:   #f59e0b;
+      --bg:      #f1f5f9;
+      --surface: #ffffff;
+      --border:  #e2e8f0;
+      --muted:   #94a3b8;
+      --text:    #1e293b;
+      --text2:   #475569;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      color: var(--text);
+      background: var(--bg);
+    }
+    body { display: flex; flex-direction: column; overflow: hidden; }
+
+    /* ── Topbar ────────────────────────────────────── */
+    #topbar {
+      background: var(--navy);
+      color: #fff;
+      height: 44px;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      flex-shrink: 0;
+      border-bottom: 2px solid var(--blue);
+    }
+    #topbar .title { font-weight: 700; font-size: 13px; letter-spacing: 0.02em; }
+    #topbar .title span { color: var(--blue); }
+    #topbar .spacer { flex: 1; }
+    #topbar .count { color: rgba(255,255,255,0.65); font-size: 12px; margin-right: 4px; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 12px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+      font-family: inherit;
+    }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--blue2); }
+    .btn-ghost { background: rgba(255,255,255,0.08); color: #fff; }
+    .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.18); }
+    .btn-outline {
+      background: var(--surface); color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-outline:hover:not(:disabled) { background: var(--bg); }
+    .btn-outline.ok { color: var(--green); border-color: rgba(34,197,94,0.5); }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn-danger:hover:not(:disabled) { background: #dc2626; }
+    .btn-sm { padding: 3px 8px; font-size: 11px; }
+    .btn-icon { padding: 4px 8px; }
+
+    /* ── Scroll container ───────────────────────────── */
+    #scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 18px 28px;
+    }
+    #inner { max-width: 1200px; margin: 0 auto; }
+
+    /* ── Upload panel ───────────────────────────────── */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+    .panel h3 {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text2);
+      margin-bottom: 12px;
+    }
+
+    .dropzone {
+      border: 1.5px dashed var(--border);
+      border-radius: 8px;
+      padding: 22px 16px;
+      text-align: center;
+      color: var(--muted);
+      background: var(--bg);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .dropzone:hover { border-color: var(--blue); color: var(--text2); }
+    .dropzone.dragover {
+      border-color: var(--blue);
+      background: rgba(79,142,247,0.08);
+      color: var(--blue2);
+    }
+    .dropzone i { font-size: 26px; display: block; margin-bottom: 8px; opacity: 0.7; }
+    .dropzone .dz-main { font-size: 13px; font-weight: 600; color: var(--text2); }
+    .dropzone .dz-sub  { font-size: 11px; margin-top: 4px; }
+    .dropzone.busy { pointer-events: none; opacity: 0.7; }
+
+    .upload-fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    @media (max-width: 720px) { .upload-fields { grid-template-columns: 1fr; } }
+    .upload-fields .fld label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text2);
+      margin-bottom: 4px;
+    }
+    .upload-fields .fld label .hint { font-weight: 400; color: var(--muted); margin-left: 5px; }
+    input[type="text"], select {
+      width: 100%;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      font-size: 13px;
+      font-family: inherit;
+      color: var(--text);
+      background: var(--surface);
+    }
+    input[type="text"]:focus, select:focus {
+      outline: none;
+      border-color: var(--blue);
+      box-shadow: 0 0 0 2px rgba(79,142,247,0.15);
+    }
+
+    .progress {
+      margin-top: 12px;
+      height: 7px;
+      border-radius: 4px;
+      background: var(--border);
+      overflow: hidden;
+      display: none;
+    }
+    .progress.active { display: block; }
+    .progress-bar {
+      height: 100%;
+      background: var(--blue);
+      width: 0%;
+      transition: width 0.18s;
+    }
+    .progress-label {
+      display: none;
+      font-size: 11px;
+      color: var(--text2);
+      margin-top: 6px;
+    }
+    .progress-label.active { display: block; }
+
+    /* ── Toolbar ────────────────────────────────────── */
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .toolbar .search {
+      position: relative;
+      flex: 1;
+      min-width: 200px;
+    }
+    .toolbar .search i {
+      position: absolute;
+      left: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 12px;
+      pointer-events: none;
+    }
+    .toolbar .search input { padding-left: 30px; }
+    .toolbar .ctl { display: flex; align-items: center; gap: 6px; }
+    .toolbar .ctl label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text2);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .toolbar select { width: auto; min-width: 110px; }
+
+    /* ── Grid ───────────────────────────────────────── */
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 14px;
+    }
+    .asset-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .asset-thumb {
+      height: 120px;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .asset-thumb img {
+      width: 100%; height: 100%; object-fit: cover; display: block;
+    }
+    .asset-thumb.is-image { cursor: pointer; }
+    .asset-thumb .file-icon { font-size: 40px; opacity: 0.55; }
+    .asset-body { padding: 8px 10px; flex: 1; min-width: 0; }
+    .asset-title {
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .asset-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 3px;
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      min-width: 0;
+    }
+    .asset-sub .asset-coll {
+      background: rgba(79,142,247,0.12);
+      color: #1e40af;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-weight: 600;
+      font-size: 10px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 95px;
+    }
+    .asset-sub .asset-size { white-space: nowrap; }
+    .asset-date { font-size: 10px; color: var(--muted); margin-top: 4px; }
+    .asset-actions {
+      display: flex;
+      gap: 4px;
+      padding: 8px 10px;
+      border-top: 1px solid var(--border);
+      align-items: center;
+    }
+    .asset-actions .copy-btn { flex: 1; justify-content: center; }
+    .asset-actions .icon-btn {
+      width: 30px; height: 28px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 5px;
+      cursor: pointer;
+      color: var(--text2);
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .asset-actions .icon-btn:hover { background: var(--bg); }
+    .asset-actions .icon-btn.del:hover { background: rgba(239,68,68,0.1); color: var(--red); }
+
+    /* ── States ─────────────────────────────────────── */
+    .state {
+      grid-column: 1 / -1;
+      padding: 48px 24px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .state i { font-size: 34px; display: block; margin-bottom: 12px; opacity: 0.5; }
+    .state.err { color: var(--red); }
+    .state .sub { font-size: 12px; margin-top: 6px; }
+
+    /* ── Pagination ─────────────────────────────────── */
+    #pager {
+      margin-top: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    #pager .range {
+      color: var(--muted);
+      font-size: 12px;
+      margin-right: 8px;
+    }
+    #pager .page-btn {
+      min-width: 30px;
+      height: 30px;
+      padding: 0 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 5px;
+      cursor: pointer;
+      color: var(--text2);
+      font-size: 12px;
+      font-family: inherit;
+    }
+    #pager .page-btn:hover:not(:disabled) { background: var(--bg); }
+    #pager .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    #pager .page-btn.active {
+      background: var(--blue);
+      color: #fff;
+      border-color: var(--blue);
+      font-weight: 600;
+    }
+    #pager .ellipsis { color: var(--muted); padding: 0 2px; }
+
+    .swal2-popup { font-size: 13px !important; }
+    .swal-lbl { font-weight: 600; font-size: 12px; color: var(--text2); display: block; }
+  </style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="title">Asset <span>Manager</span></div>
+  <div class="spacer"></div>
+  <span class="count" id="topCount"></span>
+  <button class="btn btn-ghost btn-sm" onclick="onRefresh()" title="Re-fetch the asset list">
+    <i class="fa-solid fa-arrows-rotate"></i> Refresh
+  </button>
+</div>
+
+<div id="scroll">
+  <div id="inner">
+
+    <!-- ── Upload ────────────────────────────────────── -->
+    <div class="panel">
+      <h3>Upload</h3>
+      <div class="dropzone" id="dropzone" onclick="document.getElementById('up-file').click()">
+        <i class="fa-solid fa-cloud-arrow-up"></i>
+        <div class="dz-main">Drop files here or click to browse</div>
+        <div class="dz-sub">Images, PDF, Word, Excel, CSV, text · up to 500&nbsp;MB each</div>
+        <input type="file" id="up-file" multiple
+          accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+          style="display:none" onchange="onFilePicked(this)">
+      </div>
+      <div class="upload-fields">
+        <div class="fld">
+          <label>Title <span class="hint">single upload only</span></label>
+          <input type="text" id="up-title" placeholder="(defaults to file name)" maxlength="255">
+        </div>
+        <div class="fld">
+          <label>Tags <span class="hint">comma-separated</span></label>
+          <input type="text" id="up-tags" placeholder="e.g. logo, header">
+        </div>
+        <div class="fld">
+          <label>Collection <span class="hint">blank → general</span></label>
+          <input type="text" id="up-collection" placeholder="general" maxlength="64">
+        </div>
+      </div>
+      <div class="progress" id="up-progress"><div class="progress-bar" id="up-bar"></div></div>
+      <div class="progress-label" id="up-progress-label"></div>
+    </div>
+
+    <!-- ── Toolbar ───────────────────────────────────── -->
+    <div class="toolbar">
+      <div class="search">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <input type="text" id="tb-search" placeholder="Search title, name, tags…"
+          oninput="onSearchInput(this.value)">
+      </div>
+      <div class="ctl">
+        <label>Collection</label>
+        <select id="tb-collection" onchange="onCollectionChange(this.value)">
+          <option value="">All</option>
+        </select>
+      </div>
+      <div class="ctl">
+        <label>Type</label>
+        <select id="tb-mime" onchange="onMimeChange(this.value)">
+          <option value="">All</option>
+          <option value="image/">Images</option>
+          <option value="application/pdf">PDF</option>
+        </select>
+      </div>
+      <div class="ctl">
+        <label>Sort</label>
+        <select id="tb-sort" onchange="onSortChange(this.value)">
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="name">Name</option>
+          <option value="size">Size</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- ── Grid ──────────────────────────────────────── -->
+    <div id="grid">
+      <div class="state"><i class="fa-solid fa-spinner fa-spin"></i>Loading…</div>
+    </div>
+
+    <!-- ── Pagination ────────────────────────────────── -->
+    <div id="pager"></div>
+
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+// Parent bridge — mirrors videoManager.html. JSON traffic goes through
+// P.apiSend (which handles JWT injection, 401-retry, and expiry refresh).
+// Multipart upload uses XHR directly with P.AUTH_STATE.jwt so we get
+// upload-progress events (fetch can't report upload progress).
+// ════════════════════════════════════════════════════════════════════════════
+const P = window.parent;
+
+if (!P || !P.AUTH_STATE) {
+  document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ef4444;">'
+    + 'This page must be loaded inside the YisraCase admin app.</div>';
+  throw new Error('No parent auth context');
+}
+
+const Toast = Swal.mixin({
+  toast: true, position: 'top-end', timer: 2500,
+  showConfirmButton: false, timerProgressBar: true,
+});
+
+function E(id) { return document.getElementById(id); }
+
+function esc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function ensureFreshJwt() {
+  if (!P.AUTH_STATE.jwt || (P.isJwtExpired && P.isJwtExpired(P.AUTH_STATE.jwt))) {
+    if (P.loginBlocking) await P.loginBlocking();
+  }
+}
+
+/**
+ * Multipart upload of one file to POST /api/assets via XHR (for progress).
+ * `fields` are appended as text parts (empty/undefined values skipped).
+ * @returns {Promise<{success,url,filename,size,mime,uploadedAt,id}>}
+ */
+async function uploadAsset(file, fields, onProgress) {
+  await ensureFreshJwt();
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const fd  = new FormData();
+    fd.append('file', file);
+    Object.keys(fields || {}).forEach(k => {
+      const v = fields[k];
+      if (v !== undefined && v !== null && v !== '') fd.append(k, v);
+    });
+
+    xhr.open('POST', '/api/assets');
+    xhr.setRequestHeader('Authorization', 'Bearer ' + P.AUTH_STATE.jwt);
+    // Do NOT set Content-Type — XHR sets the multipart boundary itself.
+
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total);
+    });
+    xhr.addEventListener('load', () => {
+      let data = null;
+      try { data = xhr.responseText ? JSON.parse(xhr.responseText) : null; } catch {}
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data);
+      } else if (xhr.status === 401) {
+        reject(new Error('Authentication expired — please retry'));
+      } else {
+        reject(new Error((data && (data.error || data.message)) || ('HTTP ' + xhr.status)));
+      }
+    });
+    xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+    xhr.addEventListener('abort', () => reject(new Error('Upload aborted')));
+    xhr.send(fd);
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// State
+// ════════════════════════════════════════════════════════════════════════════
+const state = {
+  assets:      [],
+  total:       0,
+  page:        1,       // 1-indexed
+  pageSize:    30,
+  q:           '',
+  collection:  '',      // '' = All
+  mime:        '',      // '' = All ; 'image/' prefix ; 'application/pdf' exact
+  sort:        'newest',
+  collections: [],
+  loading:     false,
+  uploading:   false,
+};
+
+// ════════════════════════════════════════════════════════════════════════════
+// Formatters
+// ════════════════════════════════════════════════════════════════════════════
+function fmtSize(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0, v = n;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  if (i === 0) return v + ' B';
+  return (v < 10 ? v.toFixed(1) : Math.round(v)) + ' ' + units[i];
+}
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  try { return new Date(iso).toLocaleDateString(); }
+  catch { return String(iso); }
+}
+
+// FontAwesome icon class for a non-image mime.
+function iconForMime(mime) {
+  const m = String(mime || '').toLowerCase();
+  if (m === 'application/pdf') return 'fa-file-pdf';
+  if (m.includes('word') || m.includes('msword') || m.includes('officedocument.wordprocessing')) return 'fa-file-word';
+  if (m.includes('sheet') || m.includes('excel') || m.includes('officedocument.spreadsheet')) return 'fa-file-excel';
+  if (m === 'text/csv') return 'fa-file-csv';
+  if (m.startsWith('text/')) return 'fa-file-lines';
+  if (m.startsWith('video/')) return 'fa-file-video';
+  if (m.startsWith('audio/')) return 'fa-file-audio';
+  if (m.includes('zip') || m.includes('compressed')) return 'fa-file-zipper';
+  return 'fa-file';
+}
+
+function assetDisplayTitle(a) {
+  return a.title || a.original_name || a.filename || '(untitled)';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// List fetch + render
+// ════════════════════════════════════════════════════════════════════════════
+function buildListParams() {
+  // Only include non-empty keys — URLSearchParams stringifies undefined as
+  // the literal "undefined", so empty facets must be omitted entirely.
+  const params = {
+    sort:   state.sort,
+    limit:  state.pageSize,
+    offset: (state.page - 1) * state.pageSize,
+  };
+  if (state.q)          params.q          = state.q;
+  if (state.collection) params.collection = state.collection;
+  if (state.mime)       params.mime       = state.mime;
+  return params;
+}
+
+async function fetchAssets() {
+  state.loading = true;
+  renderGridState('<i class="fa-solid fa-spinner fa-spin"></i>Loading…');
+
+  let data;
+  try {
+    data = await P.apiSend('/api/assets', 'GET', buildListParams());
+  } catch (err) {
+    state.loading = false;
+    renderGridState(
+      '<i class="fa-solid fa-circle-exclamation"></i>Failed to load assets.'
+      + '<div class="sub">' + esc(err.message) + '</div>'
+      + '<div style="margin-top:12px;"><button class="btn btn-outline btn-sm" onclick="fetchAssets()">'
+      + '<i class="fa-solid fa-arrows-rotate"></i> Retry</button></div>',
+      'err'
+    );
+    E('pager').innerHTML = '';
+    E('topCount').textContent = '';
+    return;
+  }
+
+  state.loading = false;
+  state.assets  = Array.isArray(data.assets) ? data.assets : [];
+  state.total   = Number(data.total) || 0;
+
+  // Clamp page if we ran past the end (e.g. after deletions) and re-fetch once.
+  const maxPage = Math.max(1, Math.ceil(state.total / state.pageSize));
+  if (state.page > maxPage) {
+    state.page = maxPage;
+    return fetchAssets();
+  }
+
+  renderGrid();
+  renderPagination();
+  E('topCount').textContent = state.total
+    ? state.total + ' asset' + (state.total === 1 ? '' : 's')
+    : '';
+}
+
+function renderGridState(html, cls) {
+  E('grid').innerHTML = '<div class="state' + (cls ? ' ' + cls : '') + '">' + html + '</div>';
+}
+
+function cardHtml(a) {
+  const isImage = String(a.mime || '').toLowerCase().startsWith('image/');
+  const safeUrl = esc(a.url || '');
+  const thumb = isImage && a.url
+    ? '<div class="asset-thumb is-image" onclick="window.open(\'' + safeUrl + '\',\'_blank\')">'
+        + '<img src="' + safeUrl + '" alt="" loading="lazy">'
+      + '</div>'
+    : '<div class="asset-thumb"><i class="fa-solid ' + iconForMime(a.mime) + ' file-icon"></i></div>';
+
+  const title = assetDisplayTitle(a);
+  const collChip = a.collection
+    ? '<span class="asset-coll" title="' + esc(a.collection) + '">' + esc(a.collection) + '</span>'
+    : '';
+
+  return ''
+    + '<div class="asset-card" data-card-id="' + a.id + '">'
+    +   thumb
+    +   '<div class="asset-body">'
+    +     '<div class="asset-title" title="' + esc(title) + '">' + esc(title) + '</div>'
+    +     '<div class="asset-sub">' + collChip
+    +       '<span class="asset-size">' + esc(fmtSize(a.size)) + '</span>'
+    +     '</div>'
+    +     '<div class="asset-date">' + esc(fmtDate(a.created_at)) + '</div>'
+    +   '</div>'
+    +   '<div class="asset-actions">'
+    +     '<button class="btn btn-outline btn-sm copy-btn" onclick="copyUrl(' + a.id + ', this)">'
+    +       '<i class="fa-solid fa-link"></i> Copy URL</button>'
+    +     '<button class="icon-btn" title="Edit" onclick="editAsset(' + a.id + ')">'
+    +       '<i class="fa-solid fa-pen"></i></button>'
+    +     '<button class="icon-btn del" title="Delete" onclick="deleteAsset(' + a.id + ')">'
+    +       '<i class="fa-solid fa-trash"></i></button>'
+    +   '</div>'
+    + '</div>';
+}
+
+function renderGrid() {
+  if (!state.assets.length) {
+    const filtered = state.q || state.collection || state.mime;
+    renderGridState(
+      '<i class="fa-solid fa-photo-film"></i>'
+      + (filtered ? 'No assets match your filters.' : 'No assets yet.')
+      + (filtered
+          ? '<div class="sub">Try clearing the search or filters.</div>'
+          : '<div class="sub">Upload a file above to get started.</div>')
+    );
+    return;
+  }
+  E('grid').innerHTML = state.assets.map(cardHtml).join('');
+}
+
+// Replace a single card in place (used after an edit, to avoid a full re-render).
+function replaceCard(a) {
+  const el = document.querySelector('[data-card-id="' + a.id + '"]');
+  if (el) el.outerHTML = cardHtml(a);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Pagination
+// ════════════════════════════════════════════════════════════════════════════
+function renderPagination() {
+  const pager = E('pager');
+  const total = state.total;
+  if (!total) { pager.innerHTML = ''; return; }
+
+  const maxPage = Math.max(1, Math.ceil(total / state.pageSize));
+  const cur     = state.page;
+  const start   = (cur - 1) * state.pageSize + 1;
+  const end     = Math.min(cur * state.pageSize, total);
+
+  // Windowed page numbers: first, last, and a +/-2 window around current,
+  // with ellipses for gaps.
+  const nums = new Set([1, maxPage, cur, cur - 1, cur - 2, cur + 1, cur + 2]);
+  const pages = [...nums].filter(n => n >= 1 && n <= maxPage).sort((a, b) => a - b);
+
+  let html = '<span class="range">' + start + '–' + end + ' of ' + total + '</span>';
+  html += '<button class="page-btn" ' + (cur <= 1 ? 'disabled' : '')
+        + ' onclick="gotoPage(' + (cur - 1) + ')"><i class="fa-solid fa-chevron-left"></i></button>';
+
+  let prev = 0;
+  for (const n of pages) {
+    if (n - prev > 1) html += '<span class="ellipsis">…</span>';
+    html += '<button class="page-btn ' + (n === cur ? 'active' : '') + '" '
+          + 'onclick="gotoPage(' + n + ')">' + n + '</button>';
+    prev = n;
+  }
+
+  html += '<button class="page-btn" ' + (cur >= maxPage ? 'disabled' : '')
+        + ' onclick="gotoPage(' + (cur + 1) + ')"><i class="fa-solid fa-chevron-right"></i></button>';
+
+  pager.innerHTML = html;
+}
+
+function gotoPage(n) {
+  const maxPage = Math.max(1, Math.ceil(state.total / state.pageSize));
+  const target  = Math.min(Math.max(1, n), maxPage);
+  if (target === state.page) return;
+  state.page = target;
+  fetchAssets();
+  E('scroll').scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Toolbar handlers
+// ════════════════════════════════════════════════════════════════════════════
+let searchTimer = null;
+function onSearchInput(value) {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.q = (value || '').trim();
+    state.page = 1;
+    fetchAssets();
+  }, 280);
+}
+function onCollectionChange(value) { state.collection = value || ''; state.page = 1; fetchAssets(); }
+function onMimeChange(value)       { state.mime = value || '';       state.page = 1; fetchAssets(); }
+function onSortChange(value)       { state.sort = value || 'newest'; state.page = 1; fetchAssets(); }
+
+async function onRefresh() {
+  await loadCollections();
+  await fetchAssets();
+  Toast.fire({ icon: 'success', title: 'Refreshed' });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Collections facet
+// ════════════════════════════════════════════════════════════════════════════
+async function loadCollections() {
+  try {
+    const res = await P.apiSend('/api/assets/collections', 'GET');
+    state.collections = Array.isArray(res.collections) ? res.collections : [];
+  } catch (err) {
+    state.collections = [];
+  }
+  renderCollectionSelect();
+}
+
+function renderCollectionSelect() {
+  const sel = E('tb-collection');
+  const list = state.collections.slice();
+  // Keep an active filter visible even if its collection is (now) absent
+  // from the facet list (e.g. its only assets were just deleted).
+  if (state.collection && !list.includes(state.collection)) list.push(state.collection);
+
+  let html = '<option value="">All</option>';
+  html += list.map(c =>
+    '<option value="' + esc(c) + '"' + (c === state.collection ? ' selected' : '') + '>' + esc(c) + '</option>'
+  ).join('');
+  sel.innerHTML = html;
+  sel.value = state.collection; // ensure correct selection after rebuild
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Card actions: copy / edit / delete
+// ════════════════════════════════════════════════════════════════════════════
+async function copyUrl(id, btn) {
+  const a = state.assets.find(x => x.id === id);
+  if (!a) return;
+  try {
+    await navigator.clipboard.writeText(a.url);
+    if (btn) {
+      const orig = btn.innerHTML;
+      btn.classList.add('ok');
+      btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied';
+      setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('ok'); }, 1400);
+    } else {
+      Toast.fire({ icon: 'success', title: 'URL copied' });
+    }
+  } catch {
+    // Clipboard API can be blocked in some iframe/permission contexts.
+    Swal.fire({
+      icon: 'info', title: 'Copy manually',
+      html: '<textarea readonly style="width:100%; height:60px; font-family:monospace; font-size:11px;">'
+        + esc(a.url) + '</textarea>',
+    });
+  }
+}
+
+async function editAsset(id) {
+  const a = state.assets.find(x => x.id === id);
+  if (!a) return;
+
+  const result = await Swal.fire({
+    title: 'Edit asset',
+    width: 480,
+    html:
+      '<div style="text-align:left;">'
+      +   '<label class="swal-lbl">Title</label>'
+      +   '<input id="ea-title" class="swal2-input" style="width:100%; margin:4px 0 12px;" '
+      +     'maxlength="255" value="' + esc(a.title || '') + '">'
+      +   '<label class="swal-lbl">Tags <span style="color:#94a3b8; font-weight:400;">(comma-separated)</span></label>'
+      +   '<input id="ea-tags" class="swal2-input" style="width:100%; margin:4px 0 12px;" '
+      +     'value="' + esc(a.tags || '') + '">'
+      +   '<label class="swal-lbl">Collection</label>'
+      +   '<input id="ea-coll" class="swal2-input" style="width:100%; margin:4px 0 0;" '
+      +     'maxlength="64" value="' + esc(a.collection || '') + '">'
+      + '</div>',
+    showCancelButton: true,
+    confirmButtonText: 'Save',
+    focusConfirm: false,
+    preConfirm: () => ({
+      title:      document.getElementById('ea-title').value,
+      tags:       document.getElementById('ea-tags').value,
+      collection: document.getElementById('ea-coll').value,
+    }),
+  });
+  if (!result.isConfirmed || !result.value) return;
+
+  const v = result.value;
+  try {
+    const res = await P.apiSend('/api/assets/' + id, 'PATCH', {
+      title:      v.title,
+      tags:       v.tags,
+      collection: v.collection,
+    });
+    const idx = state.assets.findIndex(x => x.id === id);
+    if (idx !== -1 && res && res.asset) {
+      // Merge: res.asset (from SELECT *) has no uploaded_by_name; spread-merge
+      // preserves the existing joined field.
+      state.assets[idx] = Object.assign({}, state.assets[idx], res.asset);
+      replaceCard(state.assets[idx]);
+    }
+    await loadCollections(); // collection may have changed → refresh facet
+    Toast.fire({ icon: 'success', title: 'Saved' });
+  } catch (err) {
+    Swal.fire('Save failed', err.message, 'error');
+  }
+}
+
+async function deleteAsset(id) {
+  const a = state.assets.find(x => x.id === id);
+  const label = a ? assetDisplayTitle(a) : 'this asset';
+  const r = await Swal.fire({
+    title: 'Delete asset?',
+    html:  '“' + esc(label) + '” will be removed from the library.'
+         + '<br><span style="font-size:12px; color:#64748b;">The underlying file stays in storage.</span>',
+    icon:  'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Delete',
+    confirmButtonColor: '#ef4444',
+  });
+  if (!r.isConfirmed) return;
+
+  try {
+    await P.apiSend('/api/assets/' + id, 'DELETE');
+    Toast.fire({ icon: 'success', title: 'Deleted' });
+    // Re-fetch the current page so counts + pagination stay correct
+    // (fetchAssets clamps the page if this emptied the last one).
+    await fetchAssets();
+    await loadCollections(); // a collection may have lost its last asset
+  } catch (err) {
+    Swal.fire('Delete failed', err.message, 'error');
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Upload flow
+// ════════════════════════════════════════════════════════════════════════════
+function getImageDims(file) {
+  return new Promise((resolve) => {
+    if (!file.type || !file.type.startsWith('image/')) return resolve(null);
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    const done = (dims) => { URL.revokeObjectURL(url); resolve(dims); };
+    const t = setTimeout(() => done(null), 5000);
+    img.onload  = () => { clearTimeout(t); done({ width: img.naturalWidth, height: img.naturalHeight }); };
+    img.onerror = () => { clearTimeout(t); done(null); };
+    img.src = url;
+  });
+}
+
+function setUploadBusy(busy) {
+  state.uploading = busy;
+  E('dropzone').classList.toggle('busy', busy);
+  E('up-progress').classList.toggle('active', busy);
+  E('up-progress-label').classList.toggle('active', busy);
+  if (!busy) {
+    E('up-bar').style.width = '0%';
+    E('up-progress-label').textContent = '';
+  }
+}
+
+function onFilePicked(inputEl) {
+  const files = inputEl.files;
+  if (files && files.length) handleFiles(files);
+  inputEl.value = ''; // allow re-picking the same file(s)
+}
+
+async function handleFiles(fileList) {
+  if (state.uploading) {
+    Toast.fire({ icon: 'warning', title: 'Upload already in progress' });
+    return;
+  }
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+
+  const titleField = E('up-title').value.trim();
+  const tags       = E('up-tags').value.trim();
+  let   collection = E('up-collection').value.trim();
+  if (!collection) collection = 'general'; // every asset carries a collection
+
+  setUploadBusy(true);
+
+  let okCount = 0, failCount = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+
+    // Soft client-side size guard (server enforces too).
+    if (file.size > 500 * 1024 * 1024) {
+      Toast.fire({ icon: 'warning', title: file.name + ' exceeds 500 MB — skipped' });
+      failCount++;
+      continue;
+    }
+
+    const dims = await getImageDims(file);
+    E('up-bar').style.width = '0%';
+    E('up-progress-label').textContent =
+      'Uploading ' + file.name + (files.length > 1 ? ' (' + (i + 1) + '/' + files.length + ')' : '') + '…';
+
+    // Title applies only to single-file uploads; for batches, let the server
+    // default each row's title to its own file name.
+    const perFileTitle = files.length === 1 ? titleField : '';
+
+    try {
+      await uploadAsset(file, {
+        title:      perFileTitle,
+        tags:       tags,
+        collection: collection,
+        width:      dims ? dims.width  : '',
+        height:     dims ? dims.height : '',
+      }, (frac) => { E('up-bar').style.width = (frac * 100).toFixed(1) + '%'; });
+      okCount++;
+    } catch (err) {
+      failCount++;
+      Toast.fire({ icon: 'error', title: 'Failed: ' + file.name + ' — ' + err.message });
+    }
+  }
+
+  setUploadBusy(false);
+
+  // Clear the form fields after a batch.
+  E('up-title').value = '';
+  E('up-tags').value = '';
+  E('up-collection').value = '';
+
+  if (okCount) {
+    Toast.fire({ icon: 'success', title: okCount + ' file' + (okCount === 1 ? '' : 's') + ' uploaded' });
+    // Refresh: jump to page 1 (newest sort surfaces fresh uploads at the top)
+    // and rebuild the collection facet (a new collection may now exist).
+    state.page = 1;
+    await loadCollections();
+    await fetchAssets();
+    E('scroll').scrollTo({ top: 0, behavior: 'smooth' });
+  }
+}
+
+// Drag-and-drop wiring on the dropzone.
+(function wireDropzone() {
+  const dz = E('dropzone');
+  ['dragenter', 'dragover'].forEach(ev =>
+    dz.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (!state.uploading) dz.classList.add('dragover');
+    })
+  );
+  ['dragleave', 'dragend'].forEach(ev =>
+    dz.addEventListener(ev, (e) => {
+      e.preventDefault(); e.stopPropagation();
+      dz.classList.remove('dragover');
+    })
+  );
+  dz.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dz.classList.remove('dragover');
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length) handleFiles(files);
+  });
+})();
+
+// ════════════════════════════════════════════════════════════════════════════
+// Boot — wait for the shell's JWT (mirrors videoManager.html).
+// ════════════════════════════════════════════════════════════════════════════
+(function waitForParent() {
+  if (P && P.AUTH_STATE && P.AUTH_STATE.jwt) {
+    loadCollections().then(fetchAssets);
+    return;
+  }
+  setTimeout(waitForParent, 100);
+})();
+</script>
+</body>
+</html>

@@ -249,6 +249,29 @@ async function list(db, opts = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// listCollections
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * List the distinct, non-null collection names across all LIVE (non-deleted)
+ * assets, alphabetically. Powers the Asset Manager's collection-filter facet.
+ * NULL collections are excluded (legacy rows); soft-deleted rows are excluded.
+ *
+ * @param {object} db
+ * @returns {Promise<string[]>}
+ */
+async function listCollections(db) {
+  const [rows] = await db.query(
+    `SELECT DISTINCT collection
+       FROM image_library
+      WHERE deleted_at IS NULL
+        AND collection IS NOT NULL
+      ORDER BY collection`,
+  );
+  return rows.map(r => r.collection);
+}
+
+// ─────────────────────────────────────────────────────────────
 // get / update / delete
 // ─────────────────────────────────────────────────────────────
 
@@ -341,6 +364,7 @@ module.exports = {
   normalizeTags,
   create,
   list,
+  listCollections,
   get,
   update,
   softDelete,

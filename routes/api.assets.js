@@ -372,6 +372,24 @@ router.get('/api/assets', jwtOrApiKey, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// GET /api/assets/collections — distinct live collection names
+// ─────────────────────────────────────────────────────────────
+//
+// MUST be declared BEFORE the '/api/assets/:id' routes below so the literal
+// 'collections' segment is never captured as an :id param. (Express matches in
+// declaration order; though :id here is only on PATCH/DELETE, keeping this
+// above them is the robust, future-proof placement.)
+router.get('/api/assets/collections', jwtOrApiKey, async (req, res) => {
+  try {
+    const collections = await assetService.listCollections(req.db);
+    res.json({ collections });
+  } catch (err) {
+    console.error('[GET /api/assets/collections]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // PATCH /api/assets/:id — edit title/tags/collection
 // ─────────────────────────────────────────────────────────────
 router.patch('/api/assets/:id', jwtOrApiKey, async (req, res) => {
@@ -404,97 +422,6 @@ router.delete('/api/assets/:id', jwtOrApiKey, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('[DELETE /api/assets/:id]', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ═════════════════════════════════════════════════════════════
-// TEMP back-compat — remove after campaign/sendingform/communicate
-// migrate to assetpicker.js (Slice 5)
-// ═════════════════════════════════════════════════════════════
-
-// POST /api/upload — legacy upload contract.
-//   collection defaults to 'comms-images'; a row is only inserted when
-//   addToLibrary is truthy. Response uses the legacy shape (id is harmlessly
-//   included). Same multipart/base64 logic as POST /api/assets.
-router.post('/api/upload', jwtOrApiKey, (req, res) => {
-  const body = req.body || {};
-  const cfg = {
-    maxBytes:  resolveMaxBytes(firstDefined(req.query.maxBytes, body.maxBytes)),
-    mimeAllow: parseMimeAllow(firstDefined(req.query.mimeAllow, body.mimeAllow)),
-  };
-  const policy = {
-    defaultCollection: 'comms-images',
-    resolveRegister: (m) => truthy(m.addToLibrary),
-    buildResponse: (r) => ({
-      success:    true,
-      url:        r.url,
-      filename:   r.filename,
-      size:       r.size,
-      mime:       r.mime,
-      uploadedAt: r.uploadedAt,
-    }),
-  };
-  dispatchUpload(req, res, policy, cfg);
-});
-
-// GET /api/image-library — legacy comms picker list.
-//   Scoped to the comms collection ('comms-images' OR legacy NULL rows),
-//   live (non-deleted), newest first, mapped to the shape comms code expects.
-router.get('/api/image-library', jwtOrApiKey, async (req, res) => {
-  try {
-    const { assets } = await assetService.list(req.db, {
-      collection:       'comms-images',
-      sort:             'newest',
-      limit:            500,
-      maxLimit:         1000, // lift the default 100 cap for this internal shim
-      offset:           0,
-    });
-    const images = assets.map(r => ({
-      id:            r.id,
-      url:           r.url,
-      filename:      r.filename,
-      original_name: r.original_name,
-      mime:          r.mime,
-      created_at:    r.created_at,
-    }));
-    res.json({ images });
-  } catch (err) {
-    console.error('[GET /api/image-library]', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/image-library — legacy manual URL add.
-router.post('/api/image-library', jwtOrApiKey, async (req, res) => {
-  const { url, original_name } = req.body || {};
-  if (!url) return res.status(400).json({ error: 'url is required' });
-
-  try {
-    const filename = String(url).split('/').pop() || 'image';
-    const row = await assetService.create(req.db, {
-      url,
-      filename,
-      original_name: original_name || filename,
-      collection:    'comms-images',
-      uploaded_by:   req.auth.userId,
-    });
-    res.json({ success: true, id: row ? row.id : null });
-  } catch (err) {
-    console.error('[POST /api/image-library]', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// DELETE /api/image-library/:id — legacy remove (now soft-delete; GCS retained).
-router.delete('/api/image-library/:id', jwtOrApiKey, async (req, res) => {
-  try {
-    const id = parseInt(req.params.id, 10);
-    const ok = await assetService.softDelete(req.db, id);
-    if (!ok) return res.status(404).json({ error: 'Image not found' });
-    res.json({ success: true });
-  } catch (err) {
-    console.error('[DELETE /api/image-library/:id]', err);
     res.status(500).json({ error: err.message });
   }
 });

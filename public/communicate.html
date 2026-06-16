@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/js/videoInsert.js"></script>
+  <script src="/js/assetpicker.js"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -492,183 +493,21 @@ function showTab(tab) {
   E('panel-' + tab).classList.add('active');
 }
 
-
-// ═══════════════════════════════════════════════════════════════
-// IMAGE LIBRARY (from campaign.html)
-// ═══════════════════════════════════════════════════════════════
-
-async function showLibraryPicker() {
-  let images;
-  try {
-    const res = await P.apiSend('/api/image-library', 'GET');
-    images = res.images || [];
-  } catch (err) {
-    Swal.fire('Error', 'Failed to load image library', 'error');
-    return null;
-  }
-  if (!images.length) {
-    await Swal.fire('Empty', 'No images in library yet. Upload one first!', 'info');
-    return null;
-  }
-  return new Promise(resolve => {
-    Swal.fire({
-      title: 'Image Library',
-      html: `
-        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(120px,1fr)); gap:10px; max-height:400px; overflow-y:auto; padding:4px;">
-          ${images.map(img => `
-            <div style="position:relative; border:2px solid transparent; border-radius:6px; cursor:pointer; transition:border-color .15s;"
-                 class="lib-img-wrap"
-                 onmouseover="this.style.borderColor='#07ADEF'"
-                 onmouseout="this.style.borderColor='transparent'"
-                 data-url="${esc(img.url)}" data-id="${img.id}">
-              <img src="${esc(img.url)}" alt="${esc(img.original_name || '')}"
-                   style="width:100%; height:90px; object-fit:cover; border-radius:4px; display:block;">
-              <div style="font-size:10px; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:2px 4px;">
-                ${esc(img.original_name || img.filename)}
-              </div>
-              <button data-delete-id="${img.id}"
-                      class="lib-img-delete"
-                      style="position:absolute; top:2px; right:2px; background:rgba(220,53,69,.85); color:#fff;
-                             border:none; border-radius:50%; width:20px; height:20px; font-size:12px;
-                             cursor:pointer; line-height:20px; padding:0;"
-                      title="Remove from library">&times;</button>
-            </div>
-          `).join('')}
-        </div>
-      `,
-      showConfirmButton: false,
-      showCancelButton: true,
-      cancelButtonText: 'Cancel',
-      width: 600,
-      didOpen: () => {
-        const popup = Swal.getPopup();
-        popup.querySelectorAll('.lib-img-wrap').forEach(wrap => {
-          wrap.addEventListener('click', () => {
-            resolve(wrap.dataset.url);
-            Swal.close();
-          });
-        });
-        popup.querySelectorAll('.lib-img-delete').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            deleteLibraryImage(Number(btn.dataset.deleteId), btn.closest('.lib-img-wrap'));
-          });
-        });
-      },
-      willClose: () => resolve(null)
-    });
-  });
-}
-
-async function deleteLibraryImage(id, wrapEl) {
-  const r = await Swal.fire({
-    title: 'Remove from library?',
-    text: 'The image will remain hosted but won\'t appear in the library.',
-    icon: 'warning',
-    showCancelButton: true,
-    confirmButtonText: 'Remove',
-    confirmButtonColor: '#dc3545'
-  });
-  if (!r.isConfirmed) return;
-  try {
-    await P.apiSend(`/api/image-library/${id}`, 'DELETE');
-    if (wrapEl) wrapEl.remove();
-    Toast.fire({ icon: 'success', title: 'Removed from library' });
-  } catch (err) {
-    Toast.fire({ icon: 'error', title: 'Failed to remove' });
-  }
-}
-
-
-// ═══════════════════════════════════════════════════════════════
-// UPLOAD HELPER (shared by image/MMS/email attachment flows)
-// ═══════════════════════════════════════════════════════════════
-
-async function uploadFile(file, maxMB = 5, saveToLibrary = true) {
-  if (file.size > maxMB * 1024 * 1024) {
-    throw new Error(`File must be under ${maxMB} MB`);
-  }
-  Toast.fire({ icon: 'info', title: 'Uploading...' });
-  const base64 = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result.split(',')[1]);
-    reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsDataURL(file);
-  });
-  const res = await P.apiSend('/api/upload', 'POST', {
-    image: base64,
-    filename: file.name,
-    contentType: file.type,
-    addToLibrary: saveToLibrary
-  });
-  return res.url;
-}
-
-/**
- * Universal attach dialog: upload / URL / library.
- * Returns URL string or null if canceled.
- */
-async function attachDialog(title, acceptTypes) {
-  const { value: formValues, isConfirmed, isDenied } = await Swal.fire({
-    title,
-    html: `
-      <div style="text-align:left;">
-        <p style="font-weight:600; margin-bottom:6px;">Upload a file:</p>
-        <input type="file" id="swal-file" accept="${acceptTypes}"
-               style="margin-bottom:14px; font-size:13px;">
-        <label style="display:flex; align-items:center; gap:6px; margin-bottom:14px; font-size:13px; cursor:pointer;">
-          <input type="checkbox" id="swal-save-library" checked>
-          Save to image library for reuse
-        </label>
-        <hr style="margin:10px 0;">
-        <p style="font-weight:600; margin-bottom:6px;">Or enter file URL:</p>
-        <input type="text" id="swal-url" class="swal2-input" placeholder="https://..."
-               style="margin:0; width:100%;">
-      </div>
-    `,
-    showCancelButton: true,
-    showDenyButton: true,
-    confirmButtonText: 'Attach',
-    denyButtonText: 'Browse Library',
-    denyButtonColor: '#6c757d',
-    preConfirm: () => {
-      const popup = Swal.getPopup();
-      const file = popup.querySelector('#swal-file').files[0];
-      const url = popup.querySelector('#swal-url').value.trim();
-      const saveToLibrary = popup.querySelector('#swal-save-library').checked;
-      if (!file && !url) {
-        Swal.showValidationMessage('Upload a file or enter a URL');
-        return false;
-      }
-      return { file, url, saveToLibrary };
-    }
-  });
-
-  // Library path
-  if (isDenied) {
-    return await showLibraryPicker();
-  }
-  if (!isConfirmed) return null;
-
-  if (formValues.file) {
-    try {
-      return await uploadFile(formValues.file, title.includes('MMS') ? 5 : 10, formValues.saveToLibrary);
-    } catch (err) {
-      Swal.fire('Upload Failed', err.message, 'error');
-      return null;
-    }
-  }
-  return formValues.url;
-}
-
-
 // ═══════════════════════════════════════════════════════════════
 // QUILL IMAGE HANDLER
 // ═══════════════════════════════════════════════════════════════
 
 async function quillImageHandler() {
-  const url = await attachDialog('Insert Image', 'image/png,image/jpeg,image/gif,image/webp');
-  if (url) await insertImageAtCursor(url);
+  const url = await AssetPicker.pick({
+    collection: 'comms-images',
+    accept: 'image/png,image/jpeg,image/gif,image/webp',
+    mimeFilter: 'image/',
+    maxMB: 10,
+    title: 'Insert Image',
+    apiSend: P.apiSend
+  });
+  if (!url) return;
+  await insertImageAtCursor(url);
 }
 
 async function insertImageAtCursor(url) {
@@ -708,8 +547,16 @@ async function attachMmsImage() {
   if (senderOpt?.dataset.mmsCapable !== '1') {
     return Swal.fire('SMS Only', 'The selected phone line does not support MMS. Choose a RingCentral line.', 'warning');
   }
-  const url = await attachDialog('Attach Image (MMS)', 'image/png,image/jpeg,image/gif,image/webp,.pdf');
-  if (url) setMmsAttachment(url);
+  const url = await AssetPicker.pick({
+    collection: 'comms-images',
+    accept: 'image/png,image/jpeg,image/gif,image/webp,.pdf',
+    mimeFilter: 'image/',
+    maxMB: 5,
+    title: 'Attach Image (MMS)',
+    apiSend: P.apiSend
+  });
+  if (!url) return;
+  setMmsAttachment(url);
 }
 
 function setMmsAttachment(url) {
@@ -742,8 +589,15 @@ function updateMmsVisibility() {
 // ═══════════════════════════════════════════════════════════════
 
 async function attachEmailFile() {
-  const url = await attachDialog('Attach File', 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt');
-  if (url) setEmailAttachment(url);
+  const url = await AssetPicker.pick({
+    collection: 'comms-images',
+    accept: 'image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt',
+    maxMB: 10,
+    title: 'Attach File',
+    apiSend: P.apiSend
+  });
+  if (!url) return;
+  setEmailAttachment(url);
 }
 
 function setEmailAttachment(url) {
