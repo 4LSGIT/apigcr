@@ -488,10 +488,15 @@ function fireViewHook(db, { appt_view_id, event, appt_id, contact_id,
 //   - cancelAppt: event = canceled
 // each guarded by source==='client'.
 //
-// Recipients gate on a present phone only — NOT users.allow_sms. Membership in
-// office_alerts_to is itself an explicit admin opt-in (an assigned ops duty),
-// distinct from allow_sms which governs a user's own task-reminder spam.
-// Empty/unset office_alerts_to ⇒ no recipients ⇒ feature OFF.
+// Recipients = office_alerts_to roster ∪ this appt's provider (appt_with), so a
+// provider is told of client changes to their OWN appt even when not on the
+// roster. Deduped by user id ⇒ a roster-member provider gets exactly ONE text.
+// appt_with = 0/null (court/system/provider-less) is skipped; the roster still
+// sends. Recipients gate on a present phone only — NOT users.allow_sms.
+// Membership in office_alerts_to is itself an explicit admin opt-in (an assigned
+// ops duty), distinct from allow_sms which governs a user's own task-reminder
+// spam. Empty/unset office_alerts_to ⇒ no roster recipients ⇒ feature OFF (the
+// roster is the master switch; an empty roster suppresses the provider text too).
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -593,14 +598,24 @@ function notifyStaffOfClientAction(db, { event, source, apptId, oldStart = null,
         return;
     }
 
+    // Recipient set = office_alerts_to roster ∪ { this appt's provider }.
+    // The provider (appt_with) is notified of client-initiated changes to their
+    // own appt even when NOT on the roster. Union deduped by user id, so a
+    // provider already on the roster gets exactly ONE text. appt_with = 0/null
+    // (court/system/provider-less) is skipped — the roster still sends.
+    const providerUid  = Number(info.appt_with);
+    const recipientIds = (Number.isInteger(providerUid) && providerUid > 0)
+      ? [...new Set([...userIds, providerUid])]
+      : userIds;
+
     // Resolve each user id → phone (NOT gated on allow_sms — see header note).
     const [rows] = await db.query(
       `SELECT user, phone FROM users WHERE user IN (?)`,
-      [userIds]
+      [recipientIds]
     );
     const byId = new Map(rows.map(r => [Number(r.user), r.phone]));
 
-    for (const uid of userIds) {
+    for (const uid of recipientIds) {
       const phone = byId.get(uid);
       if (!phone) {
         console.warn(`[APPT SERVICE] office alert: user ${uid} has no phone — skipped`);
