@@ -49,7 +49,6 @@
  * thrown Error into an HTTP status / { success:false } as appropriate.
  */
 
-const fetch = require('node-fetch');
 const { buildHeadersForCredential } = require('../lib/credentialInjection');
 const { FIRM_TZ } = require('./timezoneService');
 

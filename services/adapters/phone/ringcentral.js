@@ -21,8 +21,6 @@
 // to the Connections > Phone Lines admin UI. Adding fields here
 // auto-propagates to the frontend without route or template edits.
 
-const fetch    = require('node-fetch');
-const FormData = require('form-data');
 const Bottleneck = require('bottleneck');
 const { buildHeadersForCredential } = require('../../../lib/credentialInjection');
 
@@ -76,11 +74,12 @@ const sendMmsThroughLimiter = limiter.wrap(
     form.append('to',   toE164);
     if (text) form.append('text', text);
     form.append('country', JSON.stringify({ isoCode: countryIso }));
-    form.append('attachment', buffer, { filename, contentType });
+    form.append('attachment', new Blob([buffer], { type: contentType }), filename);
 
     const res = await fetch(MMS_URL, {
       method: 'POST',
-      headers: { ...authHeaders, ...form.getHeaders() },
+      // undici sets the multipart boundary from the FormData body.
+      headers: { ...authHeaders },
       body: form,
     });
     if (!res.ok) throw new Error(`RingCentral MMS ${res.status}: ${await res.text()}`);

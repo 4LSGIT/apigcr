@@ -23,7 +23,6 @@
  *   await hookService.executeHook(db, 'calendly-new-lead', input, { dryRun: true });
  */
 
-const fetch = require('node-fetch');
 const crypto = require('crypto');
 const { evaluateConditions } = require('./hookFilter');
 const { executeMapper, resolveBodyTemplate } = require('./hookMapper');

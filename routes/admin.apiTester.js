@@ -29,7 +29,6 @@
 // Credentials list: reuses existing GET /api/credentials.
 
 const express = require('express');
-const fetch = require('node-fetch');
 const router = express.Router();
 
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
@@ -81,6 +80,7 @@ function redactHeaders(headers) {
 }
 
 // node-fetch v2 returns a Headers object; convert to plain {name: value|[values]}
+/*routes/admin.apiTester.js:32 (its headersToObject already falls back to .entries() when .raw is absent; AbortController already enforces timeout. Optional polish: res.body.destroy() → res.body.cancel() since a web stream has no .destroy() — but it's already wrapped in try/catch so it's harmless as-is.) */
 function headersToObject(h) {
   if (!h) return {};
   if (typeof h.raw === 'function') {

@@ -42,7 +42,6 @@
  * (the contactService on-write hook) wrap in .catch().
  */
 
-const fetch = require('node-fetch');
 const { buildHeadersForCredential } = require('../lib/credentialInjection');
 const contactService = require('./contactService');
 

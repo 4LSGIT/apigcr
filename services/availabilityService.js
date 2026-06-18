@@ -63,7 +63,6 @@
 
 const { DateTime } = require('luxon');
 const { FIRM_TZ } = require('./timezoneService');
-const fetch = require('node-fetch');
 const { buildHeadersForCredential } = require('../lib/credentialInjection');
 const gcalService = require('./gcalService'); // reuse _resolveTarget for firm-cred resolution
 

@@ -416,24 +416,19 @@ test('refreshTokens: refresh-token rotation — keeps existing when response omi
 });
 
 test('refreshTokens: failure increments counter, alert + status flip at exactly threshold', async () => {
-  // To assert that exactly one Pabbly alert fires at the threshold, swap
-  // node-fetch BEFORE re-requiring oauthService (the module captures fetch
-  // at load time, so post-hoc cache mutation alone is insufficient).
-  const fetchPath = require.resolve('node-fetch');
-  const origFetch = require.cache[fetchPath].exports;
-  let pabblyAlertCount = 0;
+  // oauthService fires its critical alert via lib/alerting's alert() (email +
+  // SMS) — not a Pabbly webhook. Spy on that export, then reload oauthService
+  // so it re-captures the spy (it destructures
+  // `const { alert } = require('../lib/alerting')` at load time).
+  const alerting = require('../lib/alerting');
+  const origAlert = alerting.alert;
+  let alertCount = 0;
   const captured = [];
-  const wrappedFetch = async (url, opts) => {
-    if (typeof url === 'string' && url.includes('pabbly.com')) {
-      pabblyAlertCount++;
-      captured.push(JSON.parse(opts.body));
-      return { ok: true, status: 200, text: async () => '', json: async () => ({}) };
-    }
-    return origFetch(url, opts);
+  alerting.alert = (_db, payload) => {   // alert() is fire-and-forget, never throws
+    alertCount++;
+    captured.push(payload);
   };
-  require.cache[fetchPath].exports = wrappedFetch;
 
-  // Force re-load of oauthService with our wrapped fetch
   delete require.cache[require.resolve('../services/oauthService')];
   const isolatedOauthService = require('../services/oauthService');
 
@@ -459,7 +454,7 @@ test('refreshTokens: failure increments counter, alert + status flip at exactly 
     assert.strictEqual(row.oauth_status, 'connected');
     assert.match(row.oauth_last_error, /400.*invalid_grant/);
     await new Promise((r) => setImmediate(r));
-    assert.strictEqual(pabblyAlertCount, 0, 'no alert at count=1');
+    assert.strictEqual(alertCount, 0, 'no alert at count=1');
 
     // Failure 2: count → 2, status flips, exactly ONE alert fires
     await assert.rejects(isolatedOauthService.refreshTokens(db, id), /400/);
@@ -467,22 +462,25 @@ test('refreshTokens: failure increments counter, alert + status flip at exactly 
     assert.strictEqual(row.refresh_failure_count, 2);
     assert.strictEqual(row.oauth_status, 'refresh_failed');
     await new Promise((r) => setImmediate(r));
-    assert.strictEqual(pabblyAlertCount, 1, 'exactly one alert at threshold');
-    assert.strictEqual(captured[0].error_type, 'oauth_refresh_failed');
-    assert.strictEqual(captured[0].credential_id, id);
-    assert.strictEqual(captured[0].credential_name, 'TestCred');
+    assert.strictEqual(alertCount, 1, 'exactly one alert at threshold');
+    assert.strictEqual(captured[0].source, 'oauth');
+    assert.strictEqual(captured[0].kind, 'refresh_failed');
+    assert.strictEqual(captured[0].group_key, `oauth:${id}`);
+    assert.strictEqual(captured[0].severity, 'critical');
+    assert.strictEqual(captured[0].context.credential_id, id);
+    assert.strictEqual(captured[0].context.name, 'TestCred');
+    assert.strictEqual(captured[0].context.strike_count, 2);
 
-    // Failure 3: count → 3, no second alert (the `=== threshold` guard)
+    // Failure 3: count → 3, no second alert (=== threshold guard)
     await assert.rejects(isolatedOauthService.refreshTokens(db, id), /400/);
     row = db.rows.get(id);
     assert.strictEqual(row.refresh_failure_count, 3);
     await new Promise((r) => setImmediate(r));
-    assert.strictEqual(pabblyAlertCount, 1, 'still exactly one alert at count=3');
+    assert.strictEqual(alertCount, 1, 'still exactly one alert at count=3');
 
     await provider.close();
   } finally {
-    // Restore real fetch and reload the module
-    require.cache[fetchPath].exports = origFetch;
+    alerting.alert = origAlert;
     delete require.cache[require.resolve('../services/oauthService')];
   }
 });

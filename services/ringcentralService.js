@@ -4,8 +4,6 @@
  * RingCentral Service (clean, no logging)
  */
 
-const fetch = require("node-fetch");
-const FormData = require("form-data"); // For MMS multipart
 const Bottleneck = require("bottleneck");
 const path = require("path");
 const crypto = require("crypto");
@@ -276,16 +274,19 @@ const sendMmsThroughLimiter = smsLimiter.wrap(
     if (text) form.append("text", text);
     form.append("country", JSON.stringify({ isoCode: countryIso }));
     if (attachmentBuffer) {
-      form.append("attachment", attachmentBuffer, {
-        filename: attachmentName,
-        contentType: attachmentType,
-      });
+      form.append(
+        "attachment",
+        new Blob([attachmentBuffer], { type: attachmentType }),
+        attachmentName
+      );
     }
     const res = await fetch(
       "https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/mms",
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${tokenData.access_token}`, ...form.getHeaders() },
+        // undici derives the multipart Content-Type+boundary from the FormData
+        // body; do NOT set it manually or spread form.getHeaders().
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
         body: form,
       }
     );

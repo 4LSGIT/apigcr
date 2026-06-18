@@ -2,7 +2,6 @@
 //
 const express = require("express");
 const router = express.Router();
-const fetch = require("node-fetch");
 const trap = require("../lib/legacyTrap");
 
 /**

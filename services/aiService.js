@@ -28,7 +28,6 @@
 // scheduled_jobs integration, scoped as its own later slice. No v1 consumer
 // needs it.
 
-const fetch = require('node-fetch');
 const { buildHeadersForCredential } = require('../lib/credentialInjection');
 const { getPrompt } = require('../lib/aiPrompts');
 

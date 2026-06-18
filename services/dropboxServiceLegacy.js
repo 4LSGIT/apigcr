@@ -26,7 +26,6 @@
  * This file contains NO HTTP or Express logic.
  */
 
-const fetch = require("node-fetch");
 
 const DROPBOX_APP_KEY      = process.env.DROPBOX_APP_KEY;
 const DROPBOX_APP_SECRET   = process.env.DROPBOX_APP_SECRET;

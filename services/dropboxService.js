@@ -70,7 +70,6 @@
  * mapErrorStatus can pass client-error codes through (same scheme as gcal).
  */
 
-const fetch = require('node-fetch');
 const { buildHeadersForCredential } = require('../lib/credentialInjection');
 
 // ─────────────────────────────────────────────────────────────
@@ -261,7 +260,7 @@ async function _content(db, credentialId, endpoint, arg, { mode, body, timeoutMs
   }
 
   if (mode === 'download') {
-    const buffer = await res.buffer();
+    const buffer = Buffer.from(await res.arrayBuffer());
     let metadata = null;
     const raw = res.headers.get('dropbox-api-result');
     if (raw) { try { metadata = JSON.parse(raw); } catch { /* */ } }

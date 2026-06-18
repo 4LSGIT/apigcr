@@ -16,7 +16,6 @@
 // to the Connections > Phone Lines admin UI. Adding fields here
 // auto-propagates to the frontend without route or template edits.
 
-const fetch = require('node-fetch');
 const { buildHeadersForCredential } = require('../../../lib/credentialInjection');
 
 const QUO_API_URL = 'https://api.openphone.com/v1/messages';
