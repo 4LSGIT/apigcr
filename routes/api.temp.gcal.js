@@ -1,6 +1,6 @@
 // routes/api.temp_gcal.js
 //
-// ⚠️ TEMPORARY ROUTE — DELETE WHEN DONE. ⚠️
+// ⚠️ TEMPORARY ROUTE — move to local WHEN DONE. ⚠️
 //
 // Gives a Claude instance free-reign HTTP access to the Google APIs using
 // the stored Google Workspace oauth2 credential (id 11), authenticated by a
