@@ -35,7 +35,7 @@
 // metadata only — endpoints, grant_type, status, token presence + prefix/length.
 
 const crypto = require('crypto');
-const fetch = require('node-fetch');
+//const fetch = require('node-fetch');
 const { encrypt, decrypt } = require('../lib/credentialCrypto');
 const { alert } = require('../lib/alerting');
 
