@@ -2084,6 +2084,10 @@ async function createContact(db, {
     );
 
     await conn.commit();
+
+    // One-way Google Contacts sync (fire-and-forget; never blocks the response).
+    try { require('./gContactsService').pushContact(db, newId).catch(e => console.warn('[GCONTACTS] push on create:', e.message)); } catch (_) {}
+
     return { contact_id: newId, contact_name: created.contact_name };
   } catch (err) {
     try { await conn.rollback(); } catch (_) { /* ignore */ }
@@ -2272,6 +2276,9 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
     if (addrPlanRes)  addrResult  = await _applyAddressPlan(conn, contactId, addrPlanRes.plan, userId);
 
     await conn.commit();
+
+    // One-way Google Contacts sync (fire-and-forget; never blocks the response).
+    try { require('./gContactsService').pushContact(db, contactId).catch(e => console.warn('[GCONTACTS] push on update:', e.message)); } catch (_) {}
 
     // 5. Build response
     const transferredFrom = [
