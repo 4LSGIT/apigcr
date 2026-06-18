@@ -64,6 +64,10 @@
         <i class="fa-solid fa-circle-down"></i> Refresh
       </button>
     </div>
+    <!-- Type-specific button groups. Each is hidden by default and revealed by
+         applyCaseType() (search "applyCaseType" in the script) based on
+         case_type. #otherButtons is the generic fallback. To add a new type,
+         add a group here AND a branch in applyCaseType — see the recipe there. -->
     <div id="bkButtons" style="display: none">
       <button class="tab" id="ISSNButton" onclick="openTab(this, 'tabInfo')">
         <i class="fa-solid fa-circle-info"></i> Initial Strategy Session Notes
@@ -79,6 +83,14 @@
       </button>
       <button class="tab" onclick="openTab(this, 'tabDet')">
         <i class="fa-brands fa-wpforms"></i> Detailed Questionnaire
+      </button>
+    </div>
+    <div id="otherButtons" style="display: none">
+      <button class="tab" onclick="openTab(this, 'tabSend')">
+        <i class="fa-solid fa-comments"></i> Sending Form
+      </button>
+      <button class="tab" onclick="openTab(this, 'tabCase')">
+        <i class="fa-solid fa-landmark"></i> Case Details
       </button>
     </div>
     <h4 style="color: #000">
@@ -880,9 +892,13 @@
       }
     </script>
 
-    <!-- BK case tabs -->
+    <!-- Type-specific tab panels. applyCaseType() loads each iframe's src per
+         case_type. tabSend (#SendingForm) and tabCase (#caseForm) are SHARED by
+         all types — every branch just loads a different src into them. tabInfo /
+         tab341 / tabDet are BK-only. Add new-type panels at "other case types
+         here" below. -->
 
-    <div id="tabInfo" class="tab-content">
+    <div id="tabInfo" class="tab-content"> <!-- BK only -->
       <p style="text-align: center; color: red">
         You must submit the form below to update the clients file!
       </p>
@@ -895,11 +911,11 @@
       </button>
     </div>
 
-    <div id="tabSend" class="tab-content">
+    <div id="tabSend" class="tab-content"> <!-- shared: src set per type -->
       <iframe id="SendingForm"></iframe>
     </div>
 
-    <div id="tabCase" class="tab-content">
+    <div id="tabCase" class="tab-content"> <!-- shared: src set per type -->
       <iframe id="caseForm"></iframe>
     </div>
 
@@ -1027,6 +1043,7 @@ async function caseTypeChanged(type) {
     window.entityData.case.case_subtype = '';
     syncSubtypeSelect(type, '');
     E("type").innerHTML = fmtCaseType(window.entityData.case) || "N/A";
+    applyCaseType(window.entityData.case);   // re-toggle button group + iframes for the new type
     Toast.fire({ icon: 'success', title: 'Case type updated' });
   } catch (e) {
     Toast.fire({ icon: 'error', title: 'Error', text: e.message });
@@ -1043,30 +1060,80 @@ async function caseSubtypeChanged(sub) {
   }
 }
 
+// ── Case-type wiring (button group + iframe srcs) ───────────
+// Re-runnable: hides every type-specific group, then reveals the one for the
+// current type and points its iframes. Called on first load (loadIframes) AND
+// whenever the type changes (caseTypeChanged), so the UI re-toggles WITHOUT a
+// page reload. Keep it idempotent — never assume a clean starting state.
+//
+// Note on type matching: BK-ness is the category alone — Chapter 7/13 live in
+// case_subtype, so every chapter matches `case_type === "Bankruptcy"`.
+//
+// ┌─────────────────────────────────────────────────────────────────────────┐
+// │ TO ADD A NEW CASE TYPE (e.g. "Litigation"), do these 3 things:           │
+// │                                                                          │
+// │  1. HTML: add a `<div id="litButtons" style="display:none">` button      │
+// │     group next to #bkButtons / #otherButtons (search "otherButtons").    │
+// │     Reuse shared tabs (tabSend/tabCase) and/or add new tab-content        │
+// │     panels + iframes down in the "BK case tabs" section.                  │
+// │  2. JS: add its group id to TYPE_GROUPS below (so it gets hidden on       │
+// │     reset — miss this and it'll stick on screen after a type switch).     │
+// │  3. JS: add an `else if (type === "Litigation") { ... }` branch below,    │
+// │     mirroring the BK/else branches: show the group + set its iframe srcs. │
+// │                                                                          │
+// │ Anything not matched by a branch falls through to `else` (the generic     │
+// │ group: Sending Form + Case Details). Shared panels — tabSend/#SendingForm │
+// │ and tabCase/#caseForm — are reused by every branch; each just loads a     │
+// │ different src into the same iframe.                                       │
+// └─────────────────────────────────────────────────────────────────────────┘
+
+// Every type-specific button group id. applyCaseType hides them all before
+// revealing the current one — a new type's group MUST be added here too.
+const TYPE_GROUPS = ["bkButtons", "otherButtons"];
+
+function applyCaseType(c) {
+  // Reset: hide all type groups so re-running on a type change can't leave a
+  // stale group visible. (Standard tabs in #caseButtons are never touched.)
+  TYPE_GROUPS.forEach(id => { S(id).display = "none"; });
+
+  const type = c.case_type;
+
+  if (type === "Bankruptcy") {
+    S("bkButtons").display = "";
+
+    if (c.case_ISSN_form) {
+      E("ISSNinfo").src = `https://jotform.com/edit/${c.case_ISSN_form}`;//back compatibility
+    } else {
+      E("ISSNinfo").src = `forms/issn.html?case_id=${c.case_id}`;
+    }
+
+    E("SendingForm").src = `sendingform-bk.html?case_id=${c.case_id}`;
+    E("caseForm").src    = `forms/casedetails-bk.html?case_id=${c.case_id}`;
+    E("341").src         = `/forms/341notes.html?case_id=${c.case_id}`;
+    E("det").src         = c.case_detailed_link || "about:blank";
+  }
+  // ↓↓↓ NEW CASE TYPES GO HERE — copy this template, uncomment, rename ↓↓↓
+  // else if (type === "Litigation") {
+  //   S("litButtons").display = "";                                  // 1. show its group
+  //   E("SendingForm").src = `sendingform-lit.html?case_id=${c.case_id}`;  // 2. point its
+  //   E("caseForm").src    = `forms/casedetails-lit.html?case_id=${c.case_id}`; //   iframes
+  // }
+  // ↑↑↑ also add "litButtons" to TYPE_GROUPS above ↑↑↑
+  else {
+    // Fallback for every type without its own branch: generic forms.
+    S("otherButtons").display = "";
+
+    E("SendingForm").src = `sendingform.html?case_id=${c.case_id}`;
+    E("caseForm").src    = `forms/casedetails.html?case_id=${c.case_id}`;
+  }
+}
+
 // ── Iframe loading (called once on initial load) ────────────
 function loadIframes() {
   const c = window.entityData.case;
   if (!c) return;
 
-  // Post type/subtype split: BK-ness is the category alone — Chapter 7/13
-  // live in case_subtype, so every chapter matches. (Existing rows were
-  // migrated; compat triggers catch stragglers — no old-shape tolerance here.)
-  const isBK = c.case_type === "Bankruptcy";
-
-  if (isBK) {
-    S("bkButtons").display = "";
-
-    if (c.case_ISSN_form) {
-      E("ISSNinfo").src = `https://jotform.com/edit/${c.case_ISSN_form}`;
-    } else {
-      E("ISSNinfo").src = `forms/issn.html?case_id=${c.case_id}`;
-    }
-
-    E("SendingForm").src = `sendingform.html?case_id=${c.case_id}`;
-    E("caseForm").src    = `forms/casedetails.html?case_id=${c.case_id}`;
-    E("341").src         = `/forms/341notes.html?case_id=${c.case_id}`;
-    E("det").src         = c.case_detailed_link || "about:blank";
-  }
+  applyCaseType(c);
 
   // Dropbox
   if (c.case_dropbox) {

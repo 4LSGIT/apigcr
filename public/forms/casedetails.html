@@ -3,24 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bankruptcy Case Details</title>
+  <title>Case Details</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <link href="/css/yc-forms.css" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <style>
-    /* Compact overrides for this dense form */
     .yc-section-title { font-size: 1rem; margin-top: 14px; margin-bottom: 6px; }
     .yc-field { margin-bottom: 8px; }
     .yc-label { font-size: 0.84rem; margin-bottom: 3px; }
-    .yc-check-grid { gap: 4px 12px; }
-    .yc-check-grid label { font-size: 0.84rem; }
-    /* Side-by-side section pairs */
-    .yc-section-pair { display: flex; gap: 20px; }
-    .yc-section-pair > .yc-section { flex: 1; }
-    @media (max-width: 600px) { .yc-section-pair { flex-direction: column; } }
-    /* Sublabel hints */
-    .yc-hint { font-size: 0.75rem; color: #6c757d; margin-top: 2px; }
+    .yc-hint  { font-size: 0.75rem; color: #6c757d; margin-top: 2px; }
   </style>
 </head>
 <body>
@@ -47,30 +39,25 @@
 
   <div class="yc-row">
     <div class="yc-field yc-2x yc-field-locked">
-      <label class="yc-label">Debtor</label>
+      <label class="yc-label">Client</label>
       <input type="text" name="debtor_name" data-yc-locked-msg="Edit the client name from the Contact page">
     </div>
     <div class="yc-field yc-2x yc-field-locked" id="codebtorField" style="display:none;">
-      <label class="yc-label">Co-Debtor</label>
-      <input type="text" name="codebtor_name" data-yc-locked-msg="Edit the co-debtor name from the Contact page">
+      <label class="yc-label">Secondary Party</label>
+      <input type="text" name="codebtor_name" data-yc-locked-msg="Edit the secondary party from the Contact page">
     </div>
   </div>
 
   <div class="yc-row">
     <div class="yc-field yc-2x">
-      <label class="yc-label">Case Number</label>
-      <input type="text" name="case_number" placeholder="25-44545 or 25-44545-mar">
-      <div class="yc-hint" id="caseNumberHint"></div>
+      <label class="yc-label">Case / Docket Number</label>
+      <input type="text" name="case_number" maxlength="20" placeholder="e.g. 1:26-cv-00123-RML">
+      <div class="yc-hint">Stored exactly as entered — no formatting applied.</div>
     </div>
-    <div class="yc-field yc-fixed-sm">
-      <label class="yc-label">Chapter</label>
-      <input type="text" name="case_chapter" maxlength="2" placeholder="7">
-    </div>
-    <div class="yc-field">
-      <label class="yc-label">Trustee</label>
-      <select name="case_trustee"></select>
-      <input type="hidden" name="case_341_link">
-      <div class="yc-hint" id="trusteeHint"></div>
+    <div class="yc-field yc-2x">
+      <label class="yc-label">Case Number (Full)</label>
+      <input type="text" name="case_number_full" maxlength="20" placeholder="e.g. 1:26-cv-00123 (RML)">
+      <div class="yc-hint">Optional alternate / full form of the docket.</div>
     </div>
     <div class="yc-field yc-field-locked">
       <label class="yc-label">Case ID</label>
@@ -79,213 +66,42 @@
   </div>
 
   <div class="yc-row">
+    <div class="yc-field yc-2x">
+      <label class="yc-label">Judge</label>
+      <input type="text" name="case_judge" maxlength="100" placeholder="e.g. Robert M. Lindeman">
+    </div>
+    <div class="yc-field">
+      <label class="yc-label">Opened</label>
+      <input type="date" name="case_open_date">
+    </div>
     <div class="yc-field">
       <label class="yc-label">Filed</label>
       <input type="date" name="case_file_date">
     </div>
     <div class="yc-field">
-      <label class="yc-label">Initial 341</label>
-      <input type="date" name="case_341_initial">
-    </div>
-    <div class="yc-field yc-2x yc-field-locked">
-      <label class="yc-label">Current 341</label>
-      <input type="datetime-local" name="case_341_current" data-yc-locked-msg="The 341 date is managed via the 341 Notes form">
+      <label class="yc-label">Closed</label>
+      <input type="date" name="case_close_date">
     </div>
   </div>
 
-  <div class="yc-row">
-    <div class="yc-field">
-      <label class="yc-label">Objection Deadline</label>
-      <input type="date" name="case_objection">
-      <div class="yc-hint">+60 days from initial 341</div>
-    </div>
-    <div class="yc-field">
-      <label class="yc-label">180 Days</label>
-      <input type="date" name="case_180">
-      <div class="yc-hint">+180 days from file date</div>
-    </div>
-    <div class="yc-field">
-      <label class="yc-label">90 Day Preference</label>
-      <input type="date" name="case_preference">
-      <div class="yc-hint">file date − 90 days</div>
-    </div>
-  </div>
-
-  <!-- ═══ CASE ISSUES ═══ -->
-  <div class="yc-section">
-    <div class="yc-section-title">Case Issues</div>
-    <div class="yc-row">
-      <div class="yc-field">
-        <label class="yc-label">Vehicle</label>
-        <div class="yc-check-grid" data-yc-checkgroup="vehicle" style="grid-template-columns:1fr;">
-          <label><input type="checkbox" value="Reaffirmation"> Reaffirmation</label>
-          <label><input type="checkbox" value="Redemption"> Redemption</label>
-          <label><input type="checkbox" value="Replacement"> Replacement</label>
-        </div>
-      </div>
-      <div class="yc-field">
-        <label class="yc-label">Garnishment</label>
-        <div class="yc-check-grid" data-yc-checkgroup="garnishment" style="grid-template-columns:1fr;">
-          <label><input type="checkbox" value="Pre-Petition"> Pre-Petition</label>
-          <label><input type="checkbox" value="Post-Petition"> Post-Petition</label>
-        </div>
-      </div>
-      <div class="yc-field">
-        <label class="yc-label">Other</label>
-        <div class="yc-check-grid" data-yc-checkgroup="other_issues" style="grid-template-columns:1fr;">
-          <label><input type="checkbox" value="Automatic Stay Violation"> Automatic Stay Violation</label>
-          <label><input type="checkbox" value="Student Loans"> Student Loans</label>
-          <label><input type="checkbox" value="Confirmation Objections"> Confirmation Objections</label>
-          <label><input type="checkbox" value="Other"> Other</label>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══ FEE AGREEMENTS + CREDIT COUNSELING (side by side) ═══ -->
-  <div class="yc-section-pair">
-    <div class="yc-section">
-      <div class="yc-section-title">Fee Agreement(s)</div>
-      <div class="yc-row">
-        <div class="yc-field">
-          <label class="yc-label">Pre-Petition</label>
-          <div class="yc-check-grid" data-yc-checkgroup="pre_petition" style="grid-template-columns:1fr;">
-            <label><input type="checkbox" value="Sent"> Sent</label>
-            <label><input type="checkbox" value="Signed"> Signed</label>
-          </div>
-        </div>
-        <div class="yc-field">
-          <label class="yc-label">Post-Petition</label>
-          <div class="yc-check-grid" data-yc-checkgroup="post_petition" style="grid-template-columns:1fr;">
-            <label><input type="checkbox" value="Sent"> Sent</label>
-            <label><input type="checkbox" value="Signed"> Signed</label>
-            <label><input type="checkbox" value="N/A"> N/A</label>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="yc-section">
-      <div class="yc-section-title">Credit Counseling</div>
-      <div class="yc-row">
-        <div class="yc-field">
-          <label class="yc-label">1st Course</label>
-          <div class="yc-check-grid" data-yc-checkgroup="first_course" style="grid-template-columns:1fr;">
-            <label><input type="checkbox" value="Sent Info"> Sent Info</label>
-            <label><input type="checkbox" value="Received"> Received</label>
-            <label><input type="checkbox" value="Filed"> Filed</label>
-          </div>
-        </div>
-        <div class="yc-field">
-          <label class="yc-label">2nd Course</label>
-          <div class="yc-check-grid" data-yc-checkgroup="second_course" style="grid-template-columns:1fr;">
-            <label><input type="checkbox" value="Sent Info"> Sent Info</label>
-            <label><input type="checkbox" value="Received"> Received</label>
-            <label><input type="checkbox" value="Filed"> Filed</label>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══ MATRIX + SCHEDULES (side by side) ═══ -->
-  <div class="yc-section-pair">
-    <div class="yc-section">
-      <div class="yc-section-title">Matrix</div>
-      <div class="yc-check-grid" data-yc-checkgroup="matrix" style="grid-template-columns:1fr 1fr;">
-        <label><input type="checkbox" value="Extension Motion"> Extension Motion</label>
-        <label><input type="checkbox" value="Uploaded"> Uploaded</label>
-      </div>
-      <div class="yc-row" style="margin-top:6px;">
-        <div class="yc-field">
-          <label class="yc-label">Original Due</label>
-          <input type="date" name="matrix_date_original">
-        </div>
-        <div class="yc-field">
-          <label class="yc-label">Proposed Due</label>
-          <input type="date" name="matrix_date_proposed">
-        </div>
-      </div>
-    </div>
-
-    <div class="yc-section">
-      <div class="yc-section-title">Schedules</div>
-      <div class="yc-check-grid" data-yc-checkgroup="schedules" style="grid-template-columns:1fr 1fr;">
-        <label><input type="checkbox" value="Extension Motion"> Extension Motion</label>
-        <label><input type="checkbox" value="Filed"> Filed</label>
-      </div>
-      <div class="yc-row" style="margin-top:6px;">
-        <div class="yc-field">
-          <label class="yc-label">Original Due</label>
-          <input type="date" name="schedules_due_original">
-        </div>
-        <div class="yc-field">
-          <label class="yc-label">Proposed Due</label>
-          <input type="date" name="schedules_due_proposed">
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══ FILING FEE ═══ -->
-  <div class="yc-section">
-    <div class="yc-section-title">Filing Fee</div>
-    <div class="yc-check-grid" data-yc-checkgroup="filing_fee">
-      <label><input type="checkbox" value="Order Uploaded"> Order Uploaded</label>
-      <label><input type="checkbox" value="Show Cause"> Show Cause</label>
-      <label><input type="checkbox" value="Fee Paid"> Fee Paid</label>
-      <label><input type="checkbox" value="Order Issued"> Order Issued</label>
-      <label><input type="checkbox" value="Deadline Extended"> Deadline Extended</label>
-      <label><input type="checkbox" value="Fee Waived"> Fee Waived</label>
-    </div>
-    <div class="yc-row" style="margin-top:6px;">
-      <div class="yc-field">
-        <label class="yc-label">Final Installment Due</label>
-        <input type="date" name="final_installment">
-      </div>
-      <div class="yc-field yc-2x">
-        <label class="yc-label">Show Cause Date</label>
-        <input type="datetime-local" name="show_cause">
-      </div>
-      <div class="yc-field">
-        <label class="yc-label">Extended Deadline</label>
-        <input type="date" name="filing_fee_extended_deadline">
-      </div>
-    </div>
-  </div>
-
-  <!-- ═══ DOCUMENTS FOR TRUSTEE ═══ -->
-  <div class="yc-section">
-    <div class="yc-section-title">Documents for Trustee</div>
-    <div class="yc-row">
-      <div class="yc-field">
-        <label class="yc-label">Documents Due</label>
-        <input type="date" name="docs_due">
-        <div class="yc-hint">14 days before current 341</div>
-      </div>
-      <div class="yc-field">
-        <label class="yc-label">Documents</label>
-        <div class="yc-check-grid" data-yc-checkgroup="docs" style="grid-template-columns:1fr;">
-          <label><input type="checkbox" value="Uploaded"> Uploaded</label>
-          <label><input type="checkbox" value="Missing"> Missing</label>
-        </div>
-      </div>
-      <div class="yc-field yc-2x">
-        <label class="yc-label">Documents Missing for Trustee</label>
-        <textarea name="docs_missing" rows="3" maxlength="2000"></textarea>
-      </div>
-    </div>
+  <div class="yc-hint" style="margin: 4px 2px 0;">
+    Hearings, depositions, and deadlines are tracked on the <strong>Events</strong> tab.
   </div>
 
   <!-- ═══ NOTES + ALERTS ═══ -->
-  <div class="yc-row">
-    <div class="yc-field">
-      <label class="yc-label">Notes</label>
-      <textarea name="case_notes" rows="4" maxlength="5000"></textarea>
-    </div>
-    <div class="yc-field">
-      <label class="yc-label">Alerts</label>
-      <textarea name="case_alerts" rows="4" maxlength="5000"></textarea>
+  <div class="yc-section">
+    <div class="yc-section-title">Notes &amp; Alerts</div>
+
+    <div class="yc-row">
+      <div class="yc-field yc-2x">
+        <label class="yc-label">Case Notes</label>
+        <textarea name="case_notes" rows="6" maxlength="65535"></textarea>
+        <div class="yc-hint">Court, opposing counsel, and other matter details — record here.</div>
+      </div>
+      <div class="yc-field yc-2x">
+        <label class="yc-label">Alerts</label>
+        <textarea name="case_alerts" rows="6" maxlength="5000"></textarea>
+      </div>
     </div>
   </div>
 
@@ -305,7 +121,7 @@
   } else {
 
     const form = new YCForm({
-      formKey:       'case_details',
+      formKey:       'case_details_general',
       schemaVersion: 1,
       linkType:      'case',
       linkId:        caseId,
@@ -316,56 +132,18 @@
       readonly:      false,
 
       fields: {
-        // Hidden / locked display fields
-        debtor_name:      { el: '[name="debtor_name"]',    type: 'text', readonly: true },
-        codebtor_name:    { el: '[name="codebtor_name"]',  type: 'text', readonly: true },
-        case_id:          { el: '[name="case_id"]',        type: 'text', readonly: true },
+        // Locked display fields
+        debtor_name:      { el: '[name="debtor_name"]',   type: 'text', readonly: true },
+        codebtor_name:    { el: '[name="codebtor_name"]', type: 'text', readonly: true },
+        case_id:          { el: '[name="case_id"]',       type: 'text', readonly: true },
 
-        // Case details
-        case_number:      { el: '[name="case_number"]',    type: 'text' },
-        case_chapter:     { el: '[name="case_chapter"]',   type: 'text' },
-        case_trustee:     { el: '[name="case_trustee"]',   type: 'select' },
-        case_341_link:    { el: '[name="case_341_link"]',  type: 'text' },
-        case_file_date:   { el: '[name="case_file_date"]', type: 'date' },
-        case_341_initial: { el: '[name="case_341_initial"]', type: 'date' },
-        case_341_current: { el: '[name="case_341_current"]', type: 'text', readonly: true },
-        case_objection:   { el: '[name="case_objection"]',   type: 'date' },
-        case_180:         { el: '[name="case_180"]',         type: 'date' },
-        case_preference:  { el: '[name="case_preference"]',  type: 'date' },
-
-        // Case issues (SET columns → checkgroup)
-        vehicle:       { el: '[data-yc-checkgroup="vehicle"]',       type: 'checkgroup' },
-        garnishment:   { el: '[data-yc-checkgroup="garnishment"]',   type: 'checkgroup' },
-        other_issues:  { el: '[data-yc-checkgroup="other_issues"]',  type: 'checkgroup' },
-
-        // Fee agreements
-        pre_petition:  { el: '[data-yc-checkgroup="pre_petition"]',  type: 'checkgroup' },
-        post_petition: { el: '[data-yc-checkgroup="post_petition"]', type: 'checkgroup' },
-
-        // Credit counseling
-        first_course:  { el: '[data-yc-checkgroup="first_course"]',  type: 'checkgroup' },
-        second_course: { el: '[data-yc-checkgroup="second_course"]', type: 'checkgroup' },
-
-        // Matrix
-        matrix:               { el: '[data-yc-checkgroup="matrix"]', type: 'checkgroup' },
-        matrix_date_original: { el: '[name="matrix_date_original"]', type: 'date' },
-        matrix_date_proposed: { el: '[name="matrix_date_proposed"]', type: 'date' },
-
-        // Schedules
-        schedules:              { el: '[data-yc-checkgroup="schedules"]', type: 'checkgroup' },
-        schedules_due_original: { el: '[name="schedules_due_original"]', type: 'date' },
-        schedules_due_proposed: { el: '[name="schedules_due_proposed"]', type: 'date' },
-
-        // Filing fee
-        filing_fee:                  { el: '[data-yc-checkgroup="filing_fee"]', type: 'checkgroup' },
-        final_installment:           { el: '[name="final_installment"]',        type: 'date' },
-        show_cause:                  { el: '[name="show_cause"]',               type: 'text' }, // datetime-local
-        filing_fee_extended_deadline:{ el: '[name="filing_fee_extended_deadline"]', type: 'date' },
-
-        // Documents
-        docs:         { el: '[data-yc-checkgroup="docs"]',  type: 'checkgroup' },
-        docs_due:     { el: '[name="docs_due"]',            type: 'date' },
-        docs_missing: { el: '[name="docs_missing"]',        type: 'textarea' },
+        // Editable case details (form field names == DB column names; no apiMap)
+        case_number:      { el: '[name="case_number"]',      type: 'text' },
+        case_number_full: { el: '[name="case_number_full"]', type: 'text' },
+        case_judge:       { el: '[name="case_judge"]',       type: 'text' },
+        case_open_date:   { el: '[name="case_open_date"]',   type: 'date' },
+        case_file_date:   { el: '[name="case_file_date"]',   type: 'date' },
+        case_close_date:  { el: '[name="case_close_date"]',  type: 'date' },
 
         // Notes
         case_notes:  { el: '[name="case_notes"]',  type: 'textarea' },
@@ -376,301 +154,39 @@
         load: { method: 'GET', url: '/api/cases/{linkId}?include=clients', path: 'case' },
       },
 
-      // Map DB column names that differ from form field names
-      apiMap: {
-        'case_number_full':      'case_number',
-        'case_issues_bk_vehicle':'vehicle',
-        'case_garnish':          'garnishment',
-        'case_issues_bk_other':  'other_issues',
-        'case_pre_petition':     'pre_petition',
-        'case_post_petition':    'post_petition',
-        'case_1st_course':       'first_course',
-        'case_2nd_course':       'second_course',
-      },
-
       onSubmit: {
         patch: { method: 'PATCH', url: '/api/cases/{linkId}' },
       },
 
-      onLoad: async (data) => {
+      onLoad: async () => {
         const loadResult = form._loadResult || {};
-        const caseData = loadResult.case || {};
-        const clients = loadResult.clients || [];
+        const clients    = loadResult.clients || [];
 
-        // Debtor name (locked display)
+        // Client name (locked display)
         const PC = clients.find(c => c.relate_type === 'Primary');
         if (PC) {
           document.querySelector('[name="debtor_name"]').value = PC.contact_name || '';
         }
 
-        // Co-debtor (show section if exists)
+        // Secondary party (show field if one exists)
         const SC = clients.find(c => c.relate_type === 'Secondary');
         if (SC) {
           document.querySelector('[name="codebtor_name"]').value = SC.contact_name || '';
           document.getElementById('codebtorField').style.display = '';
         }
-
-        // Case number fallback: if case_number_full was empty, try case_number
-        const cnEl = document.querySelector('[name="case_number"]');
-        if (!cnEl.value) cnEl.value = caseData.case_number || '';
-
-        // Trustee dropdown: build options from firmData and select the stored
-        // value (injecting a flagged option if it isn't in the list). The 341
-        // link (case_341_link) is left as-loaded here — it's only overwritten
-        // when the user actively changes the trustee (see onTrusteeChange).
-        buildTrusteeOptions(caseData.case_trustee || '');
-        renderTrusteeHint();
       },
 
       onSave: () => {
-        //try { P.postMessage({ type: 'form-saved', form: 'case_details' }, '*'); } catch (_) {}
+        //try { P.postMessage({ type: 'form-saved', form: 'case_details_general' }, '*'); } catch (_) {}
       },
     });
 
-    // Parse a typed docket into { short, full }.
-    //   "25-44545-mar" → { short:'25-44545', full:'25-44545-mar' }
-    //   "25-44545"     → { short:'25-44545', full:null }
-    //   unparseable    → { short:<raw>,      full:null }  (keep data; flag in UI)
-    // Shared by the save path and the live hint.
-    function splitDocket(raw) {
-      const v = (raw || '').trim();
-      if (!v) return { short: '', full: null, ok: true };
-      const m = /^(\d{2}-\d{5})(-[A-Za-z]+)$/.exec(v);
-      if (m) return { short: m[1], full: v, ok: true };
-      if (/^\d{2}-\d{5}$/.test(v)) return { short: v, full: null, ok: true };
-      // Doesn't match either shape — keep raw in the short column, leave full
-      // null so we never persist a malformed "full". ok:false drives the hint.
-      return { short: v, full: null, ok: false };
-    }
+    // No custom _buildPatchPayload here (unlike the BK form): field names already
+    // equal DB column names and there is no apiMap, so YCForm's default builder —
+    // which sends only changed, non-readonly fields — does exactly what we need.
+    // Dockets are stored verbatim (no split); that transform lives only in the BK form.
 
-    // Custom PATCH payload: map form field names back to DB column names.
-    //
-    // case_number is special: the single visible field holds whatever the user
-    // typed (short "25-44545" or full "25-44545-mar"). We split it into BOTH db
-    // columns — case_number (short ##-#####) and case_number_full (full docket
-    // incl. -judge suffix, or NULL when no suffix was typed).
-    form._buildPatchPayload = function() {
-      const diff = this.getDiff();
-      const payload = {};
-
-      // Reverse map: form field name → DB column name (case_number handled below)
-      const reverseApiMap = {
-        'vehicle':       'case_issues_bk_vehicle',
-        'garnishment':   'case_garnish',
-        'other_issues':  'case_issues_bk_other',
-        'pre_petition':  'case_pre_petition',
-        'post_petition': 'case_post_petition',
-        'first_course':  'case_1st_course',
-        'second_course': 'case_2nd_course',
-      };
-
-      for (const [fieldName, [_oldVal, newVal]] of Object.entries(diff)) {
-        const fieldConfig = this.config.fields[fieldName];
-        if (fieldConfig && fieldConfig.readonly) continue;
-
-        if (fieldName === 'case_number') {
-          const { short, full } = splitDocket(newVal);
-          payload.case_number = short;
-          payload.case_number_full = full;
-          continue;
-        }
-        if (fieldName === 'case_chapter') {
-          const ch = String(newVal || '').trim();
-          payload.case_chapter = ch;
-          payload.case_subtype = ch ? `Chapter ${ch}` : '';
-          continue;
-        }
-        const dbCol = reverseApiMap[fieldName] || fieldName;
-        payload[dbCol] = newVal;
-      }
-
-      return payload;
-    };
-
-    // ── Trustee dropdown + 341-link auto-fill ──
-    // Source of truth is firmData.settings.trustees (app_settings 'fe-trustees',
-    // editable in Settings → Trustees). The selected trustee's `link` is written
-    // to the hidden case_341_link field, which the appointment automation (T19)
-    // reads as the 341 meeting link.
-    const T_GROUP_LABEL = { 7: 'Chapter 7', 13: 'Chapter 13', 12: 'Chapter 12' };
-    const trusteeList    = () => (P.firmData && P.firmData.settings && P.firmData.settings.trustees) || [];
-    const trusteeSelect  = () => document.querySelector('[name="case_trustee"]');
-    const trusteeLinkEl  = () => document.querySelector('[name="case_341_link"]');
-    const trusteeHintEl  = () => document.getElementById('trusteeHint');
-
-    function escHtml(s) {
-      return String(s == null ? '' : s).replace(/[&<>"']/g,
-        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    }
-    function findTrustee(name) {
-      return trusteeList().find(t => String(t.name) === String(name)) || null;
-    }
-
-    // Render the <select>, grouped by chapter, and select `selectedName`.
-    // If the stored name isn't in the list (legacy/dirty data), inject a
-    // flagged option so the value still shows and is never silently dropped.
-    function buildTrusteeOptions(selectedName) {
-      const sel = trusteeSelect();
-      if (!sel) return;
-      const list = trusteeList();
-      const name = selectedName || '';
-
-      const groups = {};
-      list.forEach(t => {
-        const ct = Number(t.case_type) || 0;
-        (groups[ct] = groups[ct] || []).push(t);
-      });
-      const groupOrder = [...new Set([7, 13, 12, ...Object.keys(groups).map(Number)])]
-        .filter(c => groups[c] && groups[c].length);
-
-      let html = '<option value="">— select trustee —</option>';
-
-      // A stored value that isn't in the list (legacy/dirty data) gets a flagged
-      // option so it still displays and is never silently dropped. Built into the
-      // HTML string (a direct child of <select>) — NOT inserted via insertBefore,
-      // which throws once <optgroup>s are present (its options aren't direct
-      // children of the select).
-      if (name && !list.some(t => String(t.name) === name)) {
-        html += `<option value="${escHtml(name)}" data-unlisted="1">⚠ ${escHtml(name)} (not in trustee list)</option>`;
-      }
-
-      for (const ct of groupOrder) {
-        html += `<optgroup label="${escHtml(T_GROUP_LABEL[ct] || ('Chapter ' + ct))}">`;
-        for (const t of groups[ct]) {
-          const nm = String(t.name || '');
-          html += `<option value="${escHtml(nm)}">${escHtml(nm)}</option>`;
-        }
-        html += '</optgroup>';
-      }
-      sel.innerHTML = html;
-      sel.value = name;
-    }
-
-    function renderTrusteeHint() {
-      const hint = trusteeHintEl();
-      if (!hint) return;
-      const name = trusteeSelect() ? trusteeSelect().value : '';
-      if (!name) { hint.textContent = ''; hint.style.color = ''; return; }
-      const t = findTrustee(name);
-      if (!t) {
-        hint.textContent = 'Not in trustee list — 341 link not auto-set. Pick a listed trustee, or add them in Settings → Trustees.';
-        hint.style.color = '#b02a37';
-        return;
-      }
-      hint.style.color = '';
-      hint.textContent = t.link ? '341 link auto-set from trustee' : '⚠ This trustee has no 341 link on file';
-    }
-
-    // User changed the trustee:
-    //   • blank "— select trustee —"  → clear the 341 link
-    //   • a listed trustee            → set the 341 link from that trustee
-    //   • the flagged unlisted option → leave the existing link untouched
-    function onTrusteeChange() {
-      const sel = trusteeSelect();
-      const linkEl = trusteeLinkEl();
-      const name = sel.value;
-      if (name === '') {
-        if (linkEl) linkEl.value = '';
-      } else {
-        const t = findTrustee(name);
-        if (t && linkEl) linkEl.value = t.link || '';
-        // else: unlisted legacy value — leave link as-is
-      }
-      renderTrusteeHint();
-    }
-
-    form.init().then(() => {
-      // Trustee change → auto-fill the hidden 341 link
-      const trusteeSel = trusteeSelect();
-      if (trusteeSel) trusteeSel.addEventListener('change', onTrusteeChange);
-
-      // ── Auto-calculate derived date fields ──
-
-function addDays(dateStr, days) {
-  if (!dateStr) return '';
-  // Parse YYYY-MM-DD as LOCAL date to avoid UTC/TZ drift
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
-  if (!m) return '';
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  if (isNaN(d)) return '';
-  d.setDate(d.getDate() + days);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function subtractDays(dateStr, days) {
-  return addDays(dateStr, -days);
-}
-
-      // Subtract 14 days from a datetime-local value, return date only
-function dateFromDatetime(dtStr, offsetDays) {
-  if (!dtStr) return '';
-  // datetime-local: "YYYY-MM-DDTHH:mm" — parse LOCAL, not UTC
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(dtStr);
-  if (!m) return '';
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
-  if (isNaN(d)) return '';
-  d.setDate(d.getDate() + offsetDays);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-      const rules = [
-        // { source, target, calc }
-        { source: '[name="case_341_initial"]',  target: '[name="case_objection"]',  calc: v => addDays(v, 60) },
-        { source: '[name="case_file_date"]',    target: '[name="case_180"]',        calc: v => addDays(v, 180) },
-        { source: '[name="case_file_date"]',    target: '[name="case_preference"]', calc: v => subtractDays(v, 90) },
-        { source: '[name="case_341_current"]',  target: '[name="docs_due"]',        calc: v => dateFromDatetime(v, -14) },
-      ];
-
-      // Run on load: fill empty target fields
-      rules.forEach(({ source, target, calc }) => {
-        const srcEl = document.querySelector(source);
-        const tgtEl = document.querySelector(target);
-        if (!srcEl || !tgtEl) return;
-        if (!tgtEl.value && srcEl.value) {
-          tgtEl.value = calc(srcEl.value);
-        }
-      });
-
-      // Recalculate live when source changes
-      rules.forEach(({ source, target, calc }) => {
-        const srcEl = document.querySelector(source);
-        const tgtEl = document.querySelector(target);
-        if (!srcEl || !tgtEl) return;
-        srcEl.addEventListener('change', () => {
-          tgtEl.value = calc(srcEl.value);
-        });
-      });
-
-      // ── Live case-number parse preview ──
-      // Shows how the typed value will split into the short / full columns,
-      // and flags input that matches neither shape.
-      const cnInput = document.querySelector('[name="case_number"]');
-      const cnHint  = document.getElementById('caseNumberHint');
-      if (cnInput && cnHint) {
-        const renderCaseNumberHint = () => {
-          const raw = cnInput.value.trim();
-          if (!raw) { cnHint.textContent = ''; cnHint.style.color = ''; return; }
-          const { short, full, ok } = splitDocket(raw);
-          if (!ok) {
-            cnHint.textContent = 'Unrecognized format — expected ##-##### or ##-#####-abc';
-            cnHint.style.color = '#b02a37';
-            return;
-          }
-          cnHint.style.color = '';
-          cnHint.textContent = full
-            ? `Saves as: ${short} (short) + ${full} (full)`
-            : `Saves as: ${short} (short); no judge suffix yet`;
-        };
-        cnInput.addEventListener('input', renderCaseNumberHint);
-        renderCaseNumberHint(); // initial state from loaded value
-      }
-    });
+    form.init();
   }
 </script>
 </body>
