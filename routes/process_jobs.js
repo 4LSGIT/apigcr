@@ -195,8 +195,12 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
     jobs = rows;
   } catch (err) {
     if (connection) {
-      await connection.rollback();
-      connection.release();
+      try {
+        await connection.rollback();
+        connection.release();
+      } catch (cleanupErr) {
+        try { connection.destroy(); } catch (_) {}
+      }
     }
     console.error("[PROCESS-JOBS] Claim failed:", err);
     return res.status(500).json({ error: "Failed to claim jobs" });
@@ -401,14 +405,20 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
     } catch (err) {
       if (conn) {
-        await conn.rollback();
-        conn.release();
+        try {
+          await conn.rollback();
+          conn.release();
+        } catch (cleanupErr) {
+          console.error(`[PROCESS-JOBS] conn cleanup failed for job ${job.id}: ${cleanupErr.message}`);
+          try { conn.destroy(); } catch (_) {}
+        }
       }
 
       // Record failed attempt — conn2 is in its own try/finally so the
       // connection is always released even if recording or rescheduling throws.
-      const conn2 = await db.getConnection();
+      let conn2;
       try {
+        conn2 = await db.getConnection();
         await conn2.beginTransaction();
 
         await recordResult(
@@ -466,12 +476,21 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
         }
 
         await conn2.commit();
+        // Release errors AFTER a successful commit must not flip a committed
+        // job to "failed" in the results array — swallow and drop the conn.
+        try { conn2.release(); } catch (_) { try { conn2.destroy(); } catch (_) {} }
       } catch (recordErr) {
-        await conn2.rollback();
-        console.error(`[PROCESS-JOBS] Failed to record result for job ${job.id}:`, recordErr);
+        console.error(`[PROCESS-JOBS] Failed to record result for job ${job.id}: ${recordErr.message}`);
         results.push({ id: job.id, status: "failed", error: err.message });
-      } finally {
-        conn2.release();
+        if (conn2) {
+          try {
+            await conn2.rollback();
+            conn2.release();
+          } catch (cleanupErr) {
+            try { conn2.destroy(); } catch (_) {}
+          }
+        }
+        // Job left as-is (still 'running' from STEP 1) — recoverStuckJobs resets it.
       }
     }
   }
