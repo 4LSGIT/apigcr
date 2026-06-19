@@ -477,7 +477,7 @@ async function cancelDueReminder(db, taskId) {
 async function getFromEmail(db) {
   try {
     const { getSetting } = settings();
-    return await getSetting(db, 'email_default_from') || 'automations@4lsg.com';
+    return await getSetting(db, 'email_automations') || 'automations@4lsg.com';
   } catch { return 'automations@4lsg.com'; }
 }
 
