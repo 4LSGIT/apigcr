@@ -66,4 +66,12 @@ if (process.env.ENVIRONMENT === "development") {
     .catch((err) => console.error(`[db] connection failed: ${err.code || err.name} — ${err.message}`));
 }
 
+// Transaction helper, surfaced on the pool so every caller (req.db is this same
+// pool singleton) can do `db.withTransaction(async (conn) => { ... })` with no
+// import. Implementation lives in lib/withTransaction.js (dependency-free,
+// unit-testable); this is just a thin bound convenience method. The standalone
+// withTransaction(db, fn, opts) is still exported from there for scripts/tests.
+const { withTransaction } = require("../lib/withTransaction");
+promisePool.withTransaction = (fn, opts) => withTransaction(promisePool, fn, opts);
+
 module.exports = promisePool;
