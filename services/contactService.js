@@ -1970,9 +1970,7 @@ async function createContact(db, {
   const normalizedEmail   = normalizeEmail(email);
   const normalizedEmail2  = normalizeEmail(email2);
 
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+  const out = await db.withTransaction(async (conn) => {
 
     // Booking token minted at birth — same format as the mint-or-return
     // endpoint in routes/booking.js (32 lowercase hex, TOKEN_RE-compatible).
@@ -2083,18 +2081,15 @@ async function createContact(db, {
       [newId]
     );
 
-    await conn.commit();
-
-    // One-way Google Contacts sync (fire-and-forget; never blocks the response).
-    try { require('./gContactsService').pushContact(db, newId).catch(e => console.warn('[GCONTACTS] push on create:', e.message)); } catch (_) {}
-
     return { contact_id: newId, contact_name: created.contact_name };
-  } catch (err) {
-    try { await conn.rollback(); } catch (_) { /* ignore */ }
-    throw err;
-  } finally {
-    conn.release();
-  }
+  });
+
+  // One-way Google Contacts sync (fire-and-forget; never blocks the response).
+  // Post-commit (it already ran after commit); kept outside the transaction body
+  // so the withTransaction auto-retry can never re-fire it.
+  try { require('./gContactsService').pushContact(db, out.contact_id).catch(e => console.warn('[GCONTACTS] push on create:', e.message)); } catch (_) {}
+
+  return out;
 }
 
 
@@ -2201,9 +2196,7 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
 
   const finalKeys = Object.keys(normalized);
 
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+  const out = await db.withTransaction(async (conn) => {
 
     // 1. Scalar UPDATE on contacts (if any scalar fields remain)
     if (finalKeys.length > 0) {
@@ -2275,11 +2268,6 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
     if (emailPlanRes) emailResult = await _applyEmailPlan(conn, contactId, emailPlanRes.plan, userId);
     if (addrPlanRes)  addrResult  = await _applyAddressPlan(conn, contactId, addrPlanRes.plan, userId);
 
-    await conn.commit();
-
-    // One-way Google Contacts sync (fire-and-forget; never blocks the response).
-    try { require('./gContactsService').pushContact(db, contactId).catch(e => console.warn('[GCONTACTS] push on update:', e.message)); } catch (_) {}
-
     // 5. Build response
     const transferredFrom = [
       ...((phoneResult && phoneResult.transferred_from) || []),
@@ -2295,12 +2283,14 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
     if (hasAddresses) resp.addresses_changed = addrResult.addresses_changed;
     if (transferredFrom.length) resp.transferred_from = transferredFrom;
     return resp;
-  } catch (err) {
-    try { await conn.rollback(); } catch (_) { /* ignore */ }
-    throw err;
-  } finally {
-    conn.release();
-  }
+  });
+
+  // One-way Google Contacts sync (fire-and-forget; never blocks the response).
+  // Post-commit (it already ran after commit); kept outside the transaction body
+  // so the withTransaction auto-retry can never re-fire it.
+  try { require('./gContactsService').pushContact(db, contactId).catch(e => console.warn('[GCONTACTS] push on update:', e.message)); } catch (_) {}
+
+  return out;
 }
 
 // ─────────────────────────────────────────────────────────────
