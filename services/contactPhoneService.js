@@ -338,9 +338,7 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
   const cid = parseInt(contactId, 10);
 
   // ─── Transaction ───
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+  const { newId, autoPromoted, transferredFrom } = await db.withTransaction(async (conn) => {
 
     // 1. Active-uniqueness collision check.
     //
@@ -471,23 +469,18 @@ async function createContactPhone(db, contactId, fields = {}, { force = false, c
     // 5. Recompute target contact's mirror
     await recomputePrimaryPhone(conn, cid);
 
-    await conn.commit();
+    return { newId, autoPromoted, transferredFrom };
+  });
 
-    // 6. Re-fetch with joins (outside transaction is fine — commit is done)
-    const phoneRow = await getContactPhone(db, newId);
+  // 6. Re-fetch with joins (post-commit)
+  const phoneRow = await getContactPhone(db, newId);
 
-    const result = {
-      phone:         phoneRow,
-      auto_promoted: autoPromoted,
-    };
-    if (transferredFrom) result.transferred_from = transferredFrom;
-    return result;
-  } catch (err) {
-    try { await conn.rollback(); } catch (_) { /* ignore */ }
-    throw err;
-  } finally {
-    conn.release();
-  }
+  const result = {
+    phone:         phoneRow,
+    auto_promoted: autoPromoted,
+  };
+  if (transferredFrom) result.transferred_from = transferredFrom;
+  return result;
 }
 
 
@@ -538,9 +531,7 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0 } = {}) {
   // actually present in `fields` appear in `incoming`.
   const incoming = validatePhoneRow(fields, { mode: 'update' });
 
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+  await db.withTransaction(async (conn) => {
 
     // Load current row
     const [[current]] = await conn.query(
@@ -603,17 +594,10 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0 } = {}) {
     if (mirrorAffected) {
       await recomputePrimaryPhone(conn, current.contact_id);
     }
+  });
 
-    await conn.commit();
-
-    const phoneRow = await getContactPhone(db, phoneId);
-    return { phone: phoneRow };
-  } catch (err) {
-    try { await conn.rollback(); } catch (_) { /* ignore */ }
-    throw err;
-  } finally {
-    conn.release();
-  }
+  const phoneRow = await getContactPhone(db, phoneId);
+  return { phone: phoneRow };
 }
 
 
@@ -631,9 +615,7 @@ async function updateContactPhone(db, phoneId, fields, { updatedBy = 0 } = {}) {
  * @returns {Promise<{ deleted: true, deleted_id: number }>}
  */
 async function deleteContactPhone(db, phoneId) {
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+  await db.withTransaction(async (conn) => {
 
     const [[current]] = await conn.query(
       `SELECT id, contact_id, is_primary, end_date FROM contact_phones WHERE id = ?`,
@@ -646,15 +628,9 @@ async function deleteContactPhone(db, phoneId) {
     if (current.is_primary === 1 && current.end_date === null) {
       await recomputePrimaryPhone(conn, current.contact_id);
     }
+  });
 
-    await conn.commit();
-    return { deleted: true, deleted_id: parseInt(phoneId, 10) };
-  } catch (err) {
-    try { await conn.rollback(); } catch (_) { /* ignore */ }
-    throw err;
-  } finally {
-    conn.release();
-  }
+  return { deleted: true, deleted_id: parseInt(phoneId, 10) };
 }
 
 

@@ -868,11 +868,9 @@ async function createAppt(db, {
   // If any of these fail, we don't want the appt to exist.
   // Post-commit side effects (sequences, GCal, etc.) are fire-and-forget.
   // ────────────────────────────────────────────────────────────
-  const conn = await db.getConnection();
-  let apptId;
-  let supersededAppt = null; // { appt_id, appt_gcal, appt_gcal_user, appt_with } for any prior 341 we're replacing
-  try {
-    await conn.beginTransaction();
+  const { apptId, supersededAppt } = await db.withTransaction(async (conn) => {
+    let apptId;
+    let supersededAppt = null; // { appt_id, appt_gcal, appt_gcal_user, appt_with } for any prior 341 we're replacing
 
     // 1) INSERT appointment — includes both local and UTC times.
     //    appt_manage_token: minted on EVERY insert (char(32) UNIQUE hex).
@@ -933,16 +931,11 @@ async function createAppt(db, {
       );
     }
 
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback().catch(rbErr =>
-      console.error('[APPT SERVICE] Rollback failed:', rbErr.message)
-    );
+    return { apptId, supersededAppt };
+  }).catch(err => {
     console.error('[APPT SERVICE] createAppt core writes failed:', err.message);
     throw err;
-  } finally {
-    conn.release();
-  }
+  });
 
   // 3c) Post-commit 341 supersession side effects (non-blocking)
   if (supersededAppt) {

@@ -310,9 +310,7 @@ async function createContactAddress(db, contactId, fields = {}, { createdBy = 0 
   const cid = parseInt(contactId, 10);
 
   // ─── Transaction ───
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+  const { newId, autoPromoted } = await db.withTransaction(async (conn) => {
 
     // 1. Auto-promote check
     let isPrimary; // 0 or 1
@@ -376,19 +374,14 @@ async function createContactAddress(db, contactId, fields = {}, { createdBy = 0 
     // 4. Recompute target contact's mirror
     await recomputePrimaryAddress(conn, cid);
 
-    await conn.commit();
+    return { newId, autoPromoted };
+  });
 
-    const addressRow = await getContactAddress(db, newId);
-    return {
-      address:       addressRow,
-      auto_promoted: autoPromoted,
-    };
-  } catch (err) {
-    try { await conn.rollback(); } catch (_) { /* ignore */ }
-    throw err;
-  } finally {
-    conn.release();
-  }
+  const addressRow = await getContactAddress(db, newId);
+  return {
+    address:       addressRow,
+    auto_promoted: autoPromoted,
+  };
 }
 
 
@@ -441,9 +434,7 @@ async function updateContactAddress(db, addressId, fields, { updatedBy = 0 } = {
   // validateAddressRow (update mode) — sparse, per-field shape validation.
   const incoming = validateAddressRow(fields, { mode: 'update' });
 
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+  await db.withTransaction(async (conn) => {
 
     const [[current]] = await conn.query(
       `SELECT * FROM contact_addresses WHERE id = ?`,
@@ -505,17 +496,10 @@ async function updateContactAddress(db, addressId, fields, { updatedBy = 0 } = {
     if (mirrorAffected) {
       await recomputePrimaryAddress(conn, current.contact_id);
     }
+  });
 
-    await conn.commit();
-
-    const addressRow = await getContactAddress(db, addressId);
-    return { address: addressRow };
-  } catch (err) {
-    try { await conn.rollback(); } catch (_) { /* ignore */ }
-    throw err;
-  } finally {
-    conn.release();
-  }
+  const addressRow = await getContactAddress(db, addressId);
+  return { address: addressRow };
 }
 
 
@@ -528,9 +512,7 @@ async function updateContactAddress(db, addressId, fields, { updatedBy = 0 } = {
  * Mirror recompute fires if the deleted row was primary-active.
  */
 async function deleteContactAddress(db, addressId) {
-  const conn = await db.getConnection();
-  try {
-    await conn.beginTransaction();
+  await db.withTransaction(async (conn) => {
 
     const [[current]] = await conn.query(
       `SELECT id, contact_id, is_primary, end_date FROM contact_addresses WHERE id = ?`,
@@ -543,15 +525,9 @@ async function deleteContactAddress(db, addressId) {
     if (current.is_primary === 1 && current.end_date === null) {
       await recomputePrimaryAddress(conn, current.contact_id);
     }
+  });
 
-    await conn.commit();
-    return { deleted: true, deleted_id: parseInt(addressId, 10) };
-  } catch (err) {
-    try { await conn.rollback(); } catch (_) { /* ignore */ }
-    throw err;
-  } finally {
-    conn.release();
-  }
+  return { deleted: true, deleted_id: parseInt(addressId, 10) };
 }
 
 

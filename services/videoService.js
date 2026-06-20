@@ -393,9 +393,7 @@ async function setSlugCanonical(pool, videoId, newSlug) {
 
   await assertSlugAvailable(pool, newSlug, videoId);
 
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
+  await pool.withTransaction(async (conn) => {
 
     await conn.query(
       'DELETE FROM video_slug_aliases WHERE slug = ? AND video_id = ?',
@@ -411,19 +409,14 @@ async function setSlugCanonical(pool, videoId, newSlug) {
       'UPDATE videos SET slug = ? WHERE id = ?',
       [newSlug, videoId],
     );
-
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback();
+  }).catch((err) => {
     if (err.code === 'ER_DUP_ENTRY') {
       const e = new Error(`Slug "${newSlug}" is already in use`);
       e.statusCode = 409;
       throw e;
     }
     throw err;
-  } finally {
-    conn.release();
-  }
+  });
 }
 
 /**
@@ -514,9 +507,7 @@ async function deleteVideo(db, id) {
  * @returns {Promise<{viewId: number}>}
  */
 async function recordView(pool, { videoId, contactId, ipHash, userAgent }) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
+  const viewId = await pool.withTransaction(async (conn) => {
 
     let caseId = null;
     if (contactId != null) {
@@ -545,14 +536,9 @@ async function recordView(pool, { videoId, contactId, ipHash, userAgent }) {
       [videoId]
     );
 
-    await conn.commit();
-    return { viewId: result.insertId };
-  } catch (err) {
-    try { await conn.rollback(); } catch { /* ignore */ }
-    throw err;
-  } finally {
-    conn.release();
-  }
+    return result.insertId;
+  });
+  return { viewId };
 }
 
 /**
@@ -752,9 +738,7 @@ async function getVideoAnalytics(db, videoId) {
  * @throws {Error}  err.statusCode = 404 if video does not exist
  */
 async function resetVideoAnalytics(pool, videoId) {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
+  const row = await pool.withTransaction(async (conn) => {
 
     const [result] = await conn.query(
       `UPDATE videos
@@ -764,7 +748,6 @@ async function resetVideoAnalytics(pool, videoId) {
       [videoId]
     );
     if (result.affectedRows === 0) {
-      await conn.rollback();
       const e = new Error('Video not found');
       e.statusCode = 404;
       throw e;
@@ -775,17 +758,13 @@ async function resetVideoAnalytics(pool, videoId) {
       [videoId]
     );
 
-    await conn.commit();
-    const iso = row && row.analytics_reset_at
-      ? new Date(row.analytics_reset_at).toISOString()
-      : null;
-    return { ok: true, reset_at: iso };
-  } catch (err) {
-    try { await conn.rollback(); } catch { /* ignore */ }
-    throw err;
-  } finally {
-    conn.release();
-  }
+    return row;
+  });
+
+  const iso = row && row.analytics_reset_at
+    ? new Date(row.analytics_reset_at).toISOString()
+    : null;
+  return { ok: true, reset_at: iso };
 }
 
 /**

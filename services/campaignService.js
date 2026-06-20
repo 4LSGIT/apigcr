@@ -200,10 +200,7 @@ async function createCampaign(db, { type, sender, subject, body, contactIds, sch
     throw new Error('Invalid scheduledTime value');
   }
 
-  const conn = await db.getConnection();
-  await conn.beginTransaction();
-
-  try {
+  const { campaignId } = await db.withTransaction(async (conn) => {
     // 1. INSERT campaign
     const [campaignResult] = await conn.query(
       `INSERT INTO campaigns (type, sender, subject, body, attachment_url, status, scheduled_time, contact_count, created_by, created)
@@ -238,23 +235,17 @@ async function createCampaign(db, { type, sender, subject, body, contactIds, sch
       [jobValues.map(v => [...v, new Date(), new Date()])]
     );
 
-    await conn.commit();
+    return { campaignId };
+  });
 
-    console.log(`[CAMPAIGN] Created campaign ${campaignId}: ${type}, ${uniqueIds.length} contacts, status=${initialStatus}`);
+  console.log(`[CAMPAIGN] Created campaign ${campaignId}: ${type}, ${uniqueIds.length} contacts, status=${initialStatus}`);
 
-    return {
-      campaignId,
-      contactCount: uniqueIds.length,
-      jobsCreated: uniqueIds.length,
-      status: initialStatus
-    };
-
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
-  }
+  return {
+    campaignId,
+    contactCount: uniqueIds.length,
+    jobsCreated: uniqueIds.length,
+    status: initialStatus
+  };
 }
 
 
