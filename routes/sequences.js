@@ -535,95 +535,91 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
     return res.status(400).json({ error: 'Invalid template ID' });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
-    // Fetch original template row
-    //
-    // Slice 2.1: also SELECT test_input so the duplicate carries over the
-    // authorial trigger_data shape doc.
-    // Slice E Phase 2: SELECT filters JSON in place of the dropped
-    // appt_type_filter / appt_with_filter columns.
-    const [tplRows] = await connection.query(
-      `SELECT name, type, filters, \`condition\`, description, test_input
-       FROM sequence_templates WHERE id = ?`,
-      [originalId]
-    );
-    if (tplRows.length === 0) {
-      await connection.commit();
+      // Fetch original template row
+      //
+      // Slice 2.1: also SELECT test_input so the duplicate carries over the
+      // authorial trigger_data shape doc.
+      // Slice E Phase 2: SELECT filters JSON in place of the dropped
+      // appt_type_filter / appt_with_filter columns.
+      const [tplRows] = await connection.query(
+        `SELECT name, type, filters, \`condition\`, description, test_input
+         FROM sequence_templates WHERE id = ?`,
+        [originalId]
+      );
+      if (tplRows.length === 0) {
+        return { notFound: true };
+      }
+
+      const original = tplRows[0];
+      const newName  = customName?.trim() || `Copy of ${original.name}`;
+
+      // Insert new template — active=0 (starts inactive, intentional).
+      // JSON columns (`filters`, `condition`, `test_input`) round-trip through
+      // toJson — handles either string or parsed-object return from SELECT.
+      // `type` is copied verbatim — if original is NULL (ID-only), the duplicate
+      // is NULL (ID-only) too.
+      const [newTplResult] = await connection.query(
+        `INSERT INTO sequence_templates
+          (name, type, filters, \`condition\`, description, active, test_input)
+         VALUES (?, ?, ?, ?, ?, 0, ?)`,
+        [
+          newName,
+          original.type,
+          toJson(original.filters),
+          toJson(original.condition),
+          original.description,
+          toJson(original.test_input)
+        ]
+      );
+      const newTemplateId = newTplResult.insertId;
+
+      // Fetch + duplicate all steps. JSON columns pass through raw — same
+      // pattern as POST /workflows/:id/duplicate.
+      const [steps] = await connection.query(
+        `SELECT step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy
+         FROM sequence_steps
+         WHERE template_id = ?
+         ORDER BY step_number ASC`,
+        [originalId]
+      );
+
+      if (steps.length > 0) {
+        const stepValues = steps.map(s => [
+          newTemplateId,
+          s.step_number,
+          s.action_type,
+          toJson(s.action_config),
+          toJson(s.timing),
+          toJson(s.condition),
+          toJson(s.fire_guard),
+          toJson(s.error_policy)
+        ]);
+
+        await connection.query(
+          `INSERT INTO sequence_steps
+            (template_id, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
+           VALUES ?`,
+          [stepValues]
+        );
+      }
+      return { notFound: false, newTemplateId, newName, stepCount: steps.length };
+    });
+
+    if (outcome.notFound) {
       return res.status(404).json({ error: 'Template not found' });
     }
 
-    const original = tplRows[0];
-    const newName  = customName?.trim() || `Copy of ${original.name}`;
-
-    // Insert new template — active=0 (starts inactive, intentional).
-    // JSON columns (`filters`, `condition`, `test_input`) round-trip through
-    // toJson — handles either string or parsed-object return from SELECT.
-    // `type` is copied verbatim — if original is NULL (ID-only), the duplicate
-    // is NULL (ID-only) too.
-    const [newTplResult] = await connection.query(
-      `INSERT INTO sequence_templates
-        (name, type, filters, \`condition\`, description, active, test_input)
-       VALUES (?, ?, ?, ?, ?, 0, ?)`,
-      [
-        newName,
-        original.type,
-        toJson(original.filters),
-        toJson(original.condition),
-        original.description,
-        toJson(original.test_input)
-      ]
-    );
-    const newTemplateId = newTplResult.insertId;
-
-    // Fetch + duplicate all steps. JSON columns pass through raw — same
-    // pattern as POST /workflows/:id/duplicate.
-    const [steps] = await connection.query(
-      `SELECT step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy
-       FROM sequence_steps
-       WHERE template_id = ?
-       ORDER BY step_number ASC`,
-      [originalId]
-    );
-
-    if (steps.length > 0) {
-      const stepValues = steps.map(s => [
-        newTemplateId,
-        s.step_number,
-        s.action_type,
-        toJson(s.action_config),
-        toJson(s.timing),
-        toJson(s.condition),
-        toJson(s.fire_guard),
-        toJson(s.error_policy)
-      ]);
-
-      await connection.query(
-        `INSERT INTO sequence_steps
-          (template_id, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
-         VALUES ?`,
-        [stepValues]
-      );
-    }
-
-    await connection.commit();
-    connection.release();
-
-    console.log(`[DUPLICATE SEQUENCE] Template ${originalId} → ${newTemplateId} (${steps.length} steps)`);
+    console.log(`[DUPLICATE SEQUENCE] Template ${originalId} → ${outcome.newTemplateId} (${outcome.stepCount} steps)`);
 
     res.status(201).json({
       success: true,
-      templateId: newTemplateId,
-      name: newName
+      templateId: outcome.newTemplateId,
+      name: outcome.newName
     });
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error('[DUPLICATE SEQUENCE] Failed:', err);
     res.status(500).json({ error: 'Failed to duplicate template', message: err.message });
   }
@@ -655,47 +651,47 @@ router.post('/sequences/templates/:id/steps', jwtOrApiKey, async (req, res) => {
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
-    const [[t]] = await connection.query(`SELECT id FROM sequence_templates WHERE id = ?`, [templateId]);
-    if (!t) { await connection.commit(); return res.status(404).json({ error: 'Template not found' }); }
+      const [[t]] = await connection.query(`SELECT id FROM sequence_templates WHERE id = ?`, [templateId]);
+      if (!t) { return { notFound: true }; }
 
-    let targetStep = step_number;
-    if (!targetStep) {
-      const [[maxRow]] = await connection.query(
-        `SELECT MAX(step_number) as max FROM sequence_steps WHERE template_id = ?`, [templateId]
+      let targetStep = step_number;
+      if (!targetStep) {
+        const [[maxRow]] = await connection.query(
+          `SELECT MAX(step_number) as max FROM sequence_steps WHERE template_id = ?`, [templateId]
+        );
+        targetStep = (maxRow.max || 0) + 1;
+      } else {
+        // Two-pass shift up
+        await connection.query(
+          `UPDATE sequence_steps SET step_number = step_number + 10000 WHERE template_id = ? AND step_number >= ?`,
+          [templateId, targetStep]
+        );
+        await connection.query(
+          `UPDATE sequence_steps SET step_number = step_number - 10000 + 1 WHERE template_id = ? AND step_number >= ?`,
+          [templateId, targetStep + 10000]
+        );
+      }
+
+      const [result] = await connection.query(
+        `INSERT INTO sequence_steps (template_id, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [templateId, targetStep, action_type,
+         JSON.stringify(action_config), JSON.stringify(timing),
+         condition   ? JSON.stringify(condition)   : null,
+         fire_guard  ? JSON.stringify(fire_guard)  : null,
+         error_policy? JSON.stringify(error_policy): null]
       );
-      targetStep = (maxRow.max || 0) + 1;
-    } else {
-      // Two-pass shift up
-      await connection.query(
-        `UPDATE sequence_steps SET step_number = step_number + 10000 WHERE template_id = ? AND step_number >= ?`,
-        [templateId, targetStep]
-      );
-      await connection.query(
-        `UPDATE sequence_steps SET step_number = step_number - 10000 + 1 WHERE template_id = ? AND step_number >= ?`,
-        [templateId, targetStep + 10000]
-      );
+      return { notFound: false, stepId: result.insertId, stepNumber: targetStep };
+    });
+
+    if (outcome.notFound) {
+      return res.status(404).json({ error: 'Template not found' });
     }
-
-    const [result] = await connection.query(
-      `INSERT INTO sequence_steps (template_id, step_number, action_type, action_config, timing, \`condition\`, fire_guard, error_policy)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [templateId, targetStep, action_type,
-       JSON.stringify(action_config), JSON.stringify(timing),
-       condition   ? JSON.stringify(condition)   : null,
-       fire_guard  ? JSON.stringify(fire_guard)  : null,
-       error_policy? JSON.stringify(error_policy): null]
-    );
-
-    await connection.commit();
-    connection.release();
-    res.status(201).json({ success: true, stepId: result.insertId, stepNumber: targetStep });
+    res.status(201).json({ success: true, stepId: outcome.stepId, stepNumber: outcome.stepNumber });
   } catch (err) {
-    if (connection) { await connection.rollback(); connection.release(); }
     res.status(500).json({ error: 'Failed to add step', message: err.message });
   }
 });
@@ -812,30 +808,30 @@ router.delete('/sequences/templates/:id/steps/:stepNumber', jwtOrApiKey, async (
   const templateId = parseInt(req.params.id);
   const stepNum    = parseInt(req.params.stepNumber);
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
-    const [[step]] = await connection.query(
-      `SELECT id FROM sequence_steps WHERE template_id = ? AND step_number = ?`, [templateId, stepNum]
-    );
-    if (!step) { await connection.commit(); return res.status(404).json({ error: 'Step not found' }); }
+      const [[step]] = await connection.query(
+        `SELECT id FROM sequence_steps WHERE template_id = ? AND step_number = ?`, [templateId, stepNum]
+      );
+      if (!step) { return { notFound: true }; }
 
-    await connection.query(
-      `DELETE FROM sequence_steps WHERE template_id = ? AND step_number = ?`, [templateId, stepNum]
-    );
-    await connection.query(
-      `UPDATE sequence_steps SET step_number = step_number - 1
-       WHERE template_id = ? AND step_number > ? ORDER BY step_number ASC`,
-      [templateId, stepNum]
-    );
+      await connection.query(
+        `DELETE FROM sequence_steps WHERE template_id = ? AND step_number = ?`, [templateId, stepNum]
+      );
+      await connection.query(
+        `UPDATE sequence_steps SET step_number = step_number - 1
+         WHERE template_id = ? AND step_number > ? ORDER BY step_number ASC`,
+        [templateId, stepNum]
+      );
+      return { notFound: false };
+    });
 
-    await connection.commit();
-    connection.release();
+    if (outcome.notFound) {
+      return res.status(404).json({ error: 'Step not found' });
+    }
     res.json({ success: true, message: `Step ${stepNum} deleted and renumbered` });
   } catch (err) {
-    if (connection) { await connection.rollback(); connection.release(); }
     res.status(500).json({ error: 'Failed to delete step', message: err.message });
   }
 });
@@ -1475,31 +1471,27 @@ router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, 
 
   if (!fromStep || !toStep) return res.status(400).json({ error: 'fromStep and toStep are required' });
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    await db.withTransaction(async (connection) => {
 
-    // Two-pass swap via temp number
-    const temp = 99999;
-    await connection.query(
-      `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
-      [temp, templateId, fromStep]
-    );
-    await connection.query(
-      `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
-      [fromStep, templateId, toStep]
-    );
-    await connection.query(
-      `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
-      [toStep, templateId, temp]
-    );
+      // Two-pass swap via temp number
+      const temp = 99999;
+      await connection.query(
+        `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
+        [temp, templateId, fromStep]
+      );
+      await connection.query(
+        `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
+        [fromStep, templateId, toStep]
+      );
+      await connection.query(
+        `UPDATE sequence_steps SET step_number = ? WHERE template_id = ? AND step_number = ?`,
+        [toStep, templateId, temp]
+      );
+    });
 
-    await connection.commit();
-    connection.release();
     res.json({ success: true });
   } catch (err) {
-    if (connection) { await connection.rollback(); connection.release(); }
     res.status(500).json({ error: 'Failed to reorder steps', message: err.message });
   }
 });
