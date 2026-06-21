@@ -517,7 +517,18 @@
     <div class="sb-item" data-tab="tabMore" onclick="openMainTab('tabMore')" title="More Features">
       <i class="fa-solid fa-gear"></i><span>More Features</span>
     </div>
-    <div class="sb-item" onclick="(async () => {console.log(await apiSend('/process-jobs'));})()" title="Process Jobs">
+    <!-- <div class="sb-item" onclick="(async () => {console.log(await apiSend('/process-jobs'));})()" title="Process Jobs"> -->
+    <div
+      class="sb-item"
+      onclick="(async () => {
+        showProcessingSwal();
+        let res = await apiSend('/process-jobs');
+        Toast.fire({
+          icon: 'success',
+          title: `${res.processed} job${res.processed == 1 ? '' : 's'} processed`
+        });
+      })()"
+      title="Process Jobs">
       <i class="fa-solid fa-bolt"></i><span>Process Jobs</span>
     </div>
 
