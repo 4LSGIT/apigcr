@@ -150,58 +150,45 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
   const BATCH_SIZE = 10;
 
   let jobs = [];
-  let connection;
 
+  // STEP 1: Atomically claim a batch of due jobs (pure-DB → retries: 1).
   try {
     await recoverStuckJobs(db);
 
-    // STEP 1: Atomically claim jobs
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    jobs = await db.withTransaction(async (connection) => {
+      const [rows] = await connection.query(
+        `
+        SELECT *
+        FROM scheduled_jobs
+        WHERE status = 'pending'
+          AND active = 1
+          AND scheduled_time <= NOW()
+          AND (expires_at IS NULL OR expires_at > NOW())
+          AND (max_executions IS NULL OR execution_count < max_executions)
+        ORDER BY scheduled_time
+        LIMIT ?
+        FOR UPDATE SKIP LOCKED
+        `,
+        [BATCH_SIZE]
+      );
 
-    const [rows] = await connection.query(
-      `
-      SELECT *
-      FROM scheduled_jobs
-      WHERE status = 'pending'
-        AND active = 1
-        AND scheduled_time <= NOW()
-        AND (expires_at IS NULL OR expires_at > NOW())
-        AND (max_executions IS NULL OR execution_count < max_executions)
-      ORDER BY scheduled_time
-      LIMIT ?
-      FOR UPDATE SKIP LOCKED
-      `,
-      [BATCH_SIZE]
-    );
+      if (rows.length === 0) return [];
 
-    if (rows.length === 0) {
-      await connection.commit();
+      const jobIds = rows.map((j) => j.id);
+
+      await connection.query(
+        `UPDATE scheduled_jobs SET status = 'running', updated_at = NOW() WHERE id IN (?)`,
+        [jobIds]
+      );
+
+      return rows;
+    }, { retries: 1 });
+
+    if (jobs.length === 0) {
       stampHeartbeat(db); // fire-and-forget — poll cycle ran (common path)
       return res.json({ processed: 0, results: [] });
     }
-
-    const jobIds = rows.map((j) => j.id);
-
-    await connection.query(
-      `UPDATE scheduled_jobs SET status = 'running', updated_at = NOW() WHERE id IN (?)`,
-      [jobIds]
-    );
-
-    await connection.commit();
-    connection.release();
-    connection = null;
-
-    jobs = rows;
   } catch (err) {
-    if (connection) {
-      try {
-        await connection.rollback();
-        connection.release();
-      } catch (cleanupErr) {
-        try { connection.destroy(); } catch (_) {}
-      }
-    }
     console.error("[PROCESS-JOBS] Claim failed:", err);
     return res.status(500).json({ error: "Failed to claim jobs" });
   }
@@ -214,11 +201,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
     const attempt = job.attempts + 1;
     const executionNumber = job.execution_count + 1;
 
-    let conn;
     try {
-      conn = await db.getConnection();
-      await conn.beginTransaction();
-
       // SPECIAL CASE: workflow_resume
       // NOTE: Job status is left as 'running' (set in STEP 1) and only
       // updated to 'completed'/'failed' AFTER the detached executor finishes.
@@ -232,16 +215,15 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
         console.log(`[RESUME] Resuming execution ${executionId} at step ${nextStep}`);
 
-        // Update execution state inside the claim transaction
-        await conn.query(
-          `UPDATE workflow_executions 
-           SET status = 'active', current_step_number = ?, updated_at = NOW()
-           WHERE id = ?`,
-          [nextStep, executionId]
-        );
-
-        await conn.commit();
-        conn.release();
+        // Update execution state in its own short transaction (pure-DB → retries: 1).
+        await db.withTransaction(async (conn) => {
+          await conn.query(
+            `UPDATE workflow_executions 
+             SET status = 'active', current_step_number = ?, updated_at = NOW()
+             WHERE id = ?`,
+            [nextStep, executionId]
+          );
+        }, { retries: 1 });
 
         // Advance in background (non-blocking).
         // The job's scheduled_jobs.status update happens AFTER advanceWorkflow
@@ -280,14 +262,13 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
       // SPECIAL CASE: sequence_step
       // See workflow_resume comment above — same pattern: status stays 'running'
       // until detached executor finishes so a crash doesn't silently drop the step.
+      // No claim transaction is needed: there is no pre-dispatch DB write here, so
+      // the previous empty begin/commit was a no-op and has been removed.
       if (job.type === 'sequence_step') {
         const data = typeof job.data === 'string' ? JSON.parse(job.data) : job.data;
         const { enrollmentId, stepId } = data || {};
 
         console.log(`[SEQ STEP] enrollment=${enrollmentId} step=${stepId}`);
-
-        await conn.commit();
-        conn.release();
 
         // Execute in background (non-blocking)
         (async () => {
@@ -319,16 +300,16 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
         continue; // next job in the batch
       }
-// SPECIAL CASE: hook_retry
+
+      // SPECIAL CASE: hook_retry
       // See workflow_resume comment above — same pattern: status stays 'running'
       // until detached executor finishes so a crash doesn't silently drop the retry.
+      // No claim transaction is needed: there is no pre-dispatch DB write here, so
+      // the previous empty begin/commit was a no-op and has been removed.
       if (job.type === 'hook_retry') {
         const data = typeof job.data === 'string' ? JSON.parse(job.data) : job.data;
 
         console.log(`[HOOK RETRY] execution=${data.execution_id} target=${data.target_id}`);
-
-        await conn.commit();
-        conn.release();
 
         (async () => {
           try {
@@ -360,104 +341,89 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
         continue;
       }
+
       // NORMAL JOB TYPES (webhook, internal_function, custom_code, campaign_send,
       // task_due_reminder, task_daily_digest)
-      const rawOutput = await executeJob(job, db);
-      // Edge cases where rawOutput can be undefined:
-      //   - custom_code where the script body has no trailing expression
-      //   - webhook with 204/empty response where axios returns undefined data
-      // JSON.stringify(undefined) returns undefined, which recordResult would
-      // store as NULL — indistinguishable from a failure row. Coerce so success
-      // rows always round-trip as valid JSON.
-      const output = rawOutput === undefined ? { success: true } : rawOutput;
+      //
+      // executeJob runs the external side effect on the pool and is NOT idempotent,
+      // so this transaction uses { retries: 0 } — a transient pre-commit failure must
+      // not re-run the callback and re-fire it. (Behaviour matches the pre-migration
+      // code: on a record-time failure the job is failed and retried on a later poll.)
+      const completion = await db.withTransaction(async (conn) => {
+        const rawOutput = await executeJob(job, db);
+        // Edge cases where rawOutput can be undefined:
+        //   - custom_code where the script body has no trailing expression
+        //   - webhook with 204/empty response where axios returns undefined data
+        // JSON.stringify(undefined) returns undefined, which recordResult would
+        // store as NULL — indistinguishable from a failure row. Coerce so success
+        // rows always round-trip as valid JSON.
+        const output = rawOutput === undefined ? { success: true } : rawOutput;
 
-      // Record successful attempt
-      await recordResult(
-        conn,
-        job.id,
-        executionNumber,
-        attempt,
-        true,
-        output,
-        Date.now() - start
-      );
-
-      if (job.type === "recurring") {
-        await rescheduleRecurring(conn, job);
-      } else {
-        await conn.query(
-          `
-          UPDATE scheduled_jobs
-          SET status='completed', attempts=?, updated_at=NOW(), execution_count = execution_count + 1
-          WHERE id=?
-          `,
-          [attempt, job.id]
-        );
-      }
-
-      await conn.commit();
-      conn.release();
-
-      results.push({
-        id: job.id,
-        status: job.type === "recurring" ? "advanced" : "completed",
-      });
-
-    } catch (err) {
-      if (conn) {
-        try {
-          await conn.rollback();
-          conn.release();
-        } catch (cleanupErr) {
-          console.error(`[PROCESS-JOBS] conn cleanup failed for job ${job.id}: ${cleanupErr.message}`);
-          try { conn.destroy(); } catch (_) {}
-        }
-      }
-
-      // Record failed attempt — conn2 is in its own try/finally so the
-      // connection is always released even if recording or rescheduling throws.
-      let conn2;
-      try {
-        conn2 = await db.getConnection();
-        await conn2.beginTransaction();
-
+        // Record successful attempt
         await recordResult(
-          conn2,
+          conn,
           job.id,
           executionNumber,
           attempt,
-          false,
-          err.message,
+          true,
+          output,
           Date.now() - start
         );
 
-        if (attempt < job.max_attempts) {
-          const delayMs = job.backoff_seconds * Math.pow(2, attempt - 1) * 1000;
-          const nextTime = new Date(Date.now() + delayMs);
-
-          await conn2.query(
+        if (job.type === "recurring") {
+          await rescheduleRecurring(conn, job);
+        } else {
+          await conn.query(
             `
             UPDATE scheduled_jobs
-            SET status='pending', attempts=?, scheduled_time=?, updated_at=NOW() 
+            SET status='completed', attempts=?, updated_at=NOW(), execution_count = execution_count + 1
             WHERE id=?
             `,
-            [attempt, nextTime, job.id]
+            [attempt, job.id]
+          );
+        }
+
+        return job.type === "recurring" ? "advanced" : "completed";
+      }, { retries: 0 });
+
+      results.push({
+        id: job.id,
+        status: completion,
+      });
+
+    } catch (err) {
+      // Record failed attempt in its own transaction (pure-DB → retries: 1). The
+      // results.push is moved outside the callback so a transient retry cannot
+      // double-record into the results array.
+      try {
+        const outcome = await db.withTransaction(async (conn2) => {
+          await recordResult(
+            conn2,
+            job.id,
+            executionNumber,
+            attempt,
+            false,
+            err.message,
+            Date.now() - start
           );
 
-          results.push({
-            id: job.id,
-            status: "retry_scheduled",
-            attempt,
-            error: err.message,
-          });
-        } else {
-          if (job.type === "recurring") {
+          if (attempt < job.max_attempts) {
+            const delayMs = job.backoff_seconds * Math.pow(2, attempt - 1) * 1000;
+            const nextTime = new Date(Date.now() + delayMs);
+
+            await conn2.query(
+              `
+              UPDATE scheduled_jobs
+              SET status='pending', attempts=?, scheduled_time=?, updated_at=NOW() 
+              WHERE id=?
+              `,
+              [attempt, nextTime, job.id]
+            );
+
+            return { status: "retry_scheduled", attempt, error: err.message };
+          } else if (job.type === "recurring") {
             await rescheduleRecurring(conn2, job);
-            results.push({
-              id: job.id,
-              status: "advanced_after_failure",
-              error: err.message,
-            });
+            return { status: "advanced_after_failure", error: err.message };
           } else {
             await conn2.query(
               `
@@ -467,29 +433,14 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
               `,
               [attempt, job.id]
             );
-            results.push({
-              id: job.id,
-              status: "failed",
-              error: err.message,
-            });
+            return { status: "failed", error: err.message };
           }
-        }
+        }, { retries: 1 });
 
-        await conn2.commit();
-        // Release errors AFTER a successful commit must not flip a committed
-        // job to "failed" in the results array — swallow and drop the conn.
-        try { conn2.release(); } catch (_) { try { conn2.destroy(); } catch (_) {} }
+        results.push({ id: job.id, ...outcome });
       } catch (recordErr) {
         console.error(`[PROCESS-JOBS] Failed to record result for job ${job.id}: ${recordErr.message}`);
         results.push({ id: job.id, status: "failed", error: err.message });
-        if (conn2) {
-          try {
-            await conn2.rollback();
-            conn2.release();
-          } catch (cleanupErr) {
-            try { conn2.destroy(); } catch (_) {}
-          }
-        }
         // Job left as-is (still 'running' from STEP 1) — recoverStuckJobs resets it.
       }
     }
