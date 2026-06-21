@@ -278,10 +278,8 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "Invalid workflow ID" });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
     // Load id + default_contact_id_from in one shot. Adding the column to the
     // SELECT is cheap; skipping it would force a separate round-trip.
@@ -290,17 +288,14 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       [workflowId]
     );
     if (wfRows.length === 0) {
-      await connection.commit();
-      return res.status(404).json({ error: "Workflow not found" });
+      return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
     const workflow = wfRows[0];
 
     // Inactive workflows cannot be started — manual or otherwise. Toggle the
     // workflow active in the editor first.
     if (!workflow.active) {
-      await connection.rollback();
-      connection.release();
-      return res.status(409).json({ error: "Workflow is inactive", message: "Activate the workflow before starting it." });
+      return { respond: { status: 409, body: { error: "Workflow is inactive", message: "Activate the workflow before starting it." } } };
     }
 
     // Resolve contact_id via the shared helper. Throws on invalid explicit
@@ -314,9 +309,7 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       });
     } catch (e) {
       if (e instanceof InvalidContactIdError) {
-        await connection.rollback();
-        connection.release();
-        return res.status(400).json({ error: "Invalid contact_id", message: e.message });
+        return { respond: { status: 400, body: { error: "Invalid contact_id", message: e.message } } };
       }
       throw e;
     }
@@ -330,10 +323,14 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
       [workflowId, contactId, JSON.stringify(initData), JSON.stringify(initData)]
     );
 
-    const executionId = result.insertId;
+      return { executionId: result.insertId, contactId };
+    });
 
-    await connection.commit();
-    connection.release();
+    if (outcome.respond) {
+      return res.status(outcome.respond.status).json(outcome.respond.body);
+    }
+
+    const { executionId, contactId } = outcome;
 
     res.status(202).json({
       success: true,
@@ -355,10 +352,6 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     })();
 
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error(`[START] Failed:`, err);
     res.status(500).json({ error: "Failed to start workflow", message: err.message });
   }
@@ -851,10 +844,8 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
     // Verify workflow exists
     const [wfRows] = await connection.query(
@@ -862,8 +853,7 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
       [workflowId]
     );
     if (wfRows.length === 0) {
-      await connection.commit();
-      return res.status(404).json({ error: "Workflow not found" });
+      return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
 
     let targetStep = stepNumber;
@@ -905,21 +895,19 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
       [workflowId, targetStep, type, JSON.stringify(config), JSON.stringify(error_policy)]
     );
 
-    await connection.commit();
-    connection.release();
+      return { targetStep };
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
 
     res.status(201).json({
       success: true,
       workflowId,
-      stepNumber: targetStep,
+      stepNumber: outcome.targetStep,
       type,
-      message: `Step ${targetStep} added to workflow ${workflowId}`
+      message: `Step ${outcome.targetStep} added to workflow ${workflowId}`
     });
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error("[ADD STEP] Failed:", err);
     res.status(500).json({ error: "Failed to add step", message: err.message });
   }
@@ -1005,10 +993,8 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
     ]);
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const workflowId = await db.withTransaction(async (connection) => {
 
     const [workflowResult] = await connection.query(
       `INSERT INTO workflows (name, description, test_input) VALUES (?, ?, ?)`,
@@ -1029,8 +1015,8 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
       [rows]
     );
 
-    await connection.commit();
-    connection.release();
+      return workflowId;
+    });
 
     console.log(`[WORKFLOW CREATED] id=${workflowId} steps=${steps.length}`);
 
@@ -1042,10 +1028,6 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
     });
 
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error("[WORKFLOW BULK CREATE ERROR]", err);
     return res.status(500).json({
       error: "Failed to create workflow",
@@ -1070,10 +1052,8 @@ router.delete("/workflows/:id", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "Invalid workflow ID" });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
     // Verify workflow exists
     const [wfRows] = await connection.query(
@@ -1081,8 +1061,7 @@ router.delete("/workflows/:id", jwtOrApiKey, async (req, res) => {
       [workflowId]
     );
     if (wfRows.length === 0) {
-      await connection.commit();
-      return res.status(404).json({ error: "Workflow not found" });
+      return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
 
     // Delete steps first (foreign key safety)
@@ -1097,8 +1076,10 @@ router.delete("/workflows/:id", jwtOrApiKey, async (req, res) => {
       [workflowId]
     );
 
-    await connection.commit();
-    connection.release();
+      return {};
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
 
     console.log(`[DELETE WORKFLOW] Deleted workflow ${workflowId} and all steps`);
 
@@ -1107,10 +1088,6 @@ router.delete("/workflows/:id", jwtOrApiKey, async (req, res) => {
       message: `Workflow ${workflowId} and all its steps deleted`
     });
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error("[DELETE WORKFLOW] Failed:", err);
     res.status(500).json({ error: "Failed to delete workflow", message: err.message });
   }
@@ -1134,10 +1111,8 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
     return res.status(400).json({ error: "Invalid workflow ID or step number" });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
     // Verify workflow exists
     const [wfRows] = await connection.query(
@@ -1145,8 +1120,7 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
       [workflowId]
     );
     if (wfRows.length === 0) {
-      await connection.commit();
-      return res.status(404).json({ error: "Workflow not found" });
+      return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
 
     // Verify step exists
@@ -1155,8 +1129,7 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
       [workflowId, stepNum]
     );
     if (stepRows.length === 0) {
-      await connection.commit();
-      return res.status(404).json({ error: "Step not found" });
+      return { respond: { status: 404, body: { error: "Step not found" } } };
     }
 
     // Delete the step
@@ -1178,8 +1151,10 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
       [workflowId, stepNum]
     );
 
-    await connection.commit();
-    connection.release();
+      return {};
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
 
     console.log(`[DELETE STEP] Deleted step ${stepNum} from workflow ${workflowId} and renumbered`);
 
@@ -1188,10 +1163,6 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
       message: `Step ${stepNum} deleted and subsequent steps renumbered`
     });
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error("[DELETE STEP] Failed:", err);
     res.status(500).json({ error: "Failed to delete step", message: err.message });
   }
@@ -1216,10 +1187,8 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "Invalid workflow ID" });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
     // Verify workflow exists
     const [wfRows] = await connection.query(
@@ -1227,8 +1196,7 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
       [workflowId]
     );
     if (wfRows.length === 0) {
-      await connection.commit();
-      return res.status(404).json({ error: "Workflow not found" });
+      return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
 
     // ────────────────────────────────────────────────
@@ -1243,8 +1211,7 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
       }
 
       if (from === to) {
-        await connection.commit();
-        return res.json({ success: true, message: "No change needed" });
+        return { respond: { status: 200, body: { success: true, message: "No change needed" } } };
       }
 
       // Shift steps between from and to.
@@ -1315,11 +1282,13 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
       }
     } 
     else {
-      return res.status(400).json({ error: "Must provide either {fromStep, toStep} or {order: array}" });
+      return { respond: { status: 400, body: { error: "Must provide either {fromStep, toStep} or {order: array}" } } };
     }
 
-    await connection.commit();
-    connection.release();
+      return {};
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
 
     console.log(`[REORDER] Workflow ${workflowId} steps reordered`);
 
@@ -1328,10 +1297,6 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
       message: "Steps reordered successfully"
     });
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error("[REORDER STEPS] Failed:", err);
     res.status(500).json({ error: "Failed to reorder steps", message: err.message });
   }
@@ -1369,10 +1334,8 @@ router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
     if (v) return res.status(v.status).json({ error: v.error });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
     // Verify workflow exists
     const [wfRows] = await connection.query(
@@ -1380,8 +1343,7 @@ router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
       [workflowId]
     );
     if (wfRows.length === 0) {
-      await connection.commit();
-      return res.status(404).json({ error: "Workflow not found" });
+      return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
 
     // Build dynamic update (only update fields that were sent)
@@ -1414,8 +1376,10 @@ router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
 
     await connection.query(query, params);
 
-    await connection.commit();
-    connection.release();
+      return {};
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
 
     console.log(`[UPDATE WORKFLOW] Updated workflow ${workflowId}`);
 
@@ -1425,10 +1389,6 @@ router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
       message: "Workflow updated successfully"
     });
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error("[UPDATE WORKFLOW] Failed:", err);
     res.status(500).json({ 
       error: "Failed to update workflow", 
@@ -1474,10 +1434,8 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
     // Verify workflow + step exist
     const [rows] = await connection.query(
@@ -1485,8 +1443,7 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
       [workflowId, stepNum]
     );
     if (rows.length === 0) {
-      await connection.commit();
-      return res.status(404).json({ error: "Step not found" });
+      return { respond: { status: 404, body: { error: "Step not found" } } };
     }
 
     await connection.query(
@@ -1504,8 +1461,10 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
       ]
     );
 
-    await connection.commit();
-    connection.release();
+      return {};
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
 
     console.log(`[UPDATE STEP] Fully replaced step ${stepNum} in workflow ${workflowId}`);
 
@@ -1516,10 +1475,6 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
       message: `Step ${stepNum} fully updated`
     });
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error("[PUT STEP] Failed:", err);
     res.status(500).json({ error: "Failed to update step", message: err.message });
   }
@@ -1550,10 +1505,8 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
     return res.status(400).json({ error: "At least one field is required" });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
     // Verify step exists
     const [rows] = await connection.query(
@@ -1561,8 +1514,7 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
       [workflowId, stepNum]
     );
     if (rows.length === 0) {
-      await connection.commit();
-      return res.status(404).json({ error: "Step not found" });
+      return { respond: { status: 404, body: { error: "Step not found" } } };
     }
 
     // Timing-extensions slice — if type or config is being updated, validate
@@ -1581,16 +1533,12 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
       }
       const v = validateInternalFunctionConfig(typeToCheck, configToCheck);
       if (v) {
-        await connection.rollback();
-        connection.release();
-        return res.status(v.status).json({ error: v.error, message: v.message });
+        return { respond: { status: v.status, body: { error: v.error, message: v.message } } };
       }
       // Webhook credential injection slice — same combination-check pattern.
       const wv = await validateWebhookConfig(db, typeToCheck, configToCheck);
       if (wv) {
-        await connection.rollback();
-        connection.release();
-        return res.status(wv.status).json({ error: wv.error, message: wv.message });
+        return { respond: { status: wv.status, body: { error: wv.error, message: wv.message } } };
       }
     }
 
@@ -1619,8 +1567,10 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
 
     await connection.query(query, params);
 
-    await connection.commit();
-    connection.release();
+      return {};
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
 
     console.log(`[PATCH STEP] Updated step ${stepNum} in workflow ${workflowId}`);
 
@@ -1631,10 +1581,6 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
       message: `Step ${stepNum} partially updated`
     });
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error("[PATCH STEP] Failed:", err);
     res.status(500).json({ error: "Failed to patch step", message: err.message });
   }
@@ -1657,10 +1603,8 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
     return res.status(400).json({ error: "Invalid workflow ID" });
   }
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
     // Get original workflow
     //
@@ -1671,8 +1615,7 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
       [originalId]
     );
     if (wfRows.length === 0) {
-      await connection.commit();
-      return res.status(404).json({ error: "Workflow not found" });
+      return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
 
     const original = wfRows[0];
@@ -1715,24 +1658,22 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
       );
     }
 
-    await connection.commit();
-    connection.release();
+      return { newWorkflowId, newName, stepCount: steps.length };
+    });
 
-    console.log(`[DUPLICATE] Workflow ${originalId} → ${newWorkflowId} (${steps.length} steps)`);
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
+
+    console.log(`[DUPLICATE] Workflow ${originalId} → ${outcome.newWorkflowId} (${outcome.stepCount} steps)`);
 
     res.status(201).json({
       success: true,
       originalWorkflowId: originalId,
-      newWorkflowId,
-      newName,
-      stepCount: steps.length,
+      newWorkflowId: outcome.newWorkflowId,
+      newName: outcome.newName,
+      stepCount: outcome.stepCount,
       message: `Workflow duplicated successfully`
     });
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error("[DUPLICATE WORKFLOW] Failed:", err);
     res.status(500).json({ 
       error: "Failed to duplicate workflow", 
@@ -1782,10 +1723,8 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
   // than refusing the cancel over overflow.
   const reasonStored = reason.length > 500 ? reason.slice(0, 500) : reason;
 
-  let connection;
   try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
+    const outcome = await db.withTransaction(async (connection) => {
 
     // Verify execution exists and is still cancellable.
     const [execRows] = await connection.query(
@@ -1799,11 +1738,7 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
     );
 
     if (execRows.length === 0) {
-      await connection.commit();
-      return res.status(400).json({
-        error: "Cannot cancel",
-        message: "Execution not found or already finished",
-      });
+      return { respond: { status: 400, body: { error: "Cannot cancel", message: "Execution not found or already finished" } } };
     }
 
     // Mark as cancelled (with reason).
@@ -1830,8 +1765,10 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
       [executionId]
     );
 
-    await connection.commit();
-    connection.release();
+      return {};
+    });
+
+    if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
 
     console.log(`[CANCEL] Execution ${executionId} cancelled by user — reason: ${reasonStored}`);
 
@@ -1842,10 +1779,6 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
       message: "Workflow execution cancelled successfully",
     });
   } catch (err) {
-    if (connection) {
-      await connection.rollback();
-      connection.release();
-    }
     console.error("[CANCEL EXECUTION] Failed:", err);
     res.status(500).json({
       error: "Failed to cancel execution",
