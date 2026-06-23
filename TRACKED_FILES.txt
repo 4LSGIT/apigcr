@@ -103,7 +103,6 @@ public/automation/sequences.html
 public/automation/workflows.html
 public/automationManager.html
 public/availabilitymanager.html
-public/b.html
 public/book.html
 public/bookingviewsmanager.html
 public/calendar.html
@@ -138,6 +137,7 @@ public/js/yc-forms.js
 public/manage.html
 public/manuals.html
 public/mms.html
+public/old.html
 public/pageManager.html
 public/rating.html
 public/readonlyKeys.html

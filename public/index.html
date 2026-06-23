@@ -3,122 +3,587 @@
 
 <head>
   <title>4LSG YisraCase</title>
-  <link rel="icon" href="https://legalsolutions.group/wp-content/uploads/2022/06/cropped-favicon-32x32.png"
-    sizes="32x32" />
+  <link rel="icon" type="image/png" sizes="32x32" href="https://legalsolutions.group/assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="https://legalsolutions.group/assets/favicon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="https://legalsolutions.group/assets/favicon-180.png">
   <script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    /* === HEADER + SIDEBAR === */
+    :root {
+      --sidebar-w: 220px;
+      --sidebar-skinny-w: 56px;
+      --header-h: 56px;
+      --accent: #07ADEF;
+      --accent-dark: #0590c8;
+      --page-bg: #ffffff;
+      --surface-bg: #ffffff;
+      --sidebar-bg: #f7f8fa;
+      --sidebar-sublist-bg: #eef0f3;
+      --sidebar-hover: #e8eaed;
+      --sidebar-active-bg: rgba(7,173,239,0.12);
+      --border: #e1e4e8;
+      --text: #2c3e50;
+      --text-muted: #6c757d;
+      --shadow: 0 1px 3px rgba(0,0,0,0.04);
+      --shadow-drawer: 2px 0 12px rgba(0,0,0,0.18);
+      --backdrop: rgba(0,0,0,0.4);
+      --logout-color: #d9534f;
+      --logout-hover-bg: #fdecea;
+    }
+    body.dark {
+      --page-bg: #131722;
+      --surface-bg: #1a1e2a;
+      --sidebar-bg: #1a1e2a;
+      --sidebar-sublist-bg: #131722;
+      --sidebar-hover: #2a2f3d;
+      --sidebar-active-bg: rgba(7,173,239,0.22);
+      --border: #2c313d;
+      --text: #e1e4e8;
+      --text-muted: #8b95a8;
+      --shadow: 0 1px 3px rgba(0,0,0,0.4);
+      --shadow-drawer: 2px 0 12px rgba(0,0,0,0.5);
+      --backdrop: rgba(0,0,0,0.6);
+      --logout-color: #ff7670;
+      --logout-hover-bg: #3a1f1f;
+    }
+    body {
+      margin: 0;
+      padding-top: var(--header-h);
+      padding-left: var(--sidebar-w);
+      transition: padding-left 0.2s ease, background 0.2s ease, color 0.2s ease;
+      background: var(--page-bg);
+      color: var(--text);
+    }
+    body.sidebar-skinny { --sidebar-w: var(--sidebar-skinny-w); }
+    body.sidebar-hidden { padding-left: 0 !important; }
+
+    /* Header */
+    #appHeader {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: var(--header-h);
+      background: var(--surface-bg);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center;
+      padding: 0 16px; gap: 12px;
+      z-index: 100;
+      box-shadow: var(--shadow);
+      transition: background 0.2s ease, border-color 0.2s ease;
+    }
+    #appHeader .hdr-logo { height: 40px; width: auto; flex-shrink: 0; }
+    #appHeader .hdr-hamburger {
+      display: none; background: none; border: none;
+      font-size: 22px; cursor: pointer; padding: 6px 10px; color: var(--text);
+    }
+    body.sidebar-hidden #appHeader .hdr-hamburger { display: block; }
+    #appHeader .hdr-search {
+      display: flex; align-items: center; gap: 6px;
+      flex: 1; max-width: 480px; margin-left: 16px;
+    }
+    #appHeader .hdr-search input {
+      flex: 1; height: 36px; padding: 0 14px;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 14px; outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+      background: var(--surface-bg); color: var(--text);
+    }
+    #appHeader .hdr-search input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(7,173,239,0.15);
+    }
+    #appHeader .hdr-search button {
+      height: 36px; padding: 0 18px;
+      background: var(--accent); color: #fff;
+      border: none; border-radius: 6px;
+      cursor: pointer; font-weight: 500; font-size: 14px;
+    }
+    #appHeader .hdr-search button:hover { background: var(--accent-dark); }
+    #appHeader .hdr-spacer { flex: 1; }
+    #appHeader .hdr-right {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+    }
+    #appHeader .hdr-greeting {
+      color: var(--text); font-size: 14px;
+      cursor: pointer; padding: 6px 10px; border-radius: 6px;
+      transition: background 0.15s;
+      user-select: none;
+    }
+    #appHeader .hdr-greeting:hover { background: var(--sidebar-hover); }
+    #appHeader .hdr-greeting b { color: var(--accent); }
+    #appHeader .hdr-btn, #appHeader .hdr-logout {
+      background: var(--surface-bg); border: 1px solid var(--border);
+      height: 36px; padding: 0 12px; border-radius: 6px;
+      cursor: pointer; color: var(--text); font-size: 13px;
+      display: flex; align-items: center; gap: 6px;
+    }
+    #appHeader .hdr-btn:hover, #appHeader .hdr-logout:hover { background: var(--sidebar-hover); }
+    #appHeader .hdr-btn-icon { padding: 0 10px; }
+    #appHeader .hdr-btn-icon i { font-size: 15px; }
+    #appHeader .hdr-logout { color: var(--logout-color); }
+    #appHeader .hdr-logout:hover { background: var(--logout-hover-bg); }
+
+    /* Sidebar */
+    #appSidebar {
+      position: fixed; top: var(--header-h); left: 0; bottom: 0;
+      width: var(--sidebar-w);
+      background: var(--sidebar-bg);
+      border-right: 1px solid var(--border);
+      z-index: 90; overflow-y: auto; overflow-x: hidden;
+      transition: width 0.2s ease, transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+      display: flex; flex-direction: column;
+    }
+    body.sidebar-hidden #appSidebar { transform: translateX(-100%); }
+
+    #appSidebar .sb-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 9px 18px; cursor: pointer;
+      color: var(--text); font-size: 14px;
+      border-left: 3px solid transparent;
+      white-space: nowrap; user-select: none;
+    }
+    #appSidebar .sb-item i {
+      width: 20px; text-align: center; flex-shrink: 0;
+      color: var(--text-muted); font-size: 15px;
+    }
+    #appSidebar .sb-item:hover { background: var(--sidebar-hover); }
+    #appSidebar .sb-item.active {
+      background: var(--sidebar-active-bg);
+      border-left-color: var(--accent);
+      color: var(--accent); font-weight: 500;
+    }
+    #appSidebar .sb-item.active i { color: var(--accent); }
+    #appSidebar .sb-item .sb-badge {
+      margin-left: auto; background: var(--accent); color: #fff;
+      font-size: 11px; padding: 1px 7px; border-radius: 10px;
+      font-weight: 600; min-width: 18px; text-align: center;
+    }
+    #appSidebar .sb-item .sb-caret {
+      font-size: 11px; color: var(--text-muted);
+      transition: transform 0.2s; margin-left: 6px;
+      width: auto;
+    }
+    #appSidebar .sb-item.sb-collapsed .sb-caret { transform: rotate(-90deg); }
+    #appSidebar .sb-section-label {
+      font-size: 10px; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.6px;
+      padding: 14px 18px 4px; font-weight: 700;
+    }
+
+    /* Open Files sublist */
+    #appSidebar .sb-sublist {
+      background: var(--sidebar-sublist-bg);
+      padding: 2px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    #appSidebar .sb-sublist .file-button {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 18px 7px 38px;
+      cursor: pointer; font-size: 13px;
+      color: var(--text); white-space: nowrap;
+      border-left: 3px solid transparent;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    #appSidebar .sb-sublist .file-button i:first-child {
+      color: var(--text-muted); font-size: 13px; flex-shrink: 0;
+    }
+    #appSidebar .sb-sublist .file-button:hover { background: var(--sidebar-hover); }
+    #appSidebar .sb-sublist .file-button.active {
+      background: var(--sidebar-active-bg);
+      border-left-color: var(--accent);
+      color: var(--accent); font-weight: 500;
+    }
+    #appSidebar .sb-sublist .file-button.active i:first-child { color: var(--accent); }
+    #appSidebar .sb-sublist .file-button .file-close {
+      margin-left: auto; opacity: 0.4;
+      padding: 2px 4px; cursor: pointer; font-size: 13px;
+    }
+    #appSidebar .sb-sublist .file-button:hover .file-close { opacity: 0.8; }
+    #appSidebar .sb-sublist .file-button .file-close:hover { opacity: 1; color: var(--logout-color); }
+    #appSidebar .sb-sublist #closeAllFiles {
+      padding: 6px 18px 6px 38px; font-size: 12px;
+      color: var(--text-muted); cursor: pointer;
+      border-top: 1px dashed var(--border); margin-top: 4px;
+    }
+    #appSidebar .sb-sublist #closeAllFiles:hover { color: var(--logout-color); }
+    #appSidebar .sb-sublist #noOpenFiles { display: none !important; }
+
+    /* Sidebar footer + collapse bar */
+    #appSidebar .sb-spacer { flex: 1; min-height: 12px; }
+    #appSidebar .sb-version {
+      padding: 6px 18px; font-size: 11px; color: var(--text-muted);
+    }
+    #appSidebar .sb-collapse-bar {
+      display: flex; gap: 4px;
+      padding: 8px;
+      border-top: 1px solid var(--border);
+      background: var(--sidebar-bg);
+    }
+    #appSidebar .sb-collapse-bar button {
+      flex: 1; padding: 8px; background: var(--surface-bg);
+      border: 1px solid var(--border); border-radius: 4px;
+      cursor: pointer; color: var(--text-muted);
+      font-size: 13px;
+    }
+    #appSidebar .sb-collapse-bar button:hover { background: var(--sidebar-hover); color: var(--text); }
+
+    /* === Skinny state (icons only) — DESKTOP ONLY === */
+    @media (min-width: 769px) {
+      body.sidebar-skinny #appSidebar .sb-item span,
+      body.sidebar-skinny #appSidebar .sb-item .sb-badge,
+      body.sidebar-skinny #appSidebar .sb-item .sb-caret,
+      body.sidebar-skinny #appSidebar .sb-section-label,
+      body.sidebar-skinny #appSidebar .sb-version,
+      body.sidebar-skinny #appSidebar .sb-sublist .file-button span,
+      body.sidebar-skinny #appSidebar .sb-sublist .file-button .file-close,
+      body.sidebar-skinny #appSidebar #closeAllFiles { display: none !important; }
+      body.sidebar-skinny #appSidebar .sb-item {
+        padding: 12px 0; justify-content: center;
+      }
+      body.sidebar-skinny #appSidebar .sb-item i { font-size: 18px; }
+      body.sidebar-skinny #appSidebar .sb-sublist .file-button {
+        padding: 8px 0; justify-content: center;
+      }
+      body.sidebar-skinny #appSidebar .sb-collapse-bar {
+        flex-direction: column; gap: 6px; padding: 6px;
+      }
+    }
+
+    /* Mobile */
+    @media (max-width: 768px) {
+      body { padding-left: 0; }
+      #appSidebar {
+        transform: translateX(-100%);
+        width: 240px !important;
+        box-shadow: var(--shadow-drawer);
+      }
+      body.sidebar-mobile-open #appSidebar { transform: translateX(0); }
+      body.sidebar-mobile-open::after {
+        content: ''; position: fixed;
+        top: var(--header-h); left: 0; right: 0; bottom: 0;
+        background: var(--backdrop); z-index: 85;
+      }
+      #appHeader .hdr-hamburger { display: block !important; }
+      #appHeader .hdr-search { display: none; }
+      #appHeader .hdr-greeting { display: none; }
+      #appHeader .hdr-btn span,
+      #appHeader .hdr-logout span { display: none; }
+      #appHeader .hdr-btn,
+      #appHeader .hdr-logout { padding: 0 10px; }
+      #appHeader .hdr-logo { height: 32px; }
+      /* Hide/skinny collapse bar is desktop-only — drawer is the mobile model */
+      #appSidebar .sb-collapse-bar { display: none; }
+      #appSidebar .sb-version { display: none; }
+    }
+
+    /* === Resets for style.css collisions (apply in both light & dark) === */
+    /* style.css has its own .file-button rules that conflict with sidebar use */
+    #appSidebar .sb-sublist .file-button {
+      background: transparent !important;
+      border: none !important;
+      border-left: 3px solid transparent !important;
+      border-radius: 0 !important;
+      margin: 0 !important;
+    }
+    #appSidebar .sb-sublist .file-button.active {
+      border-left-color: var(--accent) !important;
+    }
+    #appSidebar .sb-sublist .file-button .file-close {
+      color: inherit !important;
+      margin-left: auto !important;
+    }
+
+    /* === Dark mode overrides for main content === */
+    body.dark .tab-main {
+      color: var(--text);
+    }
+    /* Default buttons (excluding the branded blue CTAs) */
+    body.dark .tab-main button:not(.big-button):not(.pop-button):not(.switch-button) {
+      background: var(--surface-bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    body.dark .tab-main button:not(.big-button):not(.pop-button):not(.switch-button):hover:not(:disabled) {
+      background: var(--sidebar-hover);
+    }
+    body.dark .tab-main button:disabled {
+      opacity: 0.5;
+    }
+    /* Keep branded blue CTAs blue in dark mode */
+    body.dark .tab-main .big-button,
+    body.dark .tab-main .pop-button,
+    body.dark .tab-main .switch-button {
+      background-color: var(--accent);
+      color: #fff;
+      border: none;
+    }
+    body.dark .tab-main .big-button:hover,
+    body.dark .tab-main .pop-button:hover,
+    body.dark .tab-main .switch-button:hover {
+      background-color: var(--accent-dark);
+    }
+    body.dark .tab-main input,
+    body.dark .tab-main select,
+    body.dark .tab-main textarea {
+      background: var(--surface-bg);
+      color: var(--text);
+      border: 1px solid var(--border) !important;
+    }
+    body.dark .tab-main input:focus,
+    body.dark .tab-main select:focus,
+    body.dark .tab-main textarea:focus {
+      outline: none;
+      border-color: var(--accent) !important;
+    }
+    /* Tables — need solid bg on tr to override style.css's #f2f2f2 stripe */
+    body.dark .tab-main table.logTable {
+      background: var(--surface-bg);
+      color: var(--text);
+    }
+    body.dark .tab-main table.logTable th {
+      background-color: var(--accent-dark);
+      color: #fff;
+      border-color: var(--border);
+    }
+    body.dark .tab-main table.logTable td {
+      border-color: var(--border);
+      background: var(--surface-bg);
+    }
+    body.dark .tab-main table.logTable tr {
+      background-color: var(--surface-bg);
+    }
+    body.dark .tab-main table.logTable tr:nth-child(even) {
+      background-color: var(--sidebar-bg);
+    }
+    body.dark .tab-main table.logTable tr:nth-child(even) td {
+      background-color: var(--sidebar-bg);
+    }
+    body.dark .tab-main table.logTable tr:hover,
+    body.dark .tab-main table.logTable tr:hover td {
+      background-color: var(--sidebar-hover) !important;
+    }
+    body.dark .tab-main a,
+    body.dark .tab-main a:visited {
+      color: var(--accent);
+    }
+    body.dark .tab-main hr {
+      border: none;
+      border-top: 1px solid var(--border);
+    }
+    /* Appointment box etc. */
+    body.dark .tab-main .appointment-box {
+      border-color: var(--border);
+      background: var(--surface-bg);
+    }
+    /* style.css .tab (tabs class) */
+    body.dark .tab {
+      background-color: var(--sidebar-bg);
+      color: var(--text);
+    }
+    body.dark .tab:hover {
+      background-color: var(--sidebar-hover);
+    }
+    /* Campaign tab styles from style.css */
+    body.dark .campaign-tab-button {
+      background-color: var(--sidebar-bg);
+      color: var(--text);
+      border-color: var(--border);
+    }
+    body.dark .campaign-tab-button.active {
+      background-color: var(--surface-bg);
+    }
+    body.dark .campaign-tab-main {
+      background-color: var(--surface-bg);
+      border-color: var(--border);
+    }
+    /* SweetAlert in dark mode */
+    body.dark .swal2-popup {
+      background: var(--surface-bg) !important;
+      color: var(--text) !important;
+    }
+    body.dark .swal2-title,
+    body.dark .swal2-html-container {
+      color: var(--text) !important;
+    }
+    body.dark .swal2-input,
+    body.dark .swal2-textarea,
+    body.dark .swal2-select {
+      background: var(--sidebar-bg) !important;
+      color: var(--text) !important;
+      border-color: var(--border) !important;
+    }
+
+    /* Print */
+    @media print {
+      #appHeader, #appSidebar { display: none !important; }
+      body { padding: 0 !important; }
+    }
+
+    /* Legacy top buttons row — sidebar replaces it */
+    #topButtons { display: none !important; }
+  </style>
 </head>
 
 <body>
-  <div style="text-align: center">
-    <img src="https://iili.io/Jy2nXHv.md.png" width="280" aria-label="Form Logo" /><br />
-    <div id="loading" style="text-align: center; display: none">
-      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i><br /><br />
+  <!-- ============ HEADER ============ -->
+  <header id="appHeader">
+    <button class="hdr-hamburger" onclick="toggleMobileSidebar()" aria-label="Menu">
+      <i class="fa-solid fa-bars"></i>
+    </button>
+    <img class="hdr-logo" src="https://iili.io/Jy2nXHv.md.png" alt="4LSG YisraCase" />
+    <div class="hdr-search">
+      <input id="qpInput" placeholder="Name, Phone, Case # or ID"
+        onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value, null, null, 10);}" />
+      <button onclick="quickPick(E('qpInput').value, null, null, 10)">Go</button>
     </div>
-  </div>
-  <div id="topButtons" style="text-align: center; display: none">
-    <button style="height: 30px" onclick="openMainTab('tabHome')">
-      <i class="fa-solid fa-home"></i> Home
-    </button>
-    <button style="height: 30px"
-      onclick="E('tabOpenFiles').style.display=E('tabOpenFiles').style.display=='none'?'':'none'">
-      <i class="fa-solid fa-users"></i> Current Tabs
-    </button>
-    <button style="height: 30px" onclick="E('tabTasksTo').value=user.user;tabTasksGet(0);openMainTab('tabTasks')">
-      <i class="fa-solid fa-list-check"></i> My Tasks
-    </button>
-    <button style="height: 30px" onclick="openMainTab('tabAdmin')" id="adminButton">
-      <i class="fa-solid fa-crown"></i> Admin Tab
-    </button>
-    <button style="height: 30px" onclick="openMainTab('tabMore')" id="moreButton">
-      <i class="fa-solid fa-gear"></i> More Features
-    </button>
-    <button style="height: 30px" onclick="Swal.fire({ title: 'Log Out?',html: '<p>Are you sure you want to log out?</p><p>You will lose all unsaved data in all the open files!</p>',
-            icon: 'warning', showCancelButton: true, confirmButtonText: 'Yes, goodbye!',cancelButtonText: 'No, cancel',
-            preConfirm: () => { logout();location.reload();}});">
-      <i class="fa-solid fa-rotate-right"></i> Log Out
-    </button>
-  </div>
-
-  <div id="tabOpenFiles" style="display: none; text-align: center">
-    <div id="noOpenFiles">There are no open files at the moment!</div>
-    <div id="closeAllFiles" style="display: none" class="file-type-button" onclick="closeAllFiles(this)">
-      Close All<!--<i class="file-close fa-solid fa-circle-xmark"></i>-->
+    <div class="hdr-spacer"></div>
+    <div class="hdr-right" id="hdrUserArea" style="display:none">
+      <span class="hdr-greeting" onclick="openMainTab('tabSettings')" title="Settings">Hi, <b id="myNameIs"></b>!</span>
+      <button class="hdr-btn" onclick="E('tabTasksTo').value=user.user;tabTasksGet(0);openMainTab('tabTasks')" title="My Tasks">
+        <i class="fa-solid fa-list-check"></i><span>My Tasks</span>
+      </button>
+      <button class="hdr-btn hdr-btn-icon" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">
+        <i class="fa-solid fa-moon" id="themeIcon"></i>
+      </button>
+      <button class="hdr-logout" onclick="confirmLogout()" title="Log Out">
+        <i class="fa-solid fa-arrow-right-from-bracket"></i><span>Log Out</span>
+      </button>
     </div>
-  </div>
+  </header>
 
-  <hr /> <!-- End of the header hr as requested-->
+  <!-- ============ SIDEBAR ============ -->
+  <nav id="appSidebar" style="display:none">
+    <div class="sb-item" data-tab="tabHome" onclick="openMainTab('tabHome')" title="Home">
+      <i class="fa-solid fa-house"></i><span>Home</span>
+    </div>
 
-  <div id="tabHome" class="tab-main">
-    <button style="width: 100px; height: 100px" onclick="cases?'':tabCasesGet(0);openMainTab('tabCases', this)">
+    <!-- Open Files (only shown when count > 0) -->
+    <div class="sb-item" id="sbOpenFiles" style="display:none" onclick="toggleOpenFilesList()" title="Open Files">
+      <i class="fa-solid fa-folder-open"></i><span>Open Files</span>
+      <span class="sb-badge" id="sbOpenFilesCount">0</span>
+      <i class="fa-solid fa-chevron-down sb-caret"></i>
+    </div>
+    <div id="tabOpenFiles" class="sb-sublist" style="display:none">
+      <div id="noOpenFiles">There are no open files at the moment!</div>
+      <div id="closeAllFiles" style="display:none" onclick="closeAllFiles(this)">
+        <i class="fa-solid fa-circle-xmark"></i> Close All
+      </div>
+      <!-- file buttons get appended here by addFile() -->
+    </div>
+
+    <div class="sb-section-label">Records</div>
+    <div class="sb-item" data-tab="tabCases" onclick="cases?'':tabCasesGet(0);openMainTab('tabCases')" title="Cases">
+      <i class="fa-solid fa-landmark"></i><span>Cases</span>
+    </div>
+    <div class="sb-item" data-tab="tabContacts" onclick="contacts?'':tabContactsGet(0);openMainTab('tabContacts')" title="Contacts">
+      <i class="fa-solid fa-users"></i><span>Contacts</span>
+    </div>
+    <div class="sb-item" data-tab="tabAppts" onclick="appts?'':tabApptsGet(0);openMainTab('tabAppts')" title="Appointments">
+      <i class="fa-solid fa-calendar-days"></i><span>Appointments</span>
+    </div>
+    <div class="sb-item" data-tab="tabEvents" onclick="events?'':tabEventsGet(0);openMainTab('tabEvents')" title="Events">
+      <i class="fa-solid fa-flag"></i><span>Events</span>
+    </div>
+    <div class="sb-item" data-tab="tabTasks" onclick="tasks?'':tabTasksGet(0);openMainTab('tabTasks')" title="Tasks">
+      <i class="fa-solid fa-list"></i><span>Tasks</span>
+    </div>
+    <div class="sb-item" data-tab="tabLogs" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')" title="Log">
+      <i class="fa-solid fa-box-archive"></i><span>Log</span>
+    </div>
+    <div class="sb-item" data-tab="tabBills" onclick="openMainTab('tabBills')" title="Bills">
+      <i class="fa-solid fa-file-invoice-dollar"></i><span>Bills</span>
+    </div>
+
+    <div class="sb-section-label">Actions</div>
+    <div class="sb-item" onclick="newContact()" title="New Client">
+      <i class="fa-solid fa-user-plus"></i><span>New Client</span>
+    </div>
+    <div class="sb-item" data-tab="tabCampaigns" onclick="openMainTab('tabCampaigns')" title="Campaigns">
+      <i class="fa-solid fa-envelopes-bulk"></i><span>Campaigns</span>
+    </div>
+    <div class="sb-item" id="sbCustom" data-tab="tabCustom" onclick="openMainTab('tabCustom')" title="Custom">
+      <i class="fa-solid fa-clock"></i><span>Custom Tab</span>
+    </div>
+
+    <div class="sb-section-label">Settings</div>
+    <div class="sb-item" data-tab="tabSettings" onclick="openMainTab('tabSettings')" title="Settings">
+      <i class="fa-solid fa-gear"></i><span>Settings</span>
+    </div>
+    <div class="sb-item" id="sbAdmin" data-tab="tabAdmin" onclick="openMainTab('tabAdmin')" style="display:none" title="Admin">
+      <i class="fa-solid fa-crown"></i><span>Admin</span>
+    </div>
+    <div class="sb-item" data-tab="tabMore" onclick="openMainTab('tabMore')" title="More Features">
+      <i class="fa-solid fa-gear"></i><span>More Features</span>
+    </div>
+    <!-- <div class="sb-item" onclick="(async () => {console.log(await apiSend('/process-jobs'));})()" title="Process Jobs"> -->
+    <div
+      class="sb-item"
+      onclick="(async () => {
+        showProcessingSwal();
+        let res = await apiSend('/process-jobs');
+        Toast.fire({
+          icon: 'success',
+          title: `${res.processed} job${res.processed == 1 ? '' : 's'} processed`
+        });
+      })()"
+      title="Process Jobs">
+      <i class="fa-solid fa-bolt"></i><span>Process Jobs</span>
+    </div>
+
+    <div class="sb-spacer"></div>
+    <div class="sb-version">Ver b0.50</div>
+    <div class="sb-collapse-bar">
+      <button onclick="hideSidebar()" title="Hide sidebar">
+        <i class="fa-solid fa-arrow-up"></i>
+      </button>
+      <button onclick="toggleSidebarSkinny()" title="Toggle skinny mode">
+        <i class="fa-solid fa-arrow-left" id="sbSkinnyIcon"></i>
+      </button>
+    </div>
+  </nav>
+
+  <div id="tabHome" class="tab-main"><br><br>
+    <button class="home-btn" onclick="cases?'':tabCasesGet(0);openMainTab('tabCases', this)">
       <i class="fa-solid fa-landmark fa-2xl"></i><br /><br />Cases
     </button>
-    <button style="width: 100px; height: 100px" onclick="contacts?'':tabContactsGet(0);openMainTab('tabContacts')">
+    <button class="home-btn" onclick="contacts?'':tabContactsGet(0);openMainTab('tabContacts')">
       <i class="fa-solid fa-users fa-2xl"></i><br /><br />Contacts
     </button>
-    <button style="width: 100px; height: 100px" onclick="appts?'':tabApptsGet(0);openMainTab('tabAppts')">
+    <button class="home-btn" onclick="appts?'':tabApptsGet(0);openMainTab('tabAppts')">
       <i class="fa-solid fa-calendar-days fa-2xl"></i><br /><br />Appointments
     </button>
     <div style="height: 5px"></div>
-    <button style="width: 100px; height: 100px" onclick="tasks?'':tabTasksGet(0);openMainTab('tabTasks')">
-      <i class="fa-solid fa-list fa-2xl"></i><br /><br />Tasks
+    <button class="home-btn" onclick="openMainTab('tabBills')">
+      <i class="fa-solid fa-file-invoice-dollar fa-2xl"></i><br /><br />Bills
     </button>
-    <button style="width: 100px; height: 100px" onclick="newContact()">
+    <button class="home-btn" onclick="newContact()">
       <i class="fa-solid fa-user-plus fa-2xl"></i><br /><br />New Client
     </button>
-    <button style="width: 100px; height: 100px" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')">
+    <button class="home-btn" onclick="events?'':tabEventsGet(0);openMainTab('tabEvents')">
+      <i class="fa-solid fa-flag fa-2xl"></i><br /><br />Events
+    </button>
+    <div style="height: 5px"></div>
+    <button class="home-btn" onclick="tasks?'':tabTasksGet(0);openMainTab('tabTasks')">
+      <i class="fa-solid fa-list fa-2xl"></i><br /><br />Tasks
+    </button>
+    <button class="home-btn" onclick="openMainTab('tabCampaigns')">
+      <i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br /><br />Campaigns
+    </button>
+    <button class="home-btn" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')">
       <i class="fa-solid fa-box-archive fa-2xl"></i><br /><br />Log
     </button>
     <div style="height: 5px"></div>
-    <button id="tabCustomButton" style="width: 100px; height: 100px" onclick="openMainTab('tabCustom')">
+    <button id="tabCustomButton" class="home-btn" onclick="openMainTab('tabCustom')">
       <i class="fa-solid fa-clock fa-2xl"></i><br /><br />Custom Tab
     </button>
-    <button style="width: 100px; height: 100px" onclick="openMainTab('tabCampaigns')">
-      <i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br /><br />Campaigns
+    <button class="home-btn" onclick="openMainTab('tabMore')">
+      <i class="fa-solid fa-grip fa-2xl"></i><br /><br />More Features
     </button>
-    <button style="width: 100px; height: 100px" onclick="openMainTab('tabMyAccount')">
-      <i class="fa-solid fa-circle-user fa-2xl"></i><br /><br />My Account
+    <button class="home-btn" onclick="openMainTab('tabSettings')">
+      <i class="fa-solid fa-gear fa-2xl"></i><br /><br />Settings
     </button>
-    <p
-      title="Enter a Contact ID, Phone Number (without spaces), Case Number or a Lead ID to directly open that Client/Case">
-      Quick Pick: (in-progress; not reliable)
-    </p>
-    <input id="qpInput" placeholder="Client ID, Case # or Lead ID"
-      onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value);}" />
-    <button class="pop-button" onclick="quickPick(E('qpInput').value)">
-      Go
-    </button>
-    <br /><br />
-    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'contact')">
-      Contact
-    </button>
-    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'case')">
-      Case
-    </button>
-    <button class="pop-button" onclick="quickPick(E('qpInput').value, 'bill')">
-      Bill
-    </button>
-    <br /><br />
-    <p>
-      Ver b0.40 — if anyone actually reads this,
-      <a href="#" onclick="
-    fetch(`https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjYwNTY0MDYzMzA0M2M1MjZlNTUzNTUxMzMi_pc?user=${encodeURIComponent(user.user_name)}`);
-    Toast.fire({ title: `Wow ${user.user_name}, you actually clicked it!` });
-    return false;
-  ">
-        click here
-      </a>
-      and report feature requests or errors to
-      <a href='mailto:it@4lsg.com'>it@4lsg.com</a>.
-    </p>
-    <!--
-      <p>
-        Ver b0.35 please report any feature requests or errors to
-        <a href="mailto:it@4lsg.com">it@4lsg.com</a>
-      </p>-->
   </div>
 
   <div id="tabBills" class="tab-main">
@@ -131,25 +596,22 @@
   </div>
 
   <div id="tabCampaigns" class="tab-main">
-    <iframe id="tabCampFrame" src="/campaign.html"></iframe>
+    <iframe id="tabCampFrame" iframe data-src="/campaign.html"></iframe>
   </div>
 
 
   <div id="tabCases" class="tab-main">
     <h1>This is the Cases Tab</h1>
-    <span>
+    <span><button onclick="NewCaseForm()">
+        <i class="fa-solid fa-folder-plus"></i> New Case
+      </button>
       Query:
       <input id="tabCasesQuery" type="text" onkeypress="if (event.keyCode == 13) {tabCasesGet(0)}" />
       Case Type:
       <select id="tabCasesType" style="width: auto">
         <option value="%">All</option>
-        <option>Bankruptcy</option>
-        <option>Bankruptcy - Ch. 7</option>
-        <option>Bankruptcy - Ch. 13</option>
-        <option value="Bankruptcy - Ch%" default>
-          Bankruptcy - all chapters
-        </option>
-        <option>Criminal</option>
+        <!-- Type / "Type: Subtype" options are populated from fe-case_types
+             (populateCaseTypeFilter in scripts.js) after firmData loads. -->
       </select>
       Stage:
       <select id="tabCasesStage" style="width: auto">
@@ -187,7 +649,6 @@
         <th onclick="sort(this, 'c.case_type')">Case Type</th>
         <th onclick="sort(this, 'c.case_stage')">Case Stage</th>
         <th onclick="sort(this, 'c.case_status')">Case Status</th>
-        <th onclick="sort(this, 'c.case_rec')">Recommendation</th>
         <th onclick="sort(this, 'c.case_open_date')">Open Date</th>
         <th onclick="sort(this, 'c.case_file_date')">File Date</th>
         <th onclick="sort(this, 'c.case_close_date')">Close Date</th>
@@ -200,106 +661,90 @@
   </div>
 
   <script>
-    function tabCasesGet(offset) {
+    async function tabCasesGet(offset) {
       offsets.cases = offset;
       E("tabCasesLoad").style.display = "block";
-      let query = E("tabCasesQuery").value;
-      let type = E("tabCasesType").value;
-      let stage = E("tabCasesStage").value;
-      let status = E("tabCasesStatus").value;
-      status = status ? `%${status}%` : "%";
-      let order = E("tabCasesOrder").value;
-      let order2 = E("tabCasesOrder2").value;
+
+      const q = E("tabCasesQuery").value;
+      // Type filter options come from fe-case_types (populateCaseTypeFilter
+      // is idempotent and preserves the selection — safe to re-run here in
+      // case this fires before the post-auth populate). The selected option
+      // carries the filter in data attrs: data-type (case_type) and
+      // data-subtype (exact case_subtype, '' = all). The static "All"
+      // option has neither and falls through to its value '%'.
+      populateCaseTypeFilter(E("tabCasesType"));
+      const typeOpt = E("tabCasesType").selectedOptions[0];
+      const type = typeOpt ? (typeOpt.dataset.type ?? typeOpt.value) : "%";
+      const subtype = (typeOpt && typeOpt.dataset.subtype) || "";
+      const stage = E("tabCasesStage").value;
+      const status = E("tabCasesStatus").value;
+      const sort_by = E("tabCasesOrder").value;
+      const sort_dir = E("tabCasesOrder2").value;
 
       const table = E("casesTable");
       const foot = E("casesTableFoot");
       foot.innerHTML = "";
-      var rows = table.getElementsByTagName("tr");
-      for (var i = rows.length - 1; i > 0; i--) {
-        table.deleteRow(i);
-      }
-      q = `SELECT c.case_id, COALESCE(c.case_number_full, c.case_number, "") AS case_number, c.case_type, c.case_stage,
-          c.case_status, JSON_ARRAYAGG(JSON_OBJECT('contact_name', co.contact_name, 'contact_id', co.contact_id, 'contact_relate',
-          cr.case_relate_type)) as contacts,
-          IFNULL(DATE_FORMAT(c.case_open_date, '%M %e, %Y'), '') as open,
-          IFNULL(DATE_FORMAT(c.case_file_date, '%M %e, %Y'), '') as file,
-          IFNULL(DATE_FORMAT(c.case_close_date, '%M %e, %Y'), '') as close,
-          case_rec
-          FROM cases c
-          LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
-          LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
-          WHERE (co.contact_id like "%${query}%" OR co.contact_name like "%${query}%" OR c.case_id LIKE "%${query}%" OR c.case_number LIKE "%${query}%" OR c.case_number_full LIKE "%${query}%" OR c.case_notes LIKE "%${query}%")
-          AND c.case_type LIKE "${type}" AND c.case_stage LIKE "${stage}" AND c.case_status LIKE "${status}" 
-          GROUP BY c.case_id
-          ORDER BY ${order} ${order2}
-          LIMIT ${limit} OFFSET ${offset}|||
-          SELECT COUNT( DISTINCT c.case_id) AS counter 
-          FROM cases c LEFT JOIN case_relate cr ON c.case_id = cr.case_relate_case_id
-          LEFT JOIN contacts co ON cr.case_relate_client_id = co.contact_id
-          WHERE (co.contact_id like "%${query}%" OR co.contact_name like "%${query}%" OR c.case_id LIKE "%${query}%" OR c.case_number LIKE "%${query}%" OR c.case_number_full LIKE "%${query}%" OR c.case_notes LIKE "%${query}%")
-          AND c.case_type LIKE "${type}" AND c.case_stage LIKE "${stage}" AND c.case_status LIKE "${status}" 
-          ORDER BY ${order} ${order2}
-          `;
-      fetch(
-        `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          q
-        )}`
-      )
-        .then((response) => response.json())
-        .then((data) => {
-          console.log(data);
-          if (data.data.query2[0].counter > 0) {
-            cases = data.data.query1;
-            console.log(cases);
-            cases.forEach((C) => {
-              C.contacts = typeof C.contacts === "string" ? JSON.parse(C.contacts) : C.contacts;
-              const row = table.insertRow();
-              rowHTML = `<td><a href="#" onclick="addFile('${C.Case_number || C.case_id
-                }', 'case', '${C.case_id}')">${C.case_id}</a></td><td>`;
-              C.contacts.forEach((client) => {
-                if (client.contact_id) {
-                  rowHTML += `<a href="#" onclick="addFile('${client.contact_name.replace(
-                    /'/g,
-                    "\\'"
-                  )}', 'client', '${client.contact_id}')">${client.contact_name
-                    }</a> (${client.contact_relate})<br>`;
-                }
-              });
-              rowHTML += `</td><td>${C.case_number}</td><td>${C.case_type}</td><td>${C.case_stage}</td><td>${C.case_status}</td><td>${C.case_rec}</td><td>${C.open}</td><td>${C.file}</td><td>${C.close}</td>`;
-              row.innerHTML = rowHTML;
-            });
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
 
-            foot.innerHTML =
-              offset > 0
-                ? `<a href="#" onclick="tabCasesGet(${offset - 100
-                })"">&lt;</a> `
-                : "";
-            for (i = 1; data.data.query2[0].counter >= (i - 1) * limit; i++) {
-              foot.innerHTML +=
-                offset / limit + 1 == i
-                  ? `<a href="#" onclick="tabCasesGet(${(i - 1) * limit
-                  })">[${i}]</a> `
-                  : `<a href="#" onclick="tabCasesGet(${(i - 1) * limit
-                  })">${i}</a> `;
-            }
-            foot.innerHTML +=
-              offset + limit < data.data.query2[0].counter
-                ? `<a href="#" onclick="tabCasesGet(${offset + limit
-                })"">&gt;</a> `
-                : "";
-            foot.innerHTML += ` | Results ${offset + 1}-${offset + data.data.query1.length
-              } of ${data.data.query2[0].counter} 
-        <select style="width:auto" onchange="limit = this.value;tabCasesGet(0)">
-        <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
-        <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
-        <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
-        <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
-        </select> | <button onclick="window.print()">Print</button>`;
-          } else {
-            Toast.fire({ icon: "error", title: `No Cases Found!` });
+      const params = { limit, offset, sort_by, sort_dir };
+      if (q) params.q = q;
+      if (type !== '%') params.type = type;
+      if (subtype) params.subtype = subtype;
+      if (stage !== '%') params.stage = stage;
+      if (status) params.status = `%${status}%`;
+
+      try {
+        const data = await apiSend("/api/cases", "GET", params);
+        cases = data.cases;
+
+        if (data.total > 0) {
+          cases.forEach((C) => {
+            C.contacts = typeof C.contacts === "string" ? JSON.parse(C.contacts) : C.contacts;
+            const row = table.insertRow();
+            let clientsHTML = "";
+            C.contacts.forEach((client) => {
+              if (client.contact_id) {
+                clientsHTML += `<a href="#" onclick="addFile('${(client.contact_name || '').replace(/'/g, "\\'")}','client','${client.contact_id}')">${client.contact_name}</a> (${client.contact_relate})<br>`;
+              }
+            });
+            row.innerHTML = `
+        <td><a href="#" onclick="addFile('${C.case_number || C.case_id}','case','${C.case_id}')">${C.case_id}</a></td>
+        <td>${clientsHTML}</td>
+        <td>${C.case_number}</td>
+        <td>${fmtCaseType(C)}</td>
+        <td>${C.case_stage}</td>
+        <td>${C.case_status}</td>
+        <td>${C.open}</td>
+        <td>${C.file}</td>
+        <td>${C.close}</td>`;
+          });
+
+          // Pagination
+          foot.innerHTML = offset > 0
+            ? `<a href="#" onclick="tabCasesGet(${offset - limit})">&lt;</a> ` : "";
+          for (let i = 1; data.total >= (i - 1) * limit; i++) {
+            foot.innerHTML += offset / limit + 1 == i
+              ? `<a href="#" onclick="tabCasesGet(${(i - 1) * limit})">[${i}]</a> `
+              : `<a href="#" onclick="tabCasesGet(${(i - 1) * limit})">${i}</a> `;
           }
-          E("tabCasesLoad").style.display = "none";
-        });
+          foot.innerHTML += offset + limit < data.total
+            ? `<a href="#" onclick="tabCasesGet(${offset + limit})">&gt;</a> ` : "";
+          foot.innerHTML += ` | Results ${offset + 1}–${offset + cases.length} of ${data.total}
+              <select style="width:auto" onchange="limit=this.value;tabCasesGet(0)">
+                <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
+                <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
+                <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
+                <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
+              </select> | <button onclick="window.print()">Print</button>`;
+        } else {
+          Toast.fire({ icon: "error", title: "No cases found!" });
+        }
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error loading cases", text: err.message });
+      }
+
+      E("tabCasesLoad").style.display = "none";
     }
   </script>
 
@@ -352,111 +797,86 @@
   </div>
 
   <script>
-    function tabContactsGet(offset) {
+    async function tabContactsGet(offset) {
       offsets.contacts = offset;
       E("tabContactsLoad").style.display = "block";
-      let query = E("tabContactsQuery").value;
+
+      const q = E("tabContactsQuery").value;
+      const sortVal = E("tabContactsSort").value;  // e.g. "contact_lname ASC"
+      const [sort_by, sort_dir] = sortVal.split(" ");
 
       const table = E("contactsTable");
       const foot = E("contactsTableFoot");
       foot.innerHTML = "";
-      var rows = table.getElementsByTagName("tr");
-      for (var i = rows.length - 1; i > 0; i--) {
-        table.deleteRow(i);
-      }
-      q = `SELECT c.*,
-      JSON_ARRAYAGG(JSON_OBJECT('case_number', COALESCE(ca.case_number_full, ca.case_number, ca.case_id), 'case_id', ca.case_id, 'case_type', ca.case_type)) as cases,
-      IFNULL(DATE_FORMAT(c.contact_dob, '%M %e, %Y'), '') as DoB
-      FROM contacts c LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id
-      WHERE c.contact_id LIKE "%${query}%" OR c.contact_name like "%${query}%" OR c.contact_phone LIKE "%${query}%" OR c.contact_email like "%${query}%" OR c.contact_dob LIKE "%${query}%" OR c.contact_ssn LIKE "%${query}%" GROUP BY c.contact_id
-      ORDER BY ${E("tabContactsSort").value}
-      LIMIT 100 OFFSET 0|||
-      SELECT COUNT(contact_id) AS counter FROM ( SELECT contact_id FROM contacts c LEFT JOIN case_relate cr ON c.contact_id = cr.case_relate_client_id LEFT JOIN cases ca ON cr.case_relate_case_id = ca.case_id WHERE c.contact_id LIKE "%${query}%" OR c.contact_name like "%${query}%" OR c.contact_phone LIKE "%${query}%" OR c.contact_email like "%${query}%" OR c.contact_dob LIKE "%${query}%" OR c.contact_ssn LIKE "%${query}%" GROUP BY c.contact_id) AS subquery`;
-      fetch(
-        `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          q
-        )}`
-      )
-        .then((response) => response.json())
-        .then((data) => {
-          console.log(data);
-          if (data.data.query2[0].counter > 0) {
-            contacts = data.data.query1;
-            //Toast.fire({ icon: "success", title: `Returned ${data.data.query2[0].counter} results!` });
-            console.log(data);
-            contacts.forEach((contact) => {
-              const row = table.insertRow();
-              rowHTML = `<td>${contact.contact_id}</td>
-                   <td><a href="#" onclick="addFile('${contact.contact_name.replace(
-                /'/g,
-                "\\'"
-              )}', 'contact', '${contact.contact_id}')">${contact.contact_name
-                }</a></td>
-                   <td>${contact.contact_phone.replace(
-                  /(\d{3})(\d{3})(\d{4})/,
-                  "$1-$2-$3"
-                )}</td>
-                   <td>${contact.contact_email}</td>
-                   <td>${contact.contact_address
-                  ? contact.contact_address +
-                  "<br>" +
-                  contact.contact_city +
-                  ", " +
-                  contact.contact_state +
-                  " " +
-                  contact.contact_zip
-                  : ""
-                }</td><td>`;
-              contact.cases = typeof contact.cases === "string" ? JSON.parse(contact.cases) : contact.cases;
-              contact.cases.forEach((contactCase) => {
-                if (contactCase.case_id) {
-                  rowHTML += `<a href="#" title="${contactCase.case_id
-                    }" onclick="addFile('${contactCase.case_number || contactCase.case_id
-                    }', 'case', '${contactCase.case_id}')">${contactCase.case_number || contactCase.case_id
-                    }</a><br>`;
-                }
-              });
-              rowHTML += `</td><td>${contact.DoB}</td>`;
-              row.innerHTML = rowHTML;
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
+
+      const params = { limit, offset, sort_by, sort_dir };
+      if (q) params.q = q;
+
+      try {
+        const data = await apiSend("/api/contacts", "GET", params);
+        contacts = data.contacts;
+
+        if (data.total > 0) {
+          contacts.forEach((contact) => {
+            const row = table.insertRow();
+            const phone = (contact.contact_phone || "").replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3");
+            const address = contact.contact_address
+              ? `${contact.contact_address}<br>${contact.contact_city}, ${contact.contact_state} ${contact.contact_zip}`
+              : "";
+
+            let casesHTML = "";
+            const caseList = typeof contact.cases === "string" ? JSON.parse(contact.cases) : contact.cases;
+            caseList.forEach((c) => {
+              if (c.case_id) {
+                casesHTML += `<a href="#" title="${c.case_id}" onclick="addFile('${c.case_number || c.case_id}','case','${c.case_id}')">${c.case_number || c.case_id}</a><br>`;
+              }
             });
-            foot.innerHTML =
-              offset > 0
-                ? `<a href="#" onclick="tabContactsGet(${offset - limit
-                })"">&lt;</a> `
-                : "";
-            for (i = 1; data.data.query2[0].counter >= (i - 1) * limit; i++) {
-              foot.innerHTML +=
-                offset / limit + 1 == i
-                  ? `<a href="#" onclick="tabContactsGet(${(i - 1) * limit
-                  })">[${i}]</a> `
-                  : `<a href="#" onclick="tabContactsGet(${(i - 1) * limit
-                  })">${i}</a> `;
-            }
-            foot.innerHTML +=
-              offset + limit < data.data.query2[0].counter
-                ? `<a href="#" onclick="tabContactsGet(${offset + limit
-                })"">&gt;</a> `
-                : "";
-            foot.innerHTML += ` | Results ${offset + 1}-${offset + contacts.length
-              } of ${data.data.query2[0].counter}
-        <select style="width:auto" onchange="limit = this.value;tabContactsGet(0)">
-        <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
-        <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
-        <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
-        <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
-        </select> | <button onclick="window.print()">Print</button>`;
-          } else {
-            Toast.fire({ icon: "error", title: `No Contacts Found!` });
+
+            row.innerHTML = `
+            <td>${contact.contact_id}</td>
+            <td><a href="#" onclick="addFile('${(contact.contact_name || '').replace(/'/g, "\\'")}','contact','${contact.contact_id}')">${contact.contact_name}</a></td>
+            <td>${phone}</td>
+            <td>${contact.contact_email || ""}</td>
+            <td>${address}</td>
+            <td>${casesHTML}</td>
+            <td>${contact.dob || ""}</td>`;
+          });
+
+          // Pagination
+          foot.innerHTML = offset > 0
+            ? `<a href="#" onclick="tabContactsGet(${offset - limit})">&lt;</a> ` : "";
+          for (let i = 1; data.total >= (i - 1) * limit; i++) {
+            foot.innerHTML += offset / limit + 1 == i
+              ? `<a href="#" onclick="tabContactsGet(${(i - 1) * limit})">[${i}]</a> `
+              : `<a href="#" onclick="tabContactsGet(${(i - 1) * limit})">${i}</a> `;
           }
-          E("tabContactsLoad").style.display = "none";
-        });
+          foot.innerHTML += offset + limit < data.total
+            ? `<a href="#" onclick="tabContactsGet(${offset + limit})">&gt;</a> ` : "";
+          foot.innerHTML += ` | Results ${offset + 1}–${offset + contacts.length} of ${data.total}
+          <select style="width:auto" onchange="limit=this.value;tabContactsGet(0)">
+            <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
+            <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
+            <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
+            <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
+          </select> | <button onclick="window.print()">Print</button>`;
+        } else {
+          Toast.fire({ icon: "error", title: "No contacts found!" });
+        }
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error loading contacts", text: err.message });
+      }
+
+      E("tabContactsLoad").style.display = "none";
     }
   </script>
 
-  <div id="tabAppts" class="tab-main">
+<div id="tabAppts" class="tab-main">
     <h1>Appointments</h1>
     <span>
       <button id="tabApptsCal" onclick="tabApptsCal()">Calendar</button>
+      <button id="tabApptsNew" onclick="newApptDialog({ contactPick: true, casePick: true, onCreated: () => tabApptsGet(0) })"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button>
       Type:
       <select id="tabApptsType" style="width: auto">
         <option>Default</option>
@@ -476,6 +896,10 @@
         <option>No Show</option>
         <option>Rescheduled</option>
         <option selected>Scheduled</option>
+      </select>
+      With:
+      <select id="tabApptsWith" class="userslist" data-userlist-filter="does_appts" style="width: auto">
+        <option value="">All</option>
       </select>
       Time:
       <select id="tabApptsTime" style="width: auto" onchange="tabApptsTimeChange(this.value)">
@@ -508,18 +932,67 @@
       <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
     </div>
   </div>
+
+  <div id="tabEvents" class="tab-main">
+    <h1>Events</h1>
+    <span>
+      <button id="tabEventsNew" onclick="newEventDialog({ linkPick: true, onSaved: () => tabEventsGet(0) })"><i class="fa-solid fa-flag"></i> New Event</button>
+      Type:
+      <select id="tabEventsType" class="eventtypelist" style="width: auto">
+        <option value="">All types</option>
+      </select>
+      Status:
+      <select id="tabEventsStatus" style="width: auto">
+        <option selected>Scheduled</option>
+        <option>Completed</option>
+        <option>Canceled</option>
+        <option value="all">All</option>
+      </select>
+      Time:
+      <select id="tabEventsTime" style="width: auto" onchange="tabEventsTimeChange(this.value)">
+        <option>All</option>
+        <option>Before</option>
+        <option>On</option>
+        <option>After</option>
+        <option>Between</option>
+      </select>
+      <input id="tabEventsDate1" type="date" style="width: auto; display: none" />
+      <label id="tabEventsDateLabel"></label>
+      <input id="tabEventsDate2" type="date" style="width: auto; display: none" />
+      Search:
+      <input id="tabEventsQ" style="width: auto" placeholder="title…"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();tabEventsGet(0);}" />
+      Sort:
+      <select id="tabEventsSort" style="width: auto" onchange="tabEventsGet(0)">
+        <option value="asc" selected>Soonest first</option>
+        <option value="desc">Latest first</option>
+      </select>
+      <button id="tabEventsButton" onclick="tabEventsGet(0)">Search</button>
+    </span>
+    <table id="eventsTable" class="logTable">
+      <tr>
+        <th>ID</th>
+        <th>Type</th>
+        <th>Title</th>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Blocks</th>
+        <th>Status</th>
+        <th>Linked</th>
+        <th>Location</th>
+        <th>Action</th>
+      </tr>
+    </table>
+    <div id="eventsTableFoot"></div>
+    <div id="tabEventsLoad" style="display: none">
+      <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
+    </div>
+  </div>
   <script>
     function tabApptsCal() {
       Swal.fire({
         title: `Calendar`,
-        html: `
-      <iframe 
-        src="/calendar.html" 
-        width="100%" 
-        height="600" 
-        style="border:none;">
-      </iframe>
-    `,
+        html: `<iframe src="/calendar.html" width="100%" height="600" style="border:none;"></iframe>`,
         width: "75%",
         heightAuto: true,
         showConfirmButton: false,
@@ -527,21 +1000,199 @@
       });
     }
 
-    function showAppt(apptID, apptNum) {
+
+    // Refresh any visible appointment lists
+    // tabAppts, case2 appts tab, contact2 appts tab will pick this up
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'appt-updated') {
+        try {
+          document.querySelectorAll('iframe').forEach(frame => {
+            try {
+              if (frame.contentWindow.refreshAppts) frame.contentWindow.refreshAppts();
+            } catch (_) { }
+          });
+        } catch (_) { }
+      }
+    });
+
+    // Refresh any visible event lists (entity-page iframes define refreshEvents)
+    window.addEventListener('message', (e) => {
+      if (e.data?.type === 'event-updated') {
+        try {
+          document.querySelectorAll('iframe').forEach(frame => {
+            try {
+              if (frame.contentWindow.refreshEvents) frame.contentWindow.refreshEvents();
+            } catch (_) { }
+          });
+        } catch (_) { }
+      }
+    });
+
+    // Broadcast an event change so open entity iframes refresh, then refresh
+    // this tab. Used as the onSaved/onDone callback for the shell Events tab.
+    function eventsChanged() {
+      try { window.postMessage({ type: 'event-updated' }, '*'); } catch (_) { }
+      tabEventsGet(offsets.events || 0);
+    }
+
+    function tabEventsTimeChange(time) {
+      if (time == "All") {
+        E("tabEventsDate1").style.display = "none";
+        E("tabEventsDateLabel").innerHTML = "";
+        E("tabEventsDate2").style.display = "none";
+      } else if (time != "Between") {
+        E("tabEventsDate1").style.display = "inline-block";
+        E("tabEventsDateLabel").innerHTML = "";
+        E("tabEventsDate2").style.display = "none";
+      } else {
+        E("tabEventsDate1").style.display = "inline-block";
+        E("tabEventsDateLabel").innerHTML = "and ";
+        E("tabEventsDate2").style.display = "inline-block";
+      }
+    }
+
+    async function tabEventsGet(offset) {
+      offsets.events = offset;
+      E("tabEventsButton").disabled = true;
+      E("tabEventsLoad").style.display = "block";
+
+      const typeVal = E("tabEventsType").value.trim();
+      const status = E("tabEventsStatus").value;
+      const time = E("tabEventsTime").value;
+      const date1 = E("tabEventsDate1").value;
+      const date2 = E("tabEventsDate2").value;
+      const q = E("tabEventsQ").value.trim();
+      const sort = E("tabEventsSort").value;
+
+      const params = { limit, offset, status, sort };
+      if (typeVal) params.type = typeVal;
+      if (q) params.q = q;
+
+      if (time === "Before") { params.to = date1; }
+      if (time === "After") { params.from = date1; }
+      if (time === "On") { params.from = date1; params.to = date1; }
+      if (time === "Between") { params.from = date1; params.to = date2; }
+
+      const table = E("eventsTable");
+      const foot = E("eventsTableFoot");
+      foot.innerHTML = "";
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
+
+      try {
+        const data = await apiSend("/api/events", "GET", params);
+        const total = data.total || 0;
+
+        if (total > 0 && data.data && data.data.length) {
+          events = data.data;
+          events.forEach((ev) => {
+            const row = table.insertRow();
+            const date = ev.event_date ? String(ev.event_date).slice(0, 10) : "";
+            const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
+            const timeStr = allDay ? "All day" : (ev.event_time ? String(ev.event_time).slice(0, 5) : "");
+            const esc = (s) => escHtml(s == null ? "" : String(s));
+            // Blocks cell (events.event_with): whose booking availability this
+            // timed event carves. NULL = everyone (firm-wide); an id = that
+            // provider only. All-day events never block → blank.
+            let blocks = "";
+            if (!allDay) {
+              if (ev.event_with == null) {
+                blocks = "Everyone";
+              } else if (Number(ev.event_with) === 0) {
+                blocks = "Nobody";
+              } else {
+                const wu = (window.firmData?.users || [])
+                  .find(u => Number(u.user) === Number(ev.event_with));
+                blocks = esc(wu ? wu.user_name : `#${ev.event_with}`);
+              }
+            }
+            // Linked cell → addFile link (matches the rest of the page).
+            // case_number rows: docket verbatim; clickable only when the
+            // docket currently resolves to a case (resolved_case_id from the
+            // API's query-side resolution) — otherwise plain text.
+            let linked = "";
+            if (ev.event_link_type === "case_number" && ev.event_link_id != null) {
+              const docket = String(ev.link_label || ev.event_link_id);
+              if (ev.resolved_case_id) {
+                const jsLabel = docket.replace(/'/g, "\\'");
+                linked = `Case #: <a href="#" onclick="addFile('${jsLabel}','case','${ev.resolved_case_id}');return false">${esc(docket)}</a>`;
+              } else {
+                linked = `Case #: ${esc(docket)}`;
+              }
+            } else if (ev.link_label && ev.event_link_id != null) {
+              const jsLabel = String(ev.link_label).replace(/'/g, "\\'");
+              const ft = ev.event_link_type === "case" ? "case" : "contact";
+              const noun = ev.event_link_type === "case" ? "Case" : "Contact";
+              linked = `${noun}: <a href="#" onclick="addFile('${jsLabel}','${ft}','${ev.event_link_id}');return false">${esc(ev.link_label)}</a>`;
+            }
+            row.innerHTML = `
+              <td>${ev.event_id}</td>
+              <td>${esc(ev.event_type)}</td>
+              <td>${esc(ev.event_title)}</td>
+              <td>${date}</td>
+              <td>${timeStr}</td>
+              <td>${blocks}</td>
+              <td>${esc(ev.event_status)}</td>
+              <td>${linked}</td>
+              <td>${esc(ev.event_location)}</td>`;
+
+            const buttons = [];
+            buttons.push(`<button onclick='newEventDialog({ event: ${escAttrJSON(ev)}, onSaved: eventsChanged })'><i class="fa-solid fa-pen"></i> Edit</button>`);
+            if (ev.event_status === "Scheduled") {
+              buttons.push(`<button onclick="eventComplete(${ev.event_id}, eventsChanged)"><i class="fa-solid fa-check"></i> Complete</button>`);
+              buttons.push(`<button onclick="eventCancel(${ev.event_id}, eventsChanged)"><i class="fa-solid fa-ban"></i> Cancel</button>`);
+            }
+            row.innerHTML += `<td>${buttons.join(" ")}</td>`;
+          });
+
+          // Footer — log-style pagination + meta + limit + print.
+          renderEventsFooter(foot, total, limit, offset, events.length,
+            (p) => tabEventsGet((p - 1) * limit),
+            (newLimit) => { limit = newLimit; tabEventsGet(0); });
+        } else {
+          events = "";
+          foot.innerHTML = "";
+          Toast.fire({ icon: "info", title: "No events found." });
+        }
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error loading events", text: err.message });
+      }
+
+      E("tabEventsLoad").style.display = "none";
+      E("tabEventsButton").disabled = false;
+    }
+
+    // Small HTML-escape helpers local to the shell for the events table.
+    function escHtml(s) {
+      return String(s == null ? "" : s)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    // JSON for an inline single-quoted onclick attribute: escape &, <, and the
+    // single quotes that would close the attribute. (newEventDialog reads the
+    // row object back via JSON.parse.)
+    function escAttrJSON(obj) {
+      return JSON.stringify(obj)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/'/g, "&#39;");
+    }
+
+    function showAppt(apptID) {
       Swal.fire({
         title: `Appointment ${apptID}`,
-        html: `
-      <iframe 
-        src="/apptform.html?apptID=${apptID}&apptNum=${apptNum}" 
-        width="100%" 
-        height="600" 
-        style="border:none;">
-      </iframe>
-    `,
-        width: "75%", // relative to viewport width
+        html: `<iframe src="/apptform2.html?apptID=${apptID}" width="100%"  style="border:none;height:650px;"></iframe>`,
+        width: "75%",
         heightAuto: true,
         showConfirmButton: false,
         showCloseButton: true,
+        didClose: () => {
+          // Notify the active tab to refresh (if it has a refresh function)
+          // This catches any changes made inside the appointment form
+          try {
+            const activeIframe = document.querySelector('.tab-content[style*="block"] iframe');
+            if (activeIframe && activeIframe.contentWindow.refresh) {
+              activeIframe.contentWindow.refresh();
+            }
+          } catch (_) { }
+        }
       });
     }
 
@@ -554,358 +1205,325 @@
         E("tabApptsDate1").style.display = "inline-block";
         E("tabApptsDateLabel").innerHTML = "";
         E("tabApptsDate2").style.display = "none";
-      } else if (time == "Between") {
+      } else {
         E("tabApptsDate1").style.display = "inline-block";
         E("tabApptsDateLabel").innerHTML = "and ";
         E("tabApptsDate2").style.display = "inline-block";
       }
     }
-    function tabApptsGet(offset) {
+
+    async function tabApptsGet(offset) {
       offsets.appts = offset;
       E("tabApptsButton").disabled = true;
       E("tabApptsLoad").style.display = "block";
-      let type = E("tabApptsType").value;
-      let status = E("tabApptsStatus").value;
-      let time = E("tabApptsTime").value;
-      let date1 = E("tabApptsDate1").value;
-      let date2 = E("tabApptsDate2").value;
-      query = "WHERE 1";
-      if (type != "All" && type != "Default") {
-        query += ` AND appt_type = '${type}'`;
+
+      const typeVal = E("tabApptsType").value;
+      const status = E("tabApptsStatus").value;
+      const time = E("tabApptsTime").value;
+      const date1 = E("tabApptsDate1").value;
+      const date2 = E("tabApptsDate2").value;
+      const withUser = E("tabApptsWith").value;
+
+      const params = { limit, offset };
+
+      // Type filter
+      if (typeVal === "Default") {
+        params.exclude_type = "341 Meeting";
+      } else if (typeVal !== "All") {
+        params.type = typeVal;
       }
-      if (type == "Default") {
-        query += ` AND appt_type != '341 Meeting'`;
-      }
-      if (status != "All") {
-        query += ` AND appt_status = '${status}'`;
-      }
-      if (time != "All") {
-        if (time == "Between") {
-          query += ` AND DATE(appt_date) > '${date1}' AND DATE(appt_date) < '${date2}'`;
-        } else if (time == "Before") {
-          query += ` AND DATE(appt_date) < '${date1}'`;
-        } else if (time == "After") {
-          query += ` AND DATE(appt_date) > '${date1}'`;
-        } else if (time == "On") {
-          query += ` AND DATE(appt_date) = '${date1}'`;
-        }
-      }
+
+      if (withUser) params.appt_with = withUser;
+
+
+      // Status filter
+      if (status !== "All") params.status = status;
+
+      // Date range filter
+      if (time === "Before") { params.to = date1; }
+      if (time === "After") { params.from = date1; }
+      if (time === "On") { params.from = date1; params.to = date1; }
+      if (time === "Between") { params.from = date1; params.to = date2; }
+
       const table = E("apptsTable");
       const foot = E("apptsTableFoot");
       foot.innerHTML = "";
-      var rows = table.getElementsByTagName("tr");
-      for (var i = rows.length - 1; i > 0; i--) {
-        table.deleteRow(i);
-      }
-      q = `SELECT appts.appt_id AS id, contacts.contact_name AS name, appts.appt_client_id AS clientId, cases.case_number AS caseN, appts.appt_case_id AS leadId, appts.appt_type AS type, appts.appt_date as date, DATE_FORMAT(appts.appt_date, '%b. %e, %Y') AS format_date, DATE_FORMAT(appts.appt_date, '%h:%i %p') AS time, DATE_FORMAT(appts.appt_date, '%Y-%m-%dT%H:%i') AS datetime, appts.appt_status AS status, users.user_name AS user_name, users.user as user
-       FROM appts LEFT JOIN users ON users.user = appts.appt_with LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query} /*to put current day appts first*/ /*CASE WHEN DATE(appts,appt_date) = CURDATE() THEN 0 ELSE 1 END,*/ ORDER BY appts.appt_date DESC LIMIT ${limit} OFFSET ${offset};|||
-       SELECT COUNT(*) AS counter FROM appts LEFT JOIN contacts ON appts.appt_client_id = contacts.contact_id LEFT JOIN cases ON appts.appt_case_id = cases.case_id ${query}`;
-      fetch(
-        `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          q
-        )}`
-      )
-        .then((response) => response.json())
-        .then((data) => {
-          console.log(data);
-          if (data.data.query2[0].counter > 0) {
-            appts = data.data.query1;
-            appts.forEach((appt, apptNum) => {
-              const row = table.insertRow();
-              row.innerHTML = `
-          <td><a href="#" onclick="showAppt(${appt.id}, ${apptNum})">${appt.id
-                }</a></td>
-          <td>${appt.format_date}</td>
-          <td>${appt.time}</td>
-          <td><a href="#" onclick="addFile('${(appt.name || "").replace(
-                  /'/g,
-                  "\\'"
-                )}', 'client', '${appt.clientId}'); return false">${appt.name || ""
-                }</a></td>
-          <td><a href="#" onclick="addFile('${appt.caseN || appt.leadId
-                }', 'case', '${appt.leadId}'); return false">${appt.caseN || appt.leadId
-                }</a></td>
-          <td>${appt.type}</td>
-          <td>${appt.status}</td>
-          <td>${appt.user_name}</td>
-          `;
-              if (appt.status == "No Show") {
-                row.innerHTML += `<td><button onclick="apptUpdate(${appt.id}, 'Cancel', '${appt.format_date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-                            <button onclick="apptUpdate(${appt.id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-                            <button onclick="apptUpdate(${appt.id}, 'Reschedule', '${appt.date}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`;
-              } else if (appt.status == "Scheduled") {
-                row.innerHTML += `<td><button onclick="apptUpdate(${appt.id}, 'Cancel', '${appt.format_date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-                                 <button onclick="apptUpdate(${appt.id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-                                 <button onclick="apptUpdate(${appt.id}, 'No Show')"><i class="fa-solid fa-user-xmark"></i> No Show</button>
-                                 <button onclick="apptUpdate(${appt.id}, 'Reschedule', '${appt.date}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`;
-              } else if (appt.status == "Canceled") {
-                row.innerHTML += `<td><button onclick="apptUpdate(${appt.id}, 'Reschedule', '${appt.date}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`;
-              } else {
-                row.innerHTML += `<td></td>`;
-              }
-            });
-            foot.innerHTML =
-              offset > 0
-                ? `<a href="#" onclick="tabApptsGet(${offset - limit
-                })"">&lt;</a> `
-                : "";
-            for (i = 1; data.data.query2[0].counter >= (i - 1) * limit; i++) {
-              foot.innerHTML +=
-                offset / limit + 1 == i
-                  ? `<a href="#" onclick="tabApptsGet(${(i - 1) * limit
-                  })">[${i}]</a> `
-                  : `<a href="#" onclick="tabApptsGet(${(i - 1) * limit
-                  })">${i}</a> `;
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
+
+      try {
+        const data = await apiSend("/api/appts", "GET", params);
+
+        if (data.counter > 0) {
+          appts = data.appts;
+          appts.forEach((appt, apptNum) => {
+            const row = table.insertRow();
+            const caseName = appt.case_number || appt.appt_case_id || "";
+            const caseId = appt.appt_case_id || "";
+            const name = appt.contact_name || "";
+            row.innerHTML = `
+            <td><a href="#" onclick="showAppt(${appt.id})">${appt.id}</a></td>
+            <td>${appt.format_date}</td>
+            <td>${appt.time}</td>
+            <td><a href="#" onclick="addFile('${name.replace(/'/g, "\\'")}','client','${appt.appt_client_id}');return false">${name}</a></td>
+            <td><a href="#" onclick="addFile('${caseName}','case','${caseId}');return false">${caseName}</a></td>
+            <td>${appt.appt_type}</td>
+            <td>${appt.status}</td>
+            <td>${appt.user_name}</td>`;
+
+            // Always show all 4 action buttons except the one matching the current status.
+            // Backend blocks same-state transitions; user gets a correction warning on
+            // non-Scheduled transitions via apptUpdate's confirmCorrection() helper.
+            const apptDateTime = `${appt.format_date} at ${appt.time}`;
+            const s = appt.status;
+            const buttons = [];
+            if (s !== "Attended") {
+              buttons.push(`<button onclick="apptUpdate(${appt.id},'Attended',null,null,'${s}')"><i class="fa-solid fa-user-check"></i> Attended</button>`);
             }
-            foot.innerHTML +=
-              offset + limit < data.data.query2[0].counter
-                ? `<a href="#" onclick="tabApptsGet(${offset + limit
-                })"">&gt;</a> `
-                : "";
-            foot.innerHTML += ` | Results ${offset + 1}-${offset + appts.length
-              } of ${data.data.query2[0].counter} 
-        <select style="width:auto" onchange="limit = this.value;tabApptsGet(0)">
-        <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
-        <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
-        <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
-        <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
-        </select> | <button onclick="window.print()">Print</button>`;
-          } else {
-            Toast.fire({ icon: "error", title: `No appointments Found!` });
+            if (s !== "No Show") {
+              buttons.push(`<button onclick="apptUpdate(${appt.id},'No Show',null,null,'${s}')"><i class="fa-solid fa-user-xmark"></i> No Show</button>`);
+            }
+            if (s !== "Canceled") {
+              buttons.push(`<button onclick="apptUpdate(${appt.id},'Cancel','${apptDateTime}',null,'${s}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
+            }
+            if (s !== "Rescheduled") {
+              buttons.push(`<button onclick="apptUpdate(${appt.id},'Reschedule','${appt.appt_datetime_local}',null,'${s}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+            }
+            row.innerHTML += `<td>${buttons.join(" ")}</td>`;
+          });
+
+          // Pagination
+          foot.innerHTML = offset > 0
+            ? `<a href="#" onclick="tabApptsGet(${offset - limit})">&lt;</a> ` : "";
+          for (let i = 1; data.counter >= (i - 1) * limit; i++) {
+            foot.innerHTML += offset / limit + 1 == i
+              ? `<a href="#" onclick="tabApptsGet(${(i - 1) * limit})">[${i}]</a> `
+              : `<a href="#" onclick="tabApptsGet(${(i - 1) * limit})">${i}</a> `;
           }
-          E("tabApptsLoad").style.display = "none";
-          E("tabApptsButton").disabled = false;
-        });
+          foot.innerHTML += offset + limit < data.counter
+            ? `<a href="#" onclick="tabApptsGet(${offset + limit})">&gt;</a> ` : "";
+          foot.innerHTML += ` | Results ${offset + 1}–${offset + appts.length} of ${data.counter}
+          <select style="width:auto" onchange="limit=this.value;tabApptsGet(0)">
+            <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
+            <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
+            <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
+            <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
+          </select> | <button onclick="window.print()">Print</button>`;
+        } else {
+          Toast.fire({ icon: "error", title: "No appointments found!" });
+        }
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error loading appointments", text: err.message });
+      }
+
+      E("tabApptsLoad").style.display = "none";
+      E("tabApptsButton").disabled = false;
     }
 
     function rescheduledConfMsg(date1, date2, apptype) {
-      if (date2) {
-        d1 = new Intl.DateTimeFormat("en-US", {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "numeric",
-          hour12: true,
-        }).format(new Date(date1));
-        d1 = d1
-          .replace(/, /g, " ")
-          .replace(/ (\d{1,2}:\d{2} [AP]M)$/, " at $1")
-          .replace(/\bat at\b/g, "at");
-
-        d2 = new Intl.DateTimeFormat("en-US", {
-          weekday: "short",
-          month: "short",
-          day: "numeric",
-          hour: "numeric",
-          minute: "numeric",
-          hour12: true,
-        }).format(new Date(date2));
-        d2 = d2
-          .replace(/, /g, " ")
-          .replace(/ (\d{1,2}:\d{2} [AP]M)$/, " at $1")
-          .replace(/\bat at\b/g, "at");
-
-        str = `This is to confirm that I rescheduled our appointment from ${d1} to ${d2}.`;
-        E("rescheduleConfirmMessage").innerHTML = str;
-        console.log("d1", d1);
-        console.log("date1", date1);
-        console.log("d2", d2);
-        console.log("date2", date2);
-      } else if (!date1) {
-        E("rescheduleConfirmMessage").style.display =
-          E("apptRescSMS").checked == true ||
-            E("apptRescEmail").checked == true
-            ? ""
-            : "none";
-      }
+      // The confirmation default now uses server-side resolver placeholders
+      // ({{appts.appt_date|date:…}} + the /m/{{appts.appt_manage_token}} manage
+      // link), resolved against the NEW successor appt in apptService. So we no
+      // longer interpolate the date client-side or overwrite the textarea on
+      // date pick — doing so would clobber the placeholder default (and any
+      // staff edits) with verbatim text. This now only toggles visibility.
+      E("rescheduleConfirmMessage").style.display =
+        (E("apptRescSMS").checked || E("apptRescEmail").checked) ? "" : "none";
     }
 
-    function apptUpdate(appt, action, date) {
-      if (action == "Cancel") {
+    /**
+     * Show a confirmation when changing an appt from a non-Scheduled status.
+     * Returns true if user confirmed (or no warning needed).
+     */
+    async function confirmCorrection(newAction, currentStatus) {
+      if (!currentStatus || currentStatus === "Scheduled") return true;
+      const result = await Swal.fire({
+        title: "Status Correction",
+        html: `This appointment is currently marked <strong>${currentStatus}</strong>.<br><br>
+               Are you sure you want to change it to <strong>${newAction}</strong>?`,
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: `Yes, change to ${newAction}`,
+        cancelButtonText: "Never mind",
+      });
+      return result.isConfirmed;
+    }
+
+    /**
+     * Build a correction-warning banner HTML to prepend inside the Swal body.
+     * Returns empty string if no warning is needed.
+     */
+    function correctionBannerHtml(currentStatus, action) {
+      if (!currentStatus || currentStatus === "Scheduled") return "";
+      const verb = action === "Cancel" ? "Canceling" : "Rescheduling";
+      return `<div style="background:#fff8e1;border:1px solid #f0d878;border-left:3px solid #e6a800;
+              border-radius:6px;padding:10px 12px;margin-bottom:12px;font-size:0.85rem;color:#6d4c00;text-align:left;">
+              <i class="fa-solid fa-triangle-exclamation" style="color:#e6a800;margin-right:6px;"></i>
+              This appointment is currently marked <strong>${currentStatus}</strong>.
+              ${verb} will change its status.
+              </div>`;
+    }
+
+    async function apptUpdate(appt, action, date, onSuccess, currentStatus) {
+
+      if (action === "Cancel") {
         Swal.fire({
           title: `Cancel appointment #${appt}?`,
-          html: `<textarea id="cancelNote" placeholder="Cancelation note (optional):" style="height:60px;width:300px;resize:none;"></textarea><br>
-                     <input id="apptCancelFollowUp" type="checkbox" style="width:10px;transform: scale(1.5);"><span> Follow-up sequence?</span><br>
-                     <input id="apptCancelTask" type="checkbox" style="width:10px;transform: scale(1.5);"><span> Create task?</span><br>
-                     <label>Confirmation Message?</label> <input style="width:auto" type="checkbox" id="cancelConfirmSMS" onchange="E('cancelConfirmMessage').style.display=(this.checked||E('cancelConfirmEmail').checked)?'':'none'" name="confirmSMS" value="sms">
-                     <label for="cancelConfirmSMS">SMS</label>
-                     <input type="checkbox" style="width:auto" id="cancelConfirmEmail" onchange="E('cancelConfirmMessage').style.display=(this.checked||E('cancelConfirmSMS').checked)?'':'none'" name="confirmEmail" value="email">
-                     <label for="cancelConfirmEmail">Email</label><br>
-                     <textarea id="cancelConfirmMessage" style="display:none;height:60px;width:300px;resize:none;">This is to confirm that I canceled our appointment on ${date}.</textarea>
-                     `,
+          html: `
+          ${correctionBannerHtml(currentStatus, "Cancel")}
+          <textarea id="cancelNote" placeholder="Cancelation note (optional):" style="height:60px;width:300px;resize:none;"></textarea><br>
+          <input id="apptCancelTask" type="checkbox" style="width:10px;transform:scale(1.5);"> <span>Create follow-up task?</span><br>
+          <label>Confirmation:</label>
+          <input style="width:auto" type="checkbox" id="cancelConfirmSMS"
+            onchange="E('cancelConfirmMessage').style.display=(this.checked||E('cancelConfirmEmail').checked)?'':'none'"
+            name="confirmSMS">
+          <label for="cancelConfirmSMS">SMS</label>
+          <input type="checkbox" style="width:auto" id="cancelConfirmEmail"
+            onchange="E('cancelConfirmMessage').style.display=(this.checked||E('cancelConfirmSMS').checked)?'':'none'"
+            name="confirmEmail">
+          <label for="cancelConfirmEmail">Email</label><br>
+          <textarea id="cancelConfirmMessage" style="display:none;height:60px;width:300px;resize:none;">Hi {{contacts.contact_fname}}, this is to confirm that your appointment on {{appts.appt_date|date:dddd MMMM Do}} at {{appts.appt_date|time:h:mm A}} has been canceled. To book a new time: https://app.4lsg.com/m/{{appts.appt_manage_token|default:}}</textarea>`,
           confirmButtonText: "Yes, Cancel it!",
           cancelButtonText: "No, leave it alone!",
           showCancelButton: true,
           showLoaderOnConfirm: true,
-          preConfirm: () => {
-            apptCancelFollowUp = E("apptCancelFollowUp").checked;
-            apptCancelTask = E("apptCancelTask").checked;
-            note = encodeURIComponent(E("cancelNote").value);
-            note = note ? `Cancelation%20note:%20${note}` : "";
-            confirm = encodeURIComponent(E("cancelConfirmMessage").value);
-            sms = E("cancelConfirmSMS").checked ? "true" : "false";
-            email = E("cancelConfirmEmail").checked ? "true" : "false";
-            if ((sms == "true" || email == "true") && confirm == "") {
-              Swal.showValidationMessage(
-                "Please add a confirmation message!"
-              );
+          preConfirm: async () => {
+            const note = E("cancelNote").value;
+            const sms = E("cancelConfirmSMS").checked;
+            const email = E("cancelConfirmEmail").checked;
+            const confirm_message = E("cancelConfirmMessage").value;
+            const create_task = E("apptCancelTask").checked;
+
+            if ((sms || email) && !confirm_message.trim()) {
+              Swal.showValidationMessage("Please add a confirmation message!");
               return false;
             }
-            return fetch(
-              `${url}?mode=updateAppt&username=${username}&password=${password}&action=cancel&appt=${appt}&note=${note}&sms=${sms}&email=${email}&confirm=${confirm}&apptCancelFollowUp=${apptCancelFollowUp}&apptCancelTask=${apptCancelTask}`
-            )
-              .then((response) => response.json())
-              .then((data) => {
-                Toast.fire({
-                  icon: data.status || "error",
-                  title: data.title || "Error",
-                  text: data.message,
-                });
-                tabApptsGet(offsets.appts);
-              });
+            try {
+              const data = await apiSend("/api/appts/cancel", "POST",
+                { appt, note, sms, email, confirm_message, create_task });
+              Toast.fire({ icon: data.status, title: data.title, text: data.message });
+            } catch (err) {
+              Toast.fire({ icon: "error", title: "Error", text: err.message });
+            }
+            tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
         });
-      } else if (action == "Attended") {
+
+      } else if (action === "Attended") {
+        if (!(await confirmCorrection("Attended", currentStatus))) return;
         Swal.fire({
           title: `Mark appointment #${appt} as attended?`,
           confirmButtonText: "Yes, they attended",
           cancelButtonText: "No, that was a mistake",
           showCancelButton: true,
           showLoaderOnConfirm: true,
-          preConfirm: () => {
-            return fetch(
-              `${url}?mode=updateAppt&username=${username}&password=${password}&action=attended&appt=${appt}`
-            )
-              .then((response) => response.json())
-              .then((data) => {
-                Toast.fire({
-                  icon: data.status || "error",
-                  title: data.title || "Error",
-                  text: data.message,
-                });
-                tabApptsGet(offsets.appts);
-              });
+          preConfirm: async () => {
+            try {
+              const data = await apiSend(`/api/appts/${appt}/attended`, "POST");
+              Toast.fire({ icon: data.status, title: data.title, text: data.message });
+            } catch (err) {
+              Toast.fire({ icon: "error", title: "Error", text: err.message });
+            }
+            tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
         });
-      } else if (action == "Reschedule") {
+
+      } else if (action === "Reschedule") {
         Swal.fire({
           title: "Reschedule",
-          html: `<label>Select a date and time to reschedule to</label><br><input class="swal2-input" value="${date}" type="datetime-local" id="apptRescDate" onchange="rescheduledConfMsg('${date}', this.value)"><br><br>
-          <div style="width: 300px; margin: 0 auto;">Confirmation:
-          <label for="apptRescSMS"><input type="checkbox" id="apptRescSMS" style="width:auto;" onchange="rescheduledConfMsg(null)"><span>SMS</span></label>&nbsp;
-          <label for="apptRescEmail"><input type="checkbox" id="apptRescEmail" style="width:auto;" onchange="rescheduledConfMsg()"><span>Email</span></label></div>
-          <textarea id="rescheduleConfirmMessage" style="display:none;height:60px;width:300px;resize:none;"></textarea>
-          `,
+          html: `
+          ${correctionBannerHtml(currentStatus, "Reschedule")}
+          <label>Select a date and time to reschedule to</label><br>
+          <input class="swal2-input" value="${date}" type="datetime-local" id="apptRescDate"
+            onchange="rescheduledConfMsg('${date}', this.value)"><br><br>
+          <div style="width:300px;margin:0 auto;">Confirmation:
+            <label for="apptRescSMS"><input type="checkbox" id="apptRescSMS" style="width:auto;"
+              onchange="rescheduledConfMsg(null)"> SMS</label>&nbsp;
+            <label for="apptRescEmail"><input type="checkbox" id="apptRescEmail" style="width:auto;"
+              onchange="rescheduledConfMsg()"> Email</label>
+          </div>
+          <textarea id="rescheduleConfirmMessage" style="display:none;height:60px;width:300px;resize:none;">Hi {{contacts.contact_fname}}, this is to confirm that your appointment is now {{appts.appt_date|date:dddd MMMM Do}} at {{appts.appt_date|time:h:mm A}}. To view or change it: https://app.4lsg.com/m/{{appts.appt_manage_token|default:}}</textarea>`,
           showCancelButton: true,
           confirmButtonText: "Reschedule",
           showDenyButton: true,
           denyButtonText: "Reschedule Later",
           showLoaderOnConfirm: true,
           showLoaderOnDeny: true,
-          preConfirm: () => {
-            value = E("apptRescDate").value;
-            newDate = value.replace("T", " ") + ":00";
-            sms = E("apptRescSMS").checked;
-            email = E("apptRescEmail").checked;
-            msg = E("rescheduleConfirmMessage").value;
-            if (!newDate || newDate === date) {
-              Swal.showValidationMessage(
-                "Please select a different date and time"
-              );
+          preConfirm: async () => {
+            const value = E("apptRescDate").value;
+            const newDate = value.replace("T", " ") + ":00";
+            const sms = E("apptRescSMS").checked;
+            const email = E("apptRescEmail").checked;
+            const msg = E("rescheduleConfirmMessage").value;
+
+            if (!value || newDate.startsWith(date.replace("T", " "))) {
+              Swal.showValidationMessage("Please select a different date and time");
               return false;
-            } else if (whenDate(newDate) != "future") {
-              Swal.showValidationMessage(
-                "Please select a future date and time"
-              );
-              return false;
-            } else if ((sms || email) && !msg) {
-              Swal.showValidationMessage(
-                "Please include a confirmation message or uncheck the confirmation option"
-              );
-              return false;
-            } else {
-              let formattedDate = new Date(value).toLocaleString("en-US", {
-                month: "long",
-                day: "numeric",
-                year: "numeric",
-                hour: "numeric",
-                minute: "numeric",
-                hour12: true,
-              });
-              return fetch(
-                `${url}?mode=updateAppt&username=${username}&password=${password}&action=reschedule&appt=${appt}&newDate=${newDate}&sms=${sms ? "true" : "false"
-                }&email=${email ? "true" : "false"}&msg=${encodeURIComponent(
-                  msg
-                )}`
-              )
-                .then((response) => response.json())
-                .then((data) => {
-                  console.log(data);
-                  Toast.fire({
-                    icon: data.status || "error",
-                    title: data.title || "Error",
-                    text: data.message,
-                  });
-                  tabApptsGet(offsets.appts);
-                  //Toast.fire('Rescheduled', `Appointment rescheduled to: ${formattedDate}${E("apptRescSMS").checked ? " SMS Confirmation":""}${E("apptRescEmail").checked ? " Email Confirmation":""}`);
-                });
             }
+            if (whenDate(newDate) !== "future") {
+              Swal.showValidationMessage("Please select a future date and time");
+              return false;
+            }
+            if ((sms || email) && !msg) {
+              Swal.showValidationMessage("Please include a confirmation message or uncheck the confirmation option");
+              return false;
+            }
+            try {
+              const data = await apiSend("/api/appts/reschedule", "POST",
+                { appt, newDate, sms, email, msg });
+              Toast.fire({ icon: data.status, title: data.title, text: data.message });
+            } catch (err) {
+              Toast.fire({ icon: "error", title: "Error", text: err.message });
+            }
+            tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
-          preDeny: () => {
-            return fetch(
-              `${url}?mode=updateAppt&username=${username}&password=${password}&action=rescheduleLater&appt=${appt}`
-            )
-              .then((response) => response.json())
-              .then((data) => {
-                console.log(data);
-                Toast.fire({
-                  icon: data.status || "error",
-                  title: data.title || "Error",
-                  text: data.message,
-                });
-                tabApptsGet(offsets.appts);
-              });
+          preDeny: async () => {
+            try {
+              const data = await apiSend("/api/appts/reschedule", "POST",
+                { appt, rescheduleLater: true });
+              Toast.fire({ icon: data.status, title: data.title, text: data.message });
+            } catch (err) {
+              Toast.fire({ icon: "error", title: "Error", text: err.message });
+            }
+            tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
         });
-      } else if (action == "No Show") {
+
+      } else if (action === "No Show") {
+        if (!(await confirmCorrection("No Show", currentStatus))) return;
         Swal.fire({
           title: `Mark appointment #${appt} as No-Show?`,
           text: "This will enroll the client in the no-show sequence",
-          confirmButtonText: "Yes!",
-          cancelButtonText: "No, Please stop!",
+          confirmButtonText: "Yes, enroll in sequence",
           denyButtonText: "Mark without enrolling",
+          cancelButtonText: "Cancel",
           showDenyButton: true,
           showCancelButton: true,
           showLoaderOnConfirm: true,
           showLoaderOnDeny: true,
-          preDeny: () => {
-            return fetch(
-              `${url}?mode=updateAppt&username=${username}&password=${password}&action=NoShow&enroll=false&appt=${appt}`
-            )
-              .then((response) => response.json())
-              .then((data) => {
-                Toast.fire({
-                  icon: data.status || "error",
-                  title: data.title || "Error",
-                  text: data.message,
-                });
-                tabApptsGet(offsets.appts);
-              });
+          preConfirm: async () => {
+            try {
+              const data = await apiSend(`/api/appts/${appt}/no-show`, "POST", { enroll: true });
+              Toast.fire({ icon: data.status, title: data.title, text: data.message });
+            } catch (err) {
+              Toast.fire({ icon: "error", title: "Error", text: err.message });
+            }
+            tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
-          preConfirm: () => {
-            return fetch(
-              `${url}?mode=updateAppt&username=${username}&password=${password}&action=NoShow&enroll=true&appt=${appt}`
-            )
-              .then((response) => response.json())
-              .then((data) => {
-                Toast.fire({
-                  icon: data.status || "error",
-                  title: data.title || "Error",
-                  text: data.message,
-                });
-                tabApptsGet(offsets.appts);
-              });
+          preDeny: async () => {
+            try {
+              const data = await apiSend(`/api/appts/${appt}/no-show`, "POST", { enroll: false });
+              Toast.fire({ icon: data.status, title: data.title, text: data.message });
+            } catch (err) {
+              Toast.fire({ icon: "error", title: "Error", text: err.message });
+            }
+            tabApptsGet(offsets.appts);
+            if (onSuccess) onSuccess();
           },
         });
       }
@@ -925,16 +1543,16 @@
         <option>Completed</option>
         <option>Due Today</option>
         <option>Overdue</option>
-        <option>Canceled</option>
-        <option value="1' OR '1">All</option>
+        <option>Deleted</option>
+        <option value="All">All</option>
       </select>
       Assigned By:
       <select id="tabTasksBy" class="userslist" style="width: 150px">
-        <option value="1' OR '1">All</option>
+        <option value="">All</option>
       </select>
       Assigned to:
-      <select id="tabTasksTo" class="userslist" style="width: 150px">
-        <option value="1' OR '1">All</option>
+      <select id="tabTasksTo" class="userslist" data-userlist-filter="user_type" style="width: 150px">
+        <option value="">All</option>
       </select>
       <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
     </span>
@@ -958,296 +1576,226 @@
     </div>
   </div>
   <script>
-    function newTask(
-      taskID,
-      taskTo,
-      taskTitle,
-      taskDesc,
-      taskDue,
-      taskNotification,
-      taskLink,
-      taskStart
-    ) {
+    async function newTask(task, linkType, linkId, onSuccess) {
+      const isEdit = !!(task && task.id);
+      const t = task || {};
+      const toVal = t.to?.id || '';
+      const titleVal = t.title || '';
+      const descVal = t.desc || '';
+      const dueVal = t.due || '';
+      const notifyVal = t.notify ? 'checked' : '';
+      const lType = isEdit ? (t.link?.type || '') : (linkType || '');
+      const lId = isEdit ? (t.link?.id || '') : (linkId || '');
+      const showLink = !!(lType && lId);
+      const linkLabel = lType === 'case' ? 'Case' : 'Client';
+      // Build assignee dropdown from firmData. Placeholder is disabled+hidden
+      // so it shows as a hint but cannot be re-selected once the user picks someone.
+      const userOpts =
+      '<option value="" disabled selected hidden>— select assignee —</option>' +
+      (window.firmData?.users || [])
+      .filter(u => u.user_type)
+      .map(u => `<option value="${u.user}">${u.user_name}</option>`)
+      .join('');
+
       Swal.fire({
-        title: `${taskID ? "Update" : "New"} Task:`,
-        html: `<label class="input-label">Assign To: </label
-      ><select id="taskAssignTo" style="width:250px" value="${taskTo ? taskTo : ""
-          }">${userOpts}</select><br>
-      <label class="input-label">Title: </label><input style="width:250px" id="taskTitle" value="${taskTitle ? taskTitle : ""
-          }"><br>
-      <label class="input-label">Description: </label><textarea class="input-ta" rows="4" style="width:250px" id="taskDesc">${taskDesc ? taskDesc : ""
-          }</textarea><br>
-      <label class="input-label">Start Date: </label><input type="date" style="width:250px" id="taskStart" value="${taskStart ? taskStart : ""
-          }"><br>
-      <label class="input-label"></label><label class="sub-label">leave blank to start immediately</label><br>
-      <label class="input-label">Due Date: </label><input type="date" style="width:250px" id="taskDate" value="${taskDue ? taskDue : ""
-          }"><br>
-      <label class="sub-label" style="width:90%">a message will be sent now and on the due date</label><br>
-      <input type="checkbox" id="taskNotify" ${taskNotification ? "checked" : ""
-          } style="width:10px;transform: scale(1.5);"><span> Notify Assigner upon completion?</span>
-      <div style="display:${taskLink ? "" : "none"}">
-      <input type="checkbox" id="taskLink" ${taskLink ? "checked" : ""
-          } style="width:10px;transform: scale(1.5);"><span> Link to ${isNaN(taskLink) ? "Case" : "Client"
-          }?</span>
-      </div>`,
+        title: `${isEdit ? "Update" : "New"} Task:`,
+        html: `
+        <label class="input-label">Assign To: </label>
+        <select id="taskAssignTo" style="width:250px">${userOpts}</select><br>
+        <label class="input-label">Title: </label>
+        <input style="width:250px" id="taskTitle" value="${titleVal}"><br>
+        <label class="input-label">Description: </label>
+        <textarea class="input-ta" rows="4" style="width:250px" id="taskDesc">${descVal}</textarea><br>
+        <label class="input-label">Due Date: </label>
+        <input type="date" style="width:250px" id="taskDate" value="${dueVal}"><br>
+        <label class="sub-label" style="width:90%">a message will be sent now and on the due date</label><br>
+        <input type="checkbox" id="taskNotify" ${notifyVal} style="width:10px;transform:scale(1.5);">
+        <span> Notify Assigner upon completion?</span>
+        <div id="taskLinkDiv" style="display:${showLink ? '' : 'none'}">
+          <input type="checkbox" id="taskLinkCheck" ${showLink ? 'checked' : ''} style="width:10px;transform:scale(1.5);">
+          <span> Link to ${linkLabel}?</span>
+        </div>`,
         showCancelButton: true,
-        showConfirmButton: true,
-        cancelButtonText: "Cancel",
-        confirmButtonText: `${taskID ? "Update" : "Assign"}`,
+        confirmButtonText: isEdit ? "Update" : "Assign",
         showCloseButton: true,
-        preConfirm: () => {
-          if (!E("taskTitle").value) {
-            Swal.showValidationMessage("Please add a brief title");
-            return false;
-          } else if (!E("taskDesc").value) {
-            Swal.showValidationMessage("Please add a clear description");
-            return false;
-          } else if (!E("taskDate").value) {
-            Swal.showValidationMessage(
-              "Without a due date it will never be done!"
-            );
-            return false;
-          }
-        },
-      }).then((result) => {
-        if (result.isConfirmed && !taskID) {
-          link = E("taskLink").checked ? taskLink : "";
-          assignTo = E("taskAssignTo").value;
-          taskTitle = E("taskTitle").value;
-          taskDesc = E("taskDesc").value;
-          taskDate = E("taskDate").value;
-          taskStart = E("taskStart").value;
-          taskNotification = E("taskNotify").checked;
-          showProcessingSwal();
-          fetch(
-            `${url}?mode=createTask&username=${username}&password=${password}&to=${assignTo}&title=${taskTitle}&desc=${taskDesc}&due=${taskDate ? taskDate : ""
-            }&start=${taskStart ? taskStart : ""}&notify=${taskNotification ? "1" : "0"
-            }&link=${link}`
-          )
-            .then((response) => response.json())
-            .then((data) => {
-              Toast.fire({
-                title: data.title,
-                text: data.message,
-                icon: data.icon,
-              });
-            });
-        } else if (result.isConfirmed && taskID) {
-          link =
-            (E("taskLink").checked ? taskLink : "") == taskLink
-              ? ""
-              : E("taskLink").checked
-                ? taskLink
-                : "{{blank}}";
-          assignTo =
-            E("taskAssignTo").value == taskTo ? "" : E("taskAssignTo").value;
-          taskTitle =
-            E("taskTitle").value == taskTitle ? "" : E("taskTitle").value;
-          taskDesc =
-            E("taskDesc").value == taskDesc ? "" : E("taskDesc").value;
-          taskDate =
-            E("taskDate").value == taskDate
-              ? ""
-              : E("taskDate").value || "{{blank}}";
-          taskstart =
-            E("taskStart").value == taskStart
-              ? ""
-              : E("taskStart").value || "{{blank}}";
-          taskNotification =
-            E("taskNotify").checked == taskNotification
-              ? ""
-              : E("taskNotify").checked
-                ? "1"
-                : "0";
-          if (
-            assignTo ||
-            taskTitle ||
-            taskDesc ||
-            taskDate ||
-            taskstart ||
-            taskNotification
-          ) {
-            showProcessingSwal();
-            fetch(
-              `${url}?mode=updateTask&username=${username}&password=${password}&action=edit&task=${taskID}&to=${assignTo}&title=${taskTitle}&desc=${taskDesc}&due=${taskDate ? taskDate : ""
-              }&start=${taskStart ? taskStart : ""
-              }&notify=${taskNotification}&link=${link}`
-            )
-              .then((response) => response.json())
-              .then((data) => {
-                Toast.fire({
-                  title: data.title,
-                  text: data.message,
-                  icon: data.icon,
-                });
-              });
+        didOpen: () => { if (toVal) E("taskAssignTo").value = toVal; },
+        preConfirm: async () => {
+          const title = E("taskTitle").value;
+          const desc = E("taskDesc").value;
+          const due = E("taskDate").value;
+          const assignTo = E("taskAssignTo").value;
+          if (!assignTo) { Swal.showValidationMessage("Please choose an assignee"); return false; }
+          if (!title) { Swal.showValidationMessage("Please add a brief title"); return false; }
+          if (!desc) { Swal.showValidationMessage("Please add a clear description"); return false; }
+          if (!due) { Swal.showValidationMessage("Without a due date it will never be done!"); return false; }
+
+          const linked = showLink && E("taskLinkCheck").checked;
+
+          if (!isEdit) {
+            const payload = {
+              to: parseInt(E("taskAssignTo").value),
+              title, desc, due,
+              notify: E("taskNotify").checked,
+            };
+            if (linked) { payload.link_type = lType; payload.link_id = lId; }
+            try {
+              const data = await apiSend("/api/tasks", "POST", payload);
+              Toast.fire({ icon: data.status, title: data.title, text: data.message });
+              tabTasksGet(offsets.tasks);
+              if (onSuccess) onSuccess();
+            } catch (err) {
+              Toast.fire({ icon: "error", title: "Error", text: err.message });
+            }
           } else {
-            Toast.fire({ title: "No changes selected" });
+            const patch = {};
+            if (title !== (t.title || '')) patch.task_title = title;
+            if (desc !== (t.desc || '')) patch.task_desc = desc;
+            if (due !== (t.due || '')) patch.task_due = due;
+            if (parseInt(E("taskAssignTo").value) !== +toVal) patch.task_to = parseInt(E("taskAssignTo").value);
+            if (E("taskNotify").checked !== !!t.notify) patch.task_notification = E("taskNotify").checked;
+            if (showLink && linked && !t.link?.type) { patch.task_link_type = lType; patch.task_link_id = String(lId); }
+            if (showLink && !linked && t.link?.type) { patch.task_link_type = null; patch.task_link_id = null; }
+
+            if (!Object.keys(patch).length) { Toast.fire({ title: "No changes made" }); return; }
+            try {
+              const data = await apiSend(`/api/tasks/${task.id}`, "PATCH", patch);
+              Toast.fire({ icon: data.status, title: data.title, text: data.message });
+              tabTasksGet(offsets.tasks);
+              if (onSuccess) onSuccess();
+            } catch (err) {
+              Toast.fire({ icon: "error", title: "Error", text: err.message });
+            }
           }
-        } else if (result.dismiss === Swal.DismissReason.cancel) {
-          // Handle cancel button click
-          // Swal.fire("This doesn't do anything!");
         }
       });
     }
 
-    function updateTask(
-      taskId,
-      action,
-      taskTo,
-      taskTitle,
-      taskDesc,
-      taskDue,
-      taskNotification,
-      taskLink
-    ) {
-      if (action == "Edit") {
-        newTask(
-          taskId,
-          taskTo,
-          taskTitle,
-          taskDesc,
-          taskDue,
-          taskNotification,
-          taskLink
-        );
-      } else {
-        showProcessingSwal();
-        fetch(
-          `${url}?mode=updateTask&username=${username}&password=${password}&task=${taskId}&action=${action}&taskto=${taskTo || ""
-          }&taskTitle=${taskTitle || ""}&taskDesc=${taskDesc || ""}&taskDue=${taskDue || ""
-          }&taskNotification=${taskNotification || ""}&taskLink=${taskLink || ""
-          }`
-        )
-          .then((response) => response.json())
-          .then((data) => {
-            Toast.fire({
-              title: data.title || "Error",
-              text: data.message || "An unknown error occurred",
-              icon: data.status || "error",
-            });
-            tabTasksGet(0);
-          });
+    async function updateTask(taskId, action, onSuccess) {
+      let task = Array.isArray(tasks) ? tasks.find(t => +t.id === +taskId) : null;
+      if (!task) {
+        try {
+          const data = await apiSend(`/api/tasks/${taskId}`, "GET");
+          task = data.data;
+        } catch (err) {
+          Toast.fire({ icon: "error", title: "Error loading task", text: err.message });
+          return;
+        }
+      }
+
+      if (action === "Edit") {
+        newTask(task, null, null, onSuccess);
+        return;
+      }
+
+      const actionMap = {
+        "Mark Complete": `/api/tasks/${taskId}/complete`,
+        "Cancel": `/api/tasks/${taskId}/delete`,
+        "Uncancel": `/api/tasks/${taskId}/reopen`,
+        "Mark Incomplete": `/api/tasks/${taskId}/reopen`,
+      };
+
+      const endpoint = actionMap[action];
+      if (!endpoint) { Toast.fire({ icon: "error", title: `Unknown action: ${action}` }); return; }
+
+      try {
+        const data = await apiSend(endpoint, "PATCH");
+        Toast.fire({ icon: data.status, title: data.title, text: data.message });
+        tabTasksGet(offsets.tasks);
+        if (onSuccess) onSuccess();
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error", text: err.message });
       }
     }
 
-    function tabTasksGet(offset) {
+    async function tabTasksGet(offset) {
       offsets.tasks = offset;
       E("tabTasksButton").disabled = true;
       E("tabTasksLoad").style.display = "block";
-      query = E("tabTasksQuery").value;
-      status = E("tabTasksStatus").value;
-      by = E("tabTasksBy").value;
-      to = E("tabTasksTo").value;
-      link = "1' OR '1";
+
+      const q = E("tabTasksQuery").value;
+      const status = E("tabTasksStatus").value;
+      const by = E("tabTasksBy").value;
+      const to = E("tabTasksTo").value;
+
       const table = E("tasksTable");
       const foot = E("tasksTableFoot");
       foot.innerHTML = "";
-      var rows = table.getElementsByTagName("tr");
-      for (var i = rows.length - 1; i > 0; i--) {
-        table.deleteRow(i);
-      }
-      q = `SELECT t.*, u.user_name AS task_from_name, u2.user_name AS task_to_name, DATE_FORMAT(t.task_due, '%b. %e, %Y') AS due, DATE_FORMAT(t.task_date, '%b. %e, %Y at %l:%i %p') AS date,
-       contacts.contact_name, contacts.contact_id, cases.case_id,
-    CASE WHEN contacts.contact_id IS NOT NULL THEN 'contact' WHEN cases.case_id IS NOT NULL THEN 'case' ELSE NULL END AS link_type,
-    CASE 
-        WHEN cases.case_number_full IS NOT NULL THEN cases.case_number_full
-        WHEN cases.case_number IS NOT NULL THEN cases.case_number
-        WHEN cases.case_id IS NOT NULL THEN cases.case_id
-        WHEN contacts.contact_name IS NOT NULL THEN contacts.contact_name
-    END AS link_title
-       FROM tasks t LEFT JOIN users u ON t.task_from = u.user LEFT JOIN users u2 ON t.task_to = u2.user LEFT JOIN contacts ON t.task_link = contacts.contact_id LEFT JOIN cases ON t.task_link != "" AND (t.task_link = cases.case_number OR t.task_link = cases.case_number_full OR t.task_link = cases.case_id) 
-       WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%" OR contacts.contact_name LIKE "%${query}%" OR cases.case_number LIKE "%${query}%" OR cases.case_number_full LIKE "%${query}%" OR cases.case_id LIKE "%${query}%" OR contacts.contact_name LIKE "%${query}%")
-         AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END LIMIT ${limit} OFFSET ${offset};|||
-       SELECT COUNT(*) AS counter FROM tasks t LEFT JOIN users u ON t.task_from = u.user LEFT JOIN users u2 ON t.task_to = u2.user LEFT JOIN contacts ON t.task_link = contacts.contact_id LEFT JOIN cases ON t.task_link != "" AND (t.task_link = cases.case_number OR t.task_link = cases.case_number_full OR t.task_link = cases.case_id) 
-       WHERE (t.task_link = '${link}' ) AND (task_title like "%${query}%" OR task_desc like "%${query}%" OR contacts.contact_name LIKE "%${query}%" OR cases.case_number LIKE "%${query}%" OR cases.case_number_full LIKE "%${query}%" OR cases.case_id LIKE "%${query}%" OR contacts.contact_name LIKE "%${query}%")
-         AND (task_from = '${by}') AND (task_to = '${to}') AND CASE WHEN "${status}"="Incomplete" THEN (task_status = "Pending" OR task_status="Due Today" OR task_status = "Overdue") ELSE task_status = '${status}' END
-        `;
-      fetch(
-        `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          q
-        )}`
-      )
-        .then((response) => response.json())
-        .then((data) => {
-          console.log(data);
-          tasks = data.data.query1;
-          if (data.data.query2[0].counter > 0) {
-            //Toast.fire({ title: "success", text: `${data.data.query2[0].counter} tasks retrieved`, icon: "success"});
-            tasks.forEach((task) => {
-              const row = table.insertRow();
-              //taskTo, taskTitle, taskDesc, taskDue, taskNotification
-              rowHTML = `<td><select 
-        onchange="updateTask(${task.task_id}, this.value, ${task.task_to}, '${task.task_title}', '${task.task_desc}', '${task.task_due}', ${task.task_notification}, '${task.task_link}');this.selectedIndex=0;" 
-        style="width:150px"><option value="" disabled selected>Actions</option>`;
-              if (
-                task.task_status == "Pending" ||
-                task.task_status == "Due Today" ||
-                task.task_status == "Overdue"
-              ) {
-                rowHTML += `<option value="Mark Complete">Mark Complete</option>
-            <option value="Edit">Edit</option>
-            <option value="Cancel">Cancel</option>  
-          </select>`;
-              } else if (task.task_status == "Canceled") {
-                rowHTML += `<option value="Uncancel">Reinstate</option>  
-          </select>`;
-              } else if (task.task_status == "Completed") {
-                rowHTML += `<option value="Mark Incomplete">Mark Incomplete</option>
-          </select>`;
-              } else {
-                rowHTML += `<td>`;
-              }
-              taskLink = task.task_link
-                ? `<a href="#" onclick="addFile('${task.link_title}', '${task.link_type}', '${task.task_link}'); return false">${task.link_title}</a>`
-                : "";
-              row.innerHTML = `
-          ${rowHTML}</td>
-          <td>${task.task_id}</td>
-          <td>${task.task_status}</td>
-          <td>${task.task_title}</td>
-          <td>${task.task_desc}</td>
-          <td>${task.task_from_name}</td>
-          <td>${task.task_to_name}</td>
-          <td>${taskLink}</td>
-          <td>${task.due || ""}</td>
-          <td>${task.date}</td>`;
-            });
-            foot.innerHTML =
-              offset > 0
-                ? `<a href="#" onclick="tabTasksGet(${offset - limit
-                })"">&lt;</a> `
-                : "";
-            for (i = 1; data.data.query2[0].counter >= (i - 1) * limit; i++) {
-              foot.innerHTML +=
-                offset / limit + 1 == i
-                  ? `<a href="#" onclick="tabTasksGet(${(i - 1) * limit
-                  })">[${i}]</a> `
-                  : `<a href="#" onclick="tabTasksGet(${(i - 1) * limit
-                  })">${i}</a> `;
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
+
+      const params = { limit, offset };
+      if (q) params.q = q;
+      if (status !== "All") params.status = status;
+      if (by) params.assigned_by = by;
+      if (to) params.assigned_to = to;
+
+      try {
+        const data = await apiSend("/api/tasks", "GET", params);
+        tasks = data.data;
+
+        if (data.total > 0) {
+          tasks.forEach(task => {
+            const row = table.insertRow();
+
+            let opts = "";
+            if (["Pending", "Due Today", "Overdue"].includes(task.status)) {
+              opts = `<option value="Mark Complete">Mark Complete</option>
+                    <option value="Edit">Edit</option>
+                    <option value="Cancel">Delete</option>`;
+            } else if (task.status === "Deleted") {
+              opts = `<option value="Uncancel">Reinstate</option>`;
+            } else if (task.status === "Completed") {
+              opts = `<option value="Mark Incomplete">Mark Incomplete</option>`;
             }
-            foot.innerHTML +=
-              offset + limit < data.data.query2[0].counter
-                ? `<a href="#" onclick="tabTasksGet(${offset + limit
-                })"">&gt;</a> `
-                : "";
-            foot.innerHTML += ` | Results ${offset + 1}-${offset + tasks.length
-              } of ${data.data.query2[0].counter} 
-        <select style="width:auto" onchange="limit = this.value;tabTasksGet(0)">
-        <option value="50" ${limit === 50 ? "selected" : ""}>50</option>
-        <option value="100" ${limit === 100 ? "selected" : ""}>100</option>
-        <option value="200" ${limit === 200 ? "selected" : ""}>200</option>
-        <option value="500" ${limit === 500 ? "selected" : ""}>500</option>
-        </select> | <button onclick="window.print()">Print</button>`;
-          } else {
-            Toast.fire({ icon: "error", title: `No Tasks Found!` });
+
+            const linkHTML = task.link?.id
+              ? `<a href="#" onclick="addFile('${(task.link.title || '').replace(/'/g, "\\'")}','${task.link.type === 'contact' ? 'client' : 'case'}','${task.link.id}');return false">${task.link.title || task.link.id}</a>`
+              : "";
+            const created = task.created
+              ? new Date(task.created).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+              : "";
+
+            row.innerHTML = `
+            <td><select onchange="updateTask(${task.id},this.value);this.selectedIndex=0;" style="width:150px">
+              <option value="" disabled selected>Actions</option>${opts}
+            </select></td>
+            <td>${task.id}</td>
+            <td>${task.status}</td>
+            <td>${task.title}</td>
+            <td>${task.desc || ""}</td>
+            <td>${task.from?.name || ""}</td>
+            <td>${task.to?.name || ""}</td>
+            <td>${linkHTML}</td>
+            <td>${task.due || ""}</td>
+            <td>${created}</td>`;
+          });
+
+          foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabTasksGet(${offset - limit})">&lt;</a> ` : "";
+          for (let i = 1; data.total >= (i - 1) * limit; i++) {
+            foot.innerHTML += offset / limit + 1 == i
+              ? `<a href="#" onclick="tabTasksGet(${(i - 1) * limit})">[${i}]</a> `
+              : `<a href="#" onclick="tabTasksGet(${(i - 1) * limit})">${i}</a> `;
           }
-          E("tabTasksButton").disabled = false;
-          E("tabTasksLoad").style.display = "none";
-        });
+          foot.innerHTML += offset + limit < data.total ? `<a href="#" onclick="tabTasksGet(${offset + limit})">&gt;</a> ` : "";
+          foot.innerHTML += ` | Results ${offset + 1}–${offset + tasks.length} of ${data.total}
+          <select style="width:auto" onchange="limit=this.value;tabTasksGet(0)">
+            <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
+            <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
+            <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
+            <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
+          </select> | <button onclick="window.print()">Print</button>`;
+        } else {
+          Toast.fire({ icon: "error", title: "No tasks found!" });
+        }
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error loading tasks", text: err.message });
+      }
+
+      E("tabTasksButton").disabled = false;
+      E("tabTasksLoad").style.display = "none";
     }
   </script>
-
+  
   <div id="tabLogs" class="tab-main">
     <span>Query:
       <input id="tabLogQuery" onkeypress="if (event.keyCode == 13) {tabLogGet(0)}" />
@@ -1265,7 +1813,12 @@
         <option>Court Email</option>
         <option>Other</option>
       </select>
-      By:
+      <select id="logDirectionFilter" style="display:none">
+        <option value="">Any Direction</option>
+        <option value="outgoing">Outgoing</option>
+        <option value="incoming">Incoming</option>
+      </select>
+      By: 
       <select id="tabLogBy" class="userslist" style="width: auto">
         <option value="">All</option>
       </select>
@@ -1280,7 +1833,7 @@
       <input id="tabLogDate1" type="date" style="width: 150px; display: none" />
       <label id="tabLogDateLabel"></label>
       <input id="tabLogDate2" type="date" style="width: 150px; display: none" />
-
+  
       <button id="tabLogButton" onclick="tabLogGet(0)">Search</button>
     </span>
     <table id="logTable" class="logTable" style="text-align: left">
@@ -1298,22 +1851,48 @@
       <i class="fa-solid fa-spinner fa-spin-pulse fa-2xl"></i>
     </div>
   </div>
-
+  
   <script>
     function tabLogTimeChange(time) {
-      if (time == "All") {
+      if (time === "All") {
         E("tabLogDate1").style.display = "none";
         E("tabLogDateLabel").innerHTML = "";
         E("tabLogDate2").style.display = "none";
-      } else if (time != "Between") {
+      } else if (time !== "Between") {
         E("tabLogDate1").style.display = "inline-block";
         E("tabLogDateLabel").innerHTML = "";
         E("tabLogDate2").style.display = "none";
-      } else if (time == "Between") {
+      } else {
         E("tabLogDate1").style.display = "inline-block";
         E("tabLogDateLabel").innerHTML = "and ";
         E("tabLogDate2").style.display = "inline-block";
       }
+    }
+
+    // Slice B.4: factored out so exportLog can reuse without re-implementing.
+    // Returns current filter params WITHOUT limit/offset (callers add those).
+    function getLogFilterParams() {
+      const params = {};
+      const q = E("tabLogQuery").value;
+      const type = E("tabLogType").value;
+      const time = E("tabLogTime").value;
+      const date1 = E("tabLogDate1").value;
+      const date2 = E("tabLogDate2").value;
+      const by = E("tabLogBy").value;
+      const direction = E("logDirectionFilter").value;
+      if (q) params.q = q;
+      if (type !== "All") params.type = type;  // route handles 'Communication' mapping
+      if (by) params.by = by;
+      if (direction) params.direction = direction;
+      if (time === "Before")  { params.to_date = date1; }
+      if (time === "After")   { params.from_date = date1; }
+      if (time === "On")      { params.from_date = date1; params.to_date = date1; }
+      if (time === "Between") { params.from_date = date1; params.to_date = date2; }
+      return params;
+    }
+
+    function exportLog() {
+      return exportLogCsv(getLogFilterParams, 'yisracase-log');
     }
 
     async function tabLogGet(offset) {
@@ -1321,28 +1900,13 @@
       E("tabLogButton").disabled = true;
       E("tabLogLoad").style.display = "block";
 
-      const q = E("tabLogQuery").value;
-      const type = E("tabLogType").value;
-      const time = E("tabLogTime").value;
-      const date1 = E("tabLogDate1").value;
-      const date2 = E("tabLogDate2").value;
-      const by = E("tabLogBy").value;
-
       const table = E("logTable");
       const foot = E("logTableFoot");
       foot.innerHTML = "";
       const rows = table.getElementsByTagName("tr");
       for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
 
-      const params = { limit, offset };
-      if (q) params.q = q;
-      if (type !== "All") params.type = type;  // route handles 'Communication' mapping
-      if (by) params.by = by;
-
-      if (time === "Before") { params.to_date = date1; }
-      if (time === "After") { params.from_date = date1; }
-      if (time === "On") { params.from_date = date1; params.to_date = date1; }
-      if (time === "Between") { params.from_date = date1; params.to_date = date2; }
+      const params = { ...getLogFilterParams(), limit, offset };
 
       try {
         const data = await apiSend("/api/log", "GET", params);
@@ -1360,46 +1924,59 @@
             } else if (entry.contact_id) {
               const cname = (entry.contact_name || "").replace(/'/g, "\\'");
               link = `<a href="#" onclick="addFile('${cname}','client','${entry.contact_id}');return false">${entry.contact_name || "Name Error"}</a>`;
+            } else if (entry.log_link_type === "phone" && entry.log_link_id) {
+              const p = String(entry.log_link_id);
+              const formatted = p.length === 10
+                ? `(${p.slice(0,3)}) ${p.slice(3,6)}-${p.slice(6)}`
+                : p;
+              link = `${formatted} <br><a href="#" onclick="OrphanAdoptDialog('${p}', 'phone', () => tabLogGet(offsets.logs));return false" title="Attach to contact"><i class="fa-solid fa-user-plus"></i></a>`;
+            } else if (entry.log_link_type === "email" && entry.log_link_id) {
+              const e = String(entry.log_link_id).replace(/'/g, "\\'");
+              link = `${entry.log_link_id} <br><a href="#" onclick="OrphanAdoptDialog('${e}', 'email', () => tabLogGet(offsets.logs));return false" title="Attach to contact"><i class="fa-solid fa-user-plus"></i></a>`;
+            } else if (entry.log_link_type === "case" && entry.log_link_id) {
+              // Court email or other case-typed row that didn't resolve (no matching case row).
+              // Phase 4.1: "+ Add" adopts the docket onto an existing case.
+              const d = String(entry.log_link_id).replace(/'/g, "\\'");
+              link = `<span title="No matching case">${entry.log_link_id}</span> <br><a href="#" onclick="CaseAdoptDialog('${d}', () => tabLogGet(offsets.logs));return false" title="Adopt this docket onto a case"><i class="fa-solid fa-folder-plus"></i></a>`;
+            } else if (entry.log_link_type == null && entry.log_link) {
+              // Legacy NULL-typed row whose log_link didn't resolve via any JOIN.
+              link = `<span title="Unresolved legacy link">${entry.log_link}</span>`;
             }
 
-            // Data cell — try to parse JSON, fall back to raw string
-            let cell_data;
-            try {
-              const jsonData = JSON.parse(entry.log_data.replace(/\n/g, "\\n").replace(/\r/g, "\\r"));
-              cell_data = Object.keys(jsonData)
-                .map(key => `<b>${key}:</b> ${decodeURIComponent(jsonData[key])}`)
-                .join("<br>");
-            } catch (_) {
-              cell_data = entry.log_data || "";
+            // Slice B.4: Data cell collapsed by default (1 line per key + ellipsis).
+            const cell_data = buildLogDataCell(entry);
+
+            // Slice B.2 (variant): direction icon trails the log_type on a second line,
+            // small + grey so the type word stays the primary read.
+            let dirIcon = "";
+            const isComm = ['sms','email','call','court email'].includes(entry.log_type);
+            if (isComm && entry.log_direction === 'outgoing') {
+              dirIcon = `<br><i class="fa-solid fa-arrow-right-from-bracket" title="Outgoing" style="font-size:0.85em;color:#888"></i>`;
+            } else if (isComm && entry.log_direction === 'incoming') {
+              dirIcon = `<br><i class="fa-solid fa-arrow-right-to-bracket" title="Incoming" style="font-size:0.85em;color:#888"></i>`;
             }
+
+            // Slice B.3: leading link-type icon + trailing extras-inspector icon
+            const typeIcon = logEntryIcon(entry);
+            const extrasIcon = logExtrasIcon(entry);
 
             row.innerHTML = `
               <td>${entry.log_id}</td>
-              <td>${entry.log_type}</td>
+              <td>${entry.log_type}${dirIcon}</td>
               <td>${entry.formatted_date}</td>
-              <td>${link}</td>
+              <td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}</div></td>
               <td>${cell_data}</td>
-              <td>${entry.by_name || entry.log_by || ""}</td>`;
+              <td>${entry.by_name || entry.log_by || ""}${extrasIcon}</td>`;
           });
 
-          // Pagination
-          foot.innerHTML = offset > 0
-            ? `<a href="#" onclick="tabLogGet(${offset - limit})">&lt;</a> ` : "";
-          for (let i = 1; data.total >= (i - 1) * limit; i++) {
-            foot.innerHTML += offset / limit + 1 == i
-              ? `<a href="#" onclick="tabLogGet(${(i - 1) * limit})">[${i}]</a> `
-              : `<a href="#" onclick="tabLogGet(${(i - 1) * limit})">${i}</a> `;
-          }
-          foot.innerHTML += offset + limit < data.total
-            ? `<a href="#" onclick="tabLogGet(${offset + limit})">&gt;</a> ` : "";
-          foot.innerHTML += ` | Results ${offset + 1}–${offset + logs.length} of ${data.total}
-            <select style="width:auto" onchange="limit=this.value;tabLogGet(0)">
-              <option value="50"  ${limit == 50 ? "selected" : ""}>50</option>
-              <option value="100" ${limit == 100 ? "selected" : ""}>100</option>
-              <option value="200" ${limit == 200 ? "selected" : ""}>200</option>
-              <option value="500" ${limit == 500 ? "selected" : ""}>500</option>
-            </select> | <button onclick="window.print()">Print</button>`;
+          // Slice B.4: unified footer (pagination + meta + limit + toggle + buttons)
+          renderLogFooter(foot, data, limit, offset,
+            (p) => tabLogGet((p - 1) * limit),
+            exportLog);
         } else {
+          renderLogFooter(foot, data, limit, offset,
+            (p) => tabLogGet((p - 1) * limit),
+            exportLog);
           Toast.fire({ icon: "error", title: "No log entries found!" });
         }
       } catch (err) {
@@ -1409,24 +1986,76 @@
       E("tabLogButton").disabled = false;
       E("tabLogLoad").style.display = "none";
     }
+
+    // Slice B.3: contextual visibility for direction filter
+    const LOG_COMM_TYPES = ['Communication', 'SMS', 'Email', 'Call', 'Court Email'];
+    function syncLogDirectionFilterVisibility() {
+      const t = E('tabLogType').value;
+      const show = LOG_COMM_TYPES.includes(t);
+      E('logDirectionFilter').style.display = show ? '' : 'none';
+      if (!show) E('logDirectionFilter').value = '';
+    }
+    E('tabLogType').addEventListener('change', syncLogDirectionFilterVisibility);
+    syncLogDirectionFilterVisibility();
   </script>
 
-  <div id="tabMyAccount" class="tab-main">
-    <h2>My Account:</h2>
-    <p>Hello <span id="myNameIs"></span>.</p>
-    <button class="big-button" onclick="updateUserInfo()">
-      Update Information
-    </button>
-    <button class="big-button" onclick="updateUserPass()">
-      Change Password
-    </button>
-    <button class="big-button" onclick="showClioCode()">
-      Get Clio Code
-    </button>
+  <div id="tabSettings" class="tab-main">
+    <iframe data-src="/settings.html"></iframe>
   </div>
 
-  <script>
-    async function showClioCode() {
+
+<div id="tabMore" class="tab-main">
+  <h2>More Features</h2>
+  <button class="big-button" data-target="manualsDiv"         data-exclusive-group="more"><i class="fa-solid fa-book fa-2xl"></i><br><br>Manuals</button>
+  <button class="big-button" data-target="automationsDiv"     data-exclusive-group="more"><i class="fa-solid fa-robot fa-2xl"></i><br><br>Automations</button>
+  <button class="big-button" data-target="featureRequestsDiv" data-exclusive-group="more"><i class="fa-solid fa-lightbulb fa-2xl"></i><br><br>Feature Requests</button>
+  <br><br>
+  <button class="big-button" data-target="videoManagerDiv"    data-exclusive-group="more"><i class="fa-solid fa-video fa-2xl"></i><br><br>Video Manager</button>
+  <button class="big-button" data-target="redirectsDiv"    data-exclusive-group="more"><i class="fa-solid fa-signs-post fa-2xl"></i><br><br>Redirects Manager</button>
+  <button class="big-button" data-target="landingPagesDiv" data-exclusive-group="more"><i class="fa-solid fa-sitemap fa-2xl"></i><br><br>Landing Pages</button>
+  <br><br>
+  <button class="big-button" data-target="bookingDiv" data-exclusive-group="more"><i class="fa-solid fa-calendar-week fa-2xl"></i><br><br>Booking Manager</button>
+  <button class="big-button" onclick="showClioCode()"><i class="fa-solid fa-c fa-2xl"></i><br><br>Get Clio Code</button>
+  <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
+  <br><br>
+  <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
+  <button class="big-button" data-target="assetManagerDiv"    data-exclusive-group="more"><i class="fa-solid fa-photo-film fa-2xl"></i><br><br>Asset Manager</button>
+  <button class="big-button" onclick=""><i class="fa-solid fa-cat fa-2xl"></i><br><br>the place!</button>
+
+
+  <div id="manualsDiv"         class="more-panel" style="display:none">
+    <iframe data-src="/manuals.html"></iframe>
+  </div>
+  <div id="automationsDiv"     class="more-panel" style="display:none">
+    <iframe data-src="/automationManager.html"></iframe>
+  </div>
+  <div id="featureRequestsDiv" class="more-panel" style="display:none">
+    <iframe data-src="/featureRequests.html"></iframe>
+  </div>
+  <div id="videoManagerDiv"    class="more-panel" style="display:none">
+    <iframe data-src="/videoManager.html"></iframe>
+  </div>
+  <div id="redirectsDiv"    class="more-panel" style="display:none">
+    <iframe data-src="/redirects.html"></iframe>
+  </div>
+  <div id="landingPagesDiv" class="more-panel" style="display:none">
+    <iframe data-src="/pageManager.html"></iframe>
+  </div>
+  <div id="bookingDiv" class="more-panel" style="display:none">
+    <iframe data-src="/bookingviewsmanager.html"></iframe>
+  </div>
+  <div id="courtPreviewDiv" class="more-panel" style="display:none">
+    <iframe data-src="/courtpreview.html"></iframe>
+  </div>
+  <div id="availabilityDiv" class="more-panel" style="display:none">
+    <iframe data-src="/availabilitymanager.html"></iframe>
+  </div>
+  <div id="assetManagerDiv" class="more-panel" style="display:none">
+    <iframe data-src="/assetManager.html"></iframe>
+  </div>
+</div>
+<script>
+      async function showClioCode() {
       try {
         const data = await apiSend("/clio-code");
 
@@ -1469,299 +2098,209 @@
         Swal.fire({ title: "Error", text: "Unable to fetch login code", icon: "error", });
       }
     }
-
-    function updateUserInfo() {
-      Swal.fire({
-        title: "Update User Information",
-        html: `<label class="input-label-top">First Name:*</label><span class="spacer"></span><label class="input-label-top">Last Name:*</label><br>
-              <input id="userFirstName" value="${user.user_fname
-          }"><span class="spacer"></span><input id="userLastName" value="${user.user_lname
-          }"><br>
-              <label class="input-label-top">Username:*</label><span class="spacer"></span><label class="input-label-top">Email:*</label><br>
-              <input id="userUsername" value="${user.username
-          }"><span class="spacer"></span><input id="userEmail" value="${user.email
-          }"><br>
-              <label class="input-label-top">SMS reminders:</label><span class="spacer"></span><label class="input-label-top" id="userPhoneLabel">Phone Number:${user.allow_sms == "1" ? "*" : ""
-          }</label><br>
-              <span style="display:inline-block;width:200px;text-align:left">
-              <label><input style="width:auto;" type="radio" name="smsReminder" onchange="E('userPhoneLabel').innerHTML=this.checked?'Phone Number:*':'Phone Number:'" ${user.allow_sms == 1 ? "checked" : ""
-          } value="yes" id="userSMSyes"> Yes</label>
-              <label><input style="width:auto;" type="radio" name="smsReminder" onchange="E('userPhoneLabel').innerHTML=this.checked?'Phone Number:':'Phone Number:*'" ${user.allow_sms == 0 ? "checked" : ""
-          } value="no"> No</label>
-              </span>
-              <span class="spacer"></span><input id="userPhone" value="${user.phone || ""
-          }"><br>
-              <label class="input-label-top">Task Reminders:</label><span class="spacer"></span><label class="input-label-top"></label><br>
-              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Sunday" ${user.task_remind_freq?.includes("Sunday") ? "checked" : ""
-          }> Sunday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Monday" ${user.task_remind_freq?.includes("Monday") ? "checked" : ""
-          }> Monday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Tuesday" ${user.task_remind_freq?.includes("Tuesday") ? "checked" : ""
-          }> Tuesday</label></div>
-              <div><label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Wednesday" ${user.task_remind_freq?.includes("Wednesday") ? "checked" : ""
-          }> Wednesday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Thursday" ${user.task_remind_freq?.includes("Thursday") ? "checked" : ""
-          }> Thursday</label>
-              <label><input type="checkbox" style="width:auto;" name="taskReminderFreq" value="Friday" ${user.task_remind_freq?.includes("Friday") ? "checked" : ""
-          }> Friday</label></div>
-              `,
-        showCancelButton: true,
-        confirmButtonText: "Update",
-        confirmButtonColor: "#07ADEF",
-        showLoaderOnConfirm: true,
-        preConfirm: async () => {
-          const userFirstName = E("userFirstName").value.trim();
-          const userLastName = E("userLastName").value.trim();
-          const userUsername = E("userUsername").value.trim();
-          const userEmail = E("userEmail").value.trim();
-          const userPhone = E("userPhone").value.replace(/\D/g, "");
-          const smsreminder = E("userSMSyes").checked ? 1 : 0;
-          const selectedDays = Array.from(
-            document.querySelectorAll('input[name="taskReminderFreq"]:checked')
-          ).map(d => d.value).join(",");
-
-          if (!userFirstName || !userLastName || !userUsername || !userEmail) {
-            Swal.showValidationMessage("Please enter all the mandatory fields");
-            return false;
-          }
-          if (smsreminder === 1 && !userPhone) {
-            Swal.showValidationMessage("Phone number is required when SMS reminders are enabled");
-            return false;
-          }
-          if (userPhone && userPhone.length !== 10) {
-            Swal.showValidationMessage("Please enter a valid 10-digit phone number");
-            return false;
-          }
-
-          try {
-            const data = await apiSend("/api/auth/update-profile", "POST", {
-              user_fname: userFirstName,
-              user_lname: userLastName,
-              username: userUsername,
-              email: userEmail,
-              phone: userPhone || null,
-              allow_sms: smsreminder,
-              task_remind_freq: selectedDays
-            });
-            return data;
-          } catch (err) {
-            Swal.showValidationMessage(err.message || "Failed to update profile");
-            return false;
-          }
-        },
-        allowOutsideClick: () => !Swal.isLoading()
-      }).then((result) => {
-        if (result.isConfirmed && result.value) {
-          const updated = result.value.user;
-
-          // Refresh in-memory user object
-          Object.assign(user, updated);
-
-          // Sync auth globals in case username changed
-          username = updated.username;
-          AUTH_STATE.username = updated.username;
-
-          E("myNameIs").innerHTML = updated.user_name;
-
-          Toast.fire({
-            icon: "success",
-            title: "Profile updated successfully",
-            timer: 2000
-          });
-        }
-      });
-    }
-
-    function updateUserPass() {
-      Swal.fire({
-        title: "Change Password",
-        html: `
-          <label class="input-label-top">Current Password:</label>
-          <input type="password" id="currentPass" class="swal2-input" placeholder="Current password">
-          <label class="input-label-top">New Password:</label>
-          <input type="password" id="newPass" class="swal2-input" placeholder="New password">
-          <label class="input-label-top">Confirm New Password:</label>
-          <input type="password" id="confirmPass" class="swal2-input" placeholder="Confirm new password">
-        `,
-        showCancelButton: true,
-        confirmButtonText: "Change Password",
-        confirmButtonColor: "#07ADEF",
-        showLoaderOnConfirm: true,
-        preConfirm: async () => {
-          const currentPass = E("currentPass").value;
-          const newPass = E("newPass").value;
-          const confirmPass = E("confirmPass").value;
-
-          if (!currentPass || !newPass || !confirmPass) {
-            Swal.showValidationMessage("Please fill in all fields");
-            return false;
-          }
-          if (newPass.length < 4) {
-            Swal.showValidationMessage("New password must be at least 4 characters");
-            return false;
-          }
-          if (newPass !== confirmPass) {
-            Swal.showValidationMessage("New passwords do not match");
-            return false;
-          }
-
-          try {
-            const data = await apiSend("/api/auth/change-password", "POST", {
-              current_password: currentPass,
-              new_password: newPass
-            });
-            return data;
-          } catch (err) {
-            Swal.showValidationMessage(err.message || "Failed to change password");
-            return false;
-          }
-        },
-        allowOutsideClick: () => !Swal.isLoading()
-      }).then((result) => {
-        if (result.isConfirmed) {
-          // Update the in-memory password global so legacy routes stay in sync
-          // TODO: REMOVE when dropping plaintext password column
-          password = E("newPass")?.value || password;
-          AUTH_STATE.password = password;
-
-          Toast.fire({
-            icon: "success",
-            title: "Password changed successfully",
-            timer: 2000
-          });
-        }
-      });
-    }
-
-    function testSwalPage() {
-      Swal.fire({
-        title: `test swal page iframe`,
-        html: `
-      <iframe 
-        src="/testswalpage.html" 
-        width="100%" 
-        height="600" 
-        style="border:none;">
-      </iframe>
-    `,
-        width: "75%",
-        heightAuto: true,
-        showConfirmButton: false,
-        showCloseButton: true,
-      });
-    }
-  </script>
-
-
-<div id="tabMore" class="tab-main">
-  <h2>More Features</h2>
-
-  <button class="big-button" data-target="manualsDiv">Manuals</button>
-  <button class="big-button" data-target="automationsDiv">Automations</button>
-  <button class="big-button" data-target="featureRequestsDiv">Feature Requests</button>
-  <!--<button class="big-button" data-target="hooksDiv">YisraHooks</button>-->
-
-  <div id="manualsDiv" class="more-panel" style="display:none">
-    <iframe data-src="/manuals.html"></iframe>
-  </div>
-  <div id="automationsDiv" class="more-panel" style="display:none">
-    <iframe data-src="/automationManager.html"></iframe>
-  </div>
-  <div id="featureRequestsDiv" class="more-panel" style="display:none">
-    <iframe data-src="/featureRequests.html"></iframe>
-  </div>
-  <!--<div id="hooksDiv" class="more-panel" style="display:none">
-    <iframe data-src="/YisraHook.html"></iframe>
-  </div>-->
-</div>
-<script>
-  document.querySelectorAll('#tabMore .big-button').forEach(btn => {
-  btn.addEventListener('click', () => {
-
-    const targetId = btn.dataset.target
-    const target = document.getElementById(targetId)
-
-    const panels = document.querySelectorAll('#tabMore .more-panel')
-
-    const wasHidden = getComputedStyle(target).display === 'none'
-
-    panels.forEach(p => p.style.display = 'none')
-
-    if (wasHidden) {
-      target.style.display = ''
-      // Lazy-load: set src from data-src on first click
-      const iframe = target.querySelector('iframe[data-src]')
-      if (iframe) {
-        iframe.src = iframe.dataset.src
-        delete iframe.dataset.src
-      }
-    }
-  })
-})
 </script>
   
+<div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-crown"></i>'>
+  <h2>Admin</h2>
+  <button class="big-button" onclick="etchSwal()"><i class="fa-solid fa-pen-ruler fa-2xl"></i><br><br>Etch</button>
+  <button class="big-button" data-target="readonlyKeysDiv" data-exclusive-group="admin"><i class="fa-solid fa-key fa-2xl"></i><br><br>Readonly Keys (SU)</button>
+  <button class="big-button" data-target="dbConsoleDiv" data-exclusive-group="admin"><i class="fa-solid fa-database fa-2xl"></i><br><br>DB Console (SU)</button>
+  <br><br>
+  <button class="big-button" data-target="connectionsDiv" data-exclusive-group="admin"><i class="fa-solid fa-plug fa-2xl"></i><br><br>Connections (SU)</button>
+  <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin"><i class="fa-solid fa-vial fa-2xl"></i><br><br>API Tester (SU)</button>
 
-  <div id="tabAdmin" class="tab-main">
-    <h2>Admin</h2>
-    <button class="big-button" onclick="admintask1()">View/Edit Users</button>
-    <button class="big-button" onclick="testSwalPage()">Test Swal Page</button>
-    <button class="big-button" onclick="admintask2()">Sequences</button>
-    <button class="big-button"
-      onclick="E('sqlQueryDiv').style.display = E('sqlQueryDiv').style.display == 'none'? '':'none'">
-      mySQL Query
-    </button>
-    <div id="sequencesDiv" style="display: none"></div>
-    <div id="sqlQueryDiv" style="display: none">
-      <h2>mySQL query</h2>
-      <p>
-        THIS IS AN ADVANCED FEATURE THAT CAN HAVE EXTREME CONSEQUENCES - DON'T
-        USE IF YOU DONT KNOW WHAT THIS IS! (that means you!)
-      </p>
-      <input />
-      <button class="big-button" onclick="mySQLquery(this.previousElementSibling.value)">
-        Query
-      </button>
-      <div id="sqlResult"></div>
-    </div>
+  <div id="sequencesDiv" style="display:none"></div>
+  <div id="readonlyKeysDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/readonlyKeys.html"
+            style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
   </div>
-  <script>
-    function mySQLquery(query) {
-      fetch(
-        `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-          query
-        )}`
-      )
-        .then((response) => response.json())
-        .then((data) => {
-          E("sqlResult").innerHTML = JSON.stringify(data, undefined, 2);
+  <div id="dbConsoleDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/dbConsole.html"
+            style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
+  </div>
+  <div id="connectionsDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/connections.html"
+            style="width:100%; height:80vh; border:1px solid #2a3040; border-radius:6px; background:#0f1117;"></iframe>
+  </div>
+  <div id="apiTesterDiv" style="display:none; margin-top:10px;">
+    <iframe data-src="/apiTester.html"></iframe>
+  </div>
+</div>
+<style>
+  /* Drill-in pill strip for big-button tabs */
+  .feature-strip { display:none; align-items:center; flex-wrap:wrap; gap:6px; margin:0 0 12px; }
+  .drill-active .feature-strip { display:flex; }
+  .drill-active > .big-button, .drill-active > br { display:none; }
+  .pill-button {
+    display:inline-flex; align-items:center; gap:6px;
+    padding:5px 12px; border-radius:999px;
+    border:1px solid #b9c2cf; background:transparent;
+    color:inherit; cursor:pointer; font-size:13px; line-height:1.2;
+  }
+  .pill-button i { font-size:13px; }
+  .pill-button .pill-label { display:none; }
+  .pill-button.active .pill-label,
+  .pill-button.no-icon .pill-label { display:inline; }
+  .pill-button:hover { border-color:#1d7fe0; }
+  .pill-button.active { background:#1d7fe0; border-color:#1d7fe0; color:#fff; }
+</style>
+<script>
+  function adminTask(){
+    alert("admin task executed!")
+  }
+
+  // ── iframe-in-Swal popout pattern ────────────────────────────────────
+  // Pops a SweetAlert modal hosting a full page in an <iframe>. Good for
+  // one-off tools you want as a modal rather than a drill-in panel.
+  // (Contrast: the data-target/data-src panels below lazy-load inline.)
+  function etchSwal() {
+    Swal.fire({
+      title: `Etch`,
+      html: `<iframe src="/etch.html" width="100%" height="700" style="border:none;"></iframe>`,
+      width: "85%",
+      heightAuto: true,
+      showConfirmButton: false,
+      showCloseButton: true,
+    });
+  }
+  // ── Panel toggle + drill-in pill strip ── HOW TO USE ──────────────────
+  // Panel button:  <button class="big-button" data-target="myDiv" data-exclusive-group="more">
+  //                + sibling <div id="myDiv" style="display:none"><iframe data-src="/x.html"></iframe></div>
+  //   Click = open panel (iframe lazy-loads once), hide the grid, show pill strip.
+  //   One panel open per group; re-clicking the active pill returns to the grid.
+  // Action button (no data-target): its pill proxies the original onclick.
+  // Pills auto-build from ALL .big-buttons in the tab — zero wiring per feature.
+  //   Icon-only (cloned from button, fa-2xl stripped); label shows when active,
+  //   or always if the button has no icon. Hover = tooltip.
+  // "All" pill exits to the grid; its icons come from data-all-icons on the
+  //   tab div (HTML string), default: back-arrow + grip.
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-target]');
+    if (!btn) return;
+
+    const target = document.getElementById(btn.dataset.target);
+    if (!target) return;
+
+    const wasHidden = getComputedStyle(target).display === 'none';
+
+    // If this button belongs to an exclusive group, hide other panels in that group first.
+    const group = btn.dataset.exclusiveGroup;
+    if (group) {
+      document.querySelectorAll(`[data-target][data-exclusive-group="${group}"]`)
+        .forEach(b => {
+          const panel = document.getElementById(b.dataset.target);
+          if (panel) panel.style.display = 'none';
         });
     }
-  </script>
 
+    target.style.display = wasHidden ? '' : 'none';
+
+    if (wasHidden) {
+      const iframe = target.querySelector('iframe[data-src]');
+      if (iframe) {
+        iframe.src = iframe.dataset.src;
+        delete iframe.dataset.src;
+      }
+    }
+
+    if (group) syncDrillState(btn.closest('.tab-main'), group);
+  });
+
+  // Build the pill strip once per tab (lazy, on first drill-in).
+  function ensureStrip(tab) {
+    let strip = tab.querySelector(':scope > .feature-strip');
+    if (strip) return strip;
+
+    strip = document.createElement('div');
+    strip.className = 'feature-strip';
+
+    // "All" pill - back to the grid
+    const allPill = document.createElement('button');
+    allPill.className = 'pill-button';
+    // Icons configurable per tab via data-all-icons (HTML string); default = back-arrow + grip
+    const homeIcons = tab.dataset.allIcons || '<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-grip"></i>';
+    allPill.innerHTML = homeIcons + '<span class="pill-label">All</span>';
+    allPill.title = 'All';
+    allPill.addEventListener('click', () => {
+      // Hide any open panels referenced by this tab's grid buttons
+      tab.querySelectorAll(':scope > .big-button[data-target]').forEach(b => {
+        const panel = document.getElementById(b.dataset.target);
+        if (panel) panel.style.display = 'none';
+      });
+      tab.classList.remove('drill-active');
+      strip.querySelectorAll('.pill-button').forEach(p => p.classList.remove('active'));
+    });
+    strip.appendChild(allPill);
+
+    // One pill per grid button (panel buttons AND action buttons)
+    tab.querySelectorAll(':scope > .big-button').forEach(src => {
+      const pill = document.createElement('button');
+      pill.className = 'pill-button';
+
+      const icon = src.querySelector('i');
+      if (icon) {
+        const i = icon.cloneNode(false);
+        i.classList.remove('fa-2xl');
+        pill.appendChild(i);
+      } else {
+        pill.classList.add('no-icon');
+      }
+      const label = document.createElement('span');
+      label.className = 'pill-label';
+      label.textContent = src.textContent.trim();
+      pill.title = label.textContent;
+      pill.appendChild(label);
+
+      if (src.dataset.target) {
+        // Let the generic handler above drive panel switching
+        pill.dataset.target = src.dataset.target;
+        pill.dataset.exclusiveGroup = src.dataset.exclusiveGroup || '';
+      } else {
+        // Action button: proxy the original click
+        pill.addEventListener('click', () => src.click());
+      }
+      strip.appendChild(pill);
+    });
+
+    const h2 = tab.querySelector(':scope > h2');
+    if (h2) h2.after(strip); else tab.prepend(strip);
+    return strip;
+  }
+
+  // After any panel toggle: enter/exit drilled mode and highlight the active pill.
+  function syncDrillState(tab, group) {
+    if (!tab) return;
+    const strip = ensureStrip(tab);
+
+    let openId = null;
+    document.querySelectorAll(`[data-target][data-exclusive-group="${group}"]`).forEach(b => {
+      const panel = document.getElementById(b.dataset.target);
+      if (panel && getComputedStyle(panel).display !== 'none') openId = panel.id;
+    });
+
+    tab.classList.toggle('drill-active', !!openId);
+    strip.querySelectorAll('.pill-button').forEach(p =>
+      p.classList.toggle('active', p.dataset.target === openId)
+    );
+  }
+</script>
   <script>
     params = {};
     new URL(window.location).searchParams.forEach((value, key) => {
       params[key] = value;
     });
-    username = params.user || "";
-    password = params.pass || "";
-    userName = "";
-    user = [];
-    userArray = "";
-    url =
-      "https://connect.pabbly.com/workflow/sendwebhookdata/IjU3NjUwNTZhMDYzNTA0MzU1MjY1NTUzNjUxMzUi_pc"; //FIR - DB
-    limit = 100;
-    users = "";
-    checklists = [];
+    // Top-level state used across tab handlers
+    user = {};
+    limit = parseInt(getTabPref('log','limit',100),10) || 100;
     fileCounter = 1;
-    allow_sms = 0;
     cases = "";
     contacts = "";
     appts = "";
+    events = "";
     tasks = "";
     logs = "";
-    customTabVar = '';
-    offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0 };
+    offsets = { cases: 0, contacts: 0, appts: 0, events: 0, tasks: 0, logs: 0, custom: 0,  };
+    customTabVar = ""
 
     function openMainTab(tabName) {
       var i, tabs;
@@ -1769,15 +2308,40 @@
       for (i = 0; i < tabs.length; i++) {
         tabs[i].style.display = "none";
       }
-      E(tabName).style.display = "block";
+      const target = E(tabName);
+      target.style.display = "block";
+      // Lazy-load any iframe inside the tab on first open
+      const iframe = target.querySelector('iframe[data-src]');
+      if (iframe) {
+        iframe.src = iframe.dataset.src;
+        delete iframe.dataset.src;
+      }
+      // Update sidebar active state
+      updateSidebarActive(tabName);
+      // Auto-close mobile drawer after navigation
+      document.body.classList.remove('sidebar-mobile-open');
     }
 
-    let temp34 = "";
+    function updateSidebarActive(tabName) {
+      // Clear all active states (main items AND file rows)
+      document.querySelectorAll('#appSidebar .sb-item, #appSidebar .file-button').forEach(el => {
+        el.classList.remove('active');
+      });
+      if (tabName && tabName.indexOf('file-div') === 0) {
+        // A file iframe is the active tab — light up Open Files + the matching row
+        E('sbOpenFiles').classList.add('active');
+        const btn = document.querySelector(`#tabOpenFiles .file-button[data-file-id="${tabName}"]`);
+        if (btn) btn.classList.add('active');
+      } else {
+        document.querySelectorAll('#appSidebar .sb-item').forEach(el => {
+          if (el.dataset.tab === tabName) el.classList.add('active');
+        });
+      }
+    }
 
-    // ---- Global auth state (temporary, legacy-compatible) ----
+    // ---- Global auth state ----
     window.AUTH_STATE = {
       username: null,
-      password: null,
       jwt: null,
       loginInProgress: null
     };
@@ -1801,15 +2365,12 @@
 
 
     async function apiSend(endpoint, method = "GET", payload = null, extraHeaders = {}) {
-      // Ensure JWT
+      // Ensure JWT — prompt the user if missing or expired
       if (
         !window.AUTH_STATE.jwt ||
         isJwtExpired(window.AUTH_STATE.jwt)
       ) {
-        if (!window.AUTH_STATE.username || !window.AUTH_STATE.password) {
-          throw new Error("Not logged in");
-        }
-        await login(window.AUTH_STATE.username, window.AUTH_STATE.password);
+        await loginBlocking();
       }
       let url = endpoint;
       const options = {
@@ -1831,9 +2392,9 @@
         }
       }
       let res = await fetch(url, options);
-      // Auto-relogin + retry once
+      // Prompt re-login on 401, then retry once
       if (res.status === 401) {
-        await login(window.AUTH_STATE.username, window.AUTH_STATE.password);
+        await loginBlocking();
         options.headers.Authorization = `Bearer ${window.AUTH_STATE.jwt}`;
         res = await fetch(url, options);
       }
@@ -1860,30 +2421,26 @@
       }
       return data;
     }
-window.firmData = { phoneLines: [], emailFrom: [], currentUser: null };
+
+    // ── Firm-wide data — loaded once after auth, available to all child iframes ──
+    window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [], settings: {} };
+
 async function loadFirmData() {
-  try {
-    const [lines, emails, me] = await Promise.all([
-      apiSend('/api/phone-lines', 'GET'),
-      apiSend('/api/email-from', 'GET'),
-      apiSend('/api/users/me', 'GET')
-    ]);
-    window.firmData.phoneLines  = lines.lines   || [];
-    window.firmData.emailFrom   = emails.emails  || [];
-    window.firmData.currentUser = me.user        || null;
-  } catch (err) {
-    console.error('loadFirmData failed:', err);
-    // Non-fatal — iframes can still fetch their own if needed
-  }
+  const data = await apiSend('/api/firm-data', 'GET');  // let it throw
+  window.firmData.phoneLines  = data.phoneLines  || [];
+  window.firmData.emailFrom   = data.emailFrom   || [];
+  window.firmData.currentUser = data.currentUser || null;
+  window.firmData.users       = data.users       || [];
+  window.firmData.settings    = data.settings    || {};
+  if (!window.firmData.currentUser) throw new Error("No user data returned");
 }
-    async function loginBlocking() {
-      if (window.AUTH_STATE.loginInProgress) {
-        return window.AUTH_STATE.loginInProgress;
-      }
-      window.AUTH_STATE.loginInProgress = new Promise((resolve, reject) => {
-        Swal.fire({
-          title: "Please log in",
-          html: `
+
+
+
+ async function loginBlocking() {
+  await Swal.fire({
+    title: "Please log in",
+    html: `
         <label class="input-label">Username: </label>
         <input id="username" value="${AUTH_STATE.username || ""}">
         <br><br>
@@ -1935,38 +2492,31 @@ async function loadFirmData() {
 
             return false;
           },
-
-          preConfirm: async () => {
-            username = E("username").value;
-            password = E("password").value;
-
-            if (!username || !password) {
-              Swal.showValidationMessage("Please fill in all required fields");
-              return false;
-            }
-
-            try {
-              await login(username, password); // <-- JWT login
-              resolve();
-            } catch (err) {
-              Swal.showValidationMessage("Login failed");
-              reject(err);
-            }
-          }
-        });
-      });
-
+    preConfirm: async () => {
+      const u = E("username").value;
+      const p = E("password").value;
+      if (!u || !p) {
+        Swal.showValidationMessage("Please fill in all required fields");
+        return false;
+      }
       try {
-        await window.AUTH_STATE.loginInProgress;
-      } finally {
-        window.AUTH_STATE.loginInProgress = null;
+        await login(u, p);
+      } catch (err) {
+        Swal.showValidationMessage("Login failed");
+        return false;   // keeps the modal open on failure
       }
     }
+  });
+}
 
-    async function login(username, password) {
-      AUTH_STATE.username = username;
-      AUTH_STATE.password = password;
+async function login(username, password) {
+  // Coalesce: if a login is already running, everyone awaits the same fetch.
+  if (window.AUTH_STATE.loginInProgress) {
+    return window.AUTH_STATE.loginInProgress;
+  }
 
+  window.AUTH_STATE.loginInProgress = (async () => {
+    try {
       const res = await fetch("/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1976,48 +2526,47 @@ async function loadFirmData() {
       if (!res.ok || !data.token) {
         throw new Error(data.error || "Login failed");
       }
+
+      // Cache username for next login's prefill; password is never stored.
+      AUTH_STATE.username = username;
       AUTH_STATE.jwt = data.token;
       localStorage.setItem("jwt", data.token);
       return data.token;
+    } finally {
+      // Clear the flag whether we succeeded or threw — next caller gets a fresh attempt.
+      window.AUTH_STATE.loginInProgress = null;
     }
+  })();
+
+  return window.AUTH_STATE.loginInProgress;
+}
 
 
-    async function initAuth() {
-      const token = AUTH_STATE.jwt;
-      if (!token || isJwtExpired(token)) {
-        await loginBlocking();
-      }
-      await loadUserContext();
-      await loadFirmData();
-    }
-
+async function initAuth() {
+  let token = AUTH_STATE.jwt;
+  if (!token || isJwtExpired(token)) await loginBlocking();
+  try {
+    await loadFirmData();
+  } catch (err) {
+    Toast.fire({ icon: 'warning', title: 'Session expired, please log in again', timer: 2000 });
+    localStorage.removeItem("jwt");
+    AUTH_STATE.jwt = null;
+    await loginBlocking();
+    await loadFirmData();
+  }
+  user  = window.firmData.currentUser || {};
+  users = window.firmData.users       || [];
+  loadUserContext();
+}
 
     async function loadUserContext() {
-      const data = await apiSend(
-        "/db-jwt",
-        "GET",
-        {
-          query: `
-        SELECT * FROM users WHERE user = '${getJwtPayload(AUTH_STATE.jwt).sub}';|||
-        SELECT user_name, user FROM users WHERE user_type = true;
-      `
-        }
-      );
-
-      user = data.data.query1[0];
-      users = data.data.query2;
-      //temporary and insecure!!
-      username = user.username;
-      password = user.password;
-      AUTH_STATE.username = user.username;
-      AUTH_STATE.password = user.password;
-      E("myNameIs").innerHTML = user.user_name;
-      E("topButtons").style.display = "block";
-      E("adminButton").style.display =
-        user.user_auth === "authorized - SU" ||
-          user.user_auth === "authorized - admin"
-          ? ""
-          : "none";
+      // user and users are already set as aliases to firmData by initAuth()
+      E("myNameIs").innerHTML = user.user_name || "";
+      E("hdrUserArea").style.display = "flex";
+      E("appSidebar").style.display = "flex";
+      const isAdmin = user.user_auth === "authorized - SU" ||
+                      user.user_auth === "authorized - admin";
+      E("sbAdmin").style.display = isAdmin ? "" : "none";
 
       Toast.fire({
         icon: "success",
@@ -2027,11 +2576,22 @@ async function loadFirmData() {
 
       const customConfig = user.user_custom_tab ? user.user_custom_tab : null;
       if (customConfig && customConfig.src) {
-        E('tabCustomButton').innerHTML = `<i class="fa-solid fa-${customConfig.icon || 'bug'} fa-2xl"></i><br /><br />${customConfig.title || 'Custom Tab'}`;
-        let loadFunc = customConfig.loadFunc ? customConfig.loadFunc + "openMainTab('tabCustom')":"openMainTab('tabCustom')";
-        console.log(loadFunc);
-        E('tabCustomButton').setAttribute('onclick', loadFunc);
-        E('tabCustomFrame').src = customConfig.src;        
+        const icon = customConfig.icon || 'bug';
+        const title = customConfig.title || 'Custom Tab';
+        const loadFunc = customConfig.loadFunc ? customConfig.loadFunc + "openMainTab('tabCustom')" : "openMainTab('tabCustom')";
+        // Update home grid button (if still present) and sidebar item
+        const tcb = E('tabCustomButton');
+        if (tcb) {
+          tcb.innerHTML = `<i class="fa-solid fa-${icon} fa-2xl"></i><br /><br />${title}`;
+          tcb.setAttribute('onclick', loadFunc);
+        }
+        const sbc = E('sbCustom');
+        if (sbc) {
+          sbc.innerHTML = `<i class="fa-solid fa-${icon}"></i><span>${title}</span>`;
+          sbc.setAttribute('onclick', loadFunc);
+          sbc.setAttribute('title', title);
+        }
+        E('tabCustomFrame').src = customConfig.src;
       } else {
         E('tabCustom').innerHTML = `
         <h1>Custom Tab</h1>
@@ -2063,7 +2623,7 @@ async function loadFirmData() {
         tabTasksGet(0);
       }
       if (params.clients) {
-        tabClientssGet(0);
+        tabContactsGet(0);
       }
       if (params.cases) {
         tabCasesGet(0);
@@ -2074,15 +2634,46 @@ async function loadFirmData() {
       if (params.appt) {
         showAppt(params.appt);
       }
-      const selectElements =
-        document.querySelectorAll("select.userslist");
-      userOpts = "";
-      users.forEach((user) => {
-        userOpts += `<option value="${user.user}">${user.user_name}</option>`;
+      // Populate all user-list selects in the parent shell.
+      // A select can opt into filtering by adding data-userlist-filter="<column>",
+      // e.g. data-userlist-filter="user_does_appts" to only include users
+      // flagged for appointments. Static options in the markup are preserved.
+      document.querySelectorAll('select.userslist').forEach(sel => {
+        const filterField = sel.dataset.userlistFilter;
+        const list = filterField
+          ? (window.firmData?.users || []).filter(u => u[filterField])
+          : (window.firmData?.users || []);
+        list.forEach(u => {
+          const opt = document.createElement('option');
+          opt.value = u.user;
+          opt.textContent = u.user_name;
+          sel.appendChild(opt);
+        });
       });
-      selectElements.forEach((select) => {
-        select.innerHTML += userOpts;
+
+      // Populate event-type selects (filter bar) from the same single source
+      // as the create/edit dialog (getEventTypeOptions in scripts.js). Static
+      // options in the markup (e.g. "All types") are preserved; the current
+      // value is restored so a re-populate never clobbers a user's choice.
+      document.querySelectorAll('select.eventtypelist').forEach(sel => {
+        const prev = sel.value;
+        // Drop any previously-appended dynamic options (keep static markup).
+        sel.querySelectorAll('option[data-dyn="1"]').forEach(o => o.remove());
+        (typeof getEventTypeOptions === 'function' ? getEventTypeOptions() : []).forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          opt.setAttribute('data-dyn', '1');
+          sel.appendChild(opt);
+        });
+        if (prev) sel.value = prev;
       });
+
+      // Populate the Cases-tab type filter from fe-case_types — same single
+      // source as NewCaseForm and case2's overview selects
+      // (populateCaseTypeFilter in scripts.js). Re-run on every init for the
+      // same restore-don't-clobber behavior as the event-type selects above.
+      populateCaseTypeFilter(E('tabCasesType'));
     }
 
     initAuth();
@@ -2102,30 +2693,26 @@ async function loadFirmData() {
       if (window.AUTH_STATE) {
         AUTH_STATE.jwt = null;
         AUTH_STATE.username = "";
-        AUTH_STATE.password = "";
         AUTH_STATE.loginInProgress = null;
       }
 
       // --- Legacy globals ---
-      username = "";
-      password = "";
-      userName = "";
-      user = [];
-      userArray = "";
-
-      users = "";
+      user = {};
+      users = [];
       cases = "";
       contacts = "";
       appts = "";
+      events = "";
       tasks = "";
       logs = "";
 
-      offsets = { cases: 0, contacts: 0, appts: 0, tasks: 0, logs: 0, custom: 0,  };
+      offsets = { cases: 0, contacts: 0, appts: 0, events: 0, tasks: 0, logs: 0, custom: 0,  };
 
       // --- UI reset (minimal, non-destructive) ---
       try {
-        E("topButtons").style.display = "none";
-        E("adminButton").style.display = "none";
+        E("appSidebar").style.display = "none";
+        E("hdrUserArea").style.display = "none";
+        E("sbAdmin").style.display = "none";
         E("myNameIs").innerHTML = "";
       } catch (_) { }
 
@@ -2140,21 +2727,18 @@ async function loadFirmData() {
     }
 
     function addFile(fileName, fileType, fileID) {
-      E("noOpenFiles").style.display = "none";
       const fileButtonContainer = E("tabOpenFiles");
-      E("closeAllFiles").style.display = fileButtonContainer.children.length > 2 ? "" : "none";
       const fileButton = document.createElement("div");
       const file = document.createElement("div");
       file.innerHTML = "this is a test!";
       if (fileType == "case") {
-        fileButton.innerHTML = `<i class="fa-solid fa-landmark"></i> ${fileName}`;
-        //file.innerHTML = `<iframe src="https://4lsg.glitch.me/fileCase.html?caseID=${fileID}"></iframe>`
-        file.innerHTML = `<iframe src="/case.html?caseID=${fileID}&fileCount=${fileCounter}"></iframe>`;
+        fileButton.innerHTML = `<i class="fa-solid fa-landmark"></i><span>${fileName}</span>`;
+        file.innerHTML = `<iframe src="/case2.html?caseID=${fileID}&fileCount=${fileCounter}"></iframe>`;
       } else if (fileType == "client" || fileType == "contact") {
-        fileButton.innerHTML = `<i class="fa-solid fa-user"></i> ${fileName}`;
-        file.innerHTML = `<iframe src="/contact.html?clientID=${fileID}&fileCount=${fileCounter}"></iframe>`;
+        fileButton.innerHTML = `<i class="fa-solid fa-user"></i><span>${fileName}</span>`;
+        file.innerHTML = `<iframe src="/contact2.html?clientID=${fileID}&fileCount=${fileCounter}"></iframe>`;
       } else if (fileType == "bill") {
-        fileButton.innerHTML = `<i class="fa-solid fa-file-invoice-dollar"></i> ${fileName}`;
+        fileButton.innerHTML = `<i class="fa-solid fa-file-invoice-dollar"></i><span>${fileName}</span>`;
         file.innerHTML = `<h1>No bills today!</h1><p>file Count: ${fileCounter}</p>`;
       }
       fileButton.className = "file-button";
@@ -2163,14 +2747,16 @@ async function loadFirmData() {
       file.id = "file-div" + fileCounter;
       fileButton.name = fileName;
       file.name = fileName;
+      fileButton.dataset.fileId = file.id;
+      fileButton.title = fileName;
       fileButton.onclick = function () {
         openMainTab(file.id);
       };
 
       const closeBtn = document.createElement("i");
       closeBtn.className = "file-close fa-solid fa-circle-xmark";
-      closeBtn.addEventListener("click", function () {
-        event.stopPropagation();
+      closeBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
         Swal.fire({
           title: `Close "${fileName}"?`,
           text: `Did you save all the forms?`,
@@ -2178,12 +2764,12 @@ async function loadFirmData() {
           confirmButtonText: "Confirm",
         }).then((result) => {
           if (result.isConfirmed) {
+            const wasActive = file.style.display === "block";
             fileButtonContainer.removeChild(fileButton);
             document.body.removeChild(file);
-            E("noOpenFiles").style.display =
-              fileButtonContainer.children.length == 2 ? "block" : "none";
-            E("closeAllFiles").style.display =
-              fileButtonContainer.children.length > 3 ? "" : "none";
+            updateOpenFilesUI();
+            // If we closed the file currently being viewed, go home
+            if (wasActive) openMainTab('tabHome');
           }
         });
       });
@@ -2191,9 +2777,37 @@ async function loadFirmData() {
       fileButtonContainer.appendChild(fileButton);
       document.body.appendChild(file);
       fileCounter++;
+      updateOpenFilesUI();
+      // Auto-expand Open Files list when a file is added
+      E('sbOpenFiles').classList.remove('sb-collapsed');
+      E('tabOpenFiles').style.display = '';
       openMainTab(file.id);
-      E("tabOpenFiles").style.display =
-        E("tabOpenFiles").style.display == "none" ? "" : "none";
+    }
+
+    function updateOpenFilesUI() {
+      const container = E('tabOpenFiles');
+      const fileButtons = container.querySelectorAll('.file-button');
+      const count = fileButtons.length;
+      const sbOpenFiles = E('sbOpenFiles');
+      const badge = E('sbOpenFilesCount');
+      if (count === 0) {
+        sbOpenFiles.style.display = 'none';
+        container.style.display = 'none';
+        badge.style.display = 'none';
+        E('closeAllFiles').style.display = 'none';
+      } else {
+        sbOpenFiles.style.display = '';
+        badge.style.display = '';
+        badge.textContent = count;
+        E('closeAllFiles').style.display = count > 1 ? '' : 'none';
+      }
+    }
+
+    function toggleOpenFilesList() {
+      const item = E('sbOpenFiles');
+      const list = E('tabOpenFiles');
+      const collapsed = item.classList.toggle('sb-collapsed');
+      list.style.display = collapsed ? 'none' : '';
     }
 
     function closeAllFiles(button) {
@@ -2212,271 +2826,277 @@ async function loadFirmData() {
           fileButtons.forEach((element) => {
             element.parentNode.removeChild(element);
           });
-          E("closeAllFiles").style.display = "none";
-          E("noOpenFiles").style.display = "block";
+          updateOpenFilesUI();
+          openMainTab('tabHome');
         }
       });
     }
 
-    function newContact(prefill = {}, onSuccess = null) {
-      Swal.fire({
-        title: "Add New Client:",
-        html: `<label class="input-label">Name:</label>
-             <input style="width:200px;" type="text" id="NCName" placeholder="Full Name"><br>
-             <label class="input-label">Phone:</label>
-             <input style="width:200px;" id="NCPhone" type="text" placeholder="(###) ###-####" title="Enter a valid phone number"><br>
-             <label class="input-label">Email:</label>
-             <input style="width:200px;" id="NCEmail" type="text" placeholder="Email Address"><br>
-             <label class="input-label">Set Appointment:</label>
-             <input type="datetime-local" id="NCDate" style="width:200px;" disabled title="Coming soon"><br>
-             <label class="sub-label" style="color:#999;">Temporarily disabled - coming soon.</label><br>
-             <label class="input-label">Case Type:</label>
-             <select id="NCType" style="width:200px;" onchange="E('NCOtherType').style.display = this.value === 'Other' ? '' : 'none';">
-              <option selected value="">Select a case type</option>
-              <option>Bankruptcy</option>
-              <option>Other</option>
-             </select>
-             <input style="width:200px; display:none;" type="text" id="NCOtherType" placeholder="Enter case type"><br>
-             <label class="sub-label">Optional, select type to create lead.</label><br>
-             `,
-        showCancelButton: true,
-        showConfirmButton: true,
-        cancelButtonText: "Cancel",
-        confirmButtonText: "Add & Open Client",
-        showCloseButton: true,
-        showDenyButton: true,
-        denyButtonText: "Add & Open Case",
-        denyButtonColor: "#26abe2",
-        showLoaderOnConfirm: true,
-        showLoaderOnDeny: true,
+    // newContact() moved to /scripts.js (Phase 1 dialog rationalization).
+    // Shared by the header "+ New Client" buttons and OrphanAdoptDialog.
 
-        didOpen: () => {
-          if (prefill.phone) {
-            const p = String(prefill.phone).replace(/\D/g, "");
-            E("NCPhone").value = p.length === 10
-              ? `(${p.slice(0,3)}) ${p.slice(3,6)}-${p.slice(6)}`
-              : prefill.phone;
-          }
-          if (prefill.email) E("NCEmail").value = prefill.email;
-        },
-
-        // ── ADD & OPEN CLIENT ──
-        preConfirm: async () => {
-          const name = E("NCName").value.trim();
-          const phone = E("NCPhone").value.replace(/\D/g, "");
-          const email = E("NCEmail").value.trim();
-          const date = E("NCDate").value;
-          const caseTypeRaw = E("NCType").value;
-          const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
-
-          // Relaxed validation: name + at least one of phone or email
-          if (!name || (!E("NCPhone").value && !email)) {
-            Swal.showValidationMessage("Name plus at least a phone or email is required");
-            return false;
-          }
-          if (name.split(" ").length < 2) {
-            Swal.showValidationMessage("Please fill in a valid full name");
-            return false;
-          }
-          if (E("NCPhone").value && phone.length !== 10) {
-            Swal.showValidationMessage("Please fill in a valid phone number");
-            return false;
-          }
-          if (email && !/^\S+@\S+\.\S+$/.test(email)) {
-            Swal.showValidationMessage("Please fill in a valid email address");
-            return false;
-          }
-          if (caseTypeRaw === "Other" && !caseType) {
-            Swal.showValidationMessage("Please enter a case type");
-            return false;
-          }
-
-          try {
-            // 1. Create/update contact
-            const contactResult = await apiSend("/api/intake/contact", "POST", {
-              name, phone, email
-            });
-
-            // 2. If case type selected, create case too
-            let caseResult = null;
-            if (caseType) {
-              caseResult = await apiSend("/api/intake/case", "POST", {
-                contact_id: contactResult.id,
-                case_type: caseType
-              });
-            }
-
-            // 3. TODO: If appointment date was set, create appointment via POST /api/appts
-            // if (date) {
-            //   await apiSend("/api/appts", "POST", {
-            //     contact_id: contactResult.id,
-            //     case_id: caseResult?.id || null,
-            //     appt_date: date,
-            //     appt_type: caseType || "General"
-            //   });
-            // }
-
-            return { type: "client", data: contactResult };
-          } catch (err) {
-            Swal.showValidationMessage(err.message || "Failed to create client");
-            return false;
-          }
-        },
-
-        // ── ADD & OPEN CASE ──
-        preDeny: async () => {
-          const name = E("NCName").value.trim();
-          const phone = E("NCPhone").value.replace(/\D/g, "");
-          const email = E("NCEmail").value.trim();
-          const date = E("NCDate").value;
-          const caseTypeRaw = E("NCType").value;
-          const caseType = caseTypeRaw === "Other" ? E("NCOtherType").value.trim() : caseTypeRaw;
-
-          // Relaxed validation: name + at least one of phone or email + case type
-          if (!name || (!E("NCPhone").value && !email)) {
-            Swal.showValidationMessage("Name plus at least a phone or email is required");
-            return false;
-          }
-          if (!caseType) {
-            Swal.showValidationMessage("Please select a case type");
-            return false;
-          }
-          if (caseTypeRaw === "Other" && !caseType) {
-            Swal.showValidationMessage("Please enter a case type");
-            return false;
-          }
-          if (name.split(" ").length < 2) {
-            Swal.showValidationMessage("Please fill in a valid full name");
-            return false;
-          }
-          if (E("NCPhone").value && phone.length !== 10) {
-            Swal.showValidationMessage("Please fill in a valid phone number");
-            return false;
-          }
-          if (email && !/^\S+@\S+\.\S+$/.test(email)) {
-            Swal.showValidationMessage("Please fill in a valid email address");
-            return false;
-          }
-
-          try {
-            // 1. Create/update contact
-            const contactResult = await apiSend("/api/intake/contact", "POST", {
-              name, phone, email
-            });
-
-            // 2. Create case
-            const caseResult = await apiSend("/api/intake/case", "POST", {
-              contact_id: contactResult.id,
-              case_type: caseType
-            });
-
-            // 3. TODO: If appointment date was set, create appointment via POST /api/appts
-            // if (date) {
-            //   await apiSend("/api/appts", "POST", {
-            //     contact_id: contactResult.id,
-            //     case_id: caseResult.id,
-            //     appt_date: date,
-            //     appt_type: caseType
-            //   });
-            // }
-
-            return { type: "case", data: caseResult, contactData: contactResult };
-          } catch (err) {
-            Swal.showValidationMessage(err.message || "Failed to create case");
-            return false;
-          }
-        },
-
-        allowOutsideClick: () => !Swal.isLoading()
-
-      }).then((result) => {
-        // preConfirm result → result.isConfirmed + result.value
-        // preDeny result    → result.isDenied + result.value
-        if (!result.isConfirmed && !result.isDenied) return; // cancelled
-        if (!result.value) return;
-
-        const { type, data } = result.value;
-
-        Toast.fire({
-          icon: data.status || "success",
-          title: data.status === "success" ? "Success" : "Error",
-          text: data.message
-        });
-
-        if (data.status === "success") {
-          if (type === "client") {
-            addFile(data.name, "client", data.id);
-          } else if (type === "case") {
-            addFile(data.id, "case", data.id);
-          }
-          if (typeof onSuccess === "function") onSuccess();
-        }
-      });
-    }
-
-    quickpicktemp = "";
-    function quickPick(term, type, tab) {
+    /**
+     * quickPick — unified search + open
+     * @param {string} term   — search query
+     * @param {string} [type] — 'contact', 'case', or null/undefined for all
+     * @param {string} [tab]  — tab to open after file loads (e.g. 'tabSend')
+     * @param {number} [limit=1] — 1 for best-match (URL params), 10+ for picker (search box)
+     */
+    async function quickPick(term, type, tab, limit = 1) {
       if (!term) {
-        alert("no term entered");
-      } else if (term) {
-        showProcessingSwal();
-        terms = term.split(" ");
-        name = `%${terms.join("%")}%`;
-        phone = term.replace(/\D/g, "");
-        query = `SELECT contact_name AS name, 'client' AS type, contact_id AS id, 'success' AS message FROM contacts co
-      WHERE co.contact_id = '${term}' OR co.contact_phone = '${term}'
-      UNION ALL
-      SELECT COALESCE(case_number_full, case_number, case_id) AS name, 'case' AS type, case_id AS id, 'success' AS message FROM cases
-      WHERE case_id = '${term}'
-      UNION ALL
-      SELECT COALESCE(case_number_full, case_number) AS name, 'case' AS type, case_id AS id, 'success' AS message FROM cases
-      WHERE case_number = '${term}' OR case_number_full = '${term}'
-      UNION ALL
-      SELECT '' AS name, '' AS type, '' AS id, 'not found' AS message FROM contacts
-      LIMIT 1`;
-        if (type == "contact") {
-          query = `SELECT contact_name AS name, 'client' AS type, contact_id AS id, 'success' AS message 
-              FROM contacts co WHERE (co.contact_id = '${term}' AND co.contact_id != "") OR (co.contact_phone = '${phone}' AND co.contact_phone != "") OR contact_name LIKE '${name}'`;
+        Toast.fire({ icon: 'warning', title: 'Enter a search term' });
+        return;
+      }
+
+      const searchType = type === 'contact' ? 'contact'
+                       : type === 'case' ? 'case'
+                       : 'all';
+
+      showProcessingSwal();
+
+      try {
+        const data = await apiSend('/api/search', 'GET', {
+          q: term, type: searchType, limit
+        });
+        Swal.close();
+
+        if (!data.results || data.results.length === 0) {
+          Toast.fire({ icon: 'error', title: 'No results found' });
+        } else if (data.results.length === 1) {
+          const r = data.results[0];
+          Toast.fire({ icon: 'success', title: `Opening: ${r.name}`, timer: 1000 });
+          addFile(
+            r.name,
+            r.type === 'contact' ? 'client' : r.type,
+            r.id + (tab ? `&tab=${tab}` : '')
+          );
+        } else {
+          showSearchPicker(data.results, tab);
         }
-        if (type == "case") {
-          query = `SELECT COALESCE(case_number_full, case_number, case_id) AS name, 'case' AS type, case_id AS id, 'success' AS message 
-              FROM cases LEFT JOIN case_relate cr ON case_id = cr.case_relate_case_id LEFT JOIN contacts c ON cr.case_relate_client_id = c.contact_id
-              WHERE (case_id = '${term}' AND case_id != '') OR (case_number = '${term}' AND case_number != '') OR (case_number_full = '${term}' AND case_number_full != '') OR (c.contact_name LIKE '${name}' AND c.contact_name != '') OR (c.contact_id = '${term}' AND c.contact_id != '') OR (c.contact_phone = '${phone}' AND c.contact_phone != '')`;
-        }
-        if (type == "bill") {
-          alert("no bills allowed");
-          Swal.close();
-          return "no bills";
-        }
-        console.log(query);
-        fetch(
-          `/db?username=${username}&password=${password}&query=${encodeURIComponent(
-            query
-          )}`
-        )
-          .then((response) => response.json())
-          .then((data) => {
-            Swal.close();
-            console.log(data);
-            if (
-              data.data.query1[0] &&
-              data.data.query1[0].message == "success"
-            ) {
-              Toast.fire({
-                icon: "success",
-                title: `Opening File: ${data.data.query1[0].name}!`,
-              });
-              addFile(
-                data.data.query1[0].name,
-                data.data.query1[0].type,
-                data.data.query1[0].id + (tab ? `&tab=${tab}` : ``)
-              );
-            } else {
-              alert("no file");
-            }
-          });
+      } catch (err) {
+        Swal.close();
+        Toast.fire({ icon: 'error', title: 'Search failed', text: err.message });
       }
     }
+
+    function showSearchPicker(results, tab) {
+      const rows = results.map(r => {
+        const icon = r.type === 'contact' ? 'fa-user' : 'fa-landmark';
+        // Case rows label with "Type: Subtype" (fmtCaseType, scripts.js) —
+        // the landmark icon + contact-name line already convey case-ness.
+        // Untyped cases (and older cached results) fall back to 'Case'.
+        const label = r.type === 'contact' ? 'Contact' : (fmtCaseType(r) || 'Case');
+        const safeName = (r.name || '').replace(/'/g, "\\'");
+        const fileType = r.type === 'contact' ? 'client' : r.type;
+        const fileId = r.id + (tab ? `&tab=${tab}` : '');
+        return `<div class="qp-row" onclick="Swal.close();addFile('${safeName}','${fileType}','${fileId}')"
+                     style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #eee;text-align:left;display:flex;align-items:center;gap:8px;"
+                     onmouseover="this.style.background='#f0f7ff'" onmouseout="this.style.background=''">
+          <i class="fa-solid ${icon}" style="color:#07ADEF;width:20px;text-align:center"></i>
+          <div>
+            <b>${r.name || 'Unknown'}</b>
+            <span style="color:#888;font-size:0.85em;margin-left:6px">${label}</span>
+            ${r.detail ? `<br><span style="color:#666;font-size:0.85em">${r.detail}</span>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+
+      Swal.fire({
+        title: `${results.length} results found`,
+        html: `<div style="max-height:400px;overflow-y:auto;border:1px solid #eee;border-radius:6px">${rows}</div>`,
+        showConfirmButton: false,
+        showCloseButton: true,
+        width: '450px'
+      });
+    }
+    // ============ SIDEBAR / HEADER CONTROLS ============
+    function toggleSidebarSkinny() {
+      // Cannot enter skinny while hidden — un-hide first
+      if (document.body.classList.contains('sidebar-hidden')) {
+        document.body.classList.remove('sidebar-hidden');
+      }
+      const skinny = document.body.classList.toggle('sidebar-skinny');
+      const state = skinny ? 'skinny' : 'full';
+      localStorage.setItem('sidebarState', state);
+      localStorage.setItem('sidebarStatePrior', state);
+      const icon = document.getElementById('sbSkinnyIcon');
+      if (icon) icon.className = skinny ? 'fa-solid fa-arrow-right' : 'fa-solid fa-arrow-left';
+    }
+
+    function hideSidebar() {
+      document.body.classList.add('sidebar-hidden');
+      localStorage.setItem('sidebarState', 'hidden');
+    }
+
+    function showSidebar() {
+      document.body.classList.remove('sidebar-hidden');
+      // Restore previous skinny/full state (default to full)
+      // Note: localStorage may say 'hidden' — fall back to full if so
+      const prior = localStorage.getItem('sidebarStatePrior') || 'full';
+      if (prior === 'skinny') document.body.classList.add('sidebar-skinny');
+      else document.body.classList.remove('sidebar-skinny');
+      localStorage.setItem('sidebarState', prior);
+    }
+
+    function toggleMobileSidebar() {
+      // On desktop with hidden sidebar, hamburger un-hides it.
+      // On mobile, hamburger toggles the drawer.
+      if (document.body.classList.contains('sidebar-hidden')
+          && window.matchMedia('(min-width: 769px)').matches) {
+        showSidebar();
+      } else {
+        document.body.classList.toggle('sidebar-mobile-open');
+      }
+    }
+
+    function confirmLogout() {
+      Swal.fire({
+        title: 'Log Out?',
+        html: '<p>Are you sure you want to log out?</p><p>You will lose all unsaved data in all the open files!</p>',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Yes, goodbye!',
+        cancelButtonText: 'No, cancel',
+        preConfirm: () => { logout(); location.reload(); }
+      });
+    }
+
+    // ============ DARK MODE ============
+    function toggleTheme() {
+      const dark = document.body.classList.toggle('dark');
+      localStorage.setItem('theme', dark ? 'dark' : 'light');
+      const icon = document.getElementById('themeIcon');
+      if (icon) icon.className = dark ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+    }
+
+    // Restore sidebar state + theme on page load
+    (function () {
+      // Theme — apply BEFORE first paint to avoid flash
+      const theme = localStorage.getItem('theme');
+      if (theme === 'dark') {
+        document.body.classList.add('dark');
+        const icon = document.getElementById('themeIcon');
+        if (icon) icon.className = 'fa-solid fa-sun';
+      }
+
+      // Sidebar state
+      const state = localStorage.getItem('sidebarState');
+      if (state && state !== 'hidden') {
+        localStorage.setItem('sidebarStatePrior', state);
+      }
+      if (state === 'skinny') {
+        document.body.classList.add('sidebar-skinny');
+        const icon = document.getElementById('sbSkinnyIcon');
+        if (icon) icon.className = 'fa-solid fa-arrow-right';
+      } else if (state === 'hidden') {
+        document.body.classList.add('sidebar-hidden');
+      }
+      // Close mobile drawer when tapping outside sidebar/hamburger
+      document.addEventListener('click', (e) => {
+        if (!document.body.classList.contains('sidebar-mobile-open')) return;
+        if (e.target.closest('#appSidebar') || e.target.closest('.hdr-hamburger')) return;
+        document.body.classList.remove('sidebar-mobile-open');
+      });
+    })();
+  </script>
+
+  <!-- ── System status banner (error-alerting Slice 2) ──────────────────────
+       Polls GET /api/system-status on load + every 10 min. Shows a fixed red
+       top bar when the automation poller heartbeat or error sweep is stale,
+       or open critical alerts exist. Self-contained: inline styles only, no
+       dependency on shell CSS. Reuses the shell's JWT (AUTH_STATE.jwt) via a
+       direct fetch — deliberately NOT apiSend(), whose 401/expired path pops
+       the loginBlocking() modal; a background poll must never do that. If the
+       JWT is missing/expired the poll is skipped quietly.
+       Failure posture: any fetch/parse error or ok:false → no banner. -->
+  <script>
+    (function systemStatusBanner() {
+      const POLL_MS = 10 * 60 * 1000;
+      let bar = null, msgEl = null;
+      // Dismiss semantics: ✕ hides the bar until the fired-CONDITION set
+      // changes (not the message text — ages in the text change every poll).
+      let dismissedSig = null;
+
+      function ensureBar() {
+        if (bar) return;
+        bar = document.createElement('div');
+        bar.id = 'ycSystemAlertBar';
+        // z-index 999: above shell chrome (≤100), below SweetAlert2 modals (1060)
+        bar.style.cssText =
+          'position:fixed;top:0;left:0;right:0;z-index:999;display:none;' +
+          'background:#c0392b;color:#fff;padding:6px 36px;text-align:center;' +
+          'font:13px/1.5 Arial,Helvetica,sans-serif;' +
+          'box-shadow:0 1px 4px rgba(0,0,0,0.35);';
+        msgEl = document.createElement('span');
+        const x = document.createElement('button');
+        x.textContent = '\u2715';
+        x.setAttribute('aria-label', 'Dismiss system alert');
+        x.style.cssText =
+          'position:absolute;right:8px;top:50%;transform:translateY(-50%);' +
+          'background:none;border:none;color:#fff;font-size:14px;' +
+          'cursor:pointer;padding:2px 6px;line-height:1;';
+        x.onclick = function () {
+          dismissedSig = bar.dataset.sig || null;
+          bar.style.display = 'none';
+        };
+        bar.appendChild(msgEl);
+        bar.appendChild(x);
+        document.body.appendChild(bar);
+      }
+
+      function hide() { if (bar) bar.style.display = 'none'; }
+
+      function show(sig, message) {
+        if (sig === dismissedSig) return;   // same condition set → stay hidden
+        dismissedSig = null;                // condition set changed → re-arm
+        ensureBar();
+        bar.dataset.sig = sig;
+        msgEl.textContent = message;        // textContent only — never innerHTML
+        bar.style.display = 'block';
+      }
+
+      async function poll() {
+        try {
+          const jwt = window.AUTH_STATE && window.AUTH_STATE.jwt;
+          if (!jwt || (typeof isJwtExpired === 'function' && isJwtExpired(jwt))) {
+            console.debug('[sysBanner] no valid JWT — skipping poll');
+            return; // leave current banner state untouched
+          }
+          const res = await fetch('/api/system-status', {
+            headers: { 'Authorization': 'Bearer ' + jwt }
+          });
+          if (!res.ok) { console.debug('[sysBanner] HTTP ' + res.status); return hide(); }
+          const data = await res.json();
+          if (!data || data.ok !== true) { console.debug('[sysBanner] ok:false'); return hide(); }
+          if (!data.banner) return hide();
+
+          const sigParts = [], parts = [];
+          if (data.process_jobs && data.process_jobs.stale) {
+            sigParts.push('hb');
+            parts.push('Automation engine stalled \u2014 last run ' +
+              data.process_jobs.age_minutes + ' min ago.');
+          }
+          if (data.error_sweep && data.error_sweep.stale) {
+            sigParts.push('sweep');
+            parts.push('Error sweep stalled \u2014 last success ' +
+              data.error_sweep.age_minutes + ' min ago.');
+          }
+          const crit = (data.alerts && data.alerts.open_criticals) || 0;
+          if (crit > 0) {
+            sigParts.push('crit:' + crit); // count change = condition change
+            parts.push(crit + ' open critical alert(s).');
+          }
+          if (!parts.length) return hide(); // banner:true but nothing fired — defensive
+          show(sigParts.join('|'), '\u26A0 YisraCase system alert: ' + parts.join(' '));
+        } catch (err) {
+          console.debug('[sysBanner] poll failed:', err && err.message);
+          hide(); // a broken status check must never disturb a healthy shell
+        }
+      }
+
+      poll();
+      setInterval(poll, POLL_MS);
+    })();
   </script>
 </body>
 
