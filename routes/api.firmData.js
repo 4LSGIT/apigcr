@@ -98,7 +98,8 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
       phoneLines: lines,
       emailFrom: emails,
       users,
-      settings
+      settings,
+      firmTimezone: process.env.FIRM_TIMEZONE || 'America/Detroit'
     });
   } catch (err) {
     console.error('GET /api/firm-data error:', err);

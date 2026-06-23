@@ -112,6 +112,15 @@
     }
     #appHeader .hdr-greeting:hover { background: var(--sidebar-hover); }
     #appHeader .hdr-greeting b { color: var(--accent); }
+    #appHeader .hdr-clock {
+      display: flex; align-items: center; gap: 7px;
+      flex-shrink: 0; white-space: nowrap;
+      padding: 5px 12px; border-radius: 999px;
+      background: var(--sidebar-bg); border: 1px solid var(--border);
+      color: var(--text-muted); font-size: 13px; font-weight: 500;
+      font-variant-numeric: tabular-nums; user-select: none;
+    }
+    #appHeader .hdr-clock i { color: var(--accent); font-size: 13px; }
     #appHeader .hdr-btn, #appHeader .hdr-logout {
       background: var(--surface-bg); border: 1px solid var(--border);
       height: 36px; padding: 0 12px; border-radius: 6px;
@@ -267,6 +276,10 @@
       #appHeader .hdr-hamburger { display: block !important; }
       #appHeader .hdr-search { display: none; }
       #appHeader .hdr-greeting { display: none; }
+      /* Firm clock stays (sidebar is a hidden drawer on mobile) — drop the
+         date and tighten it so just the time fits the narrow bar. */
+      #appHeader .hdr-clock { padding: 4px 10px; font-size: 12px; gap: 5px; }
+      #appHeader .hdr-clock .hdr-clock-date { display: none; }
       #appHeader .hdr-btn span,
       #appHeader .hdr-logout span { display: none; }
       #appHeader .hdr-btn,
@@ -437,6 +450,10 @@
       <input id="qpInput" placeholder="Name, Phone, Case # or ID"
         onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value, null, null, 10);}" />
       <button onclick="quickPick(E('qpInput').value, null, null, 10)">Go</button>
+    </div>
+    <div class="hdr-spacer"></div>
+    <div class="hdr-clock" id="hdrClock" title="Firm local time" style="display:none">
+      <i class="fa-regular fa-clock"></i><span id="hdrClockText"></span>
     </div>
     <div class="hdr-spacer"></div>
     <div class="hdr-right" id="hdrUserArea" style="display:none">
@@ -2423,7 +2440,7 @@
     }
 
     // ── Firm-wide data — loaded once after auth, available to all child iframes ──
-    window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [], settings: {} };
+    window.firmData = { phoneLines: [], emailFrom: [], currentUser: null, users: [], settings: {}, firmTimezone: "America/Detroit" };
 
 async function loadFirmData() {
   const data = await apiSend('/api/firm-data', 'GET');  // let it throw
@@ -2432,6 +2449,7 @@ async function loadFirmData() {
   window.firmData.currentUser = data.currentUser || null;
   window.firmData.users       = data.users       || [];
   window.firmData.settings    = data.settings    || {};
+  window.firmData.firmTimezone = data.firmTimezone || "America/Detroit";
   if (!window.firmData.currentUser) throw new Error("No user data returned");
 }
 
@@ -2542,6 +2560,33 @@ async function login(username, password) {
 }
 
 
+// Live firm-local clock in the header. Renders in the firm's timezone
+// (FIRM_TIMEZONE, shipped down via /api/firm-data) regardless of where the
+// viewer is — staff in other zones see firm wall time. The date span is
+// hidden on mobile via CSS so only the time shows in the narrow bar.
+let firmClockTimer = null;
+function startFirmClock() {
+  const tz = window.firmData?.firmTimezone || "America/Detroit";
+  const textEl = E("hdrClockText");
+  const clockEl = E("hdrClock");
+  if (!textEl || !clockEl) return;
+  const dateFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, weekday: "short", month: "short", day: "numeric"
+  });
+  const timeFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour: "numeric", minute: "2-digit", timeZoneName: "short"
+  });
+  const tick = () => {
+    const now = new Date();
+    textEl.innerHTML =
+      `<span class="hdr-clock-date">${dateFmt.format(now)} · </span>${timeFmt.format(now)}`;
+  };
+  tick();
+  clockEl.style.display = "flex";
+  if (firmClockTimer) clearInterval(firmClockTimer);
+  firmClockTimer = setInterval(tick, 1000);
+}
+
 async function initAuth() {
   let token = AUTH_STATE.jwt;
   if (!token || isJwtExpired(token)) await loginBlocking();
@@ -2563,6 +2608,7 @@ async function initAuth() {
       // user and users are already set as aliases to firmData by initAuth()
       E("myNameIs").innerHTML = user.user_name || "";
       E("hdrUserArea").style.display = "flex";
+      startFirmClock();
       E("appSidebar").style.display = "flex";
       const isAdmin = user.user_auth === "authorized - SU" ||
                       user.user_auth === "authorized - admin";
