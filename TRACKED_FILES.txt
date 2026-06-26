@@ -225,6 +225,7 @@ routes/db.jwt.js
 routes/db64.js
 routes/dbQuery.js
 routes/dropbox.js
+routes/freelook.js
 routes/functions.js
 routes/internal.js
 routes/internal/dropbox.js
