@@ -712,7 +712,7 @@ async function preview() {
       lines.push('── SOS TITLE INSTRUCTIONS ──\nSMS: Link to instructions PDF\nEmail: PDF attached');
     }
     if (action.type === 'irs_idme') {
-      lines.push('── IRS.GOV / ID.ME INSTRUCTIONS ──\nSMS: Link to instruction video + PDF\nEmail: Video + PDF attached');
+      lines.push('── IRS.GOV / ID.ME INSTRUCTIONS ──\nSMS: Link to video walkthrough + PDF\nEmail: Video preview (GIF) linking to landing page + PDF attached');
     }
     if (action.type === 'docs_needed') {
       try {
@@ -848,48 +848,56 @@ async function send() {
         }
       }
 
-      // ── IRS.GOV / ID.ME INSTRUCTIONS (MMS video + email with video + PDF) ──
+      // ── IRS.GOV / ID.ME INSTRUCTIONS (gif-embed video link + PDF) ──
+      // Video is hosted on YisraVideo (/v/get-irs-transcripts): it walks through
+      // ID.me account setup AND downloading transcripts. We LINK it, never attach
+      // — the ~23MB mp4 can't go through Gmail (25MB API cap) and shouldn't be
+      // force-downloaded over SMS. The email embeds the video's GIF (animated
+      // preview that links to the landing page; its first frame is the branded
+      // title card, so it degrades to a clean static thumbnail in Outlook).
+      // ?c=<contact_id> attributes the view to the contact for analytics.
+      // NOTE: irsGif/landing slug are hardcoded to the get-irs-transcripts video;
+      // if that video's GIF is replaced in the video manager, update irsGif here.
       if (action.type === 'irs_idme') {
-  const irsVideo = 'https://storage.googleapis.com/uploads.4lsg.com/f90893673d9f2e3869c8fb02e3410631.mp4';
   const irsPdf = 'https://storage.googleapis.com/uploads.4lsg.com/f7cdbf587e6b80018b5e819c0ee54635.pdf';
+  const irsGif = 'https://storage.googleapis.com/uploads.4lsg.com/a7ef1d16086cb08cbef03ac9a1b41fda.gif';
+  const irsVideoBase = 'https://app.4lsg.com/v/get-irs-transcripts';
   const smsOpt = document.getElementById('smsFrom').selectedOptions[0];
   const mmsCapable = smsOpt?.dataset.mmsCapable === '1';
 
   for (const r of recipients) {
+    const irsVideo = irsVideoBase + (r.contact_id ? `?c=${r.contact_id}` : '');
     if (smsOn && r.phone) {
       if (mmsCapable) {
         await P.apiSend('/internal/mms/send', 'POST', {
           from: smsFrom, to: r.phone,
-          text: `Hi ${r.fname}! Here is instructions for setting up your IRS.GOV account through ID.ME. See the attached PDF or for video instructions click here: ${irsVideo}`,
+          text: `Hi ${r.fname}! Here are instructions for setting up your IRS.GOV account through ID.ME and downloading your transcripts. See the attached PDF, or watch the video here: ${irsVideo}`,
           attachment_url: irsPdf,
         });
         successes.push(`IRS/ID.ME MMS → ${r.name}`);
       } else {
         await P.apiSend('/internal/sms/send', 'POST', {
           from: smsFrom, to: r.phone,
-          message: `Hi ${r.fname}! Here is information for setting up your IRS.GOV account through ID.ME.\n\nVideo: ${irsVideo}\nInstructions: ${irsPdf}`,
+          message: `Hi ${r.fname}! Here is information for setting up your IRS.GOV account through ID.ME and downloading your transcripts.\n\nVideo: ${irsVideo}\nInstructions: ${irsPdf}`,
         });
         successes.push(`IRS/ID.ME SMS → ${r.name}`);
       }
     }
     if (emailOn && r.email) {
-
-            await P.apiSend('/internal/email/send', 'POST', {
-              from: emailFrom, to: r.email,
-              subject: 'Instructions for Setting Up Your IRS.GOV / ID.ME Account',
-              text: `Hi ${r.fname},\n\nPlease see the attached video and instructions for setting up your IRS.GOV account through ID.ME.`,
-              html: `<p>Hi ${r.fname},</p><p>Please see the attached video and instructions for setting up your IRS.GOV account through ID.ME.</p>`,
-              attachment_names: 'IRS ID.ME Instructions.pdf',
-              attachment_urls: irsPdf,
-              attachments: [
-                { filename: 'IRS ID.ME Setup Video.mp4', path: irsVideo },
-                { filename: 'IRS ID.ME Instructions.pdf', path: irsPdf },
-              ],
-            });
-            successes.push(`IRS/ID.ME Email → ${r.name}`);
-          }
-        }
-      }
+      await P.apiSend('/internal/email/send', 'POST', {
+        from: emailFrom, to: r.email,
+        subject: 'Instructions for Setting Up Your IRS.GOV / ID.ME Account',
+        text: `Hi ${r.fname},\n\nPlease see the attached PDF for instructions on setting up your IRS.GOV account through ID.ME and downloading your transcripts.\n\nVideo walkthrough: ${irsVideo}`,
+        html: `<p>Hi ${r.fname},</p>`
+            + `<p>Please see the attached PDF for instructions on setting up your IRS.GOV account through ID.ME and downloading your transcripts.</p>`
+            + `<p>Or click below to watch the video walkthrough:</p>`
+            + `<a href="${irsVideo}"><img src="${irsGif}" alt="Watch: Setting up IRS.gov / ID.me and downloading your transcripts" width="600" style="display:block; max-width:100%; height:auto; border:0;"></a>`,
+        attachment_urls: { url: irsPdf, name: 'IRS ID.ME Instructions.pdf' },
+      });
+      successes.push(`IRS/ID.ME Email → ${r.name}`);
+    }
+  }
+}
 
       // ── DOCS NEEDED ──
       if (action.type === 'docs_needed') {
