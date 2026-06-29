@@ -255,6 +255,7 @@ routes/test_wf_advance.js
 routes/unplacehold.js
 routes/videoLanding.js
 routes/workflows.js
+scripts/Courtapprovetest.js
 scripts/add-path-headers.js
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js

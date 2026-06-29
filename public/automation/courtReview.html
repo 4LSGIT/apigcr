@@ -28,6 +28,7 @@
     .btn-primary{background:var(--blue);color:#fff;} .btn-primary:hover{background:var(--blue2);}
     .btn-green{background:var(--green);color:#fff;} .btn-green:hover{background:#16a34a;}
     .btn-danger{background:var(--red);color:#fff;} .btn-danger:hover{background:#dc2626;}
+    .btn-amber{background:var(--amber);color:#fff;} .btn-amber:hover{background:#d97706;}
     .btn-outline{background:var(--surface);border:1px solid var(--border);color:var(--text2);}
     .btn-outline:hover{background:var(--border);}
     .btn-sm{padding:4px 9px;font-size:11px;}
@@ -265,6 +266,19 @@ function reasonLabel(cat){
     // unresolved case_not_found row needs an Adopt, not a re-run.
     const rerunEnabled = resolvesNow || cat === 'citation_miss' || cat === 'model_flagged' || cat === 'extract_failed';
 
+    // ── APPROVE & RUN button — MODEL-flagged rows ONLY ──────────────────────
+    // A model_flagged row is one where the extractor set payload.needs_review
+    // (review_reason is its free text). Approving strips ONLY that flag; the
+    // executor's citation/dup/single-match/field-policy gates still run, so an
+    // uncited or ambiguous action re-queues. case_not_found needs Adopt (not
+    // approve); citation_miss/extract_failed can't be approved away, so they
+    // keep their existing actions and get no Approve button.
+    const approveBtn = cat === 'model_flagged'
+      ? `<button class="btn btn-amber btn-sm" onclick="window.crApprove(${r.id})" title="Apply this model-flagged reschedule live, overriding the needs-review flag. Citation / duplicate / single-match safety checks still apply.">
+           <i class="fa-solid fa-circle-check"></i> Approve &amp; run
+         </button>`
+      : '';
+
     const resolveHtml = resolvesNow
       ? `<div class="resolve-box resolve-ok"><i class="fa-solid fa-circle-check"></i> Docket resolves to <b>${esc(caseLabel)}</b>${res.primary_contact_name ? ' · '+esc(res.primary_contact_name) : ''} (case_id ${esc(res.case_id)})</div>`
       : `<div class="resolve-box resolve-no"><i class="fa-solid fa-triangle-exclamation"></i> No case resolves for <b class="mono">${esc(docket)}</b> — adopt the docket onto a case to proceed.</div>`;
@@ -288,6 +302,7 @@ function reasonLabel(cat){
         <button class="btn btn-primary btn-sm" id="cr-btn-rerun" ${rerunEnabled?'':'disabled'} onclick="window.crRerun(${r.id})">
           <i class="fa-solid fa-play"></i> Re-run
         </button>
+        ${approveBtn}
         <button class="btn btn-green btn-sm" onclick="window.crAdopt(${r.id})" ${docket==='(no docket)'?'disabled':''}>
           <i class="fa-solid fa-folder-plus"></i> Adopt → case…
         </button>
@@ -320,6 +335,62 @@ function reasonLabel(cat){
     else if (out.outcome === 'executed')    Toast.fire({ icon:'info', title:'Dry-run executed — still queued (court_ingest_live is off)' });
     else if (out.outcome === 'none')        Toast.fire({ icon:'info', title:'Re-ran: nothing to apply' });
     else                                    Toast.fire({ icon:'info', title:'Re-ran: still queued ('+(out.review_reason||'review')+')' });
+  }
+
+  // ── Approve & run (model-flagged override) ──────────────────────────────
+  // Fetch the item for its payload — so the confirm shows the exact planned
+  // actions (reusing renderActions) and can detect a 341 for the SMS warning —
+  // confirm, then POST /approve (force:true on the server).
+  async function approve(id){
+    let item;
+    try { item = await api('/api/court-review/item/' + id, 'GET'); }
+    catch (e) { Toast.fire({ icon:'error', title: e.message }); return; }
+
+    const acts    = (item.payload && Array.isArray(item.payload.actions)) ? item.payload.actions : [];
+    const hasAppt = acts.some(a => a && a.type === 'create_appointment');
+    const liveWarn = hasAppt
+      ? `<div style="margin-top:10px;color:#991b1b;font-weight:600;text-align:left">⚠ This runs the actions live. A 341 appointment is involved — the client will be scheduled/rescheduled AND notified by SMS.</div>`
+      : `<div style="margin-top:10px;color:#92400e;font-weight:600;text-align:left">⚠ This runs the actions live.</div>`;
+
+    const { isConfirmed } = await Swal.fire({
+      title: 'Approve & run',
+      html: `
+        <div style="font-size:12.5px;color:#475569;text-align:left">
+          Overrides the model's needs-review flag and applies the actions below. The executor's
+          structural checks (citations, duplicate guard, single-match) still apply — an uncited or
+          ambiguous action simply re-queues.
+        </div>
+        <div style="text-align:left;margin-top:10px">${renderActions(item.payload)}</div>
+        ${liveWarn}`,
+      width: 560,
+      showCancelButton: true,
+      confirmButtonText: 'Approve & run',
+      confirmButtonColor: '#f59e0b',
+      showCloseButton: true,
+    });
+    if (!isConfirmed) return;
+
+    try {
+      const r = await api('/api/court-review/approve', 'POST', { court_ai_log_id: id });
+      reportApprove(r);
+      await load();
+    } catch (e) { Toast.fire({ icon:'error', title: e.message }); }
+  }
+
+  // Surface the result — make the "approve didn't apply, here's why" case loud.
+  function reportApprove(r){
+    const out  = r.result || {};
+    const live = r.dry_run === false;
+    if (r.status === 'skipped')
+      Toast.fire({ icon:'warning', title:'Approve skipped: '+(r.reason || 'no stored payload to run') });
+    else if (out.outcome === 'executed' && live)
+      Toast.fire({ icon:'success', title:'Approved & executed (live)' });
+    else if (out.outcome === 'executed')
+      Toast.fire({ icon:'info', title:'Approved — dry-run only (court_ingest_live is off); still queued' });
+    else if (out.outcome === 'none')
+      Toast.fire({ icon:'info', title:'Approved: nothing to apply' });
+    else
+      Toast.fire({ icon:'warning', title:'Approved but still queued ('+(out.review_reason||'review')+') — a safety check held, so it was not applied' });
   }
 
   // Open the SHELL's CasePicker in a SHELL Swal; resolve to { case_id, case } | null.
@@ -431,6 +502,7 @@ function reasonLabel(cat){
   window.crReload      = load;
   window.crSelect      = select;
   window.crRerun       = rerun;
+  window.crApprove     = approve;
   window.crAdopt       = adopt;
   window.crGroupAdopt  = groupAdopt;
   window.crDismiss     = dismiss;

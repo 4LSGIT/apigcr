@@ -75,6 +75,15 @@ function parsePayload(raw) {
  * @param {object} [opts]
  * @param {boolean} [opts.allowExtract=true]  when raw_response is null, run the
  *        AI extract flow (true) or skip the row (false, used by the sweep).
+ * @param {boolean} [opts.force=false]  human "approve & run": in the stored-
+ *        payload branch ONLY, strip the model's soft needs_review flag so the
+ *        executor's STEP 3 short-circuit no longer fires. The executor's HARD
+ *        gates (STEP 4 citation check, 341 create_appointment dup-guard,
+ *        update_event single-match, CASE_FIELD_POLICY) all run AFTER STEP 3 and
+ *        are untouched — an approved row that citation-misses or maps to an
+ *        ambiguous event STILL queues. force overrides the model's holistic
+ *        "a human should look" judgment, NOT the structural safeties. No effect
+ *        on the extract_failed branch (no payload to force).
  * @returns {Promise<{
  *   status:'reran'|'skipped',
  *   reason?:string,
@@ -84,7 +93,7 @@ function parsePayload(raw) {
  *   result?:object            // executor return (or a normalized extract result)
  * }>}
  */
-async function rerunCalRow(db, calRow, { allowExtract = true } = {}) {
+async function rerunCalRow(db, calRow, { allowExtract = true, force = false } = {}) {
   const dryRun  = !(await isLive(db));
   const payload = parsePayload(calRow.raw_response);
   const { subject, body, from_email } = await fetchEmail(db, calRow.message_id);
@@ -92,6 +101,14 @@ async function rerunCalRow(db, calRow, { allowExtract = true } = {}) {
   // ── Stored payload present → replay it, NO AI call. ──────────────────────
   if (payload) {
     payload.message_id = calRow.message_id; // trust our canonical id
+    // ── APPROVE & RUN (force) ──────────────────────────────────────────────
+    // Strip ONLY the model's soft needs_review flag — read solely at STEP 3 of
+    // executeCourtActions. The executor's structural safeties (STEP 4 citation
+    // gate, the 341 create_appointment dup-guard, update_event single-match,
+    // CASE_FIELD_POLICY) run AFTER STEP 3 and are NOT affected here, so an
+    // approved row that citation-misses or is ambiguous STILL queues. Approve
+    // overrides the holistic "needs a human" judgment, not the hard gates.
+    if (force && payload && typeof payload === 'object') delete payload.needs_review;
     const result = await courtExecutor.executeCourtActions(db, {
       payload, subject, body, dryRun,
     });

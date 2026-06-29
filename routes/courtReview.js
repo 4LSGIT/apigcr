@@ -250,6 +250,39 @@ router.post('/api/court-review/rerun', jwtOrApiKey, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// POST /api/court-review/approve { court_ai_log_id }
+//   HUMAN OVERRIDE for a MODEL-FLAGGED queued row. Replays the stored payload
+//   exactly like /rerun, but with force:true — which strips ONLY the model's
+//   soft needs_review flag (read solely at courtExecutor STEP 3). Every
+//   structural safety stays in force: an approved row that fails the citation
+//   gate, hits the 341 dup-guard, maps to an ambiguous (zero/many) update_event,
+//   or violates CASE_FIELD_POLICY STILL queues/skips. Approve is "I, a human,
+//   vouch for this reschedule" — NOT "execute no matter what".
+//
+//   allowExtract:false — approve is only meaningful for rows WITH a stored
+//   payload. An extract_failed row has none, so rerunCalRow reports
+//   status:'skipped' (reason extract_failed_no_payload) instead of spending a
+//   fresh AI call. Honors court_ingest_live for dry/live exactly like /rerun.
+//   → { ok, status, ai, dry_run, new_court_ai_log_id, result }
+// ─────────────────────────────────────────────────────────────────────────
+router.post('/api/court-review/approve', jwtOrApiKey, async (req, res) => {
+  try {
+    const id = Number((req.body || {}).court_ai_log_id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ ok: false, error: 'court_ai_log_id required' });
+    }
+    const row = await loadRow(req.db, id);
+    if (!row) return res.status(404).json({ ok: false, error: 'court_ai_log row not found' });
+
+    const r = await courtRerun.rerunCalRow(req.db, row, { allowExtract: false, force: true });
+    res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error('[courtReview] /approve error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // POST /api/court-review/adopt-rerun { court_ai_log_id, case_id }
 //   Write the queued row's docket onto the chosen case (ADDITIVE — mirrors
 //   PATCH /api/cases/:id/docket guards), then re-run. 409 (no re-run) when the
