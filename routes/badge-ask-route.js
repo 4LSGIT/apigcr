@@ -40,6 +40,28 @@ const COLS      = parseInt(process.env.OLED_COLS || '21', 10);
 const ROWS      = parseInt(process.env.OLED_ROWS || '5', 10);
 const MAX_PAGES = parseInt(process.env.OLED_MAX_PAGES || '6', 10);
 
+// ---- logging helpers ----
+const log = (...a) => console.log('[badge/ask]', ...a);
+const errlog = (...a) => console.error('[badge/ask]', ...a);
+const mask = (v) => (v ? `set(${String(v).length} chars, …${String(v).slice(-4)})` : 'MISSING');
+const preview = (s, n = 200) => {
+  const str = String(s == null ? '' : s);
+  return str.length > n ? `${str.slice(0, n)}… (${str.length} chars)` : str;
+};
+
+// log effective config once at module load so we can see what the server actually booted with
+log('config', {
+  STT_PROVIDER,
+  GROQ_API_KEY: mask(GROQ_API_KEY),
+  GROQ_STT_MODEL,
+  ELEVENLABS_API_KEY: mask(ELEVEN_API_KEY),
+  ELEVEN_STT_MODEL: ELEVEN_MODEL,
+  ANTHROPIC_API_KEY: mask(ANTHROPIC_KEY),
+  ANTHROPIC_MODEL,
+  BADGE_DEVICE_TOKEN: DEVICE_TOKEN ? 'set' : 'none',
+  COLS, ROWS, MAX_PAGES,
+});
+
 // body parsers: raw audio OR json text (each only fires on its own content-type)
 router.use(express.raw({ type: ['audio/*', 'application/octet-stream'], limit: '12mb' }));
 router.use(express.json({ limit: '64kb' }));
@@ -105,34 +127,55 @@ function ensureWav(buf, rate, channels) {
 
 // ---- STT providers (swap via STT_PROVIDER) ----
 async function sttGroq(buf) {
+  log('sttGroq -> request', { model: GROQ_STT_MODEL, wavBytes: buf.length, keyPresent: !!GROQ_API_KEY });
   const form = new FormData();
   form.append('file', new Blob([buf], { type: 'audio/wav' }), 'audio.wav');
   form.append('model', GROQ_STT_MODEL);
   form.append('language', 'en');
   form.append('response_format', 'json');
+  const t0 = Date.now();
   const r = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
     method: 'POST',
     headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
     body: form,
   });
-  if (!r.ok) throw new Error(`Groq STT ${r.status}: ${await r.text()}`);
-  return ((await r.json()).text || '').trim();
+  log('sttGroq <- response', { status: r.status, ok: r.ok, ms: Date.now() - t0 });
+  if (!r.ok) {
+    const body = await r.text();
+    errlog('sttGroq ERROR body:', body);          // full Groq error so we can read it server-side
+    throw new Error(`Groq STT ${r.status}: ${body}`);
+  }
+  const json = await r.json();
+  const text = (json.text || '').trim();
+  log('sttGroq transcript:', preview(text));
+  return text;
 }
 
 async function sttElevenLabs(buf) {
+  log('sttElevenLabs -> request', { model: ELEVEN_MODEL, wavBytes: buf.length, keyPresent: !!ELEVEN_API_KEY });
   const form = new FormData();
   form.append('file', new Blob([buf], { type: 'audio/wav' }), 'audio.wav');
   form.append('model_id', ELEVEN_MODEL);
+  const t0 = Date.now();
   const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
     method: 'POST',
     headers: { 'xi-api-key': ELEVEN_API_KEY },
     body: form,
   });
-  if (!r.ok) throw new Error(`ElevenLabs STT ${r.status}: ${await r.text()}`);
-  return ((await r.json()).text || '').trim();
+  log('sttElevenLabs <- response', { status: r.status, ok: r.ok, ms: Date.now() - t0 });
+  if (!r.ok) {
+    const body = await r.text();
+    errlog('sttElevenLabs ERROR body:', body);
+    throw new Error(`ElevenLabs STT ${r.status}: ${body}`);
+  }
+  const json = await r.json();
+  const text = (json.text || '').trim();
+  log('sttElevenLabs transcript:', preview(text));
+  return text;
 }
 
 function transcribe(buf) {
+  log('transcribe via', STT_PROVIDER);
   return STT_PROVIDER === 'elevenlabs' ? sttElevenLabs(buf) : sttGroq(buf);
 }
 
@@ -144,6 +187,8 @@ async function askClaude(question) {
     `not the omega sign). Be extremely concise: prefer one answer that fits a tiny OLED of about ` +
     `${COLS} chars by ${ROWS} lines. Hard cap about ${COLS * ROWS * MAX_PAGES} characters. ` +
     `Lead with the answer, no preamble.`;
+  log('askClaude -> request', { model: ANTHROPIC_MODEL, keyPresent: !!ANTHROPIC_KEY, question: preview(question) });
+  const t0 = Date.now();
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -158,15 +203,33 @@ async function askClaude(question) {
       messages: [{ role: 'user', content: question }],
     }),
   });
-  if (!r.ok) throw new Error(`Anthropic ${r.status}: ${await r.text()}`);
+  log('askClaude <- response', { status: r.status, ok: r.ok, ms: Date.now() - t0 });
+  if (!r.ok) {
+    const body = await r.text();
+    errlog('askClaude ERROR body:', body);
+    throw new Error(`Anthropic ${r.status}: ${body}`);
+  }
   const j = await r.json();
-  return (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  const answer = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  log('askClaude answer:', preview(answer));
+  return answer;
 }
 
 // ---- handler ----
 router.post('/badge/ask', async (req, res) => {
+  const reqStart = Date.now();
+  log('--- POST /badge/ask ---', {
+    contentType: req.get('content-type') || '(none)',
+    contentLength: req.get('content-length') || '(none)',
+    query: req.query,
+    bodyIsBuffer: Buffer.isBuffer(req.body),
+    bodyLen: Buffer.isBuffer(req.body) ? req.body.length : undefined,
+    bodyType: Buffer.isBuffer(req.body) ? 'buffer' : typeof req.body,
+    hasToken: !!req.get('x-badge-token'),
+  });
   try {
     if (DEVICE_TOKEN && req.get('x-badge-token') !== DEVICE_TOKEN) {
+      log('rejected: bad/missing x-badge-token');
       return res.status(401).json({ error: 'bad token' });
     }
 
@@ -174,24 +237,31 @@ router.post('/badge/ask', async (req, res) => {
     if (Buffer.isBuffer(req.body) && req.body.length) {
       const rate = parseInt(req.query.rate || '16000', 10);     // raw-PCM sample rate (ignored if already WAV)
       const ch   = parseInt(req.query.ch   || '1', 10);
+      const isWav = req.body.length >= 12 && req.body.toString('ascii', 0, 4) === 'RIFF';
+      log('audio path', { rawBytes: req.body.length, rate, ch, alreadyWav: isWav });
       const wav  = ensureWav(req.body, rate, ch);               // wraps headerless PCM; passes WAV through
+      log('wav ready', { wavBytes: wav.length });
       transcript = await transcribe(wav);                       // audio path (mic)
     } else if (req.body && typeof req.body.text === 'string') {
       transcript = req.body.text.trim();                        // text path (curl / future T9)
+      log('text path', { text: preview(transcript) });
     } else {
+      log('rejected: no audio buffer and no JSON text field');
       return res.status(400).json({ error: 'send audio (Content-Type: audio/wav) or JSON {"text":"..."}' });
     }
 
     if (!transcript) {
+      log('rejected: empty transcript after STT/parse');
       return res.status(422).json({ error: 'empty transcript', transcript: '', pages: [], totalPages: 0 });
     }
 
     const answer = await askClaude(transcript);
     const pages = paginate(wrap(answer, COLS), ROWS, MAX_PAGES);
+    log('OK response', { transcriptLen: transcript.length, answerLen: answer.length, totalPages: pages.length, ms: Date.now() - reqStart });
 
     res.json({ transcript, answer, pages, totalPages: pages.length, cols: COLS, rows: ROWS });
   } catch (e) {
-    console.error('[badge/ask]', e);
+    errlog('handler caught error after', Date.now() - reqStart, 'ms:', e && e.stack ? e.stack : e);
     res.status(502).json({ error: String(e.message || e) });
   }
 });
