@@ -216,6 +216,7 @@ routes/auth.login.js
 routes/auth.password.js
 routes/auth.profile.js
 routes/availabilityAdmin.js
+routes/badge-ask-route.js
 routes/booking.js
 routes/cal.js
 routes/campaign.js
