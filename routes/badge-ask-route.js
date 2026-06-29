@@ -1,9 +1,9 @@
 // badge-ask-route.js
 // Temp "badge" endpoint: audio (or text) -> STT -> Claude -> OLED-paginated JSON.
 //
-// Mount on YisraCase:
+// Routes are defined with full /badge/... paths, so mount at root:
 //   const badgeRoute = require('./badge-ask-route');
-//   app.use('/badge', badgeRoute);            // -> POST /badge/ask
+//   app.use(badgeRoute);          // -> POST /badge/ask , GET /badge/last.wav
 //
 // Requires Node 18+ (global fetch / FormData / Blob). Env vars:
 //   STT_PROVIDER          'groq' (default) | 'elevenlabs'
@@ -22,6 +22,10 @@
 // (Content-Type: application/octet-stream). For raw PCM the device streams chunks and
 // passes rate/channels as query params, e.g. POST /badge/ask?rate=16000&ch=1 -- the
 // route concatenates the body and prepends the 44-byte WAV header before STT.
+//
+// Debug: GET /badge/last.wav?token=SECRET downloads the most recent capture so you can
+// listen to exactly what STT received. Each audio request logs a 'pcm stats' line
+// (peak/rms/nonzeroPct) so you can tell dead silence from real signal.
 
 const express = require('express');
 const router = express.Router();
@@ -39,6 +43,8 @@ const DEVICE_TOKEN    = process.env.BADGE_DEVICE_TOKEN || '';
 const COLS      = parseInt(process.env.OLED_COLS || '21', 10);
 const ROWS      = parseInt(process.env.OLED_ROWS || '5', 10);
 const MAX_PAGES = parseInt(process.env.OLED_MAX_PAGES || '6', 10);
+
+let lastWav = null;   // most recent capture, served by GET /badge/last.wav
 
 // ---- logging helpers ----
 const log = (...a) => console.log('[badge/ask]', ...a);
@@ -123,6 +129,29 @@ function pcmToWav(pcm, rate, channels, bits) {
 function ensureWav(buf, rate, channels) {
   if (buf.length >= 12 && buf.toString('ascii', 0, 4) === 'RIFF') return buf; // already WAV
   return pcmToWav(buf, rate, channels, 16);                                   // wrap raw 16-bit PCM
+}
+
+// ---- PCM analyzer (diagnose silent vs real signal) ----
+function pcmStats(buf) {
+  const n = buf.length >> 1;
+  let peak = 0, sumSq = 0, nz = 0;
+  for (let i = 0; i < n; i++) {
+    const s = buf.readInt16LE(i << 1);
+    const a = s < 0 ? -s : s;
+    if (a > peak) peak = a;
+    if (s !== 0) nz++;
+    sumSq += s * s;
+  }
+  const head = [];
+  for (let i = 0; i < Math.min(8, n); i++) head.push(buf.readInt16LE(i << 1));
+  return {
+    samples: n,
+    peak,                                   // 0 = dead silence (slot/wiring); thousands = real signal
+    rms: Math.round(Math.sqrt(sumSq / Math.max(1, n))),
+    nonzeroPct: Math.round(100 * nz / Math.max(1, n)),
+    dbfs: peak > 0 ? Math.round(20 * Math.log10(peak / 32768)) : null,
+    head,                                   // first 8 raw samples
+  };
 }
 
 // ---- STT providers (swap via STT_PROVIDER) ----
@@ -215,6 +244,16 @@ async function askClaude(question) {
   return answer;
 }
 
+// ---- debug: download the most recent capture ----
+router.get('/badge/last.wav', (req, res) => {
+  if (DEVICE_TOKEN && req.get('x-badge-token') !== DEVICE_TOKEN && req.query.token !== DEVICE_TOKEN) {
+    return res.status(401).json({ error: 'bad token' });
+  }
+  if (!lastWav) return res.status(404).json({ error: 'no capture yet' });
+  res.set('Content-Type', 'audio/wav');
+  res.send(lastWav);
+});
+
 // ---- handler ----
 router.post('/badge/ask', async (req, res) => {
   const reqStart = Date.now();
@@ -239,7 +278,9 @@ router.post('/badge/ask', async (req, res) => {
       const ch   = parseInt(req.query.ch   || '1', 10);
       const isWav = req.body.length >= 12 && req.body.toString('ascii', 0, 4) === 'RIFF';
       log('audio path', { rawBytes: req.body.length, rate, ch, alreadyWav: isWav });
+      if (!isWav) log('pcm stats', pcmStats(req.body));         // dead silence vs real signal
       const wav  = ensureWav(req.body, rate, ch);               // wraps headerless PCM; passes WAV through
+      lastWav = wav;                                            // stash for GET /badge/last.wav
       log('wav ready', { wavBytes: wav.length });
       transcript = await transcribe(wav);                       // audio path (mic)
     } else if (req.body && typeof req.body.text === 'string') {
