@@ -262,6 +262,7 @@ scripts/backfillAppts.js
 scripts/backfillCampaignContacts.js
 scripts/courtBacktest.js
 scripts/courtCitationTest.js
+scripts/courtRescheduleTest.js
 scripts/courtReviewTest.js
 scripts/courtSummaryTest.js
 scripts/encrypt-smtp-passwords.js
