@@ -491,8 +491,13 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         applied.push({ action_index: i, type, entity_type: 'event', entity_id: String(old.event_id),
           summary: `reschedule ${oldSummary} -> ${newSummary}` });
         appliedOrIntended++;
+      } else if (matches.length === 0) {
+        // No existing future event of this type → clean create, nothing to
+        // collide with. The new event IS the correct outcome; do NOT queue.
+        await doCreateEvent(i, fields);
       } else {
-        // zero or >1 → land the new date as a fresh event; flag for human cleanup.
+        // 2+ future matches → genuine ambiguity about which to update. Create
+        // the new date AND flag for human cleanup of the duplicate(s).
         reviewReasons.push('event_update_ambiguous');
         await doCreateEvent(i, fields);
       }
