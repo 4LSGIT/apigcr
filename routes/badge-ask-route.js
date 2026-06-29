@@ -164,7 +164,7 @@ async function askClaude(question) {
 }
 
 // ---- handler ----
-router.post('/ask', async (req, res) => {
+router.post('/badge/ask', async (req, res) => {
   try {
     if (DEVICE_TOKEN && req.get('x-badge-token') !== DEVICE_TOKEN) {
       return res.status(401).json({ error: 'bad token' });
