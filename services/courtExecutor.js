@@ -87,6 +87,65 @@ function eventSummary(date, time, location) {
   return `${date}${time ? ' ' + time : ''}${location ? ' [' + location + ']' : ''}`;
 }
 
+// ── update_event title matching ────────────────────────────────────────────
+// Two FUTURE hearings on one case can share the generic event_type "Hearing"
+// (live: case 21-50019 has a Plan-Modification hearing AND a Trustee Motion-to-
+// Dismiss hearing, both type "Hearing"). update_event used to match on type
+// alone, so a reschedule of one would clobber the other. titlesMatch decides
+// whether two event titles name the SAME hearing, AFTER stripping the generic
+// scaffolding ("hearing on the ... chapter 13 ...") down to a distinguishing
+// core.
+//
+// CHOSEN RULE — biased toward FALSE. A false "no match" creates a new event and
+// FLAGS for a human (safe; the operator reconciles); a false "match" silently
+// reschedules the WRONG hearing (the bug we are killing). So:
+//   - normalize: lowercase, non-alphanumerics → spaces, collapse, tokenize.
+//   - drop generic filler tokens (incl. the tokens of "post-confirmation", and
+//     "&" which normalization erases) and any length-1 token (possessive "s").
+//   - both cores EMPTY     → TRUE  (both fully generic, e.g. "Hearing" vs
+//                                   "Confirmation Hearing" — with a single type
+//                                   match there is no other hearing to confuse
+//                                   it with; required so plain reschedules of a
+//                                   lone generic hearing still update in place).
+//   - exactly ONE empty    → FALSE (one side carries a distinguishing core the
+//                                   other lacks — cannot confirm same hearing).
+//   - both non-empty       → TRUE iff the smaller core ⊆ the larger, OR
+//                                   Jaccard(cores) ≥ 0.5.
+// "confirmation" is filler because the spec's filler list carries
+// "post-confirmation"; "Confirmation Hearing" therefore reduces to an empty core
+// and is matched via the both-empty rule, not by a shared significant token.
+const TITLE_FILLER = new Set([
+  'hearing', 'on', 'the', 'of', 'a', 'to', 'in', 'at', 'for', 'and',
+  'case', 'with', 're', 'notice', 'court', 'courtroom', 'ch', 'chapter',
+  'post', 'confirmation', '7', '13',
+]);
+
+/** title → Set of significant (non-filler, len>1) lowercase tokens. */
+function _titleCore(title) {
+  return new Set(
+    String(title == null ? '' : title)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim()
+      .split(/\s+/)
+      .filter((t) => t.length > 1 && !TITLE_FILLER.has(t))
+  );
+}
+
+/** True iff existingTitle and newTitle name the same hearing (see rule above). */
+function titlesMatch(existingTitle, newTitle) {
+  const a = _titleCore(existingTitle);
+  const b = _titleCore(newTitle);
+  if (a.size === 0 && b.size === 0) return true;   // both generic
+  if (a.size === 0 || b.size === 0) return false;  // one distinguishing, one not
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let inter = 0;
+  for (const t of small) if (large.has(t)) inter++;
+  if (inter === small.size) return true;           // smaller ⊆ larger
+  const union = a.size + b.size - inter;
+  return union > 0 && inter / union >= 0.5;        // Jaccard ≥ 0.5
+}
+
 async function insertCourtAiLog(db, row) {
   const [r] = await db.query(
     `INSERT INTO court_ai_log
@@ -454,15 +513,24 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       }
       const newTime = fields.time || null;
       const newLoc = fields.location || null;
-      // FUTURE Scheduled events of this type for the case.
-      const [matches] = await db.query(
-        `SELECT event_id, event_date, event_time, event_all_day, event_location FROM events
+      // FUTURE Scheduled events of THIS TYPE for the case. event_title is now
+      // SELECTed so we can disambiguate two same-type hearings by title (a
+      // reschedule must update the SAME hearing, never a different same-type one).
+      const [typeMatches] = await db.query(
+        `SELECT event_id, event_date, event_time, event_all_day, event_location, event_title
+           FROM events
           WHERE event_link_type='case_number' AND event_link_id=? AND event_type<=>?
             AND event_status='Scheduled' AND event_date >= CURDATE()`,
         [resolved.case_number, eventType]
       );
-      if (matches.length === 1) {
-        const old = matches[0];
+      // Of those, the ones whose TITLE names the same hearing as this email.
+      const titleMatches = typeMatches.filter((m) => titlesMatch(m.event_title, fields.event_title));
+
+      if (titleMatches.length === 1) {
+        // CONFIDENT same-hearing reschedule: exactly one future event of this
+        // type AND title. Update in place (mechanics unchanged from the prior
+        // single-match path).
+        const old = titleMatches[0];
         const oldSummary = eventSummary(toDatePart(old.event_date), toTimePart(old.event_time), old.event_location);
         const newSummary = eventSummary(newDate, newTime, newLoc);
         if (!effectiveDryRun) {
@@ -491,14 +559,17 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         applied.push({ action_index: i, type, entity_type: 'event', entity_id: String(old.event_id),
           summary: `reschedule ${oldSummary} -> ${newSummary}` });
         appliedOrIntended++;
-      } else if (matches.length === 0) {
-        // No existing future event of this type → clean create, nothing to
-        // collide with. The new event IS the correct outcome; do NOT queue.
+      } else if (typeMatches.length === 0) {
+        // Nothing of this type exists → clean create, nothing to collide with.
+        // The new event IS the correct outcome; do NOT queue. (Preserves the
+        // prior slice's zero-match-no-flag behavior.)
         await doCreateEvent(i, fields);
       } else {
-        // 2+ future matches → genuine ambiguity about which to update. Create
-        // the new date AND flag for human cleanup of the duplicate(s).
-        reviewReasons.push('event_update_ambiguous');
+        // Type-matches EXIST but no UNIQUE title match — either zero titles
+        // match (a DIFFERENT hearing shares the type) or 2+ do (ambiguous).
+        // Do NOT update anything (updating here is the wrong-hearing-clobber
+        // bug). Create the new event and FLAG for a human to verify / clean up.
+        reviewReasons.push('event_title_mismatch');
         await doCreateEvent(i, fields);
       }
       continue;
@@ -894,5 +965,5 @@ module.exports = {
   CASE_FIELD_POLICY,
   CASE_DATE_FIELDS,
   // exported for tests
-  _internal: { toDatePart, toTimePart },
+  _internal: { toDatePart, toTimePart, titlesMatch, _titleCore },
 };

@@ -84,6 +84,14 @@ function parsePayload(raw) {
  *        ambiguous event STILL queues. force overrides the model's holistic
  *        "a human should look" judgment, NOT the structural safeties. No effect
  *        on the extract_failed branch (no payload to force).
+ * @param {boolean} [opts.forceExtract=false]  explicit user-driven FRESH AI
+ *        pass: IGNORE any stored payload and run the full court_extract flow
+ *        (re-fetch subject/from_email/body, call court_extract, return ai:true +
+ *        the new court_ai_log_id). For rows where the model OUTPUT itself was
+ *        wrong (citation_miss / event_title_mismatch / model_flagged) — replaying
+ *        the stored actions cannot fix a bad extraction. Bypasses BOTH the
+ *        stored-payload replay AND the allowExtract skip (allowExtract still
+ *        governs the payload-null SWEEP case; forceExtract is the user's button).
  * @returns {Promise<{
  *   status:'reran'|'skipped',
  *   reason?:string,
@@ -93,13 +101,16 @@ function parsePayload(raw) {
  *   result?:object            // executor return (or a normalized extract result)
  * }>}
  */
-async function rerunCalRow(db, calRow, { allowExtract = true, force = false } = {}) {
+async function rerunCalRow(db, calRow, { allowExtract = true, force = false, forceExtract = false } = {}) {
   const dryRun  = !(await isLive(db));
   const payload = parsePayload(calRow.raw_response);
   const { subject, body, from_email } = await fetchEmail(db, calRow.message_id);
 
   // ── Stored payload present → replay it, NO AI call. ──────────────────────
-  if (payload) {
+  // forceExtract OVERRIDES this: the user explicitly wants a fresh AI pass
+  // because the model OUTPUT was wrong (citation_miss / event_title_mismatch /
+  // model_flagged) — replaying the stored actions cannot fix a bad extraction.
+  if (payload && !forceExtract) {
     payload.message_id = calRow.message_id; // trust our canonical id
     // ── APPROVE & RUN (force) ──────────────────────────────────────────────
     // Strip ONLY the model's soft needs_review flag — read solely at STEP 3 of
@@ -121,8 +132,11 @@ async function rerunCalRow(db, calRow, { allowExtract = true, force = false } = 
     };
   }
 
-  // ── No payload (extract_failed). ─────────────────────────────────────────
-  if (!allowExtract) {
+  // ── No payload (extract_failed), OR forceExtract requested. ──────────────
+  // The skip applies ONLY to the sweep's payload-null case (allowExtract=false).
+  // A forceExtract request is the user's explicit button and is always allowed
+  // to spend the AI call.
+  if (!allowExtract && !forceExtract) {
     return { status: 'skipped', reason: 'extract_failed_no_payload', ai: false };
   }
 

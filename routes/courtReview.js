@@ -250,6 +250,33 @@ router.post('/api/court-review/rerun', jwtOrApiKey, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// POST /api/court-review/reextract { court_ai_log_id }
+//   FRESH AI PASS for a row whose MODEL OUTPUT was the problem (citation_miss,
+//   event_title_mismatch, or model_flagged). IGNORES any stored payload and
+//   re-runs the full court_extract flow over the re-fetched email — replaying
+//   the stored actions cannot fix a bad extraction. Honors court_ingest_live for
+//   dry/live exactly like /rerun. (case_not_found is NOT a re-extract case — the
+//   model was fine, the docket just doesn't resolve; Adopt+replay is the path.)
+//   → { ok, status:'reran', ai:true, dry_run, new_court_ai_log_id, result }
+// ─────────────────────────────────────────────────────────────────────────
+router.post('/api/court-review/reextract', jwtOrApiKey, async (req, res) => {
+  try {
+    const id = Number((req.body || {}).court_ai_log_id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ ok: false, error: 'court_ai_log_id required' });
+    }
+    const row = await loadRow(req.db, id);
+    if (!row) return res.status(404).json({ ok: false, error: 'court_ai_log row not found' });
+
+    const r = await courtRerun.rerunCalRow(req.db, row, { forceExtract: true });
+    res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error('[courtReview] /reextract error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // POST /api/court-review/approve { court_ai_log_id }
 //   HUMAN OVERRIDE for a MODEL-FLAGGED queued row. Replays the stored payload
 //   exactly like /rerun, but with force:true — which strips ONLY the model's

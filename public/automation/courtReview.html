@@ -279,6 +279,19 @@ function reasonLabel(cat){
          </button>`
       : '';
 
+    // ── RE-EXTRACT button — rows where the MODEL OUTPUT was the problem ─────
+    // citation_miss:* / event_title_mismatch / model_flagged — replaying the
+    // stored payload can't fix a bad extraction, so offer a FRESH AI pass.
+    // event_title_mismatch lands in the model_flagged category client-side
+    // (reasonCategory), so the two cases below cover all three. NOT shown on
+    // case_not_found (the model was fine — Adopt+replay) nor extract_failed
+    // (its Re-run already runs a fresh extract; a second button would duplicate).
+    const reextractBtn = (cat === 'citation_miss' || cat === 'model_flagged')
+      ? `<button class="btn btn-sm" style="background:var(--purple);color:#fff" onclick="window.crReextract(${r.id})" title="Discard the stored extraction and run a FRESH AI pass over the original email. Use when the model's OUTPUT was wrong (bad citation, wrong hearing matched). Spends an AI call.">
+           <i class="fa-solid fa-robot"></i> Re-extract
+         </button>`
+      : '';
+
     const resolveHtml = resolvesNow
       ? `<div class="resolve-box resolve-ok"><i class="fa-solid fa-circle-check"></i> Docket resolves to <b>${esc(caseLabel)}</b>${res.primary_contact_name ? ' · '+esc(res.primary_contact_name) : ''} (case_id ${esc(res.case_id)})</div>`
       : `<div class="resolve-box resolve-no"><i class="fa-solid fa-triangle-exclamation"></i> No case resolves for <b class="mono">${esc(docket)}</b> — adopt the docket onto a case to proceed.</div>`;
@@ -303,6 +316,7 @@ function reasonLabel(cat){
           <i class="fa-solid fa-play"></i> Re-run
         </button>
         ${approveBtn}
+        ${reextractBtn}
         <button class="btn btn-green btn-sm" onclick="window.crAdopt(${r.id})" ${docket==='(no docket)'?'disabled':''}>
           <i class="fa-solid fa-folder-plus"></i> Adopt → case…
         </button>
@@ -391,6 +405,44 @@ function reasonLabel(cat){
       Toast.fire({ icon:'info', title:'Approved: nothing to apply' });
     else
       Toast.fire({ icon:'warning', title:'Approved but still queued ('+(out.review_reason||'review')+') — a safety check held, so it was not applied' });
+  }
+
+  // ── Re-extract (fresh AI pass for a wrong-OUTPUT row) ───────────────────
+  // Confirm (noting the AI-call cost), POST /reextract (forceExtract:true on the
+  // server → discards the stored payload, re-runs court_extract). Report the new
+  // outcome; if it still queued, surface the new review_reason.
+  async function reextract(id){
+    const { isConfirmed } = await Swal.fire({
+      title: 'Re-extract (fresh AI pass)',
+      html: `
+        <div style="font-size:12.5px;color:#475569;text-align:left">
+          Discards the stored extraction and runs the AI extractor again over the original email.
+          Use when the model's <b>output</b> was the problem (bad citation, wrong hearing matched) —
+          replaying the stored actions can't fix that.
+          <div style="margin-top:10px;color:#7c3aed;font-weight:600">⚠ This spends a fresh AI call.</div>
+        </div>`,
+      width: 520,
+      showCancelButton: true,
+      confirmButtonText: 'Re-extract',
+      confirmButtonColor: '#8b5cf6',
+      showCloseButton: true,
+    });
+    if (!isConfirmed) return;
+    try {
+      const r = await api('/api/court-review/reextract', 'POST', { court_ai_log_id: id });
+      reportReextract(r);
+      await load();
+    } catch (e) { Toast.fire({ icon:'error', title: e.message }); }
+  }
+
+  function reportReextract(r){
+    const out  = r.result || {};
+    const live = r.dry_run === false;
+    if (out.outcome === 'executed' && live) Toast.fire({ icon:'success', title:'Re-extracted & executed (live)' });
+    else if (out.outcome === 'executed')    Toast.fire({ icon:'info', title:'Re-extracted — dry-run only (court_ingest_live is off); still queued' });
+    else if (out.outcome === 'none')        Toast.fire({ icon:'info', title:'Re-extracted: nothing to apply' });
+    else if (out.extract_failed)            Toast.fire({ icon:'warning', title:'Re-extract failed again ('+(out.review_reason||'extract_failed')+')' });
+    else                                    Toast.fire({ icon:'warning', title:'Re-extracted — still queued ('+(out.review_reason||'review')+')' });
   }
 
   // Open the SHELL's CasePicker in a SHELL Swal; resolve to { case_id, case } | null.
@@ -502,6 +554,7 @@ function reasonLabel(cat){
   window.crReload      = load;
   window.crSelect      = select;
   window.crRerun       = rerun;
+  window.crReextract   = reextract;
   window.crApprove     = approve;
   window.crAdopt       = adopt;
   window.crGroupAdopt  = groupAdopt;

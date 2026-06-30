@@ -264,6 +264,7 @@ scripts/courtBacktest.js
 scripts/courtCitationTest.js
 scripts/courtReviewTest.js
 scripts/courtSummaryTest.js
+scripts/courtTitleMatchTest.js
 scripts/encrypt-smtp-passwords.js
 scripts/test_availability.js
 scripts/test_court_revert.js
