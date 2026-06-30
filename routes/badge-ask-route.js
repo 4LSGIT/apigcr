@@ -1,5 +1,5 @@
 // badge-ask-route.js
-// Temp "badge" endpoint: audio (or text) -> STT -> Claude -> OLED-paginated JSON.
+// Temp "badge" endpoint: audio (or text) -> STT -> Claude (+ web search) -> OLED-paginated JSON.
 //
 // Routes are defined with full /badge/... paths, so mount at root:
 //   const badgeRoute = require('./badge-ask-route');
@@ -14,18 +14,19 @@
 //   ANTHROPIC_API_KEY     required
 //   ANTHROPIC_MODEL       default 'claude-haiku-4-5-20251001'
 //   BADGE_DEVICE_TOKEN    optional shared secret; if set, device must send header  x-badge-token
-//   OLED_COLS             chars per line  (default 21  = u8g2 6x10 font on a 128px-wide panel)
-//   OLED_ROWS             content lines per page (default 5)
-//   OLED_MAX_PAGES        cap to avoid runaway answers (default 6)
+//   OLED_COLS / OLED_ROWS / OLED_MAX_PAGES   display geometry (defaults 21 / 5 / 6)
+//   BADGE_CITY/REGION/COUNTRY/TZ             optional: localize web-search results (e.g. weather)
+//
+// Web search: the Anthropic web_search tool is attached to every request; Claude decides on its
+// own whether to search (weather, news, prices, scores, live data) or answer from training.
+// Cost ~ $10 / 1000 searches + the extra input tokens; max_uses caps searches per request.
 //
 // Audio body may be a WAV (Content-Type: audio/wav) OR headerless 16-bit PCM
-// (Content-Type: application/octet-stream). For raw PCM the device streams chunks and
-// passes rate/channels as query params, e.g. POST /badge/ask?rate=16000&ch=1 -- the
-// route concatenates the body and prepends the 44-byte WAV header before STT.
+// (Content-Type: application/octet-stream). For raw PCM the device passes rate/channels as query
+// params, e.g. POST /badge/ask?rate=16000&ch=1 -- the route prepends the 44-byte WAV header.
 //
-// Debug: GET /badge/last.wav?token=SECRET downloads the most recent capture so you can
-// listen to exactly what STT received. Each audio request logs a 'pcm stats' line
-// (peak/rms/nonzeroPct) so you can tell dead silence from real signal.
+// Debug: GET /badge/last.wav?token=SECRET downloads the most recent capture. Each audio request
+// logs a 'pcm stats' line (peak/rms/nonzeroPct) so you can tell dead silence from real signal.
 
 const express = require('express');
 const router = express.Router();
@@ -43,6 +44,13 @@ const DEVICE_TOKEN    = process.env.BADGE_DEVICE_TOKEN || '';
 const COLS      = parseInt(process.env.OLED_COLS || '21', 10);
 const ROWS      = parseInt(process.env.OLED_ROWS || '5', 10);
 const MAX_PAGES = parseInt(process.env.OLED_MAX_PAGES || '6', 10);
+
+// optional: localize web-search results (e.g. weather). Leave BADGE_CITY empty to omit.
+const BADGE_CITY    = process.env.BADGE_CITY    || '';     // e.g. 'Southfield'
+const BADGE_REGION  = process.env.BADGE_REGION  || '';     // e.g. 'Michigan'
+const BADGE_COUNTRY = process.env.BADGE_COUNTRY || 'US';
+const BADGE_TZ      = process.env.BADGE_TZ      || '';     // e.g. 'America/Detroit'
+const SEARCH_MAX_USES = parseInt(process.env.SEARCH_MAX_USES || '3', 10);
 
 let lastWav = null;   // most recent capture, served by GET /badge/last.wav
 
@@ -66,6 +74,8 @@ log('config', {
   ANTHROPIC_MODEL,
   BADGE_DEVICE_TOKEN: DEVICE_TOKEN ? 'set' : 'none',
   COLS, ROWS, MAX_PAGES,
+  WEB_SEARCH: `on (max_uses=${SEARCH_MAX_USES})`,
+  LOCATION: BADGE_CITY ? `${BADGE_CITY}${BADGE_REGION ? ', ' + BADGE_REGION : ''}, ${BADGE_COUNTRY}` : 'none',
 });
 
 // body parsers: raw audio OR json text (each only fires on its own content-type)
@@ -208,15 +218,32 @@ function transcribe(buf) {
   return STT_PROVIDER === 'elevenlabs' ? sttElevenLabs(buf) : sttGroq(buf);
 }
 
-// ---- Claude ----
+// ---- Claude (+ web search) ----
 async function askClaude(question) {
   const system =
     `You are a pocket reference badge. Answer in plain ASCII text only - no markdown, asterisks, ` +
     `headers, bullet lists, emoji, or non-ASCII symbols (write "deg C" not the degree sign, "ohms" ` +
     `not the omega sign). Be extremely concise: prefer one answer that fits a tiny OLED of about ` +
     `${COLS} chars by ${ROWS} lines. Hard cap about ${COLS * ROWS * MAX_PAGES} characters. ` +
-    `Lead with the answer, no preamble.`;
-  log('askClaude -> request', { model: ANTHROPIC_MODEL, keyPresent: !!ANTHROPIC_KEY, question: preview(question) });
+    `Lead with the answer, no preamble. Use web search when the question needs current or real-time ` +
+    `info (weather, news, prices, schedules, scores, live data); otherwise answer from your own knowledge.`;
+
+  // Claude decides whether to search; max_uses caps cost/latency.
+  const webTool = { type: 'web_search_20250305', name: 'web_search', max_uses: SEARCH_MAX_USES };
+  if (BADGE_CITY) {
+    webTool.user_location = {
+      type: 'approximate',
+      city: BADGE_CITY,
+      ...(BADGE_REGION ? { region: BADGE_REGION } : {}),
+      country: BADGE_COUNTRY,
+      ...(BADGE_TZ ? { timezone: BADGE_TZ } : {}),
+    };
+  }
+
+  log('askClaude -> request', {
+    model: ANTHROPIC_MODEL, keyPresent: !!ANTHROPIC_KEY, question: preview(question),
+    webSearch: true, loc: BADGE_CITY || 'none',
+  });
   const t0 = Date.now();
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -227,8 +254,9 @@ async function askClaude(question) {
     },
     body: JSON.stringify({
       model: ANTHROPIC_MODEL,
-      max_tokens: 400,
+      max_tokens: 1024,                 // room for the internal search loop + final answer
       system,
+      tools: [webTool],
       messages: [{ role: 'user', content: question }],
     }),
   });
@@ -239,8 +267,17 @@ async function askClaude(question) {
     throw new Error(`Anthropic ${r.status}: ${body}`);
   }
   const j = await r.json();
-  const answer = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
-  log('askClaude answer:', preview(answer));
+
+  // Take the text AFTER the last search activity so a "let me check..." preamble before the
+  // search never lands on the OLED. If no search happened, this is just all the text blocks.
+  const blocks = j.content || [];
+  let lastTool = -1;
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].type === 'server_tool_use' || blocks[i].type === 'web_search_tool_result') lastTool = i;
+  }
+  const answer = blocks.slice(lastTool + 1).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  const searches = blocks.filter(b => b.type === 'server_tool_use').length;
+  log('askClaude answer:', preview(answer), { searches, stop: j.stop_reason });
   return answer;
 }
 
