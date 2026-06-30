@@ -147,7 +147,17 @@
 const P = window.parent;
 const api = (...args) => P.apiSend(...args);
 const E = id => document.getElementById(id);
-const Toast = Swal.mixin({ toast:true, position:'top-end', showConfirmButton:false, timer:2600 });
+const Toast = Swal.mixin({
+  toast: true,
+  position: "top",
+  showConfirmButton: true,
+  timer: 3000,
+  timerProgressBar: true,
+  didOpen: (toast) => {
+    toast.onmouseenter = Swal.stopTimer;
+    toast.onmouseleave = Swal.resumeTimer;
+  },
+});
 
 function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function reasonCategory(r){
