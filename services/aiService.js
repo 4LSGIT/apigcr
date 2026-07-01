@@ -17,7 +17,8 @@
 //               clean 2xx is 'ok'.
 //   'error'   = non-2xx, bad envelope, no_auth, OR a 2xx whose JSON output
 //               failed to parse (error='json_parse').
-//   'timeout' = AbortController fired (20s).
+//   'timeout' = AbortController fired (default 20s; per-call opts.timeout_ms,
+//               clamped 1s–60s).
 // Each transport attempt is its own row and stamps its OWN status: a json
 // call that fails to parse, then succeeds on the stricter retry, writes one
 // 'error'/'json_parse' row followed by one 'ok' row. Tokens + cost are stamped
@@ -38,7 +39,9 @@ const { getPrompt } = require('../lib/aiPrompts');
 const ANTHROPIC_URL           = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_CREDENTIAL_ID = 12;          // type=api_key "Claude"
 const ANTHROPIC_VERSION       = '2023-06-01';
-const TIMEOUT_MS              = 20000;        // 20s via AbortController
+const TIMEOUT_MS              = 20000;        // default; per-call override via opts.timeout_ms
+const TIMEOUT_MIN_MS          = 1000;         // clamp floor for opts.timeout_ms
+const TIMEOUT_MAX_MS          = 60000;        // clamp ceiling for opts.timeout_ms
 const DEFAULT_MAX_TOKENS      = 1024;         // inline calls that omit max_tokens
 
 // Pricing per 1M tokens, keyed by model. Add new models here; an unknown
@@ -183,6 +186,8 @@ async function logCall(db, row) {
  * @param {string} [opts.model]        overrides prompt/required for inline
  * @param {number} [opts.max_tokens]   overrides prompt/default
  * @param {string} [opts.outputType]   'text'|'json'|'html' (default 'text')
+ * @param {number} [opts.timeout_ms]   per-attempt timeout override; clamped to
+ *                                     [TIMEOUT_MIN_MS, TIMEOUT_MAX_MS]. Default TIMEOUT_MS.
  * @param {string} [opts.mode]         'sync' (default). 'async' throws.
  * @param {string|null} [opts.consumerRef] free-form tag stored on ai_calls
  * @returns {Promise<{ok:boolean, output?:string, json?:any,
@@ -197,6 +202,7 @@ async function call(db, {
   model,
   max_tokens,
   outputType,
+  timeout_ms,
   mode = 'sync',
   consumerRef = null,
 } = {}) {
@@ -204,6 +210,12 @@ async function call(db, {
     // STOP-AND-REPORT: scheduled_jobs integration is a separate slice.
     throw new Error('aiService async mode not implemented');
   }
+
+  // ---- Resolve per-attempt timeout (clamped; garbage falls back to default) ----
+  const nTimeout = Number(timeout_ms);
+  const resolvedTimeoutMs = (Number.isFinite(nTimeout) && nTimeout > 0)
+    ? Math.min(Math.max(nTimeout, TIMEOUT_MIN_MS), TIMEOUT_MAX_MS)
+    : TIMEOUT_MS;
 
   // ---- Resolve prompt config ----
   let systemText, resolvedModel, resolvedMaxTokens, resolvedOutputType;
@@ -284,7 +296,7 @@ async function call(db, {
     };
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), resolvedTimeoutMs);
     const startedAt = Date.now();
 
     try {
@@ -358,7 +370,7 @@ async function call(db, {
       const aborted = err && err.name === 'AbortError';
       const status  = aborted ? 'timeout' : 'error';
       const errorMsg = aborted
-        ? `timeout after ${TIMEOUT_MS}ms`
+        ? `timeout after ${resolvedTimeoutMs}ms`
         : (err && err.message) || String(err);
 
       const callId = await logCall(db, {
