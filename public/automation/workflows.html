@@ -1643,7 +1643,10 @@ function wfRenderTester(step) {
   const detected = [...new Set(
     [...cfgStr.matchAll(/\{\{(\w[\w.]*)\}\}/g)]
       .map(m => m[1])
-      .filter(k => !k.startsWith('env.') && k !== 'this')
+      // this / this.* are step-output references resolved AFTER execution —
+      // never input variables. Seeding them creates phantom rows that shadow
+      // the real `this` resolution server-side (variables win in resolveSingle).
+      .filter(k => !k.startsWith('env.') && k !== 'this' && !k.startsWith('this.'))
   )];
 
   // Slice 2.1 — per-step dirty check. If the user has touched any variable
@@ -1741,7 +1744,10 @@ async function wfRunTest() {
   const variables = {};
   document.querySelectorAll('#wf-var-rows .var-row').forEach(row => {
     const [k, v] = row.querySelectorAll('input');
-    if (k.value.trim()) variables[k.value.trim()] = v.value;
+    const key = k.value.trim();
+    // this / this.* rows (stale tester-state snapshots or hand-typed) would
+    // shadow real step-output resolution server-side — never send them.
+    if (key && key !== 'this' && !key.startsWith('this.')) variables[key] = v.value;
   });
   const res_el = document.getElementById('wf-test-result');
   res_el.innerHTML = `<div style="margin-top:14px;color:var(--muted);font-size:13px"><i class="fa-solid fa-spinner spin"></i> Running…</div>`;

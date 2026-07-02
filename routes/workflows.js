@@ -1806,7 +1806,19 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
 router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { step, variables = {}, env = {} } = req.body;
- 
+
+  // Strip phantom step-output keys from incoming variables. The tester UI
+  // historically seeded a variable row for every {{placeholder}} found in the
+  // step config — including {{this.*}} step-output references — which then
+  // arrive here as variables with empty values. resolveSingle checks
+  // `key in variables` FIRST, so a phantom `this.output.x` key shadows the
+  // real post-execution `this` resolution and set_vars silently resolve to "".
+  // Step-output references are never legitimate *input* variables, so strip
+  // them server-side regardless of which client (or cached client) sent them.
+  for (const k of Object.keys(variables)) {
+    if (k === 'this' || k.startsWith('this.')) delete variables[k];
+  }
+
   if (!step || !step.type || !step.config) {
     return res.status(400).json({ error: "step.type and step.config are required" });
   }
