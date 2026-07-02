@@ -8,10 +8,22 @@
  *   2. Behavior — fixed input/output table that captures the validator's
  *      contract. New cases get added here when adding a new function or
  *      changing an existing one.
+ *
+ * Coverage is DERIVED from the registry — there is no hardcoded function-name
+ * list to go stale. Functions that intentionally carry no __meta are exempted
+ * by name in META_EXEMPT below, and a guard test ensures the exemption list
+ * itself can't go stale (every entry must exist and must genuinely lack meta).
  */
 /*
 npm install --save-dev jest
+
+# credentialCrypto (pulled in via internal_functions → emailService → smtp)
+# throws at require time without this env var. Any random key works here —
+# tests never decrypt real data. Use `export` (inline VAR=… \ continuation
+# breaks easily when pasted into interactive shells).
+export CREDENTIALS_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
 npx jest tests/internal_functions.meta.test.js
+
 npm uninstall --save-dev jest
 */
 const internalFunctions = require('../lib/internal_functions');
@@ -21,17 +33,40 @@ const ALLOWED_TYPES = new Set([
   'enum', 'iso_datetime', 'duration', 'object', 'array',
 ]);
 
-const ALLOWED_WIDGETS = new Set(['phone_line', 'email_from']);
+const ALLOWED_WIDGETS = new Set(['phone_line', 'phone_line_mms', 'email_from']);
+
+// Functions that intentionally carry NO __meta. Each entry must have a
+// comment at its definition in lib/internal_functions.js explaining why.
+//   court_extract — ingest-pipeline-only; its params are envelope dot-paths
+//                   supplied via the rule's params_mapping, which only exist
+//                   in the email-ingest pipeline. Must never render in the
+//                   workflow/sequence step editors.
+const META_EXEMPT = new Set(['court_extract']);
 
 describe('internal_functions __meta registry — shape', () => {
   const allMeta = internalFunctions.__getAllMeta();
 
-  test('every callable function (excluding __ helpers) has __meta', () => {
+  test('every callable function (excluding __ helpers and documented exemptions) has __meta', () => {
     const callable = Object.keys(internalFunctions).filter(
       k => typeof internalFunctions[k] === 'function' && !k.startsWith('__')
     );
-    const missing = callable.filter(k => !internalFunctions[k].__meta);
+    const missing = callable.filter(k => !internalFunctions[k].__meta && !META_EXEMPT.has(k));
     expect(missing).toEqual([]);
+  });
+
+  test('META_EXEMPT entries are real functions that genuinely lack meta', () => {
+    for (const name of META_EXEMPT) {
+      expect(typeof internalFunctions[name]).toBe('function');   // stale name → fail
+      expect(internalFunctions[name].__meta).toBeUndefined();    // meta added → remove exemption
+    }
+  });
+
+  test('registry and callable set agree (no orphan metas)', () => {
+    // Every key __getAllMeta returns must be a callable, non-__ function.
+    for (const name of Object.keys(allMeta)) {
+      expect(name.startsWith('__')).toBe(false);
+      expect(typeof internalFunctions[name]).toBe('function');
+    }
   });
 
   test.each(Object.entries(allMeta))(
@@ -92,17 +127,7 @@ describe('internal_functions __meta registry — shape', () => {
       }
     }
   );
-
-  test('all 24 functions present', () => {
-    expect(Object.keys(allMeta).sort()).toEqual([
-      'cancel_sequences', 'create_appointment', 'create_log', 'create_task',
-      'enroll_sequence', 'evaluate_condition', 'format_string', 'get_appointments',
-      'lookup_appointment', 'lookup_contact', 'noop', 'query_db',
-      'run_task_digest', 'schedule_resume', 'send_email', 'send_mms', 'send_sms',
-      'set_next', 'set_test_var', 'set_var', 'update_appointment',
-      'update_contact', 'wait_for', 'wait_until_time',
-    ]);
-  });
+});
 
 describe('validateParamsAgainstMeta — behavior fixtures', () => {
   const meta = internalFunctions.__getAllMeta();
@@ -168,6 +193,23 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
     // update_contact — object type
     ['update_contact valid',          'update_contact', { contact_id: '1', fields: { contact_type: 'Client' } }, null],
     ['update_contact fields=array',   'update_contact', { contact_id: '1', fields: ['nope'] }, 'must be a JSON object'],
+
+    // update_case — object type + required id
+    ['update_case valid',             'update_case', { case_id: '1', fields: { case_stage: 'Filed' } }, null],
+    ['update_case placeholder id',    'update_case', { case_id: '{{caseId}}', fields: { case_stage: 'Filed' } }, null],
+    ['update_case fields=array',      'update_case', { case_id: '1', fields: ['nope'] }, 'must be a JSON object'],
+    ['update_case missing id',        'update_case', { fields: { case_stage: 'Filed' } }, 'case_id is required'],
+
+    // query_ai — required prompt, strict enums, integer bounds
+    ['query_ai valid minimal',        'query_ai', { prompt: 'do x' }, null],
+    ['query_ai valid full',           'query_ai', { prompt: 'do x', input: '{{trigger.email_body}}', model: 'claude-haiku-4-5-20251001', output_type: 'json', max_tokens: 2048, timeout_ms: 30000, output_var: 'r' }, null],
+    ['query_ai missing prompt',       'query_ai', { input: 'text' }, 'prompt is required'],
+    ['query_ai bad model',            'query_ai', { prompt: 'x', model: 'gpt-5' }, 'must be one of'],
+    ['query_ai placeholder model rejected', 'query_ai', { prompt: 'x', model: '{{aiModel}}' }, 'must be one of'],
+    ['query_ai bad output_type',      'query_ai', { prompt: 'x', output_type: 'html' }, 'must be one of'],
+    ['query_ai max_tokens too high',  'query_ai', { prompt: 'x', max_tokens: 99999 }, 'must be <= 8192'],
+    ['query_ai timeout too low',      'query_ai', { prompt: 'x', timeout_ms: 10 }, 'must be >= 1000'],
+    ['query_ai string max_tokens ok', 'query_ai', { prompt: 'x', max_tokens: '512' }, null],
 
     // run_task_digest — boolean type
     ['digest force=true',             'run_task_digest', { force: true }, null],

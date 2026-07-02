@@ -35,18 +35,31 @@ Functions can return:
 
 Each function carries a `__meta` block — a JSON description of its params (name, type, required, etc.) that drives the form-driven UI. The reference below pulls directly from those `__meta` blocks; if a future change adds or renames a param, `GET /workflows/functions` is the live source of truth.
 
-### The 24 functions
+### The function registry
 
-Confirmed by `tests/internal_functions.meta.test.js`:
+54 callable functions as of 2026-07, grouped by `__meta` category. The meta test (`tests/internal_functions.meta.test.js`) derives its coverage from the registry itself — there is no hardcoded name list to go stale.
 
-```
-cancel_sequences, create_appointment, create_log, create_task,
-enroll_sequence, evaluate_condition, format_string, get_appointments,
-lookup_appointment, lookup_contact, noop, query_db,
-run_task_digest, schedule_resume, send_email, send_mms, send_sms,
-set_next, set_test_var, set_var, update_appointment,
-update_contact, wait_for, wait_until_time
-```
+| Category | Functions |
+|---|---|
+| control (workflow only) | `set_next`, `evaluate_condition` |
+| variables | `noop`, `set_var`, `format_string` |
+| timing (workflow only) | `schedule_resume`, `wait_for`, `wait_until_time` |
+| communication | `send_sms`, `send_email`, `send_mms` |
+| tasks | `create_task`, `run_task_digest` |
+| contacts | `lookup_contact`, `find_contact`, `update_contact` |
+| cases | `update_case` |
+| appointments | `create_appointment`, `lookup_appointment`, `update_appointment`, `get_appointments` |
+| events | `create_event`, `update_event`, `complete_event`, `lookup_event`, `get_events`, `run_event_digest` |
+| calendar | `gcal_create_event`, `gcal_get_event`, `gcal_update_event`, `gcal_delete_event` |
+| dropbox | `dropbox_create_folder`, `dropbox_get_shared_link`, `dropbox_list_folder`, `dropbox_move`, `dropbox_rename`, `dropbox_delete`, `dropbox_save_url`, `dropbox_ensure_case_folder` |
+| log | `create_log`, `phone_log` |
+| sequences | `cancel_sequences`, `enroll_sequence` |
+| connections | `refresh_expiring_oauth_credentials`, `rc_renew_subscriptions`, `gcontacts_sync_pending` |
+| system | `run_error_sweep`, `court_review_retry`, `court_activity_summary`, `generate_firm_blocks` |
+| general | `query_db` |
+| ai | `query_ai` |
+| dev | `set_test_var` |
+| *(no meta — pipeline-only)* | `court_extract` — intentionally carries no `__meta`; its params are envelope dot-paths that only exist in the email-ingest pipeline, so it must never appear in the step editors. Documented at its definition and exempted by name in the meta test. |
 
 ### Workflow-only vs both engines
 
@@ -499,6 +512,43 @@ The whitelist of allowed tables matches the resolver's whitelist — see chapter
 
 ---
 
+### AI (both engines)
+
+#### `query_ai`
+
+Send a prompt (plus optional untrusted input text) to Claude and use the response. Thin wrapper over `services/aiService.js`: credential id 12, per-attempt `ai_calls` logging (tokens / cost / latency, `consumer_ref='query_ai'`), `<untrusted_user_input>` wrapping, and JSON parse with one strict retry all live in the service.
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `prompt` | string | yes | Instructions (the system prompt). `{{placeholders}}` resolve before sending. **Never paste foreign text here — use `input`.** |
+| `input` | string | optional | The data to analyze (email body, inbound message, a `query_db` result). Wrapped in `<untrusted_user_input>` tags with a never-obey guard. Non-string values (e.g. an object via the engine's single-placeholder fast path) are `JSON.stringify`'d. |
+| `model` | enum | optional, default `claude-sonnet-4-6` | `claude-sonnet-4-6` (smarter) or `claude-haiku-4-5-20251001` (cheaper/faster for simple parses). Adding a model = add to the `__meta` enum **and** `aiService` `MODEL_PRICING` (unknown models log `cost_cents = null`). |
+| `output_type` | enum | optional, default `text` | `json`: response is fence-stripped and parsed (one strict retry on garbage); the step's output is the parsed **object**. `text`: raw text. |
+| `max_tokens` | integer | optional, default 1024, max 8192 | Response length cap. |
+| `timeout_ms` | integer | optional, default 20000, clamped 1000–60000 | Per-attempt API timeout. Long compositions at high `max_tokens` may need more than the 20s default. |
+| `output_var` | string | optional | Also copy the output into a named workflow variable for later steps (same convention as `query_db`). |
+
+Output access: in the **same step's** `set_vars`, use `{{this.output}}` (text) or `{{this.output.field}}` (json object). Later steps must use `output_var` — the next step's `this` is reset.
+
+Failure (`api_error`, `timeout`, `no_auth`, or `json_parse` after the retry) throws, so the step's `error_policy` applies. **Every attempt is billed and logged as its own `ai_calls` row** — `error_policy` retries re-bill, and a json call that needs the strict retry costs two calls. Prompts that demand raw-JSON-only output ("no prose, no code fences") usually parse on the first attempt.
+
+Prompt-injection boundary: the engine resolves `{{placeholders}}` in **all** params before the function runs, so nothing technically stops `{{trigger.email_body}}` inside `prompt` — but only `input` gets the untrusted-content guard. Instructions go in `prompt`; foreign text goes in `input`.
+
+```json
+{
+  "function_name": "query_ai",
+  "params": {
+    "prompt": "Extract the caller's callback phone number from the email. Respond with raw JSON only — no prose, no code fences: {\"phone\": string|null}",
+    "input": "{{trigger.email_body}}",
+    "output_type": "json",
+    "output_var": "parsed"
+  },
+  "set_vars": { "callbackPhone": "{{this.output.phone}}" }
+}
+```
+
+---
+
 ### Dev / testing
 
 #### `set_test_var`
@@ -589,4 +639,5 @@ internalFunctions.__validateParamsAgainstMeta(name, params)   // → null on suc
 5. **`get_appointments` and `query_db` both have a `format` param** — use `count` to just get the row count, `first` (query_db only) for a single row, `html_rows` for an HTML-formatted block ready for an email.
 6. **`evaluate_condition` `else: null` ends the workflow** — same as `set_next` with `null`. Useful for "if condition fails, we're done."
 7. **`send_email` `attachment_urls` must be a JSON array in the editor.** `emailService.sendEmail` accepts a single `{url, name}` object or a comma-separated string at runtime, but the workflow editor's metadata-driven validator declares `type: 'array'` and rejects non-array shapes at save time. Sequence editor enforces the same. **Wrap single attachments as `[{...}]`.** Also: the URL must be publicly reachable at send time (Pabbly fetches it itself; nodemailer's `path:` for SMTP does the same) — private/signed GCS URLs without anonymous access won't work.
+8. **`query_ai` output lives at `{{this.output.field}}`, not `{{this.field}}`** — `this` is the full function return `{success, output, set_vars, usage, call_id}`. This applies to every internal function's same-step `set_vars` (some older docstrings in `internal_functions.js` claim `{{this.column_name}}`; they're wrong — the code and chapter 6 are authoritative). And every `query_ai` attempt bills the API: `error_policy` retries and the json strict retry each write their own `ai_calls` row.
 8. **Workflow variables shadow resolver placeholders.** A workflow variable named `contact_fname` (set via `set_vars`) makes `{{contact_fname}}` resolve to the variable, not to `contacts.contact_fname`. Pick variable names that don't collide with resolver column names.
