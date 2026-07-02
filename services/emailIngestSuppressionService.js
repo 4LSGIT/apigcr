@@ -229,7 +229,22 @@ async function evaluateSuppressions(db, envelope) {
 // raw SQL callers (tests, future internal callers) get the same guard.
 // ─────────────────────────────────────────────────────────────
 
-const validator = require('./emailIngestValidator');
+// CIRCULAR-DEPENDENCY NOTE: emailIngestValidator requires
+// ../lib/internal_functions, and the phone-log pipeline lives inside
+// internal_functions and pulls in the phone ingest services. Today nothing in
+// that load graph requires this service back, so a top-level
+// `const validator = require('./emailIngestValidator')` happens to work — but
+// any future edge from the internal_functions graph into the email ingest
+// services would turn it into a partial-exports capture (the default empty {}
+// mid-load), with validator.* coming back undefined at runtime. Resolve it
+// lazily, matching phoneIngestMetaService / phoneIngestRuleService /
+// phoneIngestSuppressionService, so the email and phone sides carry the same
+// convention and the landmine class is closed.
+function _validator() {
+  // Lazy require — see CIRCULAR-DEPENDENCY NOTE above. Node caches the module,
+  // so this is a cheap registry lookup after first load, not a re-parse.
+  return require('./emailIngestValidator');
+}
 
 class ValidationError extends Error {
   constructor(errors) {
@@ -279,7 +294,7 @@ async function getById(db, id) {
  * @throws {ValidationError}
  */
 async function create(db, payload, userId) {
-  const { errors } = validator.validateSuppression(payload, true);
+  const { errors } = _validator().validateSuppression(payload, true);
   if (errors.length) throw new ValidationError(errors);
 
   const [r] = await db.query(
@@ -318,7 +333,7 @@ async function update(db, id, payload, userId) {
     match_mode:   payload.match_mode    !== undefined ? payload.match_mode   : existing.match_mode,
     match_config: payload.match_config !== undefined ? payload.match_config : existing.match_config,
   };
-  const { errors } = validator.validateSuppression(merged, true);
+  const { errors } = _validator().validateSuppression(merged, true);
   if (errors.length) throw new ValidationError(errors);
 
   const sets = [];

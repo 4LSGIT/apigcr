@@ -25,7 +25,23 @@
  */
 
 const { listOperators } = require('./hookFilter');
-const validator = require('./emailIngestValidator');
+
+// CIRCULAR-DEPENDENCY NOTE: emailIngestValidator requires
+// ../lib/internal_functions, and the phone-log pipeline lives inside
+// internal_functions and pulls in the phone ingest services. Today nothing in
+// that load graph requires this service back, so a top-level
+// `const validator = require('./emailIngestValidator')` happens to work — but
+// any future edge from the internal_functions graph into the email ingest
+// services would turn it into a partial-exports capture (the default empty {}
+// mid-load), with validator.* coming back undefined at runtime. Resolve it
+// lazily, matching phoneIngestMetaService / phoneIngestRuleService /
+// phoneIngestSuppressionService, so the email and phone sides carry the same
+// convention and the landmine class is closed.
+function _validator() {
+  // Lazy require — see CIRCULAR-DEPENDENCY NOTE above. Node caches the module,
+  // so this is a cheap registry lookup after first load, not a re-parse.
+  return require('./emailIngestValidator');
+}
 
 
 // ─────────────────────────────────────────────────────────────
@@ -202,7 +218,7 @@ async function _targets(db) {
     workflows,
     sequences,
     hooks,
-    internal_functions: validator.internalFunctionNames(),
+    internal_functions: _validator().internalFunctionNames(),
     internal_function_meta: _internalFunctionMeta(),
     credentials,
   };
