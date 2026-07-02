@@ -204,28 +204,27 @@ async function validateWebhookConfig(db, type, config) {
 
 // ─────────────────────────────────────────────────────────────
 // GET /workflows/functions — list available internal functions
-// Used by workflowManager.html to populate dropdowns dynamically
+// Used by the workflow/sequence editors to populate dropdowns dynamically.
+// The sequence list is META-DRIVEN: functions carrying __meta.workflowOnly
+// are excluded (workflow control flow / timing / variable manipulation live
+// in the engine; sequences have their own timing). Functions WITHOUT meta
+// default to sequence-eligible. There is no hardcoded exclusion list —
+// declare workflowOnly: true on the function's __meta instead.
 // MUST be defined before any /:id routes to avoid param capture
 // ─────────────────────────────────────────────────────────────
-
-const SEQUENCE_EXCLUDED = new Set([
-  'set_next', 'evaluate_condition',     // workflow control flow only
-  'schedule_resume', 'wait_for', 'wait_until_time', // sequences have own timing
-  'format_string',                      // workflow variable manipulation
-  'set_test_var'                        // dev only
-]);
 
 router.get('/workflows/functions', jwtOrApiKey, (req, res) => {
   // Filter out the __-prefixed helpers (validateParamsAgainstMeta, getMeta, getAllMeta)
   // added alongside the metadata registry — those aren't callable functions.
+  const meta = internalFunctions.__getAllMeta();
   const allFunctions = Object.keys(internalFunctions).filter(
     name => typeof internalFunctions[name] === 'function' && !name.startsWith('__')
   );
   res.json({
     success: true,
     workflow: allFunctions,
-    sequence: allFunctions.filter(f => !SEQUENCE_EXCLUDED.has(f)),
-    meta:     internalFunctions.__getAllMeta(),
+    sequence: allFunctions.filter(f => !(meta[f] && meta[f].workflowOnly)),
+    meta,
   });
 });
 

@@ -36,12 +36,12 @@ const ALLOWED_TYPES = new Set([
 const ALLOWED_WIDGETS = new Set(['phone_line', 'phone_line_mms', 'email_from']);
 
 // Functions that intentionally carry NO __meta. Each entry must have a
-// comment at its definition in lib/internal_functions.js explaining why.
-//   court_extract — ingest-pipeline-only; its params are envelope dot-paths
-//                   supplied via the rule's params_mapping, which only exist
-//                   in the email-ingest pipeline. Must never render in the
-//                   workflow/sequence step editors.
-const META_EXEMPT = new Set(['court_extract']);
+// comment at its definition in lib/internal_functions/ explaining why.
+// Currently empty: court_extract (the former lone exception) now carries a
+// minimal uiHidden meta so the editors can filter it from pickers via
+// metadata instead of a hardcoded exemption. The mechanism (and its guard
+// test below) stays so future exceptions get the same stale-proofing.
+const META_EXEMPT = new Set([]);
 
 describe('internal_functions __meta registry — shape', () => {
   const allMeta = internalFunctions.__getAllMeta();

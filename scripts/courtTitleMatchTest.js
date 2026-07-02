@@ -36,7 +36,7 @@ function fakeModule(relFromRoot, exports) {
   return exports;
 }
 // court_extract is mutated per-test; default no-op shape.
-const fakeInternal = fakeModule('lib/internal_functions.js', {
+const fakeInternal = fakeModule('lib/internal_functions/index.js', {
   court_extract: async () => ({ output: {} }),
 });
 fakeModule('services/caseService.js', {

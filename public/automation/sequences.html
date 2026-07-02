@@ -1270,7 +1270,10 @@ function seqRenderActionConfig(type, cfg) {
   // hidden in the sequence renderer (SEQ_HIDE_SETVARS_FIELD) — see filter
   // constants near top of script.
   const fnList   = (FUNCTIONS.sequence.length ? FUNCTIONS.sequence : ['noop']);
-  const currentFn = cfg.function_name && fnList.includes(cfg.function_name) ? cfg.function_name : fnList[0];
+  // Default new steps to the first NON-hidden function; a step already saved
+  // with a uiHidden function keeps it (seqBuildFnOptions includes it).
+  const firstVisible = fnList.find(f => !(FUNCTIONS.meta[f]?.uiHidden === true)) || fnList[0];
+  const currentFn = cfg.function_name && fnList.includes(cfg.function_name) ? cfg.function_name : firstVisible;
   const setVarsHtml = SEQ_HIDE_SETVARS_FIELD
     ? ''
     : `<div class="field"><label>set_vars (JSON)</label><textarea id="se-setvars" rows="3">${cfg.set_vars ? esc(JSON.stringify(cfg.set_vars, null, 2)) : ''}</textarea></div>`;
@@ -1284,9 +1287,50 @@ function seqRenderActionConfig(type, cfg) {
     ? `<input type="hidden" id="se-setvars-preserved" value="${esc(JSON.stringify(cfg.set_vars))}">`
     : '';
   return `${toggle}
-    <div class="field"><label>Function</label><select id="se-fn" onchange="seqOnFnChange()">${fnList.map(f => `<option ${currentFn === f ? 'selected' : ''}>${f}</option>`).join('')}</select></div>
+    <div class="field"><label>Function</label><select id="se-fn" onchange="seqOnFnChange()">${seqBuildFnOptions(fnList, currentFn)}</select></div>
     <div id="se-fn-body">${seqRenderInternalFnBody(currentFn, cfg.params || {})}</div>
     ${setVarsHtml}${setVarsHidden}`;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Grouped function-picker options — MIRROR of wfBuildFnOptions /
+// WF_FN_CATEGORY_ORDER in workflows.html. Keep the two in sync.
+//
+// Groups fnList into <optgroup>s by FUNCTIONS.meta[name].category ('other'
+// for meta-less functions — in the hardcoded-fallback path FUNCTIONS.meta is
+// {} so everything lands in 'other', matching the old flat behavior).
+// Functions with meta.uiHidden === true are filtered from the picker UNLESS
+// the step being edited currently has that function selected — then it's
+// included in its category group with a " (hidden)" label suffix so existing
+// steps stay viewable/editable. value="" is set explicitly so the suffix
+// never leaks into the saved function_name.
+// ─────────────────────────────────────────────────────────────
+const SEQ_FN_CATEGORY_ORDER = ['communication','contacts','cases','appointments','events','tasks','log',
+  'sequences','calendar','dropbox','ai','general','control','timing',
+  'variables','connections','system','dev','other'];
+function seqBuildFnOptions(fnList, currentFn) {
+  const groups = new Map();
+  for (const f of fnList) {
+    const m = FUNCTIONS.meta[f];
+    if (m && m.uiHidden === true && f !== currentFn) continue;
+    const cat = (m && m.category) || 'other';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(f);
+  }
+  const otherIdx = SEQ_FN_CATEGORY_ORDER.indexOf('other');
+  const rank = c => {
+    const i = SEQ_FN_CATEGORY_ORDER.indexOf(c);
+    return i === -1 ? otherIdx - 0.5 : i;  // unknown categories append before 'other'
+  };
+  const cats = [...groups.keys()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  return cats.map(cat =>
+    `<optgroup label="${cat}">` +
+    groups.get(cat).sort().map(f => {
+      const hidden = FUNCTIONS.meta[f]?.uiHidden === true;
+      return `<option value="${f}" ${currentFn === f ? 'selected' : ''}>${f}${hidden ? ' (hidden)' : ''}</option>`;
+    }).join('') +
+    `</optgroup>`
+  ).join('');
 }
 
 // Slice 3.3 — checkbox handler for start_workflow's tie-to-contact toggle.

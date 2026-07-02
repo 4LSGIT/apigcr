@@ -36,9 +36,10 @@ consumer changes were needed.
 
 - **`__meta` sits immediately below its implementation.** New functions need a
   `__meta` block — `tests/internal_functions.meta.test.js` enforces the shape.
-  (The lone exception is `court_extract`, which intentionally carries no meta;
-  the comment at its definition in `court.js` explains why. Any new exception
-  needs the same treatment: a comment at the definition.)
+  (Every function currently has one — `court_extract`, the former lone
+  exception, now carries a minimal `uiHidden` meta so the editors filter it
+  from pickers via metadata. Any new meta-less exception needs a comment at
+  the definition AND an entry in the test's `META_EXEMPT` set.)
 
 - **`index.js` auto-scans this directory** — there is no registration step.
   Drop a new category file in and its exports join the registry at boot.
@@ -81,7 +82,8 @@ Schema fields:
 |---|---|---|
 | `category` | string | grouping label (control / timing / …) |
 | `description` | string | one-line summary shown above the form |
-| `workflowOnly` | boolean | advisory; matches `SEQUENCE_EXCLUDED` in routes |
+| `workflowOnly` | boolean | DRIVES the sequence exclusion — `GET /workflows/functions` filters these from the `sequence` list |
+| `uiHidden` | boolean | filtered from the workflow/sequence editor pickers (still shown, suffixed "(hidden)", on steps already using the function) |
 | `controlFlow` | boolean | advisory; matches `isControlStep` in engine |
 | `params` | array | param specs (below) |
 | `exclusiveOneOf` | array of `[name,…]` groups | exactly one must be set |
