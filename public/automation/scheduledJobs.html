@@ -6,6 +6,7 @@
   <title>Scheduled Jobs</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/automation/fnPicker.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        SCHEDULED JOBS SUB-PAGE — self-contained styles.
@@ -218,7 +219,10 @@ let subPageActive = false;
 // Functions list for the internal_function dropdown in New Job.
 // Each sub-page that needs this list fetches its own — cheap,
 // matches hooks.html's approach, avoids shell-level state.
-const FUNCTIONS = { workflow: [], sequence: [] };
+// FUNCTIONS.meta is a map of name → __meta (drives the grouped picker in
+// fnPicker.js); stays {} on the hardcoded-fallback path, so everything
+// groups under 'other' there.
+const FUNCTIONS = { workflow: [], sequence: [], meta: {} };
 
 // Credentials list for the webhook credential dropdown — same pattern as
 // workflows.html and sequences.html.  `loaded` flag distinguishes "not yet
@@ -231,6 +235,7 @@ async function loadFunctions() {
     const data = await api('/workflows/functions');
     FUNCTIONS.workflow = data.workflow || [];
     FUNCTIONS.sequence = data.sequence || [];
+    FUNCTIONS.meta     = data.meta     || {};
   } catch (e) {
     console.warn('Failed to load function list, using fallback:', e.message);
     FUNCTIONS.workflow = ['set_next','evaluate_condition','noop','set_var','format_string','schedule_resume','wait_for','wait_until_time','send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','set_test_var'];
@@ -403,7 +408,10 @@ async function jobNew() {
   if (!FUNCTIONS.workflow.length) await loadFunctions();
   if (!CREDENTIALS.loaded)        await loadCredentials();
 
-  const fnOpts = (FUNCTIONS.workflow.length ? FUNCTIONS.workflow : ['noop']).map(f => `<option value="${f}">${f}</option>`).join('');
+  // Grouped picker (fnPicker.js). New Job is create-only — no current
+  // function to preserve, so currentFn is null and the browser defaults to
+  // the first option of the first group. uiHidden functions are filtered.
+  const fnOpts = buildFnOptions(FUNCTIONS.workflow.length ? FUNCTIONS.workflow : ['noop'], FUNCTIONS.meta, null, { applyHidden: true });
   // Webhook credential injection slice — credential dropdown for webhook jobs.
   // Empty option means no auth header (anonymous request).
   const credOpts = CREDENTIALS.loaded

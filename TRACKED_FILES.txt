@@ -116,6 +116,7 @@ public/apptform2.html
 public/assetManager.html
 public/automation/courtReview.html
 public/automation/emailIngest.html
+public/automation/fnPicker.js
 public/automation/hooks.html
 public/automation/phoneIngest.html
 public/automation/scheduledJobs.html

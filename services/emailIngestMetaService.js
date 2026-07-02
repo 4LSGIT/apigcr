@@ -203,8 +203,28 @@ async function _targets(db) {
     sequences,
     hooks,
     internal_functions: validator.internalFunctionNames(),
+    internal_function_meta: _internalFunctionMeta(),
     credentials,
   };
+}
+
+// name → { category } for the grouped function picker (fnPicker.js).
+// Names without __meta simply have no entry (they group under 'other'
+// client-side). uiHidden is deliberately NOT included: the ingest surfaces
+// ignore hiding, and omitting the flag makes that impossible to get wrong.
+//
+// Lazy require of lib/internal_functions — same rationale as
+// phoneIngestMetaService's CIRCULAR-DEPENDENCY NOTE: the phone-log pipeline
+// lives inside internal_functions and pulls in ingest services, so a
+// top-level require here could capture a mid-load module. Node caches the
+// module, so this is a cheap lookup after first load.
+function _internalFunctionMeta() {
+  const allMeta = require('../lib/internal_functions').__getAllMeta();
+  const out = {};
+  for (const [name, m] of Object.entries(allMeta)) {
+    if (m && m.category) out[name] = { category: m.category };
+  }
+  return out;
 }
 
 

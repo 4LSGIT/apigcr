@@ -6,6 +6,7 @@
   <title>Hooks</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/automation/fnPicker.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        HOOKS SUB-PAGE — self-contained styles.
@@ -651,6 +652,7 @@ window.togglePanelLeft = togglePanelLeft;
   let sequenceTemplatesList = [];
   let sequenceTypesList = [];   // [{ type, priority_fields, description, active, ... }]
   let internalFunctionsList = [];
+  let internalFunctionsMeta = {};   // name → __meta, drives grouped picker (fnPicker.js)
 
   // ── Init (lazy, runs on first tab open) ──
   async function hooksInit() {
@@ -673,6 +675,7 @@ window.togglePanelLeft = togglePanelLeft;
       workflowsList = wfData.workflows || wfData || [];
       sequenceTemplatesList = seqData.templates || seqData || [];
       internalFunctionsList = fnData.workflow || fnData.functions || fnData || [];
+      internalFunctionsMeta = fnData.meta || {};
       sequenceTypesList = stData.types || [];
       renderHookList();
     } catch (e) {
@@ -1295,7 +1298,10 @@ window.togglePanelLeft = togglePanelLeft;
     }).join('');
 
     const seqModeInit = (cfg.template_id != null && cfg.template_id !== '') ? 'id' : 'type';
-    const fnOpts = internalFunctionsList.map(fn => `<option value="${esc(fn)}" ${cfg.function_name===fn?'selected':''}>${esc(fn)}</option>`).join('');
+    // Grouped picker (fnPicker.js). uiHidden functions are filtered unless
+    // this target already has one selected. The "— select a function —"
+    // placeholder option stays outside, ahead of the groups.
+    const fnOpts = buildFnOptions(internalFunctionsList, internalFunctionsMeta, cfg.function_name || null, { applyHidden: true });
 
     return `
       <div style="text-align:left;font-size:13px">

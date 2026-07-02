@@ -228,8 +228,26 @@ async function _targets(db) {
     sequences,
     hooks,
     internal_functions: _validator().internalFunctionNames(),
+    internal_function_meta: _internalFunctionMeta(),
     credentials,
   };
+}
+
+// name → { category } for the grouped function picker (fnPicker.js).
+// Names without __meta simply have no entry (they group under 'other'
+// client-side). uiHidden is deliberately NOT included: the ingest surfaces
+// ignore hiding, and omitting the flag makes that impossible to get wrong.
+//
+// Lazy require — see CIRCULAR-DEPENDENCY NOTE above; lib/internal_functions
+// sits inside the same cycle as emailIngestValidator (it pulls in the phone
+// ingest services), so require at call time, not module load.
+function _internalFunctionMeta() {
+  const allMeta = require('../lib/internal_functions').__getAllMeta();
+  const out = {};
+  for (const [name, m] of Object.entries(allMeta)) {
+    if (m && m.category) out[name] = { category: m.category };
+  }
+  return out;
 }
 
 

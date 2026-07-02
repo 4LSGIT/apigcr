@@ -55,6 +55,15 @@ consumer changes were needed.
   `query_db` carries `'general'` but lives in `db.js`. Do not "fix" a category
   to match its filename.
 
+- **New categories render without registration, but sort near the end.** The
+  grouped function picker (`public/automation/fnPicker.js` — shared by the
+  workflow, sequence, scheduled-job, hook, and email/phone ingest editors)
+  orders `<optgroup>`s by its `FN_CATEGORY_ORDER` array. A category absent
+  from that array still renders with all its functions, placed just before
+  `other` (alphabetical among other unlisted categories). To give a new
+  category a deliberate slot, add it to `FN_CATEGORY_ORDER` — one edit, all
+  six surfaces pick it up.
+
 - **Lazy-require discipline.** Requires carrying circular-dependency comments
   (`// deferred require (circular dep safety)`, `// lazy require (convention)`,
   `// ← lazy require`) MUST stay inside the function bodies — moving them to
@@ -83,7 +92,7 @@ Schema fields:
 | `category` | string | grouping label (control / timing / …) |
 | `description` | string | one-line summary shown above the form |
 | `workflowOnly` | boolean | DRIVES the sequence exclusion — `GET /workflows/functions` filters these from the `sequence` list |
-| `uiHidden` | boolean | filtered from the workflow/sequence editor pickers (still shown, suffixed "(hidden)", on steps already using the function) |
+| `uiHidden` | boolean | filtered from the workflow / sequence / scheduled-job / hook pickers (still shown, suffixed "(hidden)", on steps already using the function). The email/phone ingest pickers deliberately ignore it (`applyHidden: false`) — their `/meta` payloads omit the flag entirely |
 | `controlFlow` | boolean | advisory; matches `isControlStep` in engine |
 | `params` | array | param specs (below) |
 | `exclusiveOneOf` | array of `[name,…]` groups | exactly one must be set |

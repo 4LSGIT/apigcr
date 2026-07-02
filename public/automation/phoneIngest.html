@@ -6,6 +6,7 @@
   <title>Phone Ingest</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/automation/fnPicker.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        PHONE INGEST SUB-PAGE — self-contained styles.
@@ -1951,7 +1952,12 @@ window.piToggleSidebar = piToggleSidebar;
     }).join('');
     const seqModeInit = (cfg.template_id != null && cfg.template_id !== '') ? 'id' : 'type';
     const hookOpts = (t.hooks || []).map(h => `<option value="${esc(h.slug)}" ${cfg.slug===h.slug?'selected':''}>${esc(h.name || h.slug)} (${esc(h.slug)})</option>`).join('');
-    const fnOpts = (t.internal_functions || []).map(fn => `<option value="${esc(fn)}" ${cfg.function_name===fn?'selected':''}>${esc(fn)}</option>`).join('');
+    // Grouped picker (fnPicker.js). applyHidden false — the ingest surfaces
+    // deliberately show every callable function (incl. uiHidden ones like
+    // court_extract, which live ingest rules reference). Categories come from
+    // /meta's targets.internal_function_meta; {} fallback groups all under
+    // 'other'. The "— select a function —" placeholder stays outside.
+    const fnOpts = buildFnOptions(t.internal_functions || [], t.internal_function_meta || {}, cfg.function_name || null, { applyHidden: false });
     const credOpts = (t.credentials || []).map(c => `<option value="${c.id}" ${cfg.credential_id==c.id?'selected':''}>${esc(c.name)} (${esc(c.type)})</option>`).join('');
 
     return `

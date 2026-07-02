@@ -6,6 +6,7 @@
   <title>Workflows</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/automation/fnPicker.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        WORKFLOWS SUB-PAGE — self-contained styles.
@@ -960,11 +961,11 @@ function wfRenderConfigFields(type, cfg) {
   if (type === 'internal_function') {
     const fnList = (FUNCTIONS.workflow.length ? FUNCTIONS.workflow : ['noop']);
     // Default new steps to the first NON-hidden function; a step already
-    // saved with a uiHidden function keeps it (wfBuildFnOptions includes it).
+    // saved with a uiHidden function keeps it (buildFnOptions includes it).
     const firstVisible = fnList.find(f => !(FUNCTIONS.meta[f]?.uiHidden === true)) || fnList[0];
     const currentFn = cfg.function_name && fnList.includes(cfg.function_name) ? cfg.function_name : firstVisible;
     return `${toggle}
-      <div class="field"><label>Function</label><select id="e-fn" onchange="wfOnFnChange()">${wfBuildFnOptions(fnList, currentFn)}</select></div>
+      <div class="field"><label>Function</label><select id="e-fn" onchange="wfOnFnChange()">${buildFnOptions(fnList, FUNCTIONS.meta, currentFn, { applyHidden: true })}</select></div>
       <div id="e-fn-body">${wfRenderInternalFnBody(currentFn, cfg.params || {})}</div>
       <div class="field"><label>set_vars (JSON)</label><textarea id="e-setvars" rows="3">${cfg.set_vars ? JSON.stringify(cfg.set_vars, null, 2) : ''}</textarea></div>`;
   }
@@ -982,46 +983,8 @@ function wfOnTypeChange() {
   wfUpdateCredWarning();
 }
 
-// ─────────────────────────────────────────────────────────────
-// Grouped function-picker options — MIRRORED in sequences.html
-// (seqBuildFnOptions / SEQ_FN_CATEGORY_ORDER). Keep the two in sync.
-//
-// Groups fnList into <optgroup>s by FUNCTIONS.meta[name].category ('other'
-// for meta-less functions — in the hardcoded-fallback path FUNCTIONS.meta is
-// {} so everything lands in 'other', matching the old flat behavior).
-// Functions with meta.uiHidden === true are filtered from the picker UNLESS
-// the step being edited currently has that function selected — then it's
-// included in its category group with a " (hidden)" label suffix so existing
-// steps stay viewable/editable. value="" is set explicitly so the suffix
-// never leaks into the saved function_name.
-// ─────────────────────────────────────────────────────────────
-const WF_FN_CATEGORY_ORDER = ['communication','contacts','cases','appointments','events','tasks','log',
-  'sequences','calendar','dropbox','ai','general','control','timing',
-  'variables','connections','system','dev','other'];
-function wfBuildFnOptions(fnList, currentFn) {
-  const groups = new Map();
-  for (const f of fnList) {
-    const m = FUNCTIONS.meta[f];
-    if (m && m.uiHidden === true && f !== currentFn) continue;
-    const cat = (m && m.category) || 'other';
-    if (!groups.has(cat)) groups.set(cat, []);
-    groups.get(cat).push(f);
-  }
-  const otherIdx = WF_FN_CATEGORY_ORDER.indexOf('other');
-  const rank = c => {
-    const i = WF_FN_CATEGORY_ORDER.indexOf(c);
-    return i === -1 ? otherIdx - 0.5 : i;  // unknown categories append before 'other'
-  };
-  const cats = [...groups.keys()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
-  return cats.map(cat =>
-    `<optgroup label="${cat}">` +
-    groups.get(cat).sort().map(f => {
-      const hidden = FUNCTIONS.meta[f]?.uiHidden === true;
-      return `<option value="${f}" ${currentFn === f ? 'selected' : ''}>${f}${hidden ? ' (hidden)' : ''}</option>`;
-    }).join('') +
-    `</optgroup>`
-  ).join('');
-}
+// Grouped function-picker options: shared builder in /automation/fnPicker.js
+// (window.buildFnOptions) — replaced the Slice B wfBuildFnOptions mirror.
 
 // ─────────────────────────────────────────────────────────────
 // Internal-function form renderer — drives off FUNCTIONS.meta.
