@@ -5,6 +5,7 @@ const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const {
   advanceWorkflow,
   resolvePlaceholders,
+  resolveSingle,
   resolveExecutionContactId,
   InvalidContactIdError,
 } = require("../lib/workflow_engine");
@@ -1790,21 +1791,28 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
 
 /**
  * POST /workflows/test-step
- * Dry-run a single step in isolation — resolves placeholders against provided
- * variables and executes the step exactly as the engine would, but writes
- * nothing to the DB. Safe to call repeatedly during workflow development.
+ * Test a single step in isolation — resolves placeholders against provided
+ * variables, then either previews (dry_run) or executes the step.
  *
  * Body:
- *   step      { type, config }          — step definition (no id/workflow_id needed)
- *   variables { key: value, ... }       — simulated workflow variables
- *   env       { executionId?, stepNumber? }  — optional env overrides for {{env.*}}
+ *   step      { type, config, error_policy? }  — step definition (no id/workflow_id needed)
+ *   variables { key: value, ... }              — simulated workflow variables
+ *   env       { executionId?, stepNumber? }    — optional env overrides for {{env.*}}
+ *   dry_run   boolean (optional)               — resolve-only, no execution, no side effects
  *
- * Returns:
- *   { success, output, set_vars, next_step, delayed_until, error?, duration_ms }
+ * Dry-run returns:
+ *   { success: true, dry_run: true, resolved_config, unresolved_placeholders,
+ *     validation_error?, credential_note? }
+ *
+ * Live returns (unchanged shape, plus retries_skipped when the step's
+ * error_policy declared max_retries > 0 — the tester never sleeps through
+ * retry backoff; effective retries are forced to 0):
+ *   { success, output, set_vars, next_step, delayed_until, error?,
+ *     duration_ms, attempts, would_abort?, retries_skipped? }
  */
 router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
   const db = req.db;
-  const { step, variables = {}, env = {} } = req.body;
+  const { step, variables = {}, env = {}, dry_run = false } = req.body;
 
   // Strip phantom step-output keys from incoming variables. The tester UI
   // historically seeded a variable row for every {{placeholder}} found in the
@@ -1821,25 +1829,25 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
   if (!step || !step.type || !step.config) {
     return res.status(400).json({ error: "step.type and step.config are required" });
   }
- 
+
   const VALID_TYPES = ["webhook", "internal_function", "custom_code"];
   if (!VALID_TYPES.includes(step.type)) {
     return res.status(400).json({ error: `Invalid step type: ${step.type}` });
   }
- 
+
   // Parse config if it arrived as a string
   let config = step.config;
   if (typeof config === "string") {
     try { config = JSON.parse(config); }
     catch { return res.status(400).json({ error: "step.config is not valid JSON" }); }
   }
- 
+
   // Parse error_policy if present
   let errorPolicy = step.error_policy || { strategy: "ignore" };
   if (typeof errorPolicy === "string") {
     try { errorPolicy = JSON.parse(errorPolicy); } catch { errorPolicy = { strategy: "ignore" }; }
   }
- 
+
   const context = {
     variables,
     this: {},
@@ -1850,55 +1858,84 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
       ...env
     }
   };
- 
+
   // Resolve placeholders in config
   const resolvedConfig = resolvePlaceholders(config, context);
- 
+
+  // ── Dry run: resolve-only preview. No executeJob call, no side effects
+  // for any step type. Always 200 — validation problems are surfaced as
+  // data, not errors, so the author still sees the resolved view.
+  if (dry_run) {
+    const out = {
+      success:         true,
+      dry_run:         true,
+      resolved_config: resolvedConfig,
+      // Tokens in the ORIGINAL config that resolve to null (unknown variable,
+      // this.* pre-execution, unknown env helper). Cannot scan resolvedConfig —
+      // resolvePlaceholders blanks unresolved tokens to '' (resolveSingle
+      // returns null, replace callback does `?? ''`), so tokens never survive
+      // resolution. Probing the original tokens via resolveSingle also
+      // correctly distinguishes an unset variable (null → flagged) from a
+      // variable explicitly set to empty string ('' → not flagged).
+      unresolved_placeholders: [...new Set(
+        [...JSON.stringify(config).matchAll(/\{\{([^{}]+)\}\}/g)].map(m => m[1].trim())
+      )].filter(k => resolveSingle(k, context) == null).map(k => `{{${k}}}`),
+    };
+
+    if (step.type === "internal_function") {
+      const vErr = validateInternalFunctionParams(config.function_name, resolvedConfig.params);
+      if (vErr) out.validation_error = vErr.error;
+    }
+
+    // NEVER resolve or echo credential headers here — that would leak
+    // secrets into the preview. Just note that injection happens at send.
+    if (step.type === "webhook" && (config.credential_id || resolvedConfig.credential_id)) {
+      out.credential_note = "Credential headers are injected at send time and are not shown in preview.";
+    }
+
+    return res.json(out);
+  }
+
+  // ── Live run. The tester never honors retry backoff — a 3×30s policy
+  // would hang this HTTP request for minutes. Effective retries are forced
+  // to 0; retries_skipped flags when the step's policy declared any.
+  const strategy       = errorPolicy.strategy || "ignore";
+  const policyRetries  = Number(errorPolicy.max_retries) || 0;
+  const retriesSkipped = policyRetries > 0;
+
   // Build job data
   const jobData = { type: step.type, ...resolvedConfig };
- 
+
   // Inject _variables for evaluate_condition
   if (step.type === "internal_function" && resolvedConfig.params) {
     jobData.params = { ...resolvedConfig.params, _variables: variables };
   }
- 
-  const strategy   = errorPolicy.strategy || "ignore";
-  const maxRetries = Number(errorPolicy.max_retries) || 0;
-  const backoffSec = Number(errorPolicy.backoff_seconds) || 5;
- 
+
   const startTime = Date.now();
   let rawResult, success, errorMsg;
-  let attempt = 1;
- 
-  // Execute with retry logic (mirrors executeStep in workflow_engine.js)
-  while (true) {
-    try {
-      rawResult = await executeJob({ data: jobData }, db);
-      success = true;
-      break;
-    } catch (err) {
-      if (attempt > maxRetries) {
-        success  = false;
-        errorMsg = err.message;
-        break;
-      }
-      await new Promise(r => setTimeout(r, backoffSec * 1000 * attempt));
-      attempt++;
-    }
+  const attempt = 1; // retries forced off in tester — see above
+
+  try {
+    rawResult = await executeJob({ data: jobData }, db);
+    success = true;
+  } catch (err) {
+    success  = false;
+    errorMsg = err.message;
   }
- 
+
   const duration_ms = Date.now() - startTime;
- 
+
   if (!success) {
     return res.json({
       success:      false,
       error:        errorMsg,
       duration_ms,
       attempts:     attempt,
-      would_abort:  strategy === "abort" || strategy === "retry_then_abort"
+      would_abort:  strategy === "abort" || strategy === "retry_then_abort",
+      ...(retriesSkipped ? { retries_skipped: true } : {})
     });
   }
- 
+
   // Resolve set_vars from config (static) + function return
   context.this = rawResult;
   let staticSetVars = {};
@@ -1906,11 +1943,11 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
     staticSetVars = resolvePlaceholders(config.set_vars, context);
   }
   const set_vars = { ...staticSetVars, ...(rawResult?.set_vars || {}) };
- 
+
   // Extract control signals
   const next_step    = rawResult?.next_step    ?? null;
   const delayed_until = rawResult?.delayed_until ?? null;
- 
+
   res.json({
     success:      true,
     output:       rawResult,
@@ -1919,9 +1956,9 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
     delayed_until,
     duration_ms,
     attempts:     attempt,
-    resolved_config: resolvedConfig   // handy for debugging placeholder resolution
+    resolved_config: resolvedConfig,   // handy for debugging placeholder resolution
+    ...(retriesSkipped ? { retries_skipped: true } : {})
   });
 });
-
 
 module.exports = router;
