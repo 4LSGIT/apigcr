@@ -426,6 +426,7 @@
     <div class="canvas-head">
       <div class="canvas-title placeholder" id="wf-canvas-title">← Select a workflow</div>
       <div id="wf-canvas-actions" style="display:none;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="wfRunWorkflow()"><i class="fa-solid fa-play"></i> Run</button>
         <button class="btn btn-outline btn-sm" onclick="wfShowExplain()"><i class="fa-regular fa-circle-question"></i> Explain</button>
         <button class="btn btn-outline btn-sm" onclick="wfEdit()"><i class="fa-solid fa-pencil"></i> Edit</button>
         <button class="btn btn-outline btn-sm" onclick="wfDuplicate()"><i class="fa-regular fa-copy"></i> Duplicate</button>
@@ -1835,6 +1836,105 @@ function wfExecStatusBadge(status) {
   return `<span class="exec-status-badge exec-status-${esc(status)}">${esc(status)}</span>`;
 }
 
+// ── Slice 2 — Run Workflow (manual start + re-run) ─────────────
+// prefill (optional): { initData: object|null, contactId: number|null,
+//   sourceExecutionId: number|null } — supplied by the re-run path in
+// viewWorkflowExecution. Without prefill, init_data seeds from the
+// workflow's test_input (string or parsed object per mysql2), else {}.
+async function wfRunWorkflow(prefill) {
+  if (!WF.activeWf) return;
+
+  // Inactive guard — server would 409 anyway; save the round-trip.
+  if (!WF.activeWf.active) {
+    Swal.fire({ icon: 'info', title: 'Workflow is inactive', text: 'Activate it in the editor before running.' });
+    return;
+  }
+
+  // Seed init_data: re-run prefill > test_input > {}
+  let seedObj = null;
+  let seedHint = '';
+  if (prefill && prefill.initData != null) {
+    seedObj  = prefill.initData;
+    seedHint = prefill.sourceExecutionId ? `From execution #${prefill.sourceExecutionId}` : '';
+  } else {
+    let ti = WF.activeWf.test_input;
+    if (typeof ti === 'string') ti = parseJson(ti);
+    if (ti && typeof ti === 'object' && !Array.isArray(ti)) {
+      seedObj  = ti;
+      seedHint = 'Seeded from test_input';
+    }
+  }
+  const seedJson = JSON.stringify(seedObj || {}, null, 2);
+  const seedContact = (prefill && prefill.contactId != null) ? String(prefill.contactId) : '';
+
+  const res = await Swal.fire({
+    title: `Run "${esc(WF.activeWf.name || '')}"`,
+    width: 560,
+    html: `
+      <div style="text-align:left;font-size:13px">
+        <label style="display:block;font-weight:600;margin-bottom:4px">Init data (JSON object)</label>
+        <textarea id="wf-run-initdata" rows="12" style="width:100%;font-family:monospace;font-size:12px;box-sizing:border-box">${esc(seedJson)}</textarea>
+        ${seedHint ? `<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(seedHint)}</div>` : ''}
+        <label style="display:block;font-weight:600;margin:10px 0 4px">Contact ID (optional)</label>
+        <input type="number" min="1" id="wf-run-contactid" value="${esc(seedContact)}" style="width:100%;box-sizing:border-box;font-size:12px;padding:6px 8px">
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: 'Start',
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async () => {
+      // DOM lookups must happen here — Swal destroys the DOM after close.
+      const rawJson    = document.getElementById('wf-run-initdata').value;
+      const rawContact = document.getElementById('wf-run-contactid').value;
+
+      // Parse init_data: empty → {}, must be a plain object.
+      let init_data;
+      if (!rawJson.trim()) {
+        init_data = {};
+      } else {
+        try {
+          init_data = JSON.parse(rawJson);
+        } catch (e) {
+          Swal.showValidationMessage(`Invalid JSON: ${e.message}`);
+          return false;
+        }
+        if (init_data === null || typeof init_data !== 'object' || Array.isArray(init_data)) {
+          Swal.showValidationMessage('Init data must be a JSON object, e.g. {"key": "value"}');
+          return false;
+        }
+      }
+
+      // Validate contact id: empty → omit; else positive integer.
+      const body = { init_data };
+      if (rawContact.trim() !== '') {
+        const cid = Number(rawContact);
+        if (!Number.isInteger(cid) || cid <= 0) {
+          Swal.showValidationMessage('Contact ID must be a positive integer.');
+          return false;
+        }
+        body.contact_id = cid;
+      }
+
+      try {
+        return await api(`/workflows/${WF.activeWfId}/start`, 'POST', body);
+      } catch (err) {
+        // ApiError carries server message — covers 409 inactive & 400 contact.
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    },
+  });
+
+  if (res.isConfirmed && res.value && res.value.executionId) {
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Execution #${res.value.executionId} started`, timer: 2000, showConfirmButton: false });
+    WFEX.offset = 0;
+    // wfSwitchEditorTab('executions') calls loadWorkflowExecutions() itself —
+    // verified; do not call it again here or it double-fires.
+    wfSwitchEditorTab('executions');
+  }
+}
+
 async function loadWorkflowExecutions() {
   if (!WF.activeWfId) return;
   const wfIdAtCall = WF.activeWfId;
@@ -2008,11 +2108,30 @@ async function viewWorkflowExecution(id) {
       showConfirmButton: isCancellable,
       confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel execution',
       confirmButtonColor: '#dc2626',
-      reverseButtons: true,   // [Cancel execution] [Close]
+      showDenyButton: true,
+      denyButtonText: '<i class="fa-solid fa-rotate-right"></i> Re-run',
+      denyButtonColor: '#4f8ef7',
+      reverseButtons: true,   // [Re-run] [Cancel execution] [Close]
     });
 
     if (res.isConfirmed && isCancellable) {
       cancelWorkflowExecution(id, ex.workflow_name || '');
+    } else if (res.isDenied) {
+      // Re-run — pass the execution's init_data verbatim (never the variables
+      // snapshot: variables = init_data + step mutations; re-running with them
+      // would double-apply step effects). Resume-with-variables is Slice 4.
+      if (Swal.isVisible()) Swal.close();
+      // Defensive: drill-down is only reachable from the selected workflow's
+      // Executions tab, so these should always match — but guard anyway.
+      if (WF.activeWfId !== ex.workflow_id) {
+        Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Execution belongs to a different workflow', timer: 2500, showConfirmButton: false });
+        return;
+      }
+      wfRunWorkflow({
+        initData: initDataObj ?? {},
+        contactId: ex.contact_id ?? null,
+        sourceExecutionId: id,
+      });
     }
   } catch (e) {
     Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: e.message, timer: 2500, showConfirmButton: false });
@@ -2526,6 +2645,7 @@ window.wfAddVarRow              = wfAddVarRow;
 window.wfRemoveVarRow           = wfRemoveVarRow;
 window.wfRunTest                = wfRunTest;
 window.wfRunPreview             = wfRunPreview;
+window.wfRunWorkflow            = wfRunWorkflow;
 window.loadWorkflowExecutions   = loadWorkflowExecutions;
 window.wfExecPrevPage           = wfExecPrevPage;
 window.wfExecNextPage           = wfExecNextPage;
