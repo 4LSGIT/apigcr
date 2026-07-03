@@ -2033,13 +2033,42 @@ async function viewWorkflowExecution(id) {
     const variablesObj = parseJson(ex.variables);
 
     const historyRowsHtml = history.length ? history.map(h => {
-      // Step config isn't stored on workflow_execution_steps — function name
-      // would require a JOIN to workflow_steps (and would show current config,
-      // not as-run). For now, surface the soft ref.
-      const fn = h.step_id != null ? `step_id ${h.step_id}` : '—';
-      const errorCell = h.error_message
-        ? `<div class="step-error-cell">${esc(h.error_message)}</div>`
-        : '';
+      // Function column: server-derived step_label (as-run function_name >
+      // current config's function_name > step type). Null → soft step_id ref.
+      // current_config labels get an asterisk caveat — the step may have been
+      // edited since this run.
+      let fn = h.step_label
+        ? esc(h.step_label)
+        : (h.step_id != null ? `step_id ${h.step_id}` : '—');
+      if (h.step_label && h.step_label_source === 'current_config') {
+        fn += `<span title="Name from current step config — may differ from what ran">*</span>`;
+      }
+
+      // Detail column: error text (if any) + collapsible resolved-config and
+      // output disclosures. Pattern mirrors sequences.html action_config_resolved.
+      const disclosure = (label, obj) => `
+              <details style="margin-top:4px"><summary style="cursor:pointer;font-size:10px;color:#64748b">${label}</summary>
+                <pre style="background:#1e293b;color:#e2e8f0;padding:6px 8px;border-radius:4px;font-size:10px;overflow:auto;max-height:160px;margin-top:4px">${esc(JSON.stringify(obj, null, 2))}</pre>
+              </details>`;
+      const isNonEmptyObj = (v) => v != null && typeof v === 'object' && Object.keys(v).length > 0;
+      // output_data may also be a primitive (executeJob can return strings/
+      // numbers) — show it unless null/{}/[]/empty-string.
+      const isEmptyish = (v) => v == null
+        || (typeof v === 'object' && Object.keys(v).length === 0)
+        || (typeof v === 'string' && v.trim() === '');
+
+      let detailCell = '';
+      if (h.error_message) {
+        detailCell += `<div class="step-error-cell">${esc(h.error_message)}</div>`;
+      }
+      if (isNonEmptyObj(h.resolved_config)) {
+        detailCell += disclosure('resolved config', h.resolved_config);
+      }
+      if (!isEmptyish(h.output_data)) {
+        detailCell += disclosure('output', h.output_data);
+      }
+      if (!detailCell) detailCell = '—';
+
       return `
         <tr>
           <td>${h.step_number ?? '—'}</td>
@@ -2047,7 +2076,7 @@ async function viewWorkflowExecution(id) {
           <td>${wfExecStatusBadge(h.status)}</td>
           <td>${h.duration_ms != null ? h.duration_ms + ' ms' : '—'}</td>
           <td class="text-sm">${wfExecFmtDate(h.executed_at)}</td>
-          <td>${errorCell}</td>
+          <td>${detailCell}</td>
         </tr>
       `;
     }).join('') : '<tr><td colspan="6" style="padding:8px;color:var(--muted);text-align:center">No steps executed.</td></tr>';
@@ -2092,11 +2121,11 @@ async function viewWorkflowExecution(id) {
             <thead>
               <tr>
                 <th>Step</th>
-                <th>Ref</th>
+                <th>Function</th>
                 <th>Status</th>
                 <th>Duration</th>
                 <th>Executed</th>
-                <th>Error</th>
+                <th>Detail</th>
               </tr>
             </thead>
             <tbody>${historyRowsHtml}</tbody>

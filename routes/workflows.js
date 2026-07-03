@@ -470,22 +470,55 @@ router.get("/executions/:id", jwtOrApiKey, async (req, res) => {
     // Optional: full step history
     let history = null;
     if (includeHistory) {
+      // LEFT JOIN: steps can be deleted after execution — ws.* is NULL then,
+      // and the step_label fallback chain below handles it.
       const [historyRows] = await db.query(
         `
-        SELECT *
-        FROM workflow_execution_steps
-        WHERE workflow_execution_id = ?
-        ORDER BY executed_at ASC
+        SELECT h.*,
+               ws.type   AS step_type,
+               ws.config AS step_config_current
+        FROM workflow_execution_steps h
+        LEFT JOIN workflow_steps ws ON ws.id = h.step_id
+        WHERE h.workflow_execution_id = ?
+        ORDER BY h.executed_at ASC
         `,
         [executionId]
       );
 
+      // string → try JSON.parse (mysql2 may already hand back objects for JSON columns)
+      const tryParse = (v) => {
+        if (typeof v !== 'string') return v;
+        try { return JSON.parse(v); } catch { return v; }
+      };
+
       history = historyRows.map(row => {
-        if (row.output_data) {
-          try {
-            row.output_data = JSON.parse(row.output_data);
-          } catch {}
+        if (row.output_data) row.output_data = tryParse(row.output_data);
+        if (row.resolved_config) row.resolved_config = tryParse(row.resolved_config);
+
+        // step_label: prefer the as-run function_name (exact), else the current
+        // step config's function_name (may have been edited since the run),
+        // else the step type, else null. step_label_source lets the UI caveat
+        // the current_config case.
+        const currentCfg = tryParse(row.step_config_current);
+        let stepLabel = null;
+        let labelSource = null;
+        if (row.resolved_config && typeof row.resolved_config === 'object' && row.resolved_config.function_name) {
+          stepLabel = row.resolved_config.function_name;
+          labelSource = 'as_run';
+        } else if (currentCfg && typeof currentCfg === 'object' && currentCfg.function_name) {
+          stepLabel = currentCfg.function_name;
+          labelSource = 'current_config';
+        } else if (row.step_type) {
+          stepLabel = row.step_type;
+          labelSource = 'type';
         }
+        row.step_label = stepLabel;
+        row.step_label_source = labelSource;
+
+        // Don't ship the full current config — it's not what ran and bloats
+        // the payload. step_label already extracted what we need from it.
+        delete row.step_config_current;
+
         return row;
       });
     }
