@@ -4,6 +4,7 @@ const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const {
   advanceWorkflow,
+  executeSingleStep,
   resolvePlaceholders,
   resolveSingle,
   resolveExecutionContactId,
@@ -1815,6 +1816,174 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
     console.error("[CANCEL EXECUTION] Failed:", err);
     res.status(500).json({
       error: "Failed to cancel execution",
+      message: err.message,
+    });
+  }
+});
+
+
+
+/**
+ * POST /executions/:id/resume
+ * Slice 4 — resume a terminal execution from a chosen step, or redo one step.
+ *
+ * Body: { mode: 'resume' | 'single_step', step_number, variables? }
+ *   - mode 'resume':      re-arm the execution at step_number and let
+ *                         advanceWorkflow run it to completion (202, detached).
+ *   - mode 'single_step': execute exactly that step synchronously via
+ *                         executeSingleStep — records history, merges set_vars,
+ *                         never navigates or changes status (200).
+ *   - variables (optional): plain object — FULL REPLACE of
+ *                         workflow_executions.variables before execution.
+ *
+ * Eligibility: any status EXCEPT live ('active','processing','delayed') —
+ * failed, cancelled, completed, completed_with_errors are all resumable.
+ * Deliberate: completed runs can contain mistakes that weren't recorded as
+ * errors (wrong recipient, bad data) and operators need to redo them.
+ *
+ * We deliberately do NOT check workflows.active — resume is an operator
+ * repair tool and must work on workflows that have since been deactivated.
+ *
+ * Final-status honesty: getWorkflowFinalStatus counts ALL history rows, so a
+ * resumed execution that finishes cleanly will still end
+ * 'completed_with_errors' if old failed rows exist. This is correct — history
+ * is honest — do not "fix" it by filtering old rows.
+ */
+router.post("/executions/:id/resume", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const { id } = req.params;
+
+  const executionId = parseInt(id, 10);
+  if (isNaN(executionId) || executionId <= 0) {
+    return res.status(400).json({ error: "Invalid execution ID" });
+  }
+
+  const body = (req.body && typeof req.body === 'object') ? req.body : {};
+  const { mode, step_number, variables } = body;
+
+  try {
+    // 1. Execution exists.
+    const [execRows] = await db.query(
+      `SELECT id, workflow_id, status FROM workflow_executions WHERE id = ?`,
+      [executionId]
+    );
+    if (execRows.length === 0) {
+      return res.status(404).json({ error: "Execution not found" });
+    }
+    const execution = execRows[0];
+
+    // 2. Not live. Everything else is eligible (see route doc above).
+    if (['active', 'processing', 'delayed'].includes(execution.status)) {
+      return res.status(409).json({
+        error: "Cannot resume",
+        message: `Cannot resume a live execution (status '${execution.status}')`,
+      });
+    }
+
+    // 3. Mode.
+    if (mode !== 'resume' && mode !== 'single_step') {
+      return res.status(400).json({
+        error: "Invalid mode",
+        message: "mode must be 'resume' or 'single_step'",
+      });
+    }
+
+    // 4. step_number is a positive integer AND exists on this workflow.
+    const stepNum = Number(step_number);
+    if (!Number.isInteger(stepNum) || stepNum <= 0) {
+      return res.status(400).json({
+        error: "Invalid step_number",
+        message: "step_number must be a positive integer",
+      });
+    }
+    const [stepRows] = await db.query(
+      `SELECT id FROM workflow_steps WHERE workflow_id = ? AND step_number = ?`,
+      [execution.workflow_id, stepNum]
+    );
+    if (stepRows.length === 0) {
+      return res.status(400).json({
+        error: "Step not found",
+        message: `Workflow ${execution.workflow_id} has no step ${stepNum}`,
+      });
+    }
+
+    // 5. variables, when present, must be a plain object. Semantics: FULL
+    //    REPLACE of workflow_executions.variables (not a merge).
+    const hasVariables = variables !== undefined;
+    if (hasVariables && (
+      variables === null ||
+      typeof variables !== 'object' ||
+      Array.isArray(variables)
+    )) {
+      return res.status(400).json({
+        error: "Invalid variables",
+        message: "variables must be a plain JSON object when provided",
+      });
+    }
+
+    if (mode === 'resume') {
+      if (hasVariables) {
+        await db.query(
+          `UPDATE workflow_executions
+           SET status = 'active', current_step_number = ?, completed_at = NULL,
+               variables = ?, updated_at = NOW()
+           WHERE id = ?`,
+          [stepNum, JSON.stringify(variables), executionId]
+        );
+      } else {
+        await db.query(
+          `UPDATE workflow_executions
+           SET status = 'active', current_step_number = ?, completed_at = NULL,
+               updated_at = NOW()
+           WHERE id = ?`,
+          [stepNum, executionId]
+        );
+      }
+
+      console.log(`[RESUME] Execution ${executionId} resumed from step ${stepNum}${hasVariables ? ' (variables replaced)' : ''}`);
+
+      res.status(202).json({
+        success: true,
+        executionId,
+        mode: 'resume',
+        resumed_from: stepNum,
+      });
+
+      // Background advance — mirrors POST /workflows/:id/start exactly.
+      (async () => {
+        try {
+          const advanceResult = await advanceWorkflow(executionId, db);
+          console.log(`[ASYNC ADVANCE] (resume) Completed: ${advanceResult.status}`);
+        } catch (err) {
+          console.error(`[ASYNC ADVANCE] (resume) Failed for execution ${executionId}:`, err.message);
+        }
+      })();
+      return;
+    }
+
+    // mode === 'single_step' — replace variables FIRST so the template
+    // context builds from them, then run synchronously.
+    if (hasVariables) {
+      await db.query(
+        `UPDATE workflow_executions SET variables = ?, updated_at = NOW() WHERE id = ?`,
+        [JSON.stringify(variables), executionId]
+      );
+    }
+
+    const result = await executeSingleStep(executionId, stepNum, db);
+
+    console.log(`[RESUME] Execution ${executionId} single-step redo of step ${stepNum}: ${result.success ? 'success' : 'failed'}`);
+
+    return res.status(200).json({
+      success: result.success,
+      mode: 'single_step',
+      step_number: stepNum,
+      result,
+    });
+  } catch (err) {
+    console.error("[RESUME EXECUTION] Failed:", err);
+    res.status(500).json({
+      error: "Failed to resume execution",
       message: err.message,
     });
   }

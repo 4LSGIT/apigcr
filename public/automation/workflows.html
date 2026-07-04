@@ -2091,11 +2091,24 @@ async function viewWorkflowExecution(id) {
     // Is this execution cancellable? Same non-terminal set as contact2.
     const isCancellable = ['active', 'processing', 'delayed'].includes(rawStatus);
 
+    // Slice 4 — Resume/redo entry point. All three Swal buttons are taken
+    // (Cancel execution / Re-run / Close), so this lives inline in the modal
+    // body. Only rendered for non-live executions — same live set the server
+    // 409s on.
+    const resumeBtnBlock = !isCancellable
+      ? `<div style="margin-bottom:8px">
+           <button class="btn btn-outline btn-sm" onclick="wfResumeExecution(${id})">
+             <i class="fa-solid fa-forward-step"></i> Resume / redo…
+           </button>
+         </div>`
+      : '';
+
     const res = await Swal.fire({
       title: `Execution #${id}`,
       width: 760,
       html: `
         <div style="text-align:left;font-size:12px;max-height:65vh;overflow:auto">
+          ${resumeBtnBlock}
           <p><b>Workflow:</b> ${esc(ex.workflow_name || '—')} (id ${ex.workflow_id})</p>
           <p style="margin-top:6px"><b>Status:</b> ${wfExecStatusBadge(displayStatus)}</p>
           <p style="margin-top:6px"><b>Started:</b> ${wfExecFmtDate(ex.created_at)}</p>
@@ -2203,6 +2216,149 @@ async function cancelWorkflowExecution(executionId, workflowName) {
   if (result.isConfirmed && result.value === true) {
     Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Execution cancelled', timer: 1800, showConfirmButton: false });
     loadWorkflowExecutions();
+  }
+}
+
+// ── Slice 4 — Resume / redo a terminal execution ────────────────
+// Opened from the inline button in viewWorkflowExecution's modal body.
+// Self-contained: refetches the execution rather than relying on the
+// drill-down's locals (the drill-down Swal is closed before this opens).
+async function wfResumeExecution(id) {
+  if (Swal.isVisible()) Swal.close();
+
+  try {
+    const data = await api(`/executions/${id}?history=true`);
+    const ex = data.execution;
+    const history = data.history || [];
+
+    // Guard like Re-run does: drill-down is only reachable from the selected
+    // workflow's Executions tab, so these should always match.
+    if (WF.activeWfId !== ex.workflow_id) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Execution belongs to a different workflow', timer: 2500, showConfirmButton: false });
+      return;
+    }
+
+    // Server would 409 anyway, but the status may have gone live between the
+    // drill-down render and this click — save the round-trip.
+    if (['active', 'processing', 'delayed'].includes(String(ex.status || '').toLowerCase())) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'Execution is live — cannot resume', timer: 2500, showConfirmButton: false });
+      return;
+    }
+
+    // Step select from the loaded editor steps. Default: first failed history
+    // row (history is ordered ASC); else the last history row; else 1.
+    const failedRow = history.find(h => h.status === 'failed');
+    const defaultStep = failedRow ? failedRow.step_number
+      : (history.length ? history[history.length - 1].step_number : 1);
+
+    const stepOptions = (WF.steps || []).map(s => {
+      const label = (s.config && s.config.function_name) ? s.config.function_name : s.type;
+      const sel = s.step_number === defaultStep ? ' selected' : '';
+      return `<option value="${s.step_number}"${sel}>#${s.step_number} — ${esc(label)}</option>`;
+    }).join('');
+
+    if (!stepOptions) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Workflow has no steps to resume from', timer: 2500, showConfirmButton: false });
+      return;
+    }
+
+    // Prefill variables textarea with the execution's current variables
+    // (string or parsed object per mysql2). Empty textarea = keep as-is.
+    const variablesObj = parseJson(ex.variables);
+    const varsJson = variablesObj ? JSON.stringify(variablesObj, null, 2) : '';
+
+    const res = await Swal.fire({
+      title: `Resume / redo execution #${id}`,
+      width: 560,
+      html: `
+        <div style="text-align:left;font-size:13px">
+          <label style="display:block;font-weight:600;margin-bottom:4px">Mode</label>
+          <label style="display:block;font-weight:400;font-size:12px;margin-bottom:2px">
+            <input type="radio" name="wf-resume-mode" value="resume" checked>
+            Resume from step (continues to end)
+          </label>
+          <label style="display:block;font-weight:400;font-size:12px">
+            <input type="radio" name="wf-resume-mode" value="single_step">
+            Redo single step (records result, nothing else runs)
+          </label>
+
+          <label style="display:block;font-weight:600;margin:10px 0 4px">Step</label>
+          <select id="wf-resume-step" style="width:100%;box-sizing:border-box;font-size:12px;padding:6px 8px">${stepOptions}</select>
+
+          <label style="display:block;font-weight:600;margin:10px 0 4px">Variables (JSON object)</label>
+          <textarea id="wf-resume-vars" rows="10" style="width:100%;font-family:monospace;font-size:12px;box-sizing:border-box">${esc(varsJson)}</textarea>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Full replace. Leave empty to keep as-is.</div>
+
+          <div style="margin-top:10px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:11px">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            Side effects of previously-run steps are not undone. In resume mode, every step from the chosen point re-executes.
+          </div>
+        </div>
+      `,
+      showCancelButton: true,
+      confirmButtonText: 'Go',
+      showLoaderOnConfirm: true,
+      allowOutsideClick: () => !Swal.isLoading(),
+      preConfirm: async () => {
+        // DOM lookups must happen here — Swal destroys the DOM after close.
+        const mode = document.querySelector('input[name="wf-resume-mode"]:checked').value;
+        const step_number = Number(document.getElementById('wf-resume-step').value);
+        const rawVars = document.getElementById('wf-resume-vars').value;
+
+        const body = { mode, step_number };
+
+        // Empty textarea → omit variables (keep as-is). Else must parse to a
+        // plain object.
+        if (rawVars.trim() !== '') {
+          let vars;
+          try {
+            vars = JSON.parse(rawVars);
+          } catch (e) {
+            Swal.showValidationMessage(`Invalid JSON: ${e.message}`);
+            return false;
+          }
+          if (vars === null || typeof vars !== 'object' || Array.isArray(vars)) {
+            Swal.showValidationMessage('Variables must be a JSON object, e.g. {"key": "value"}');
+            return false;
+          }
+          body.variables = vars;
+        }
+
+        try {
+          return await api(`/executions/${id}/resume`, 'POST', body);
+        } catch (err) {
+          // ApiError carries the server message — covers 409 live & 400s.
+          Swal.showValidationMessage(err.message || String(err));
+          return false;
+        }
+      },
+    });
+
+    if (!res.isConfirmed || !res.value) return;
+
+    const out = res.value;
+    if (out.mode === 'resume') {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Execution #${id} resumed from step ${out.resumed_from}`, timer: 2200, showConfirmButton: false });
+      // Drill-down is only reachable from the Executions tab (verified: the
+      // eye button in renderWfExecRows is viewWorkflowExecution's sole call
+      // site), so the tab is already active — refresh in place, no tab switch.
+      loadWorkflowExecutions();
+    } else if (out.mode === 'single_step') {
+      const r = out.result || {};
+      Swal.fire({
+        icon: r.success ? 'success' : 'error',
+        title: r.success ? `Step ${out.step_number} succeeded` : `Step ${out.step_number} failed`,
+        html: `
+          <div style="text-align:left;font-size:13px">
+            ${r.error ? `<div class="step-error-cell" style="margin-bottom:6px">${esc(r.error)}</div>` : ''}
+            <div><b>Duration:</b> ${r.duration_ms != null ? r.duration_ms + ' ms' : '—'}</div>
+          </div>
+        `,
+      });
+      loadWorkflowExecutions();
+    }
+  } catch (e) {
+    Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: e.message, timer: 2500, showConfirmButton: false });
   }
 }
 
@@ -2680,6 +2836,7 @@ window.wfExecPrevPage           = wfExecPrevPage;
 window.wfExecNextPage           = wfExecNextPage;
 window.viewWorkflowExecution    = viewWorkflowExecution;
 window.cancelWorkflowExecution  = cancelWorkflowExecution;
+window.wfResumeExecution        = wfResumeExecution;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {
