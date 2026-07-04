@@ -4,6 +4,7 @@ const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const ms = require("ms"); //  for parsing "5m", "2h", etc.
 const { CronExpressionParser } = require("cron-parser"); // resume → next future tick
+const internalFunctions = require("../lib/internal_functions"); // __validateFunctionParams (Slice 5)
 
 // Helper: parse delay string to milliseconds
 function parseDelay(delayStr) {
@@ -148,9 +149,17 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
     const v = await validateWebhookJobData(db, jobData);
     if (v) return res.status(v.status).json({ error: v.error });
   } else if (job_type === "internal_function") {
-    if (!function_name) return res.status(400).json({ error: "function_name is required" });
+    if (!function_name || typeof function_name !== 'string' || !function_name.trim()) {
+      return res.status(400).json({ error: "function_name is required (non-empty string)" });
+    }
     jobData.function_name = function_name;
     jobData.params = params;
+
+    // Slice 5 — metadata-driven param validation, shared with the workflow
+    // routes via lib/internal_functions. Functions without __meta pass
+    // through (engine validates at run time).
+    const v = internalFunctions.__validateFunctionParams(function_name, params);
+    if (v) return res.status(v.status || 400).json({ error: v.error });
   } else if (job_type === "custom_code") {
     if (!code) return res.status(400).json({ error: "code is required" });
     jobData.code = code;
@@ -465,11 +474,21 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
     if (backoff_seconds  !== undefined) { updates.push("backoff_seconds = ?");  params.push(parseInt(backoff_seconds)); }
     if (data             !== undefined) {
       // Validate webhook job-data shape if the new data IS a webhook payload.
-      // Non-webhook data (internal_function, custom_code) passes through with
-      // existing permissive behavior — those types weren't validated before
-      // and aren't part of this slice.
       const v = await validateWebhookJobData(db, data);
       if (v) return res.status(v.status).json({ error: v.error });
+
+      // Slice 5 — validate internal_function job data (function_name presence
+      // + metadata-driven param validation shared with the workflow routes).
+      // Other data types (custom_code, unknown) keep permissive pass-through.
+      if (data && typeof data === 'object' && data.type === 'internal_function') {
+        const fn = data.function_name;
+        if (!fn || typeof fn !== 'string' || !fn.trim()) {
+          return res.status(400).json({ error: "internal_function job: function_name is required (non-empty string)" });
+        }
+        const pv = internalFunctions.__validateFunctionParams(fn, data.params);
+        if (pv) return res.status(pv.status || 400).json({ error: pv.error });
+      }
+
       updates.push("data = ?"); params.push(JSON.stringify(data));
     }
     if (max_executions   !== undefined) { updates.push("max_executions = ?");   params.push(max_executions !== null ? parseInt(max_executions) : null); }

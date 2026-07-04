@@ -42,94 +42,15 @@ function validateTestInput(v) {
 // Internal-function param validation — metadata-driven
 //
 // Save-time validation for the params block of an `internal_function` step.
-// Drives off __meta blocks defined in lib/internal_functions.js — see the
-// schema notes there. This file owns the specialized parse-checks for
-// iso_datetime and duration types because they require parseUserDateTime
-// and ms() which we already have imported here.
-//
-// Functions without __meta are passed through (engine validates at run
-// time, same as before this slice).
-//
-// Returns null on success, or { status, error } on failure.
+// The full validator (phase-1 meta shape + phase-2 iso_datetime/duration
+// parse-checks) lives in lib/internal_functions/index.js — relocated there
+// in scheduled-jobs Slice 5 so routes/scheduled_jobs.js shares it. Same
+// return contract: null on success, or { status, error } on failure.
 // ─────────────────────────────────────────────────────────────
 
-const { parseUserDateTime } = require("../services/timezoneService");
-const ms = require("ms");
 const internalFunctions = require("../lib/internal_functions");
 
-const PLACEHOLDER_RE = /\{\{[^}]+\}\}/;
-
-function _wfHasPlaceholder(s) {
-  return typeof s === 'string' && PLACEHOLDER_RE.test(s);
-}
-
-// iso_datetime fields accept three string shapes at runtime: date-leading
-// strings (parseUserDateTime), duration strings (ms()), and plain numbers
-// (ms-from-now). Validate accordingly when not a placeholder.
-function _wfValidateIsoDatetimeString(label, v) {
-  if (typeof v === 'number') return null;
-  if (typeof v !== 'string') return { error: `${label} must be a string or number` };
-  if (_wfHasPlaceholder(v)) return null;
-  if (/^\d{4}-\d{2}-\d{2}/.test(v)) {
-    try {
-      const parsed = parseUserDateTime(v);
-      if (!parsed) return { error: `${label} is empty after trim: "${v}"` };
-    } catch (err) {
-      return { error: `${label}: ${err.message}` };
-    }
-    return null;
-  }
-  if (ms(v) === undefined) {
-    return { error: `${label}: "${v}" is not a valid duration or datetime (use "30s","10m","2h","1d", or an ISO datetime like "2026-05-01T14:30:00")` };
-  }
-  return null;
-}
-
-function _wfValidateDurationString(label, v) {
-  if (typeof v === 'number') return null;
-  if (typeof v !== 'string') return { error: `${label} must be a duration string or number` };
-  if (_wfHasPlaceholder(v)) return null;
-  if (ms(v) === undefined) {
-    return { error: `${label}: "${v}" is not a valid duration (use "30s","10m","2h","1d", or a millisecond number)` };
-  }
-  return null;
-}
-
-function validateInternalFunctionParams(functionName, params) {
-  if (!functionName) return null;
-  if (params == null) return null; // function-level required-field check happens elsewhere/runtime
-
-  const meta = internalFunctions.__getMeta(functionName);
-  if (!meta) {
-    // No metadata — preserve legacy permissive behavior (engine validates at run time)
-    if (typeof params !== 'object' || Array.isArray(params)) {
-      return { status: 400, error: 'params must be a JSON object' };
-    }
-    return null;
-  }
-
-  // Phase 1 — generic shape/type/group validation
-  const metaErr = internalFunctions.__validateParamsAgainstMeta(meta, params);
-  if (metaErr) return { status: 400, error: metaErr.error };
-
-  // Phase 2 — specialized parse-checks for iso_datetime / duration string forms
-  if (typeof params !== 'object' || params === null) return null; // already validated above
-  for (const spec of meta.params) {
-    if (!(spec.name in params)) continue;
-    const v = params[spec.name];
-    if (v === null || v === '' || v === 'null') continue; // nullishSkipsBlock handled by phase 1
-
-    if (spec.type === 'iso_datetime') {
-      const err = _wfValidateIsoDatetimeString(`${functionName} params.${spec.name}`, v);
-      if (err) return { status: 400, error: err.error };
-    } else if (spec.type === 'duration') {
-      const err = _wfValidateDurationString(`${functionName} params.${spec.name}`, v);
-      if (err) return { status: 400, error: err.error };
-    }
-  }
-
-  return null;
-}
+const validateInternalFunctionParams = internalFunctions.__validateFunctionParams;
 
 /**
  * Convenience wrapper: validates an `internal_function` step's config block.

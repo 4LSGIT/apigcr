@@ -216,13 +216,14 @@ let jobsLoaded = false;
 let jobsDebounceTimer;
 let subPageActive = false;
 
-// Functions list for the internal_function dropdown in New Job.
+// Functions list for the internal_function dropdowns (New Job + Edit Job).
 // Each sub-page that needs this list fetches its own — cheap,
 // matches hooks.html's approach, avoids shell-level state.
 // FUNCTIONS.meta is a map of name → __meta (drives the grouped picker in
-// fnPicker.js); stays {} on the hardcoded-fallback path, so everything
-// groups under 'other' there.
-const FUNCTIONS = { workflow: [], sequence: [], meta: {} };
+// fnPicker.js). `loaded` distinguishes fetched-OK from fetch-failed; on
+// failure the dialogs show a disabled/error state rather than a stale
+// hardcoded list (removed in Slice 5 — it drifted from the registry).
+const FUNCTIONS = { workflow: [], sequence: [], meta: {}, loaded: false, error: null };
 
 // Credentials list for the webhook credential dropdown — same pattern as
 // workflows.html and sequences.html.  `loaded` flag distinguishes "not yet
@@ -236,10 +237,12 @@ async function loadFunctions() {
     FUNCTIONS.workflow = data.workflow || [];
     FUNCTIONS.sequence = data.sequence || [];
     FUNCTIONS.meta     = data.meta     || {};
+    FUNCTIONS.loaded   = true;
+    FUNCTIONS.error    = null;
   } catch (e) {
-    console.warn('Failed to load function list, using fallback:', e.message);
-    FUNCTIONS.workflow = ['set_next','evaluate_condition','noop','set_var','format_string','schedule_resume','wait_for','wait_until_time','send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','set_test_var'];
-    FUNCTIONS.sequence = ['send_sms','send_email','create_log','create_task','create_appointment','lookup_contact','update_contact','lookup_appointment','update_appointment','get_appointments','query_db','cancel_sequences','enroll_sequence','noop','set_var'];
+    console.warn('Failed to load function list:', e.message);
+    FUNCTIONS.loaded = false;
+    FUNCTIONS.error  = e.message || 'fetch failed';
   }
 }
 
@@ -405,13 +408,17 @@ async function jobNew() {
   // Make sure FUNCTIONS is loaded (could fire before init completes
   // if shell calls onNew very early — defensive). Same for CREDENTIALS,
   // which the webhook branch of the form needs.
-  if (!FUNCTIONS.workflow.length) await loadFunctions();
-  if (!CREDENTIALS.loaded)        await loadCredentials();
+  if (!FUNCTIONS.loaded)   await loadFunctions();
+  if (!CREDENTIALS.loaded) await loadCredentials();
 
   // Grouped picker (fnPicker.js). New Job is create-only — no current
   // function to preserve, so currentFn is null and the browser defaults to
   // the first option of the first group. uiHidden functions are filtered.
-  const fnOpts = buildFnOptions(FUNCTIONS.workflow.length ? FUNCTIONS.workflow : ['noop'], FUNCTIONS.meta, null, { applyHidden: true });
+  // Registry fetch failure → disabled select with an error option (no stale
+  // hardcoded fallback); preConfirm blocks internal_function creation.
+  const fnOpts = FUNCTIONS.loaded
+    ? buildFnOptions(FUNCTIONS.workflow, FUNCTIONS.meta, null, { applyHidden: true })
+    : `<option value="" selected>⚠ function list unavailable — ${esc(FUNCTIONS.error || 'fetch failed')}</option>`;
   // Webhook credential injection slice — credential dropdown for webhook jobs.
   // Empty option means no auth header (anonymous request).
   const credOpts = CREDENTIALS.loaded
@@ -453,7 +460,7 @@ async function jobNew() {
           <input id="sj-name" class="sj-el" placeholder="e.g. Daily digest, Reminder SMS"></div>
         <hr class="sj-divider">
         <div id="sj-fn-wrap" class="sj-field"><span class="sj-label">Function</span>
-          <select id="sj-fn" class="sj-el">${fnOpts}</select></div>
+          <select id="sj-fn" class="sj-el" ${FUNCTIONS.loaded ? '' : 'disabled'}>${fnOpts}</select></div>
         <div id="sj-params-wrap" class="sj-field"><span class="sj-label">Params (JSON)</span>
           <textarea id="sj-params" class="sj-el" placeholder='{ "from": "2485592400", "to": "...", "message": "..." }'>{}</textarea></div>
         <div id="sj-url-wrap" class="sj-field" style="display:none"><span class="sj-label">Webhook URL</span>
@@ -532,7 +539,12 @@ async function jobNew() {
       if (scheduledTime) payload.scheduled_time = new Date(scheduledTime + 'Z').toISOString();
 
       if (job_type === 'internal_function') {
-        payload.function_name = document.getElementById('sj-fn').value;
+        const fnVal = document.getElementById('sj-fn').value;
+        if (!fnVal) {
+          Swal.showValidationMessage('Function list unavailable — cannot create an internal_function job. Retry after the registry loads.');
+          return false;
+        }
+        payload.function_name = fnVal;
         const p = document.getElementById('sj-params').value.trim();
         if (p) {
           try { payload.params = JSON.parse(p); }
@@ -615,9 +627,47 @@ async function jobEdit(id) {
   // jobs the cache isn't needed; skip the wait.
   if (jobType === 'webhook' && !CREDENTIALS.loaded) await loadCredentials();
 
+  const isWebhook = jobType === 'webhook';
+  const isFn      = jobType === 'internal_function';
+
+  // Slice 5 — internal_function jobs get an editable function select +
+  // params textarea. Registry needed for the grouped picker.
+  if (isFn && !FUNCTIONS.loaded) await loadFunctions();
+
+  // Function options: current function stays selected even if it's uiHidden
+  // (buildFnOptions handles that) or missing from the registry entirely
+  // (renamed/removed function — appended so the select doesn't silently
+  // jump to a different function). Registry fetch failure → select locked
+  // to the current function; params remain editable.
+  let editFnOpts = '';
+  if (isFn) {
+    if (FUNCTIONS.loaded) {
+      const list = (!fnName || FUNCTIONS.workflow.includes(fnName))
+        ? FUNCTIONS.workflow
+        : [...FUNCTIONS.workflow, fnName];
+      editFnOpts = buildFnOptions(list, FUNCTIONS.meta, fnName || null, { applyHidden: true });
+    } else {
+      editFnOpts = `<option value="${esc(fnName)}" selected>${esc(fnName || '—')} (function list unavailable)</option>`;
+    }
+  }
+
+  // Webhook method options — same set as jobNew, current method selected.
+  const curMethod = String(jobData.method || 'GET').toUpperCase();
+  const methodOpts = ['GET','POST','PUT','PATCH','DELETE'].map(m =>
+    `<option ${m === curMethod ? 'selected' : ''}>${m}</option>`).join('');
+
+  // Webhook body prefill: objects/arrays/numbers/booleans pretty-print;
+  // strings show raw (non-JSON string bodies are legal and pass through
+  // unchanged); undefined/null → empty.
+  let bodyPrefill = '';
+  if (jobData.body !== undefined && jobData.body !== null) {
+    bodyPrefill = typeof jobData.body === 'string'
+      ? jobData.body
+      : JSON.stringify(jobData.body, null, 2);
+  }
+
   // Build the credential dropdown for webhook jobs only. Selected option
   // matches the job's current credential_id; empty option means "no auth".
-  const isWebhook = jobType === 'webhook';
   const curCred = jobData.credential_id == null ? '' : String(jobData.credential_id);
   const credOpts = CREDENTIALS.loaded
     ? `<option value="">— none —</option>` + CREDENTIALS.list.map(c =>
@@ -638,6 +688,7 @@ async function jobEdit(id) {
         .sj-el{display:block;width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:inherit;color:#1e293b;background:#fff;outline:none;box-sizing:border-box;height:36px}
         .sj-el:focus{border-color:#4f8ef7;box-shadow:0 0 0 3px rgba(79,142,247,.12)}
         select.sj-el{cursor:pointer}
+        textarea.sj-el{height:auto;min-height:64px;resize:vertical;font-family:'SF Mono','Fira Code',monospace;font-size:12px;line-height:1.5}
         .sj-divider{border:none;border-top:1px solid #e5e7eb;margin:14px 0 12px}
         .sj-readonly{background:#f8fafc;color:#475569;padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;height:36px;display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       </style>
@@ -645,22 +696,36 @@ async function jobEdit(id) {
         <div class="sj-row">
           <div class="sj-field"><span class="sj-label">Type</span>
             <div class="sj-readonly">${esc(data.type)} · ${esc(jobType)}</div></div>
-          <div class="sj-field"><span class="sj-label">${jobType === 'internal_function' ? 'Function' : jobType === 'webhook' ? 'URL' : 'Details'}</span>
-            <div class="sj-readonly">${esc(fnName || jobUrl || '—')}</div></div>
+          ${isFn ? `
+          <div class="sj-field"><span class="sj-label">Function</span>
+            <select id="sje-fn" class="sj-el" ${FUNCTIONS.loaded ? '' : 'disabled'}>${editFnOpts}</select></div>`
+          : isWebhook ? `
+          <div class="sj-field"><span class="sj-label">Webhook URL</span>
+            <input id="sje-url" class="sj-el" value="${esc(jobUrl)}" placeholder="https://..." oninput="sjUpdateCredWarning('sje-cred-warn','sje-cred','sje-url')"></div>`
+          : `
+          <div class="sj-field"><span class="sj-label">Details</span>
+            <div class="sj-readonly">${esc(fnName || jobUrl || '—')}</div></div>`}
         </div>
+        ${isFn ? `
+        <div class="sj-field"><span class="sj-label">Params (JSON object)</span>
+          <textarea id="sje-params" class="sj-el" rows="8">${esc(JSON.stringify(jobData.params ?? {}, null, 2))}</textarea></div>` : ''}
         <div class="sj-field"><span class="sj-label">Name</span>
           <input id="sje-name" class="sj-el" value="${esc(data.name || '')}"></div>
         ${isWebhook ? `
         <hr class="sj-divider">
         <div class="sj-row">
-          <div class="sj-field"><span class="sj-label">Credential</span>
-            <select id="sje-cred" class="sj-el" onchange="sjUpdateCredWarning('sje-cred-warn','sje-cred','')">${credOpts}</select>
-            <div class="sj-note">Auth header injected at request time.</div>
-            <div id="sje-cred-warn" data-url="${esc(jobUrl)}" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.4"></div></div>
+          <div class="sj-field"><span class="sj-label">HTTP Method</span>
+            <select id="sje-method" class="sj-el">${methodOpts}</select></div>
           <div class="sj-field"><span class="sj-label">Timeout (ms)</span>
             <input id="sje-timeout" class="sj-el" type="number" min="1" max="120000" value="${jobData.timeout_ms || 30000}">
             <div class="sj-note">Default 30000, max 120000.</div></div>
-        </div>` : ''}
+        </div>
+        <div class="sj-field"><span class="sj-label">Body (JSON or raw text — empty for none)</span>
+          <textarea id="sje-body" class="sj-el" rows="6">${esc(bodyPrefill)}</textarea></div>
+        <div class="sj-field"><span class="sj-label">Credential</span>
+          <select id="sje-cred" class="sj-el" onchange="sjUpdateCredWarning('sje-cred-warn','sje-cred','sje-url')">${credOpts}</select>
+          <div class="sj-note">Auth header injected at request time.</div>
+          <div id="sje-cred-warn" style="display:none;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.4"></div></div>` : ''}
         <hr class="sj-divider">
         <div class="sj-row">
           <div class="sj-field"><span class="sj-label">Scheduled Time (UTC)</span>
@@ -689,10 +754,9 @@ async function jobEdit(id) {
       </div>`,
     showCancelButton: true, confirmButtonText: 'Save', width: 560,
     didOpen: () => {
-      // Initial warning evaluation — covers existing webhook jobs that were
-      // saved before this slice's URL-scope check landed (or where the URL
-      // was changed externally to a foreign host).
-      if (isWebhook) sjUpdateCredWarning('sje-cred-warn', 'sje-cred', '');
+      // Initial warning evaluation — reads the (now editable) URL field so
+      // the warning tracks in-dialog URL changes, matching jobNew.
+      if (isWebhook) sjUpdateCredWarning('sje-cred-warn', 'sje-cred', 'sje-url');
     },
     preConfirm: () => {
       const payload = {};
@@ -711,30 +775,81 @@ async function jobEdit(id) {
         payload.expires_at = expires ? new Date(expires + 'Z').toISOString() : undefined;
       }
 
-      // Webhook credential injection slice — if this is a webhook job and the
-      // user changed the credential or timeout, send a merged `data` payload.
-      // PATCH replaces the entire data column, so we must spread the existing
-      // jobData and overwrite only the touched keys. Skip the merge entirely
-      // if neither field actually changed — keeps the PATCH minimal.
+      // Slice 5 — editable job payload. PATCH replaces the entire data
+      // column, so both branches spread the existing jobData and overwrite
+      // only the touched keys (preserves unknown keys — contact_id, log
+      // flags, etc.). payload.data is attached only if something actually
+      // changed, keeping no-op saves minimal.
       if (isWebhook) {
+        const newUrl = document.getElementById('sje-url')?.value.trim() || '';
+        if (!newUrl) {
+          Swal.showValidationMessage('URL is required for webhook jobs');
+          return false;
+        }
+        const newMethod = document.getElementById('sje-method')?.value || 'GET';
+
+        // Body: empty → no body key. Valid JSON → parsed value. Non-JSON
+        // text that doesn't look like attempted JSON → raw string
+        // pass-through (legal — the route's body check is permissive).
+        // Looks-like-JSON-but-broken ({ or [ lead) → validation error, since
+        // that's almost certainly a typo, not an intentional string body.
+        const bodyRaw = document.getElementById('sje-body')?.value.trim() || '';
+        let newBody;
+        let bodyProvided = false;
+        if (bodyRaw) {
+          bodyProvided = true;
+          try { newBody = JSON.parse(bodyRaw); }
+          catch (err) {
+            if (/^[\[{]/.test(bodyRaw)) {
+              Swal.showValidationMessage('Body looks like JSON but does not parse: ' + err.message);
+              return false;
+            }
+            newBody = bodyRaw;
+          }
+        }
+
         const credRaw = document.getElementById('sje-cred')?.value || '';
         const newCredId = credRaw ? parseInt(credRaw, 10) : null;
-        const oldCredId = jobData.credential_id == null ? null : Number(jobData.credential_id);
 
         const timeoutRaw = document.getElementById('sje-timeout')?.value || '';
         const newTimeout = timeoutRaw ? parseInt(timeoutRaw, 10) : null;
-        const oldTimeout = jobData.timeout_ms == null ? null : Number(jobData.timeout_ms);
 
-        const credChanged    = newCredId   !== oldCredId;
-        const timeoutChanged = newTimeout  !== oldTimeout;
+        const mergedData = { ...jobData, url: newUrl, method: newMethod };
+        if (bodyProvided) mergedData.body = newBody;
+        else              delete mergedData.body;
+        if (newCredId == null) delete mergedData.credential_id;
+        else                   mergedData.credential_id = newCredId;
+        if (newTimeout == null) delete mergedData.timeout_ms;
+        else                    mergedData.timeout_ms = newTimeout;
 
-        if (credChanged || timeoutChanged) {
-          const mergedData = { ...jobData };
-          // Use null to explicitly clear; route validation handles null/missing the same.
-          if (newCredId == null) delete mergedData.credential_id;
-          else                   mergedData.credential_id = newCredId;
-          if (newTimeout == null) delete mergedData.timeout_ms;
-          else                    mergedData.timeout_ms = newTimeout;
+        if (JSON.stringify(mergedData) !== JSON.stringify(jobData)) {
+          payload.data = mergedData;
+        }
+      }
+
+      if (isFn) {
+        const fnSel = document.getElementById('sje-fn');
+        const newFn = (fnSel ? fnSel.value : fnName) || fnName;
+        if (!newFn) {
+          Swal.showValidationMessage('Function is required');
+          return false;
+        }
+        const pRaw = document.getElementById('sje-params')?.value.trim() || '';
+        let newParams = {};
+        if (pRaw) {
+          try { newParams = JSON.parse(pRaw); }
+          catch (err) {
+            Swal.showValidationMessage('Params is not valid JSON: ' + err.message);
+            return false;
+          }
+          if (typeof newParams !== 'object' || newParams === null || Array.isArray(newParams)) {
+            Swal.showValidationMessage('Params must be a JSON object (e.g. { "key": "value" })');
+            return false;
+          }
+        }
+
+        const mergedData = { ...jobData, function_name: newFn, params: newParams };
+        if (JSON.stringify(mergedData) !== JSON.stringify(jobData)) {
           payload.data = mergedData;
         }
       }
