@@ -2325,17 +2325,6 @@
       document.body.classList.remove('sidebar-mobile-open');
     }
 
-    /* --- Back-button trap: Back goes to the Home tab, never leaves the app --- */
-    (function () {
-      if (window.__ycBackTrap) return;          // idempotent (initAuth/loadUserContext can re-run)
-      window.__ycBackTrap = true;
-      history.pushState({ yc: 1 }, '');          // seed an in-app entry so Back has somewhere to land
-      window.addEventListener('popstate', function () {
-        history.pushState({ yc: 1 }, '');        // re-arm so the next Back also stays in-app
-        if (typeof openMainTab === 'function') openMainTab('tabHome');
-      });
-    })();
-
     function updateSidebarActive(tabName) {
       // Clear all active states (main items AND file rows)
       document.querySelectorAll('#appSidebar .sb-item, #appSidebar .file-button').forEach(el => {
