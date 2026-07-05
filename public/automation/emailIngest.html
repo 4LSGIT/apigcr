@@ -1798,6 +1798,64 @@ window.eiToggleSidebar = eiToggleSidebar;
     http:              { label: 'HTTP',     icon: 'fa-globe',           color: 'var(--blue)' },
   };
 
+  // ── Forward pseudo-type detection (Slice 9B) ──────────────────────
+  // "Forward" is a UI-level pseudo-type over the two Slice 9A internal
+  // functions (forward_as_email / forward_as_sms). It exists ONLY in this
+  // page's action-type select — the stored action_type is always
+  // internal_function, and the server's action_types list is untouched
+  // (forward is not a dispatch type).
+  //
+  // Detection is deliberately strict: a stored internal_function action is
+  // treated as Forward iff
+  //   - function_name is one of the two forwarding fns,
+  //   - params_mapping.event === '$' (bare whole-object token), and
+  //   - every OTHER mapping key is in the fn's known param set AND its value
+  //     is a quoted literal.
+  // Anything else (path-mapped `to`, extra params, missing event) renders in
+  // the generic Internal Function form — the friendly form must never lossily
+  // rewrite a hand-built mapping. A mapping missing `to`/`from` still detects
+  // (empty friendly fields; save validation forces filling them — not lossy).
+  //
+  // Quoted-literal check mirrors resolveParamsMapping (lib/actionDispatchers):
+  // a string of length >= 2 that starts AND ends with a single quote. Only the
+  // OUTER pair is stripped at resolve time, so interior single quotes are safe
+  // in both directions (wrap on save, strip on detect).
+  const FWD_FN_CHANNEL = { forward_as_email: 'email', forward_as_sms: 'sms' };
+  const FWD_ALLOWED_KEYS = {
+    email: ['event', 'to', 'from', 'subject_prefix', 'body_prefix'],
+    sms:   ['event', 'to', 'from', 'body_prefix'],
+  };
+  function fwdIsQuotedLiteral(v) {
+    return typeof v === 'string' && v.length >= 2 && v.startsWith("'") && v.endsWith("'");
+  }
+  // cfg = parsed internal_function config. Returns
+  // { channel, to, from, subject_prefix, body_prefix } (unquoted values,
+  // '' when absent) or null when the shape isn't Forward-safe.
+  function fwdDetect(cfg) {
+    const channel = FWD_FN_CHANNEL[cfg && cfg.function_name];
+    if (!channel) return null;
+    const pm = cfg.params_mapping;
+    if (!pm || typeof pm !== 'object' || Array.isArray(pm)) return null;
+    if (pm.event !== '$') return null;
+    const allowed = FWD_ALLOWED_KEYS[channel];
+    const out = { channel, to: '', from: '', subject_prefix: '', body_prefix: '' };
+    for (const [k, v] of Object.entries(pm)) {
+      if (k === 'event') continue;
+      if (!allowed.includes(k)) return null;    // extra param → generic form
+      if (!fwdIsQuotedLiteral(v)) return null;  // path-mapped value → generic form
+      out[k] = v.slice(1, -1);                  // strip the outer quote pair
+    }
+    return out;
+  }
+  // 'Fwd:' default for NEW Forward actions — read from /meta's
+  // internal_function_meta params (Slice 9B meta-service passthrough);
+  // hard fallback matches forwarding.js's __meta default.
+  function fwdSubjectDefault() {
+    const m = meta.targets?.internal_function_meta?.forward_as_email;
+    const p = m && Array.isArray(m.params) ? m.params.find(x => x.name === 'subject_prefix') : null;
+    return (p && p.default != null) ? String(p.default) : 'Fwd:';
+  }
+
   function summarizeAction(a) {
     const type = a.action_type || 'http';
     const cfg = parseJson(a.config) || {};
@@ -1813,7 +1871,15 @@ window.eiToggleSidebar = eiToggleSidebar;
       const h = (meta.targets?.hooks || []).find(x => x.slug === cfg.slug);
       return h ? `Invoke hook '${cfg.slug}' (${h.name})` : `Invoke hook '${cfg.slug || '?'}'`;
     }
-    if (type === 'internal_function') return `Call ${cfg.function_name || '?'}()`;
+    if (type === 'internal_function') {
+      const fwd = fwdDetect(cfg);
+      if (fwd) {
+        return fwd.channel === 'email'
+          ? `Forward as email → ${fwd.to || '?'}`
+          : `Forward as SMS → ${fwd.to || '?'}`;
+      }
+      return `Call ${cfg.function_name || '?'}()`;
+    }
     if (type === 'http') return `${cfg.method || 'POST'} ${cfg.url || '—'}`;
     return `(${type})`;
   }
@@ -1945,8 +2011,33 @@ window.eiToggleSidebar = eiToggleSidebar;
 
   // ── Action config form (hand-built per type, mirroring buildTargetForm) ──
   function buildActionForm(a) {
-    const type = a.action_type || 'workflow';
     const cfg = parseJson(a.config) || {};
+    // Slice 9B: a stored internal_function action that is Forward-shaped
+    // opens in the friendly Forward form. The internal_function section
+    // below is STILL populated from the raw cfg (fn select + params rows via
+    // initActionFormHandlers), so switching the type dropdown to "Internal
+    // Function" reveals the underlying fn + mapping — same
+    // render-all-sections/show-hide pattern every other type uses.
+    const fwd = a.action_type === 'internal_function' ? fwdDetect(cfg) : null;
+    const isNewAction = a.action_type == null; // addAction passes {}
+    const type = fwd ? 'forward' : (a.action_type || 'workflow');
+    // Field values for the Forward section. subject_prefix prefills the meta
+    // default ('Fwd:') on NEW actions only — round-tripped actions show their
+    // stored value, including stored-empty (or absent) as empty.
+    const fv = fwd || {
+      channel: 'email', to: '', from: '', body_prefix: '',
+      subject_prefix: isNewAction ? fwdSubjectDefault() : '',
+    };
+    // From widgets — shell hybrid dropdowns (select ⇄ variable-text toggle);
+    // they self-degrade to a plain <input> when firmData has no rows. The
+    // typeof guard additionally covers a missing shell helper so the field is
+    // never a dead select.
+    const fwdFromEmailHtml = (typeof P.fdEmailFromSelectHtml === 'function')
+      ? P.fdEmailFromSelectHtml('swal-a-fwd-from-email', fv.channel === 'email' ? fv.from : '')
+      : `<input id="swal-a-fwd-from-email" class="swal2-input" style="margin:0;width:100%" value="${esc(fv.channel === 'email' ? fv.from : '')}" placeholder="info@4lsg.com">`;
+    const fwdFromSmsHtml = (typeof P.fdPhoneLineSelectHtml === 'function')
+      ? P.fdPhoneLineSelectHtml('swal-a-fwd-from-sms', fv.channel === 'sms' ? fv.from : '')
+      : `<input id="swal-a-fwd-from-sms" class="swal2-input" style="margin:0;width:100%" value="${esc(fv.channel === 'sms' ? fv.from : '')}" placeholder="2485559999">`;
     const t = meta.targets || {};
     const wfOpts = (t.workflows || []).map(w => `<option value="${w.id}" ${cfg.workflow_id==w.id?'selected':''}>${esc(w.name || 'Workflow #'+w.id)} (id: ${w.id})</option>`).join('');
     const seqList = t.sequences || [];
@@ -1972,6 +2063,10 @@ window.eiToggleSidebar = eiToggleSidebar;
           <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Action Type</label>
           <select id="swal-a-type" class="swal2-select" style="margin:0;width:100%">
             <option value="workflow"          ${type==='workflow'?'selected':''}>Workflow — start execution</option>
+            <!-- Slice 9B: 'forward' is a client-only pseudo-type — it saves as
+                 internal_function + forward_as_email/forward_as_sms and is NOT
+                 in the server's action_types list (it isn't a dispatch type). -->
+            <option value="forward"           ${type==='forward'?'selected':''}>Forward — resend as email / SMS</option>
             <option value="sequence"          ${type==='sequence'?'selected':''}>Sequence — enroll contact</option>
             <option value="hook"              ${type==='hook'?'selected':''}>Hook — invoke by slug</option>
             <option value="internal_function" ${type==='internal_function'?'selected':''}>Internal Function — call directly</option>
@@ -1985,6 +2080,40 @@ window.eiToggleSidebar = eiToggleSidebar;
           <div class="fg">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Workflow</label>
             <select id="swal-a-wf" class="swal2-select" style="margin:0;width:100%"><option value="">— select a workflow —</option>${wfOpts}</select>
+          </div>
+        </div>
+
+        <!-- forward (Slice 9B pseudo-type — saves as internal_function) -->
+        <div id="swal-a-sec-forward" class="swal-a-section" style="display:none">
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Forward</label>
+            <select id="swal-a-fwd-channel" class="swal2-select" style="margin:0;width:100%">
+              <option value="email" ${fv.channel!=='sms'?'selected':''}>as Email</option>
+              <option value="sms"   ${fv.channel==='sms'?'selected':''}>as SMS</option>
+            </select>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">To</label>
+            <input id="swal-a-fwd-to" class="swal2-input" style="margin:0;width:100%" value="${esc(fv.to)}" placeholder="stuart@4lsg.com or 2485551234">
+            <div class="hint">Fixed address/number. For dynamic recipients from the event, use the Internal Function action type.</div>
+          </div>
+          <div class="fg" id="swal-a-fwd-from-email-wrap">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">From (sending address)</label>
+            ${fwdFromEmailHtml}
+          </div>
+          <div class="fg" id="swal-a-fwd-from-sms-wrap" style="display:none">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">From (sending line)</label>
+            ${fwdFromSmsHtml}
+          </div>
+          <div class="fg" id="swal-a-fwd-subj-wrap">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Subject prefix</label>
+            <input id="swal-a-fwd-subj" class="swal2-input" style="margin:0;width:100%" value="${esc(fv.subject_prefix)}">
+            <div class="hint">Prepended to the forwarded subject. Clear it for the original subject bare.</div>
+          </div>
+          <div class="fg">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Body prefix (optional)</label>
+            <textarea id="swal-a-fwd-body" class="swal2-textarea" style="margin:0;width:100%;font-size:12px;min-height:50px">${esc(fv.body_prefix)}</textarea>
+            <div class="hint">Leading paragraph before the forwarded content.</div>
           </div>
         </div>
 
@@ -2104,6 +2233,23 @@ window.eiToggleSidebar = eiToggleSidebar;
     typeEl.addEventListener('change', updateSections);
     updateSections();
 
+    // forward channel toggle (Slice 9B) — swaps the From widget and hides the
+    // email-only subject-prefix field when forwarding as SMS.
+    const fwdChEl = document.getElementById('swal-a-fwd-channel');
+    if (fwdChEl) {
+      const updateFwdChannel = () => {
+        const isEmail = fwdChEl.value !== 'sms';
+        const we = document.getElementById('swal-a-fwd-from-email-wrap');
+        const ws = document.getElementById('swal-a-fwd-from-sms-wrap');
+        const sj = document.getElementById('swal-a-fwd-subj-wrap');
+        if (we) we.style.display = isEmail ? '' : 'none';
+        if (ws) ws.style.display = isEmail ? 'none' : '';
+        if (sj) sj.style.display = isEmail ? '' : 'none';
+      };
+      fwdChEl.addEventListener('change', updateFwdChannel);
+      updateFwdChannel();
+    }
+
     // sequence enrollment-mode toggle
     const seqModeEl = document.getElementById('swal-a-seq-mode');
     if (seqModeEl) {
@@ -2183,6 +2329,37 @@ window.eiToggleSidebar = eiToggleSidebar;
       const wfId = parseInt(document.getElementById('swal-a-wf').value, 10);
       if (!Number.isInteger(wfId) || wfId <= 0) { Swal.showValidationMessage('Select a workflow'); return false; }
       return { action_type: 'workflow', config: { workflow_id: wfId }, position, active };
+    }
+
+    // Slice 9B: Forward pseudo-type → saved as an internal_function action.
+    if (type === 'forward') {
+      const channel = document.getElementById('swal-a-fwd-channel').value === 'sms' ? 'sms' : 'email';
+      const to = document.getElementById('swal-a-fwd-to').value.trim();
+      const fromEl = document.getElementById(channel === 'email' ? 'swal-a-fwd-from-email' : 'swal-a-fwd-from-sms');
+      const from = ((fromEl && fromEl.value) || '').trim();
+      if (!to)   { Swal.showValidationMessage(channel === 'email' ? 'Enter a recipient email address' : 'Enter a recipient phone number'); return false; }
+      if (!from) { Swal.showValidationMessage(channel === 'email' ? 'Select a sending address' : 'Select a sending line'); return false; }
+      // Literal wrapping per resolveParamsMapping (lib/actionDispatchers):
+      // only the OUTER single-quote pair is stripped at resolve time
+      // (source.slice(1, -1)), so values containing interior single quotes
+      // are safe without escaping. event: '$' (bare, unquoted) passes the
+      // whole post-transform envelope through.
+      const q = v => `'${v}'`;
+      const pm = { event: '$', to: q(to), from: q(from) };
+      if (channel === 'email') {
+        const sp = document.getElementById('swal-a-fwd-subj').value;
+        if (sp.trim() !== '') pm.subject_prefix = q(sp); // omit when empty
+      }
+      const bp = document.getElementById('swal-a-fwd-body').value;
+      if (bp.trim() !== '') pm.body_prefix = q(bp); // omit when empty
+      return {
+        action_type: 'internal_function',
+        config: {
+          function_name: channel === 'email' ? 'forward_as_email' : 'forward_as_sms',
+          params_mapping: pm,
+        },
+        position, active,
+      };
     }
 
     if (type === 'sequence') {

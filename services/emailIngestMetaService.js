@@ -224,10 +224,18 @@ async function _targets(db) {
   };
 }
 
-// name → { category } for the grouped function picker (fnPicker.js).
-// Names without __meta simply have no entry (they group under 'other'
-// client-side). uiHidden is deliberately NOT included: the ingest surfaces
-// ignore hiding, and omitting the flag makes that impossible to get wrong.
+// name → { category, params? } for the grouped function picker (fnPicker.js)
+// and the Forward pseudo-type form (Slice 9B). Names without __meta simply
+// have no entry (they group under 'other' client-side). uiHidden is
+// deliberately NOT included: the ingest surfaces ignore hiding, and omitting
+// the flag makes that impossible to get wrong.
+//
+// Slice 9B: each entry also carries a `params` array projecting
+// {name, required, default?, widget?} per __meta param — the minimal surface
+// the Forward form needs (subject_prefix's 'Fwd:' default, and which `from`
+// widget applies). fnPicker.js reads only .category/.uiHidden, so the extra
+// key is invisible to it; nothing else consumes internal_function_meta
+// (grep-verified: both ingest pages + fnPicker only).
 //
 // Lazy require of lib/internal_functions — same rationale as
 // phoneIngestMetaService's CIRCULAR-DEPENDENCY NOTE: the phone-log pipeline
@@ -238,7 +246,17 @@ function _internalFunctionMeta() {
   const allMeta = require('../lib/internal_functions').__getAllMeta();
   const out = {};
   for (const [name, m] of Object.entries(allMeta)) {
-    if (m && m.category) out[name] = { category: m.category };
+    if (!m || !m.category) continue;
+    const entry = { category: m.category };
+    if (Array.isArray(m.params)) {
+      entry.params = m.params.map((p) => ({
+        name: p.name,
+        required: !!p.required,
+        ...(p.default !== undefined && { default: p.default }),
+        ...(p.widget && { widget: p.widget }),
+      }));
+    }
+    out[name] = entry;
   }
   return out;
 }
