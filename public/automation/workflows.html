@@ -689,6 +689,192 @@ function wfUpdateCredWarning() {
   warnEl.textContent = '⚠ ' + result.text;
 }
 
+// ─────────────────────────────────────────────────────────────
+// start_workflow target contract panel (Slice 6R)
+//
+// When the internal_function editor's selected function is
+// `start_workflow` and the workflow_id param holds a literal numeric
+// value, an informational panel under the field shows the target
+// workflow's name, active state, and expected init_data contract
+// (derived from the target's test_input — authorial documentation of
+// the init_data shape, Slice 2.1). Placeholder values render a
+// "dynamic — can't check" note; empty values hide the panel.
+//
+// Target resolution order:
+//   1. WF.workflows (sidebar list, already in memory — includes
+//      name/active/test_input per GET /workflows SELECT). Checked
+//      live each time so a list refresh wins over the cache. Note
+//      the sidebar default filters active=true, so inactive
+//      targets usually miss here and fall through to (2).
+//   2. WFTARGET.cache — results of lazy GET /workflows/:id
+//      fetches, keyed by id. Both found and 404 results are
+//      cached: at most one fetch per distinct id per page load.
+//      Refresh staleness is accepted (the route re-verifies
+//      existence at save time regardless).
+//
+// Missing-keys comparison runs against the init_data PARAM value
+// (the object-typed JSON textarea) — the function passes init_data
+// straight through to the child execution, so top-level keys are
+// compared directly. (No wrapped/`initData` handling — that shape
+// belongs to POST /workflows/:id/start bodies, not this param.)
+// ─────────────────────────────────────────────────────────────
+
+const WFTARGET = {
+  cache: new Map(),     // id → { found: true, wf } | { found: false }
+  inflight: new Map(),  // id → Promise (dedupe concurrent resolves)
+  timer: null,          // debounce handle for panel re-evaluation
+};
+
+// Resolve a target workflow id → { found: true, wf } | { found: false } |
+// { found: null } (transient fetch failure — unknown, not cached).
+async function wfResolveTargetWorkflow(id) {
+  const hit = WF.workflows.find(w => w.id === id);
+  if (hit) return { found: true, wf: hit };
+  if (WFTARGET.cache.has(id)) return WFTARGET.cache.get(id);
+  if (WFTARGET.inflight.has(id)) return WFTARGET.inflight.get(id);
+  const p = (async () => {
+    try {
+      const data = await api(`/workflows/${id}?includeSteps=false`);
+      const result = { found: true, wf: data.workflow };
+      WFTARGET.cache.set(id, result);
+      return result;
+    } catch (e) {
+      if (e && e.status === 404) {
+        const result = { found: false };
+        WFTARGET.cache.set(id, result);
+        return result;
+      }
+      return { found: null }; // network/5xx — don't cache, don't claim not-found
+    } finally {
+      WFTARGET.inflight.delete(id);
+    }
+  })();
+  WFTARGET.inflight.set(id, p);
+  return p;
+}
+
+// Parse the target's test_input into an expected-keys array, or null when
+// absent/empty/non-object (mysql2 may hand back a parsed object or a JSON
+// string — same dual handling as the tester seed path).
+function wfExpectedInitKeys(testInput) {
+  let ti = testInput;
+  if (typeof ti === 'string') ti = parseJson(ti);
+  if (!ti || typeof ti !== 'object' || Array.isArray(ti)) return null;
+  const keys = Object.keys(ti);
+  return keys.length ? keys : null;
+}
+
+// Compare the step's init_data param (raw textarea string) against expected
+// init_data keys. Returns an array of missing keys, or null when not
+// computable (empty field, invalid JSON — e.g. placeholders breaking parse —
+// or non-object value). Placeholder VALUES inside valid JSON strings are
+// fine; only top-level keys are compared. The function passes init_data
+// straight through, so there is NO wrapped-body detection here.
+function wfComputeMissingKeys(bodyRaw, expectedKeys) {
+  if (!expectedKeys || !expectedKeys.length) return null;
+  if (!bodyRaw || !bodyRaw.trim()) return null;
+  let initData;
+  try { initData = JSON.parse(bodyRaw); } catch { return null; }
+  if (!initData || typeof initData !== 'object' || Array.isArray(initData)) return null;
+  return expectedKeys.filter(k => !Object.prototype.hasOwnProperty.call(initData, k));
+}
+
+// Render the contract panel into #e-swf-target-panel (present only when the
+// internal_function editor renders the start_workflow form). Informational
+// styling; amber for inactive / not-found targets, matching the cred-warning
+// box's inline-style pattern.
+async function wfRenderTargetPanel() {
+  const panel = document.getElementById('e-swf-target-panel');
+  if (!panel) return;
+  const hide = () => { panel.style.display = 'none'; panel.innerHTML = ''; };
+
+  // Only meaningful while the selected function is start_workflow (the panel
+  // div only renders for it, but guard against stale timers after a switch).
+  if (document.getElementById('e-fn')?.value !== 'start_workflow') return hide();
+
+  const raw = (document.getElementById('e-pf-workflow_id')?.value || '').trim();
+  if (!raw) return hide();
+
+  const INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:11px;line-height:1.5';
+  const AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.5';
+
+  if (raw.includes('{{')) {
+    panel.style.cssText = INFO;
+    panel.innerHTML = 'Target workflow is dynamic ({{…}}) — contract can\'t be checked.';
+    return;
+  }
+  if (!/^\d+$/.test(raw)) return hide(); // non-numeric, non-placeholder — save validation will complain; stay quiet
+  const targetId = parseInt(raw, 10);
+
+  const res = await wfResolveTargetWorkflow(targetId);
+
+  // The await may have raced a field edit or editor re-render; only paint if
+  // the field still points at the same target (and the panel still exists).
+  const panelNow = document.getElementById('e-swf-target-panel');
+  if (!panelNow) return;
+  const rawNow = (document.getElementById('e-pf-workflow_id')?.value || '').trim();
+  if (rawNow !== raw) return;
+
+  if (res.found === false) {
+    panelNow.style.cssText = AMBER;
+    panelNow.innerHTML = `⚠ Workflow #${targetId} not found.`;
+    return;
+  }
+  if (res.found === null) {
+    panelNow.style.cssText = INFO;
+    panelNow.innerHTML = `→ Starts workflow #${targetId} — details unavailable (fetch failed).`;
+    return;
+  }
+
+  const wf = res.wf || {};
+  const inactive = !wf.active;
+  const lines = [];
+  lines.push(
+    `→ Starts workflow: <strong>${esc(wf.name || '')}</strong> (#${targetId})`
+    + (inactive ? ' <span style="font-weight:600">— target is inactive — this step will fail until it\'s activated</span>' : '')
+  );
+
+  const expected = wfExpectedInitKeys(wf.test_input);
+  if (expected) {
+    lines.push(`Expected init_data keys: <code>${expected.map(esc).join('</code>, <code>')}</code>`);
+    const missing = wfComputeMissingKeys(document.getElementById('e-pf-init_data')?.value || '', expected);
+    if (missing && missing.length) {
+      lines.push(`init_data doesn't set: <code>${missing.map(esc).join('</code>, <code>')}</code>`);
+    }
+  } else {
+    lines.push('No test_input documented on the target — contract unknown.');
+  }
+
+  panelNow.style.cssText = inactive ? AMBER : INFO;
+  panelNow.innerHTML = lines.join('<br>');
+}
+
+// Debounced entry point for workflow_id / init_data input events (~400ms).
+// Rapid edits collapse to one evaluation; render-time callers use
+// wfRenderTargetPanel directly for an immediate first paint.
+function wfUpdateTargetPanelDebounced() {
+  if (WFTARGET.timer) clearTimeout(WFTARGET.timer);
+  WFTARGET.timer = setTimeout(() => {
+    WFTARGET.timer = null;
+    wfRenderTargetPanel();
+  }, 400);
+}
+
+// Attach input listeners to the start_workflow param fields and do the
+// first paint. Called via setTimeout(…, 0) from wfRenderInternalFnBody —
+// the returned HTML string is inserted synchronously by every caller
+// (wfRenderEditor / wfOnTypeChange / wfToggleJson / wfOnFnChange), so by
+// the time the timeout fires the elements exist. innerHTML replacement
+// discards old nodes (and their listeners), so re-attaching per render
+// can't stack duplicate handlers.
+function wfWireStartWorkflowPanel() {
+  const idEl   = document.getElementById('e-pf-workflow_id');
+  const dataEl = document.getElementById('e-pf-init_data');
+  if (idEl)   idEl.addEventListener('input', wfUpdateTargetPanelDebounced);
+  if (dataEl) dataEl.addEventListener('input', wfUpdateTargetPanelDebounced);
+  wfRenderTargetPanel();
+}
+
 // ══════════════════════════════════════════════════════════════════
 // LIST + CANVAS
 // ══════════════════════════════════════════════════════════════════
@@ -1063,8 +1249,21 @@ function wfRenderInternalFnBody(fnName, params) {
   const fieldsHtml = meta.params.map(spec => {
     const value = params[spec.name];
     const visible = !spec.modeGroup || spec.modeGroup === current;
-    return wfRenderParamField(spec, value, visible);
+    let html = wfRenderParamField(spec, value, visible);
+    // Slice 6R — target contract panel mounts directly under the
+    // workflow_id field when editing a start_workflow step.
+    if (fnName === 'start_workflow' && spec.name === 'workflow_id') {
+      html += `<div id="e-swf-target-panel" style="display:none"></div>`;
+    }
+    return html;
   }).join('');
+
+  // Slice 6R — wire the panel after the caller inserts this HTML (all call
+  // sites assign innerHTML synchronously, so the elements exist by the time
+  // the timeout fires).
+  if (fnName === 'start_workflow') {
+    setTimeout(wfWireStartWorkflowPanel, 0);
+  }
 
   return `<div id="e-fn-body-inner" data-mode="${current || ''}">${desc}${modeBar}${fieldsHtml}</div>`;
 }

@@ -25,6 +25,7 @@ lib/internal_functions/appointments.js
 lib/internal_functions/calendar.js
 lib/internal_functions/cases.js
 lib/internal_functions/communication.js
+lib/internal_functions/composition.js
 lib/internal_functions/connections.js
 lib/internal_functions/contacts.js
 lib/internal_functions/control.js

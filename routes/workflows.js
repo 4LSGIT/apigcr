@@ -126,6 +126,51 @@ async function validateWebhookConfig(db, type, config) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// start_workflow target validation — async because workflow FK check.
+//
+// Slice 6R. Mirrors the webhook credential_id existence-check precedent
+// above and routes/sequences.js's start_workflow action_config check: when
+// an internal_function step is `start_workflow` and params.workflow_id is
+// a literal (placeholder-free) value, verify the target workflow exists at
+// save time. Placeholder values skip the check (resolved at runtime — same
+// convention as the URL parse-check). The __meta types workflow_id as
+// 'string' (so the form renders a text input that can hold placeholders),
+// which loses the meta validator's integer check — the numeric-shape check
+// here recovers it for literal values.
+//
+// Active is NOT checked here: saving a step against a currently-inactive
+// workflow is legitimate authoring order (build child, wire parent,
+// activate child). The runtime function throws on inactive.
+//
+// Returns null on success, or { status, error } on failure.
+// ─────────────────────────────────────────────────────────────
+
+async function validateStartWorkflowConfig(db, type, config) {
+  if (type !== 'internal_function') return null;
+  if (config == null || typeof config !== 'object') return null;
+  if (config.function_name !== 'start_workflow') return null;
+  const params = config.params;
+  if (params == null || typeof params !== 'object' || Array.isArray(params)) return null;
+
+  const wid = params.workflow_id;
+  // Absent/empty → the meta validator's `required` check already 400s;
+  // don't double-report here.
+  if (wid === undefined || wid === null || wid === '') return null;
+  // Placeholder → runtime concern.
+  if (typeof wid === 'string' && /\{\{.*?\}\}/.test(wid)) return null;
+
+  const n = Number(wid);
+  if (!Number.isInteger(n) || n <= 0) {
+    return { status: 400, error: `start_workflow params.workflow_id must be a positive integer or {{placeholder}} (got ${JSON.stringify(wid)})` };
+  }
+  const [[row]] = await db.query(`SELECT id FROM workflows WHERE id = ?`, [n]);
+  if (!row) {
+    return { status: 400, error: `start_workflow params.workflow_id ${n} does not exist in workflows table` };
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────
 // GET /workflows/functions — list available internal functions
 // Used by the workflow/sequence editors to populate dropdowns dynamically.
 // The sequence list is META-DRIVEN: functions carrying __meta.workflowOnly
@@ -799,6 +844,12 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
+  // Slice 6R — start_workflow target FK check (literal workflow_id only)
+  {
+    const v = await validateStartWorkflowConfig(db, type, config);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
+
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
@@ -925,6 +976,15 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
     // Webhook credential injection slice — validate URL, method, credential FK, timeout
     {
       const v = await validateWebhookConfig(db, step.type, step.config);
+      if (v) return res.status(v.status).json({
+        error: `Step ${i + 1}: ${v.error}`,
+        message: v.message,
+      });
+    }
+
+    // Slice 6R — start_workflow target FK check (literal workflow_id only)
+    {
+      const v = await validateStartWorkflowConfig(db, step.type, step.config);
       if (v) return res.status(v.status).json({
         error: `Step ${i + 1}: ${v.error}`,
         message: v.message,
@@ -1389,6 +1449,12 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
     if (v) return res.status(v.status).json({ error: v.error, message: v.message });
   }
 
+  // Slice 6R — start_workflow target FK check (literal workflow_id only)
+  {
+    const v = await validateStartWorkflowConfig(db, type, config);
+    if (v) return res.status(v.status).json({ error: v.error, message: v.message });
+  }
+
   try {
     const outcome = await db.withTransaction(async (connection) => {
 
@@ -1494,6 +1560,11 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
       const wv = await validateWebhookConfig(db, typeToCheck, configToCheck);
       if (wv) {
         return { respond: { status: wv.status, body: { error: wv.error, message: wv.message } } };
+      }
+      // Slice 6R — start_workflow target FK check, same combination pattern.
+      const swv = await validateStartWorkflowConfig(db, typeToCheck, configToCheck);
+      if (swv) {
+        return { respond: { status: swv.status, body: { error: swv.error, message: swv.message } } };
       }
     }
 
