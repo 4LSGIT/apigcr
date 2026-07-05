@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Activity</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       ACTIVITY SUB-PAGE — self-contained styles.
+       Shared tokens + base layout duplicated from shell
+       (same convention as scheduledJobs.html).
+       ══════════════════════════════════════════════ */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:    #1a1a2e;
+      --navy2:   #16213e;
+      --blue:    #4f8ef7;
+      --blue2:   #3a7de8;
+      --green:   #22c55e;
+      --red:     #ef4444;
+      --amber:   #f59e0b;
+      --purple:  #8b5cf6;
+      --bg:      #f1f5f9;
+      --surface: #ffffff;
+      --border:  #e2e8f0;
+      --muted:   #94a3b8;
+      --text:    #1e293b;
+      --text2:   #475569;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px;
+      color: var(--text);
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── Button family (duplicated from shell) ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: var(--blue2); }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Empty state (shared) ── */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; color: var(--muted);
+      gap: 10px; text-align: center;
+    }
+    .empty-state i { font-size: 36px; opacity: 0.25; }
+
+    /* ══════════════════════════════════════════════
+       ACTIVITY-SPECIFIC STYLES
+       ══════════════════════════════════════════════ */
+
+    .act-toolbar {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 10px 16px; display: flex; align-items: center; gap: 12px;
+      flex-shrink: 0; flex-wrap: wrap;
+    }
+
+    /* Segmented control (type filter + mode toggle) */
+    .act-seg {
+      display: inline-flex; border: 1px solid var(--border);
+      border-radius: 6px; overflow: hidden; background: var(--bg);
+    }
+    .act-seg button {
+      border: none; background: none; padding: 6px 12px;
+      font-size: 12px; font-weight: 500; color: var(--text2);
+      cursor: pointer; transition: all 0.12s; white-space: nowrap;
+    }
+    .act-seg button:not(:last-child) { border-right: 1px solid var(--border); }
+    .act-seg button:hover { background: rgba(0,0,0,0.04); }
+    .act-seg button.active { background: var(--blue); color: #fff; }
+
+    .act-select {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 13px; color: var(--text); background: var(--surface);
+      outline: none; cursor: pointer;
+    }
+
+    .act-toolbar .act-updated {
+      margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap;
+    }
+
+    /* Per-source error strip */
+    #act-errors { flex-shrink: 0; }
+    .act-error-note {
+      background: #fef2f2; border-bottom: 1px solid #fecaca; color: #991b1b;
+      font-size: 12px; padding: 6px 16px;
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    /* ── Table ── */
+    #act-body { flex: 1; overflow-y: auto; }
+
+    .act-table { width: 100%; border-collapse: collapse; background: var(--surface); }
+    .act-table th {
+      position: sticky; top: 0; z-index: 1;
+      background: var(--bg); text-align: left; padding: 8px 12px;
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--text2); border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .act-table td {
+      padding: 8px 12px; border-bottom: 1px solid var(--border);
+      vertical-align: top; font-size: 13px;
+    }
+    .act-table tr.act-row { cursor: pointer; }
+    .act-table tr.act-row:hover { background: #f8fafc; }
+
+    .act-type {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; font-weight: 600; white-space: nowrap;
+    }
+    .act-type i { width: 14px; text-align: center; }
+    .act-type-workflow i { color: var(--blue); }
+    .act-type-job      i { color: var(--amber); }
+    .act-type-hook     i { color: var(--purple); }
+    .act-type-sequence i { color: var(--green); }
+
+    .act-name {
+      font-weight: 600; max-width: 320px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .act-detail {
+      color: var(--text2); font-size: 12px; max-width: 420px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    /* Status chips — palette matches hooks.html's hook-status-badge family */
+    .act-chip {
+      display: inline-block; padding: 2px 8px; border-radius: 10px;
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .act-chip-good    { background: #dcfce7; color: #166534; }
+    .act-chip-bad     { background: #fef2f2; color: #991b1b; }
+    .act-chip-warn    { background: #fef9c3; color: #854d0e; }
+    .act-chip-active  { background: #dbeafe; color: #1e40af; }
+    .act-chip-neutral { background: #f1f5f9; color: #475569; }
+
+    .act-when { white-space: nowrap; color: var(--text2); font-size: 12px; }
+
+    .act-json-btn {
+      border: 1px solid var(--border); background: var(--surface);
+      border-radius: 6px; padding: 3px 8px; font-size: 11px;
+      color: var(--text2); cursor: pointer;
+    }
+    .act-json-btn:hover { background: var(--bg); }
+
+    .act-swal-pre {
+      text-align: left; background: #0f172a; color: #e2e8f0;
+      border-radius: 8px; padding: 12px; font-size: 11px;
+      max-height: 55vh; overflow: auto; white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Toolbar ── -->
+<div class="act-toolbar">
+  <div class="act-seg" id="act-type-seg">
+    <button data-type="all" class="active">All</button>
+    <button data-type="workflow">Workflows</button>
+    <button data-type="job">Jobs</button>
+    <button data-type="hook">Hooks</button>
+    <button data-type="sequence">Sequences</button>
+  </div>
+
+  <div class="act-seg" id="act-mode-seg">
+    <button data-mode="failures" class="active"><i class="fa-solid fa-triangle-exclamation" style="margin-right:5px"></i>Failures</button>
+    <button data-mode="all">All</button>
+  </div>
+
+  <select class="act-select" id="act-window">
+    <option value="24" selected>Last 24 hours</option>
+    <option value="168">Last 7 days</option>
+    <option value="720">Last 30 days</option>
+  </select>
+
+  <button class="btn btn-primary btn-sm" id="act-refresh-btn" onclick="loadActivity()">
+    <i class="fa-solid fa-rotate-right" id="act-refresh-icon"></i> Refresh
+  </button>
+
+  <span class="act-updated" id="act-updated"></span>
+</div>
+
+<!-- ── Per-source fetch-error notes ── -->
+<div id="act-errors"></div>
+
+<!-- ── Table ── -->
+<div id="act-body">
+  <div class="empty-state"><i class="fa-solid fa-heart-pulse"></i><div>Loading activity…</div></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// ACTIVITY SUB-PAGE — cross-automation "what broke overnight" view.
+//
+// Merges four read-only sources client-side:
+//   - GET /executions              (workflow executions; routes/workflows.js)
+//   - GET /scheduled-jobs          (scheduled jobs; routes/scheduled_jobs.js)
+//   - GET /api/hooks/executions    (global; routes/api.hooks.js, Slice 7)
+//   - GET /sequences/step-log      (global; routes/sequences.js, Slice 7)
+//
+// Shell communication:
+//   - P.apiSend(...)            — relayed to a.html
+//   - P.setTopbarButtons({...}) — request button visibility
+//   - P.switchSubPage(id)       — programmatic tab switch (row click)
+//
+// Lifecycle hooks exposed on window: onShow, onHide, onRefresh.
+// (onSave / onDelete / onNew not applicable — read-only view.)
+//
+// Auto-refresh: 60s interval, gated on BOTH the shell tab being active
+// (subPageActive, via onShow/onHide) AND document.visibilityState ===
+// 'visible' (browser tab). Interval is cleared whenever either gate
+// closes and restarted when both reopen.
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function relativeTime(ms) {
+  const diff = Date.now() - ms;
+  if (!Number.isFinite(diff) || diff < 0) return 'just now';
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+  const day = Math.floor(hr / 24);
+  return `${day} day${day === 1 ? '' : 's'} ago`;
+}
+
+// ── State ──────────────────────────────────────────────────────
+let subPageActive  = false;
+let typeFilter     = 'all';       // all | workflow | job | hook | sequence
+let modeFilter     = 'failures';  // failures | all
+let windowHours    = 24;          // 24 | 168 | 720
+let refreshTimer   = null;
+let loadInFlight   = false;
+let lastRows       = [];          // normalized rows from the last successful merge
+
+// ── Source metadata ────────────────────────────────────────────
+//
+// tabId maps a row's source to the automationManager sub-page to switch
+// to on row click (shell exposes window.switchSubPage).
+//
+// Failure-status vocabularies (verified against schema + writer code):
+//   workflow_executions: pending|active|processing|delayed|completed|
+//                        completed_with_errors|failed|cancelled
+//                        → failures = failed, completed_with_errors
+//   scheduled_jobs:      pending|running|completed|failed → failures = failed
+//   hook_executions:     received|filtered|processing|delivered|partial|
+//                        failed|captured → failures = failed, partial
+//   sequence_step_log:   sent|skipped|failed → failures = failed
+const SOURCES = {
+  workflow: { label: 'Workflow', icon: 'diagram-project', tabId: 'workflows' },
+  job:      { label: 'Job',      icon: 'clock',           tabId: 'scheduledJobs' },
+  hook:     { label: 'Hook',     icon: 'satellite-dish',  tabId: 'hooks' },
+  sequence: { label: 'Sequence', icon: 'list-ol',         tabId: 'sequences' },
+};
+
+// Status → chip color class. Anything unlisted renders neutral.
+const CHIP_CLASS = {
+  completed: 'good', delivered: 'good', sent: 'good', success: 'good',
+  failed: 'bad',
+  partial: 'warn', completed_with_errors: 'warn', pending: 'warn',
+  active: 'active', processing: 'active', running: 'active', delayed: 'active',
+  skipped: 'neutral', filtered: 'neutral', cancelled: 'neutral',
+  captured: 'neutral', received: 'neutral',
+};
+
+// ── Timestamp normalization ────────────────────────────────────
+// Each source exposes a different "when it happened" field; pick the
+// most failure-relevant one available and normalize to epoch ms.
+function toMs(v) {
+  if (!v) return NaN;
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) ? t : NaN;
+}
+
+function normWorkflow(r) {
+  return {
+    source: 'workflow',
+    id: r.id,
+    name: r.workflow_name || `Workflow #${r.workflow_id}`,
+    status: r.status,
+    ts: toMs(r.completed_at) || toMs(r.updated_at) || toMs(r.created_at),
+    detail: `exec #${r.id} · step ${r.current_step_number ?? '?'} · ${r.steps_executed_count ?? 0} executed`,
+    raw: r,
+  };
+}
+
+function normJob(r) {
+  const bits = [`#${r.id}`, r.type];
+  if (r.attempts != null) bits.push(`attempt ${r.attempts}/${r.max_attempts ?? '?'}`);
+  return {
+    source: 'job',
+    id: r.id,
+    name: r.name || `Job #${r.id}`,
+    status: r.status,
+    ts: toMs(r.updated_at) || toMs(r.scheduled_time) || toMs(r.created_at),
+    detail: bits.join(' · '),
+    raw: r,
+  };
+}
+
+function normHook(r) {
+  const bits = [`exec #${r.id}`];
+  if (r.delivery_count != null) bits.push(`${r.delivery_count} deliver${r.delivery_count == 1 ? 'y' : 'ies'}`);
+  if (r.error) bits.push(r.error);
+  return {
+    source: 'hook',
+    id: r.id,
+    name: r.hook_name || r.slug || `Hook #${r.hook_id}`,
+    status: r.status,
+    ts: toMs(r.created_at),
+    detail: bits.join(' · '),
+    raw: r,
+  };
+}
+
+function normSequence(r) {
+  const bits = [`enrollment #${r.enrollment_id}`, `step ${r.step_number}`, `contact ${r.contact_id}`];
+  if (r.error_message) bits.push(r.error_message);
+  else if (r.skip_reason) bits.push(r.skip_reason);
+  return {
+    source: 'sequence',
+    id: r.id,
+    name: r.template_name || `Template #${r.template_id}`,
+    status: r.status,
+    ts: toMs(r.executed_at),
+    detail: bits.join(' · '),
+    raw: r,
+  };
+}
+
+// ── Fetchers ───────────────────────────────────────────────────
+//
+// `since` (ISO) is passed server-side where the endpoint supports it
+// (the two new Slice 7 endpoints). /executions and /scheduled-jobs have
+// no `since` param — those get the same window applied client-side in
+// applyFiltersAndRender(). (The cutoff is applied to ALL rows client-side
+// as well, so the server-side `since` is just a row-count optimization.)
+//
+// /executions accepts a single `status` value only — Failures mode
+// fetches `failed` and `completed_with_errors` as two parallel calls.
+async function fetchWorkflows(sinceIso) {
+  if (modeFilter === 'failures') {
+    const [a, b] = await Promise.all([
+      api('/executions', 'GET', { status: 'failed', limit: 100 }),
+      api('/executions', 'GET', { status: 'completed_with_errors', limit: 100 }),
+    ]);
+    return [...(a.executions || []), ...(b.executions || [])].map(normWorkflow);
+  }
+  const d = await api('/executions', 'GET', { limit: 100 });
+  return (d.executions || []).map(normWorkflow);
+}
+
+async function fetchJobs(sinceIso) {
+  const params = { limit: 100 };
+  if (modeFilter === 'failures') params.status = 'failed';
+  const d = await api('/scheduled-jobs', 'GET', params);
+  return (d.jobs || []).map(normJob);
+}
+
+async function fetchHooks(sinceIso) {
+  const params = { limit: 100, since: sinceIso };
+  if (modeFilter === 'failures') params.status = 'failed,partial';
+  const d = await api('/api/hooks/executions', 'GET', params);
+  return (d.executions || []).map(normHook);
+}
+
+async function fetchSequences(sinceIso) {
+  const params = { limit: 100, since: sinceIso };
+  if (modeFilter === 'failures') params.status = 'failed';
+  const d = await api('/sequences/step-log', 'GET', params);
+  return (d.step_log || []).map(normSequence);
+}
+
+const FETCHERS = {
+  workflow: fetchWorkflows,
+  job:      fetchJobs,
+  hook:     fetchHooks,
+  sequence: fetchSequences,
+};
+
+// ── Load + merge ───────────────────────────────────────────────
+async function loadActivity() {
+  if (loadInFlight) return;
+  loadInFlight = true;
+  const icon = document.getElementById('act-refresh-icon');
+  icon.classList.add('spin');
+
+  const sinceMs  = Date.now() - windowHours * 3600 * 1000;
+  const sinceIso = new Date(sinceMs).toISOString();
+
+  const activeSources = typeFilter === 'all'
+    ? Object.keys(FETCHERS)
+    : [typeFilter];
+
+  try {
+    const results = await Promise.allSettled(activeSources.map((s) => FETCHERS[s](sinceIso)));
+
+    const rows = [];
+    const errors = [];
+    results.forEach((r, i) => {
+      const src = activeSources[i];
+      if (r.status === 'fulfilled') rows.push(...r.value);
+      else errors.push({ source: src, message: r.reason?.message || String(r.reason) });
+    });
+
+    lastRows = rows;
+    renderErrors(errors);
+    applyFiltersAndRender(sinceMs);
+    document.getElementById('act-updated').textContent =
+      `Updated ${new Date().toLocaleTimeString()}`;
+  } finally {
+    loadInFlight = false;
+    icon.classList.remove('spin');
+  }
+}
+
+function renderErrors(errors) {
+  const box = document.getElementById('act-errors');
+  if (!errors.length) { box.innerHTML = ''; return; }
+  box.innerHTML = errors.map((e) => `
+    <div class="act-error-note">
+      <i class="fa-solid fa-circle-exclamation"></i>
+      Failed to load ${esc(SOURCES[e.source]?.label || e.source)} activity: ${esc(e.message)}
+    </div>
+  `).join('');
+}
+
+function applyFiltersAndRender(sinceMs) {
+  // Client-side time window — uniform across all sources (covers the two
+  // endpoints without a `since` param, and re-trims the others).
+  // Rows with an unparseable timestamp are kept (NaN fails the < check)
+  // so a serialization surprise degrades to "shown" rather than silently
+  // hidden.
+  const rows = lastRows
+    .filter((r) => !(r.ts < sinceMs))
+    .sort((a, b) => (b.ts || 0) - (a.ts || 0))
+    .slice(0, 100);
+
+  const body = document.getElementById('act-body');
+
+  if (!rows.length) {
+    body.innerHTML = `
+      <div class="empty-state">
+        <i class="fa-solid ${modeFilter === 'failures' ? 'fa-circle-check' : 'fa-inbox'}"></i>
+        <div>${modeFilter === 'failures'
+          ? 'No failures in the selected window. All quiet.'
+          : 'No activity in the selected window.'}</div>
+      </div>`;
+    return;
+  }
+
+  body.innerHTML = `
+    <table class="act-table">
+      <thead>
+        <tr><th>Type</th><th>Name</th><th>Status</th><th>When</th><th>Detail</th><th></th></tr>
+      </thead>
+      <tbody>
+        ${rows.map((r, i) => {
+          const meta = SOURCES[r.source];
+          const chip = CHIP_CLASS[r.status] || 'neutral';
+          const abs  = Number.isFinite(r.ts) ? new Date(r.ts).toLocaleString() : '—';
+          const rel  = Number.isFinite(r.ts) ? relativeTime(r.ts) : '—';
+          return `
+            <tr class="act-row" onclick="rowClick(${i})">
+              <td><span class="act-type act-type-${r.source}"><i class="fa-solid fa-${meta.icon}"></i>${esc(meta.label)}</span></td>
+              <td><div class="act-name" title="${esc(r.name)}">${esc(r.name)}</div></td>
+              <td><span class="act-chip act-chip-${chip}">${esc(r.status)}</span></td>
+              <td><span class="act-when" title="${esc(abs)}">${esc(rel)}</span></td>
+              <td><div class="act-detail" title="${esc(r.detail)}">${esc(r.detail)}</div></td>
+              <td><button class="act-json-btn" onclick="event.stopPropagation(); rowDetail(${i})" title="View raw record"><i class="fa-solid fa-code"></i></button></td>
+            </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+
+  // Stash the rendered rows for the click handlers (index-addressed).
+  window._actRendered = rows;
+}
+
+// ── Row interactions ───────────────────────────────────────────
+//
+// Row click → switch to the source's sub-tab (the shell's switchSubPage
+// is a plain window-level function, so programmatic switching is
+// trivially supported). No deep-link to the specific record — out of
+// scope for Slice 7; the per-row code button shows the raw JSON.
+function rowClick(i) {
+  const r = window._actRendered?.[i];
+  if (!r) return;
+  const tabId = SOURCES[r.source]?.tabId;
+  if (tabId && typeof P.switchSubPage === 'function') {
+    P.switchSubPage(tabId);
+  } else {
+    rowDetail(i); // fallback if shell contract ever changes
+  }
+}
+
+function rowDetail(i) {
+  const r = window._actRendered?.[i];
+  if (!r) return;
+  let json;
+  try { json = JSON.stringify(r.raw, null, 2); }
+  catch { json = String(r.raw); }
+  Swal.fire({
+    title: `${SOURCES[r.source]?.label || r.source} · ${esc(r.name)}`,
+    html: `<pre class="act-swal-pre">${esc(json)}</pre>`,
+    width: 640,
+    confirmButtonText: 'Close',
+  });
+}
+
+// ── Toolbar wiring ─────────────────────────────────────────────
+document.getElementById('act-type-seg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-type]');
+  if (!btn) return;
+  typeFilter = btn.dataset.type;
+  document.querySelectorAll('#act-type-seg button').forEach((b) => b.classList.toggle('active', b === btn));
+  loadActivity();
+});
+
+document.getElementById('act-mode-seg').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn) return;
+  modeFilter = btn.dataset.mode;
+  document.querySelectorAll('#act-mode-seg button').forEach((b) => b.classList.toggle('active', b === btn));
+  loadActivity();
+});
+
+document.getElementById('act-window').addEventListener('change', (e) => {
+  windowHours = parseInt(e.target.value) || 24;
+  loadActivity();
+});
+
+// ── Auto-refresh (60s, visibility-gated) ───────────────────────
+function startAutoRefresh() {
+  stopAutoRefresh();
+  if (!subPageActive || document.visibilityState !== 'visible') return;
+  refreshTimer = setInterval(() => {
+    // Double-check gates at fire time — belt and suspenders against a
+    // missed lifecycle event.
+    if (subPageActive && document.visibilityState === 'visible') loadActivity();
+  }, 60 * 1000);
+}
+
+function stopAutoRefresh() {
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (subPageActive) { loadActivity(); startAutoRefresh(); }
+  } else {
+    stopAutoRefresh();
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════
+// LIFECYCLE
+// ══════════════════════════════════════════════════════════════════
+
+async function init() {
+  subPageActive = true;
+  declareTopbar();
+  await loadActivity();
+  startAutoRefresh();
+}
+
+function declareTopbar() {
+  if (!subPageActive) return;
+  P.setTopbarButtons({ refresh: true, new: false, save: false, delete: false });
+}
+
+function onShow() {
+  subPageActive = true;
+  declareTopbar();
+  loadActivity();       // refresh on re-show — activity is time-sensitive
+  startAutoRefresh();
+}
+
+function onHide() {
+  subPageActive = false;
+  stopAutoRefresh();
+}
+
+function onRefresh() { return loadActivity(); }
+
+// ══════════════════════════════════════════════════════════════════
+// WINDOW EXPORTS — for inline onclick handlers + shell hooks
+// ══════════════════════════════════════════════════════════════════
+
+window.onShow       = onShow;
+window.onHide       = onHide;
+window.onRefresh    = onRefresh;
+window.loadActivity = loadActivity;
+window.rowClick     = rowClick;
+window.rowDetail    = rowDetail;
+
+// ── Boot ───────────────────────────────────────────────────────
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return init();
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>

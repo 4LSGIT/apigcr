@@ -45,8 +45,9 @@
     #topbar {
       background: var(--navy);
       color: #fff;
-      height: 48px;
+      min-height: 48px;          /* was: height: 48px — allow growth when tabs wrap */
       display: flex;
+      flex-wrap: wrap;           /* NEW — wrap tabs/actions to a second row when narrow */
       align-items: center;
       padding: 0 16px;
       gap: 0;
@@ -65,29 +66,30 @@
 
     .tab-nav {
       display: flex;
-      height: 100%;
+      flex-wrap: wrap;           /* NEW — tab buttons wrap instead of clipping */
       gap: 2px;
       flex: 1;
+      min-width: 0;              /* was: height: 100% — breaks in wrapped flex lines */
     }
 
     .tab-nav-btn {
-      height: 100%;
-      padding: 0 20px;
+      height: 48px;              /* was: height: 100% — fixed so each wrapped row stays uniform */
+      padding: 0 10px;
       border: none;
       background: none;
       color: rgba(255,255,255,0.55);
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 500;
       cursor: pointer;
       border-bottom: 3px solid transparent;
       transition: all 0.15s;
       display: flex;
       align-items: center;
-      gap: 7px;
+      gap: 6px;
       white-space: nowrap;
     }
     .tab-nav-btn:hover { color: rgba(255,255,255,0.85); background: rgba(255,255,255,0.05); }
-    .tab-nav-btn.active { color: #fff; border-bottom-color: var(--blue); }
+    .tab-nav-btn.active { color: #fff; border-bottom-color: var(--blue); font-size: 14px; }
 
     .topbar-actions { display: flex; gap: 8px; margin-left: auto; }
 
@@ -378,10 +380,11 @@ const SUB_PAGES = [
   { id: 'workflows',     title: 'Workflows',      icon: 'diagram-project', src: '/automation/workflows.html',     newLabel: 'New Workflow' },
   { id: 'sequences',     title: 'Sequences',      icon: 'list-ol',         src: '/automation/sequences.html',     newLabel: 'New Sequence Template' },
   { id: 'scheduledJobs', title: 'Scheduled Jobs', icon: 'clock',           src: '/automation/scheduledJobs.html', newLabel: 'New Scheduled Job' },
-  { id: 'hooks',         title: 'Hooks',          icon:'fa-satellite-dish',src: '/automation/hooks.html',         newLabel: 'New Hook' },
+  { id: 'hooks',         title: 'Hooks',          icon: 'satellite-dish',  src: '/automation/hooks.html',         newLabel: 'New Hook' },
   { id: 'emailIngest',   title: 'Email',   icon: 'envelope-open-text', src:'/automation/emailIngest.html', newLabel: 'New' },
   { id: 'phoneIngest',   title: 'Phone',   icon: 'mobile',          src: '/automation/phoneIngest.html',   newLabel: 'New' },
   { id: 'courtReview',   title: 'Court Review', icon: 'gavel',      src: '/automation/courtReview.html',   newLabel: '' },
+  { id: 'activity',      title: 'Activity',     icon: 'heart-pulse',src: '/automation/activity.html',      newLabel: '' },
 ];
 
 // ── Shell state ────────────────────────────────────────────────

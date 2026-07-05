@@ -217,6 +217,80 @@ router.get('/api/hooks/meta', jwtOrApiKey, async (req, res) => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────
+// GET /api/hooks/executions — GLOBAL executions list (Slice 7,
+// cross-automation Activity tab).
+//
+// ROUTE-ORDER CRITICAL: this must be registered BEFORE
+// GET /api/hooks/:id below, or Express matches '/api/hooks/executions'
+// with :id = 'executions' and the handler 404s ("Hook not found").
+// /api/hooks/meta above sits before :id for the same reason. The
+// existing detail route GET /api/hooks/executions/:id (further down,
+// ~L615 in baseline) is unaffected by :id — it has two path segments
+// after /api/hooks, which the one-segment :id pattern can't capture —
+// and it doesn't conflict with this route either (different segment
+// counts).
+//
+// Query params:
+//   status — optional. Single value or comma-separated list drawn from
+//            the hook_executions enum: received | filtered | processing |
+//            delivered | partial | failed | captured.
+//            (Failure statuses for the Activity view: failed, partial.)
+//   since  — optional ISO datetime; filters created_at >= since.
+//   limit  — default 50, capped at 200.
+//
+// Returns { status: 'success', executions: [...] } — each row carries
+// the hook name (LEFT JOIN so orphaned executions still list) and a
+// delivery_count subquery mirroring the per-hook listExecutions shape.
+// ─────────────────────────────────────────────────────────────
+router.get('/api/hooks/executions', jwtOrApiKey, async (req, res) => {
+  try {
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+    const where = ['1=1'];
+    const params = [];
+
+    if (req.query.status) {
+      const statuses = String(req.query.status)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (statuses.length) {
+        where.push(`he.status IN (${statuses.map(() => '?').join(',')})`);
+        params.push(...statuses);
+      }
+    }
+
+    if (req.query.since) {
+      const d = new Date(req.query.since);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ status: 'error', message: 'Invalid since datetime' });
+      }
+      // Server and DB both run in UTC (TZ=UTC); format the cutoff as a
+      // UTC 'YYYY-MM-DD HH:MM:SS' literal so a 'Z'-suffixed ISO string
+      // from the client never trips MySQL's datetime parsing.
+      where.push('he.created_at >= ?');
+      params.push(d.toISOString().slice(0, 19).replace('T', ' '));
+    }
+
+    const [rows] = await req.db.query(
+      `SELECT he.id, he.hook_id, he.slug, he.status, he.error, he.created_at,
+              h.name AS hook_name,
+              (SELECT COUNT(*) FROM hook_delivery_logs hdl WHERE hdl.execution_id = he.id) AS delivery_count
+       FROM hook_executions he
+       LEFT JOIN hooks h ON h.id = he.hook_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY he.created_at DESC
+       LIMIT ?`,
+      [...params, limit]
+    );
+
+    res.json({ status: 'success', executions: rows });
+  } catch (err) {
+    console.error('[hook] global executions list error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 router.get('/api/hooks/:id', jwtOrApiKey, async (req, res) => {
   try {
     const hook = await hookService.getHookById(req.db, req.params.id);

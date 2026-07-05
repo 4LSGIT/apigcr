@@ -1015,6 +1015,75 @@ router.get('/sequences/templates/:id/enrollments', jwtOrApiKey, async (req, res)
   }
 });
 
+// GET /sequences/step-log — GLOBAL recent step-log rows (Slice 7,
+// cross-automation Activity tab).
+//
+// Joins enrollment → template so each row carries template_name /
+// template_type + contact_id. INNER JOINs are safe: enrollment_id and
+// template_id are FK-backed, a step-log row can't exist without both.
+//
+// No route-order hazard in this file — there is no '/sequences/:param'
+// wildcard route, so '/sequences/step-log' can't be shadowed.
+//
+// Query params (mirrors GET /api/hooks/executions):
+//   status — optional. Single value or comma-separated list from the
+//            sequence_step_log enum: sent | skipped | failed.
+//            (Failure status for the Activity view: failed.)
+//   since  — optional ISO datetime; filters executed_at >= since.
+//   limit  — default 50, capped at 200.
+//
+// Returns { success: true, step_log: [...] }, newest first.
+router.get('/sequences/step-log', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  try {
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
+    const where = ['1=1'];
+    const params = [];
+
+    if (req.query.status) {
+      const statuses = String(req.query.status)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (statuses.length) {
+        where.push(`l.status IN (${statuses.map(() => '?').join(',')})`);
+        params.push(...statuses);
+      }
+    }
+
+    if (req.query.since) {
+      const d = new Date(req.query.since);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ error: 'Invalid since datetime' });
+      }
+      // Server + DB run in UTC; format as UTC 'YYYY-MM-DD HH:MM:SS' so a
+      // 'Z'-suffixed ISO string never trips MySQL's datetime parsing.
+      where.push('l.executed_at >= ?');
+      params.push(d.toISOString().slice(0, 19).replace('T', ' '));
+    }
+
+    const [rows] = await db.query(
+      `SELECT l.id, l.enrollment_id, l.step_id, l.step_number, l.status,
+              l.skip_reason, l.error_message, l.duration_ms,
+              l.scheduled_at, l.executed_at,
+              e.contact_id, e.template_id,
+              t.name AS template_name, t.type AS template_type
+       FROM sequence_step_log l
+       JOIN sequence_enrollments e ON e.id = l.enrollment_id
+       JOIN sequence_templates t ON t.id = e.template_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY l.executed_at DESC, l.id DESC
+       LIMIT ?`,
+      [...params, limit]
+    );
+
+    res.json({ success: true, step_log: rows });
+  } catch (err) {
+    console.error('[GET STEP LOG] Failed:', err);
+    res.status(500).json({ error: 'Failed to list step log', message: err.message });
+  }
+});
+
 // GET /sequences/enrollments
 router.get('/sequences/enrollments', jwtOrApiKey, async (req, res) => {
   const db = req.db;
