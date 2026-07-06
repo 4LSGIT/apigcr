@@ -543,6 +543,14 @@ function _extractActionResult(actionType, logData) {
 async function evaluateRules(db, envelope) {
   const rules = await listActiveRules(db);
 
+  // Catalog parity: MATCH_FIELDS offers `body`, but the canonical envelope
+  // carries text/html only — body is derived at ingest for the email_log row
+  // (emailIngestService: envelope.text || envelope.html || '') and was never
+  // put on the envelope, so body conditions could never match. Derive it here
+  // with the identical expression. Non-mutating spread — callers' envelope
+  // object is untouched.
+  envelope = { ...envelope, body: (envelope.text || envelope.html || '') };
+
   const matchedRuleIds = [];
   const actionOutcomes = [];
   const parseWarnings  = [];

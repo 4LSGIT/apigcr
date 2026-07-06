@@ -192,6 +192,14 @@ async function _bumpMetrics(db, ruleIds) {
 async function evaluateSuppressions(db, envelope) {
   const rules = await listActiveSuppressions(db);
 
+  // Catalog parity (same derivation as emailIngestRuleService.evaluateRules):
+  // MATCH_FIELDS offers `body`, but the canonical envelope carries text/html
+  // only — body is derived at ingest for the email_log row (emailIngestService:
+  // envelope.text || envelope.html || '') and was never put on the envelope, so
+  // body conditions could never match. Derive it here with the identical
+  // expression. Non-mutating spread — the caller's envelope object is untouched.
+  envelope = { ...envelope, body: (envelope.text || envelope.html || '') };
+
   const matchedRuleIds = [];
   for (const rule of rules) {
     if (_evaluateRule(rule, envelope)) matchedRuleIds.push(rule.id);

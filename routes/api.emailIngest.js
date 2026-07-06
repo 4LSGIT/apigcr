@@ -522,4 +522,133 @@ router.get('/api/email-ingest/sample-events', jwtOrApiKey, async (req, res) => {
 });
 
 
+// ─────────────────────────────────────────────────────────────
+// TEST-MATCH (Slice 10A — read-only, zero side effects)
+//
+// POST /api/email-ingest/rules/test-match
+//
+// Evaluates an editor's CURRENT (unsaved) match config against recent
+// historical email events, using the PRODUCTION matcher
+// (emailIngestRuleService._evaluateMatch) — so semantics, including per-row
+// error swallowing, are byte-identical to what the rule would do live. The
+// corpus is the same synthetic-envelope reconstruction the sample panel uses
+// (sampleService.fetchSyntheticEnvelopes — one reconstruction implementation);
+// each row carries `fidelity` ('full' when raw_input was intact and the 4
+// raw-only fields — from.name, kind, headers.list_id, headers.in_reply_to —
+// were overlaid; 'reconstructed' otherwise, where those 4 fields are ABSENT
+// and conditions on them will read as non-match on that row).
+//
+// No suppression evaluation — this tests the RULE layer only. No DB writes,
+// no audit row (nothing changed), no dispatching.
+//
+// Body: { match_mode, match_config, limit?, since?, include_misses? }
+// Response:
+//   { success:true, total, matched_count,
+//     rows: [ { exec_id, ts, from, label, matched, fidelity } ] }
+//   rows = matches newest-first; when include_misses, misses appended after
+//   them (also newest-first).
+// ─────────────────────────────────────────────────────────────
+
+router.post('/api/email-ingest/rules/test-match', jwtOrApiKey, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { match_mode, match_config } = body;
+
+    // ── validation ──
+    if (match_mode !== 'conditions' && match_mode !== 'code') {
+      return res.status(400).json({ error: "match_mode must be 'conditions' or 'code'" });
+    }
+
+    let limit = 100;
+    if (body.limit !== undefined && body.limit !== null) {
+      const n = Number(body.limit);
+      if (!Number.isInteger(n) || n < 1) {
+        return res.status(400).json({ error: 'limit must be a positive integer' });
+      }
+      limit = Math.min(300, n);
+    }
+
+    let since;
+    if (body.since !== undefined && body.since !== null && body.since !== '') {
+      const d = new Date(body.since);
+      if (isNaN(d.getTime())) {
+        return res.status(400).json({ error: 'Invalid since datetime' });
+      }
+      since = body.since;
+    }
+
+    const includeMisses = body.include_misses === true;
+
+    if (match_mode === 'conditions') {
+      // The production matcher treats a NULL conditions config as NON-match
+      // (never match-all), so testing one is pointless — reject with the
+      // explicit always-match shape instead.
+      if (match_config == null || typeof match_config !== 'object' || Array.isArray(match_config)) {
+        return res.status(400).json({
+          error: "conditions mode requires match_config to be an object — for an explicit always-match, use {operator:'and', conditions:[]}",
+        });
+      }
+    } else {
+      // code mode — extract the code string EXACTLY the way _evaluateMatch
+      // does: a string config is JSON.parse'd FIRST (the matcher's defensive
+      // parse), THEN code = string-or-.code. A raw (non-JSON) code string
+      // therefore never matches in production — reject it up front instead of
+      // returning a misleading 0-match run. Then compile ONCE so a syntax
+      // error is a clean 400 instead of 0-matches-with-N-warnings. The
+      // compiled fn is DISCARDED — per-row evaluation still goes through
+      // _evaluateMatch so runtime semantics (error swallowing included) are
+      // byte-identical to production.
+      let cfg = match_config;
+      if (typeof cfg === 'string') {
+        try { cfg = JSON.parse(cfg); }
+        catch {
+          return res.status(400).json({
+            error: "match_config string is not valid JSON — the production matcher would treat this as non-match on every event; send {code:'...'} instead",
+          });
+        }
+      }
+      const code = typeof cfg === 'string' ? cfg : cfg?.code;
+      if (!code || typeof code !== 'string' || !code.trim()) {
+        return res.status(400).json({ error: 'code mode requires a non-empty code string (match_config.code)' });
+      }
+      try {
+        // eslint-disable-next-line no-new-func
+        new Function('input', code);
+      } catch (err) {
+        return res.status(400).json({ error: `code does not compile: ${err.message}` });
+      }
+    }
+
+    // ── corpus + evaluation ──
+    const { rows } = await sampleService.fetchSyntheticEnvelopes(req.db, { limit, since });
+
+    const testRule = { id: 'test-match', name: '(editor)', match_mode, match_config };
+    const matches = [];
+    const misses  = [];
+    for (const r of rows) {
+      const matched = ruleService._evaluateMatch(testRule, r.envelope);
+      const shaped = {
+        exec_id:  r.exec_id,
+        ts:       r.ts,
+        from:     (r.envelope.from && r.envelope.from.email != null) ? r.envelope.from.email : null,
+        label:    sampleService._subjectSnippet(r.envelope.subject),
+        matched,
+        fidelity: r.fidelity,
+      };
+      (matched ? matches : misses).push(shaped);
+    }
+
+    return res.json({
+      success:       true,
+      total:         rows.length,
+      matched_count: matches.length,
+      rows:          includeMisses ? matches.concat(misses) : matches,
+    });
+  } catch (err) {
+    console.error('[email-ingest] test-match error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
 module.exports = router;
