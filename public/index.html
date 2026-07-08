@@ -270,6 +270,7 @@
       padding: 8px;
       border-top: 1px solid var(--border);
       background: var(--sidebar-bg);
+      position: sticky; bottom: 0; z-index: 1;
     }
     #appSidebar .sb-collapse-bar button {
       flex: 1; padding: 8px; background: var(--surface-bg);
@@ -278,6 +279,19 @@
       font-size: 13px;
     }
     #appSidebar .sb-collapse-bar button:hover { background: var(--sidebar-hover); color: var(--text); }
+
+    /* Fast hover tooltip for icon-only (skinny) sidebar items.
+       Rendered on <body> so it escapes the sidebar's overflow clipping. */
+    #sbTip {
+      position: fixed; z-index: 9999; pointer-events: none;
+      background: var(--sidebar-bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 9px; font-size: 12.5px; font-weight: 500;
+      white-space: nowrap; box-shadow: 0 4px 14px rgba(0,0,0,0.18);
+      opacity: 0; transform: translateY(-50%) translateX(-4px);
+      transition: opacity 0.09s ease, transform 0.09s ease;
+    }
+    #sbTip.show { opacity: 1; transform: translateY(-50%) translateX(0); }
 
     /* === Skinny state (icons only) — DESKTOP ONLY === */
     @media (min-width: 769px) {
@@ -3015,6 +3029,63 @@ async function initAuth() {
       document.body.classList.add('sidebar-hidden');
       localStorage.setItem('sidebarState', 'hidden');
     }
+
+    // ---- Fast sidebar tooltips (skinny mode only) ----
+    // Native title tooltips have a ~1s+ browser delay that can't be changed.
+    // When the sidebar is skinny (icons only), show our own quick tooltip and
+    // temporarily suppress the native one so they don't double up. Full mode
+    // keeps its native title tooltips untouched.
+    (function () {
+      const tip = document.createElement('div');
+      tip.id = 'sbTip';
+      document.body.appendChild(tip);
+      let curr = null, showT = null;
+
+      function skinnyDesktop() {
+        return document.body.classList.contains('sidebar-skinny')
+          && window.matchMedia('(min-width: 769px)').matches;
+      }
+      function show(el) {
+        const text = el.getAttribute('title') || el.dataset.tip;
+        if (!text) return;
+        // Suppress the slow native tooltip while ours is visible.
+        if (el.hasAttribute('title')) {
+          el.dataset.tip = el.getAttribute('title');
+          el.removeAttribute('title');
+        }
+        curr = el;
+        const r = el.getBoundingClientRect();
+        tip.textContent = text;
+        tip.style.left = (r.right + 8) + 'px';
+        tip.style.top = (r.top + r.height / 2) + 'px';
+        tip.classList.add('show');
+      }
+      function hide() {
+        clearTimeout(showT); showT = null;
+        if (curr) {
+          // Restore the native title we borrowed.
+          if (curr.dataset.tip && !curr.hasAttribute('title')) {
+            curr.setAttribute('title', curr.dataset.tip);
+          }
+          curr = null;
+        }
+        tip.classList.remove('show');
+      }
+
+      const sb = document.getElementById('appSidebar');
+      sb.addEventListener('pointerover', (e) => {
+        if (!skinnyDesktop()) { hide(); return; }
+        const el = e.target.closest('.sb-item, .sb-sublist .file-button');
+        if (!el) { hide(); return; }
+        if (el === curr) return;
+        hide();
+        showT = setTimeout(() => show(el), 80);
+      });
+      sb.addEventListener('pointerleave', hide);
+      sb.addEventListener('scroll', hide, { passive: true });
+      sb.addEventListener('click', hide);
+      window.addEventListener('resize', hide);
+    })();
 
     function showSidebar() {
       document.body.classList.remove('sidebar-hidden');

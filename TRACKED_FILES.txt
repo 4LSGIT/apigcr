@@ -110,7 +110,6 @@ manual/06-Admin-Tools/02-readonly-keys.md
 manual/06-Admin-Tools/03-api-tester.md
 manual/06-Admin-Tools/README.md
 package.json
-public/a.html
 public/apiTester.html
 public/appt.html
 public/apptform.html
