@@ -403,6 +403,7 @@
       color: var(--text); font-size: 12px; padding: 4px 8px;
     }
     .tm-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text2); cursor: pointer; user-select: none; }
+    .tm-range-sep { font-size: 12px; color: var(--muted); user-select: none; }
     .tm-banner {
       background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
       border-radius: 6px; padding: 6px 10px; font-size: 11.5px; margin: 0 0 8px; line-height: 1.4;
@@ -1031,7 +1032,8 @@ window.piToggleSidebar = piToggleSidebar;
   // Server shape (10C): { success, total, matched_count, unparseable_skipped?,
   // window_total?, truncated?, rows:[{ exec_id, ts, from, label, matched,
   // fidelity, status }] } — matches first (newest-first; oldest-first when
-  // since anchors the window); when include_misses, misses appended after
+  // since anchors the window). since/until (10D) bound the range — the start
+  // is required by this UI, the end optional; when include_misses, misses appended after
   // them. Corpus is scope 'wide' server-side (suppressed/skipped events
   // included, duplicates excluded); exec_id targets ONE execution (404 when
   // missing/unreconstructable). Rows with status != 'logged' get a badge —
@@ -1053,10 +1055,12 @@ window.piToggleSidebar = piToggleSidebar;
         <select class="tm-select" id="tm-window" title="Which recent events to test against">
           <option value="100" selected>Last 100 events</option>
           <option value="300">Last 300</option>
-          <option value="since">Since date…</option>
+          <option value="since">Date range…</option>
           <option value="exec">Specific execution…</option>
         </select>
-        <input type="datetime-local" class="tm-date hidden" id="tm-since" title="Test events since this date">
+        <input type="datetime-local" class="tm-date hidden" id="tm-since" title="Start of the range (required)">
+        <span class="tm-range-sep hidden" id="tm-range-sep">→</span>
+        <input type="datetime-local" class="tm-date hidden" id="tm-until" title="End of the range (optional — leave empty for “until now”)">
         <input type="number" min="1" step="1" class="tm-date hidden" id="tm-exec" placeholder="execution #" title="Test against one specific execution by id">
         <label class="tm-check"><input type="checkbox" id="tm-misses"> include non-matching</label>
       </div>
@@ -1069,8 +1073,11 @@ window.piToggleSidebar = piToggleSidebar;
         <div class="pi-sample-body" id="tm-res-body"></div>
       </div>`;
     E('tm-window').addEventListener('change', () => {
-      E('tm-since').classList.toggle('hidden', E('tm-window').value !== 'since');
-      E('tm-exec').classList.toggle('hidden', E('tm-window').value !== 'exec');
+      const w = E('tm-window').value;
+      E('tm-since').classList.toggle('hidden', w !== 'since');
+      E('tm-range-sep').classList.toggle('hidden', w !== 'since');
+      E('tm-until').classList.toggle('hidden', w !== 'since');
+      E('tm-exec').classList.toggle('hidden', w !== 'exec');
     });
     hostEl.querySelector('#tm-resbox .pi-sample-head')
       .addEventListener('click', () => E('tm-resbox').classList.toggle('collapsed'));
@@ -1117,11 +1124,17 @@ window.piToggleSidebar = piToggleSidebar;
     if (win === 'since') {
       const since = E('tm-since').value;
       if (!since) {
-        Swal.fire({ icon: 'warning', title: 'Pick a date', text: 'Choose the date to test from.' });
+        Swal.fire({ icon: 'warning', title: 'Pick a start date', text: 'Choose the date to test from. The end date is optional.' });
+        return;
+      }
+      const until = E('tm-until').value;
+      if (until && new Date(until).getTime() < new Date(since).getTime()) {
+        Swal.fire({ icon: 'warning', title: 'Range is backwards', text: 'The end date is before the start date.' });
         return;
       }
       body.since = since;
-      body.limit = 300; // window stays capped even with a wide date
+      if (until) body.until = until; // omitted = "until now"
+      body.limit = 300; // window stays capped even with a wide range
     } else {
       body.limit = Number(win); // 100 | 300
     }
@@ -1196,7 +1209,11 @@ window.piToggleSidebar = piToggleSidebar;
     // rows but only the first `total` (oldest-first) were evaluated.
     let trunc = '';
     if (data && data.truncated && tmLastRun && tmLastRun.body && tmLastRun.body.since) {
-      trunc = ` · first ${total} of ${Number(data.window_total)} since ${esc(String(tmLastRun.body.since).replace('T', ' '))} — narrow the range`;
+      const s = esc(String(tmLastRun.body.since).replace('T', ' '));
+      const u = tmLastRun.body.until ? esc(String(tmLastRun.body.until).replace('T', ' ')) : '';
+      trunc = u
+        ? ` · first ${total} of ${Number(data.window_total)} between ${s} and ${u} — narrow the range`
+        : ` · first ${total} of ${Number(data.window_total)} since ${s} — narrow the range`;
     }
     const head = `<div class="tm-head">${matchN} of ${total} recent events match${skipped > 0 ? ` · ${skipped} unparseable skipped` : ''}${trunc}</div>`;
 

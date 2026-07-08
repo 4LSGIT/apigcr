@@ -250,14 +250,20 @@ function _normSince(since) {
  *   since    — (windowed only) the window now STARTS at the bound:
  *              ORDER BY id ASC from created_at >= since, so "since June 25"
  *              includes June 25 rather than the newest N that happen to
- *              postdate it. window_total (COUNT over the same WHERE) is
- *              returned so callers can flag truncation. Without since, the
- *              newest-N DESC behavior is unchanged.
+ *              postdate it. Without since, newest-N DESC is unchanged.
+ *   until    — (windowed only, Slice 10D) inclusive upper bound
+ *              (created_at <= until). Composable with since for a date
+ *              range; alone it means "newest N ending at the bound" (DESC —
+ *              ordering is driven by since only). window_total (COUNT over
+ *              the same WHERE) is returned whenever EITHER bound is given so
+ *              callers can flag truncation. Callers validate until >= since;
+ *              the fetcher just applies the predicates.
  *
  * @param {object} db
  * @param {object} opts
  * @param {number} [opts.limit]        row cap — required in windowed mode
- * @param {string|Date} [opts.since]   optional created_at lower bound
+ * @param {string|Date} [opts.since]   optional created_at lower bound (inclusive)
+ * @param {string|Date} [opts.until]   optional created_at upper bound (inclusive)
  * @param {'logged'|'wide'} [opts.scope='logged']  corpus scope (windowed mode)
  * @param {number} [opts.exec_id]      load one specific execution (see above)
  * @returns {Promise<{rows: Array<{exec_id:number, ts:*, status:string,
@@ -273,7 +279,7 @@ function _normSince(since) {
  *   (Email reconstruction never SKIPS a row — contrast phone's
  *   unparseable_skipped — so there is no skip count here.)
  */
-async function fetchSyntheticEnvelopes(db, { limit, since, scope = 'logged', exec_id } = {}) {
+async function fetchSyntheticEnvelopes(db, { limit, since, until, scope = 'logged', exec_id } = {}) {
   // ── exec_id mode: one specific execution, no status filter ──
   if (exec_id != null) {
     const id = Number(exec_id);
@@ -331,8 +337,14 @@ async function fetchSyntheticEnvelopes(db, { limit, since, scope = 'logged', exe
     where.push('eie.created_at >= ?');
     params.push(_normSince(since));
   }
-  // since anchors the window at its START (ASC); otherwise newest-N (DESC).
+  if (until != null && until !== '') {
+    where.push('eie.created_at <= ?');
+    params.push(_normSince(until));
+  }
+  // since anchors the window at its START (ASC); otherwise newest-N (DESC) —
+  // an until-only window is "the newest N ending at the bound".
   const order = (since != null && since !== '') ? 'ASC' : 'DESC';
+  const bounded = (since != null && since !== '') || (until != null && until !== '');
 
   // scope 'logged': rows that produced an email_log + log row — the joins
   // resolve and the SQL below stays byte-identical to 10A (sample-panel
@@ -389,10 +401,10 @@ async function fetchSyntheticEnvelopes(db, { limit, since, scope = 'logged', exe
     return shaped;
   });
 
-  // Truncation visibility: when the caller anchored the window with `since`,
+  // Truncation visibility: when the caller bounded the window by date,
   // report how many rows the WHERE actually covers so "first N of M" is
   // possible client-side.
-  if (since != null && since !== '') {
+  if (bounded) {
     const [[cnt]] = await db.query(
       `SELECT COUNT(*) AS n
          FROM email_ingest_executions eie

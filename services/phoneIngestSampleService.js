@@ -119,9 +119,12 @@ function _testLabel(envelope, eventType, ts) {
  *              unparseable → { rows: [], not_found: 'unparseable' } — markers
  *              the route turns into a precise 404. since/limit ignored.
  *   since    — the window now STARTS at the bound (ORDER BY id ASC from
- *              created_at >= since); window_total (COUNT over the same WHERE)
- *              is returned so callers can flag truncation. Without since, the
- *              newest-N DESC behavior is unchanged.
+ *              created_at >= since). Without since, newest-N DESC is unchanged.
+ *   until    — (Slice 10D) inclusive upper bound (created_at <= until).
+ *              Composable with since for a date range. window_total (COUNT
+ *              over the same WHERE) is returned whenever EITHER bound is
+ *              given so callers can flag truncation. Callers validate
+ *              until >= since; the fetcher just applies the predicates.
  *   status   — every row carries the execution status
  *              ('logged'|'suppressed'|'error') for the UI's status badges.
  *
@@ -131,7 +134,8 @@ function _testLabel(envelope, eventType, ts) {
  *                                     skipped rows are not backfilled, matching
  *                                     the sample path's historical behavior);
  *                                     required in windowed mode
- * @param {string|Date} [opts.since]   optional created_at lower bound
+ * @param {string|Date} [opts.since]   optional created_at lower bound (inclusive)
+ * @param {string|Date} [opts.until]   optional created_at upper bound (inclusive)
  * @param {number} [opts.exec_id]      load one specific execution (see above)
  * @returns {Promise<{
  *   rows: Array<{exec_id:number, ts:*, status:string, event_type:string|null,
@@ -141,7 +145,7 @@ function _testLabel(envelope, eventType, ts) {
  *   not_found?: 'no_execution'|'unparseable'
  * }>}  newest first (oldest first when since given).
  */
-async function fetchEnvelopes(db, { limit, since, exec_id } = {}) {
+async function fetchEnvelopes(db, { limit, since, until, exec_id } = {}) {
   // ── exec_id mode: one specific execution ──
   if (exec_id != null) {
     const id = Number(exec_id);
@@ -184,8 +188,14 @@ async function fetchEnvelopes(db, { limit, since, exec_id } = {}) {
     where.push('e.created_at >= ?');
     params.push(_normSince(since));
   }
-  // since anchors the window at its START (ASC); otherwise newest-N (DESC).
+  if (until != null && until !== '') {
+    where.push('e.created_at <= ?');
+    params.push(_normSince(until));
+  }
+  // since anchors the window at its START (ASC); otherwise newest-N (DESC) —
+  // an until-only window is "the newest N ending at the bound".
   const order = (since != null && since !== '') ? 'ASC' : 'DESC';
+  const bounded = (since != null && since !== '') || (until != null && until !== '');
 
   const [rows] = await db.query(
     `SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type
@@ -212,8 +222,8 @@ async function fetchEnvelopes(db, { limit, since, exec_id } = {}) {
     });
   }
 
-  // Truncation visibility for since-anchored windows.
-  if (since != null && since !== '') {
+  // Truncation visibility for date-bounded windows.
+  if (bounded) {
     const [[cnt]] = await db.query(
       `SELECT COUNT(*) AS n
          FROM phone_ingest_executions e
