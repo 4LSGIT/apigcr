@@ -146,6 +146,29 @@ function titlesMatch(existingTitle, newTitle) {
   return union > 0 && inter / union >= 0.5;        // Jaccard ≥ 0.5
 }
 
+/** normalize a title for loose comparison: lowercase, non-alnum→space, collapse. */
+function _titleNorm(t) {
+  return String(t == null ? '' : t).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/**
+ * LOOSE title similarity, used ONLY behind a same-DATE+TIME slot gate (the caller
+ * confirms date+time are already equal before consulting this). Deliberately more
+ * lenient than titlesMatch — which stays the strict disambiguator for the no-slot
+ * case: true iff one normalized title contains the other, OR titlesMatch holds.
+ * Empty-after-normalize never matches (an empty string is a substring of anything,
+ * which would collapse unrelated events). Because a slot match requires date+time
+ * to be identical, this can only ever fold a re-notice the model re-titled — two
+ * genuinely different same-date deadlines carry different words and are NOT similar,
+ * so they both survive.
+ */
+function titlesSimilarLoose(a, b) {
+  const na = _titleNorm(a), nb = _titleNorm(b);
+  if (!na || !nb) return false;
+  if (na === nb || na.includes(nb) || nb.includes(na)) return true;
+  return titlesMatch(a, b);
+}
+
 async function insertCourtAiLog(db, row) {
   const [r] = await db.query(
     `INSERT INTO court_ai_log
@@ -405,6 +428,22 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       skipped.push({ action_index: idx, type: 'create_event', reason: 'event_exists', event_id: dupe[0].event_id });
       return null;
     }
+    // SLOT+TITLE BACKSTOP: the exact-title guard above misses model title-variance
+    // (bare vs debtor-named). Also skip when a Scheduled same-type event already
+    // sits at the same DATE+TIME (event_time<=>? is NULL-safe, so all-day events
+    // match on date alone) AND its title is loosely the same hearing. Two DIFFERENT
+    // same-date deadlines carry different titles → not similar → both still created.
+    const [slotRows] = await db.query(
+      `SELECT event_id, event_title FROM events
+        WHERE event_link_type='case_number' AND event_link_id=? AND event_type<=>?
+          AND event_date=? AND event_time<=>? AND event_status='Scheduled'`,
+      [ev.event_link_id, ev.event_type, ev.event_date, ev.event_time]
+    );
+    const slotHit = slotRows.find((r) => titlesSimilarLoose(r.event_title, ev.event_title));
+    if (slotHit) {
+      skipped.push({ action_index: idx, type: 'create_event', reason: 'event_slot_exists', event_id: slotHit.event_id });
+      return null;
+    }
     let eventId = null;
     if (!effectiveDryRun) {
       const [r] = await db.query(
@@ -523,8 +562,20 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
             AND event_status='Scheduled' AND event_date >= CURDATE()`,
         [resolved.case_number, eventType]
       );
-      // Of those, the ones whose TITLE names the same hearing as this email.
-      const titleMatches = typeMatches.filter((m) => titlesMatch(m.event_title, fields.event_title));
+      // Same hearing = strict title match, OR same DATE+TIME with a loosely-similar
+      // title (a re-notice the model re-titled — e.g. "Confirmation Hearing" vs
+      // "Confirmation Hearing - <debtor>"). The slot arm requires date+time to be
+      // ALREADY equal, so a slot-driven match can only ever change LOCATION → it
+      // lands on the length===1 update-in-place branch and is a no-op / courtroom
+      // move, never a second copy. Different same-date deadlines have different
+      // titles → not similar → not folded in → both preserved.
+      const _sameSlot = (m) =>
+        toDatePart(m.event_date) === (toDatePart(newDate) || newDate) &&
+        (toTimePart(m.event_time) || null) === (newTime || null) &&
+        titlesSimilarLoose(m.event_title, fields.event_title);
+      const titleMatches = typeMatches.filter(
+        (m) => titlesMatch(m.event_title, fields.event_title) || _sameSlot(m)
+      );
 
       if (titleMatches.length === 1) {
         // CONFIDENT same-hearing reschedule: exactly one future event of this
@@ -965,5 +1016,5 @@ module.exports = {
   CASE_FIELD_POLICY,
   CASE_DATE_FIELDS,
   // exported for tests
-  _internal: { toDatePart, toTimePart, titlesMatch, _titleCore },
+  _internal: { toDatePart, toTimePart, titlesMatch, _titleCore, titlesSimilarLoose, _titleNorm },
 };
