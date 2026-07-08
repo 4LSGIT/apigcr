@@ -3165,7 +3165,7 @@ async function viewSequenceEnrollment(id) {
     // no pending/running scheduled_jobs row in history. Distinct from
     // Fire Now (which targets an EXISTING pending job). See
     // routes/sequences.js POST /enrollments/:id/recover for the backend
-    // contract and the matching block in contact2.html viewContactEnrollment.
+    // contract and the matching block in contact.html viewContactEnrollment.
     const hasInFlightJob = history.some(h =>
       h.job_status === 'pending' || h.job_status === 'running'
     );
@@ -3237,7 +3237,7 @@ async function viewSequenceEnrollment(id) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Cancel helper — mirrors cancelContactEnrollment in contact2.html.
+// Cancel helper — mirrors cancelContactEnrollment in contact.html.
 // Prompts for a reason (min 3 chars), POSTs to /sequences/enrollments/:id/cancel,
 // toasts result, reloads the enrollment list.
 // ─────────────────────────────────────────────────────────────
@@ -3355,7 +3355,7 @@ async function handleSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
 // Recover stuck enrollment — handler for the denyButton in the enrollment-
 // detail modal. Distinct from Fire Now: this CREATES a new scheduled_jobs
 // row (because the enrollment has no pending/running job), whereas Fire Now
-// reschedules an EXISTING pending job. Parallel handler lives in contact2.html
+// reschedules an EXISTING pending job. Parallel handler lives in contact.html
 // as handleContactSequenceRecover.
 // ─────────────────────────────────────────────────────────────
 async function handleSequenceRecover(enrollmentId) {

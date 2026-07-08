@@ -283,7 +283,7 @@ function sortSelect(element) {
 
 /* ──────────────────────────────────────────────────────────────────────────
    Log tab shared helpers (Slice B.3 + B.4)
-   Used by a.html, b.html, contact2.html, case2.html.
+   Used by a.html, b.html, contact.html, case.html.
 
    Calling contract — each caller defines:
      • tabLogGet(offset)     — refreshes the log table at the given offset
@@ -1795,8 +1795,8 @@ function newContact(prefill = {}, onSuccess = null) {
 /* ──────────────────────────────────────────────────────────────────────────
    newApptDialog(opts)   (shared appointment creator)
 
-   One dialog for the standalone appt surfaces (a/b shell appts tab, case2,
-   contact2). Sends appt_with explicitly (the per-file SWALs it replaced never
+   One dialog for the standalone appt surfaces (a/b shell appts tab, case,
+   contact). Sends appt_with explicitly (the per-file SWALs it replaced never
    did, so every booked appt defaulted server-side to user 1 / Stuart).
 
    The dialog has two SIDES — contact and case — that cross-constrain:
@@ -1880,7 +1880,7 @@ function newApptDialog(opts = {}) {
     contactSide.mode = 'list';
     contactSide.list = opts.contactList;
     contactSide.defaultPrimary = opts.contactDefaultPrimary !== false;
-  } else if (Array.isArray(opts.caseContacts)) {             // legacy flat (case2)
+  } else if (Array.isArray(opts.caseContacts)) {             // legacy flat (case)
     contactSide.mode = 'list';
     contactSide.list = opts.caseContacts;
     contactSide.defaultPrimary = true;
@@ -2057,7 +2057,7 @@ function newApptDialog(opts = {}) {
 
   // ── Revert both sides to their pickers (shell two-sided "change") ────────
   // Only affects sides that the user drove or that were cross-populated — a
-  // caller-fixed or caller-list side (case2 / contact2) is left untouched.
+  // caller-fixed or caller-list side (case / contact) is left untouched.
   function revertToPickers() {
     if (contactSide.drove || contactSide.crossPopulated) {
       contactSide.mode = 'pick';

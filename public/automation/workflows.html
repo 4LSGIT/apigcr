@@ -2280,14 +2280,14 @@ async function viewWorkflowExecution(id) {
       `;
     }).join('') : '<tr><td colspan="6" style="padding:8px;color:var(--muted);text-align:center">No steps executed.</td></tr>';
 
-    // Cancel-reason surface for cancelled executions (parity with contact2)
+    // Cancel-reason surface for cancelled executions (parity with contact)
     const cancelReasonBlock = (rawStatus === 'cancelled' && ex.cancel_reason)
       ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
            <b>Cancel reason:</b> ${esc(ex.cancel_reason)}
          </div>`
       : '';
 
-    // Is this execution cancellable? Same non-terminal set as contact2.
+    // Is this execution cancellable? Same non-terminal set as contact.
     const isCancellable = ['active', 'processing', 'delayed'].includes(rawStatus);
 
     // Slice 4 — Resume/redo entry point. All three Swal buttons are taken
@@ -2379,7 +2379,7 @@ async function viewWorkflowExecution(id) {
   }
 }
 
-// Workflow execution cancel — lifted from contact2's cancelContactWorkflow,
+// Workflow execution cancel — lifted from contact's cancelContactWorkflow,
 // adapted to this sub-page's helpers (api / loadWorkflowExecutions). Reason
 // required (min 3 chars trimmed, server enforces the same validation).
 async function cancelWorkflowExecution(executionId, workflowName) {

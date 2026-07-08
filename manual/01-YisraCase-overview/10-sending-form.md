@@ -2,7 +2,7 @@
 
 ## What It Is
 
-The Sending Form is a standalone action UI for composing and sending messages to case contacts. It lives at `public/sendingform.html` and is loaded in an iframe inside `case2.html`.
+The Sending Form is a standalone action UI for composing and sending messages to case contacts. It lives at `public/sendingform.html` and is loaded in an iframe inside `case.html`.
 
 **This is NOT a YisraForm.** It does not use the `YCForm` class, `form_submissions` table, drafts, autosave, or schema versioning. It uses `yc-forms.css` for visual consistency but is otherwise a custom page. There is nothing to save — you check options, preview, send, and it's done. The log entries and checklist records are the history.
 
@@ -10,7 +10,7 @@ The Sending Form is a standalone action UI for composing and sending messages to
 
 ## How to Load It
 
-In `case2.html`:
+In `case.html`:
 ```js
 E("SendingForm").src = `sendingform.html?case_id=${caseData.case_id}`;
 ```

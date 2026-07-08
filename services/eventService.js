@@ -641,7 +641,7 @@ async function getEvent(db, eventId) {
  * Case-scope expansion (self-healing docket linking): when called with
  * link_type='case' AND link_id, the result ALSO includes 'case_number'
  * events whose docket equals that case's case_number or case_number_full —
- * so case2's Events tab shows docket-linked events with zero frontend
+ * so case's Events tab shows docket-linked events with zero frontend
  * change. Direct filtering with link_type='case_number' & link_id=<docket>
  * is plain equality. No expansion for link_type='contact'.
  *

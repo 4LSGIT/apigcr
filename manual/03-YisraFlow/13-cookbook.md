@@ -774,9 +774,9 @@ Dual-count UIs (active vs all) extend with `active_total`:
 
 **Row shapes diverge intentionally.** Each engine carries engine-specific fields (`workflow_name` on executions, `template_name` + `step_count` on enrollments, `target_count` on deliveries). Don't force-common the row shape — it bloats with NULLs on one side or loses information on the other. Envelope is common; row is native.
 
-### 3.10 Tab-Visibility Pattern (contact2)
+### 3.10 Tab-Visibility Pattern (contact)
 
-Each tab on `contact2.html` is self-contained: the tab's module owns its load function, polling callbacks, and stop function. The global `openTab()` only toggles `display`; it doesn't know what each tab does.
+Each tab on `contact.html` is self-contained: the tab's module owns its load function, polling callbacks, and stop function. The global `openTab()` only toggles `display`; it doesn't know what each tab does.
 
 ```
 openTab(tabId)
@@ -1016,7 +1016,7 @@ The `POST /api/email/ingest` endpoint is the new external entrypoint for inbound
 
 **Firm-to-firm.** If `from + every to + every cc` is on a firm domain, the structured `log` row is suppressed (status `skipped_firm_to_firm`); the `email_log` forensic row is still written. The check fails open on any missing recipient — same conservative posture as `/logEmail`'s legacy check.
 
-**Auto-log default.** Every non-firm-to-firm, non-duplicate ingest produces one `log` row via `logService.createLogEntry` with `link_type='email'`, `link_id=<other party's email>`, `direction=<inferred>`. IT-facing forensics (source, message_id, cc list, auth verdicts, envelope.date) ride along in `log_extra`. Surfaces in `case2`/`contact2` via the Phase-A date-windowed `contact_emails` EXISTS join — no change to readers needed.
+**Auto-log default.** Every non-firm-to-firm, non-duplicate ingest produces one `log` row via `logService.createLogEntry` with `link_type='email'`, `link_id=<other party's email>`, `direction=<inferred>`. IT-facing forensics (source, message_id, cc list, auth verdicts, envelope.date) ride along in `log_extra`. Surfaces in `case`/`contact` via the Phase-A date-windowed `contact_emails` EXISTS join — no change to readers needed.
 
 **`log_date`.** The `log` row's `log_date` is `NOW()` at ingest time (logService doesn't accept an override). The original RFC `Date:` header lives in `log_extra.envelope_date` for cases where the difference matters (forwarded-from-archive scenarios).
 
@@ -1583,7 +1583,7 @@ They answer different questions. `scheduled_jobs.status = failed` can mean "infr
 
 ### 5.25 Low-Use UI Surfaces Drift Silently
 
-Old `putSeq` / `abortSeq` on `contact2.html` read `s.enrollment_id`, but the service returned `se.id` unaliased. Every cancel button POST'd to `/sequences/enrollments/undefined/cancel` for who knows how long — no-one noticed because the tab wasn't exercised.
+Old `putSeq` / `abortSeq` on `contact.html` read `s.enrollment_id`, but the service returned `se.id` unaliased. Every cancel button POST'd to `/sequences/enrollments/undefined/cancel` for who knows how long — no-one noticed because the tab wasn't exercised.
 
 **Pattern.** If you're adding something that "feels like it should already exist," **grep first.** The existing one might be broken, and shipping a parallel new version without noticing — or worse, calling the broken one — is how drift compounds.
 

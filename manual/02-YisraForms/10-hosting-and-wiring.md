@@ -10,7 +10,7 @@ Forms call `window.parent.apiSend()` for all API requests. This works through a 
 
 ```
 a.html              ← apiSend() defined here
-  └─ case2.html     ← window.apiSend = P.apiSend   (relay)
+  └─ case.html     ← window.apiSend = P.apiSend   (relay)
        └─ forms/341notes.html   ← calls P.apiSend()
 ```
 
@@ -33,7 +33,7 @@ The shell (`a.html`) loads firm-wide data once after auth — phone lines, email
 // In the shell (a.html): loaded once
 window.firmData = { phoneLines, emailFrom, currentUser, users };
 
-// In case2.html / contact2.html: relay
+// In case.html / contact.html: relay
 window.firmData = P.firmData;
 
 // In the form: read
@@ -58,13 +58,13 @@ Iframes that load before the parent's `apiSend` or `firmData` is defined need to
 **When to use it:**
 - Any iframe whose `src` is set during parent initialization (before the parent finishes its own boot)
 - Any iframe that reads from `P.firmData` or `P.entityData` during init
-- Most forms hosted in `case2.html` and `contact2.html` need this
+- Most forms hosted in `case.html` and `contact.html` need this
 
 **When to skip it:**
 - Admin iframes lazy-loaded on-demand (e.g. `automationManager.html`, `featureRequests.html`) — by the time the user clicks to open them, the parent has finished booting
 - Simple forms that only use `P.apiSend` and don't touch `firmData` or `entityData` — `apiSend` is relayed before any iframe `src` is set
 
-Forms that use this pattern today: `communicate.html`, `campaign.html`, `sendingform.html`. For standard YCForm-based forms hosted in `case2.html` / `contact2.html`, `yc-forms.js` handles waiting internally by checking `window.parent.entityData` before falling back to an API call — you don't need the boot loop unless your form's init does additional work before calling `form.init()`.
+Forms that use this pattern today: `communicate.html`, `campaign.html`, `sendingform.html`. For standard YCForm-based forms hosted in `case.html` / `contact.html`, `yc-forms.js` handles waiting internally by checking `window.parent.entityData` before falling back to an API call — you don't need the boot loop unless your form's init does additional work before calling `form.init()`.
 
 ---
 
@@ -99,13 +99,13 @@ E("tabInfoIframe").src = `forms/contact-form.html?contact_id=${clientID}`;
 
 ## Parent-as-Data-Source
 
-Parent pages (`case2.html`, `contact2.html`) fetch entity data once and expose it on `window.entityData`:
+Parent pages (`case.html`, `contact.html`) fetch entity data once and expose it on `window.entityData`:
 
 ```js
-// case2.html
+// case.html
 window.entityData = { case, clients, appts, tasks, log };
 
-// contact2.html
+// contact.html
 window.entityData = { contact, cases, appts, tasks, log, sequences };
 ```
 
@@ -134,13 +134,13 @@ When a form saves, the parent re-fetches and pushes fresh data into all sibling 
        SecurityError on .contentWindow access; handle silently.
 ```
 
-Both `case2.html` and `contact2.html` implement this listener already. Forms don't need to set up their own — just save normally and the parent takes care of sibling refresh.
+Both `case.html` and `contact.html` implement this listener already. Forms don't need to set up their own — just save normally and the parent takes care of sibling refresh.
 
 ---
 
 ## Listening for Save Events — Custom Parent Logic
 
-Most parent pages don't need their own listener — `case2.html` / `contact2.html` already handle `form-saved` centrally. If you're building a custom parent that hosts forms, listen like this:
+Most parent pages don't need their own listener — `case.html` / `contact.html` already handle `form-saved` centrally. If you're building a custom parent that hosts forms, listen like this:
 
 ```js
 window.addEventListener('message', async (e) => {
@@ -166,10 +166,10 @@ The same form can be hosted in different pages:
 
 | Form | Host page | URL param |
 |------|-----------|-----------|
-| `forms/contact-form.html` | `contact2.html` | `?contact_id=${clientID}` |
-| `forms/341notes.html` | `case2.html` | `?case_id=${caseId}` |
-| `forms/casedetails.html` | `case2.html` | `?case_id=${caseId}` |
-| `forms/issn.html` | `case2.html` | `?case_id=${caseId}` |
+| `forms/contact-form.html` | `contact.html` | `?contact_id=${clientID}` |
+| `forms/341notes.html` | `case.html` | `?case_id=${caseId}` |
+| `forms/casedetails.html` | `case.html` | `?case_id=${caseId}` |
+| `forms/issn.html` | `case.html` | `?case_id=${caseId}` |
 
 The form doesn't know or care who its parent is — it just needs `P.apiSend()` to exist (and optionally `P.firmData` / `P.entityData`).
 
@@ -197,5 +197,5 @@ When `external: true`, the form uses `fetch()` directly. No parent iframe, no po
    ```
 3. Set iframe `src` to `forms/yourform.html?entity_id=${id}`
 4. If the form reads from `P.firmData` or `P.entityData` before calling `form.init()`, wrap init in the `waitForParent` boot pattern
-5. If hosted somewhere other than `case2.html` / `contact2.html`, add a `message` listener for `form-saved`
+5. If hosted somewhere other than `case.html` / `contact.html`, add a `message` listener for `form-saved`
 6. Test the full loop — save, verify parent data refresh, verify sibling iframes see the change

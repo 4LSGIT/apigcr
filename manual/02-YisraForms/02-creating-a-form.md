@@ -134,7 +134,7 @@ See [03-ycform-config.md](03-ycform-config.md) for every option.
 
 ## Step 4: Wire Into Parent Page
 
-In the parent (e.g., `case2.html`):
+In the parent (e.g., `case.html`):
 
 ```js
 // Relay apiSend and firmData from a.html (near top of script)
@@ -145,6 +145,6 @@ window.firmData = P.firmData;
 document.getElementById("myIframe").src = `forms/casebasic.html?case_id=${caseId}`;
 ```
 
-The parent doesn't need to add its own `message` listener for `form-saved` — `case2.html` and `contact2.html` already have a centralized listener that calls `refreshEntityData()` on any save, which updates `window.entityData` and pushes fresh data into all non-dirty sibling form iframes.
+The parent doesn't need to add its own `message` listener for `form-saved` — `case.html` and `contact.html` already have a centralized listener that calls `refreshEntityData()` on any save, which updates `window.entityData` and pushes fresh data into all non-dirty sibling form iframes.
 
 See [10-hosting-and-wiring.md](10-hosting-and-wiring.md) for full details.

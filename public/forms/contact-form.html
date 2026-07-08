@@ -729,7 +729,7 @@
         //   where <getContact result> = { contact: {...}, phones, emails, addresses }
         //
         // Flatten into the same shape entityData.contact uses (Stage B.2
-        // in contact2.html), so populate() via endpoints.load.path='contact'
+        // in contact.html), so populate() via endpoints.load.path='contact'
         // hits the child arrays naturally.
         if (patchResp && patchResp.contact) {
           const fresh = patchResp.contact;
@@ -1427,7 +1427,7 @@
       // Success — refresh the form from the server (out-of-band mutation,
       // not via form.save, so postMessage 'form-saved' is the right way
       // to tell the parent + siblings to refresh too. We refresh ourselves
-      // locally since contact2.html's refreshEntityData skips the sender.)
+      // locally since contact.html's refreshEntityData skips the sender.)
       try {
         const fresh = await P.apiSend(
           `/api/contacts/${contactId}`,
@@ -1475,7 +1475,7 @@
     // IFRAME HEIGHT REPORTING
     //
     // The form grows as the user adds repeater rows or expands advanced
-    // sections. Parent (contact2.html) listens for {type:'iframe-resize',
+    // sections. Parent (contact.html) listens for {type:'iframe-resize',
     // form:'contact_info', height} and sets iframe.style.height.
     //
     // Uses ResizeObserver for robustness — fires on any body size change.

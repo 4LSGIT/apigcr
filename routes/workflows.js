@@ -386,7 +386,7 @@ router.get("/executions", jwtOrApiKey, async (req, res) => {
 
     // Flat envelope: { success, executions, total }. Matches the per-workflow
     // sibling (`GET /workflows/:id/executions`) and every cross-engine list
-    // endpoint added since. Grep of the frontend (workflows.html, contact2.html,
+    // endpoint added since. Grep of the frontend (workflows.html, contact.html,
     // automationManager.html sub-pages) turned up no consumer of the prior
     // `pagination: { page, limit, total, totalPages }` envelope — the single
     // live caller (`workflows.html` executions tab) hits the per-workflow

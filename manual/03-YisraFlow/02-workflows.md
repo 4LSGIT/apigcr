@@ -225,7 +225,7 @@ Resume at the next occurrence of the given time.
 
 ### Contact-tying a workflow execution
 
-A workflow execution can optionally be tied to a contact via `workflow_executions.contact_id`. Contact-tied executions show up on the contact's Automations tab in `contact2.html`; untied ones don't appear on any contact page (this is the historical default).
+A workflow execution can optionally be tied to a contact via `workflow_executions.contact_id`. Contact-tied executions show up on the contact's Automations tab in `contact.html`; untied ones don't appear on any contact page (this is the historical default).
 
 **Two ways to set `contact_id`:**
 

@@ -138,12 +138,12 @@ public/calendar.html
 public/caltest.html
 public/campaign.html
 public/case.html
-public/case2.html
+public/caseV1.html
 public/caseerror.html
 public/communicate.html
 public/connections.html
 public/contact.html
-public/contact2.html
+public/contactV1.html
 public/contactform.html
 public/courtpreview.html
 public/css/yc-forms.css

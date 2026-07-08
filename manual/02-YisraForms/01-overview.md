@@ -21,11 +21,11 @@ Every form uses two shared files — `yc-forms.css` for styling and `yc-forms.js
 
 ## How It Fits Into YisraCase
 
-Forms are loaded as iframes inside parent pages like `contact2.html`, `case2.html`, or any other page that needs an editable form.
+Forms are loaded as iframes inside parent pages like `contact.html`, `case.html`, or any other page that needs an editable form.
 
 ```
 a.html  (has apiSend, firmData, entityData relay)
-  └─ contact2.html  (window.apiSend = P.apiSend; window.firmData = P.firmData)
+  └─ contact.html  (window.apiSend = P.apiSend; window.firmData = P.firmData)
        └─ forms/contact-form.html  (uses P.apiSend for all API calls)
 ```
 
@@ -52,7 +52,7 @@ Each form declares a `schemaVersion` integer. Bump it when you add, remove, or r
 **Submission** — created on explicit save. Append-only. Version increments (1, 2, 3...).
 
 ### Parent-as-Data-Source
-Parent pages (`case2.html`, `contact2.html`) fetch entity data once and expose it on `window.entityData`. Forms read from there on init instead of making their own API calls. On save, the parent re-fetches and pushes refreshed data into all non-dirty sibling forms. See [10-hosting-and-wiring.md](10-hosting-and-wiring.md).
+Parent pages (`case.html`, `contact.html`) fetch entity data once and expose it on `window.entityData`. Forms read from there on init instead of making their own API calls. On save, the parent re-fetches and pushes refreshed data into all non-dirty sibling forms. See [10-hosting-and-wiring.md](10-hosting-and-wiring.md).
 
 ---
 

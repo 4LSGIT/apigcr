@@ -128,9 +128,9 @@ Split into three buckets:
 
 **V1-only (tied to `index.html` flow) → legacy-remove at cutover:**
 - `index.html` (V1 entry)
-- `case.html`, `contact.html` (superseded by `case2.html`, `contact2.html`)
+- `caseV1.html`, `contactV1.html` (superseded by `case.html`, `contact.html`)
 - `appt.html`, `apptform.html` (superseded by `apptform2.html`; served at `/appt` via `routes/pages.js`)
-- `contactform.html` (only called from `contact.html` and `index.html`)
+- `contactform.html` (only called from `contactV1.html` and `index.html`)
 
 **Standalone utilities/landing pages — served via `GET /:page`, keep:**
 - `caltest.html` — Michigan Tax Prep marketing/offer page
@@ -184,7 +184,7 @@ Split into three buckets:
 1. ~~Remove the admin "mySQL Query (legacy)" tab from a.html.~~ **Done** (commit `ca157e2`).
 2. ~~Drop the plaintext-password cache from `AUTH_STATE` + the silent-relogin path.~~ **Done** (commit `ca157e2`) — replaced with `loginBlocking()` prompt, 24h JWT unchanged, username prefilled.
 3. ~~Relabel the V2-ok items in `files.md`.~~ **Done**.
-4. Delete `index.html` and the V1-only pages (`case.html`, `contact.html`, `appt.html`, `apptform.html`, `contactform.html`). Watch logs for 404s on `/case`, `/contact`, `/appt` for ~a week.
+4. Delete `index.html` and the V1-only pages (`caseV1.html`, `contactV1.html`, `appt.html`, `apptform.html`, `contactform.html`). Watch logs for 404s on `/caseV1`, `/contactV1`, `/appt` for ~a week.
 
 **Security cleanup (in progress — trap is collecting data):**
 5. ~~Install caller-ID trap on legacy routes.~~ **Done** (commit `eacddba`) — see §3. Run [ref/legacy-trap-schema.sql](legacy-trap-schema.sql) to create `legacy_route_log`, then wait ~14 days.

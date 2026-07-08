@@ -96,7 +96,7 @@ endpoints: {
 
 `path` is optional — extracts a nested key from the API response (e.g., `GET /api/contacts/:id` returns `{ contact: {...}, cases: [...] }`, `path: 'contact'` extracts the contact object). URL placeholders: `{linkId}`, `{linkType}`, `{formKey}`.
 
-**The `path` key doubles as the `window.parent.entityData` lookup key.** When a form is hosted inside `case2.html` or `contact2.html`, `yc-forms.js` first checks `window.parent.entityData[endpoints.load.path]` — if present, it uses that data without making an API call. This is how the parent-as-data-source pattern works. See [10-hosting-and-wiring.md](10-hosting-and-wiring.md).
+**The `path` key doubles as the `window.parent.entityData` lookup key.** When a form is hosted inside `case.html` or `contact.html`, `yc-forms.js` first checks `window.parent.entityData[endpoints.load.path]` — if present, it uses that data without making an API call. This is how the parent-as-data-source pattern works. See [10-hosting-and-wiring.md](10-hosting-and-wiring.md).
 
 ## apiMap
 

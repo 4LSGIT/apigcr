@@ -24,7 +24,7 @@
 //
 //   1. email_log row — raw bytes for forensics (dedup'd by message_id;
 //      race-safe via ER_DUP_ENTRY catch on the unique-keyed INSERT).
-//   2. log row via logService — surfaces in case2/contact2 via the
+//   2. log row via logService — surfaces in case/contact via the
 //      Phase-A contact-log reader's date-windowed EXISTS join on
 //      contact_emails. link_type='email' + link_id=<value> means the
 //      row is orphan-safe (written regardless of whether the sender
@@ -275,7 +275,7 @@ throw new Error(
     // ── 6. Write the log row via logService ──
     // Orphan-safe: row exists regardless of whether contactEmail
     // matches any contact in contacts / contact_emails. Surfaces in
-    // case2/contact2 only when the Phase-A contact reader's
+    // case/contact only when the Phase-A contact reader's
     // date-windowed EXISTS picks it up.
     let logId = null;
     try {

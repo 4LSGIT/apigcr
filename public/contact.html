@@ -1,17 +1,339 @@
-<xscript type="text/javascript" src="https://www.dropbox.com/static/api/2/dropins.js" id="dropboxjs" data-app-key="ubgcneqmlvas3rc"></xscript>
-  <script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
+<script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/scripts.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css">
-  
+<style>
+  /* ── Sequences + Workflows tab (slice 4.3) — all classes prefixed
+         .cauto- (shared), .cseq- (sequence-specific),
+         or .cwf- (workflow-specific) for scoping ── */
+
+/* Shared tab-level header: holds the scope toggle + refresh. Governs BOTH
+   the sequences section and the workflows section below it. */
+.cauto-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px 14px;
+  flex-wrap: wrap;
+}
+
+/* Per-section sub-header: section title + "N active" / "N active of M total"
+   count. Each section (sequences, workflows) gets one. */
+.cauto-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 4px 6px;
+  border-top: 1px solid #e2e8f0;
+}
+.cauto-section-head:first-of-type { border-top: none; }
+.cauto-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+.cauto-section-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+/* Divider between sections. */
+.cauto-divider {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 18px 0 6px;
+}
+
+/* Scope toggle — shared across both sections. */
+.cseq-scope-toggle {
+  display: inline-flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cseq-scope-btn {
+  background: #fff;
+  border: none;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #334155;
+}
+.cseq-scope-btn.active { background: #2563eb; color: #fff; }
+.cseq-scope-btn:not(.active):hover { background: #f1f5f9; }
+
+/* Refresh button — shared header. */
+.cseq-refresh-btn {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: #334155;
+}
+.cseq-refresh-btn:hover { background: #f1f5f9; }
+
+/* Tables — sequences + workflows share the same layout treatment. */
+.cseq-table th, .cseq-table td,
+.cwf-table  th, .cwf-table  td { text-align: left; padding: 6px 8px; vertical-align: top; }
+.cseq-template-name,
+.cwf-workflow-name { font-weight: 600; color: #0f172a; }
+.cseq-template-type { font-size: 11px; color: #64748b; }
+.cseq-id,
+.cwf-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #475569; }
+
+.cseq-empty,
+.cwf-empty {
+  color: #94a3b8;
+  font-weight: 400;
+  padding: 18px;
+  text-align: center;
+  margin: 6px 0;
+}
+
+.cseq-pagination,
+.cwf-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 4px;
+  font-size: 12px;
+  color: #475569;
+}
+.cseq-pagination button,
+.cwf-pagination button {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  color: #334155;
+}
+.cseq-pagination button:disabled,
+.cwf-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Status badges — sequence.status enum (active, completed, cancelled). */
+.cseq-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.cseq-status-active    { background: #dbeafe; color: #1e40af; }
+.cseq-status-completed { background: #dcfce7; color: #166534; }
+.cseq-status-cancelled { background: #fee2e2; color: #991b1b; }
+
+/* Status badges — workflow_executions.status enum (superset; kept distinct
+   from sequence badges because the enums don't line up even where names
+   do — e.g. workflows have 'processing' and 'delayed' which sequences
+   don't). */
+.cwf-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.cwf-status-pending               { background: #fef3c7; color: #92400e; }
+.cwf-status-active                { background: #dbeafe; color: #1e40af; }
+.cwf-status-processing            { background: #e0e7ff; color: #3730a3; }
+.cwf-status-delayed               { background: #fef9c3; color: #854d0e; }
+.cwf-status-completed             { background: #dcfce7; color: #166534; }
+.cwf-status-completed_with_errors { background: #fed7aa; color: #9a3412; }
+.cwf-status-failed                { background: #fee2e2; color: #991b1b; }
+.cwf-status-cancelled             { background: #e2e8f0; color: #475569; }
+
+/* Step-history badges (drill-down modal) — sequence variant. */
+.cseq-job-badge, .cseq-log-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.cseq-job-pending    { background: #fef3c7; color: #92400e; }
+.cseq-job-running    { background: #dbeafe; color: #1e40af; }
+.cseq-job-completed  { background: #dcfce7; color: #166534; }
+.cseq-job-failed     { background: #fee2e2; color: #991b1b; }
+.cseq-log-sent       { background: #dcfce7; color: #166534; }
+.cseq-log-skipped    { background: #e5e7eb; color: #374151; }
+.cseq-log-failed     { background: #fee2e2; color: #991b1b; }
+
+/* Step-history badges (drill-down modal) — workflow variant, uses
+   workflow_execution_steps.status enum (success | failed, engine-written). */
+.cwf-step-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.cwf-step-success { background: #dcfce7; color: #166534; }
+.cwf-step-failed  { background: #fee2e2; color: #991b1b; }
+.cwf-step-skipped { background: #e5e7eb; color: #374151; }
+.cwf-step-delayed { background: #fef9c3; color: #854d0e; }
+
+/* Row buttons — shared between sections. */
+.cseq-view-btn, .cseq-cancel-btn,
+.cwf-view-btn,  .cwf-cancel-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 4px;
+}
+.cseq-view-btn, .cwf-view-btn {
+  background: #fff;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+.cseq-view-btn:hover, .cwf-view-btn:hover { background: #f1f5f9; }
+.cseq-cancel-btn, .cwf-cancel-btn {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+.cseq-cancel-btn:hover, .cwf-cancel-btn:hover { background: #fecaca; }
+
+/* Drill-down step-history tables (rendered inside a Swal modal; styles
+   are global because Swal renders into document.body, not a shadow DOM). */
+.cseq-history-table,
+.cwf-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-top: 6px;
+}
+.cseq-history-table th,
+.cseq-history-table td,
+.cwf-history-table th,
+.cwf-history-table td {
+  border: 1px solid #e2e8f0;
+  padding: 4px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+.cseq-history-table th,
+.cwf-history-table th { background: #f1f5f9; font-weight: 600; }
+.cseq-history-table tr.cseq-row-muted td,
+.cwf-history-table  tr.cwf-row-muted  td { color: #94a3b8; background: #f8fafc; }
+.cseq-history-table .cseq-error-cell,
+.cwf-history-table  .cwf-error-cell {
+  max-width: 260px;
+  word-break: break-word;
+  color: #991b1b;
+}
+
+/* ── Relationships tab (Slice 3) — all classes prefixed .crel-* ── */
+.crel-scope-toggle {
+  display: inline-flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.crel-scope-btn {
+  background: #fff;
+  border: none;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #334155;
+}
+.crel-scope-btn.active { background: #2563eb; color: #fff; }
+.crel-scope-btn:not(.active):hover { background: #f1f5f9; }
+
+.crel-refresh-btn {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: #334155;
+  font-size: 13px;
+}
+.crel-refresh-btn:hover { background: #f1f5f9; }
+
+.crel-add-btn {
+  background: #2563eb;
+  color: #fff;
+  border: 1px solid #2563eb;
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.crel-add-btn:hover { background: #1d4ed8; }
+
+.crel-table th, .crel-table td { text-align: left; padding: 6px 8px; vertical-align: top; }
+
+.crel-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.crel-status-active   { background: #dcfce7; color: #166534; }
+.crel-status-inactive { background: #e2e8f0; color: #475569; }
+
+.crel-edit-btn, .crel-delete-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 4px;
+}
+.crel-edit-btn {
+  background: #fff;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+.crel-edit-btn:hover { background: #f1f5f9; }
+.crel-delete-btn {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+.crel-delete-btn:hover { background: #fecaca; }
+
+.crel-empty {
+  color: #94a3b8;
+  font-weight: 400;
+  padding: 18px;
+  text-align: center;
+  margin: 6px 0;
+}
+
+.crel-result-row:hover { background: #f0f9ff; }
+
+.crel-other-link {
+  color: #07ADEF;
+  text-decoration: none;
+  font-weight: 500;
+}
+.crel-other-link:hover {
+  text-decoration: underline;
+}
+</style>  
 
 
 <div id="tabViewClient" class="tab-main" style="text-align: center;display:none">
   <div id="tabButtons" class="tabs" style="text-align: center">
         <button class="tab active" onclick="openTab(this, 'tabInfo')"><i class="fa-solid fa-circle-info"></i> Client Information</button>
+        <button class="tab" onclick="openTab(this, 'tabRels')"><i class="fa-solid fa-people-arrows"></i> Relationships</button>
         <button class="tab" onclick="openTab(this, 'tabSend')"><i class="fa-solid fa-comments"></i> Communication</button>
-        <button class="tab" onclick="openTab(this, 'tabSeq')"><i class="fa-solid fa-robot"></i> Sequences</button>
+        <button class="tab" onclick="openTab(this, 'tabSeq')"><i class="fa-solid fa-robot"></i> Automations</button>
         <button class="tab" onclick="openTab(this, 'tabAppts')"><i class="fa-solid fa-calendar-check"></i>&nbsp;&nbsp;Appointments</button>
+        <button class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();"><i class="fa-solid fa-calendar-day"></i>&nbsp;&nbsp;Events</button>
         <button class="tab" onclick="openTab(this, 'tabCases')"><i class="fa-solid fa-landmark"></i> Cases</button>
         <button class="tab" onclick="openTab(this, 'tabBills')"><i class="fa-solid fa-file-invoice-dollar"></i> Bills</button>
         <button class="tab" onclick="openTab(this, 'tabLog')"><i class="fa-solid fa-receipt"></i> Log</button>
@@ -33,41 +355,92 @@
   <div id="tabInfo" class="tab-content">
     <iframe id="tabInfoIframe"></iframe>
   </div>
-  
+
   <div id="tabSend" class="tab-content">
     <iframe id="tabSendIframe"></iframe>
   </div>
+
   
-  <div id="tabSeq" class="tab-content">
-    <h1>Sequences:</h1>
-    <h2>No Sequences</h2>
-    <table id="seqTable" class="logTable" style="display:none">
-    </table>
+<div id="tabSeq" class="tab-content">
+  <!-- Shared tab-level controls: scope toggle + refresh govern BOTH sections. -->
+  <div class="cauto-header">
+    <div class="cseq-scope-toggle" role="tablist" aria-label="Automation scope">
+      <button type="button" class="cseq-scope-btn active"
+              data-scope="active"
+              onclick="contactSequencesSetScope('active')">Active only</button>
+      <button type="button" class="cseq-scope-btn"
+              data-scope="all"
+              onclick="contactSequencesSetScope('all')">Show all</button>
+    </div>
+    <button type="button" class="cseq-refresh-btn"
+            onclick="reloadContactAutomations()" title="Refresh both lists">
+      <i class="fa-solid fa-arrows-rotate"></i> Refresh
+    </button>
   </div>
-<script>
-function abortSeq(id, type) {
-    Swal.fire({
-        title: "Abort Sequence?",
-        text: `Are you sure you want to abort this "${type}" sequence?`,
-        showCancelButton: true,
-        confirmButtonText: 'Confirm',
-        showLoaderOnConfirm: true,
-        preConfirm: async () => {
-            data = await sendQuery(`UPDATE sequences SET seq_status = 'aborted' WHERE seq_id = '${id}'|||
-                 SELECT *, IFNULL(DATE_FORMAT(seq.seq_start_date, '%b. %e, %Y at %l:%i %p'), '') as start_date FROM sequences seq WHERE seq.seq_client = '${clientID}';`);
-            seq = data.data.query2;
-            if (Array.isArray(seq)) {
-                putSeq();
-            }
-        }
-    });
-}
-</script>
+
+  <!-- ── SEQUENCES section ─────────────────────────────────────────── -->
+  <div class="cauto-section-head">
+    <h3 class="cauto-section-title"><i class="fa-solid fa-repeat"></i> Sequences</h3>
+    <span id="cseq-count" class="cauto-section-count">—</span>
+  </div>
+  <table id="cseq-table" class="logTable cseq-table" style="display:none">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Template</th>
+        <th>Status</th>
+        <th>Step</th>
+        <th>Next Step</th>
+        <th>Enrolled</th>
+        <th>Completed</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="cseq-tbody"></tbody>
+  </table>
+  <h2 id="cseq-empty" class="cseq-empty" style="display:none">No active sequences.</h2>
+  <div id="cseq-pagination" class="cseq-pagination"></div>
+
+  <hr class="cauto-divider">
+
+  <!-- ── WORKFLOWS section (Slice 4.3 Part B) ──────────────────────── -->
+  <div class="cauto-section-head">
+    <h3 class="cauto-section-title"><i class="fa-solid fa-diagram-project"></i> Workflows</h3>
+    <span id="cwf-count" class="cauto-section-count">—</span>
+  </div>
+  <table id="cwf-table" class="logTable cwf-table" style="display:none">
+    <thead>
+      <tr>
+        <th>Execution</th>
+        <th>Workflow</th>
+        <th>Status</th>
+        <th>Step</th>
+        <th>Started</th>
+        <th>Completed</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="cwf-tbody"></tbody>
+  </table>
+  <h2 id="cwf-empty" class="cwf-empty" style="display:none">No active workflows.</h2>
+  <div id="cwf-pagination" class="cwf-pagination"></div>
+</div>
+
+
+
   <div id="tabAppts" class="tab-content">
     <h1>Appointments:</h1>
     <button class="file-button" onclick="newAppt()"><i class="fa-solid fa-calendar-plus"></i> New Appointment</button>
     <h2>No Appointments</h2>
     <table id="apptsTable" class="logTable" style="display:none"><tr><th>Appt ID:</th><th>Type:</th><th>Date:</th><th>Time:</th><th>Length:</th><th>status</th><th>Note:</th><th>Action:</th></tr></table>
+  </div>
+
+  <div id="tabEvents" class="tab-content">
+    <h1>Events connected to this contact:</h1>
+    <button class="file-button" onclick="newEvent()"><i class="fa-solid fa-calendar-plus"></i> New Event</button>
+    <table id="eventsTable" class="logTable">
+      <tr><th>ID</th><th>Type</th><th>Title</th><th>Date</th><th>Time</th><th>Status</th><th>Location</th><th>Action</th></tr>
+    </table>
   </div>
 
   <div id="tabCases" class="tab-content">
@@ -78,49 +451,56 @@ function abortSeq(id, type) {
       <tr><th>Lead ID:</th><th>Relation</th><th>Case Number:</th><th>Case Type:</th><th>Stage:</th><th>Status:</th><th>Open Date:</th><th>File Date:</th><th>Close Date:</th></tr>
     </table>
   </div>
-  <script>
-    function newCase() {
-      Swal.fire({
-        title: "Create New Case:",
-        html: `<label class="input-label">Case Type:</label>
-              <select id="newCaseType"><option>Bankruptcy - Ch</option><option>Other</option></select>`,
-    showCancelButton: true,
-    confirmButtonText: 'Create',
-    showLoaderOnConfirm: true,
-    preConfirm: () => {
-      type=E("newCaseType").value
-      if (!type) {
-        Swal.showValidationMessage("Please select a case type");
-        return false;
-      } else {
-        return fetch(`${url}?mode=clientAction&action=newCase&username=${username}&password=${password}&client=${clientData.contact_id}&type=${encodeURIComponent(type)}`)
-          .then(response => response.json())
-          .then(data => {
-          console.log(data)
-          Toast.fire({icon: data.status, title: data.title, text: data.message})
-          if (data.status == "success") {window.parent.addFile(data.name, 'case', data.id, data.case_type)}
-        })
-      }
-    }
-  });
-}
 
-  </script>
+
+  <div id="tabRels" class="tab-content">
+    <div class="cauto-header">
+      <div class="crel-scope-toggle" role="tablist" aria-label="Relationship scope">
+        <button type="button" class="crel-scope-btn active"
+                data-scope="active"
+                onclick="contactRelationsSetScope('active')">Active only</button>
+        <button type="button" class="crel-scope-btn"
+                data-scope="all"
+                onclick="contactRelationsSetScope('all')">Show all</button>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button type="button" class="crel-add-btn"
+                onclick="openAddRelationModal()">
+          <i class="fa-solid fa-plus"></i> Add Relationship
+        </button>
+        <button type="button" class="crel-refresh-btn"
+                onclick="loadContactRelations()" title="Refresh">
+          <i class="fa-solid fa-arrows-rotate"></i> Refresh
+        </button>
+      </div>
+    </div>
+    <div class="cauto-section-head">
+      <h3 class="cauto-section-title">
+        <i class="fa-solid fa-people-arrows"></i> Relationships
+      </h3>
+      <span id="crel-count" class="cauto-section-count">—</span>
+    </div>
+    <table id="crel-table" class="logTable crel-table" style="display:none">
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Related Contact</th>
+          <th>Status</th>
+          <th>Start</th>
+          <th>End</th>
+          <th>Notes</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="crel-tbody"></tbody>
+    </table>
+    <h2 id="crel-empty" class="crel-empty" style="display:none">No relationships.</h2>
+  </div>
+
 
   <div id="tabBills" class="tab-content">
     Everything you want?!
   </div>
-
-
-      
-      
-    
-      
-    
-    
-      
-    
-    
 
   <div id="tabLog" class="tab-content"> 
     <h1>Client Log</h1>
@@ -138,7 +518,13 @@ function abortSeq(id, type) {
         <option>Form</option>
         <option>Status</option>
         <option>Note</option>
+        <option>Court Email</option>
         <option>Other</option>
+      </select>
+      <select id="logDirectionFilter" style="display:none">
+        <option value="">Any Direction</option>
+        <option value="outgoing">Outgoing</option>
+        <option value="incoming">Incoming</option>
       </select>Time: 
       <select id="tabLogTime" style="width:150px" onchange="tabLogTimeChange(this.value)">
         <option>All</option>
@@ -166,44 +552,56 @@ function abortSeq(id, type) {
 <script>
   
 function tabLogTimeChange(time) {
-  if (time == 'All') {
+  if (time === 'All') {
     E('tabLogDate1').style.display = 'none';
     E('tabLogDateLabel').innerHTML = '';
     E('tabLogDate2').style.display = 'none';
-  } else if (time != 'Between') {
+  } else if (time !== 'Between') {
     E('tabLogDate1').style.display = 'inline-block';
     E('tabLogDateLabel').innerHTML = '';
     E('tabLogDate2').style.display = 'none';
-  } else if (time == 'Between') {
+  } else {
     E('tabLogDate1').style.display = 'inline-block';
     E('tabLogDateLabel').innerHTML = 'and ';
     E('tabLogDate2').style.display = 'inline-block';
   }
 }
-    
 
-
-async function tabLogGet(offset) {
-  E('tabLogButton').disabled = true;
-  E('tabLogLoad').style.display = 'block';
+// Slice B.4: factored out so exportLog can reuse without re-implementing.
+// Returns current filter params WITHOUT limit/offset (callers add those).
+// Includes link_type/link_id scoping to this contact.
+function getLogFilterParams() {
+  const params = { link_type: "contact", link_id: clientID };
   const q     = E("tabLogQuery").value;
   const type  = E("tabLogType").value;
   const time  = E('tabLogTime').value;
   const date1 = E('tabLogDate1').value;
   const date2 = E('tabLogDate2').value;
+  const direction = E("logDirectionFilter").value;
+  if (q)              params.q        = q;
+  if (type !== "All") params.type     = type;
+  if (direction)      params.direction = direction;
+  if (time === "Before")  { params.to_date   = date1; }
+  if (time === "After")   { params.from_date = date1; }
+  if (time === "On")      { params.from_date = date1; params.to_date = date1; }
+  if (time === "Between") { params.from_date = date1; params.to_date = date2; }
+  return params;
+}
+
+function exportLog() {
+  return exportLogCsv(getLogFilterParams, `contact-${clientID}-log`);
+}
+
+async function tabLogGet(offset) {
+  E('tabLogButton').disabled = true;
+  E('tabLogLoad').style.display = 'block';
   const table = E('logTable');
   const foot  = E('logTableFoot');
   foot.innerHTML = "";
   const rows = table.getElementsByTagName("tr");
   for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
 
-  const params = { link_type: "contact", link_id: clientID, limit, offset };
-  if (q)              params.q        = q;
-  if (type !== "All") params.type     = type;
-  if (time === "Before")  { params.to_date   = date1; }
-  if (time === "After")   { params.from_date = date1; }
-  if (time === "On")      { params.from_date = date1; params.to_date = date1; }
-  if (time === "Between") { params.from_date = date1; params.to_date = date2; }
+  const params = { ...getLogFilterParams(), limit, offset };
 
   try {
     const data = await P.apiSend("/api/log", "GET", params);
@@ -211,11 +609,8 @@ async function tabLogGet(offset) {
     if (data.total > 0) {
       logs.forEach(entry => {
         const row = table.insertRow();
-        let cell_data;
-        try {
-          const jsonData = JSON.parse(entry.log_data.replace(/\n/g,"\\n").replace(/\r/g,"\\r"));
-          cell_data = Object.keys(jsonData).map(key => `<b>${key}:</b> ${jsonData[key]}`).join('<br>');
-        } catch (_) { cell_data = entry.log_data || ""; }
+        // Slice B.4: Data cell collapsed by default (1 line per key + ellipsis).
+        const cell_data = buildLogDataCell(entry);
         // Slice 4: prefer server-resolved entity ids over raw log_link literal.
         // Case branch first (case_id existed before phone/email hydration); else
         // contact branch (covers contact-typed rows AND phone/email-typed rows
@@ -223,28 +618,33 @@ async function tabLogGet(offset) {
         let link = "";
         if (entry.case_id && isNaN(entry.log_link)) {
           const caseName = (entry.case_number || entry.case_id || "").toString().replace(/'/g, "\\'");
-          link = `<a href="#" onclick="window.parent.addFile('${caseName}','case','${entry.case_id}');return false">${entry.case_number || entry.case_id}</a>`;
+          link = `<a href="#" onclick="P.addFile('${caseName}','case','${entry.case_id}');return false">${entry.case_number || entry.case_id}</a>`;
         } else if (entry.contact_id) {
           const cname = (entry.contact_name || "").replace(/'/g, "\\'");
-          link = `<a href="#" onclick="window.parent.addFile('${cname}','client','${entry.contact_id}');return false">${entry.contact_name || "Name Error"}</a>`;
+          link = `<a href="#" onclick="P.addFile('${cname}','client','${entry.contact_id}');return false">${entry.contact_name || "Name Error"}</a>`;
         }
-        row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}</td><td>${entry.formatted_date}</td><td>${link}</td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}</td>`;
+        // Slice B.2 (variant): direction icon trails the log_type on a second line,
+        // small + grey so the type word stays the primary read.
+        let dirIcon = "";
+        const isComm = ['sms','email','call','court email'].includes(entry.log_type);
+        if (isComm && entry.log_direction === 'outgoing') {
+          dirIcon = `<br><i class="fa-solid fa-arrow-right-from-bracket" title="Outgoing" style="font-size:0.85em;color:#888"></i>`;
+        } else if (isComm && entry.log_direction === 'incoming') {
+          dirIcon = `<br><i class="fa-solid fa-arrow-right-to-bracket" title="Incoming" style="font-size:0.85em;color:#888"></i>`;
+        }
+        // Slice B.3: leading link-type icon + trailing extras-inspector icon
+        const typeIcon = logEntryIcon(entry);
+        const extrasIcon = logExtrasIcon(entry);
+        row.innerHTML = `<td>${entry.log_id}</td><td>${entry.log_type}${dirIcon}</td><td>${entry.formatted_date}</td><td><div style="min-width:10em;max-width:16em;overflow-wrap:anywhere">${typeIcon}${link}</div></td><td>${cell_data}</td><td>${entry.by_name||entry.log_by||""}${extrasIcon}</td>`;
       });
-      foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabLogGet(${offset-limit})">&lt;</a> ` : "";
-      for (let i = 1; data.total >= (i-1)*limit; i++) {
-        foot.innerHTML += offset/limit+1 == i
-          ? `<a href="#" onclick="tabLogGet(${(i-1)*limit})">[${i}]</a> `
-          : `<a href="#" onclick="tabLogGet(${(i-1)*limit})">${i}</a> `;
-      }
-      foot.innerHTML += offset+limit < data.total ? `<a href="#" onclick="tabLogGet(${offset+limit})">&gt;</a> ` : "";
-      foot.innerHTML += ` | Results ${offset+1}–${offset+logs.length} of ${data.total}
-        <select style="width:auto" onchange="limit=this.value;tabLogGet(0)">
-          <option value="50"  ${limit==50?"selected":""}>50</option>
-          <option value="100" ${limit==100?"selected":""}>100</option>
-          <option value="200" ${limit==200?"selected":""}>200</option>
-          <option value="500" ${limit==500?"selected":""}>500</option>
-        </select> | <button onclick="window.print()">Print</button>`;
+      // Slice B.4: unified footer
+      renderLogFooter(foot, data, limit, offset,
+        (p) => tabLogGet((p - 1) * limit),
+        exportLog);
     } else {
+      renderLogFooter(foot, data, limit, offset,
+        (p) => tabLogGet((p - 1) * limit),
+        exportLog);
       Toast.fire({ icon: "error", title: "No log entries found!" });
     }
   } catch (err) {
@@ -254,26 +654,36 @@ async function tabLogGet(offset) {
   E('tabLogLoad').style.display = 'none';
 }
 
+// Slice B.3: contextual visibility for direction filter
+const LOG_COMM_TYPES = ['Communication', 'SMS', 'Email', 'Call', 'Court Email'];
+function syncLogDirectionFilterVisibility() {
+  const t = E('tabLogType').value;
+  const show = LOG_COMM_TYPES.includes(t);
+  E('logDirectionFilter').style.display = show ? '' : 'none';
+  if (!show) E('logDirectionFilter').value = '';
+}
+E('tabLogType').addEventListener('change', syncLogDirectionFilterVisibility);
+syncLogDirectionFilterVisibility();
 
-function addLog() {
+
+async function addLog() {
   Swal.fire({
     title: "Add Log:",
     html: `<textarea id="addLogText" style="height:60px;width:300px;resize:none;"></textarea>`,
     showCancelButton: true,
     confirmButtonText: 'Log',
     showLoaderOnConfirm: true,
-    preConfirm: () => {
-      text=E("addLogText").value
-      if (!text) {
-        Swal.showValidationMessage("Please add a log message");
-        return false;
-      } else {
-        return fetch(`${url}?mode=clientAction&action=addLog&username=${username}&password=${password}&case=&client=${clientID}&text=${encodeURIComponent(text)}`)
-          .then(response => response.json())
-          .then(data => {
-          console.log(data)
-          Toast.fire({icon: data.status, title: data.title, text: data.message})
-        })
+    preConfirm: async () => {
+      const text = E("addLogText").value;
+      if (!text) { Swal.showValidationMessage("Please add a log message"); return false; }
+      try {
+        await P.apiSend("/api/log", "POST", {
+          type: "note", link_type: "contact", link_id: clientID, data: text
+        });
+        Toast.fire({ icon: "success", title: "Logged!" });
+        tabLogGet(0);
+      } catch (err) {
+        Toast.fire({ icon: "error", title: "Error", text: err.message });
       }
     }
   });
@@ -287,7 +697,7 @@ function addLog() {
 <div id="tabTasks" class="tab-content">
 <h1>Tasks</h1>
     <span>
-      <button onclick="window.parent.newTask(null,null,null,null,null,null,clientID)">Create Task</button>
+      <button onclick="P.newTask(null,'contact',clientID,refreshTasks)">Create Task</button>
       Query:
       <input id="tabTasksQuery">
       Status: 
@@ -297,16 +707,16 @@ function addLog() {
         <option>Completed</option>
         <option>Due Today</option>
         <option>Overdue</option>
-        <option>Canceled</option>
-        <option value="1' OR '1">All</option>
+        <option>Deleted</option>
+        <option value="All">All</option>
       </select>
       Assigned By: 
       <select id="tabTasksBy" class="userslist" style="width:150px">
-        <option value="1' OR '1">All</option>
+        <option value="">All</option>
       </select>
       Assigned to: 
-      <select id="tabTasksTo" class="userslist" style="width:150px">
-        <option value="1' OR '1">All</option>
+      <select id="tabTasksTo" class="userslist" data-userlist-filter="user_type" style="width:150px">
+        <option value="">All</option>
       </select>
       <button id="tabTasksButton" onclick="tabTasksGet(0)">Search</button>
     </span>
@@ -331,338 +741,2069 @@ function addLog() {
   </div>
   
   <script>
-    temptask = ""
-    function tabTasksGet(offset) {
+    let temptask = "";
+
+    async function refreshTasks() {
+      await tabTasksGet(0);
+    }
+
+    async function tabTasksGet(offset) {
       E('tabTasksButton').disabled = true;
       E('tabTasksLoad').style.display = 'block';
-      query = E("tabTasksQuery").value
-      status = E("tabTasksStatus").value
-      by = E("tabTasksBy").value
-      to = E("tabTasksTo").value
+
+      const q = E("tabTasksQuery").value;
+      const status = E("tabTasksStatus").value;
+      const by = E("tabTasksBy").value;
+      const to = E("tabTasksTo").value;
+
       const table = E('tasksTable');
       const foot = E('tasksTableFoot');
-      foot.innerHTML = ""
-      var rows = table.getElementsByTagName("tr");
-      for (var i = rows.length - 1; i > 0; i--) {
-        table.deleteRow(i);
-      }
-      fetch(`${url}?mode=getClientTasks&username=${username}&password=${password}&client=${clientID}&query=${query}&status=${status}&by=${by}&to=${to}&offset=${offset}&limit=${limit}&link=${clientID}`)
-        .then(response => response.json())
-        .then(data => {
-        temptask = data
-        tasks = data.data;
-        console.log(data);
-        if (data.message == "tasks retrieved"){
-          Toast.fire({ title: "success", text: `${data.results} tasks retrieved`, icon: "success"});
-          tasks.forEach(task => {
+      foot.innerHTML = "";
+      const rows = table.getElementsByTagName("tr");
+      for (let i = rows.length - 1; i > 0; i--) table.deleteRow(i);
+
+      const params = { link_type: "contact", link_id: clientID, limit, offset };
+      if (q) params.q = q;
+      if (status !== "All") params.status = status;
+      if (by) params.assigned_by = by;
+      if (to) params.assigned_to = to;
+
+      try {
+        const data = await P.apiSend("/api/tasks", "GET", params);
+        const taskList = data.data || [];
+
+        if (data.total > 0) {
+          taskList.forEach(task => {
             const row = table.insertRow();
-            rowHTML = `<td><select 
-              onchange="window.parent.updateTask(${task.task_id}, this.value, ${task.task_to}, '${task.task_title}', '${task.task_desc}', '${task.task_due}', ${task.task_notification}, '${task.task_link}');this.selectedIndex=0;" 
-              style="width:150px"><option value="" disabled selected>Actions</option>`;
-            if (task.task_status == "Pending" || task.task_status =="Due Today" || task.task_status == "Overdue") {rowHTML +=
-              `<option value="Mark Complete">Mark Complete</option><option value="Edit">Edit</option>
-              <option value="Cancel">Cancel</option></select>`}
-            else if (task.task_status == "Canceled") {rowHTML += 
-              `<option value="Uncancel">Reinstate</option></select>`}
-            else if (task.task_status == "Completed") {rowHTML +=
-              `<option value="Mark Incomplete">Mark Incomplete</option></select>`}
-            else {rowHTML += `<td>`}
+            let opts = "";
+            if (["Pending", "Due Today", "Overdue"].includes(task.status)) {
+              opts = `<option value="Mark Complete">Mark Complete</option>
+                    <option value="Edit">Edit</option>
+                    <option value="Cancel">Delete</option>`;
+            } else if (task.status === "Deleted") {
+              opts = `<option value="Uncancel">Reinstate</option>`;
+            } else if (task.status === "Completed") {
+              opts = `<option value="Mark Incomplete">Mark Incomplete</option>`;
+            }
+            const created = task.created
+              ? new Date(task.created).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+              : "";
             row.innerHTML = `
-              ${rowHTML}</td><td>${task.task_id}</td><td>${task.task_status}</td><td>${task.task_title}</td><td>${task.task_desc}</td>
-              <td>${task.task_from_name||"TASKMASTER"}</td><td>${task.task_to_name}</td><td><a href="#" onclick="window.parent.addFile('${task.case_number||task.case_id||task.contact_name}', '${isNaN(task.task_link)? "case":"client"}', '${task.task_link}')">${task.case_number||task.case_id||task.contact_name}</a></td><td>${task.due||task.task_due||""}</td><td>${task.date||task.task_date}</td>`;
+            <td><select onchange="P.updateTask(${task.id},this.value,refreshTasks);this.selectedIndex=0;" style="width:150px">
+              <option value="" disabled selected>Actions</option>${opts}
+            </select></td>
+            <td>${task.id}</td>
+            <td>${task.status}</td>
+            <td>${task.title}</td>
+            <td>${task.desc || ""}</td>
+            <td>${task.from?.name || ""}</td>
+            <td>${task.to?.name || ""}</td>
+            <td></td>
+            <td>${task.due || ""}</td>
+            <td>${created}</td>`;
           });
-          foot.innerHTML = offset > 0 ? `<a href="#" onclick="tabTasksGet(${offset-limit})"">&lt;</a> `: "";
-          for (i=1; data.results >= (i-1)*limit; i++) {
-            foot.innerHTML += (offset/limit + 1 == i)?
-              `<a href="#" onclick="tabTasksGet(${(i-1)*limit})">[${i}]</a> `:
-              `<a href="#" onclick="tabTasksGet(${(i-1)*limit})">${i}</a> `;
-          }
-          foot.innerHTML += (offset+limit < data.results) ? `<a href="#" onclick="tabTasksGet(${offset+limit})"">&gt;</a> `: "";
-          foot.innerHTML += ` | Results ${offset+1}-${offset+data.data.length} of ${data.results}
-          <select style="width:auto" onchange="limit = this.value;tabTasksGet(0)">
-          <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
-          <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
-          <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
-          <option value="500" ${limit === 500 ? 'selected' : ''}>500</option>
-          </select> | <button onclick="window.print()">Print</button>`;
+          foot.innerHTML = ` | ${data.total} task${data.total === 1 ? '' : 's'}`;
+        } else {
+          foot.innerHTML = "No tasks linked to this contact";
         }
-        else {Toast.fire({ icon: "error", title: `No Tasks Found!` }); foot.innerHTML = "No Tasks Related to Client"}
-        E('tabTasksButton').disabled = false;
-        E('tabTasksLoad').style.display = 'none';
-      });
+      } catch (err) {
+        foot.innerHTML = "Error loading tasks";
+        console.error(err);
+      }
+
+      E('tabTasksButton').disabled = false;
+      E('tabTasksLoad').style.display = 'none';
     }
   </script>
 
 </div>
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 <script>
-window.apiSend = P.apiSend;     // relay for form iframes
-window.firmData = P.firmData;
-function openTab(tab, tabName) {
-  var i, tabContent, tabLinks;
-    if (tab){
-      tabs = document.getElementsByClassName("tab");
-      for (i = 0; i < tabs.length; i++) {
-        tabs[i].classList.remove("active");
-      }
-      tab.classList.add("active")}
-  tabContent = document.getElementsByClassName("tab-content");
-  for (i = 0; i < tabContent.length; i++) {
-    tabContent[i].style.display = "none";
-  }
-  document.getElementById(tabName).style.display = "block";
-}
 
+// ── Constants ────────────────────────────────────────────────
+//const P        = window.parent;
+const clientID = new URLSearchParams(window.location.search).get('clientID');
+let limit      = parseInt(getTabPref('log','limit', P.limit || 100), 10) || 100;
 
+window.apiSend = P.apiSend;   // relay for child form iframes
+window.firmData = P.firmData;  // relay firm-wide data (phone lines, email senders, current user)
+// Populate userslist filter selects from firmData.users.
+// Static <option value="">All</option> is preserved; users are appended.
+// Parent's populateUserSelect doesn't reach into iframes.
+document.querySelectorAll('select.userslist').forEach(sel => {
+  const filterField = sel.dataset.userlistFilter;
+  const list = filterField
+    ? (window.firmData?.users || []).filter(u => u[filterField])
+    : (window.firmData?.users || []);
+  list.forEach(u => {
+    const opt = document.createElement('option');
+    opt.value = u.user;
+    opt.textContent = u.user_name;
+    sel.appendChild(opt);
+  });
+});
 
-
-
-  
-function putCases(){
-  table=E("casesTable")
-  table.style.display=""
-  table.previousElementSibling.style.display="none"
-  cases.forEach(C => {
-    row = table.insertRow();
-    row.innerHTML = `<td><a href="#" onclick="window.parent.addFile('${C.case_id}', 'case', '${C.case_id}', '${C.case_id}'); return false">${C.case_id}</a></td><td>${C.case_relate_type}</td>
-     <td>${C.case_number_full||C.case_number||"No Case Number"}</td><td>${C.case_type}</td><td>${C.case_stage}</td><td>${C.case_status}</td><td>${C.open}</td><td>${C.file}</td><td>${C.close}</td>`
-   })
-}
-
-
-function putAppt() {
-  table=E("apptsTable")
-  table.style.display=""
-  table.previousElementSibling.style.display="none"
-  appts.forEach(appt => {
-    row = table.insertRow();
-       if (appt.status == "No Show") {
-          rowHTML =  `<td><button onclick="window.parent.apptUpdate(${appt.id}, 'Cancel', '${appt.date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-                            <button onclick="window.parent.apptUpdate(${appt.id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-                            <button onclick="window.parent.apptUpdate(${appt.id}, 'Reschedule', '${appt.raw_date}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`}
-        else if (appt.status == "Scheduled") {
-          rowHTML =  `<td><button onclick="window.parent.apptUpdate(${appt.id}, 'Cancel', '${appt.date} at ${appt.time}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-                                 <button onclick="window.parent.apptUpdate(${appt.id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-                                 <button onclick="window.parent.apptUpdate(${appt.id}, 'No Show')"><i class="fa-solid fa-user-xmark"></i> No Show</button>
-                                 <button onclick="window.parent.apptUpdate(${appt.id}, 'Reschedule', '${appt.raw_date}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`}
-        else { rowHTML = `<td></td>` }
-
-     row.innerHTML = `<td>${appt.id}</td><td>${appt.type}</td><td>${appt.date}</td><td>${appt.time}</td><td>${appt.length}</td><td>${appt.status}</td><td>${appt.note||""}</td>${rowHTML}`
-   })
-}
-  
-function putSeq(){
-  table=E("seqTable")
-  table.style.display=""
-  table.previousElementSibling.style.display="none"
-  table.innerHTML = "<tr><th>ID:</th><th>Type:</th><th>Status:</th><th>link:</th><th>Start Date:</th><th>Next Step:</th><th></th></tr>"
-  seq.forEach(seq => {
-    row = table.insertRow();
-    row.innerHTML = seq.seq_status == "active"? `<td>${seq.seq_id}</td><td>${seq.seq_type}</td><td>${seq.seq_status}</td><td>${seq.seq_link}</td><td>${seq.start_date}</td><td>${seq.seq_next_step}</td><td><button onclick="abortSeq('${seq.seq_id}','${seq.seq_type}')">Abort</button></td>`:
-                                               `<td>${seq.seq_id}</td><td>${seq.seq_type}</td><td>${seq.seq_status}</td><td>${seq.seq_link}</td><td>${seq.start_date}</td><td>${seq.seq_next_step}</td><td></td>`
-   })
-}
-
-function processing() {
-  Swal.fire({
-        title: 'Processing...',
-        html: '<div style="display: flex; align-items: center; justify-content: center; height: 150px; overflow: hidden; display: block"><i class="fa-solid fa-spinner fa-spin-pulse fa-6x"></i><br><p><div>please wait</p>',
-        showConfirmButton: false,
-        width: "250px"
-    });
-}
-
-
-clientData = ""
-appts = ""
-cases = ""
-log=""
-tasks = ""
-username = window.parent.username;
-password = window.parent.password
-limit = window.parent.limit
-url = window.parent.url
-clientID = new URLSearchParams(window.location.search).get('clientID');
-seq = ""
-  temp11 = ""
-  //temp stuff to make communication.html work!
-  window.entityData = {
+// ── State (single source of truth) ──────────────────────────
+window.entityData = {
   contact:   null,
   cases:     [],
   appts:     [],
   tasks:     [],
-  log:       [],
-  sequences: []
+  log:       []
 };
-  async function loadEntityData() {
+
+// ── Data loading ────────────────────────────────────────────
+async function loadEntityData() {
+  // Slice 3 Stage B.2: include phones/emails/addresses for the
+  // contact-form repeaters. Children are flattened into ed.contact
+  // so the form's endpoints.load.path = 'contact' surfaces them
+  // alongside scalar contact columns. The aggregate PATCH response
+  // also gets re-flattened the same way (in contact-form.html's
+  // custom save flow) for a single source of truth.
   const data = await P.apiSend(
     `/api/contacts/${clientID}`, 'GET',
-    { include: 'cases,appts,tasks,log,sequences' }
+    { include: 'cases,appts,tasks,log,phones,emails,addresses' }
   );
-    const ed       = window.entityData;
+  const ed       = window.entityData;
   ed.contact     = data.contact;
+  ed.contact.phones    = data.phones    || [];
+  ed.contact.emails    = data.emails    || [];
+  ed.contact.addresses = data.addresses || [];
   ed.cases       = data.cases     || [];
   ed.appts       = data.appts     || [];
   ed.tasks       = data.tasks     || [];
   ed.log         = data.log       || [];
-  ed.sequences   = data.sequences || [];
 }
-  loadEntityData()
-  //end temp
-processing()
-  query = `SELECT co.*  FROM contacts co WHERE co.contact_id = '${clientID}';|||
-  SELECT *, IFNULL(DATE_FORMAT(seq.seq_start_date, '%b. %e, %Y at %l:%i %p'), '') as start_date FROM sequences seq WHERE seq.seq_client = '${clientID}';|||
-  SELECT *, IFNULL(DATE_FORMAT(case_open_date, '%b. %e, %Y'), '') AS open, IFNULL(DATE_FORMAT(case_file_date, '%b. %e, %Y'), '') AS file, IFNULL(DATE_FORMAT(case_close_date, '%b. %e, %Y'), '') AS close 
-    FROM case_relate cr LEFT JOIN cases ca ON ca.case_id = cr.case_relate_case_id
-    WHERE cr.case_relate_client_id = '${clientID}';|||
-  SELECT appt_id AS id, DATE_FORMAT(appt_date, '%Y-%m-%d %H:%i:%s') AS raw_date,
-    DATE_FORMAT(appt_date, '%b. %e, %Y') AS date, DATE_FORMAT(appt_date, '%l:%i %p') AS time,
-    appt_type AS type, appt_length AS length, appt_note AS note, appt_status AS status
-    FROM appts WHERE appt_client_id = "${clientID}" ORDER BY raw_date DESC`
-  query = encodeURIComponent(query)
-fetch(`/db?username=${username}&password=${password}&query=${query}`)
-  .then(response => response.json())
-  .then(data => {
-  console.log(data)
-  clientData = data.data.query1[0]
-  seq = data.data.query2;
-  cases = data.data.query3;
-  appts = data.data.query4;
-  E('phone').innerHTML = clientData.contact_phone ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
-  E('fname').innerHTML = clientData.contact_fname || "";
-  E('lname').innerHTML = clientData.contact_lname || "";
-  /*E('sendEmailTo').value = clientData.contact_email || "";
-  E('sendSMSTo').value = clientData.contact_phone ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
-  E('logCallTo').value = clientData.contact_phone ? clientData.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
-  */
- E("tabSendIframe").src="/communicate.html"
-  document.getElementById("tabInfoIframe").src =
-      `contactform.html?firstname=${clientData.contact_fname}&middlename=${clientData.contact_mname}&lastname=${clientData.contact_lname}&preferredname=${clientData.contact_pname}
-      &email=${clientData.contact_email}&phone=${clientData.contact_phone}&secondaryemail=${clientData.contact_email2}&secondaryphone=${clientData.contact_phone2}
-      &dob=${clientData.contact_dob||""}&ssn=${clientData.contact_ssn}
-      &address=${clientData.contact_address}&city=${clientData.contact_city}&state=${clientData.contact_state}&zip=${clientData.contact_zip}
-      &clientid=${clientID}&tags=${clientData.contact_tags}&notes=${encodeURIComponent(clientData.contact_notes)}
-      `;document.getElementById("tabViewClient").style.display = "block";
-  /* jotform
-  document.getElementById("tabInfoIframe").src =
-      `https://jotform.com/240933625720050?clientName[first]=${clientData.contact_fname}&clientName[middle]=${clientData.contact_mname}&clientName[last]=${clientData.contact_lname}&email=${clientData.contact_email}&phoneNumber[full]=${clientData.contact_phone}
-      &dateOf[month]=${clientData.contact_dob ? clientData.contact_dob.split("T")[0].split('-')[1] : ""}&dateOf[day]=${clientData.contact_dob ? clientData.contact_dob.split("T")[0].split('-')[2] : ""}&dateOf[year]=${clientData.contact_dob ? clientData.contact_dob.split("T")[0].split('-')[0] : ""}
-      &address[addr_line1]=${clientData.contact_address}&address[city]=${clientData.contact_city}&address[state]=${clientData.contact_state}&address[postal]=${clientData.contact_zip}&ssn=${clientData.contact_ssn}
-      &clientId=${clientID}&notes=${clientData.contact_notes}&tags=${clientData.contact_tags}`;document.getElementById("tabViewClient").style.display = "block";
-  */
-  openTab(null, 'tabInfo');
-  Swal.close();
-  
-  if (Array.isArray(cases)) {
-    putCases();
-  }
-  if (Array.isArray(seq)) {
-    putSeq();
-  }
-  
-  if (Array.isArray(appts)) {
-    putAppt();
-  }
-})
 
+// ── Header & prefill updates ────────────────────────────────
+function updateHeader() {
+  const c = window.entityData.contact;
+  if (!c) return;
 
-  tabLogGet(0);
-  //tabTasksGet(0);    
-
-
-
-
-function conMsg() {
-date = new Date(E('scheduleDateTime').value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}).replace(',', ' at');
-  E("confirmMessageText").style.display = (E("confirmSMS").checked||E("confirmEmail").checked) ? "":"none";
-  E("confirmMessageText").value = (E("confirmSMS").checked||E("confirmEmail").checked) ? 
-    `This is to confirm that I scheduled you for a ${E("apptLen").value} minute ${document.querySelector('input[name="schedulePlatform"]:checked').value} ${E("apptType").value} on ${date}.` : "";
-  E("apptDatePretty").value= new Date(E('scheduleDateTime').value).toLocaleString('en-US', { month: 'short', day: 'numeric' }) + ', ' + new Date(E('scheduleDateTime').value).toLocaleString('en-US', { year: 'numeric', hour: 'numeric', minute: '2-digit' }).replace(',', ' at');
+  E('fname').innerHTML = c.contact_fname || "";
+  E('lname').innerHTML = c.contact_lname || "";
+  E('phone').innerHTML = c.contact_phone
+    ? c.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3') : "";
 }
-  
-newApptTemp=""
-function newAppt() {
+
+// ── Iframe loading (called once on initial load) ────────────
+function loadIframes() {
+  E('tabInfoIframe').src = `/forms/contact-form.html?contact_id=${clientID}`;
+  E('tabSendIframe').src = '/communicate.html';
+}
+
+// ── Table render functions ──────────────────────────────────
+//    All read from window.entityData
+
+function putCases() {
+  const table = E("casesTable");
+  const emptyHeader = table.previousElementSibling;
+  // Clear existing rows (keep header) before re-rendering either state
+  while (table.rows.length > 1) table.deleteRow(-1);
+  if (!window.entityData.cases.length) {
+    table.style.display = "none";
+    emptyHeader.style.display = "";
+    return;
+  }
+  table.style.display = "";
+  emptyHeader.style.display = "none";
+  window.entityData.cases.forEach(C => {
+    const row = table.insertRow();
+    row.innerHTML = `<td><a href="#" onclick="P.addFile('${C.case_id}','case','${C.case_id}');return false">${C.case_id}</a></td>
+      <td>${C.relate_type}</td>
+      <td>${C.case_number_full||C.case_number||"No Case Number"}</td>
+      <td>${fmtCaseType(C)}</td><td>${C.case_stage}</td><td>${C.case_status}</td>
+      <td>${C.open||""}</td><td>${C.file||""}</td><td>${C.close||""}</td>`;
+  });
+}
+
+function putAppt() {
+  const table = E("apptsTable");
+  const emptyHeader = table.previousElementSibling;
+  // Clear existing rows (keep header) before re-rendering either state
+  while (table.rows.length > 1) table.deleteRow(-1);
+  if (!window.entityData.appts.length) {
+    table.style.display = "none";
+    emptyHeader.style.display = "";
+    return;
+  }
+  table.style.display = "";
+  emptyHeader.style.display = "none";
+  window.entityData.appts.forEach(appt => {
+    const row = table.insertRow();
+    // Always show all 4 action buttons except the one matching current status.
+    // Backend blocks same-state transitions; parent's apptUpdate() warns the user
+    // when currentStatus is non-Scheduled (5th arg).
+    const apptDateTime = `${appt.format_date} at ${appt.time}`;
+    const s = appt.appt_status;
+    const buttons = [];
+    if (s !== "Attended") {
+      buttons.push(`<button onclick="P.apptUpdate(${appt.appt_id},'Attended',null,refreshAppts,'${s}')"><i class="fa-solid fa-user-check"></i> Attended</button>`);
+    }
+    if (s !== "No Show") {
+      buttons.push(`<button onclick="P.apptUpdate(${appt.appt_id},'No Show',null,refreshAppts,'${s}')"><i class="fa-solid fa-user-xmark"></i> No Show</button>`);
+    }
+    if (s !== "Canceled") {
+      buttons.push(`<button onclick="P.apptUpdate(${appt.appt_id},'Cancel','${apptDateTime}',refreshAppts,'${s}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>`);
+    }
+    if (s !== "Rescheduled") {
+      buttons.push(`<button onclick="P.apptUpdate(${appt.appt_id},'Reschedule','${appt.appt_datetime_local}',refreshAppts,'${s}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button>`);
+    }
+    const rowHTML = `<td>${buttons.join(" ")}</td>`;
+    row.innerHTML = `<td><a href="#" onclick="P.showAppt(${appt.appt_id})">${appt.appt_id}</a></td><td>${appt.appt_type}</td><td>${appt.format_date}</td><td>${appt.time}</td><td>${appt.appt_length}</td><td>${appt.appt_status}</td><td>${appt.appt_note||""}</td>${rowHTML}`;
+  });
+}
+
+
+
+// ── Tab switching ───────────────────────────────────────────
+function openTab(tab, tabName) {
+  if (tab) {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+  }
+  document.querySelectorAll(".tab-content").forEach(t => t.style.display = "none");
+  E(tabName).style.display = "block";
+  // Stop automation polling whenever the user leaves the Automations tab —
+  // regardless of which tab they switch to (tabRels, tabCases, anything else).
+  if (tabName !== 'tabSeq') {
+    stopContactAutomationPolling();
+  }
+  // Per-tab lifecycle hooks.
+  if (tabName === 'tabSeq') {
+    reloadContactAutomations();
+  } else if (tabName === 'tabRels') {
+    loadContactRelations();
+  }
+}
+
+// ── Utilities ───────────────────────────────────────────────
+function processing() {
   Swal.fire({
-    title: "Schedule Appointment",
-    html: `<form onchange="conMsg()""><select style="width:300px" onchange="[E('apptType').value,E('apptLen').value]=this.value.split(',');document.getElementById('ApptOtherSpan').style.display=this.value==','?'block':'none'">
-      <option disabled selected>Appointment Type:</option>
-      <option value="Strategy Session,15">Strategy Session (15 min)</option>
-      <option value="Strategy Session Follow Up,15">Strategy Session Follow Up (15 min)</option>
-      <option value="Strategy Session Follow Up,30">Strategy Session Follow Up (30 min)</option>
-      <option value="Pre-filing Meeting,30">Pre-filing Meeting (30 min)</option>
-      <option value="Schedules Completion Meeting,45">Schedules Completion Meeting (45 min)</option>
-      <option value="Documents Completion Meeting,30">Documents Completion Meeting (30 min)</option>
-      <option value="Matrix Completion Meeting,15">Matrix Completion Meeting (15 min)</option>
-      <option value="Schedules Completion Meeting,20">Schedules Completion Meeting (20 min)</option>
-      <option value=",">Other</option>
-      </select><br>
-      <span id="ApptOtherSpan" style="display:none"><input id="apptType" style="width:240px" placeholder="Other Appointment Type"><input id="apptLen" style="width:60px" maxlength="3" oninput="this.value=isNaN(this.value)?'':this.value" placeholder="length"></span><br>
-      <label>Method: </label><input style="width:auto" type="radio" id="telephone" name="schedulePlatform" value="telephone" checked>
-      <label for="telephone">Telephone</label>
-      <input type="radio" id="zoom"  style="width:auto" name="schedulePlatform" value="Zoom">
-      <label for="zoom">Zoom</label>
-      <input type="radio" id="inPerson"  style="width:auto" name="schedulePlatform" value="in-person">
-      <label for="inPerson">In-person</label><br>
-      <input type="datetime-local" class="swal2-input" id="scheduleDateTime" name="datetime"><br>
-      <textarea id="appointmentNote" placeholder="Appointment Notes (optional)" style="height:60px;width:300px;"></textarea><br>
-      <label>Confirmation Message?</label> <input style="width:auto" type="checkbox" id="confirmSMS" name="confirmSMS" value="sms">
-      <label for="sms">SMS</label>
-      <input type="checkbox" style="width:auto" id="confirmEmail" name="confirmEmail" value="email">
-      <label for="email">Email</label><br></form>
-      <textarea id="confirmMessageText" style="display:none;height:60px;width:300px;resize:none;"></textarea>
-      <input id="apptDatePretty" style="display:none">`,
-    showCancelButton: true,
-    confirmButtonText: 'Schedule',
-    showLoaderOnConfirm: true,
-    preConfirm: () => {
-      len=E("apptLen").value
-      dateP=E("apptDatePretty").value.split(" at ")
-      platform= document.querySelector('input[name="schedulePlatform"]:checked').value
-      type=E("apptType").value
-      date=E("scheduleDateTime").value.replace("T", " ").concat(":00")
-      note=E("appointmentNote").value
-      if ((!E("apptType").value) || (!E("apptLen").value) || (!E("scheduleDateTime").value)) {
-        Swal.showValidationMessage("Please complete all the mandatory fields");
-        return false;
-      } else if (whenDate(date) == "past") {
-        Swal.showValidationMessage("Please chose a future date");
-        return false;
-      } else {
-        return fetch(`${url}?mode=updateAppt&action=newAppt&username=${username}&password=${password}&case=&client=${clientData.contact_id}&len=${E("apptLen").value}&platform=${document.querySelector('input[name="schedulePlatform"]:checked').value}&type=${E("apptType").value}&date=${E("scheduleDateTime").value.replace("T", " ")}:00&confirmEmail=${E("confirmEmail").checked}&confirmSMS=${E("confirmSMS").checked}&sms=${clientData.contact_phone}&email=${clientData.contact_email}&note=${encodeURIComponent(E("appointmentNote").value)}&confirmMessage=${encodeURIComponent(E("confirmMessageText").value)}&clientName=${clientData.contact_name}`)
-          .then(response => response.json())
-          .then(data => {
-          newApptTemp = data
-          console.log(newApptTemp)
-          Toast.fire({icon: data.status, title: data.title, text: data.message})
-          if (data.status == "success"){
-            E("apptsTable").insertRow(0).innerHTML = `<td>${data.id}</td><td>${type}</td><td>${dateP[0]}</td><td>${dateP[1]}</td><td>${len}</td><td>Scheduled</td><td>${note}</td>
-                                <td><button onclick="window.parent.apptUpdate(${data.id}, 'Cancel', '${dateP[0]} at ${dateP[1]}')"><i class="fa-solid fa-calendar-xmark"></i> Cancel</button>
-                                 <button onclick="window.parent.apptUpdate(${data.id}, 'Attended')"><i class="fa-solid fa-user-check"></i> Attended</button>
-                                 <button onclick="window.parent.apptUpdate(${data.id}, 'No Show')"><i class="fa-solid fa-user-xmark"></i> No Show</button>
-                                 <button onclick="window.parent.apptUpdate(${data.id}, 'Reschedule', '${date}')"><i class="fa-solid fa-user-clock"></i> Reschedule</button></td>`
-          }
-        })
+    title: 'Processing...',
+    html: '<div style="display:block;text-align:center;height:150px"><i class="fa-solid fa-spinner fa-spin-pulse fa-6x"></i><br><p>please wait</p></div>',
+    showConfirmButton: false,
+    width: "250px"
+  });
+}
+
+// ── onSuccess callbacks for parent actions ───────────────────
+async function refreshAppts() {
+  const data = await P.apiSend(`/api/contacts/${clientID}`, 'GET', { include: 'appts' });
+  window.entityData.appts = data.appts || [];
+  putAppt();
+}
+
+function refreshTasks() { tabTasksGet(0); }
+
+// ── Refresh after form save ─────────────────────────────────
+async function refreshEntityData(sourceFormKey) {
+  await loadEntityData();
+  updateHeader();
+
+  // Re-render tables
+  putCases();
+  putAppt();
+
+// Push to all non-dirty child YCForm iframes
+document.querySelectorAll('iframe').forEach(iframe => {
+  try {
+    const form = iframe.contentWindow?.ycForm;
+    if (!form) return;
+    if (form.config.formKey === sourceFormKey) return;
+    if (!form.isDirty()) {
+      // Push fresh parent data into the form's internal state
+      const path = form.config.endpoints?.load?.path;
+      if (path && window.entityData[path]) {
+        form._liveData   = window.entityData[path];
+        form._loadResult = window.entityData;
       }
+      // Re-populate from resolved data source
+      form.populate(form._resolveDataSource());
+      // Re-run onLoad for computed fields (debtor name, co-debtor, etc.)
+      if (form.config.onLoad) {
+        form.config.onLoad(form._resolveDataSource());
+      }
+    }
+  } catch (_) { /* not loaded yet or cross-origin */ }
+});
+}
+
+// ── Message listener (centralized) ──────────────────────────
+window.addEventListener('message', async (e) => {
+  if (e.data?.type === 'form-saved') {
+    await refreshEntityData(e.data.form);
+  }
+  // Slice 3 Stage B.2: contact-form grows when the user adds
+  // phone/email/address rows or expands per-row advanced sections.
+  // The form reports its scrollHeight via postMessage; we set the
+  // iframe's height to match. Scoped to contact_info — other iframes
+  // (communicate.html) keep their default sizing.
+  if (e.data?.type === 'iframe-resize' && e.data?.form === 'contact_info') {
+    const iframe = E('tabInfoIframe');
+    if (iframe && e.data.height) {
+      iframe.style.height = e.data.height + 'px';
+    }
+  }
+});
+
+// ── Cases tab — create new case ─────────────────────────────
+// Delegates to the shared NewCaseForm (scripts.js, Phase 4.2) with this
+// contact pre-selected as Primary. The bespoke dialog this replaces posted
+// pre-split case_type values ("Bankruptcy - Ch. 7") — a live old-shape
+// writer after the 2026-06 type/subtype split. NewCaseForm opens the new
+// case file itself on success; we just refresh this contact's case list.
+function newCase() {
+  const ct = window.entityData.contact || {};
+  NewCaseForm(
+    {
+      primary_contact_id:   ct.contact_id,
+      primary_contact_name: ct.contact_name || '',
+    },
+    async () => { await loadEntityData(); putCases(); }
+  );
+}
+
+// ── Appointments tab — confirmation message builder ─────────
+// newAppt() delegates to the shared newApptDialog() in scripts.js.
+// contact: the contact is fixed; the case is optional and chosen from the
+// contact's own cases (default = none).
+function newAppt() {
+  const ed = window.entityData || {};
+  const ct = ed.contact || {};
+  const caseList = (ed.cases || []).map(cs => ({
+    case_id:          cs.case_id,
+    case_number:      cs.case_number,
+    case_number_full: cs.case_number_full,
+    case_type:        cs.case_type
+  }));
+  newApptDialog({
+    contactFixed: { id: ct.contact_id, label: ct.contact_name || ('Contact ' + ct.contact_id) },
+    caseList,
+    onCreated: async () => { await refreshAppts(); }
+  });
+}
+
+// ── Events tab (contact-scoped) ─────────────────────────────
+// Mirrors the Appointments tab. Lazy-loaded on first tab open. Shared
+// dialog/helpers (newEventDialog, eventComplete, eventCancel) live in
+// scripts.js. Events on an entity page have a FIXED link to this contact.
+let events = [];
+
+function eventEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function newEvent() {
+  const ed = window.entityData || {};
+  const ct = ed.contact || {};
+  newEventDialog({
+    linkFixed: { type: 'contact', id: clientID, label: ct.contact_name || ('Contact ' + clientID) },
+    onSaved: () => refreshEvents()
+  });
+}
+
+async function refreshEvents() {
+  try {
+    const data = await P.apiSend('/api/events', 'GET',
+      { link_type: 'contact', link_id: clientID, status: 'all', sort: 'asc' });
+    events = data.data || [];
+    putEvents();
+  } catch (err) {
+    console.error('refreshEvents failed:', err.message);
+  }
+}
+// Exposed so the shell's 'event-updated' listener can refresh this iframe.
+window.refreshEvents = refreshEvents;
+
+function putEvents() {
+  const table = E('eventsTable');
+  // Clear rows after the header (full rebuild).
+  table.innerHTML =
+    '<tr><th>ID</th><th>Type</th><th>Title</th><th>Date</th><th>Time</th><th>Status</th><th>Location</th><th>Action</th></tr>';
+  events.forEach(ev => {
+    const row = table.insertRow();
+    const date = ev.event_date ? String(ev.event_date).slice(0, 10) : '';
+    const allDay = ev.event_all_day == 1 || ev.event_all_day === true;
+    const timeStr = allDay
+      ? 'All day'
+      : (ev.event_time ? String(ev.event_time).slice(0, 5) : '');
+    row.innerHTML =
+      `<td>${ev.event_id}</td>` +
+      `<td>${eventEsc(ev.event_type)}</td>` +
+      `<td>${eventEsc(ev.event_title)}</td>` +
+      `<td>${date}</td>` +
+      `<td>${timeStr}</td>` +
+      `<td>${eventEsc(ev.event_status)}</td>` +
+      `<td>${eventEsc(ev.event_location)}</td>`;
+    // Action cell — Edit always; Complete + Cancel only when Scheduled.
+    const actionCell = row.insertCell();
+    const editBtn = document.createElement('button');
+    editBtn.innerHTML = '<i class="fa-solid fa-pen"></i> Edit';
+    editBtn.onclick = () => newEventDialog({ event: ev, onSaved: () => refreshEvents() });
+    actionCell.appendChild(editBtn);
+    if (ev.event_status === 'Scheduled') {
+      actionCell.appendChild(document.createTextNode(' '));
+      const compBtn = document.createElement('button');
+      compBtn.innerHTML = '<i class="fa-solid fa-check"></i> Complete';
+      compBtn.onclick = () => eventComplete(ev.event_id, () => refreshEvents());
+      actionCell.appendChild(compBtn);
+      actionCell.appendChild(document.createTextNode(' '));
+      const cancelBtn = document.createElement('button');
+      cancelBtn.innerHTML = '<i class="fa-solid fa-ban"></i> Cancel';
+      cancelBtn.onclick = () => eventCancel(ev.event_id, () => refreshEvents());
+      actionCell.appendChild(cancelBtn);
     }
   });
 }
-  
+
+// ═════════════════════════════════════════════════════════════════════════
+// AUTOMATIONS TAB (slice 4.3 Parts A + B)
+// Contact-scoped sequence enrollments AND contact-scoped workflow
+// executions, side-by-side in the same tab. Drill-down modal with step
+// history + row-level cancel for both. Unified 5s polling.
+//
+// Part A shipped the sequences half. Part B adds the workflows half
+// (relies on workflow_executions.contact_id populated by the template-
+// default or explicit-override mechanism — see backend migration and
+// lib/workflow_engine.js resolveExecutionContactId).
+//
+// Sequences row shape from /api/contacts/:id/sequences:
+//   { enrollment_id, template_id, template_name, template_type, status,
+//     current_step, total_steps, cancel_reason,
+//     enrolled_at, completed_at, updated_at }
+//
+// Workflows row shape from /api/contacts/:id/workflows:
+//   { execution_id, workflow_id, workflow_name, status,
+//     current_step_number, steps_executed_count, cancel_reason,
+//     created_at, updated_at, completed_at }
+//
+// Uses P.apiSend (no local api() helper on contact.html).
+// Polling lifecycle mirrors Part A:
+//   - openTab('tabSeq') → reloadContactAutomations() → decides whether to poll
+//   - openTab(other)    → stopContactAutomationPolling()
+//   - in-tick self-check on tabSeq.style.display (no MutationObserver)
+//   - stops when BOTH visible lists are all-terminal
+// ═════════════════════════════════════════════════════════════════════════
+
+// ── Shared state (one timer drives both lists) ───────────────────────────
+const CAUTO = {
+  scope:           'active',   // 'active' | 'all' — shared across both sections
+  pollTimer:       null,
+  targetContactId: null,       // guard for SPA contact-changed race
+};
+
+const CSEQ = {
+  offset:       0,
+  limit:        50,
+  total:        0,
+  activeTotal:  0,
+  // Snapshot of last rendered rows so the row-level Cancel helper can look
+  // up template_name by enrollment_id without squeezing it through an
+  // inline onclick attribute (quote-escaping nightmare).
+  lastRows:     [],
+};
+ 
+const CWF = {
+  offset:       0,
+  limit:        50,
+  total:        0,
+  activeTotal:  0,
+  // Same motivation as CSEQ.lastRows — needed to surface workflow_name
+  // in the Cancel confirm modal without onclick string-building.
+  lastRows:     [],
+};
+
+const CSEQ_TERMINAL = new Set(['completed', 'cancelled']);
+// Workflow status enum has more entries. Non-terminal: active, processing,
+// delayed. Everything else terminates the execution.
+const CWF_TERMINAL  = new Set([
+  'completed', 'completed_with_errors', 'failed', 'cancelled'
+]);
+ 
+// ── Shared helpers (used by both sections + drill-down modals) ──────────
+function cseqEsc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function cseqFmtDate(d) {
+  if (!d) return '—';
+  try { return new Date(d).toLocaleString(); } catch { return String(d); }
+}
+function cseqFmtDateShort(d) {
+  if (!d) return '—';
+  try {
+    return new Date(d).toLocaleDateString('en-US',
+      { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return String(d); }
+}
+function cseqStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cseq-status-badge cseq-status-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cwfStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cwf-status-badge cwf-status-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cseqJobBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cseq-job-badge cseq-job-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cseqLogBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cseq-log-badge cseq-log-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cwfStepBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cwf-step-badge cwf-step-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cseqParseJson(v) {
+  if (v == null) return null;
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch { return null; }
+}
+function cseqToast(icon, title, text) {
+  const T = (typeof Toast !== 'undefined') ? Toast : (P && P.Toast);
+  if (T && typeof T.fire === 'function') T.fire({ icon, title, text });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Combined reload — fires both loaders in parallel. Called by the scope
+// toggle handler, the Refresh button, and openTab('tabSeq').
+// ─────────────────────────────────────────────────────────────────────────
+async function reloadContactAutomations() {
+  // Promise.all so a slow endpoint doesn't block the fast one. Individual
+  // errors are swallowed by the loader's own try/catch.
+  await Promise.all([
+    loadContactSequences(),
+    loadContactWorkflows(),
+  ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SEQUENCES — list load, render, paging. (Part A, preserved.)
+// ─────────────────────────────────────────────────────────────────────────
+async function loadContactSequences() {
+  const contactAtCall = clientID;
+ 
+  const tbody = E('cseq-tbody');
+  const empty = E('cseq-empty');
+  const table = E('cseq-table');
+  const count = E('cseq-count');
+  const pager = E('cseq-pagination');
+  if (!tbody || !empty || !table || !count || !pager) return;
+ 
+  // Inline spinner; tab is already visible so the table row swap is fine.
+  tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>';
+  table.style.display = '';
+  empty.style.display = 'none';
+ 
+  try {
+    const data = await P.apiSend(
+      `/api/contacts/${contactAtCall}/sequences`, 'GET',
+      { limit: CSEQ.limit, offset: CSEQ.offset, scope: CAUTO.scope }
+    );
+ 
+    // Race guard: if the contact changed while we were waiting, drop result.
+    if (clientID !== contactAtCall) return;
+ 
+    CSEQ.total       = data.total        || 0;
+    CSEQ.activeTotal = data.active_total || 0;
+    const rows = data.sequences || [];
+ 
+    count.textContent = CAUTO.scope === 'active'
+      ? `${CSEQ.activeTotal} active`
+      : `${CSEQ.activeTotal} active of ${CSEQ.total} total`;
+ 
+    if (!rows.length) {
+      table.style.display = 'none';
+      empty.style.display = '';
+      empty.textContent   = CAUTO.scope === 'active'
+        ? 'No active sequences.'
+        : 'No sequences yet.';
+      pager.innerHTML = '';
+      CSEQ.lastRows   = [];
+      // Don't stop polling here — the workflow side might still have active rows.
+      // The unified tick stops only when BOTH sides are all-terminal.
+      maybeStopAutomationPolling();
+      return;
+    }
+ 
+    tbody.innerHTML = renderContactSequenceRows(rows);
+    pager.innerHTML = renderContactSeqPager(rows.length);
+ 
+    const anySeqActive = rows.some(r =>
+      !CSEQ_TERMINAL.has(String(r.status).toLowerCase())
+    );
+    // Start polling if anything here is active. The workflow loader runs the
+    // same check; whichever runs later may flip back to "no polling needed"
+    // via maybeStopAutomationPolling.
+    if (anySeqActive) startContactAutomationPolling();
+    else              maybeStopAutomationPolling();
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="8" style="color:#991b1b;padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
+    pager.innerHTML = '';
+    // Transient fetch errors don't force a polling stop — they're often
+    // recoverable and the tick will retry on its own. But if the tab is
+    // gone or the contact changed, the next tick self-stops.
+  }
+}
+ 
+function renderContactSequenceRows(rows) {
+  CSEQ.lastRows = rows;  // cached for cancelContactEnrollment lookup
+  return rows.map(r => {
+    const typeLabel = (r.template_type && String(r.template_type).trim())
+      ? cseqEsc(r.template_type) : '—';
+    const isActive  = String(r.status).toLowerCase() === 'active';
+    const stepCell  = (r.current_step != null && r.total_steps != null)
+      ? `${cseqEsc(r.current_step)}/${cseqEsc(r.total_steps)}` : '—';
+    // Next-step time: only meaningful when the row is active AND the backend
+    // returned a non-null next_step_at (MIN scheduled_time of pending jobs).
+    // Belt-and-suspenders the isActive check too in case of transient race
+    // during a step transition (current step running, next not yet inserted).
+    const nextStepCell = (isActive && r.next_step_at)
+      ? cseqFmtDate(r.next_step_at)
+      : '—';
+    const cancelBtn = isActive
+      ? `<button type="button" class="cseq-cancel-btn"
+                 onclick="cancelContactEnrollment(${r.enrollment_id})">
+           <i class="fa-solid fa-ban"></i> Cancel
+         </button>`
+      : '';
+    const cancelReasonLine = r.cancel_reason
+      ? `<div style="font-size:10px;color:#991b1b;margin-top:2px">${cseqEsc(r.cancel_reason)}</div>`
+      : '';
+    return `
+      <tr>
+        <td class="cseq-id">#${cseqEsc(r.enrollment_id)}</td>
+        <td>
+          <div class="cseq-template-name">${cseqEsc(r.template_name || '—')}</div>
+          <div class="cseq-template-type">${typeLabel}</div>
+        </td>
+        <td>${cseqStatusBadge(r.status)}${cancelReasonLine}</td>
+        <td>${stepCell}</td>
+        <td>${nextStepCell}</td>
+        <td>${cseqFmtDateShort(r.enrolled_at)}</td>
+        <td>${cseqFmtDateShort(r.completed_at)}</td>
+        <td>
+          <button type="button" class="cseq-view-btn"
+                  onclick="viewContactEnrollment(${r.enrollment_id})">
+            <i class="fa-solid fa-eye"></i> View
+          </button>
+          ${cancelBtn}
+        </td>
+      </tr>`;
+  }).join('');
+}
+ 
+function renderContactSeqPager(visibleCount) {
+  if (CSEQ.total <= CSEQ.limit && CSEQ.offset === 0) return '';
+  const from    = CSEQ.offset + 1;
+  const to      = CSEQ.offset + visibleCount;
+  const hasPrev = CSEQ.offset > 0;
+  const hasNext = CSEQ.offset + CSEQ.limit < CSEQ.total;
+  return `
+    <button type="button" ${hasPrev ? '' : 'disabled'} onclick="contactSequencesPrevPage()">‹ Previous</button>
+    <span>Showing ${from}–${to} of ${CSEQ.total}</span>
+    <button type="button" ${hasNext ? '' : 'disabled'} onclick="contactSequencesNextPage()">Next ›</button>
+  `;
+}
+ 
+function contactSequencesPrevPage() {
+  CSEQ.offset = Math.max(0, CSEQ.offset - CSEQ.limit);
+  loadContactSequences();
+}
+function contactSequencesNextPage() {
+  if (CSEQ.offset + CSEQ.limit >= CSEQ.total) return;
+  CSEQ.offset += CSEQ.limit;
+  loadContactSequences();
+}
+ 
+// Scope toggle — keeps the Part A function name for backward compat with
+// inline onclicks in the HTML header. Now drives BOTH sections via
+// reloadContactAutomations().
+function contactSequencesSetScope(scope) {
+  if (scope !== 'active' && scope !== 'all') return;
+  if (CAUTO.scope === scope) return;
+  CAUTO.scope   = scope;
+  CSEQ.offset   = 0;
+  CWF.offset    = 0;
+  document.querySelectorAll('.cseq-scope-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.scope === scope);
+  });
+  stopContactAutomationPolling();  // fresh load decides whether to restart it
+  reloadContactAutomations();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// WORKFLOWS — list load, render, paging. (Part B, new.)
+// Mirrors the sequences shape exactly — same envelope, same scope rules,
+// same polling decisions. Status enum differs, so CWF_TERMINAL ≠ CSEQ_TERMINAL.
+// ─────────────────────────────────────────────────────────────────────────
+async function loadContactWorkflows() {
+  const contactAtCall = clientID;
+
+  const tbody = E('cwf-tbody');
+  const empty = E('cwf-empty');
+  const table = E('cwf-table');
+  const count = E('cwf-count');
+  const pager = E('cwf-pagination');
+  if (!tbody || !empty || !table || !count || !pager) return;
+
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>';
+  table.style.display = '';
+  empty.style.display = 'none';
+
+  try {
+    const data = await P.apiSend(
+      `/api/contacts/${contactAtCall}/workflows`, 'GET',
+      { limit: CWF.limit, offset: CWF.offset, scope: CAUTO.scope }
+    );
+
+    if (clientID !== contactAtCall) return;
+
+    CWF.total       = data.total        || 0;
+    CWF.activeTotal = data.active_total || 0;
+    const rows = data.workflows || [];
+
+    count.textContent = CAUTO.scope === 'active'
+      ? `${CWF.activeTotal} active`
+      : `${CWF.activeTotal} active of ${CWF.total} total`;
+
+    if (!rows.length) {
+      table.style.display = 'none';
+      empty.style.display = '';
+      empty.textContent   = CAUTO.scope === 'active'
+        ? 'No active workflows.'
+        : 'No workflows yet.';
+      pager.innerHTML = '';
+      CWF.lastRows    = [];
+      maybeStopAutomationPolling();
+      return;
+    }
+
+    tbody.innerHTML = renderContactWorkflowRows(rows);
+    pager.innerHTML = renderContactWfPager(rows.length);
+
+    const anyWfActive = rows.some(r =>
+      !CWF_TERMINAL.has(String(r.status).toLowerCase())
+    );
+    if (anyWfActive) startContactAutomationPolling();
+    else             maybeStopAutomationPolling();
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" style="color:#991b1b;padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
+    pager.innerHTML = '';
+  }
+}
+
+function renderContactWorkflowRows(rows) {
+  CWF.lastRows = rows;  // cached for cancelContactWorkflow lookup
+  return rows.map(r => {
+    const status    = String(r.status || '').toLowerCase();
+    const isCancellable = ['active', 'processing', 'delayed'].includes(status);
+    const stepCell  = (r.current_step_number != null)
+      ? `${cseqEsc(r.current_step_number)}` : '—';
+    const cancelBtn = isCancellable
+      ? `<button type="button" class="cwf-cancel-btn"
+                 onclick="cancelContactWorkflow(${r.execution_id})">
+           <i class="fa-solid fa-ban"></i> Cancel
+         </button>`
+      : '';
+    const cancelReasonLine = r.cancel_reason
+      ? `<div style="font-size:10px;color:#991b1b;margin-top:2px">${cseqEsc(r.cancel_reason)}</div>`
+      : '';
+    return `
+      <tr>
+        <td class="cwf-id">#${cseqEsc(r.execution_id)}</td>
+        <td>
+          <div class="cwf-workflow-name">${cseqEsc(r.workflow_name || '—')}</div>
+          <div class="cseq-template-type">wf #${cseqEsc(r.workflow_id)}</div>
+        </td>
+        <td>${cwfStatusBadge(r.status)}${cancelReasonLine}</td>
+        <td>${stepCell}</td>
+        <td>${cseqFmtDateShort(r.created_at)}</td>
+        <td>${cseqFmtDateShort(r.completed_at)}</td>
+        <td>
+          <button type="button" class="cwf-view-btn"
+                  onclick="viewContactWorkflow(${r.execution_id})">
+            <i class="fa-solid fa-eye"></i> View
+          </button>
+          ${cancelBtn}
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function renderContactWfPager(visibleCount) {
+  if (CWF.total <= CWF.limit && CWF.offset === 0) return '';
+  const from    = CWF.offset + 1;
+  const to      = CWF.offset + visibleCount;
+  const hasPrev = CWF.offset > 0;
+  const hasNext = CWF.offset + CWF.limit < CWF.total;
+  return `
+    <button type="button" ${hasPrev ? '' : 'disabled'} onclick="contactWorkflowsPrevPage()">‹ Previous</button>
+    <span>Showing ${from}–${to} of ${CWF.total}</span>
+    <button type="button" ${hasNext ? '' : 'disabled'} onclick="contactWorkflowsNextPage()">Next ›</button>
+  `;
+}
+
+function contactWorkflowsPrevPage() {
+  CWF.offset = Math.max(0, CWF.offset - CWF.limit);
+  loadContactWorkflows();
+}
+function contactWorkflowsNextPage() {
+  if (CWF.offset + CWF.limit >= CWF.total) return;
+  CWF.offset += CWF.limit;
+  loadContactWorkflows();
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────
+// Sequences drill-down modal — mirrors viewSequenceEnrollment from
+// automationManager, with an inline Cancel action when enrollment.status
+// === 'active'. (Part A, preserved.)
+// ─────────────────────────────────────────────────────────────────────────
+async function viewContactEnrollment(id) {
+  try {
+    const data = await P.apiSend(
+      `/sequences/enrollments/${id}`, 'GET',
+      { history: 'true', log: 'false' }
+    );
+    const en      = data.enrollment;
+    const history = data.history || [];
+    const trig    = cseqParseJson(en.trigger_data);
+ 
+    const historyRows = history.length
+      ? history.map(h => {
+          const hasLog    = h.log_id != null;
+          const rowCls    = hasLog ? '' : 'cseq-row-muted';
+          const stepCell  = h.step_number != null ? cseqEsc(h.step_number) : '—';
+          const actCell   = h.action_type ? cseqEsc(h.action_type) : '—';
+          // If a log row exists: primary badge = log_status; show job_status as
+          // a small secondary. If not: primary = job_status; row is muted.
+          const primary   = hasLog
+            ? cseqLogBadge(h.log_status || '—')
+            : cseqJobBadge(h.job_status || '—');
+          const secondary = hasLog
+            ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">job: ${cseqEsc(h.job_status || '—')}</div>`
+            : '';
+          const attempts  = (h.attempts != null && h.max_attempts != null)
+            ? `${cseqEsc(h.attempts)}/${cseqEsc(h.max_attempts)}` : '—';
+          const duration  = (h.duration_ms != null) ? `${cseqEsc(h.duration_ms)} ms` : '—';
+          const detail    = h.error_message
+            ? cseqEsc(h.error_message)
+            : (h.skip_reason ? `skipped: ${cseqEsc(h.skip_reason)}` : '');
+          return `
+            <tr class="${rowCls}">
+              <td>${stepCell}</td>
+              <td>${actCell}</td>
+              <td>${primary}${secondary}</td>
+              <td>${cseqFmtDate(h.scheduled_time)}${cseqFireNowBtnHtml(en, h)}</td>
+              <td>${hasLog ? cseqFmtDate(h.executed_at) : '—'}</td>
+              <td>${attempts}</td>
+              <td>${duration}</td>
+              <td class="cseq-error-cell">${detail}</td>
+            </tr>`;
+        }).join('')
+      : '<tr><td colspan="8" style="text-align:center;padding:12px;color:#94a3b8">No step history.</td></tr>';
+ 
+    const cancelReasonBlock = (String(en.status).toLowerCase() === 'cancelled' && en.cancel_reason)
+      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+           <b>Cancel reason:</b> ${cseqEsc(en.cancel_reason)}
+         </div>`
+      : '';
+ 
+    const isActive = String(en.status).toLowerCase() === 'active';
+    const typeLabel = (en.template_type && String(en.template_type).trim())
+      ? cseqEsc(en.template_type) : '—';
+    const stepCell  = (en.current_step != null && en.total_steps != null)
+      ? `${cseqEsc(en.current_step)}/${cseqEsc(en.total_steps)}` : '—';
+
+    // Recover button shows only when the enrollment is wedged: active AND
+    // no pending/running scheduled_jobs row in history. Distinct from
+    // Fire Now, which targets an EXISTING pending job. If a pending row
+    // exists, the Fire Now button in that row's Scheduled cell is the
+    // right control and Recover stays hidden. See routes/sequences.js
+    // POST /enrollments/:id/recover for the backend contract.
+    const hasInFlightJob = history.some(h =>
+      h.job_status === 'pending' || h.job_status === 'running'
+    );
+    const showRecoverBtn = isActive && !hasInFlightJob;
+
+    const res = await Swal.fire({
+      title: `Enrollment #${id}`,
+      width: 820,
+      html: `
+        <div style="text-align:left;font-size:12px;max-height:65vh;overflow:auto">
+          <p><b>Status:</b> ${cseqStatusBadge(en.status)}</p>
+          <p style="margin-top:6px"><b>Template:</b>
+             ${cseqEsc(en.template_name || '—')}
+             <span style="color:#64748b">(${typeLabel})</span>
+          </p>
+          <p style="margin-top:6px"><b>Enrolled:</b> ${cseqFmtDate(en.enrolled_at)}</p>
+          <p style="margin-top:6px"><b>Completed:</b> ${cseqFmtDate(en.completed_at)}</p>
+          <p style="margin-top:6px"><b>Step:</b> ${stepCell}</p>
+          ${cancelReasonBlock}
+ 
+          ${trig ? `
+            <details style="margin-top:12px">
+              <summary style="cursor:pointer;font-weight:600">Trigger Data</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(trig, null, 2))}</pre>
+            </details>` : ''}
+ 
+          <h4 style="margin-top:14px;font-size:13px">Step History</h4>
+          <table class="cseq-history-table">
+            <thead>
+              <tr>
+                <th>Step</th><th>Action</th><th>Status</th>
+                <th>Scheduled</th><th>Executed</th>
+                <th>Attempts</th><th>Duration</th><th>Error / Detail</th>
+              </tr>
+            </thead>
+            <tbody>${historyRows}</tbody>
+          </table>
+        </div>`,
+      showCancelButton: true,
+      cancelButtonText:  'Close',
+      showConfirmButton: isActive,
+      confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel enrollment',
+      confirmButtonColor: '#dc2626',
+      showDenyButton:    showRecoverBtn,
+      denyButtonText:    '<i class="fa-solid fa-wand-magic-sparkles"></i> Recover stuck enrollment',
+      denyButtonColor:   '#4f8ef7',
+      reverseButtons: true,   // [Cancel enrollment] [Recover] [Close]
+      didOpen: (popup) => {
+        popup.querySelectorAll('.cseq-fire-now-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            handleContactSequenceFireNow(id, btn.dataset.jobId, btn.dataset.scheduledRaw);
+          });
+        });
+      },
+    });
+ 
+    if (res.isConfirmed && isActive) {
+      // Fire the shared cancel helper, explicitly passing the template_name
+      // so we don't need to look it up from the list cache (which may be on
+      // a different page of the paginated list).
+      cancelContactEnrollment(id, en.template_name || '');
+    } else if (res.isDenied && showRecoverBtn) {
+      handleContactSequenceRecover(id);
+    }
+  } catch (err) {
+    Swal.fire({ icon: 'error', title: 'Failed to load enrollment',
+                text: err.message || String(err) });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Fire Now — render helper + handler. Parallel to handleSequenceFireNow
+// in sequences.html. Rendered as a small button in the Scheduled column
+// of the step-history table, only on the row representing the next-to-
+// execute step:
+//   - enrollment.status === 'active'
+//   - row has no log entry (step hasn't run)
+//   - job_status === 'pending'
+// Engine invariant guarantees at most one such row per enrollment.
+//
+// Reschedules the job to NOW; the next /process-jobs tick picks it up.
+// fire_guard and condition still apply at execution — this is NOT a
+// force-execute, just a scheduling override.
+// ─────────────────────────────────────────────────────────────────────────
+function cseqFireNowBtnHtml(en, h) {
+  const hasLog      = h.log_id != null;
+  const isActive    = String(en.status).toLowerCase() === 'active';
+  const showFireBtn = isActive && !hasLog && h.job_status === 'pending';
+  if (!showFireBtn) return '';
+  return `
+    <button type="button" class="cseq-fire-now-btn"
+            data-job-id="${h.job_id}"
+            data-scheduled-raw="${cseqEsc(h.scheduled_time || '')}"
+            title="Reschedule this step to fire on the next process-jobs tick"
+            style="margin-left:8px;padding:2px 8px;font-size:10px;
+                   background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer">
+      <i class="fa-solid fa-play"></i> Fire Now
+    </button>`;
+}
+
+async function handleContactSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
+  // Close the enrollment-detail modal first so the confirmation dialog
+  // owns the screen; we'll re-open the detail modal after success.
+  Swal.close();
+
+  const result = await Swal.fire({
+    title: 'Fire this step now?',
+    html: `
+      <div style="text-align:left;font-size:13px;line-height:1.5">
+        <p><b>Job:</b> #${cseqEsc(String(jobId))}</p>
+        <p style="margin-top:6px"><b>Original scheduled:</b> ${cseqFmtDate(scheduledRaw)}</p>
+        <p style="margin-top:10px">This reschedules the job to <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
+        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply — a step that fails its condition will skip, just as it would have at the original time.</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Fire now',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#2563eb',
+  });
+  if (!result.isConfirmed) {
+    // User backed out — re-open the enrollment-detail modal.
+    viewContactEnrollment(enrollmentId);
+    return;
+  }
+
+  try {
+    const resp = await P.apiSend(`/sequences/enrollments/${enrollmentId}/fire-next`, 'POST');
+    cseqToast('success', `Job ${resp.job_id} → NOW. Will fire on next process-jobs tick.`);
+    // Refresh the list (scheduled_time changed) then re-open the detail modal.
+    await loadContactSequences();
+    setTimeout(() => viewContactEnrollment(enrollmentId), 250);
+  } catch (e) {
+    cseqToast('error', e.message || 'Fire-now failed');
+    // Re-open the detail modal so the user sees current state.
+    setTimeout(() => viewContactEnrollment(enrollmentId), 250);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Recover stuck enrollment — handler for the denyButton in the enrollment-
+// detail modal. Distinct from Fire Now: this CREATES a new scheduled_jobs
+// row (because the enrollment has no pending/running job), whereas Fire Now
+// reschedules an EXISTING pending job. Parallel handler lives in
+// public/automation/sequences.html as seqEnrollRecover.
+//
+// Flow mirrors handleContactSequenceFireNow: close drill-down modal so the
+// confirm dialog owns the screen, confirm, POST /recover, toast, reload
+// list, reopen drill-down.
+// ─────────────────────────────────────────────────────────────────────────
+async function handleContactSequenceRecover(enrollmentId) {
+  Swal.close();
+  const result = await Swal.fire({
+    title: 'Recover stuck enrollment?',
+    html: `
+      <div style="text-align:left;font-size:13px;line-height:1.5">
+        <p>This enrollment is <b>active</b> but has no pending job — likely wedged when scheduling the next step failed (e.g. a transient calendar API blip).</p>
+        <p style="margin-top:10px">Recovery schedules the next step for <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
+        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply at execution — a step that fails its condition will skip, just as it would have at the original time.</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Recover',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f8ef7',
+  });
+  if (!result.isConfirmed) {
+    viewContactEnrollment(enrollmentId);
+    return;
+  }
+
+  try {
+    const resp = await P.apiSend(`/sequences/enrollments/${enrollmentId}/recover`, 'POST');
+    if (resp.status === 'completed') {
+      cseqToast('success', `Enrollment ${enrollmentId} → completed (no next step).`);
+    } else {
+      cseqToast('success', `Step ${resp.step_number} scheduled (job ${resp.job_id}).`);
+    }
+    await loadContactSequences();
+    setTimeout(() => viewContactEnrollment(enrollmentId), 250);
+  } catch (e) {
+    cseqToast('error', e.message || 'Recovery failed');
+    setTimeout(() => viewContactEnrollment(enrollmentId), 250);
+  }
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────
+// Shared enrollment-cancel helper — used by both row-level and drill-down.
+// Reason is required (min 3 chars). On success: toast + reload list.
+// ─────────────────────────────────────────────────────────────────────────
+async function cancelContactEnrollment(enrollmentId, templateNameOverride) {
+  // Row-level callers don't know the template_name inline (avoids quote-
+  // escaping nightmares), so look it up from the cached rows. Drill-down
+  // callers pass it explicitly.
+  const templateName = (templateNameOverride != null && templateNameOverride !== '')
+    ? templateNameOverride
+    : (CSEQ.lastRows.find(r => r.enrollment_id === enrollmentId)?.template_name || '');
+ 
+  // If the drill-down modal was left open, close it before opening confirm.
+  if (Swal.isVisible()) Swal.close();
+ 
+  const result = await Swal.fire({
+    title: `Cancel enrollment #${enrollmentId}?`,
+    html: templateName
+      ? `<div style="color:#64748b;margin-bottom:4px">Template: <b>${cseqEsc(templateName)}</b></div>`
+      : '',
+    input: 'text',
+    inputLabel: 'Reason (required, min 3 characters)',
+    inputPlaceholder: 'e.g. client asked to stop, duplicate enrollment',
+    inputValidator: (v) => {
+      if (!v || v.trim().length < 3) return 'Please enter a reason (min 3 characters).';
+    },
+    showCancelButton: true,
+    confirmButtonText: 'Confirm Cancel',
+    confirmButtonColor: '#dc2626',
+    reverseButtons: true,
+    showLoaderOnConfirm: true,
+    preConfirm: async (reason) => {
+      try {
+        await P.apiSend(`/sequences/enrollments/${enrollmentId}/cancel`, 'POST',
+                        { reason: reason.trim() });
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    },
+  });
+ 
+  if (result.isConfirmed && result.value === true) {
+    cseqToast('success', 'Enrollment cancelled');
+    await loadContactSequences();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Workflows drill-down modal — lifted from automationManager's
+// viewWorkflowExecution, adapted to .cwf-* CSS namespace, and extended
+// with a Cancel-with-reason button (which the manager's version lacks).
+//
+// Shape note: workflow_execution_steps rows carry `step_number`, `step_id`
+// (soft-ref to workflow_steps), `status` enum 'success|failed', optional
+// `error_message`, `duration_ms`, `executed_at`. Resolved-config isn't
+// stored on the step row today — we surface the step_id as a thin ref.
+// ─────────────────────────────────────────────────────────────────────────
+async function viewContactWorkflow(id) {
+  try {
+    const data = await P.apiSend(`/executions/${id}`, 'GET', { history: 'true' });
+    const ex      = data.execution || {};
+    const history = data.history   || [];
+
+    // Promote a nominally-completed execution to completed_with_errors if
+    // any step failed. Matches the automationManager heuristic so the badge
+    // doesn't lie; the engine itself also computes this via getWorkflowFinalStatus.
+    const rawStatus = String(ex.status || '').toLowerCase();
+    const displayStatus = (rawStatus.startsWith('completed')
+                            && history.some(h => h.status === 'failed'))
+      ? 'completed_with_errors'
+      : rawStatus;
+
+    const initDataObj  = cseqParseJson(ex.init_data);
+    const variablesObj = cseqParseJson(ex.variables);
+
+    const historyRowsHtml = history.length ? history.map(h => {
+      const fn = h.step_id != null ? `step_id ${cseqEsc(h.step_id)}` : '—';
+      const errorCell = h.error_message
+        ? `<div class="cwf-error-cell">${cseqEsc(h.error_message)}</div>`
+        : '';
+      return `
+        <tr>
+          <td>${h.step_number != null ? cseqEsc(h.step_number) : '—'}</td>
+          <td>${fn}</td>
+          <td>${cwfStepBadge(h.status)}</td>
+          <td>${h.duration_ms != null ? cseqEsc(h.duration_ms) + ' ms' : '—'}</td>
+          <td>${cseqFmtDate(h.executed_at)}</td>
+          <td>${errorCell}</td>
+        </tr>`;
+    }).join('')
+      : '<tr><td colspan="6" style="text-align:center;padding:12px;color:#94a3b8">No steps executed.</td></tr>';
+
+    const cancelReasonBlock = (rawStatus === 'cancelled' && ex.cancel_reason)
+      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+           <b>Cancel reason:</b> ${cseqEsc(ex.cancel_reason)}
+         </div>`
+      : '';
+
+    const isCancellable = ['active', 'processing', 'delayed'].includes(rawStatus);
+
+    const res = await Swal.fire({
+      title: `Execution #${id}`,
+      width: 820,
+      html: `
+        <div style="text-align:left;font-size:12px;max-height:65vh;overflow:auto">
+          <p><b>Workflow:</b>
+             ${cseqEsc(ex.workflow_name || '—')}
+             <span style="color:#64748b">(wf #${cseqEsc(ex.workflow_id)})</span>
+          </p>
+          <p style="margin-top:6px"><b>Status:</b> ${cwfStatusBadge(displayStatus)}</p>
+          <p style="margin-top:6px"><b>Started:</b> ${cseqFmtDate(ex.created_at)}</p>
+          <p style="margin-top:6px"><b>Updated:</b> ${cseqFmtDate(ex.updated_at)}</p>
+          <p style="margin-top:6px"><b>Completed:</b> ${cseqFmtDate(ex.completed_at)}</p>
+          <p style="margin-top:6px"><b>Current step:</b> ${ex.current_step_number == null ? '—' : cseqEsc(ex.current_step_number)}</p>
+          <p style="margin-top:6px"><b>Steps executed:</b> ${ex.steps_executed_count ?? 0}</p>
+          ${cancelReasonBlock}
+
+          ${initDataObj ? `
+            <details style="margin-top:12px">
+              <summary style="cursor:pointer;font-weight:600">Init Data</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(initDataObj, null, 2))}</pre>
+            </details>` : ''}
+
+          ${variablesObj ? `
+            <details style="margin-top:8px">
+              <summary style="cursor:pointer;font-weight:600">Variables</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(variablesObj, null, 2))}</pre>
+            </details>` : ''}
+
+          <h4 style="margin-top:14px;font-size:13px">Step History</h4>
+          <table class="cwf-history-table">
+            <thead>
+              <tr>
+                <th>Step</th><th>Ref</th><th>Status</th>
+                <th>Duration</th><th>Executed</th><th>Error</th>
+              </tr>
+            </thead>
+            <tbody>${historyRowsHtml}</tbody>
+          </table>
+        </div>`,
+      showCancelButton: true,
+      cancelButtonText:  'Close',
+      showConfirmButton: isCancellable,
+      confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel execution',
+      confirmButtonColor: '#dc2626',
+      reverseButtons: true,   // [Cancel execution] [Close]
+    });
+
+    if (res.isConfirmed && isCancellable) {
+      cancelContactWorkflow(id, ex.workflow_name || '');
+    }
+  } catch (err) {
+    Swal.fire({ icon: 'error', title: 'Failed to load execution',
+                text: err.message || String(err) });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared workflow-cancel helper — mirrors cancelContactEnrollment.
+// Reason required (min 3 chars, trimmed), server enforces same validation.
+// ─────────────────────────────────────────────────────────────────────────
+async function cancelContactWorkflow(executionId, workflowNameOverride) {
+  const workflowName = (workflowNameOverride != null && workflowNameOverride !== '')
+    ? workflowNameOverride
+    : (CWF.lastRows.find(r => r.execution_id === executionId)?.workflow_name || '');
+
+  if (Swal.isVisible()) Swal.close();
+
+  const result = await Swal.fire({
+    title: `Cancel execution #${executionId}?`,
+    html: workflowName
+      ? `<div style="color:#64748b;margin-bottom:4px">Workflow: <b>${cseqEsc(workflowName)}</b></div>`
+      : '',
+    input: 'text',
+    inputLabel: 'Reason (required, min 3 characters)',
+    inputPlaceholder: 'e.g. client rescheduled, workflow stuck, manual intervention',
+    inputValidator: (v) => {
+      if (!v || v.trim().length < 3) return 'Please enter a reason (min 3 characters).';
+    },
+    showCancelButton: true,
+    confirmButtonText: 'Confirm Cancel',
+    confirmButtonColor: '#dc2626',
+    reverseButtons: true,
+    showLoaderOnConfirm: true,
+    preConfirm: async (reason) => {
+      try {
+        await P.apiSend(`/executions/${executionId}/cancel`, 'POST',
+                        { reason: reason.trim() });
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    },
+  });
+
+  if (result.isConfirmed && result.value === true) {
+    cseqToast('success', 'Execution cancelled');
+    await loadContactWorkflows();
+  }
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────
+// Unified polling — 5s cadence, one timer drives both lists.
+// Stop triggers (any of):
+//   (1) user switched to a different tab (display !== 'block')
+//   (2) contact changed mid-poll (SPA guard)
+//   (3) BOTH lists have no non-terminal rows in their visible scope
+// ─────────────────────────────────────────────────────────────────────────
+function startContactAutomationPolling() {
+  // Idempotent: if already running for this contact, no-op.
+  if (CAUTO.pollTimer && CAUTO.targetContactId === clientID) return;
+  stopContactAutomationPolling();
+  CAUTO.targetContactId = clientID;
+  CAUTO.pollTimer = setInterval(async () => {
+    // Stop (1): tab switched away.
+    const tabEl = E('tabSeq');
+    if (!tabEl || tabEl.style.display !== 'block') {
+      stopContactAutomationPolling();
+      return;
+    }
+    // Stop (2): contact changed.
+    if (CAUTO.targetContactId !== clientID) {
+      stopContactAutomationPolling();
+      return;
+    }
+
+    try {
+      // Parallel fetch. Both endpoints are idempotent GETs; the fast one
+      // doesn't block on the slow one.
+      const [seqData, wfData] = await Promise.all([
+        P.apiSend(`/api/contacts/${CAUTO.targetContactId}/sequences`, 'GET',
+                  { limit: CSEQ.limit, offset: CSEQ.offset, scope: CAUTO.scope }),
+        P.apiSend(`/api/contacts/${CAUTO.targetContactId}/workflows`, 'GET',
+                  { limit: CWF.limit,  offset: CWF.offset,  scope: CAUTO.scope }),
+      ]);
+
+      // Re-check after the awaits: tab or contact may have changed.
+      if (!tabEl.isConnected || tabEl.style.display !== 'block') {
+        stopContactAutomationPolling(); return;
+      }
+      if (CAUTO.targetContactId !== clientID) {
+        stopContactAutomationPolling(); return;
+      }
+
+      // ── Sequences section render ─────────────────────────────────────
+      {
+        const rows = seqData.sequences || [];
+        CSEQ.total       = seqData.total        || 0;
+        CSEQ.activeTotal = seqData.active_total || 0;
+        const count = E('cseq-count');
+        if (count) {
+          count.textContent = CAUTO.scope === 'active'
+            ? `${CSEQ.activeTotal} active`
+            : `${CSEQ.activeTotal} active of ${CSEQ.total} total`;
+        }
+        const tbody = E('cseq-tbody');
+        const empty = E('cseq-empty');
+        const table = E('cseq-table');
+        const pager = E('cseq-pagination');
+        if (tbody && empty && table && pager) {
+          if (!rows.length) {
+            table.style.display = 'none';
+            empty.style.display = '';
+            empty.textContent = CAUTO.scope === 'active'
+              ? 'No active sequences.'
+              : 'No sequences yet.';
+            pager.innerHTML = '';
+            CSEQ.lastRows   = [];
+          } else {
+            table.style.display = '';
+            empty.style.display = 'none';
+            tbody.innerHTML = renderContactSequenceRows(rows);
+            pager.innerHTML = renderContactSeqPager(rows.length);
+          }
+        }
+      }
+
+      // ── Workflows section render ─────────────────────────────────────
+      {
+        const rows = wfData.workflows || [];
+        CWF.total       = wfData.total        || 0;
+        CWF.activeTotal = wfData.active_total || 0;
+        const count = E('cwf-count');
+        if (count) {
+          count.textContent = CAUTO.scope === 'active'
+            ? `${CWF.activeTotal} active`
+            : `${CWF.activeTotal} active of ${CWF.total} total`;
+        }
+        const tbody = E('cwf-tbody');
+        const empty = E('cwf-empty');
+        const table = E('cwf-table');
+        const pager = E('cwf-pagination');
+        if (tbody && empty && table && pager) {
+          if (!rows.length) {
+            table.style.display = 'none';
+            empty.style.display = '';
+            empty.textContent = CAUTO.scope === 'active'
+              ? 'No active workflows.'
+              : 'No workflows yet.';
+            pager.innerHTML = '';
+            CWF.lastRows    = [];
+          } else {
+            table.style.display = '';
+            empty.style.display = 'none';
+            tbody.innerHTML = renderContactWorkflowRows(rows);
+            pager.innerHTML = renderContactWfPager(rows.length);
+          }
+        }
+      }
+
+      // Stop (3): both lists all-terminal. Evaluated against the fresh rows.
+      const anySeqActive = (seqData.sequences || []).some(r =>
+        !CSEQ_TERMINAL.has(String(r.status).toLowerCase()));
+      const anyWfActive  = (wfData.workflows || []).some(r =>
+        !CWF_TERMINAL.has(String(r.status).toLowerCase()));
+      if (!anySeqActive && !anyWfActive) stopContactAutomationPolling();
+
+    } catch (err) {
+      // Transient errors: keep the loop alive, next tick retries.
+      console.warn('[cauto] poll error:', err.message || err);
+    }
+  }, 5000);
+}
+ 
+function stopContactAutomationPolling() {
+  if (CAUTO.pollTimer) {
+    clearInterval(CAUTO.pollTimer);
+    CAUTO.pollTimer = null;
+  }
+  CAUTO.targetContactId = null;
+}
+
+// Called by each loader's empty-list path. Stops the poll only if BOTH
+// lists currently have no active rows — avoids the sequences loader's
+// empty state from killing the timer while workflows is still running.
+function maybeStopAutomationPolling() {
+  const seqHasActive = (CSEQ.activeTotal || 0) > 0;
+  const wfHasActive  = (CWF.activeTotal  || 0) > 0;
+  if (!seqHasActive && !wfHasActive) stopContactAutomationPolling();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// RELATIONSHIPS TAB (Slice 3)
+// Contact-scoped relationship management via /api/contact-relations and
+// /api/contacts/:id/relations. Catalog cached on first tab entry.
+// Row shape (from listContactRelations, perspective projected to clientID):
+//   { id, type_code, perspective: { label, other_contact_id,
+//     other_contact_name, other_contact_pname, other_contact_type },
+//     contact_a_id, contact_b_id, active, status, start_date, end_date,
+//     end_reason, notes, is_symmetric, forward_label, reverse_label,
+//     created_at, created_by, created_by_name, updated_at }
+// Catalog shape (from listRelationTypes):
+//   { type_code, forward_label, reverse_label, is_symmetric,
+//     allowed_statuses: [], allowed_end_reasons: [], sort_order, active }
+// Uses P.apiSend. No polling — relations don't change without user action.
+// ═════════════════════════════════════════════════════════════════════════
+
+const CREL = {
+  scope:   'active',   // 'active' | 'all'
+  rows:    [],
+  types:   null,       // catalog cache, fetched lazily on first modal open
+  loading: false,
+};
+
+// ── Shared helpers ────────────────────────────────────────────────────────
+function crelEsc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * Normalize a date-ish value (Date object, ISO string, or 'YYYY-MM-DD') to
+ * a 'YYYY-MM-DD' string. mysql2 may return DATE columns as Date objects
+ * depending on driver config; the relation service does NOT pre-format
+ * dates, so the frontend must handle both shapes. Returns '' on empty.
+ */
+function crelToDateOnly(v) {
+  if (v == null || v === '') return '';
+  if (typeof v === 'string') {
+    return v.length >= 10 ? v.slice(0, 10) : v;
+  }
+  try {
+    const d = new Date(v);
+    if (isNaN(d.getTime())) return '';
+    return d.toISOString().slice(0, 10);
+  } catch { return ''; }
+}
+
+function crelFmtDate(v) {
+  const ymd = crelToDateOnly(v);
+  if (!ymd) return '—';
+  // Parse as a local date so a 2010-06-12 string doesn't shift backward
+  // to 2010-06-11 in negative UTC offsets.
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (!y || !m || !d) return ymd;
+  try {
+    return new Date(y, m - 1, d).toLocaleDateString('en-US',
+      { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return ymd; }
+}
+
+function crelToast(icon, title, text) {
+  const T = (typeof Toast !== 'undefined') ? Toast : (P && P.Toast);
+  if (T && typeof T.fire === 'function') T.fire({ icon, title, text });
+}
+
+/**
+ * Open the "other" contact's page via the parent shell's file-opener.
+ * Looks up the name from CREL.rows so user-provided strings (e.g.
+ * names with apostrophes) don't have to be JS-escaped into onclick.
+ */
+function crelOpenContact(otherId) {
+  const row = CREL.rows.find(r => r.perspective.other_contact_id === otherId);
+  if (!row) return;
+  P.addFile(row.perspective.other_contact_name, 'client', otherId);
+}
+
+// ── Catalog fetch (cached) ────────────────────────────────────────────────
+async function getRelationTypes(forceRefresh = false) {
+  if (CREL.types && !forceRefresh) return CREL.types;
+  const data = await P.apiSend('/api/relation-types', 'GET');
+  CREL.types = data.types || [];
+  return CREL.types;
+}
+
+function getRelationTypeByCode(code) {
+  return (CREL.types || []).find(t => t.type_code === code);
+}
+
+// ── List load & render ────────────────────────────────────────────────────
+async function loadContactRelations() {
+  if (CREL.loading) return;
+  CREL.loading = true;
+
+  const contactAtCall = clientID;
+  const tbody = E('crel-tbody');
+  const empty = E('crel-empty');
+  const table = E('crel-table');
+  const count = E('crel-count');
+  if (!tbody || !empty || !table || !count) { CREL.loading = false; return; }
+
+  // Inline spinner — tab already visible
+  tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>';
+  table.style.display = '';
+  empty.style.display = 'none';
+  count.textContent   = '…';
+
+  try {
+    const params = { limit: 100, offset: 0 };
+    if (CREL.scope === 'active') params.active = 'true';
+    const data = await P.apiSend(
+      `/api/contacts/${contactAtCall}/relations`, 'GET', params);
+
+    // Race guard: drop result if user navigated to a different contact.
+    if (clientID !== contactAtCall) { CREL.loading = false; return; }
+
+    const rows = data.relations || [];
+    CREL.rows = rows;
+    count.textContent = String(data.total ?? rows.length);
+
+    if (!rows.length) {
+      table.style.display = 'none';
+      empty.style.display = '';
+      empty.textContent   = CREL.scope === 'active'
+        ? 'No active relationships.'
+        : 'No relationships.';
+      return;
+    }
+
+    tbody.innerHTML = renderContactRelationRows(rows);
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" style="color:#991b1b;padding:12px">Error: ${crelEsc(err.message || String(err))}</td></tr>`;
+    count.textContent = '!';
+  } finally {
+    CREL.loading = false;
+  }
+}
+
+function renderContactRelationRows(rows) {
+  return rows.map(r => {
+    const persp     = r.perspective || {};
+    const typeLabel = persp.label || r.type_code || '—';
+    // Show type_code as a small grey hint only on asymmetric types — for
+    // symmetric types the forward_label IS the only label and the type_code
+    // is redundant noise.
+    const typeHint  = (!r.is_symmetric && r.type_code !== typeLabel)
+      ? `<div class="cseq-template-type">${crelEsc(r.type_code)}</div>`
+      : '';
+
+    const otherName = persp.other_contact_name
+      || (persp.other_contact_id != null ? `Contact #${persp.other_contact_id}` : '—');
+    const otherIdLine = persp.other_contact_id != null
+      ? `<div class="cseq-template-type">#${crelEsc(persp.other_contact_id)}</div>`
+      : '';
+
+    const isActive  = !!r.active;
+    const badge = isActive
+      ? `<span class="crel-status-badge crel-status-active">Active</span>`
+      : `<span class="crel-status-badge crel-status-inactive">Inactive</span>`;
+    const statusLine = r.status
+      ? `<div style="font-size:11px;color:#64748b;margin-top:2px">${crelEsc(r.status)}</div>`
+      : '';
+    const endLine = r.end_reason
+      ? `<div style="font-size:11px;color:#64748b;margin-top:2px">${crelEsc(r.end_reason)}${r.end_date ? ' on ' + crelEsc(crelFmtDate(r.end_date)) : ''}</div>`
+      : '';
+
+    const notesText  = r.notes || '';
+    const notesTrunc = notesText.length > 60
+      ? notesText.slice(0, 60) + '…'
+      : notesText;
+
+    return `
+      <tr>
+        <td>
+          <div class="cseq-template-name">${crelEsc(typeLabel)}</div>
+          ${typeHint}
+        </td>
+        <td>
+          <a href="#" class="crel-other-link"
+             onclick="crelOpenContact(${persp.other_contact_id});return false;"
+             title="Open this contact">${crelEsc(otherName)}</a>
+          ${otherIdLine}
+        </td>
+        <td>${badge}${statusLine}${endLine}</td>
+        <td>${crelFmtDate(r.start_date)}</td>
+        <td>${crelFmtDate(r.end_date)}</td>
+        <td title="${crelEsc(notesText)}">${crelEsc(notesTrunc)}</td>
+        <td>
+          <button type="button" class="crel-edit-btn"
+                  onclick="openEditRelationModal(${r.id})">
+            <i class="fa-solid fa-pen"></i> Edit
+          </button>
+          <button type="button" class="crel-delete-btn"
+                  onclick="deleteContactRelation(${r.id})">
+            <i class="fa-solid fa-trash"></i> Delete
+          </button>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function contactRelationsSetScope(scope) {
+  if (scope !== 'active' && scope !== 'all') return;
+  if (CREL.scope === scope) return;
+  CREL.scope = scope;
+  document.querySelectorAll('.crel-scope-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.scope === scope);
+  });
+  loadContactRelations();
+}
+
+// ── Type dropdown / vocab option builders ────────────────────────────────
+/**
+ * Build <option> list for the type dropdown.
+ *   - Symmetric types get ONE option (forward_label only).
+ *   - Asymmetric types get TWO options (forward_label, reverse_label).
+ *   - The option value is `type_code|swap` where swap=0 means "page contact
+ *     is contact_a" and swap=1 means "page contact is contact_b" (so the
+ *     reverse label correctly identifies the relationship direction).
+ * Catalog is already sorted by sort_order ASC server-side; forward+reverse
+ * for the same type land adjacent.
+ */
+function buildRelationTypeOptions(types, selectedValue = '') {
+  const opts = [
+    `<option value="" disabled${selectedValue ? '' : ' selected'}>— select type —</option>`
+  ];
+  types.forEach(t => {
+    if (t.is_symmetric) {
+      const v = `${t.type_code}|0`;
+      const sel = v === selectedValue ? ' selected' : '';
+      opts.push(`<option value="${crelEsc(v)}"${sel}>${crelEsc(t.forward_label)}</option>`);
+    } else {
+      const vf = `${t.type_code}|0`;
+      const vr = `${t.type_code}|1`;
+      const selF = vf === selectedValue ? ' selected' : '';
+      const selR = vr === selectedValue ? ' selected' : '';
+      opts.push(`<option value="${crelEsc(vf)}"${selF}>${crelEsc(t.forward_label)}</option>`);
+      opts.push(`<option value="${crelEsc(vr)}"${selR}>${crelEsc(t.reverse_label)}</option>`);
+    }
+  });
+  return opts.join('');
+}
+
+function buildVocabOptions(vocab, current = '') {
+  if (!Array.isArray(vocab) || !vocab.length) return '';
+  const opts = [
+    `<option value=""${current ? '' : ' selected'}>— none —</option>`
+  ];
+  vocab.forEach(v => {
+    const sel = v === current ? ' selected' : '';
+    opts.push(`<option value="${crelEsc(v)}"${sel}>${crelEsc(v)}</option>`);
+  });
+  return opts.join('');
+}
+
+// ── Add Relationship Modal ────────────────────────────────────────────────
+async function openAddRelationModal() {
+  let types;
+  try {
+    types = await getRelationTypes();
+  } catch (err) {
+    crelToast('error', 'Failed to load relation types', err.message);
+    return;
+  }
+  if (!types.length) {
+    crelToast('error', 'No relation types configured.');
+    return;
+  }
+
+  // Closure state for the contact picker.
+  let pickedContactId   = null;
+  let pickedContactName = '';
+  let searchDebounce    = null;
+  let searchSeq         = 0;
+
+  const html = `
+    <div style="text-align:left">
+      <div style="margin-bottom:10px">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Type</label>
+        <select id="crelm-type" style="width:100%;padding:6px">
+          ${buildRelationTypeOptions(types)}
+        </select>
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Other Contact</label>
+        <div id="crelm-picked" style="display:none;padding:6px 10px;background:#dbeafe;border:1px solid #93c5fd;border-radius:6px;margin-bottom:6px;font-size:13px"></div>
+        <input id="crelm-search" placeholder="Type to search contacts..." style="width:100%;padding:6px" autocomplete="off">
+        <div id="crelm-results" style="max-height:160px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:4px;margin-top:4px;display:none;background:#fff"></div>
+      </div>
+      <div id="crelm-status-wrap" style="margin-bottom:10px;display:none">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Status</label>
+        <select id="crelm-status" style="width:100%;padding:6px"></select>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div style="flex:1">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Start Date</label>
+          <input type="date" id="crelm-start" style="width:100%;padding:6px">
+        </div>
+        <div style="flex:1">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Date</label>
+          <input type="date" id="crelm-end" style="width:100%;padding:6px">
+        </div>
+      </div>
+      <div id="crelm-endreason-wrap" style="margin-bottom:10px;display:none">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Reason</label>
+        <select id="crelm-endreason" style="width:100%;padding:6px"></select>
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#334155">
+          <input type="checkbox" id="crelm-active" checked style="width:auto">
+          Active
+        </label>
+      </div>
+      <div style="margin-bottom:6px">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Notes</label>
+        <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000"></textarea>
+      </div>
+    </div>
+  `;
+
+  await Swal.fire({
+    title: 'Add Relationship',
+    html,
+    width: 520,
+    showCancelButton: true,
+    confirmButtonText: 'Create',
+    focusConfirm: false,
+    didOpen: () => {
+      const typeSel    = document.getElementById('crelm-type');
+      const searchInp  = document.getElementById('crelm-search');
+      const resultsBox = document.getElementById('crelm-results');
+      const pickedBox  = document.getElementById('crelm-picked');
+
+      // Type change → repopulate Status + End Reason dropdowns.
+      typeSel.addEventListener('change', () => {
+        const val = typeSel.value;
+        if (!val) return;
+        const [code] = val.split('|');
+        const t = getRelationTypeByCode(code);
+        const statusWrap = document.getElementById('crelm-status-wrap');
+        const statusSel  = document.getElementById('crelm-status');
+        const endrWrap   = document.getElementById('crelm-endreason-wrap');
+        const endrSel    = document.getElementById('crelm-endreason');
+        if (t && t.allowed_statuses && t.allowed_statuses.length) {
+          statusSel.innerHTML = buildVocabOptions(t.allowed_statuses);
+          statusWrap.style.display = '';
+        } else {
+          statusSel.innerHTML = '';
+          statusWrap.style.display = 'none';
+        }
+        if (t && t.allowed_end_reasons && t.allowed_end_reasons.length) {
+          endrSel.innerHTML = buildVocabOptions(t.allowed_end_reasons);
+          endrWrap.style.display = '';
+        } else {
+          endrSel.innerHTML = '';
+          endrWrap.style.display = 'none';
+        }
+      });
+
+      // Debounced contact search.
+      searchInp.addEventListener('input', () => {
+        if (searchDebounce) clearTimeout(searchDebounce);
+        const term = searchInp.value.trim();
+        if (!term) {
+          resultsBox.innerHTML = '';
+          resultsBox.style.display = 'none';
+          return;
+        }
+        searchDebounce = setTimeout(async () => {
+          const mySeq = ++searchSeq;
+          try {
+            const data = await P.apiSend('/api/contacts', 'GET',
+              { q: term, limit: 10 });
+            if (mySeq !== searchSeq) return; // stale response, drop
+            const list = data.contacts || [];
+            if (!list.length) {
+              resultsBox.innerHTML =
+                '<div style="padding:8px;color:#94a3b8;font-size:12px">No matches.</div>';
+              resultsBox.style.display = '';
+              return;
+            }
+            resultsBox.innerHTML = list.map(c => {
+              const id = c.contact_id;
+              const nm = c.contact_name
+                || `${c.contact_fname || ''} ${c.contact_lname || ''}`.trim()
+                || `Contact #${id}`;
+              const ph = c.contact_phone
+                ? c.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, '$1-$2-$3')
+                : '';
+              const em = c.contact_email || '';
+              const sub = [ph, em].filter(Boolean).join(' · ');
+              return `<div class="crel-result-row" data-id="${id}" data-name="${crelEsc(nm)}"
+                           style="padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:13px">
+                        <b>${crelEsc(nm)}</b>
+                        <span style="color:#64748b;font-size:11px;margin-left:6px">#${id}${sub ? ' · ' + crelEsc(sub) : ''}</span>
+                      </div>`;
+            }).join('');
+            resultsBox.style.display = '';
+            resultsBox.querySelectorAll('.crel-result-row').forEach(row => {
+              row.addEventListener('click', () => {
+                pickedContactId   = parseInt(row.dataset.id, 10);
+                pickedContactName = row.dataset.name;
+                pickedBox.textContent =
+                  `Selected: ${pickedContactName} (#${pickedContactId})`;
+                pickedBox.style.display = '';
+                searchInp.value = '';
+                resultsBox.innerHTML = '';
+                resultsBox.style.display = 'none';
+              });
+            });
+          } catch (err) {
+            if (mySeq !== searchSeq) return;
+            resultsBox.innerHTML =
+              `<div style="padding:8px;color:#991b1b;font-size:12px">Error: ${crelEsc(err.message)}</div>`;
+            resultsBox.style.display = '';
+          }
+        }, 300);
+      });
+    },
+    preConfirm: async () => {
+      const typeVal = document.getElementById('crelm-type').value;
+      if (!typeVal) {
+        Swal.showValidationMessage('Please select a relationship type.');
+        return false;
+      }
+      if (!pickedContactId) {
+        Swal.showValidationMessage('Please pick a contact.');
+        return false;
+      }
+      if (pickedContactId === parseInt(clientID, 10)) {
+        Swal.showValidationMessage('Cannot create a relationship with self.');
+        return false;
+      }
+      const [type_code, swapStr] = typeVal.split('|');
+      const swap    = swapStr === '1';
+      const meId    = parseInt(clientID, 10);
+      const otherId = pickedContactId;
+      const contact_a_id = swap ? otherId : meId;
+      const contact_b_id = swap ? meId    : otherId;
+
+      const statusEl = document.getElementById('crelm-status');
+      const endrEl   = document.getElementById('crelm-endreason');
+      const status     = (statusEl && statusEl.value) || '';
+      const end_reason = (endrEl   && endrEl.value)   || '';
+      const start_date = document.getElementById('crelm-start').value || null;
+      const end_date   = document.getElementById('crelm-end').value   || null;
+      const active     = document.getElementById('crelm-active').checked ? 1 : 0;
+      const notes      = document.getElementById('crelm-notes').value || '';
+
+      try {
+        await P.apiSend('/api/contact-relations', 'POST', {
+          contact_a_id, contact_b_id, type_code,
+          active, status, start_date, end_date, end_reason, notes
+        });
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    }
+  }).then(result => {
+    if (result.isConfirmed && result.value === true) {
+      crelToast('success', 'Relationship created');
+      loadContactRelations();
+    }
+  });
+}
+
+// ── Edit Relationship Modal ──────────────────────────────────────────────
+async function openEditRelationModal(id) {
+  const row = CREL.rows.find(r => r.id === id);
+  if (!row) {
+    crelToast('error', 'Relation not in current view — try Refresh.');
+    return;
+  }
+
+  let types;
+  try {
+    types = await getRelationTypes();
+  } catch (err) {
+    crelToast('error', 'Failed to load relation types', err.message);
+    return;
+  }
+
+  const t = getRelationTypeByCode(row.type_code);
+  if (!t) {
+    crelToast('error', 'Relation type missing from catalog.');
+    return;
+  }
+
+  const persp     = row.perspective || {};
+  const otherName = persp.other_contact_name
+    || `Contact #${persp.other_contact_id}`;
+  const typeLabelDisplay = `${persp.label || row.type_code} ${otherName}`;
+
+  const statusOpts = (t.allowed_statuses && t.allowed_statuses.length)
+    ? buildVocabOptions(t.allowed_statuses, row.status || '')
+    : '';
+  const endrOpts   = (t.allowed_end_reasons && t.allowed_end_reasons.length)
+    ? buildVocabOptions(t.allowed_end_reasons, row.end_reason || '')
+    : '';
+
+  const startYmd = crelToDateOnly(row.start_date);
+  const endYmd   = crelToDateOnly(row.end_date);
+
+  const html = `
+    <div style="text-align:left">
+      <div style="margin-bottom:10px;padding:8px 10px;background:#f1f5f9;border-radius:6px;font-size:13px;color:#334155">
+        <div><b>${crelEsc(typeLabelDisplay)}</b></div>
+        <div style="font-size:11px;color:#64748b">Type and other contact cannot be changed.</div>
+      </div>
+      <div style="margin-bottom:10px">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;color:#334155">
+          <input type="checkbox" id="crelm-active" ${row.active ? 'checked' : ''} style="width:auto">
+          Active
+        </label>
+      </div>
+      ${statusOpts ? `
+        <div style="margin-bottom:10px">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Status</label>
+          <select id="crelm-status" style="width:100%;padding:6px">${statusOpts}</select>
+        </div>` : ''}
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <div style="flex:1">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Start Date</label>
+          <input type="date" id="crelm-start" value="${crelEsc(startYmd)}" style="width:100%;padding:6px">
+        </div>
+        <div style="flex:1">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Date</label>
+          <input type="date" id="crelm-end" value="${crelEsc(endYmd)}" style="width:100%;padding:6px">
+        </div>
+      </div>
+      ${endrOpts ? `
+        <div style="margin-bottom:10px">
+          <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">End Reason</label>
+          <select id="crelm-endreason" style="width:100%;padding:6px">${endrOpts}</select>
+        </div>` : ''}
+      <div style="margin-bottom:6px">
+        <label style="display:block;font-size:12px;color:#475569;margin-bottom:4px">Notes</label>
+        <textarea id="crelm-notes" rows="3" style="width:100%;padding:6px;resize:vertical" maxlength="2000">${crelEsc(row.notes || '')}</textarea>
+      </div>
+    </div>
+  `;
+
+  await Swal.fire({
+    title: `Edit Relationship #${id}`,
+    html,
+    width: 520,
+    showCancelButton: true,
+    confirmButtonText: 'Save',
+    focusConfirm: false,
+    preConfirm: async () => {
+      const active     = document.getElementById('crelm-active').checked ? 1 : 0;
+      const statusEl   = document.getElementById('crelm-status');
+      const endrEl     = document.getElementById('crelm-endreason');
+      const newStatus     = statusEl ? statusEl.value : (row.status || '');
+      const newEndReason  = endrEl   ? endrEl.value   : (row.end_reason || '');
+      const newStart   = document.getElementById('crelm-start').value || null;
+      const newEnd     = document.getElementById('crelm-end').value   || null;
+      const newNotes   = document.getElementById('crelm-notes').value;
+
+      // Build patch with only changed fields. Normalize for comparison.
+      const patch = {};
+      const rowStart = crelToDateOnly(row.start_date) || null;
+      const rowEnd   = crelToDateOnly(row.end_date)   || null;
+      const rowActive = row.active ? 1 : 0;
+
+      if (active !== rowActive)                              patch.active     = active;
+      if ((newStart || null) !== rowStart)                   patch.start_date = newStart;
+      if ((newEnd   || null) !== rowEnd)                     patch.end_date   = newEnd;
+      if (statusEl && newStatus    !== (row.status     || '')) patch.status     = newStatus;
+      if (endrEl   && newEndReason !== (row.end_reason || '')) patch.end_reason = newEndReason;
+      if (newNotes !== (row.notes || ''))                    patch.notes      = newNotes;
+
+      if (!Object.keys(patch).length) {
+        Swal.showValidationMessage('No changes to save.');
+        return false;
+      }
+
+      try {
+        await P.apiSend(`/api/contact-relations/${id}`, 'PATCH', patch);
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    }
+  }).then(result => {
+    if (result.isConfirmed && result.value === true) {
+      crelToast('success', 'Relationship updated');
+      loadContactRelations();
+    }
+  });
+}
+
+// ── Delete ───────────────────────────────────────────────────────────────
+async function deleteContactRelation(id) {
+  const result = await Swal.fire({
+    title: 'Delete this relationship?',
+    text: 'This cannot be undone.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Delete',
+    confirmButtonColor: '#dc2626',
+    reverseButtons: true,
+    showLoaderOnConfirm: true,
+    preConfirm: async () => {
+      try {
+        await P.apiSend(`/api/contact-relations/${id}`, 'DELETE');
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    }
+  });
+  if (result.isConfirmed && result.value === true) {
+    crelToast('success', 'Relationship deleted');
+    loadContactRelations();
+  }
+}
+
+// ── Initial load ────────────────────────────────────────────
+processing();
+(async () => {
+  try {
+    await loadEntityData();
+    updateHeader();
+    loadIframes();
+
+    E('tabViewClient').style.display = 'block';
+    openTab(null, 'tabInfo');
+    Swal.close();
+
+    if (window.entityData.cases.length)     putCases();
+    if (window.entityData.appts.length)     putAppt();
+
+    tabLogGet(0);
+
+  } catch (err) {
+    Swal.close();
+    P.Toast.fire({ icon: "error", title: "Error loading contact", text: err.message });
+  }
+})();
+
 </script>

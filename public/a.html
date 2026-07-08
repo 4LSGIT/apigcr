@@ -532,7 +532,7 @@
 
 
     // Refresh any visible appointment lists
-    // tabAppts, case2 appts tab, contact2 appts tab will pick this up
+    // tabAppts, case appts tab, contact appts tab will pick this up
     window.addEventListener('message', (e) => {
       if (e.data?.type === 'appt-updated') {
         try {
@@ -2167,7 +2167,7 @@ async function initAuth() {
       });
 
       // Populate the Cases-tab type filter from fe-case_types — same single
-      // source as NewCaseForm and case2's overview selects
+      // source as NewCaseForm and case's overview selects
       // (populateCaseTypeFilter in scripts.js). Re-run on every init for the
       // same restore-don't-clobber behavior as the event-type selects above.
       populateCaseTypeFilter(E('tabCasesType'));
@@ -2231,10 +2231,10 @@ async function initAuth() {
       file.innerHTML = "this is a test!";
       if (fileType == "case") {
         fileButton.innerHTML = `<i class="fa-solid fa-landmark"></i> ${fileName}`;
-        file.innerHTML = `<iframe src="/case2.html?caseID=${fileID}&fileCount=${fileCounter}"></iframe>`;
+        file.innerHTML = `<iframe src="/case.html?caseID=${fileID}&fileCount=${fileCounter}"></iframe>`;
       } else if (fileType == "client" || fileType == "contact") {
         fileButton.innerHTML = `<i class="fa-solid fa-user"></i> ${fileName}`;
-        file.innerHTML = `<iframe src="/contact2.html?clientID=${fileID}&fileCount=${fileCounter}"></iframe>`;
+        file.innerHTML = `<iframe src="/contact.html?clientID=${fileID}&fileCount=${fileCounter}"></iframe>`;
       } else if (fileType == "bill") {
         fileButton.innerHTML = `<i class="fa-solid fa-file-invoice-dollar"></i> ${fileName}`;
         file.innerHTML = `<h1>No bills today!</h1><p>file Count: ${fileCounter}</p>`;

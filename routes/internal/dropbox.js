@@ -2,7 +2,7 @@
 //
 // POST /internal/dropbox/create-folder
 // Body: { case_id }  — any other fields (legacy contact_name / case_number
-// sent by case.html and case2.html) are accepted and IGNORED: the server
+// sent by caseV1.html and case.html) are accepted and IGNORED: the server
 // derives everything from the case row and its Primary contact, which also
 // neutralizes the historical payload disagreement between the two shells
 // (one sent FML, the other LFM). No shell edits required.

@@ -85,13 +85,13 @@
 | public/calendar.html                 | V2-ok         | FullCalendar iframe, uses parent.apiSend('/api/events') |
 | public/caltest.html                  | standalone    | Michigan Tax Prep marketing/offer page |
 | public/campaign.html                 | V2            | |
-| public/case.html                     | legacy-remove | replaced by case2.html |
-| public/case2.html                    | V2            | |
+| public/case.html                     | V2            | (was case2.html) |
+| public/caseV1.html                   | legacy-remove | was V1 case.html; loaded by old.html |
 | public/caseerror.html                | standalone    | case-error display page |
 | public/communicate.html              | V2            | |
-| public/contact.html                  | legacy-remove | replaced by contact2.html |
-| public/contact2.html                 | V2            | |
-| public/contactform.html              | legacy-remove | only loaded by contact.html and index.html (V1) |
+| public/contact.html                  | V2            | (was contact2.html) |
+| public/contactV1.html                | legacy-remove | was V1 contact.html; loaded by old.html |
+| public/contactform.html              | legacy-remove | only loaded by contactV1.html and index.html (V1) |
 | public/css/yc-forms.css              | V2            | stylesheet for V2 forms (add to inventory) |
 | public/dbConsole.html                | V2            | |
 | public/docReq.html                   | V2            | |
