@@ -116,6 +116,11 @@ public/appt.html
 public/apptform.html
 public/apptform2.html
 public/assetManager.html
+public/assets/icon-180.png
+public/assets/icon-192.png
+public/assets/icon-32.png
+public/assets/icon-512.png
+public/assets/manifest.json
 public/automation/activity.html
 public/automation/courtReview.html
 public/automation/emailIngest.html
@@ -176,6 +181,7 @@ public/settings.html
 public/style.css
 public/styleOpts.html
 public/survey.html
+public/sw.js
 public/tabLeads.html
 public/videoManager.html
 ref/database.sql

@@ -3,9 +3,26 @@
 
 <head>
   <title>4LSG YisraCase</title>
-  <link rel="icon" type="image/png" sizes="32x32" href="https://legalsolutions.group/assets/favicon-32.png">
-  <link rel="icon" type="image/png" sizes="192x192" href="https://legalsolutions.group/assets/favicon-192.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="https://legalsolutions.group/assets/favicon-180.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/icon-32.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="/assets/icon-192.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/assets/icon-180.png">
+
+  <!-- PWA -->
+  <link rel="manifest" href="/assets/manifest.json">
+  <meta name="theme-color" content="#07ADEF">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="YisraCase">
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js').catch(function (e) {
+          console.warn('SW registration failed:', e);
+        });
+      });
+    }
+  </script>
   <script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/scripts.js"></script>
