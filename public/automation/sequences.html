@@ -547,6 +547,86 @@
       background: #eef2ff; border: 1px solid #c7d2fe;
       padding: 6px 9px; border-radius: 5px; margin-bottom: 8px;
     }
+
+    /* ── Sequence preview (Slice 8B) — rendered inside a SweetAlert2 modal ── */
+    .seq-pv-wrap { text-align: left; }
+    .seq-pv-tplname { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 10px; }
+    .seq-pv-form { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+    .seq-pv-label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-weight: 600; color: var(--text2); }
+    .seq-pv-input, .seq-pv-textarea {
+      width: 100%; padding: 7px 9px; border: 1px solid #d1d5db; border-radius: 5px;
+      font-size: 13px; font-weight: 400; color: var(--text); box-sizing: border-box;
+    }
+    .seq-pv-textarea { font-family: 'SF Mono','Consolas',monospace; resize: vertical; min-height: 62px; }
+    .seq-pv-hint { font-size: 11px; font-weight: 400; color: var(--muted); }
+    .seq-pv-actions { display: flex; justify-content: flex-end; }
+    .seq-pv-results { max-height: 52vh; overflow: auto; }
+    .seq-pv-loading, .seq-pv-empty { text-align: center; padding: 18px; color: var(--muted); font-size: 13px; }
+
+    .seq-pv-head { margin-bottom: 10px; }
+    .seq-pv-tpl { font-size: 14px; font-weight: 700; color: var(--text); }
+    .seq-pv-sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+
+    .seq-pv-banner {
+      display: flex; align-items: flex-start; gap: 7px; font-size: 12px; line-height: 1.4;
+      padding: 8px 10px; border-radius: 6px; margin-bottom: 12px;
+    }
+    .seq-pv-amber { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+
+    .seq-pv-step { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--surface); }
+    .seq-pv-step-head { display: flex; align-items: baseline; gap: 8px; }
+    .seq-pv-step-num { font-family: 'SF Mono','Consolas',monospace; font-weight: 700; font-size: 12px; color: var(--blue); flex-shrink: 0; }
+    .seq-pv-step-sum { font-size: 13px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; overflow-wrap: anywhere; }
+    .seq-pv-step-time { flex-shrink: 0; }
+    .seq-pv-time { font-size: 11px; color: var(--text2); white-space: nowrap; }
+    .seq-pv-time.seq-pv-muted { color: var(--muted); }
+    .seq-pv-time-err { font-size: 11px; color: var(--red); white-space: normal; }
+    .seq-pv-step-badges { margin-top: 6px; }
+    .seq-pv-skip {
+      display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 10px;
+      background: #fffbeb; color: #b45309; border: 1px solid #fde68a;
+    }
+
+    .seq-pv-k { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+    .seq-pv-msg { margin-top: 8px; }
+    .seq-pv-msg-body {
+      margin-top: 3px; font-size: 12px; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere;
+      background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+    }
+    .seq-pv-msg-empty .seq-pv-msg-body { color: var(--muted); font-style: italic; }
+    .seq-pv-subj { margin-top: 8px; font-size: 12px; color: var(--text); }
+    .seq-pv-subj .seq-pv-k { margin-right: 6px; }
+    .seq-pv-note { margin-top: 4px; font-size: 11px; color: var(--muted); }
+    .seq-pv-attach { margin-top: 6px; font-size: 11px; color: var(--text2); overflow-wrap: anywhere; }
+    .seq-pv-attach i { color: var(--muted); margin-right: 4px; }
+
+    .seq-pv-unres {
+      margin-top: 8px; font-size: 11px; line-height: 1.4; color: #92400e;
+      background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px 9px; overflow-wrap: anywhere;
+    }
+    .seq-pv-unres i { margin-right: 4px; }
+    .seq-pv-reserr {
+      margin-top: 8px; font-size: 11px; line-height: 1.4; color: #991b1b;
+      background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 6px 9px; overflow-wrap: anywhere;
+    }
+    .seq-pv-reserr i { margin-right: 4px; }
+
+    .seq-pv-details { margin-top: 8px; }
+    .seq-pv-details > summary { font-size: 11px; color: var(--text2); cursor: pointer; user-select: none; }
+    .seq-pv-pre {
+      margin-top: 6px; font-family: 'SF Mono','Consolas',monospace; font-size: 11px; line-height: 1.45;
+      white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text);
+      background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+    }
+
+    .seq-pv-foot { margin-top: 6px; font-size: 11px; color: var(--muted); font-style: italic; }
+
+    .seq-pv-error {
+      font-size: 12px; line-height: 1.4; color: #991b1b;
+      background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 10px 12px;
+    }
+    .seq-pv-error i { margin-right: 5px; }
+    .seq-pv-error-actions { margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -578,6 +658,7 @@
       <div class="canvas-title placeholder" id="seq-canvas-title">← Select a sequence template</div>
       <div id="seq-canvas-actions" style="display:none;gap:8px">
         <button class="btn btn-outline btn-sm" onclick="seqShowExplain()"><i class="fa-regular fa-circle-question"></i> Explain</button>
+        <button class="btn btn-outline btn-sm" onclick="seqOpenPreviewForm()" title="Dry-run this template against a contact — no side effects"><i class="fa-solid fa-flask"></i> Preview</button>
         <button class="btn btn-outline btn-sm" onclick="seqEdit()"><i class="fa-solid fa-pencil"></i> Edit</button>
         <button class="btn btn-outline btn-sm" onclick="seqDuplicate()"><i class="fa-regular fa-copy"></i> Duplicate</button>
         <button class="btn btn-danger btn-sm" onclick="seqDelete()"><i class="fa-solid fa-trash"></i></button>
@@ -3069,10 +3150,304 @@ function renderSeqEnrollRows(rows) {
         <td>${seqEnrollStatusBadge(en.status)}</td>
         <td>${stepCell}</td>
         <td class="text-sm">${seqEnrollFmtDate(en.enrolled_at)}</td>
-        <td><button class="btn btn-outline" style="padding:3px 8px;font-size:11px" onclick="viewSequenceEnrollment(${en.id})"><i class="fa-solid fa-eye"></i></button></td>
+        <td style="white-space:nowrap">
+          <button class="btn btn-outline" style="padding:3px 8px;font-size:11px" title="Preview (dry run from now)" onclick="seqPreviewEnrollment(${en.id})"><i class="fa-solid fa-flask"></i></button>
+          <button class="btn btn-outline" style="padding:3px 8px;font-size:11px" title="View history" onclick="viewSequenceEnrollment(${en.id})"><i class="fa-solid fa-eye"></i></button>
+        </td>
       </tr>
     `;
   }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SEQUENCE PREVIEW (Slice 8B) — surfaces POST /sequences/preview
+//
+// Two entry points, one SweetAlert2 modal (the page's rich-dialog
+// convention — see the Types Manager). Hypothetical mode carries a
+// contact + optional trigger_data form; enrollment mode fires
+// { enrollment_id } directly with no form.
+//
+// The engine return shape (previewEnrollmentSteps) drives rendering:
+//   { template:{id,name,type}, contact_id, trigger_data,
+//     enrollment_verdict, steps:[ {
+//       step_number, action_type, computed_time|null, timing_error?,
+//       would_skip: 'fire_guard_failed'|'step_condition_failed'|null,
+//       resolved_config, unresolved:[...], resolution_error?,
+//       action_summary } ] }
+//
+// Message-block field names come from the actual internal_functions,
+// NOT from action_type (sms/mms/email all share action_type
+// 'internal_function' — the discriminator is resolved_config.function_name):
+//   send_sms   → params.message
+//   send_mms   → params.text (+ params.attachment_url; message body is OPTIONAL)
+//   send_email → params.subject + params.text (fallback params.html; note '+ html')
+// ═══════════════════════════════════════════════════════════════
+
+const SEQ_PREVIEW = { lastBody: null };
+
+// Entry point 1 — template editor (canvas-head "Preview").
+function seqOpenPreviewForm() {
+  if (!SEQ.activeTemplateId) { Swal.fire('No template', 'Select a template first.', 'info'); return; }
+  const tplName = (SEQ.activeTemplate && SEQ.activeTemplate.name) || `Template #${SEQ.activeTemplateId}`;
+  SEQ_PREVIEW.lastBody = null;
+  Swal.fire({
+    title: 'Preview sequence',
+    width: 760,
+    showConfirmButton: false,
+    showCloseButton: true,
+    html: `
+      <div class="seq-pv-wrap">
+        <div class="seq-pv-tplname">${esc(tplName)}</div>
+        <div class="seq-pv-form">
+          <label class="seq-pv-label">Contact ID
+            <input id="seq-preview-contact" type="number" min="1" step="1" class="seq-pv-input" placeholder="e.g. 4213">
+            <span class="seq-pv-hint">contact_id — find it on the contact's page</span>
+          </label>
+          <label class="seq-pv-label">Trigger data (optional)
+            <textarea id="seq-preview-trigger" class="seq-pv-textarea" rows="4" placeholder='{"appt_id": 123, "appt_time": "2026-07-20T14:00"}'></textarea>
+            <span class="seq-pv-hint">keys this template's timing/conditions reference</span>
+          </label>
+          <div class="seq-pv-actions">
+            <button class="btn btn-primary btn-sm" data-preview-run><i class="fa-solid fa-play"></i> Run preview</button>
+          </div>
+        </div>
+        <div id="seq-preview-results" class="seq-pv-results">
+          <div class="seq-pv-hint" style="text-align:center;padding:16px">Enter a contact and run to preview.</div>
+        </div>
+      </div>
+    `,
+    didOpen: (popup) => seqPreviewWireModal(popup),
+  });
+}
+
+// Entry point 2 — enrollment row ("Preview" flask). No form; fires immediately.
+function seqPreviewEnrollment(enrollmentId) {
+  SEQ_PREVIEW.lastBody = null;
+  Swal.fire({
+    title: `Preview enrollment #${enrollmentId}`,
+    width: 760,
+    showConfirmButton: false,
+    showCloseButton: true,
+    html: `<div class="seq-pv-wrap"><div id="seq-preview-results" class="seq-pv-results"></div></div>`,
+    didOpen: async (popup) => {
+      seqPreviewWireModal(popup);
+      const resultsEl = popup.querySelector('#seq-preview-results');
+      await seqPreviewRun({ enrollment_id: enrollmentId }, resultsEl);
+    },
+  });
+}
+
+// One delegated click listener per open popup handles the in-body Run and
+// Retry buttons (both survive results re-renders without re-binding).
+function seqPreviewWireModal(popup) {
+  popup.addEventListener('click', async (ev) => {
+    const runBtn   = ev.target.closest('[data-preview-run]');
+    const retryBtn = ev.target.closest('[data-preview-retry]');
+    if (!runBtn && !retryBtn) return;
+    ev.preventDefault();
+    const resultsEl = popup.querySelector('#seq-preview-results');
+    if (runBtn) {
+      Swal.resetValidationMessage();
+      const body = seqPreviewGatherForm(popup);   // null → validation message already shown
+      if (!body) return;
+      await seqPreviewRun(body, resultsEl);
+    } else {
+      if (SEQ_PREVIEW.lastBody) await seqPreviewRun(SEQ_PREVIEW.lastBody, resultsEl);
+    }
+  });
+}
+
+// Client-side validation (hypothetical mode). Mirrors the server contract:
+// contact must be a positive int; trigger_data, if present, must parse to a
+// plain object (array/primitive → reject before the round-trip).
+function seqPreviewGatherForm(popup) {
+  const cidRaw = (popup.querySelector('#seq-preview-contact')?.value || '').trim();
+  const cid = parseInt(cidRaw, 10);
+  if (!cidRaw || !Number.isInteger(cid) || cid <= 0 || String(cid) !== cidRaw) {
+    Swal.showValidationMessage('Contact ID must be a positive integer');
+    return null;
+  }
+  const body = { template_id: SEQ.activeTemplateId, contact_id: cid };
+  const tdRaw = (popup.querySelector('#seq-preview-trigger')?.value || '').trim();
+  if (tdRaw) {
+    let td;
+    try { td = JSON.parse(tdRaw); }
+    catch { Swal.showValidationMessage('trigger_data must be valid JSON'); return null; }
+    if (td === null || typeof td !== 'object' || Array.isArray(td)) {
+      Swal.showValidationMessage('trigger_data must be a JSON object');
+      return null;
+    }
+    body.trigger_data = td;
+  }
+  return body;
+}
+
+// POST + render. Server 4xx (ApiError, has .status) → verbatim, non-retryable.
+// Network errors → verbatim + Retry (re-fires the same body).
+async function seqPreviewRun(body, resultsEl) {
+  if (!resultsEl) return;
+  SEQ_PREVIEW.lastBody = body;
+  resultsEl.innerHTML = `<div class="seq-pv-loading"><i class="fa-solid fa-spinner fa-pulse"></i> Running preview…</div>`;
+  try {
+    const data = await api('/sequences/preview', 'POST', body);
+    resultsEl.innerHTML = seqRenderPreviewResult(data && data.preview);
+  } catch (e) {
+    const isServer = !!(e && (e.name === 'ApiError' || typeof e.status === 'number'));
+    if (isServer) {
+      resultsEl.innerHTML =
+        `<div class="seq-pv-error"><i class="fa-solid fa-circle-exclamation"></i>${esc(e.message || 'Request failed')}</div>`;
+    } else {
+      resultsEl.innerHTML =
+        `<div class="seq-pv-error"><i class="fa-solid fa-plug-circle-xmark"></i>${esc(e && e.message || 'Network error')}` +
+        `<div class="seq-pv-error-actions"><button class="btn btn-outline btn-sm" data-preview-retry><i class="fa-solid fa-rotate"></i> Retry</button></div></div>`;
+    }
+  }
+}
+
+// ── Renderers ──────────────────────────────────────────────────
+function seqRenderPreviewResult(preview) {
+  const p = preview || {};
+  const tpl = p.template || {};
+  const steps = Array.isArray(p.steps) ? p.steps : [];
+  const verdict = p.enrollment_verdict || 'would_proceed';
+
+  let html = `<div class="seq-pv-head">
+    <div class="seq-pv-tpl">${esc(tpl.name || ('Template #' + (tpl.id ?? '?')))}</div>
+    <div class="seq-pv-sub">contact #${esc(p.contact_id)}${tpl.type ? ' · ' + esc(tpl.type) : ''}</div>
+  </div>`;
+
+  if (verdict !== 'would_proceed') {
+    html += `<div class="seq-pv-banner seq-pv-amber"><i class="fa-solid fa-triangle-exclamation"></i>` +
+      `<span>Would cancel at enrollment: template condition failed — steps shown for information</span></div>`;
+  }
+
+  html += steps.length
+    ? steps.map(seqRenderPreviewStep).join('')
+    : `<div class="seq-pv-empty">This template has no steps.</div>`;
+
+  html += `<div class="seq-pv-foot">Times include randomized jitter where configured — each preview is one representative run.</div>`;
+  return html;
+}
+
+function seqRenderPreviewStep(s) {
+  let timeHtml;
+  if (s.timing_error) {
+    timeHtml = `<span class="seq-pv-time-err"><i class="fa-solid fa-clock"></i> ${esc(s.timing_error)}</span>`;
+  } else if (s.computed_time) {
+    timeHtml = `<span class="seq-pv-time">${esc(seqPreviewFmtTime(s.computed_time))}</span>`;
+  } else {
+    timeHtml = `<span class="seq-pv-time seq-pv-muted">unscheduled</span>`;
+  }
+
+  let skipBadge = '';
+  if (s.would_skip === 'fire_guard_failed')        skipBadge = `<span class="seq-pv-skip">skipped · fire guard</span>`;
+  else if (s.would_skip === 'step_condition_failed') skipBadge = `<span class="seq-pv-skip">skipped · step condition</span>`;
+
+  return `<div class="seq-pv-step">
+    <div class="seq-pv-step-head">
+      <span class="seq-pv-step-num">#${esc(s.step_number)}</span>
+      <span class="seq-pv-step-sum">${esc(seqPreviewSummaryLine(s))}</span>
+      <span class="seq-pv-step-time">${timeHtml}</span>
+    </div>
+    ${skipBadge ? `<div class="seq-pv-step-badges">${skipBadge}</div>` : ''}
+    ${seqRenderPreviewBody(s)}
+  </div>`;
+}
+
+// Compact one-liner for the card header. Reads action_summary (already
+// normalized by the engine) with resolved_config as fallback.
+function seqPreviewSummaryLine(s) {
+  const cfg = s.resolved_config || {};
+  const sum = s.action_summary || {};
+  const fn  = cfg.function_name || sum.function_name;
+  const to  = (cfg.params && cfg.params.to != null ? cfg.params.to : sum.to);
+  if (fn === 'send_sms')   return `SMS → ${to != null ? to : '(no recipient)'}`;
+  if (fn === 'send_mms')   return `MMS → ${to != null ? to : '(no recipient)'}`;
+  if (fn === 'send_email') return `Email → ${to != null ? to : '(no recipient)'}`;
+  if (s.action_type === 'webhook') {
+    const method = sum.method || cfg.method || 'POST';
+    const url    = sum.url || cfg.url || '';
+    return `Webhook → ${method} ${url}`.trim();
+  }
+  if (s.action_type === 'start_workflow') {
+    const wf = sum.workflow_id != null ? sum.workflow_id : cfg.workflow_id;
+    return `Start workflow #${wf != null ? wf : '?'}`;
+  }
+  if (fn) return String(fn);
+  return String(s.action_type || 'step');
+}
+
+// The payoff: the exact resolved message, read from resolved_config.params.
+function seqRenderPreviewBody(s) {
+  const cfg    = s.resolved_config || {};
+  const fn     = cfg.function_name;
+  const params = cfg.params || {};
+  let html = '';
+
+  if (fn === 'send_sms') {
+    html += seqPreviewMsgBlock('Message', params.message);
+  } else if (fn === 'send_mms') {
+    html += seqPreviewMsgBlock('Message', params.text, '(no text — attachment only)');
+    if (params.attachment_url != null && params.attachment_url !== '') {
+      html += `<div class="seq-pv-attach"><i class="fa-solid fa-paperclip"></i>${esc(params.attachment_url)}</div>`;
+    }
+  } else if (fn === 'send_email') {
+    html += `<div class="seq-pv-subj"><span class="seq-pv-k">Subject</span>${esc(params.subject != null && params.subject !== '' ? params.subject : '(no subject)')}</div>`;
+    const hasHtml   = params.html != null && params.html !== '';
+    const hasText   = params.text != null && params.text !== '';
+    const bodyText  = hasText ? params.text : (hasHtml ? params.html : '');
+    html += seqPreviewMsgBlock('Body', bodyText, '(empty body)');
+    if (hasHtml) html += `<div class="seq-pv-note">+ html body present${hasText ? ' (showing text variant)' : ' (showing html source as text)'}</div>`;
+  } else {
+    // webhook / start_workflow / task / other internal fn → summary + full config
+    html += `<details class="seq-pv-details"><summary>resolved config</summary><pre class="seq-pv-pre">${esc(seqPreviewPretty(cfg))}</pre></details>`;
+  }
+
+  if (Array.isArray(s.unresolved) && s.unresolved.length) {
+    html += `<div class="seq-pv-unres"><i class="fa-solid fa-triangle-exclamation"></i>Unresolved: ${s.unresolved.map(t => esc(t)).join(', ')}</div>`;
+  }
+  if (s.resolution_error) {
+    html += `<div class="seq-pv-reserr"><i class="fa-solid fa-circle-xmark"></i>${esc(s.resolution_error)}</div>`;
+    html += `<details class="seq-pv-details"><summary>raw config</summary><pre class="seq-pv-pre">${esc(seqPreviewPretty(cfg))}</pre></details>`;
+  }
+  return html;
+}
+
+function seqPreviewMsgBlock(label, text, emptyLabel) {
+  const empty = (text == null || text === '');
+  const content = empty ? (emptyLabel || '(empty)') : text;
+  return `<div class="seq-pv-msg${empty ? ' seq-pv-msg-empty' : ''}"><div class="seq-pv-k">${esc(label)}</div>` +
+         `<div class="seq-pv-msg-body">${esc(content)}</div></div>`;
+}
+
+function seqPreviewPretty(obj) {
+  try { return JSON.stringify(obj, null, 2); } catch { return String(obj); }
+}
+
+// "Jul 10, 3:00 PM · in 2d 4h" — browser-local (matches seqEnrollFmtDate;
+// the page hardcodes no timezone).
+function seqPreviewFmtTime(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  let abs;
+  try { abs = d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+  catch { abs = d.toISOString(); }
+  return `${abs} · ${seqPreviewRelTime(d.getTime() - Date.now())}`;
+}
+
+function seqPreviewRelTime(ms) {
+  const past = ms < 0;
+  let s = Math.abs(Math.round(ms / 1000));
+  const day = Math.floor(s / 86400); s -= day * 86400;
+  const hr  = Math.floor(s / 3600);  s -= hr * 3600;
+  const min = Math.floor(s / 60);
+  const parts = [];
+  if (day) parts.push(day + 'd');
+  if (hr)  parts.push(hr + 'h');
+  if (!day && min) parts.push(min + 'm');   // minutes only matter under a day
+  if (!parts.length) parts.push('0m');
+  const bodyStr = parts.join(' ');
+  return past ? `${bodyStr} ago` : `in ${bodyStr}`;
 }
 
 function renderSeqEnrollPager(visibleCount) {
@@ -4042,6 +4417,8 @@ window.loadSequenceEnrollments    = loadSequenceEnrollments;
 window.seqEnrollPrevPage          = seqEnrollPrevPage;
 window.seqEnrollNextPage          = seqEnrollNextPage;
 window.viewSequenceEnrollment     = viewSequenceEnrollment;
+window.seqOpenPreviewForm         = seqOpenPreviewForm;
+window.seqPreviewEnrollment       = seqPreviewEnrollment;
 window.seqShowPlaceholderRef      = seqShowPlaceholderRef;
 
 // ── Boot ───────────────────────────────────────────────────────
