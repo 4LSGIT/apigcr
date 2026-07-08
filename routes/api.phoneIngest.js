@@ -361,12 +361,22 @@ router.get('/api/phone-ingest/sample-events', jwtOrApiKey, async (req, res) => {
 // No suppression evaluation — this tests the RULE layer only. No DB writes,
 // no audit row (nothing changed), no dispatching.
 //
-// Body: { match_mode, match_config, limit?, since?, include_misses? }
+// Slice 10C — `since` anchors the window at its START (oldest-first from the
+// date, with truncation reporting) and `exec_id` targets one specific
+// execution. Phone's corpus was never status-filtered (suppressed phone
+// events were always testable), so there is no email-style scope widening
+// here — only the targeting/window/status additions.
+//
+// Body: { match_mode, match_config, limit?, since?, exec_id?, include_misses? }
+//   exec_id — positive int; mutually exclusive with since (400 if both);
+//             limit is ignored with it; not found / not reconstructable → 404.
 // Response:
 //   { success:true, total, matched_count, unparseable_skipped,
-//     rows: [ { exec_id, ts, from, label, matched, fidelity } ] }
-//   rows = matches newest-first; when include_misses, misses appended after
-//   them (also newest-first).
+//     rows: [ { exec_id, ts, from, label, matched, fidelity, status } ] }
+//   + when since was used: window_total (rows in range) and
+//     truncated (window_total > total — the range overflowed the cap).
+//   rows = matches newest-first (oldest-first when since given); when
+//   include_misses, misses appended after them (same ordering).
 // ─────────────────────────────────────────────────────────────
 
 router.post('/api/phone-ingest/rules/test-match', jwtOrApiKey, async (req, res) => {
@@ -395,6 +405,18 @@ router.post('/api/phone-ingest/rules/test-match', jwtOrApiKey, async (req, res) 
         return res.status(400).json({ error: 'Invalid since datetime' });
       }
       since = body.since;
+    }
+
+    let execId;
+    if (body.exec_id !== undefined && body.exec_id !== null && body.exec_id !== '') {
+      const n = Number(body.exec_id);
+      if (!Number.isInteger(n) || n < 1) {
+        return res.status(400).json({ error: 'exec_id must be a positive integer' });
+      }
+      if (since !== undefined) {
+        return res.status(400).json({ error: 'exec_id and since are mutually exclusive — target one execution or a date window, not both' });
+      }
+      execId = n; // limit is ignored in exec_id mode
     }
 
     const includeMisses = body.include_misses === true;
@@ -440,9 +462,21 @@ router.post('/api/phone-ingest/rules/test-match', jwtOrApiKey, async (req, res) 
     }
 
     // ── corpus + evaluation ──
-    const { rows, unparseable_skipped } =
-      await sampleService.fetchEnvelopes(req.db, { limit, since });
+    // exec_id → that one execution. Otherwise the windowed corpus (which,
+    // unlike email, never had a status filter to widen).
+    const corpus = execId !== undefined
+      ? await sampleService.fetchEnvelopes(req.db, { exec_id: execId })
+      : await sampleService.fetchEnvelopes(req.db, { limit, since });
 
+    if (corpus.not_found) {
+      return res.status(404).json({
+        error: corpus.not_found === 'unparseable'
+          ? `execution #${execId} has no parseable raw_input — nothing to evaluate`
+          : `execution #${execId} not found`,
+      });
+    }
+
+    const { rows, unparseable_skipped } = corpus;
     const testRule = { id: 'test-match', name: '(editor)', match_mode, match_config };
     const matches = [];
     const misses  = [];
@@ -455,17 +489,23 @@ router.post('/api/phone-ingest/rules/test-match', jwtOrApiKey, async (req, res) 
         label:    sampleService._testLabel(r.envelope, r.event_type, r.ts),
         matched,
         fidelity: r.fidelity,
+        status:   r.status,
       };
       (matched ? matches : misses).push(shaped);
     }
 
-    return res.json({
+    const out = {
       success:             true,
       total:               rows.length,
       matched_count:       matches.length,
       unparseable_skipped: unparseable_skipped,
       rows:                includeMisses ? matches.concat(misses) : matches,
-    });
+    };
+    if (since !== undefined && corpus.window_total !== undefined) {
+      out.window_total = corpus.window_total;
+      out.truncated    = corpus.window_total > rows.length;
+    }
+    return res.json(out);
   } catch (err) {
     console.error('[phone-ingest] test-match error:', err);
     res.status(500).json({ status: 'error', message: err.message });

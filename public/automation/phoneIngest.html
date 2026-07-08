@@ -393,6 +393,60 @@
     .pi-sample-val.muted { color: var(--muted); font-style: italic; }
     .pi-sample-empty { font-size: 12px; color: var(--muted); padding: 6px; }
 
+    /* ══ TEST-MATCH PANEL (Slice 10B) ══
+       SHARED test-match styles — the `tm-` prefix block is kept BYTE-IDENTICAL
+       across phoneIngest.html AND emailIngest.html (same convention as the
+       .pi-sample* block above). If you change one page, change the other. */
+    .tm-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .tm-select, .tm-date {
+      border: 1px solid var(--border); border-radius: 6px; background: #fff;
+      color: var(--text); font-size: 12px; padding: 4px 8px;
+    }
+    .tm-check { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text2); cursor: pointer; user-select: none; }
+    .tm-banner {
+      background: #fffbeb; border: 1px solid #fde68a; color: #92400e;
+      border-radius: 6px; padding: 6px 10px; font-size: 11.5px; margin: 0 0 8px; line-height: 1.4;
+    }
+    .tm-head { font-size: 12px; font-weight: 700; color: var(--text); margin: 2px 0 8px; }
+    .tm-rows { display: flex; flex-direction: column; gap: 2px; }
+    .tm-row {
+      display: flex; align-items: baseline; gap: 10px; padding: 4px 6px;
+      border-radius: 5px; font-size: 12px; min-width: 0;
+    }
+    .tm-row.clickable { cursor: pointer; }
+    .tm-row.clickable:hover { background: #eef5ff; }
+    .tm-row.miss { opacity: 0.5; }
+    .tm-ts { font-size: 11px; color: var(--text2); white-space: nowrap; flex-shrink: 0; width: 108px; }
+    .tm-from {
+      font-family: 'SF Mono','Cascadia Code','Consolas',monospace; font-size: 11px;
+      color: var(--blue2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      flex-shrink: 0; max-width: 200px;
+    }
+    .tm-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+    .tm-fid {
+      flex-shrink: 0; font-size: 10px; font-weight: 600; color: #92400e;
+      background: #fffbeb; border: 1px solid #fde68a; border-radius: 4px;
+      padding: 0 5px; cursor: help;
+    }
+    .tm-status {
+      flex-shrink: 0; font-size: 10px; font-weight: 600; color: #92400e;
+      background: #fef3c7; border: 1px solid #fcd34d; border-radius: 4px;
+      padding: 0 5px; opacity: 0.85; cursor: help;
+    }
+    .tm-divider {
+      display: flex; align-items: center; gap: 8px; margin: 8px 0 4px;
+      font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px;
+      text-transform: uppercase; color: var(--muted);
+    }
+    .tm-divider::before, .tm-divider::after { content: ''; height: 1px; background: var(--border); flex: 1; }
+    .tm-empty { font-size: 12px; color: var(--muted); padding: 6px; font-style: italic; }
+    .tm-err {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+      border-radius: 6px; padding: 8px 10px; font-size: 12px;
+      word-break: break-word;
+    }
+
     /* ══ ACTION-FORM schema-hint note (from meta.action_types config_schema_hint) ══ */
     .swal-a-note {
       font-size: 11px; color: var(--text2); background: #f1f7ff;
@@ -952,6 +1006,250 @@ window.piToggleSidebar = piToggleSidebar;
     const rows = root.querySelectorAll('.cond-row');
     if (rows.length && typeof rows[rows.length - 1].scrollIntoView === 'function') {
       rows[rows.length - 1].scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // TEST-MATCH PANEL (Slice 10B) — evaluates the rule editor's CURRENT
+  // (unsaved) match config against recent historical events via the Slice 10A
+  // endpoint, which runs the PRODUCTION matcher. Suppression rules are NOT
+  // applied server-side — this tests the rule layer only.
+  //
+  // ╔════════════════════════════════════════════════════════════════════════╗
+  // ║ SHARED PANEL — KEPT BYTE-IDENTICAL across phoneIngest.html AND           ║
+  // ║ emailIngest.html (same convention as the sample panel above). The ONLY   ║
+  // ║ intended difference between the two copies is TM_ENDPOINT (below);       ║
+  // ║ TM_IS_EMAIL and TM_EXEC_ENDPOINT — and thus every page-specific behavior ║
+  // ║ (the email-only code-mode banner and fidelity badge) — derive from it.   ║
+  // ║ Functions in this block (mountTestMatchPanel, tmRunFromEditor, tmSend,   ║
+  // ║ tmRender*, tmOpenExecution) + the .tm-* CSS must stay in sync. If you    ║
+  // ║ change one page, change the other.                                       ║
+  // ╚════════════════════════════════════════════════════════════════════════╝
+  //
+  // Harvest REUSES the save path (collectRuleForm) — one harvest
+  // implementation, so what gets tested is exactly what Save would persist.
+  // Server shape (10C): { success, total, matched_count, unparseable_skipped?,
+  // window_total?, truncated?, rows:[{ exec_id, ts, from, label, matched,
+  // fidelity, status }] } — matches first (newest-first; oldest-first when
+  // since anchors the window); when include_misses, misses appended after
+  // them. Corpus is scope 'wide' server-side (suppressed/skipped events
+  // included, duplicates excluded); exec_id targets ONE execution (404 when
+  // missing/unreconstructable). Rows with status != 'logged' get a badge —
+  // "your rule matches, but this event was suppressed" is the diagnostic
+  // payoff of the widened corpus.
+  const TM_ENDPOINT = '/api/phone-ingest/rules/test-match'; // ← the ONLY line differing between the two pages
+  const TM_IS_EMAIL = TM_ENDPOINT.indexOf('email-ingest') !== -1;
+  const TM_EXEC_ENDPOINT = TM_ENDPOINT.replace('/rules/test-match', '/executions');
+
+  let tmLastRun = null; // { body, mode } — replayed by the Retry strip after a network/5xx failure
+
+  // Mount the controls row + (initially hidden) collapsible results box into
+  // `hostEl` (an empty div placed in the rule editor's Match section).
+  function mountTestMatchPanel(hostEl) {
+    if (!hostEl) return;
+    hostEl.innerHTML = `
+      <div class="tm-controls">
+        <button type="button" class="btn btn-outline btn-sm" id="tm-run"><i class="fa-solid fa-vial"></i> Test conditions</button>
+        <select class="tm-select" id="tm-window" title="Which recent events to test against">
+          <option value="100" selected>Last 100 events</option>
+          <option value="300">Last 300</option>
+          <option value="since">Since date…</option>
+          <option value="exec">Specific execution…</option>
+        </select>
+        <input type="datetime-local" class="tm-date hidden" id="tm-since" title="Test events since this date">
+        <input type="number" min="1" step="1" class="tm-date hidden" id="tm-exec" placeholder="execution #" title="Test against one specific execution by id">
+        <label class="tm-check"><input type="checkbox" id="tm-misses"> include non-matching</label>
+      </div>
+      <div class="pi-sample collapsed hidden" id="tm-resbox" style="margin-top:8px">
+        <div class="pi-sample-head">
+          <i class="fa-solid fa-chevron-down chev"></i>
+          <span><i class="fa-solid fa-vial" style="margin-right:6px;color:var(--muted)"></i>Test results</span>
+          <span class="pi-sample-hint" id="tm-res-hint"></span>
+        </div>
+        <div class="pi-sample-body" id="tm-res-body"></div>
+      </div>`;
+    E('tm-window').addEventListener('change', () => {
+      E('tm-since').classList.toggle('hidden', E('tm-window').value !== 'since');
+      E('tm-exec').classList.toggle('hidden', E('tm-window').value !== 'exec');
+    });
+    hostEl.querySelector('#tm-resbox .pi-sample-head')
+      .addEventListener('click', () => E('tm-resbox').classList.toggle('collapsed'));
+    E('tm-run').addEventListener('click', tmRunFromEditor);
+    tmLastRun = null; // a stale run dies with the editor it was harvested from
+  }
+
+  // Harvest the editor's current state via the SAVE path and fire a test run.
+  async function tmRunFromEditor() {
+    // ── harvest (save-path reuse — do NOT reimplement the harvest) ──
+    const payload = collectRuleForm();
+    const mode = payload.match_mode;
+    const cfg  = payload.match_config;
+
+    // Untestable editor state → the same feedback Save gives, no server call.
+    // (Conditions mode can't produce an unparseable config through the
+    // builder; an EMPTY condition set is a legitimate always-match test and
+    // is allowed through — the "N of N match" result is the feedback.)
+    if (mode === 'code' && !String((cfg && cfg.code) || '').trim()) {
+      Swal.fire({
+        icon: 'warning', title: 'Empty match code',
+        text: 'The match code is empty (it will never match) — nothing to test.',
+      });
+      return;
+    }
+
+    // ── window controls → request params ──
+    const body = { match_mode: mode, match_config: cfg };
+    const win = E('tm-window').value;
+    if (win === 'exec') {
+      const n = Number(E('tm-exec').value);
+      if (!Number.isInteger(n) || n < 1) {
+        Swal.fire({ icon: 'warning', title: 'Enter an execution #', text: 'Give the id of the execution to test against (a positive whole number).' });
+        return;
+      }
+      body.exec_id = n;
+      // Always include the row so the verdict is visible either way — a
+      // non-matching single target with misses hidden would render as an
+      // empty "0 of 1" with no row to look at.
+      body.include_misses = true;
+      tmSend(body, mode);
+      return;
+    }
+    if (win === 'since') {
+      const since = E('tm-since').value;
+      if (!since) {
+        Swal.fire({ icon: 'warning', title: 'Pick a date', text: 'Choose the date to test from.' });
+        return;
+      }
+      body.since = since;
+      body.limit = 300; // window stays capped even with a wide date
+    } else {
+      body.limit = Number(win); // 100 | 300
+    }
+    if (E('tm-misses').checked) body.include_misses = true;
+
+    tmSend(body, mode);
+  }
+
+  async function tmSend(body, mode) {
+    tmLastRun = { body, mode };
+    const box = E('tm-resbox');
+    box.classList.remove('hidden');
+    box.classList.remove('collapsed');
+    E('tm-res-hint').textContent = '';
+    E('tm-res-body').innerHTML = `<div class="tm-empty"><i class="fa-solid fa-spinner spin"></i> Testing against recent events…</div>`;
+    try {
+      const data = await api(TM_ENDPOINT, 'POST', body);
+      tmRenderResults(data, mode);
+    } catch (e) {
+      // 400 = config rejected; 404 = exec_id target missing/unreconstructable.
+      // Both are verbatim, non-retryable renders (same input can't succeed).
+      if (e && (e.status === 400 || e.status === 404)) tmRenderBadRequest(e);
+      else tmRenderNetError(e);
+    }
+  }
+
+  function tmBanners(mode) {
+    let h = '';
+    if (TM_IS_EMAIL && mode === 'code') {
+      h += `<div class="tm-banner"><i class="fa-solid fa-circle-info" style="margin-right:5px"></i>Code runs against reconstructed events — fields outside the match catalog are missing on most rows.</div>`;
+    }
+    h += `<div class="tm-banner"><i class="fa-solid fa-circle-info" style="margin-right:5px"></i>Suppression rules are not applied — this tests rule matching only.</div>`;
+    return h;
+  }
+
+  function tmTs(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function tmRow(r) {
+    const fid = (TM_IS_EMAIL && r.fidelity === 'reconstructed')
+      ? `<span class="tm-fid" title="4 raw-only fields absent on this row: from.name, kind, list_id, in_reply_to">reconstructed</span>`
+      : '';
+    // Non-logged executions get a status chip — the rule can match an event
+    // the pipeline suppressed/skipped; that context is the point.
+    const st = (r.status && r.status !== 'logged')
+      ? `<span class="tm-status" title="execution status: ${esc(r.status)}">${esc(r.status)}</span>`
+      : '';
+    const clickable = r.exec_id != null;
+    return `<div class="tm-row${r.matched ? '' : ' miss'}${clickable ? ' clickable' : ''}"${clickable ? ` data-exec="${esc(String(r.exec_id))}" title="Open execution #${esc(String(r.exec_id))}"` : ''}>
+      <span class="tm-ts">${esc(tmTs(r.ts))}</span>
+      <span class="tm-from" title="${esc(r.from == null ? '' : String(r.from))}">${r.from == null ? '<span class="pi-sample-val muted">—</span>' : esc(String(r.from))}</span>
+      <span class="tm-label" title="${esc(r.label || '')}">${esc(r.label || '')}</span>
+      ${st}
+      ${fid}
+    </div>`;
+  }
+
+  function tmRenderResults(data, mode) {
+    const total   = Number((data && data.total) || 0);
+    const matchN  = Number((data && data.matched_count) || 0);
+    const rows    = (data && Array.isArray(data.rows)) ? data.rows : [];
+    const skipped = Number((data && data.unparseable_skipped) || 0);
+
+    const matches = rows.filter(r => r.matched);
+    const misses  = rows.filter(r => !r.matched);
+
+    // since-anchored windows report truncation: the range held window_total
+    // rows but only the first `total` (oldest-first) were evaluated.
+    let trunc = '';
+    if (data && data.truncated && tmLastRun && tmLastRun.body && tmLastRun.body.since) {
+      trunc = ` · first ${total} of ${Number(data.window_total)} since ${esc(String(tmLastRun.body.since).replace('T', ' '))} — narrow the range`;
+    }
+    const head = `<div class="tm-head">${matchN} of ${total} recent events match${skipped > 0 ? ` · ${skipped} unparseable skipped` : ''}${trunc}</div>`;
+
+    let bodyRows = '';
+    if (matches.length) {
+      bodyRows += `<div class="tm-rows">${matches.map(tmRow).join('')}</div>`;
+    } else {
+      bodyRows += `<div class="tm-empty">${total ? 'No matching events in this window.' : 'No events captured in this window — nothing to test against.'}</div>`;
+    }
+    if (misses.length) {
+      bodyRows += `<div class="tm-divider">non-matching (${misses.length})</div><div class="tm-rows">${misses.map(tmRow).join('')}</div>`;
+    }
+
+    const bodyEl = E('tm-res-body');
+    bodyEl.innerHTML = tmBanners(mode) + head + bodyRows;
+    E('tm-res-hint').textContent = `${matchN} / ${total}`;
+
+    // Row → execution drawer (reuses the page's existing drawer plumbing).
+    bodyEl.querySelectorAll('.tm-row[data-exec]').forEach(el => {
+      el.addEventListener('click', () => tmOpenExecution(el.getAttribute('data-exec')));
+    });
+  }
+
+  function tmRenderBadRequest(e) {
+    // 400 = the config itself was rejected (e.g. "code does not compile: …").
+    // Rendered verbatim, no Retry — rerunning the same config can't succeed.
+    E('tm-res-body').innerHTML = tmBanners(tmLastRun ? tmLastRun.mode : '') +
+      `<div class="tm-err"><i class="fa-solid fa-triangle-exclamation"></i> ${esc((e && e.message) || 'The server rejected the test request.')}</div>`;
+    E('tm-res-hint').textContent = 'error';
+  }
+
+  function tmRenderNetError(e) {
+    E('tm-res-body').innerHTML =
+      `<div class="tm-err"><i class="fa-solid fa-triangle-exclamation"></i> ${esc((e && e.message) || 'Request failed')} <button type="button" class="btn btn-outline btn-sm" id="tm-retry">Retry</button></div>`;
+    E('tm-res-hint').textContent = 'error';
+    const btn = E('tm-retry');
+    if (btn) btn.addEventListener('click', () => { if (tmLastRun) tmSend(tmLastRun.body, tmLastRun.mode); });
+  }
+
+  // Open the executions drawer for one tested row. Reuses openDrawer +
+  // renderExecutionDrawer directly — unlike selectExecution, this does NOT
+  // touch cache.executions or re-render the executions table (the user is on
+  // the Rules tab; the drawer is a page-level overlay).
+  async function tmOpenExecution(id) {
+    openDrawer(`Execution #${id}`, `<div class="text-muted"><i class="fa-solid fa-spinner spin"></i> Loading…</div>`);
+    try {
+      const data = await api(`${TM_EXEC_ENDPOINT}/${id}`);
+      const exec   = (data && data.execution) ? data.execution : (data || {});
+      const linked = (data && data.linked) ? data.linked : {};
+      renderExecutionDrawer(exec, linked);
+    } catch (e) {
+      openDrawer(`Execution #${id}`,
+        `<div class="tm-err"><i class="fa-solid fa-triangle-exclamation"></i> ${esc((e && e.message) || 'Failed to load execution')}</div>`);
     }
   }
 
@@ -1585,6 +1883,7 @@ window.piToggleSidebar = piToggleSidebar;
           <textarea class="pi-textarea pi-code-textarea" id="rule-match-code" placeholder="// return truthy to match">${esc(matchCodeStr)}</textarea>
           <div class="pi-field-hint">Receives the phone event as <code>input</code> (e.g. <code>input.link_id</code>, <code>input.extra.provider</code>). Return truthy to match.</div>
         </div>
+        <div id="rule-testmatch-host"></div>
 
         <!-- ═══ TRANSFORM ═══ -->
         <div class="pi-section-head">Transform</div>
@@ -1630,6 +1929,8 @@ window.piToggleSidebar = piToggleSidebar;
     };
     E('rule-match-mode').addEventListener('change', () => { applyMatchMode(); markDirty(); });
     applyMatchMode();
+    // ── test-match panel (Slice 10B) — kept in sync across emailIngest.html/phoneIngest.html ──
+    mountTestMatchPanel(E('rule-testmatch-host'));
 
     // ── transform mode toggle (preserves each sub-editor's state) ──
     const applyTransformMode = () => {

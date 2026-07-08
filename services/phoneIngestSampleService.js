@@ -18,8 +18,8 @@
  * must rebuild an event from clean columns because email raw_input is ~75%
  * truncated/unparseable).
  *
- * ONE SOURCING IMPLEMENTATION (Slice 10A):
- *   fetchEnvelopes(db, {limit, since}) is the single windowed corpus fetcher.
+ * ONE SOURCING IMPLEMENTATION (Slice 10A; modes widened in Slice 10C):
+ *   fetchEnvelopes(db, {limit, since, exec_id}) is the single corpus fetcher.
  *   Both consumers ride it:
  *     - getSampleEvents (field-discovery panel) — {limit: SAMPLE_LIMIT}
  *     - the rules/test-match endpoint — caller-supplied limit/since
@@ -110,19 +110,69 @@ function _testLabel(envelope, eventType, ts) {
  * created_at >= since) and parses each raw_input into the event object the
  * production matcher receives. Unparseable rows are skipped and counted.
  *
+ * Slice 10C additions — exec_id targeting, since-anchored windows, status:
+ *   exec_id  — load exactly ONE execution by id. Phone NEVER had a status
+ *              filter to drop (its only windowed filter is raw_input IS NOT
+ *              NULL — suppressed phone events were ALWAYS in this corpus, so
+ *              there is no email-style `scope` machinery here). Not found →
+ *              { rows: [], not_found: 'no_execution' }; raw_input missing or
+ *              unparseable → { rows: [], not_found: 'unparseable' } — markers
+ *              the route turns into a precise 404. since/limit ignored.
+ *   since    — the window now STARTS at the bound (ORDER BY id ASC from
+ *              created_at >= since); window_total (COUNT over the same WHERE)
+ *              is returned so callers can flag truncation. Without since, the
+ *              newest-N DESC behavior is unchanged.
+ *   status   — every row carries the execution status
+ *              ('logged'|'suppressed'|'error') for the UI's status badges.
+ *
  * @param {object} db
  * @param {object} opts
- * @param {number} opts.limit          required row cap (newest-N, applied in SQL —
+ * @param {number} [opts.limit]        row cap (newest-N, applied in SQL —
  *                                     skipped rows are not backfilled, matching
- *                                     the sample path's historical behavior)
+ *                                     the sample path's historical behavior);
+ *                                     required in windowed mode
  * @param {string|Date} [opts.since]   optional created_at lower bound
+ * @param {number} [opts.exec_id]      load one specific execution (see above)
  * @returns {Promise<{
- *   rows: Array<{exec_id:number, ts:*, event_type:string|null,
+ *   rows: Array<{exec_id:number, ts:*, status:string, event_type:string|null,
  *                envelope:object, fidelity:'full'}>,
- *   unparseable_skipped: number
- * }>}  newest first.
+ *   unparseable_skipped: number,
+ *   window_total?: number,
+ *   not_found?: 'no_execution'|'unparseable'
+ * }>}  newest first (oldest first when since given).
  */
-async function fetchEnvelopes(db, { limit, since } = {}) {
+async function fetchEnvelopes(db, { limit, since, exec_id } = {}) {
+  // ── exec_id mode: one specific execution ──
+  if (exec_id != null) {
+    const id = Number(exec_id);
+    if (!Number.isInteger(id) || id < 1) {
+      throw new Error('fetchEnvelopes: exec_id must be a positive integer');
+    }
+    const [rows] = await db.query(
+      `SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type
+         FROM phone_ingest_executions e
+         LEFT JOIN phone_event_log pel ON pel.id = e.event_log_id
+        WHERE e.id = ?`,
+      [id]
+    );
+    if (!rows.length) return { rows: [], unparseable_skipped: 0, not_found: 'no_execution' };
+    const row = rows[0];
+    const envelope = _parseRawInput(row.raw_input);
+    if (!envelope) return { rows: [], unparseable_skipped: 1, not_found: 'unparseable' };
+    return {
+      rows: [{
+        exec_id:    row.exec_id,
+        ts:         row.created_at,
+        status:     row.status,
+        event_type: row.event_type != null ? row.event_type : null,
+        envelope,
+        fidelity:   'full',
+      }],
+      unparseable_skipped: 0,
+    };
+  }
+
+  // ── windowed mode ──
   const lim = Number(limit);
   if (!Number.isInteger(lim) || lim < 1) {
     throw new Error('fetchEnvelopes: limit must be a positive integer');
@@ -134,16 +184,17 @@ async function fetchEnvelopes(db, { limit, since } = {}) {
     where.push('e.created_at >= ?');
     params.push(_normSince(since));
   }
-  params.push(lim);
+  // since anchors the window at its START (ASC); otherwise newest-N (DESC).
+  const order = (since != null && since !== '') ? 'ASC' : 'DESC';
 
   const [rows] = await db.query(
-    `SELECT e.id AS exec_id, e.raw_input, e.created_at, pel.event_type
+    `SELECT e.id AS exec_id, e.raw_input, e.created_at, e.status, pel.event_type
        FROM phone_ingest_executions e
        JOIN phone_event_log pel ON pel.id = e.event_log_id
       WHERE ${where.join(' AND ')}
-      ORDER BY e.id DESC
+      ORDER BY e.id ${order}
       LIMIT ?`,
-    params
+    params.concat([lim])
   );
 
   const out = [];
@@ -154,10 +205,22 @@ async function fetchEnvelopes(db, { limit, since } = {}) {
     out.push({
       exec_id:    row.exec_id,
       ts:         row.created_at,
+      status:     row.status,
       event_type: row.event_type != null ? row.event_type : null,
       envelope,
       fidelity:   'full',
     });
+  }
+
+  // Truncation visibility for since-anchored windows.
+  if (since != null && since !== '') {
+    const [[cnt]] = await db.query(
+      `SELECT COUNT(*) AS n
+         FROM phone_ingest_executions e
+        WHERE ${where.join(' AND ')}`,
+      params
+    );
+    return { rows: out, unparseable_skipped: unparseable, window_total: Number(cnt.n) };
   }
 
   return { rows: out, unparseable_skipped: unparseable };

@@ -33,11 +33,13 @@
  *      On truncated rows these stay ABSENT (present:false → "not captured in
  *      this sample"); they remain valid, absent-clickable catalog fields.
  *
- * ONE RECONSTRUCTION IMPLEMENTATION (Slice 10A):
- *   fetchSyntheticEnvelopes(db, {limit, since}) is the single windowed corpus
- *   fetcher. Both consumers ride it:
- *     - getSampleEvents (field-discovery panel) — {limit: SAMPLE_LIMIT}
- *     - the rules/test-match endpoint — caller-supplied limit/since
+ * ONE RECONSTRUCTION IMPLEMENTATION (Slice 10A; modes widened in Slice 10C):
+ *   fetchSyntheticEnvelopes(db, {limit, since, scope, exec_id}) is the single
+ *   corpus fetcher. Both consumers ride it:
+ *     - getSampleEvents (field-discovery panel) — {limit: SAMPLE_LIMIT},
+ *       scope 'logged' (default) — the 10A query, byte-for-byte
+ *     - the rules/test-match endpoint — scope 'wide' (suppressed/skipped
+ *       events included; duplicates excluded) or exec_id targeting
  *   Each returned row carries `fidelity`: 'full' when that row's raw_input was
  *   the intact envelope and the 4 raw-only fields were overlaid,
  *   'reconstructed' otherwise (clean-column rebuild only).
@@ -220,40 +222,143 @@ function _normSince(since) {
 
 /**
  * Slice 10A — THE windowed corpus fetcher (single reconstruction impl).
+ * Slice 10C — scope widening, exec_id targeting, since-anchored windows.
  *
- * Fetches the newest `limit` LOGGED email executions (optionally bounded by
- * created_at >= since) and reconstructs a synthetic envelope for each — the
- * exact object the production matcher receives.
+ * Fetches email executions and reconstructs a synthetic envelope for each —
+ * the exact object the production matcher receives. Three modes:
+ *
+ *   exec_id  — load exactly ONE execution by id, NO status filter at all
+ *              (even a `duplicate` reconstructs via its email_log_id; the
+ *              whole point is "test my rule against THIS email"). Not found /
+ *              no email_log row → { rows: [], not_found: <marker> } so the
+ *              route can 404 with a precise message. scope/since/limit are
+ *              ignored in this mode.
+ *   windowed — scope 'logged' (default): TODAY'S 10A query, byte-for-byte —
+ *              the sample panel's teaching set must not shift (and must not
+ *              absorb duplicates). scope 'wide' (test-match): every execution
+ *              that represents a real, distinct, reconstructable email —
+ *              status != 'duplicate' (duplicates alias the ORIGINAL's
+ *              email_log row; including them would put the same message in
+ *              the corpus 2–4× and inflate match counts) AND email_log_id IS
+ *              NOT NULL (drops only the handful of auth/validation orphans).
+ *              `log` is LEFT-joined in wide scope: suppressed executions have
+ *              log_id NULL (suppression killed the structured log row) — the
+ *              very rows rules are usually written FOR. With no log_extra,
+ *              reconstruction falls back per the module header
+ *              (headers.message_id ← email_log.message_id; auth.* carry the
+ *              documented present:true/value:null contract).
+ *   since    — (windowed only) the window now STARTS at the bound:
+ *              ORDER BY id ASC from created_at >= since, so "since June 25"
+ *              includes June 25 rather than the newest N that happen to
+ *              postdate it. window_total (COUNT over the same WHERE) is
+ *              returned so callers can flag truncation. Without since, the
+ *              newest-N DESC behavior is unchanged.
  *
  * @param {object} db
  * @param {object} opts
- * @param {number} opts.limit          required row cap (newest-N)
+ * @param {number} [opts.limit]        row cap — required in windowed mode
  * @param {string|Date} [opts.since]   optional created_at lower bound
- * @returns {Promise<{rows: Array<{exec_id:number, ts:*, envelope:object,
- *   fidelity:'full'|'reconstructed'}>}>}  newest first.
+ * @param {'logged'|'wide'} [opts.scope='logged']  corpus scope (windowed mode)
+ * @param {number} [opts.exec_id]      load one specific execution (see above)
+ * @returns {Promise<{rows: Array<{exec_id:number, ts:*, status:string,
+ *   envelope:object, fidelity:'full'|'reconstructed'}>,
+ *   window_total?: number, not_found?: 'no_execution'|'no_email_log'}>}
+ *   Windowed rows: newest first (oldest first when since given). `status` is
+ *   the execution status ('logged'|'skipped_suppression'|…) — carried on
+ *   wide/exec_id rows; the scope-'logged' query is untouched (its SQL is a
+ *   regression surface) so its rows do not carry it, and its only consumer
+ *   (getSampleEvents) never reads it.
  *   fidelity 'full'          → raw_input was intact; all 12 catalog fields real
  *   fidelity 'reconstructed' → clean-column rebuild; the 4 raw-only fields absent
  *   (Email reconstruction never SKIPS a row — contrast phone's
  *   unparseable_skipped — so there is no skip count here.)
  */
-async function fetchSyntheticEnvelopes(db, { limit, since } = {}) {
+async function fetchSyntheticEnvelopes(db, { limit, since, scope = 'logged', exec_id } = {}) {
+  // ── exec_id mode: one specific execution, no status filter ──
+  if (exec_id != null) {
+    const id = Number(exec_id);
+    if (!Number.isInteger(id) || id < 1) {
+      throw new Error('fetchSyntheticEnvelopes: exec_id must be a positive integer');
+    }
+    const [rows] = await db.query(
+      `SELECT eie.id          AS exec_id,
+              eie.created_at  AS created_at,
+              eie.status      AS status,
+              eie.raw_input   AS raw_input,
+              el.id           AS el_id,
+              el.from_email   AS from_email,
+              el.to_email     AS to_email,
+              el.subject      AS subject,
+              el.body         AS body,
+              el.source       AS el_source,
+              el.message_id   AS el_mid,
+              l.log_extra     AS log_extra
+         FROM email_ingest_executions eie
+         LEFT JOIN email_log el ON el.id    = eie.email_log_id
+         LEFT JOIN log       l  ON l.log_id = eie.log_id
+        WHERE eie.id = ?`,
+      [id]
+    );
+    if (!rows.length) return { rows: [], not_found: 'no_execution' };
+    const row = rows[0];
+    if (row.el_id == null) return { rows: [], not_found: 'no_email_log' };
+    const intact = _intactEnvelope(row.raw_input);
+    return {
+      rows: [{
+        exec_id:  row.exec_id,
+        ts:       row.created_at,
+        status:   row.status,
+        envelope: _buildEnvelope(row, intact),
+        fidelity: intact ? 'full' : 'reconstructed',
+      }],
+    };
+  }
+
+  // ── windowed mode ──
   const lim = Number(limit);
   if (!Number.isInteger(lim) || lim < 1) {
     throw new Error('fetchSyntheticEnvelopes: limit must be a positive integer');
   }
+  if (scope !== 'logged' && scope !== 'wide') {
+    throw new Error("fetchSyntheticEnvelopes: scope must be 'logged' or 'wide'");
+  }
 
-  const where = [`eie.status = 'logged'`];
+  const where = scope === 'wide'
+    ? [`eie.status != 'duplicate'`, `eie.email_log_id IS NOT NULL`]
+    : [`eie.status = 'logged'`];
   const params = [];
   if (since != null && since !== '') {
     where.push('eie.created_at >= ?');
     params.push(_normSince(since));
   }
-  params.push(lim);
+  // since anchors the window at its START (ASC); otherwise newest-N (DESC).
+  const order = (since != null && since !== '') ? 'ASC' : 'DESC';
 
-  // status='logged' → rows that actually produced an email_log + log row, so
-  // the joins resolve and we have something to reconstruct. Newest first.
+  // scope 'logged': rows that produced an email_log + log row — the joins
+  // resolve and the SQL below stays byte-identical to 10A (sample-panel
+  // regression surface; no status column added, no join loosened).
+  // scope 'wide':   LEFT JOIN log — suppressed rows have log_id NULL; the
+  // eie.status column rides along for the UI's status badges.
   const [rows] = await db.query(
-    `SELECT eie.id          AS exec_id,
+    scope === 'wide'
+      ? `SELECT eie.id          AS exec_id,
+            eie.created_at  AS created_at,
+            eie.status      AS status,
+            eie.raw_input   AS raw_input,
+            el.from_email   AS from_email,
+            el.to_email     AS to_email,
+            el.subject      AS subject,
+            el.body         AS body,
+            el.source       AS el_source,
+            el.message_id   AS el_mid,
+            l.log_extra     AS log_extra
+       FROM email_ingest_executions eie
+       JOIN email_log el ON el.id      = eie.email_log_id
+       LEFT JOIN log l  ON l.log_id   = eie.log_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY eie.id ${order}
+      LIMIT ?`
+      : `SELECT eie.id          AS exec_id,
             eie.created_at  AS created_at,
             eie.raw_input   AS raw_input,
             el.from_email   AS from_email,
@@ -267,20 +372,35 @@ async function fetchSyntheticEnvelopes(db, { limit, since } = {}) {
        JOIN email_log el ON el.id      = eie.email_log_id
        JOIN log       l  ON l.log_id   = eie.log_id
       WHERE ${where.join(' AND ')}
-      ORDER BY eie.id DESC
+      ORDER BY eie.id ${order}
       LIMIT ?`,
-    params
+    params.concat([lim])
   );
 
   const out = rows.map((row) => {
     const intact = _intactEnvelope(row.raw_input);
-    return {
+    const shaped = {
       exec_id:  row.exec_id,
       ts:       row.created_at,
       envelope: _buildEnvelope(row, intact),
       fidelity: intact ? 'full' : 'reconstructed',
     };
+    if (scope === 'wide') shaped.status = row.status;
+    return shaped;
   });
+
+  // Truncation visibility: when the caller anchored the window with `since`,
+  // report how many rows the WHERE actually covers so "first N of M" is
+  // possible client-side.
+  if (since != null && since !== '') {
+    const [[cnt]] = await db.query(
+      `SELECT COUNT(*) AS n
+         FROM email_ingest_executions eie
+        WHERE ${where.join(' AND ')}`,
+      params
+    );
+    return { rows: out, window_total: Number(cnt.n) };
+  }
 
   return { rows: out };
 }
