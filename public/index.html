@@ -462,9 +462,14 @@
     <button class="hdr-hamburger" onclick="toggleMobileSidebar()" aria-label="Menu">
       <i class="fa-solid fa-bars"></i>
     </button>
-    <img class="hdr-logo" src="https://iili.io/Jy2nXHv.md.png" alt="4LSG YisraCase" />
+  <a href="https://legalsolutions.group/" target="_blank" rel="noopener noreferrer">
+    <img
+      class="hdr-logo"
+      src="https://legalsolutions.group/assets/lsg-logo.webp"
+      alt="4LSG YisraCase">
+  </a>
     <div class="hdr-search">
-      <input id="qpInput" placeholder="Name, Phone, Case # or ID"
+      <input style="width:220px;" id="qpInput" placeholder="Name, Phone, Case # or ID"
         onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value, null, null, 10);}" />
       <button onclick="quickPick(E('qpInput').value, null, null, 10)">Go</button>
     </div>
@@ -2460,8 +2465,9 @@ async function loadFirmData() {
 
  async function loginBlocking() {
   await Swal.fire({
-    title: "Please log in",
+    title: "Welcome to YisraCase",
     html: `
+        <image src="assets/icon-192.png"><br>
         <label class="input-label">Username: </label>
         <input id="username" value="${AUTH_STATE.username || ""}">
         <br><br>
