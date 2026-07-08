@@ -26,7 +26,7 @@
 const express         = require('express');
 const router          = express.Router();
 const jwtOrApiKey     = require('../lib/auth.jwtOrApiKey');
-const { enrollContact, enrollContactByTemplateId, cancelSequences, validateTemplateFilters, scheduleStepJob } = require('../lib/sequenceEngine');
+const { enrollContact, enrollContactByTemplateId, previewEnrollmentSteps, cancelSequences, validateTemplateFilters, scheduleStepJob } = require('../lib/sequenceEngine');
 const toJson = v => v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v));
 
 // Normalize the optional `type` column. As of Slice B, sequence_templates.type
@@ -919,6 +919,110 @@ router.post('/sequences/enroll', jwtOrApiKey, async (req, res) => {
     res.status(201).json({ success: true, ...result });
   } catch (err) {
     res.status(500).json({ error: 'Failed to enroll contact', message: err.message });
+  }
+});
+
+// POST /sequences/preview — Slice 8A
+//
+// Zero-side-effect dry run of a would-be enrollment. Returns, per step, the
+// computed fire time, skip verdicts, and the fully resolved action_config (the
+// exact message text the contact would receive). Performs ONLY reads — no
+// dispatch, no scheduled_jobs / enrollments / step_log writes.
+//
+// Body — exactly ONE of:
+//   { template_id, contact_id, trigger_data? }   hypothetical enrollment
+//   { enrollment_id }                             seed from an existing enrollment
+//                                                 (its status is irrelevant)
+//
+// trigger_data (hypothetical only) must be a plain object; defaults to {}.
+// 404 for a missing template / enrollment; 400 for a missing contact so a
+// preview never silently resolves blank placeholders.
+//
+// Response: { success: true, preview: <engine return> }
+router.post('/sequences/preview', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const { template_id, contact_id, enrollment_id, trigger_data } = req.body || {};
+
+  const present       = v => v !== undefined && v !== null && v !== '';
+  const hasEnrollment = present(enrollment_id);
+  const hasTemplate   = present(template_id);
+  const hasContact    = present(contact_id);
+
+  // ── Exactly one shape ──
+  if (hasEnrollment && (hasTemplate || hasContact)) {
+    return res.status(400).json({
+      error: 'Provide either { template_id, contact_id } or { enrollment_id }, not both',
+    });
+  }
+  if (!hasEnrollment && !hasTemplate && !hasContact) {
+    return res.status(400).json({
+      error: 'Provide either { template_id, contact_id } or { enrollment_id }',
+    });
+  }
+  if (!hasEnrollment && !(hasTemplate && hasContact)) {
+    return res.status(400).json({
+      error: 'template_id and contact_id are both required for a hypothetical preview',
+    });
+  }
+
+  // trigger_data — only meaningful for the hypothetical shape; validate its
+  // shape whenever present (array/primitive → 400), default {}.
+  let triggerData = {};
+  if (trigger_data !== undefined && trigger_data !== null) {
+    if (typeof trigger_data !== 'object' || Array.isArray(trigger_data)) {
+      return res.status(400).json({ error: 'trigger_data must be a JSON object' });
+    }
+    triggerData = trigger_data;
+  }
+
+  try {
+    if (hasEnrollment) {
+      const enrollmentIdInt = parseInt(enrollment_id, 10);
+      if (!Number.isInteger(enrollmentIdInt) || enrollmentIdInt <= 0) {
+        return res.status(400).json({ error: 'enrollment_id must be a positive integer' });
+      }
+      const [[enr]] = await db.query(
+        `SELECT id FROM sequence_enrollments WHERE id = ?`,
+        [enrollmentIdInt]
+      );
+      if (!enr) return res.status(404).json({ error: 'Enrollment not found' });
+
+      const preview = await previewEnrollmentSteps(db, { enrollment_id: enrollmentIdInt });
+      return res.json({ success: true, preview });
+    }
+
+    // Hypothetical shape.
+    const templateIdInt = parseInt(template_id, 10);
+    const contactIdInt  = parseInt(contact_id, 10);
+    if (!Number.isInteger(templateIdInt) || templateIdInt <= 0) {
+      return res.status(400).json({ error: 'template_id must be a positive integer' });
+    }
+    if (!Number.isInteger(contactIdInt) || contactIdInt <= 0) {
+      return res.status(400).json({ error: 'contact_id must be a positive integer' });
+    }
+
+    const [[tpl]] = await db.query(
+      `SELECT id FROM sequence_templates WHERE id = ?`,
+      [templateIdInt]
+    );
+    if (!tpl) return res.status(404).json({ error: 'Template not found' });
+
+    const [[contact]] = await db.query(
+      `SELECT contact_id FROM contacts WHERE contact_id = ?`,
+      [contactIdInt]
+    );
+    if (!contact) {
+      return res.status(400).json({ error: `contact_id ${contactIdInt} does not exist` });
+    }
+
+    const preview = await previewEnrollmentSteps(db, {
+      template_id:  templateIdInt,
+      contact_id:   contactIdInt,
+      trigger_data: triggerData,
+    });
+    res.json({ success: true, preview });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to preview sequence', message: err.message });
   }
 });
 
