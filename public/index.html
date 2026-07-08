@@ -117,6 +117,31 @@
       cursor: pointer; font-weight: 500; font-size: 14px;
     }
     #appHeader .hdr-search button:hover { background: var(--accent-dark); }
+
+    /* Quick search inside the Home tab — hidden by default, revealed only on
+       narrow viewports (see the max-width:768px block) where the header
+       search is hidden. */
+    #tabHome .home-search { display: none; }
+    #tabHome .home-search {
+      gap: 8px; margin: 18px auto 0; max-width: 320px; padding: 0 8px;
+    }
+    #tabHome .home-search input {
+      flex: 1; height: 40px; padding: 0 14px;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 15px; outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+      background: var(--surface-bg); color: var(--text);
+    }
+    #tabHome .home-search input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(7,173,239,0.15);
+    }
+    #tabHome .home-search button {
+      height: 40px; padding: 0 18px;
+      background: var(--accent); color: #fff;
+      border: none; border-radius: 6px;
+      cursor: pointer; font-weight: 500; font-size: 15px;
+    }
+    #tabHome .home-search button:hover { background: var(--accent-dark); }
     #appHeader .hdr-spacer { flex: 1; }
     #appHeader .hdr-right {
       display: flex; align-items: center; gap: 8px; flex-shrink: 0;
@@ -293,6 +318,8 @@
       #appHeader .hdr-hamburger { display: block !important; }
       #appHeader .hdr-search { display: none; }
       #appHeader .hdr-greeting { display: none; }
+      /* Header search is hidden here, so surface the Home-tab search instead. */
+      #tabHome .home-search { display: flex; }
       /* Firm clock stays (sidebar is a hidden drawer on mobile) — drop the
          date and tighten it so just the time fits the narrow bar. */
       #appHeader .hdr-clock { padding: 4px 10px; font-size: 12px; gap: 5px; }
@@ -609,6 +636,12 @@
     <button class="home-btn" onclick="openMainTab('tabSettings')">
       <i class="fa-solid fa-gear fa-2xl"></i><br /><br />Settings
     </button>
+    <!-- Quick search — only shown on narrow viewports where the header search is hidden -->
+    <div class="home-search">
+      <input styleid="qpInputHome" placeholder="Name, Phone, Case # or ID"
+        onkeydown="if (event.key === 'Enter'){event.preventDefault();quickPick(this.value, null, null, 10);}" />
+      <button onclick="quickPick(E('qpInputHome').value, null, null, 10)">Go</button>
+    </div>
   </div>
 
   <div id="tabBills" class="tab-main">
