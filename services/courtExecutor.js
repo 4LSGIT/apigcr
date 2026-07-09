@@ -173,9 +173,9 @@ async function insertCourtAiLog(db, row) {
   const [r] = await db.query(
     `INSERT INTO court_ai_log
        (message_id, ai_call_id, dry_run, classification, case_number,
-        resolved_case_id, case_name, actions_json, citations_json,
+        resolved_case_id, case_name, actions_json, citations_json, skipped_json,
         outcome, review_reason, raw_response)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       row.message_id,
       row.ai_call_id ?? null,
@@ -186,6 +186,10 @@ async function insertCourtAiLog(db, row) {
       row.case_name ?? null,
       row.actions_json == null ? null : JSON.stringify(row.actions_json),
       row.citations_json == null ? null : JSON.stringify(row.citations_json),
+      // skipped_json: only the two dispatch-path writers (STEP 6 + mid-dispatch
+      // error) pass this; every other writer omits it → NULL. mysql2 JSON
+      // columns need explicit stringify on write.
+      row.skipped_json == null ? null : JSON.stringify(row.skipped_json),
       row.outcome,
       row.review_reason ?? null,
       row.raw_response == null ? null : JSON.stringify(row.raw_response),
@@ -704,6 +708,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       case_name: caseName,
       actions_json: payload.actions || null,
       citations_json: citation,
+      skipped_json: skipped.length ? skipped : null,
       outcome: 'error',
       review_reason: reviewReason,
       raw_response: payload,
@@ -741,6 +746,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     case_name: caseName,
     actions_json: payload.actions || null,
     citations_json: citation,
+    skipped_json: skipped.length ? skipped : null,
     outcome,
     review_reason: reviewReason,
     raw_response: payload,
