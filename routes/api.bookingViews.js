@@ -48,7 +48,7 @@ const IDENTITY_MODES = ['public', 'prefill'];
 
 // Columns the API accepts on create/update (everything except id/timestamps).
 const FIELDS = [
-  'slug', 'active', 'provider_mode', 'provider_ids',
+  'slug', 'active', 'provider_mode', 'provider_ids', 'page_windows',
   'appt_type', 'appt_length', 'platform',
   'buffer_min', 'min_notice_min', 'horizon_days', 'granularity_min',
   'identity_mode', 'source_tag', 'collect_note',
@@ -131,6 +131,58 @@ async function validateView(db, v) {
     return { error: `Unknown or non-appointment provider id(s): ${missing.join(', ')}` };
   }
   out.provider_ids = pids;
+
+  // page_windows — optional per-view weekly time restriction (Slice A).
+  // null/''/[]/undefined → unrestricted (stored NULL). Otherwise an array of
+  // { weekday:0–6, start?:'HH:mm', end?:'HH:mm' } (both times or neither;
+  // start < end). Max 28 entries. Extra keys are stripped, not rejected.
+  const PW_ERR = 'page_windows must be null or an array of {weekday:0-6, start?:"HH:mm", end?:"HH:mm"} (both times or neither; start < end).';
+  let pw = v.page_windows;
+  if (pw === undefined || pw === null || pw === '') {
+    out.page_windows = null;
+  } else {
+    if (typeof pw === 'string') {
+      try { pw = JSON.parse(pw); } catch { return { error: PW_ERR }; }
+    }
+    if (!Array.isArray(pw)) {
+      return { error: PW_ERR };
+    } else if (pw.length === 0) {
+      out.page_windows = null;
+    } else if (pw.length > 28) {
+      return { error: 'page_windows may not exceed 28 entries.' };
+    } else {
+      const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+      const norm = [];
+      for (const entry of pw) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          return { error: PW_ERR };
+        }
+        const wd = Number(entry.weekday);
+        if (!Number.isInteger(wd) || wd < 0 || wd > 6) {
+          return { error: 'page_windows entry weekday must be an integer 0–6.' };
+        }
+        const hasStart = entry.start !== undefined && entry.start !== null && entry.start !== '';
+        const hasEnd   = entry.end   !== undefined && entry.end   !== null && entry.end   !== '';
+        if (hasStart !== hasEnd) {
+          return { error: 'Each page_windows entry needs both start and end, or neither.' };
+        }
+        if (!hasStart) {
+          norm.push({ weekday: wd }); // all-day
+        } else {
+          const s = String(entry.start);
+          const e = String(entry.end);
+          if (!HHMM.test(s) || !HHMM.test(e)) {
+            return { error: 'page_windows start/end must be "HH:mm" (00:00–23:59).' };
+          }
+          if (!(s < e)) {
+            return { error: 'page_windows entry start must be earlier than end.' };
+          }
+          norm.push({ weekday: wd, start: s, end: e });
+        }
+      }
+      out.page_windows = norm;
+    }
+  }
 
   // appt_type / title — NOT NULL columns
   const apptType = trimOrNull(v.appt_type, 60);
@@ -215,6 +267,9 @@ function rowOut(row) {
   if (typeof r.provider_ids === 'string') {
     try { r.provider_ids = JSON.parse(r.provider_ids); } catch { r.provider_ids = []; }
   }
+  if (typeof r.page_windows === 'string') {
+    try { r.page_windows = JSON.parse(r.page_windows); } catch { r.page_windows = null; }
+  }
   return r;
 }
 
@@ -282,9 +337,11 @@ router.post('/api/booking-views', jwtOrApiKey, async (req, res) => {
     }
     const v = result.values;
     const cols = FIELDS;
-    const vals = cols.map(c =>
-      c === 'provider_ids' ? JSON.stringify(v.provider_ids) : v[c]
-    );
+    const vals = cols.map(c => {
+      if (c === 'provider_ids') return JSON.stringify(v.provider_ids); // NOT NULL
+      if (c === 'page_windows') return v.page_windows == null ? null : JSON.stringify(v.page_windows);
+      return v[c];
+    });
     const [ins] = await req.db.query(
       `INSERT INTO booking_views (${cols.join(', ')})
        VALUES (${cols.map(() => '?').join(', ')})`,
@@ -330,9 +387,11 @@ router.patch('/api/booking-views/:id', jwtOrApiKey, async (req, res) => {
     }
     const v = result.values;
     const sets = FIELDS.map(c => `${c} = ?`).join(', ');
-    const vals = FIELDS.map(c =>
-      c === 'provider_ids' ? JSON.stringify(v.provider_ids) : v[c]
-    );
+    const vals = FIELDS.map(c => {
+      if (c === 'provider_ids') return JSON.stringify(v.provider_ids); // NOT NULL
+      if (c === 'page_windows') return v.page_windows == null ? null : JSON.stringify(v.page_windows);
+      return v[c];
+    });
     await req.db.query(
       `UPDATE booking_views SET ${sets} WHERE id = ?`,
       [...vals, id]

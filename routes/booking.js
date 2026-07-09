@@ -162,6 +162,67 @@ const postLimited = makeLimiter(10 * 60 * 1000, 5);   // bookings
 // Helpers — view loading
 // ─────────────────────────────────────────────────────────────
 
+const PW_HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Validate + normalize a booking_views.page_windows value (the optional
+ * per-view weekly time restriction). Pure — the caller decides fail-open policy.
+ *
+ * mysql2 returns the json column already parsed; a string is tolerated
+ * (defensive, mirroring provider_ids). Accepted shape:
+ *   null | [] → unrestricted            → { ok:true,  value:null }
+ *   [{ weekday:0–6, start?:'HH:mm', end?:'HH:mm' }, …]
+ *     (both start/end or neither; start < end when present)
+ *                                        → { ok:true,  value:[normalized] }
+ *   anything malformed                   → { ok:false, reason }
+ *
+ * Normalized entries carry only { weekday, start?, end? } (extra keys stripped).
+ *
+ * @param {*} raw — booking_views.page_windows
+ * @returns {{ok:true, value:?object[]} | {ok:false, reason:string}}
+ */
+function normalizePageWindows(raw) {
+  let arr = raw;
+  if (arr === undefined || arr === null) return { ok: true, value: null };
+  if (typeof arr === 'string') {
+    const t = arr.trim();
+    if (!t) return { ok: true, value: null };
+    try { arr = JSON.parse(t); } catch { return { ok: false, reason: 'not valid JSON' }; }
+  }
+  if (!Array.isArray(arr)) return { ok: false, reason: 'not an array' };
+  if (arr.length === 0) return { ok: true, value: null };
+
+  const out = [];
+  for (const entry of arr) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return { ok: false, reason: 'entry is not an object' };
+    }
+    const wd = Number(entry.weekday);
+    if (!Number.isInteger(wd) || wd < 0 || wd > 6) {
+      return { ok: false, reason: `entry weekday ${JSON.stringify(entry.weekday)} is not an int 0–6` };
+    }
+    const hasStart = entry.start !== undefined && entry.start !== null && entry.start !== '';
+    const hasEnd   = entry.end   !== undefined && entry.end   !== null && entry.end   !== '';
+    if (hasStart !== hasEnd) {
+      return { ok: false, reason: 'entry has exactly one of start/end (need both or neither)' };
+    }
+    if (!hasStart) {
+      out.push({ weekday: wd }); // all-day
+    } else {
+      const s = String(entry.start);
+      const e = String(entry.end);
+      if (!PW_HHMM_RE.test(s) || !PW_HHMM_RE.test(e)) {
+        return { ok: false, reason: `entry start/end not "HH:mm" (${s} / ${e})` };
+      }
+      if (!(s < e)) {
+        return { ok: false, reason: `entry start ${s} is not earlier than end ${e}` };
+      }
+      out.push({ weekday: wd, start: s, end: e });
+    }
+  }
+  return { ok: true, value: out };
+}
+
 /**
  * Load an active booking view by slug, parse provider_ids, and sanity-check
  * config. Misconfigured views (bad provider list, appt_length outside the
@@ -213,6 +274,27 @@ async function loadView(db, slug) {
   }
 
   view._provider_ids = pids; // parsed + validated
+
+  // page_windows — optional per-view weekly time restriction (Slice A).
+  // FAIL-OPEN: unlike the misconfigured-view 404 above, a broken restriction
+  // must NOT block clients. Invalid → serve NORMAL availability + alert staff.
+  const pw = normalizePageWindows(view.page_windows);
+  if (pw.ok) {
+    view._page_windows = pw.value;
+  } else {
+    view._page_windows = null; // serve regular availability
+    alert(db, {
+      source: 'app', kind: 'booking_view_windows_invalid', severity: 'error',
+      group_key: `booking_view_windows:${view.slug}`,
+      title: `Booking view "${view.slug}" has invalid page_windows`,
+      message:
+        `booking_views.id=${view.id} page_windows failed validation ` +
+        `(${pw.reason}; value=${JSON.stringify(view.page_windows)}). ` +
+        `The time restriction is being IGNORED — the view is serving regular ` +
+        `availability until this is fixed.`,
+    });
+  }
+
   return view;
 }
 
@@ -273,19 +355,27 @@ router.get('/api/book/:slug/config', async (req, res) => {
         });
     }
 
+    // Per-view restricted weekdays (Slice A): null when unrestricted, else a
+    // sorted unique list of weekday ints (0=Sun…6=Sat). Weekday numbers ONLY —
+    // no times are exposed. Slice B's widget grays out date chips from this.
+    const allowed_weekdays = view._page_windows
+      ? [...new Set(view._page_windows.map(w => Number(w.weekday)))].sort((a, b) => a - b)
+      : null;
+
     const ts = Date.now();
     res.json({
-      title:         view.title,
-      subtitle:      view.subtitle,
-      accent_color:  view.accent_color,
-      logo_url:      view.logo_url,
-      logo_link_url: view.logo_link_url,
-      platform:      view.platform,
-      appt_type:     view.appt_type,
-      appt_length:   view.appt_length,
-      identity_mode: view.identity_mode,
-      collect_note:  !!view.collect_note,
-      horizon_days:  view.horizon_days,
+      title:           view.title,
+      subtitle:        view.subtitle,
+      accent_color:    view.accent_color,
+      logo_url:        view.logo_url,
+      logo_link_url:   view.logo_link_url,
+      platform:        view.platform,
+      appt_type:       view.appt_type,
+      appt_length:     view.appt_length,
+      identity_mode:   view.identity_mode,
+      collect_note:    !!view.collect_note,
+      horizon_days:    view.horizon_days,
+      allowed_weekdays,
       providers,
       ts,
       sig: signTs(ts),
@@ -404,13 +494,14 @@ router.get('/api/book/:slug/slots', async (req, res) => {
     }
 
     const perProvider = await getSlots(req.db, {
-      providerIds:    sel.pids,
-      appt_length:    view.appt_length,
-      buffer_min:     view.buffer_min,
-      from:           dateStr,
-      to:             dateStr,
-      granularity:    view.granularity_min,
-      min_notice_min: view.min_notice_min,
+      providerIds:     sel.pids,
+      appt_length:     view.appt_length,
+      buffer_min:      view.buffer_min,
+      from:            dateStr,
+      to:              dateStr,
+      granularity:     view.granularity_min,
+      min_notice_min:  view.min_notice_min,
+      restrict_windows: view._page_windows,
     });
 
     // Flat array: union across providers (only any_auto has >1), deduped,
@@ -574,13 +665,14 @@ async function bookUnderLock(db, view, providerId, dateStr, start, contactId, no
     // (getSlots reads through `conn` — a PoolConnection supports .query the
     // same as the pool.)
     const fresh = await getSlots(conn, {
-      providerIds:    [providerId],
-      appt_length:    view.appt_length,
-      buffer_min:     view.buffer_min,
-      from:           dateStr,
-      to:             dateStr,
-      granularity:    view.granularity_min,
-      min_notice_min: view.min_notice_min,
+      providerIds:     [providerId],
+      appt_length:     view.appt_length,
+      buffer_min:      view.buffer_min,
+      from:            dateStr,
+      to:              dateStr,
+      granularity:     view.granularity_min,
+      min_notice_min:  view.min_notice_min,
+      restrict_windows: view._page_windows, // enforcement: out-of-window start 409s
     });
     if (!(fresh[providerId] || []).includes(start)) return null;
 
@@ -750,13 +842,14 @@ router.post('/api/book/:slug', async (req, res) => {
       // least-loaded first. The per-candidate re-check happens inside each
       // provider's lock; this ordering pass is just the pick heuristic.
       const perProvider = await getSlots(req.db, {
-        providerIds:    view._provider_ids,
-        appt_length:    view.appt_length,
-        buffer_min:     view.buffer_min,
-        from:           dateStr,
-        to:             dateStr,
-        granularity:    view.granularity_min,
-        min_notice_min: view.min_notice_min,
+        providerIds:     view._provider_ids,
+        appt_length:     view.appt_length,
+        buffer_min:      view.buffer_min,
+        from:            dateStr,
+        to:              dateStr,
+        granularity:     view.granularity_min,
+        min_notice_min:  view.min_notice_min,
+        restrict_windows: view._page_windows,
       });
       candidates = await anyAutoCandidates(req.db, view, dateStr, start, perProvider);
       if (!candidates.length) {

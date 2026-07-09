@@ -128,6 +128,38 @@ function subtractIntervals(windows, busy) {
 }
 
 /**
+ * Intersect two interval lists. Each input is unioned first (so overlapping
+ * or adjacent fragments collapse), then a two-pointer walk emits the overlap
+ * of every pair. Both half-open [start, end): touching intervals (a.end ===
+ * b.start) do NOT overlap and yield nothing. Result is sorted and disjoint
+ * (guaranteed by the union preprocessing). Pure.
+ *
+ * Used by the per-view booking-window restriction: bookable = availability ∩
+ * view-windows. Intersection can only ever REMOVE time, never add it.
+ *
+ * @param {{start:number,end:number}[]} a
+ * @param {{start:number,end:number}[]} b
+ * @returns {{start:number,end:number}[]} sorted, disjoint intersection
+ */
+function intersectIntervals(a, b) {
+  const A = unionIntervals(a);
+  const B = unionIntervals(b);
+  if (A.length === 0 || B.length === 0) return [];
+
+  const out = [];
+  let i = 0, j = 0;
+  while (i < A.length && j < B.length) {
+    const lo = Math.max(A[i].start, B[j].start);
+    const hi = Math.min(A[i].end,   B[j].end);
+    if (lo < hi) out.push({ start: lo, end: hi }); // strict: half-open, no touch
+    // Advance whichever interval ends first (its overlaps are exhausted).
+    if (A[i].end <= B[j].end) i++;
+    else j++;
+  }
+  return out;
+}
+
+/**
  * Snap a zoned DateTime up to the next clock-grid point (inclusive — an
  * on-grid input is returned unchanged, seconds/ms truncated up).
  *
@@ -306,6 +338,13 @@ function normalizeBusyForProvider(providerId, {
  * @param {number} o.granularityMin
  * @param {number} [o.earliestStartMs=-Infinity]
  * @param {string} [o.zone=FIRM_TZ]
+ * @param {?object[]} [o.restrictRows=null] — optional per-view weekly window
+ *        restriction (booking_views.page_windows shape):
+ *        [{ weekday:0–6, start?:'HH:mm', end?:'HH:mm' }, …]. null/undefined =
+ *        no restriction (today's behavior). When non-null the day's working
+ *        windows are INTERSECTED with the entries matching this weekday, so it
+ *        can only ever remove availability. A weekday with NO matching entry is
+ *        closed for this view → []. An entry with no start/end = all-day.
  * @returns {string[]} 'yyyy-MM-dd HH:mm' starts for that day
  */
 /**
@@ -343,13 +382,13 @@ function _providerWorkingWindows(workingRows, fromDay, toDay, zone = FIRM_TZ) {
 
 function computeProviderDaySlots({
   dayStr, workingRows, busy, lengthMin, granularityMin,
-  earliestStartMs = -Infinity, zone = FIRM_TZ,
+  earliestStartMs = -Infinity, zone = FIRM_TZ, restrictRows = null,
 }) {
   const day = DateTime.fromISO(dayStr, { zone });
   if (!day.isValid) return [];
   const weekday = day.weekday % 7; // luxon 1=Mon…7=Sun → 0=Sun…6=Sat
 
-  const windows = [];
+  let windows = [];
   for (const r of workingRows || []) {
     if (Number(r.weekday) !== weekday) continue;
     if (r.active !== undefined && Number(r.active) !== 1) continue;
@@ -362,6 +401,36 @@ function computeProviderDaySlots({
     if (start == null || end == null || end <= start) continue;
     windows.push({ start, end });
   }
+
+  // ── Per-view weekly restriction (booking_views.page_windows) ──
+  // Pure intersection with the entries matching THIS weekday. Can only remove
+  // availability, never add. A restricted view with no entry for the weekday is
+  // closed that day; a zeroed-out intersection falls through the same
+  // windows.length===0 early-return below.
+  if (restrictRows != null) {
+    const dayEntries = (restrictRows || []).filter(r => Number(r.weekday) === weekday);
+    if (dayEntries.length === 0) return []; // weekday not offered by this view
+    const restrictionIntervals = [];
+    for (const r of dayEntries) {
+      const hasTimes = r.start != null && r.start !== '' && r.end != null && r.end !== '';
+      if (hasTimes) {
+        const start = localStrToMs(`${dayStr} ${r.start}:00`, zone);
+        const end   = localStrToMs(`${dayStr} ${r.end}:00`,   zone);
+        if (start == null || end == null || end <= start) continue;
+        restrictionIntervals.push({ start, end });
+      } else {
+        // All-day entry: whole civil day. End via Luxon day arithmetic
+        // (next day's start-of-day) — NOT dayStart+24h, which breaks on DST.
+        restrictionIntervals.push({
+          start: day.startOf('day').toMillis(),
+          end:   day.plus({ days: 1 }).startOf('day').toMillis(),
+        });
+      }
+    }
+    // intersectIntervals([], …) === [] so an empty working set stays empty.
+    windows = intersectIntervals(windows, restrictionIntervals);
+  }
+
   if (windows.length === 0) return []; // no availability rows for this weekday → no slots
 
   const free = subtractIntervals(windows, busy);
@@ -673,6 +742,10 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
  * @param {number}  [opts.min_notice_min=0]
  * @param {DateTime|Date|string} [opts.now] — injectable clock for tests;
  *                                            default DateTime.now() in FIRM_TZ
+ * @param {?object[]} [opts.restrict_windows] — optional per-view weekly window
+ *        restriction (booking_views.page_windows shape). null/undefined = no
+ *        restriction. Threaded verbatim into computeProviderDaySlots; see there.
+ *        Only ever narrows availability (pure intersection).
  * @returns {Promise<Object<string, string[]>>}
  *          { [providerId]: ['YYYY-MM-DD HH:mm', …] } sorted ascending
  */
@@ -684,6 +757,7 @@ async function getSlots(db, {
   granularity = 15,
   min_notice_min = 0,
   now = undefined,
+  restrict_windows = undefined,
 } = {}) {
   // ── Validation ──
   if (!Array.isArray(providerIds) || providerIds.length === 0) {
@@ -706,6 +780,12 @@ async function getSlots(db, {
   }
   if (String(to) < String(from)) {
     throw new Error('getSlots: to must be >= from');
+  }
+  // Light validation only — deep per-entry shape validation lives at the write
+  // boundary (api.bookingViews) and the read boundary (booking.js loadView,
+  // fail-open). null/undefined = unrestricted; an array threads through as-is.
+  if (restrict_windows != null && !Array.isArray(restrict_windows)) {
+    throw new Error('getSlots: restrict_windows must be an array when provided');
   }
 
   const zone = FIRM_TZ;
@@ -825,6 +905,12 @@ async function getSlots(db, {
 
     // Working-window union over the whole range — feeds the freeBusy all-day
     // (c) drop rule (a timed block that swallows a whole working day).
+    // DELIBERATELY the BASE working windows, NOT narrowed by restrict_windows:
+    // the (c) rule drops a Google block only when it covers a WHOLE working
+    // window. If it tested against a narrowed window, a 2h GCal block spanning
+    // a `Mon 14–16` restriction would look "all-day" and be dropped — which
+    // would OPEN slots. The per-view restriction must only ever remove time, so
+    // it is applied later (in computeProviderDaySlots), after busy subtraction.
     const workingUnion = unionIntervals(
       _providerWorkingWindows(workingRows, fromDay, toDay, zone)
     );
@@ -853,6 +939,7 @@ async function getSlots(db, {
       slots.push(...computeProviderDaySlots({
         dayStr: d.toFormat('yyyy-MM-dd'),
         workingRows, busy, lengthMin, granularityMin, earliestStartMs, zone,
+        restrictRows: restrict_windows,
       }));
     }
     result[pid] = slots; // per-day output already ascending; days iterated ascending
@@ -865,6 +952,7 @@ module.exports = {
   // pure core — exported for offline testing
   unionIntervals,
   subtractIntervals,
+  intersectIntervals,
   walkSlots,
   computeProviderDaySlots,
   normalizeBusyForProvider,
