@@ -13,6 +13,7 @@ process.env.FIRM_TIMEZONE = process.env.FIRM_TIMEZONE || 'America/Detroit';
 const {
   unionIntervals,
   subtractIntervals,
+  intersectIntervals,
   walkSlots,
   computeProviderDaySlots,
   normalizeBusyForProvider,
@@ -42,11 +43,16 @@ const FULL_WEEK = [0, 1, 2, 3, 4, 5, 6].map(w => ({
 
 function daySlots(dayStr, busy, { lengthMin = 30, granularityMin = 15,
                                   earliestStartMs = -Infinity,
-                                  workingRows = FULL_WEEK } = {}) {
+                                  workingRows = FULL_WEEK, restrictRows = null } = {}) {
   return computeProviderDaySlots({
     dayStr, workingRows, busy, lengthMin, granularityMin, earliestStartMs, zone: ZONE,
+    restrictRows,
   });
 }
+
+// Monday-only 08:00–17:00 working set for restriction cases (2026-06-15 = Mon).
+const MON_8_17 = [{ weekday: 1, start_time: '08:00:00', end_time: '17:00:00',
+                    valid_from: null, valid_to: null }];
 
 // ═════════════════════════════════════════════════════════════
 // Case 1 — plain day: 9–23, no busy, 30-min length, 15-min grid
@@ -304,6 +310,250 @@ caseStart('S. interval math edges');
     [{ start: 10, end: 20 }], [{ start: 0, end: 30 }],
   ).length === 0);
   check('walkSlots empty windows → []', walkSlots([], { lengthMin: 30, granularityMin: 15, zone: ZONE }).length === 0);
+}
+caseEnd();
+
+// ═════════════════════════════════════════════════════════════
+// Case 13 — intersectIntervals edges (Slice A pure helper)
+// ═════════════════════════════════════════════════════════════
+caseStart('13. intersectIntervals — disjoint/overlap/containment/touch/multi');
+{
+  const I = intersectIntervals;
+  check('disjoint → []',
+    JSON.stringify(I([{ start: 0, end: 10 }], [{ start: 20, end: 30 }])) === '[]');
+  check('partial overlap → [5,10)',
+    JSON.stringify(I([{ start: 0, end: 10 }], [{ start: 5, end: 15 }]))
+      === JSON.stringify([{ start: 5, end: 10 }]));
+  check('containment → [40,60)',
+    JSON.stringify(I([{ start: 0, end: 100 }], [{ start: 40, end: 60 }]))
+      === JSON.stringify([{ start: 40, end: 60 }]));
+  check('adjacent touch → [] (half-open)',
+    JSON.stringify(I([{ start: 0, end: 10 }], [{ start: 10, end: 20 }])) === '[]');
+  check('multi → [5,10)+[20,25)',
+    JSON.stringify(I([{ start: 0, end: 10 }, { start: 20, end: 30 }], [{ start: 5, end: 25 }]))
+      === JSON.stringify([{ start: 5, end: 10 }, { start: 20, end: 25 }]));
+  check('empty operand → []',
+    JSON.stringify(I([], [{ start: 0, end: 10 }])) === '[]');
+  check('commutative on a sample',
+    JSON.stringify(I([{ start: 0, end: 10 }], [{ start: 5, end: 15 }]))
+      === JSON.stringify(I([{ start: 5, end: 15 }], [{ start: 0, end: 10 }])));
+}
+caseEnd();
+
+// ═════════════════════════════════════════════════════════════
+// Case 14 — restrictRows: weekday not offered by the view → []
+// ═════════════════════════════════════════════════════════════
+caseStart('14. restrictRows: weekday not offered → [] (Mon working, restrict Thu only)');
+{
+  const s = daySlots('2026-06-15', [], { workingRows: MON_8_17, restrictRows: [{ weekday: 4 }] });
+  check('empty', s.length === 0, JSON.stringify(s));
+}
+caseEnd();
+
+// ═════════════════════════════════════════════════════════════
+// Case 15 — restrictRows: window narrowing (the core feature)
+// ═════════════════════════════════════════════════════════════
+caseStart('15. restrictRows 14:00–16:00 narrows 08–17, 60-min → 14:00..15:00 (5 slots)');
+{
+  const s = daySlots('2026-06-15', [], {
+    workingRows: MON_8_17,
+    restrictRows: [{ weekday: 1, start: '14:00', end: '16:00' }],
+    lengthMin: 60, granularityMin: 15,
+  });
+  check('exactly [14:00,14:15,14:30,14:45,15:00]',
+    JSON.stringify(s) === JSON.stringify([
+      '2026-06-15 14:00', '2026-06-15 14:15', '2026-06-15 14:30',
+      '2026-06-15 14:45', '2026-06-15 15:00',
+    ]), JSON.stringify(s));
+}
+caseEnd();
+
+// ═════════════════════════════════════════════════════════════
+// Case 16 — restrictRows: all-day entry ≡ unrestricted for that weekday
+// ═════════════════════════════════════════════════════════════
+caseStart('16. restrictRows: all-day entry ≡ unrestricted output for that weekday');
+{
+  const allDay = daySlots('2026-06-15', [], {
+    workingRows: MON_8_17, restrictRows: [{ weekday: 1 }],
+    lengthMin: 60, granularityMin: 30,
+  });
+  const plain = daySlots('2026-06-15', [], {
+    workingRows: MON_8_17, lengthMin: 60, granularityMin: 30,
+  });
+  check('identical output', JSON.stringify(allDay) === JSON.stringify(plain),
+    `allDay=${allDay.length} plain=${plain.length}`);
+  check('nonempty (sanity)', allDay.length > 0, allDay.length);
+}
+caseEnd();
+
+// ═════════════════════════════════════════════════════════════
+// Case 17 — restrictRows: restriction straddling the working edge
+// ═════════════════════════════════════════════════════════════
+caseStart('17. restrictRows 16:00–19:00 vs working →17:00, 60-min → last start 16:00');
+{
+  const s = daySlots('2026-06-15', [], {
+    workingRows: MON_8_17,
+    restrictRows: [{ weekday: 1, start: '16:00', end: '19:00' }],
+    lengthMin: 60, granularityMin: 15,
+  });
+  check('exactly [16:00]', JSON.stringify(s) === JSON.stringify(['2026-06-15 16:00']),
+    JSON.stringify(s));
+}
+caseEnd();
+
+// ═════════════════════════════════════════════════════════════
+// Case 18 — restrictRows: null → byte-identical to unrestricted
+// ═════════════════════════════════════════════════════════════
+caseStart('18. restrictRows: null → byte-identical to unrestricted (with a busy appt)');
+{
+  const busy = normalizeBusyForProvider(1, {
+    appts: [{ appt_with: 1, appt_date: '2026-06-15 10:00:00', appt_length: 60, appt_status: 'Scheduled' }],
+    bufferMin: 15, zone: ZONE,
+  });
+  const withNull = daySlots('2026-06-15', busy, { restrictRows: null });
+  const plain    = daySlots('2026-06-15', busy);
+  check('identical', JSON.stringify(withNull) === JSON.stringify(plain));
+  check('same length', withNull.length === plain.length, `${withNull.length} vs ${plain.length}`);
+}
+caseEnd();
+
+// ═════════════════════════════════════════════════════════════
+// Case 19 — restrictRows: adjacent same-weekday entries union
+// ═════════════════════════════════════════════════════════════
+caseStart('19. restrictRows: adjacent 14–15 + 15–16 ≡ single 14–16');
+{
+  const two = daySlots('2026-06-15', [], {
+    workingRows: MON_8_17,
+    restrictRows: [
+      { weekday: 1, start: '14:00', end: '15:00' },
+      { weekday: 1, start: '15:00', end: '16:00' },
+    ],
+    lengthMin: 60, granularityMin: 15,
+  });
+  const one = daySlots('2026-06-15', [], {
+    workingRows: MON_8_17,
+    restrictRows: [{ weekday: 1, start: '14:00', end: '16:00' }],
+    lengthMin: 60, granularityMin: 15,
+  });
+  check('adjacent entries ≡ merged window', JSON.stringify(two) === JSON.stringify(one),
+    `two=${JSON.stringify(two)} one=${JSON.stringify(one)}`);
+  check('= 5 slots (14:00..15:00)', two.length === 5, two.length);
+}
+caseEnd();
+
+// ═════════════════════════════════════════════════════════════
+// Case 20 — restrict entry with valid_from/valid_to (Slice C)
+// ═════════════════════════════════════════════════════════════
+caseStart('20. restrict window valid 06-15..06-22 — before → [], within → narrowed, after → []');
+{
+  const restrict = [{ weekday: 1, start: '10:00', end: '12:00',
+                      valid_from: '2026-06-15', valid_to: '2026-06-22' }];
+  const opts = { lengthMin: 30, granularityMin: 30 };
+
+  // Monday before valid_from → closed (fail-closed: no valid entry = closed).
+  const before = computeProviderDaySlots({
+    dayStr: '2026-06-08', workingRows: FULL_WEEK, busy: [], zone: ZONE,
+    restrictRows: restrict, ...opts,
+  });
+  check('Mon 06-08 (before range) empty', before.length === 0, JSON.stringify(before));
+
+  // Mondays within range → narrowed to 10:00–12:00.
+  for (const day of ['2026-06-15', '2026-06-22']) {
+    const s = computeProviderDaySlots({
+      dayStr: day, workingRows: FULL_WEEK, busy: [], zone: ZONE,
+      restrictRows: restrict, ...opts,
+    });
+    check(`Mon ${day} = [10:00, 10:30, 11:00, 11:30]`,
+      JSON.stringify(s) === JSON.stringify([`${day} 10:00`, `${day} 10:30`, `${day} 11:00`, `${day} 11:30`]),
+      JSON.stringify(s));
+  }
+
+  // Monday after valid_to → closed.
+  const after = computeProviderDaySlots({
+    dayStr: '2026-06-29', workingRows: FULL_WEEK, busy: [], zone: ZONE,
+    restrictRows: restrict, ...opts,
+  });
+  check('Mon 06-29 (after range) empty', after.length === 0, JSON.stringify(after));
+
+  // Independent bounds: valid_from only → open-ended future.
+  const fromOnly = [{ weekday: 1, start: '10:00', end: '12:00', valid_from: '2026-06-22' }];
+  const fo1 = computeProviderDaySlots({
+    dayStr: '2026-06-15', workingRows: FULL_WEEK, busy: [], zone: ZONE,
+    restrictRows: fromOnly, ...opts,
+  });
+  const fo2 = computeProviderDaySlots({
+    dayStr: '2026-07-06', workingRows: FULL_WEEK, busy: [], zone: ZONE,
+    restrictRows: fromOnly, ...opts,
+  });
+  check('valid_from-only: earlier Monday empty', fo1.length === 0);
+  check('valid_from-only: later Monday has slots', fo2.length === 4, JSON.stringify(fo2));
+}
+caseEnd();
+
+// ═════════════════════════════════════════════════════════════
+// Case 21 — two entries same weekday: expired + current → only current
+// ═════════════════════════════════════════════════════════════
+caseStart('21. same weekday, one expired one current — only current window applies');
+{
+  const restrict = [
+    { weekday: 1, start: '09:00', end: '11:00', valid_to: '2026-06-08' },   // expired by 06-15
+    { weekday: 1, start: '14:00', end: '16:00', valid_from: '2026-06-15' }, // current
+  ];
+  const s = computeProviderDaySlots({
+    dayStr: '2026-06-15', workingRows: FULL_WEEK, busy: [], zone: ZONE,
+    restrictRows: restrict, lengthMin: 60, granularityMin: 60,
+  });
+  check('morning window (expired) closed', !s.some(x => x < '2026-06-15 14:00'), JSON.stringify(s));
+  check('afternoon = [14:00, 15:00]',
+    JSON.stringify(s) === JSON.stringify(['2026-06-15 14:00', '2026-06-15 15:00']),
+    JSON.stringify(s));
+
+  // On a date where BOTH were valid (06-08), both windows apply.
+  const both = computeProviderDaySlots({
+    dayStr: '2026-06-08', workingRows: FULL_WEEK, busy: [], zone: ZONE,
+    restrictRows: [
+      { weekday: 1, start: '09:00', end: '11:00', valid_to: '2026-06-08' },
+      { weekday: 1, start: '14:00', end: '16:00' },
+    ],
+    lengthMin: 60, granularityMin: 60,
+  });
+  check('overlap date: both windows open',
+    JSON.stringify(both) === JSON.stringify(
+      ['2026-06-08 09:00', '2026-06-08 10:00', '2026-06-08 14:00', '2026-06-08 15:00']),
+    JSON.stringify(both));
+}
+caseEnd();
+
+// ═════════════════════════════════════════════════════════════
+// Case 22 — entries WITHOUT validity keys ≡ Slice A behavior (regression)
+// ═════════════════════════════════════════════════════════════
+caseStart('22. no validity keys — identical to Slice A restriction semantics');
+{
+  const restrict = [
+    { weekday: 1, start: '10:00', end: '12:00' }, // timed Monday
+    { weekday: 3 },                               // all-day Wednesday
+  ];
+  const opts = { workingRows: FULL_WEEK, busy: [], zone: ZONE, lengthMin: 30, granularityMin: 30 };
+
+  // Timed entry narrows Monday.
+  const mon = computeProviderDaySlots({ dayStr: '2026-06-15', restrictRows: restrict, ...opts });
+  check('Mon narrowed to 10:00–12:00',
+    JSON.stringify(mon) === JSON.stringify(
+      ['2026-06-15 10:00', '2026-06-15 10:30', '2026-06-15 11:00', '2026-06-15 11:30']),
+    JSON.stringify(mon));
+
+  // All-day entry leaves Wednesday's full working day.
+  const wedRestricted = computeProviderDaySlots({ dayStr: '2026-06-17', restrictRows: restrict, ...opts });
+  const wedFree       = computeProviderDaySlots({ dayStr: '2026-06-17', restrictRows: null, ...opts });
+  check('all-day Wed ≡ unrestricted Wed', JSON.stringify(wedRestricted) === JSON.stringify(wedFree));
+
+  // Unlisted weekday closed.
+  const tue = computeProviderDaySlots({ dayStr: '2026-06-16', restrictRows: restrict, ...opts });
+  check('unlisted Tue closed', tue.length === 0, JSON.stringify(tue));
+
+  // restrictRows null → untouched.
+  const nullR = computeProviderDaySlots({ dayStr: '2026-06-15', restrictRows: null, ...opts });
+  check('null restriction leaves full day', nullR.length > 4);
 }
 caseEnd();
 
