@@ -147,6 +147,33 @@
   .field.inline { display: flex; align-items: center; gap: 8px; }
   .field.inline label { margin: 0; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text); }
 
+  /* ── Availability windows editor (Slice B) ─────────────────── */
+  .window-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .window-row select, .window-row input[type="time"] {
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 6px 8px; font-size: 12.5px; font-family: inherit;
+    color-scheme: dark; /* native time-picker glyph visible on dark bg */
+  }
+  .window-row select:focus, .window-row input[type="time"]:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .window-row input[type="time"]:disabled { opacity: 0.35; }
+  .window-row label.allday {
+    display: flex; align-items: center; gap: 5px; font-size: 12.5px;
+    color: var(--text); text-transform: none; letter-spacing: 0;
+    margin: 0; cursor: pointer;
+  }
+  .window-row .win-remove {
+    background: var(--panel-2); color: var(--muted);
+    border: 1px solid var(--border); border-radius: 4px;
+    width: 24px; height: 24px; line-height: 1; cursor: pointer; font-size: 13px;
+  }
+  .window-row .win-remove:hover { border-color: var(--danger); color: var(--danger); }
+
   .provider-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 4px 0; }
   .provider-checks label {
     display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text);
@@ -285,6 +312,15 @@
         <label for="f-source">Source tag (optional → appts.appt_source)</label>
         <input type="text" id="f-source" maxlength="60">
       </div>
+    </div>
+
+    <h4>Availability windows (optional)</h4>
+    <div class="field">
+      <div class="hint">When any windows are set, this page only offers times inside
+      them — intersected with the provider's normal availability. It never adds
+      time. No windows = normal availability.</div>
+      <div id="f-windows"></div>
+      <button type="button" class="btn small" id="f-windows-add">+ Add window</button>
     </div>
 
     <h4>Providers</h4>
@@ -521,9 +557,12 @@ function renderList() {
 
 function listRow(v) {
   const mode = { fixed_one: 'fixed', client_choice: 'choice', any_auto: 'auto' }[v.provider_mode] || v.provider_mode;
+  const winBadge = Array.isArray(v.page_windows) && v.page_windows.length
+    ? ' <span class="muted" title="Availability windows set">\u23F1 windows</span>'
+    : '';
   return `
     <tr data-id="${v.id}">
-      <td class="slug-cell">${esc(v.slug)}</td>
+      <td class="slug-cell">${esc(v.slug)}${winBadge}</td>
       <td>${esc(v.title)}</td>
       <td>${esc(v.appt_type)} <span class="muted">· ${v.appt_length}m</span></td>
       <td title="${esc(providerNames(v))}">${esc(mode)} <span class="muted">(${(v.provider_ids || []).length})</span></td>
@@ -577,6 +616,58 @@ function renderHookSelect(selectedId) {
     ).join('');
 }
 
+// ── Availability windows editor (Slice B) ───────────────────
+// Server contract (routes/api.bookingViews.js): page_windows is null or an
+// array of { weekday:0=Sun…6=Sat, start?:'HH:mm', end?:'HH:mm' } — both
+// times or neither (neither = all day), start < end, max 28 entries.
+const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function windowRowHtml(w) {
+  const allDay = !w.start && !w.end;
+  const opts = WEEKDAY_LABELS.map((label, i) =>
+    `<option value="${i}" ${i === Number(w.weekday) ? 'selected' : ''}>${label}</option>`
+  ).join('');
+  return `
+    <div class="window-row">
+      <select class="win-weekday">${opts}</select>
+      <label class="allday"><input type="checkbox" class="win-allday" ${allDay ? 'checked' : ''}> All day</label>
+      <input type="time" class="win-start" value="${allDay ? '' : esc(w.start || '')}" ${allDay ? 'disabled' : ''}>
+      <span class="muted">–</span>
+      <input type="time" class="win-end" value="${allDay ? '' : esc(w.end || '')}" ${allDay ? 'disabled' : ''}>
+      <button type="button" class="win-remove" title="Remove window">&times;</button>
+    </div>
+  `;
+}
+
+function renderWindows(windows) {
+  // rowOut delivers page_windows parsed; tolerate a string defensively.
+  let pw = windows;
+  if (typeof pw === 'string') {
+    try { pw = JSON.parse(pw); } catch { pw = null; }
+  }
+  if (!Array.isArray(pw)) pw = [];
+  E('f-windows').innerHTML = pw.map(windowRowHtml).join('');
+}
+
+function addWindowRow() {
+  // New row default: Monday, all day (valid as-is; uncheck to set times).
+  E('f-windows').insertAdjacentHTML('beforeend', windowRowHtml({ weekday: 1 }));
+}
+
+function collectWindows() {
+  const rows = [...E('f-windows').querySelectorAll('.window-row')];
+  if (!rows.length) return null; // no rows = unrestricted
+  return rows.map(row => {
+    const weekday = Number(row.querySelector('.win-weekday').value);
+    if (row.querySelector('.win-allday').checked) return { weekday };
+    return {
+      weekday,
+      start: row.querySelector('.win-start').value,
+      end:   row.querySelector('.win-end').value,
+    };
+  });
+}
+
 function openEditor(id) {
   state.editingId = id;
   const v = id ? state.views.find(x => x.id === id) : null;
@@ -601,6 +692,8 @@ function openEditor(id) {
   E('f-notice').value      = v ? v.min_notice_min : 120;
   E('f-horizon').value     = v ? v.horizon_days : 30;
   E('f-source').value      = v && v.source_tag ? v.source_tag : '';
+
+  renderWindows(v ? v.page_windows : []); // null/[]/missing → zero rows
 
   E('f-provider-mode').value = v ? v.provider_mode : 'client_choice';
   E('provider-mode-hint').textContent = PROVIDER_MODE_HINTS[E('f-provider-mode').value];
@@ -653,6 +746,7 @@ function collectPayload() {
     min_notice_min:   Number(E('f-notice').value),
     horizon_days:     Number(E('f-horizon').value),
     source_tag:       E('f-source').value.trim() || null,
+    page_windows:     collectWindows(),
     provider_mode:    E('f-provider-mode').value,
     provider_ids:     providerIds,
     identity_mode:    E('f-identity').value,
@@ -680,6 +774,21 @@ function clientValidate(p) {
   }
   if (!Number.isInteger(p.horizon_days) || p.horizon_days < 1 || p.horizon_days > 365) {
     return 'Horizon must be 1–365 days.';
+  }
+  if (Array.isArray(p.page_windows)) {
+    if (p.page_windows.length > 28) {
+      return 'Availability windows: no more than 28 entries.'; // mirrors server cap
+    }
+    for (let i = 0; i < p.page_windows.length; i++) {
+      const w = p.page_windows[i];
+      if (w.start === undefined) continue; // all-day row
+      if (!w.start || !w.end) {
+        return `Window ${i + 1}: fill in both start and end times, or check All day.`;
+      }
+      if (!(w.start < w.end)) { // HH:mm string compare is chronological
+        return `Window ${i + 1}: start must be earlier than end.`;
+      }
+    }
   }
   if (!p.provider_ids.length) return 'Check at least one provider.';
   if (p.provider_mode === 'fixed_one' && p.provider_ids.length !== 1) {
@@ -754,6 +863,22 @@ function init() {
   E('f-save').addEventListener('click', saveView);
   E('f-provider-mode').addEventListener('change', () => {
     E('provider-mode-hint').textContent = PROVIDER_MODE_HINTS[E('f-provider-mode').value];
+  });
+  E('f-windows-add').addEventListener('click', addWindowRow);
+  E('f-windows').addEventListener('click', e => {
+    const btn = e.target.closest('.win-remove');
+    if (btn) btn.closest('.window-row').remove();
+  });
+  E('f-windows').addEventListener('change', e => {
+    if (!e.target.classList.contains('win-allday')) return;
+    const row = e.target.closest('.window-row');
+    const allDay = e.target.checked;
+    row.querySelector('.win-start').disabled = allDay;
+    row.querySelector('.win-end').disabled = allDay;
+    if (allDay) {
+      row.querySelector('.win-start').value = '';
+      row.querySelector('.win-end').value = '';
+    }
   });
   E('modal-backdrop').addEventListener('click', e => {
     if (e.target === E('modal-backdrop')) closeEditor();

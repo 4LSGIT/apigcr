@@ -116,6 +116,12 @@
     border-color: var(--accent); background: var(--accent); color: var(--accent-text);
   }
   .date-chip.selected .dow { color: var(--accent-text); opacity: 0.85; }
+  /* Weekdays outside the view's availability windows (cfg.allowed_weekdays).
+     Cosmetic only — the server never offers out-of-window slots. */
+  .date-chip.disabled {
+    cursor: default; background: var(--panel); opacity: 0.45;
+  }
+  .date-chip.disabled .dow, .date-chip.disabled .dom { color: var(--muted); }
 
   /* ── Inputs ─────────────────────────────────────────────── */
   select, input[type="text"], input[type="tel"], input[type="email"], textarea {
@@ -633,20 +639,25 @@
     var strip = E('date-strip');
     var today = firmToday();
     var horizon = Math.max(0, Number(cfg.horizon_days) || 0);
+    // Per-view allowed weekdays (0=Sun…6=Sat) from /config. null/absent →
+    // unrestricted (older backend responses too). Cosmetic: the server is the
+    // enforcer — it returns no out-of-window slots and 409s such bookings.
+    var allowed = Array.isArray(cfg.allowed_weekdays) ? cfg.allowed_weekdays : null;
     var html = '';
     for (var i = 0; i <= horizon; i++) {
       var ymd = addDays(today, i);
-      var d = dateObj(ymd);
+      var d = dateObj(ymd); // local-noon construction → getDay() is the true local weekday
+      var dead = allowed && allowed.indexOf(d.getDay()) === -1;
       var dow = d.toLocaleDateString(undefined, { weekday: 'short' });
       var dom = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      html += '<div class="date-chip" data-date="' + ymd + '">' +
+      html += '<div class="date-chip' + (dead ? ' disabled' : '') + '" data-date="' + ymd + '">' +
               '<span class="dow">' + esc(dow) + '</span>' +
               '<span class="dom">' + esc(dom) + '</span></div>';
     }
     strip.innerHTML = html;
     strip.addEventListener('click', function (e) {
       var chip = e.target.closest('.date-chip');
-      if (chip) selectDate(chip.dataset.date);
+      if (chip && !chip.classList.contains('disabled')) selectDate(chip.dataset.date);
     });
   }
 
