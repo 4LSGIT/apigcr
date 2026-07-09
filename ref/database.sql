@@ -1,5 +1,5 @@
 -- DB Console schema snapshot
--- Generated: 2026-06-10T12:01:31.507Z
+-- Generated: 2026-07-09T15:07:02.572Z
 -- Source: POST /admin/db/schema/save-to-ref
 -- Contains schema only (no data, no database identifier).
 
@@ -212,7 +212,66 @@ CREATE TABLE `appts` (
   `appt_platform` enum('telephone','Zoom','in-person') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `appt_create_date` datetime DEFAULT NULL,
   `appt_with` tinyint DEFAULT '1',
-  `appt_end` datetime GENERATED ALWAYS AS ((`appt_date` + interval `appt_length` minute)) STORED
+  `appt_end` datetime GENERATED ALWAYS AS ((`appt_date` + interval `appt_length` minute)) STORED,
+  `appt_gcal_user` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-calendar event id',
+  `appt_source` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'booking view source_tag',
+  `appt_manage_token` char(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'client manage-link token',
+  `appt_view_id` int unsigned DEFAULT NULL COMMENT 'booking_views.id this appt was booked/rebooked through'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `availability_blocks`
+--
+
+DROP TABLE IF EXISTS `availability_blocks`;
+CREATE TABLE `availability_blocks` (
+  `id` int unsigned NOT NULL,
+  `user` tinyint NOT NULL,
+  `block_start` datetime NOT NULL,
+  `block_end` datetime NOT NULL,
+  `reason` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `booking_views`
+--
+
+DROP TABLE IF EXISTS `booking_views`;
+CREATE TABLE `booking_views` (
+  `id` int unsigned NOT NULL,
+  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `provider_mode` enum('fixed_one','client_choice','any_auto') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'client_choice',
+  `provider_ids` json NOT NULL,
+  `appt_type` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `appt_length` smallint NOT NULL,
+  `platform` enum('telephone','Zoom','in-person') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'telephone',
+  `buffer_min` smallint NOT NULL DEFAULT '0',
+  `min_notice_min` smallint NOT NULL DEFAULT '120',
+  `horizon_days` smallint NOT NULL DEFAULT '30',
+  `granularity_min` smallint NOT NULL DEFAULT '15',
+  `identity_mode` enum('public','prefill') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'public',
+  `source_tag` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `collect_note` tinyint(1) NOT NULL DEFAULT '0',
+  `confirm_template` text COLLATE utf8mb4_general_ci,
+  `confirm_sms` tinyint(1) NOT NULL DEFAULT '0',
+  `confirm_email` tinyint(1) NOT NULL DEFAULT '0',
+  `hook_id` int DEFAULT NULL,
+  `title` varchar(200) COLLATE utf8mb4_general_ci NOT NULL,
+  `subtitle` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `accent_color` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `logo_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `logo_link_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `thankyou_html` text COLLATE utf8mb4_general_ci,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  `page_windows` json DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -691,12 +750,16 @@ CREATE TABLE `contacts` (
   `contact_tags` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_notes` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_clio_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `contact_google_resource_name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `contact_google_etag` varchar(160) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `contact_google_synced_at` datetime DEFAULT NULL,
   `contact_phone2` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_email2` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `contact_created` datetime DEFAULT NULL,
   `contact_updated` timestamp NULL DEFAULT NULL,
   `contact_sms_optout` tinyint(1) NOT NULL DEFAULT '0',
-  `contact_email_optout` tinyint(1) NOT NULL DEFAULT '0'
+  `contact_email_optout` tinyint(1) NOT NULL DEFAULT '0',
+  `booking_token` char(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'opaque link-prefill id'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -891,7 +954,7 @@ CREATE TABLE `court_ai_log` (
   `dry_run` tinyint(1) NOT NULL DEFAULT '1',
   `classification` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `case_number` varchar(40) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `resolved_case_id` varchar(8) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `resolved_case_id` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `case_name` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `actions_json` json DEFAULT NULL,
   `citations_json` json DEFAULT NULL,
@@ -1148,7 +1211,8 @@ CREATE TABLE `events` (
   `event_calendar_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `event_create_date` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `event_created_by` tinyint DEFAULT NULL,
-  `event_updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
+  `event_updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  `event_with` tinyint DEFAULT NULL COMMENT 'provider scope: users.user; NULL = firm-wide block'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1201,6 +1265,25 @@ CREATE TABLE `feature_requests` (
   `submitted_by` int NOT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `firm_blocks`
+--
+
+DROP TABLE IF EXISTS `firm_blocks`;
+CREATE TABLE `firm_blocks` (
+  `block_id` int unsigned NOT NULL,
+  `block_start` datetime NOT NULL,
+  `block_end` datetime NOT NULL,
+  `label` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `source` enum('shabbos','yom_tov','manual') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'manual',
+  `generated_for` date DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1348,9 +1431,17 @@ CREATE TABLE `image_library` (
   `url` varchar(500) COLLATE utf8mb4_unicode_ci NOT NULL,
   `filename` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
   `original_name` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `mime` varchar(50) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `title` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `tags` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `collection` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `mime` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `size` bigint unsigned DEFAULT NULL,
+  `width` smallint unsigned DEFAULT NULL,
+  `height` smallint unsigned DEFAULT NULL,
+  `visibility` enum('public','private') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'public',
   `uploaded_by` tinyint unsigned DEFAULT NULL,
-  `created_at` datetime DEFAULT CURRENT_TIMESTAMP
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `deleted_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -1443,29 +1534,6 @@ CREATE TABLE `log` (
   `log_by` tinyint unsigned NOT NULL,
   `log_data` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_extra` json DEFAULT NULL,
-  `log_from` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `log_to` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `log_subject` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `log_message` varchar(10000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `log_form_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `log_form_sub` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `log_direction` enum('incoming','outgoing') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='text, includes email body, sms message, note, etc';
-
--- --------------------------------------------------------
-
---
--- Table structure for table `logtemp`
---
-
-DROP TABLE IF EXISTS `logtemp`;
-CREATE TABLE `logtemp` (
-  `log_id` int NOT NULL,
-  `log_type` enum('email','sms','call','other','form','status','note','court email','docs','appt','update') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `log_date` datetime NOT NULL,
-  `log_link` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `log_by` tinyint unsigned NOT NULL,
-  `log_data` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_from` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_to` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `log_subject` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -2303,6 +2371,26 @@ CREATE TABLE `trustees` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `user_availability`
+--
+
+DROP TABLE IF EXISTS `user_availability`;
+CREATE TABLE `user_availability` (
+  `id` int unsigned NOT NULL,
+  `user` tinyint NOT NULL,
+  `weekday` tinyint NOT NULL,
+  `start_time` time NOT NULL,
+  `end_time` time NOT NULL,
+  `valid_from` date DEFAULT NULL,
+  `valid_to` date DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `users`
 --
 
@@ -2330,6 +2418,8 @@ CREATE TABLE `users` (
   `reset_expires` datetime DEFAULT NULL,
   `user_custom_tab` json NOT NULL,
   `does_appts` tinyint(1) NOT NULL DEFAULT '0',
+  `freebusy_calendar_ids` json DEFAULT NULL,
+  `user_gcal_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider secondary calendar id (firm Google account)',
   CONSTRAINT `chk_does_appts_requires_phone` CHECK (((`does_appts` = 0) or (`default_phone` is not null)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -2408,6 +2498,7 @@ CREATE TABLE `workflow_execution_steps` (
   `step_id` int NOT NULL,
   `status` enum('success','failed','skipped','delayed') COLLATE utf8mb4_unicode_ci NOT NULL,
   `output_data` json DEFAULT NULL,
+  `resolved_config` json DEFAULT NULL,
   `error_message` text COLLATE utf8mb4_unicode_ci,
   `attempts` int DEFAULT '0',
   `duration_ms` int DEFAULT '0',
@@ -2549,8 +2640,23 @@ ALTER TABLE `app_settings`
 --
 ALTER TABLE `appts`
   ADD PRIMARY KEY (`appt_id`),
+  ADD UNIQUE KEY `uq_appts_manage_token` (`appt_manage_token`),
   ADD KEY `lead_id` (`appt_case_id`),
   ADD KEY `date` (`appt_date`);
+
+--
+-- Indexes for table `availability_blocks`
+--
+ALTER TABLE `availability_blocks`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_ab_user_start` (`user`,`active`,`block_start`);
+
+--
+-- Indexes for table `booking_views`
+--
+ALTER TABLE `booking_views`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_bv_slug` (`slug`);
 
 --
 -- Indexes for table `campaign_contacts`
@@ -2666,6 +2772,7 @@ ALTER TABLE `contact_relations`
 --
 ALTER TABLE `contacts`
   ADD PRIMARY KEY (`contact_id`),
+  ADD UNIQUE KEY `uq_contacts_booking_token` (`booking_token`),
   ADD KEY `idx_contact_email` (`contact_email`),
   ADD FULLTEXT KEY `contact_name` (`contact_name`);
 
@@ -2797,6 +2904,14 @@ ALTER TABLE `feature_requests`
   ADD PRIMARY KEY (`id`);
 
 --
+-- Indexes for table `firm_blocks`
+--
+ALTER TABLE `firm_blocks`
+  ADD PRIMARY KEY (`block_id`),
+  ADD UNIQUE KEY `uq_fb_source_for` (`source`,`generated_for`),
+  ADD KEY `idx_fb_start` (`active`,`block_start`);
+
+--
 -- Indexes for table `form_submissions`
 --
 ALTER TABLE `form_submissions`
@@ -2846,7 +2961,10 @@ ALTER TABLE `hooks`
 --
 ALTER TABLE `image_library`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `uq_url` (`url`(400));
+  ADD UNIQUE KEY `uq_url` (`url`(400)),
+  ADD KEY `idx_il_collection` (`collection`),
+  ADD KEY `idx_il_created` (`created_at`),
+  ADD KEY `idx_il_deleted` (`deleted_at`);
 
 --
 -- Indexes for table `job_results`
@@ -2883,12 +3001,6 @@ ALTER TABLE `log`
   ADD KEY `idx_log_date` (`log_date`),
   ADD KEY `idx_log_type` (`log_type`),
   ADD KEY `idx_log_link_type_id` (`log_link_type`,`log_link_id`);
-
---
--- Indexes for table `logtemp`
---
-ALTER TABLE `logtemp`
-  ADD PRIMARY KEY (`log_id`);
 
 --
 -- Indexes for table `pages`
@@ -3138,6 +3250,13 @@ ALTER TABLE `trustees`
   ADD PRIMARY KEY (`trustee_id`);
 
 --
+-- Indexes for table `user_availability`
+--
+ALTER TABLE `user_availability`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_ua_user_weekday` (`user`,`weekday`,`active`);
+
+--
 -- Indexes for table `users`
 --
 ALTER TABLE `users`
@@ -3243,6 +3362,18 @@ ALTER TABLE `ai_change_log`
 --
 ALTER TABLE `appts`
   MODIFY `appt_id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `availability_blocks`
+--
+ALTER TABLE `availability_blocks`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `booking_views`
+--
+ALTER TABLE `booking_views`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `campaign_contacts`
@@ -3413,6 +3544,12 @@ ALTER TABLE `feature_requests`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `firm_blocks`
+--
+ALTER TABLE `firm_blocks`
+  MODIFY `block_id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `form_submissions`
 --
 ALTER TABLE `form_submissions`
@@ -3482,12 +3619,6 @@ ALTER TABLE `legacy_route_log`
 -- AUTO_INCREMENT for table `log`
 --
 ALTER TABLE `log`
-  MODIFY `log_id` int NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT for table `logtemp`
---
-ALTER TABLE `logtemp`
   MODIFY `log_id` int NOT NULL AUTO_INCREMENT;
 
 --
@@ -3681,6 +3812,12 @@ ALTER TABLE `test`
 --
 ALTER TABLE `trustees`
   MODIFY `trustee_id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `user_availability`
+--
+ALTER TABLE `user_availability`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `users`

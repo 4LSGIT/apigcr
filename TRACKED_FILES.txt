@@ -115,9 +115,13 @@ public/appt.html
 public/apptform.html
 public/apptform2.html
 public/assetManager.html
+public/assets/icon-180-dev.png
 public/assets/icon-180.png
+public/assets/icon-192-dev.png
 public/assets/icon-192.png
+public/assets/icon-32-dev.png
 public/assets/icon-32.png
+public/assets/icon-512-dev.png
 public/assets/icon-512.png
 public/assets/manifest.json
 public/automation/activity.html
