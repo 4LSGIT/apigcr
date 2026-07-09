@@ -747,7 +747,12 @@
   function renderSlots(slots) {
     var region = E('slots-region');
     if (!slots.length) {
-      region.innerHTML = '<div class="slots-msg">No times available this day — pick another date.</div>';
+      // client_choice dead-end hint: another provider may have times this
+      // day (date chips are the union of providers' base availability).
+      var msg = E('provider-section').classList.contains('hidden')
+        ? 'No times available this day — pick another date.'
+        : 'No times for this provider this day — try another date or provider.';
+      region.innerHTML = '<div class="slots-msg">' + esc(msg) + '</div>';
       return;
     }
     region.innerHTML = '<div class="slots">' + slots.map(function (s) {
