@@ -7,6 +7,19 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/assets/icon-192.png">
   <link rel="apple-touch-icon" sizes="180x180" href="/assets/icon-180.png">
 
+  <!-- DEV FAVICON — remove this whole <script> block to disable.
+       On the local dev server (localhost) swap to the orange dev icons and tag
+       the tab title so the dev tab is unmistakable. GCR runs on a real
+       hostname, so this is a no-op in production. -->
+  <script>
+    if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+      document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach(l => {
+        l.href = l.href.replace(/icon-(\d+)\.png/, 'icon-$1-dev.png');
+      });
+      document.title = '[DEV] ' + document.title;
+    }
+  </script>
+
   <!-- PWA -->
   <link rel="manifest" href="/assets/manifest.json">
   <meta name="theme-color" content="#07ADEF">
