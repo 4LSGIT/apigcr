@@ -152,15 +152,25 @@
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     margin-bottom: 6px;
   }
-  .window-row select, .window-row input[type="time"] {
+  .window-row select, .window-row input[type="time"], .window-row input[type="date"] {
     background: var(--panel-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 4px;
     padding: 6px 8px; font-size: 12.5px; font-family: inherit;
-    color-scheme: dark; /* native time-picker glyph visible on dark bg */
+    color-scheme: dark; /* native picker glyphs visible on dark bg */
   }
-  .window-row select:focus, .window-row input[type="time"]:focus {
+  .window-row select:focus, .window-row input[type="time"]:focus,
+  .window-row input[type="date"]:focus {
     outline: none; border-color: var(--accent);
   }
+  /* Validity range — visually secondary; wraps to a second line on narrow
+     widths (flex-wrap is on .window-row). Blank = always valid. */
+  .window-row .win-validity {
+    display: flex; align-items: center; gap: 5px;
+  }
+  .window-row .win-validity .vlabel {
+    font-size: 11px; color: var(--muted);
+  }
+  .window-row input[type="date"] { font-size: 11.5px; padding: 5px 6px; }
   .window-row input[type="time"]:disabled { opacity: 0.35; }
   .window-row label.allday {
     display: flex; align-items: center; gap: 5px; font-size: 12.5px;
@@ -383,6 +393,11 @@
       <textarea id="f-thankyou" rows="3" placeholder="&lt;p&gt;Thank you — your appointment has been booked.&lt;/p&gt;"></textarea>
       <div class="hint">Rendered as trusted HTML in the widget after a successful booking.</div>
     </div>
+    <div class="field">
+      <label for="f-footer">Footer (optional)</label>
+      <textarea id="f-footer" rows="3"></textarea>
+      <div class="hint">Text or HTML, shown at the bottom of the public booking page.</div>
+    </div>
 
     <div class="modal-actions">
       <button class="btn" id="f-cancel" type="button">Cancel</button>
@@ -418,6 +433,7 @@ const DEFAULT_CONFIRM_TEMPLATE =
   'Manage or cancel: https://app.4lsg.com/m/{{appts.appt_manage_token|default:}}';
 const DEFAULT_THANKYOU_HTML =
   '<p><strong>You\u2019re booked!</strong> We\u2019ll call you at the time you selected.</p>';
+const DEFAULT_FOOTER_HTML = 'For more information, contact our office at <a href="tel:+12484179800">(248) 417-9800</a> or <a href="mailto:office@4lsg.com">office@4lsg.com</a>.';
 
 // ── Helpers ─────────────────────────────────────────────────
 const E = (id) => document.getElementById(id);
@@ -616,10 +632,12 @@ function renderHookSelect(selectedId) {
     ).join('');
 }
 
-// ── Availability windows editor (Slice B) ───────────────────
+// ── Availability windows editor (Slices B + C) ──────────────
 // Server contract (routes/api.bookingViews.js): page_windows is null or an
-// array of { weekday:0=Sun…6=Sat, start?:'HH:mm', end?:'HH:mm' } — both
-// times or neither (neither = all day), start < end, max 28 entries.
+// array of { weekday:0=Sun…6=Sat, start?:'HH:mm', end?:'HH:mm',
+// valid_from?:'YYYY-MM-DD', valid_to?:'YYYY-MM-DD' } — both times or neither
+// (neither = all day), start < end; valid_from/valid_to each optional and
+// independent (inclusive; blank = always), max 28 entries.
 const WEEKDAY_LABELS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 function windowRowHtml(w) {
@@ -634,6 +652,12 @@ function windowRowHtml(w) {
       <input type="time" class="win-start" value="${allDay ? '' : esc(w.start || '')}" ${allDay ? 'disabled' : ''}>
       <span class="muted">–</span>
       <input type="time" class="win-end" value="${allDay ? '' : esc(w.end || '')}" ${allDay ? 'disabled' : ''}>
+      <span class="win-validity">
+        <span class="vlabel">from</span>
+        <input type="date" class="win-valid-from" value="${esc(w.valid_from || '')}" title="First date this window applies (blank = always)">
+        <span class="vlabel">until</span>
+        <input type="date" class="win-valid-to" value="${esc(w.valid_to || '')}" title="Last date this window applies (blank = always)">
+      </span>
       <button type="button" class="win-remove" title="Remove window">&times;</button>
     </div>
   `;
@@ -659,12 +683,18 @@ function collectWindows() {
   if (!rows.length) return null; // no rows = unrestricted
   return rows.map(row => {
     const weekday = Number(row.querySelector('.win-weekday').value);
-    if (row.querySelector('.win-allday').checked) return { weekday };
-    return {
-      weekday,
-      start: row.querySelector('.win-start').value,
-      end:   row.querySelector('.win-end').value,
-    };
+    const w = row.querySelector('.win-allday').checked
+      ? { weekday }
+      : {
+          weekday,
+          start: row.querySelector('.win-start').value,
+          end:   row.querySelector('.win-end').value,
+        };
+    const vf = row.querySelector('.win-valid-from').value;
+    const vt = row.querySelector('.win-valid-to').value;
+    if (vf) w.valid_from = vf; // omit when blank = always
+    if (vt) w.valid_to = vt;
+    return w;
   });
 }
 
@@ -706,6 +736,7 @@ function openEditor(id) {
   E('f-confirm-email').checked  = v ? !!v.confirm_email : false;
   renderHookSelect(v ? v.hook_id : null);
   E('f-thankyou').value = v ? (v.thankyou_html || '') : DEFAULT_THANKYOU_HTML;
+  E('f-footer').value   = v ? (v.footer_html || '')   : DEFAULT_FOOTER_HTML;
 
   hideErr();
   E('modal-backdrop').classList.add('open');
@@ -756,6 +787,7 @@ function collectPayload() {
     confirm_email:    E('f-confirm-email').checked ? 1 : 0,
     hook_id:          E('f-hook').value ? Number(E('f-hook').value) : null,
     thankyou_html:    E('f-thankyou').value.trim() || null,
+    footer_html:      E('f-footer').value.trim() || null,
   };
 }
 
@@ -787,6 +819,12 @@ function clientValidate(p) {
       }
       if (!(w.start < w.end)) { // HH:mm string compare is chronological
         return `Window ${i + 1}: start must be earlier than end.`;
+      }
+    }
+    for (let i = 0; i < p.page_windows.length; i++) {
+      const w = p.page_windows[i];
+      if (w.valid_from && w.valid_to && !(w.valid_from <= w.valid_to)) {
+        return `Window ${i + 1}: valid-from must not be after valid-to.`;
       }
     }
   }

@@ -99,13 +99,16 @@
   }
   .summary a.change:hover { text-decoration: underline; }
 
-  /* ── Date strip ─────────────────────────────────────────── */
+  /* ── Date grid ──────────────────────────────────────────── */
+  /* Wrapping grid, same visual language as the time-slot grid below —
+     Slice C: only server-provided bookable dates render, so no scroll strip
+     and no grayed-out chips. */
   .date-strip {
-    display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 8px;
-    -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr));
+    gap: 6px; padding: 2px 0 8px;
   }
   .date-chip {
-    flex: 0 0 auto; min-width: 58px; padding: 7px 6px;
+    padding: 7px 4px;
     border: 1px solid var(--border); border-radius: 8px;
     background: var(--bg); cursor: pointer; text-align: center;
     font-size: 12px; color: var(--text);
@@ -116,12 +119,12 @@
     border-color: var(--accent); background: var(--accent); color: var(--accent-text);
   }
   .date-chip.selected .dow { color: var(--accent-text); opacity: 0.85; }
-  /* Weekdays outside the view's availability windows (cfg.allowed_weekdays).
-     Cosmetic only — the server never offers out-of-window slots. */
-  .date-chip.disabled {
-    cursor: default; background: var(--panel); opacity: 0.45;
+  /* Empty state ("expired" / "no dates") — calm, muted, not an error banner. */
+  .dates-empty {
+    grid-column: 1 / -1;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 14px; color: var(--muted); font-size: 14px; text-align: center;
   }
-  .date-chip.disabled .dow, .date-chip.disabled .dom { color: var(--muted); }
 
   /* ── Inputs ─────────────────────────────────────────────── */
   select, input[type="text"], input[type="tel"], input[type="email"], textarea {
@@ -193,6 +196,16 @@
   .call-note { color: var(--muted); font-size: 14px; margin-top: 12px; }
   .thankyou { padding: 24px 4px; }
   .hidden { display: none !important; }
+
+  /* ── Per-view footer (cfg.footer_html, admin-trusted) ───────
+     Sits BELOW the booking card, visible on every step incl. confirmation. */
+  .page-footer {
+    margin-top: 28px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 12.5px; text-align: center;
+  }
+  .page-footer a { color: var(--accent); text-decoration: none; }
+  .page-footer a:hover { text-decoration: underline; }
 
   .spinner {
     display: inline-block; width: 18px; height: 18px;
@@ -314,6 +327,10 @@
 
   <!-- Thank-you (replaces #main on success) -->
   <div class="thankyou hidden" id="thankyou"></div>
+
+  <!-- Per-view footer (cfg.footer_html) — outside #main/#thankyou so it
+       stays visible on every step AND on the confirmation screen. -->
+  <div class="page-footer hidden" id="page-footer"></div>
 </div>
 
 <script>
@@ -583,6 +600,13 @@
     }
     if (cfg.collect_note) show('note-field');
 
+    // Per-view footer — trusted admin content (booking_views.footer_html),
+    // injected raw exactly like thankyou_html is on success.
+    if (cfg.footer_html && String(cfg.footer_html).trim()) {
+      E('page-footer').innerHTML = cfg.footer_html;
+      show('page-footer');
+    }
+
     buildDateStrip();
     wireNav();
     wireDetails();
@@ -634,30 +658,47 @@
     });
   }
 
-  // ── Date strip (step 1) ─────────────────────────────────────
+  // ── Date grid (step 1) ──────────────────────────────────────
+  function dateChipHtml(ymd) {
+    var d = dateObj(ymd); // local-noon construction avoids UTC day-shift
+    var dow = d.toLocaleDateString(undefined, { weekday: 'short' });
+    var dom = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return '<div class="date-chip" data-date="' + ymd + '">' +
+           '<span class="dow">' + esc(dow) + '</span>' +
+           '<span class="dom">' + esc(dom) + '</span></div>';
+  }
+
   function buildDateStrip() {
     var strip = E('date-strip');
-    var today = firmToday();
-    var horizon = Math.max(0, Number(cfg.horizon_days) || 0);
-    // Per-view allowed weekdays (0=Sun…6=Sat) from /config. null/absent →
-    // unrestricted (older backend responses too). Cosmetic: the server is the
-    // enforcer — it returns no out-of-window slots and 409s such bookings.
-    var allowed = Array.isArray(cfg.allowed_weekdays) ? cfg.allowed_weekdays : null;
     var html = '';
-    for (var i = 0; i <= horizon; i++) {
-      var ymd = addDays(today, i);
-      var d = dateObj(ymd); // local-noon construction → getDay() is the true local weekday
-      var dead = allowed && allowed.indexOf(d.getDay()) === -1;
-      var dow = d.toLocaleDateString(undefined, { weekday: 'short' });
-      var dom = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-      html += '<div class="date-chip' + (dead ? ' disabled' : '') + '" data-date="' + ymd + '">' +
-              '<span class="dow">' + esc(dow) + '</span>' +
-              '<span class="dom">' + esc(dom) + '</span></div>';
+
+    if (Array.isArray(cfg.bookable_dates)) {
+      // Slice C server: only dates worth showing (base weekly availability
+      // ∩ page-window validity, date-level). Server order preserved. The
+      // server is still the enforcer for times — a listed date can resolve
+      // to "no times" (fully booked / firm-blocked).
+      if (cfg.bookable_dates.length === 0) {
+        // Nothing selectable → the flow simply can't advance; no extra gating.
+        var msg = cfg.page_expired === true
+          ? 'This booking link has expired.'
+          : 'No dates are currently available.';
+        strip.innerHTML = '<div class="dates-empty">' + esc(msg) + '</div>';
+        return;
+      }
+      html = cfg.bookable_dates.map(dateChipHtml).join('');
+    } else {
+      // Stale-cache fallback (older backend response without bookable_dates):
+      // render the full horizon, pre-Slice-B behavior. The server never
+      // offers out-of-window slots and 409s such bookings regardless.
+      var today = firmToday();
+      var horizon = Math.max(0, Number(cfg.horizon_days) || 0);
+      for (var i = 0; i <= horizon; i++) html += dateChipHtml(addDays(today, i));
     }
+
     strip.innerHTML = html;
     strip.addEventListener('click', function (e) {
       var chip = e.target.closest('.date-chip');
-      if (chip && !chip.classList.contains('disabled')) selectDate(chip.dataset.date);
+      if (chip) selectDate(chip.dataset.date);
     });
   }
 

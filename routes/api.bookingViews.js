@@ -54,6 +54,7 @@ const FIELDS = [
   'identity_mode', 'source_tag', 'collect_note',
   'confirm_template', 'confirm_sms', 'confirm_email', 'hook_id',
   'title', 'subtitle', 'accent_color', 'logo_url', 'logo_link_url', 'thankyou_html',
+  'footer_html',
 ];
 
 // ─────────────────────────────────────────────────────────────
@@ -132,11 +133,15 @@ async function validateView(db, v) {
   }
   out.provider_ids = pids;
 
-  // page_windows — optional per-view weekly time restriction (Slice A).
-  // null/''/[]/undefined → unrestricted (stored NULL). Otherwise an array of
-  // { weekday:0–6, start?:'HH:mm', end?:'HH:mm' } (both times or neither;
-  // start < end). Max 28 entries. Extra keys are stripped, not rejected.
-  const PW_ERR = 'page_windows must be null or an array of {weekday:0-6, start?:"HH:mm", end?:"HH:mm"} (both times or neither; start < end).';
+  // page_windows — optional per-view weekly time restriction (Slice A) with
+  // optional per-entry validity range (Slice C). null/''/[]/undefined →
+  // unrestricted (stored NULL). Otherwise an array of
+  // { weekday:0–6, start?:'HH:mm', end?:'HH:mm',
+  //   valid_from?:'YYYY-MM-DD', valid_to?:'YYYY-MM-DD' }
+  // (both times or neither; start < end; valid_from/valid_to independent,
+  // inclusive; both present → valid_from <= valid_to). Max 28 entries.
+  // Extra keys are stripped, not rejected.
+  const PW_ERR = 'page_windows must be null or an array of {weekday:0-6, start?:"HH:mm", end?:"HH:mm", valid_from?:"YYYY-MM-DD", valid_to?:"YYYY-MM-DD"} (both times or neither; start < end).';
   let pw = v.page_windows;
   if (pw === undefined || pw === null || pw === '') {
     out.page_windows = null;
@@ -152,6 +157,7 @@ async function validateView(db, v) {
       return { error: 'page_windows may not exceed 28 entries.' };
     } else {
       const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+      const YMD  = /^\d{4}-\d{2}-\d{2}$/;
       const norm = [];
       for (const entry of pw) {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -166,9 +172,29 @@ async function validateView(db, v) {
         if (hasStart !== hasEnd) {
           return { error: 'Each page_windows entry needs both start and end, or neither.' };
         }
-        if (!hasStart) {
-          norm.push({ weekday: wd }); // all-day
-        } else {
+
+        // Optional validity range (Slice C) — each independent, inclusive.
+        const hasVf = entry.valid_from !== undefined && entry.valid_from !== null && entry.valid_from !== '';
+        const hasVt = entry.valid_to   !== undefined && entry.valid_to   !== null && entry.valid_to   !== '';
+        let vf = null, vt = null;
+        if (hasVf) {
+          vf = String(entry.valid_from);
+          if (!YMD.test(vf)) {
+            return { error: 'page_windows valid_from must be "YYYY-MM-DD".' };
+          }
+        }
+        if (hasVt) {
+          vt = String(entry.valid_to);
+          if (!YMD.test(vt)) {
+            return { error: 'page_windows valid_to must be "YYYY-MM-DD".' };
+          }
+        }
+        if (vf && vt && !(vf <= vt)) {
+          return { error: 'page_windows entry valid_from must not be after valid_to.' };
+        }
+
+        const n = { weekday: wd };
+        if (hasStart) {
           const s = String(entry.start);
           const e = String(entry.end);
           if (!HHMM.test(s) || !HHMM.test(e)) {
@@ -177,8 +203,12 @@ async function validateView(db, v) {
           if (!(s < e)) {
             return { error: 'page_windows entry start must be earlier than end.' };
           }
-          norm.push({ weekday: wd, start: s, end: e });
-        }
+          n.start = s;
+          n.end = e;
+        } // else all-day
+        if (vf) n.valid_from = vf;
+        if (vt) n.valid_to = vt;
+        norm.push(n);
       }
       out.page_windows = norm;
     }
@@ -249,6 +279,8 @@ async function validateView(db, v) {
     ? null : String(v.confirm_template);
   out.thankyou_html    = (v.thankyou_html == null || String(v.thankyou_html).trim() === '')
     ? null : String(v.thankyou_html);
+  out.footer_html      = (v.footer_html == null || String(v.footer_html).trim() === '')
+    ? null : String(v.footer_html);
 
   if (out.logo_url && !/^https?:\/\//i.test(out.logo_url)) {
     return { error: 'logo_url must be an http(s) URL.' };

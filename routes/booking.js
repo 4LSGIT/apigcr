@@ -171,12 +171,16 @@ const PW_HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
  * mysql2 returns the json column already parsed; a string is tolerated
  * (defensive, mirroring provider_ids). Accepted shape:
  *   null | [] → unrestricted            → { ok:true,  value:null }
- *   [{ weekday:0–6, start?:'HH:mm', end?:'HH:mm' }, …]
- *     (both start/end or neither; start < end when present)
+ *   [{ weekday:0–6, start?:'HH:mm', end?:'HH:mm',
+ *      valid_from?:'YYYY-MM-DD', valid_to?:'YYYY-MM-DD' }, …]
+ *     (both start/end or neither; start < end when present;
+ *      valid_from/valid_to each optional + independent, inclusive;
+ *      when both present valid_from <= valid_to — string compare)
  *                                        → { ok:true,  value:[normalized] }
  *   anything malformed                   → { ok:false, reason }
  *
- * Normalized entries carry only { weekday, start?, end? } (extra keys stripped).
+ * Normalized entries carry only { weekday, start?, end?, valid_from?,
+ * valid_to? } (extra keys stripped).
  *
  * @param {*} raw — booking_views.page_windows
  * @returns {{ok:true, value:?object[]} | {ok:false, reason:string}}
@@ -206,9 +210,30 @@ function normalizePageWindows(raw) {
     if (hasStart !== hasEnd) {
       return { ok: false, reason: 'entry has exactly one of start/end (need both or neither)' };
     }
-    if (!hasStart) {
-      out.push({ weekday: wd }); // all-day
-    } else {
+
+    // Optional validity range (Slice C): each of valid_from/valid_to is
+    // independent; inclusive 'YYYY-MM-DD'; both present → vf <= vt.
+    const hasVf = entry.valid_from !== undefined && entry.valid_from !== null && entry.valid_from !== '';
+    const hasVt = entry.valid_to   !== undefined && entry.valid_to   !== null && entry.valid_to   !== '';
+    let vf = null, vt = null;
+    if (hasVf) {
+      vf = String(entry.valid_from);
+      if (!DATE_RE.test(vf)) {
+        return { ok: false, reason: `entry valid_from not "YYYY-MM-DD" (${vf})` };
+      }
+    }
+    if (hasVt) {
+      vt = String(entry.valid_to);
+      if (!DATE_RE.test(vt)) {
+        return { ok: false, reason: `entry valid_to not "YYYY-MM-DD" (${vt})` };
+      }
+    }
+    if (vf && vt && !(vf <= vt)) {
+      return { ok: false, reason: `entry valid_from ${vf} is after valid_to ${vt}` };
+    }
+
+    const norm = { weekday: wd };
+    if (hasStart) {
       const s = String(entry.start);
       const e = String(entry.end);
       if (!PW_HHMM_RE.test(s) || !PW_HHMM_RE.test(e)) {
@@ -217,8 +242,12 @@ function normalizePageWindows(raw) {
       if (!(s < e)) {
         return { ok: false, reason: `entry start ${s} is not earlier than end ${e}` };
       }
-      out.push({ weekday: wd, start: s, end: e });
-    }
+      norm.start = s;
+      norm.end = e;
+    } // else all-day
+    if (vf) norm.valid_from = vf;
+    if (vt) norm.valid_to = vt;
+    out.push(norm);
   }
   return { ok: true, value: out };
 }
@@ -355,12 +384,57 @@ router.get('/api/book/:slug/config', async (req, res) => {
         });
     }
 
-    // Per-view restricted weekdays (Slice A): null when unrestricted, else a
-    // sorted unique list of weekday ints (0=Sun…6=Sat). Weekday numbers ONLY —
-    // no times are exposed. Slice B's widget grays out date chips from this.
-    const allowed_weekdays = view._page_windows
-      ? [...new Set(view._page_windows.map(w => Number(w.weekday)))].sort((a, b) => a - b)
-      : null;
+    // Bookable dates (Slice C — replaces Slice B's allowed_weekdays; no
+    // back-compat shim: book.html and this file deploy together, and each
+    // side treats the other's absence as "show everything").
+    //
+    // DELIBERATELY date-level windows math only — base weekly availability
+    // (weekday + valid_from/valid_to) intersected with page_windows validity
+    // at DATE granularity. NO busy/gcal/slot computation happens here: a
+    // fully-booked or firm-blocked date still appears and simply resolves to
+    // "no times available" on click. Union across providers (client_choice
+    // caveat, accepted: a date can show where only SOME providers have base
+    // availability).
+    const today = firmToday();
+    const todayStr = today.toFormat('yyyy-MM-dd');
+
+    // Date-level truth needs weekday + validity only — no times.
+    // DATE_FORMAT keeps vf/vt as plain strings (mysql2 would otherwise hand
+    // back Date objects, which String(...).slice(0,10) mangles).
+    const [uaRows] = await req.db.query(
+      `SELECT user, weekday,
+              DATE_FORMAT(valid_from, '%Y-%m-%d') AS valid_from,
+              DATE_FORMAT(valid_to,   '%Y-%m-%d') AS valid_to
+         FROM user_availability
+        WHERE active = 1 AND user IN (?)`,
+      [view._provider_ids]
+    );
+
+    const validOn = (r, dayStr, weekday) => {
+      if (Number(r.weekday) !== weekday) return false;
+      const vf = r.valid_from ? String(r.valid_from).slice(0, 10) : null;
+      const vt = r.valid_to   ? String(r.valid_to).slice(0, 10)   : null;
+      if (vf && dayStr < vf) return false;
+      if (vt && dayStr > vt) return false;
+      return true;
+    };
+
+    const horizon = Math.max(0, Number(view.horizon_days) || 0);
+    const bookable_dates = [];
+    for (let d = today, i = 0; i <= horizon; d = d.plus({ days: 1 }), i++) {
+      const dayStr = d.toFormat('yyyy-MM-dd');
+      const weekday = d.weekday % 7; // luxon 1=Mon…7=Sun → 0=Sun…6=Sat (engine convention)
+      if (!uaRows.some(r => validOn(r, dayStr, weekday))) continue;
+      if (view._page_windows && !view._page_windows.some(w => validOn(w, dayStr, weekday))) continue;
+      bookable_dates.push(dayStr);
+    }
+
+    // page_expired: every window carries a valid_to and all are in the past —
+    // the page as a whole can never offer a date again. Drives the widget's
+    // "this booking link has expired" copy (vs the generic no-dates message).
+    const page_expired =
+      Array.isArray(view._page_windows) && view._page_windows.length > 0 &&
+      view._page_windows.every(w => w.valid_to && String(w.valid_to) < todayStr);
 
     const ts = Date.now();
     res.json({
@@ -369,13 +443,15 @@ router.get('/api/book/:slug/config', async (req, res) => {
       accent_color:    view.accent_color,
       logo_url:        view.logo_url,
       logo_link_url:   view.logo_link_url,
+      footer_html:     view.footer_html || null, // raw passthrough (admin-trusted)
       platform:        view.platform,
       appt_type:       view.appt_type,
       appt_length:     view.appt_length,
       identity_mode:   view.identity_mode,
       collect_note:    !!view.collect_note,
       horizon_days:    view.horizon_days,
-      allowed_weekdays,
+      bookable_dates,
+      page_expired,
       providers,
       ts,
       sig: signTs(ts),

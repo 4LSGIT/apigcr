@@ -340,11 +340,14 @@ function normalizeBusyForProvider(providerId, {
  * @param {string} [o.zone=FIRM_TZ]
  * @param {?object[]} [o.restrictRows=null] — optional per-view weekly window
  *        restriction (booking_views.page_windows shape):
- *        [{ weekday:0–6, start?:'HH:mm', end?:'HH:mm' }, …]. null/undefined =
- *        no restriction (today's behavior). When non-null the day's working
- *        windows are INTERSECTED with the entries matching this weekday, so it
- *        can only ever remove availability. A weekday with NO matching entry is
- *        closed for this view → []. An entry with no start/end = all-day.
+ *        [{ weekday:0–6, start?:'HH:mm', end?:'HH:mm',
+ *           valid_from?:'YYYY-MM-DD', valid_to?:'YYYY-MM-DD' }, …].
+ *        null/undefined = no restriction (today's behavior). When non-null the
+ *        day's working windows are INTERSECTED with the entries matching this
+ *        weekday AND valid on this date (valid_from/valid_to inclusive), so it
+ *        can only ever remove availability. A date with NO matching valid
+ *        entry is closed for this view → []. An entry with no start/end =
+ *        all-day.
  * @returns {string[]} 'yyyy-MM-dd HH:mm' starts for that day
  */
 /**
@@ -408,8 +411,21 @@ function computeProviderDaySlots({
   // closed that day; a zeroed-out intersection falls through the same
   // windows.length===0 early-return below.
   if (restrictRows != null) {
-    const dayEntries = (restrictRows || []).filter(r => Number(r.weekday) === weekday);
-    if (dayEntries.length === 0) return []; // weekday not offered by this view
+    // Entry counts only if its weekday matches AND dayStr is inside its
+    // optional valid_from/valid_to range (inclusive, 'YYYY-MM-DD' string
+    // compare) — same gating the workingRows loop applies above. A restricted
+    // view with no VALID entry for this date is closed that date (fail-closed,
+    // consistent with "weekday not listed = closed"; the loadView fail-open
+    // for malformed JSON is a different, upstream concern).
+    const dayEntries = (restrictRows || []).filter(r => {
+      if (Number(r.weekday) !== weekday) return false;
+      const vf = r.valid_from ? String(r.valid_from).slice(0, 10) : null;
+      const vt = r.valid_to   ? String(r.valid_to).slice(0, 10)   : null;
+      if (vf && dayStr < vf) return false;
+      if (vt && dayStr > vt) return false;
+      return true;
+    });
+    if (dayEntries.length === 0) return []; // weekday not offered (or no window valid on this date)
     const restrictionIntervals = [];
     for (const r of dayEntries) {
       const hasTimes = r.start != null && r.start !== '' && r.end != null && r.end !== '';
