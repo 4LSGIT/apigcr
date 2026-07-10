@@ -211,6 +211,21 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
     ['query_ai timeout too low',      'query_ai', { prompt: 'x', timeout_ms: 10 }, 'must be >= 1000'],
     ['query_ai string max_tokens ok', 'query_ai', { prompt: 'x', max_tokens: '512' }, null],
 
+    // query_ai file attachments (Slice B) — text-only regression is the
+    // 'query_ai valid minimal'/'valid full' rows above (zero file params
+    // stays valid). NOTE: the file_* sources carry NO exclusiveOneOf group —
+    // the validator's exclusiveOneOf means EXACTLY one and all four sources
+    // are optional here, so at-most-one is enforced at RUN TIME only (see
+    // the runtime describe block below). timeout_ms max raised 60000→120000.
+    ['query_ai timeout at raised max','query_ai', { prompt: 'x', timeout_ms: 120000 }, null],
+    ['query_ai timeout above max',    'query_ai', { prompt: 'x', timeout_ms: 120001 }, 'must be <= 120000'],
+    ['query_ai valid file_url',       'query_ai', { prompt: 'summarize the attachment', file_url: 'https://example.com/scan.pdf' }, null],
+    ['query_ai valid file_dropbox_path', 'query_ai', { prompt: 'summarize', file_dropbox_path: '/ Cases/scanned-notice.pdf', timeout_ms: 90000, output_var: 'summary' }, null],
+    ['query_ai asset with file_type override', 'query_ai', { prompt: 'read it', file_asset_id: 123, file_type: 'document' }, null],
+    ['query_ai two file sources pass save-time (runtime-enforced)', 'query_ai', { prompt: 'x', file_url: 'https://example.com/a.pdf', file_dropbox_path: '/b.pdf' }, null],
+    ['query_ai bad file_type',        'query_ai', { prompt: 'x', file_url: 'https://example.com/a.pdf', file_type: 'video' }, 'must be one of'],
+    ['query_ai file_asset_id non-numeric', 'query_ai', { prompt: 'x', file_asset_id: 'abc' }, 'must be an integer'],
+
     // parse_pdf — exclusiveOneOf over three sources, option types
     ['parse_pdf valid url',           'parse_pdf', { url: 'https://example.com/doc.pdf' }, null],
     ['parse_pdf valid dropbox_path',  'parse_pdf', { dropbox_path: '/ Cases/petition.pdf', pages: '1-3', output_var: 'petition_text' }, null],
@@ -241,6 +256,41 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
       expect(result).not.toBeNull();
       expect(result.error).toContain(expectedFragment);
     }
+  });
+});
+
+// Runtime checks for query_ai's file-source rules that the save-time
+// validator CANNOT express (exclusiveOneOf = exactly-one; the file_*
+// sources are optional-exclusive). Every case below throws BEFORE any
+// DB/service/API I/O, so db=null is safe.
+describe('query_ai file-source runtime checks', () => {
+  test('two file sources throws', async () => {
+    await expect(internalFunctions.query_ai(
+      { prompt: 'x', file_url: 'https://example.com/a.pdf', file_dropbox_path: '/b.pdf' }, null
+    )).rejects.toThrow('provide at most one file source');
+  });
+  test('bad file_type throws', async () => {
+    await expect(internalFunctions.query_ai(
+      { prompt: 'x', file_url: 'https://example.com/a.pdf', file_type: 'video' }, null
+    )).rejects.toThrow('file_type must be');
+  });
+  test('unsupported extension throws', async () => {
+    await expect(internalFunctions.query_ai(
+      { prompt: 'x', file_url: 'https://example.com/a.docx' }, null
+    )).rejects.toThrow('unsupported file type ".docx"');
+  });
+  test('undeterminable type without file_type throws', async () => {
+    await expect(internalFunctions.query_ai(
+      { prompt: 'x', file_url: 'https://example.com/download?id=9' }, null
+    )).rejects.toThrow('cannot infer file type');
+  });
+  test('extension-less url with file_type override passes inference (query string stripped)', async () => {
+    // file_type makes the block type determinable for a url source; the call
+    // then proceeds to aiService, which fails on the null db — proving
+    // inference itself accepted the input.
+    await expect(internalFunctions.query_ai(
+      { prompt: 'x', file_url: 'https://example.com/download?id=9', file_type: 'document' }, null
+    )).rejects.not.toThrow('cannot infer');
   });
 });
 
