@@ -211,6 +211,17 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
     ['query_ai timeout too low',      'query_ai', { prompt: 'x', timeout_ms: 10 }, 'must be >= 1000'],
     ['query_ai string max_tokens ok', 'query_ai', { prompt: 'x', max_tokens: '512' }, null],
 
+    // parse_pdf — exclusiveOneOf over three sources, option types
+    ['parse_pdf valid url',           'parse_pdf', { url: 'https://example.com/doc.pdf' }, null],
+    ['parse_pdf valid dropbox_path',  'parse_pdf', { dropbox_path: '/ Cases/petition.pdf', pages: '1-3', output_var: 'petition_text' }, null],
+    ['parse_pdf valid dropbox_link',  'parse_pdf', { dropbox_link: 'https://www.dropbox.com/s/abc/petition.pdf', max_length: 5000, normalize_whitespace: false }, null],
+    ['parse_pdf placeholder path',    'parse_pdf', { dropbox_path: '{{petition_path}}' }, null],
+    ['parse_pdf two sources',         'parse_pdf', { url: 'https://example.com/doc.pdf', dropbox_path: '/x.pdf' }, 'must include only one'],
+    ['parse_pdf no source',           'parse_pdf', { pages: '1-3' }, 'must include exactly one'],
+    ['parse_pdf pages not string',    'parse_pdf', { url: 'https://example.com/doc.pdf', pages: 3 }, 'must be a string'],
+    ['parse_pdf normalize=string',    'parse_pdf', { url: 'https://example.com/doc.pdf', normalize_whitespace: 'true' }, 'must be a boolean'],
+    ['parse_pdf max_length too low',  'parse_pdf', { url: 'https://example.com/doc.pdf', max_length: 0 }, 'must be >= 1'],
+
     // run_task_digest — boolean type
     ['digest force=true',             'run_task_digest', { force: true }, null],
     ['digest force=string',           'run_task_digest', { force: 'true' }, 'must be a boolean'],

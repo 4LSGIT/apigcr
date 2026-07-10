@@ -37,6 +37,7 @@ lib/internal_functions/events.js
 lib/internal_functions/forwarding.js
 lib/internal_functions/index.js
 lib/internal_functions/log.js
+lib/internal_functions/pdf.js
 lib/internal_functions/sequences.js
 lib/internal_functions/system.js
 lib/internal_functions/tasks.js
