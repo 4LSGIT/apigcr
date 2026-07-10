@@ -182,7 +182,6 @@ public/sendingform-bk.html
 public/sendingform.html
 public/settings.html
 public/style.css
-public/styleOpts.html
 public/survey.html
 public/sw.js
 public/tabLeads.html
