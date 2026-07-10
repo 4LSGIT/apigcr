@@ -370,6 +370,7 @@ services/videoService.js
 startup/db.js
 startup/dbReadonly.js
 startup/init.js
+tests/aiService.attachments.test.js
 tests/internal_functions.meta.test.js
 tests/oauthService.test.js
 tests/test-credential-crypto.js
