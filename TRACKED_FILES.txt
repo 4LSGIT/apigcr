@@ -200,6 +200,7 @@ routes/_errtest.js
 routes/admin.apiTester.js
 routes/admin.dbConsole.js
 routes/alert-test.js
+routes/api.ai.js
 routes/api.appSettings.js
 routes/api.appts.js
 routes/api.assets.js
