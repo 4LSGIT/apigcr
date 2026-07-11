@@ -22,7 +22,10 @@
  *                         there is no SSRF surface here.
  *   file        {File}    multipart upload (20MB cap — matches aiService's
  *                         decoded base64 cap)
- *   base64      {string}  base64 file bytes (JSON body; 20MB decoded cap)
+ *   base64      {string}  base64 file bytes (JSON body). NOTE: server.js's
+ *                         global express.json limit (10mb) caps this path
+ *                         at ~7.5MB decoded (413 before this route runs).
+ *                         Use multipart for anything bigger (20MB cap).
  *
  * AI params (form fields or JSON keys; form values are coerced):
  *   prompt      {string}  REQUIRED — instructions for the model
@@ -281,7 +284,9 @@ router.post('/api/ai/file', jwtOrApiKey, uploadSingle, async (req, res) => {
     // ---- Call aiService (all guards/logging live there) ----
     const result = await aiService.call(req.db, {
       inlineSystem: prompt,
-      userInput: body.input != null && body.input !== '' ? String(body.input) : null,
+      userInput: body.input != null && body.input !== ''
+        ? (typeof body.input === 'string' ? body.input : JSON.stringify(body.input))
+        : null,
       attachments: [element],
       model,
       outputType,
