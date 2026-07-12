@@ -184,6 +184,7 @@ public/send-sms.html
 public/sendingform-bk.html
 public/sendingform.html
 public/settings.html
+public/streak.html
 public/style.css
 public/survey.html
 public/sw.js
@@ -243,6 +244,7 @@ routes/api.redirects.js
 routes/api.scratch.js
 routes/api.search.js
 routes/api.sending.js
+routes/api.streak.js
 routes/api.systemStatus.js
 routes/api.tasks.js
 routes/api.temp.gcal.js

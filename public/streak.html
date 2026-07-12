@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#4f46e5">
+<title>Streak</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  /* Two rows of 14 = the last 4 weeks. Today is the bottom-right cell.
+     14 columns keeps the tap targets ~20px on a phone; 28 would be ~9px. */
+  .daygrid { display:grid; grid-template-columns:repeat(14, minmax(0,1fr)); gap:3px; }
+  .day { aspect-ratio:1/1; border-radius:3px; }
+  .spin { animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen antialiased">
+
+<div id="app" class="mx-auto max-w-2xl px-4 py-6 sm:py-10"></div>
+
+<script>
+/* ────────────────────────────────────────────────────────────────────────────
+ * YisraStreak — front end for routes/api.streak.js
+ *
+ *   /streak            → admin console (list / create / edit boards)
+ *   /streak?b=<slug>   → one board: streaks, tick today, 4-week grid
+ *
+ * Credentials live in localStorage and go out on every request as a custom
+ * header, base64'd:
+ *   members  X-Streak-Auth  = base64("username:password")
+ *   admin    X-Streak-Admin = base64("password")
+ * Custom headers rather than `Authorization: Basic` so a 401 never triggers the
+ * browser's native credential dialog.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const app    = document.getElementById('app');
+const SLUG   = (new URLSearchParams(location.search).get('b') || '').toLowerCase();
+const IS_ADMIN_PAGE = !SLUG;
+
+const CRED_KEY  = SLUG ? 'yisrastreak:cred:' + SLUG : null;
+const ADMIN_KEY = 'yisrastreak:admin';
+
+/* ─── tiny helpers ───────────────────────────────────────────────────────── */
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+
+/* utf-8 safe base64 — btoa alone dies on anything above U+00FF */
+const b64 = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+
+const getCred  = () => { try { return JSON.parse(localStorage.getItem(CRED_KEY) || 'null'); } catch { return null; } };
+const setCred  = (c) => c ? localStorage.setItem(CRED_KEY, JSON.stringify(c)) : localStorage.removeItem(CRED_KEY);
+const getAdmin = () => localStorage.getItem(ADMIN_KEY) || '';
+const setAdmin = (p) => p ? localStorage.setItem(ADMIN_KEY, p) : localStorage.removeItem(ADMIN_KEY);
+
+const memberHeaders = () => { const c = getCred(); return c ? { 'X-Streak-Auth': b64(c.u + ':' + c.p) } : {}; };
+const adminHeaders  = () => ({ 'X-Streak-Admin': b64(getAdmin()) });
+
+async function api(method, path, body, headers = {}) {
+  const res = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let data = null;
+  try { data = await res.json(); } catch { /* empty / non-JSON body */ }
+  if (!res.ok) {
+    const err = new Error(data?.error || ('Request failed (' + res.status + ')'));
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+/* "2026-07-13" → "Mon 13 Jul". Parsed as UTC so it never slides a day. */
+function pretty(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + 'T00:00:00Z');
+  return d.toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short', timeZone:'UTC' });
+}
+
+function toast(msg, kind = 'error') {
+  const el = document.createElement('div');
+  el.className = 'fixed left-1/2 bottom-6 -translate-x-1/2 z-50 px-4 py-2 rounded-lg text-sm shadow-lg ' +
+    (kind === 'error' ? 'bg-rose-600 text-white' : 'bg-slate-800 text-white');
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+const BTN  = 'inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed';
+const PRI  = BTN + ' bg-indigo-600 text-white hover:bg-indigo-700';
+const SEC  = BTN + ' bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50';
+const DANG = BTN + ' bg-white text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50';
+const INP  = 'w-full rounded-lg border-0 ring-1 ring-slate-300 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none';
+
+function loading(label = 'Loading…') {
+  app.innerHTML =
+    '<div class="flex items-center justify-center gap-3 py-24 text-slate-400 text-sm">' +
+      '<svg class="spin h-5 w-5" viewBox="0 0 24 24" fill="none">' +
+        '<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" opacity=".25"></circle>' +
+        '<path d="M22 12a10 10 0 0 0-10-10" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path>' +
+      '</svg>' + esc(label) +
+    '</div>';
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * BOARD  —  /streak?b=<slug>
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+let BOARD = null;   // last payload from GET /api/streak/board/:slug
+
+async function bootBoard() {
+  loading();
+  if (!getCred()) return renderLogin();
+  try {
+    BOARD = await api('GET', '/api/streak/board/' + SLUG, undefined, memberHeaders());
+    renderBoard();
+  } catch (err) {
+    if (err.status === 401) { setCred(null); return renderLogin(err.message); }
+    app.innerHTML = '<p class="py-24 text-center text-sm text-rose-600">' + esc(err.message) + '</p>';
+  }
+}
+
+async function renderLogin(msg) {
+  let meta = null;
+  try { meta = await api('GET', '/api/streak/meta/' + SLUG); }
+  catch (err) {
+    app.innerHTML = '<p class="py-24 text-center text-sm text-rose-600">' + esc(err.message) + '</p>';
+    return;
+  }
+
+  const people = meta.members.map((m) =>
+    '<button data-u="' + esc(m.username) + '" class="who ' + SEC + ' w-full justify-start">' + esc(m.name) + '</button>'
+  ).join('');
+
+  app.innerHTML =
+    '<div class="mx-auto max-w-sm">' +
+      '<h1 class="text-2xl font-bold tracking-tight text-center">' + esc(meta.title) + '</h1>' +
+      (meta.description ? '<p class="mt-1 text-center text-sm text-slate-500">' + esc(meta.description) + '</p>' : '') +
+      '<div class="mt-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">' +
+        '<p class="text-sm font-medium text-slate-600">Who are you?</p>' +
+        '<div class="mt-3 space-y-2">' + people + '</div>' +
+        '<form id="pwform" class="mt-4 hidden">' +
+          '<label class="text-sm font-medium text-slate-600">Password for <span id="pwwho" class="font-semibold"></span></label>' +
+          '<input id="pw" type="password" autocomplete="current-password" class="' + INP + ' mt-2">' +
+          '<button type="submit" class="' + PRI + ' mt-3 w-full">Sign in</button>' +
+          '<button type="button" id="back" class="mt-2 w-full text-xs text-slate-400 hover:text-slate-600">back</button>' +
+        '</form>' +
+        (msg ? '<p class="mt-4 text-sm text-rose-600">' + esc(msg) + '</p>' : '') +
+      '</div>' +
+    '</div>';
+
+  let chosen = null;
+  app.querySelectorAll('.who').forEach((b) => b.addEventListener('click', () => {
+    chosen = b.dataset.u;
+    app.querySelectorAll('.who').forEach((x) => x.classList.add('hidden'));
+    document.getElementById('pwwho').textContent = b.textContent;
+    document.getElementById('pwform').classList.remove('hidden');
+    document.getElementById('pw').focus();
+  }));
+
+  document.getElementById('back')?.addEventListener('click', () => renderLogin());
+
+  document.getElementById('pwform').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const p = document.getElementById('pw').value;
+    const btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Checking…';
+    try {
+      // Verify before persisting, so a bad password never gets stored.
+      await api('POST', '/api/streak/auth/' + SLUG, {}, { 'X-Streak-Auth': b64(chosen + ':' + p) });
+      setCred({ u: chosen, p });
+      bootBoard();
+    } catch (err) {
+      btn.disabled = false; btn.textContent = 'Sign in';
+      toast(err.message);
+    }
+  });
+}
+
+function dayCell(d, clickable, todayISO) {
+  const isToday = d.date === todayISO;
+  let cls, title = pretty(d.date);
+
+  if (d.done && d.late)  { cls = 'bg-amber-400';   title += ' — done (ticked late)'; }
+  else if (d.done)       { cls = 'bg-emerald-500'; title += ' — done'; }
+  else if (isToday)      { cls = 'bg-white border-2 border-dashed border-slate-400'; title += ' — today, not yet'; }
+  else                   { cls = 'bg-slate-200';   title += ' — missed'; }
+
+  if (d.note) title += ' · ' + d.note;
+  if (isToday && d.done) cls += ' ring-2 ring-offset-1 ring-emerald-600';
+
+  return '<div class="day ' + cls + (clickable ? ' cursor-pointer hover:opacity-70' : '') + '"' +
+         (clickable ? ' data-act="toggle" data-date="' + d.date + '"' : '') +
+         ' title="' + esc(title) + '"></div>';
+}
+
+function memberCard(m, board) {
+  const done = m.done_today;
+  const you  = m.is_you;
+
+  /* Only your own squares are clickable, and only inside the backfill window. */
+  const earliest = board.days_editable_from;
+  const grid = m.days
+    .map((d) => dayCell(d, you && !board.archived && d.date >= earliest, board.today))
+    .join('');
+
+  const pill = done
+    ? '<span class="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Done today</span>'
+    : '<span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-500">Not yet today</span>';
+
+  let action = '';
+  if (you && !board.archived) {
+    if (!done) {
+      action =
+        '<div class="mt-4 space-y-2">' +
+          '<input id="note" class="' + INP + '" maxlength="280" placeholder="Note (optional)">' +
+          '<button data-act="checkin" class="' + PRI + ' w-full py-3 text-base">✓ Mark today done</button>' +
+        '</div>';
+    } else {
+      const note = m.days[m.days.length - 1]?.note;
+      action =
+        '<div class="mt-4 rounded-lg bg-emerald-50 p-3 text-center ring-1 ring-emerald-200">' +
+          '<p class="text-sm font-semibold text-emerald-800">Nice. Logged for today.</p>' +
+          (note ? '<p class="mt-1 text-xs italic text-emerald-700">“' + esc(note) + '”</p>' : '') +
+          '<button data-act="undo" class="mt-2 text-xs text-emerald-700/70 underline hover:text-emerald-900">undo</button>' +
+        '</div>';
+    }
+  }
+
+  return '<section class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200' +
+           (you ? ' ring-2 ring-indigo-300' : '') + '" data-user="' + esc(m.username) + '">' +
+
+    '<div class="flex items-center justify-between">' +
+      '<h2 class="font-semibold">' + esc(m.name) +
+        (you ? '<span class="ml-2 text-xs font-normal text-indigo-500">you</span>' : '') +
+      '</h2>' + pill +
+    '</div>' +
+
+    '<div class="mt-4 flex items-baseline gap-2">' +
+      '<span class="text-5xl font-bold tabular-nums tracking-tight' +
+        (m.current > 0 ? ' text-slate-900' : ' text-slate-300') + '">' + m.current + '</span>' +
+      '<span class="text-sm text-slate-500">day streak' + (m.current > 0 ? ' 🔥' : '') + '</span>' +
+    '</div>' +
+
+    '<p class="mt-1 text-xs text-slate-400">' +
+      'Best ' + m.longest + ' · ' + m.total + ' total · last ' + esc(pretty(m.last_done)) +
+    '</p>' +
+
+    action +
+
+    '<div class="mt-5">' +
+      '<div class="daygrid">' + grid + '</div>' +
+      '<p class="mt-2 text-[11px] text-slate-400">' +
+        'Last 4 weeks · today is bottom-right' +
+        (you && !board.archived ? ' · tap a recent square to fix a mistake' : '') +
+      '</p>' +
+    '</div>' +
+
+  '</section>';
+}
+
+function renderBoard() {
+  const b = BOARD;
+  // Mirror the server's backfill rule client-side so we only offer taps the API
+  // will accept. The server re-checks; this is UI only.
+  const t = new Date(b.today + 'T00:00:00Z');
+  t.setUTCDate(t.getUTCDate() - b.backfill_days);
+  b.days_editable_from = t.toISOString().slice(0, 10);
+
+  const banner = b.archived
+    ? '<div class="mb-4 rounded-xl bg-slate-200 px-4 py-3 text-center text-sm font-medium text-slate-600">This board is archived — read only.</div>'
+    : b.all_done_today
+      ? '<div class="mb-4 rounded-xl bg-emerald-500 px-4 py-3 text-center text-sm font-semibold text-white">🎉 Everyone is done today.</div>'
+      : '';
+
+  app.innerHTML =
+    '<header class="mb-6 flex items-start justify-between gap-4">' +
+      '<div>' +
+        '<h1 class="text-2xl font-bold tracking-tight">' + esc(b.title) + '</h1>' +
+        (b.description ? '<p class="mt-1 text-sm text-slate-500">' + esc(b.description) + '</p>' : '') +
+        '<p class="mt-1 text-xs text-slate-400">' + esc(pretty(b.today)) + '</p>' +
+      '</div>' +
+      '<button id="signout" class="shrink-0 text-xs text-slate-400 hover:text-slate-600">sign out</button>' +
+    '</header>' +
+    banner +
+    '<div class="space-y-4">' + b.members.map((m) => memberCard(m, b)).join('') + '</div>' +
+    '<p class="mt-8 text-center text-[11px] text-slate-300">' +
+      'Amber = ticked after the fact. You can only change your own last ' + b.backfill_days + ' days.' +
+    '</p>';
+
+  document.getElementById('signout').addEventListener('click', () => { setCred(null); bootBoard(); });
+
+  const me = app.querySelector('[data-user="' + b.you + '"]');
+  if (!me) return;
+
+  me.querySelector('[data-act="checkin"]')?.addEventListener('click', (e) => {
+    const note = document.getElementById('note')?.value || '';
+    send(e.currentTarget, 'POST', { note });
+  });
+  me.querySelector('[data-act="undo"]')?.addEventListener('click', (e) => send(e.currentTarget, 'DELETE', {}));
+  me.querySelectorAll('[data-act="toggle"]').forEach((cell) => {
+    cell.addEventListener('click', () => {
+      const date = cell.dataset.date;
+      const day  = BOARD.members.find((m) => m.is_you).days.find((d) => d.date === date);
+      if (day.done && date !== BOARD.today && !confirm('Remove ' + pretty(date) + ' from your streak?')) return;
+      send(cell, day.done ? 'DELETE' : 'POST', { date });
+    });
+  });
+}
+
+async function send(el, method, body) {
+  el.style.pointerEvents = 'none';
+  if (el.tagName === 'BUTTON') { el.disabled = true; el.textContent = 'Saving…'; }
+  try {
+    await api(method, '/api/streak/board/' + SLUG + '/checkin', body, memberHeaders());
+    BOARD = await api('GET', '/api/streak/board/' + SLUG, undefined, memberHeaders());
+    renderBoard();
+  } catch (err) {
+    toast(err.message);
+    if (err.status === 401) { setCred(null); bootBoard(); } else { renderBoard(); }
+  }
+}
+
+/* Pick up the other person's tick without a manual refresh. */
+setInterval(() => { if (!IS_ADMIN_PAGE && BOARD && !document.hidden) bootBoardQuiet(); }, 60000);
+document.addEventListener('visibilitychange', () => {
+  if (!IS_ADMIN_PAGE && BOARD && !document.hidden) bootBoardQuiet();
+});
+async function bootBoardQuiet() {
+  try {
+    BOARD = await api('GET', '/api/streak/board/' + SLUG, undefined, memberHeaders());
+    renderBoard();
+  } catch { /* transient — the next tick will retry */ }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * ADMIN  —  /streak
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+let BOARDS = [];
+let EDITING = null;   // slug currently open in the editor
+
+async function bootAdmin() {
+  loading();
+  if (!getAdmin()) return renderAdminLogin();
+  try {
+    BOARDS = (await api('GET', '/api/streak/boards', undefined, adminHeaders())).boards;
+    renderAdmin();
+  } catch (err) {
+    setAdmin('');
+    renderAdminLogin(err.message);
+  }
+}
+
+function renderAdminLogin(msg) {
+  app.innerHTML =
+    '<div class="mx-auto max-w-sm pt-16">' +
+      '<h1 class="text-center text-2xl font-bold tracking-tight">Streak boards</h1>' +
+      '<form id="af" class="mt-8 rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-200">' +
+        '<label class="text-sm font-medium text-slate-600">Admin password</label>' +
+        '<input id="ap" type="password" class="' + INP + ' mt-2" autocomplete="current-password">' +
+        '<button class="' + PRI + ' mt-4 w-full">Sign in</button>' +
+        (msg ? '<p class="mt-4 text-sm text-rose-600">' + esc(msg) + '</p>' : '') +
+      '</form>' +
+      '<p class="mt-6 text-center text-xs text-slate-400">Members don\'t come here — they use their board link.</p>' +
+    '</div>';
+
+  document.getElementById('af').addEventListener('submit', (e) => {
+    e.preventDefault();
+    setAdmin(document.getElementById('ap').value);
+    bootAdmin();
+  });
+}
+
+/* One editable member row. `m` may be {} for a blank row. */
+function memberRow(m = {}, isNew = true) {
+  return '<div class="mrow grid grid-cols-[1fr_1fr_1fr_auto] gap-2">' +
+    '<input class="' + INP + ' m-name" placeholder="Name"     value="' + esc(m.name || '') + '">' +
+    '<input class="' + INP + ' m-user" placeholder="username" value="' + esc(m.username || '') + '"' +
+      (isNew ? '' : ' readonly') + '>' +
+    '<input class="' + INP + ' m-pass" type="text" autocomplete="off" placeholder="' +
+      (isNew ? 'password' : 'leave blank to keep') + '">' +
+    '<button type="button" class="m-del px-2 text-slate-300 hover:text-rose-500" title="remove">✕</button>' +
+  '</div>';
+}
+
+function readMembers(root) {
+  return [...root.querySelectorAll('.mrow')].map((r) => {
+    const o = {
+      name:     r.querySelector('.m-name').value.trim(),
+      username: r.querySelector('.m-user').value.trim().toLowerCase(),
+    };
+    const p = r.querySelector('.m-pass').value;
+    if (p) o.password = p;        // omitted => server keeps the existing hash
+    return o;
+  }).filter((m) => m.username);
+}
+
+function wireMemberEditor(root) {
+  root.querySelector('.m-add').addEventListener('click', () => {
+    root.querySelector('.mlist').insertAdjacentHTML('beforeend', memberRow({}, true));
+    wireDeletes(root);
+  });
+  wireDeletes(root);
+}
+function wireDeletes(root) {
+  root.querySelectorAll('.m-del').forEach((b) => {
+    b.onclick = () => {
+      if (root.querySelectorAll('.mrow').length <= 1) return toast('A board needs at least one person.');
+      b.closest('.mrow').remove();
+    };
+  });
+}
+
+function boardCard(b) {
+  const url = location.origin + '/streak?b=' + b.slug;
+  const editing = EDITING === b.slug;
+
+  const head =
+    '<div class="flex items-start justify-between gap-3">' +
+      '<div class="min-w-0">' +
+        '<h2 class="truncate font-semibold">' + esc(b.title) +
+          (b.archived ? '<span class="ml-2 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">archived</span>' : '') +
+        '</h2>' +
+        '<p class="mt-0.5 truncate text-xs text-slate-400">' +
+          esc(b.members.map((m) => m.name).join(', ')) +
+          ' · ' + b.checkins + ' check-ins' +
+          (b.last_checkin ? ' · last ' + esc(pretty(b.last_checkin)) : '') +
+        '</p>' +
+      '</div>' +
+      '<a href="' + esc(url) + '" class="' + SEC + ' shrink-0">Open</a>' +
+    '</div>';
+
+  const bar =
+    '<div class="mt-3 flex flex-wrap gap-2 text-xs">' +
+      '<button data-a="copy" class="rounded bg-slate-100 px-2 py-1 text-slate-600 hover:bg-slate-200">Copy link</button>' +
+      '<button data-a="edit" class="rounded bg-slate-100 px-2 py-1 text-slate-600 hover:bg-slate-200">' +
+        (editing ? 'Close' : 'Edit') + '</button>' +
+      '<button data-a="arch" class="rounded bg-slate-100 px-2 py-1 text-slate-600 hover:bg-slate-200">' +
+        (b.archived ? 'Unarchive' : 'Archive') + '</button>' +
+      '<button data-a="del" class="rounded bg-rose-50 px-2 py-1 text-rose-600 hover:bg-rose-100">Delete</button>' +
+    '</div>';
+
+  const editor = !editing ? '' :
+    '<div class="mt-4 space-y-3 border-t border-slate-100 pt-4">' +
+      '<input class="' + INP + ' e-title" value="' + esc(b.title) + '" placeholder="Title">' +
+      '<input class="' + INP + ' e-desc"  value="' + esc(b.description || '') + '" placeholder="Description (optional)">' +
+      '<input class="' + INP + ' e-tz"    value="' + esc(b.tz) + '" placeholder="Timezone">' +
+      '<div class="mlist space-y-2">' + b.members.map((m) => memberRow(m, false)).join('') + '</div>' +
+      '<button type="button" class="m-add text-xs text-indigo-600 hover:underline">+ add person</button>' +
+      '<div class="flex gap-2 pt-1">' +
+        '<button data-a="save" class="' + PRI + '">Save</button>' +
+        '<button data-a="edit" class="' + SEC + '">Cancel</button>' +
+      '</div>' +
+      '<p class="text-[11px] text-slate-400">Usernames are fixed once created. Blank password = unchanged. ' +
+        'Removing someone leaves their history intact — re-add the same username to restore it.</p>' +
+    '</div>';
+
+  return '<section class="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200' +
+    (b.archived ? ' opacity-70' : '') + '" data-slug="' + esc(b.slug) + '">' +
+    head + bar + editor + '</section>';
+}
+
+function renderAdmin() {
+  const tzGuess = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Detroit';
+
+  app.innerHTML =
+    '<header class="mb-6 flex items-center justify-between">' +
+      '<h1 class="text-2xl font-bold tracking-tight">Streak boards</h1>' +
+      '<button id="aout" class="text-xs text-slate-400 hover:text-slate-600">sign out</button>' +
+    '</header>' +
+
+    '<details id="newbox" class="mb-6 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">' +
+      '<summary class="cursor-pointer select-none text-sm font-semibold text-indigo-600">+ New board</summary>' +
+      '<div class="mt-4 space-y-3">' +
+        '<input class="' + INP + ' n-title" placeholder="Title — e.g. Daily Torah study">' +
+        '<input class="' + INP + ' n-desc"  placeholder="Description (optional)">' +
+        '<input class="' + INP + ' n-tz"    value="' + esc(tzGuess) + '" placeholder="Timezone">' +
+        '<p class="pt-1 text-xs font-medium text-slate-500">People</p>' +
+        '<div class="mlist space-y-2">' + memberRow({}, true) + memberRow({}, true) + '</div>' +
+        '<button type="button" class="m-add text-xs text-indigo-600 hover:underline">+ add person</button>' +
+        '<button id="create" class="' + PRI + ' w-full">Create board</button>' +
+      '</div>' +
+    '</details>' +
+
+    (BOARDS.length
+      ? '<div class="space-y-4">' + BOARDS.map(boardCard).join('') + '</div>'
+      : '<p class="py-12 text-center text-sm text-slate-400">No boards yet.</p>');
+
+  document.getElementById('aout').addEventListener('click', () => { setAdmin(''); bootAdmin(); });
+
+  const newbox = document.getElementById('newbox');
+  wireMemberEditor(newbox);
+  document.getElementById('create').addEventListener('click', async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true; btn.textContent = 'Creating…';
+    try {
+      const r = await api('POST', '/api/streak/boards', {
+        title:       newbox.querySelector('.n-title').value.trim(),
+        description: newbox.querySelector('.n-desc').value.trim(),
+        tz:          newbox.querySelector('.n-tz').value.trim(),
+        members:     readMembers(newbox),
+      }, adminHeaders());
+      toast('Created "' + r.title + '"', 'ok');
+      EDITING = null;
+      bootAdmin();
+    } catch (err) {
+      btn.disabled = false; btn.textContent = 'Create board';
+      toast(err.message);
+    }
+  });
+
+  app.querySelectorAll('section[data-slug]').forEach((card) => {
+    const slug = card.dataset.slug;
+    const board = BOARDS.find((b) => b.slug === slug);
+    if (EDITING === slug) wireMemberEditor(card);
+
+    card.querySelectorAll('[data-a]').forEach((btn) => btn.addEventListener('click', async () => {
+      const a = btn.dataset.a;
+
+      if (a === 'copy') {
+        const url = location.origin + '/streak?b=' + slug;
+        try { await navigator.clipboard.writeText(url); toast('Link copied', 'ok'); }
+        catch { prompt('Copy this link:', url); }
+        return;
+      }
+      if (a === 'edit') { EDITING = (EDITING === slug ? null : slug); return renderAdmin(); }
+
+      if (a === 'arch') {
+        try { await api('PATCH', '/api/streak/boards/' + slug, { archived: !board.archived }, adminHeaders()); bootAdmin(); }
+        catch (err) { toast(err.message); }
+        return;
+      }
+      if (a === 'del') {
+        if (!confirm('Delete "' + board.title + '" and all ' + board.checkins + ' check-ins? This cannot be undone.')) return;
+        try { await api('DELETE', '/api/streak/boards/' + slug, undefined, adminHeaders()); EDITING = null; bootAdmin(); }
+        catch (err) { toast(err.message); }
+        return;
+      }
+      if (a === 'save') {
+        btn.disabled = true; btn.textContent = 'Saving…';
+        try {
+          await api('PATCH', '/api/streak/boards/' + slug, {
+            title:       card.querySelector('.e-title').value.trim(),
+            description: card.querySelector('.e-desc').value.trim(),
+            tz:          card.querySelector('.e-tz').value.trim(),
+            members:     readMembers(card),
+          }, adminHeaders());
+          EDITING = null;
+          bootAdmin();
+        } catch (err) {
+          btn.disabled = false; btn.textContent = 'Save';
+          toast(err.message);
+        }
+      }
+    }));
+  });
+}
+
+/* ─── go ─────────────────────────────────────────────────────────────────── */
+IS_ADMIN_PAGE ? bootAdmin() : bootBoard();
+</script>
+</body>
+</html>
