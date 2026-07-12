@@ -875,6 +875,297 @@ function wfWireStartWorkflowPanel() {
   wfRenderTargetPanel();
 }
 
+// ─────────────────────────────────────────────────────────────
+// enroll_sequence target contract panel (Slice CP-1)
+//
+// Ports the Slice 6R start_workflow contract panel to enroll_sequence.
+// The panel div (#e-esq-target-panel) mounts after the trigger_data
+// field and renders per the editor's current mode (data-mode on
+// #e-fn-body-inner):
+//
+//   by_id   — resolve #e-pf-template_id via ESQTARGET (cache-only:
+//             unlike 6R there is NO in-memory sidebar list of sequence
+//             templates on this page, so every id goes through the lazy
+//             GET /sequences/templates/:id cache). Shows name, type,
+//             step count, active state, and the expected trigger_data
+//             contract from two sources in order:
+//               1. template.test_input (authorial docs, Slice 2.1) —
+//                  reuses wfExpectedInitKeys (identical dual object/
+//                  JSON-string handling).
+//               2. Fallback: keys derived by scanning every step's
+//                  timing / action_config / condition / fire_guard for
+//                  `trigger_data.<key>` references (first path segment,
+//                  first-seen order, deduped).
+//             A missing-keys diff runs against the trigger_data param
+//             textarea via wfComputeMissingKeys (reused directly — the
+//             signature is (bodyRaw, expectedKeys), field-agnostic).
+//
+//   by_type — no static contract (the engine's cascade picks the
+//             winner at run time by scoring each active candidate's
+//             filters against trigger_data per the type's
+//             priority_fields — see sequenceEngine.enrollContact).
+//             The panel lists active candidates of the type via a
+//             second cache keyed by type string (successes AND empty
+//             results cached; transient failures not), capped at 5.
+//
+// Inactive by-id targets get amber "enrollment will fail" copy —
+// verified: sequenceEngine.enrollContactByTemplateId throws
+// `Sequence template #N is inactive` before enrolling.
+//
+// Same cache/inflight/race-guard semantics as WFTARGET: 404 cached,
+// 5xx/network NOT cached, inflight dedupe (at most one fetch per key
+// per page load), and after every await the field/mode/panel are
+// re-read so a stale resolve never paints over fresher state.
+// ─────────────────────────────────────────────────────────────
+
+const ESQTARGET = {
+  cache: new Map(),      // template id → { found:true, template, steps } | { found:false }
+  typeCache: new Map(),  // type string → { ok:true, templates } (empty lists cached too)
+  inflight: new Map(),   // 'id:N' / 'type:X' → Promise (dedupe concurrent resolves)
+  timer: null,           // debounce handle — own timer, never shares WFTARGET.timer
+};
+
+// Resolve a sequence template id → { found:true, template, steps } |
+// { found:false } | { found:null } (transient fetch failure — not cached).
+async function esqResolveTemplate(id) {
+  if (ESQTARGET.cache.has(id)) return ESQTARGET.cache.get(id);
+  const key = 'id:' + id;
+  if (ESQTARGET.inflight.has(key)) return ESQTARGET.inflight.get(key);
+  const p = (async () => {
+    try {
+      const data = await api(`/sequences/templates/${id}`);
+      const result = { found: true, template: data.template || {}, steps: data.steps || [] };
+      ESQTARGET.cache.set(id, result);
+      return result;
+    } catch (e) {
+      if (e && e.status === 404) {
+        const result = { found: false };
+        ESQTARGET.cache.set(id, result);
+        return result;
+      }
+      return { found: null }; // network/5xx — don't cache, don't claim not-found
+    } finally {
+      ESQTARGET.inflight.delete(key);
+    }
+  })();
+  ESQTARGET.inflight.set(key, p);
+  return p;
+}
+
+// Resolve a type string → { ok:true, templates:[…] } | { ok:false }
+// (transient failure — not cached). Successes are cached even when the
+// candidate list is empty: "no active templates of this type" is a real
+// answer, not an error.
+async function esqResolveTypeCandidates(type) {
+  if (ESQTARGET.typeCache.has(type)) return ESQTARGET.typeCache.get(type);
+  const key = 'type:' + type;
+  if (ESQTARGET.inflight.has(key)) return ESQTARGET.inflight.get(key);
+  const p = (async () => {
+    try {
+      const data = await api(`/sequences/templates?type=${encodeURIComponent(type)}&active=true`);
+      const result = { ok: true, templates: data.templates || [] };
+      ESQTARGET.typeCache.set(type, result);
+      return result;
+    } catch {
+      return { ok: false };
+    } finally {
+      ESQTARGET.inflight.delete(key);
+    }
+  })();
+  ESQTARGET.inflight.set(key, p);
+  return p;
+}
+
+// Fallback contract derivation: scan every step's timing / action_config /
+// condition / fire_guard (each may arrive as a parsed object or a JSON
+// string — objects are stringified, strings used as-is) for
+// `trigger_data.<key>` references. Catches both {{trigger_data.x}}
+// placeholders and bare "trigger_data.y" dot-paths; nested paths like
+// trigger_data.a.b contribute only the first segment (`a`). Dedupes,
+// preserving first-seen order. Returns [] when nothing references
+// trigger_data.
+function esqDerivedTriggerKeys(steps) {
+  const parts = [];
+  for (const s of (steps || [])) {
+    for (const col of ['timing', 'action_config', 'condition', 'fire_guard']) {
+      const v = s ? s[col] : undefined;
+      if (v === undefined || v === null) continue;
+      parts.push(typeof v === 'string' ? v : JSON.stringify(v));
+    }
+  }
+  const blob = parts.join('\n');
+  const keys = [];
+  const seen = new Set();
+  const re = /trigger_data\.([A-Za-z0-9_]+)/g;
+  let m;
+  while ((m = re.exec(blob)) !== null) {
+    if (!seen.has(m[1])) { seen.add(m[1]); keys.push(m[1]); }
+  }
+  return keys;
+}
+
+// Render the contract panel into #e-esq-target-panel. Self-guards: no-ops
+// when the panel div is absent or the selected function isn't
+// enroll_sequence (stale timers / the wfOnModeChange hook firing for other
+// functions), and hides when the mode's driving field is empty.
+async function wfRenderEnrollSequencePanel() {
+  const panel = document.getElementById('e-esq-target-panel');
+  if (!panel) return;
+  const hide = () => { panel.style.display = 'none'; panel.innerHTML = ''; };
+
+  if (document.getElementById('e-fn')?.value !== 'enroll_sequence') return hide();
+
+  const INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:11px;line-height:1.5';
+  const AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.5';
+
+  const mode = document.getElementById('e-fn-body-inner')?.dataset.mode || '';
+
+  if (mode === 'by_id') {
+    const raw = (document.getElementById('e-pf-template_id')?.value || '').trim();
+    if (!raw) return hide();
+
+    if (raw.includes('{{')) {
+      panel.style.cssText = INFO;
+      panel.innerHTML = 'Target template is dynamic ({{…}}) — contract can\'t be checked.';
+      return;
+    }
+    if (!/^\d+$/.test(raw)) return hide(); // non-numeric, non-placeholder — save validation will complain; stay quiet
+    const targetId = parseInt(raw, 10);
+
+    const res = await esqResolveTemplate(targetId);
+
+    // The await may have raced a field edit, mode flip, or editor re-render;
+    // only paint if everything still points at the same target.
+    const panelNow = document.getElementById('e-esq-target-panel');
+    if (!panelNow) return;
+    const rawNow = (document.getElementById('e-pf-template_id')?.value || '').trim();
+    if (rawNow !== raw) return;
+    if ((document.getElementById('e-fn-body-inner')?.dataset.mode || '') !== 'by_id') return;
+
+    if (res.found === false) {
+      panelNow.style.cssText = AMBER;
+      panelNow.innerHTML = `⚠ Sequence template #${targetId} not found.`;
+      return;
+    }
+    if (res.found === null) {
+      panelNow.style.cssText = INFO;
+      panelNow.innerHTML = `→ Enrolls sequence template #${targetId} — details unavailable (fetch failed).`;
+      return;
+    }
+
+    const tpl = res.template || {};
+    const inactive = !tpl.active;
+    const lines = [];
+    lines.push(
+      `→ Enrolls sequence: <strong>${esc(tpl.name || '')}</strong> (#${targetId})`
+      + (inactive ? ' <span style="font-weight:600">— target is inactive — enrollment will fail until it\'s activated</span>' : '')
+    );
+    lines.push(
+      `Type: ${tpl.type ? `<code>${esc(tpl.type)}</code>` : '(no type — id-only)'} · ${res.steps.length} step(s)`
+    );
+
+    // Contract, two sources in order: test_input (reuse wfExpectedInitKeys —
+    // identical object/JSON-string dual handling), then step-placeholder scan.
+    let expected = wfExpectedInitKeys(tpl.test_input);
+    if (expected) {
+      lines.push(`Expected trigger_data keys: <code>${expected.map(esc).join('</code>, <code>')}</code>`);
+    } else {
+      const derived = esqDerivedTriggerKeys(res.steps);
+      if (derived.length) {
+        expected = derived;
+        lines.push(`Expected trigger_data keys (derived from step placeholders): <code>${derived.map(esc).join('</code>, <code>')}</code>`);
+      } else {
+        lines.push('No trigger_data contract found on the target.');
+      }
+    }
+
+    if (expected) {
+      // wfComputeMissingKeys reused directly — (bodyRaw, expectedKeys) is
+      // field-agnostic; same null-when-not-computable semantics.
+      const missing = wfComputeMissingKeys(document.getElementById('e-pf-trigger_data')?.value || '', expected);
+      if (missing && missing.length) {
+        lines.push(`trigger_data doesn't set: <code>${missing.map(esc).join('</code>, <code>')}</code>`);
+      }
+    }
+
+    panelNow.style.cssText = inactive ? AMBER : INFO;
+    panelNow.innerHTML = lines.join('<br>');
+    return;
+  }
+
+  if (mode === 'by_type') {
+    const raw = (document.getElementById('e-pf-template_type')?.value || '').trim();
+    if (!raw) return hide();
+
+    if (raw.includes('{{')) {
+      panel.style.cssText = INFO;
+      panel.innerHTML = 'Target type is dynamic ({{…}}) — candidates can\'t be checked.';
+      return;
+    }
+
+    const res = await esqResolveTypeCandidates(raw);
+
+    const panelNow = document.getElementById('e-esq-target-panel');
+    if (!panelNow) return;
+    const rawNow = (document.getElementById('e-pf-template_type')?.value || '').trim();
+    if (rawNow !== raw) return;
+    if ((document.getElementById('e-fn-body-inner')?.dataset.mode || '') !== 'by_type') return;
+
+    const base = 'Resolves by type cascade at run time — contract not statically checkable.';
+
+    if (!res.ok) {
+      panelNow.style.cssText = INFO;
+      panelNow.innerHTML = `${base}<br>Candidate list unavailable (fetch failed).`;
+      return;
+    }
+
+    const rows = res.templates;
+    if (!rows.length) {
+      panelNow.style.cssText = AMBER;
+      panelNow.innerHTML = `${base}<br>⚠ No active templates of type "${esc(raw)}".`;
+      return;
+    }
+
+    const shown = rows.slice(0, 5)
+      .map(t => `${esc(t.name || '')} (#${t.id}, ${t.step_count ?? 0} steps)`)
+      .join(', ');
+    const more = rows.length > 5 ? `, +${rows.length - 5} more` : '';
+    panelNow.style.cssText = INFO;
+    panelNow.innerHTML =
+      `${base}<br>${rows.length} active candidate(s): ${shown}${more}`
+      + `<br>Runtime cascade scores each candidate's filters against trigger_data per the type's priority_fields — the winner may differ per enrollment.`;
+    return;
+  }
+
+  return hide();
+}
+
+// Debounced entry point for template_id / template_type / trigger_data input
+// events (~400ms). Own timer — never shares WFTARGET.timer.
+function wfUpdateEnrollSequencePanelDebounced() {
+  if (ESQTARGET.timer) clearTimeout(ESQTARGET.timer);
+  ESQTARGET.timer = setTimeout(() => {
+    ESQTARGET.timer = null;
+    wfRenderEnrollSequencePanel();
+  }, 400);
+}
+
+// Attach input listeners to the enroll_sequence param fields and do the
+// first paint. Called via setTimeout(…, 0) from wfRenderInternalFnBody —
+// same timing/duplicate-handler argument as wfWireStartWorkflowPanel: all
+// call sites assign innerHTML synchronously, so the elements exist by the
+// time the timeout fires, and innerHTML replacement discards old nodes
+// (and their listeners), so re-attaching per render can't stack duplicate
+// handlers. All three fields exist regardless of mode (hidden mode-group
+// fields stay mounted, display:none).
+function wfWireEnrollSequencePanel() {
+  for (const id of ['e-pf-template_id', 'e-pf-template_type', 'e-pf-trigger_data']) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', wfUpdateEnrollSequencePanelDebounced);
+  }
+  wfRenderEnrollSequencePanel();
+}
+
 // ══════════════════════════════════════════════════════════════════
 // LIST + CANVAS
 // ══════════════════════════════════════════════════════════════════
@@ -1255,6 +1546,11 @@ function wfRenderInternalFnBody(fnName, params) {
     if (fnName === 'start_workflow' && spec.name === 'workflow_id') {
       html += `<div id="e-swf-target-panel" style="display:none"></div>`;
     }
+    // Slice CP-1 — enroll_sequence contract panel mounts directly under the
+    // trigger_data field.
+    if (fnName === 'enroll_sequence' && spec.name === 'trigger_data') {
+      html += `<div id="e-esq-target-panel" style="display:none"></div>`;
+    }
     return html;
   }).join('');
 
@@ -1264,6 +1560,7 @@ function wfRenderInternalFnBody(fnName, params) {
   if (fnName === 'start_workflow') {
     setTimeout(wfWireStartWorkflowPanel, 0);
   }
+  if (fnName === 'enroll_sequence') setTimeout(wfWireEnrollSequencePanel, 0); // Slice CP-1
 
   return `<div id="e-fn-body-inner" data-mode="${current || ''}">${desc}${modeBar}${fieldsHtml}</div>`;
 }
@@ -1379,6 +1676,7 @@ function wfOnModeChange(mode) {
     btn.style.borderColor = isActive ? 'var(--brand)' : 'var(--border)';
     btn.style.background  = isActive ? 'rgba(99,102,241,0.15)' : 'transparent';
   });
+  wfRenderEnrollSequencePanel(); // Slice CP-1 — self-guards on #e-fn === 'enroll_sequence'; no-op for every other function
 }
 
 function wfToggleJson() {
