@@ -1328,10 +1328,17 @@ function seqRenderActionConfig(type, cfg) {
     const datalistHtml = (typeof P.fdParamSourceDatalistHtml === 'function')
       ? P.fdParamSourceDatalistHtml('se-sw-initdata-sources')
       : '';
+    // Slice CP-2 — wire the target-contract panel after the caller inserts this
+    // HTML. All three callers of seqRenderActionConfig assign the returned
+    // string to .innerHTML synchronously (seqRenderEditTab → #seq-editor-body,
+    // seqOnActionTypeChange / seqToggleJson → #se-config-area), so the elements
+    // exist by the time this timeout fires.
+    setTimeout(seqWireStartWorkflowPanel, 0);
     return `${toggle}
       <div class="field"><label>Workflow</label>
         <select id="se-sw-workflow">${wfOpts}</select>
       </div>
+      <div id="se-sw-target-panel" style="display:none"></div>
       <div class="field"><label>init_data (JSON)</label>
         <textarea id="se-sw-initdata" rows="6">${esc(initDataText)}</textarea>
         ${datalistHtml}
@@ -1382,6 +1389,240 @@ function seqOnStartWorkflowTieChange() {
   const checked = document.getElementById('se-sw-tie')?.checked;
   const wrap = document.getElementById('se-sw-override-wrap');
   if (wrap) wrap.style.display = checked ? 'none' : '';
+}
+
+// ─────────────────────────────────────────────────────────────
+// start_workflow target contract panel (Slice CP-2)
+//
+// Port of the workflows.html Slice 6R panel (#e-swf-target-panel) to the
+// sequence step editor. When the step's action type is `start_workflow` and
+// the Workflow select holds a literal numeric id, an informational panel
+// under the select shows the target workflow's name, active state, and the
+// expected init_data contract (derived from the target's `test_input` —
+// authorial documentation of the init_data shape, Slice 2.1).
+//
+// Target resolution order (same two tiers as 6R):
+//   1. SEQ_WORKFLOWS.list — the same in-memory list that builds the Workflow
+//      dropdown. Re-read live on every render so a list refresh wins over the
+//      SEQSWTARGET cache. GET /workflows SELECTs name/active/test_input (plus
+//      step_count), so a tier-1 hit has everything this panel needs — no fetch.
+//      Two properties of that load worth knowing (routes/workflows.js +
+//      loadSeqExtras, both verified):
+//        - loadSeqExtras asks for `?limit=200`, but the route clamps limit to
+//          100 (`Math.min(100, …)`). The real ceiling is 100 workflows
+//          (created_at DESC) — for both this list AND the dropdown built from
+//          it. A firm past 100 workflows loses the tail from the picker; that
+//          is a Slice 3.3 dropdown limitation, not a panel one.
+//        - It loads at most ONCE per page load: loadSeqExtras runs only from
+//          init() (onShow does NOT call it, despite the comment on the
+//          SEQ_WORKFLOWS declaration) and guards on `.loaded`. A target
+//          renamed or deactivated after boot therefore shows stale panel copy
+//          until the page reloads. Accepted: the panel is advisory, and the
+//          engine re-checks `active` at execution time regardless.
+//      NOTE the divergence from 6R here: that page's sidebar list is fetched
+//      with active=true, so inactive targets miss tier 1 and fall through to
+//      the fetch. loadSeqExtras applies NO active filter, so inactive
+//      workflows ARE in SEQ_WORKFLOWS.list — they are selectable in the
+//      dropdown and resolve at tier 1, amber copy and all, with no fetch.
+//   2. SEQSWTARGET.cache — lazy GET /workflows/:id?includeSteps=false, keyed
+//      by id. Found and 404 results are cached (at most one fetch per distinct
+//      id per page load); network/5xx failures are NOT cached and resolve to
+//      { found: null } so a transient blip never renders as "not found".
+//      When is tier 2 actually reachable? The select can only hold ids that
+//      came from SEQ_WORKFLOWS.list, so once the list loads, tier 1 always
+//      hits. Tier 2 covers the two states where the list is empty but the
+//      select still carries a real id: (a) the pre-load window, and (b) a
+//      failed list fetch — loadSeqExtras `.catch`es and leaves `loaded:false`
+//      forever, so the single "loading workflows…" <option> (which carries the
+//      saved workflow_id verbatim as its value) persists for the session. In
+//      both, this fetch is the only thing that can resolve the target.
+//
+// Placeholder workflow_ids: a JSON-mode-authored `{{…}}` workflow_id matches
+// no <option>, so the select falls back to the first one ("— select a
+// workflow —", value "") and the panel hides. In the pre-load window the
+// "loading workflows…" option does carry `{{…}}` verbatim, so the raw value
+// can be a placeholder there — the non-numeric rule hides it too. Same
+// outcome both ways, so CP-2 has no "dynamic — can't check" copy (6R needs it
+// because its workflow_id is a free-text input where `{{…}}` is a first-class
+// authoring state; here the widget is a select). The select-blanking itself is
+// a Slice 3.3 gather/render issue — known, out of scope for CP-2.
+//
+// Missing-keys diff runs against the raw #se-sw-initdata textarea. The step's
+// init_data is passed straight through to the child execution's init_data
+// (sequenceEngine.executeStartWorkflowAction), so top-level keys compare
+// directly — no wrapped/`initData` body handling, same as 6R.
+//
+// Inactive copy is engine-verified: executeStartWorkflowAction throws
+// `start_workflow step: workflow #N is inactive` (Slice 6R alignment) before
+// inserting the child execution. One nuance, deliberately not reflected in the
+// copy: that check runs AFTER the retry-safety short-circuit, so a RETRY of a
+// step that already started its child (before the target was deactivated)
+// reuses the prior execution and never reaches the throw. The panel speaks to
+// fresh fires, which is the question an author is actually asking.
+//
+// Contract source is the target's test_input alone (6R parity) — no scan of
+// the target workflow's steps for placeholder tokens.
+// ─────────────────────────────────────────────────────────────
+
+const SEQSWTARGET = {
+  cache: new Map(),     // id → { found: true, wf } | { found: false }
+  inflight: new Map(),  // id → Promise (dedupe concurrent resolves)
+  timer: null,          // debounce handle — own timer, shared by both listeners
+};
+
+// Resolve a target workflow id → { found: true, wf } | { found: false } |
+// { found: null } (transient fetch failure — unknown, not cached).
+async function seqResolveTargetWorkflow(id) {
+  const hit = SEQ_WORKFLOWS.list.find(w => w.id === id);
+  if (hit) return { found: true, wf: hit };
+  if (SEQSWTARGET.cache.has(id)) return SEQSWTARGET.cache.get(id);
+  if (SEQSWTARGET.inflight.has(id)) return SEQSWTARGET.inflight.get(id);
+  const p = (async () => {
+    try {
+      const data = await api(`/workflows/${id}?includeSteps=false`);
+      const result = { found: true, wf: data.workflow };
+      SEQSWTARGET.cache.set(id, result);
+      return result;
+    } catch (e) {
+      if (e && e.status === 404) {
+        const result = { found: false };
+        SEQSWTARGET.cache.set(id, result);
+        return result;
+      }
+      return { found: null }; // network/5xx — don't cache, don't claim not-found
+    } finally {
+      SEQSWTARGET.inflight.delete(id);
+    }
+  })();
+  SEQSWTARGET.inflight.set(id, p);
+  return p;
+}
+
+// Parse the target's test_input into an expected-keys array, or null when
+// absent/empty/non-object (mysql2 may hand back a parsed object or a JSON
+// string — same dual handling as the tester seed path). Logic-identical port
+// of wfExpectedInitKeys (workflows.html); this page's parseJson is byte-
+// identical to that one's, so the two agree on every input.
+function seqExpectedInitKeys(testInput) {
+  let ti = testInput;
+  if (typeof ti === 'string') ti = parseJson(ti);
+  if (!ti || typeof ti !== 'object' || Array.isArray(ti)) return null;
+  const keys = Object.keys(ti);
+  return keys.length ? keys : null;
+}
+
+// Compare the step's init_data (raw textarea string) against the expected
+// init_data keys. Returns an array of missing keys, or null when not computable
+// (empty field, invalid JSON — e.g. an unquoted placeholder breaking the parse —
+// or a non-object value). Placeholder VALUES inside valid JSON are fine; only
+// top-level keys are compared, so the new-step default
+// {"contact_id":"{{trigger_data.contact_id}}"} diffs cleanly. Logic-identical
+// port of wfComputeMissingKeys (workflows.html) — the signature is
+// (bodyRaw, expectedKeys), field-agnostic.
+function seqComputeMissingKeys(bodyRaw, expectedKeys) {
+  if (!expectedKeys || !expectedKeys.length) return null;
+  if (!bodyRaw || !bodyRaw.trim()) return null;
+  let initData;
+  try { initData = JSON.parse(bodyRaw); } catch { return null; }
+  if (!initData || typeof initData !== 'object' || Array.isArray(initData)) return null;
+  return expectedKeys.filter(k => !Object.prototype.hasOwnProperty.call(initData, k));
+}
+
+// Render the contract panel into #se-sw-target-panel (present only while the
+// step editor is showing the start_workflow form). Informational styling; amber
+// for inactive / not-found targets, matching the se-wh-cred-warn box's inline-
+// style pattern.
+async function seqRenderStartWorkflowPanel() {
+  const panel = document.getElementById('se-sw-target-panel');
+  if (!panel) return; // not mounted: other action type, JSON mode, editor closed
+  const hide = () => { panel.style.display = 'none'; panel.innerHTML = ''; };
+
+  // Only meaningful while the action type is start_workflow (the panel div only
+  // renders for it, but guard against a stale debounce timer firing after a
+  // type switch has already torn the form down and rebuilt it).
+  if (document.getElementById('se-action-type')?.value !== 'start_workflow') return hide();
+
+  const raw = (document.getElementById('se-sw-workflow')?.value || '').trim();
+  if (!raw) return hide();               // "— select a workflow —", or the loading
+                                         // placeholder on a step with no saved id
+  if (!/^\d+$/.test(raw)) return hide();  // non-numeric — see the placeholder note above
+  const targetId = parseInt(raw, 10);
+
+  const INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:11px;line-height:1.5';
+  const AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.5';
+
+  const res = await seqResolveTargetWorkflow(targetId);
+
+  // The await may have raced a select change, an action-type switch, or an
+  // editor re-render; only paint if everything still points at the same target.
+  const panelNow = document.getElementById('se-sw-target-panel');
+  if (!panelNow) return;
+  if (document.getElementById('se-action-type')?.value !== 'start_workflow') return;
+  const rawNow = (document.getElementById('se-sw-workflow')?.value || '').trim();
+  if (rawNow !== raw) return;
+
+  if (res.found === false) {
+    panelNow.style.cssText = AMBER;
+    panelNow.innerHTML = `⚠ Workflow #${targetId} not found.`;
+    return;
+  }
+  if (res.found === null) {
+    panelNow.style.cssText = INFO;
+    panelNow.innerHTML = `→ Starts workflow #${targetId} — details unavailable (fetch failed).`;
+    return;
+  }
+
+  const wf = res.wf || {};
+  const inactive = !wf.active;
+  const lines = [];
+  lines.push(
+    `→ Starts workflow: <strong>${esc(wf.name || '')}</strong> (#${targetId})`
+    + (inactive ? ' <span style="font-weight:600">— target is inactive — this step will fail until it\'s activated</span>' : '')
+  );
+
+  const expected = seqExpectedInitKeys(wf.test_input);
+  if (expected) {
+    lines.push(`Expected init_data keys: <code>${expected.map(esc).join('</code>, <code>')}</code>`);
+    const missing = seqComputeMissingKeys(document.getElementById('se-sw-initdata')?.value || '', expected);
+    if (missing && missing.length) {
+      lines.push(`init_data doesn't set: <code>${missing.map(esc).join('</code>, <code>')}</code>`);
+    }
+  } else {
+    lines.push('No test_input documented on the target — contract unknown.');
+  }
+
+  panelNow.style.cssText = inactive ? AMBER : INFO;
+  panelNow.innerHTML = lines.join('<br>');
+}
+
+// Debounced entry point for the init_data textarea's `input` events (~400ms).
+// Rapid edits collapse to one evaluation. The Workflow select's `change` skips
+// the debounce (manager review, CP-2): a select pick is a single discrete
+// action with no keystrokes to collapse, so it paints immediately — same as
+// the render-time first-paint callers. Own timer, never shared with any other
+// page timer; a pending textarea debounce firing after an immediate select
+// paint is harmless (the render is idempotent and re-reads current state).
+function seqUpdateStartWorkflowPanelDebounced() {
+  if (SEQSWTARGET.timer) clearTimeout(SEQSWTARGET.timer);
+  SEQSWTARGET.timer = setTimeout(() => {
+    SEQSWTARGET.timer = null;
+    seqRenderStartWorkflowPanel();
+  }, 400);
+}
+
+// Attach listeners to the start_workflow fields and do the first paint. Called
+// via setTimeout(…, 0) from seqRenderActionConfig's start_workflow branch — all
+// three of its callers (seqRenderEditTab, seqOnActionTypeChange, seqToggleJson)
+// assign the returned string to .innerHTML synchronously, so the elements exist
+// by the time the timeout fires. innerHTML replacement discards the old nodes
+// (and their listeners) on every one of those paths, so re-attaching per render
+// can't stack duplicate handlers.
+function seqWireStartWorkflowPanel() {
+  const wfEl   = document.getElementById('se-sw-workflow');
+  const dataEl = document.getElementById('se-sw-initdata');
+  if (wfEl)   wfEl.addEventListener('change', seqRenderStartWorkflowPanel);   // immediate — discrete action
+  if (dataEl) dataEl.addEventListener('input', seqUpdateStartWorkflowPanelDebounced);
+  seqRenderStartWorkflowPanel();
 }
 
 // ─────────────────────────────────────────────────────────────
