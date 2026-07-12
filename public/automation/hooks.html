@@ -663,7 +663,13 @@ window.togglePanelLeft = togglePanelLeft;
         api('/api/hooks'),
         api('/api/credentials'),
         api('/api/hooks/meta'),
-        api('/workflows').catch(() => ({ workflows: [] })),
+        // Slice CP-3b (manager addendum) — no limit param meant the route
+        // default of 20 rows (created_at DESC). Live count is already 22, so
+        // the workflow-target dropdown was silently dropping the oldest
+        // workflows and edit-locking targets that point at them (the select
+        // can't hold an off-list id; collectTargetForm blocks the save).
+        // 100 is the route's clamp ceiling — same request sequences.html makes.
+        api('/workflows?limit=100').catch(() => ({ workflows: [] })),
         api('/sequences/templates').catch(() => ({ templates: [] })),
         api('/workflows/functions').catch(() => ({ workflow: [] })),
         api('/api/sequence-types').catch(() => ({ types: [] })),
@@ -1283,6 +1289,455 @@ window.togglePanelLeft = togglePanelLeft;
     warnEl.textContent = '⚠ ' + result.text;
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // Slice CP-3 — target-contract panels in the target editor
+  //
+  // Two informational panels inside the Swal target-editor modal, ported from
+  // CP-1 (workflows.html #e-esq-target-panel) and CP-2 (sequences.html
+  // #se-sw-target-panel): same INFO/AMBER inline styles, same cache semantics
+  // (404 cached, transient failures NOT cached, inflight dedupe → at most one
+  // fetch per key per page load), same after-await race guards, same
+  // self-guarding renders.
+  //
+  //   #swal-t-wf-panel  — workflow target. Names the target, flags an inactive
+  //       one, and lists its documented init_data contract. INFORMATIONAL ONLY,
+  //       NO missing-keys diff: for a hook target, init_data IS the hook's
+  //       transform output (deliverWorkflow: `const initData = targetOutput`),
+  //       computed server-side per delivery and dynamic by nature. There is no
+  //       client-side field list to diff it against — unlike 6R/CP-1/CP-2,
+  //       where init_data is a literal JSON textarea the author controls.
+  //       (Manager decision: diffing a captured sample was assessed and
+  //       rejected — it needs a server transform round-trip, not a client
+  //       check. Do not build it here.)
+  //
+  //   #swal-t-seq-panel — sequence target, mode-aware:
+  //       id-mode   names the template, flags inactive, derives the expected
+  //                 trigger_data contract, and DIFFS it against the
+  //                 "trigger_data fields" list — that list IS the client-side
+  //                 field list the workflow panel lacks, so here the diff is
+  //                 computable and worth having.
+  //       type-mode two zero-fetch lines: active candidates of the type, and
+  //                 cascade coverage. Does NOT duplicate
+  //                 #swal-t-seq-cascade-hint, which already covers type
+  //                 registration and the priority_fields tip.
+  //
+  // Panels are NOT hidden on target-type change. The panel divs live inside the
+  // .swal-t-section wrappers that updateSections() shows/hides wholesale, so
+  // visibility is already handled. (CP-1/CP-2 guard their renders on the current
+  // function/action type because an innerHTML swap destroys and rebuilds their
+  // panel div. Here the modal DOM is static for the modal's lifetime, so hiding
+  // the panel on type-change would leave it display:none even after its section
+  // came back — the type select fires no event that would repaint it. Painting
+  // into a temporarily-hidden section is harmless and leaves the right content
+  // in place when the user flips back.)
+  // ═══════════════════════════════════════════════════════════════
+
+  const HOOK_PANEL_INFO  = 'display:block;margin-top:6px;padding:8px 10px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;color:#1e40af;font-size:11px;line-height:1.5';
+  const HOOK_PANEL_AMBER = 'display:block;margin-top:6px;padding:8px 10px;background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;color:#92400e;font-size:11px;line-height:1.5';
+
+  // Shown under any trigger_data diff. ENGINE-VERIFIED: deliverSequence skips a
+  // configured field whose value is `undefined` in the transform output
+  // (`if (val !== undefined)`), so a field being LISTED is necessary but not
+  // sufficient for it to arrive.
+  const HOOK_TD_CAVEAT = '<span style="opacity:.85">(a listed field only reaches <code>trigger_data</code> when the transform output contains it)</span>';
+
+  const HOOKTARGET = {
+    wfCache:  new Map(),  // wf id       → { found:true, wf }               | { found:false }
+    seqCache: new Map(),  // template id → { found:true, template, steps }  | { found:false }
+    inflight: new Map(),  // 'wf:N' / 'seq:N' → Promise (dedupe concurrent resolves)
+    tdTimer:  null,       // trigger_data debounce handle — own timer, never shared
+  };
+
+  // Resolve a workflow id → { found:true, wf } | { found:false } |
+  // { found:null } (transient fetch failure — unknown, not cached).
+  async function hookResolveWorkflow(id) {
+    // Tier 1 — the session list. Loose == to match how buildTargetForm compares
+    // (`cfg.workflow_id == w.id`): select values are strings and w.id may arrive
+    // as a number or a string depending on the JSON.
+    const hit = workflowsList.find(w => w.id == id); // eslint-disable-line eqeqeq
+    if (hit) return { found: true, wf: hit };
+
+    // Tier 2 — lazy GET /workflows/:id.
+    //
+    // KNOWN ISSUE, manager-tracked, deliberately NOT fixed in CP-3: hooksInit
+    // fetches `/workflows` with no limit param, so workflowsList caps at the
+    // route default of 20 rows (created_at DESC). A saved config.workflow_id
+    // outside that window is exactly the case this tier exists for — but it is
+    // currently UNREACHABLE, because buildTargetForm builds #swal-t-wf's
+    // <option> list FROM workflowsList: an id with no option leaves the select
+    // on "" and the panel hides (and collectTargetForm then blocks the save with
+    // "Select a workflow"). So tier 1 always hits whenever the select has a
+    // value, and this fetch never fires today. Kept because it is the correct
+    // structure and goes live the moment the limit-20 fetch is fixed.
+    if (HOOKTARGET.wfCache.has(id)) return HOOKTARGET.wfCache.get(id);
+    const key = 'wf:' + id;
+    if (HOOKTARGET.inflight.has(key)) return HOOKTARGET.inflight.get(key);
+    const p = (async () => {
+      try {
+        const data = await api(`/workflows/${id}?includeSteps=false`);
+        const result = { found: true, wf: data.workflow };
+        HOOKTARGET.wfCache.set(id, result);
+        return result;
+      } catch (e) {
+        if (e && e.status === 404) {
+          const result = { found: false };
+          HOOKTARGET.wfCache.set(id, result);
+          return result;
+        }
+        return { found: null }; // network/5xx — don't cache, don't claim not-found
+      } finally {
+        HOOKTARGET.inflight.delete(key);
+      }
+    })();
+    HOOKTARGET.inflight.set(key, p);
+    return p;
+  }
+
+  // Resolve a sequence template id → { found:true, template, steps } |
+  // { found:false } | { found:null } (transient — not cached).
+  //
+  // Load-bearing for STEPS, not for existence: the id dropdown is built from the
+  // active rows of sequenceTemplatesList, so a value in #swal-t-seq-id is always
+  // in that list — but list rows carry no `steps`, and the fallback contract
+  // derivation (token-scan) needs them. Callers therefore fetch even on a tier-1
+  // hit, but only when test_input is absent. The 404 branch is defensive (the
+  // session list can go stale against a concurrent delete).
+  async function hookFetchSeqTemplate(id) {
+    if (HOOKTARGET.seqCache.has(id)) return HOOKTARGET.seqCache.get(id);
+    const key = 'seq:' + id;
+    if (HOOKTARGET.inflight.has(key)) return HOOKTARGET.inflight.get(key);
+    const p = (async () => {
+      try {
+        const data = await api(`/sequences/templates/${id}`);
+        const result = { found: true, template: data.template || {}, steps: data.steps || [] };
+        HOOKTARGET.seqCache.set(id, result);
+        return result;
+      } catch (e) {
+        if (e && e.status === 404) {
+          const result = { found: false };
+          HOOKTARGET.seqCache.set(id, result);
+          return result;
+        }
+        return { found: null }; // network/5xx — don't cache, don't claim not-found
+      } finally {
+        HOOKTARGET.inflight.delete(key);
+      }
+    })();
+    HOOKTARGET.inflight.set(key, p);
+    return p;
+  }
+
+  // Parse a target's test_input into an expected-keys array, or null when
+  // absent/empty/non-object. Logic-identical port of wfExpectedInitKeys
+  // (workflows.html, CP-1) / seqExpectedInitKeys (sequences.html, CP-2); this
+  // page's parseJson is byte-identical to both, so all three agree on every
+  // input. The dual object/JSON-string handling is required: mysql2 hands JSON
+  // columns back parsed or as strings depending on connection options, and
+  // neither list route parses test_input.
+  function hookExpectedKeys(testInput) {
+    let ti = testInput;
+    if (typeof ti === 'string') ti = parseJson(ti);
+    if (!ti || typeof ti !== 'object' || Array.isArray(ti)) return null;
+    const keys = Object.keys(ti);
+    return keys.length ? keys : null;
+  }
+
+  // Fallback contract derivation — logic-identical port of esqDerivedTriggerKeys
+  // (workflows.html, CP-1). Scans every step's timing / action_config /
+  // condition / fire_guard (parsed object or JSON string) for `trigger_data.<key>`
+  // references. Catches both {{trigger_data.x}} placeholders and bare dot-paths;
+  // nested paths contribute only their first segment. Dedupes, first-seen order.
+  function hookDerivedTriggerKeys(steps) {
+    const parts = [];
+    for (const s of (steps || [])) {
+      for (const col of ['timing', 'action_config', 'condition', 'fire_guard']) {
+        const v = s ? s[col] : undefined;
+        if (v === undefined || v === null) continue;
+        parts.push(typeof v === 'string' ? v : JSON.stringify(v));
+      }
+    }
+    const blob = parts.join('\n');
+    const keys = [];
+    const seen = new Set();
+    const re = /trigger_data\.([A-Za-z0-9_]+)/g;
+    let m;
+    while ((m = re.exec(blob)) !== null) {
+      if (!seen.has(m[1])) { seen.add(m[1]); keys.push(m[1]); }
+    }
+    return keys;
+  }
+
+  // The trigger_data KEYS a given "trigger_data fields" string actually produces
+  // at delivery. Pure — no DOM. Mirrors the two-stage pipeline exactly:
+  //   1. collectTargetForm stores raw.split(',').map(trim).filter(Boolean)
+  //      into config.trigger_data_fields;
+  //   2. deliverSequence derives each key as
+  //        field.includes('.') ? field.split('.').pop() : field
+  //      — identical to a bare .split('.').pop() for every input (split on a
+  //      string with no '.' yields [field], and pop() gives field back).
+  // No post-filter: a malformed "a." maps to '' in the engine too, and dropping
+  // it here would make the diff disagree with the engine on that input.
+  function hookStrippedTdKeys(raw) {
+    return String(raw || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .map(f => f.split('.').pop());
+  }
+
+  // Set-difference: expected contract keys the field list will never produce.
+  // null when there is no contract to check against.
+  function hookMissingTdKeys(expected, provided) {
+    if (!expected || !expected.length) return null;
+    return expected.filter(k => !provided.includes(k));
+  }
+
+  // ── Workflow target panel ──
+  async function hookRenderWfTargetPanel() {
+    const panel = document.getElementById('swal-t-wf-panel');
+    if (!panel) return;                   // modal closed, or a stale timer fired
+    const hide = () => { panel.style.display = 'none'; panel.innerHTML = ''; };
+
+    const raw = (document.getElementById('swal-t-wf')?.value || '').trim();
+    if (!raw) return hide();              // "— select a workflow —"
+    // #swal-t-wf is a <select> whose option values are workflow ids, so its value
+    // is always "" or digits — no "{{…}}" dynamic-target copy needed here (CP-2
+    // precedent; 6R needs it only because its workflow_id is a free-text input).
+    if (!/^\d+$/.test(raw)) return hide();
+    const targetId = parseInt(raw, 10);
+
+    const res = await hookResolveWorkflow(targetId);
+
+    // The await may have raced a select change or a modal close; only paint if
+    // the panel still exists and the select still points at the same target.
+    const panelNow = document.getElementById('swal-t-wf-panel');
+    if (!panelNow) return;
+    if ((document.getElementById('swal-t-wf')?.value || '').trim() !== raw) return;
+
+    if (res.found === false) {
+      panelNow.style.cssText = HOOK_PANEL_AMBER;
+      panelNow.innerHTML = `⚠ Workflow #${targetId} not found.`;
+      return;
+    }
+    if (res.found === null) {
+      panelNow.style.cssText = HOOK_PANEL_INFO;
+      panelNow.innerHTML = `→ Starts workflow #${targetId} — details unavailable (fetch failed).`;
+      return;
+    }
+
+    const wf = res.wf || {};
+    const inactive = !wf.active;
+    const lines = [];
+    // ENGINE-VERIFIED: deliverWorkflow returns 409 / status 'failed' with
+    // `workflow #N is inactive` before inserting an execution.
+    lines.push(
+      `→ Starts workflow: <strong>${esc(wf.name || '')}</strong> (#${targetId})`
+      + (inactive ? ' <span style="font-weight:600">— target is inactive — delivery will fail (logged as failed)</span>' : '')
+    );
+
+    // Contract only — see the block header for why there is no diff.
+    const expected = hookExpectedKeys(wf.test_input);
+    if (expected) {
+      lines.push(`Expected init_data keys: <code>${expected.map(esc).join('</code>, <code>')}</code>`);
+    } else {
+      lines.push('No test_input documented on the target — contract unknown.');
+    }
+
+    panelNow.style.cssText = inactive ? HOOK_PANEL_AMBER : HOOK_PANEL_INFO;
+    panelNow.innerHTML = lines.join('<br>');
+  }
+
+  // ── Sequence target panel (mode-aware) ──
+  async function hookRenderSeqTargetPanel() {
+    const panel = document.getElementById('swal-t-seq-panel');
+    if (!panel) return;
+    const hide = () => { panel.style.display = 'none'; panel.innerHTML = ''; };
+
+    const mode = document.getElementById('swal-t-seq-mode')?.value || 'type';
+
+    // ─────────────── id-mode ───────────────
+    if (mode === 'id') {
+      const raw = (document.getElementById('swal-t-seq-id')?.value || '').trim();
+      if (!raw) return hide();            // "— select a template —"
+      if (!/^\d+$/.test(raw)) return hide();
+      const targetId = parseInt(raw, 10);
+
+      // Tier 1 — the session list (name / type / active / test_input / step_count,
+      // but NO steps). Loose == to match buildTargetForm's `cfg.template_id == s.id`.
+      let tpl = sequenceTemplatesList.find(s => s.id == targetId) || null; // eslint-disable-line eqeqeq
+      let expected = hookExpectedKeys(tpl ? tpl.test_input : null);
+      let steps = null;
+      let stepFetchFailed = false;
+
+      // Contract sources, in CP-1's order: (1) test_input, (2) token-scan of the
+      // template's steps. Steps aren't in the list rows, so (2) forces the :id
+      // fetch even on a tier-1 hit — done lazily, only when test_input is absent.
+      if (!tpl || !expected) {
+        const res = await hookFetchSeqTemplate(targetId);
+
+        // Race guard: the await may have run past a template change, a mode flip,
+        // or a modal close.
+        const panelMid = document.getElementById('swal-t-seq-panel');
+        if (!panelMid) return;
+        if ((document.getElementById('swal-t-seq-mode')?.value || 'type') !== 'id') return;
+        if ((document.getElementById('swal-t-seq-id')?.value || '').trim() !== raw) return;
+
+        if (res.found === false) {
+          panelMid.style.cssText = HOOK_PANEL_AMBER;
+          panelMid.innerHTML = `⚠ Sequence template #${targetId} not found.`;
+          return;
+        }
+        if (res.found === null) {
+          if (!tpl) {
+            panelMid.style.cssText = HOOK_PANEL_INFO;
+            panelMid.innerHTML = `→ Enrolls sequence template #${targetId} — details unavailable (fetch failed).`;
+            return;
+          }
+          // Degrade: keep the tier-1 row, lose only the steps fallback.
+          stepFetchFailed = true;
+        } else {
+          // The fetched row is fresher than the session list (the template may
+          // have been renamed or deactivated since page load) and carries the
+          // steps we came for.
+          tpl = res.template || {};
+          steps = res.steps || [];
+          expected = hookExpectedKeys(tpl.test_input);
+        }
+      }
+
+      const panelNow = document.getElementById('swal-t-seq-panel');
+      if (!panelNow) return;
+
+      const t2 = tpl || {};
+      const inactive = !t2.active;
+      const stepCount = steps ? steps.length : (t2.step_count ?? 0);
+      const lines = [];
+
+      // ENGINE-VERIFIED: enrollContactByTemplateId throws
+      // `Sequence template #N is inactive` before enrolling → deliverSequence logs
+      // the delivery failed. Reachable only from a stale session list or a
+      // concurrent deactivation — the id dropdown itself filters to active rows.
+      lines.push(
+        `→ Enrolls sequence: <strong>${esc(t2.name || '')}</strong> (#${targetId})`
+        + (inactive ? ' <span style="font-weight:600">— target is inactive — enrollment will fail</span>' : '')
+      );
+      lines.push(
+        `Type: ${t2.type ? `<code>${esc(t2.type)}</code>` : '(no type — id-only)'} · ${stepCount} step(s)`
+      );
+
+      if (expected) {
+        lines.push(`Expected trigger_data keys: <code>${expected.map(esc).join('</code>, <code>')}</code>`);
+      } else if (stepFetchFailed) {
+        lines.push('No <code>test_input</code> documented, and the step fetch failed — contract unknown.');
+      } else {
+        const derived = hookDerivedTriggerKeys(steps);
+        if (derived.length) {
+          expected = derived;
+          lines.push(`Expected trigger_data keys (derived from step placeholders): <code>${derived.map(esc).join('</code>, <code>')}</code>`);
+        } else {
+          lines.push('No trigger_data contract found on the target.');
+        }
+      }
+
+      // Read the field list AFTER any await so a mid-flight edit isn't diffed stale.
+      const tdKeys = hookStrippedTdKeys(document.getElementById('swal-t-seq-td')?.value || '');
+      const missing = hookMissingTdKeys(expected, tdKeys);
+      if (missing && missing.length) {
+        lines.push(`trigger_data fields don't cover: <code>${missing.map(esc).join('</code>, <code>')}</code>`);
+        lines.push(HOOK_TD_CAVEAT);
+      }
+
+      panelNow.style.cssText = inactive ? HOOK_PANEL_AMBER : HOOK_PANEL_INFO;
+      panelNow.innerHTML = lines.join('<br>');
+      return;
+    }
+
+    // ─────────────── type-mode ───────────────
+    if (mode === 'type') {
+      const tt = (document.getElementById('swal-t-seq-type')?.value || '').trim();
+      if (!tt) return hide();
+
+      // Zero fetches: everything below is already in the session caches. Type
+      // registration and the priority_fields tip belong to renderCascadeHint —
+      // not repeated here.
+      const lines = [];
+      let amber = false;
+
+      // ── 1. Active candidates ──
+      // The type dropdown is derived from sequenceTemplatesList, which is the
+      // UNFILTERED /sequences/templates list (active AND inactive rows):
+      //   buildTargetForm: [...new Set(sequenceTemplatesList.map(s => s.type).filter(Boolean))]
+      // So a listed type can genuinely have ZERO active candidates. ENGINE-VERIFIED:
+      // enrollContact throws `No active sequence template found for type: X` in
+      // that case → deliverSequence logs the delivery failed.
+      const candidates = sequenceTemplatesList.filter(
+        s => s.type === tt && s.active == 1 // eslint-disable-line eqeqeq
+      );
+
+      if (!candidates.length) {
+        amber = true;
+        lines.push(`⚠ No active templates of type "${esc(tt)}" — enrollment will fail.`);
+      } else {
+        const shown = candidates.slice(0, 5)
+          .map(s => `${esc(s.name || '')} (#${s.id}, ${s.step_count ?? 0} steps)`)
+          .join(', ');
+        const more = candidates.length > 5 ? `, +${candidates.length - 5} more` : '';
+        lines.push(`${candidates.length} active candidate(s): ${shown}${more}`);
+      }
+
+      // ── 2. Cascade coverage ──
+      const tdKeys = hookStrippedTdKeys(document.getElementById('swal-t-seq-td')?.value || '');
+      const reg = sequenceTypesList.find(r => r.type === tt);
+      const pf  = (reg && Array.isArray(reg.priority_fields)) ? reg.priority_fields : [];
+      const uncovered = pf.filter(f => !tdKeys.includes(f));
+
+      if (uncovered.length) {
+        // ENGINE-VERIFIED (sequenceEngine.enrollContact scoring loop) — a cascade
+        // field missing from trigger_data is NOT a wildcard. "Wildcard" is a
+        // property of the TEMPLATE's filters JSON: filters[f] absent/null →
+        // `continue` (scores 0, never disqualifies). When a template DOES filter on
+        // f and the trigger carries no value for f, that template is DISQUALIFIED:
+        //     if (triggerVal === undefined || triggerVal === null) { qualified = false; break; }
+        // A field absent from the trigger_data field list can never reach
+        // trigger_data (deliverSequence builds it only from that list), so every
+        // candidate filtering on an uncovered field is guaranteed to be
+        // disqualified. If that wipes out ALL of them, `scored` is empty and
+        // enrollContact throws `No qualifying sequence template …` → delivery
+        // logged failed. Hence the severity split below rather than a flat INFO.
+        const survivors = candidates.filter(s => {
+          const f = parseJson(s.filters) || {};   // mysql2 dual: object or JSON string
+          return !uncovered.some(k => f[k] !== undefined && f[k] !== null);
+        });
+        const label = `Cascade field(s) not in trigger_data fields: <code>${uncovered.map(esc).join('</code>, <code>')}</code>`;
+
+        if (!candidates.length) {
+          lines.push(`${label}.`);
+        } else if (!survivors.length) {
+          amber = true;
+          lines.push(
+            `⚠ ${label} — every active candidate filters on one of them, so all `
+            + `${candidates.length} get disqualified and enrollment will fail.`
+          );
+        } else {
+          const knocked = candidates.length - survivors.length;
+          lines.push(
+            label
+            + (knocked
+              ? ` — ${knocked} of ${candidates.length} candidate(s) filter on them and can never match; the cascade can only pick from the other ${survivors.length}.`
+              : ' — no active candidate filters on them, so the cascade is unaffected (all score 0; lowest id wins).')
+          );
+        }
+        lines.push(HOOK_TD_CAVEAT);
+      }
+
+      panel.style.cssText = amber ? HOOK_PANEL_AMBER : HOOK_PANEL_INFO;
+      panel.innerHTML = lines.join('<br>');
+      return;
+    }
+
+    return hide();
+  }
+
   // ── Target form — HTML builder ──
   function buildTargetForm(t) {
     const type = t.target_type || 'http';
@@ -1374,6 +1829,8 @@ window.togglePanelLeft = togglePanelLeft;
               Advance runs in the background — hook delivery does not wait.
             </div>
           </div>
+          <!-- Target-contract panel (Slice CP-3) — painted by hookRenderWfTargetPanel. -->
+          <div id="swal-t-wf-panel" style="display:none"></div>
         </div>
 
         <!-- ═══ SEQUENCE section ═══ -->
@@ -1433,6 +1890,9 @@ window.togglePanelLeft = togglePanelLeft;
               Dot-paths supported — <code>body.appt_id</code> is stored as <code>appt_id</code>.
             </div>
           </div>
+          <!-- Target-contract panel (Slice CP-3) — painted by hookRenderSeqTargetPanel.
+               Sits below the trigger_data field because it reads it in BOTH modes. -->
+          <div id="swal-t-seq-panel" style="display:none"></div>
         </div>
 
         <!-- ═══ INTERNAL FUNCTION section ═══ -->
@@ -1552,6 +2012,19 @@ window.togglePanelLeft = togglePanelLeft;
         cascadeHintEl.innerHTML = `⚠️ Type <code>${esc(tt)}</code> is not registered. Enrollment will fail at delivery time unless this type is created first.`;
         return;
       }
+      // Slice CP-3b (manager addendum) — an inactive REGISTERED type also fails
+      // enrollment: sequenceEngine.enrollContact throws `Sequence type "X" is
+      // inactive` before any cascade scoring. Previously this branch fell
+      // through to the friendly blue tip. /api/sequence-types returns
+      // active: !!r.active on every row.
+      if (!reg.active) {
+        cascadeHintEl.style.display = '';
+        cascadeHintEl.style.background = '#fef3c7';
+        cascadeHintEl.style.borderColor = '#fde68a';
+        cascadeHintEl.style.color = '#78350f';
+        cascadeHintEl.innerHTML = `⚠️ Type <code>${esc(tt)}</code> is registered but <strong>inactive</strong>. Enrollment will fail at delivery time until the type is re-activated.`;
+        return;
+      }
       const pf = Array.isArray(reg.priority_fields) ? reg.priority_fields : [];
       cascadeHintEl.style.display = '';
       cascadeHintEl.style.background = '#eff6ff';
@@ -1616,6 +2089,50 @@ window.togglePanelLeft = togglePanelLeft;
     } else {
       targetConditions = null;
     }
+
+    // ── Slice CP-3 — target-contract panels ─────────────────────
+    // Wiring only; the renders live in the CP-3 block above buildTargetForm.
+    //
+    // We wire directly, with no setTimeout(…, 0): didOpen fires after Swal has
+    // put the modal DOM in place, so the elements already exist. (CP-1/CP-2 need
+    // the timeout only because their forms are injected by an innerHTML
+    // assignment in the same synchronous frame as the wiring call.)
+    //
+    // Per-open wiring cannot stack handlers: Swal destroys the popup DOM on
+    // close, so each open re-runs buildTargetForm against a brand-new element
+    // set. The pre-existing listeners in this function (typeEl / seqModeEl /
+    // seqTypeEl) already rely on exactly that, so there is nothing to tear down.
+    const wfSelEl = document.getElementById('swal-t-wf');
+    const seqIdEl = document.getElementById('swal-t-seq-id');
+    const seqTdEl = document.getElementById('swal-t-seq-td');
+
+    // `change` on a select is a single discrete action with no keystrokes to
+    // collapse → paint immediately (CP-2 precedent). Only the free-text
+    // trigger_data field is debounced. seqModeEl/seqTypeEl already carry the
+    // cascade-hint listeners; adding a second listener runs both, in
+    // registration order.
+    if (wfSelEl)   wfSelEl.addEventListener('change', hookRenderWfTargetPanel);
+    if (seqModeEl) seqModeEl.addEventListener('change', hookRenderSeqTargetPanel);
+    if (seqIdEl)   seqIdEl.addEventListener('change', hookRenderSeqTargetPanel);
+    if (seqTypeEl) seqTypeEl.addEventListener('change', hookRenderSeqTargetPanel);
+    if (seqTdEl) {
+      seqTdEl.addEventListener('input', () => {
+        if (HOOKTARGET.tdTimer) clearTimeout(HOOKTARGET.tdTimer);
+        HOOKTARGET.tdTimer = setTimeout(() => {
+          HOOKTARGET.tdTimer = null;
+          // Safe if the modal closed inside the debounce window — the render
+          // self-guards on the panel div's presence.
+          hookRenderSeqTargetPanel();
+        }, 400);
+      });
+    }
+
+    // First paint — covers edit-existing, where the selects arrive already
+    // populated and fire no change event. Both are called unconditionally: the
+    // panel for the non-selected target type sits in a hidden section, and its
+    // driving select is empty anyway, so it hides itself.
+    hookRenderWfTargetPanel();
+    hookRenderSeqTargetPanel();
   }
 
   function renderParamsMapping(mapping) {
