@@ -668,7 +668,16 @@ window.togglePanelLeft = togglePanelLeft;
         // the workflow-target dropdown was silently dropping the oldest
         // workflows and edit-locking targets that point at them (the select
         // can't hold an off-list id; collectTargetForm blocks the save).
-        // 100 is the route's clamp ceiling — same request sequences.html makes.
+        //
+        // 100 is the route's hard ceiling (Math.min(100, ...) in GET /workflows),
+        // matching workflows.html:1177. NOT sequences.html — that one asks for
+        // ?limit=200 and silently gets 100; its "covers most firms" comment is
+        // wrong. Tracked separately.
+        //
+        // This RAISES the ceiling, it does not remove it: at 101 workflows the
+        // same silent edit-lock returns, and there is no headroom left to ask
+        // for. The structural fix is a synthetic <option> carrying a saved id
+        // that isn't in the list (see the note on hookResolveWorkflow tier 2).
         api('/workflows?limit=100').catch(() => ({ workflows: [] })),
         api('/sequences/templates').catch(() => ({ templates: [] })),
         api('/workflows/functions').catch(() => ({ workflow: [] })),
@@ -1359,16 +1368,20 @@ window.togglePanelLeft = togglePanelLeft;
 
     // Tier 2 — lazy GET /workflows/:id.
     //
-    // KNOWN ISSUE, manager-tracked, deliberately NOT fixed in CP-3: hooksInit
-    // fetches `/workflows` with no limit param, so workflowsList caps at the
-    // route default of 20 rows (created_at DESC). A saved config.workflow_id
-    // outside that window is exactly the case this tier exists for — but it is
-    // currently UNREACHABLE, because buildTargetForm builds #swal-t-wf's
-    // <option> list FROM workflowsList: an id with no option leaves the select
-    // on "" and the panel hides (and collectTargetForm then blocks the save with
-    // "Select a workflow"). So tier 1 always hits whenever the select has a
-    // value, and this fetch never fires today. Kept because it is the correct
-    // structure and goes live the moment the limit-20 fetch is fixed.
+    // Currently UNREACHABLE by construction, and that is a known gap, not a bug
+    // in this function. buildTargetForm builds #swal-t-wf's <option> list FROM
+    // workflowsList, so the select can only ever hold an id that is already in
+    // tier 1. An id outside the fetched window has no option: the select falls
+    // back to "", the panel hides, and collectTargetForm blocks the save with a
+    // misleading "Select a workflow" — the target becomes uneditable.
+    //
+    // CP-3b raised the fetch to ?limit=100 (the route's hard ceiling), which
+    // covers today's 22 workflows. It does NOT close the hole — at 101 the same
+    // silent edit-lock returns with no headroom left. Closing it needs a
+    // synthetic <option> in buildTargetForm carrying any saved cfg.workflow_id
+    // that isn't in workflowsList; the moment that lands, this tier goes live
+    // and paints the amber "not found" / inactive copy that explains the break.
+    // Kept and tested for exactly that reason.
     if (HOOKTARGET.wfCache.has(id)) return HOOKTARGET.wfCache.get(id);
     const key = 'wf:' + id;
     if (HOOKTARGET.inflight.has(key)) return HOOKTARGET.inflight.get(key);
