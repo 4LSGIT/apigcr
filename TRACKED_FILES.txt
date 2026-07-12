@@ -166,6 +166,7 @@ public/forms/contact-form.html
 public/forms/issn.html
 public/index.html
 public/js/assetpicker.js
+public/js/versionGuard.js
 public/js/videoInsert.js
 public/js/yc-forms.js
 public/manage.html

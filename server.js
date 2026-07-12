@@ -6,10 +6,42 @@ const fs = require("fs");
 require("dotenv").config();
 const { alert } = require("./lib/alerting");
 
+const appBuild = require("./lib/appBuild");
+const db = require("./startup/db");
+
 const app = express();
-var corsOptions = { origin: "*" };
+// exposedHeaders: lets a cross-origin caller read the build headers. Same-origin
+// (the shell) can read them regardless, but a vanity-host page could not.
+var corsOptions = {
+  origin: "*",
+  exposedHeaders: ["X-App-Build", "X-App-Min-Build"],
+};
 app.use(cors(corsOptions));
 app.set('trust proxy', 1);//google cloud run
+
+// Stamp EVERY response (API and static) with the build this instance is running,
+// plus the force-reload floor if one is set. The browser shell records the build
+// it booted on and shows an "update available" banner when the two diverge — or
+// force-reloads if its build is below the floor. See public/js/versionGuard.js.
+//
+// These headers are a HINT, not the source of truth. X-App-Min-Build is read from
+// a 30s cache (a header middleware cannot await a DB round-trip), so it can lag
+// reality by up to half a minute in either direction. That is fine and by design:
+// the client never acts on the header — it only uses it to decide whether to go
+// ask GET /api/version, which awaits the real value and is authoritative.
+//
+// refreshMinBuild is fire-and-forget and internally throttled to one DB read per
+// 30s per instance, so calling it on every request (static assets included) is
+// free. Mounted before express.static so static responses carry the headers too.
+app.use((req, res, next) => {
+  res.set("X-App-Build", appBuild.build);
+  const floor = appBuild.minBuildCached();
+  if (floor) res.set("X-App-Min-Build", String(floor));
+  appBuild.refreshMinBuild(db);
+  next();
+});
+console.log(`app build: ${appBuild.build} (mtime ${appBuild.mtime})`);
+
 // Capture raw body for webhook HMAC verification
 app.use('/hooks', express.json({
   verify: (req, res, buf) => { req.rawBody = buf.toString(); }
@@ -18,7 +50,7 @@ app.use(express.json({ limit: '10mb' }));//maybe limit to /upload?
 app.use(express.urlencoded({ extended: true }));
 // Landing pages: vanity-host middleware must run BEFORE express.static so a
 // mapped domain's root doesn't fall into public/index.html.
-const db = require("./startup/db");
+// (`db` is required at the top of the file — the build-header middleware needs it.)
 app.use(require("./routes/pageLanding").pageHostMiddleware(db));
 app.use(
   express.static(path.join(__dirname, "public"), {
@@ -27,6 +59,13 @@ app.use(
         res.set("Content-Type", "application/javascript");
       } else if (path.endsWith(".css")) {
         res.set("Content-Type", "text/css");
+      }
+      // Page HTML must always be revalidated. express.static's default of
+      // `public, max-age=0` already forces a conditional GET, but `public` allows
+      // a shared proxy to hold a copy — `private, no-cache` removes that whole
+      // class of "I refreshed and still got the old page".
+      if (path.endsWith(".html")) {
+        res.set("Cache-Control", "private, no-cache, must-revalidate");
       }
     },
   })
@@ -40,7 +79,10 @@ const routesPath = path.join(__dirname, "routes");
 app.get("/:page", (req, res, next) => {
   const filePath = path.join(__dirname, "public", req.params.page + ".html");
   if (fs.existsSync(filePath)) {
-    return res.sendFile(filePath);
+    // Same rule as express.static above: HTML is always revalidated.
+    return res.sendFile(filePath, {
+      headers: { "Cache-Control": "private, no-cache, must-revalidate" },
+    });
   }
   next(); // continue to normal routes if file doesn’t exist
 });

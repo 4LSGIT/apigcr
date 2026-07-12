@@ -39,6 +39,10 @@
   <script src="https://kit.fontawesome.com/b48f1b97af.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/scripts.js"></script>
+  <!-- Stale-tab guard: force-reloads this page when the server is running a newer
+       build than the one this tab booted on. Started at the bottom of the boot
+       script (VersionGuard.start()). See public/js/versionGuard.js. -->
+  <script src="/js/versionGuard.js"></script>
   <link rel="stylesheet" type="text/css" href="style.css" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
@@ -2405,6 +2409,10 @@
       updateSidebarActive(tabName);
       // Auto-close mobile drawer after navigation
       document.body.classList.remove('sidebar-mobile-open');
+      // Keep the address bar's workspace URL pointing at the active view, so a
+      // plain F5 restores not just the open files but the one being looked at.
+      // (Hoisted from the workspace-URL section below — same script block.)
+      syncWorkspaceUrl();
     }
 
     function updateSidebarActive(tabName) {
@@ -2483,6 +2491,9 @@
         options.headers.Authorization = `Bearer ${window.AUTH_STATE.jwt}`;
         res = await fetch(url, options);
       }
+      // Stale-tab guard: every response carries X-App-Build. Free detection —
+      // an actively-used tab running old JS is caught on its very next request.
+      try { window.VersionGuard && window.VersionGuard.noteResponse(res); } catch (_) { }
       // Handle empty responses (204, etc.)
       if (res.status === 204) return null;
       const text = await res.text();
@@ -2714,7 +2725,19 @@ async function initAuth() {
         `;
       }
 
-      openMainTab(params.open || "tabHome");
+      // ?open= is either a main tab id, or `file:<n>` pointing into ?files=.
+      // Guard it: E('file:0') is null, and so is E('anything-a-user-typed'), and
+      // openMainTab() would throw on both.
+      const openIsFile = /^file:\d+$/.test(params.open || "");
+      openMainTab(!openIsFile && params.open && E(params.open) ? params.open : "tabHome");
+
+      // Workspace restore. Written by currentOpenFilesUrl() and navigated to by
+      // the version guard, so an update doesn't cost anyone their open files.
+      // Async — it resolves each file's display name before opening it.
+      if (params.files) restoreOpenFiles(params.files, params.open);
+
+      // Legacy single-file params. Still supported: existing links and bookmarks
+      // use them, and they're how quickPick hands off from a search.
       if (params.qp) {
         params.qp.split(",").forEach((q) => {
           q ? quickPick(q) : "";
@@ -2792,7 +2815,12 @@ async function initAuth() {
     }
 
     initAuth();
-  
+
+    // Stale-tab guard. Independent of auth (/api/version is public), so it also
+    // runs while the login modal is up. Reloads this page whenever the server
+    // reports a newer build than the one this tab booted on.
+    if (window.VersionGuard) VersionGuard.start();
+
 
     function logout() {
       Toast.fire({
@@ -2864,6 +2892,29 @@ async function initAuth() {
       file.name = fileName;
       fileButton.dataset.fileId = file.id;
       fileButton.title = fileName;
+
+      // Restore token, read back by currentOpenFilesUrl(). Compact on purpose —
+      // it ends up in the address bar. `fileID` arrives as either "123" or
+      // "123&tab=docs" (see quickPick), so split the sub-tab back out.
+      //
+      // IDs ONLY. Never the name: a client's name in the query string would leak
+      // to any external site they click through to, via the Referer header. Names
+      // ride in a sessionStorage label cache instead — see currentOpenFilesUrl().
+      //
+      // Bill ids are assumed numeric like the others. Nothing calls addFile with
+      // 'bill' yet (the branch above is a placeholder); widen /^\d+$/ if they
+      // turn out to be something else.
+      const _rawId = String(fileID);
+      const _id = _rawId.split("&")[0];
+      const _sub = /(?:^|&)tab=([A-Za-z0-9_-]+)/.exec(_rawId);
+      const _kind =
+        fileType === "case" ? "c"
+        : fileType === "client" || fileType === "contact" ? "p"
+        : fileType === "bill" ? "b"
+        : "";
+      if (_kind && /^\d+$/.test(_id)) {
+        fileButton.dataset.fileSpec = _kind + _id + (_sub ? "~" + _sub[1] : "");
+      }
       fileButton.onclick = function () {
         openMainTab(file.id);
       };
@@ -2915,6 +2966,203 @@ async function initAuth() {
         badge.style.display = '';
         badge.textContent = count;
         E('closeAllFiles').style.display = count > 1 ? '' : 'none';
+      }
+      // Every workspace mutation (open, close, close-all) flows through here —
+      // mirror it into the address bar.
+      syncWorkspaceUrl();
+    }
+
+    /**
+     * Mirror the current workspace into the address bar (history.replaceState —
+     * no navigation, no history entry). Called from updateOpenFilesUI() on every
+     * file open/close and from openMainTab() on every view switch, so the URL is
+     * ALWAYS a live snapshot of the workspace, not just at guard-reload time.
+     *
+     * That closes a real gap: without this, ?files= is only written when the
+     * version guard reloads, so a user who restored three files, closed them,
+     * and pressed F5 would get the three files back. With it, plain F5 restores
+     * exactly what's open right now — and one-shot boot params (?case=, ?qp=,
+     * ?appt=) are scrubbed after they fire instead of re-firing on refresh.
+     *
+     * Also refreshes the sessionStorage label cache on every call (it's written
+     * inside currentOpenFilesUrl), so same-tab restores stay network-free.
+     *
+     * try/catch: Safari throttles replaceState (~100 calls/30s) and throws when
+     * exceeded. Human-speed tab clicking can't reach that, but the address bar
+     * going briefly stale must never break the app.
+     */
+    function syncWorkspaceUrl() {
+      try {
+        history.replaceState(null, "", currentOpenFilesUrl());
+      } catch (_) {}
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════════
+       WORKSPACE URL — open files survive a reload
+       ══════════════════════════════════════════════════════════════════════════
+       The shell is a long-lived page and a reload closes every open case/contact
+       file. That made a version-update prompt something people would rationally
+       ignore. So we don't reload — we NAVIGATE to a URL that re-opens everything.
+
+       Format:
+         ?files=c123,p456,c789~docs   c<id> = case, p<id> = contact,
+                                      ~<sub> = the file's inner tab (optional)
+         &open=file:1                 the 2nd file is the one being viewed
+         &open=tabCases               ...or a main tab was
+
+       IDs ONLY — never names. A client's name in the query string would leak to
+       any external site the user clicks through to, via the Referer header.
+
+       Side-effects worth knowing about, both good:
+         · the address bar now holds the workspace, so a plain F5 restores it too
+         · a URL is a shareable snapshot ("send me the link you're looking at")
+
+       Read by:  restoreOpenFiles() on boot
+       Used by:  public/js/versionGuard.js — window.ycReloadUrl, below
+       ════════════════════════════════════════════════════════════════════════ */
+
+    /** The id of the <div class="tab-main"> currently on screen, or null. */
+    function currentMainTabId() {
+      const tabs = document.getElementsByClassName("tab-main");
+      for (let i = 0; i < tabs.length; i++) {
+        if (tabs[i].style.display === "block") return tabs[i].id;
+      }
+      return null;
+    }
+
+    /**
+     * Serialise the open files + the active view into a URL.
+     *
+     * Built fresh from origin+pathname rather than by editing location.search, so
+     * one-shot boot params (?case=, ?qp=, ?appt=, …) are dropped — they already
+     * fired, and carrying ?case=123 forward would double-open that file.
+     *
+     * Display names go into a sessionStorage LABEL CACHE, never the URL. That
+     * buys three things:
+     *   · no client names in the address bar (Referer leak — see addFile)
+     *   · a same-tab reload (ours, or a plain F5) restores instantly, with ZERO
+     *     /api/search round-trips
+     *   · file types with no searchable record — bills — get a name for free
+     * A shared URL opened in a fresh tab has no cache and falls back to a lookup.
+     */
+    const YC_LABEL_KEY = "ycFileLabels";
+
+    function currentOpenFilesUrl() {
+      const specs = [];
+      const labels = {};
+      let activeIdx = -1;
+
+      document.querySelectorAll("#tabOpenFiles .file-button").forEach((btn) => {
+        const spec = btn.dataset.fileSpec;
+        if (!spec) return;
+        const div = E(btn.dataset.fileId);
+        if (div && div.style.display === "block") activeIdx = specs.length;
+        labels[spec] = btn.title;
+        specs.push(spec);
+      });
+
+      try {
+        sessionStorage.setItem(YC_LABEL_KEY, JSON.stringify(labels));
+      } catch (_) {
+        /* storage disabled or full — restore just falls back to /api/search */
+      }
+
+      const u = new URL(window.location.origin + window.location.pathname);
+      if (specs.length) u.searchParams.set("files", specs.join(","));
+      if (activeIdx >= 0) {
+        u.searchParams.set("open", "file:" + activeIdx);
+      } else {
+        const cur = currentMainTabId();
+        if (cur && cur !== "tabHome") u.searchParams.set("open", cur);
+      }
+      return u.toString();
+    }
+
+    // versionGuard.js reloads through this instead of location.reload().
+    window.ycReloadUrl = currentOpenFilesUrl;
+
+    /**
+     * Re-open the files named in ?files=, in order, then show the one ?open=
+     * points at.
+     *
+     * Names come from the sessionStorage label cache first — so a same-tab reload
+     * (or a plain F5) restores with no network at all, and bills, which have no
+     * searchable record, get a name for free.
+     *
+     * On a cache miss (a shared URL opened in a fresh tab) we resolve from
+     * /api/search, whose first pass is an exact case_id / contact_id lookup
+     * (services/searchService.js), not a fuzzy match. We still verify the returned
+     * id AND type before opening: silently opening the wrong client's file would
+     * be a genuinely bad bug. Bills have no endpoint, so they fall back to a
+     * placeholder label.
+     *
+     * Lookups run in parallel; addFile() then runs strictly in order, so the
+     * file-div<N> numbering lines up with the URL and ?open=file:<n> is stable.
+     * A file that can't be resolved keeps its slot as null so those indices don't
+     * shift under it.
+     */
+    async function restoreOpenFiles(spec, open) {
+      const KIND = { c: "case", p: "client", b: "bill" };
+
+      const want = [];
+      for (const tok of String(spec).split(",")) {
+        const m = /^([cpb])(\d+)(?:~([A-Za-z0-9_-]+))?$/.exec(tok.trim());
+        if (m) want.push({ tok: m[0], kind: m[1], id: m[2], sub: m[3] || "" });
+      }
+      if (!want.length) return;
+
+      let labels = {};
+      try {
+        labels = JSON.parse(sessionStorage.getItem(YC_LABEL_KEY) || "{}") || {};
+      } catch (_) {
+        labels = {};
+      }
+
+      const found = await Promise.all(
+        want.map(async (f) => {
+          const type = KIND[f.kind];
+          const cached = labels[f.tok];
+          if (cached) return { ...f, type, name: cached };
+          if (f.kind === "b") return { ...f, type, name: "Bill " + f.id };
+
+          const searchType = f.kind === "c" ? "case" : "contact";
+          try {
+            const d = await apiSend("/api/search", "GET", {
+              q: f.id,
+              type: searchType,
+              limit: 1,
+            });
+            const r = (d.results || [])[0];
+            if (!r || String(r.id) !== String(f.id) || r.type !== searchType)
+              return null;
+            return { ...f, type, name: r.name };
+          } catch {
+            return null; // deleted, or no permission — skip it, don't kill the boot
+          }
+        })
+      );
+
+      const divIds = found.map((f) => {
+        if (!f) return null;
+        addFile(f.name, f.type, f.id + (f.sub ? `&tab=${f.sub}` : ""));
+        return "file-div" + (fileCounter - 1); // addFile() increments after use
+      });
+
+      const missing = found.filter((f) => !f).length;
+      if (missing) {
+        Toast.fire({
+          icon: "warning",
+          title: `${missing} file${missing === 1 ? "" : "s"} could not be reopened`,
+        });
+      }
+
+      // addFile() leaves the LAST file showing, so restore the real view now.
+      const m = /^file:(\d+)$/.exec(open || "");
+      if (m) {
+        const target = divIds[Number(m[1])];
+        openMainTab(target && E(target) ? target : "tabHome");
+      } else {
+        openMainTab(open && E(open) ? open : "tabHome");
       }
     }
 

@@ -292,6 +292,11 @@ const REGISTRY = {
   'email_default_from': { label: 'Default Email From' },
   'email_default_to':   { label: 'Default Email To' },
   'gcal_calendar_id':   { label: 'Google Calendar ID' },
+  // Force-reload floor. Blank = normal (open tabs just get an "update available"
+  // banner). Set a date (e.g. 2026-07-12) and any tab running a build older than
+  // that is force-reloaded. Self-expiring: the next deploy ships past it.
+  // See lib/appBuild.js.
+  'min_client_build':   { label: 'Force Reload Before (date, blank = off)' },
   'sms_default_from':   { label: 'Default SMS From' },
   'sms_staff_from':     { label: 'Staff SMS From' }
 };
