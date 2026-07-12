@@ -869,9 +869,19 @@ async function loadSeqExtras() {
   if (!SEQ_WORKFLOWS.loaded) {
     // /workflows returns { workflows: [...], pagination: {...} } — flat shape
     // for the list, pagination nested (envelope finding #60 — not our fix).
-    // Default limit is 20; fetch up to 200 so the dropdown covers most firms
-    // without paginating.
-    jobs.push(api('/workflows?limit=200').then(d => {
+    //
+    // Slice CP-3c — this asked for ?limit=200 and silently got 100: the route
+    // clamps with Math.min(100, …), so 100 is the hard ceiling and there is no
+    // larger number to ask for. Ask for what the server actually grants. Same
+    // request hooks.html makes (CP-3b). Behavior is unchanged — 200 and 100
+    // both yielded 100 rows — this is a truth-in-code fix, not a bug fix.
+    //
+    // The ceiling itself stands: a firm past 100 workflows loses the tail of
+    // the list from the Workflow picker (created_at DESC). Known and parked —
+    // see the CP-2 panel block below, and note that hooks.html closed the
+    // equivalent hole for SAVED ids with a synthetic <option> (CP-3c); this
+    // page's picker has the same gap and does not yet have that fix.
+    jobs.push(api('/workflows?limit=100').then(d => {
       SEQ_WORKFLOWS.list = d.workflows || [];
       SEQ_WORKFLOWS.loaded = true;
     }).catch(e => console.warn('Failed to load workflows:', e.message)));
@@ -1408,11 +1418,13 @@ function seqOnStartWorkflowTieChange() {
 //      step_count), so a tier-1 hit has everything this panel needs — no fetch.
 //      Two properties of that load worth knowing (routes/workflows.js +
 //      loadSeqExtras, both verified):
-//        - loadSeqExtras asks for `?limit=200`, but the route clamps limit to
-//          100 (`Math.min(100, …)`). The real ceiling is 100 workflows
-//          (created_at DESC) — for both this list AND the dropdown built from
-//          it. A firm past 100 workflows loses the tail from the picker; that
-//          is a Slice 3.3 dropdown limitation, not a panel one.
+//        - loadSeqExtras asks for `?limit=100` — the route's hard ceiling
+//          (`Math.min(100, …)`). It used to ask for 200 and silently receive
+//          100; CP-3c changed the request to match reality (no behavior change).
+//          The real ceiling is 100 workflows (created_at DESC) — for both this
+//          list AND the dropdown built from it. A firm past 100 workflows loses
+//          the tail from the picker; that is a Slice 3.3 dropdown limitation,
+//          not a panel one.
 //        - It loads at most ONCE per page load: loadSeqExtras runs only from
 //          init() (onShow does NOT call it, despite the comment on the
 //          SEQ_WORKFLOWS declaration) and guards on `.loaded`. A target

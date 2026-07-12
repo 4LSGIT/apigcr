@@ -1366,22 +1366,19 @@ window.togglePanelLeft = togglePanelLeft;
     const hit = workflowsList.find(w => w.id == id); // eslint-disable-line eqeqeq
     if (hit) return { found: true, wf: hit };
 
-    // Tier 2 — lazy GET /workflows/:id.
+    // Tier 2 — lazy GET /workflows/:id. LIVE as of CP-3c.
     //
-    // Currently UNREACHABLE by construction, and that is a known gap, not a bug
-    // in this function. buildTargetForm builds #swal-t-wf's <option> list FROM
-    // workflowsList, so the select can only ever hold an id that is already in
-    // tier 1. An id outside the fetched window has no option: the select falls
-    // back to "", the panel hides, and collectTargetForm blocks the save with a
-    // misleading "Select a workflow" — the target becomes uneditable.
-    //
-    // CP-3b raised the fetch to ?limit=100 (the route's hard ceiling), which
-    // covers today's 22 workflows. It does NOT close the hole — at 101 the same
-    // silent edit-lock returns with no headroom left. Closing it needs a
-    // synthetic <option> in buildTargetForm carrying any saved cfg.workflow_id
-    // that isn't in workflowsList; the moment that lands, this tier goes live
-    // and paints the amber "not found" / inactive copy that explains the break.
-    // Kept and tested for exactly that reason.
+    // Through CP-3b this was unreachable: buildTargetForm built #swal-t-wf's
+    // <option> list purely FROM workflowsList, so the select could only hold an
+    // id tier 1 already had. CP-3c's `wfOrphan` synthetic option now carries a
+    // saved cfg.workflow_id that ISN'T in the list, which is precisely when this
+    // tier is the only thing that can resolve the target. Two ways to get there:
+    //   • the id is past the fetched window (?limit=100 is the route's ceiling);
+    //   • workflowsList is empty because the list fetch failed (hooksInit
+    //     `.catch`es to []) — the orphan option then carries every saved id.
+    // A 404 paints amber "not found"; an inactive hit paints the amber
+    // "delivery will fail" copy. That is the whole point of the orphan option:
+    // turn a silent blank select into an explained one.
     if (HOOKTARGET.wfCache.has(id)) return HOOKTARGET.wfCache.get(id);
     const key = 'wf:' + id;
     if (HOOKTARGET.inflight.has(key)) return HOOKTARGET.inflight.get(key);
@@ -1765,6 +1762,41 @@ window.togglePanelLeft = togglePanelLeft;
       return `<option value="${s.id}" ${cfg.template_id == s.id ? 'selected' : ''}>${esc(s.name)}${typeLabel}</option>`;
     }).join('');
 
+    // ── Slice CP-3c — orphan-id options ─────────────────────────────────
+    // Both internal-target pickers are built FROM a filtered in-memory list, so
+    // a saved id that isn't in that list has no <option> and the <select> falls
+    // back to its "" placeholder. Two ways that happens today:
+    //   • workflow_id  — outside the fetched window (CP-3b raised it to the
+    //     route's 100-row ceiling; past that the tail is still dropped);
+    //   • template_id  — the template was DEACTIVATED (or deleted) after the
+    //     target was configured. seqIdOpts filters `active == 1`, so this needs
+    //     no row limit at all to bite — one toggle in the sequences UI does it.
+    // The consequences were bad and silent: the target's config vanished from
+    // the form, the CP-3 panel had nothing to key off and stayed blank, and
+    // collectTargetForm rejected the save with a misleading "Select a workflow"
+    // / "Select a template" — leaving the target permanently uneditable.
+    //
+    // Carrying the saved id in a synthetic <option> fixes all three at once: the
+    // select can represent it, collectTargetForm round-trips it unchanged (it
+    // parseInts the select's value — verified), and the CP-3 panel's tier-2
+    // resolve fires and paints the amber that explains the breakage
+    // (⚠ not found / — target is inactive). No panel code changed: this is
+    // exactly the state those branches were written for.
+    //
+    // Loose == matches the `selected` comparisons directly above (`cfg.workflow_id
+    // == w.id`, `cfg.template_id == s.id`) — select values are strings, and ids
+    // may arrive as numbers or strings depending on the JSON. Using anything
+    // stricter here would emit a duplicate orphan for an id that IS in the list.
+    const wfOrphan = (cfg.workflow_id != null && cfg.workflow_id !== ''
+                      && !workflowsList.some(w => w.id == cfg.workflow_id)) // eslint-disable-line eqeqeq
+      ? `<option value="${esc(cfg.workflow_id)}" selected>Workflow #${esc(cfg.workflow_id)} — not in list</option>`
+      : '';
+
+    const seqIdOrphan = (cfg.template_id != null && cfg.template_id !== ''
+                         && !seqTemplatesActive.some(s => s.id == cfg.template_id)) // eslint-disable-line eqeqeq
+      ? `<option value="${esc(cfg.template_id)}" selected>Template #${esc(cfg.template_id)} — inactive or missing</option>`
+      : '';
+
     const seqModeInit = (cfg.template_id != null && cfg.template_id !== '') ? 'id' : 'type';
     // Grouped picker (fnPicker.js). uiHidden functions are filtered unless
     // this target already has one selected. The "— select a function —"
@@ -1835,7 +1867,7 @@ window.togglePanelLeft = togglePanelLeft;
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Workflow</label>
             <select id="swal-t-wf" class="swal2-select" style="margin:0;width:100%">
               <option value="">— select a workflow —</option>
-              ${wfOpts}
+              ${wfOrphan}${wfOpts}
             </select>
             <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">
               The full transform output becomes <code>init_data</code> AND the initial variables.
@@ -1877,7 +1909,7 @@ window.togglePanelLeft = togglePanelLeft;
               <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Template</label>
               <select id="swal-t-seq-id" class="swal2-select" style="margin:0;width:100%">
                 <option value="">— select a template —</option>
-                ${seqIdOpts}
+                ${seqIdOrphan}${seqIdOpts}
               </select>
               ${seqIdOpts === '' ? '<div class="hint" style="color:#ef4444;font-size:11px;margin-top:3px">No active sequence templates loaded. Check /sequences/templates.</div>' : ''}
               <div class="hint" style="font-size:11px;color:var(--muted);margin-top:3px">Only active templates shown. Name is followed by the template&rsquo;s type in parens.</div>
