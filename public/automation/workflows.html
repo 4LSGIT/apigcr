@@ -511,6 +511,33 @@
 const P = window.parent;
 
 // ── Utilities ──────────────────────────────────────────────────
+// ── Slice CP-3d — full workflow list via paginated drain ─────────────
+// GET /workflows clamps limit with Math.min(100, …), so a single request can
+// never cover a firm past 100 workflows — and the sort is created_at DESC, so
+// the rows that fall off are the OLDEST: the established, most-targeted chains.
+//
+// Page 1 carries pagination.totalPages, so the remaining pages go out in
+// PARALLEL rather than as a serial hasNext walk. At today's 22 workflows
+// totalPages is 1 and this is exactly ONE request — byte-identical to the
+// pre-CP-3d behaviour. It only costs more when there is genuinely more to
+// fetch (250 workflows → 1 + 2 parallel = 2 round-trips, not 3).
+//
+// Bounded at 20 pages (2,000 workflows) so a malformed envelope cannot spin.
+// Past that scale the answer stops being a bigger drain and becomes
+// server-side search in the picker — the route already accepts ?search=.
+//
+// `qs` carries extra filters; workflows.html passes '&active=true'.
+async function fetchAllWorkflows(qs = '') {
+  const first = await api(`/workflows?limit=100&page=1${qs}`);
+  const pages = Math.min(first.pagination?.totalPages || 1, 20);
+  if (pages <= 1) return { workflows: first.workflows || [] };
+  const rest = await Promise.all(
+    Array.from({ length: pages - 1 }, (_, i) =>
+      api(`/workflows?limit=100&page=${i + 2}${qs}`).then(d => d.workflows || []))
+  );
+  return { workflows: (first.workflows || []).concat(...rest) };
+}
+
 const api = (...args) => P.apiSend(...args);
 
 function esc(s) {
@@ -1174,8 +1201,15 @@ async function loadWorkflows() {
   try {
     // Default hides inactive (active=true). Toggle on → omit the filter so
     // inactive workflows are included.
-    const q = WF.showInactive ? '/workflows?limit=100' : '/workflows?limit=100&active=true';
-    const data = await api(q);
+    //
+    // Slice CP-3d — this used to be a bare ?limit=100, which the route clamps
+    // anyway. Since it discarded the pagination envelope and the sidebar search
+    // below filters CLIENT-SIDE over whatever was fetched, a firm past 100
+    // workflows had its OLDEST rows silently vanish from the primary workflow
+    // browser — invisible in the list AND unfindable by search, despite running
+    // fine. fetchAllWorkflows() drains every page, so the list is complete at
+    // any count. Still exactly one request at today's 22.
+    const data = await fetchAllWorkflows(WF.showInactive ? '' : '&active=true');
     WF.workflows = data.workflows || [];
     // Re-apply any active search term so a reload (e.g. after edit) doesn't
     // blow away the user's filter.

@@ -626,6 +626,33 @@ window.togglePanelLeft = togglePanelLeft;
 // ═══════════════════════════════════════════════════════════════
 (function hooksModule() {
   const api = (...args) => P.apiSend(...args);
+  // ── Slice CP-3d — full workflow list via paginated drain ─────────────
+  // GET /workflows clamps limit with Math.min(100, …), so a single request can
+  // never cover a firm past 100 workflows — and the sort is created_at DESC, so
+  // the rows that fall off are the OLDEST: the established, most-targeted chains.
+  //
+  // Page 1 carries pagination.totalPages, so the remaining pages go out in
+  // PARALLEL rather than as a serial hasNext walk. At today's 22 workflows
+  // totalPages is 1 and this is exactly ONE request — byte-identical to the
+  // pre-CP-3d behaviour. It only costs more when there is genuinely more to
+  // fetch (250 workflows → 1 + 2 parallel = 2 round-trips, not 3).
+  //
+  // Bounded at 20 pages (2,000 workflows) so a malformed envelope cannot spin.
+  // Past that scale the answer stops being a bigger drain and becomes
+  // server-side search in the picker — the route already accepts ?search=.
+  //
+  // `qs` carries extra filters; workflows.html passes '&active=true'.
+  async function fetchAllWorkflows(qs = '') {
+    const first = await api(`/workflows?limit=100&page=1${qs}`);
+    const pages = Math.min(first.pagination?.totalPages || 1, 20);
+    if (pages <= 1) return { workflows: first.workflows || [] };
+    const rest = await Promise.all(
+      Array.from({ length: pages - 1 }, (_, i) =>
+        api(`/workflows?limit=100&page=${i + 2}${qs}`).then(d => d.workflows || []))
+    );
+    return { workflows: (first.workflows || []).concat(...rest) };
+  }
+
   const E = id => document.getElementById(id);
   const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
 
@@ -669,16 +696,15 @@ window.togglePanelLeft = togglePanelLeft;
         // workflows and edit-locking targets that point at them (the select
         // can't hold an off-list id; collectTargetForm blocks the save).
         //
-        // 100 is the route's hard ceiling (Math.min(100, ...) in GET /workflows),
-        // matching workflows.html:1177. NOT sequences.html — that one asks for
-        // ?limit=200 and silently gets 100; its "covers most firms" comment is
-        // wrong. Tracked separately.
+        // CP-3b raised the request to ?limit=100 (the route's clamp ceiling);
+        // CP-3d replaced it with fetchAllWorkflows(), which drains every page.
+        // The dropdown now holds EVERY workflow regardless of count, so the
+        // truncation that motivated CP-3b/CP-3c is gone at the source.
         //
-        // This RAISES the ceiling, it does not remove it: at 101 workflows the
-        // same silent edit-lock returns, and there is no headroom left to ask
-        // for. The structural fix is a synthetic <option> carrying a saved id
-        // that isn't in the list (see the note on hookResolveWorkflow tier 2).
-        api('/workflows?limit=100').catch(() => ({ workflows: [] })),
+        // CP-3c's orphan <option> stays: it still covers the case where this
+        // fetch FAILS outright (the .catch below yields an empty list, and a
+        // saved id must still be representable and resolvable).
+        fetchAllWorkflows().catch(() => ({ workflows: [] })),
         api('/sequences/templates').catch(() => ({ templates: [] })),
         api('/workflows/functions').catch(() => ({ workflow: [] })),
         api('/api/sequence-types').catch(() => ({ types: [] })),
@@ -1372,10 +1398,12 @@ window.togglePanelLeft = togglePanelLeft;
     // <option> list purely FROM workflowsList, so the select could only hold an
     // id tier 1 already had. CP-3c's `wfOrphan` synthetic option now carries a
     // saved cfg.workflow_id that ISN'T in the list, which is precisely when this
-    // tier is the only thing that can resolve the target. Two ways to get there:
-    //   • the id is past the fetched window (?limit=100 is the route's ceiling);
-    //   • workflowsList is empty because the list fetch failed (hooksInit
-    //     `.catch`es to []) — the orphan option then carries every saved id.
+    // tier is the only thing that can resolve the target. CP-3d's paginated
+    // drain removed the "id is past the fetched window" route into this state
+    // — the list is now complete at any workflow count — but one remains:
+    //   • workflowsList is empty because the list fetch FAILED (hooksInit
+    //     `.catch`es to []) — the orphan option then carries every saved id,
+    //     and this tier is the only way to say anything about the target.
     // A 404 paints amber "not found"; an inactive hit paints the amber
     // "delivery will fail" copy. That is the whole point of the orphan option:
     // turn a silent blank select into an explained one.
@@ -1766,8 +1794,9 @@ window.togglePanelLeft = togglePanelLeft;
     // Both internal-target pickers are built FROM a filtered in-memory list, so
     // a saved id that isn't in that list has no <option> and the <select> falls
     // back to its "" placeholder. Two ways that happens today:
-    //   • workflow_id  — outside the fetched window (CP-3b raised it to the
-    //     route's 100-row ceiling; past that the tail is still dropped);
+    //   • workflow_id  — outside the fetched window. CP-3d's paginated drain
+    //     closed this at the source (the list is now complete), but the
+    //     orphan still matters when the list fetch FAILS and yields [];
     //   • template_id  — the template was DEACTIVATED (or deleted) after the
     //     target was configured. seqIdOpts filters `active == 1`, so this needs
     //     no row limit at all to bite — one toggle in the sequences UI does it.

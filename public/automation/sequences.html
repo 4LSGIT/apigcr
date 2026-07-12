@@ -745,6 +745,33 @@
 const P = window.parent;
 
 // ── Utilities ──────────────────────────────────────────────────
+// ── Slice CP-3d — full workflow list via paginated drain ─────────────
+// GET /workflows clamps limit with Math.min(100, …), so a single request can
+// never cover a firm past 100 workflows — and the sort is created_at DESC, so
+// the rows that fall off are the OLDEST: the established, most-targeted chains.
+//
+// Page 1 carries pagination.totalPages, so the remaining pages go out in
+// PARALLEL rather than as a serial hasNext walk. At today's 22 workflows
+// totalPages is 1 and this is exactly ONE request — byte-identical to the
+// pre-CP-3d behaviour. It only costs more when there is genuinely more to
+// fetch (250 workflows → 1 + 2 parallel = 2 round-trips, not 3).
+//
+// Bounded at 20 pages (2,000 workflows) so a malformed envelope cannot spin.
+// Past that scale the answer stops being a bigger drain and becomes
+// server-side search in the picker — the route already accepts ?search=.
+//
+// `qs` carries extra filters; workflows.html passes '&active=true'.
+async function fetchAllWorkflows(qs = '') {
+  const first = await api(`/workflows?limit=100&page=1${qs}`);
+  const pages = Math.min(first.pagination?.totalPages || 1, 20);
+  if (pages <= 1) return { workflows: first.workflows || [] };
+  const rest = await Promise.all(
+    Array.from({ length: pages - 1 }, (_, i) =>
+      api(`/workflows?limit=100&page=${i + 2}${qs}`).then(d => d.workflows || []))
+  );
+  return { workflows: (first.workflows || []).concat(...rest) };
+}
+
 const api = (...args) => P.apiSend(...args);
 
 function esc(s) {
@@ -870,18 +897,13 @@ async function loadSeqExtras() {
     // /workflows returns { workflows: [...], pagination: {...} } — flat shape
     // for the list, pagination nested (envelope finding #60 — not our fix).
     //
-    // Slice CP-3c — this asked for ?limit=200 and silently got 100: the route
-    // clamps with Math.min(100, …), so 100 is the hard ceiling and there is no
-    // larger number to ask for. Ask for what the server actually grants. Same
-    // request hooks.html makes (CP-3b). Behavior is unchanged — 200 and 100
-    // both yielded 100 rows — this is a truth-in-code fix, not a bug fix.
-    //
-    // The ceiling itself stands: a firm past 100 workflows loses the tail of
-    // the list from the Workflow picker (created_at DESC). Known and parked —
-    // see the CP-2 panel block below, and note that hooks.html closed the
-    // equivalent hole for SAVED ids with a synthetic <option> (CP-3c); this
-    // page's picker has the same gap and does not yet have that fix.
-    jobs.push(api('/workflows?limit=100').then(d => {
+    // Slice CP-3c corrected the request from ?limit=200 (silently clamped to
+    // 100) to ?limit=100. Slice CP-3d then removed the ceiling entirely:
+    // fetchAllWorkflows() drains every page, so SEQ_WORKFLOWS.list is now the
+    // COMPLETE workflow set at any count — no more losing the oldest rows off
+    // the tail of the Workflow picker. At today's counts it is still exactly
+    // one request.
+    jobs.push(fetchAllWorkflows().then(d => {
       SEQ_WORKFLOWS.list = d.workflows || [];
       SEQ_WORKFLOWS.loaded = true;
     }).catch(e => console.warn('Failed to load workflows:', e.message)));
@@ -1418,13 +1440,12 @@ function seqOnStartWorkflowTieChange() {
 //      step_count), so a tier-1 hit has everything this panel needs — no fetch.
 //      Two properties of that load worth knowing (routes/workflows.js +
 //      loadSeqExtras, both verified):
-//        - loadSeqExtras asks for `?limit=100` — the route's hard ceiling
-//          (`Math.min(100, …)`). It used to ask for 200 and silently receive
-//          100; CP-3c changed the request to match reality (no behavior change).
-//          The real ceiling is 100 workflows (created_at DESC) — for both this
-//          list AND the dropdown built from it. A firm past 100 workflows loses
-//          the tail from the picker; that is a Slice 3.3 dropdown limitation,
-//          not a panel one.
+//        - loadSeqExtras now calls fetchAllWorkflows(), which drains every page
+//          (CP-3d). The route clamps a single request to 100 rows
+//          (`Math.min(100, …)`) and sorts created_at DESC, so before CP-3d a
+//          firm past 100 workflows silently lost its OLDEST — i.e. its most
+//          established — workflows off the tail of both this list and the
+//          picker built from it. That ceiling is gone; the list is complete.
 //        - It loads at most ONCE per page load: loadSeqExtras runs only from
 //          init() (onShow does NOT call it, despite the comment on the
 //          SEQ_WORKFLOWS declaration) and guards on `.loaded`. A target
