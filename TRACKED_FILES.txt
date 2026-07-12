@@ -9,6 +9,7 @@ lib/aiPrompts/courtExtract.js
 lib/aiPrompts/echo.js
 lib/aiPrompts/index.js
 lib/alerting.js
+lib/appBuild.js
 lib/auth.jwtOrApiKey.js
 lib/auth.readonly.js
 lib/auth.superuser.js
@@ -245,6 +246,7 @@ routes/api.systemStatus.js
 routes/api.tasks.js
 routes/api.temp.gcal.js
 routes/api.users.js
+routes/api.version.js
 routes/api.videos.js
 routes/auth.login.js
 routes/auth.password.js
