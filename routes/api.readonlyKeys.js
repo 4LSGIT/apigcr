@@ -27,6 +27,16 @@ const DEFAULT_TTL_MIN = 1440;  // 1 day
 const ipOf = (req) =>
   req.headers["x-forwarded-for"]?.split(",").shift() || req.socket?.remoteAddress;
 
+// Compact UTC stamp (YYYYMMDDTHHMMZ) appended to the plaintext key, so a holder who
+// has only the key string — a human, or an AI session handed the key with no other
+// context — can tell whether it's dead without spending a request to find out.
+//
+// Advisory only: expiry is always enforced from the DB's expires_at. The stamp cannot
+// be forged upward, since it sits inside the sha256'd material — editing it changes
+// key_hash and the lookup simply misses. Seconds are truncated, so the stamp can read
+// up to 59s earlier than the true expiry; erring early is the safe direction.
+const stampExpiry = (d) => d.toISOString().replace(/[-:]/g, "").slice(0, 13) + "Z";
+
 // ─── CREATE ──────────────────────────────────────────────────────────
 router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (req, res) => {
   const started = Date.now();
@@ -42,10 +52,15 @@ router.post("/api/readonly-keys", ...superuserOnlyFor("readonlyKeys"), async (re
     ? Math.min(requested, MAX_TTL_MINUTES)
     : DEFAULT_TTL_MIN;
 
-  const raw       = "ycro_" + crypto.randomBytes(32).toString("hex");
+  // Must precede the key — the key carries this value as its suffix and the two have
+  // to agree. Note ttl here is the *clamped* value, so an over-long request can't mint
+  // a key advertising an expiry the DB won't honor.
+  const expiresAt = new Date(Date.now() + ttl * 60_000);
+
+  const raw       = "ycro_" + crypto.randomBytes(32).toString("hex")
+                            + "_" + stampExpiry(expiresAt);
   const keyHash   = hashKey(raw);
   const keyPrefix = raw.slice(0, 12);
-  const expiresAt = new Date(Date.now() + ttl * 60_000);
 
   try {
     const [r] = await req.db.query(

@@ -34,6 +34,31 @@ It is safe by construction, in layers:
    immediately — it is never displayed again and is never stored or logged in
    plaintext anywhere (only a hash is kept).
 
+## Key format
+
+A key carries its own expiry date, so whoever holds it can tell whether it's
+still alive without having to try it:
+
+```
+ycro_<64 random hex chars>_20260715T1430Z
+                           └─ expires 15 Jul 2026, 14:30 UTC
+```
+
+The trailing stamp is always **UTC**, to the minute. It exists because the key
+string is the part that gets pasted forward — into a script, a CI config, an AI
+session — while the expiry date shown at create time gets left behind. Hand
+someone a key and they can now read its shelf life straight off it.
+
+Two things to know about that stamp:
+
+- **It's a hint, not the rule.** Expiry is enforced from the database, which is
+  the only authority. The stamp is there to be read, never to be trusted.
+- **Editing it doesn't buy you time — it destroys the key.** The stamp is part
+  of what gets hashed, so changing so much as a digit means the key no longer
+  matches anything on file and is rejected as invalid.
+
+Keys issued before this format existed have no stamp and keep working normally.
+
 ## Managing keys
 
 - **List** active (or all) keys with their labels and expiry.
