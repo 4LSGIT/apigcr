@@ -88,6 +88,16 @@ function forwardEmailsToIngest() {
 
     for (let mi = 0; mi < messages.length; mi++) {
       const message = messages[mi];
+
+      // Drafts are unsent — no recipients, not real communications — and must
+      // never be ingested. thread.getMessages() includes drafts, so skip them.
+      // `continue` does NOT flip threadAllOk, so the label still comes off the
+      // thread once the real messages are done (no reprocessing, no alert).
+      if (message.isDraft()) {
+        Logger.log('skipping draft ' + message.getId() + ' in thread ' + thread.getId());
+        continue;
+      }
+
       let result;
       try {
         result = processOneMessage(message, thread);
@@ -292,9 +302,25 @@ function buildCanonicalEnvelope(message) {
   // return the raw header value (or a comma-joined merge if the header
   // appears multiple times). parseAddressList tolerates either.
   const fromList    = parseAddressList(message.getFrom());
-  const toList      = parseAddressList(message.getTo());
+  let   toList      = parseAddressList(message.getTo());
   const ccList      = parseAddressList(message.getCc());
   const replyToList = parseAddressList(message.getReplyTo());
+
+  // Recipient fallback. The receiver requires to[].email OR
+  // envelope.recipient; envelope.recipient is always null here (Gmail hides
+  // the SMTP envelope), so an empty To: header — e.g. a forward sent with
+  // recipients in Bcc only — fails validation and the message is dropped.
+  // getBcc() is populated on messages this mailbox SENT, which is exactly the
+  // case for these forwards, so fall back to it before giving up.
+  if (toList.length === 0) {
+    const bccList = parseAddressList(message.getBcc());
+    if (bccList.length > 0) {
+      toList = bccList;
+      warnings.push('to_empty_fell_back_to_bcc');
+    } else {
+      warnings.push('to_empty_and_no_bcc');
+    }
+  }
 
   const fromOne = fromList.length > 0 ? fromList[0] : { name: '', email: '' };
 
