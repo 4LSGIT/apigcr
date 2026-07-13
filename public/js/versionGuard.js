@@ -14,55 +14,82 @@
  * Two tiers
  * ---------
  * SOFT — the default, every deploy.
- *   A small pill, bottom-right: "Update available — Reload".
- *   NON-DISMISSABLE. No ✕, no "Later". The only thing that removes it is a
- *   reload. Nothing is ever taken from the user — but they cannot quietly decide
- *   to keep running last month's code either.
+ *   A small pill, bottom-right: "Update available — Reload". NON-DISMISSABLE:
+ *   no ✕, no "Later". The only thing that removes it is a reload. Nothing is ever
+ *   taken from the user — but they can't quietly decide to keep running last
+ *   month's code either.
  *
- * HARD — opt-in, per incident. Set app_settings.min_client_build to a date.
- *   A non-blocking banner with a live countdown (GRACE_MS, default 15 minutes),
- *   then the page reloads itself. For when an old client is genuinely dangerous.
+ * HARD — opt-in per incident, via app_settings.min_client_build.
+ *   A non-blocking banner with a live countdown, then the page reloads ITSELF.
+ *   The banner is deliberately not a modal: a grace period only means something
+ *   if you can use the app during it, and a dialog counting down for fifteen
+ *   minutes is not a grace period, it's a fifteen-minute outage in which the Save
+ *   button is unreachable.
  *
- *   The banner is deliberately NOT a modal. A grace period only means something
- *   if the user can actually use the app during it — a blocking dialog counting
- *   down for fifteen minutes is not a grace period, it is a fifteen-minute
- *   outage in which they are locked out of the Save button.
+ * A force that can be blocked is not a force
+ * ------------------------------------------
+ * v1 of this file held the reload indefinitely whenever any YCForm reported
+ * isDirty(). That was wrong, and it failed in production within a day.
+ *
+ * YCForm.isDirty() is `JSON.stringify(collect()) !== JSON.stringify(_original)` —
+ * a whole-form string compare against a load-time snapshot. ANY field that
+ * normalises itself after that snapshot (a select populated late, a date input
+ * reformatting, an editor initialising) reports dirty forever, on a form nobody
+ * touched. One such false positive and the forced reload never fires: the banner
+ * just sits there saying "save your changes" to someone who has none.
+ *
+ * So the reload is now unconditional. Unsaved work delays it; it cannot prevent it:
+ *
+ *   grace (GRACE_MS, 15m)     countdown. Work normally. Save what you like.
+ *   ↓ still dirty at T-0
+ *   final (DIRTY_GRACE_MS, 2m) red banner NAMING the forms. Non-negotiable.
+ *   ↓ still dirty at T-0
+ *   preserve → reload         every dirty form's diff is written to localStorage
+ *                             and offered back on the next boot. Nothing is
+ *                             destroyed silently; nothing can block the reload.
+ *
+ * Saving at any point short-circuits straight to the reload.
+ *
+ * If the dirty flag was a false positive, the recovery snapshot is harmless noise
+ * the user dismisses. If it was real, their typing is sitting in localStorage.
+ * Either way the stale client is gone, which was the entire point.
  *
  * Reloads preserve the workspace
  * ------------------------------
  * We never call location.reload() blind. index.html exposes window.ycReloadUrl(),
- * which serialises the open case/contact files and the active view into a URL;
- * we location.replace() to that instead. So an update costs the user nothing but
- * a second, and the address bar keeps the workspace — meaning a plain F5 restores
- * it too. If that hook is absent we fall back to a plain reload and the pill says
- * so honestly ("Your 3 open files will close").
+ * which serialises the open case/contact files and the active view into a URL; we
+ * location.replace() to that instead. An update costs the user a second, and the
+ * address bar keeps the workspace, so a plain F5 restores it too.
  *
- * Why there is still no silent auto-reload
- * ---------------------------------------
- * hasUnsavedWork() can only see YCForms. A half-typed SMS in Communicate, a
- * filled-in search, an open picker — none of that is visible to us, and all of it
- * would vanish without a trace. A banner the user acts on is honest; a silent
- * reload that eats their message is not.
- *
- * When we re-check
- * ----------------
- *   tab becomes visible (the big one — catches a tab idle for days), window
- *   focus, network back online, bfcache restore, a POLL_MS backstop, and free on
- *   any apiSend() response via X-App-Build / X-App-Min-Build.
+ * Why there is still no silent auto-reload in SOFT mode
+ * ----------------------------------------------------
+ * isDirty() only sees YCForms. A half-typed SMS in Communicate, a filled-in
+ * search, an open picker — invisible to us, and all of it would vanish. A banner
+ * the user acts on is honest; a silent reload that eats their message is not.
  *
  * Loop breaker
  * ------------
  * A bad floor value (or a rollback to below it) could cause reload → still stale
  * → reload, locking the firm out of the app. Two defences: never force a reload
- * into a build that is itself below the floor, and hard-stop after LOOP_MAX
- * forced reloads in LOOP_WINDOW_MS.
+ * into a build that is itself below the floor, and hard-stop after LOOP_MAX forced
+ * reloads in LOOP_WINDOW_MS.
  *
  * Only ever runs in the top frame — reloading the shell reloads every iframe.
  *
- * Console:
+ * Console
+ * -------
+ *   VersionGuard.diagnose()                → WHICH forms claim dirty, and which
+ *                                            fields differ. Start here when the
+ *                                            banner blames you for changes you
+ *                                            didn't make.
  *   VersionGuard.info()                    → current state
- *   VersionGuard.check()                   → force a check right now
- *   VersionGuard.isBusy = () => boolean    → add your own "don't force yet" test
+ *   VersionGuard.simulate('soft'|'hard')   → fake a server update; no deploy, no DB
+ *   VersionGuard.simulate(false)           → stop faking
+ *   VersionGuard.graceMs = 20000           → shorten the countdown to watch it land
+ *   VersionGuard.dirtyGraceMs = 10000      → ...and the final one
+ *   VersionGuard.recovery()                → read back preserved unsaved work
+ *   VersionGuard.reloadNow()               → skip to the end
+ *   VersionGuard.isBusy = () => boolean    → add your own "not yet" test
  */
 (function () {
   "use strict";
@@ -72,23 +99,21 @@
 
   // ── Tunables ────────────────────────────────────────────────────────────────
   var GRACE_MS = 15 * 60 * 1000; // HARD: time to save / finish a thought
+  var DIRTY_GRACE_MS = 2 * 60 * 1000; // final warning if STILL dirty at T-0
   var POLL_MS = 5 * 60 * 1000; // backstop poll for a visible-but-idle tab
   var RECHECK_MS = 30 * 1000; // min gap between *unforced* checks
   var HARD_MIN_MS = 5 * 1000; // min gap between ANY two checks (anti-spam)
   var CONFIRM_MS = 3 * 1000; // re-ask before acting (rides out a rollout)
   var NOTE_MS = 20 * 1000; // how often the pill re-checks its warning line
 
-  // What happens if the grace period expires and there is STILL unsaved work.
-  // null  → hold. Keep the banner up and reload the moment they save. We do not
-  //         destroy a half-typed intake form to win an argument about staleness.
-  // <ms>  → give up and reload anyway that long after the deadline.
-  var FORCE_AFTER_MS = null;
+  var RECOVERY_KEY = "ycUnsavedRecovery";
+  var RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
 
   // Z-INDEX — house convention, from #ycSystemAlertBar in index.html:
   //   shell chrome ≤ 100  <  system alert bar 999  <  SweetAlert2 1060
-  // Both of ours sit in that band: above the header and sidebar, but NEVER over a
-  // SweetAlert (the login prompt lives there).
-  var Z_PILL = 999;
+  // Ours sit in that band: above the header and sidebar, never over a SweetAlert
+  // (the login prompt lives there).
+  var Z_STACK = 999;
   var Z_BANNER = 1000; // also fixed top:0, and more urgent than a system alert
 
   // Loop breaker.
@@ -106,15 +131,20 @@
   var mode = null; // null | 'soft' | 'hard'
   var checking = false;
   var lastCheck = 0;
-  var deadline = 0; // HARD: wall-clock ms when the reload lands
-  var overdueSince = 0; // HARD: when the deadline passed with work still unsaved
+  var deadline = 0; // HARD: end of the grace period
+  var finalDeadline = 0; // HARD: end of the final, non-negotiable countdown
   var pollTimer = null;
-  var pendingTimer = null; // a forced check deferred past the anti-spam floor
-  var noteTimer = null; // keeps the pill's warning line accurate
-  var hardTimer = null; // 1Hz countdown tick
+  var pendingTimer = null;
+  var noteTimer = null;
+  var hardTimer = null;
 
   var VG = {};
   window.VersionGuard = VG;
+
+  // Public and writable — the countdowns read these, not the consts, so you can
+  // shorten them from the console and watch a forced reload actually land.
+  VG.graceMs = GRACE_MS;
+  VG.dirtyGraceMs = DIRTY_GRACE_MS;
 
   function log() {
     try {
@@ -123,6 +153,11 @@
         ["[versionGuard]"].concat([].slice.call(arguments))
       );
     } catch (_) {}
+  }
+
+  function num(v, fallback) {
+    var n = Number(v);
+    return n > 0 ? n : fallback;
   }
 
   // ── Server state ────────────────────────────────────────────────────────────
@@ -139,11 +174,11 @@
   /**
    * 'hard' | 'soft' | null
    *
-   * Note the floor-usability test. If the build currently being SERVED is itself
-   * older than the floor (a bad Settings value, or a rollback to below it), then
-   * forcing a reload would land the user right back where they were — an infinite
-   * reload loop. The floor is nonsense in that case: ignore it, fall through to
-   * the soft pill.
+   * The floor-usability test matters: if the build currently being SERVED is
+   * itself older than the floor (a bad Settings value, or a rollback to below
+   * it), forcing a reload would land the user right back where they were — an
+   * infinite reload loop. The floor is nonsense in that case: ignore it and fall
+   * through to the soft pill.
    */
   function classify(v) {
     if (!bootBuild || !v || !v.build) return null;
@@ -175,10 +210,10 @@
     } catch (_) {}
   }
 
-  // ── Inspecting the shell ────────────────────────────────────────────────────
+  // ── Walking the shell's frames ──────────────────────────────────────────────
   // Frames nest a couple of levels (index.html → case.html → forms/*.html,
   // index.html → automationManager.html → automation/*.html). yc-forms sets
-  // window.ycForm on its own frame and exposes isDirty().
+  // window.ycForm on its own frame and exposes isDirty() / getDiff() / collect().
   function collectFrames(win, out, depth) {
     if (depth > 4) return out;
     out.push(win);
@@ -197,20 +232,71 @@
     return out;
   }
 
-  function hasUnsavedWork() {
+  function frameLabel(w) {
+    try {
+      if (w.document && w.document.title) return w.document.title;
+    } catch (_) {}
+    try {
+      return w.location.pathname.split("/").pop() || "form";
+    } catch (_) {}
+    return "form";
+  }
+
+  function framePath(w) {
+    try {
+      return w.location.pathname + w.location.search;
+    } catch (_) {}
+    return "";
+  }
+
+  /** Every frame with a YCForm, whether dirty or not. */
+  function allForms() {
+    var out = [];
     var frames = collectFrames(window, [], 0);
     for (var i = 0; i < frames.length; i++) {
+      var f;
       try {
-        var f = frames[i].ycForm;
-        if (f && typeof f.isDirty === "function" && f.isDirty()) return true;
+        f = frames[i].ycForm;
+      } catch (_) {
+        continue;
+      }
+      if (f && typeof f.isDirty === "function") out.push({ w: frames[i], f: f });
+    }
+    return out;
+  }
+
+  /** Cheap — isDirty() only. Safe to call at 1Hz. */
+  function dirtyFormLabels() {
+    var out = [];
+    var forms = allForms();
+    for (var i = 0; i < forms.length; i++) {
+      try {
+        if (forms[i].f.isDirty()) out.push(frameLabel(forms[i].w));
+      } catch (_) {}
+    }
+    return out;
+  }
+
+  function hasUnsavedWork() {
+    var forms = allForms();
+    for (var i = 0; i < forms.length; i++) {
+      try {
+        if (forms[i].f.isDirty()) return true;
       } catch (_) {}
     }
     return false;
   }
 
+  function listDirty() {
+    var l = dirtyFormLabels();
+    if (!l.length) return "this page";
+    if (l.length === 1) return l[0];
+    if (l.length === 2) return l[0] + " and " + l[1];
+    return l.slice(0, -1).join(", ") + " and " + l[l.length - 1];
+  }
+
   // NB: scoped to #tabOpenFiles on purpose. `.file-button` is also used INSIDE
-  // case.html / contact.html for their own New Appointment / New Event buttons —
-  // those live in iframes, but the scope keeps this honest regardless.
+  // case.html / contact.html for their own New Appointment / New Event buttons.
   function openFileCount() {
     try {
       return document.querySelectorAll("#tabOpenFiles .file-button").length;
@@ -219,7 +305,6 @@
     }
   }
 
-  // Does the shell offer a workspace-preserving reload URL? (index.html does.)
   function filesPreserved() {
     return typeof window.ycReloadUrl === "function";
   }
@@ -233,15 +318,128 @@
     return hasUnsavedWork();
   }
 
+  // ── Preserving unsaved work ─────────────────────────────────────────────────
+  /**
+   * Snapshot every dirty form to localStorage immediately before a forced reload.
+   * This is what makes the force safe to make unconditional: we are not asking
+   * permission to discard, we are refusing to discard at all.
+   *
+   * Stores getDiff() (field → [was, now]) and collect() (the whole form). Offered
+   * back on the next boot; expires after RECOVERY_TTL_MS.
+   *
+   * @returns {number} forms preserved
+   */
+  function preserveUnsavedWork() {
+    var out = [];
+    var forms = allForms();
+    for (var i = 0; i < forms.length; i++) {
+      var w = forms[i].w;
+      var f = forms[i].f;
+      try {
+        if (!f.isDirty()) continue;
+      } catch (_) {
+        continue;
+      }
+      var rec = { label: frameLabel(w), url: framePath(w) };
+      try {
+        rec.changed = typeof f.getDiff === "function" ? f.getDiff() : null;
+      } catch (_) {
+        rec.changed = null;
+      }
+      try {
+        rec.all = typeof f.collect === "function" ? f.collect() : null;
+      } catch (_) {
+        rec.all = null;
+      }
+      out.push(rec);
+    }
+    if (!out.length) return 0;
+    try {
+      localStorage.setItem(
+        RECOVERY_KEY,
+        JSON.stringify({ at: Date.now(), forms: out })
+      );
+    } catch (err) {
+      // Quota, private mode, whatever. We still reload — a stale client is the
+      // bigger risk — but say so loudly rather than pretending we saved it.
+      console.error("[versionGuard] COULD NOT preserve unsaved work:", err);
+      return 0;
+    }
+    return out.length;
+  }
+
+  function readRecovery() {
+    var raw = null;
+    try {
+      raw = localStorage.getItem(RECOVERY_KEY);
+    } catch (_) {
+      return null;
+    }
+    if (!raw) return null;
+    var rec = null;
+    try {
+      rec = JSON.parse(raw);
+    } catch (_) {
+      clearRecovery();
+      return null;
+    }
+    if (!rec || !rec.forms || !rec.forms.length) {
+      clearRecovery();
+      return null;
+    }
+    if (Date.now() - (rec.at || 0) > RECOVERY_TTL_MS) {
+      clearRecovery();
+      return null;
+    }
+    return rec;
+  }
+
+  function clearRecovery() {
+    try {
+      localStorage.removeItem(RECOVERY_KEY);
+    } catch (_) {}
+  }
+
+  function formatRecovery(rec) {
+    var lines = [];
+    lines.push(
+      "Unsaved changes preserved " + new Date(rec.at).toLocaleString() + "\n"
+    );
+    rec.forms.forEach(function (f) {
+      lines.push("── " + f.label + "   " + (f.url || ""));
+      var d = f.changed || {};
+      var keys = Object.keys(d);
+      if (!keys.length) {
+        lines.push("   (no field-level diff was available)");
+      } else {
+        keys.forEach(function (k) {
+          var pair = d[k] || [];
+          lines.push("   " + k);
+          lines.push("      was: " + JSON.stringify(pair[0]));
+          lines.push("      now: " + JSON.stringify(pair[1]));
+        });
+      }
+      lines.push("");
+    });
+    return lines.join("\n");
+  }
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
   // ── Reload ──────────────────────────────────────────────────────────────────
   /**
    * Reload THROUGH the shell's workspace URL when one is on offer, so an update
    * does not close the user's open case/contact files.
    *
    * location.replace() rather than assign(): it navigates without pushing a
-   * history entry (Back should not take you to the pre-update page), and it
-   * leaves the workspace in the address bar — so a later manual F5 restores the
-   * files too. See currentOpenFilesUrl() / restoreOpenFiles() in index.html.
+   * history entry (Back should not return to the pre-update page), and it leaves
+   * the workspace in the address bar — so a later manual F5 restores the files
+   * too. See currentOpenFilesUrl() / restoreOpenFiles() in index.html.
    *
    * Static assets are served no-cache + ETag and sw.js is a no-op passthrough, so
    * a same-URL navigation still revalidates everything. No cache-busting needed.
@@ -252,7 +450,7 @@
     var url = null;
     try {
       if (filesPreserved()) url = window.ycReloadUrl();
-    } catch (err) {
+    } catch (_) {
       url = null; // never let a serialisation bug block the reload
     }
     try {
@@ -264,44 +462,61 @@
   }
 
   function stopTimers() {
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = null;
-    }
-    if (pendingTimer) {
-      clearTimeout(pendingTimer);
-      pendingTimer = null;
-    }
-    if (noteTimer) {
-      clearInterval(noteTimer);
-      noteTimer = null;
-    }
-    if (hardTimer) {
-      clearInterval(hardTimer);
-      hardTimer = null;
-    }
+    [pollTimer, noteTimer, hardTimer].forEach(function (t) {
+      if (t) clearInterval(t);
+    });
+    if (pendingTimer) clearTimeout(pendingTimer);
+    pollTimer = noteTimer = hardTimer = pendingTimer = null;
+  }
+
+  // ── The bottom-right stack (pill + recovery card share it) ──────────────────
+  function stack() {
+    var el = document.getElementById("vgStack");
+    if (el) return el;
+    if (!document.body) return null;
+    el = document.createElement("div");
+    el.id = "vgStack";
+    el.style.cssText = [
+      "position:fixed",
+      "right:14px",
+      "bottom:14px",
+      "z-index:" + Z_STACK,
+      "display:flex",
+      "flex-direction:column",
+      "gap:8px",
+      "align-items:flex-end",
+      "pointer-events:none",
+    ].join(";");
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function cardStyle(accent) {
+    return [
+      "pointer-events:auto",
+      "max-width:300px",
+      "background:var(--surface-bg,#fff)",
+      "color:var(--text,#2c3e50)",
+      "border:1px solid var(--border,#e1e4e8)",
+      "border-left:4px solid " + accent,
+      "border-radius:8px",
+      "padding:9px 12px",
+      "box-shadow:0 4px 18px rgba(0,0,0,.18)",
+      "font:13px/1.35 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif",
+      "display:flex",
+      "align-items:center",
+      "gap:10px",
+    ].join(";");
   }
 
   // ── SOFT: the non-dismissable "update available" pill ───────────────────────
-  //
-  // No ✕. No "Later". It appears on the first deploy past this tab's build and
-  // the only thing that removes it is a reload. A dismissable nag gets dismissed,
-  // and then someone is on a five-week-old page with no signal at all.
-
   /**
-   * The honest one-liner about what a reload costs.
-   *
-   * "may be lost" rather than "will be lost" on purpose: hasUnsavedWork() only
-   * sees YCForms. A half-typed SMS in Communicate, a filled-in search, an open
-   * picker — we cannot see any of it, so we must not promise it is safe. Better a
-   * mild caveat they can act on than a confident lie.
-   *
-   * @returns {{t:string, warn:boolean}}
+   * "may be lost", not "will be lost": isDirty() only sees YCForms. A half-typed
+   * SMS in Communicate is invisible to us, so we must not promise it is safe.
    */
   function noteFor() {
     if (hasUnsavedWork())
-      return { t: "You have unsaved changes — save first.", warn: true };
-
+      return { t: "Unsaved changes in " + listDirty() + ".", warn: true };
     var n = openFileCount();
     if (n && !filesPreserved())
       return {
@@ -327,57 +542,39 @@
     var note = noteFor();
     if (el.textContent === note.t) return;
     el.textContent = note.t;
-    el.style.display = "block";
     el.style.color = note.warn ? AMBER : "var(--text-muted,#6c757d)";
   }
 
   function showSoftPill() {
     if (document.getElementById("vgPill")) return updateSoftPill();
-    if (!document.body) return;
+    var host = stack();
+    if (!host) return;
 
     var pill = document.createElement("div");
     pill.id = "vgPill";
     pill.setAttribute("role", "status");
-    pill.style.cssText = [
-      "position:fixed",
-      "right:14px",
-      "bottom:14px",
-      "z-index:" + Z_PILL,
-      "max-width:280px",
-      "background:var(--surface-bg,#fff)",
-      "color:var(--text,#2c3e50)",
-      "border:1px solid var(--border,#e1e4e8)",
-      "border-left:4px solid " + BLUE,
-      "border-radius:8px",
-      "padding:9px 12px",
-      "box-shadow:0 4px 18px rgba(0,0,0,.18)",
-      "font:13px/1.35 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif",
-      "display:flex",
-      "align-items:center",
-      "gap:10px",
-    ].join(";");
-
+    pill.style.cssText = cardStyle(BLUE);
     pill.innerHTML =
       "<div>" +
       '<div style="font-weight:700;white-space:nowrap">' +
       '<i class="fa-solid fa-arrows-rotate" style="color:' +
       BLUE +
-      ';margin-right:6px"></i>' +
-      "Update available</div>" +
+      ';margin-right:6px"></i>Update available</div>' +
       '<div id="vgNote" style="font-size:12px;margin-top:2px"></div>' +
       "</div>" +
       '<button id="vgReload" style="background:' +
       BLUE +
       ";color:#fff;border:0;border-radius:5px;font:inherit;font-weight:600;" +
       'cursor:pointer;padding:6px 12px;white-space:nowrap;margin-left:auto">Reload</button>';
-
-    document.body.appendChild(pill);
+    host.appendChild(pill);
     updateSoftPill();
 
     document.getElementById("vgReload").addEventListener("click", function () {
       if (
         hasUnsavedWork() &&
-        !window.confirm("You have unsaved changes. Reload and lose them?")
+        !window.confirm(
+          "Unsaved changes in " + listDirty() + ". Reload and lose them?"
+        )
       )
         return;
       doReload(false);
@@ -394,12 +591,83 @@
     if (mode !== "soft") log("update available — was", bootBuild, "now", v.build);
     mode = "soft";
     showSoftPill();
-    // Keep the warning line honest as they open/close files and edit forms.
     if (!noteTimer) noteTimer = setInterval(updateSoftPill, NOTE_MS);
     // Polling continues: a floor set later must still be able to escalate us.
   }
 
-  // ── HARD: non-blocking countdown, then reload ───────────────────────────────
+  // ── Recovery card (shown on the boot AFTER work was preserved) ──────────────
+  function showRecoveryCard() {
+    var rec = readRecovery();
+    if (!rec || document.getElementById("vgRecover")) return;
+    var host = stack();
+    if (!host) return;
+
+    var n = rec.forms.length;
+    var card = document.createElement("div");
+    card.id = "vgRecover";
+    card.setAttribute("role", "status");
+    card.style.cssText = cardStyle(AMBER);
+    card.innerHTML =
+      "<div>" +
+      '<div style="font-weight:700"><i class="fa-solid fa-life-ring" style="color:' +
+      AMBER +
+      ';margin-right:6px"></i>Unsaved changes kept</div>' +
+      '<div style="font-size:12px;margin-top:2px;color:var(--text-muted,#6c757d)">' +
+      n +
+      " form" +
+      (n === 1 ? "" : "s") +
+      " had unsaved edits when the app updated.</div>" +
+      "</div>" +
+      '<button id="vgRecoverView" style="background:' +
+      AMBER +
+      ";color:#fff;border:0;border-radius:5px;font:inherit;font-weight:600;" +
+      'cursor:pointer;padding:6px 12px;white-space:nowrap;margin-left:auto">View</button>';
+    host.appendChild(card);
+
+    document
+      .getElementById("vgRecoverView")
+      .addEventListener("click", function () {
+        var text = formatRecovery(rec);
+        if (typeof Swal === "undefined") {
+          console.log(text);
+          window.alert(text);
+          return;
+        }
+        Swal.fire({
+          icon: "info",
+          title: "Unsaved changes from before the update",
+          html:
+            '<p style="margin:0 0 8px;text-align:left;font-size:.9em;color:#6c757d">' +
+            "These were <b>not</b> submitted — they're a copy of what was on screen. " +
+            "Re-enter anything you still need." +
+            "</p>" +
+            '<pre style="text-align:left;max-height:45vh;overflow:auto;background:#f6f8fa;' +
+            "border:1px solid #e1e4e8;border-radius:6px;padding:10px;font-size:12px;" +
+            'white-space:pre-wrap;word-break:break-word">' +
+            esc(text) +
+            "</pre>",
+          width: "42rem",
+          confirmButtonText: "Copy",
+          confirmButtonColor: BLUE,
+          showDenyButton: true,
+          denyButtonText: "Discard",
+          showCancelButton: true,
+          cancelButtonText: "Close",
+        }).then(function (r) {
+          if (r.isConfirmed) {
+            try {
+              navigator.clipboard.writeText(text);
+            } catch (_) {}
+          } else if (r.isDenied) {
+            clearRecovery();
+            var el = document.getElementById("vgRecover");
+            if (el && el.parentNode) el.parentNode.removeChild(el);
+          }
+        });
+      });
+  }
+
+  // ── HARD: countdown, then reload REGARDLESS ─────────────────────────────────
   function fmtLeft(ms) {
     var s = Math.max(0, Math.ceil(ms / 1000));
     var m = Math.floor(s / 60);
@@ -439,70 +707,93 @@
     document
       .getElementById("vgReloadNow")
       .addEventListener("click", function () {
-        if (
-          hasUnsavedWork() &&
-          !window.confirm("You have unsaved changes. Reload and lose them?")
-        )
-          return;
+        if (hasUnsavedWork()) {
+          if (
+            !window.confirm(
+              "Unsaved changes in " +
+                listDirty() +
+                ".\n\nThey will be kept for recovery, but NOT submitted. Reload now?"
+            )
+          )
+            return;
+          preserveUnsavedWork();
+        }
         doReload(true);
       });
   }
 
-  function paintHardBanner(leftMs, busy) {
+  function paintHardBanner(phase, ms, busy) {
     var bar = document.getElementById("vgBanner");
     var msg = document.getElementById("vgBannerMsg");
     var btn = document.getElementById("vgReloadNow");
     if (!bar || !msg || !btn) return;
 
-    var overdue = leftMs <= 0;
-    bar.style.background = overdue ? RED : AMBER;
-    btn.style.color = overdue ? RED : AMBER;
+    var isFinal = phase === "final";
+    bar.style.background = isFinal ? RED : AMBER;
+    btn.style.color = isFinal ? RED : AMBER;
+    btn.textContent = "Reload now";
 
-    if (overdue) {
-      // Only reachable with unsaved work — a clean tab reloads on the tick.
+    if (isFinal) {
       msg.textContent =
-        "\u26A0 YisraCase must reload, but you still have unsaved changes. " +
-        "Save them and this page will reload itself.";
-      btn.textContent = "Discard & reload";
+        "\u26A0 Reloading in " +
+        fmtLeft(ms) +
+        " \u2014 unsaved changes in " +
+        listDirty() +
+        ". Save now. Anything unsaved will be kept for recovery, but not submitted.";
       return;
     }
 
     msg.textContent =
       "\u26A0 YisraCase has been updated. This page will reload in " +
-      fmtLeft(leftMs) +
+      fmtLeft(ms) +
       (busy
-        ? " \u2014 you have unsaved changes."
+        ? " \u2014 unsaved changes in " + listDirty() + "."
         : filesPreserved()
           ? ". Open files will be restored \u2014 save anything else."
           : " \u2014 save your work, open files will close.");
-    btn.textContent = "Reload now";
   }
 
   function tickHard() {
     var left = deadline - Date.now();
-    var busy = isBusy();
-
     if (left > 0) {
-      paintHardBanner(left, busy);
+      paintHardBanner("grace", left, isBusy());
       return;
     }
 
-    if (!busy) {
+    // Grace is up. Clean → go.
+    if (!isBusy()) {
       doReload(true);
       return;
     }
 
-    // The grace period expired and there is STILL unsaved work. Hold. We are not
-    // destroying someone's half-typed intake form to win an argument about
-    // staleness — the banner stays up and we reload the instant they save.
-    // FORCE_AFTER_MS is the escape hatch if you want a hard cap.
-    if (!overdueSince) overdueSince = Date.now();
-    if (FORCE_AFTER_MS && Date.now() - overdueSince >= FORCE_AFTER_MS) {
-      log("unsaved work held the reload past the cap — forcing anyway");
-      doReload(true);
+    // Still dirty. Final, NON-NEGOTIABLE countdown — never an indefinite hold.
+    // A single false-positive isDirty() would otherwise block the force forever,
+    // which is exactly the bug this replaces.
+    if (!finalDeadline) {
+      finalDeadline = Date.now() + num(VG.dirtyGraceMs, DIRTY_GRACE_MS);
+      log(
+        "unsaved work at T-0 in [" +
+          dirtyFormLabels().join(", ") +
+          "] — final countdown, reloading regardless at",
+        new Date(finalDeadline).toLocaleTimeString()
+      );
+    }
+    var fleft = finalDeadline - Date.now();
+    if (fleft > 0) {
+      paintHardBanner("final", fleft, true);
       return;
     }
-    paintHardBanner(0, true);
+
+    // Time is up. Preserve, then go. Nothing is destroyed silently, and nothing
+    // can stop the reload.
+    var n = preserveUnsavedWork();
+    if (n)
+      log(
+        "preserved",
+        n,
+        "unsaved form(s) — read back with VersionGuard.recovery()"
+      );
+    doReload(true);
   }
 
   function goHard(v) {
@@ -524,7 +815,8 @@
     mode = "hard";
     stopTimers();
     removeSoftPill();
-    deadline = Date.now() + GRACE_MS;
+    finalDeadline = 0;
+    deadline = Date.now() + num(VG.graceMs, GRACE_MS);
     log(
       "forced reload — boot mtime",
       bootMtime,
@@ -545,8 +837,7 @@
     var now = Date.now();
     var since = now - lastCheck;
 
-    // Unforced (background poll, window focus): cheap throttle. Safe to drop —
-    // the next poll comes round soon enough.
+    // Unforced (background poll, window focus): cheap throttle. Safe to drop.
     if (!force && since < RECHECK_MS) return;
 
     // Forced (tab became visible, back online, bfcache restore, or a response
@@ -567,7 +858,6 @@
 
     fetchVersion()
       .then(function (v) {
-        // First successful call establishes what "current" means for this tab.
         if (!bootBuild) {
           bootBuild = v.build;
           bootMtime = v.mtime || 0;
@@ -577,7 +867,7 @@
 
         var c = classify(v);
         if (!c) return null;
-        if (c === "soft" && mode === "soft") return null; // pill already up
+        if (c === "soft" && mode === "soft") return null;
 
         // Confirm once. Two reads, 3s apart, must agree before we act — that
         // rides out a traffic-split rollout where two revisions are live.
@@ -608,9 +898,8 @@
    * stale tab is caught on its very next request at no extra network cost.
    *
    * The headers are only a TRIGGER. X-App-Min-Build comes off a 30s server-side
-   * cache and can lag reality in either direction, so we never act on it — we
-   * just go ask /api/version, which is authoritative. Worst case a stale header
-   * costs one wasted round-trip (and check() throttles even that).
+   * cache and can lag reality in either direction, so we never act on it — we go
+   * ask /api/version, which is authoritative.
    */
   VG.noteResponse = function (res) {
     if (mode === "hard" || !bootBuild || !res || !res.headers) return;
@@ -621,14 +910,11 @@
     } catch (_) {
       return;
     }
-
-    // A floor beats everything — check it even when the soft pill is already up.
     var floor = m ? Number(m) : 0;
     if (floor && bootMtime && bootMtime < floor) {
       check(true);
       return;
     }
-
     if (mode) return; // soft already showing; the header tells us nothing new
     if (!b || b === bootBuild) return;
     check(true);
@@ -638,19 +924,138 @@
     check(true);
   };
 
+  /**
+   * WHICH forms claim to be dirty, and WHICH fields they think changed.
+   *
+   * Run this when the banner blames you for changes you didn't make. YCForm's
+   * isDirty() is a whole-form JSON compare against a load-time snapshot, so a
+   * field that normalises itself after load (a select populated late, a date
+   * reformatting) shows up here with was/now values that look identical-ish —
+   * that's your false positive, and it should be fixed in the form, not here.
+   */
+  VG.diagnose = function () {
+    var forms = allForms();
+    if (!forms.length) {
+      log("no YCForms found in any frame");
+      return [];
+    }
+    var rows = [];
+    forms.forEach(function (x) {
+      var dirty = false;
+      try {
+        dirty = x.f.isDirty();
+      } catch (_) {}
+      var diff = null;
+      if (dirty) {
+        try {
+          diff = x.f.getDiff();
+        } catch (_) {}
+      }
+      rows.push({
+        form: frameLabel(x.w),
+        url: framePath(x.w),
+        dirty: dirty,
+        changed: diff ? Object.keys(diff).join(", ") : "",
+      });
+      if (dirty && diff) {
+        console.groupCollapsed(
+          "%c" + frameLabel(x.w) + " %cclaims dirty — " + framePath(x.w),
+          "font-weight:700",
+          "font-weight:400;color:#888"
+        );
+        Object.keys(diff).forEach(function (k) {
+          console.log(k, "\n  was:", diff[k][0], "\n  now:", diff[k][1]);
+        });
+        console.groupEnd();
+      }
+    });
+    try {
+      console.table(rows);
+    } catch (_) {
+      console.log(rows);
+    }
+    return rows;
+  };
+
+  VG.recovery = function () {
+    var rec = readRecovery();
+    if (!rec) {
+      log("no preserved unsaved work");
+      return null;
+    }
+    console.log(formatRecovery(rec));
+    return rec;
+  };
+
+  VG.clearRecovery = clearRecovery;
+
+  VG.reloadNow = function () {
+    if (hasUnsavedWork()) preserveUnsavedWork();
+    doReload(true);
+  };
+
+  /**
+   * Simulate a server state — no deploy, no DB. Stubs /api/version only; every
+   * other request still goes to the real server. A reload clears it.
+   *
+   *   VersionGuard.simulate('soft')  → "Update available" pill
+   *   VersionGuard.simulate('hard')  → forced-reload countdown
+   *   VersionGuard.simulate(false)   → put the real fetch back
+   *
+   * The UI appears ~3s later (two /api/version reads, CONFIRM_MS apart, have to
+   * agree before we act).
+   *
+   * NOTE: two forced reloads inside five minutes trips the loop breaker and the
+   * third is refused BY DESIGN. Testing repeatedly?
+   *   sessionStorage.removeItem('vgForcedReloads')
+   */
+  VG.simulate = function (tier) {
+    if (!VG._realFetch) VG._realFetch = window.fetch.bind(window);
+    if (!tier) {
+      window.fetch = VG._realFetch;
+      log("simulation off — real /api/version restored");
+      return;
+    }
+    var base = bootMtime || Date.now();
+    window.fetch = function (url, opts) {
+      if (String(url).indexOf("/api/version") === -1)
+        return VG._realFetch(url, opts);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            build: "SIMULATED-" + tier,
+            mtime: base + 1000, // a build newer than the one we booted on
+            // A floor ABOVE our boot but AT OR BELOW the served build. Both halves
+            // are required — see classify(). 0 = no floor = soft only.
+            minBuild: tier === "hard" ? base + 1 : 0,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      );
+    };
+    log("simulating a", tier, "update — expect the UI in ~3s");
+    check(true);
+  };
+
   VG.info = function () {
     return {
       bootBuild: bootBuild,
       bootMtime: bootMtime,
       mode: mode,
       reloadsIn: deadline ? Math.max(0, deadline - Date.now()) : null,
+      finalReloadIn: finalDeadline
+        ? Math.max(0, finalDeadline - Date.now())
+        : null,
+      dirtyForms: dirtyFormLabels(),
       filesPreserved: filesPreserved(),
       forcedReloadsRecently: recentForcedReloads().length,
+      hasPreservedWork: !!readRecovery(),
     };
   };
 
   VG.start = function () {
     if (pollTimer) return; // already started
+    showRecoveryCard(); // did a forced reload just save someone's typing?
     check(true); // establishes bootBuild
 
     document.addEventListener("visibilitychange", function () {
