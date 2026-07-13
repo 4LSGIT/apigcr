@@ -44,15 +44,26 @@
  *   ↓ still dirty at T-0
  *   final (DIRTY_GRACE_MS, 2m) red banner NAMING the forms. Non-negotiable.
  *   ↓ still dirty at T-0
- *   preserve → reload         every dirty form's diff is written to localStorage
- *                             and offered back on the next boot. Nothing is
- *                             destroyed silently; nothing can block the reload.
+ *   preserve → reload         every dirty form's diff is written to
+ *                             sessionStorage and offered back on the next boot
+ *                             (the reload is same-tab, so it survives). Nothing
+ *                             is destroyed silently; nothing can block the
+ *                             reload.
  *
  * Saving at any point short-circuits straight to the reload.
  *
  * If the dirty flag was a false positive, the recovery snapshot is harmless noise
- * the user dismisses. If it was real, their typing is sitting in localStorage.
+ * the user dismisses. If it was real, their typing is sitting in sessionStorage.
  * Either way the stale client is gone, which was the entire point.
+ *
+ * sessionStorage, NOT localStorage — and the DIFF only, never collect():
+ * a form snapshot on an intake form is SSNs and financials. localStorage is
+ * plaintext at rest on a shared firm machine and survives browser restarts;
+ * collect() would capture every field, touched or not. sessionStorage is
+ * tab-scoped and dies with the tab, and location.replace()/reload() are
+ * same-tab navigations, so it survives exactly as long as the recovery offer
+ * is reachable and not a second longer. The loop breaker and the shell's
+ * label cache already ride sessionStorage across this same reload.
  *
  * Reloads preserve the workspace
  * ------------------------------
@@ -320,12 +331,14 @@
 
   // ── Preserving unsaved work ─────────────────────────────────────────────────
   /**
-   * Snapshot every dirty form to localStorage immediately before a forced reload.
-   * This is what makes the force safe to make unconditional: we are not asking
-   * permission to discard, we are refusing to discard at all.
+   * Snapshot every dirty form to sessionStorage immediately before a forced
+   * reload. This is what makes the force safe to make unconditional: we are not
+   * asking permission to discard, we are refusing to discard at all.
    *
-   * Stores getDiff() (field → [was, now]) and collect() (the whole form). Offered
-   * back on the next boot; expires after RECOVERY_TTL_MS.
+   * Stores getDiff() (field → [was, now]) ONLY — deliberately not collect().
+   * The diff is what the user actually typed; the whole form is PII we have no
+   * business copying (see the header). Offered back on the next boot in this
+   * tab; expires after RECOVERY_TTL_MS.
    *
    * @returns {number} forms preserved
    */
@@ -346,16 +359,11 @@
       } catch (_) {
         rec.changed = null;
       }
-      try {
-        rec.all = typeof f.collect === "function" ? f.collect() : null;
-      } catch (_) {
-        rec.all = null;
-      }
       out.push(rec);
     }
     if (!out.length) return 0;
     try {
-      localStorage.setItem(
+      sessionStorage.setItem(
         RECOVERY_KEY,
         JSON.stringify({ at: Date.now(), forms: out })
       );
@@ -371,7 +379,7 @@
   function readRecovery() {
     var raw = null;
     try {
-      raw = localStorage.getItem(RECOVERY_KEY);
+      raw = sessionStorage.getItem(RECOVERY_KEY);
     } catch (_) {
       return null;
     }
@@ -396,7 +404,7 @@
 
   function clearRecovery() {
     try {
-      localStorage.removeItem(RECOVERY_KEY);
+      sessionStorage.removeItem(RECOVERY_KEY);
     } catch (_) {}
   }
 
@@ -570,13 +578,17 @@
     updateSoftPill();
 
     document.getElementById("vgReload").addEventListener("click", function () {
-      if (
-        hasUnsavedWork() &&
-        !window.confirm(
-          "Unsaved changes in " + listDirty() + ". Reload and lose them?"
+      if (hasUnsavedWork()) {
+        if (
+          !window.confirm(
+            "Unsaved changes in " +
+              listDirty() +
+              ".\n\nThey will be kept for recovery, but NOT submitted. Reload now?"
+          )
         )
-      )
-        return;
+          return;
+        preserveUnsavedWork();
+      }
       doReload(false);
     });
   }

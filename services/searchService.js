@@ -42,8 +42,8 @@ async function search(db, { q, type = 'all', limit = 1 } = {}) {
     ? (digits.length === 11 ? digits.slice(1) : digits)
     : null;
   const isShortNumber = isAllDigits && digits.length <= 6;
-  // case_id: 6-8 alphanumeric, no spaces, has at least one letter
-  const looksLikeCaseId = /^[A-Za-z0-9]{6,8}$/.test(term) && /[A-Za-z]/.test(term);
+  // case_id: 6-8 base64url chars (legacy ids may contain - or _), has a letter
+  const looksLikeCaseId = /^[A-Za-z0-9_-]{6,8}$/.test(term) && /[A-Za-z]/.test(term);
   // case_number: "25-12345" or case_number_full: "2:25-bk-12345"
   const looksLikeCaseRef = /\d{2}-/.test(term) || term.includes(':');
   const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(term);
