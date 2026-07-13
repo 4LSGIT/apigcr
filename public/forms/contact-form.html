@@ -748,26 +748,18 @@
             }
           } catch (_) { /* cross-origin */ }
 
-          // Update our own _liveData and re-populate. populate() also
-          // re-snapshots _original so dirty state clears.
-          this._liveData = flat;
-          this.populate(this._resolveDataSource());
-
-          // Re-run onLoad to re-bind repeater glue (populate() rebuilt
-          // the .yc-repeater-item nodes; their event handlers are on the
-          // container so binding is once-per-load, but glue's per-row
-          // dataset state on advanced toggle is lost — rebinding is safe
-          // and idempotent).
-          if (this.config.onLoad) this.config.onLoad(this._resolveDataSource());
+          // Re-populate from the rehydrated row. refresh() repopulates, awaits
+          // onLoad (which re-binds the repeater glue that populate() just tore
+          // down when it rebuilt the .yc-repeater-item nodes) and only then
+          // re-baselines — so onLoad's writes can't read as unsaved changes.
+          // force: true because we ARE dirty here; the pending changes are
+          // exactly the ones we just persisted.
+          await this.refresh({ liveData: flat, force: true });
         } else {
           // Scalar-only save (no aggregate arrays in payload): server
           // returned { status, data } without rehydration envelope.
-          // populate() didn't run, so do the dirty-state reset manually
-          // — mirrors yc-forms.js save() step 7.
-          this._original = JSON.parse(JSON.stringify(this.collect()));
-          this._lastAutosaveJson = JSON.stringify(this._original);
-          this.el.classList.remove('yc-dirty');
-          this.el.querySelectorAll('.yc-changed').forEach(el => el.classList.remove('yc-changed'));
+          // populate() didn't run, so re-baseline explicitly.
+          this.resetBaseline();
         }
 
         // 5. Record submission in form_submissions
@@ -836,7 +828,14 @@
         this._toast('success', 'Saved successfully');
 
         // 11. Callbacks + parent notification
-        if (this.config.onSave) this.config.onSave(submitResult);
+        // Awaited + re-baselined, mirroring yc-forms.js save() step 11: an onSave
+        // that writes fields would otherwise land after the baseline and leave the
+        // form dirty forever. Fenced on _userEditSeq so a keystroke during the
+        // await isn't swallowed. (This form's onSave is a no-op today — kept in
+        // sync so the un-awaited pattern doesn't creep back in.)
+        const seqBeforeOnSave = this._userEditSeq;
+        if (this.config.onSave) await this.config.onSave(submitResult);
+        if (this._userEditSeq === seqBeforeOnSave) this.resetBaseline();
         if (!this.config.external) {
           try {
             P.postMessage({
@@ -1445,9 +1444,9 @@
             P.entityData.contact = flat;
           }
         } catch (_) {}
-        form._liveData = flat;
-        form.populate(form._resolveDataSource());
-        if (form.config.onLoad) form.config.onLoad(form._resolveDataSource());
+        // force: true — the revived contact's data IS the truth now, and
+        // refresh() awaits onLoad before re-baselining (see yc-forms.js).
+        await form.refresh({ liveData: flat, force: true });
       } catch (refreshErr) {
         console.warn('[contact-form] Revive refresh failed:', refreshErr);
       }

@@ -1234,28 +1234,27 @@ async function refreshEntityData(sourceFormKey) {
   putClients();
   putAppts();
 
-// Push to all non-dirty child YCForm iframes
-document.querySelectorAll('iframe').forEach(iframe => {
-  try {
-    const form = iframe.contentWindow?.ycForm;
-    if (!form) return;
-    if (form.config.formKey === sourceFormKey) return;
-    if (!form.isDirty()) {
-      // Push fresh parent data into the form's internal state
+  // Push fresh data into every non-dirty sibling YCForm iframe.
+  //
+  // for...of, not forEach: refresh() is async (it awaits the form's onLoad, which
+  // may do an API lookup) and an async forEach callback is fire-and-forget — the
+  // re-baseline inside refresh() would never be sequenced. The dirty guard, the
+  // await, the re-baseline and the conditionals all live in YCForm.refresh() now,
+  // so this can't drift out of sync with init() again.
+  for (const iframe of document.querySelectorAll('iframe')) {
+    try {
+      const form = iframe.contentWindow?.ycForm;
+      if (!form) continue;                                   // not loaded yet
+      if (form.config.formKey === sourceFormKey) continue;   // the form that just saved
       const path = form.config.endpoints?.load?.path;
-      if (path && window.entityData[path]) {
-        form._liveData   = window.entityData[path];
-        form._loadResult = window.entityData;
-      }
-      // Re-populate from resolved data source
-      form.populate(form._resolveDataSource());
-      // Re-run onLoad for computed fields (debtor name, co-debtor, etc.)
-      if (form.config.onLoad) {
-        form.config.onLoad(form._resolveDataSource());
-      }
+      await form.refresh({
+        liveData:   path ? window.entityData[path] : null,
+        loadResult: window.entityData,
+      });
+    } catch (err) {
+      console.warn('[refreshEntityData] form refresh failed:', err);
     }
-  } catch (_) { /* not loaded yet or cross-origin */ }
-});
+  }
 }
 
 // ── Message listener (centralized) ──────────────────────────

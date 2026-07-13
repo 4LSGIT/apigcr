@@ -50,6 +50,18 @@ class YCForm {
     this._draftData = null;        // Stored draft from server (for recovery)
     this._submittedData = null;    // Latest submitted row from server
     this._liveData = null;         // Data from the source entity table
+    this._userEditSeq = 0;         // Bumped on every TRUSTED user input/change.
+                                   // Lets refresh()/save() tell "onLoad wrote this
+                                   // field" from "the user typed into it while we
+                                   // were awaiting" — see resetBaseline().
+
+    // Capture-phase delegation: sees every field in the form, including repeater
+    // rows created later. Synthetic events (isTrusted === false) are ignored on
+    // purpose — only a human counts as a user edit.
+    // NB: assumes repeater containers live inside this.el. All current ones do.
+    const bump = (e) => { if (e.isTrusted) this._userEditSeq++; };
+    this.el.addEventListener('input', bump, true);
+    this.el.addEventListener('change', bump, true);
 
     // DOM refs
     this._headerEl = document.querySelector('.yc-form-header');
@@ -170,9 +182,10 @@ if (this.config.endpoints.load) {
       if (this.config.onLoad) {
         await this.config.onLoad(dataSource);
       }
-// 13c. Re-snapshot after onLoad (it may have modified field values)
-this._original = JSON.parse(JSON.stringify(this.collect()));
-this._lastAutosaveJson = JSON.stringify(this._original);
+
+      // 13c. Re-baseline after onLoad (it may have modified field values)
+      this.resetBaseline();
+
       // 13b. Re-evaluate conditionals now that data is populated
       //      (initial evaluation in _setupConditionals ran before populate)
       this._evaluateConditionals();
@@ -359,13 +372,56 @@ this._lastAutosaveJson = JSON.stringify(this._original);
       });
     }
 
-    // Store snapshot for dirty-checking
-    this._original = JSON.parse(JSON.stringify(this.collect()));
-    this._lastAutosaveJson = JSON.stringify(this._original);
+    // Everything written above is machine-written, so it IS the clean state.
+    this.resetBaseline();
+  }
 
-    // Clear dirty state
-    this.el.classList.remove('yc-dirty');
-    this.el.querySelectorAll('.yc-changed').forEach(el => el.classList.remove('yc-changed'));
+
+  /**
+   * Re-load from data the parent just refreshed, WITHOUT destroying user input.
+   *
+   * Mirrors init() steps 10 → 13 → 13c → 13b — the ONLY ordering in which onLoad's
+   * field writes land BEFORE the dirty baseline is taken. The parent pages used to
+   * inline this by hand and dropped both the `await` and the re-baseline, so every
+   * value an onLoad computed (debtor_name, derived dates, the awaited attorney
+   * lookup) landed after the baseline and the form reported dirty forever — on a
+   * form nobody had touched. Call this instead of hand-rolling the sequence.
+   *
+   * @param {object}  [opts]
+   * @param {*}       [opts.liveData]    fresh entity row → this._liveData
+   * @param {*}       [opts.loadResult]  fresh full parent payload → this._loadResult
+   * @param {boolean} [opts.force=false] repopulate even if dirty. ONLY for a
+   *                                     post-save refresh, where the pending
+   *                                     changes ARE the ones just persisted.
+   * @returns {Promise<'skipped-dirty'|'kept-user-edits'|'refreshed'>}
+   */
+  async refresh(opts = {}) {
+    // Unsaved edits pending: populate() would overwrite them in the DOM. Never clobber.
+    if (!opts.force && this.isDirty()) return 'skipped-dirty';
+
+    if (opts.liveData != null) this._liveData = opts.liveData;
+    if (opts.loadResult != null) this._loadResult = opts.loadResult;
+
+    const seq = this._userEditSeq;
+
+    this.populate(this._resolveDataSource());               // 10 (also baselines)
+
+    if (this.config.onLoad) {
+      await this.config.onLoad(this._resolveDataSource());  // 13 — AWAITED
+    }
+
+    // The await above is a window in which the user can type into the form we just
+    // repopulated. If they did, re-baselining would swallow that edit permanently:
+    // invisible to isDirty(), to autosave, and to versionGuard's recovery. Leave the
+    // form dirty instead — a cosmetic false-positive beats discarding someone's work.
+    if (this._userEditSeq !== seq) {
+      this._evaluateConditionals();
+      return 'kept-user-edits';
+    }
+
+    this.resetBaseline();                                   // 13c
+    this._evaluateConditionals();                           // 13b
+    return 'refreshed';
   }
 
 
@@ -424,6 +480,31 @@ this._lastAutosaveJson = JSON.stringify(this._original);
   // ═══════════════════════════════════════════════════════════════════════════
   // DIRTY CHECKING & DIFF
   // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Re-baseline dirty tracking to the form's CURRENT field values.
+   *
+   * isDirty() is `collect() !== _original`. ANY value written after the last
+   * snapshot — an onLoad computing a derived date, a select whose options land
+   * late, an async lookup resolving — makes a form nobody touched report dirty
+   * forever. Call this once those writes have settled and the form is honestly
+   * clean again.
+   *
+   * Sets BOTH _original (isDirty/getDiff) and _lastAutosaveJson (autosaveTick),
+   * or the next keystroke autosaves a draft full of machine-computed values.
+   *
+   * ONLY call when the current values are known to be machine-written. Baselining
+   * over a user's pending edit makes that edit invisible to isDirty(), to autosave,
+   * AND to versionGuard's unsaved-work preservation — i.e. silently discarded.
+   * refresh() and save() fence this with _userEditSeq; do the same at any new
+   * call site.
+   */
+  resetBaseline() {
+    this._original = JSON.parse(JSON.stringify(this.collect()));
+    this._lastAutosaveJson = JSON.stringify(this._original);
+    this.el.classList.remove('yc-dirty');
+    this.el.querySelectorAll('.yc-changed').forEach(el => el.classList.remove('yc-changed'));
+  }
 
   isDirty() {
     return JSON.stringify(this.collect()) !== JSON.stringify(this._original);
@@ -638,10 +719,7 @@ this._lastAutosaveJson = JSON.stringify(this._original);
       }
 
       // 7. Reset state
-      this._original = JSON.parse(JSON.stringify(this.collect()));
-      this._lastAutosaveJson = JSON.stringify(this._original);
-      this.el.classList.remove('yc-dirty');
-      this.el.querySelectorAll('.yc-changed').forEach(el => el.classList.remove('yc-changed'));
+      this.resetBaseline();
 
       // 8. Update status
       this._showStatus('Saved just now');
@@ -669,7 +747,15 @@ this._lastAutosaveJson = JSON.stringify(this._original);
       this._toast('success', 'Saved successfully');
 
       // 11. Callback & parent notification
-      if (this.config.onSave) this.config.onSave(submitResult);
+      //
+      // onSave is AWAITED, then we re-baseline. It may write fields — issn.html
+      // sets cd_id/cd_contact_id for a co-debtor it just created — and those
+      // writes land after step 7's baseline, leaving the form dirty forever.
+      // Skip the re-baseline if the user typed during the await (same fence as
+      // refresh()): a phantom-dirty form beats a silently discarded edit.
+      const seqBeforeOnSave = this._userEditSeq;
+      if (this.config.onSave) await this.config.onSave(submitResult);
+      if (this._userEditSeq === seqBeforeOnSave) this.resetBaseline();
       if (!this.config.external) {
         try {
           window.parent.postMessage({
