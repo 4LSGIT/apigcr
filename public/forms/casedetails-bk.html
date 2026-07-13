@@ -420,12 +420,98 @@
         // when the user actively changes the trustee (see onTrusteeChange).
         buildTrusteeOptions(caseData.case_trustee || '');
         renderTrusteeHint();
+
+        // Fill empty derived dates. MUST be here and not in init().then() —
+        // yc-forms re-snapshots the dirty baseline immediately after this hook,
+        // so a field written later reads as an unsaved change forever. See the
+        // DERIVED DATE FIELDS block below.
+        applyDerivedDates();
       },
 
       onSave: () => {
         //try { P.postMessage({ type: 'form-saved', form: 'case_details' }, '*'); } catch (_) {}
       },
     });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // DERIVED DATE FIELDS
+    // ═══════════════════════════════════════════════════════════════════════
+    // Four dates are computed from other dates when they're empty. They are
+    // SUGGESTIONS shown in editable inputs — the user can override any of them.
+    //
+    // applyDerivedDates() MUST be called from onLoad, not from init().then().
+    //
+    // yc-forms takes its dirty-check baseline (_original) at step 13c, which runs
+    // AFTER the onLoad hook precisely so onLoad can modify field values — see the
+    // comment there: "Re-snapshot after onLoad (it may have modified field
+    // values)". init().then() resolves LATER than that, so anything written to a
+    // field from inside .then() lands after the baseline is taken and the form
+    // reports isDirty() === true forever, on a form the user never touched.
+    //
+    // That was a live bug: every open of a filed case with an empty 90-day
+    // preference or docs-due date showed phantom unsaved changes, which in turn
+    // blocked the stale-tab guard's forced reload (public/js/versionGuard.js).
+    //
+    // Consequence of baselining AFTER the fill: a derived value is not in
+    // getDiff(), so it is not persisted unless the user edits it. That's correct
+    // — these are deterministic functions of case_file_date / case_341_*, they're
+    // recomputed identically on every load, and nothing server-side reads the
+    // columns (they appear only in the writable-column allow-list in
+    // lib/internal_functions/cases.js). Storing them would just be a stale copy.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    function addDays(dateStr, days) {
+      if (!dateStr) return '';
+      // Parse YYYY-MM-DD as LOCAL date to avoid UTC/TZ drift
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
+      if (!m) return '';
+      const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      if (isNaN(d)) return '';
+      d.setDate(d.getDate() + days);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    function subtractDays(dateStr, days) {
+      return addDays(dateStr, -days);
+    }
+
+    // Offset a datetime-local value ("YYYY-MM-DDTHH:mm") by N days → date only
+    function dateFromDatetime(dtStr, offsetDays) {
+      if (!dtStr) return '';
+      // Parse LOCAL, not UTC
+      const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(dtStr);
+      if (!m) return '';
+      const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+      if (isNaN(d)) return '';
+      d.setDate(d.getDate() + offsetDays);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
+    const DERIVED_RULES = [
+      // { source, target, calc }
+      { source: '[name="case_341_initial"]',  target: '[name="case_objection"]',  calc: v => addDays(v, 60) },
+      { source: '[name="case_file_date"]',    target: '[name="case_180"]',        calc: v => addDays(v, 180) },
+      { source: '[name="case_file_date"]',    target: '[name="case_preference"]', calc: v => subtractDays(v, 90) },
+      { source: '[name="case_341_current"]',  target: '[name="docs_due"]',        calc: v => dateFromDatetime(v, -14) },
+    ];
+
+    /** Fill empty derived targets from their sources. onLoad only — see above. */
+    function applyDerivedDates() {
+      DERIVED_RULES.forEach(({ source, target, calc }) => {
+        const srcEl = document.querySelector(source);
+        const tgtEl = document.querySelector(target);
+        if (!srcEl || !tgtEl) return;
+        if (!tgtEl.value && srcEl.value) {
+          tgtEl.value = calc(srcEl.value);
+        }
+      });
+    }
 
     // Parse a typed docket into { short, full }.
     //   "25-44545-mar" → { short:'25-44545', full:'25-44545-mar' }
@@ -584,61 +670,9 @@
       const trusteeSel = trusteeSelect();
       if (trusteeSel) trusteeSel.addEventListener('change', onTrusteeChange);
 
-      // ── Auto-calculate derived date fields ──
-
-function addDays(dateStr, days) {
-  if (!dateStr) return '';
-  // Parse YYYY-MM-DD as LOCAL date to avoid UTC/TZ drift
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateStr);
-  if (!m) return '';
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-  if (isNaN(d)) return '';
-  d.setDate(d.getDate() + days);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function subtractDays(dateStr, days) {
-  return addDays(dateStr, -days);
-}
-
-      // Subtract 14 days from a datetime-local value, return date only
-function dateFromDatetime(dtStr, offsetDays) {
-  if (!dtStr) return '';
-  // datetime-local: "YYYY-MM-DDTHH:mm" — parse LOCAL, not UTC
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(dtStr);
-  if (!m) return '';
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
-  if (isNaN(d)) return '';
-  d.setDate(d.getDate() + offsetDays);
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-      const rules = [
-        // { source, target, calc }
-        { source: '[name="case_341_initial"]',  target: '[name="case_objection"]',  calc: v => addDays(v, 60) },
-        { source: '[name="case_file_date"]',    target: '[name="case_180"]',        calc: v => addDays(v, 180) },
-        { source: '[name="case_file_date"]',    target: '[name="case_preference"]', calc: v => subtractDays(v, 90) },
-        { source: '[name="case_341_current"]',  target: '[name="docs_due"]',        calc: v => dateFromDatetime(v, -14) },
-      ];
-
-      // Run on load: fill empty target fields
-      rules.forEach(({ source, target, calc }) => {
-        const srcEl = document.querySelector(source);
-        const tgtEl = document.querySelector(target);
-        if (!srcEl || !tgtEl) return;
-        if (!tgtEl.value && srcEl.value) {
-          tgtEl.value = calc(srcEl.value);
-        }
-      });
-
-      // Recalculate live when source changes
-      rules.forEach(({ source, target, calc }) => {
+      // Recalculate derived dates live when a source field changes. (The initial
+      // fill happens in onLoad — see applyDerivedDates and the note there.)
+      DERIVED_RULES.forEach(({ source, target, calc }) => {
         const srcEl = document.querySelector(source);
         const tgtEl = document.querySelector(target);
         if (!srcEl || !tgtEl) return;
