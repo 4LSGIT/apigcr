@@ -601,11 +601,19 @@
       cursor: pointer; padding: 6px; font-size: 13px; line-height: 1;
     }
     .mr-remove:hover { color: var(--red); }
+    /* Transforms editor — a <textarea>, ONE DESCRIPTOR PER LINE.
+       The delimiter is the newline, not a comma: a comma made regex quantifiers
+       ({4,8}) and `split:,:0` inexpressible. wrap=off + white-space:pre keeps
+       one visual line == one descriptor, so a long court regex can't LOOK like
+       it wrapped onto a second descriptor. */
     .mr-transforms {
-      margin-top: 6px; width: 100%; padding: 5px 8px; font-size: 12px;
+      display: block; margin-top: 6px; width: 100%; padding: 5px 8px; font-size: 12px;
       border: 1px solid var(--border); border-radius: 4px; color: var(--text);
       font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+      background: #fff; line-height: 1.5; min-height: 44px; resize: vertical;
+      white-space: pre; overflow-x: auto;
     }
+    .mr-transforms:focus { outline: none; border-color: var(--blue); }
     .mr-empty { text-align: center; padding: 12px; color: var(--muted); font-size: 12px; }
 
     /* action manager cards (interactive — extend the read-only .action-card) */
@@ -2012,7 +2020,7 @@ window.piToggleSidebar = piToggleSidebar;
             <input class="mr-to" placeholder="dest_field" value="${esc(r.to || '')}">
             <button type="button" class="mr-remove" title="Remove"><i class="fa-solid fa-times"></i></button>
           </div>
-          ${kind==='from' ? `<input class="mr-transforms" placeholder="transforms: lowercase, trim, date:yyyy-MM-dd …" value="${esc((r.transforms||[]).join(', '))}">` : ''}
+          ${kind==='from' ? `<textarea class="mr-transforms" rows="2" wrap="off" spellcheck="false" placeholder="one transform per line&#10;trim&#10;regex:(\\d{4,8})">${esc((r.transforms||[]).join('\n'))}</textarea>` : ''}
         </div>`;
     }).join('');
     // wire each rule's controls
@@ -2045,7 +2053,10 @@ window.piToggleSidebar = piToggleSidebar;
       if (kind === 'from') {
         rule.from = source;
         const tf = card.querySelector('.mr-transforms');
-        if (tf && tf.value.trim()) rule.transforms = tf.value.split(',').map(s => s.trim()).filter(Boolean);
+        // NEWLINE-delimited, one descriptor per line. Do NOT also accept commas as a
+        // fallback — that reintroduces the bug this replaced: the comma split
+        // `regex:(\d{4,8})` into two broken halves and threw "Unknown transform".
+        if (tf && tf.value.trim()) rule.transforms = tf.value.split('\n').map(s => s.trim()).filter(Boolean);
       } else if (kind === 'template') {
         rule.template = source;
       } else {

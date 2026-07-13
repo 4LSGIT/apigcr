@@ -256,7 +256,20 @@
     }
     .rule-row .rule-from { flex: 2; min-width: 120px; }
     .rule-row .rule-to   { flex: 2; min-width: 120px; }
-    .rule-row .rule-transforms { flex: 3; min-width: 160px; }
+    /* Transforms editor — a <textarea>, ONE DESCRIPTOR PER LINE.
+       The delimiter is the newline, not a comma: a comma made regex quantifiers
+       ({4,8}) and `split:,:0` inexpressible. wrap=off + white-space:pre keeps one
+       visual line == one descriptor, so a long regex can't LOOK like it wrapped
+       onto a second descriptor.
+       NOTE: this field is a SIBLING of .rule-row, not a child — the rule that used
+       to live here (`.rule-row .rule-transforms`) therefore never matched anything. */
+    .rule-transforms {
+      display: block; width: 100%; padding: 6px 8px; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 4px;
+      background: #fff; color: var(--text); line-height: 1.5;
+      min-height: 44px; resize: vertical; white-space: pre; overflow-x: auto;
+    }
+    .rule-transforms:focus { outline: none; border-color: var(--blue); }
     .rule-remove {
       background: none; border: none; color: var(--muted);
       cursor: pointer; padding: 6px; font-size: 13px;
@@ -1083,9 +1096,9 @@ window.togglePanelLeft = togglePanelLeft;
         </div>
         ${r.from !== undefined ? `
         <div style="margin-top:6px">
-          <input style="width:100%;padding:6px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px" class="mono"
-                 placeholder="transforms: lowercase, trim, date:yyyy-MM-dd …" value="${esc((r.transforms || []).join(', '))}">
-          <div class="hint">Comma-separated transform functions</div>
+          <textarea class="rule-transforms mono" rows="2" wrap="off" spellcheck="false"
+                    placeholder="one transform per line&#10;trim&#10;regex:(\\d{4,8})">${esc((r.transforms || []).join('\n'))}</textarea>
+          <div class="hint">One transform per line</div>
         </div>` : ''}
       </div>
     `).join('');
@@ -1111,9 +1124,15 @@ window.togglePanelLeft = togglePanelLeft;
       const rule = { to };
       if (type === 'from') {
         rule.from = source;
-        const tfInput = card.querySelector('input.mono');
+        // LANDMINE: this used to select by TAG NAME — `input.mono`. The field is now a
+        // <textarea>, so that selector returns null, the guard below skips, and every
+        // save would SILENTLY DELETE the rule's transforms. Select on the class.
+        const tfInput = card.querySelector('.rule-transforms');
+        // NEWLINE-delimited, one descriptor per line. Do NOT also accept commas as a
+        // fallback — that reintroduces the bug this replaced: the comma split
+        // `regex:(\d{4,8})` into two broken halves and threw "Unknown transform".
         if (tfInput && tfInput.value.trim()) {
-          rule.transforms = tfInput.value.split(',').map(s => s.trim()).filter(Boolean);
+          rule.transforms = tfInput.value.split('\n').map(s => s.trim()).filter(Boolean);
         }
       } else if (type === 'template') {
         rule.template = source;

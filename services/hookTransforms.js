@@ -195,7 +195,22 @@ transforms.required = (v) => {
  * Parse a transform descriptor string into { name, args }.
  * Format: "name" or "name:arg1:arg2:..."
  *
- * Colons inside args can be escaped with backslash: "between:Name\\::;"
+ * ESCAPING — the backslash escapes EXACTLY TWO characters, and nothing else:
+ *
+ *   \:   → a literal colon inside an arg   ("between:Name\::;"  → args ["Name:", ";"])
+ *   \\   → a literal backslash             ("replace:\\:/"      → args ["\", "/"])
+ *
+ * Every OTHER backslash sequence is passed through with BOTH characters intact,
+ * so regex escapes survive: "regex:(\d+)" yields the pattern (\d+), not (d+).
+ *
+ * This is deliberate and load-bearing. The previous implementation treated the
+ * backslash as a universal escape and discarded it, which silently compiled
+ * `regex:(\d+)` as `(d+)` — a valid regex that matches the letter "d". No throw,
+ * no warning, just a plausible wrong answer. \d \w \s \b \. were all unusable,
+ * which is why every regex in the live court-email pipeline is written with
+ * character classes ([0-9], [^0-9]) instead. Do not "simplify" this back.
+ *
+ * A trailing lone backslash is emitted literally ("regex:\" → args ["\"]).
  *
  * @param {string} descriptor
  * @returns {{ name: string, args: string[] }}
@@ -209,15 +224,24 @@ function parseTransformDescriptor(descriptor) {
   const parts = [];
   let current = '';
   for (let i = 0; i < descriptor.length; i++) {
-    if (descriptor[i] === '\\' && i + 1 < descriptor.length) {
-      // Escaped character — include the next char literally
-      current += descriptor[i + 1];
-      i++;
-    } else if (descriptor[i] === ':') {
+    const ch = descriptor[i];
+
+    if (ch === '\\' && i + 1 < descriptor.length) {
+      const next = descriptor[i + 1];
+      if (next === ':' || next === '\\') {
+        // Real escape sequence — emit the escaped char, drop the backslash.
+        current += next;
+        i++;
+      } else {
+        // NOT an escape sequence. Keep the backslash; `next` is handled on the
+        // following iteration, so "\d" stays "\d".
+        current += ch;
+      }
+    } else if (ch === ':') {
       parts.push(current);
       current = '';
     } else {
-      current += descriptor[i];
+      current += ch;
     }
   }
   parts.push(current);

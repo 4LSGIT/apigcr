@@ -94,24 +94,48 @@ function setNestedValue(obj, path, value) {
 // ─────────────────────────────────────────────────────────────
 
 /**
+ * Is the ENTIRE string one token, and nothing else?
+ *
+ * Structural check, not a regex — a token is allowed to contain single braces
+ * (regex quantifiers: {6}, {4,8}) but never "{{" or "}}". Slicing the delimiters
+ * off and inspecting the inside is exact; a lazy `^\{\{(.+?)\}\}$` would wrongly
+ * call "{{a}}{{b}}" a single token with the content "a}}{{b".
+ *
+ * @param {*} t
+ * @returns {boolean}
+ */
+function _isSingleToken(t) {
+  if (typeof t !== 'string' || t.length < 5) return false;   // "{{x}}" is the shortest
+  if (!t.startsWith('{{') || !t.endsWith('}}')) return false;
+  const inner = t.slice(2, -2);
+  return !inner.includes('{{') && !inner.includes('}}');
+}
+
+/**
  * Resolve a template string with {{path}} and {{path|transform|transform}} tokens.
  *
  * If the template contains exactly ONE token and no surrounding text,
  * returns the raw resolved value (preserving type). Otherwise returns a string.
+ *
+ * Token content may contain single braces, so regex quantifiers work:
+ *   {{message|regex:(\d{6})}}   →  "564795"
+ * The previous [^}]+ token pattern stopped at the first "}", so any {m} / {m,n}
+ * quantifier made the token unmatchable — the literal template was returned and
+ * stored, with no error. Token content still may NOT contain "{{" or "}}".
+ * [\s\S] (not .) keeps the newline tolerance the old [^}]+ had.
  *
  * @param {string} template - e.g. "{{body.name|capitalize}} ({{body.email|lowercase}})"
  * @param {object} input    - the source object
  * @returns {*}
  */
 function resolveTemplate(template, input) {
-  // Check if the entire template is a single token (preserve type)
-  const singleTokenMatch = template.match(/^\{\{([^}]+)\}\}$/);
-  if (singleTokenMatch) {
-    return resolveToken(singleTokenMatch[1], input);
+  // Whole string is one token → return the raw resolved value (preserve type)
+  if (_isSingleToken(template)) {
+    return resolveToken(template.slice(2, -2), input);
   }
 
   // Multiple tokens or mixed text — result is always a string
-  return template.replace(/\{\{([^}]+)\}\}/g, (_, tokenContent) => {
+  return template.replace(/\{\{([\s\S]+?)\}\}/g, (_, tokenContent) => {
     const resolved = resolveToken(tokenContent, input);
     return resolved == null ? '' : String(resolved);
   });
