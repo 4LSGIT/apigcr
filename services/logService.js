@@ -209,12 +209,14 @@ function _buildContactLogWhere(contactId) {
  * Build a WHERE fragment matching all log rows attributable to a case.
  *
  * Case-scope:
- *   - log_link_type = 'case' AND log_link_id IN (case_id, case_number, case_number_full)
- *   - log_link_type IS NULL  AND log_link    IN (same 3 values)
- *   The IN list against three case identifiers is the "Slice 2 hasn't
- *   normalized log_link/log_link_id yet" workaround: court-email logs
- *   write the docket-style case number, manual notes may write either,
- *   and we want all of them surfacing on the case view.
+ *   - log_link_type = 'case' AND log_link_id IN (<non-blank case identifiers>)
+ *   - log_link_type IS NULL  AND log_link    IN (<same list>)
+ *   where the list is case_id, case_number and case_number_full with
+ *   nulls/blanks dropped (see "Blank identifiers" below). Matching all
+ *   three identifiers is the "Slice 2 hasn't normalized
+ *   log_link/log_link_id yet" workaround: court-email logs write the
+ *   docket-style case number, manual notes may write either, and we
+ *   want all of them surfacing on the case view.
  *
  * Related-contact merge:
  *   - For each related contact (resolved via case_relate, filtered by
@@ -222,16 +224,33 @@ function _buildContactLogWhere(contactId) {
  *     case view also surfaces those contacts' logs (including
  *     phone/email-typed rows attributed by date window).
  *
- * If case_number / case_number_full are NULL on the case row, they are
- * substituted with '' in the IN list. log_link / log_link_id are never
- * legitimately '' for case-scope rows (Phase-A wrote '' for phone/email
- * rows only, and those carry log_link_type='phone'/'email', not 'case'
- * or NULL), so the empty-string substitute can never spuriously match.
- * Passing literal NULL into IN(...) would make the predicate
- * un-matchable AND clutter the plan; the substitute keeps the SQL flat.
+ * Blank identifiers are FILTERED OUT of the IN-list, never substituted.
+ * An earlier version of this helper substituted '' for NULL
+ * case_number / case_number_full to keep the SQL flat (a fixed three-
+ * placeholder IN-list), on the theory that '' could never spuriously
+ * match. That theory was wrong and the bug was live:
+ *
+ *   createLogEntry writes log_link = '' for ANY row created without a
+ *   link (log_link is varchar(30) NOT NULL — see the `logLink = link_id
+ *   != null ? String(link_id) : ''` branch). Those rows carry
+ *   log_link_type IS NULL, so they land squarely in the second
+ *   case-scope clause. 46 such rows existed in production (tasks,
+ *   events, forms, appts, status), and 856 of 1027 cases have a blank
+ *   case_number and/or case_number_full — so every one of those case
+ *   views was showing all 46 phantom rows, none of which belonged to
+ *   the case.
+ *
+ * The contract now: build the IN-list from case_id, case_number and
+ * case_number_full, dropping null and empty-string values, and emit
+ * placeholders to match. case_id is the PK and is never blank, so the
+ * list always has at least one member — there is no `IN ()` syntax-
+ * error case. Empty-string case_number (3 rows in prod) is treated
+ * identically to NULL.
  *
  * If the case is not found, falls back to a minimal fragment matching
  * the raw caseId — don't throw; the caller may pass a non-existent ID.
+ * A blank caseId in that fallback returns an always-false fragment:
+ * matching nothing is correct, matching every unlinked row is not.
  *
  * @param {object} db                       - mysql2 pool/conn
  * @param {string} caseId
@@ -250,6 +269,13 @@ async function _buildCaseLogWhere(db, caseId, { relateFilter = 'default' } = {})
   );
 
   if (!caseRow) {
+    // Blank ID must match nothing. Without this guard the fallback below
+    // becomes `log_link = ''`, which matches every unlinked log row —
+    // the same phantom-match bug the IN-list filter fixes.
+    if (caseId == null || String(caseId) === '') {
+      return { whereFragment: '(1 = 0)', params: [] };
+    }
+
     // Case not found: minimal fragment against the raw caseId.
     const whereFragment = `(
          (l.log_link_type = 'case' AND l.log_link_id = ?)
@@ -261,12 +287,13 @@ async function _buildCaseLogWhere(db, caseId, { relateFilter = 'default' } = {})
     };
   }
 
-  // NULL → '' sentinel for IN-list (see docstring rationale).
-  const caseIdsForIn = [
-    String(caseRow.case_id),
-    caseRow.case_number      != null ? String(caseRow.case_number)      : '',
-    caseRow.case_number_full != null ? String(caseRow.case_number_full) : ''
-  ];
+  // Filter blanks out of the IN-list — do NOT substitute '' (see docstring:
+  // '' matches every unlinked createLogEntry row). case_id is the PK and is
+  // never blank, so this list always has >= 1 member: no `IN ()` case.
+  const caseIdsForIn = [caseRow.case_id, caseRow.case_number, caseRow.case_number_full]
+    .filter(v => v != null && String(v) !== '')
+    .map(String);
+  const ph = caseIdsForIn.map(() => '?').join(', ');
 
   // 2) Resolve related contacts per filter.
   let relatedContactIds = [];
@@ -292,10 +319,10 @@ async function _buildCaseLogWhere(db, caseId, { relateFilter = 'default' } = {})
   const orParts = [];
   const params = [];
 
-  // 3a. Case-scope: two clauses, three params each.
-  orParts.push(`(l.log_link_type = 'case' AND l.log_link_id IN (?, ?, ?))`);
+  // 3a. Case-scope: two clauses, one param per non-blank case identifier.
+  orParts.push(`(l.log_link_type = 'case' AND l.log_link_id IN (${ph}))`);
   params.push(...caseIdsForIn);
-  orParts.push(`(l.log_link_type IS NULL  AND l.log_link    IN (?, ?, ?))`);
+  orParts.push(`(l.log_link_type IS NULL  AND l.log_link    IN (${ph}))`);
   params.push(...caseIdsForIn);
 
   // 3b. Per-related-contact: four clauses, four params each (mirrors
