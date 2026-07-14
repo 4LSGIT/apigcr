@@ -61,6 +61,12 @@ const emailIngestRuleService = require('./emailIngestRuleService');
 const RAW_INPUT_LIMIT = 16 * 1024;            // 16 KB cap on raw_input snapshots
 const LOG_MESSAGE_SOFT_CAP = 50000;           // mirror routes/logs.js soft cap
 
+// The GAS test-replay marker. ref/gas.js:784's forwardTestTrigger() appends
+// "-test-<base36 ts>-<rand6>" to the real Gmail message_id specifically so the
+// (source, message_id) dedup below treats a re-POST as a NEW message and Layer 3
+// fires again. Anything carrying it is a REPLAY of mail we have already handled.
+const TEST_MESSAGE_ID_RE = /-test-/;
+
 // ─────────────────────────────────────────────────────────────
 // EMAIL_DOMAINS parsing (module-scope, computed once at load).
 //
@@ -318,8 +324,12 @@ async function _writeExecution(db, fields) {
  * path inside the log-write catch (step 7d), so Layer 3 outcomes get
  * recorded even when the structured log row couldn't be written.
  */
-function _buildMetadata(suppression, automation) {
+function _buildMetadata(suppression, automation, isTest = false) {
   const m = {};
+  // Recorded whenever set, even when nothing else is interesting: a test
+  // envelope must be visible on the executions row, not inferred from the
+  // message_id by whoever is reading the audit trail later.
+  if (isTest) m.is_test = true;
   if (suppression && suppression.matchedRuleIds && suppression.matchedRuleIds.length) {
     m.suppressed_by = suppression.matchedRuleIds;
   }
@@ -460,6 +470,28 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
     };
   }
 
+  // ── 2b. TEST-ENVELOPE DETECTION (Slice 4 Phase B).
+  //   A GAS forwardTestTrigger() replay mangles the Gmail message_id into
+  //   "<id>-test-<base36ts>-<rand6>" (ref/gas.js:784) for the EXPLICIT purpose
+  //   of defeating the (source, message_id) dedup two steps below, so that
+  //   Layer-3 rules fire again. Its own comment calls that "SAFER". It is not.
+  //
+  //   Until now the marker was honoured in exactly ONE place in the whole tree
+  //   — courtExecutor.js:245, which forces dry-run — so the court executor was
+  //   protected and every WORKFLOW rule was wide open. On 2026-06-10 a replay
+  //   of ~17 already-processed court emails re-fired wf24/wf25 live and created
+  //   10 duplicate deadline events. Detect the marker ONCE, here, and let
+  //   emailIngestRuleService._dispatchAction refuse the dangerous action type.
+  //
+  //   Non-mutating spread (matches evaluateRules' own convention): the caller's
+  //   object is untouched, and rawInputForLog was snapshotted from the ORIGINAL
+  //   above so raw_input stays a faithful record of what arrived on the wire.
+  const isTest = TEST_MESSAGE_ID_RE.test(messageId);
+  if (isTest) {
+    console.warn(`[emailIngest] TEST envelope — message_id carries -test-: ${messageId}. Workflow actions will be SKIPPED.`);
+    envelope = { ...envelope, is_test: true };
+  }
+
   // ── 3. Pre-check dedup on (source.name, messageId).
   //   This is a fast path that avoids the email_log INSERT when the
   //   row already exists. The INSERT IGNORE below catches the race
@@ -579,7 +611,7 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
       status:       'skipped_firm_to_firm',
       log_id:       null,
       email_log_id: emailLogId,
-      metadata:     _buildMetadata(null, automation),
+      metadata:     _buildMetadata(null, automation, isTest),
       raw_input:    rawInputForLog,
       remote_ip:    remoteIp || null,
     });
@@ -662,7 +694,7 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
           status:       'error',
           error:        `createLogEntry INVALID_LOG_LINK_ID: ${logErr.message}`,
           email_log_id: emailLogId,
-          metadata:     _buildMetadata(suppression, automation),
+          metadata:     _buildMetadata(suppression, automation, isTest),
           raw_input:    rawInputForLog,
           remote_ip:    remoteIp || null,
         });
@@ -687,7 +719,7 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
   const status = suppression.suppressed ? 'skipped_suppression' : 'logged';
 
   // ── 9. Build metadata via the shared helper.
-  const metadata = _buildMetadata(suppression, automation);
+  const metadata = _buildMetadata(suppression, automation, isTest);
 
   // ── 10. Write the executions row + return.
   const executionId = await _writeExecution(db, {
@@ -717,4 +749,5 @@ module.exports = {
 
   // Module-level constants useful to tests
   RAW_INPUT_LIMIT,
+  TEST_MESSAGE_ID_RE,
 };

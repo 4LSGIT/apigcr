@@ -55,6 +55,33 @@ const CASE_DATE_FIELDS = new Set(['case_file_date', 'case_close_date', 'case_obj
 const { resolveCase } = require('../lib/courtResolve');
 const { checkCitations } = require('../lib/courtCitation');
 
+// SHARED DEDUPE + TITLE MATCHING (Slice 4 Phase B).
+//
+// titlesMatch / titlesSimilarLoose / _titleCore / _titleNorm and the
+// TITLE_FILLER set used to be DEFINED here. They now live in eventService,
+// which is the only place an event can be created, so the guard and the
+// creator cannot drift apart. Imported, not copied — there is exactly one
+// implementation in the tree.
+//
+// findDuplicateEvent is the natural-key guard that replaces the two inline
+// SELECTs doCreateEvent used to carry (the exact-title key and the
+// slot+loose-title backstop). It sees ACROSS pipelines: wf24 writes
+// event_type 'confirmation_hearing' and the external automation links by
+// case_id, neither of which the old executor-local guard could match. See the
+// long comment above findDuplicateEvent in eventService.
+//
+// Module-scope require is cycle-safe: eventService's dependency tree
+// (gcal/task/log/email/timezone) never reaches courtExecutor.
+const eventService = require('./eventService');
+const {
+  findDuplicateEvent,
+  buildIdentityTokens,
+  titlesMatch,
+  titlesSimilarLoose,
+  _titleCore,
+  _titleNorm,
+} = eventService;
+
 // Minimal, present provenance marker stamped on the NOTE field of every
 // entity the court executor creates (events + 341 appts). Notes only — never
 // titles (the event natural-key dedupe includes event_title; a prefix there
@@ -88,86 +115,15 @@ function eventSummary(date, time, location) {
 }
 
 // ── update_event title matching ────────────────────────────────────────────
-// Two FUTURE hearings on one case can share the generic event_type "Hearing"
-// (live: case 21-50019 has a Plan-Modification hearing AND a Trustee Motion-to-
-// Dismiss hearing, both type "Hearing"). update_event used to match on type
-// alone, so a reschedule of one would clobber the other. titlesMatch decides
-// whether two event titles name the SAME hearing, AFTER stripping the generic
-// scaffolding ("hearing on the ... chapter 13 ...") down to a distinguishing
-// core.
-//
-// CHOSEN RULE — biased toward FALSE. A false "no match" creates a new event and
-// FLAGS for a human (safe; the operator reconciles); a false "match" silently
-// reschedules the WRONG hearing (the bug we are killing). So:
-//   - normalize: lowercase, non-alphanumerics → spaces, collapse, tokenize.
-//   - drop generic filler tokens (incl. the tokens of "post-confirmation", and
-//     "&" which normalization erases) and any length-1 token (possessive "s").
-//   - both cores EMPTY     → TRUE  (both fully generic, e.g. "Hearing" vs
-//                                   "Confirmation Hearing" — with a single type
-//                                   match there is no other hearing to confuse
-//                                   it with; required so plain reschedules of a
-//                                   lone generic hearing still update in place).
-//   - exactly ONE empty    → FALSE (one side carries a distinguishing core the
-//                                   other lacks — cannot confirm same hearing).
-//   - both non-empty       → TRUE iff the smaller core ⊆ the larger, OR
-//                                   Jaccard(cores) ≥ 0.5.
-// "confirmation" is filler because the spec's filler list carries
-// "post-confirmation"; "Confirmation Hearing" therefore reduces to an empty core
-// and is matched via the both-empty rule, not by a shared significant token.
-const TITLE_FILLER = new Set([
-  'hearing', 'on', 'the', 'of', 'a', 'to', 'in', 'at', 'for', 'and',
-  'case', 'with', 're', 'notice', 'court', 'courtroom', 'ch', 'chapter',
-  'post', 'confirmation', '7', '13',
-]);
-
-/** title → Set of significant (non-filler, len>1) lowercase tokens. */
-function _titleCore(title) {
-  return new Set(
-    String(title == null ? '' : title)
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, ' ')
-      .trim()
-      .split(/\s+/)
-      .filter((t) => t.length > 1 && !TITLE_FILLER.has(t))
-  );
-}
-
-/** True iff existingTitle and newTitle name the same hearing (see rule above). */
-function titlesMatch(existingTitle, newTitle) {
-  const a = _titleCore(existingTitle);
-  const b = _titleCore(newTitle);
-  if (a.size === 0 && b.size === 0) return true;   // both generic
-  if (a.size === 0 || b.size === 0) return false;  // one distinguishing, one not
-  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
-  let inter = 0;
-  for (const t of small) if (large.has(t)) inter++;
-  if (inter === small.size) return true;           // smaller ⊆ larger
-  const union = a.size + b.size - inter;
-  return union > 0 && inter / union >= 0.5;        // Jaccard ≥ 0.5
-}
-
-/** normalize a title for loose comparison: lowercase, non-alnum→space, collapse. */
-function _titleNorm(t) {
-  return String(t == null ? '' : t).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-}
-
-/**
- * LOOSE title similarity, used ONLY behind a same-DATE+TIME slot gate (the caller
- * confirms date+time are already equal before consulting this). Deliberately more
- * lenient than titlesMatch — which stays the strict disambiguator for the no-slot
- * case: true iff one normalized title contains the other, OR titlesMatch holds.
- * Empty-after-normalize never matches (an empty string is a substring of anything,
- * which would collapse unrelated events). Because a slot match requires date+time
- * to be identical, this can only ever fold a re-notice the model re-titled — two
- * genuinely different same-date deadlines carry different words and are NOT similar,
- * so they both survive.
- */
-function titlesSimilarLoose(a, b) {
-  const na = _titleNorm(a), nb = _titleNorm(b);
-  if (!na || !nb) return false;
-  if (na === nb || na.includes(nb) || nb.includes(na)) return true;
-  return titlesMatch(a, b);
-}
+// titlesMatch (the STRICT disambiguator) and titlesSimilarLoose (the LOOSE,
+// slot-gated one) are imported from eventService — see the import block above
+// and the long rule commentary at the top of eventService's TITLE MATCHING
+// section. They are called here with the case's IDENTITY TOKENS (docket forms
+// + primary debtor name) so that a title's boilerplate "— <Debtor> (<docket>)"
+// suffix, which is identical on EVERY event of a case, cannot inflate the
+// similarity score. Without the strip, "Proofs of Claims Due — X (26-47542)"
+// and "Government POC Due — X (26-47542)" score Jaccard 0.6 and would be
+// treated as the same deadline.
 
 async function insertCourtAiLog(db, row) {
   const [r] = await db.query(
@@ -285,6 +241,16 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   const resolved = await resolveCase(db, caseNumber);
   const caseName =
     payload.case_name || (resolved.found ? resolved.primary_contact_name : null) || null;
+
+  // Identity tokens for this case, built ONCE from what resolveCase already
+  // fetched (both docket forms + the primary debtor name) — no extra queries.
+  // Passed to findDuplicateEvent (so it skips its own lookups) and to the
+  // update_event title matchers below.
+  const identityTokens = buildIdentityTokens([
+    resolved.case_number,
+    resolved.case_number_full,
+    resolved.primary_contact_name,
+  ]);
 
   // In preview, every return carries resolved{} + citation; live returns are
   // unchanged (base object only).
@@ -420,32 +386,37 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       skipped.push({ action_index: idx, type: 'create_event', reason: 'event_missing_date' });
       return null;
     }
-    // NATURAL-KEY GUARD: same (link_id, type, date, title) Scheduled event.
-    const [dupe] = await db.query(
-      `SELECT event_id FROM events
-        WHERE event_link_type='case_number' AND event_link_id=? AND event_type<=>?
-          AND event_date=? AND event_title=? AND event_status='Scheduled'
-        LIMIT 1`,
-      [ev.event_link_id, ev.event_type, ev.event_date, ev.event_title]
-    );
-    if (dupe.length) {
-      skipped.push({ action_index: idx, type: 'create_event', reason: 'event_exists', event_id: dupe[0].event_id });
-      return null;
-    }
-    // SLOT+TITLE BACKSTOP: the exact-title guard above misses model title-variance
-    // (bare vs debtor-named). Also skip when a Scheduled same-type event already
-    // sits at the same DATE+TIME (event_time<=>? is NULL-safe, so all-day events
-    // match on date alone) AND its title is loosely the same hearing. Two DIFFERENT
-    // same-date deadlines carry different titles → not similar → both still created.
-    const [slotRows] = await db.query(
-      `SELECT event_id, event_title FROM events
-        WHERE event_link_type='case_number' AND event_link_id=? AND event_type<=>?
-          AND event_date=? AND event_time<=>? AND event_status='Scheduled'`,
-      [ev.event_link_id, ev.event_type, ev.event_date, ev.event_time]
-    );
-    const slotHit = slotRows.find((r) => titlesSimilarLoose(r.event_title, ev.event_title));
-    if (slotHit) {
-      skipped.push({ action_index: idx, type: 'create_event', reason: 'event_slot_exists', event_id: slotHit.event_id });
+    // ── DUPLICATE GUARD — one shared helper, three rules ───────────────────
+    // Replaces the two inline SELECTs that used to live here (the exact
+    // natural key, and the slot+loose-title backstop added in c22af6a09c).
+    // Both were correct as far as they went, and both keyed on
+    //   event_link_type='case_number' AND event_type<=>?
+    // which made them structurally blind to the OTHER two pipelines: wf24
+    // writes event_type='confirmation_hearing' (underscore, ≠ 'Confirmation
+    // Hearing' under any collation) and the retiring external automation links
+    // by event_link_type='case'. eventService.findDuplicateEvent normalizes
+    // BOTH — case identity across link forms, and event_type across casing /
+    // punctuation — so a hearing already created by wf24 seconds earlier from
+    // the SAME court email is now seen. (Live 2026-07-07: events 99 (wf24) and
+    // 104 (this executor), same hearing, 7 seconds apart.)
+    //
+    // SKIP-REASON CONTRACT — do not rename these strings.
+    // lib/internal_functions/court.js:344 DEDUP_SKIP_REASONS and the weekly
+    // digest's "Covered Elsewhere" section both key off them:
+    //   rule natural_key            → 'event_exists'
+    //   rules slot_type/slot_title  → 'event_slot_exists'
+    const dupe = await findDuplicateEvent(db, {
+      event_link_type: ev.event_link_type,
+      event_link_id:   ev.event_link_id,
+      event_type:      ev.event_type,
+      event_title:     ev.event_title,
+      event_date:      ev.event_date,
+      event_time:      ev.event_time,
+      identity_tokens: identityTokens,
+    });
+    if (dupe) {
+      const reason = dupe._dedupe_rule === 'natural_key' ? 'event_exists' : 'event_slot_exists';
+      skipped.push({ action_index: idx, type: 'create_event', reason, event_id: dupe.event_id });
       return null;
     }
     let eventId = null;
@@ -573,12 +544,17 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       // lands on the length===1 update-in-place branch and is a no-op / courtroom
       // move, never a second copy. Different same-date deadlines have different
       // titles → not similar → not folded in → both preserved.
+      // Both matchers are the SHARED eventService implementations (imported at
+      // the top of this file — no local copy). They are handed the case's
+      // identityTokens so the "— <Debtor> (<docket>)" boilerplate that wf24 and
+      // the model both append cannot inflate the similarity score; see the
+      // findDuplicateEvent commentary in eventService.
       const _sameSlot = (m) =>
         toDatePart(m.event_date) === (toDatePart(newDate) || newDate) &&
         (toTimePart(m.event_time) || null) === (newTime || null) &&
-        titlesSimilarLoose(m.event_title, fields.event_title);
+        titlesSimilarLoose(m.event_title, fields.event_title, identityTokens);
       const titleMatches = typeMatches.filter(
-        (m) => titlesMatch(m.event_title, fields.event_title) || _sameSlot(m)
+        (m) => titlesMatch(m.event_title, fields.event_title, identityTokens) || _sameSlot(m)
       );
 
       if (titleMatches.length === 1) {
@@ -1021,6 +997,14 @@ module.exports = {
   logExtractFailure,
   CASE_FIELD_POLICY,
   CASE_DATE_FIELDS,
-  // exported for tests
-  _internal: { toDatePart, toTimePart, titlesMatch, _titleCore, titlesSimilarLoose, _titleNorm },
+  // exported for tests. titlesMatch / _titleCore / titlesSimilarLoose /
+  // _titleNorm are now eventService's (re-exported here, NOT redefined) so the
+  // existing scripts/courtTitleMatchTest.js harness keeps resolving them from
+  // this module. Called with no identityTokens argument — as those tests do —
+  // they behave exactly as they did before the move.
+  _internal: {
+    toDatePart, toTimePart,
+    titlesMatch, _titleCore, titlesSimilarLoose, _titleNorm,
+    findDuplicateEvent, buildIdentityTokens,
+  },
 };

@@ -300,6 +300,7 @@ scripts/add-path-headers.js
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
 scripts/backfillCampaignContacts.js
+scripts/cleanup_court_event_dupes_2026_07.js
 scripts/courtBacktest.js
 scripts/courtCitationTest.js
 scripts/courtReviewTest.js
@@ -379,10 +380,15 @@ startup/db.js
 startup/dbReadonly.js
 startup/init.js
 tests/aiService.attachments.test.js
+tests/emailservice.normalizebodies.test.js
+tests/eventDedup.phaseB.test.js
+tests/eventservice.remindertitle.test.js
 tests/hookMapper.test.js
 tests/hookTransforms.test.js
 tests/internal_functions.meta.test.js
+tests/logservice.buildcaselogwhere.test.js
 tests/logservice.updateloglink.test.js
+tests/phoneingestservice.dedup.test.js
 tests/taskservice.test.js
 tests/test-credential-crypto.js
 tests/test-cron.js

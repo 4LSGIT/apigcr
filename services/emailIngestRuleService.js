@@ -429,12 +429,45 @@ async function _bumpMetrics(db, ruleIds) {
  * @returns {{rule_id:number, rule_action_id:number, action_type:string,
  *            status:'success'|'failed', error?:string, result?:object}}
  */
-async function _dispatchAction(db, rule, action, transformedInput) {
+async function _dispatchAction(db, rule, action, transformedInput, envelope) {
   const base = {
     rule_id:        rule.id,
     rule_action_id: action.id,
     action_type:    action.action_type,
   };
+
+  // ── TEST-ENVELOPE GATE (Slice 4 Phase B) ─────────────────────────────────
+  // emailIngestService sets envelope.is_test on any message_id carrying the GAS
+  // "-test-" replay marker. That marker exists precisely BECAUSE the replay is
+  // meant to bypass the (source, message_id) dedup and make Layer 3 fire — so
+  // by the time we get here, a test envelope means "we have already processed
+  // this exact email once, for real."
+  //
+  // Re-running a `workflow` on it is never right: workflows fan out into live
+  // create_event / create_task / send_email steps. On 2026-06-10 a single
+  // forwardTestTrigger() run replayed three already-processed 341 notices,
+  // re-fired wf24/wf25, and created 10 duplicate deadline events.
+  //
+  // internal_function actions STILL dispatch. court_extract — the only one
+  // wired to an ingest rule today — self-protects (courtExecutor.js:245 forces
+  // dry-run on /-test-/ ids), which is exactly why the executor came through
+  // 2026-06-10 clean while the workflows did not. That belt is now redundant by
+  // design; keep it. hook / sequence / http still dispatch too: none of them
+  // creates events, and the whole point of a test replay is to exercise them.
+  //
+  // Read the flag off the ENVELOPE, never off transformedInput — a mapper-mode
+  // rule builds a brand-new object and the flag would not survive.
+  //
+  // DELIBERATE DIVERGENCE: phoneIngestRuleService._dispatchAction is
+  // line-identical to this function (see lib/alerting.js:492) and does NOT get
+  // this gate. Phone events have no -test- replay path. Revisit if one appears.
+  if (envelope && envelope.is_test === true && action.action_type === 'workflow') {
+    console.warn(
+      `[emailIngestRule] rule ${rule.id} action ${action.id}: workflow ` +
+      `${(action.config && action.config.workflow_id) || '?'} NOT dispatched — test envelope`
+    );
+    return { ...base, status: 'skipped_test_envelope' };
+  }
 
   // Parse action.config defensively (json column).
   let config = action.config;
@@ -533,10 +566,14 @@ function _extractActionResult(actionType, logData) {
  * of every matching rule.
  *
  * @param {object} db
- * @param {object} envelope  - canonical envelope (top level)
+ * @param {object} envelope  - canonical envelope (top level). `is_test` (set by
+ *   emailIngestService for GAS "-test-" replay message_ids) suppresses
+ *   `workflow` actions — see the TEST-ENVELOPE GATE in _dispatchAction.
  * @returns {Promise<{
  *   matchedRuleIds: number[],
- *   actionOutcomes: Array<{rule_id, rule_action_id, action_type, status, error?, result?}>,
+ *   actionOutcomes: Array<{rule_id, rule_action_id, action_type,
+ *                          status: 'success'|'failed'|'skipped_test_envelope',
+ *                          error?, result?}>,
  *   parseWarnings:  string[]   // transform failures / non-firing diagnostics
  * }>}
  */
@@ -578,9 +615,11 @@ async function evaluateRules(db, envelope) {
     const transformedInput = tr.output;
 
     // 3. Actions, in position order. Each isolated; one failure does not
-    //    abort the rest.
+    //    abort the rest. `envelope` is passed so _dispatchAction can see
+    //    is_test — transformedInput cannot carry it (mapper mode builds a
+    //    brand-new object).
     for (const action of rule.actions) {
-      const outcome = await _dispatchAction(db, rule, action, transformedInput);
+      const outcome = await _dispatchAction(db, rule, action, transformedInput, envelope);
       actionOutcomes.push(outcome);
     }
   }

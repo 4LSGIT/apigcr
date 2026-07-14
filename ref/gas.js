@@ -750,10 +750,28 @@ function testWithLastEmail() {
 // Apply the label CONFIG.testTriggerLabelName ('Test Trigger') to any email
 // you want to re-run through ingest as if it were brand new.
 //
-// Differences vs forwardEmailsToIngest (all SAFER):
-//   - Overrides envelope.headers.message_id with a random suffix so the
-//     receiver's (source, message_id) dedupe treats it as a NEW message and
-//     Layer-3 rules actually fire. (Re-runnable: fresh suffix each run.)
+// Differences vs forwardEmailsToIngest — the FIRST one is not "safer", it is
+// both the entire point and the entire hazard. Read the receiver-side contract
+// before you run this:
+//   - Overrides envelope.headers.message_id with a "-test-<ts36>-<rand6>" suffix
+//     so the receiver's (source, message_id) dedupe treats it as a NEW message
+//     and Layer-3 rules actually fire. (Re-runnable: fresh suffix each run.)
+//
+//     RECEIVER-SIDE CONTRACT (as of Slice 4 Phase B):
+//       * emailIngestService sets envelope.is_test = true on any /-test-/ id
+//         and records is_test:true in the email_ingest_executions metadata.
+//       * emailIngestRuleService REFUSES to dispatch `workflow` actions for a
+//         test envelope (outcome: skipped_test_envelope). Workflows fan out into
+//         live create_event / create_task steps; a replay must not re-fire them.
+//       * internal_function actions STILL dispatch. court_extract is safe
+//         because courtExecutor forces dry-run on /-test-/ ids. ANY OTHER
+//         internal_function wired to an ingest rule WILL RUN FOR REAL.
+//       * hook / sequence / http actions STILL dispatch, for real.
+//
+//     Before Phase B there was NO receiver-side gate at all. On 2026-06-10 a run
+//     of this function replayed ~17 already-processed court emails, re-fired
+//     wf24/wf25 live, and created 10 duplicate deadline events. The comment that
+//     used to sit here claimed these differences were "all SAFER". They were not.
 //   - Skips BOTH legacy side-jobs (no Pabbly docs@ relay, no Clio forward).
 //   - Does NOT remove the label, so you can re-run freely.
 //
