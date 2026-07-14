@@ -381,10 +381,10 @@ tests/aiService.attachments.test.js
 tests/hookMapper.test.js
 tests/hookTransforms.test.js
 tests/internal_functions.meta.test.js
-tests/oauthService.test.js
 tests/taskservice.test.js
 tests/test-credential-crypto.js
 tests/test-cron.js
+tests/test-oauthService.js
 tests/test-timing-extensions.js
 tests/test_classifier.js
 views/v.html
