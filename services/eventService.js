@@ -535,8 +535,22 @@ async function spawnReminderTask(db, event, reminder, actingUserId = 0) {
     console.warn(`[EVENT SERVICE] spawnReminderTask: missing reminder.to for event ${event.event_id}`);
     return null;
   }
-  const title = (reminder.title && String(reminder.title).trim())
+  // tasks.task_title is varchar(100) and createTask now THROWS on overlong
+  // titles (it used to truncate silently — sql_mode is not strict).
+  //
+  // This title is MACHINE-derived from event_title (varchar(200)) — up to 210
+  // chars before clamping — and there is no author to see the error: BOTH call
+  // sites swallow throws (createEvent:900 `.catch()`, updateEvent:1094
+  // try/catch). An overlong title would therefore produce NO reminder task at
+  // all, only a console.error. For a bankruptcy deadline that is unacceptable.
+  //
+  // Clamp where nobody is watching; throw where there IS an author to see it
+  // (create_task fails a visible workflow step; POST /api/tasks 500s to a human).
+  // Covers BOTH branches: reminder.title is free-text from automation/UI config
+  // and is equally unbounded.
+  const rawTitle = (reminder.title && String(reminder.title).trim())
     || `Reminder: ${event.event_title}`;
+  const title = rawTitle.length > 100 ? rawTitle.slice(0, 99) + '…' : rawTitle;
 
   const result = await taskService.createTask(db, {
     from:      actingUserId || 0,   // automation (no acting user) → automations user (0)

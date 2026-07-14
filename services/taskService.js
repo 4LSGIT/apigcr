@@ -24,6 +24,28 @@
  *   routes/taskActions.js (GET /t/:token confirm page, POST .../complete,
  *   GET .../status.svg live badge). Token authorizes the assignee's
  *   complete action — acceptable threat model for internal staff tasks.
+ *
+ *   createTask RETURNS the token and its URL:
+ *     { task_id, action_token, action_url }
+ *   so a caller can embed the one-click link in an email it sends itself.
+ *
+ * Tasks as notifications:
+ *   createTask({ source, send_assignment_email }) turns a task into a
+ *   general-purpose, one-click-dismissable notice:
+ *     - `source` (tasks.task_source, VARCHAR(50), free-text, immutable)
+ *       NULL      = human-created work
+ *       non-NULL  = machine-pushed notice; records which system pushed it
+ *                   ('court_review', 'esign_stall', …). Never validated —
+ *                   new sources must be zero-migration.
+ *     - `send_assignment_email: false` suppresses the canned assignment
+ *       email so the caller can send its own containing action_url.
+ *       It does NOT suppress the due-date reminder — omit `due` for that.
+ *
+ * HTML escaping:
+ *   Every user/machine-supplied value interpolated into the email builders
+ *   below goes through htmlEscape(). MIME subject headers do NOT (escaping a
+ *   mail header would put a literal &amp; in the recipient's inbox) — only
+ *   the HTML <title> inside emailWrap() is escaped.
  */
 
 const crypto       = require('crypto');
@@ -41,6 +63,26 @@ function settings() { return require('./settingsService'); }
 // ─────────────────────────────────────────────────────────────────────────────
 
 const APP_URL = process.env.APP_URL || 'https://app.4lsg.com';
+
+/**
+ * HTML-escape a value for interpolation into the email builders below.
+ *
+ * Deliberately duplicated from routes/taskActions.js rather than imported —
+ * both modules stay self-contained (existing convention). Keep them in sync.
+ *
+ * ORDER MATTERS for multiline text: escape FIRST, then newline→<br>:
+ *   htmlEscape(task.desc).replace(/\n/g, '<br>')
+ * Doing it the other way round would escape the <br> tags you just inserted.
+ */
+function htmlEscape(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 /** Random url-safe action token (22 chars), stored in tasks.task_action_token. */
 function newActionToken() {
@@ -93,14 +135,21 @@ function fmtDateShort(d) {
 
 const TASK_COLOR = '#312e81';   // indigo-900
 
-/** Shared outer wrapper */
+/**
+ * Shared outer wrapper.
+ *
+ * `subject` here is the HTML <title> ONLY — it is escaped. The MIME subject
+ * header is built independently at each send site (notifyAssignment,
+ * notifyCompletion, job_executor, run_task_digest) and must stay RAW.
+ * `bodyHtml` is already-built HTML — never escaped.
+ */
 function emailWrap(headerLabel, subject, bodyHtml) {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${subject}</title>
+<title>${htmlEscape(subject)}</title>
 </head>
 <body style="margin:0;padding:0;background:#f0f4ff;font-family:'Segoe UI',Arial,sans-serif">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4ff;padding:32px 0">
@@ -113,7 +162,7 @@ function emailWrap(headerLabel, subject, bodyHtml) {
       <tr>
         <td style="background:${TASK_COLOR};padding:22px 32px 18px">
           <span style="color:#c7d2fe;font-size:11px;font-weight:600;
-                       letter-spacing:2px;text-transform:uppercase">${headerLabel}</span>
+                       letter-spacing:2px;text-transform:uppercase">${htmlEscape(headerLabel)}</span>
         </td>
       </tr>
 
@@ -194,14 +243,14 @@ function buildActionBlock(task) {
 function buildAssignmentEmail(task, verb = 'assigned') {
   const linkLine = task.link
     ? `<p style="margin:0 0 16px;font-size:13px;color:#6b7280">
-         Linked to: <strong style="color:#4f46e5">${task.link.title}</strong>
+         Linked to: <strong style="color:#4f46e5">${htmlEscape(task.link.title)}</strong>
        </p>`
     : '';
 
   const descBlock = task.desc
     ? `<div style="margin:16px 0;padding:14px 16px;background:#f5f3ff;border-left:3px solid ${TASK_COLOR};
                   border-radius:4px;font-size:14px;color:#374151;line-height:1.6">
-         ${task.desc.replace(/\n/g, '<br>')}
+         ${htmlEscape(task.desc).replace(/\n/g, '<br>')}
        </div>`
     : '';
 
@@ -211,13 +260,13 @@ function buildAssignmentEmail(task, verb = 'assigned') {
       You have a new task waiting for you.
     </p>
 
-    <p style="margin:0 0 6px;font-size:18px;font-weight:700;color:${TASK_COLOR}">${task.title}</p>
+    <p style="margin:0 0 6px;font-size:18px;font-weight:700;color:${TASK_COLOR}">${htmlEscape(task.title)}</p>
 
     ${descBlock}
     ${linkLine}
 
     <table cellpadding="0" cellspacing="0" style="margin:8px 0 20px">
-      ${metaRow('Assigned by', task.from.name || '—')}
+      ${metaRow('Assigned by', htmlEscape(task.from.name || '—'))}
       ${metaRow('Due date', task.due ? fmtDate(task.due) : 'No due date')}
       ${task.notify ? metaRow('Notification', 'Assigner will be notified on completion') : ''}
     </table>
@@ -225,6 +274,8 @@ function buildAssignmentEmail(task, verb = 'assigned') {
     ${buildActionBlock(task)}
   `;
 
+  // NOTE: the `subject` arg is the HTML <title> — emailWrap escapes it.
+  // The MIME subject header is built separately in notifyAssignment (raw).
   return emailWrap('Task Assignment', `New Task ${verb}: ${task.title}`, body);
 }
 
@@ -236,7 +287,7 @@ function buildAssignmentEmail(task, verb = 'assigned') {
 function buildCompletionEmail(task, completedByName) {
   const linkLine = task.link
     ? `<p style="margin:0 0 16px;font-size:13px;color:#6b7280">
-         Linked to: <strong style="color:#4f46e5">${task.link.title}</strong>
+         Linked to: <strong style="color:#4f46e5">${htmlEscape(task.link.title)}</strong>
        </p>`
     : '';
 
@@ -246,17 +297,19 @@ function buildCompletionEmail(task, completedByName) {
       A task you created has been marked complete.
     </p>
 
-    <p style="margin:0 0 6px;font-size:18px;font-weight:700;color:#065f46">${task.title}</p>
+    <p style="margin:0 0 6px;font-size:18px;font-weight:700;color:#065f46">${htmlEscape(task.title)}</p>
 
     ${linkLine}
 
     <table cellpadding="0" cellspacing="0" style="margin:8px 0 20px">
-      ${metaRow('Completed by', completedByName)}
-      ${metaRow('Assigned to',  task.to.name || '—')}
+      ${metaRow('Completed by', htmlEscape(completedByName))}
+      ${metaRow('Assigned to',  htmlEscape(task.to.name || '—'))}
       ${task.due ? metaRow('Was due', fmtDate(task.due)) : ''}
     </table>
   `;
 
+  // NOTE: the `subject` arg is the HTML <title> — emailWrap escapes it.
+  // The MIME subject header is built separately in notifyCompletion (raw).
   return emailWrap('Task Completed', `Task Completed: ${task.title}`, body);
 }
 
@@ -267,14 +320,14 @@ function buildCompletionEmail(task, completedByName) {
 function buildDueReminderEmail(task) {
   const linkLine = task.link
     ? `<p style="margin:0 0 16px;font-size:13px;color:#6b7280">
-         Linked to: <strong style="color:#4f46e5">${task.link.title}</strong>
+         Linked to: <strong style="color:#4f46e5">${htmlEscape(task.link.title)}</strong>
        </p>`
     : '';
 
   const descBlock = task.desc
     ? `<div style="margin:14px 0;padding:14px 16px;background:#fff7ed;border-left:3px solid #f97316;
                   border-radius:4px;font-size:14px;color:#374151;line-height:1.6">
-         ${task.desc.replace(/\n/g, '<br>')}
+         ${htmlEscape(task.desc).replace(/\n/g, '<br>')}
        </div>`
     : '';
 
@@ -284,19 +337,21 @@ function buildDueReminderEmail(task) {
       A task assigned to you is due today.
     </p>
 
-    <p style="margin:0 0 6px;font-size:18px;font-weight:700;color:#b45309">${task.title}</p>
+    <p style="margin:0 0 6px;font-size:18px;font-weight:700;color:#b45309">${htmlEscape(task.title)}</p>
 
     ${descBlock}
     ${linkLine}
 
     <table cellpadding="0" cellspacing="0" style="margin:8px 0 20px">
       ${metaRow('Due date',    fmtDate(task.due))}
-      ${metaRow('Assigned by', task.from.name || '—')}
+      ${metaRow('Assigned by', htmlEscape(task.from.name || '—'))}
     </table>
 
     ${buildActionBlock(task)}
   `;
 
+  // NOTE: the `subject` arg is the HTML <title> — emailWrap escapes it.
+  // The MIME subject header is built separately in job_executor (raw).
   return emailWrap('Due Today Reminder', `⏰ Task Due Today: ${task.title}`, body);
 }
 
@@ -319,7 +374,7 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
       let href = APP_URL;
       if (t.contact_name) href += `?contact=${t.contact_id || ''}`;
       else if (t.case_number_full || t.case_number|| t.case_id) href += `?case=${t.case_id || ''}`;
-      linkHtml = `<a href="${href}" style="color:#4f46e5;text-decoration:none">${linkName}</a>`;
+      linkHtml = `<a href="${href}" style="color:#4f46e5;text-decoration:none">${htmlEscape(linkName)}</a>`;
     }
     // One-click complete link (requires the digest query to SELECT t.task_action_token)
     const doneHtml = t.task_action_token
@@ -328,7 +383,7 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
       : '';
     return `<tr style="border-bottom:1px solid #f3f4f6">
       <td style="padding:8px 4px 8px 0;font-size:13px;color:#111827;font-weight:500;
-                 max-width:280px">${t.task_title}</td>
+                 max-width:280px">${htmlEscape(t.task_title)}</td>
       <td style="padding:8px 6px;font-size:12px;color:#6b7280;white-space:nowrap">
         ${fmtDateShort(t.task_due)}
       </td>
@@ -364,7 +419,7 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
   }
 
   const body = `
-    <h2 style="margin:0 0 2px;font-size:22px;color:#111827">Good morning, ${user.user_fname || user.user_name}!</h2>
+    <h2 style="margin:0 0 2px;font-size:22px;color:#111827">Good morning, ${htmlEscape(user.user_fname || user.user_name)}!</h2>
     <p style="margin:0 0 20px;font-size:14px;color:#6b7280">Here's your task summary for ${dayName}, ${today}.</p>
 
     <table cellpadding="0" cellspacing="0" width="100%"
@@ -659,7 +714,8 @@ function shapeRow(r) {
     from:    { id: r.from_id, name: r.from_name },
     to:      { id: r.to_id,   name: r.to_name   },
     link,
-    action_token: r.task_action_token || null
+    action_token: r.task_action_token || null,
+    source:       r.task_source || null
   };
 }
 
@@ -700,6 +756,37 @@ async function getTask(db, taskId) {
 // CREATE
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Create a task.
+ *
+ * @param {object}  db
+ * @param {object}  opts
+ * @param {number}  [opts.from]                  assigner user id; null → self-assign to `to`
+ * @param {number}   opts.to                     assignee user id (required)
+ * @param {string}   opts.title                  ≤100 chars (throws above)
+ * @param {string}  [opts.desc='']               ≤1000 chars (throws above)
+ * @param {string}  [opts.start=null]
+ * @param {string}  [opts.due=null]              schedules an 8 AM reminder on that date
+ * @param {boolean} [opts.notify=false]          notify the ASSIGNER on completion
+ * @param {string}  [opts.link_type=null]        'contact'|'case'|'appt'|'bill'|'event'
+ * @param {string}  [opts.link_id=null]
+ * @param {string}  [opts.source=null]           tasks.task_source — free-text, ≤50 chars.
+ *                                               NULL = human-created work. Non-NULL = a
+ *                                               machine-pushed notice ('court_review', …).
+ *                                               IMMUTABLE: not in updateTask's ALLOWED set.
+ * @param {boolean} [opts.send_assignment_email=true]
+ *                                               false → suppress the canned assignment email
+ *                                               so the caller can send its own containing
+ *                                               action_url. Does NOT suppress the due-date
+ *                                               reminder — omit `due` for that.
+ *
+ * @returns {Promise<{task_id:number, action_token:string, action_url:string}>}
+ *
+ * Length guards THROW rather than truncate: session sql_mode lacks
+ * STRICT_TRANS_TABLES, so an overlong write would land silently truncated.
+ * (Enabling strict mode is not an option — /api/intake/case relies on implicit
+ * defaults for ~41 NOT-NULL columns.)
+ */
 async function createTask(db, {
   from,
   to,
@@ -709,29 +796,41 @@ async function createTask(db, {
   due       = null,
   notify    = false,
   link_type = null,
-  link_id   = null
+  link_id   = null,
+  source                = null,
+  send_assignment_email = true
 }) {
   if (!title) throw new Error('createTask requires title');
   if (!to)    throw new Error('createTask requires to');
+
+  // sql_mode is NOT strict → an overlong value truncates SILENTLY. Throw instead.
+  if (String(title).length  > 100)  throw new Error('createTask: title exceeds 100 chars');
+  if (String(desc).length   > 1000) throw new Error('createTask: desc exceeds 1000 chars');
+  if (source && String(source).length > 50) throw new Error('createTask: source exceeds 50 chars');
 
   // null/undefined `from` → self-assign to the recipient; a legitimate 0
   // (the automations user) is preserved, NOT coerced to `to`.
   const taskFrom = (from == null) ? to : from;
 
+  // Hoisted (was minted inline in the param array and discarded) so the caller
+  // can be handed the token / URL back.
+  const actionToken = newActionToken();
+
   const [result] = await db.query(
     `INSERT INTO tasks
        (task_from, task_to, task_title, task_desc, task_start, task_due,
-        task_notification, task_status, task_date, task_last_update,
+        task_notification, task_source, task_status, task_date, task_last_update,
         task_link, task_link_type, task_link_id, task_action_token)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', NOW(), NOW(), ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Pending', NOW(), NOW(), ?, ?, ?, ?)`,
     [
       taskFrom, to, title, desc,
       start || null, due || null,
       notify ? 1 : 0,
+      source || null,
       link_id != null ? String(link_id) : '',  // task_link — legacy
       link_type,
       link_id != null ? String(link_id) : null,
-      newActionToken()
+      actionToken
     ]
   );
 
@@ -745,14 +844,20 @@ async function createTask(db, {
     try {
       const task = await getTask(db, taskId);
       if (!task) return;
-      await notifyAssignment(db, task);
+      if (send_assignment_email) await notifyAssignment(db, task);
+      // Intentionally NOT gated on send_assignment_email — the due reminder is a
+      // separate channel. A caller that wants neither email omits `due`.
       if (due) await scheduleDueReminder(db, taskId, due);
     } catch (err) {
       console.error(`[TASK] Post-create side effects failed for task #${taskId}:`, err.message);
     }
   });
 
-  return { task_id: taskId };
+  return {
+    task_id:      taskId,
+    action_token: actionToken,
+    action_url:   taskActionUrl({ action_token: actionToken })
+  };
 }
 
 
@@ -765,6 +870,9 @@ async function updateTask(db, taskId, fields, actingUserId = 0) {
     throw new Error('updateTask requires at least one field');
   }
 
+  // Throwing allowlist. `task_source` and `task_action_token` are deliberately
+  // ABSENT: source is IMMUTABLE after creation (it records which system pushed
+  // the notice), and the token is minted once by createTask.
   const ALLOWED = new Set([
     'task_status', 'task_to', 'task_from', 'task_title', 'task_desc',
     'task_start', 'task_due', 'task_notification',

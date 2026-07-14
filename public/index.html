@@ -1850,10 +1850,10 @@
             </select></td>
             <td>${task.id}</td>
             <td>${task.status}</td>
-            <td>${task.title}</td>
-            <td>${task.desc || ""}</td>
-            <td>${task.from?.name || ""}</td>
-            <td>${task.to?.name || ""}</td>
+            <td>${escHtml(task.title)}</td>
+            <td>${escHtml(task.desc || "")}</td>
+            <td>${escHtml(task.from?.name || "")}</td>
+            <td>${escHtml(task.to?.name || "")}</td>
             <td>${linkHTML}</td>
             <td>${task.due || ""}</td>
             <td>${created}</td>`;

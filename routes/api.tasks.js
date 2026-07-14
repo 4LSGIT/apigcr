@@ -68,8 +68,12 @@ router.post('/api/tasks', jwtOrApiKey, async (req, res) => {
       due:       req.body.due    || null,
       notify:    req.body.notify || false,
       link_type: req.body.link_type || null,
-      link_id:   req.body.link_id   || null
+      link_id:   req.body.link_id   || null,
+      source:                req.body.source || null,
+      send_assignment_email: req.body.send_assignment_email !== false
     });
+    // `...result` now spreads { task_id, action_token, action_url } — the action
+    // token ships in the response to any authed caller that just created the task.
     res.json({ status: 'success', title: 'Task Created', message: 'Task successfully created', ...result });
   } catch (err) {
     console.error('POST /api/tasks error:', err);
@@ -94,7 +98,10 @@ router.patch('/api/tasks/:id(\\d+)', jwtOrApiKey, async (req, res) => {
 // ─── COMPLETE ─────────────────────────────────────────────────────────────────
 router.patch('/api/tasks/:id(\\d+)/complete', jwtOrApiKey, async (req, res) => {
   try {
-    const task = await taskService.completeTask(req.db, req.params.id, req.auth?.userId);
+    // In-app counterpart to taskActions.js's { via: 'email_link' }.
+    const task = await taskService.completeTask(
+      req.db, req.params.id, req.auth?.userId, { via: 'app' }
+    );
     res.json({ status: 'success', title: 'Done!', message: 'Task marked as completed.', data: task });
   } catch (err) {
     console.error('PATCH /api/tasks/:id/complete error:', err);

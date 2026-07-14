@@ -429,6 +429,15 @@
     <script>
       function refreshTasks() { tabTasksGet(0); }
 
+      // Small HTML-escape helper local to the tasks table. Task title/desc can
+      // now carry machine-pushed text (court email subjects), so raw
+      // interpolation into innerHTML is stored XSS. Text-node context only —
+      // &, <, > is sufficient. (Copied from index.html's shell helper.)
+      function escHtml(s) {
+        return String(s == null ? "" : s)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      }
+
       async function tabTasksGet(offset) {
         E("tabTasksButton").disabled = true;
         E("tabTasksLoad").style.display = "block";
@@ -473,10 +482,10 @@
                 </select></td>
                 <td>${task.id}</td>
                 <td>${task.status}</td>
-                <td>${task.title}</td>
-                <td>${task.desc||""}</td>
-                <td>${task.from?.name||""}</td>
-                <td>${task.to?.name||""}</td>
+                <td>${escHtml(task.title)}</td>
+                <td>${escHtml(task.desc||"")}</td>
+                <td>${escHtml(task.from?.name||"")}</td>
+                <td>${escHtml(task.to?.name||"")}</td>
                 <td></td>
                 <td>${task.due||""}</td>
                 <td>${created}</td>`;
