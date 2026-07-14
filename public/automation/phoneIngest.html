@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/automation/fnPicker.js"></script>
+  <script src="/automation/paramsMapping.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        PHONE INGEST SUB-PAGE — self-contained styles.
@@ -2601,51 +2602,51 @@ window.piToggleSidebar = piToggleSidebar;
       updateBody();
     }
 
-    // internal_function params mapping
+    // internal_function params mapping — shared widget (paramsMapping.js).
+    // Open-for-edit paints EXACTLY the stored rows, undecorated. Seeding is
+    // driven only by the function <select>'s change event below, so reopening
+    // an existing action never grows rows under the operator.
     const cfg = parseJson(a.config) || {};
-    renderActionParamsMapping(cfg.params_mapping || {});
+    pmRender(aPmEl(), cfg.params_mapping || {}, A_PM_OPTS);
+
     const addBtn = document.getElementById('swal-a-fn-add');
-    if (addBtn) addBtn.addEventListener('click', () => {
-      document.getElementById('swal-a-fn-params').appendChild(buildActionParamRow('', ''));
+    if (addBtn) addBtn.addEventListener('click', () => pmAddRow(aPmEl(), A_PM_OPTS));
+
+    // Meta-driven seeding. Picking a function appends one row per declared param
+    // not already present (declaration order), prefilled with the param's
+    // default as a quoted literal, and marks required params / tooltips the
+    // description / hints enum values. Rows the operator already filled are
+    // preserved across a function switch — including out-of-schema keys, which
+    // the param validator tolerates by design.
+    //
+    // Passing null as existingMapping is deliberate: the merge base is then read
+    // off the CURRENT DOM rather than the saved config, which is what makes the
+    // switch-function-preserves-typing behavior work.
+    const fnSel = document.getElementById('swal-a-fn');
+    if (fnSel) fnSel.addEventListener('change', () => {
+      if (!fnSel.value) return;   // "— select a function —" → leave the rows alone
+      const fnMeta = (meta.targets?.internal_function_meta || {})[fnSel.value] || null;
+      pmSeedFromMeta(aPmEl(), fnMeta, null, A_PM_OPTS);
     });
   }
 
-  function renderActionParamsMapping(mapping) {
-    const el = document.getElementById('swal-a-fn-params');
-    if (!el) return;
-    // Shell datalist helper (guarded — degrade to no datalist if absent).
-    let dl = '';
-    try { if (typeof P.fdParamSourceDatalistHtml === 'function') dl = P.fdParamSourceDatalistHtml('a-pm-source-datalist'); } catch {}
-    el.innerHTML = dl;
-    const entries = Object.entries(mapping || {});
-    if (!entries.length) el.appendChild(buildActionParamRow('', ''));
-    else for (const [k, v] of entries) el.appendChild(buildActionParamRow(k, v));
-  }
-
-  function buildActionParamRow(key, value) {
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center';
-    const displayValue = (typeof value === 'string') ? value : (value == null ? '' : JSON.stringify(value));
-    row.innerHTML = `
-      <input class="swal-apm-key" placeholder="param name" value="${esc(key)}" style="flex:1;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
-      <span style="color:var(--muted);font-size:14px">=</span>
-      <input class="swal-apm-val mono" list="a-pm-source-datalist" placeholder="field  or  a.b.c  or  'literal'" value="${esc(displayValue)}" style="flex:2;padding:5px 8px;font-size:12px;border:1px solid var(--border);border-radius:4px">
-      <button type="button" class="swal-apm-del" style="padding:4px 8px;font-size:11px;background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;color:#ef4444" title="Remove"><i class="fa-solid fa-times"></i></button>`;
-    row.querySelector('.swal-apm-del').addEventListener('click', () => row.remove());
-    return row;
-  }
-
-  function collectActionParamsMapping() {
-    const rows = document.querySelectorAll('#swal-a-fn-params > div');
-    const mapping = {};
-    rows.forEach(row => {
-      const key = row.querySelector('.swal-apm-key')?.value?.trim();
-      const val = row.querySelector('.swal-apm-val')?.value;
-      if (!key) return;
-      mapping[key] = val == null ? '' : val;
-    });
-    return mapping;
-  }
+  // ── Params-mapping widget (public/automation/paramsMapping.js) ─────────
+  //
+  // The renderActionParamsMapping / buildActionParamRow /
+  // collectActionParamsMapping trio that used to live here — near-verbatim in
+  // phoneIngest.html and, with different class names, in hooks.html — is now
+  // the shared module. Only the page-specific ids stay local.
+  //
+  // Two behavior changes ride along with the consolidation:
+  //   - Row classes are the module's pm-key / pm-val / pm-del. The old
+  //     swal-apm-* names were pure JS selectors, used by nothing outside that
+  //     trio and styled by no rule (grep-verified across public/).
+  //   - pmCollect now DROPS rows whose value is blank, not just rows whose key
+  //     is blank. Seeded-but-unfilled rows are scaffolding; persisting them as
+  //     `{ subject: "" }` would resolve to undefined at dispatch. Verified
+  //     against live data — no production mapping row has an empty value.
+  const A_PM_OPTS = { datalistId: 'a-pm-source-datalist' };
+  const aPmEl = () => document.getElementById('swal-a-fn-params');
 
   // Harvest the action form → {action_type, config, position, active}.
   function collectActionForm() {
@@ -2714,7 +2715,7 @@ window.piToggleSidebar = piToggleSidebar;
     if (type === 'internal_function') {
       const fn = document.getElementById('swal-a-fn').value.trim();
       if (!fn) { Swal.showValidationMessage('Select a function'); return false; }
-      return { action_type: 'internal_function', config: { function_name: fn, params_mapping: collectActionParamsMapping() }, position, active };
+      return { action_type: 'internal_function', config: { function_name: fn, params_mapping: pmCollect(aPmEl()) }, position, active };
     }
 
     if (type === 'http') {

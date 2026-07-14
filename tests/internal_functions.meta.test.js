@@ -15,8 +15,9 @@
  * itself can't go stale (every entry must exist and must genuinely lack meta).
  */
 /*
-npm install --save-dev jest
-
+# jest is a COMMITTED devDependency now (package.json: "jest": "^30.4.2") — it
+# is no longer installed/uninstalled around each run. `npm install` is enough.
+#
 # credentialCrypto (pulled in via internal_functions → emailService → smtp)
 # throws at require time without this env var. Any random key works here —
 # tests never decrypt real data. Use `export` (inline VAR=… \ continuation
@@ -24,7 +25,15 @@ npm install --save-dev jest
 export CREDENTIALS_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
 npx jest tests/internal_functions.meta.test.js
 
-npm uninstall --save-dev jest
+# Whole jest suite. No ignore flags needed: jest's default testMatch only picks
+# up *.test.js / *.spec.js, and this repo names its NON-jest files with a
+# test- / test_ prefix (test-oauthService.js is node:test; test-cron.js,
+# test-credential-crypto.js, test-timing-extensions.js and test_classifier.js
+# are standalone scripts). Keep that convention when adding files here.
+npx jest
+
+# The node:test file runs separately:
+node --test tests/test-oauthService.js
 */
 const internalFunctions = require('../lib/internal_functions');
 
@@ -179,6 +188,56 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
     ['log valid type',                'create_log', { type: 'note' }, null],
     ['log bad type',                  'create_log', { type: 'invalid' }, 'must be one of'],
     ['log missing type',              'create_log', {}, 'type is required'],
+    // 'event' was missing from the meta enum while runtime already wrote such
+    // rows (11 live). Enum expansion can only ever ACCEPT more, so this is safe.
+    ['log type event',                'create_log', { type: 'event' }, null],
+
+    // create_log.extra — declared type:'object', NOT 'string'.
+    //
+    // The object form is the one the SAVE-TIME validator actually sees: every
+    // live validated caller (wf15 s8, wf16 s7 on create_log; wf17–21 on
+    // phone_log) passes an object literal. type:'string' would reject all of
+    // them ("must be a string"), edit-locking those steps in workflows.html —
+    // which also round-trips the value back out AS an object (JSON textarea →
+    // JSON.parse on gather), so form and validator would disagree.
+    //
+    // The JSON-STRING form only ever arrives via params_mapping, and that path
+    // is never validated (lib/actionDispatchers.deliverInternalFunction calls
+    // fn(params, db) directly). So rejecting it here costs nothing real, and
+    // asserting the rejection LOCKS THE DESIGN: at the workflow layer, `extra`
+    // must be a real object. Hand-writing it as a JSON string there is a
+    // footgun — {{placeholders}} interpolated into a JSON *string* corrupt it
+    // the moment a resolved value contains a quote or backslash, and
+    // createLogEntry then silently writes SQL NULL.
+    ['log extra object',              'create_log', { type: 'note', extra: { provider: 'rc' } }, null],
+    ['log extra empty object',        'create_log', { type: 'note', extra: {} }, null],
+    ['log extra json-string rejected','create_log', { type: 'note', extra: '{"provider":"rc"}' }, 'must be a JSON object'],
+    ['log extra array rejected',      'create_log', { type: 'note', extra: ['rc'] }, 'must be a JSON object'],
+    ['log extra omitted',             'create_log', { type: 'note', by: 0 }, null],
+
+    // phone_log — same param contract as create_log (drop-in), incl. `extra`.
+    // The pipeline itself writes params.extra.firmToFirm, so `extra` is part of
+    // phone_log's contract rather than an incidental passthrough. This row is
+    // the regression gate for wf17–21, all of which pass an object literal.
+    ['phone_log extra object',        'phone_log',  { type: 'sms', extra: { provider: 'quo' } }, null],
+    ['phone_log extra string rejected','phone_log', { type: 'sms', extra: '{"provider":"quo"}' }, 'must be a JSON object'],
+
+    // update_log — re-link only. log_id is integer-typed but MUST accept a
+    // {{placeholder}}: the canonical caller is create_log → set_vars logId →
+    // update_log { log_id: '{{logId}}' }. The validator's placeholder bypass
+    // runs before the type check, so placeholderAllowed works on any type —
+    // omitting it (as create_appointment.appt_with does) 400s the step at save.
+    ['update_log valid',              'update_log', { log_id: 58197, link_type: 'contact', link_id: '412' }, null],
+    ['update_log placeholder log_id', 'update_log', { log_id: '{{logId}}', link_type: 'contact', link_id: '{{contactId}}' }, null],
+    ['update_log missing log_id',     'update_log', { link_type: 'contact', link_id: '412' }, 'log_id is required'],
+    ['update_log missing link_type',  'update_log', { log_id: 1, link_id: '412' }, 'link_type is required'],
+    ['update_log missing link_id',    'update_log', { log_id: 1, link_type: 'contact' }, 'link_id is required'],
+    ['update_log bad link_type',      'update_log', { log_id: 1, link_type: 'nonsense', link_id: '412' }, 'must be one of'],
+    // 'task'/'event' are valid in the DB column but deliberately NOT re-link
+    // targets — machine-written rows. Rejecting them here is the design, not a
+    // gap; widening the enum later is additive.
+    ['update_log task not relinkable','update_log', { log_id: 1, link_type: 'task', link_id: '5' }, 'must be one of'],
+    ['update_log phone value',        'update_log', { log_id: 1, link_type: 'phone', link_id: '3135550100' }, null],
 
     // query_db — array types, integer with bounds
     ['query_db valid',                'query_db', { select: ['cases.case_id'], from: 'cases' }, null],

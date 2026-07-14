@@ -65,10 +65,21 @@
  *     case_relate_filter ('default' = Primary/Secondary/Other; 'all' = no
  *     type filter; 'none' = case-only, no related-contact merge).
  *
+ * Re-linking (params-mapping Slice):
+ *   - updateLogLink(db, { log_id, link_type, link_id }) re-points an existing
+ *     row at a different entity. RE-LINK ONLY: it writes the three link
+ *     columns and nothing else — no unlink path (both link_type and link_id
+ *     are required), no content edits, no create-on-missing.
+ *   - It reuses createLogEntry's _normalizePhone / _normalizeEmail helpers and
+ *     its log_link mirror rule, so a value written by one path and re-linked by
+ *     the other lands in exactly the same stored form.
+ *   - Backs the update_log internal function (lib/internal_functions/log.js).
+ *
  * Usage:
  *   const logService = require('../services/logService');
  *   const entries = await logService.listLog(db, { link_type: 'contact', link_id: 123 });
  *   const entry  = await logService.createLogEntry(db, { type: 'note', ... });
+ *   await logService.updateLogLink(db, { log_id: 58197, link_type: 'contact', link_id: '412' });
  */
 
 // ─────────────────────────────────────────────────────────────
@@ -857,11 +868,156 @@ async function getOrphanEarliestDate(db, type, value) {
 }
 
 
+// ─────────────────────────────────────────────────────────────
+// updateLogLink
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * The link types a log row can be RE-LINKED to.
+ *
+ * The DB column is wider — log.log_link_type is
+ * enum('contact','case','appt','bill','phone','email','task','event') — but
+ * 'task' and 'event' rows are machine-written (0 and 11 rows respectively at
+ * the time of writing) and are not user re-link targets. Excluding them is
+ * deliberate, not an oversight; widening this list later is purely additive.
+ *
+ * Mirrors create_log/update_log's __meta enum in lib/internal_functions/log.js.
+ */
+const RELINKABLE_TYPES = ['contact', 'case', 'appt', 'bill', 'phone', 'email'];
+
+/**
+ * Re-link an existing log entry.
+ *
+ * RE-LINK ONLY. This writes log_link_type / log_link_id / log_link and nothing
+ * else. Deliberately absent:
+ *   - no unlink path — link_type and link_id are both REQUIRED. Clearing a
+ *     link is not something an automation should do by accident; a row that
+ *     needs to become an orphan can be handled explicitly elsewhere.
+ *   - no content edits — type/data/extra/from/to/subject/message/direction are
+ *     not accepted. A log row's content is a historical record.
+ *   - no create-on-missing — a log_id with no row throws LOG_NOT_FOUND.
+ *
+ * link_id normalization is IDENTICAL to createLogEntry's, sharing the same
+ * _normalizePhone / _normalizeEmail helpers, so a value written by one path and
+ * re-linked by the other lands in exactly the same stored form:
+ *   phone → 10 digits (leading +1 stripped); legacy log_link mirror forced ''
+ *   email → trimmed + lowercased;            legacy log_link mirror forced ''
+ *   contact/case/appt/bill → String(link_id); mirrored into log_link
+ *
+ * Error codes (set on `err.code` so routes can map them):
+ *   LOG_ID_REQUIRED        - log_id missing / not a positive integer
+ *   INVALID_LOG_LINK_TYPE  - link_type missing or outside RELINKABLE_TYPES
+ *   INVALID_LOG_LINK_ID    - link_id blank, or an unusable phone/email value
+ *   LOG_NOT_FOUND          - no log row with that id
+ *
+ * @param {object} db
+ * @param {object} opts
+ * @param {number|string} opts.log_id    - the log row to re-link (required)
+ * @param {string}        opts.link_type - one of RELINKABLE_TYPES (required)
+ * @param {string|number} opts.link_id   - entity ID, or the phone/email VALUE (required)
+ * @returns {Promise<{ log_id: number, link_type: string, link_id: string }>}
+ *          link_id is the NORMALIZED value that was actually stored.
+ */
+async function updateLogLink(db, { log_id, link_type, link_id } = {}) {
+  // ── log_id ──
+  // Coerced rather than type-checked: the canonical caller is a workflow step
+  // resolving {{logId}}, which arrives as the string "58197".
+  const logId = Number(log_id);
+  if (log_id === null || log_id === undefined || log_id === ''
+      || !Number.isInteger(logId) || logId <= 0) {
+    const err = new Error(
+      `updateLogLink requires a positive integer log_id (got ${JSON.stringify(log_id)}).`
+    );
+    err.code = 'LOG_ID_REQUIRED';
+    throw err;
+  }
+
+  // ── link_type ──
+  if (!RELINKABLE_TYPES.includes(link_type)) {
+    const err = new Error(
+      `Invalid link_type for updateLogLink: ${JSON.stringify(link_type)}. ` +
+      `Must be one of: ${RELINKABLE_TYPES.join(', ')}.`
+    );
+    err.code = 'INVALID_LOG_LINK_TYPE';
+    throw err;
+  }
+
+  // ── link_id ── required, non-blank. No unlink path.
+  if (link_id === null || link_id === undefined || String(link_id).trim() === '') {
+    const err = new Error(
+      `updateLogLink requires a non-blank link_id (got ${JSON.stringify(link_id)}). ` +
+      `There is no unlink path.`
+    );
+    err.code = 'INVALID_LOG_LINK_ID';
+    throw err;
+  }
+
+  // ── row must exist ──
+  // Checked BEFORE normalization so a bad log_id reports as LOG_NOT_FOUND
+  // rather than being masked by an unrelated link_id complaint.
+  const existing = await getLogEntry(db, logId);
+  if (!existing) {
+    const err = new Error(`Log entry ${logId} not found.`);
+    err.code = 'LOG_NOT_FOUND';
+    throw err;
+  }
+
+  // ── normalize + mirror — same rules as createLogEntry ──
+  let normalizedLinkId = String(link_id);
+  let logLink;
+
+  if (link_type === 'phone') {
+    const norm = _normalizePhone(normalizedLinkId);
+    if (!norm || norm.length !== 10) {
+      const err = new Error(
+        `Invalid phone for log_link_id: ${JSON.stringify(link_id)}. ` +
+        `Must normalize to exactly 10 digits.`
+      );
+      err.code = 'INVALID_LOG_LINK_ID';
+      throw err;
+    }
+    normalizedLinkId = norm;
+    logLink = '';
+  } else if (link_type === 'email') {
+    const norm = _normalizeEmail(normalizedLinkId);
+    if (!norm || !norm.includes('@')) {
+      const err = new Error(
+        `Invalid email for log_link_id: ${JSON.stringify(link_id)}. ` +
+        `Must be non-empty and contain '@'.`
+      );
+      err.code = 'INVALID_LOG_LINK_ID';
+      throw err;
+    }
+    normalizedLinkId = norm;
+    logLink = '';
+  } else {
+    // contact / case / appt / bill — legacy log_link mirrors the entity ID.
+    logLink = normalizedLinkId;
+  }
+
+  console.log(
+    `[UPDATE_LOG] log_id=${logId} link=${existing.log_link_type}:${existing.log_link_id} ` +
+    `\u2192 ${link_type}:${normalizedLinkId}`
+  );
+
+  await db.query(
+    `UPDATE log
+        SET log_link_type = ?, log_link_id = ?, log_link = ?
+      WHERE log_id = ?`,
+    [link_type, normalizedLinkId, logLink, logId]
+  );
+
+  return { log_id: logId, link_type, link_id: normalizedLinkId };
+}
+
+
 module.exports = {
   listLog,
   getLogEntry,
   createLogEntry,
+  updateLogLink,
   getOrphanEarliestDate,
+  RELINKABLE_TYPES,
   // Slice 1 semantic unification: exposed for contactService.getContact
   // and caseService.getCase. Underscore-prefixed = "internal but
   // cross-service usable" — please don't call from frontend or routes.

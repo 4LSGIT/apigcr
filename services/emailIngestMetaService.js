@@ -224,18 +224,28 @@ async function _targets(db) {
   };
 }
 
-// name → { category, params? } for the grouped function picker (fnPicker.js)
-// and the Forward pseudo-type form (Slice 9B). Names without __meta simply
-// have no entry (they group under 'other' client-side). uiHidden is
-// deliberately NOT included: the ingest surfaces ignore hiding, and omitting
+// name → { category, params? } for the grouped function picker (fnPicker.js),
+// the Forward pseudo-type form (Slice 9B), and the params-mapping widget's
+// meta-driven seeding (public/automation/paramsMapping.js). Names without
+// __meta simply have no entry (they group under 'other' client-side). uiHidden
+// is deliberately NOT included: the ingest surfaces ignore hiding, and omitting
 // the flag makes that impossible to get wrong.
 //
-// Slice 9B: each entry also carries a `params` array projecting
-// {name, required, default?, widget?} per __meta param — the minimal surface
-// the Forward form needs (subject_prefix's 'Fwd:' default, and which `from`
-// widget applies). fnPicker.js reads only .category/.uiHidden, so the extra
-// key is invisible to it; nothing else consumes internal_function_meta
-// (grep-verified: both ingest pages + fnPicker only).
+// Slice 9B added a `params` array projecting {name, required, default?,
+// widget?} per __meta param — the minimal surface the Forward form needed
+// (subject_prefix's 'Fwd:' default, and which `from` widget applies).
+//
+// params-mapping Slice WIDENS that projection with `type`, `enum`,
+// `description` and `multiline`. pmSeedFromMeta needs them to decorate the
+// seeded rows (required marker, description tooltip, enum hint), and it lets
+// the ingest pages consume the SAME param shape hooks.html already gets from
+// /workflows/functions (which returns the raw, unprojected __meta). Everything
+// carried through is additive — existing consumers read .category/.uiHidden
+// (fnPicker.js) and .params[].default (fwdSubjectDefault) and are unaffected.
+// `placeholderAllowed` / `min` / `max` / `nullishSkipsBlock` stay out: they are
+// save-time validator concerns, and the ingest params_mapping path is never
+// validated (lib/actionDispatchers.deliverInternalFunction calls fn(params, db)
+// directly).
 //
 // Lazy require of lib/internal_functions — same rationale as
 // phoneIngestMetaService's CIRCULAR-DEPENDENCY NOTE: the phone-log pipeline
@@ -252,8 +262,12 @@ function _internalFunctionMeta() {
       entry.params = m.params.map((p) => ({
         name: p.name,
         required: !!p.required,
+        ...(p.type !== undefined && { type: p.type }),
         ...(p.default !== undefined && { default: p.default }),
         ...(p.widget && { widget: p.widget }),
+        ...(Array.isArray(p.enum) && { enum: p.enum }),
+        ...(p.description !== undefined && { description: p.description }),
+        ...(p.multiline !== undefined && { multiline: p.multiline }),
       }));
     }
     out[name] = entry;

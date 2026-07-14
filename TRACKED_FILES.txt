@@ -131,6 +131,7 @@ public/automation/courtReview.html
 public/automation/emailIngest.html
 public/automation/fnPicker.js
 public/automation/hooks.html
+public/automation/paramsMapping.js
 public/automation/phoneIngest.html
 public/automation/scheduledJobs.html
 public/automation/sequences.html
@@ -381,6 +382,7 @@ tests/aiService.attachments.test.js
 tests/hookMapper.test.js
 tests/hookTransforms.test.js
 tests/internal_functions.meta.test.js
+tests/logservice.updateloglink.test.js
 tests/taskservice.test.js
 tests/test-credential-crypto.js
 tests/test-cron.js
