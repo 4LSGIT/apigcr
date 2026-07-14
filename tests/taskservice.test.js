@@ -3,8 +3,8 @@
  * completeTask / deleteTask, their logExtra payloads, and the completion
  * email's optional note block.
  *
- * NOTE (Slice 3): this file is NEW. There was no tests/taskService.test.js on
- * main — the Slice-3 prompt's "extend the existing 32" was wrong. Nothing was
+ * NOTE (Slice 3): this file is NEW. There was no taskService suite on main at
+ * all — the Slice-3 prompt's "extend the existing 32" was wrong. Nothing was
  * extended; nothing pre-existing was lost.
  *
  * What matters here:
@@ -24,17 +24,29 @@
  * consistent with the other suites here).
  */
 /*
-npx jest tests/taskService.test.js
+npx jest tests/taskservice.test.js
 
 (jest is already a committed devDependency — package.json "jest": "^30.4.2".
  No install/uninstall dance needed; the older suites' header comments predate
  that and are stale.)
+
+FILENAME: this file is `taskservice.test.js`, all-lowercase 's'. It is the only
+suite here that does not mirror its source module's casing — services/taskService.js
+is camelCase, and aiService / hookMapper / hookTransforms / logService / oauthService
+all match theirs exactly. Cosmetic only: jest's path argument is a CASE-INSENSITIVE
+regex, so `npx jest tests/taskService.test.js` also resolves here and runs. Renaming
+the file to taskService.test.js would restore the convention (it would also need the
+matching line in TRACKED_FILES.txt); nothing is broken until then.
 */
 
 // credentialCrypto (pulled in via emailService → adapters/email/smtp →
 // credentialInjection) throws at REQUIRE time without this. Any random key
 // works — nothing here decrypts real data. Must be set before the requires.
-// Same pattern as tests/oauthService.test.js:13.
+// Same pattern as tests/test-oauthService.js:13 (renamed from oauthService.test.js:
+// it is a `node --test` suite, and the .test.js suffix made jest auto-discover it.
+// The test- / test_ prefix is this repo's convention for "not a jest file" — see
+// also test-cron.js, test-credential-crypto.js, test-timing-extensions.js,
+// test_classifier.js).
 process.env.CREDENTIALS_ENCRYPTION_KEY =
   require('crypto').randomBytes(32).toString('base64');
 
