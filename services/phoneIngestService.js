@@ -17,10 +17,12 @@
  *      suppression match field (extra.firmToFirm).
  *   1b. Dedup precheck (MTH-2) — SELECT on the (provider, provider_ref) unique
  *      key BEFORE suppression and rules. A TRUE redelivery of an already-
- *      processed provider event returns immediately with a `duplicate`
- *      execution row, so redelivery cannot re-fire Layer-3 automation actions.
- *      Mirrors emailIngestService step 3. Skipped when either half of the key
- *      is NULL (see _normalizeProviderRef).
+ *      TERMINAL provider event (logged OR suppressed OR errored — see the
+ *      `alreadyProcessed` predicate; log_id alone is NOT the test, because the
+ *      suppressed path never writes a log) returns immediately with a
+ *      `duplicate` execution row, so redelivery cannot re-fire Layer-3
+ *      automation actions. Mirrors emailIngestService step 3. Skipped when
+ *      either half of the key is NULL (see _normalizeProviderRef).
  *   2. Write phone_event_log catch-all — ALWAYS, idempotent
  *      (INSERT ... ON DUPLICATE KEY UPDATE). Forensic; never gates logging.
  *   3. Layer 2 — evaluateSuppressions(db, event). Decides the structured LOG
@@ -52,11 +54,13 @@
  *   error (INVALID_LOG_LINK_ID):
  *               { log_id:null, suppressed:false, error:<message>, firmToFirm }
  *   duplicate (MTH-2 — true provider redelivery; Layer 2 and Layer 3 did NOT run):
- *               { log_id:<existing>, suppressed:false, duplicate:true, firmToFirm }
+ *               { log_id:<original's>, suppressed:<original's>, duplicate:true, firmToFirm }
  *
- * NOTE on the duplicate shape: log_id carries the ORIGINAL delivery's log id
- * (not null), so a downstream workflow step reading {{this.output.log_id}}
- * still resolves. `duplicate` is additive — the only caller
+ * NOTE on the duplicate shape: it ECHOES the original delivery's outcome — a
+ * redelivered logged event returns that event's log_id with suppressed:false; a
+ * redelivered suppressed event returns log_id:null with suppressed:true. So a
+ * downstream step reading {{this.output.log_id}} sees exactly what it saw on the
+ * first delivery. `duplicate` is additive — the only caller
  * (lib/internal_functions/log.js → fns.phone_log) wraps the whole object as
  * { success:true, output } without destructuring, so no consumer breaks.
  */
@@ -282,21 +286,36 @@ async function ingestPhoneEvent(db, event) {
   //   empirically on MySQL 8.0 + mysql2 3.x with this exact statement:
   //   fresh insert → 1, duplicate → 1. affectedRows cannot distinguish them.
   //
-  //   log_id NULL on the existing row ⇒ a previous attempt died between the
-  //   catch-all INSERT and the log_id backfill. Fall through and process
-  //   normally (self-healing) rather than swallowing a never-logged event.
+  //   >>> WHAT COUNTS AS "ALREADY PROCESSED" — and why it is NOT `log_id != null`:
+  //   The suppressed path DELIBERATELY skips createLogEntry, so a fully-processed
+  //   suppressed event carries log_id = NULL forever. Keying the guard on log_id
+  //   alone (as the original MTH-2 spec did) therefore misclassifies every
+  //   suppressed event as "died mid-flight" and re-runs the whole pipeline on
+  //   redelivery — re-firing Layer-3 actions, which is exactly what this guard
+  //   exists to prevent. Live DB 2026-07-14: 390 of 4309 event rows (9%) carry a
+  //   NULL log_id purely because they were suppressed.
   //
-  //   Residual race (unchanged from before, and never observed: all 4288
-  //   non-empty refs in phone_event_log are distinct as of 2026-07-14): two
-  //   truly concurrent redeliveries can both miss the precheck. The ODKU
-  //   INSERT still collapses them onto one event row; they would produce two
-  //   log entries, exactly as they do today.
+  //   The event reached a terminal state if ANY of these is true:
+  //     • log_id IS NOT NULL      → the `logged` path completed
+  //     • suppressed = 1          → the `suppressed` path completed (no log by design)
+  //     • an executions row exists → covers the `error` (INVALID_LOG_LINK_ID) path
+  //                                  and any earlier `duplicate` row
+  //   Only a row with none of the three is genuinely incomplete: the pipeline
+  //   rethrows (writing NO executions row) when createLogEntry fails for any
+  //   reason other than INVALID_LOG_LINK_ID, which is precisely the "died between
+  //   the catch-all INSERT and the terminal write" case worth self-healing.
+  //   Verified against the live table: this predicate leaves 0 of 4309 rows
+  //   misclassified, and the 23 pre-executions-table rows are all caught by the
+  //   log_id / suppressed clauses.
   if (provider != null && providerRef != null) {
     let dupRow = null;
     try {
       const [dupRows] = await db.query(
-        `SELECT id, log_id FROM phone_event_log
-          WHERE provider = ? AND provider_ref = ? LIMIT 1`,
+        `SELECT e.id, e.log_id, e.suppressed,
+                EXISTS(SELECT 1 FROM phone_ingest_executions x
+                        WHERE x.event_log_id = e.id) AS has_execution
+           FROM phone_event_log e
+          WHERE e.provider = ? AND e.provider_ref = ? LIMIT 1`,
         [provider, providerRef]
       );
       dupRow = (dupRows && dupRows.length) ? dupRows[0] : null;
@@ -306,21 +325,29 @@ async function ingestPhoneEvent(db, event) {
       console.warn(`[phone_log] dedup precheck failed: ${err.message}`);
     }
 
-    if (dupRow && dupRow.log_id != null) {
-      // True redelivery of an already-fully-processed provider event.
+    const alreadyProcessed = !!dupRow && (
+      dupRow.log_id != null ||
+      Number(dupRow.suppressed) === 1 ||
+      Number(dupRow.has_execution) === 1
+    );
+
+    if (alreadyProcessed) {
+      // True redelivery of an already-terminal provider event.
       // metadata stays NULL: the rules did NOT run on this delivery, and
       // fabricating a metadata object would misrepresent the forensics.
+      // log_id mirrors the ORIGINAL outcome — null when the original was
+      // suppressed, which is correct and consistent with the suppressed shape.
       await _writeExecution(db, {
         event_log_id: dupRow.id,
         status:       'duplicate',
-        log_id:       dupRow.log_id,
+        log_id:       dupRow.log_id ?? null,
         metadata:     null,
         raw_input:    rawInputForLog,
       });
 
       return {
-        log_id:     dupRow.log_id,
-        suppressed: false,
+        log_id:     dupRow.log_id ?? null,
+        suppressed: Number(dupRow.suppressed) === 1,   // echo the original's outcome
         duplicate:  true,
         firmToFirm,
       };
