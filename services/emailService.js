@@ -91,11 +91,59 @@ function textToHtml(text) {
     '</p>';
 }
 
+/**
+ * Coerce a body value to something htmlToText / textToHtml can call .replace on.
+ *
+ * WHY (MTH-2 / Fix D): lib/workflow_engine.resolvePlaceholders has a deliberate
+ * single-placeholder fast path — when a param's value is EXACTLY one `{{token}}`
+ * and that token resolves to a non-primitive, the object/array is passed through
+ * UNSTRINGIFIED (an MMS attachment array must survive; String() would turn it
+ * into "[object Object],[object Object]"). Do not "fix" that in the engine.
+ *
+ * The consequence lands here: a workflow that pipes a json-typed `query_ai`
+ * output var straight into send_email's `text`/`html` (wf29 did exactly this,
+ * 2026-07-02) hands emailService an OBJECT, and textToHtml's `text.replace(...)`
+ * throws "text.replace is not a function" — the whole workflow step dies.
+ * "AI output → email body" is a first-class authoring pattern here, so the
+ * chokepoint hardens instead of the engine.
+ *
+ * Coerce, never throw: a delivered email containing pretty-printed JSON beats a
+ * dead workflow step at a law firm.
+ *
+ * Contract:
+ *   null / undefined / ''  → returned as-is, so they stay FALSY and the
+ *                            `!text && !html` throw plus the `||` fallbacks
+ *                            below keep their exact existing semantics.
+ *   string                 → returned unchanged (same reference). This is the
+ *                            regression bar: string inputs must round-trip
+ *                            byte-identically through htmlToText/textToHtml.
+ *   object / array         → JSON.stringify(v, null, 2)
+ *   other primitives       → String(v)   (number, boolean, bigint…)
+ */
+function _coerceBody(v) {
+  if (v == null || v === '') return v;      // preserve falsiness exactly
+  if (typeof v === 'string') return v;      // hot path — untouched
+  if (typeof v === 'object') {
+    try {
+      return JSON.stringify(v, null, 2);
+    } catch {
+      // Circular reference / BigInt inside. Still don't throw — a useless body
+      // beats a failed send.
+      return String(v);
+    }
+  }
+  return String(v);
+}
+
 function normalizeBodies(text, html) {
-  if (!text && !html) throw new Error('Email requires at least one of: text, html');
+  // Coerce ONCE, at the top, on both args — every downstream consumer
+  // (htmlToText, textToHtml, the adapters) then sees a string or a falsy value.
+  const t = _coerceBody(text);
+  const h = _coerceBody(html);
+  if (!t && !h) throw new Error('Email requires at least one of: text, html');
   return {
-    text: text || htmlToText(html),
-    html: html || textToHtml(text),
+    text: t || htmlToText(h),
+    html: h || textToHtml(t),
   };
 }
 
@@ -215,4 +263,6 @@ async function sendEmail(db, opts) {
 
 const VALID_PROVIDERS = Object.freeze(Object.keys(ADAPTERS));
 
-module.exports = { sendEmail, sendEmailDirect, VALID_PROVIDERS };
+// normalizeBodies is exported as a TEST SEAM (pure function, no SMTP/adapters).
+// Additive — nothing else imports it.
+module.exports = { sendEmail, sendEmailDirect, VALID_PROVIDERS, normalizeBodies };

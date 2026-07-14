@@ -15,6 +15,12 @@
  *      also a firm number). Persists into log_extra automatically since extra
  *      is the column logService stores. Queryable later; usable as a
  *      suppression match field (extra.firmToFirm).
+ *   1b. Dedup precheck (MTH-2) — SELECT on the (provider, provider_ref) unique
+ *      key BEFORE suppression and rules. A TRUE redelivery of an already-
+ *      processed provider event returns immediately with a `duplicate`
+ *      execution row, so redelivery cannot re-fire Layer-3 automation actions.
+ *      Mirrors emailIngestService step 3. Skipped when either half of the key
+ *      is NULL (see _normalizeProviderRef).
  *   2. Write phone_event_log catch-all — ALWAYS, idempotent
  *      (INSERT ... ON DUPLICATE KEY UPDATE). Forensic; never gates logging.
  *   3. Layer 2 — evaluateSuppressions(db, event). Decides the structured LOG
@@ -28,7 +34,7 @@
  *      INVALID_LOG_LINK_ID it becomes an 'error' execution row that still
  *      carries Layer-3 outcomes in metadata; any other throw rethrows.
  *   5. Write exactly one phone_ingest_executions row per event
- *      (status logged | suppressed | error) before returning.
+ *      (status logged | suppressed | error | duplicate) before returning.
  *
  * Suppression governs the LOG WRITE only — it does NOT halt the workflow
  * (design call 1A). Downstream workflow steps run regardless; output.suppressed
@@ -40,12 +46,19 @@
  * distinct `skipped_firm_to_firm` status, unlike email — it surfaces as
  * `suppressed` or `logged`.)
  *
- * Return shape (unchanged from phone_log's previous inline output — the
- * executions-row writes below are pure side effects):
+ * Return shape (the executions-row writes below are pure side effects):
  *   suppressed: { log_id:null, suppressed:true, matched_rule_ids:[...], firmToFirm }
  *   logged:     { ...createLogEntry result, suppressed:false, firmToFirm }
  *   error (INVALID_LOG_LINK_ID):
  *               { log_id:null, suppressed:false, error:<message>, firmToFirm }
+ *   duplicate (MTH-2 — true provider redelivery; Layer 2 and Layer 3 did NOT run):
+ *               { log_id:<existing>, suppressed:false, duplicate:true, firmToFirm }
+ *
+ * NOTE on the duplicate shape: log_id carries the ORIGINAL delivery's log id
+ * (not null), so a downstream workflow step reading {{this.output.log_id}}
+ * still resolves. `duplicate` is additive — the only caller
+ * (lib/internal_functions/log.js → fns.phone_log) wraps the whole object as
+ * { success:true, output } without destructuring, so no consumer breaks.
  */
 
 const phoneIngestSuppressionService = require('./phoneIngestSuppressionService');
@@ -69,6 +82,36 @@ function _phoneLogNorm10(phone) {
   if (!phone) return '';
   const digits = String(phone).replace(/\D/g, '');
   return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+}
+
+/**
+ * Normalize one half of the (provider, provider_ref) dedup key. Empty string,
+ * whitespace-only, null and undefined all collapse to NULL; anything else is
+ * String()'d and trimmed.
+ *
+ * MTH-2 / C1 — THE BUG THIS FIXES:
+ *   wf20 ("rc-call") step 3 falls back to `provider_call_id: ""` when the
+ *   RingCentral call-log fetch returns no records (~4% of RC calls — RC's
+ *   indexing lag outlasting the 90s wait). The old extraction was
+ *   `ex.provider_call_id ?? null`, and `??` does NOT catch the empty string.
+ *   So '' entered ux_phone_event_provider_ref (provider, provider_ref), and
+ *   because '' is a perfectly ordinary value to a unique index, EVERY
+ *   ref-less RC call collided onto the first such row (id 94) via
+ *   ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id). Each call still produced
+ *   its own correct, distinct log entry — but the forensic phone_event_log
+ *   row, its log_id backfill, and the executions attribution were all smeared
+ *   onto row 94 (65 unrelated calls by 2026-07-14, still growing).
+ *
+ * MySQL unique indexes permit MULTIPLE NULLs, so an unknown ref degrades
+ * cleanly to "no dedup, own row" — the correct semantics for an event whose
+ * provider ref we never learned. Verified empirically on MySQL 8.0 against
+ * this exact index: three NULL-ref inserts produce three distinct rows,
+ * three ''-ref inserts collapse onto one.
+ */
+function _normalizeProviderRef(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s === '' ? null : s;
 }
 
 /**
@@ -173,7 +216,8 @@ function _buildMetadata(suppression, automation) {
 
 /**
  * Ingest one phone event. Layer-1/2 body is a verbatim extraction of the
- * previous phone_log pipeline; Layer-3 + executions writes added this slice.
+ * previous phone_log pipeline; Layer-3 + executions writes added in the ingest
+ * slice; the dedup precheck (step 1b) added in MTH-2.
  *
  * @param {object} db
  * @param {object} event  - the create_log params object (top level)
@@ -202,11 +246,86 @@ async function ingestPhoneEvent(db, event) {
   }
   p.extra = { ...(p.extra && typeof p.extra === 'object' ? p.extra : {}), firmToFirm };
 
-  // ---- pull dedup ref (sms→message_id, call→call_id) --------------------
+  // ---- pull dedup key (sms→message_id, call→call_id) --------------------
+  //   BOTH halves are normalized: an empty/whitespace-only value becomes NULL
+  //   so it can never collide inside ux_phone_event_provider_ref. See
+  //   _normalizeProviderRef for the incident this prevents. The normalized
+  //   values are what get bound into the INSERT below — do not re-read the
+  //   raw ex.* fields there.
   const ex = p.extra;
-  const providerRef = eventType === 'call'
-    ? (ex.provider_call_id ?? null)
-    : (ex.provider_message_id ?? null);
+  const provider = _normalizeProviderRef(ex.provider);
+  const providerRef = _normalizeProviderRef(
+    eventType === 'call' ? ex.provider_call_id : ex.provider_message_id
+  );
+
+  // ---- 1b. dedup precheck — TRUE redelivery short-circuit ---------------
+  //   Mirrors emailIngestService step 3 (SELECT-before-INSERT on the dedup
+  //   key). Runs BEFORE Layer 2 and Layer 3 so a redelivered provider event
+  //   cannot re-fire automation actions (send an SMS, enroll a sequence…).
+  //
+  //   Gated on BOTH halves of ux_phone_event_provider_ref (provider,
+  //   provider_ref) being non-NULL. MySQL unique indexes treat NULLs as
+  //   distinct, so a NULL in either column means the DB itself does NOT dedup
+  //   that row — the precheck mirrors the index exactly, no more and no less.
+  //   Intended consequence: after C1 an unknown/empty ref is NULL, so it lands
+  //   here as "no dedup, own row" — correct for a call whose provider ref we
+  //   never learned. (A ref-less call is NOT a duplicate; treating it as one
+  //   is exactly the bug this file previously had, inverted.)
+  //
+  //   >>> WHY A SELECT AND NOT r.affectedRows ON THE INSERT BELOW:
+  //   `ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)` sets the row to its
+  //   CURRENT values, so MySQL reports affectedRows = 1 on a duplicate —
+  //   byte-identical to a fresh insert. (It reports 0 only without
+  //   CLIENT_FOUND_ROWS, which mysql2 enables by default; startup/db.js passes
+  //   no custom flags.) The documented "2" appears only when the ODKU clause
+  //   actually CHANGES a column, which this one never does. Verified
+  //   empirically on MySQL 8.0 + mysql2 3.x with this exact statement:
+  //   fresh insert → 1, duplicate → 1. affectedRows cannot distinguish them.
+  //
+  //   log_id NULL on the existing row ⇒ a previous attempt died between the
+  //   catch-all INSERT and the log_id backfill. Fall through and process
+  //   normally (self-healing) rather than swallowing a never-logged event.
+  //
+  //   Residual race (unchanged from before, and never observed: all 4288
+  //   non-empty refs in phone_event_log are distinct as of 2026-07-14): two
+  //   truly concurrent redeliveries can both miss the precheck. The ODKU
+  //   INSERT still collapses them onto one event row; they would produce two
+  //   log entries, exactly as they do today.
+  if (provider != null && providerRef != null) {
+    let dupRow = null;
+    try {
+      const [dupRows] = await db.query(
+        `SELECT id, log_id FROM phone_event_log
+          WHERE provider = ? AND provider_ref = ? LIMIT 1`,
+        [provider, providerRef]
+      );
+      dupRow = (dupRows && dupRows.length) ? dupRows[0] : null;
+    } catch (err) {
+      // Fail OPEN. A failed dedup lookup must never drop a real call; worst
+      // case we fall through to the pre-MTH-2 behavior (process it again).
+      console.warn(`[phone_log] dedup precheck failed: ${err.message}`);
+    }
+
+    if (dupRow && dupRow.log_id != null) {
+      // True redelivery of an already-fully-processed provider event.
+      // metadata stays NULL: the rules did NOT run on this delivery, and
+      // fabricating a metadata object would misrepresent the forensics.
+      await _writeExecution(db, {
+        event_log_id: dupRow.id,
+        status:       'duplicate',
+        log_id:       dupRow.log_id,
+        metadata:     null,
+        raw_input:    rawInputForLog,
+      });
+
+      return {
+        log_id:     dupRow.log_id,
+        suppressed: false,
+        duplicate:  true,
+        firmToFirm,
+      };
+    }
+  }
 
   // ---- 2. catch-all write (idempotent, always) --------------------------
   let eventLogId = null;
@@ -218,7 +337,7 @@ async function ingestPhoneEvent(db, event) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
        ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
       [
-        ex.provider ?? null,
+        provider,
         providerRef,
         ex.provider_event_id ?? null,
         eventType,
@@ -258,6 +377,13 @@ async function ingestPhoneEvent(db, event) {
   //   actionOutcomes); the try/catch covers a rule-loader/DB failure so we
   //   don't lose a successfully-logged event because automation eval blew up.
   //   Mirrors emailIngestService step 7c.
+  //
+  //   SCOPE OF "ALWAYS" (clarified in MTH-2): "always" means independent of
+  //   SUPPRESSION and of the LOG-WRITE outcome, within ONE processing of an
+  //   event. It has never meant "re-run on every redelivery of the same
+  //   provider event" — step 1b short-circuits above this point precisely so a
+  //   duplicate webhook delivery cannot fire the same actions twice. The seam
+  //   is about layer independence, not about at-least-once transport.
   let automation;
   try {
     automation = await phoneIngestRuleService.evaluateRules(db, p);
@@ -351,6 +477,7 @@ module.exports = {
   resetFirmNumberCache,
   // Exported for testing / reuse
   _phoneLogNorm10,
+  _normalizeProviderRef,
   _getFirmNumbers,
   _writeExecution,
   _buildMetadata,

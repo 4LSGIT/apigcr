@@ -39,8 +39,12 @@
  * any truncation before write, mirroring email's RAW_INPUT_LIMIT).
  */
 
+// MTH-2 added 'duplicate' (true provider redelivery — phoneIngestService step
+// 1b). It MUST be listed here: list() silently DROPS an unrecognized status
+// filter rather than rejecting it, so without this entry `?status=duplicate`
+// would quietly return every row instead of the duplicates.
 const VALID_STATUSES = new Set([
-  'logged', 'suppressed', 'error',
+  'logged', 'suppressed', 'error', 'duplicate',
 ]);
 
 const DEFAULT_PAGE_SIZE = 50;

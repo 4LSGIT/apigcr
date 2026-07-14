@@ -26,7 +26,10 @@
 const crypto = require('crypto');
 const { evaluateConditions } = require('./hookFilter');
 const { executeMapper, resolveBodyTemplate } = require('./hookMapper');
-const { applyChain } = require('./hookTransforms');
+// NOTE: hookTransforms is deliberately NOT imported here. Transform chains are
+// applied INSIDE hookMapper (executeMapper / resolveTemplate); hookService never
+// applies one directly. An unused destructured import of applyChain sat on this
+// line until MTH-2 and was removed — zero call sites in this file.
 const credentialInjection = require('../lib/credentialInjection');
 const actionDispatchers = require('../lib/actionDispatchers');
 

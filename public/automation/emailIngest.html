@@ -2025,7 +2025,7 @@ window.eiToggleSidebar = eiToggleSidebar;
             <input class="mr-to" placeholder="dest_field" value="${esc(r.to || '')}">
             <button type="button" class="mr-remove" title="Remove"><i class="fa-solid fa-times"></i></button>
           </div>
-          ${kind==='from' ? `<textarea class="mr-transforms" rows="2" wrap="off" spellcheck="false" placeholder="one transform per line&#10;trim&#10;regex:(\\d{4,8})">${esc((r.transforms||[]).join('\n'))}</textarea>` : ''}
+          ${kind==='from' ? `<textarea class="mr-transforms" rows="2" wrap="off" spellcheck="false" placeholder="one transform per line&#10;trim&#10;regex: always use a capture group, e.g.  regex:(\\d{4,8})">${esc((r.transforms||[]).join('\n'))}</textarea>` : ''}
         </div>`;
     }).join('');
     // wire each rule's controls

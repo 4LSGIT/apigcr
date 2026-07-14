@@ -92,12 +92,16 @@ const TRANSFORM_MODES = [
 ];
 
 // Phone enum ONLY (phoneIngestExecutionsService.VALID_STATUSES):
-// logged | suppressed | error. Email's richer set (duplicate, skipped_*,
-// auth_failed, validation_failed) does not apply to the phone pipeline.
+// logged | suppressed | error | duplicate. Email's extra statuses (skipped_*,
+// auth_failed, validation_failed) still do not apply to the phone pipeline.
+// 'duplicate' was added in MTH-2 (true provider redelivery — the event's
+// (provider, provider_ref) key already exists with a log_id, so Layer 2 and
+// Layer 3 are skipped and the original log_id is returned).
 const EXECUTION_STATUSES = [
   { value: 'logged',     label: 'Logged' },
   { value: 'suppressed', label: 'Suppressed' },
   { value: 'error',      label: 'Error' },
+  { value: 'duplicate',  label: 'Duplicate' },
 ];
 
 // config_schema_hint per action_type — ported verbatim from

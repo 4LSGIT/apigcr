@@ -806,6 +806,10 @@ window.piToggleSidebar = piToggleSidebar;
     logged:     { label: 'Logged',     bg: '#dcfce7', fg: '#166534', dot: '#22c55e' },
     suppressed: { label: 'Suppressed', bg: '#dbeafe', fg: '#1e40af', dot: '#3b82f6' },
     error:      { label: 'Error',      bg: '#fef2f2', fg: '#991b1b', dot: '#ef4444' },
+    // MTH-2: true provider redelivery — same (provider, provider_ref) key, already
+    // logged. Layer 2 + Layer 3 did NOT run, so metadata is null. Grey, matching
+    // emailIngest.html's 'duplicate' chip.
+    duplicate:  { label: 'Duplicate',  bg: '#f1f5f9', fg: '#475569', dot: '#94a3b8' },
   };
   function statusMeta(s) {
     return STATUS_META[s] || { label: s || '—', bg: '#f1f5f9', fg: '#475569', dot: '#94a3b8' };
@@ -2020,7 +2024,7 @@ window.piToggleSidebar = piToggleSidebar;
             <input class="mr-to" placeholder="dest_field" value="${esc(r.to || '')}">
             <button type="button" class="mr-remove" title="Remove"><i class="fa-solid fa-times"></i></button>
           </div>
-          ${kind==='from' ? `<textarea class="mr-transforms" rows="2" wrap="off" spellcheck="false" placeholder="one transform per line&#10;trim&#10;regex:(\\d{4,8})">${esc((r.transforms||[]).join('\n'))}</textarea>` : ''}
+          ${kind==='from' ? `<textarea class="mr-transforms" rows="2" wrap="off" spellcheck="false" placeholder="one transform per line&#10;trim&#10;regex: always use a capture group, e.g.  regex:(\\d{4,8})">${esc((r.transforms||[]).join('\n'))}</textarea>` : ''}
         </div>`;
     }).join('');
     // wire each rule's controls
@@ -3312,8 +3316,11 @@ C. Execution drawer renders the phone `linked` shape:
    kv-card drops Source / Message ID / Remote IP / Email-log-ID (none exist on
    phone) and shows Status / Event log ID / Log ID / Error / Created.
 
-D. Status enum is logged | suppressed | error (meta.execution_statuses drives
-   the dropdown; STATUS_META drives chip colors). "suppressed" → blue chip.
+D. Status enum is logged | suppressed | error | duplicate (meta.execution_statuses
+   drives the dropdown; STATUS_META drives chip colors). "suppressed" → blue chip,
+   "duplicate" → grey chip. "duplicate" (MTH-2) = true provider redelivery: the
+   event's (provider, provider_ref) key already exists with a log_id, so Layer 2
+   and Layer 3 were skipped and metadata is null by design.
 
 Smoke steps:
 1. Phone Ingest → Suppressions. List loads (GET /api/phone-ingest/suppressions).

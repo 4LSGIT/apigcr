@@ -1098,16 +1098,50 @@ window.togglePanelLeft = togglePanelLeft;
         <div style="margin-top:6px">
           <textarea class="rule-transforms mono" rows="2" wrap="off" spellcheck="false"
                     placeholder="one transform per line&#10;trim&#10;regex:(\\d{4,8})">${esc((r.transforms || []).join('\n'))}</textarea>
-          <div class="hint">One transform per line</div>
+          <div class="hint">One transform per line. With <code>regex:</code> always use a capture group — <code>regex:(\\d{6})</code></div>
         </div>` : ''}
       </div>
     `).join('');
   }
 
-  function addMapperRule() { mapperRules.push({ from: '', to: '' }); renderMapperRules(); }
-  function removeMapperRule(i) { mapperRules.splice(i, 1); renderMapperRules(); }
+  // Harvest the live DOM back into the `mapperRules` buffer WITHOUT re-rendering.
+  //
+  // MUST run before any handler that mutates the buffer and then re-renders
+  // (add / remove / type-change). Between renders, a row's in-progress edits
+  // live ONLY in the DOM — the buffer is not touched until Save calls
+  // collectMapperRules(). Without this sync, typing into row 0's transforms
+  // textarea and then clicking "Add Mapping Rule" re-rendered from the STALE
+  // buffer and silently discarded what you just typed.
+  //
+  // phoneIngest.html / emailIngest.html have had this since their mapper
+  // editors were built (their handlers all open with syncMapperRulesFromDom()).
+  // hooks never got it. The harvest logic is identical to collectMapperRules —
+  // same shapes, same keys — so this delegates rather than duplicating it.
+  //
+  // Guard: #mapper-rules is a STATIC div in the markup, so it exists even when
+  // transform_mode !== 'mapper' and renderMapperRules() has never run. Harvesting
+  // an unrendered container would return [] and WIPE a buffer loaded from the
+  // hook. renderMapperRules() always writes at least one child (the cards, or
+  // the "No mapping rules" placeholder), so "zero children" reliably means
+  // "never rendered" → no-op.
+  function syncMapperRulesFromDom() {
+    const el = E('mapper-rules');
+    if (!el || !el.firstElementChild) return;   // missing or never rendered → no-op, not a wipe
+    mapperRules = collectMapperRules();
+  }
+
+  function addMapperRule() { syncMapperRulesFromDom(); mapperRules.push({ from: '', to: '' }); renderMapperRules(); }
+  function removeMapperRule(i) { syncMapperRulesFromDom(); mapperRules.splice(i, 1); renderMapperRules(); }
 
   function ruleTypeChanged(i, type) {
+    // Sync BEFORE reading `.to`, so a just-typed destination survives the type
+    // switch (and so sibling rows' edits survive the re-render). Ordering
+    // mirrors phoneIngest.html's .mr-type change handler exactly: the <select>
+    // has already committed its new value when onchange fires, so this row's
+    // source gets harvested under the NEW key and is then discarded by the
+    // reset below — which is the intended behavior (switching type clears the
+    // source field). Only `to` is meant to carry across.
+    syncMapperRulesFromDom();
     const to = mapperRules[i].to;
     if (type === 'from') mapperRules[i] = { from: '', to, transforms: [] };
     else if (type === 'template') mapperRules[i] = { template: '', to };
