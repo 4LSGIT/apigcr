@@ -523,8 +523,30 @@ function escAttr(s) {
     .replace(/</g, '&lt;');
 }
 
+/* Escape a string for insertion as TEXT between tags (innerHTML sinks).
+   & and < are the two that actually matter in text context; > " ' are
+   escaped too so this is safe to reuse in either context without thinking.
+   Entities render back to the literal characters, so there is no visual
+   change to the escaped output.
+
+   & MUST be replaced first or the entities we insert get double-escaped. */
+function escText(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /* Build the Data cell HTML — each key gets its own .log-data-row line,
-   with a title attribute carrying the full value for hover-reveal. */
+   with a title attribute carrying the full value for hover-reveal.
+
+   EVERYTHING here is attacker-reachable and lands in innerHTML: log_data is
+   written by the email/phone ingest pipelines, by court-email parsing, and
+   (since the task cancel/complete note) by an UNAUTHENTICATED endpoint. Keys
+   AND values AND the raw non-JSON fallback all go through escText. Do not
+   interpolate anything from `entry` here without escaping it. */
 function buildLogDataCell(entry) {
   let inner;
   try {
@@ -546,11 +568,11 @@ function buildLogDataCell(entry) {
       let v = jsonData[key];
       try { v = decodeURIComponent(String(v)); } catch { /* leave as-is */ }
       const titleSafe = escAttr(v);
-      return `<div class="log-data-row" title="${titleSafe}"><b>${key}:</b> ${v}</div>`;
+      return `<div class="log-data-row" title="${titleSafe}"><b>${escText(key)}:</b> ${escText(v)}</div>`;
     }).join('');
   } catch {
     const raw = entry.log_data || '';
-    inner = `<div class="log-data-row" title="${escAttr(raw)}">${raw}</div>`;
+    inner = `<div class="log-data-row" title="${escAttr(raw)}">${escText(raw)}</div>`;
   }
   return `<div class="log-data-cell">${inner}</div>`;
 }

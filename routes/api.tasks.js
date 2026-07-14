@@ -19,6 +19,22 @@ const router      = express.Router();
 const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const taskService = require('../services/taskService');
 
+/**
+ * Optional free-text note on complete / delete. Clamped (not rejected) at 500
+ * chars — it's a human textarea, and a 501-char note should still complete the
+ * task. Returns null for absent/empty/whitespace so callers can do
+ * `...(note && { note })` and never write note:"" into the log payload.
+ *
+ * Deliberately duplicated from routes/taskActions.js rather than imported —
+ * both route modules stay self-contained (existing convention, same as
+ * htmlEscape). Keep them in sync.
+ */
+function cleanNote(raw) {
+  if (raw == null) return null;
+  const s = String(raw).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').trim();
+  return s ? s.slice(0, 500) : null;
+}
+
 // ─── LIST ─────────────────────────────────────────────────────────────────────
 router.get('/api/tasks', jwtOrApiKey, async (req, res) => {
   try {
@@ -99,8 +115,10 @@ router.patch('/api/tasks/:id(\\d+)', jwtOrApiKey, async (req, res) => {
 router.patch('/api/tasks/:id(\\d+)/complete', jwtOrApiKey, async (req, res) => {
   try {
     // In-app counterpart to taskActions.js's { via: 'email_link' }.
+    // Optional `note` rides in the log payload (and the completion email).
+    const note = cleanNote(req.body?.note);
     const task = await taskService.completeTask(
-      req.db, req.params.id, req.auth?.userId, { via: 'app' }
+      req.db, req.params.id, req.auth?.userId, { via: 'app', ...(note && { note }) }
     );
     res.json({ status: 'success', title: 'Done!', message: 'Task marked as completed.', data: task });
   } catch (err) {
@@ -113,9 +131,13 @@ router.patch('/api/tasks/:id(\\d+)/complete', jwtOrApiKey, async (req, res) => {
 });
 
 // ─── DELETE (soft) ────────────────────────────────────────────────────────────
+// The in-app "Cancel" action. Same verb as POST /t/:token/cancel.
 router.patch('/api/tasks/:id(\\d+)/delete', jwtOrApiKey, async (req, res) => {
   try {
-    const task = await taskService.deleteTask(req.db, req.params.id, req.auth?.userId);
+    const note = cleanNote(req.body?.note);
+    const task = await taskService.deleteTask(
+      req.db, req.params.id, req.auth?.userId, { via: 'app', ...(note && { note }) }
+    );
     res.json({ status: 'success', title: 'Deleted', message: 'Task deleted.', data: task });
   } catch (err) {
     console.error('PATCH /api/tasks/:id/delete error:', err);

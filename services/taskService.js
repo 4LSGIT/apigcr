@@ -20,10 +20,23 @@
  *
  * Action tokens:
  *   Every task gets a random url-safe token (tasks.task_action_token) at
- *   creation. It powers the public one-click-complete links served by
- *   routes/taskActions.js (GET /t/:token confirm page, POST .../complete,
+ *   creation. It powers the public action links served by routes/taskActions.js
+ *   (GET /t/:token confirm page, POST .../complete, POST .../cancel,
  *   GET .../status.svg live badge). Token authorizes the assignee's
- *   complete action — acceptable threat model for internal staff tasks.
+ *   complete/cancel action — acceptable threat model for internal staff tasks.
+ *
+ * Two exits, and the note:
+ *   completeTask = acted. deleteTask = dismissed (soft, reversible via
+ *   reopenTask). Cancel is NOT a new status — it is deleteTask, so the
+ *   acted-vs-dismissed signal reads straight off task_status.
+ *
+ *   Both take an optional `logExtra` object which is merged into the log row's
+ *   `data` (→ log_data JSON). Conventional keys:
+ *     via  — 'app' | 'email_link'    (which surface performed the action)
+ *     note — optional free text from the actor. Callers CLAMP it (500 chars)
+ *            before it gets here; the service never validates it. It is NOT a
+ *            column. completeTask additionally renders it in the completion
+ *            email to the assigner (task_notification = 1).
  *
  *   createTask RETURNS the token and its URL:
  *     { task_id, action_token, action_url }
@@ -281,14 +294,30 @@ function buildAssignmentEmail(task, verb = 'assigned') {
 
 /**
  * Completion notification email (to task_from).
+ *
  * @param {object} task
  * @param {string} completedByName
+ * @param {string} [note]  optional free-text note the assignee left when
+ *                         completing (from the /t/ page or the in-app dialog).
+ *                         This email is exactly where "done, but heads-up: …"
+ *                         matters, so it renders when present.
  */
-function buildCompletionEmail(task, completedByName) {
+function buildCompletionEmail(task, completedByName, note) {
   const linkLine = task.link
     ? `<p style="margin:0 0 16px;font-size:13px;color:#6b7280">
          Linked to: <strong style="color:#4f46e5">${htmlEscape(task.link.title)}</strong>
        </p>`
+    : '';
+
+  // Same block pattern as buildAssignmentEmail's descBlock.
+  // ORDER: htmlEscape FIRST, then newline→<br> (see htmlEscape's doc).
+  const noteBlock = note
+    ? `<div style="margin:16px 0;padding:14px 16px;background:#f5f3ff;border-left:3px solid ${TASK_COLOR};
+                  border-radius:4px;font-size:14px;color:#374151;line-height:1.6">
+         <div style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:1px;
+                     text-transform:uppercase;color:#6b7280">Note from ${htmlEscape(task.to.name || 'the assignee')}</div>
+         ${htmlEscape(note).replace(/\n/g, '<br>')}
+       </div>`
     : '';
 
   const body = `
@@ -299,6 +328,7 @@ function buildCompletionEmail(task, completedByName) {
 
     <p style="margin:0 0 6px;font-size:18px;font-weight:700;color:#065f46">${htmlEscape(task.title)}</p>
 
+    ${noteBlock}
     ${linkLine}
 
     <table cellpadding="0" cellspacing="0" style="margin:8px 0 20px">
@@ -581,8 +611,11 @@ async function notifyAssignment(db, task, verb = 'assigned') {
   }
 }
 
-/** Email to task_from when a task is completed (if task_notification = 1). */
-async function notifyCompletion(db, task, completedByName) {
+/**
+ * Email to task_from when a task is completed (if task_notification = 1).
+ * @param {string} [note] optional note left by the assignee — rendered in the email.
+ */
+async function notifyCompletion(db, task, completedByName, note) {
   try {
     const [[fromUser]] = await db.query(
       'SELECT email FROM users WHERE user = ?',
@@ -591,7 +624,7 @@ async function notifyCompletion(db, task, completedByName) {
     if (!fromUser?.email) return;
 
     const from = await getFromEmail(db);
-    const html = buildCompletionEmail(task, completedByName);
+    const html = buildCompletionEmail(task, completedByName, note);
 
     await emailSvc().sendEmail(db, {
       from,
@@ -910,7 +943,20 @@ async function updateTask(db, taskId, fields, actingUserId = 0) {
 // STATUS TRANSITIONS
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Mark a task Completed.
+ *
+ * @param {object} db
+ * @param {number} taskId
+ * @param {number} [actingUserId=0]
+ * @param {object} [logExtra={}]  merged into the 'completed' log row's data.
+ *                                Conventional keys: `via` ('app'|'email_link'),
+ *                                `note` (optional free text from the actor —
+ *                                also rendered in the completion email).
+ */
 async function completeTask(db, taskId, actingUserId = 0, logExtra = {}) {
+  const extra = logExtra || {};
+
   const task = await getTask(db, taskId);
   if (!task) throw new Error(`Task ${taskId} not found`);
   if (task.status === 'Completed') throw new Error('Task is already completed');
@@ -921,20 +967,38 @@ async function completeTask(db, taskId, actingUserId = 0, logExtra = {}) {
     [taskId]
   );
 
-  await logTaskEvent(db, taskId, actingUserId, 'completed', logExtra);
+  await logTaskEvent(db, taskId, actingUserId, 'completed', extra);
   await cancelDueReminder(db, taskId);
 
   // Notify assigner if task_notification = 1 and assigner ≠ completor
   if (task.notify) {
     const [[actor]] = await db.query('SELECT user_name FROM users WHERE user = ?', [actingUserId]);
     const byName = actor?.user_name || 'A team member';
-    notifyCompletion(db, task, byName).catch(() => {});
+    notifyCompletion(db, task, byName, extra.note).catch(() => {});
   }
 
   return getTask(db, taskId);
 }
 
-async function deleteTask(db, taskId, actingUserId = 0) {
+/**
+ * Soft-delete a task (status → Deleted). Reversible via reopenTask.
+ *
+ * This is also the "cancel" verb the public /t/:token/cancel page calls:
+ * completed = acted, deleted = dismissed. That pair is the acted-vs-dismissed
+ * signal, so no new status value is introduced for cancellation.
+ *
+ * @param {object} db
+ * @param {number} taskId
+ * @param {number} [actingUserId=0]
+ * @param {object} [logExtra={}]  merged into the 'deleted' log row's data
+ *                                ALONGSIDE previous_status. Conventional keys:
+ *                                `via` ('app'|'email_link'), `note`.
+ *                                Callers passing nothing get the historical
+ *                                payload — exactly { previous_status }.
+ */
+async function deleteTask(db, taskId, actingUserId = 0, logExtra = {}) {
+  const extra = logExtra || {};
+
   const task = await getTask(db, taskId);
   if (!task) throw new Error(`Task ${taskId} not found`);
   if (task.status === 'Deleted') throw new Error('Task is already deleted');
@@ -944,7 +1008,7 @@ async function deleteTask(db, taskId, actingUserId = 0) {
     [taskId]
   );
 
-  await logTaskEvent(db, taskId, actingUserId, 'deleted', { previous_status: task.status });
+  await logTaskEvent(db, taskId, actingUserId, 'deleted', { previous_status: task.status, ...extra });
   await cancelDueReminder(db, taskId);
 
   return getTask(db, taskId);

@@ -1786,8 +1786,29 @@
       const endpoint = actionMap[action];
       if (!endpoint) { Toast.fire({ icon: "error", title: `Unknown action: ${action}` }); return; }
 
+      // Cancel (= soft delete) asks for an optional reason. Mark Complete stays
+      // ONE CLICK — no dialog, no body — it's the common path and friction there
+      // is what pushes people to just leave tasks sitting.
+      // Server clamps the note to 500 chars; maxlength is a courtesy.
+      let payload = null;
+      if (action === "Cancel") {
+        const { value, isConfirmed } = await Swal.fire({
+          title: 'Cancel this task?',
+          input: 'textarea',
+          inputLabel: 'Note (optional)',
+          inputPlaceholder: 'Why is this task not needed?',
+          inputAttributes: { maxlength: 500 },
+          showCancelButton: true,
+          confirmButtonText: 'Cancel Task',
+          cancelButtonText: 'Keep Task'
+        });
+        if (!isConfirmed) return;                 // backed out — no PATCH at all
+        const note = (value || '').trim();
+        if (note) payload = { note };             // omit entirely when empty
+      }
+
       try {
-        const data = await apiSend(endpoint, "PATCH");
+        const data = await apiSend(endpoint, "PATCH", payload);
         Toast.fire({ icon: data.status, title: data.title, text: data.message });
         tabTasksGet(offsets.tasks);
         if (onSuccess) onSuccess();
@@ -1830,7 +1851,7 @@
             if (["Pending", "Due Today", "Overdue"].includes(task.status)) {
               opts = `<option value="Mark Complete">Mark Complete</option>
                     <option value="Edit">Edit</option>
-                    <option value="Cancel">Delete</option>`;
+                    <option value="Cancel">Cancel</option>`;
             } else if (task.status === "Deleted") {
               opts = `<option value="Uncancel">Reinstate</option>`;
             } else if (task.status === "Completed") {

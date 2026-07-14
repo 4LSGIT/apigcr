@@ -788,7 +788,7 @@ async function addLog() {
             if (["Pending", "Due Today", "Overdue"].includes(task.status)) {
               opts = `<option value="Mark Complete">Mark Complete</option>
                     <option value="Edit">Edit</option>
-                    <option value="Cancel">Delete</option>`;
+                    <option value="Cancel">Cancel</option>`;
             } else if (task.status === "Deleted") {
               opts = `<option value="Uncancel">Reinstate</option>`;
             } else if (task.status === "Completed") {
