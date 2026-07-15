@@ -209,6 +209,10 @@
     <i class="fa-solid fa-rotate-right" id="act-refresh-icon"></i> Refresh
   </button>
 
+  <button class="btn btn-primary btn-sm" id="act-process-btn" onclick="processJobs()">
+    <i class="fa-solid fa-gears" id="act-process-icon"></i> Process Jobs
+  </button>
+  
   <span class="act-updated" id="act-updated"></span>
 </div>
 
@@ -246,6 +250,46 @@
 
 const P = window.parent;
 const api = (...args) => P.apiSend(...args);
+
+// Local toast (same recipe as courtReview.html — Swal is loaded in <head>).
+const Toast = Swal.mixin({
+  toast: true,
+  position: 'top-end',
+  showConfirmButton: false,
+  timer: 3000,
+  timerProgressBar: true,
+  didOpen: (t) => { t.onmouseenter = Swal.stopTimer; t.onmouseleave = Swal.resumeTimer; },
+});
+
+// Manually kick the /process-jobs poller. Safe to click any time: the endpoint
+// claims its batch with FOR UPDATE SKIP LOCKED, so a manual run racing the cron
+// just picks up different rows. Spinner + disabled guard against double-fire.
+async function processJobs() {
+  const btn  = document.getElementById('act-process-btn');
+  const icon = document.getElementById('act-process-icon');
+  if (btn.disabled) return;
+  const prevIcon = icon.className;
+  btn.disabled = true;
+  icon.className = 'fa-solid fa-spinner fa-spin';
+  try {
+    const out    = await api('/process-jobs', 'POST');
+    const n      = out?.processed ?? 0;
+    const failed = (out?.results || []).filter((r) => r.status === 'failed').length;
+    if (n === 0) {
+      Toast.fire({ icon: 'info', title: 'No jobs were due' });
+    } else if (failed) {
+      Toast.fire({ icon: 'warning', title: `Processed ${n} job${n === 1 ? '' : 's'} · ${failed} failed` });
+    } else {
+      Toast.fire({ icon: 'success', title: `Processed ${n} job${n === 1 ? '' : 's'}` });
+    }
+    loadActivity(); // reflect what just ran
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message || 'Process failed' });
+  } finally {
+    btn.disabled = false;
+    icon.className = prevIcon;
+  }
+}
 
 function esc(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
