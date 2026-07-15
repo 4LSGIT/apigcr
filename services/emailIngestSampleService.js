@@ -274,8 +274,14 @@ function _normSince(since) {
  *   wide/exec_id rows; the scope-'logged' query is untouched (its SQL is a
  *   regression surface) so its rows do not carry it, and its only consumer
  *   (getSampleEvents) never reads it.
- *   fidelity 'full'          → raw_input was intact; all 12 catalog fields real
- *   fidelity 'reconstructed' → clean-column rebuild; the 4 raw-only fields absent
+ *   fidelity 'full'          → raw_input was intact; on wide/exec_id rows the
+ *                              envelope is the intact wire object VERBATIM
+ *                              (production truth); on 'logged' rows it is the
+ *                              catalog projection with all 12 fields real
+ *   fidelity 'reconstructed' → clean-column rebuild: the 4 raw-only fields are
+ *                              absent, `to` is a flat string (wire: array of
+ *                              {email,name}), and `body` is a derived field
+ *                              the production matcher never sees
  *   (Email reconstruction never SKIPS a row — contrast phone's
  *   unparseable_skipped — so there is no skip count here.)
  */
@@ -314,7 +320,17 @@ async function fetchSyntheticEnvelopes(db, { limit, since, until, scope = 'logge
         exec_id:  row.exec_id,
         ts:       row.created_at,
         status:   row.status,
-        envelope: _buildEnvelope(row, intact),
+        // Intact raw_input IS the production envelope — the exact object
+        // evaluateRules received (to as [{email,name}], text/html,
+        // headers.all, auth, …). Use it verbatim so test-match and
+        // test-transform see production truth; the catalog-shaped rebuild
+        // both OMITS wire fields (to.0.email / text / html → false
+        // negatives, found live 2026-07-15 on rule 11) and FABRICATES
+        // fields the matcher never sees (flat `to`, `body` — email_log.body
+        // is derived text||html for the LOG row only → false positives).
+        // Truncated rows (>16KB — most court mail) still get the rebuild;
+        // fidelity tells the caller which one it got.
+        envelope: intact || _buildEnvelope(row, null),
         fidelity: intact ? 'full' : 'reconstructed',
       }],
     };
@@ -394,7 +410,12 @@ async function fetchSyntheticEnvelopes(db, { limit, since, until, scope = 'logge
     const shaped = {
       exec_id:  row.exec_id,
       ts:       row.created_at,
-      envelope: _buildEnvelope(row, intact),
+      // scope 'wide' (test-match / test-transform): intact raw_input is used
+      // verbatim — production truth (see exec_id branch for the full why).
+      // scope 'logged' (sample panel) stays on the catalog-shaped rebuild:
+      // the 10A panel is a frozen regression surface, and its projection
+      // only reads catalog paths anyway.
+      envelope: (scope === 'wide' && intact) ? intact : _buildEnvelope(row, intact),
       fidelity: intact ? 'full' : 'reconstructed',
     };
     if (scope === 'wide') shaped.status = row.status;

@@ -1102,7 +1102,7 @@ window.togglePanelLeft = togglePanelLeft;
         </div>
         ${r.from !== undefined ? `
         <div style="margin-top:6px">
-          <textarea class="rule-transforms mono" rows="2" wrap="off" spellcheck="false"
+          <textarea class="rule-transforms mono" rows="3" wrap="off" spellcheck="false"
                     placeholder="one transform per line&#10;trim&#10;regex:(\\d{4,8})">${esc((r.transforms || []).join('\n'))}</textarea>
           <div class="hint">One transform per line. With <code>regex:</code> always use a capture group — <code>regex:(\\d{6})</code></div>
         </div>` : ''}

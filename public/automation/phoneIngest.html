@@ -1351,6 +1351,17 @@ window.piToggleSidebar = piToggleSidebar;
     const t = (data && data.transform) || {};
     let h = `<div style="text-align:left;font-size:12px">`;
     h += `<div style="margin-bottom:6px;color:var(--muted)">mode: <code>${esc(mode || 'passthrough')}</code>${mode === 'passthrough' ? ' — output = input' : ''}</div>`;
+    // Reconstructed rows (email >16KB at capture — the raw envelope was
+    // truncated) are rebuilt from clean DB columns: `to` is a flat string
+    // (live it's an array of {email,name}) and text/html/headers.all are
+    // unavailable. Say so, or missing transform output looks like a bug.
+    if (data && data.source && data.source.fidelity === 'reconstructed') {
+      h += `<div style="background:#fffbeb;border:1px solid #fde68a;color:#78350f;border-radius:6px;padding:8px 10px;margin-bottom:8px">
+        <i class="fa-solid fa-triangle-exclamation"></i> <strong>Reconstructed event</strong> — the raw envelope was truncated at capture (large email).
+        Only catalog fields were rebuilt: <code>to</code> is a flat string here (live it's an array — <code>to.0.email</code> won't resolve), and
+        <code>text</code> / <code>html</code> / <code>headers.all</code> are unavailable. Transform output may be missing fields that WOULD resolve live.
+      </div>`;
+    }
     if (t.ok) {
       h += `<div style="font-weight:600">Transform output</div>${ttPre(t.output)}`;
     } else {
