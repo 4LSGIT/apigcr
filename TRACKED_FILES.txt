@@ -399,4 +399,3 @@ tests/test-timing-extensions.js
 tests/test_classifier.js
 tests/workflows.editor.roundtrip.test.js
 views/v.html
-yc-editlock.patch
