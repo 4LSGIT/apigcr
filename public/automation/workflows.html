@@ -2357,7 +2357,18 @@ function wfGatherTestVars() {
   document.querySelectorAll('#wf-var-rows .var-row').forEach(row => {
     const [k, v] = row.querySelectorAll('input');
     const key = k.value.trim();
-    if (key && key !== 'this' && !key.startsWith('this.')) variables[key] = v.value;
+    if (!key || key === 'this' || key.startsWith('this.')) return;
+    let val = v.value;
+    // Round-trip the seed serialization: wfRenderTester JSON.stringify()s
+    // object/array test_input values into these text inputs. Parse container
+    // shapes back so the tester sends the same TYPES a live trigger would —
+    // the engine's single-placeholder fast path only preserves objects that
+    // arrive as objects. Scalars stay strings (historical behavior).
+    const t = val.trim();
+    if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+      try { val = JSON.parse(t); } catch (e) { /* not JSON — keep as string */ }
+    }
+    variables[key] = val;
   });
   return variables;
 }
