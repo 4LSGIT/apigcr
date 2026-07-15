@@ -144,12 +144,10 @@ public/calendar.html
 public/caltest.html
 public/campaign.html
 public/case.html
-public/caseV1.html
 public/caseerror.html
 public/communicate.html
 public/connections.html
 public/contact.html
-public/contactV1.html
 public/contactform.html
 public/courtpreview.html
 public/css/yc-forms.css
@@ -173,14 +171,12 @@ public/js/yc-forms.js
 public/manage.html
 public/manuals.html
 public/mms.html
-public/old.html
 public/pageManager.html
 public/rating.html
 public/readonlyKeys.html
 public/redirects.html
 public/reset-password.html
 public/scripts.js
-public/scripts1.js
 public/send-sms.html
 public/sendingform-bk.html
 public/sendingform.html
