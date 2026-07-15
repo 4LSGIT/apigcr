@@ -1229,12 +1229,28 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
         return { respond: { status: 200, body: { success: true, message: "No change needed" } } };
       }
 
+      // Park the moved row in the temp range FIRST — until 'from' is
+      // vacated, the shift below would land its first row on a still-
+      // occupied slot and hit uk_workflow_step (e.g. moving 3→2 shifts
+      // 2→3 while the moved row still sits at 3). Same +10000 temp
+      // convention as insert-at and the full-order path.
+      const [parked] = await connection.query(
+        `UPDATE workflow_steps
+         SET step_number = ?
+         WHERE workflow_id = ? AND step_number = ?`,
+        [from + 10000, workflowId, from]
+      );
+      if (parked.affectedRows === 0) {
+        throw new Error(`No step at position ${from}`);
+      }
+
       // Shift steps between from and to.
-      // ORDER BY direction ensures each step moves into a slot just vacated,
-      // preventing unique constraint collisions.
+      // ORDER BY direction ensures each step moves into a slot just vacated
+      // (starting with the slot 'from' just left), preventing unique
+      // constraint collisions.
       if (from < to) {
         // Moving step forward: shift intermediate steps down — process ASC
-        // so lowest step moves first into the slot being freed by 'from'
+        // so the lowest step moves first into the freed 'from' slot
         await connection.query(
           `UPDATE workflow_steps 
            SET step_number = step_number - 1 
@@ -1244,7 +1260,7 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
         );
       } else {
         // Moving step backward: shift intermediate steps up — process DESC
-        // so highest step moves first into the slot being freed by 'from'
+        // so the highest step moves first into the freed 'from' slot
         await connection.query(
           `UPDATE workflow_steps 
            SET step_number = step_number + 1 
@@ -1254,12 +1270,12 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
         );
       }
 
-      // Place the moved step
+      // Place the moved step from the temp range into its final slot
       await connection.query(
         `UPDATE workflow_steps 
          SET step_number = ? 
          WHERE workflow_id = ? AND step_number = ?`,
-        [to, workflowId, from]
+        [to, workflowId, from + 10000]
       );
     }
 
