@@ -329,6 +329,126 @@ function sjUpdateCredWarning(warnElId, credElId, urlElId) {
   warnEl.textContent = '⚠ ' + result.text;
 }
 
+// ─────────────────────────────────────────────────────────────
+// Internal-function param assist (scheduled-jobs flavor)
+//
+// hooks / emailIngest / phoneIngest got meta-driven param seeding via
+// paramsMapping.js (pmSeedFromMeta). That module is MAPPING-shaped:
+// values are dot-paths into an event payload, literals need quoting,
+// and the rows collect into a params_mapping resolved at dispatch
+// time. Scheduled jobs have no event payload — job_executor.js passes
+// data.params to fn(params, db) VERBATIM (internal_function branch).
+// So the equivalent here keeps the raw JSON textarea and adds:
+//
+//   sjRenderFnHints(fnName, hintsElId)
+//     Info panel from FUNCTIONS.meta: fn description + one line per
+//     declared param (red * when required; type / enum / default;
+//     description truncated inline, full text in the tooltip).
+//
+//   sjSeedParams(textareaId, fnName)
+//     MERGE, NEVER CLOBBER (same contract as pmSeedFromMeta): keeps
+//     every existing key including undeclared ones, appends one key
+//     per missing declared param — value = the param's `default` when
+//     it has one (typed, NOT quoted — these are literal JSON params,
+//     not mapping sources), else ''. No-op when the textarea holds
+//     invalid JSON (never clobber an in-progress edit) or a non-object.
+//
+//   sjStripBlankParams(obj)
+//     Save-time hygiene, the pmCollect analogue: deletes every key
+//     whose value is exactly '' — unfilled seed scaffolding, including
+//     scaffolding left behind after switching functions. Verified
+//     against live data 2026-07-15: zero production internal_function
+//     jobs carry a ''-valued param, so nothing real is lost.
+//
+//   sjMissingRequired(obj, fnName)
+//     Names of declared required params absent from obj (checked
+//     AFTER the blank-strip). Used as a SOFT save gate — warn once,
+//     a second Save click proceeds anyway. Soft because meta
+//     `required` flags are advisory decoration on the ingest
+//     surfaces, and a wrong flag must not brick a working job.
+//
+// Wiring: New Job seeds the initially-selected function at didOpen
+// and re-seeds on every function change. Edit shows the stored params
+// untouched at open (hints only — matches pmRender's undecorated open)
+// and seeds only on an explicit function change.
+// ─────────────────────────────────────────────────────────────
+
+function sjFnMeta(fnName) {
+  return (fnName && FUNCTIONS.meta && FUNCTIONS.meta[fnName]) || null;
+}
+
+function sjRenderFnHints(fnName, hintsElId) {
+  const el = document.getElementById(hintsElId);
+  if (!el) return;
+  const m = sjFnMeta(fnName);
+  if (!m || !Array.isArray(m.params) || !m.params.length) {
+    el.style.display = 'none';
+    el.innerHTML = '';
+    return;
+  }
+  const lines = m.params.map(p => {
+    if (!p || !p.name) return '';
+    const bits = [];
+    if (p.type) bits.push(esc(p.type));
+    if (Array.isArray(p.enum) && p.enum.length) bits.push('one of: ' + esc(p.enum.join(' | ')));
+    if (p.default !== undefined) bits.push('default: ' + esc(JSON.stringify(p.default)));
+    const descRaw = p.description ? String(p.description) : '';
+    const descShort = descRaw.length > 100 ? descRaw.slice(0, 100) + '…' : descRaw;
+    return `<div style="padding:1px 0"${descRaw ? ` title="${esc(descRaw)}"` : ''}>` +
+      `<code style="font-weight:600">${esc(p.name)}</code>` +
+      (p.required ? '<span style="color:#ef4444;font-weight:700" title="required">*</span>' : '') +
+      (bits.length ? `<span style="color:#94a3b8"> · ${bits.join(' · ')}</span>` : '') +
+      (descShort ? `<span style="color:#64748b"> — ${esc(descShort)}</span>` : '') +
+      `</div>`;
+  }).join('');
+  el.innerHTML =
+    (m.description ? `<div style="color:#475569;margin-bottom:4px">${esc(String(m.description))}</div>` : '') +
+    lines;
+  el.style.display = '';
+}
+
+function sjSeedParams(textareaId, fnName) {
+  const ta = document.getElementById(textareaId);
+  const m = sjFnMeta(fnName);
+  if (!ta || !m || !Array.isArray(m.params)) return;
+  let obj;
+  try { obj = JSON.parse(ta.value.trim() || '{}'); } catch { return; }
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) return;
+  let changed = false;
+  for (const p of m.params) {
+    if (!p || !p.name || Object.prototype.hasOwnProperty.call(obj, p.name)) continue;
+    obj[p.name] = p.default !== undefined ? p.default : '';
+    changed = true;
+  }
+  if (!changed) return;
+  ta.value = JSON.stringify(obj, null, 2);
+  // Grow to fit the seeded skeleton (capped) so params aren't hidden
+  // behind a 64px scroll pane the operator may not notice.
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight + 4, 260) + 'px';
+}
+
+function sjStripBlankParams(obj) {
+  for (const k of Object.keys(obj)) {
+    if (obj[k] === '') delete obj[k];
+  }
+}
+
+function sjMissingRequired(obj, fnName) {
+  const m = sjFnMeta(fnName);
+  if (!m || !Array.isArray(m.params)) return [];
+  return m.params
+    .filter(p => p && p.name && p.required && !Object.prototype.hasOwnProperty.call(obj, p.name))
+    .map(p => p.name);
+}
+
+// Function <select> change handler — hints + seed together.
+function sjOnFnChange(fnElId, paramsElId, hintsElId) {
+  const fnName = document.getElementById(fnElId)?.value || '';
+  sjRenderFnHints(fnName, hintsElId);
+  sjSeedParams(paramsElId, fnName);
+}
+
 // ══════════════════════════════════════════════════════════════════
 // LIST RENDERING
 // ══════════════════════════════════════════════════════════════════
@@ -426,6 +546,9 @@ async function jobNew() {
         `<option value="${c.id}">${esc(c.name)} (${esc(c.type)})</option>`
       ).join('')
     : `<option value="">loading credentials…</option>`;
+  // Soft required-param gate state: holds the last warning shown; a second
+  // Create click with the SAME missing set proceeds anyway (see helper block).
+  let paramAck = '';
   const { value: vals } = await Swal.fire({
     title: 'New Scheduled Job',
     html: `
@@ -460,8 +583,9 @@ async function jobNew() {
           <input id="sj-name" class="sj-el" placeholder="e.g. Daily digest, Reminder SMS"></div>
         <hr class="sj-divider">
         <div id="sj-fn-wrap" class="sj-field"><span class="sj-label">Function</span>
-          <select id="sj-fn" class="sj-el" ${FUNCTIONS.loaded ? '' : 'disabled'}>${fnOpts}</select></div>
+          <select id="sj-fn" class="sj-el" ${FUNCTIONS.loaded ? '' : 'disabled'} onchange="sjOnFnChange('sj-fn','sj-params','sj-fn-hints')">${fnOpts}</select></div>
         <div id="sj-params-wrap" class="sj-field"><span class="sj-label">Params (JSON)</span>
+          <div id="sj-fn-hints" style="display:none;text-align:left;font-size:11px;line-height:1.5;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:7px 10px;margin-bottom:6px;max-height:140px;overflow:auto"></div>
           <textarea id="sj-params" class="sj-el" placeholder='{ "from": "2485592400", "to": "...", "message": "..." }'>{}</textarea></div>
         <div id="sj-url-wrap" class="sj-field" style="display:none"><span class="sj-label">Webhook URL</span>
           <input id="sj-url" class="sj-el" placeholder="https://..." oninput="sjUpdateCredWarning('sj-cred-warn','sj-cred','sj-url')"></div>
@@ -510,6 +634,9 @@ async function jobNew() {
       // Initial warning evaluation — covers the case where someone re-opens
       // New Job after switching from a webhook flow.
       sjUpdateCredWarning('sj-cred-warn', 'sj-cred', 'sj-url');
+      // Seed + hints for the initially-selected function. Safe on the
+      // fetch-failed path: fn value is '' → sjFnMeta null → both no-op.
+      sjOnFnChange('sj-fn', 'sj-params', 'sj-fn-hints');
     },
     preConfirm: () => {
       const type = document.getElementById('sj-type').value;
@@ -546,10 +673,29 @@ async function jobNew() {
         }
         payload.function_name = fnVal;
         const p = document.getElementById('sj-params').value.trim();
+        let paramsObj = {};
         if (p) {
-          try { payload.params = JSON.parse(p); }
-          catch { Swal.showValidationMessage('Params is not valid JSON'); return false; }
+          try { paramsObj = JSON.parse(p); }
+          catch (err) { Swal.showValidationMessage('Params is not valid JSON: ' + err.message); return false; }
+          if (typeof paramsObj !== 'object' || paramsObj === null || Array.isArray(paramsObj)) {
+            Swal.showValidationMessage('Params must be a JSON object (e.g. { "key": "value" })');
+            return false;
+          }
         }
+        // Drop unfilled seed scaffolding (''-valued keys), then soft-gate on
+        // missing required params: warn once, second identical click proceeds.
+        sjStripBlankParams(paramsObj);
+        const missing = sjMissingRequired(paramsObj, fnVal);
+        if (missing.length) {
+          const warnKey = fnVal + '|' + missing.join(',');
+          if (paramAck !== warnKey) {
+            paramAck = warnKey;
+            Swal.showValidationMessage(
+              `Missing required param${missing.length > 1 ? 's' : ''}: ${missing.join(', ')} — click Create again to save anyway.`);
+            return false;
+          }
+        }
+        if (Object.keys(paramsObj).length) payload.params = paramsObj;
       } else if (job_type === 'webhook') {
         payload.url = document.getElementById('sj-url').value.trim();
         payload.method = document.getElementById('sj-method').value;
@@ -675,6 +821,8 @@ async function jobEdit(id) {
       ).join('')
     : `<option value="${esc(curCred)}" selected>loading credentials…</option>`;
 
+  // Soft required-param gate state — see jobNew / the helper block.
+  let paramAck = '';
   const { value: vals } = await Swal.fire({
     title: `Edit Job #${id}`,
     html: `
@@ -698,7 +846,7 @@ async function jobEdit(id) {
             <div class="sj-readonly">${esc(data.type)} · ${esc(jobType)}</div></div>
           ${isFn ? `
           <div class="sj-field"><span class="sj-label">Function</span>
-            <select id="sje-fn" class="sj-el" ${FUNCTIONS.loaded ? '' : 'disabled'}>${editFnOpts}</select></div>`
+            <select id="sje-fn" class="sj-el" ${FUNCTIONS.loaded ? '' : 'disabled'} onchange="sjOnFnChange('sje-fn','sje-params','sje-fn-hints')">${editFnOpts}</select></div>`
           : isWebhook ? `
           <div class="sj-field"><span class="sj-label">Webhook URL</span>
             <input id="sje-url" class="sj-el" value="${esc(jobUrl)}" placeholder="https://..." oninput="sjUpdateCredWarning('sje-cred-warn','sje-cred','sje-url')"></div>`
@@ -708,6 +856,7 @@ async function jobEdit(id) {
         </div>
         ${isFn ? `
         <div class="sj-field"><span class="sj-label">Params (JSON object)</span>
+          <div id="sje-fn-hints" style="display:none;text-align:left;font-size:11px;line-height:1.5;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:7px 10px;margin-bottom:6px;max-height:140px;overflow:auto"></div>
           <textarea id="sje-params" class="sj-el" rows="8">${esc(JSON.stringify(jobData.params ?? {}, null, 2))}</textarea></div>` : ''}
         <div class="sj-field"><span class="sj-label">Name</span>
           <input id="sje-name" class="sj-el" value="${esc(data.name || '')}"></div>
@@ -757,6 +906,10 @@ async function jobEdit(id) {
       // Initial warning evaluation — reads the (now editable) URL field so
       // the warning tracks in-dialog URL changes, matching jobNew.
       if (isWebhook) sjUpdateCredWarning('sje-cred-warn', 'sje-cred', 'sje-url');
+      // Hints only at open — stored params display untouched, exactly as
+      // saved (matches pmRender's undecorated-open contract on the ingest
+      // surfaces). Seeding fires only on an explicit function change.
+      if (isFn) sjRenderFnHints(fnName, 'sje-fn-hints');
     },
     preConfirm: () => {
       const payload = {};
@@ -844,6 +997,21 @@ async function jobEdit(id) {
           }
           if (typeof newParams !== 'object' || newParams === null || Array.isArray(newParams)) {
             Swal.showValidationMessage('Params must be a JSON object (e.g. { "key": "value" })');
+            return false;
+          }
+        }
+
+        // Drop unfilled seed scaffolding, then soft-gate on missing required
+        // params (warn once, second identical click saves). Registry-failed
+        // path degrades cleanly: no meta → strip still runs, gate is empty.
+        sjStripBlankParams(newParams);
+        const missing = sjMissingRequired(newParams, newFn);
+        if (missing.length) {
+          const warnKey = newFn + '|' + missing.join(',');
+          if (paramAck !== warnKey) {
+            paramAck = warnKey;
+            Swal.showValidationMessage(
+              `Missing required param${missing.length > 1 ? 's' : ''}: ${missing.join(', ')} — click Save again to save anyway.`);
             return false;
           }
         }
@@ -1015,6 +1183,8 @@ window.jobDelete         = jobDelete;
 window.jobView           = jobView;
 window.sjToggleFields    = sjToggleFields;
 window.sjUpdateCredWarning = sjUpdateCredWarning;
+window.sjOnFnChange      = sjOnFnChange;
+window.sjRenderFnHints   = sjRenderFnHints;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {
