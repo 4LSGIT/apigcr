@@ -42,6 +42,7 @@ const ruleService            = require('../services/emailIngestRuleService');
 const executionsService      = require('../services/emailIngestExecutionsService');
 const metaService            = require('../services/emailIngestMetaService');
 const sampleService          = require('../services/emailIngestSampleService');
+const actionDispatchers      = require('../lib/actionDispatchers');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -701,6 +702,124 @@ router.post('/api/email-ingest/rules/test-match', jwtOrApiKey, async (req, res) 
     return res.json(out);
   } catch (err) {
     console.error('[email-ingest] test-match error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────
+// TEST-TRANSFORM (read-only, zero side effects)
+//
+// POST /api/email-ingest/rules/test-transform
+//
+// Runs an editor's CURRENT (unsaved) transform config against ONE event —
+// either a historical execution (exec_id, sourced through the SAME fetcher
+// test-match uses, so fidelity/status semantics carry over) or an inline
+// `input` object — using the PRODUCTION runner
+// (ruleService._runTransform), so semantics are byte-identical to what the
+// rule would do live. A failed transform is a RESULT here (transform.ok =
+// false, HTTP 200), not a request error: "your transform fails on this
+// event — actions would be skipped" is the diagnostic payoff. Only
+// request-shape problems 400.
+//
+// Production-parity note: _runTransform's mapper branch console.warns
+// per-rule mapper errors but still returns ok:true with the partial output
+// (mirroring the hook system's non-fatal mapper errors). Those warnings are
+// NOT surfaced in this response — surfacing them would require bypassing the
+// production runner. The output shown IS what actions would receive.
+//
+// params_mappings (optional, ≤20 of {label?, mapping}): each mapping is
+// resolved against the transform output with actionDispatchers.
+// resolveParamsMapping — deliberately the dispatcher's copy, which carries
+// the Slice 9A '$' whole-object rule that live ingest dispatch uses
+// (hookService's local copy lacks it). Skipped when the transform failed.
+//
+// Body: { transform_mode, transform_config, exec_id? | input?, params_mappings? }
+//   exec_id — positive int; mutually exclusive with input (exactly one).
+//   input   — inline event object (the shape the transform sees in prod).
+// Response:
+//   { success:true, source: {exec_id, ts, fidelity, status} | 'inline',
+//     input, transform: {ok, output?, error?}, resolved_params?:
+//     [{label, params}] }
+// ─────────────────────────────────────────────────────────────
+
+router.post('/api/email-ingest/rules/test-transform', jwtOrApiKey, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { transform_mode, transform_config } = body;
+
+    // ── validation (request shape only — transform failures are results) ──
+    if (typeof transform_mode !== 'string' || !transform_mode) {
+      return res.status(400).json({ error: 'transform_mode is required' });
+    }
+
+    const hasExec  = body.exec_id !== undefined && body.exec_id !== null && body.exec_id !== '';
+    const hasInput = body.input   !== undefined && body.input   !== null;
+    if (hasExec === hasInput) {
+      return res.status(400).json({ error: 'provide exactly one of exec_id (historical execution) or input (inline event object)' });
+    }
+
+    let execId;
+    if (hasExec) {
+      const n = Number(body.exec_id);
+      if (!Number.isInteger(n) || n < 1) {
+        return res.status(400).json({ error: 'exec_id must be a positive integer' });
+      }
+      execId = n;
+    } else if (typeof body.input !== 'object' || Array.isArray(body.input)) {
+      return res.status(400).json({ error: 'input must be a JSON object (the event to transform)' });
+    }
+
+    let paramsMappings;
+    if (body.params_mappings !== undefined && body.params_mappings !== null) {
+      if (!Array.isArray(body.params_mappings) || body.params_mappings.length > 20) {
+        return res.status(400).json({ error: 'params_mappings must be an array of at most 20 {label?, mapping} entries' });
+      }
+      for (const pm of body.params_mappings) {
+        if (pm == null || typeof pm !== 'object' || Array.isArray(pm)
+            || pm.mapping == null || typeof pm.mapping !== 'object' || Array.isArray(pm.mapping)) {
+          return res.status(400).json({ error: 'each params_mappings entry needs a mapping object' });
+        }
+      }
+      paramsMappings = body.params_mappings;
+    }
+
+    // ── envelope sourcing ──
+    let envelope, source;
+    if (execId !== undefined) {
+      const corpus = await sampleService.fetchSyntheticEnvelopes(req.db, { exec_id: execId });
+      if (corpus.not_found) {
+        return res.status(404).json({
+          error: corpus.not_found === 'no_email_log'
+            ? `execution #${execId} has no email_log row — nothing to reconstruct (auth/validation failures never produced one)`
+            : `execution #${execId} not found`,
+        });
+      }
+      const row = corpus.rows[0];
+      envelope = row.envelope;
+      source   = { exec_id: row.exec_id, ts: row.ts, fidelity: row.fidelity, status: row.status };
+    } else {
+      envelope = body.input;
+      source   = 'inline';
+    }
+
+    // ── production runner ──
+    const testRule = { id: 'test-transform', name: '(editor)', transform_mode, transform_config };
+    const tr = ruleService._runTransform(testRule, envelope);
+    const transform = tr.ok ? { ok: true, output: tr.output } : { ok: false, error: tr.error };
+
+    const out = { success: true, source, input: envelope, transform };
+
+    if (tr.ok && paramsMappings) {
+      out.resolved_params = paramsMappings.map((pm, i) => ({
+        label:  (typeof pm.label === 'string' && pm.label) ? pm.label : `mapping #${i + 1}`,
+        params: actionDispatchers.resolveParamsMapping(pm.mapping, tr.output),
+      }));
+    }
+
+    return res.json(out);
+  } catch (err) {
+    console.error('[email-ingest] test-transform error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }
 });

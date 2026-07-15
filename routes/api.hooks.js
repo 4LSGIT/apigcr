@@ -20,6 +20,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
 const credentialCrypto = require('../lib/credentialCrypto');
 const hookService = require('../services/hookService');
+const actionDispatchers = require('../lib/actionDispatchers');
 const { listTransforms } = require('../services/hookTransforms');
 const { listOperators } = require('../services/hookFilter');
 
@@ -629,6 +630,104 @@ router.post('/api/hooks/:id/live-test', jwtOrApiKey, async (req, res) => {
     res.json({ status: 'success', result });
   } catch (err) {
     console.error('[hook] live-test error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// MANAGEMENT API — Transform test (stateless)
+//
+// POST /api/hooks/test-transform
+//
+// Tests a transform config against sample input WITHOUT loading, saving, or
+// executing any hook — the editor's current (unsaved) state is testable.
+// Complements /api/hooks/:id/test, which dry-runs the SAVED pipeline.
+//
+// Body:
+//   transform_mode / transform_config — the transform under test
+//   input          — sample event; smart-wrapped into the unified
+//                    {body,headers,query,method,meta} envelope exactly like
+//                    /test and /live-test when not already wrapped
+//   slug?          — carried into meta.slug of the wrap (fidelity for
+//                    transforms that read it); no lookup is performed
+//   pre_transform? — {transform_mode, transform_config} run FIRST; its output
+//                    feeds the main transform. Used by the target editor to
+//                    chain hook-level transform → target-level transform so
+//                    params previews see realistic input.
+//   params_mapping? — resolved against the FINAL transform output.
+//                    Deliberately resolved with actionDispatchers'
+//                    resolveParamsMapping — the copy carrying the Slice 9A
+//                    '$' whole-object rule that live delivery runs.
+//                    (hookService's local copy, which buildDryRunPreview
+//                    uses, lacks the '$' rule — a known preview divergence
+//                    this endpoint does not inherit.)
+//
+// Transform failures are RESULTS (errors[] in a 200), mirroring
+// runTransform's own posture; only request-shape problems 400. runTransform
+// can THROW on an unparseable string config (its JSON.parse is unguarded —
+// impossible live, where configs come from JSON columns as objects); the
+// safeRun wrapper converts that throw into the same errors[] shape.
+//
+// Response: { status:'success', result: { input, pre?, transform:
+//   {output, errors}, resolved_params? } }
+// ─────────────────────────────────────────────────────────────
+
+router.post('/api/hooks/test-transform', jwtOrApiKey, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { transform_mode, transform_config, pre_transform, params_mapping, slug } = body;
+
+    if (typeof transform_mode !== 'string' || !transform_mode) {
+      return res.status(400).json({ status: 'error', message: 'transform_mode is required' });
+    }
+    const rawInput = body.input;
+    if (rawInput == null || typeof rawInput !== 'object' || Array.isArray(rawInput)) {
+      return res.status(400).json({ status: 'error', message: 'input must be a JSON object (the sample event to transform)' });
+    }
+    if (pre_transform != null && (typeof pre_transform !== 'object' || Array.isArray(pre_transform)
+        || typeof pre_transform.transform_mode !== 'string' || !pre_transform.transform_mode)) {
+      return res.status(400).json({ status: 'error', message: 'pre_transform must be an object with transform_mode/transform_config' });
+    }
+    if (params_mapping != null && (typeof params_mapping !== 'object' || Array.isArray(params_mapping))) {
+      return res.status(400).json({ status: 'error', message: 'params_mapping must be an object' });
+    }
+
+    // Smart-wrap — same detection as /test and /live-test
+    const input = rawInput.meta ? rawInput : {
+      body: rawInput,
+      headers: {},
+      query: {},
+      method: 'POST',
+      meta: {
+        source: 'transform_test',
+        received_at: new Date().toISOString(),
+        ...(typeof slug === 'string' && slug ? { slug } : {}),
+      },
+    };
+
+    const safeRun = (mode, config, data) => {
+      try { return hookService.runTransform(mode, config, data); }
+      catch (err) { return { output: {}, errors: [`Transform failed: ${err.message}`] }; }
+    };
+
+    let stageInput = input;
+    let pre;
+    if (pre_transform) {
+      pre = safeRun(pre_transform.transform_mode, pre_transform.transform_config, input);
+      stageInput = pre.output;
+    }
+
+    const transform = safeRun(transform_mode, transform_config, stageInput);
+
+    const result = { input, ...(pre ? { pre } : {}), transform };
+
+    if (params_mapping) {
+      result.resolved_params = actionDispatchers.resolveParamsMapping(params_mapping, transform.output);
+    }
+
+    res.json({ status: 'success', result });
+  } catch (err) {
+    console.error('[hook] test-transform error:', err);
     res.status(500).json({ status: 'error', message: err.message });
   }
 });

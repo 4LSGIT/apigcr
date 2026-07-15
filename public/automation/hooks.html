@@ -544,6 +544,11 @@
               <div class="hint">Return an object. Variable: <code>input</code></div>
             </div>
           </div>
+          <div class="fg" style="margin-top:12px">
+            <button type="button" class="btn btn-outline" onclick="window.hookTestTransform()"><i class="fa-solid fa-vial"></i> Test Transform</button>
+            <div class="hint">Runs the transform above (unsaved edits included) against the Test tab input — or the captured sample if the Test tab is empty. Nothing is saved or delivered.</div>
+            <pre id="transform-test-result" class="hidden mono" style="background:var(--navy);color:#e2e8f0;padding:12px;border-radius:6px;font-size:11px;max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin-top:8px"></pre>
+          </div>
         </div>
 
         <!-- ══ TARGETS ══ -->
@@ -2043,6 +2048,10 @@ window.togglePanelLeft = togglePanelLeft;
               (e.g. <code>contact.id</code>). Wrap literal strings in single quotes:
               <code>'SMS'</code>. Numbers and booleans go as-is.
             </div>
+            <button type="button" id="swal-t-fn-preview" class="btn btn-outline" style="margin-top:8px;padding:4px 10px;font-size:12px">
+              <i class="fa-solid fa-vial"></i> Preview resolved params
+            </button>
+            <pre id="swal-t-fn-preview-out" class="mono" style="display:none;background:var(--navy);color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-word;margin-top:6px;text-align:left"></pre>
           </div>
         </div>
 
@@ -2198,6 +2207,44 @@ window.togglePanelLeft = togglePanelLeft;
 
     const addBtn = document.getElementById('swal-t-fn-add');
     if (addBtn) addBtn.addEventListener('click', () => pmAddRow(tPmEl(), T_PM_OPTS));
+
+    // Params-mapping preview — runs: test data → hook-level transform
+    // (CURRENT Transform-tab editor state, unsaved edits included) → this
+    // target's STORED transform (DB-only; no UI editor exists for it) →
+    // resolveParamsMapping over the LIVE pm rows (unsaved mapping edits
+    // included). The server resolves with actionDispatchers' copy — the
+    // '$'-aware resolver live delivery runs (buildDryRunPreview's local copy
+    // lacks the '$' rule, so this preview is MORE faithful than dry-run for
+    // '$' mappings).
+    const pvBtn = document.getElementById('swal-t-fn-preview');
+    if (pvBtn) pvBtn.addEventListener('click', async () => {
+      const outEl = document.getElementById('swal-t-fn-preview-out');
+      const input = transformTestInput();
+      if (!input) return;
+      outEl.style.display = 'block';
+      outEl.textContent = 'Resolving…';
+      try {
+        const data = await api('/api/hooks/test-transform', 'POST', {
+          pre_transform:    harvestTransformEditor(),
+          transform_mode:   t.transform_mode || 'passthrough',
+          transform_config: t.transform_config != null ? t.transform_config : null,
+          input,
+          params_mapping:   pmCollect(tPmEl()),
+          ...(activeHook && activeHook.slug ? { slug: activeHook.slug } : {}),
+        });
+        const r = (data && data.result) || {};
+        const errs = [
+          ...((r.pre && r.pre.errors) || []),
+          ...((r.transform && r.transform.errors) || []),
+        ];
+        let text = '';
+        if (errs.length) text += `⚠ ${errs.join('\n⚠ ')}\n\n`;
+        text += JSON.stringify(r.resolved_params, null, 2);
+        outEl.textContent = text;
+      } catch (e) {
+        outEl.textContent = `Error: ${e.message}`;
+      }
+    });
 
     // Meta-driven seeding. Picking a function appends one row per declared param
     // not already present (declaration order), prefilled with the param's
@@ -2551,6 +2598,62 @@ window.togglePanelLeft = togglePanelLeft;
   // ══════════════════════════════════════════════════════════════════
   // TEST TAB
   // ══════════════════════════════════════════════════════════════════
+
+  // ── Transform test (stateless — POST /api/hooks/test-transform) ──
+  //
+  // Tests the Transform tab's CURRENT (unsaved) editor state against test
+  // data, without saving the hook and without touching the pipeline. Input
+  // sourcing: the Test tab textarea wins when non-empty (it auto-fills from
+  // the captured sample and may carry manual edits); otherwise the captured
+  // sample itself; otherwise nothing to test with. The server smart-wraps a
+  // bare object into the unified {body,headers,query,method,meta} envelope
+  // exactly like /test and /live-test do.
+
+  function harvestTransformEditor() {
+    const transform_mode = E('f-transform-mode').value;
+    let transform_config = null;
+    if (transform_mode === 'mapper') transform_config = collectMapperRules();
+    else if (transform_mode === 'code') transform_config = { code: E('f-transform-code').value };
+    return { transform_mode, transform_config };
+  }
+
+  function transformTestInput() {
+    const raw = E('f-test-input').value.trim();
+    if (raw) {
+      try { return JSON.parse(raw); }
+      catch { Toast.fire({ icon: 'error', title: 'Test tab input is not valid JSON' }); return null; }
+    }
+    if (activeHook && activeHook.captured_sample) {
+      const cs = activeHook.captured_sample;
+      if (typeof cs === 'object' && cs !== null) return cs;
+      try { return JSON.parse(cs); } catch { /* fall through */ }
+    }
+    Toast.fire({ icon: 'warning', title: 'No test data — capture a sample or paste JSON in the Test tab' });
+    return null;
+  }
+
+  async function hookTestTransform() {
+    const input = transformTestInput();
+    if (!input) return;
+    const { transform_mode, transform_config } = harvestTransformEditor();
+    const out = E('transform-test-result');
+    out.classList.remove('hidden');
+    out.textContent = 'Running transform…';
+    try {
+      const data = await api('/api/hooks/test-transform', 'POST', {
+        transform_mode, transform_config, input,
+        ...(activeHook && activeHook.slug ? { slug: activeHook.slug } : {}),
+      });
+      const r = (data && data.result) || {};
+      const t = r.transform || {};
+      let text = '';
+      if (t.errors && t.errors.length) text += `⚠ ${t.errors.join('\n⚠ ')}\n\n`;
+      text += JSON.stringify(t.output, null, 2);
+      out.textContent = text;
+    } catch (e) {
+      out.textContent = `Error: ${e.message}`;
+    }
+  }
 
   async function runDryTest() {
     if (!activeHookId) { Toast.fire({ icon: 'warning', title: 'Save the hook first' }); return; }
@@ -2933,6 +3036,7 @@ async function runLiveTest() {
   window.hookToggleFilterMode     = toggleFilterMode;
   window.hookAddFilterCondition   = addFilterCondition;
   window.hookToggleTransformMode  = toggleTransformMode;
+  window.hookTestTransform        = hookTestTransform;
   window.hookAddMapperRule        = addMapperRule;
   window.hookAddTarget            = addTarget;
   window.hookUpdateCredWarning    = hookUpdateCredWarning;

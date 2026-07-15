@@ -448,6 +448,12 @@
       border-radius: 6px; padding: 8px 10px; font-size: 12px;
       word-break: break-word;
     }
+    .tm-row .tm-tf {
+      margin-left: 6px; flex: 0 0 auto;
+      border: 1px solid var(--border); background: #fff; color: var(--muted);
+      border-radius: 4px; padding: 1px 7px; font-size: 10px; cursor: pointer;
+    }
+    .tm-row .tm-tf:hover { color: var(--blue); border-color: var(--blue); }
 
     /* ══ ACTION-FORM schema-hint note (from meta.action_types config_schema_hint) ══ */
     .swal-a-note {
@@ -1206,6 +1212,7 @@ window.piToggleSidebar = piToggleSidebar;
       <span class="tm-label" title="${esc(r.label || '')}">${esc(r.label || '')}</span>
       ${st}
       ${fid}
+      ${clickable ? `<button type="button" class="tm-tf" data-tf="${esc(String(r.exec_id))}" title="Test transform against event #${esc(String(r.exec_id))}"><i class="fa-solid fa-shuffle"></i></button>` : ''}
     </div>`;
   }
 
@@ -1248,6 +1255,12 @@ window.piToggleSidebar = piToggleSidebar;
     bodyEl.querySelectorAll('.tm-row[data-exec]').forEach(el => {
       el.addEventListener('click', () => tmOpenExecution(el.getAttribute('data-exec')));
     });
+    // Shuffle button → run the editor's CURRENT (unsaved) transform against
+    // that one event (test-transform). stopPropagation keeps the row's
+    // open-drawer click from also firing.
+    bodyEl.querySelectorAll('.tm-tf[data-tf]').forEach(el => {
+      el.addEventListener('click', (ev) => { ev.stopPropagation(); ttRunForExec(el.getAttribute('data-tf')); });
+    });
   }
 
   function tmRenderBadRequest(e) {
@@ -1281,6 +1294,78 @@ window.piToggleSidebar = piToggleSidebar;
       openDrawer(`Execution #${id}`,
         `<div class="tm-err"><i class="fa-solid fa-triangle-exclamation"></i> ${esc((e && e.message) || 'Failed to load execution')}</div>`);
     }
+  }
+
+  // ── test-transform (per test-match row) — kept in sync across emailIngest.html/phoneIngest.html ──
+  //
+  // Harvest REUSES the save path (collectRuleForm) — what gets tested is
+  // exactly the transform Save would persist, unsaved edits included. The
+  // event is sourced server-side by exec_id through the SAME fetcher
+  // test-match uses, and the transform runs through the PRODUCTION runner
+  // (ruleService._runTransform), so a failure here is exactly the failure
+  // the rule would log live ("actions skipped").
+  //
+  // Saved internal_function actions (incl. the Forward pseudo-type, which is
+  // stored as internal_function) ride along as params_mappings — the server
+  // resolves each against the transform output with the '$'-aware resolver
+  // live dispatch uses. Unsaved action-editor edits are NOT included: actions
+  // are save-first by design, so the loop is save action → test a row.
+  const TT_ENDPOINT = TM_ENDPOINT.replace('/rules/test-match', '/rules/test-transform');
+
+  function ttPre(v) {
+    return `<pre style="background:var(--navy);color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;max-height:260px;overflow:auto;text-align:left;white-space:pre-wrap;word-break:break-word;margin:6px 0 0">${esc(JSON.stringify(v, null, 2))}</pre>`;
+  }
+
+  async function ttRunForExec(execId) {
+    const payload = collectRuleForm();
+    const body = {
+      transform_mode:   payload.transform_mode,
+      transform_config: payload.transform_config,
+      exec_id:          Number(execId),
+    };
+    const pms = (ruleForm.actions || [])
+      .filter(a => a.active !== 0 && a.action_type === 'internal_function')
+      .map(a => {
+        const cfg = parseJson(a.config) || {};
+        if (!cfg.params_mapping || typeof cfg.params_mapping !== 'object') return null;
+        return { label: `action #${a.id} — ${cfg.function_name || 'internal_function'}`, mapping: cfg.params_mapping };
+      })
+      .filter(Boolean)
+      .slice(0, 20);
+    if (pms.length) body.params_mappings = pms;
+
+    Swal.fire({
+      title: `Transform test — event #${esc(String(execId))}`,
+      html: '<div style="padding:16px;text-align:left"><i class="fa-solid fa-spinner spin"></i> Running…</div>',
+      showConfirmButton: false, allowOutsideClick: false, width: 720,
+    });
+    try {
+      const data = await api(TT_ENDPOINT, 'POST', body);
+      ttRenderModal(execId, data, payload.transform_mode);
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Transform test failed', text: (e && e.message) || 'Request failed' });
+    }
+  }
+
+  function ttRenderModal(execId, data, mode) {
+    const t = (data && data.transform) || {};
+    let h = `<div style="text-align:left;font-size:12px">`;
+    h += `<div style="margin-bottom:6px;color:var(--muted)">mode: <code>${esc(mode || 'passthrough')}</code>${mode === 'passthrough' ? ' — output = input' : ''}</div>`;
+    if (t.ok) {
+      h += `<div style="font-weight:600">Transform output</div>${ttPre(t.output)}`;
+    } else {
+      h += `<div style="color:#b91c1c;font-weight:600"><i class="fa-solid fa-triangle-exclamation"></i> Transform failed — the rule would NOT fire its actions on this event</div>` +
+           `<div style="margin-top:4px;color:#b91c1c">${esc(t.error || '')}</div>`;
+    }
+    if (Array.isArray(data && data.resolved_params) && data.resolved_params.length) {
+      h += `<div style="font-weight:600;margin-top:12px">Resolved params (saved actions)</div>`;
+      for (const rp of data.resolved_params) {
+        h += `<div style="margin-top:6px;color:var(--muted)">${esc(rp.label || '')}</div>${ttPre(rp.params)}`;
+      }
+    }
+    h += `<details style="margin-top:12px"><summary style="cursor:pointer;font-weight:600">Input event</summary>${ttPre(data && data.input)}</details>`;
+    h += `</div>`;
+    Swal.fire({ title: `Transform test — event #${esc(String(execId))}`, html: h, width: 720, confirmButtonText: 'Close' });
   }
 
   // Fallback operator list — mirrors hooks.html's hardcoded 15 operators,
