@@ -1,0 +1,1231 @@
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/TRACKED_FILES.txt rebased/TRACKED_FILES.txt
+--- a/TRACKED_FILES.txt	2026-07-15 01:02:18.141401943 +0000
++++ b/TRACKED_FILES.txt	2026-07-15 01:02:08.361141509 +0000
+@@ -307,6 +307,7 @@
+ scripts/courtSummaryTest.js
+ scripts/courtTitleMatchTest.js
+ scripts/encrypt-smtp-passwords.js
++scripts/sweep_validate_live.js
+ scripts/test_availability.js
+ scripts/test_court_revert.js
+ scripts/test_email_ingest.sh
+@@ -314,6 +315,7 @@
+ scripts/test_email_ingest_crud.js
+ scripts/test_email_ingest_suppression.sh
+ scripts/updateRoutes.js
++scripts/verify_strictstring_live.js
+ server.js
+ services/adapters/email/gmail.js
+ services/adapters/email/pabbly.js
+@@ -387,12 +389,13 @@
+ tests/hookTransforms.test.js
+ tests/internal_functions.meta.test.js
+ tests/logservice.buildcaselogwhere.test.js
+-tests/logservice.updateloglink.test.js
++tests/logService.updateLogLink.test.js
+ tests/phoneingestservice.dedup.test.js
+-tests/taskservice.test.js
++tests/taskService.test.js
+ tests/test-credential-crypto.js
+ tests/test-cron.js
+ tests/test-oauthService.js
+ tests/test-timing-extensions.js
+ tests/test_classifier.js
++tests/workflows.editor.roundtrip.test.js
+ views/v.html
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/lib/internal_functions/ai.js rebased/lib/internal_functions/ai.js
+--- a/lib/internal_functions/ai.js	2026-07-15 01:02:18.142191839 +0000
++++ b/lib/internal_functions/ai.js	2026-07-15 01:01:55.118782832 +0000
+@@ -354,8 +354,8 @@
+   category: 'ai',
+   description: 'Send a prompt to Claude (AI) and use the response. Put instructions in "prompt" and any foreign text (email bodies, inbound messages) in "input" — input is wrapped in an injection guard, prompt is not. Optionally attach ONE file (PDF or image) via file_url / file_dropbox_path / file_dropbox_link / file_asset_id so the AI reads the actual document — including SCANNED PDFs that parse_pdf can\'t (attached files are treated as untrusted data with an automatic guard). COST: PDF attachments bill ~1.5–3k tokens/page (text+image) — prefer haiku for simple extractions, and prefer parse_pdf + input for born-digital PDFs when layout doesn\'t matter. Same-step set_vars: {{this.output}} (text) or {{this.output.field}} (json). Use output_var to expose the result to later steps. Every attempt is logged to ai_calls with cost.',
+   params: [
+-    { name: 'prompt', type: 'string', required: true, placeholderAllowed: true, multiline: true,
+-      description: 'Instructions for the AI. {{placeholders}} resolve before sending. Do NOT paste untrusted text here — use "input".',
++    { name: 'prompt', type: 'string', required: true, placeholderAllowed: true, multiline: true, strictString: true,
++      description: 'Instructions for the AI. {{placeholders}} resolve before sending. Do NOT paste untrusted text here — use "input". Runtime rejects a non-string prompt.',
+       example: 'Extract the caller\'s callback phone number from the email. Respond with JSON: {"phone": string|null}' },
+     { name: 'input', type: 'string', required: false, placeholderAllowed: true, multiline: true,
+       description: 'The data to analyze (email body, message text, query_db output). Wrapped in <untrusted_user_input> with a never-obey guard.',
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/lib/internal_functions/appointments.js rebased/lib/internal_functions/appointments.js
+--- a/lib/internal_functions/appointments.js	2026-07-15 01:02:18.142265762 +0000
++++ b/lib/internal_functions/appointments.js	2026-07-15 01:01:55.113734348 +0000
+@@ -118,8 +118,15 @@
+       description: 'Length in minutes.', example: 15 },
+     { name: 'appt_platform', type: 'enum', required: true,
+       enum: ['Telephone', 'Zoom', 'In-person'] },
++    // placeholderAllowed is REQUIRED here despite the integer type — the
++    // validator's placeholder bypass runs BEFORE the type check, so the flag
++    // works on any type (same reasoning as update_log.log_id). This function's
++    // own JSDoc example passes "{{attorney_user_id}}", and wf7 s3 does exactly
++    // that in production; omitting the flag 400'd that step at save while the
++    // executor (which resolves placeholders first, then parseInt's) ran it fine.
+     { name: 'appt_with', type: 'integer', required: false, default: 1,
+-      description: 'User ID. Defaults to 1.' },
++      placeholderAllowed: true,
++      description: 'User ID. Defaults to 1. Accepts a {{placeholder}}.' },
+     { name: 'note', type: 'string', required: false, multiline: true },
+     { name: 'confirm_sms', type: 'boolean', required: false, default: false },
+     { name: 'confirm_email', type: 'boolean', required: false, default: false },
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/lib/internal_functions/control.js rebased/lib/internal_functions/control.js
+--- a/lib/internal_functions/control.js	2026-07-15 01:02:18.142704459 +0000
++++ b/lib/internal_functions/control.js	2026-07-15 01:01:55.112390981 +0000
+@@ -51,8 +51,20 @@
+   controlFlow: true,
+   description: 'Jump to a specific step number, or terminate with cancel/fail.',
+   params: [
++    // type:'string' but the live corpus (and this spec's own `example: 5`)
++    // stores a bare step NUMBER — legal since _validateType's string case
++    // accepts finite numbers.
++    //
++    // nullishSkipsBlock is what makes required:true compatible with the
++    // documented `{"value": null}` idiom (= end the workflow normally; live on
++    // wf28 s6). The flag switches the required-check to key-presence, so an
++    // explicit null passes while an OMITTED value still 400s — omission is not
++    // the same thing: with no `value` the function returns next_step:undefined,
++    // which the engine's `next_step !== undefined` guard turns into a silent
++    // fall-through to the following step rather than a stop.
+     { name: 'value', type: 'string', required: true, placeholderAllowed: true,
+-      description: 'Step number, "cancel", "fail", or null/empty to end normally.',
++      nullishSkipsBlock: true,
++      description: 'Step number, "cancel", "fail", or null to end normally.',
+       example: 5 },
+   ],
+   example: { value: 5 }
+@@ -124,9 +136,17 @@
+       modeGroup: 'single',
+       enum: ['==','!=','>','<','>=','<=','contains','not_contains','is_empty','is_not_empty'],
+       description: 'Comparison operator. Required if `variable` is set.' },
++    // The comparison OPERAND. Its JSDoc type is `{any}` and evaluateSingle
++    // applies it with LOOSE equality, so the stored JSON type is load-bearing:
++    // wf15 s1 / wf16 s1 gate on `needs_fetch == true` with a literal boolean,
++    // and `true == "true"` is FALSE in JS — coercing the operand to a string
++    // would silently invert those branches. Hence booleanAllowed here (and
++    // finite numbers, which the string case now accepts globally: `value: 1`
++    // on wf15 s5 / wf16 s4 / wf17 s3).
+     { name: 'value', type: 'string', required: false, placeholderAllowed: true,
++      booleanAllowed: true,
+       modeGroup: 'single',
+-      description: 'Value to compare against. Ignored for is_empty / is_not_empty.' },
++      description: 'Value to compare against (string, number, or boolean — compared loosely). Ignored for is_empty / is_not_empty.' },
+     { name: 'conditions', type: 'array', required: false,
+       modeGroup: 'multi',
+       description: 'Array of {variable, operator, value} for multi-condition mode.',
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/lib/internal_functions/db.js rebased/lib/internal_functions/db.js
+--- a/lib/internal_functions/db.js	2026-07-15 01:02:18.142859084 +0000
++++ b/lib/internal_functions/db.js	2026-07-15 01:01:55.117275334 +0000
+@@ -275,8 +275,8 @@
+     { name: 'select', type: 'array', required: true,
+       description: 'Columns. ["*"] for all from `from`. e.g. ["contacts.contact_name","appts.appt_date"].',
+       example: ['contacts.contact_name', 'appts.appt_date'] },
+-    { name: 'from', type: 'string', required: true,
+-      description: 'Primary table (whitelisted).', example: 'cases' },
++    { name: 'from', type: 'string', required: true, strictString: true,
++      description: 'Primary table (whitelisted). Runtime _qdbValidateId rejects a non-string, so strictString keeps that a save-time 400.', example: 'cases' },
+     { name: 'join', type: 'array', required: false,
+       description: 'JOIN clauses. Each: { type, table, alias?, on:{left,right} }.' },
+     { name: 'where', type: 'array', required: false,
+@@ -787,20 +787,20 @@
+     'set_column/set_value + where_column/where_value form — their params_mapping does not recurse ' +
+     'into nested objects.',
+   params: [
+-    { name: 'table', type: 'string', required: true, placeholderAllowed: true,
+-      description: 'Writable table (see description).', example: 'checkitems' },
++    { name: 'table', type: 'string', required: true, placeholderAllowed: true, strictString: true,
++      description: 'Writable table (see description). _wdbValidateTable rejects a non-string identifier.', example: 'checkitems' },
+     { name: 'set', type: 'object', required: false,
+       description: 'Rich form: { column: value, ... }. Workflow/scheduled-job steps only — ' +
+                    'placeholders resolve at any depth there. Mutually exclusive with set_column.' },
+     { name: 'where', type: 'array', required: false,
+       description: 'Rich form: [{ column, op?, value }]. Columns limited to the table policy. ' +
+                    'Mutually exclusive with where_column.' },
+-    { name: 'set_column', type: 'string', required: false, placeholderAllowed: true,
++    { name: 'set_column', type: 'string', required: false, placeholderAllowed: true, strictString: true,
+       description: 'Flat form: the single column to set. Use from ingest actions / hook targets.',
+       example: 'status' },
+     { name: 'set_value', type: 'string', required: false, placeholderAllowed: true, multiline: true,
+       description: 'Flat form: the value for set_column. Scalar or null.' },
+-    { name: 'where_column', type: 'string', required: false, placeholderAllowed: true,
++    { name: 'where_column', type: 'string', required: false, placeholderAllowed: true, strictString: true,
+       description: 'Flat form: identity column to match (op is always "=").', example: 'id' },
+     { name: 'where_value', type: 'string', required: false, placeholderAllowed: true,
+       description: 'Flat form: the value for where_column.' },
+@@ -895,8 +895,8 @@
+     'in the DB console); tasks is update-only (use create_task). PK / auto_increment / generated / ' +
+     'timestamp columns are never settable. Duplicate-key collisions throw.',
+   params: [
+-    { name: 'table', type: 'string', required: true, placeholderAllowed: true,
+-      description: 'Writable table with insert:true (see description).', example: 'checkitems' },
++    { name: 'table', type: 'string', required: true, placeholderAllowed: true, strictString: true,
++      description: 'Writable table with insert:true (see description). _wdbValidateTable rejects a non-string identifier.', example: 'checkitems' },
+     { name: 'values', type: 'object', required: true,
+       description: '{ column: value, ... }. Scalars or null only — JSON.stringify structured values.' },
+     { name: 'output_var', type: 'string', required: false,
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/lib/internal_functions/index.js rebased/lib/internal_functions/index.js
+--- a/lib/internal_functions/index.js	2026-07-15 01:02:18.143235185 +0000
++++ b/lib/internal_functions/index.js	2026-07-15 01:01:55.109965473 +0000
+@@ -45,11 +45,21 @@
+   return !_isNullishParam(params[name]);
+ }
+ 
+-// `nullishSkipsBlock` params (wait_for.at, schedule_resume.resumeAt) treat
+-// explicit-null as a valid value with runtime semantics ("skip this block,
+-// jump to skipToStep"). For presence checks involving such params, we use
+-// key-presence rather than value-presence so the precompute-and-gate pattern
+-// (apptService.createAppt et al.) saves cleanly.
++// `nullishSkipsBlock` marks a param where explicit-null is a MEANINGFUL VALUE
++// with its own runtime semantics — not an absent param. Presence checks on such
++// params therefore use key-presence rather than value-presence, so the
++// precompute-and-gate pattern (apptService.createAppt et al.) saves cleanly.
++//
++// Current carriers:
++//   wait_for.at / schedule_resume.resumeAt — null = "skip this block, jump to
++//     skipToStep" (the flag's original, narrower meaning — hence the name).
++//   set_next.value — null = "end the workflow normally" (control.js). Its own
++//     description has always documented null as a legal value, but the param is
++//     required:true, so {value:null} — the documented idiom, live on wf28 s6 —
++//     hit "value is required" and 400'd at save. required stays ON: omitting
++//     `value` entirely is NOT the same thing (the engine's
++//     `next_step !== undefined` guard makes a valueless set_next a silent
++//     fall-through to the next step), so the step must still declare an intent.
+ function _isPresentForGroup(params, spec, name) {
+   if (spec && spec.nullishSkipsBlock) return name in params;
+   return _isProvided(params, name);
+@@ -59,8 +69,54 @@
+   switch (spec.type) {
+     case 'string':
+     case 'placeholder_string':
+-      if (typeof v !== 'string') return 'must be a string';
+-      return null;
++      if (typeof v === 'string') return null;
++
++      // strictString: a string is the ONLY acceptable form — skip every
++      // widening below. Carried by the eight params whose RUNTIME hard-rejects
++      // a non-string, so a number fails HERE at save time (400) with a precise
++      // message rather than deferring to a runtime throw on first execution:
++      //   parse_pdf.pages          — services/pdfService.js (parsePageRangeSyntax)
++      //   query_db.from            — db.js  _qdbValidateId
++      //   update_db.table          — db.js  _wdbValidateTable
++      //   insert_db.table          — db.js  _wdbValidateTable
++      //   update_db.set_column     — db.js
++      //   update_db.where_column   — db.js
++      //   set_setting.key          — system.js
++      //   get_setting.key          — system.js
++      //   query_ai.prompt          — ai.js
++      // (placeholderAllowed still wins where set — the {{token}} bypass runs in
++      // validateParamsAgainstMeta BEFORE _validateType, so a placeholder on one
++      // of these never reaches this line.)
++      if (spec.strictString) return 'must be a string';
++
++      // FINITE NUMBERS pass a string param — globally, for every non-strict
++      // spec.
++      //
++      // The `number`/`integer` cases below already coerce the other direction
++      // (a numeric STRING passes a numeric param), and the string case
++      // rejecting a number made that asymmetry an edit-lock: `set_next.value`
++      // is typed string but its own example is `5`, and 8 live steps store a
++      // bare step number there (wf1/2/15/16 s*), as does evaluate_condition's
++      // comparison operand (`value: 1`) and run_task_digest's `user: 6`.
++      // Booleans, objects, and arrays are still rejected here unless a per-spec
++      // flag below opts them in.
++      if (typeof v === 'number' && Number.isFinite(v)) return null;
++
++      // OPT-IN WIDENINGS — per-spec, never global.
++      //
++      // objectAllowed: a plain object literal passes. For params whose runtime
++      //   dual-accepts object-or-string (create_log.data / phone_log.data →
++      //   logService.createLogEntry stringifies an object; 7 live steps pass
++      //   nested {to,from,status,direction,…} blobs).
++      // booleanAllowed: a boolean passes. For comparison OPERANDS, whose JSDoc
++      //   type is genuinely `{any}` (evaluate_condition.value — wf15 s1 / wf16
++      //   s1 compare against literal `true`, and coercing that to the string
++      //   "true" would silently INVERT the branch: `true == true` is true but
++      //   `true == "true"` is false).
++      if (spec.objectAllowed && v !== null && typeof v === 'object' && !Array.isArray(v)) return null;
++      if (spec.booleanAllowed && typeof v === 'boolean') return null;
++
++      return 'must be a string';
+     case 'number': {
+       let n = v;
+       if (typeof n === 'string' && n.trim() !== '') n = Number(n);
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/lib/internal_functions/log.js rebased/lib/internal_functions/log.js
+--- a/lib/internal_functions/log.js	2026-07-15 01:02:18.143276155 +0000
++++ b/lib/internal_functions/log.js	2026-07-15 01:01:55.115639737 +0000
+@@ -77,9 +77,9 @@
+ //     path would hand back an object the validator then rejects — form and
+ //     validator disagreeing is the smell that flagged this.
+ //
+-// (The `data` param below is declared type:'string' and is ALSO passed as an
+-// object by those same steps — that is a real, pre-existing edit-lock, tracked
+-// separately. It is NOT the precedent to copy.)
++// (The `data` param below was ALSO passed as an object by those same steps
++// while declared type:'string' — the pre-existing edit-lock this comment used
++// to defer. It is fixed now, but NOT by copying `extra`: see DATA_PARAM.)
+ const EXTRA_PARAM = {
+   name: 'extra',
+   type: 'object',
+@@ -93,6 +93,39 @@
+     'writes SQL NULL for anything that is not a plain object.',
+ };
+ 
++// `data` → the log_data column. Shared for the same lockstep reason as
++// EXTRA_PARAM: phone_log is a documented drop-in for create_log, both funnel
++// into logService.createLogEntry, and their metas must not drift.
++//
++// TYPE STAYS 'string' + objectAllowed — it is NOT declared type:'object' the
++// way `extra` is, and the difference is deliberate:
++//
++//   - `extra` is a STRUCTURED column. Object is its only sane form, so
++//     type:'object' is honest and the editor gives it a JSON textarea.
++//
++//   - `data` is genuinely EITHER. Plain text ("Auto follow-up sent" — the
++//     example on create_log, and what most callers pass) or a nested blob
++//     (7 live steps: wf15 s8 / wf16 s7 on create_log; wf17–21 on phone_log
++//     pass {to,from,status,direction,attachments,…}). createLogEntry
++//     dual-accepts and stringifies. Declaring type:'object' would edit-lock
++//     every plain-text caller — the exact inverse of the bug being fixed —
++//     and would force the editor to render a JSON textarea for a field that is
++//     usually a sentence. So: string, opted into objects via objectAllowed.
++//     workflows.html already round-trips the object form correctly (render
++//     auto-promotes a non-string value to a data-json="1" textarea; gather
++//     JSON.parses it back), so form and validator now agree.
++const DATA_PARAM = {
++  name: 'data',
++  type: 'string',
++  required: false,
++  multiline: true,
++  objectAllowed: true,
++  description:
++    'log_data content. Plain text, a JSON string, or an object literal — ' +
++    'logService.createLogEntry dual-accepts and stringifies. {{placeholders}} ' +
++    'inside an object literal\'s VALUES resolve normally.',
++};
++
+ 
+ // ─────────────────────────────────────────────────────────────
+ // LOG (Phase 0.7)
+@@ -149,13 +182,22 @@
+   description: 'Insert a log entry. Used by workflows/sequences to record events.',
+   params: [
+     { name: 'type', type: 'enum', required: true, enum: LOG_TYPES },
++    // placeholderAllowed on an ENUM: the bypass runs before the type check, so
++    // it works on any type. wf15 s8 / wf16 s7 pass "{{link_type}}" — the whole
++    // point of those steps is that the ingest pipeline decides the link type at
++    // run time. Without the flag the enum check fired on the literal token and
++    // 400'd the step at save. The value is still enum-checked whenever it is a
++    // real literal; only {{tokens}} skip it (unresolvable at save time by
++    // definition), and an out-of-enum RESOLVED value fails at run time in
++    // logService/MySQL where it belongs.
+     { name: 'link_type', type: 'enum', required: false,
+-      enum: LINK_TYPES,
++      enum: LINK_TYPES, placeholderAllowed: true,
+       description:
+         "For 'phone'/'email', link_id is the value itself (logService " +
+         "normalizes phone to 10 digits and email to lowercased+trimmed). " +
+         "Use these when the log isn't attached to a specific entity ID — " +
+-        "inbound comms, automation traces, pre-contact pipeline activity." },
++        "inbound comms, automation traces, pre-contact pipeline activity. " +
++        "Accepts a {{placeholder}}." },
+     { name: 'link_id', type: 'string', required: false, placeholderAllowed: true,
+       description:
+         'Entity ID for contact/case/appt/bill, OR the phone (any format, ' +
+@@ -163,15 +205,19 @@
+         'link_type is phone/email.' },
+     { name: 'by', type: 'integer', required: false, default: 0,
+       description: 'User ID (0 for system/automation).' },
+-    { name: 'data', type: 'string', required: false, multiline: true,
+-      description: 'log_data content. JSON string or plain text. Objects are stringified at runtime.' },
++    DATA_PARAM,
+     { name: 'from', type: 'string', required: false, placeholderAllowed: true },
+     { name: 'to', type: 'string', required: false, placeholderAllowed: true },
+     { name: 'subject', type: 'string', required: false, placeholderAllowed: true },
+     { name: 'message', type: 'string', required: false, placeholderAllowed: true,
+       multiline: true,
+       description: 'log_message — legacy but still written.' },
+-    { name: 'direction', type: 'enum', required: false, enum: ['incoming', 'outgoing'] },
++    // Same placeholder story as link_type — wf15 s8 / wf16 s7 pass
++    // "{{direction}}". logService normalizes the resolved value
++    // ('Inbound'→'incoming') before the column write.
++    { name: 'direction', type: 'enum', required: false, enum: ['incoming', 'outgoing'],
++      placeholderAllowed: true,
++      description: "'incoming' or 'outgoing'. Accepts a {{placeholder}}; logService normalizes 'Inbound'/'Outbound' on the way to the column." },
+     EXTRA_PARAM,
+   ],
+   example: { type: 'note', link_type: 'contact', link_id: '{{contactId}}', by: 0,
+@@ -301,16 +347,27 @@
+     'the user-facing log only; it does not halt the workflow.',
+   params: [
+     { name: 'type', type: 'enum', required: true, enum: LOG_TYPES },
+-    { name: 'link_type', type: 'enum', required: false, enum: LINK_TYPES },
++    // placeholderAllowed here is LOCKSTEP, not sweep-demanded: all 5 live phone
++    // workflows currently pass a literal 'phone'. But phone_log is a documented
++    // drop-in for create_log with the same param contract, and create_log's
++    // link_type carries {{link_type}} in production (wf15 s8 / wf16 s7) — the
++    // moment a phone workflow parameterizes it the same way it would hit the
++    // identical edit-lock. Keeping the two metas identical is this file's stated
++    // convention (see EXTRA_PARAM / DATA_PARAM).
++    { name: 'link_type', type: 'enum', required: false, enum: LINK_TYPES,
++      placeholderAllowed: true },
+     { name: 'link_id', type: 'string', required: false, placeholderAllowed: true,
+       description: 'Canonical other-party phone (any format, normalized to 10 digits) when link_type=phone.' },
+     { name: 'by', type: 'integer', required: false, default: 0 },
+-    { name: 'data', type: 'string', required: false, multiline: true },
++    DATA_PARAM,
+     { name: 'from', type: 'string', required: false, placeholderAllowed: true },
+     { name: 'to', type: 'string', required: false, placeholderAllowed: true },
+     { name: 'subject', type: 'string', required: false, placeholderAllowed: true },
+     { name: 'message', type: 'string', required: false, placeholderAllowed: true, multiline: true },
+-    { name: 'direction', type: 'enum', required: false, enum: ['incoming', 'outgoing'] },
++    // Sweep-demanded, unlike link_type above: wf18 s1 / wf20 s4 / wf21 s1 pass
++    // "{{direction}}" — the provider decides inbound-vs-outbound at run time.
++    { name: 'direction', type: 'enum', required: false, enum: ['incoming', 'outgoing'],
++      placeholderAllowed: true },
+     // Declared for the same reason as on create_log — and doubly so here: the
+     // pipeline itself WRITES params.extra.firmToFirm, so `extra` is part of
+     // phone_log's contract, not an incidental passthrough. All 5 live phone
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/lib/internal_functions/pdf.js rebased/lib/internal_functions/pdf.js
+--- a/lib/internal_functions/pdf.js	2026-07-15 01:02:18.143490439 +0000
++++ b/lib/internal_functions/pdf.js	2026-07-15 01:01:55.122394326 +0000
+@@ -149,8 +149,8 @@
+       description: 'Dropbox shared link resolving to a FILE (a folder link fails).' },
+     { name: 'credential_id', type: 'integer', required: false,
+       description: 'Dropbox credential override (app_settings dropbox_credential_id, default 8). Ignored for url.' },
+-    { name: 'pages', type: 'string', required: false, placeholderAllowed: true,
+-      description: 'Page selection, "2-4,6" syntax. Omit for all pages (200-page render cap).',
++    { name: 'pages', type: 'string', required: false, placeholderAllowed: true, strictString: true,
++      description: 'Page selection, "2-4,6" syntax. Omit for all pages (200-page render cap). pdfService rejects a non-string spec (BAD_PAGES).',
+       example: '1-3' },
+     { name: 'from_text', type: 'string', required: false, placeholderAllowed: true,
+       description: 'Slice the text starting at this literal anchor (inclusive).' },
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/lib/internal_functions/system.js rebased/lib/internal_functions/system.js
+--- a/lib/internal_functions/system.js	2026-07-15 01:02:18.143518226 +0000
++++ b/lib/internal_functions/system.js	2026-07-15 01:01:55.120682149 +0000
+@@ -145,8 +145,8 @@
+     '(no trimming). Refuses is_secret rows and unknown keys. Ignores is_editable — that ' +
+     'flag governs the human settings.html editor, not automation.',
+   params: [
+-    { name: 'key', type: 'string', required: true, placeholderAllowed: true,
+-      description: 'app_settings.key. Must already exist and must not be is_secret.',
++    { name: 'key', type: 'string', required: true, placeholderAllowed: true, strictString: true,
++      description: 'app_settings.key. Must already exist and must not be is_secret. Runtime rejects a non-string key.',
+       example: 'clio_login_code' },
+     { name: 'value', type: 'string', required: true, placeholderAllowed: true, multiline: true,
+       description: 'New value, stored VERBATIM. Numbers/booleans are stringified; ' +
+@@ -191,8 +191,8 @@
+     'Read app_settings.value for a non-secret key. Throws on unknown key or is_secret row. ' +
+     'Optionally stores the value in a workflow variable via output_var.',
+   params: [
+-    { name: 'key', type: 'string', required: true, placeholderAllowed: true,
+-      description: 'app_settings.key. Must exist and must not be is_secret.',
++    { name: 'key', type: 'string', required: true, placeholderAllowed: true, strictString: true,
++      description: 'app_settings.key. Must exist and must not be is_secret. Runtime rejects a non-string key.',
+       example: 'court_ingest_live' },
+     { name: 'output_var', type: 'string', required: false,
+       description: 'Store the value in this workflow variable.',
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/package.json rebased/package.json
+--- a/package.json	2026-07-15 01:02:18.152998675 +0000
++++ b/package.json	2026-07-15 01:01:55.290733815 +0000
+@@ -40,6 +40,7 @@
+   },
+   "devDependencies": {
+     "jest": "^30.4.2",
++    "jsdom": "^26.1.0",
+     "nodemon": "^3.1.11"
+   },
+   "allowScripts": {
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/public/automation/workflows.html rebased/public/automation/workflows.html
+--- a/public/automation/workflows.html	2026-07-15 01:02:18.167058847 +0000
++++ b/public/automation/workflows.html	2026-07-15 01:01:55.125203169 +0000
+@@ -595,6 +595,12 @@
+ 
+ const WFEX_TERMINAL = new Set(['completed', 'completed_with_errors', 'failed', 'cancelled']);
+ 
++// Mirrors PLACEHOLDER_RE in lib/internal_functions/index.js. Used by the
++// metadata-driven gather to recognize a {{token}} on a NUMERIC param, which the
++// server accepts (its placeholder bypass runs before the type check) but
++// parseInt/Number would mangle to NaN. Keep the two in sync.
++const WF_PLACEHOLDER_RE = /\{\{[^}]+\}\}/;
++
+ // Tracks whether the shell has us on-screen. Polling gate.
+ let subPageActive = false;
+ let wfLoaded = false;
+@@ -1647,10 +1653,28 @@
+     case 'integer':
+     case 'number': {
+       const v = (value === null || value === undefined) ? '' : value;
+-      const step = spec.type === 'integer' ? 'step="1"' : '';
+-      const min  = spec.min !== undefined ? `min="${spec.min}"` : '';
+-      const max  = spec.max !== undefined ? `max="${spec.max}"` : '';
+-      inputHtml = `<input id="${id}" type="number" ${step} ${min} ${max} value="${esc(v)}">`;
++      // A NON-NUMERIC STRING on a numeric param is a {{placeholder}} — legal at
++      // save (the validator's placeholder bypass runs before the type check;
++      // create_appointment.appt_with, update_log.log_id) and at run time (the
++      // executor resolves, then parseInt's). But <input type="number"> runs the
++      // HTML value-sanitization algorithm and BLANKS any value that isn't a
++      // valid floating-point number — so the field renders empty, and gather's
++      // empty-field rule then DELETES the key. Two-stage silent clobber: open
++      // wf7 s3, save, and "{{attorney_user_id}}" is gone.
++      //
++      // Render those as a plain text input so they round-trip. Genuinely
++      // numeric values keep the number input (spinner, min/max). Gather mirrors
++      // this: a {{token}} passes through verbatim, anything else non-numeric
++      // still raises the "must be an integer" toast.
++      const isPlaceholderish = typeof v === 'string' && v !== '' && !Number.isFinite(Number(v));
++      if (isPlaceholderish) {
++        inputHtml = `<input id="${id}" value="${esc(v)}">`;
++      } else {
++        const step = spec.type === 'integer' ? 'step="1"' : '';
++        const min  = spec.min !== undefined ? `min="${spec.min}"` : '';
++        const max  = spec.max !== undefined ? `max="${spec.max}"` : '';
++        inputHtml = `<input id="${id}" type="number" ${step} ${min} ${max} value="${esc(v)}">`;
++      }
+       break;
+     }
+     case 'object':
+@@ -1820,19 +1844,40 @@
+       // seeded value (keep-then-overwrite: an empty visible field is an
+       // explicit "remove this"). Previously this rebuilt from {} so a bare
+       // `continue` sufficed; now we must delete or the stale clone persists.
+-      // The skip-block pattern (`at: null`) is server-written and not hand-
+-      // edited here; use Edit-as-JSON for that shape.
+-      if (!raw) { delete params[spec.name]; continue; }
++      //
++      // EXCEPT on a nullishSkipsBlock param that ALREADY held an explicit null:
++      // there, null is a meaningful VALUE, not an absent one — set_next
++      // {value:null} = "end the workflow", wait_for {at:null} = skip-block —
++      // and both render as an empty field. Deleting the key would drop that
++      // meaning: set_next {} silently becomes "fall through to the next step"
++      // (workflow_engine's `next_step !== undefined` guard), and the required
++      // ones 400. So leave the seeded null alone and let it round-trip.
++      //
++      // Only PRESERVES what was already stored — it never INVENTS a null on a
++      // param that didn't have one, so wait_for's exclusiveOneOf(duration, at)
++      // behaves exactly as before for every config that doesn't already carry
++      // `at: null`. Removing an existing null is an Edit-as-JSON operation.
++      if (!raw) {
++        if (spec.nullishSkipsBlock && params[spec.name] === null) continue;
++        delete params[spec.name];
++        continue;
++      }
+ 
+       // Type coercion
+       switch (spec.type) {
+         case 'integer': {
++          // {{placeholder}} on a numeric param is legal — the server's bypass
++          // runs before the type check. Pass it through verbatim rather than
++          // parseInt-ing it to NaN and toasting. Any OTHER non-numeric text is
++          // still a typo and still errors.
++          if (WF_PLACEHOLDER_RE.test(raw)) { params[spec.name] = raw; break; }
+           const n = parseInt(raw, 10);
+           if (Number.isFinite(n)) params[spec.name] = n;
+           else { Swal.fire('Error', `${spec.name} must be an integer`, 'error'); return null; }
+           break;
+         }
+         case 'number': {
++          if (WF_PLACEHOLDER_RE.test(raw)) { params[spec.name] = raw; break; }
+           const n = Number(raw);
+           if (Number.isFinite(n)) params[spec.name] = n;
+           else { Swal.fire('Error', `${spec.name} must be a number`, 'error'); return null; }
+@@ -1858,7 +1903,7 @@
+           }
+           break;
+         }
+-        default:
++        default: {
+           // string / enum / iso_datetime / duration / placeholder_string.
+           // If render auto-promoted an object/array value to a JSON textarea
+           // (data-json="1"), parse it back here so we round-trip the original
+@@ -1870,9 +1915,32 @@
+               Swal.fire('Error', `${spec.name} is not valid JSON`, 'error');
+               return null;
+             }
+-          } else {
+-            params[spec.name] = raw;
++            break;
+           }
++
++          // NON-STRING SCALARS on a string-typed param. The validator accepts
++          // them (finite numbers globally; booleans on booleanAllowed specs) and
++          // the live corpus relies on them: set_next {value: 5}, and
++          // evaluate_condition {value: true} on wf15 s1 / wf16 s1. Render has to
++          // String() them into a text input, so a naive gather would hand back
++          // the STRING "5" / "true" — and for evaluate_condition that silently
++          // INVERTS the branch, because evaluateSingle compares with `==` and
++          // `true == "true"` is false in JS. (These steps were unsaveable before
++          // this slice, so the clobber was unreachable; unlocking save is exactly
++          // what makes it reachable.)
++          //
++          // Rule: if the user did not TOUCH the text, write back the original
++          // value verbatim. An edited field takes the normal string path.
++          const orig = (sameFn && WF.origConfig.params) ? WF.origConfig.params[spec.name] : undefined;
++          if (orig !== undefined && orig !== null
++              && typeof orig !== 'string' && typeof orig !== 'object'
++              && String(orig) === raw) {
++            params[spec.name] = orig;
++            break;
++          }
++
++          params[spec.name] = raw;
++        }
+       }
+     }
+ 
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/scripts/sweep_validate_live.js rebased/scripts/sweep_validate_live.js
+--- a/scripts/sweep_validate_live.js	1970-01-01 00:00:00.000000000 +0000
++++ b/scripts/sweep_validate_live.js	2026-07-15 01:01:55.287705515 +0000
+@@ -0,0 +1,129 @@
++#!/usr/bin/env node
++/**
++ * scripts/sweep_validate_live.js  (worker tool — NOT tracked/deployed)
++ *
++ * Pulls every LIVE internal_function config from the readonly SQL API and runs
++ * it through internalFunctions.__validateFunctionParams — the exact function
++ * the save routes call (routes/workflows.js:837/969/1442/1555,
++ * routes/scheduled_jobs.js:161/488). Any row it reports is a config that would
++ * 400 on save today.
++ *
++ * COLLECT-ALL: the real validator short-circuits on the first error, which
++ * hides co-occurring failures on the same step. So we ALSO re-run each
++ * provided param through the same code path in isolation (single-spec mini
++ * meta) to enumerate every failing param. `BLOCKED` counts configs; `failing
++ * params` counts individual bad params.
++ *
++ * usage:  YC_RO_KEY=ycro_… node scripts/sweep_validate_live.js [--json] [--values]
++ */
++const KEY = process.env.YC_RO_KEY;
++if (!KEY) { console.error('set YC_RO_KEY'); process.exit(1); }
++
++const IF = require('../lib/internal_functions');
++const vMeta = IF.__validateParamsAgainstMeta;
++
++async function sql(q) {
++  const r = await fetch('https://app.4lsg.com/api/readonly/sql', {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json', 'X-Readonly-Api-Key': KEY },
++    body: JSON.stringify({ sql: q }),
++  });
++  const j = await r.json();
++  if (!j.ok) throw new Error(JSON.stringify(j));
++  return j.rows;
++}
++
++const asJson = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
++const isNullish = (v) => v === undefined || v === null || v === '';
++const show = (v) => {
++  const s = JSON.stringify(v);
++  return s && s.length > 70 ? s.slice(0, 67) + '…' : s;
++};
++
++/** Every failing param on a config, not just the first. */
++function diagnose(fnName, params) {
++  const meta = IF.__getMeta(fnName);
++  const out = [];
++  if (!meta) return out;
++
++  // 1. Whole-config pass (groups, required, phase-2 parse checks).
++  const full = IF.__validateFunctionParams(fnName, params);
++
++  // 2. Per-param isolation pass — reuses the real per-spec type code path.
++  const p = params || {};
++  const perParam = [];
++  for (const spec of meta.params || []) {
++    if (!(spec.name in p) || isNullish(p[spec.name])) continue;
++    const e = vMeta({ params: [spec] }, { [spec.name]: p[spec.name] });
++    if (e) perParam.push({ param: spec.name, type: spec.type, error: e.error, value: p[spec.name] });
++  }
++  out.push(...perParam);
++
++  // 3. If the whole-config error isn't explained by a per-param error, it's a
++  //    group / required / phase-2 failure — surface it separately.
++  if (full && !perParam.some(x => full.error.startsWith(x.param + ':'))) {
++    out.push({ param: '(config)', type: '-', error: full.error, value: undefined });
++  }
++  return out;
++}
++
++(async () => {
++  const steps = await sql(`
++    SELECT s.id, s.workflow_id, s.step_number, s.config, w.name AS wf_name, w.active
++    FROM workflow_steps s
++    JOIN workflows w ON w.id = s.workflow_id
++    WHERE s.type = 'internal_function'
++    ORDER BY s.workflow_id, s.step_number
++  `);
++
++  const jobs = await sql(`
++    SELECT id, name AS job_name, data, active
++    FROM scheduled_jobs
++    WHERE JSON_UNQUOTE(JSON_EXTRACT(data, '$.type')) = 'internal_function'
++    ORDER BY id
++  `);
++
++  const fails = [];
++  for (const s of steps) {
++    const cfg = asJson(s.config) || {};
++    const errs = diagnose(cfg.function_name, cfg.params);
++    if (errs.length) {
++      fails.push({ kind: 'wf', label: `wf${s.workflow_id} s${s.step_number}`,
++        active: s.active, fn: cfg.function_name, errs, wf: s.workflow_id });
++    }
++  }
++  for (const j of jobs) {
++    const d = asJson(j.data) || {};
++    const errs = diagnose(d.function_name, d.params);
++    if (errs.length) {
++      fails.push({ kind: 'job', label: `job${j.id}`, active: j.active,
++        fn: d.function_name, errs, wf: null });
++    }
++  }
++
++  if (process.argv.includes('--json')) {
++    console.log(JSON.stringify(fails, null, 2));
++    return;
++  }
++
++  const wfFails  = fails.filter(f => f.kind === 'wf');
++  const jobFails = fails.filter(f => f.kind === 'job');
++  const errCount = fails.reduce((n, f) => n + f.errs.length, 0);
++  const showVals = process.argv.includes('--values');
++
++  console.log(`internal_function workflow steps : ${steps.length}`);
++  console.log(`internal_function scheduled jobs : ${jobs.length}`);
++  console.log(`BLOCKED workflow steps           : ${wfFails.length}`);
++  console.log(`BLOCKED scheduled jobs           : ${jobFails.length}`);
++  console.log(`failing params (all, not just 1st): ${errCount}`);
++  console.log('');
++  for (const f of fails) {
++    for (const e of f.errs) {
++      const val = showVals ? `   <= ${show(e.value)}` : '';
++      console.log(`${f.label.padEnd(11)}${String(f.fn).padEnd(20)}${String(e.param).padEnd(12)}${String(e.type).padEnd(9)}${e.error}${val}`);
++    }
++  }
++  console.log('');
++  const wfSet = [...new Set(wfFails.map(f => f.wf))].sort((a, b) => a - b);
++  console.log(`distinct workflows edit-locked   : ${wfSet.length} -> ${wfSet.join(', ')}`);
++})();
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/scripts/verify_strictstring_live.js rebased/scripts/verify_strictstring_live.js
+--- a/scripts/verify_strictstring_live.js	1970-01-01 00:00:00.000000000 +0000
++++ b/scripts/verify_strictstring_live.js	2026-07-15 01:01:55.289402844 +0000
+@@ -0,0 +1,85 @@
++#!/usr/bin/env node
++/**
++ * scripts/verify_strictstring_live.js  (worker tool — NOT tracked)
++ *
++ * The sweep proves no whole CONFIG is newly blocked. This proves the stronger
++ * claim the ruling asked for: no live config passes a NUMBER (or any non-string
++ * non-placeholder) to ANY of the nine strictString param instances — regardless
++ * of whether that config also fails for some unrelated reason. Walks every live
++ * internal_function config, reads the actual stored value at each strictString
++ * param, and reports its JS type.
++ *
++ *   YC_RO_KEY=… node scripts/verify_strictstring_live.js
++ */
++const KEY = process.env.YC_RO_KEY;
++if (!KEY) { console.error('set YC_RO_KEY'); process.exit(1); }
++const IF = require('../lib/internal_functions');
++
++async function sql(q) {
++  const r = await fetch('https://app.4lsg.com/api/readonly/sql', {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json', 'X-Readonly-Api-Key': KEY },
++    body: JSON.stringify({ sql: q }),
++  });
++  const j = await r.json();
++  if (!j.ok) throw new Error(JSON.stringify(j));
++  return j.rows;
++}
++const asJson = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
++
++// Build the strictString param set straight from the registry — no hardcoded
++// list to drift.
++const STRICT = new Map(); // fn -> Set(paramName)
++for (const [fn, meta] of Object.entries(IF.__getAllMeta())) {
++  for (const p of meta.params || []) {
++    if (p.strictString) {
++      if (!STRICT.has(fn)) STRICT.set(fn, new Set());
++      STRICT.get(fn).add(p.name);
++    }
++  }
++}
++
++(async () => {
++  console.log('strictString params in registry:');
++  for (const [fn, set] of STRICT) console.log(`  ${fn}: ${[...set].join(', ')}`);
++  console.log('');
++
++  const steps = await sql(`
++    SELECT s.workflow_id, s.step_number, s.config
++    FROM workflow_steps s WHERE s.type='internal_function'
++  `);
++  const jobs = await sql(`
++    SELECT id, data FROM scheduled_jobs
++    WHERE JSON_UNQUOTE(JSON_EXTRACT(data,'$.type'))='internal_function'
++  `);
++
++  const rows = [];
++  const scan = (label, fn, params) => {
++    const set = STRICT.get(fn);
++    if (!set || !params) return;
++    for (const name of set) {
++      if (!(name in params)) continue;
++      const v = params[name];
++      rows.push({ label, fn, name, type: Array.isArray(v) ? 'array' : (v === null ? 'null' : typeof v), value: v });
++    }
++  };
++
++  for (const s of steps) { const c = asJson(s.config) || {}; scan(`wf${s.workflow_id} s${s.step_number}`, c.function_name, c.params); }
++  for (const j of jobs)  { const d = asJson(j.data)   || {}; scan(`job${j.id}`, d.function_name, d.params); }
++
++  console.log(`live values found on strictString params: ${rows.length}`);
++  for (const r of rows) {
++    const disp = JSON.stringify(r.value);
++    console.log(`  ${r.label.padEnd(10)} ${r.fn.padEnd(12)} ${r.name.padEnd(14)} ${r.type.padEnd(8)} ${disp && disp.length>50?disp.slice(0,47)+'…':disp}`);
++  }
++  console.log('');
++
++  const bad = rows.filter(r => r.type !== 'string');
++  if (bad.length === 0) {
++    console.log('PASS — every live strictString value is a string. No number reaches any of the nine.');
++  } else {
++    console.log(`FAIL — ${bad.length} live strictString value(s) are NOT strings:`);
++    for (const b of bad) console.log(`  ${b.label} ${b.fn}.${b.name} = ${JSON.stringify(b.value)} (${b.type})`);
++    process.exitCode = 2;
++  }
++})();
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/tests/internal_functions.meta.test.js rebased/tests/internal_functions.meta.test.js
+--- a/tests/internal_functions.meta.test.js	2026-07-15 01:02:18.195714727 +0000
++++ b/tests/internal_functions.meta.test.js	2026-07-15 01:01:55.127193551 +0000
+@@ -111,6 +111,30 @@
+         if (p.placeholderAllowed !== undefined) expect(typeof p.placeholderAllowed).toBe('boolean');
+         if (p.multiline !== undefined) expect(typeof p.multiline).toBe('boolean');
+         if (p.nullishSkipsBlock !== undefined) expect(typeof p.nullishSkipsBlock).toBe('boolean');
++        // Save-time edit-lock slice — per-spec widenings of the `string` case.
++        // Both are only meaningful on a string-typed param; asserting that here
++        // stops them being sprinkled onto enum/integer specs where the string
++        // case never runs and they would silently do nothing.
++        if (p.objectAllowed !== undefined) {
++          expect(typeof p.objectAllowed).toBe('boolean');
++          expect(['string', 'placeholder_string']).toContain(p.type);
++        }
++        if (p.booleanAllowed !== undefined) {
++          expect(typeof p.booleanAllowed).toBe('boolean');
++          expect(['string', 'placeholder_string']).toContain(p.type);
++        }
++        // strictString restores the "string only" contract for params whose
++        // runtime hard-rejects a non-string. Meaningless on a non-string type,
++        // and it must never co-occur with objectAllowed/booleanAllowed (they
++        // pull in opposite directions).
++        if (p.strictString !== undefined) {
++          expect(typeof p.strictString).toBe('boolean');
++          expect(['string', 'placeholder_string']).toContain(p.type);
++          if (p.strictString) {
++            expect(p.objectAllowed).not.toBe(true);
++            expect(p.booleanAllowed).not.toBe(true);
++          }
++        }
+ 
+         // description, when present, must be a string
+         if (p.description !== undefined) expect(typeof p.description).toBe('string');
+@@ -292,7 +316,15 @@
+     ['parse_pdf placeholder path',    'parse_pdf', { dropbox_path: '{{petition_path}}' }, null],
+     ['parse_pdf two sources',         'parse_pdf', { url: 'https://example.com/doc.pdf', dropbox_path: '/x.pdf' }, 'must include only one'],
+     ['parse_pdf no source',           'parse_pdf', { pages: '1-3' }, 'must include exactly one'],
++    // `pages` carries strictString:true — its runtime (pdfService
++    // parsePageRangeSyntax) hard-rejects a non-string with BAD_PAGES, so a bare
++    // number must fail at SAVE time, NOT slip through decision-1's global
++    // finite-number acceptance and defer to a runtime throw. This is the guard
++    // for one of the nine strictString param instances; the dedicated
++    // strictString block at the bottom exercises the rest.
+     ['parse_pdf pages not string',    'parse_pdf', { url: 'https://example.com/doc.pdf', pages: 3 }, 'must be a string'],
++    ['parse_pdf pages array rejected','parse_pdf', { url: 'https://example.com/doc.pdf', pages: [1, 3] }, 'must be a string'],
++    ['parse_pdf placeholder pages ok','parse_pdf', { url: 'https://example.com/doc.pdf', pages: '{{pageRange}}' }, null],
+     ['parse_pdf normalize=string',    'parse_pdf', { url: 'https://example.com/doc.pdf', normalize_whitespace: 'true' }, 'must be a boolean'],
+     ['parse_pdf max_length too low',  'parse_pdf', { url: 'https://example.com/doc.pdf', max_length: 0 }, 'must be >= 1'],
+ 
+@@ -305,6 +337,112 @@
+ 
+     // Generic params shape
+     ['set_var array params rejected', 'set_var', [], 'must be a JSON object'],
++
++    // ─────────────────────────────────────────────────────────────
++    // SAVE-TIME EDIT-LOCK SLICE
++    //
++    // 20 of 91 live internal_function workflow steps 400'd on save while the
++    // executor ran them fine — the validator rejected three value shapes that
++    // are legitimate at run time. The rows below are the regression gate for
++    // each shape, PAIRED with the adjacent shape that must still fail so the
++    // widenings can't quietly grow.
++    // ─────────────────────────────────────────────────────────────
++
++    // (1) FINITE NUMBERS pass a `string` param — global, no flag. Mirrors the
++    //     numeric-STRING coercion the number/integer cases already do.
++    //     Live: set_next {value: 3|7|8} (wf1/2/15/16), evaluate_condition
++    //     {value: 1} (wf15 s5, wf16 s4, wf17 s3), run_task_digest {user: 6}.
++    ['string param accepts number',       'set_next', { value: 5 }, null],
++    ['string param accepts 0',            'set_next', { value: 0 }, null],
++    ['string param accepts negative',     'evaluate_condition', { variable: 'x', operator: '==', value: -1, then: 2 }, null],
++    ['string param accepts float',        'evaluate_condition', { variable: 'x', operator: '==', value: 1.5, then: 2 }, null],
++    ['string param rejects NaN',          'set_next', { value: NaN }, 'must be a string'],
++    ['string param rejects Infinity',     'set_next', { value: Infinity }, 'must be a string'],
++    ['string param rejects array',        'send_sms', { from: '1', to: '2', message: ['hi'] }, 'must be a string'],
++    ['run_task_digest numeric user',      'run_task_digest', { user: 6 }, null],
++    // job179 passes force:"true". NOT absorbed — `boolean` stays strict. At run
++    // time `if (!force)` makes the string "true" truthy, but it makes "false"
++    // truthy too, so the string form only works by accident. Genuinely bad
++    // config; fix the job, not the spec.
++    ['run_task_digest force=string still rejected', 'run_task_digest', { force: 'true' }, 'must be a boolean'],
++
++    // (1b) strictString RE-NARROWS (1) for the nine param instances (eight
++    //      distinct runtime guards; `table` on both update_db and insert_db)
++    //      whose runtime hard-rejects a non-string. A bare number must fail at
++    //      SAVE time on these, while every OTHER string param still takes a
++    //      number — each strict-reject row is paired with a non-strict accept so
++    //      the flag can neither spread nor silently vanish.
++    ['strictString query_ai.prompt rejects number',      'query_ai', { prompt: 5 }, 'must be a string'],
++    ['strictString query_ai.prompt accepts string',      'query_ai', { prompt: 'do x' }, null],
++    ['strictString query_ai.prompt accepts placeholder', 'query_ai', { prompt: '{{instructions}}' }, null],
++    ['strictString query_db.from rejects number',        'query_db', { select: ['*'], from: 3 }, 'must be a string'],
++    ['strictString update_db.table rejects number',      'update_db', { table: 7, set_column: 'x', set_value: 'y', where_column: 'id', where_value: '1' }, 'must be a string'],
++    ['strictString update_db.set_column rejects number', 'update_db', { table: 'checkitems', set_column: 9, set_value: 'y', where_column: 'id', where_value: '1' }, 'must be a string'],
++    ['strictString update_db.where_column rejects number','update_db',{ table: 'checkitems', set_column: 'x', set_value: 'y', where_column: 8, where_value: '1' }, 'must be a string'],
++    ['strictString insert_db.table rejects number',      'insert_db', { table: 7, values: { a: 1 } }, 'must be a string'],
++    ['strictString set_setting.key rejects number',      'set_setting', { key: 42, value: 'v' }, 'must be a string'],
++    ['strictString get_setting.key rejects number',      'get_setting', { key: 42 }, 'must be a string'],
++    // Placeholder still wins on a strict param (the {{token}} bypass runs before
++    // the type check); update_db.table carries placeholderAllowed.
++    ['strictString update_db.table accepts placeholder', 'update_db', { table: '{{tbl}}', set_column: 'x', set_value: 'y', where_column: 'id', where_value: '1' }, null],
++    // The bound-VALUE params on update_db are NOT strict — a number there is a
++    // legitimate scalar the driver parameterizes, so it must still save.
++    ['non-strict update_db.set_value accepts number',    'update_db', { table: 'checkitems', set_column: 'qty', set_value: 5, where_column: 'id', where_value: '1' }, null],
++
++    // (2) OBJECTS pass a `string` param ONLY with objectAllowed. create_log.data
++    //     / phone_log.data — createLogEntry dual-accepts object-or-string, and
++    //     7 live steps pass nested blobs (wf15 s8, wf16 s7, wf17–21).
++    ['create_log.data accepts object',    'create_log', { type: 'sms', data: { direction: '{{direction}}', attachments: '{{attachments}}' } }, null],
++    ['create_log.data accepts string',    'create_log', { type: 'note', data: 'Auto follow-up sent' }, null],
++    ['phone_log.data accepts object',     'phone_log',  { type: 'call', data: { to: '{{to}}', from: '{{from}}' } }, null],
++    ['create_log.data rejects array',     'create_log', { type: 'note', data: ['nope'] }, 'must be a string'],
++    // The flag is per-spec, never global: an unflagged string param must still
++    // reject an object. send_sms.message has no objectAllowed.
++    ['unflagged string param rejects object', 'send_sms', { from: '1', to: '2', message: { text: 'hi' } }, 'must be a string'],
++
++    // (3) BOOLEANS pass a `string` param ONLY with booleanAllowed.
++    //     evaluate_condition.value is a comparison OPERAND — JSDoc type {any},
++    //     applied with loose `==`. wf15 s1 / wf16 s1 gate on
++    //     `needs_fetch == true` with a literal boolean, and `true == "true"` is
++    //     FALSE in JS, so stringifying the operand would invert the branch.
++    ['eval value accepts boolean',        'evaluate_condition', { variable: 'needs_fetch', operator: '==', value: true, then: 2, else: 4 }, null],
++    ['eval value accepts false',          'evaluate_condition', { variable: 'x', operator: '==', value: false, then: 2 }, null],
++    ['unflagged string param rejects boolean', 'send_sms', { from: '1', to: '2', message: true }, 'must be a string'],
++    ['set_next rejects boolean',          'set_next', { value: true }, 'must be a string'],
++
++    // (4) {{placeholder}} on a NON-string spec, via placeholderAllowed (the
++    //     bypass runs before the type check, so it works on any type).
++    //     Live: create_appointment {appt_with: "{{attorney_user_id}}"} (wf7 s3),
++    //     create_log {link_type: "{{link_type}}", direction: "{{direction}}"}
++    //     (wf15 s8, wf16 s7), phone_log {direction: "{{direction}}"} (wf18 s1,
++    //     wf20 s4, wf21 s1).
++    ['appt_with placeholder',             'create_appointment', { contact_id: '1', appt_date: '2026-05-01T10:00:00', appt_type: '341 Meeting', appt_length: 15, appt_platform: 'Zoom', appt_with: '{{attorney_user_id}}' }, null],
++    ['appt_with literal integer',         'create_appointment', { contact_id: '1', appt_date: '2026-05-01T10:00:00', appt_type: '341 Meeting', appt_length: 15, appt_platform: 'Zoom', appt_with: 22 }, null],
++    ['appt_with garbage still rejected',  'create_appointment', { contact_id: '1', appt_date: '2026-05-01T10:00:00', appt_type: '341 Meeting', appt_length: 15, appt_platform: 'Zoom', appt_with: 'rena' }, 'must be an integer'],
++    // Per-spec, never global: an integer param WITHOUT the flag still rejects a
++    // token. create_log.by carries no placeholderAllowed.
++    ['unflagged integer rejects placeholder', 'create_log', { type: 'note', by: '{{userId}}' }, 'must be an integer'],
++    ['create_log.link_type placeholder',  'create_log', { type: 'sms', link_type: '{{link_type}}', link_id: '{{their_number}}' }, null],
++    ['create_log.direction placeholder',  'create_log', { type: 'sms', direction: '{{direction}}' }, null],
++    ['phone_log.direction placeholder',   'phone_log',  { type: 'sms', direction: '{{direction}}' }, null],
++    ['phone_log.link_type placeholder',   'phone_log',  { type: 'sms', link_type: '{{link_type}}' }, null],
++    // A real LITERAL is still enum-checked — the bypass only skips {{tokens}},
++    // which are unresolvable at save time by definition.
++    ['create_log.link_type bad literal',  'create_log', { type: 'sms', link_type: 'nonsense' }, 'must be one of'],
++    ['create_log.direction bad literal',  'create_log', { type: 'sms', direction: 'sideways' }, 'must be one of'],
++
++    // (5) set_next {value: null} — the documented "end the workflow normally"
++    //     idiom (live on wf28 s6), which required:true had been 400ing.
++    //     nullishSkipsBlock switches the required-check to key-presence.
++    //     OMISSION is still an error and must stay one: with no `value` the
++    //     function returns next_step:undefined, which workflow_engine's
++    //     `next_step !== undefined` guard turns into a silent fall-through to
++    //     the next step — a different thing entirely from stopping.
++    ['set_next explicit null ends wf',    'set_next', { value: null }, null],
++    ['set_next empty-string null form',   'set_next', { value: '' }, null],
++    ['set_next omitted still required',   'set_next', {}, 'value is required'],
++    ['set_next cancel',                   'set_next', { value: 'cancel' }, null],
++    ['set_next placeholder',              'set_next', { value: '{{next_step}}' }, null],
+   ];
+ 
+   test.each(cases)('%s', (label, fnKey, params, expectedFragment) => {
+diff -ruN '--exclude=node_modules' '--exclude=package-lock.json' '--exclude=.git' current_renamed/tests/workflows.editor.roundtrip.test.js rebased/tests/workflows.editor.roundtrip.test.js
+--- a/tests/workflows.editor.roundtrip.test.js	1970-01-01 00:00:00.000000000 +0000
++++ b/tests/workflows.editor.roundtrip.test.js	2026-07-15 01:01:55.283370463 +0000
+@@ -0,0 +1,270 @@
++/**
++ * Render → gather round-trip for the metadata-driven internal_function editor
++ * in public/automation/workflows.html.
++ *
++ * WHY THIS EXISTS
++ * The save-time edit-lock slice made three value shapes legal at save that the
++ * validator used to 400: a {{placeholder}} on a numeric param, an object on a
++ * string param, and a non-string scalar (number / boolean / explicit null) on a
++ * string param. Every one of those shapes is CARRIED BY A LIVE WORKFLOW STEP —
++ * and unlocking the server is only half the job, because the editor's own
++ * render→gather cycle silently rewrote several of them. Those clobbers were
++ * unreachable while the steps were unsaveable; unlocking save is exactly what
++ * makes them reachable. So this suite pins the round-trip.
++ *
++ * The four clobbers it guards (each fails against the pre-slice HTML):
++ *   1. <input type="number"> runs the HTML value-sanitization algorithm and
++ *      BLANKS a non-numeric value, so "{{attorney_user_id}}" rendered as an
++ *      empty field and gather's empty-field rule then DELETED the key.
++ *      (wf7 s3 — create_appointment.appt_with.)
++ *   2. A number on a string param round-tripped through String() as "5".
++ *      Harmless for set_next itself, but it rewrites every stored step target.
++ *      (wf1/2/15/16 — set_next.value.)
++ *   3. A boolean on a string param round-tripped as "true" — which INVERTS the
++ *      branch, since evaluateSingle compares with `==` and `true == "true"` is
++ *      false in JS. (wf15 s1 / wf16 s1 — evaluate_condition.value.)
++ *   4. An explicit null on a nullishSkipsBlock param rendered as an empty field
++ *      and gather DELETED the key — turning set_next's "end the workflow"
++ *      into a silent fall-through to the next step. (wf28 s6 — set_next.value.)
++ *
++ * MECHANICS
++ * workflows.html is a single 2,900-line inline <script> whose top level does
++ * boot work (P = window.parent, api(), init fetches). Evaluating the whole file
++ * in jsdom would need the entire shell stubbed, so instead we extract just the
++ * functions under test by brace-matching on their source text and evaluate THOSE
++ * against a jsdom document. That keeps the test honest — it runs the shipped
++ * code, not a copy — while depending on nothing but the two function bodies.
++ *
++ * jsdom implements input value-sanitization faithfully (verified: a number input
++ * with value="{{x}}" reports .value === ''), which is what makes clobber #1
++ * actually reproducible here rather than vacuously passing.
++ *
++ *   npx jest tests/workflows.editor.roundtrip.test.js
++ */
++const fs = require('fs');
++const path = require('path');
++const vm = require('vm');
++const { JSDOM } = require('jsdom');
++
++const HTML_PATH = path.join(__dirname, '..', 'public', 'automation', 'workflows.html');
++const internalFunctions = require('../lib/internal_functions');
++
++// ── Extract named function sources from the inline <script> ─────────────
++function extractFn(src, name) {
++  const start = src.indexOf(`function ${name}(`);
++  if (start === -1) throw new Error(`workflows.html: function ${name} not found — did it get renamed?`);
++  let depth = 0;
++  let i = src.indexOf('{', start);
++  const open = i;
++  for (; i < src.length; i++) {
++    const c = src[i];
++    if (c === '{') depth++;
++    else if (c === '}') {
++      depth--;
++      if (depth === 0) return src.slice(start, i + 1);
++    }
++  }
++  throw new Error(`workflows.html: unbalanced braces in ${name}`);
++}
++
++const HTML = fs.readFileSync(HTML_PATH, 'utf8');
++const SCRIPT = HTML.match(/<script(?![^>]*src=)[^>]*>([\s\S]*?)<\/script>/)[1];
++
++// Pulled verbatim from the shipped file. If any of these are renamed or their
++// braces stop balancing, extractFn throws and this suite fails loudly rather
++// than silently testing nothing.
++const SOURCES = [
++  'const WF_PLACEHOLDER_RE = ' + (SCRIPT.match(/const WF_PLACEHOLDER_RE = (.+);/) || [])[1] + ';',
++  extractFn(SCRIPT, 'esc'),
++  extractFn(SCRIPT, 'wfRenderParamField'),
++  extractFn(SCRIPT, 'wfGatherConfig'),
++].join('\n\n');
++
++/**
++ * Build a jsdom sandbox holding the real render + gather, wired to a fake
++ * editor DOM. Returns a harness that mimics one open-edit-save cycle.
++ */
++function makeEditor(fnName, storedParams) {
++  const meta = internalFunctions.__getMeta(fnName);
++  if (!meta) throw new Error(`no __meta for ${fnName}`);
++
++  const dom = new JSDOM('<body><div id="host"></div></body>');
++  const { window } = dom;
++  const swalCalls = [];
++
++  const ctx = vm.createContext({
++    document: window.document,
++    window,
++    P: {},                                   // parent shell helpers — no widget specs in play
++    Swal: { fire: (...a) => swalCalls.push(a) },
++    FUNCTIONS: { meta: { [fnName]: meta } },
++    WF: {
++      jsonMode: false,
++      // Deep clone: gather seeds from this (keep-then-overwrite), and we want
++      // to prove the ROUND-TRIP, not that gather handed our own object back.
++      origConfig: JSON.parse(JSON.stringify({ function_name: fnName, params: storedParams })),
++    },
++  });
++  vm.runInContext(SOURCES, ctx);
++
++  // Render every param field the way wfRenderInternalFnBody does, inside the
++  // #e-fn-body-inner wrapper gather reads the active mode from.
++  const mode = firstPopulatedMode(meta, storedParams);
++  const fields = meta.params
++    .map(spec => ctx.wfRenderParamField(spec, storedParams[spec.name], !spec.modeGroup || spec.modeGroup === mode))
++    .join('');
++  window.document.getElementById('host').innerHTML =
++    `<input id="e-fn" value="${fnName}">` +
++    `<div id="e-fn-body-inner" data-mode="${mode || ''}">${fields}</div>`;
++
++  return {
++    ctx,
++    window,
++    swalCalls,
++    field: (name) => window.document.getElementById(`e-pf-${name}`),
++    gather: () => ctx.wfGatherConfig('internal_function'),
++  };
++}
++
++// Mirrors _wfDetectMode's contract closely enough for the specs under test.
++function firstPopulatedMode(meta, params) {
++  const modes = [...new Set(meta.params.filter(p => p.modeGroup).map(p => p.modeGroup))];
++  if (!modes.length) return null;
++  for (const m of modes) {
++    const inMode = meta.params.filter(p => p.modeGroup === m);
++    const populated = inMode.some(p => (p.nullishSkipsBlock ? p.name in params
++      : params[p.name] !== undefined && params[p.name] !== null && params[p.name] !== ''));
++    if (populated) return m;
++  }
++  return modes[0];
++}
++
++// The live configs this slice unlocked, verbatim from the readonly SQL sweep.
++const WF7_S3 = {
++  contact_id: '{{primary_contact_id}}',
++  case_id: '{{link_id}}',
++  appt_date: '{{new_control_datetime}}',
++  appt_type: '341 Meeting',
++  appt_length: 15,
++  appt_platform: 'Telephone',
++  appt_with: '{{attorney_user_id}}',
++};
++const WF15_S1 = { variable: 'needs_fetch', operator: '==', value: true, then: 2, else: 4 };
++const WF15_S5 = { variable: 'matchCount', operator: '==', value: 1, then: 6, else: 7 };
++const WF17_S1_DATA = { direction: 'incoming', attachments: '{{attachments}}' };
++
++describe('workflows.html editor — the render step itself', () => {
++  test('a {{placeholder}} on an integer param is NOT rendered into a number input', () => {
++    // The bug, stated precisely: <input type="number" value="{{attorney_user_id}}">
++    // reports .value === '' because of HTML value sanitization. Assert both that
++    // we avoided the number input AND that the value actually survives read-back
++    // — the second assertion is the one that would have caught the original.
++    const ed = makeEditor('create_appointment', WF7_S3);
++    const el = ed.field('appt_with');
++    expect(el.getAttribute('type')).not.toBe('number');
++    expect(el.value).toBe('{{attorney_user_id}}');
++  });
++
++  test('jsdom really does sanitize number inputs (guards against a vacuous test)', () => {
++    // If this ever starts passing "{{x}}" through, the test above proves nothing
++    // and this row tells us why.
++    const { window } = new JSDOM('<body></body>');
++    window.document.body.innerHTML = '<input id="n" type="number" value="{{x}}">';
++    expect(window.document.getElementById('n').value).toBe('');
++  });
++
++  test('a genuinely numeric integer param still gets a number input', () => {
++    const ed = makeEditor('create_appointment', WF7_S3);
++    const el = ed.field('appt_length');
++    expect(el.getAttribute('type')).toBe('number');
++    expect(el.value).toBe('15');
++  });
++});
++
++describe('workflows.html editor — render → gather round-trip (untouched form)', () => {
++  // The core contract: opening a step and hitting Save without typing anything
++  // must return the config BYTE-IDENTICAL. Anything else is a silent clobber.
++  const cases = [
++    ['wf7 s3   create_appointment {{placeholder}} on integer appt_with', 'create_appointment', WF7_S3],
++    ['wf15 s1  evaluate_condition boolean operand',                      'evaluate_condition', WF15_S1],
++    ['wf15 s5  evaluate_condition numeric operand',                      'evaluate_condition', WF15_S5],
++    ['wf1 s1   set_next numeric target',                                 'set_next', { value: 3 }],
++    ['wf28 s6  set_next explicit null (= end workflow)',                 'set_next', { value: null }],
++    ['         set_next cancel',                                         'set_next', { value: 'cancel' }],
++    ['wf17 s1  phone_log object data + object extra',                    'phone_log', {
++      type: 'sms', link_type: 'phone', link_id: '{{their_number}}', by: 0,
++      direction: 'incoming', from: '{{from}}', to: '{{to}}', message: '{{body}}',
++      data: WF17_S1_DATA, extra: { provider: 'quo', message_id: '{{message_id}}' },
++    }],
++    ['wf15 s8  create_log {{placeholder}} enums + object data',          'create_log', {
++      type: 'sms', link_type: '{{link_type}}', link_id: '{{link_id}}', by: 0,
++      direction: '{{direction}}', data: { direction: '{{direction}}', attachments: '{{attachments}}' },
++    }],
++  ];
++
++  test.each(cases)('%s', (_label, fnName, stored) => {
++    const ed = makeEditor(fnName, stored);
++    const cfg = ed.gather();
++
++    expect(ed.swalCalls).toEqual([]);          // no error toast
++    expect(cfg).not.toBeNull();
++    expect(cfg.params).toEqual(stored);        // deep equality, types included
++
++    // toEqual would let a number through where a boolean is expected? No — but
++    // it WOULD let `5` pass for `"5"`? Also no. Belt-and-braces anyway: assert
++    // the JSON serialization matches, which is what actually lands in the DB.
++    expect(JSON.stringify(cfg.params)).toBe(JSON.stringify(stored));
++
++    // And the whole thing must still SAVE — the round-trip is worthless if the
++    // gathered config then 400s at the route.
++    expect(internalFunctions.__validateFunctionParams(fnName, cfg.params)).toBeNull();
++  });
++});
++
++describe('workflows.html editor — gather still coerces and still rejects', () => {
++  test('editing a numeric field yields a number, not a string', () => {
++    const ed = makeEditor('create_appointment', WF7_S3);
++    ed.field('appt_length').value = '30';
++    expect(ed.gather().params.appt_length).toBe(30);
++  });
++
++  test('typing garbage into an integer field still errors', () => {
++    const ed = makeEditor('create_appointment', WF7_S3);
++    ed.field('appt_with').value = 'rena';
++    expect(ed.gather()).toBeNull();
++    expect(ed.swalCalls[0][1]).toContain('must be an integer');
++  });
++
++  test('typing a NEW placeholder into an integer field passes through verbatim', () => {
++    const ed = makeEditor('create_appointment', WF7_S3);
++    ed.field('appt_with').value = '{{other_user_id}}';
++    expect(ed.gather().params.appt_with).toBe('{{other_user_id}}');
++  });
++
++  test('editing a boolean operand to real text yields a string', () => {
++    // The type-preserving path is "user did not touch the field". Once they do,
++    // the normal string path applies — `true` becomes `"confirmed"`, not a
++    // boolean, and that is correct.
++    const ed = makeEditor('evaluate_condition', WF15_S1);
++    ed.field('value').value = 'confirmed';
++    expect(ed.gather().params.value).toBe('confirmed');
++  });
++
++  test('clearing a normal field still deletes the key', () => {
++    const ed = makeEditor('create_appointment', WF7_S3);
++    ed.field('note').value = '';
++    ed.field('case_id').value = '';
++    const cfg = ed.gather();
++    expect('case_id' in cfg.params).toBe(false);
++  });
++
++  test('out-of-schema keys survive a form save (extra, _comment)', () => {
++    // Regression gate for the keep-then-overwrite seeding — `extra` is rendered
++    // (it is in meta) but `_comment` is a top-level config key the form never
++    // sees, and wf15 s1 / wf16 s1 both carry one.
++    const ed = makeEditor('evaluate_condition', WF15_S1);
++    ed.ctx.WF.origConfig._comment = 'Phase 2 gate: RC outbound events set needs_fetch=true.';
++    const cfg = ed.gather();
++    expect(cfg._comment).toBe('Phase 2 gate: RC outbound events set needs_fetch=true.');
++  });
++});

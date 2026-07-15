@@ -111,6 +111,30 @@ describe('internal_functions __meta registry — shape', () => {
         if (p.placeholderAllowed !== undefined) expect(typeof p.placeholderAllowed).toBe('boolean');
         if (p.multiline !== undefined) expect(typeof p.multiline).toBe('boolean');
         if (p.nullishSkipsBlock !== undefined) expect(typeof p.nullishSkipsBlock).toBe('boolean');
+        // Save-time edit-lock slice — per-spec widenings of the `string` case.
+        // Both are only meaningful on a string-typed param; asserting that here
+        // stops them being sprinkled onto enum/integer specs where the string
+        // case never runs and they would silently do nothing.
+        if (p.objectAllowed !== undefined) {
+          expect(typeof p.objectAllowed).toBe('boolean');
+          expect(['string', 'placeholder_string']).toContain(p.type);
+        }
+        if (p.booleanAllowed !== undefined) {
+          expect(typeof p.booleanAllowed).toBe('boolean');
+          expect(['string', 'placeholder_string']).toContain(p.type);
+        }
+        // strictString restores the "string only" contract for params whose
+        // runtime hard-rejects a non-string. Meaningless on a non-string type,
+        // and it must never co-occur with objectAllowed/booleanAllowed (they
+        // pull in opposite directions).
+        if (p.strictString !== undefined) {
+          expect(typeof p.strictString).toBe('boolean');
+          expect(['string', 'placeholder_string']).toContain(p.type);
+          if (p.strictString) {
+            expect(p.objectAllowed).not.toBe(true);
+            expect(p.booleanAllowed).not.toBe(true);
+          }
+        }
 
         // description, when present, must be a string
         if (p.description !== undefined) expect(typeof p.description).toBe('string');
@@ -292,7 +316,15 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
     ['parse_pdf placeholder path',    'parse_pdf', { dropbox_path: '{{petition_path}}' }, null],
     ['parse_pdf two sources',         'parse_pdf', { url: 'https://example.com/doc.pdf', dropbox_path: '/x.pdf' }, 'must include only one'],
     ['parse_pdf no source',           'parse_pdf', { pages: '1-3' }, 'must include exactly one'],
+    // `pages` carries strictString:true — its runtime (pdfService
+    // parsePageRangeSyntax) hard-rejects a non-string with BAD_PAGES, so a bare
+    // number must fail at SAVE time, NOT slip through decision-1's global
+    // finite-number acceptance and defer to a runtime throw. This is the guard
+    // for one of the nine strictString param instances; the dedicated
+    // strictString block at the bottom exercises the rest.
     ['parse_pdf pages not string',    'parse_pdf', { url: 'https://example.com/doc.pdf', pages: 3 }, 'must be a string'],
+    ['parse_pdf pages array rejected','parse_pdf', { url: 'https://example.com/doc.pdf', pages: [1, 3] }, 'must be a string'],
+    ['parse_pdf placeholder pages ok','parse_pdf', { url: 'https://example.com/doc.pdf', pages: '{{pageRange}}' }, null],
     ['parse_pdf normalize=string',    'parse_pdf', { url: 'https://example.com/doc.pdf', normalize_whitespace: 'true' }, 'must be a boolean'],
     ['parse_pdf max_length too low',  'parse_pdf', { url: 'https://example.com/doc.pdf', max_length: 0 }, 'must be >= 1'],
 
@@ -305,6 +337,112 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
 
     // Generic params shape
     ['set_var array params rejected', 'set_var', [], 'must be a JSON object'],
+
+    // ─────────────────────────────────────────────────────────────
+    // SAVE-TIME EDIT-LOCK SLICE
+    //
+    // 20 of 91 live internal_function workflow steps 400'd on save while the
+    // executor ran them fine — the validator rejected three value shapes that
+    // are legitimate at run time. The rows below are the regression gate for
+    // each shape, PAIRED with the adjacent shape that must still fail so the
+    // widenings can't quietly grow.
+    // ─────────────────────────────────────────────────────────────
+
+    // (1) FINITE NUMBERS pass a `string` param — global, no flag. Mirrors the
+    //     numeric-STRING coercion the number/integer cases already do.
+    //     Live: set_next {value: 3|7|8} (wf1/2/15/16), evaluate_condition
+    //     {value: 1} (wf15 s5, wf16 s4, wf17 s3), run_task_digest {user: 6}.
+    ['string param accepts number',       'set_next', { value: 5 }, null],
+    ['string param accepts 0',            'set_next', { value: 0 }, null],
+    ['string param accepts negative',     'evaluate_condition', { variable: 'x', operator: '==', value: -1, then: 2 }, null],
+    ['string param accepts float',        'evaluate_condition', { variable: 'x', operator: '==', value: 1.5, then: 2 }, null],
+    ['string param rejects NaN',          'set_next', { value: NaN }, 'must be a string'],
+    ['string param rejects Infinity',     'set_next', { value: Infinity }, 'must be a string'],
+    ['string param rejects array',        'send_sms', { from: '1', to: '2', message: ['hi'] }, 'must be a string'],
+    ['run_task_digest numeric user',      'run_task_digest', { user: 6 }, null],
+    // job179 passes force:"true". NOT absorbed — `boolean` stays strict. At run
+    // time `if (!force)` makes the string "true" truthy, but it makes "false"
+    // truthy too, so the string form only works by accident. Genuinely bad
+    // config; fix the job, not the spec.
+    ['run_task_digest force=string still rejected', 'run_task_digest', { force: 'true' }, 'must be a boolean'],
+
+    // (1b) strictString RE-NARROWS (1) for the nine param instances (eight
+    //      distinct runtime guards; `table` on both update_db and insert_db)
+    //      whose runtime hard-rejects a non-string. A bare number must fail at
+    //      SAVE time on these, while every OTHER string param still takes a
+    //      number — each strict-reject row is paired with a non-strict accept so
+    //      the flag can neither spread nor silently vanish.
+    ['strictString query_ai.prompt rejects number',      'query_ai', { prompt: 5 }, 'must be a string'],
+    ['strictString query_ai.prompt accepts string',      'query_ai', { prompt: 'do x' }, null],
+    ['strictString query_ai.prompt accepts placeholder', 'query_ai', { prompt: '{{instructions}}' }, null],
+    ['strictString query_db.from rejects number',        'query_db', { select: ['*'], from: 3 }, 'must be a string'],
+    ['strictString update_db.table rejects number',      'update_db', { table: 7, set_column: 'x', set_value: 'y', where_column: 'id', where_value: '1' }, 'must be a string'],
+    ['strictString update_db.set_column rejects number', 'update_db', { table: 'checkitems', set_column: 9, set_value: 'y', where_column: 'id', where_value: '1' }, 'must be a string'],
+    ['strictString update_db.where_column rejects number','update_db',{ table: 'checkitems', set_column: 'x', set_value: 'y', where_column: 8, where_value: '1' }, 'must be a string'],
+    ['strictString insert_db.table rejects number',      'insert_db', { table: 7, values: { a: 1 } }, 'must be a string'],
+    ['strictString set_setting.key rejects number',      'set_setting', { key: 42, value: 'v' }, 'must be a string'],
+    ['strictString get_setting.key rejects number',      'get_setting', { key: 42 }, 'must be a string'],
+    // Placeholder still wins on a strict param (the {{token}} bypass runs before
+    // the type check); update_db.table carries placeholderAllowed.
+    ['strictString update_db.table accepts placeholder', 'update_db', { table: '{{tbl}}', set_column: 'x', set_value: 'y', where_column: 'id', where_value: '1' }, null],
+    // The bound-VALUE params on update_db are NOT strict — a number there is a
+    // legitimate scalar the driver parameterizes, so it must still save.
+    ['non-strict update_db.set_value accepts number',    'update_db', { table: 'checkitems', set_column: 'qty', set_value: 5, where_column: 'id', where_value: '1' }, null],
+
+    // (2) OBJECTS pass a `string` param ONLY with objectAllowed. create_log.data
+    //     / phone_log.data — createLogEntry dual-accepts object-or-string, and
+    //     7 live steps pass nested blobs (wf15 s8, wf16 s7, wf17–21).
+    ['create_log.data accepts object',    'create_log', { type: 'sms', data: { direction: '{{direction}}', attachments: '{{attachments}}' } }, null],
+    ['create_log.data accepts string',    'create_log', { type: 'note', data: 'Auto follow-up sent' }, null],
+    ['phone_log.data accepts object',     'phone_log',  { type: 'call', data: { to: '{{to}}', from: '{{from}}' } }, null],
+    ['create_log.data rejects array',     'create_log', { type: 'note', data: ['nope'] }, 'must be a string'],
+    // The flag is per-spec, never global: an unflagged string param must still
+    // reject an object. send_sms.message has no objectAllowed.
+    ['unflagged string param rejects object', 'send_sms', { from: '1', to: '2', message: { text: 'hi' } }, 'must be a string'],
+
+    // (3) BOOLEANS pass a `string` param ONLY with booleanAllowed.
+    //     evaluate_condition.value is a comparison OPERAND — JSDoc type {any},
+    //     applied with loose `==`. wf15 s1 / wf16 s1 gate on
+    //     `needs_fetch == true` with a literal boolean, and `true == "true"` is
+    //     FALSE in JS, so stringifying the operand would invert the branch.
+    ['eval value accepts boolean',        'evaluate_condition', { variable: 'needs_fetch', operator: '==', value: true, then: 2, else: 4 }, null],
+    ['eval value accepts false',          'evaluate_condition', { variable: 'x', operator: '==', value: false, then: 2 }, null],
+    ['unflagged string param rejects boolean', 'send_sms', { from: '1', to: '2', message: true }, 'must be a string'],
+    ['set_next rejects boolean',          'set_next', { value: true }, 'must be a string'],
+
+    // (4) {{placeholder}} on a NON-string spec, via placeholderAllowed (the
+    //     bypass runs before the type check, so it works on any type).
+    //     Live: create_appointment {appt_with: "{{attorney_user_id}}"} (wf7 s3),
+    //     create_log {link_type: "{{link_type}}", direction: "{{direction}}"}
+    //     (wf15 s8, wf16 s7), phone_log {direction: "{{direction}}"} (wf18 s1,
+    //     wf20 s4, wf21 s1).
+    ['appt_with placeholder',             'create_appointment', { contact_id: '1', appt_date: '2026-05-01T10:00:00', appt_type: '341 Meeting', appt_length: 15, appt_platform: 'Zoom', appt_with: '{{attorney_user_id}}' }, null],
+    ['appt_with literal integer',         'create_appointment', { contact_id: '1', appt_date: '2026-05-01T10:00:00', appt_type: '341 Meeting', appt_length: 15, appt_platform: 'Zoom', appt_with: 22 }, null],
+    ['appt_with garbage still rejected',  'create_appointment', { contact_id: '1', appt_date: '2026-05-01T10:00:00', appt_type: '341 Meeting', appt_length: 15, appt_platform: 'Zoom', appt_with: 'rena' }, 'must be an integer'],
+    // Per-spec, never global: an integer param WITHOUT the flag still rejects a
+    // token. create_log.by carries no placeholderAllowed.
+    ['unflagged integer rejects placeholder', 'create_log', { type: 'note', by: '{{userId}}' }, 'must be an integer'],
+    ['create_log.link_type placeholder',  'create_log', { type: 'sms', link_type: '{{link_type}}', link_id: '{{their_number}}' }, null],
+    ['create_log.direction placeholder',  'create_log', { type: 'sms', direction: '{{direction}}' }, null],
+    ['phone_log.direction placeholder',   'phone_log',  { type: 'sms', direction: '{{direction}}' }, null],
+    ['phone_log.link_type placeholder',   'phone_log',  { type: 'sms', link_type: '{{link_type}}' }, null],
+    // A real LITERAL is still enum-checked — the bypass only skips {{tokens}},
+    // which are unresolvable at save time by definition.
+    ['create_log.link_type bad literal',  'create_log', { type: 'sms', link_type: 'nonsense' }, 'must be one of'],
+    ['create_log.direction bad literal',  'create_log', { type: 'sms', direction: 'sideways' }, 'must be one of'],
+
+    // (5) set_next {value: null} — the documented "end the workflow normally"
+    //     idiom (live on wf28 s6), which required:true had been 400ing.
+    //     nullishSkipsBlock switches the required-check to key-presence.
+    //     OMISSION is still an error and must stay one: with no `value` the
+    //     function returns next_step:undefined, which workflow_engine's
+    //     `next_step !== undefined` guard turns into a silent fall-through to
+    //     the next step — a different thing entirely from stopping.
+    ['set_next explicit null ends wf',    'set_next', { value: null }, null],
+    ['set_next empty-string null form',   'set_next', { value: '' }, null],
+    ['set_next omitted still required',   'set_next', {}, 'value is required'],
+    ['set_next cancel',                   'set_next', { value: 'cancel' }, null],
+    ['set_next placeholder',              'set_next', { value: '{{next_step}}' }, null],
   ];
 
   test.each(cases)('%s', (label, fnKey, params, expectedFragment) => {

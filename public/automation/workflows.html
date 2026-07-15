@@ -595,6 +595,12 @@ const WFEX = {
 
 const WFEX_TERMINAL = new Set(['completed', 'completed_with_errors', 'failed', 'cancelled']);
 
+// Mirrors PLACEHOLDER_RE in lib/internal_functions/index.js. Used by the
+// metadata-driven gather to recognize a {{token}} on a NUMERIC param, which the
+// server accepts (its placeholder bypass runs before the type check) but
+// parseInt/Number would mangle to NaN. Keep the two in sync.
+const WF_PLACEHOLDER_RE = /\{\{[^}]+\}\}/;
+
 // Tracks whether the shell has us on-screen. Polling gate.
 let subPageActive = false;
 let wfLoaded = false;
@@ -1647,10 +1653,28 @@ function wfRenderParamField(spec, value, visible) {
     case 'integer':
     case 'number': {
       const v = (value === null || value === undefined) ? '' : value;
-      const step = spec.type === 'integer' ? 'step="1"' : '';
-      const min  = spec.min !== undefined ? `min="${spec.min}"` : '';
-      const max  = spec.max !== undefined ? `max="${spec.max}"` : '';
-      inputHtml = `<input id="${id}" type="number" ${step} ${min} ${max} value="${esc(v)}">`;
+      // A NON-NUMERIC STRING on a numeric param is a {{placeholder}} — legal at
+      // save (the validator's placeholder bypass runs before the type check;
+      // create_appointment.appt_with, update_log.log_id) and at run time (the
+      // executor resolves, then parseInt's). But <input type="number"> runs the
+      // HTML value-sanitization algorithm and BLANKS any value that isn't a
+      // valid floating-point number — so the field renders empty, and gather's
+      // empty-field rule then DELETES the key. Two-stage silent clobber: open
+      // wf7 s3, save, and "{{attorney_user_id}}" is gone.
+      //
+      // Render those as a plain text input so they round-trip. Genuinely
+      // numeric values keep the number input (spinner, min/max). Gather mirrors
+      // this: a {{token}} passes through verbatim, anything else non-numeric
+      // still raises the "must be an integer" toast.
+      const isPlaceholderish = typeof v === 'string' && v !== '' && !Number.isFinite(Number(v));
+      if (isPlaceholderish) {
+        inputHtml = `<input id="${id}" value="${esc(v)}">`;
+      } else {
+        const step = spec.type === 'integer' ? 'step="1"' : '';
+        const min  = spec.min !== undefined ? `min="${spec.min}"` : '';
+        const max  = spec.max !== undefined ? `max="${spec.max}"` : '';
+        inputHtml = `<input id="${id}" type="number" ${step} ${min} ${max} value="${esc(v)}">`;
+      }
       break;
     }
     case 'object':
@@ -1820,19 +1844,40 @@ function wfGatherConfig(type) {
       // seeded value (keep-then-overwrite: an empty visible field is an
       // explicit "remove this"). Previously this rebuilt from {} so a bare
       // `continue` sufficed; now we must delete or the stale clone persists.
-      // The skip-block pattern (`at: null`) is server-written and not hand-
-      // edited here; use Edit-as-JSON for that shape.
-      if (!raw) { delete params[spec.name]; continue; }
+      //
+      // EXCEPT on a nullishSkipsBlock param that ALREADY held an explicit null:
+      // there, null is a meaningful VALUE, not an absent one — set_next
+      // {value:null} = "end the workflow", wait_for {at:null} = skip-block —
+      // and both render as an empty field. Deleting the key would drop that
+      // meaning: set_next {} silently becomes "fall through to the next step"
+      // (workflow_engine's `next_step !== undefined` guard), and the required
+      // ones 400. So leave the seeded null alone and let it round-trip.
+      //
+      // Only PRESERVES what was already stored — it never INVENTS a null on a
+      // param that didn't have one, so wait_for's exclusiveOneOf(duration, at)
+      // behaves exactly as before for every config that doesn't already carry
+      // `at: null`. Removing an existing null is an Edit-as-JSON operation.
+      if (!raw) {
+        if (spec.nullishSkipsBlock && params[spec.name] === null) continue;
+        delete params[spec.name];
+        continue;
+      }
 
       // Type coercion
       switch (spec.type) {
         case 'integer': {
+          // {{placeholder}} on a numeric param is legal — the server's bypass
+          // runs before the type check. Pass it through verbatim rather than
+          // parseInt-ing it to NaN and toasting. Any OTHER non-numeric text is
+          // still a typo and still errors.
+          if (WF_PLACEHOLDER_RE.test(raw)) { params[spec.name] = raw; break; }
           const n = parseInt(raw, 10);
           if (Number.isFinite(n)) params[spec.name] = n;
           else { Swal.fire('Error', `${spec.name} must be an integer`, 'error'); return null; }
           break;
         }
         case 'number': {
+          if (WF_PLACEHOLDER_RE.test(raw)) { params[spec.name] = raw; break; }
           const n = Number(raw);
           if (Number.isFinite(n)) params[spec.name] = n;
           else { Swal.fire('Error', `${spec.name} must be a number`, 'error'); return null; }
@@ -1858,7 +1903,7 @@ function wfGatherConfig(type) {
           }
           break;
         }
-        default:
+        default: {
           // string / enum / iso_datetime / duration / placeholder_string.
           // If render auto-promoted an object/array value to a JSON textarea
           // (data-json="1"), parse it back here so we round-trip the original
@@ -1870,9 +1915,32 @@ function wfGatherConfig(type) {
               Swal.fire('Error', `${spec.name} is not valid JSON`, 'error');
               return null;
             }
-          } else {
-            params[spec.name] = raw;
+            break;
           }
+
+          // NON-STRING SCALARS on a string-typed param. The validator accepts
+          // them (finite numbers globally; booleans on booleanAllowed specs) and
+          // the live corpus relies on them: set_next {value: 5}, and
+          // evaluate_condition {value: true} on wf15 s1 / wf16 s1. Render has to
+          // String() them into a text input, so a naive gather would hand back
+          // the STRING "5" / "true" — and for evaluate_condition that silently
+          // INVERTS the branch, because evaluateSingle compares with `==` and
+          // `true == "true"` is false in JS. (These steps were unsaveable before
+          // this slice, so the clobber was unreachable; unlocking save is exactly
+          // what makes it reachable.)
+          //
+          // Rule: if the user did not TOUCH the text, write back the original
+          // value verbatim. An edited field takes the normal string path.
+          const orig = (sameFn && WF.origConfig.params) ? WF.origConfig.params[spec.name] : undefined;
+          if (orig !== undefined && orig !== null
+              && typeof orig !== 'string' && typeof orig !== 'object'
+              && String(orig) === raw) {
+            params[spec.name] = orig;
+            break;
+          }
+
+          params[spec.name] = raw;
+        }
       }
     }
 

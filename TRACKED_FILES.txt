@@ -307,6 +307,7 @@ scripts/courtReviewTest.js
 scripts/courtSummaryTest.js
 scripts/courtTitleMatchTest.js
 scripts/encrypt-smtp-passwords.js
+scripts/sweep_validate_live.js
 scripts/test_availability.js
 scripts/test_court_revert.js
 scripts/test_email_ingest.sh
@@ -314,6 +315,7 @@ scripts/test_email_ingest_automation.sh
 scripts/test_email_ingest_crud.js
 scripts/test_email_ingest_suppression.sh
 scripts/updateRoutes.js
+scripts/verify_strictstring_live.js
 server.js
 services/adapters/email/gmail.js
 services/adapters/email/pabbly.js
@@ -386,13 +388,15 @@ tests/eventservice.remindertitle.test.js
 tests/hookMapper.test.js
 tests/hookTransforms.test.js
 tests/internal_functions.meta.test.js
+tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
-tests/logservice.updateloglink.test.js
 tests/phoneingestservice.dedup.test.js
-tests/taskservice.test.js
+tests/taskService.test.js
 tests/test-credential-crypto.js
 tests/test-cron.js
 tests/test-oauthService.js
 tests/test-timing-extensions.js
 tests/test_classifier.js
+tests/workflows.editor.roundtrip.test.js
 views/v.html
+yc-editlock.patch
