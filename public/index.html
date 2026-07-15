@@ -1670,7 +1670,7 @@
       const toVal = t.to?.id || '';
       const titleVal = t.title || '';
       const descVal = t.desc || '';
-      const dueVal = t.due || '';
+      const dueVal = t.due ? String(t.due).slice(0, 10) : '';
       const notifyVal = t.notify ? 'checked' : '';
       const lType = isEdit ? (t.link?.type || '') : (linkType || '');
       const lId = isEdit ? (t.link?.id || '') : (linkId || '');
@@ -1738,7 +1738,7 @@
             const patch = {};
             if (title !== (t.title || '')) patch.task_title = title;
             if (desc !== (t.desc || '')) patch.task_desc = desc;
-            if (due !== (t.due || '')) patch.task_due = due;
+            if (due !== dueVal) patch.task_due = due;
             if (parseInt(E("taskAssignTo").value) !== +toVal) patch.task_to = parseInt(E("taskAssignTo").value);
             if (E("taskNotify").checked !== !!t.notify) patch.task_notification = E("taskNotify").checked;
             if (showLink && linked && !t.link?.type) { patch.task_link_type = lType; patch.task_link_id = String(lId); }
@@ -1816,6 +1816,17 @@
       }
     }
 
+    // Format a date-only value (DB DATE, arrives as UTC-midnight ISO e.g.
+    // "2026-07-18T00:00:00.000Z"). Slice the calendar date, then build a LOCAL
+    // date so the day never shifts. Do NOT feed the raw value to new Date() —
+    // west of UTC that renders the previous day.
+    function fmtDue(d) {
+      if (!d) return "";
+      const [y, m, day] = String(d).slice(0, 10).split("-");
+      return new Date(+y, +m - 1, +day)
+        .toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    }
+
     // Escape, bold leading "Label:" line prefixes, newline→<br>.
     // Escape runs FIRST per line; the regex only matches [A-Za-z ]+: on
     // escaped text, so the inserted <strong> tags are the only HTML.
@@ -1869,7 +1880,7 @@
               ${meta("Assigned by", escHtml(task.from?.name || ""))}
               ${meta("Assigned to", escHtml(task.to?.name || ""))}
               ${meta("Linked to", task.link?.id ? escHtml(task.link.title || task.link.id) : "")}
-              ${meta("Due date", task.due ? String(task.due).slice(0, 10) : "")}
+              ${meta("Due date", fmtDue(task.due))}
               ${meta("Created", created)}
               ${meta("Source", task.source ? escHtml(task.source) : "")}
               ${meta("Notify", task.notify ? "Assigner notified on completion" : "")}
@@ -1945,7 +1956,7 @@
             <td>${escHtml(task.from?.name || "")}</td>
             <td>${escHtml(task.to?.name || "")}</td>
             <td>${linkHTML}</td>
-            <td>${task.due || ""}</td>
+            <td>${fmtDue(task.due)}</td>
             <td>${created}</td>`;
           });
 
