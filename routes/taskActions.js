@@ -69,6 +69,22 @@ function htmlEscape(str) {
 }
 
 /**
+ * Render a task description: escape, bold leading "Label:" line prefixes,
+ * newline→<br>. Escape runs FIRST per line; the bold regex only matches
+ * [A-Za-z ]+: on already-escaped text, so the inserted <strong> tags are the
+ * only HTML in the output.
+ *
+ * Deliberately duplicated from services/taskService.js rather than imported
+ * (self-contained convention, same as htmlEscape). Keep them in sync.
+ */
+function renderDescHtml(desc) {
+  return String(desc == null ? '' : desc)
+    .split('\n')
+    .map(line => htmlEscape(line).replace(/^([A-Za-z][A-Za-z ]{0,30}:)/, '<strong>$1</strong>'))
+    .join('<br>');
+}
+
+/**
  * Normalize the optional note from a form POST.
  *
  * Strips control chars (keeps \t \n \r), trims, and CLAMPS to 500 chars —
@@ -151,7 +167,7 @@ function taskSummaryHtml(task, titleColor = TASK_COLOR) {
   const descBlock = task.desc
     ? `<div style="margin:14px 0;padding:14px 16px;background:#f5f3ff;border-left:3px solid ${TASK_COLOR};
                   border-radius:4px;font-size:14px;color:#374151;line-height:1.6">
-         ${htmlEscape(task.desc).replace(/\n/g, '<br>')}
+         ${renderDescHtml(task.desc)}
        </div>`
     : '';
 

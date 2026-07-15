@@ -97,6 +97,26 @@ function htmlEscape(str) {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Render a task description for HTML surfaces: escape, bold leading
+ * "Label:" line prefixes, then newline→<br>.
+ *
+ * ORDER MATTERS: escape FIRST, per line, then run the bold regex on the
+ * escaped text — the pattern only matches [A-Za-z ]+: so it can never touch
+ * escaped entities, and the <strong> tags it inserts are the only HTML in
+ * the output. Bolding applies to ANY line starting "Some Label:" (machine-
+ * composed lead/court descs and hand-typed ones alike) — deliberate.
+ *
+ * Duplicated in routes/taskActions.js (self-contained convention, same as
+ * htmlEscape). Keep them in sync.
+ */
+function renderDescHtml(desc) {
+  return String(desc == null ? '' : desc)
+    .split('\n')
+    .map(line => htmlEscape(line).replace(/^([A-Za-z][A-Za-z ]{0,30}:)/, '<strong>$1</strong>'))
+    .join('<br>');
+}
+
 /** Random url-safe action token (22 chars), stored in tasks.task_action_token. */
 function newActionToken() {
   return crypto.randomBytes(16).toString('base64url');
@@ -263,7 +283,7 @@ function buildAssignmentEmail(task, verb = 'assigned') {
   const descBlock = task.desc
     ? `<div style="margin:16px 0;padding:14px 16px;background:#f5f3ff;border-left:3px solid ${TASK_COLOR};
                   border-radius:4px;font-size:14px;color:#374151;line-height:1.6">
-         ${htmlEscape(task.desc).replace(/\n/g, '<br>')}
+         ${renderDescHtml(task.desc)}
        </div>`
     : '';
 
@@ -357,7 +377,7 @@ function buildDueReminderEmail(task) {
   const descBlock = task.desc
     ? `<div style="margin:14px 0;padding:14px 16px;background:#fff7ed;border-left:3px solid #f97316;
                   border-radius:4px;font-size:14px;color:#374151;line-height:1.6">
-         ${htmlEscape(task.desc).replace(/\n/g, '<br>')}
+         ${renderDescHtml(task.desc)}
        </div>`
     : '';
 
@@ -1112,6 +1132,7 @@ module.exports = {
   // Email builders — exported so job_executor can use them
   buildDueReminderEmail,
   buildDigestEmail,
+  renderDescHtml,
   getFromEmail,
   getSmsFrom,
   fmtDate

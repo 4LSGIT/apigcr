@@ -726,7 +726,6 @@ async function addLog() {
         <th>Task ID</th>
         <th>Status</th>
         <th>Title</th>
-        <th>Description</th>
         <th>Assigned By</th>
         <th>Assigned To</th>
         <th>Linked To</th>
@@ -745,6 +744,78 @@ async function addLog() {
 
     async function refreshTasks() {
       await tabTasksGet(0);
+    }
+
+    // Cache of the last-loaded task list, for the detail modal.
+    let tasksCache = [];
+
+    // Escape, bold leading "Label:" line prefixes, newline→<br>.
+    // Escape runs FIRST per line; the regex only matches [A-Za-z ]+: on
+    // escaped text, so the inserted <strong> tags are the only HTML.
+    // Duplicated in index.html / case.html and (server-side) in
+    // taskService.js / taskActions.js — keep in sync.
+    function renderTaskDescHtml(desc) {
+      return String(desc == null ? "" : desc)
+        .split("\n")
+        .map(line => escHtml(line).replace(/^([A-Za-z][A-Za-z ]{0,30}:)/, "<strong>$1</strong>"))
+        .join("<br>");
+    }
+
+    // Task detail modal — same layout as index.html's viewTask; actions
+    // delegate to the parent shell (P.updateTask) with refreshTasks.
+    async function viewTask(taskId) {
+      let task = tasksCache.find(t => +t.id === +taskId) || null;
+      if (!task) {
+        try {
+          task = (await P.apiSend(`/api/tasks/${taskId}`, "GET")).data;
+        } catch (err) {
+          Toast.fire({ icon: "error", title: "Error loading task", text: err.message });
+          return;
+        }
+      }
+      const statusColors = { "Pending": "#4f46e5", "Due Today": "#d97706", "Overdue": "#dc2626", "Completed": "#065f46", "Deleted": "#6b7280" };
+      const meta = (label, val) => val
+        ? `<tr><td style="padding:3px 10px 3px 0;color:#6b7280;white-space:nowrap;vertical-align:top">${label}</td><td style="padding:3px 0">${val}</td></tr>`
+        : "";
+      const created = task.created
+        ? new Date(task.created).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+        : "";
+      let actions = [];
+      if (["Pending", "Due Today", "Overdue"].includes(task.status)) actions = ["Mark Complete", "Edit", "Cancel"];
+      else if (task.status === "Deleted") actions = ["Uncancel"];
+      else if (task.status === "Completed") actions = ["Mark Incomplete"];
+      const btnColor = a => a === "Mark Complete" ? "#059669" : a === "Cancel" ? "#b91c1c" : "#4f46e5";
+      const actionBtns = actions.map(a =>
+        `<button class="swal2-styled" style="background:${btnColor(a)}" onclick="taskModalAction(${task.id},'${a}')">${a}</button>`
+      ).join("");
+
+      Swal.fire({
+        title: `<span style="font-size:19px">${escHtml(task.title)}</span>`,
+        html: `
+          <div style="text-align:left;font-size:14px">
+            <div style="margin:0 0 10px;font-weight:600;color:${statusColors[task.status] || "#6b7280"}">${escHtml(task.status)}</div>
+            ${task.desc ? `<div style="margin:0 0 12px;padding:12px 14px;background:#f5f3ff;border-left:3px solid #4f46e5;border-radius:4px;line-height:1.6;max-height:45vh;overflow:auto">${renderTaskDescHtml(task.desc)}</div>` : ""}
+            <table style="font-size:13px;border-collapse:collapse">
+              ${meta("Task ID", task.id)}
+              ${meta("Assigned by", escHtml(task.from?.name || ""))}
+              ${meta("Assigned to", escHtml(task.to?.name || ""))}
+              ${meta("Linked to", task.link?.id ? escHtml(task.link.title || task.link.id) : "")}
+              ${meta("Due date", task.due ? String(task.due).slice(0, 10) : "")}
+              ${meta("Created", created)}
+              ${meta("Source", task.source ? escHtml(task.source) : "")}
+              ${meta("Notify", task.notify ? "Assigner notified on completion" : "")}
+            </table>
+            ${actionBtns ? `<div style="margin-top:14px;text-align:center">${actionBtns}</div>` : ""}
+          </div>`,
+        width: 640,
+        showConfirmButton: false,
+        showCloseButton: true
+      });
+    }
+
+    function taskModalAction(taskId, action) {
+      Swal.close();
+      P.updateTask(taskId, action, refreshTasks);
     }
 
     // Small HTML-escape helper local to the tasks table. Task title/desc can
@@ -780,6 +851,7 @@ async function addLog() {
       try {
         const data = await P.apiSend("/api/tasks", "GET", params);
         const taskList = data.data || [];
+        tasksCache = taskList;
 
         if (data.total > 0) {
           taskList.forEach(task => {
@@ -803,8 +875,7 @@ async function addLog() {
             </select></td>
             <td>${task.id}</td>
             <td>${task.status}</td>
-            <td>${escHtml(task.title)}</td>
-            <td>${escHtml(task.desc || "")}</td>
+            <td><a href="#" onclick="viewTask(${task.id});return false">${escHtml(task.title)}</a></td>
             <td>${escHtml(task.from?.name || "")}</td>
             <td>${escHtml(task.to?.name || "")}</td>
             <td></td>
