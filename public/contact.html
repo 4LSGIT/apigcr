@@ -785,8 +785,9 @@ async function addLog() {
       else if (task.status === "Deleted") actions = ["Uncancel"];
       else if (task.status === "Completed") actions = ["Mark Incomplete"];
       const btnColor = a => a === "Mark Complete" ? "#059669" : a === "Cancel" ? "#b91c1c" : "#4f46e5";
+      const btnLabel = a => a === "Cancel" ? "Cancel Task" : a === "Edit" ? "Edit Task" : a;
       const actionBtns = actions.map(a =>
-        `<button class="swal2-styled" style="background:${btnColor(a)}" onclick="taskModalAction(${task.id},'${a}')">${a}</button>`
+        `<button class="swal2-styled" style="background:${btnColor(a)}" onclick="taskModalAction(${task.id},'${a}')">${btnLabel(a)}</button>`
       ).join("");
 
       Swal.fire({
