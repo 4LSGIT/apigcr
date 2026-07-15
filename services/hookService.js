@@ -311,12 +311,22 @@ function getByPath(obj, path) {
  *       "contact_id": "contact_id"    → targetOutput.contact_id
  *       "contact_id": "contact.id"    → targetOutput.contact.id
  *       "contact_obj": "contact"      → targetOutput.contact  (whole object)
+ *   • The exact string '$': the whole targetOutput object itself
+ *       "event": "$"                 → params.event = targetOutput
+ *     (a literal dollar sign is "'$'"; '$x' etc. are still path lookups —
+ *     only the exact single character '$' is special)
  *   • Any non-string value: passed through as-is (number, bool, null, object)
  *       "enabled": true              → params.enabled = true
  *       "timeout_ms": 5000           → params.timeout_ms = 5000
  *
  * Array-index syntax ("items[0].name") is NOT supported — use a transform
  * rule or a code transform to pull array elements into flat fields first.
+ *
+ * PARITY NOTE: the '$' rule was added to lib/actionDispatchers' copy in
+ * Slice 9A but never backfilled here, so buildDryRunPreview (this file's
+ * only caller) misrendered '$' mappings as undefined while live delivery
+ * sent the whole object. Backfilled verbatim — the two copies are identical
+ * again; keep them that way.
  */
 function resolveParamsMapping(paramsMapping, targetOutput) {
   const params = {};
@@ -325,6 +335,9 @@ function resolveParamsMapping(paramsMapping, targetOutput) {
         && source.startsWith("'") && source.endsWith("'")) {
       // Literal — strip surrounding single quotes
       params[paramName] = source.slice(1, -1);
+    } else if (source === '$') {
+      // Whole-object token (Slice 9A) — the full targetOutput itself
+      params[paramName] = targetOutput;
     } else if (typeof source === 'string') {
       // Dot-path lookup on targetOutput
       params[paramName] = getByPath(targetOutput, source);
