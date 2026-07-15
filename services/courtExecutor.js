@@ -421,17 +421,50 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     }
     let eventId = null;
     if (!effectiveDryRun) {
-      const [r] = await db.query(
-        `INSERT INTO events
-           (event_type, event_link_type, event_link_id, event_title, event_date,
-            event_time, event_all_day, event_location, event_status,
-            event_calendar_id, event_created_by, event_note)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-        [ev.event_type, ev.event_link_type, ev.event_link_id, ev.event_title,
-         ev.event_date, ev.event_time, ev.event_all_day, ev.event_location,
-         ev.event_status, ev.event_calendar_id, ev.event_created_by, ev.event_note]
-      );
-      eventId = r.insertId;
+      // Route through eventService.createEvent so this event gets a `log` row
+      // (type='event', action 'created') and therefore SURFACES in the case /
+      // contact activity feed. The raw INSERT this replaces wrote NO log row —
+      // which is exactly why the executor's events (e.g. 90/93/104) were
+      // invisible in the feed while wf24's confirmation-hearing events, created
+      // via createEvent, were not (Slice 4 finding). The log row is the ENTIRE
+      // intended behavior change.
+      //
+      // createEvent does three other things the raw INSERT did not; all three
+      // are deliberately neutralized so nothing else about a court event changes:
+      //   - GCal sync: event_calendar_id:'none' makes _shouldSyncGcal
+      //     short-circuit, so syncEventToCalendar is a no-op (court events do NOT
+      //     start syncing to GCal here — that is a separate, unmade decision).
+      //   - Reminder task: no `reminder` key is passed, so spawnReminderTask is
+      //     never reached (court events do NOT grow reminder tasks here).
+      //   - Dedupe: dedupe:false. doCreateEvent already ran findDuplicateEvent
+      //     ABOVE and owns the 'event_exists'/'event_slot_exists' skip-reason
+      //     contract that court.js DEDUP_SKIP_REASONS + the weekly digest depend
+      //     on. dedupe:true would double-guard and could bypass that contract.
+      //
+      // Value mappings preserve the raw INSERT's row shape exactly:
+      //   - acting_user_id:0 → createEvent's createdBy rule writes event_created_by
+      //     NULL (matches the old event_created_by:null).
+      //   - event_all_day is DERIVED by createEvent from event_time (time → 0,
+      //     no time → 1), matching the old ev.event_all_day = time ? 0 : 1.
+      //   - event_status is hard-coded 'Scheduled' inside createEvent (matches).
+      //   - event_with / event_length / event_link are unset here and default to
+      //     NULL — identical to the columns the raw INSERT omitted (DB defaults
+      //     are NULL; verified against live rows).
+      const created = await eventService.createEvent(db, {
+        event_type:        ev.event_type,
+        event_link_type:   ev.event_link_type,   // 'case_number'
+        event_link_id:     ev.event_link_id,
+        event_title:       ev.event_title,
+        event_date:        ev.event_date,
+        event_time:        ev.event_time,        // createEvent derives all_day from this
+        event_location:    ev.event_location,
+        event_note:        ev.event_note,        // AI_DISCLAIMER
+        event_calendar_id: 'none',               // keeps GCal sync a no-op
+        acting_user_id:    0,                     // system-authored → event_created_by NULL
+        dedupe:            false,                 // executor already guarded upstream
+        // NO reminder key — court events must not grow reminder tasks here.
+      });
+      eventId = created.event_id;
     }
     const eid = eventId != null ? String(eventId) : '(dry)';
     const summary = `${ev.event_type || 'event'}: ${ev.event_title} @ ${eventSummary(ev.event_date, ev.event_time, ev.event_location)}`;
