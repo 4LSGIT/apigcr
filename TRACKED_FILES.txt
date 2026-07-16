@@ -383,6 +383,7 @@ tests/emailservice.normalizebodies.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventservice.remindertitle.test.js
 tests/hookMapper.test.js
+tests/hookService.duplicate.test.js
 tests/hookTransforms.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/internal_functions.meta.test.js

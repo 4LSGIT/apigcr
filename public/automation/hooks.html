@@ -454,6 +454,23 @@
               <a href="#" onclick="window.hookUseCapturedSample && window.hookUseCapturedSample();return false">Use in Test tab</a>
             </div>
           </div>
+
+          <!-- ══ Duplicate (saved hooks only; toggled in populateEditor) ══ -->
+          <div id="f-duplicate-section" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:6px;background:#f8fafc">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+              <div style="flex:1;min-width:200px">
+                <label style="font-weight:600;font-size:13px;display:block">Duplicate hook</label>
+                <div class="hint" style="margin-top:2px">
+                  Creates an <strong>inactive</strong> copy of the last <strong>saved</strong> version — auth (including secrets), filter, transform, and targets included. The copy gets a fresh slug, so it receives no traffic until a sender is pointed at it.
+                </div>
+              </div>
+              <button class="btn btn-outline" type="button" id="f-duplicate-btn"
+                      onclick="window.hookDuplicate && window.hookDuplicate()"
+                      style="font-size:12px;min-width:170px">
+                <i class="fa-solid fa-copy"></i> Duplicate hook
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- ══ AUTH ══ -->
@@ -554,7 +571,8 @@
         <!-- ══ TARGETS ══ -->
         <div class="tab-content" id="hook-tab-targets">
           <div id="targets-list"></div>
-          <button class="add-btn mt-8" onclick="window.hookAddTarget()"><i class="fa-solid fa-plus"></i> Add Delivery Target</button>
+          <button class="add-btn mt-8" id="f-target-add" onclick="window.hookAddTarget()"><i class="fa-solid fa-plus"></i> Add Delivery Target</button>
+          <div id="f-target-add-note" class="hint" style="display:none;margin-top:6px"><i class="fa-solid fa-lock"></i> Save the hook first, then add targets.</div>
         </div>
 
         <!-- ══ LOGS ══ -->
@@ -861,6 +879,16 @@ window.togglePanelLeft = togglePanelLeft;
       if (h.updated_at) parts.push(new Date(h.updated_at).toLocaleString());
       metaEl.textContent = parts.join(' • ');
     } else { metaEl.style.display = 'none'; }
+
+    // Saved-state affordances: Duplicate only exists for a saved hook, and
+    // targets are save-first (FK to hook_id — see addTarget).
+    const saved = h.id != null;
+    const dupSection = E('f-duplicate-section');
+    if (dupSection) dupSection.style.display = saved ? '' : 'none';
+    const tAdd = E('f-target-add');
+    if (tAdd) tAdd.disabled = !saved;
+    const tNote = E('f-target-add-note');
+    if (tNote) tNote.style.display = saved ? 'none' : '';
 
     // Auth
     E('f-auth-type').value = h.auth_type || 'none';
@@ -1252,7 +1280,18 @@ window.togglePanelLeft = togglePanelLeft;
     return `(${type})`;
   }
 
+  // SAVE-FIRST (matches emailIngest/phoneIngest rules): targets FK to
+  // hook_id, so they cannot exist before the hook does. The old else-branch
+  // buffered targets locally for an UNSAVED hook — but saveHook's create path
+  // never replayed them (it reloads and selectHook resets `targets` from the
+  // server row), so buffered targets were silently LOST on save. The button
+  // is disabled pre-save via populateEditor; this guard is belt-and-braces
+  // for any other path in.
   async function addTarget() {
+    if (!activeHookId) {
+      Toast.fire({ icon: 'info', title: 'Save the hook first, then add targets' });
+      return;
+    }
     const { value } = await Swal.fire({
       title: 'New Delivery Target',
       html: buildTargetForm({}),
@@ -1263,18 +1302,13 @@ window.togglePanelLeft = togglePanelLeft;
       preConfirm: () => collectTargetForm(),
     });
     if (!value) return;
-    if (activeHookId) {
-      try {
-        const result = await api(`/api/hooks/${activeHookId}/targets`, 'POST', value);
-        value.id = result.id;
-        targets.push(value);
-        renderTargets();
-        Toast.fire({ icon: 'success', title: 'Target added' });
-      } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
-    } else {
+    try {
+      const result = await api(`/api/hooks/${activeHookId}/targets`, 'POST', value);
+      value.id = result.id;
       targets.push(value);
       renderTargets();
-    }
+      Toast.fire({ icon: 'success', title: 'Target added' });
+    } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
   }
 
   async function editTarget(i) {
@@ -1289,17 +1323,15 @@ window.togglePanelLeft = togglePanelLeft;
       preConfirm: () => collectTargetForm(),
     });
     if (!value) return;
-    if (t.id) {
-      try {
-        await api(`/api/hooks/targets/${t.id}`, 'PUT', value);
-        Object.assign(targets[i], value);
-        renderTargets();
-        Toast.fire({ icon: 'success', title: 'Target updated' });
-      } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
-    } else {
+    // Save-first: every rendered target has a server id. A missing id would
+    // mean a stale pre-save buffer row — fail loudly rather than mutate air.
+    if (!t.id) { Toast.fire({ icon: 'error', title: 'Target has no id — reload the hook' }); return; }
+    try {
+      await api(`/api/hooks/targets/${t.id}`, 'PUT', value);
       Object.assign(targets[i], value);
       renderTargets();
-    }
+      Toast.fire({ icon: 'success', title: 'Target updated' });
+    } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
   }
 
   async function removeTarget(i) {
@@ -2967,6 +2999,53 @@ async function runLiveTest() {
     }
   }
 
+  // Server-side deep copy (hook + targets), created INACTIVE on a fresh slug.
+  // Copies the last SAVED state — this page has no dirty tracking, so the
+  // confirm always notes that unsaved edits are not included (opening the
+  // copy re-populates the editor, discarding them).
+  async function duplicateHook() {
+    if (!activeHookId) return;
+    const { isConfirmed } = await Swal.fire({
+      title: 'Duplicate this hook?',
+      html: `Creates an <strong>inactive</strong> copy of the last <strong>saved</strong> version of "${esc(activeHook?.name || '')}" — auth, filter, transform, and targets included — on a fresh slug. Any unsaved edits in this editor are not copied.`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Duplicate',
+    });
+    if (!isConfirmed) return;
+    const btn = E('f-duplicate-btn');
+    if (btn) btn.disabled = true;
+    try {
+      const data = await api(`/api/hooks/${activeHookId}/duplicate`, 'POST', {});
+      if (!data?.hook?.id) throw new Error('Server returned no hook');
+      Toast.fire({ icon: 'success', title: 'Duplicated — copy is inactive' });
+      const hooksData = await api('/api/hooks');
+      hooks = hooksData.hooks || [];
+      // The copy is inactive — auto-reveal if the list is hiding inactive
+      // (same pattern as saveHook's inactive-save path).
+      if (!showInactive) {
+        showInactive = true;
+        const cb = document.getElementById('hook-show-inactive');
+        if (cb) cb.checked = true;
+      }
+      applyHookFilter();
+      await selectHook(data.hook.id);
+      hookSwitchTab('general');
+      // Land ready-to-rename: focus the name, select the " (copy)" suffix.
+      const nameInput = E('f-name');
+      if (nameInput) {
+        nameInput.focus();
+        const suffixAt = nameInput.value.lastIndexOf(' (copy)');
+        if (suffixAt >= 0) nameInput.setSelectionRange(suffixAt, nameInput.value.length);
+        else nameInput.select();
+      }
+    } catch (e) {
+      Toast.fire({ icon: 'error', title: e.message });
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   // ══════════════════════════════════════════════════════════════════
   // LIFECYCLE HOOKS — exposed to the shell
   // ══════════════════════════════════════════════════════════════════
@@ -3045,6 +3124,7 @@ async function runLiveTest() {
   window.hookRunLiveTest          = runLiveTest;
   window.hookSave                 = saveHook;
   window.hookDelete               = deleteHook;
+  window.hookDuplicate            = duplicateHook;
   window.hookFilterList           = hookFilterList;
   window.hookToggleInactive       = hookToggleInactive;
 

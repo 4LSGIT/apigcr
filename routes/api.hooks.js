@@ -359,6 +359,20 @@ router.put('/api/hooks/:id', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// Deep-copy a hook + its targets. The copy gets a fresh random slug, is
+// created INACTIVE, and copies auth verbatim — see hookService.duplicateHook.
+// Body is ignored.
+router.post('/api/hooks/:id/duplicate', jwtOrApiKey, async (req, res) => {
+  try {
+    const hook = await hookService.duplicateHook(req.db, req.params.id, req.auth.userId);
+    if (!hook) return res.status(404).json({ status: 'error', message: 'Hook not found' });
+    res.status(201).json({ status: 'success', hook });
+  } catch (err) {
+    console.error('[hook] duplicate error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 router.delete('/api/hooks/:id', jwtOrApiKey, async (req, res) => {
   try {
     await hookService.deleteHook(req.db, req.params.id);

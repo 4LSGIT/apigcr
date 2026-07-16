@@ -912,6 +912,97 @@ async function deleteHook(db, id) {
   await db.query(`DELETE FROM hooks WHERE id = ?`, [id]);
 }
 
+/**
+ * Deep-copy a hook AND its targets in one transaction.
+ *
+ * The copy:
+ *   - gets a FRESH random slug (createHook's own convention) — slug is UNIQUE
+ *     and is the live inbound endpoint (/hooks/:slug), so it can never be
+ *     shared, and "<slug>-copy" would collide on a second duplicate
+ *   - is created INACTIVE (active=0)
+ *   - copies auth_type + auth_config VERBATIM (including api_key/hmac secret) —
+ *     duplicating usually means "similar integration"; the copy is inactive on
+ *     a virgin slug, so the shared secret is inert until traffic is pointed
+ *     at it
+ *   - copies captured_sample/captured_at (they power the Test tab against the
+ *     clone) but resets capture_mode to 'off' (live state, never copied)
+ *   - resets version via column default; last_modified_by = duplicating user
+ *
+ * Targets copy verbatim, including credential_id (an FK into the shared
+ * credentials store — a reference, not a secret copy), per-target conditions,
+ * and per-target transforms. Explicit column lists (not `SET ?`) so joined
+ * extras from getHookById (cred_name/cred_type) and id/timestamps can never
+ * leak into the insert.
+ *
+ * No validation round-trip — matches the rest of this service's CRUD (there
+ * is no hook validator layer; source rows are copied byte-identical).
+ *
+ * Returns the new hook (getHookById shape, targets included), or null if the
+ * source hook is absent.
+ */
+async function duplicateHook(db, id, userId) {
+  const src = await getHookById(db, id);
+  if (!src) return null;
+
+  const toJson = (v) => (v == null ? null : (typeof v === 'string' ? v : JSON.stringify(v)));
+  const copyName = `${src.name} (copy)`.slice(0, 255);
+  const newSlug  = crypto.randomUUID().slice(0, 8);
+
+  const newId = await db.withTransaction(async (conn) => {
+    const [r] = await conn.query(
+      `INSERT INTO hooks
+         (slug, name, description, auth_type, auth_config,
+          filter_mode, filter_config, transform_mode, transform_config,
+          active, last_modified_by, capture_mode, captured_sample, captured_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'off', ?, ?)`,
+      [
+        newSlug,
+        copyName,
+        src.description ?? null,
+        src.auth_type ?? 'none',
+        toJson(src.auth_config),
+        src.filter_mode ?? 'none',
+        toJson(src.filter_config),
+        src.transform_mode ?? 'passthrough',
+        toJson(src.transform_config),
+        userId ?? null,
+        toJson(src.captured_sample),
+        src.captured_at ?? null,
+      ]
+    );
+    const hookId = r.insertId;
+    for (const t of (src.targets || [])) {
+      await conn.query(
+        `INSERT INTO hook_targets
+           (hook_id, target_type, name, position, method, url, headers,
+            credential_id, body_mode, body_template, config, conditions,
+            transform_mode, transform_config, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          hookId,
+          t.target_type ?? 'http',
+          t.name ?? '',                          // NOT NULL; source always has it
+          t.position ?? 0,
+          t.method ?? 'POST',                    // NOT NULL enum, default POST
+          t.url ?? null,
+          toJson(t.headers),
+          t.credential_id ?? null,
+          t.body_mode ?? 'transform_output',     // NOT NULL enum
+          t.body_template ?? null,
+          toJson(t.config),
+          toJson(t.conditions),
+          t.transform_mode ?? 'passthrough',     // NOT NULL enum
+          toJson(t.transform_config),
+          t.active ? 1 : 0,
+        ]
+      );
+    }
+    return hookId;
+  });
+
+  return getHookById(db, newId);
+}
+
 // -- Targets --
 
 async function createTarget(db, hookId, data) {
@@ -1010,6 +1101,7 @@ module.exports = {
   createHook,
   updateHook,
   deleteHook,
+  duplicateHook,
   // CRUD — Targets
   createTarget,
   updateTarget,
