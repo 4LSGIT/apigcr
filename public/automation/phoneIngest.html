@@ -2387,7 +2387,18 @@ window.piToggleSidebar = piToggleSidebar;
       Toast.fire({ icon: 'success', title: 'Duplicated — copy is inactive' });
       cache.rules.loaded = false;
       await loadRules(true);
-      await selectRule(row.id);   // opens the copy; sets editorState fresh
+      await selectRule(row.id);   // opens the copy in the editor; sets editorState fresh
+      // Land ready-to-rename: scroll to top, focus the name, select the
+      // " (copy)" suffix so typing replaces it in place.
+      const body = E('pi-detail-body');
+      if (body) body.scrollTop = 0;
+      const nameInput = E('rule-name');
+      if (nameInput) {
+        nameInput.focus();
+        const suffixAt = nameInput.value.lastIndexOf(' (copy)');
+        if (suffixAt >= 0) nameInput.setSelectionRange(suffixAt, nameInput.value.length);
+        else nameInput.select();
+      }
     } catch (e) {
       if (btn) btn.disabled = false;
       Swal.fire({ icon: 'error', title: 'Duplicate failed', text: e.message || 'The server rejected the duplicate.' });
