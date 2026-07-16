@@ -19,6 +19,7 @@ lib/courtResolve.js
 lib/credentialCrypto.js
 lib/credentialInjection.js
 lib/errorMiddleware.js
+lib/firmConfig.js
 lib/ingestSampleProjection.js
 lib/internal_functions/README.md
 lib/internal_functions/ai.js
@@ -382,6 +383,7 @@ tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventservice.remindertitle.test.js
+tests/firmConfig.test.js
 tests/hookMapper.test.js
 tests/hookService.duplicate.test.js
 tests/hookTransforms.test.js
