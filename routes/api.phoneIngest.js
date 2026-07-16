@@ -215,6 +215,20 @@ router.delete('/api/phone-ingest/rules/:id', jwtOrApiKey, async (req, res) => {
   }
 });
 
+// Deep-copy a rule + its actions. The copy is created INACTIVE with name
+// "<source> (copy)" — see ruleService.duplicateRule. Body is ignored.
+router.post('/api/phone-ingest/rules/:id/duplicate', jwtOrApiKey, async (req, res) => {
+  try {
+    const rule = await ruleService.duplicateRule(req.db, req.params.id, req.auth.userId);
+    if (!rule) return res.status(404).json({ status: 'error', message: 'Rule not found' });
+    auditPI(req, { details: { entity: 'rule', entity_id: rule.id, duplicated_from: Number(req.params.id), after: rule } });
+    res.status(201).json({ status: 'success', rule });
+  } catch (err) {
+    console.error('[phone-ingest] duplicate rule error:', err);
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 
 // ─────────────────────────────────────────────────────────────
 // RULE ACTIONS

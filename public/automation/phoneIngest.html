@@ -2038,6 +2038,13 @@ window.piToggleSidebar = piToggleSidebar;
         <div id="rule-actions-list"></div>
         <button type="button" class="btn btn-outline btn-sm" id="rule-action-add" style="margin-top:6px"><i class="fa-solid fa-plus"></i> Add action</button>
         <div id="rule-action-disabled-note" class="pi-field-hint" style="display:none"><i class="fa-solid fa-lock"></i> Save the rule first, then add actions.</div>
+
+        ${isNew ? '' : `
+        <!-- ═══ DUPLICATE ═══ -->
+        <div class="pi-section-head">Duplicate</div>
+        <button type="button" class="btn btn-outline btn-sm" id="rule-duplicate"><i class="fa-solid fa-copy"></i> Duplicate rule</button>
+        <div class="pi-field-hint">Creates an <strong>inactive</strong> copy of the last <strong>saved</strong> version of this rule — match, transform, and actions included. Unsaved edits here are not copied.</div>
+        `}
       </div>
       ${isNew ? '' : ruleMetaCard(r)}
     `;
@@ -2351,6 +2358,40 @@ window.piToggleSidebar = piToggleSidebar;
     btn.disabled = !saved;
     if (note) note.style.display = saved ? 'none' : '';
     btn.onclick = saved ? () => addAction() : null;
+    // Duplicate button — only rendered for saved rules (isNew skips the block).
+    const dup = E('rule-duplicate');
+    if (dup) dup.onclick = () => onDuplicateRule();
+  }
+
+  // Server-side deep copy (rule + actions), created INACTIVE. Copies the last
+  // SAVED state — if the editor is dirty we warn, since the user may expect
+  // their in-progress edits in the copy. On success we navigate to the copy;
+  // selectRule() rebuilds the editor, so no explicit discard is needed.
+  // Kept in sync with emailIngest.html (endpoint prefix is the only difference).
+  async function onDuplicateRule() {
+    if (ruleForm.id == null) return;
+    if (editorState.isDirty) {
+      const res = await Swal.fire({
+        icon: 'question', title: 'Duplicate saved rule?',
+        text: 'You have unsaved edits. The duplicate copies the last SAVED version of this rule — your unsaved edits are not included and will be discarded when the copy opens. Continue?',
+        showCancelButton: true, confirmButtonText: 'Duplicate', cancelButtonText: 'Back',
+      });
+      if (!res.isConfirmed) return;
+    }
+    const btn = E('rule-duplicate');
+    if (btn) btn.disabled = true;
+    try {
+      const data = await api(`/api/phone-ingest/rules/${ruleForm.id}/duplicate`, 'POST', {});
+      const row = (data && data.rule) ? data.rule : data;
+      if (!row || row.id == null) throw new Error('Server returned no rule');
+      Toast.fire({ icon: 'success', title: 'Duplicated — copy is inactive' });
+      cache.rules.loaded = false;
+      await loadRules(true);
+      await selectRule(row.id);   // opens the copy; sets editorState fresh
+    } catch (e) {
+      if (btn) btn.disabled = false;
+      Swal.fire({ icon: 'error', title: 'Duplicate failed', text: e.message || 'The server rejected the duplicate.' });
+    }
   }
 
   async function addAction() {

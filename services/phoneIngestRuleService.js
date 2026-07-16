@@ -761,6 +761,59 @@ async function deleteRule(db, id) {
 }
 
 /**
+ * Deep-copy a rule AND its actions in one transaction. The copy is created
+ * INACTIVE (active=0) with name "<source name> (copy)" so a half-configured
+ * clone can never fire on live events — the caller (UI) edits then activates.
+ *
+ * Deliberately does NOT re-run the validator: the source rows already passed
+ * validation on their own writes, and the copy is byte-identical config.
+ * Pipeline-owned columns (match_count, last_matched_at) start fresh via
+ * column defaults — they are never copied.
+ *
+ * Returns the new rule (getById shape, actions included), or null if the
+ * source rule is absent. Kept in sync with
+ * emailIngestRuleService.duplicateRule — same shape, tables swapped.
+ */
+async function duplicateRule(db, id, userId) {
+  const src = await getById(db, id);
+  if (!src) return null;
+
+  const copyName = `${src.name} (copy)`.slice(0, 255);
+  const transformMode = src.transform_mode || 'passthrough';
+
+  const newId = await db.withTransaction(async (conn) => {
+    const [r] = await conn.query(
+      `INSERT INTO phone_ingest_rules
+         (name, description, active, position, match_mode, match_config,
+          transform_mode, transform_config, last_modified_by)
+       VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?)`,
+      [
+        copyName,
+        src.description ?? null,
+        src.position ?? 0,
+        src.match_mode,
+        _toJsonColumn(src.match_config),
+        transformMode,
+        transformMode === 'passthrough' ? null : _toJsonColumn(src.transform_config),
+        userId ?? null,
+      ]
+    );
+    const ruleId = r.insertId;
+    for (const a of (src.actions || [])) {
+      await conn.query(
+        `INSERT INTO phone_ingest_rule_actions
+           (rule_id, position, active, action_type, config)
+         VALUES (?, ?, ?, ?, ?)`,
+        [ruleId, a.position ?? 0, a.active ? 1 : 0, a.action_type, _toJsonColumn(a.config)]
+      );
+    }
+    return ruleId;
+  });
+
+  return getById(db, newId);
+}
+
+/**
  * Single action by id, or null.
  */
 async function getActionById(db, actionId) {
@@ -855,6 +908,7 @@ module.exports = {
   createRule,
   updateRule,
   deleteRule,
+  duplicateRule,
   addAction,
   updateAction,
   deleteAction,

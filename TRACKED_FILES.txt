@@ -384,6 +384,7 @@ tests/eventDedup.phaseB.test.js
 tests/eventservice.remindertitle.test.js
 tests/hookMapper.test.js
 tests/hookTransforms.test.js
+tests/ingestRuleService.duplicate.test.js
 tests/internal_functions.meta.test.js
 tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
