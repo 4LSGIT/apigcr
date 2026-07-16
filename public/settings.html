@@ -112,6 +112,11 @@
   .scalar-row:last-child { border-bottom: none; }
   .scalar-row .lbl { font-size: 12.5px; }
   .scalar-row .lbl .sub { display: block; color: var(--muted); font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+  .lbl .sub { display: block; color: var(--muted); font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+  .lbl .desc { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .toggle-row { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12.5px; }
+  .toggle-row input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+  .toggle-lbl { color: var(--text); }
   .ws-badge {
     display: none; color: var(--warn); font-size: 10.5px; margin-top: 2px;
   }
@@ -263,14 +268,11 @@
       </div>
     </div>
 
-    <!-- ── Other Settings ─────────────────────────────────────── -->
-    <div class="section collapsed" id="scalarSection" style="display:none">
-      <div class="sec-head"><h2><span class="chev">▸</span>Other Settings</h2></div>
-      <div class="sec-body">
-        <p class="note">Values are saved exactly as typed — leading/trailing spaces are preserved on purpose.</p>
-        <div id="scalarList"></div>
-      </div>
-    </div>
+    <!-- ── Firm Settings (dynamic, one section per category) ──────
+         Built at boot from GET /api/app-settings metadata (category,
+         label, description, type, sort_order). Keys handled by a custom
+         editor above never render here. -->
+    <div id="dynSections"></div>
 
   </div>
 </div>
@@ -281,25 +283,49 @@ const E = id => document.getElementById(id);
 // All shell pages expose window.top.apiSend(path, method, data?).
 const api = (path, method = 'GET', data) => window.top.apiSend(path, method, data);
 
-/* ── Registry: key → label / dedicated editor ───────────────────
-   Keys with a `custom` editor render in their own section; everything
-   else editable falls through to a plain text row in Other Settings. */
-const REGISTRY = {
-  'fe-case_types':      { label: 'Case Types',          custom: 'caseTypes' },
-  'fe-event_types':     { label: 'Event Types',         custom: 'eventTypes' },
-  'fe-trustees':        { label: 'Trustees',            custom: 'trustees' },
-  'dropbox_case_folder_templates': { label: 'Dropbox Folder Templates', custom: 'dropboxTpl' },
-  'email_default_from': { label: 'Default Email From' },
-  'email_default_to':   { label: 'Default Email To' },
-  'gcal_calendar_id':   { label: 'Google Calendar ID' },
-  // Force-reload floor. Blank = normal (open tabs just get an "update available"
-  // banner). Set a date (e.g. 2026-07-12) and any tab running a build older than
-  // that is force-reloaded. Self-expiring: the next deploy ships past it.
-  // See lib/appBuild.js.
-  'min_client_build':   { label: 'Force Reload Before (date, blank = off)' },
-  'sms_default_from':   { label: 'Default SMS From' },
-  'sms_staff_from':     { label: 'Staff SMS From' }
+/* ── Custom editors: key → dedicated section above ──────────────
+   Everything else editable renders as a typed row in a dynamic
+   per-category section, driven entirely by server metadata
+   (category / label / description / type / sort_order). */
+const CUSTOM = {
+  'fe-case_types':                 'caseTypes',
+  'fe-event_types':                'eventTypes',
+  'fe-trustees':                   'trustees',
+  'dropbox_case_folder_templates': 'dropboxTpl'
 };
+
+// Deliberate section order; unknown categories append alphabetically after.
+const CATEGORY_ORDER = ['Firm Identity', 'Email', 'SMS', 'Booking', 'Court',
+                        'Dropbox', 'Alerts', 'System', 'Other'];
+
+/* Client-side pre-validation. MUST mirror TYPE_VALIDATORS in
+   routes/api.appSettings.js — the server is authoritative; this only
+   exists so mistakes are caught before the round trip. Checks run on a
+   trimmed copy; the SAVED value is always verbatim. Blank always passes. */
+const VALIDATORS = {
+  number: v => /^-?\d+(\.\d+)?$/.test(v.trim()) || 'must be a number',
+  bool:   v => /^[01]$/.test(v.trim()) || 'must be 1 or 0',
+  email:  v => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) || 'must be a valid email address',
+  csv:    v => v.split(',').every(p => p.trim().length > 0) || 'comma-separated list, no empty entries',
+  phone:  v => (/^[+()\d\s.\-]+$/.test(v.trim()) && (v.match(/\d/g) || []).length >= 7)
+               || 'must be a phone number',
+  url:    v => { try { const u = new URL(v.trim());
+                       return (u.protocol === 'http:' || u.protocol === 'https:') || 'must be an http(s) URL'; }
+                 catch { return 'must be a valid URL (include https://)'; } },
+  json:   v => { try { JSON.parse(v); return true; }
+                 catch (e) { return 'not valid JSON: ' + e.message; } },
+  json_array: v => { try { return Array.isArray(JSON.parse(v)) || 'must be a JSON array'; }
+                     catch (e) { return 'not valid JSON: ' + e.message; } },
+  date:   v => { const s = v.trim();
+                 if (/^(0|off|false|no|none|null)$/i.test(s)) return true;
+                 if (/^\d{10}$/.test(s) || /^\d{13,}$/.test(s)) return true;
+                 return Number.isFinite(Date.parse(s)) || 'date / epoch ms / blank / off'; }
+};
+function validateByType(type, value) {
+  if (value.trim() === '') return true; // blank = unset
+  const fn = type && VALIDATORS[type];
+  return fn ? fn(value) : true;
+}
 
 function prettify(key) {
   return key.replace(/^fe-/, '').replace(/[_-]+/g, ' ')
@@ -873,45 +899,49 @@ function dtInit(rawValue, updatedAt) {
   dtBind();
 }
 
-/* ════════════════ RAW JSON FALLBACK ════════════════
-   Used when a JSON-typed setting has an unexpected shape: a textarea
-   (multi-line safe — a plain input would destroy newlines) with a
-   JSON-validity check before save. */
-function rawJsonAddRow(key, value, updatedAt, label) {
-  const id = 'raw' + (scalarSeq++);
-  const row = document.createElement('div');
-  row.style.padding = '9px 0';
-  row.innerHTML = `
-    <div class="lbl" style="margin-bottom:5px">${esc(label)}<span class="sub" style="display:block;color:var(--muted);font-size:10.5px;font-family:ui-monospace,Menlo,monospace">${esc(key)}</span></div>
-    <textarea class="raw" id="${id}"></textarea>
-    <div class="btn-row">
-      <button class="btn" id="${id}btn">Save</button>
-      <span class="status" id="${id}st"></span>
-      <span class="note" style="margin:0">${fmtDate(updatedAt)}</span>
+/* ════════════════ DYNAMIC CATEGORY SECTIONS ════════════════
+   One collapsible section per app_settings.category, created on demand
+   in CATEGORY_ORDER (rows arrive pre-sorted from init). Every editable
+   key without a CUSTOM editor renders here as a typed row. Values are
+   saved VERBATIM — leading/trailing whitespace is load-bearing for
+   some values. */
+let scalarSeq = 0;
+let rowMeta = {};   // key → full row from GET (category, label, type, ...)
+
+const metaFor = key => rowMeta[key] || {};
+
+const _catBodies = {};
+function categoryBody(cat) {
+  if (_catBodies[cat]) return _catBodies[cat];
+  const sec = document.createElement('div');
+  sec.className = 'section collapsed';
+  sec.innerHTML = `
+    <div class="sec-head"><h2><span class="chev">▸</span>${esc(cat)}</h2></div>
+    <div class="sec-body">
+      <p class="note">Values are saved exactly as typed — leading/trailing spaces are preserved on purpose.</p>
+      <div class="cat-list"></div>
     </div>`;
-  E('scalarList').appendChild(row);
-  E('scalarSection').style.display = '';
-  E(id).value = value ?? '';
-  E(id + 'btn').addEventListener('click', async () => {
-    try { JSON.parse(E(id).value); }
-    catch (e) { return setStatus(id + 'st', 'Not valid JSON: ' + e.message, false); }
-    E(id + 'btn').disabled = true;
-    try {
-      await api('/api/app-settings/' + encodeURIComponent(key), 'PUT', { value: E(id).value });
-      setStatus(id + 'st', 'Saved', true);
-      if (key.startsWith('fe-')) window.top.loadFirmData?.();
-    } catch (err) {
-      setStatus(id + 'st', err.message || 'Failed', false);
-    } finally {
-      E(id + 'btn').disabled = false;
-    }
-  });
+  E('dynSections').appendChild(sec);
+  _catBodies[cat] = sec.querySelector('.cat-list');
+  return _catBodies[cat];
 }
 
-/* ════════════════ SCALAR SETTINGS ════════════════
-   Any editable key without a dedicated editor. Saved VERBATIM —
-   leading/trailing whitespace is load-bearing for some values. */
-let scalarSeq = 0;
+/* Shared save path: client-side type pre-check (server re-checks), PUT,
+   firmData refresh for fe-* keys. Value is sent VERBATIM. */
+async function saveSetting(key, rawValue, statusId, btn) {
+  const check = validateByType(metaFor(key).type, rawValue);
+  if (check !== true) return setStatus(statusId, check, false);
+  btn.disabled = true;
+  try {
+    await api('/api/app-settings/' + encodeURIComponent(key), 'PUT', { value: rawValue });
+    setStatus(statusId, 'Saved', true);
+    if (key.startsWith('fe-')) window.top.loadFirmData?.();
+  } catch (err) {
+    setStatus(statusId, err.message || 'Failed', false);
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 function wsHint(v) {
   const lead = (v.match(/^\s*/) || [''])[0].length;
@@ -923,15 +953,28 @@ function wsHint(v) {
   return '⚠ ' + parts.join(', ') + ' — preserved on save';
 }
 
+function labelCell(key, label, description) {
+  return `${esc(label)}<span class="sub">${esc(key)}</span>` +
+    (description ? `<span class="desc">${esc(description)}</span>` : '');
+}
+
+/* Single-line values: string, number, email, csv, phone, url, date, bool. */
 function scalarAddRow(key, value, updatedAt, labelOverride) {
   const id = 'sc' + (scalarSeq++);
-  const label = labelOverride || REGISTRY[key]?.label || prettify(key);
+  const meta = metaFor(key);
+  const type = meta.type || 'string';
+  const label = labelOverride || meta.label || prettify(key);
+  const mono = ['url', 'csv', 'date', 'phone', 'number'].includes(type);
+  const inputAttrs = type === 'number' ? ' inputmode="decimal"' : '';
+
   const row = document.createElement('div');
   row.className = 'scalar-row';
   row.innerHTML = `
-    <div class="lbl">${esc(label)}<span class="sub">${esc(key)}</span></div>
+    <div class="lbl">${labelCell(key, label, meta.description)}</div>
     <div>
-      <input type="text" class="mono" id="${id}">
+      ${type === 'bool'
+        ? `<label class="toggle-row"><input type="checkbox" id="${id}"> <span class="toggle-lbl" id="${id}lbl"></span></label>`
+        : `<input type="text" class="${mono ? 'mono' : ''}" id="${id}"${inputAttrs}>`}
       <div class="ws-badge" id="${id}ws"></div>
     </div>
     <div style="text-align:right">
@@ -939,42 +982,80 @@ function scalarAddRow(key, value, updatedAt, labelOverride) {
       <div class="status" id="${id}st" style="margin-top:3px"></div>
       <div class="note" style="margin:2px 0 0">${fmtDate(updatedAt)}</div>
     </div>`;
-  E('scalarList').appendChild(row);
-  E('scalarSection').style.display = '';
+  categoryBody(meta.category || 'Other').appendChild(row);
 
   const inp = E(id);
-  inp.value = value ?? ''; // set via .value, never innerHTML — preserves everything
-  const updateWs = () => {
-    const h = wsHint(inp.value);
-    const b = E(id + 'ws');
-    b.textContent = h;
-    b.className = 'ws-badge' + (h ? ' show' : '');
-  };
-  updateWs();
-  inp.addEventListener('input', updateWs);
-  E(id + 'btn').addEventListener('click', async () => {
-    E(id + 'btn').disabled = true;
-    try {
-      await api('/api/app-settings/' + encodeURIComponent(key), 'PUT', { value: inp.value });
-      setStatus(id + 'st', 'Saved', true);
-      if (key.startsWith('fe-')) window.top.loadFirmData?.();
-    } catch (err) {
-      setStatus(id + 'st', err.message || 'Failed', false);
-    } finally {
-      E(id + 'btn').disabled = false;
-    }
-  });
+  const getVal = type === 'bool' ? () => (inp.checked ? '1' : '0') : () => inp.value;
+  if (type === 'bool') {
+    inp.checked = String(value ?? '').trim() === '1';
+    const paintLbl = () => { E(id + 'lbl').textContent = inp.checked ? 'On (1)' : 'Off (0)'; };
+    paintLbl();
+    inp.addEventListener('change', paintLbl);
+  } else {
+    inp.value = value ?? ''; // set via .value, never innerHTML — preserves everything
+    const updateWs = () => {
+      const h = wsHint(inp.value);
+      const b = E(id + 'ws');
+      b.textContent = h;
+      b.className = 'ws-badge' + (h ? ' show' : '');
+    };
+    updateWs();
+    inp.addEventListener('input', updateWs);
+  }
+  E(id + 'btn').addEventListener('click', () => saveSetting(key, getVal(), id + 'st', E(id + 'btn')));
+}
+
+/* Multi-line values: template, json, json_array — a textarea, because a
+   plain input silently destroys newlines on edit. Also the fallback
+   target when a custom editor meets an unexpected JSON shape. */
+function textareaAddRow(key, value, updatedAt, labelOverride) {
+  const id = 'ta' + (scalarSeq++);
+  const meta = metaFor(key);
+  const label = labelOverride || meta.label || prettify(key);
+  const row = document.createElement('div');
+  row.style.padding = '9px 0';
+  row.innerHTML = `
+    <div class="lbl" style="margin-bottom:5px">${labelCell(key, label, meta.description)}</div>
+    <textarea class="raw" id="${id}"></textarea>
+    <div class="btn-row">
+      <button class="btn" id="${id}btn">Save</button>
+      <span class="status" id="${id}st"></span>
+      <span class="note" style="margin:0">${fmtDate(updatedAt)}</span>
+    </div>`;
+  categoryBody(meta.category || 'Other').appendChild(row);
+  E(id).value = value ?? '';
+  E(id + 'btn').addEventListener('click', () => saveSetting(key, E(id).value, id + 'st', E(id + 'btn')));
+}
+
+/* Back-compat shim for the custom editors' unexpected-shape fallback.
+   Forces a JSON check even if the row's declared type is missing. */
+function rawJsonAddRow(key, value, updatedAt, label) {
+  if (!rowMeta[key]) rowMeta[key] = {};
+  if (!rowMeta[key].type) rowMeta[key].type = 'json';
+  textareaAddRow(key, value, updatedAt, label);
+}
+
+/* Route a row to its renderer by declared type. */
+function settingRow(row) {
+  const t = row.type || 'string';
+  if (t === 'template' || t === 'json' || t === 'json_array') {
+    textareaAddRow(row.key, row.value, row.updated_at);
+  } else {
+    scalarAddRow(row.key, row.value, row.updated_at);
+  }
 }
 
 /* ════════════════ ACCORDION ════════════════
-   All sections start collapsed; opening one closes the others. */
-document.querySelectorAll('.sec-head').forEach(h => {
-  h.addEventListener('click', () => {
-    const sec = h.parentElement;
-    const wasCollapsed = sec.classList.contains('collapsed');
-    document.querySelectorAll('.section').forEach(x => x.classList.add('collapsed'));
-    if (wasCollapsed) sec.classList.remove('collapsed');
-  });
+   All sections start collapsed; opening one closes the others.
+   Delegated so sections created after boot (dynamic categories)
+   participate without re-binding. */
+document.addEventListener('click', e => {
+  const h = e.target.closest('.sec-head');
+  if (!h) return;
+  const sec = h.parentElement;
+  const wasCollapsed = sec.classList.contains('collapsed');
+  document.querySelectorAll('.section').forEach(x => x.classList.add('collapsed'));
+  if (wasCollapsed) sec.classList.remove('collapsed');
 });
 
 /* ── Booking Calendars (Google freeBusy) — self-only, scheduler phase 2 ──
@@ -1027,17 +1108,31 @@ async function init() {
 
   try {
     const data = await api('/api/app-settings');
-    for (const row of (data.settings || [])) {
-      const reg = REGISTRY[row.key];
-      if (reg?.custom === 'caseTypes')       ctInit(row.value, row.updated_at);
-      else if (reg?.custom === 'eventTypes') etInit(row.value, row.updated_at);
-      else if (reg?.custom === 'trustees')   tInit(row.value, row.updated_at);
-      else if (reg?.custom === 'dropboxTpl') dtInit(row.value, row.updated_at);
-      else                                   scalarAddRow(row.key, row.value, row.updated_at);
+    const rows = data.settings || [];
+    rows.forEach(r => { rowMeta[r.key] = r; });
+
+    // Deliberate category order (server orders alphabetically); then
+    // sort_order, then key. Sections are created in first-encounter order.
+    const catRank = c => {
+      const i = CATEGORY_ORDER.indexOf(c || 'Other');
+      return i === -1 ? 900 : i;
+    };
+    rows.sort((a, b) =>
+      catRank(a.category) - catRank(b.category) ||
+      String(a.category || '').localeCompare(String(b.category || '')) ||
+      ((a.sort_order ?? 999) - (b.sort_order ?? 999)) ||
+      a.key.localeCompare(b.key));
+
+    for (const row of rows) {
+      const custom = CUSTOM[row.key];
+      if (custom === 'caseTypes')       ctInit(row.value, row.updated_at);
+      else if (custom === 'eventTypes') etInit(row.value, row.updated_at);
+      else if (custom === 'trustees')   tInit(row.value, row.updated_at);
+      else if (custom === 'dropboxTpl') dtInit(row.value, row.updated_at);
+      else                              settingRow(row);
     }
   } catch (err) {
-    E('scalarSection').style.display = '';
-    E('scalarList').innerHTML = `<p class="note" style="color:var(--danger)">Failed to load settings: ${esc(err.message || err)}</p>`;
+    E('dynSections').innerHTML = `<p class="note" style="color:var(--danger)">Failed to load settings: ${esc(err.message || err)}</p>`;
   }
 
   E('loading').style.display = 'none';

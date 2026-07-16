@@ -379,6 +379,7 @@ startup/db.js
 startup/dbReadonly.js
 startup/init.js
 tests/aiService.attachments.test.js
+tests/apiAppSettings.validate.test.js
 tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
 tests/eventDedup.phaseB.test.js
