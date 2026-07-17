@@ -745,7 +745,6 @@ module.exports = {
   ingestEmail,
 
   // Helpers (exported for testability / cross-service use)
-  parseFirmDomains,
   inferDirection,
   isFirmToFirm,
 
