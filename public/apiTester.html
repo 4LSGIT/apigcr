@@ -185,7 +185,7 @@
     <h3 style="margin-top: 14px;">Options</h3>
     <div class="row options">
       <label>Timeout ms: <input id="timeoutMs" type="number" value="30000" min="1000" max="60000" style="width: 80px;"></label>
-      <label><input id="followRedirects" type="checkbox"> Follow redirects</label>
+      <label><input id="followRedirects" type="checkbox" checked> Follow redirects</label>
       <label><input id="saveFull" type="checkbox"> Log full request/response</label>
     </div>
 
@@ -404,6 +404,20 @@ function clearDirty() {
   dirty = false;
   $("dirtyDot").hidden = true;
 }
+
+// Busy state on the response pane: hides the stale previous response and
+// shows a processing line while a request is in flight. renderResponse()
+// un-hides respBox on completion; setBusy(false) restores button states.
+function setBusy(on, label) {
+  $("respEmpty").hidden = true;
+  if (on) {
+    $("respBox").hidden = true;
+    $("respEmpty").hidden = false;
+    $("respEmpty").textContent = `⏳ ${label || "Running"}…`;
+  }
+  $("btnSend").disabled = on;
+  $("btnRunSaved").disabled = on || !currentSavedId;
+}
 function updateSavedHint() {
   $("savedHint").textContent = currentSavedId ? `#${currentSavedId}` : "not saved";
   $("btnRunSaved").disabled = !currentSavedId;
@@ -459,7 +473,7 @@ function clearPanel() {
     $("body").value = "";
     $("contentType").value = "";
     $("credential").value = "";
-    $("followRedirects").checked = false;
+    $("followRedirects").checked = true;
     $("saveFull").checked = false;
     $("timeoutMs").value = 30000;
     $("notes").value = "";
@@ -586,7 +600,7 @@ $("btnRunSaved").addEventListener("click", async () => {
   if (!currentSavedId) { alert("Save this request first, then Run."); return; }
   if (dirty && !confirm("You have unsaved changes. Run executes the SAVED version. Continue?")) return;
   const btn = $("btnRunSaved");
-  btn.disabled = true;
+  setBusy(true, "Running saved request");
   const orig = btn.textContent;
   btn.textContent = "Running…";
   try {
@@ -598,7 +612,7 @@ $("btnRunSaved").addEventListener("click", async () => {
     renderResponse({ status: null, error: e.message || String(e), error_type: "client" },
       `saved #${currentSavedId}`);
   } finally {
-    btn.disabled = false;
+    setBusy(false);
     btn.textContent = orig;
     updateSavedHint();
   }
@@ -635,7 +649,7 @@ async function sendRequest() {
     save_full: $("saveFull").checked,
   };
 
-  $("btnSend").disabled = true;
+  setBusy(true, "Sending");
   $("btnSend").textContent = "Sending…";
   try {
     const resp = await P.apiSend("/admin/api-tester/send-request", "POST", payload);
@@ -644,7 +658,7 @@ async function sendRequest() {
   } catch (e) {
     renderResponse({ status: null, error: e.message || String(e), error_type: "client" }, "ad-hoc");
   } finally {
-    $("btnSend").disabled = false;
+    setBusy(false);
     $("btnSend").textContent = "Send";
   }
 }
@@ -779,6 +793,7 @@ $("btnClear").addEventListener("click", () => {
   renderSavedList();
   $("respBox").hidden = true;
   $("respEmpty").hidden = false;
+  $("respEmpty").textContent = "Send a request to see the response.";
 });
 
 // ── history ─────────────────────────────────────────────────────────────────
