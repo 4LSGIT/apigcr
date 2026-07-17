@@ -185,6 +185,7 @@ public/streak.html
 public/style.css
 public/survey.html
 public/sw.js
+public/systemAlerts.html
 public/tabLeads.html
 public/videoManager.html
 ref/database.sql
@@ -199,6 +200,7 @@ routes/_courtexec.js
 routes/_errtest.js
 routes/admin.apiTester.js
 routes/admin.dbConsole.js
+routes/admin.systemAlerts.js
 routes/alert-test.js
 routes/api.ai.js
 routes/api.appSettings.js
@@ -391,6 +393,7 @@ tests/ingestRuleService.duplicate.test.js
 tests/internal_functions.meta.test.js
 tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
+tests/moduleLoad.smoke.test.js
 tests/phoneingestservice.dedup.test.js
 tests/taskService.test.js
 tests/test-credential-crypto.js

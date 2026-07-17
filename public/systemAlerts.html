@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>System Alerts</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161a22;
+    --panel-2: #1d2230;
+    --border: #2a3040;
+    --text: #e6e9ef;
+    --muted: #8a93a6;
+    --accent: #6ea8fe;
+    --danger: #ff6b6b;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+  }
+  html, body { margin:0; padding:0; height:100%; background:var(--bg); color:var(--text);
+    font-family:-apple-system, Segoe UI, Roboto, sans-serif; font-size:13px; }
+  .main { display:flex; flex-direction:column; height:100vh; min-width:0; }
+
+  /* summary cards */
+  .cards { display:flex; gap:8px; padding:10px; flex-wrap:wrap; background:var(--panel); border-bottom:1px solid var(--border); }
+  .card { flex:1 1 110px; min-width:110px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px;
+    padding:8px 12px; cursor:pointer; user-select:none; }
+  .card:hover { border-color:var(--accent); }
+  .card.active { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset; }
+  .card .n { font-size:22px; font-weight:700; line-height:1.1; }
+  .card .l { font-size:10px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin-top:2px; }
+  .card.crit .n { color:var(--danger); }
+  .card.err  .n { color:#ff9f6b; }
+  .card.warn .n { color:var(--warn); }
+  .card.ackd .n { color:var(--accent); }
+  .card.resv .n { color:var(--ok); }
+  .card.undg .n { color:var(--muted); }
+
+  /* toolbar */
+  .toolbar { display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--panel);
+    border-bottom:1px solid var(--border); flex-wrap:wrap; }
+  .toolbar select, .toolbar input[type="text"] { background:var(--panel-2); color:var(--text);
+    border:1px solid var(--border); border-radius:4px; padding:6px 8px; font-size:12px; }
+  .toolbar input[type="text"] { flex:1 1 160px; min-width:120px; }
+  .toolbar button { background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+    border-radius:4px; padding:6px 10px; cursor:pointer; font-size:12px; }
+  .toolbar button:hover:not(:disabled) { border-color:var(--accent); }
+  .toolbar button:disabled { opacity:.4; cursor:not-allowed; }
+  .toolbar button.primary { background:var(--accent); color:#001; border-color:var(--accent); font-weight:600; }
+  .toolbar button.good { border-color:var(--ok); color:var(--ok); }
+  .toolbar button.good:hover:not(:disabled) { background:var(--ok); color:#001; }
+  .toolbar button.warnb { border-color:var(--warn); color:var(--warn); }
+  .toolbar button.warnb:hover:not(:disabled) { background:var(--warn); color:#001; }
+  .toolbar .sep { flex:1; }
+  .toolbar label.auto { color:var(--muted); font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer; }
+
+  .status { padding:5px 10px; font-size:11px; color:var(--muted); border-bottom:1px solid var(--border); background:var(--panel); }
+  .status .ok { color:var(--ok); } .status .err { color:var(--danger); }
+
+  /* table */
+  .results { flex:1; overflow:auto; min-height:0; }
+  table.r { border-collapse:collapse; width:100%; font-size:12px; }
+  table.r th, table.r td { border-bottom:1px solid var(--border); padding:5px 8px; text-align:left; vertical-align:top; }
+  table.r th { background:var(--panel); position:sticky; top:0; white-space:nowrap; font-size:11px;
+    text-transform:uppercase; letter-spacing:.05em; color:var(--muted); z-index:1; }
+  table.r tbody tr.row { cursor:pointer; }
+  table.r tbody tr.row:hover { background:var(--panel-2); }
+  table.r tbody tr.row.sel { background:rgba(110,168,254,.08); }
+  td.mono, .mono { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+  td.title-cell { max-width:420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  td.nowrap { white-space:nowrap; }
+  .badge { display:inline-block; padding:1px 8px; border-radius:999px; font-size:10px; font-weight:700;
+    text-transform:uppercase; letter-spacing:.05em; }
+  .badge.critical { background:rgba(255,107,107,.15); color:var(--danger); border:1px solid var(--danger); }
+  .badge.error    { background:rgba(255,159,107,.12); color:#ff9f6b; border:1px solid #ff9f6b; }
+  .badge.warning  { background:rgba(251,191,36,.12); color:var(--warn); border:1px solid var(--warn); }
+  .state { font-size:10px; text-transform:uppercase; letter-spacing:.05em; }
+  .state.open { color:var(--danger); } .state.ackd { color:var(--accent); } .state.resv { color:var(--ok); }
+  .muted { color:var(--muted); }
+
+  /* detail expansion */
+  tr.detail td { background:var(--panel); padding:10px 14px 12px; }
+  .detail-grid { display:grid; grid-template-columns:110px 1fr; gap:3px 12px; font-size:12px; margin-bottom:8px; }
+  .detail-grid .k { color:var(--muted); }
+  pre.blk { margin:6px 0 0; padding:8px 10px; background:var(--bg); border:1px solid var(--border); border-radius:4px;
+    font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; line-height:1.5;
+    white-space:pre-wrap; word-break:break-word; max-height:300px; overflow:auto; }
+  .row-actions { margin-top:8px; display:flex; gap:6px; }
+  .row-actions button { background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+    border-radius:4px; padding:4px 10px; cursor:pointer; font-size:11px; }
+  .row-actions button:hover { border-color:var(--accent); }
+
+  .empty { padding:30px; color:var(--muted); text-align:center; }
+  .pager { display:flex; align-items:center; gap:8px; padding:6px 10px; background:var(--panel);
+    border-top:1px solid var(--border); font-size:11px; color:var(--muted); }
+  .pager button { background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:4px;
+    padding:3px 10px; cursor:pointer; font-size:11px; }
+  .pager button:disabled { opacity:.4; cursor:not-allowed; }
+</style>
+</head>
+<body>
+<div class="main">
+  <div class="cards" id="cards">
+    <div class="card crit" data-status="open" data-severity="critical"><div class="n" id="cCrit">–</div><div class="l">Open critical</div></div>
+    <div class="card err"  data-status="open" data-severity="error"><div class="n" id="cErr">–</div><div class="l">Open error</div></div>
+    <div class="card warn" data-status="open" data-severity="warning"><div class="n" id="cWarn">–</div><div class="l">Open warning</div></div>
+    <div class="card ackd" data-status="acked" data-severity=""><div class="n" id="cAck">–</div><div class="l">Acked</div></div>
+    <div class="card resv" data-status="resolved" data-severity=""><div class="n" id="cRes">–</div><div class="l">Resolved 7d</div></div>
+    <div class="card undg" data-status="open" data-severity=""><div class="n" id="cUnd">–</div><div class="l">Undigested</div></div>
+  </div>
+
+  <div class="toolbar">
+    <select id="fStatus">
+      <option value="open" selected>Open</option>
+      <option value="acked">Acked</option>
+      <option value="resolved">Resolved</option>
+      <option value="all">All</option>
+    </select>
+    <select id="fSeverity">
+      <option value="">All severities</option>
+      <option value="critical">Critical</option>
+      <option value="error">Error</option>
+      <option value="warning">Warning</option>
+    </select>
+    <select id="fSource"><option value="">All sources</option></select>
+    <input type="text" id="fQ" placeholder="Search title / message / kind…">
+    <button id="btnRefresh" class="primary">Refresh</button>
+    <label class="auto"><input type="checkbox" id="autoRefresh"> auto 60s</label>
+    <span class="sep"></span>
+    <button id="btnAck" class="warnb" disabled>Ack selected</button>
+    <button id="btnResolve" class="good" disabled>Resolve selected</button>
+    <button id="btnReopen" disabled>Reopen selected</button>
+  </div>
+
+  <div class="status" id="statusBar">Loading…</div>
+
+  <div class="results">
+    <table class="r">
+      <thead><tr>
+        <th style="width:26px"><input type="checkbox" id="selAll"></th>
+        <th>ID</th><th>Sev</th><th>State</th><th>Source</th><th>Kind</th>
+        <th>Title</th><th>Created</th><th>Digested</th><th>Acked by</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="emptyMsg" style="display:none">No alerts match the current filters. 🎉</div>
+  </div>
+
+  <div class="pager">
+    <button id="pgPrev" disabled>‹ Prev</button>
+    <span id="pgInfo"></span>
+    <button id="pgNext" disabled>Next ›</button>
+  </div>
+</div>
+
+<script>
+// ── parent-bridge auth (same pattern as dbConsole.html) ──────────────────────
+const P = window.parent;
+function api(endpoint, method = "GET", payload = null) {
+  if (!P || !P.apiSend) throw new Error("This page must be loaded inside the admin app.");
+  return P.apiSend(endpoint, method, payload);
+}
+
+let authed = false;
+(function checkSU() {
+  try {
+    const token = P?.AUTH_STATE?.jwt || localStorage.getItem("jwt");
+    if (!token) throw new Error("no token");
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (payload.user_auth !== "authorized - SU") {
+      document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Superuser access required.</div>';
+      return;
+    }
+    authed = true;
+  } catch (e) {
+    document.body.innerHTML = '<div style="padding:40px; text-align:center; color:#ff6b6b;">Not authenticated.</div>';
+  }
+})();
+
+// ── state ────────────────────────────────────────────────────────────────────
+const E = (id) => document.getElementById(id);
+const LIMIT = 100;
+let offset = 0, total = 0, rows = [], selected = new Set(), expanded = null;
+let autoTimer = null, sourcesLoaded = false;
+
+// ── rendering ────────────────────────────────────────────────────────────────
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+function fmtTs(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function ago(ts) {
+  if (!ts) return "";
+  const m = Math.round((Date.now() - new Date(ts).getTime()) / 60000);
+  if (m < 1) return "now";
+  if (m < 60) return `${m}m`;
+  if (m < 1440) return `${Math.round(m/60)}h`;
+  return `${Math.round(m/1440)}d`;
+}
+function stateOf(r) {
+  if (r.resolved_at) return ["resv", "resolved"];
+  if (r.acked_at)    return ["ackd", "acked"];
+  return ["open", "open"];
+}
+
+function render() {
+  const tb = E("tbody");
+  tb.innerHTML = "";
+  E("emptyMsg").style.display = rows.length ? "none" : "";
+  for (const r of rows) {
+    const [cls, label] = stateOf(r);
+    const tr = document.createElement("tr");
+    tr.className = "row" + (selected.has(r.id) ? " sel" : "");
+    tr.dataset.id = r.id;
+    tr.innerHTML = `
+      <td onclick="event.stopPropagation()"><input type="checkbox" data-id="${r.id}" ${selected.has(r.id) ? "checked" : ""}></td>
+      <td class="mono">${r.id}</td>
+      <td><span class="badge ${esc(r.severity)}">${esc(r.severity)}</span></td>
+      <td><span class="state ${cls}">${label}</span></td>
+      <td class="mono">${esc(r.source)}</td>
+      <td class="mono">${esc(r.kind)}</td>
+      <td class="title-cell" title="${esc(r.title)}">${esc(r.title)}</td>
+      <td class="nowrap" title="${esc(r.created_at)}">${fmtTs(r.created_at)} <span class="muted">(${ago(r.created_at)})</span></td>
+      <td>${r.digested_at ? "✓" : '<span class="muted">—</span>'}</td>
+      <td>${esc(r.acked_by || "")}</td>`;
+    tr.addEventListener("click", () => toggleDetail(r.id));
+    tb.appendChild(tr);
+    if (expanded === r.id) tb.appendChild(detailRow(r));
+  }
+  tb.querySelectorAll('input[type="checkbox"][data-id]').forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const id = Number(cb.dataset.id);
+      cb.checked ? selected.add(id) : selected.delete(id);
+      syncButtons(); render();
+    });
+  });
+  syncButtons();
+  E("pgInfo").textContent = total
+    ? `${offset + 1}–${Math.min(offset + rows.length, total)} of ${total}` : "0 results";
+  E("pgPrev").disabled = offset <= 0;
+  E("pgNext").disabled = offset + LIMIT >= total;
+}
+
+function detailRow(r) {
+  const tr = document.createElement("tr");
+  tr.className = "detail";
+  const td = document.createElement("td");
+  td.colSpan = 10;
+  let ctx = "";
+  if (r.context) {
+    try { ctx = JSON.stringify(typeof r.context === "string" ? JSON.parse(r.context) : r.context, null, 2); }
+    catch { ctx = String(r.context); }
+  }
+  td.innerHTML = `
+    <div class="detail-grid">
+      <div class="k">group_key</div><div class="mono">${esc(r.group_key || "—")}</div>
+      <div class="k">ref</div><div class="mono">${esc(r.ref_table || "—")}${r.ref_id ? " #" + esc(r.ref_id) : ""}</div>
+      <div class="k">created</div><div>${esc(r.created_at)}</div>
+      <div class="k">digested</div><div>${esc(r.digested_at || "—")}</div>
+      <div class="k">acked</div><div>${esc(r.acked_at || "—")}${r.acked_by ? " by " + esc(r.acked_by) : ""}</div>
+      <div class="k">resolved</div><div>${esc(r.resolved_at || "—")}</div>
+    </div>
+    ${r.message ? `<pre class="blk">${esc(r.message)}</pre>` : ""}
+    ${ctx ? `<pre class="blk">${esc(ctx)}</pre>` : ""}
+    <div class="row-actions">
+      ${!r.acked_at && !r.resolved_at ? `<button onclick="doAction('ack', [${r.id}])">Ack</button>` : ""}
+      ${!r.resolved_at ? `<button onclick="doAction('resolve', [${r.id}])">Resolve</button>` : ""}
+      ${r.acked_at || r.resolved_at ? `<button onclick="doAction('reopen', [${r.id}])">Reopen</button>` : ""}
+    </div>`;
+  tr.appendChild(td);
+  return tr;
+}
+
+function toggleDetail(id) { expanded = expanded === id ? null : id; render(); }
+
+function syncButtons() {
+  const any = selected.size > 0;
+  E("btnAck").disabled = E("btnResolve").disabled = E("btnReopen").disabled = !any;
+  const visIds = new Set(rows.map((r) => r.id));
+  E("selAll").checked = any && rows.length > 0 && rows.every((r) => selected.has(r.id));
+  for (const id of [...selected]) if (!visIds.has(id)) selected.delete(id);
+}
+
+// ── data ─────────────────────────────────────────────────────────────────────
+function setStatus(html) { E("statusBar").innerHTML = html; }
+
+async function load() {
+  if (!authed) return;
+  const p = new URLSearchParams({
+    status: E("fStatus").value, limit: LIMIT, offset,
+  });
+  if (E("fSeverity").value) p.set("severity", E("fSeverity").value);
+  if (E("fSource").value) p.set("source", E("fSource").value);
+  if (E("fQ").value.trim()) p.set("q", E("fQ").value.trim());
+  setStatus("Loading…");
+  try {
+    const data = await api(`/admin/system-alerts?${p}`, "GET");
+    rows = data.rows; total = data.total;
+    const c = data.counts;
+    E("cCrit").textContent = c.open_critical; E("cErr").textContent = c.open_error;
+    E("cWarn").textContent = c.open_warning; E("cAck").textContent = c.acked;
+    E("cRes").textContent = c.resolved_7d;   E("cUnd").textContent = c.undigested;
+    if (!sourcesLoaded && data.sources?.length) {
+      const sel = E("fSource");
+      for (const s of data.sources) {
+        const o = document.createElement("option");
+        o.value = o.textContent = s;
+        sel.appendChild(o);
+      }
+      sourcesLoaded = true;
+    }
+    setStatus(`<span class="ok">✓</span> ${total} alert(s) · updated ${new Date().toLocaleTimeString()}` +
+      (c.open_critical > 0 ? ` · <span class="err">${c.open_critical} critical keeping the banner up</span>` : ""));
+    render();
+  } catch (err) {
+    setStatus(`<span class="err">✗ ${esc(err.message || "load failed")}</span>`);
+  }
+}
+
+async function doAction(action, ids) {
+  if (!ids.length) return;
+  const verb = action[0].toUpperCase() + action.slice(1);
+  if (ids.length > 1 && !confirm(`${verb} ${ids.length} alert(s)?`)) return;
+  try {
+    const r = await api(`/admin/system-alerts/${action}`, "POST", { ids });
+    setStatus(`<span class="ok">✓ ${verb}: ${r.updated} row(s) updated</span>`);
+    selected.clear(); expanded = null;
+    await load();
+  } catch (err) {
+    setStatus(`<span class="err">✗ ${action} failed: ${esc(err.message || "")}</span>`);
+  }
+}
+window.doAction = doAction;
+
+// ── wiring ───────────────────────────────────────────────────────────────────
+["fStatus", "fSeverity", "fSource"].forEach((id) =>
+  E(id).addEventListener("change", () => { offset = 0; load(); }));
+E("fQ").addEventListener("keydown", (e) => { if (e.key === "Enter") { offset = 0; load(); } });
+E("btnRefresh").addEventListener("click", () => load());
+E("btnAck").addEventListener("click", () => doAction("ack", [...selected]));
+E("btnResolve").addEventListener("click", () => doAction("resolve", [...selected]));
+E("btnReopen").addEventListener("click", () => doAction("reopen", [...selected]));
+E("selAll").addEventListener("change", (e) => {
+  e.target.checked ? rows.forEach((r) => selected.add(r.id)) : selected.clear();
+  render();
+});
+E("pgPrev").addEventListener("click", () => { offset = Math.max(0, offset - LIMIT); load(); });
+E("pgNext").addEventListener("click", () => { offset += LIMIT; load(); });
+E("autoRefresh").addEventListener("change", (e) => {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  if (e.target.checked) autoTimer = setInterval(load, 60_000);
+});
+
+// Cards act as filter shortcuts.
+document.querySelectorAll(".card").forEach((card) => {
+  card.addEventListener("click", () => {
+    document.querySelectorAll(".card").forEach((c) => c.classList.remove("active"));
+    card.classList.add("active");
+    E("fStatus").value = card.dataset.status;
+    E("fSeverity").value = card.dataset.severity;
+    offset = 0; load();
+  });
+});
+
+if (authed) load();
+</script>
+</body>
+</html>
