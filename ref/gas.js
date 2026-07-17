@@ -750,28 +750,10 @@ function testWithLastEmail() {
 // Apply the label CONFIG.testTriggerLabelName ('Test Trigger') to any email
 // you want to re-run through ingest as if it were brand new.
 //
-// Differences vs forwardEmailsToIngest — the FIRST one is not "safer", it is
-// both the entire point and the entire hazard. Read the receiver-side contract
-// before you run this:
-//   - Overrides envelope.headers.message_id with a "-test-<ts36>-<rand6>" suffix
-//     so the receiver's (source, message_id) dedupe treats it as a NEW message
-//     and Layer-3 rules actually fire. (Re-runnable: fresh suffix each run.)
-//
-//     RECEIVER-SIDE CONTRACT (as of Slice 4 Phase B):
-//       * emailIngestService sets envelope.is_test = true on any /-test-/ id
-//         and records is_test:true in the email_ingest_executions metadata.
-//       * emailIngestRuleService REFUSES to dispatch `workflow` actions for a
-//         test envelope (outcome: skipped_test_envelope). Workflows fan out into
-//         live create_event / create_task steps; a replay must not re-fire them.
-//       * internal_function actions STILL dispatch. court_extract is safe
-//         because courtExecutor forces dry-run on /-test-/ ids. ANY OTHER
-//         internal_function wired to an ingest rule WILL RUN FOR REAL.
-//       * hook / sequence / http actions STILL dispatch, for real.
-//
-//     Before Phase B there was NO receiver-side gate at all. On 2026-06-10 a run
-//     of this function replayed ~17 already-processed court emails, re-fired
-//     wf24/wf25 live, and created 10 duplicate deadline events. The comment that
-//     used to sit here claimed these differences were "all SAFER". They were not.
+// Differences vs forwardEmailsToIngest (all SAFER):
+//   - Overrides envelope.headers.message_id with a random suffix so the
+//     receiver's (source, message_id) dedupe treats it as a NEW message and
+//     Layer-3 rules actually fire. (Re-runnable: fresh suffix each run.)
 //   - Skips BOTH legacy side-jobs (no Pabbly docs@ relay, no Clio forward).
 //   - Does NOT remove the label, so you can re-run freely.
 //
@@ -822,4 +804,101 @@ function forwardTestTrigger() {
     }
   }
   Logger.log('forwardTestTrigger: complete');
+}
+
+
+
+
+// ============================================================
+// WEBHOOK TRIGGER — deploy as web app to enable
+//
+// Setup:
+//   1. Add a secret: Project Settings → Script Properties →
+//      key WEBHOOK_SECRET, value = a long random string.
+//   2. Deploy → New deployment → type: Web app
+//        Execute as: Me
+//        Who has access: Anyone
+//   3. Copy the /exec URL. Invoke with:
+//        POST https://script.google.com/macros/s/<ID>/exec?secret=<WEBHOOK_SECRET>
+//      (body ignored; optional ?mode=async for fire-and-forget)
+//
+// Notes:
+//   - Headers are NOT visible to doPost — secret must be in the query string.
+//   - "Anyone" access is required for non-Google callers; the secret is the
+//     only gate, hence Script Properties, not hardcoded.
+//   - Updating code later: Deploy → Manage deployments → edit the existing
+//     deployment → New version. Do NOT create a new deployment or the URL
+//     changes.
+//   - LockService prevents a webhook run overlapping the time-trigger run
+//     (label-as-state is idempotent anyway via receiver dedup, but the lock
+//     avoids duplicate POST churn).
+// ============================================================
+function doPost(e) {
+  return handleWebhook_(e);
+}
+// Optional: allow GET too (easier to test from a browser / curl -X GET)
+function doGet(e) {
+  return handleWebhook_(e);
+}
+function handleWebhook_(e) {
+  const secret = PropertiesService.getScriptProperties().getProperty('WEBHOOK_SECRET');
+  const provided = e && e.parameter ? e.parameter.secret : null;
+
+  if (!secret || provided !== secret) {
+    return jsonOut_({ status: 'unauthorized' });
+  }
+  const mode = (e.parameter.mode || 'sync').toLowerCase();
+  if (mode === 'async') {
+    // Fire-and-forget: schedule a one-off trigger ~1s out and return now.
+    // The trigger auto-deletes itself is NOT automatic — clean up stale
+    // one-off triggers at the top of the run (see cleanupOneOffTriggers_).
+    ScriptApp.newTrigger('runIngestFromWebhook_')
+      .timeBased()
+      .after(1000)
+      .create();
+    return jsonOut_({ status: 'scheduled' });
+  }
+
+  // Sync: run inline, caller waits for completion.
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    return jsonOut_({ status: 'busy', detail: 'another run holds the lock' });
+  }
+  try {
+    forwardEmailsToIngest();
+    return jsonOut_({ status: 'ok' });
+  } catch (err) {
+    return jsonOut_({ status: 'error', detail: String(err) });
+  } finally {
+    lock.releaseLock();
+  }
+}
+// Target for async mode. Deletes its own one-off trigger(s), then runs.
+function runIngestFromWebhook_() {
+  cleanupOneOffTriggers_('runIngestFromWebhook_');
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    Logger.log('runIngestFromWebhook_: lock busy, skipping (time trigger or another webhook run active)');
+    return;
+  }
+  try {
+    forwardEmailsToIngest();
+  } finally {
+    lock.releaseLock();
+  }
+}
+// One-off after() triggers persist after firing — remove all triggers
+// pointing at the given handler. Safe: the recurring time-based trigger
+// points at forwardEmailsToIngest, not this handler, so it's untouched.
+function cleanupOneOffTriggers_(handlerName) {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === handlerName) {
+      ScriptApp.deleteTrigger(t);
+    }
+  });
+}
+function jsonOut_(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }
