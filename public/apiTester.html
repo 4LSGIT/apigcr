@@ -12,7 +12,7 @@
          background: linear-gradient(180deg, #181c25, #14171f); }
   .title { font-weight: 600; letter-spacing: 0.3px; }
   .user-hint { color: #6e7691; font-size: 11px; }
-  .app { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr);
+  .app { display: grid; grid-template-columns: 230px minmax(340px, 1fr) minmax(340px, 1fr);
          gap: 10px; padding: 10px; }
   .pane { background: #141821; border: 1px solid #2a3040; border-radius: 6px;
           padding: 10px; min-height: 200px; }
@@ -28,6 +28,7 @@
   }
   input[type=text], input[type=number] { height: 30px; }
   textarea { width: 100%; min-height: 100px; resize: vertical; }
+  textarea.short { min-height: 44px; }
   select { height: 30px; }
   button { background: #2a3040; color: #d6d9e0; border: 1px solid #3b4358;
            border-radius: 4px; padding: 6px 10px; font: inherit; cursor: pointer; }
@@ -65,8 +66,34 @@
   table.history td { padding: 4px 6px; border-bottom: 1px solid #1a1f2a; vertical-align: top; }
   table.history tr:hover td { background: #1a1f2a; cursor: pointer; }
   .truncate { max-width: 380px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
-  @media (max-width: 1100px) {
+
+  /* Saved-requests sidebar */
+  .saved-list { list-style: none; margin: 0; padding: 0; max-height: 60vh; overflow-y: auto; }
+  .saved-list li { display: flex; align-items: center; gap: 6px; padding: 5px 6px;
+                   border-radius: 4px; cursor: pointer; margin-bottom: 2px; }
+  .saved-list li:hover { background: #1a1f2a; }
+  .saved-list li.active { background: #1f2a3a; outline: 1px solid #2563eb44; }
+  .saved-list .mbadge { font-family: ui-monospace, monospace; font-size: 10px; font-weight: 600;
+                        padding: 1px 5px; border-radius: 3px; background: #2a3040; color: #b3bacb;
+                        flex: 0 0 auto; min-width: 34px; text-align: center; }
+  .saved-list .mbadge.GET    { background: #1c4427; color: #9ce4ad; }
+  .saved-list .mbadge.POST   { background: #1f2a4a; color: #9cb8e4; }
+  .saved-list .mbadge.PUT    { background: #443a1c; color: #e4cf9c; }
+  .saved-list .mbadge.PATCH  { background: #443a1c; color: #e4cf9c; }
+  .saved-list .mbadge.DELETE { background: #441c1c; color: #e49c9c; }
+  .saved-list .sname { flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dirty-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+               background: #d97706; flex: 0 0 auto; }
+  .name-row input { flex: 1 1 auto; }
+  .saved-actions { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+
+  @media (max-width: 1300px) {
+    .app { grid-template-columns: 200px 1fr; }
+    .pane.response-pane { grid-column: 1 / -1; }
+  }
+  @media (max-width: 900px) {
     .app { grid-template-columns: 1fr; }
+    .pane.response-pane { grid-column: auto; }
   }
 </style>
 </head>
@@ -79,9 +106,35 @@
 
 <div class="app">
 
+  <!-- Saved requests sidebar -->
+  <div class="pane">
+    <h3>
+      Saved Requests
+      <span style="display:flex; gap:4px;">
+        <button id="btnRefreshSaved" class="small" title="Reload list">↻</button>
+        <button id="btnNew" class="small">+ New</button>
+      </span>
+    </h3>
+    <ul class="saved-list" id="savedList"></ul>
+    <div class="muted" id="savedEmpty" hidden>No saved requests yet.</div>
+  </div>
+
   <!-- Request builder -->
   <div class="pane">
     <h3>Request</h3>
+
+    <div class="row name-row">
+      <span class="dirty-dot" id="dirtyDot" hidden title="Unsaved changes"></span>
+      <input id="reqName" type="text" placeholder="(unsaved request — set a name to save)" />
+    </div>
+
+    <div class="saved-actions">
+      <button id="btnSave" class="small">Save</button>
+      <button id="btnSaveAs" class="small">Save As</button>
+      <button id="btnRunSaved" class="small primary" title="Run the SAVED version server-side">Run</button>
+      <button id="btnDelete" class="small danger-text">Delete</button>
+      <span class="muted" id="savedHint" style="align-self:center;"></span>
+    </div>
 
     <div class="row method-url">
       <div id="methodWrap" class="method-wrap">
@@ -98,7 +151,7 @@
         <input id="methodCustom" type="text" placeholder="METHOD" maxlength="32" hidden />
       </div>
       <input id="url" type="text" placeholder="https://example.com/path" />
-      <button id="btnSend" class="primary">Send</button>
+      <button id="btnSend" class="primary" title="Send the CURRENT panel contents (ad-hoc)">Send</button>
     </div>
 
     <div class="row">
@@ -116,6 +169,17 @@
     <div id="headersBox"></div>
 
     <h3 style="margin-top: 14px;">Body</h3>
+    <div class="row">
+      <label style="flex: 1 1 auto;">Content-Type:
+        <input id="contentType" type="text" list="ctypes" placeholder="(from headers / none)" style="flex: 1 1 auto;" />
+      </label>
+      <datalist id="ctypes">
+        <option value="application/json"></option>
+        <option value="application/x-www-form-urlencoded"></option>
+        <option value="text/plain"></option>
+        <option value="text/xml"></option>
+      </datalist>
+    </div>
     <textarea id="body" placeholder='{"key":"value"}'></textarea>
 
     <h3 style="margin-top: 14px;">Options</h3>
@@ -125,6 +189,9 @@
       <label><input id="saveFull" type="checkbox"> Log full request/response</label>
     </div>
 
+    <h3 style="margin-top: 14px;">Notes</h3>
+    <textarea id="notes" class="short" placeholder="What this request is for, gotchas, etc."></textarea>
+
     <div class="row" style="margin-top: 10px;">
       <button id="btnCurl">Copy as cURL</button>
       <button id="btnClear">Clear</button>
@@ -132,7 +199,7 @@
   </div>
 
   <!-- Response -->
-  <div class="pane">
+  <div class="pane response-pane">
     <h3>Response</h3>
     <div id="respEmpty" class="muted">Send a request to see the response.</div>
     <div id="respBox" hidden>
@@ -141,6 +208,7 @@
         <span class="muted" id="statusText"></span>
         <span class="muted" id="duration"></span>
         <span class="muted" id="credInjected"></span>
+        <span class="muted" id="ranAs"></span>
       </div>
       <div id="errorNotice" class="notice err" hidden></div>
       <div id="redirectNotice" class="notice warn" hidden></div>
@@ -238,7 +306,7 @@ function addHeaderRow(name = "", value = "") {
   `;
   row.querySelector(".hk").value = name;
   row.querySelector(".hv").value = value;
-  row.querySelector("button").addEventListener("click", () => row.remove());
+  row.querySelector("button").addEventListener("click", () => { row.remove(); markDirty(); });
   box.appendChild(row);
 }
 function readHeaders() {
@@ -307,6 +375,7 @@ async function loadCredentials() {
     const resp = await P.apiSend("/api/credentials", "GET");
     const list = resp?.credentials || [];
     const sel = $("credential");
+    const keep = sel.value;
     sel.innerHTML = '<option value="">(none)</option>';
     for (const c of list) {
       const opt = document.createElement("option");
@@ -314,12 +383,228 @@ async function loadCredentials() {
       opt.textContent = `${c.name} (${c.type})${c.allowed_urls ? " ·  scoped" : ""}`;
       sel.appendChild(opt);
     }
+    sel.value = keep;
   } catch (e) {
     console.warn("Failed to load credentials:", e);
   }
 }
 
-// ── send ────────────────────────────────────────────────────────────────────
+// ── saved requests: state ───────────────────────────────────────────────────
+let currentSavedId = null;   // null = unsaved / ad-hoc
+let dirty = false;
+let populating = false;      // suppress dirty-marking during programmatic fills
+let savedRows = [];          // sidebar cache
+
+function markDirty() {
+  if (populating) return;
+  dirty = true;
+  $("dirtyDot").hidden = false;
+}
+function clearDirty() {
+  dirty = false;
+  $("dirtyDot").hidden = true;
+}
+function updateSavedHint() {
+  $("savedHint").textContent = currentSavedId ? `#${currentSavedId}` : "not saved";
+  $("btnRunSaved").disabled = !currentSavedId;
+  $("btnDelete").disabled = !currentSavedId;
+}
+
+// Any edit inside the request pane marks dirty. (Delegated: input covers
+// text fields; change covers selects/checkboxes.)
+{
+  const pane = $("reqName").closest(".pane");
+  pane.addEventListener("input", markDirty);
+  pane.addEventListener("change", markDirty);
+}
+
+// ── saved requests: panel ⇄ payload ─────────────────────────────────────────
+function panelToSavedPayload() {
+  return {
+    name: $("reqName").value.trim(),
+    method: getMethod(),
+    url: $("url").value.trim(),
+    headers: readHeaders(),
+    body: $("body").value || null,
+    content_type: $("contentType").value.trim() || null,
+    credential_id: $("credential").value ? Number($("credential").value) : null,
+    follow_redirects: $("followRedirects").checked,
+    notes: $("notes").value || null,
+  };
+}
+
+function populatePanel(row) {
+  populating = true;
+  try {
+    $("reqName").value = row.name || "";
+    setMethod(row.method || "GET");
+    $("url").value = row.url || "";
+    setHeaders(row.headers || {});
+    $("body").value = row.body || "";
+    $("contentType").value = row.content_type || "";
+    $("credential").value = row.credential_id ?? "";
+    $("followRedirects").checked = !!row.follow_redirects;
+    $("notes").value = row.notes || "";
+  } finally {
+    populating = false;
+  }
+}
+
+function clearPanel() {
+  populating = true;
+  try {
+    $("reqName").value = "";
+    setMethod("GET");
+    $("url").value = "";
+    $("body").value = "";
+    $("contentType").value = "";
+    $("credential").value = "";
+    $("followRedirects").checked = false;
+    $("saveFull").checked = false;
+    $("timeoutMs").value = 30000;
+    $("notes").value = "";
+    setHeaders({});
+  } finally {
+    populating = false;
+  }
+}
+
+// ── saved requests: sidebar ─────────────────────────────────────────────────
+async function loadSaved() {
+  if (!authed) return;
+  try {
+    const resp = await P.apiSend("/admin/api-tester/saved", "GET");
+    savedRows = resp?.rows || [];
+    renderSavedList();
+  } catch (e) {
+    console.warn("Failed to load saved requests:", e);
+  }
+}
+
+function renderSavedList() {
+  const ul = $("savedList");
+  ul.innerHTML = "";
+  $("savedEmpty").hidden = savedRows.length > 0;
+  for (const r of savedRows) {
+    const li = document.createElement("li");
+    if (r.id === currentSavedId) li.className = "active";
+    const m = String(r.method || "GET").toUpperCase();
+    li.innerHTML = `
+      <span class="mbadge ${escapeHtml(m)}">${escapeHtml(m)}</span>
+      <span class="sname" title="${escapeHtml(r.url || "")}">${escapeHtml(r.name)}</span>
+    `;
+    li.addEventListener("click", () => selectSaved(r.id));
+    ul.appendChild(li);
+  }
+}
+
+async function selectSaved(id) {
+  if (dirty && !confirm("Discard unsaved changes?")) return;
+  try {
+    const resp = await P.apiSend(`/admin/api-tester/saved/${id}`, "GET");
+    if (!resp?.row) throw new Error(resp?.error || "not found");
+    currentSavedId = resp.row.id;
+    populatePanel(resp.row);
+    clearDirty();
+    updateSavedHint();
+    renderSavedList();
+  } catch (e) {
+    alert("Failed to load saved request: " + (e.message || e));
+  }
+}
+
+// ── saved requests: actions ─────────────────────────────────────────────────
+$("btnNew").addEventListener("click", () => {
+  if (dirty && !confirm("Discard unsaved changes?")) return;
+  currentSavedId = null;
+  clearPanel();
+  clearDirty();
+  updateSavedHint();
+  renderSavedList();
+});
+
+async function doSave(asNew) {
+  const payload = panelToSavedPayload();
+  if (!payload.name) {
+    if (asNew) {
+      const n = prompt("Name for this saved request:", payload.name || "");
+      if (n == null || !n.trim()) return;
+      payload.name = n.trim();
+      $("reqName").value = payload.name;
+    } else {
+      alert("Name is required to save.");
+      $("reqName").focus();
+      return;
+    }
+  }
+  if (!payload.url) { alert("URL is required to save."); return; }
+  try {
+    if (!asNew && currentSavedId) {
+      const resp = await P.apiSend(`/admin/api-tester/saved/${currentSavedId}`, "PUT", payload);
+      if (resp?.error) throw new Error(resp.error);
+    } else {
+      const resp = await P.apiSend("/admin/api-tester/saved", "POST", payload);
+      if (resp?.error) throw new Error(resp.error);
+      currentSavedId = resp.id;
+    }
+    clearDirty();
+    updateSavedHint();
+    await loadSaved();
+  } catch (e) {
+    alert("Save failed: " + (e.message || e));
+  }
+}
+$("btnSave").addEventListener("click", () => doSave(false));
+$("btnSaveAs").addEventListener("click", () => {
+  const cur = $("reqName").value.trim();
+  const n = prompt("Name for the copy:", cur ? cur + " copy" : "");
+  if (n == null || !n.trim()) return;
+  $("reqName").value = n.trim();
+  currentSavedId = null;   // force POST
+  doSave(true);
+});
+
+$("btnDelete").addEventListener("click", async () => {
+  if (!currentSavedId) return;
+  if (!confirm(`Delete saved request "${$("reqName").value.trim() || "#" + currentSavedId}"?`)) return;
+  try {
+    const resp = await P.apiSend(`/admin/api-tester/saved/${currentSavedId}`, "DELETE");
+    if (resp?.error) throw new Error(resp.error);
+    currentSavedId = null;
+    clearPanel();
+    clearDirty();
+    updateSavedHint();
+    await loadSaved();
+  } catch (e) {
+    alert("Delete failed: " + (e.message || e));
+  }
+});
+
+// Run the SAVED version server-side (saved/:id/run). This executes what's in
+// the DB, not the panel — hence the dirty-state warning.
+$("btnRunSaved").addEventListener("click", async () => {
+  if (!currentSavedId) { alert("Save this request first, then Run."); return; }
+  if (dirty && !confirm("You have unsaved changes. Run executes the SAVED version. Continue?")) return;
+  const btn = $("btnRunSaved");
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = "Running…";
+  try {
+    const resp = await P.apiSend(`/admin/api-tester/saved/${currentSavedId}/run`, "POST",
+      { save_full: $("saveFull").checked });
+    renderResponse(resp, `saved #${currentSavedId}`);
+    loadHistory();
+  } catch (e) {
+    renderResponse({ status: null, error: e.message || String(e), error_type: "client" },
+      `saved #${currentSavedId}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+    updateSavedHint();
+  }
+});
+
+// ── send (ad-hoc — unchanged behavior) ──────────────────────────────────────
 let lastResponseBody = "";   // raw, for raw/pretty toggling
 let lastResponseHeaders = {};
 
@@ -330,10 +615,19 @@ async function sendRequest() {
   const method = getMethod();
   if (!method) { alert("Method is required (Custom… selected with empty input)"); return; }
 
+  // Merge the Content-Type field into headers for the ad-hoc path (the
+  // saved-run endpoint does the same merge server-side), unless a
+  // Content-Type header row already exists.
+  const headers = readHeaders();
+  const ct = $("contentType").value.trim();
+  if (ct && !Object.keys(headers).some(k => k.toLowerCase() === "content-type")) {
+    headers["Content-Type"] = ct;
+  }
+
   const payload = {
     method,
     url,
-    headers: readHeaders(),
+    headers,
     body: $("body").value || null,
     credential_id: $("credential").value ? Number($("credential").value) : null,
     timeout_ms: Number($("timeoutMs").value) || 30000,
@@ -345,10 +639,10 @@ async function sendRequest() {
   $("btnSend").textContent = "Sending…";
   try {
     const resp = await P.apiSend("/admin/api-tester/send-request", "POST", payload);
-    renderResponse(resp);
+    renderResponse(resp, "ad-hoc");
     loadHistory(); // refresh history after each call
   } catch (e) {
-    renderResponse({ status: null, error: e.message || String(e), error_type: "client" });
+    renderResponse({ status: null, error: e.message || String(e), error_type: "client" }, "ad-hoc");
   } finally {
     $("btnSend").disabled = false;
     $("btnSend").textContent = "Send";
@@ -360,9 +654,16 @@ $("url").addEventListener("keydown", (e) => {
 });
 
 // ── render response ─────────────────────────────────────────────────────────
-function renderResponse(r) {
+function renderResponse(r, ranAs) {
   $("respEmpty").hidden = true;
   $("respBox").hidden = false;
+
+  // Rejection responses (400/500 from the proxy itself) come back as {error}
+  // with no status fields — apiSend may surface them as thrown errors or as
+  // the parsed object depending on shell behavior; handle the object form.
+  if (r && r.error && r.status === undefined && r.http_status === undefined) {
+    r = { status: null, error: r.error, error_type: "rejected" };
+  }
 
   // status badge
   const badge = $("statusBadge");
@@ -376,6 +677,7 @@ function renderResponse(r) {
   $("statusText").textContent = r.status_text || "";
   $("duration").textContent = (r.duration_ms != null) ? `${r.duration_ms}ms` : "";
   $("credInjected").textContent = r.credential_injected ? "credential applied" : "";
+  $("ranAs").textContent = ranAs ? `· ${ranAs}` : "";
 
   // notices
   if (r.error) {
@@ -441,6 +743,10 @@ $("btnCurl").addEventListener("click", () => {
   if (!url) return;
   const method = getMethod() || "GET";
   const hdrs = readHeaders();
+  const ct = $("contentType").value.trim();
+  if (ct && !Object.keys(hdrs).some(k => k.toLowerCase() === "content-type")) {
+    hdrs["Content-Type"] = ct;
+  }
   const body = $("body").value;
   const credId = $("credential").value;
 
@@ -465,14 +771,12 @@ $("btnCurl").addEventListener("click", () => {
 
 // ── clear ───────────────────────────────────────────────────────────────────
 $("btnClear").addEventListener("click", () => {
-  setMethod("GET");
-  $("url").value = "";
-  $("body").value = "";
-  $("credential").value = "";
-  $("followRedirects").checked = false;
-  $("saveFull").checked = false;
-  $("timeoutMs").value = 30000;
-  setHeaders({});
+  if (dirty && !confirm("Discard unsaved changes?")) return;
+  currentSavedId = null;
+  clearPanel();
+  clearDirty();
+  updateSavedHint();
+  renderSavedList();
   $("respBox").hidden = true;
   $("respEmpty").hidden = false;
 });
@@ -496,11 +800,14 @@ async function loadHistory() {
         ? `badge s${tStatus ? Math.floor(tStatus / 100) : 2}`
         : "badge err";
       const statusLabel = row.status === "success" ? (tStatus ?? "ok") : row.status;
+      const savedTag = details.saved_request_id
+        ? ` <span class="muted">[${escapeHtml(details.saved_request_name || ("#" + details.saved_request_id))}]</span>`
+        : "";
       tr.innerHTML = `
         <td title="${escapeHtml(row.created_at)}">${escapeHtml(fmtRelative(row.created_at))}</td>
         <td>${escapeHtml(row.username || "")}</td>
         <td>${escapeHtml(details.target_method || row.method)}</td>
-        <td><span class="truncate" title="${escapeHtml(url)}">${escapeHtml(url)}</span></td>
+        <td><span class="truncate" title="${escapeHtml(url)}">${escapeHtml(url)}</span>${savedTag}</td>
         <td><span class="${statusCls}">${escapeHtml(String(statusLabel))}</span></td>
         <td>${row.duration_ms != null ? row.duration_ms + "ms" : ""}</td>
       `;
@@ -514,22 +821,36 @@ async function loadHistory() {
 function safeJSON(s) { try { return JSON.parse(s); } catch { return {}; } }
 
 function repopulateFrom(row, details) {
-  setMethod(details.target_method || "GET");
-  $("url").value = details.target_url || "";
-  $("credential").value = details.credential_id ?? "";
-  $("followRedirects").checked = !!details.follow_redirects;
-  if (details.request_headers) setHeaders(details.request_headers);
-  if (details.request_body != null) $("body").value = details.request_body;
-  // Note: headers/body are only present when save_full was checked at the time.
+  if (dirty && !confirm("Discard unsaved changes and load this history entry?")) return;
+  currentSavedId = null;   // history repopulation is ad-hoc territory
+  populating = true;
+  try {
+    $("reqName").value = "";
+    setMethod(details.target_method || "GET");
+    $("url").value = details.target_url || "";
+    $("credential").value = details.credential_id ?? "";
+    $("followRedirects").checked = !!details.follow_redirects;
+    if (details.request_headers) setHeaders(details.request_headers);
+    if (details.request_body != null) $("body").value = details.request_body;
+    // Note: headers/body are only present when save_full was checked at the time.
+  } finally {
+    populating = false;
+  }
+  clearDirty();
+  updateSavedHint();
+  renderSavedList();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 $("scopeAll").addEventListener("change", loadHistory);
 $("btnRefreshHistory").addEventListener("click", loadHistory);
+$("btnRefreshSaved").addEventListener("click", loadSaved);
 
 // ── boot ────────────────────────────────────────────────────────────────────
 if (authed) {
+  updateSavedHint();
   loadCredentials();
+  loadSaved();
   loadHistory();
   // Poll history every 30s while tab is visible.
   setInterval(() => { if (!document.hidden) loadHistory(); }, 30000);
