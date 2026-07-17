@@ -23,6 +23,17 @@ const path = require("path");
 
 jest.useFakeTimers();
 
+// Fail-fast env: several modules deliberately throw at load without these
+// (prod-correct design, not the bug class this suite hunts). Seed dummies —
+// no network happens at require.
+if (!process.env.CREDENTIALS_ENCRYPTION_KEY) {
+  process.env.CREDENTIALS_ENCRYPTION_KEY =
+    require("crypto").randomBytes(32).toString("base64");
+}
+for (const k of ["DROPBOX_APP_KEY", "DROPBOX_APP_SECRET", "DROPBOX_REFRESH_TOKEN"]) {
+  if (!process.env[k]) process.env[k] = "smoke-test-dummy";
+}
+
 const ROOT = path.join(__dirname, "..");
 
 // Relative paths (posix-style) of modules that may not load under test.

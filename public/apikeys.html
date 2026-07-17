@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>API Keys</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161a23;
+    --border: #2a3040;
+    --fg: #d8dde6;
+    --muted: #8a93a3;
+    --accent: #07ADEF;
+    --danger: #d94c4c;
+    --ok: #4ad28b;
+    --warn: #e0b341;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+  }
+  body { padding: 12px; }
+  h2 { margin: 0 0 8px; font-size: 16px; }
+  .muted { color: var(--muted); font-size: 11px; }
+  button {
+    background: var(--accent); color: white; border: none;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer;
+    font-size: 12px;
+  }
+  button:hover { opacity: 0.85; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.danger { background: var(--danger); }
+  button.warn { background: var(--warn); color: #1a1a1a; }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+  input {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    padding: 6px 8px; border-radius: 4px; font-size: 12px;
+    font-family: inherit;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; margin-bottom: 12px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  tr.revoked td { opacity: 0.5; }
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: 500;
+  }
+  .badge.active  { background: rgba(74,210,139,.15); color: var(--ok); }
+  .badge.revoked { background: rgba(217,76,76,.15); color: var(--danger); }
+  .key-display {
+    background: #1d2230; border: 1px solid var(--warn); padding: 12px;
+    border-radius: 6px; margin: 10px 0;
+  }
+  .key-display .key-value {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; word-break: break-all; user-select: all;
+    background: var(--bg); padding: 8px; border-radius: 4px; margin: 6px 0;
+  }
+  .warn-text { color: var(--warn); font-size: 11px; }
+  .note { color: var(--muted); font-size: 11px; margin: 6px 0 0; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<!-- ── Internal key ─────────────────────────────────────────── -->
+<div class="panel">
+  <h2>Internal key <span class="muted">(app → itself)</span></h2>
+  <div class="row">
+    <span id="internalStatus" class="muted">Loading…</span>
+    <button class="warn" id="rotateBtn" onclick="rotateInternal()" disabled>Rotate</button>
+  </div>
+  <p class="note">
+    Used by the app to authenticate its own workflow/hook calls. The value is
+    machine-generated and never displayed. Rotating moves the current key to the
+    <i>previous</i> slot — which stays valid until the <b>next</b> rotation — so
+    rotation never interrupts in-flight automation.<br>
+    ⚠ Any <b>external</b> system still calling with the internal key (e.g. Pabbly
+    before its migration) survives exactly one rotation. Mint it a named key
+    below and update it first.
+  </p>
+</div>
+
+<!-- ── Create external key ──────────────────────────────────── -->
+<div class="panel">
+  <h2>Create external key</h2>
+  <div class="row">
+    <input id="newLabel" placeholder="Label (e.g. 'Pabbly')" style="flex:1;min-width:200px;" maxlength="100">
+    <button onclick="createKey()">Create</button>
+  </div>
+  <div id="newKeyArea"></div>
+</div>
+
+<!-- ── Existing keys ────────────────────────────────────────── -->
+<div class="panel">
+  <h2>
+    External keys
+    <button class="ghost" style="float:right;font-size:11px;padding:3px 8px;" onclick="load()">Refresh</button>
+  </h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Prefix</th><th>Label</th><th>Created</th>
+        <th>Last used</th><th>Status</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="keysTbody">
+      <tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
+    </tbody>
+  </table>
+  <p class="note">
+    Plaintext keys are shown once at creation and stored only as hashes.
+    "Last used" updates at most every 5 minutes per key — it's the instrument
+    for retiring a caller: swap its key, watch the old one go quiet, revoke.
+    Revocation applies immediately on the instance you hit and within ~60s on
+    the rest.
+  </p>
+</div>
+
+<script>
+  const P = window.parent;
+
+  (function waitForParent() {
+    if (P && P.apiSend) return init();
+    setTimeout(waitForParent, 100);
+  })();
+
+  function init() { load(); }
+
+  function esc(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function fmtDate(s) {
+    if (!s) return "—";
+    const d = new Date(s);
+    if (isNaN(d)) return esc(s);
+    return d.toLocaleString();
+  }
+
+  async function load() {
+    const tbody = document.getElementById("keysTbody");
+    tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
+    try {
+      const data = await P.apiSend("/api/api-keys", "GET");
+
+      // internal status
+      const st = document.getElementById("internalStatus");
+      if (data.internal?.rotated) {
+        st.innerHTML = `Rotated — last rotation ${fmtDate(data.internal.last_rotated_at)}` +
+          (data.internal.has_previous ? ` <span class="muted">(previous slot active)</span>` : "");
+      } else {
+        st.innerHTML = `Running on the <code>INTERNAL_API_KEY</code> env var — never rotated.`;
+      }
+      document.getElementById("rotateBtn").disabled = false;
+
+      if (!data.keys || !data.keys.length) {
+        tbody.innerHTML = `<tr><td colspan="7" class="muted" style="text-align:center;padding:20px;">No external keys yet.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = data.keys.map(row => {
+        const revoked = !!row.revoked_at;
+        return `
+          <tr class="${revoked ? "revoked" : ""}">
+            <td>${row.id}</td>
+            <td><code>${esc(row.key_prefix)}…</code></td>
+            <td>${esc(row.label)}</td>
+            <td>${fmtDate(row.created_at)}</td>
+            <td>${fmtDate(row.last_used_at)}</td>
+            <td><span class="badge ${revoked ? "revoked" : "active"}">${revoked ? "revoked" : "active"}</span></td>
+            <td>${revoked ? "" : `<button class="danger" style="font-size:11px;padding:2px 6px;" onclick="revokeKey(${row.id}, '${esc(row.label).replace(/'/g, "\\'")}')">revoke</button>`}</td>
+          </tr>
+        `;
+      }).join("");
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="7" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
+    }
+  }
+
+  async function createKey() {
+    const label = document.getElementById("newLabel").value.trim();
+    if (!label) { alert("Label required"); return; }
+    try {
+      const data = await P.apiSend("/api/api-keys", "POST", { label });
+      const area = document.getElementById("newKeyArea");
+      area.innerHTML = `
+        <div class="key-display">
+          <div style="font-weight:600;margin-bottom:4px;">Key created — copy this now, it won't be shown again.</div>
+          <div class="key-value" id="rawKeyValue">${esc(data.key)}</div>
+          <div class="row">
+            <button onclick="copyKey()">Copy</button>
+            <button class="ghost" onclick="document.getElementById('newKeyArea').innerHTML=''">Dismiss</button>
+            <span class="warn-text">Label: ${esc(data.label)} · id ${data.id}</span>
+          </div>
+        </div>
+      `;
+      document.getElementById("newLabel").value = "";
+      load();
+    } catch (err) {
+      alert("Create failed: " + err.message);
+    }
+  }
+
+  function copyKey() {
+    const v = document.getElementById("rawKeyValue");
+    if (!v) return;
+    navigator.clipboard.writeText(v.textContent).then(
+      () => { v.style.outline = "1px solid var(--ok)"; setTimeout(() => v.style.outline = "", 600); },
+      () => alert("Copy failed — select and copy manually.")
+    );
+  }
+
+  async function revokeKey(id, label) {
+    if (!confirm(`Revoke key #${id} ("${label}")? The caller using it will start getting 401s.`)) return;
+    try {
+      await P.apiSend(`/api/api-keys/${id}/revoke`, "POST");
+      load();
+    } catch (err) {
+      alert("Revoke failed: " + err.message);
+    }
+  }
+
+  async function rotateInternal() {
+    if (!confirm(
+      "Rotate the internal API key?\n\n" +
+      "The current key moves to the previous slot and remains valid until the " +
+      "NEXT rotation. In-flight automation is not interrupted.\n\n" +
+      "⚠ If any external system (e.g. Pabbly) still uses the internal key and " +
+      "this is the SECOND rotation since then, it will break."
+    )) return;
+    const btn = document.getElementById("rotateBtn");
+    btn.disabled = true;
+    try {
+      await P.apiSend("/api/api-keys/rotate-internal", "POST");
+      load();
+    } catch (err) {
+      alert("Rotation failed: " + err.message);
+      btn.disabled = false;
+    }
+  }
+</script>
+</body>
+</html>

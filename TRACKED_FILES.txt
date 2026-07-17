@@ -9,6 +9,7 @@ lib/aiPrompts/courtExtract.js
 lib/aiPrompts/echo.js
 lib/aiPrompts/index.js
 lib/alerting.js
+lib/apiKeys.js
 lib/appBuild.js
 lib/auth.jwtOrApiKey.js
 lib/auth.readonly.js
@@ -113,6 +114,7 @@ manual/06-Admin-Tools/03-api-tester.md
 manual/06-Admin-Tools/README.md
 package.json
 public/apiTester.html
+public/apikeys.html
 public/appt.html
 public/apptform.html
 public/apptform2.html
@@ -198,6 +200,7 @@ ref/routes.md
 routes/_aitest.js
 routes/_courtexec.js
 routes/_errtest.js
+routes/admin.apiKeys.js
 routes/admin.apiTester.js
 routes/admin.dbConsole.js
 routes/admin.systemAlerts.js
@@ -379,8 +382,10 @@ services/videoService.js
 startup/db.js
 startup/dbReadonly.js
 startup/init.js
+tests/adminapikeys.k2.test.js
 tests/aiService.attachments.test.js
 tests/apiAppSettings.validate.test.js
+tests/apikeys.k1.test.js
 tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
 tests/eventDedup.phaseB.test.js
