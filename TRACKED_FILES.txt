@@ -4,6 +4,7 @@
 Dockerfile
 README.md
 TRACKED_FILES.txt
+jest.config.js
 lib/actionDispatchers.js
 lib/aiPrompts/courtExtract.js
 lib/aiPrompts/echo.js
@@ -396,6 +397,7 @@ tests/hookService.duplicate.test.js
 tests/hookTransforms.test.js
 tests/ingestRuleService.duplicate.test.js
 tests/internal_functions.meta.test.js
+tests/jest.setup.js
 tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/moduleLoad.smoke.test.js

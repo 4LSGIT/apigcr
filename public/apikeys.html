@@ -236,7 +236,8 @@
       "The current key moves to the previous slot and remains valid until the " +
       "NEXT rotation. In-flight automation is not interrupted.\n\n" +
       "⚠ If any external system (e.g. Pabbly) still uses the internal key and " +
-      "this is the SECOND rotation since then, it will break."
+      "this is the SECOND rotation since then, it will break.\n\n" +
+      "Tip: to immediately invalidate a compromised key, rotate twice."
     )) return;
     const btn = document.getElementById("rotateBtn");
     btn.disabled = true;
