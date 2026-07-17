@@ -89,12 +89,13 @@ setInterval(() => {
 
 /**
  * Dead-page response: a visitor hitting a missing/draft/malformed slug gets
- * 302'd (303 for POSTs — covers stale open tabs) to env.FIRM_URL when set,
- * else a plain 404. Better to land a lost lead on the firm's main site than
- * a bare error.
+ * 302'd (303 for POSTs — covers stale open tabs) to the firm site
+ * (fe-firm_site_url setting → FIRM_URL env) when set, else a plain 404.
+ * Better to land a lost lead on the firm's main site than a bare error.
  */
 function deadPage(res, { post = false } = {}) {
-  const url = (process.env.FIRM_URL || '').trim();
+  const { cfg } = require('../lib/firmConfig');
+  const url = (cfg('fe-firm_site_url') || '').trim();
   if (/^https?:\/\//i.test(url)) return res.redirect(post ? 303 : 302, url);
   return res.status(404).type('text').send('Not found');
 }

@@ -50,10 +50,11 @@ function alertOnce(req, kind) {
   if ((now - (lastAlertAt.get(k) || 0)) < ALERT_THROTTLE_MS) return;
   lastAlertAt.set(k, now);
 
-  const to   = process.env.IT_EMAIL;
-  const from = process.env.AUTO_EMAIL;
+  const { cfg } = require("../lib/firmConfig");
+  const to   = cfg("email_it");
+  const from = cfg("email_automations");
   if (!to || !from) {
-    console.warn("[LEGACY-RINGCENTRAL] IT_EMAIL or AUTO_EMAIL not set; alert skipped");
+    console.warn("[LEGACY-RINGCENTRAL] email_it or email_automations not set; alert skipped");
     return;
   }
 

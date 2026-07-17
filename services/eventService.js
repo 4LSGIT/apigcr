@@ -48,6 +48,7 @@ const taskService  = require('./taskService');
 const logService   = require('./logService');
 const emailService = require('./emailService');
 const { FIRM_TZ }  = require('./timezoneService');
+const { cfg }      = require('../lib/firmConfig');
 const { DateTime } = require('luxon');
 
 // ─────────────────────────────────────────────────────────────
@@ -73,10 +74,10 @@ function alertGcalFailure(db, kind, detail) {
   if ((now - (_lastGcalAlertAt.get(kind) || 0)) < GCAL_ALERT_THROTTLE_MS) return;
   _lastGcalAlertAt.set(kind, now);
 
-  const to   = process.env.IT_EMAIL;
-  const from = process.env.AUTO_EMAIL;
+  const to   = cfg('email_it');
+  const from = cfg('email_automations');
   if (!to || !from) {
-    console.warn('[EVENT SERVICE] IT_EMAIL or AUTO_EMAIL not set; gcal alert skipped');
+    console.warn('[EVENT SERVICE] email_it or email_automations not set; gcal alert skipped');
     return;
   }
 
@@ -1717,7 +1718,7 @@ async function getEventsForDigest(db, { from, to } = {}) {
  */
 function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
   const { windowLabel = '' } = opts;
-  const APP_URL = process.env.APP_URL || 'https://app.4lsg.com';
+  const APP_URL = cfg('app_url') || 'https://app.4lsg.com';
   const HEADER  = '#0f766e'; // teal-700 — visually distinct from indigo task digest
   const groups  = Array.isArray(eventsByDate) ? eventsByDate : [];
   const total   = groups.reduce((n, g) => n + (g.events ? g.events.length : 0), 0);
@@ -1871,7 +1872,7 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
  *
  * Recipients: app_settings 'event_digest_recipients' (CSV of users.user
  * ids); falls back to the firm catch-all inbox (app_settings
- * 'email_default_to', then process.env.FIRM_EMAIL). Aborts (sends nothing)
+ * 'email_default_to', then firm_email setting/FIRM_EMAIL env). Aborts (sends nothing)
  * if none resolve. One bad recipient never aborts the rest.
  *
  * @param {object} db
@@ -1965,15 +1966,15 @@ async function sendEventDigest(db, { force = false, from = null, to = null } = {
   }
   if (!recipients.length) {
     // No targeted recipients — fall back to the firm catch-all inbox:
-    // app_settings 'email_default_to', then process.env.FIRM_EMAIL.
+    // app_settings 'email_default_to', then firm_email (setting → FIRM_EMAIL env).
     const [[toRow]] = await db.query(
       "SELECT value FROM app_settings WHERE `key` = 'email_default_to'"
     );
-    const fallbackTo = ((toRow && toRow.value) || '').trim() || process.env.FIRM_EMAIL || null;
+    const fallbackTo = ((toRow && toRow.value) || '').trim() || cfg('firm_email') || null;
     if (fallbackTo) recipients = [{ fname: '', email: fallbackTo, phone: null, allow_sms: 0 }];
   }
   if (!recipients.length) {
-    console.warn('[EVENT DIGEST] No recipients (event_digest_recipients / email_default_to / FIRM_EMAIL all unset) — aborting send');
+    console.warn('[EVENT DIGEST] No recipients (event_digest_recipients / email_default_to / firm_email all unset) — aborting send');
     return { sent: 0, reason: 'no recipients', window: [fromStr, toStr], event_count: rows.length };
   }
 

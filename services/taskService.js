@@ -75,7 +75,8 @@ function settings() { return require('./settingsService'); }
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-const APP_URL = process.env.APP_URL || 'https://app.4lsg.com';
+// Read per call so live edits of the app_url setting apply without redeploy.
+const APP_URL = () => require('../lib/firmConfig').cfg('app_url') || 'https://app.4lsg.com';
 
 /**
  * HTML-escape a value for interpolation into the email builders below.
@@ -124,7 +125,7 @@ function newActionToken() {
 
 /** Public one-click action URL for a shaped task, or null if no token. */
 function taskActionUrl(task) {
-  return task?.action_token ? `${APP_URL}/t/${task.action_token}` : null;
+  return task?.action_token ? `${APP_URL()}/t/${task.action_token}` : null;
 }
 
 /**
@@ -421,14 +422,14 @@ function buildDigestEmail(user, overdue, dueToday, pending, dayName) {
     let linkHtml = '';
     const linkName = t.contact_name || t.case_number_full || t.case_number || '';
     if (linkName) {
-      let href = APP_URL;
+      let href = APP_URL();
       if (t.contact_name) href += `?contact=${t.contact_id || ''}`;
       else if (t.case_number_full || t.case_number|| t.case_id) href += `?case=${t.case_id || ''}`;
       linkHtml = `<a href="${href}" style="color:#4f46e5;text-decoration:none">${htmlEscape(linkName)}</a>`;
     }
     // One-click complete link (requires the digest query to SELECT t.task_action_token)
     const doneHtml = t.task_action_token
-      ? `<a href="${APP_URL}/t/${t.task_action_token}" title="Mark complete"
+      ? `<a href="${APP_URL()}/t/${t.task_action_token}" title="Mark complete"
             style="color:#059669;text-decoration:underline;font-weight:600;font-size:12px;white-space:nowrap">mark&nbsp;done</a>`
       : '';
     return `<tr style="border-bottom:1px solid #f3f4f6">

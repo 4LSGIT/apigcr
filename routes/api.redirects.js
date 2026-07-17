@@ -80,16 +80,19 @@ function esc(str) {
     .replace(/"/g, '&quot;');
 }
 
-// Branded dead-link page, generated fresh from env each request.
-// Falls back to literals so it never renders broken if an env var is unset.
+// Branded dead-link page, generated fresh per request from firmConfig
+// (fe-firm_logo_url / fe-firm_phone / firm_email settings, env fallback).
+// Falls back to literals so it never renders broken if all are unset.
 function deadLinkPage() {
-  const logo    = process.env.FIRM_LOGO  || 'https://iili.io/Jy2nXHv.md.png';
+  const { cfg } = require('../lib/firmConfig');
+  const logo    = cfg('fe-firm_logo_url') || 'https://iili.io/Jy2nXHv.md.png';
     const formatPhone = p => {
       const digits = String(p).replace(/\D/g, '');
       return digits.length === 10 ? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}` : p;
     };
-  const phone = process.env.FIRM_PHONE ? formatPhone(process.env.FIRM_PHONE) : '(248) 559-2400';
-  const email   = process.env.FIRM_EMAIL || 'info@4lsg.com';
+  const rawPhone = cfg('fe-firm_phone');
+  const phone = rawPhone ? formatPhone(rawPhone) : '(248) 559-2400';
+  const email   = cfg('firm_email') || 'info@4lsg.com';
   const telHref = phone.replace(/[^0-9+]/g, '');
   return [
     '<!DOCTYPE html>',

@@ -56,10 +56,10 @@ async function loadCredentialBasics(db, id) {
 }
 
 function getRedirectUri() {
-  const appUrl = process.env.APP_URL;
+  const appUrl = require('../lib/firmConfig').cfg('app_url');
   if (!appUrl) {
     const err = new Error(
-      'APP_URL env var is not set — set to e.g. https://app.4lsg.com (no path, ' +
+      'app_url setting / APP_URL env is not set — set to e.g. https://app.4lsg.com (no path, ' +
       'no trailing slash). OAuth callback URL is APP_URL + /auth/oauth/callback ' +
       'and that full URL must be registered with each OAuth provider.'
     );

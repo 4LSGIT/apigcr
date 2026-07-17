@@ -95,20 +95,22 @@ function _parseDomainList(raw) {
     .filter(Boolean);
 }
 
-function parseFirmDomains() {
-  const plural   = process.env.EMAIL_DOMAINS;
-  const singular = process.env.EMAIL_DOMAIN;
-  let list;
-  if (plural && plural.trim())        list = _parseDomainList(plural);
-  else if (singular && singular.trim()) list = _parseDomainList(singular);
-  else                                  list = ['4lsg.com'];
-  return new Set(list);
-}
+// Read via firmConfig per call (email_domains setting → EMAIL_DOMAINS /
+// EMAIL_DOMAIN env), memoized on the raw value — live-editable, parsed once
+// per distinct value.
+const { cfg } = require('../lib/firmConfig');
 
-const FIRM_DOMAINS = parseFirmDomains();
-console.log(
-  `[emailIngest] firm domains: ${JSON.stringify([...FIRM_DOMAINS])}`
-);
+let _domainsRaw = null;
+let _domainsSet = new Set(['4lsg.com']);
+function firmDomains() {
+  const raw = cfg('email_domains');
+  if (raw !== _domainsRaw) {
+    _domainsRaw = raw;
+    _domainsSet = new Set((raw && raw.trim()) ? _parseDomainList(raw) : ['4lsg.com']);
+    console.log(`[emailIngest] firm domains: ${JSON.stringify([..._domainsSet])}`);
+  }
+  return _domainsSet;
+}
 
 
 // ─────────────────────────────────────────────────────────────
@@ -572,7 +574,7 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
   emailLogId = insRes.insertId;
 
   // ── 6. Direction inference.
-  const direction = inferDirection(fromEmail, FIRM_DOMAINS);
+  const direction = inferDirection(fromEmail, firmDomains());
 
   // ── 6b. Layer 3 — automation rules (ALWAYS runs).
   //   Hoisted in Slice 2.3.1 to before the log-write step so the layer-
@@ -604,7 +606,7 @@ async function ingestEmail(db, source, envelope, remoteIp, rawInputSnapshot) {
   // ── 7. Firm-to-firm check (logging skip ONLY — Layer 3 already ran at 6b).
   //   Requires from + all to + all cc all on a firm domain.
   const allAddresses = _collectAllAddresses(envelope);
-  if (isFirmToFirm(allAddresses, FIRM_DOMAINS)) {
+  if (isFirmToFirm(allAddresses, firmDomains())) {
     const executionId = await _writeExecution(db, {
       source_id:    source.id,
       message_id:   messageId,

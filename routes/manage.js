@@ -161,8 +161,19 @@ async function loadManageSettings(db) {
     fallback_url_raw:    (s.manage_fallback_url || '').trim() || null,  // slice 10: JSON {url, button_text}
     firm_logo_url:       s['fe-firm_logo_url'] || null,
     firm_site_url:       s['fe-firm_site_url'] || null,
-    firm_phone:          s['fe-firm_phone'] || null,   // optional — omit when unset
+    // fe-firm_phone is stored digits-canonical (e.g. 2484179800); format
+    // here so manage/book pages render "(248) 417-9800" in "call us" copy.
+    firm_phone:          formatDisplayPhone(s['fe-firm_phone']),   // optional — null when unset
   };
+}
+
+/** 10-digit → "(xxx) xxx-xxxx"; anything else passes through; blank → null. */
+function formatDisplayPhone(p) {
+  if (!p || !String(p).trim()) return null;
+  const digits = String(p).replace(/\D/g, '');
+  return digits.length === 10
+    ? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`
+    : String(p);
 }
 
 /**

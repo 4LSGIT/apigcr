@@ -42,7 +42,8 @@ const express     = require('express');
 const router      = express.Router();
 const taskService = require('../services/taskService');
 
-const APP_URL    = process.env.APP_URL || 'https://app.4lsg.com';
+// Read per call so live edits of the app_url setting apply without redeploy.
+const APP_URL    = () => require('../lib/firmConfig').cfg('app_url') || 'https://app.4lsg.com';
 const TASK_COLOR = '#312e81';
 const GREY       = '#6b7280';
 
@@ -144,7 +145,7 @@ function pageWrap(title, bodyHtml) {
       <tr>
         <td style="background:#f8f7ff;padding:14px 32px;border-top:1px solid #e0e0e0">
           <p style="margin:0;font-size:11px;color:#9ca3af">
-            YisraCase task action page. <a href="${APP_URL}" style="color:#4f46e5">Log in</a> for full task management.
+            YisraCase task action page. <a href="${APP_URL()}" style="color:#4f46e5">Log in</a> for full task management.
           </p>
         </td>
       </tr>
@@ -266,7 +267,7 @@ router.get('/t/:token([A-Za-z0-9_\\-]{10,40})', async (req, res) => {
       //
       // The Cancel button's onclick=confirm() is progressive enhancement only:
       // with JS off it simply submits, which is still the correct verb.
-      const base = `${APP_URL}/t/${task.action_token}`;
+      const base = `${APP_URL()}/t/${task.action_token}`;
       body = `
         <h2 style="margin:0 0 8px;font-size:22px;color:#111827">Complete this task?</h2>
         <p style="margin:0 0 18px;font-size:14px;color:#374151">
@@ -390,7 +391,7 @@ router.post('/t/:token([A-Za-z0-9_\\-]{10,40})/cancel', async (req, res) => {
       ${taskSummaryHtml(updated, GREY)}
       ${noteEchoHtml(note)}
       <p style="margin:4px 0 0;font-size:13px;color:#9ca3af">
-        Canceled by mistake? <a href="${APP_URL}" style="color:#4f46e5">Log in to YisraCase</a> to reopen it.
+        Canceled by mistake? <a href="${APP_URL()}" style="color:#4f46e5">Log in to YisraCase</a> to reopen it.
       </p>`));
   } catch (err) {
     // Race: canceled between page load and click → friendly, not an error.

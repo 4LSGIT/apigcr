@@ -28,12 +28,15 @@ const rateLimit = require("express-rate-limit");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const emailService = require("../services/emailService");
+const { cfg } = require("../lib/firmConfig");
 
 const BCRYPT_ROUNDS = 12;
 const RESET_EXPIRY_MINUTES = 60;
-const FROM_EMAIL = process.env.AUTO_EMAIL || "automations@4lsg.com";
-const IT_EMAIL = process.env.IT_EMAIL || "IT@4lsg.com";
-const BASE_URL = process.env.APP_URL || "https://app.4lsg.com";
+// Read per call (not module-load consts) so live edits of the
+// email_automations / email_it / app_url settings apply without a redeploy.
+const FROM_EMAIL = () => cfg("email_automations") || "automations@4lsg.com";
+const IT_EMAIL = () => cfg("email_it") || "IT@4lsg.com";
+const BASE_URL = () => cfg("app_url") || "https://app.4lsg.com";
 
 // 5 requests per IP per 15 minutes — prevent reset-email spam and token brute-forcing
 const resetLimiter = rateLimit({
@@ -84,14 +87,14 @@ router.post("/auth/forgot-password", resetLimiter, async (req, res) => {
       [token, expires, user.user]
     );
 
-    const resetLink = `${BASE_URL}/reset-password?token=${token}`;
+    const resetLink = `${BASE_URL()}/reset-password?token=${token}`;
 
     // Send reset email to user (fire-and-forget after response)
     res.json(genericOk);
 
     // ── Post-response emails ──
     emailService.sendEmail(req.db, {
-      from: FROM_EMAIL,
+      from: FROM_EMAIL(),
       to: user.email,
       subject: "Password Reset Request",
       html: `
@@ -105,8 +108,8 @@ router.post("/auth/forgot-password", resetLimiter, async (req, res) => {
 
     // Notify IT
     emailService.sendEmail(req.db, {
-      from: FROM_EMAIL,
-      to: IT_EMAIL,
+      from: FROM_EMAIL(),
+      to: IT_EMAIL(),
       subject: `Password Reset Requested: ${user.username}`,
       text: `User "${user.username}" (email: ${user.email}) requested a password reset at ${new Date().toISOString()}.`
     }).catch(err => console.error("Failed to send IT notification:", err.message));

@@ -162,7 +162,7 @@ function dispatchUpload(req, res, policy, cfg) {
 // removes any dependence on multipart part ordering. Single-respond guard mirrors
 // routes/api.videos.js.
 function handleMultipart(req, res, policy, cfg) {
-  if (!process.env.GCS_BUCKET) {
+  if (!require('../lib/firmConfig').cfg('gcs_bucket')) {
     return res.status(500).json({ error: 'GCS_BUCKET not configured' });
   }
 
@@ -276,7 +276,7 @@ function handleMultipart(req, res, policy, cfg) {
 
 // ── Base64 JSON path (buffer → storageService.putBuffer) ──
 async function handleBase64(req, res, policy, cfg) {
-  if (!process.env.GCS_BUCKET) {
+  if (!require('../lib/firmConfig').cfg('gcs_bucket')) {
     return res.status(500).json({ error: 'GCS_BUCKET not configured' });
   }
 

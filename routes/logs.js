@@ -67,7 +67,11 @@ function getSequenceEngine() {
 // and '@4lsg.com' both accepted as input). If neither env var is set,
 // default to ['@4lsg.com'] — same as the legacy default.
 //
-// Computed once at module load. To change the list, redeploy.
+// Read via firmConfig per call (email_domains setting → EMAIL_DOMAINS /
+// EMAIL_DOMAIN env), memoized on the raw value — live-editable, parsed once
+// per distinct value.
+
+const { cfg } = require("../lib/firmConfig");
 
 function _parseDomainList(raw) {
   return String(raw)
@@ -78,22 +82,22 @@ function _parseDomainList(raw) {
     .map(s => s.toLowerCase());
 }
 
-const INTERNAL_DOMAINS = (() => {
-  const plural   = process.env.EMAIL_DOMAINS;
-  const singular = process.env.EMAIL_DOMAIN;
-  if (plural   && plural.trim())   return _parseDomainList(plural);
-  if (singular && singular.trim()) return _parseDomainList(singular);
-  return ["@4lsg.com"];
-})();
-
-console.log(
-  `[logEmail] internal domains: ${JSON.stringify(INTERNAL_DOMAINS)}`
-);
+let _domainsRaw = null;
+let _domainsParsed = ["@4lsg.com"];
+function internalDomains() {
+  const raw = cfg("email_domains");
+  if (raw !== _domainsRaw) {
+    _domainsRaw = raw;
+    _domainsParsed = (raw && raw.trim()) ? _parseDomainList(raw) : ["@4lsg.com"];
+    console.log(`[logEmail] internal domains: ${JSON.stringify(_domainsParsed)}`);
+  }
+  return _domainsParsed;
+}
 
 function isInternalDomain(email) {
   if (!email || typeof email !== "string") return false;
   const lower = email.toLowerCase();
-  return INTERNAL_DOMAINS.some(d => lower.endsWith(d));
+  return internalDomains().some(d => lower.endsWith(d));
 }
 
 // ─────────────────────────────────────────────────────────────

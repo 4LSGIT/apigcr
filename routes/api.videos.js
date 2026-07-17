@@ -191,7 +191,7 @@ router.delete('/api/videos/:id', jwtOrApiKey, async (req, res) => {
 
 router.post('/api/videos/upload-asset', jwtOrApiKey, (req, res) => {
   const userId     = req.auth?.userId;
-  const bucketName = process.env.GCS_BUCKET;
+  const bucketName = require('../lib/firmConfig').cfg('gcs_bucket');
   const kind       = req.query.kind || 'unknown';
 
   if (!bucketName) {

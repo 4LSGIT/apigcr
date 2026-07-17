@@ -15,13 +15,16 @@
 const express      = require('express');
 const router       = express.Router();
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
+const { cfg }      = require('../lib/firmConfig');
 const emailService = require('../services/emailService');
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
 const ADMIN_AUTH  = ['authorized - SU', 'authorized - admin'];
-const FROM_ADDR   = process.env.AUTO_EMAIL || 'automations@4lsg.com';
-const ADMIN_EMAIL = process.env.IT_EMAIL || 'IT@4lsg.com';
+// Read per call (not module-load consts) so live edits of the
+// email_automations / email_it settings apply without a redeploy.
+const FROM_ADDR   = () => cfg('email_automations') || 'automations@4lsg.com';
+const ADMIN_EMAIL = () => cfg('email_it') || 'IT@4lsg.com';
 
 const STAGE_LABELS = {
   considering:    'Considering',
@@ -51,7 +54,7 @@ function userId(req) {
  * Fire-and-forget email. Never throws — logs failures to console only.
  */
 function sendEmail(db, opts) {
-  emailService.sendEmail(db, { from: FROM_ADDR, ...opts })
+  emailService.sendEmail(db, { from: FROM_ADDR(), ...opts })
     .catch(err => console.error('[feature-requests] email failed:', err.message));
 }
 
@@ -133,7 +136,7 @@ router.post('/api/feature-requests', jwtOrApiKey, async (req, res) => {
         const label = type === 'bug' ? '🐛 Bug' : '✨ Feature Request';
 
         sendEmail(req.db, {
-          to:      ADMIN_EMAIL,
+          to:      ADMIN_EMAIL(),
           subject: `[YisraCase] New ${label}: ${title.trim()}`,
           text:    `${name} submitted a new ${type} request.\n\nTitle: ${title.trim()}\n\n${description.trim()}`,
           html:    `<p><strong>${name}</strong> submitted a new <strong>${label}</strong>.</p>
@@ -357,7 +360,7 @@ router.post('/api/feature-requests/:id/comments', jwtOrApiKey, async (req, res) 
           );
           const name = commenter?.user_name || `User #${uid}`;
           sendEmail(req.db, {
-            to:      ADMIN_EMAIL,
+            to:      ADMIN_EMAIL(),
             subject: `[YisraCase] New comment on "${fr.title}"`,
             text:    `${name} commented on "${fr.title}":\n\n"${comment.trim()}"`,
             html:    `<p><strong>${name}</strong> commented on <strong>"${fr.title}"</strong>:</p>

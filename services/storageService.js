@@ -43,7 +43,8 @@ const CACHE_CONTROL = 'public, max-age=31536000';
  * @returns {string}
  */
 function requireBucketName() {
-  const bucketName = process.env.GCS_BUCKET;
+  // gcs_bucket setting → GCS_BUCKET env.
+  const bucketName = require('../lib/firmConfig').cfg('gcs_bucket');
   if (!bucketName) throw new Error('GCS_BUCKET not configured');
   return bucketName;
 }

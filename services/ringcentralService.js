@@ -304,7 +304,7 @@ function randomFilename(originalName) {
 
 // Helper: Internal upload to GCS (duplicated logic from /upload, but skips auth for internal use)
 async function internalUploadToGcs(buffer, originalName, mimeType) {
-  const bucketName = process.env.GCS_BUCKET;
+  const bucketName = require("../lib/firmConfig").cfg("gcs_bucket");
   if (!bucketName) {
     throw new Error("Bucket not configured");
   }
