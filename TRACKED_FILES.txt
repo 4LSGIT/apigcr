@@ -402,6 +402,7 @@ tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/moduleLoad.smoke.test.js
 tests/phoneingestservice.dedup.test.js
+tests/refreshonmiss.k3.test.js
 tests/taskService.test.js
 tests/test-credential-crypto.js
 tests/test-cron.js
