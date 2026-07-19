@@ -128,6 +128,31 @@ function templateInputFromBody(body) {
   return out;
 }
 
+// ─── GET /api/esign/template-meta ────────────────────────────
+//
+// Phase 2D. The template editor's dropdown fodder, sourced from the REAL
+// exported constants — never a hand-copied list:
+//   resolvers  esignPrefillService.RESOLVER_NAMES (the literal whitelist)
+//   kinds      esignSendService.legalKinds(db) — static KINDS ∪ kinds on
+//              active templates, the same union validateSendInput enforces
+//   types      esignTemplateService.PREFILL_TYPES
+// Path note: the actions router's GET /api/esign/:id is digit-constrained,
+// so 'template-meta' falls through to this router (same reason /templates
+// does — see ROUTE ORDER in the header).
+
+router.get('/api/esign/template-meta', jwtOrApiKey, async (req, res) => {
+  try {
+    const kinds = await esignSendService.legalKinds(req.db);
+    return res.json({
+      resolvers: [...esignPrefillService.RESOLVER_NAMES].sort(),
+      kinds,
+      types: [...esignTemplateService.PREFILL_TYPES],
+    });
+  } catch (err) {
+    return fail(res, err, 'GET /api/esign/template-meta');
+  }
+});
+
 // ─── GET /api/esign/templates ────────────────────────────────
 
 router.get('/api/esign/templates', jwtOrApiKey, async (req, res) => {

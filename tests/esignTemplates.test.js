@@ -868,7 +868,7 @@ describe('routes/api.esign.templates.js', () => {
 
   test('every template route is behind jwtOrApiKey', () => {
     const routes = routesOf(templatesRouter);
-    expect(routes.length).toBe(8);
+    expect(routes.length).toBe(9);   // +1: GET /api/esign/template-meta (2D)
     for (const r of routes) {
       expect(r.handles).toContain(jwtOrApiKey);
     }
@@ -878,6 +878,7 @@ describe('routes/api.esign.templates.js', () => {
     const sigs = routesOf(templatesRouter)
       .map((r) => `${r.methods[0].toUpperCase()} ${r.path}`).sort();
     expect(sigs).toEqual([
+      'GET /api/esign/template-meta',
       'GET /api/esign/templates',
       'GET /api/esign/templates/:id',
       'POST /api/esign/send-from-template',

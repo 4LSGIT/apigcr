@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contract Templates</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <!-- pdf.js — PINNED. 3.11.174 is the last pdfjs-dist release shipping a UMD
+       (non-ESM) build, which is what a plain <script src> page can load; the
+       legacy build is used for broad browser compat (2D spec). jsdelivr
+       serves the npm package; SRI computed from the published artifact. The
+       worker is fetched BY pdf.js (workerSrc below), not via a script tag,
+       so integrity= does not apply to it — same-version pinning is the guard. -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.min.js"
+          integrity="sha384-OemFRmhjDZwhIKuUld0HJozkF2YErsgDaCL41trxGQZt4/WgnopJQqQl2DvDZ07Z"
+          crossorigin="anonymous"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <script src="/esign/esignActions.js"></script>
+  <script src="/esign/placementEditor.js"></script>
+  <style>
+    body { margin: 0; padding: 16px; background: #fff; }
+    .ta-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+    .ta-top h2 { margin: 0; }
+    .ta-top .spacer2 { flex: 1; }
+    .ta-back { color: #07adef; cursor: pointer; font-size: 13px; }
+    #ta-table td { text-align: left; }
+    #ta-table th { white-space: nowrap; }
+    .ta-inactive td { color: #aaa; }
+    .ta-inactive .ta-name { text-decoration: line-through; }
+    .ta-empty { color: #999; padding: 20px; text-align: center; }
+    .ta-badge-off { font-size: 10px; background: #e5e7eb; color: #6b7280;
+                    border-radius: 8px; padding: 1px 7px; margin-left: 6px; }
+
+    /* editor */
+    .ta-section { border: 1px solid #ddd; border-radius: 4px; padding: 14px 16px;
+                  margin-bottom: 14px; text-align: left; }
+    .ta-section h3 { margin: 0 0 10px; font-size: 15px; }
+    .ta-row { margin: 6px 0; }
+    .ta-row label { font-weight: bold; display: inline-block; min-width: 190px; vertical-align: top; }
+    .ta-row input[type=text], .ta-row input[type=number] { width: 300px; }
+    .ta-hint { font-size: 11px; color: #888; margin-left: 4px; }
+    .ta-err { color: #dc2626; font-size: 12px; }
+    #ta-body { width: 100%; box-sizing: border-box; min-height: 320px;
+               font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+               padding: 8px; }
+    .ta-chips { margin: 8px 0 4px; min-height: 20px; }
+    .ta-chip { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px;
+               margin: 2px 4px 2px 0; background: #e0f2fe; color: #075985; }
+    .ta-chip.undeclared { background: #fee2e2; color: #b91c1c; font-weight: bold; }
+    .ta-chip.unused { background: #f3f4f6; color: #9ca3af; }
+    #ta-schema-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    #ta-schema-table th, #ta-schema-table td { padding: 4px 6px; text-align: left; vertical-align: top; }
+    #ta-schema-table input[type=text] { width: 95%; box-sizing: border-box; }
+    #ta-schema-table select { width: 100%; }
+    .ta-row-err { color: #dc2626; font-size: 11px; }
+    #ta-stale { display: none; background: #fde68a; color: #7c4a03; font-weight: bold;
+                padding: 8px 12px; border-radius: 4px; margin: 8px 0; }
+    #ta-samples { display: none; border: 1px dashed #f59e0b; border-radius: 4px;
+                  background: #fffbeb; padding: 10px 12px; margin: 8px 0; }
+    #ta-editor-mount { margin-top: 10px; }
+    .ta-actions { text-align: center; margin: 16px 0; }
+    .ta-actions button { margin: 0 6px; }
+    #ta-static-wrap { display: none; margin-top: 6px; }
+  </style>
+</head>
+<body>
+<!-- ═══════════════════════════════════════════════════════════
+  TEMPLATE ADMIN (Phase 2D) — list + editor for contract_templates,
+  including the visual placement editor (placementEditor.js). Reached from
+  the Signatures dashboard header (dashboard.html → 'Templates'); this page
+  navigates the SAME iframe, so window.top.apiSend (the shell relay) keeps
+  working — same posture as caseWidget → sendForm.
+
+  Server validation is authoritative (esignTemplateService); the mirrors here
+  (placementEditor.js pure section) are UX only, and server errors on save
+  are shown verbatim.
+═══════════════════════════════════════════════════════════════ -->
+
+<!-- ── LIST VIEW ─────────────────────────────────────────────── -->
+<div id="ta-list-view">
+  <div class="ta-top">
+    <span class="ta-back" onclick="goDashboard()"><i class="fa-solid fa-arrow-left"></i> Signatures</span>
+    <h2><i class="fa-solid fa-file-contract"></i> Contract Templates</h2>
+    <label style="font-weight:normal;font-size:13px">
+      <input type="checkbox" id="ta-show-inactive" onchange="renderList()"> show deactivated
+    </label>
+    <div class="spacer2"></div>
+    <button class="big-button" onclick="openEditor(null)"><i class="fa-solid fa-plus"></i> New template</button>
+  </div>
+  <table id="ta-table" class="logTable">
+    <tr><th>Name</th><th>Kind</th><th>Expires after</th><th>Updated</th><th></th></tr>
+  </table>
+  <div id="ta-empty" class="ta-empty" style="display:none">No templates yet — create the first one.</div>
+  <div id="ta-load" style="text-align:center;padding:14px"><i class="fa-solid fa-spinner fa-spin-pulse fa-2x"></i></div>
+</div>
+
+<!-- ── EDITOR VIEW ───────────────────────────────────────────── -->
+<div id="ta-edit-view" style="display:none">
+  <div class="ta-top">
+    <span class="ta-back" onclick="backToList()"><i class="fa-solid fa-arrow-left"></i> Templates</span>
+    <h2 id="ta-edit-title">New template</h2>
+    <div class="spacer2"></div>
+    <span id="ta-dirty-dot" class="ta-hint" style="display:none"><i class="fa-solid fa-circle" style="color:#f59e0b;font-size:8px"></i> unsaved changes</span>
+  </div>
+
+  <!-- 1. Basics -->
+  <div class="ta-section">
+    <h3>1. Basics</h3>
+    <div class="ta-row"><label>Name:</label><input type="text" id="ta-name" maxlength="128"></div>
+    <div class="ta-row"><label>Kind:</label>
+      <input type="text" id="ta-kind" maxlength="64" list="ta-kinds">
+      <datalist id="ta-kinds"></datalist>
+      <span class="ta-hint">open vocabulary — pick one or type a new kind</span>
+    </div>
+    <div class="ta-row"><label>Expires after:</label>
+      <input type="number" id="ta-exp" min="1" max="90" style="width:80px" value="14">
+      <span class="ta-hint">days (1–90)</span>
+    </div>
+    <div class="ta-row"><label>Reminders off:</label><input type="checkbox" id="ta-remoff"></div>
+    <div class="ta-row"><label>Reminder sequence id:</label>
+      <input type="number" id="ta-seqid" min="1" style="width:80px">
+      <span class="ta-hint">Phase 3 — leave blank for firm default</span>
+    </div>
+    <div id="ta-basics-err" class="ta-err"></div>
+  </div>
+
+  <!-- 2. Body -->
+  <div class="ta-section">
+    <h3>2. Body <span class="ta-hint">HTML with {{placeholders}}</span></h3>
+    <div style="margin-bottom:6px">
+      <label style="font-weight:bold">Insert placeholder:</label>
+      <select id="ta-ph-picker"><option value="">— declared keys —</option></select>
+      <button onclick="insertPlaceholder()"><i class="fa-solid fa-plus"></i> Insert at cursor</button>
+    </div>
+    <textarea id="ta-body" spellcheck="false"></textarea>
+    <div class="ta-chips" id="ta-chips"></div>
+    <div id="ta-static-wrap">
+      <label><input type="checkbox" id="ta-static">
+        Static body — this template intentionally has <b>no</b> placeholders</label>
+      <span class="ta-hint">required by the server before a placeholder-free body can save</span>
+    </div>
+  </div>
+
+  <!-- 3. Prefill schema -->
+  <div class="ta-section">
+    <h3>3. Fill-in fields (prefill schema)</h3>
+    <table id="ta-schema-table">
+      <thead><tr>
+        <th style="width:16%">Key</th><th style="width:20%">Label</th>
+        <th style="width:11%">Type</th><th style="width:22%">Resolver</th>
+        <th style="width:18%">Default</th><th style="width:7%">Required</th><th></th>
+      </tr></thead>
+      <tbody id="ta-schema-rows"></tbody>
+    </table>
+    <button style="margin-top:8px" onclick="addSchemaRow()"><i class="fa-solid fa-plus"></i> Add field</button>
+  </div>
+
+  <!-- 4. Placement -->
+  <div class="ta-section">
+    <h3>4. Signature placement</h3>
+    <div class="ta-hint" style="margin-bottom:6px">
+      Render the document, then draw boxes where each signer signs. Boxes are stored in
+      PDF points and land exactly where drawn on the signing page.
+    </div>
+    <button class="big-button" id="ta-render-btn" onclick="renderAndPlace()">
+      <i class="fa-solid fa-wand-magic-sparkles"></i> Render &amp; place fields
+    </button>
+    <div id="ta-samples">
+      <b><i class="fa-solid fa-triangle-exclamation"></i> Sample values needed for preview</b>
+      <div class="ta-hint">These required fields have no default. Enter sample values (used only for this
+        preview render, never saved), then render again.</div>
+      <div id="ta-samples-rows"></div>
+    </div>
+    <div id="ta-stale"><i class="fa-solid fa-triangle-exclamation"></i>
+      Preview is stale — the body changed since this render. Re-render before trusting positions.</div>
+    <div id="ta-editor-mount"></div>
+  </div>
+
+  <!-- 5. Save / actions -->
+  <div class="ta-actions">
+    <button class="big-button" id="ta-save-btn" onclick="saveTemplate()">
+      <i class="fa-solid fa-floppy-disk"></i> Save template
+    </button>
+    <button id="ta-test-btn" onclick="sendTest()" style="display:none">
+      <i class="fa-solid fa-paper-plane"></i> Send test to myself
+    </button>
+    <button id="ta-deact-btn" onclick="deactivate()" style="display:none">
+      <i class="fa-solid fa-ban"></i> Deactivate
+    </button>
+  </div>
+</div>
+
+<script>
+// pdf.js worker — SAME pinned version as the library script above.
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js';
+}
+window.apiSend = function () { return esignApi.apply(null, arguments); };
+
+let meta       = { resolvers: [], kinds: [], types: ['text', 'number', 'date', 'money'] };
+let templates  = [];            // list rows
+let current    = null;          // full template row being edited, or null for new
+let editor     = null;          // PlacementEditor instance
+let bodyAtRender = null;        // body text at last successful render (stale banner)
+let savedSnapshot = null;       // JSON.stringify of the form at last load/save
+let samples    = {};            // key → sample value for preview only
+
+// ── boot ─────────────────────────────────────────────────────
+(function waitForShell() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') return init();
+  } catch (_) { }
+  setTimeout(waitForShell, 100);
+})();
+
+async function init() {
+  try {
+    const m = await esignApi('/api/esign/template-meta', 'GET');
+    meta = m || meta;
+    E('ta-kinds').innerHTML = (meta.kinds || []).map(k => `<option value="${esignEsc(k)}">`).join('');
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Error loading metadata', text: err.message });
+  }
+  await refreshList();
+}
+
+window.addEventListener('beforeunload', (e) => {
+  if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// ── list view ────────────────────────────────────────────────
+async function refreshList() {
+  E('ta-load').style.display = 'block';
+  try {
+    const data = await esignApi('/api/esign/templates', 'GET', { all: 1 });
+    templates = data.templates || [];
+    renderList();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Error loading templates', text: err.message });
+  }
+  E('ta-load').style.display = 'none';
+}
+
+function renderList() {
+  const showInactive = E('ta-show-inactive').checked;
+  const table = E('ta-table');
+  while (table.rows.length > 1) table.deleteRow(1);
+  const list = templates.filter(t => showInactive || t.active);
+  E('ta-empty').style.display = list.length ? 'none' : 'block';
+  list.forEach(t => {
+    const tr = table.insertRow();
+    if (!t.active) tr.className = 'ta-inactive';
+    tr.innerHTML =
+      `<td><span class="ta-name">${esignEsc(t.name)}</span>` +
+      (t.active ? '' : '<span class="ta-badge-off">deactivated</span>') + `</td>` +
+      `<td>${esignEsc(t.kind)}</td>` +
+      `<td>${t.expiration_days} days</td>` +
+      `<td>${esignEsc(esignFmtDate(t.updated_at))}</td>` +
+      `<td><button onclick="openEditor(${t.id})"><i class="fa-solid fa-pen"></i> Edit</button></td>`;
+  });
+}
+
+// ── editor open / close ──────────────────────────────────────
+async function openEditor(id) {
+  current = null;
+  if (id != null) {
+    try {
+      const d = await esignApi(`/api/esign/templates/${id}`, 'GET');
+      current = d.template;
+    } catch (err) {
+      Toast.fire({ icon: 'error', title: 'Error loading template', text: err.message });
+      return;
+    }
+  }
+  fillEditor(current);
+  E('ta-list-view').style.display = 'none';
+  E('ta-edit-view').style.display = 'block';
+}
+
+function backToList() {
+  if (isDirty() && !confirm('Discard unsaved changes to this template?')) return;
+  teardownEditor();
+  E('ta-edit-view').style.display = 'none';
+  E('ta-list-view').style.display = 'block';
+  refreshList();
+}
+
+function goDashboard() {
+  location.href = '/esign/dashboard.html';
+}
+
+function teardownEditor() {
+  if (editor) { editor.destroy(); editor = null; }
+  bodyAtRender = null;
+  samples = {};
+  E('ta-editor-mount').innerHTML = '';
+  E('ta-samples').style.display = 'none';
+  E('ta-stale').style.display = 'none';
+}
+
+function fillEditor(t) {
+  teardownEditor();
+  E('ta-edit-title').innerText = t ? `Edit: ${t.name}` : 'New template';
+  E('ta-name').value  = t ? t.name : '';
+  E('ta-kind').value  = t ? t.kind : '';
+  E('ta-exp').value   = t ? t.expiration_days : 14;
+  E('ta-remoff').checked = t ? !!t.reminders_off : false;
+  E('ta-seqid').value = t && t.reminder_seq_id != null ? t.reminder_seq_id : '';
+  E('ta-body').value  = t ? t.body : '';
+  // An existing template with zero placeholders saved once already — it was
+  // intentional, so pre-check static_body (the server re-demands it per save).
+  E('ta-static').checked = !!(t && peExtractPlaceholders(t.body).length === 0);
+  E('ta-basics-err').innerText = '';
+  E('ta-schema-rows').innerHTML = '';
+  ((t && t.prefill_schema) || []).forEach(e => addSchemaRow(e));
+  if (!t) addSchemaRow();
+  E('ta-test-btn').style.display  = t ? '' : 'none';
+  E('ta-deact-btn').style.display = (t && t.active) ? '' : 'none';
+  scanBody();
+  savedSnapshot = formSnapshot();
+  setDirty(false);
+}
+
+// ── dirty tracking ───────────────────────────────────────────
+function formSnapshot() {
+  return JSON.stringify({
+    name: E('ta-name').value, kind: E('ta-kind').value, exp: E('ta-exp').value,
+    remoff: E('ta-remoff').checked, seq: E('ta-seqid').value,
+    body: E('ta-body').value, stat: E('ta-static').checked,
+    schema: gatherSchemaRows(),
+    placement: editor && editor.hasDocument()
+      ? editor.getPlacements()
+      : (current ? current.placement_json : null),
+  });
+}
+function isDirty() {
+  return E('ta-edit-view').style.display !== 'none' &&
+    savedSnapshot != null && formSnapshot() !== savedSnapshot;
+}
+function setDirty(d) { E('ta-dirty-dot').style.display = d ? '' : 'none'; }
+document.addEventListener('input',  (e) => { if (E('ta-edit-view').contains(e.target)) setDirty(isDirty()); });
+document.addEventListener('change', (e) => { if (E('ta-edit-view').contains(e.target)) setDirty(isDirty()); });
+
+// ── body scan (chips + placeholder picker + static toggle) ───
+E('ta-body').addEventListener('input', () => {
+  scanBody();
+  if (bodyAtRender != null) {
+    E('ta-stale').style.display = E('ta-body').value !== bodyAtRender ? 'block' : 'none';
+  }
+});
+
+function scanBody() {
+  const keys = gatherSchemaRows().map(r => r.key).filter(Boolean);
+  const scan = peScanBody(E('ta-body').value, keys);
+  E('ta-chips').innerHTML =
+    scan.placeholders.map(p => {
+      const bad = scan.undeclared.indexOf(p) !== -1;
+      return `<span class="ta-chip${bad ? ' undeclared' : ''}" title="${bad ? 'Not declared in the schema — save will be rejected' : 'Declared'}">` +
+        `{{${esignEsc(p)}}}${bad ? ' — undeclared' : ''}</span>`;
+    }).join('') +
+    scan.unused.map(k =>
+      `<span class="ta-chip unused" title="Declared but not used in the body (allowed)">{{${esignEsc(k)}}} — unused</span>`
+    ).join('');
+  E('ta-static-wrap').style.display = scan.placeholders.length === 0 ? 'block' : 'none';
+  E('ta-ph-picker').innerHTML = '<option value="">— declared keys —</option>' +
+    keys.map(k => `<option value="${esignEsc(k)}">{{${esignEsc(k)}}}</option>`).join('');
+}
+
+function insertPlaceholder() {
+  const key = E('ta-ph-picker').value;
+  if (!key) { Toast.fire({ icon: 'info', title: 'Pick a declared key first' }); return; }
+  const ta = E('ta-body');
+  const ins = `{{${key}}}`;
+  const s = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
+  const e = ta.selectionEnd != null ? ta.selectionEnd : s;
+  ta.value = ta.value.slice(0, s) + ins + ta.value.slice(e);
+  ta.focus();
+  ta.selectionStart = ta.selectionEnd = s + ins.length;
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+// ── prefill schema table ─────────────────────────────────────
+function addSchemaRow(entry) {
+  const e = entry || { key: '', label: '', type: 'text', resolver: null, default: '', required: false };
+  const tr = document.createElement('tr');
+  tr.className = 'ta-schema-row';
+  tr.innerHTML =
+    `<td><input type="text" class="ta-s-key" maxlength="40" value="${esignEsc(e.key).replace(/"/g, '&quot;')}"></td>` +
+    `<td><input type="text" class="ta-s-label" maxlength="80" value="${esignEsc(e.label).replace(/"/g, '&quot;')}"></td>` +
+    `<td><select class="ta-s-type">` +
+      (meta.types || []).map(t => `<option value="${t}"${t === e.type ? ' selected' : ''}>${t}</option>`).join('') +
+    `</select></td>` +
+    `<td><select class="ta-s-resolver"><option value="">(none)</option>` +
+      (meta.resolvers || []).map(r =>
+        `<option value="${esignEsc(r)}"${r === e.resolver ? ' selected' : ''}>${esignEsc(r)}</option>`).join('') +
+    `</select></td>` +
+    `<td><input type="text" class="ta-s-default" value="${esignEsc(e.default == null ? '' : e.default).replace(/"/g, '&quot;')}"></td>` +
+    `<td style="text-align:center"><input type="checkbox" class="ta-s-req"${e.required ? ' checked' : ''}></td>` +
+    `<td><button title="Remove" onclick="this.closest('tr').remove();scanBody();validateSchemaInline();setDirty(isDirty())">` +
+      `<i class="fa-solid fa-trash-can"></i></button></td>`;
+  const errTr = document.createElement('tr');
+  errTr.innerHTML = `<td colspan="7" class="ta-row-err"></td>`;
+  E('ta-schema-rows').appendChild(tr);
+  E('ta-schema-rows').appendChild(errTr);
+  tr.addEventListener('input', () => { scanBody(); validateSchemaInline(); });
+  tr.addEventListener('change', () => { scanBody(); validateSchemaInline(); });
+}
+
+function gatherSchemaRows() {
+  return Array.from(document.querySelectorAll('.ta-schema-row')).map(tr => ({
+    key:      tr.querySelector('.ta-s-key').value.trim(),
+    label:    tr.querySelector('.ta-s-label').value.trim(),
+    type:     tr.querySelector('.ta-s-type').value,
+    resolver: tr.querySelector('.ta-s-resolver').value || null,
+    default:  tr.querySelector('.ta-s-default').value === '' ? null : tr.querySelector('.ta-s-default').value,
+    required: tr.querySelector('.ta-s-req').checked,
+  }));
+}
+
+/** Inline mirrors — same rules the server enforces; server stays authoritative. */
+function validateSchemaInline() {
+  const rows = gatherSchemaRows();
+  const v = peValidateSchemaRows(rows, meta);
+  document.querySelectorAll('.ta-row-err').forEach((td, i) => {
+    td.innerText = v.rowErrors[i] ? v.rowErrors[i].join(' · ') : '';
+  });
+  return v.ok;
+}
+
+// ── render & place (Deliverable 1 wired in) ──────────────────
+async function renderAndPlace() {
+  const schema = gatherSchemaRows();
+  // required + no default + no sample yet → collect samples inline first
+  const needing = schema.filter(e => e.required && (e.default == null || e.default === '') && !(samples[e.key] || '').trim());
+  if (needing.length && E('ta-samples').style.display !== 'block') {
+    E('ta-samples-rows').innerHTML = needing.map(e =>
+      `<div class="ta-row"><label>${esignEsc(e.label || e.key)}:</label>` +
+      `<input type="text" class="ta-sample" data-key="${esignEsc(e.key)}" value=""></div>`).join('');
+    E('ta-samples').style.display = 'block';
+    E('ta-samples-rows').querySelector('input')?.focus();
+    Toast.fire({ icon: 'info', title: 'Enter sample values, then render again' });
+    return;
+  }
+  document.querySelectorAll('.ta-sample').forEach(el => { samples[el.dataset.key] = el.value; });
+
+  const btn = E('ta-render-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin-pulse"></i> Rendering…';
+  try {
+    // The preview endpoint validates the template FROM THE DATABASE, so unsaved
+    // body/schema edits must be saved first for the render to reflect them.
+    // Simplest honest flow: save (validating), then preview the saved row.
+    const saved = await doSave({ quiet: true });
+    if (!saved) return;
+
+    const values = {};
+    gatherSchemaRows().forEach(e => {
+      if (e.default != null && e.default !== '') values[e.key] = e.default;
+      if ((samples[e.key] || '').trim()) values[e.key] = samples[e.key].trim();
+    });
+    const out = await esignFetchPdf(`/api/esign/templates/${current.id}/preview`, { values });
+    const buf = await out.blob.arrayBuffer();
+    if (!editor) {
+      editor = new PlacementEditor(E('ta-editor-mount'), {
+        onChange: () => { setDirty(isDirty()); },
+        workerSrc: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js',
+      });
+    }
+    await editor.loadPdf(buf, current.placement_json || { fields: [] });
+    bodyAtRender = E('ta-body').value;
+    E('ta-stale').style.display = 'none';
+    E('ta-samples').style.display = 'none';
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Render failed', text: err.message });
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Render &amp; place fields';
+  }
+}
+
+// ── save ─────────────────────────────────────────────────────
+function buildPayload() {
+  const seq = E('ta-seqid').value.trim();
+  return {
+    name: E('ta-name').value.trim(),
+    kind: E('ta-kind').value.trim(),
+    body: E('ta-body').value,
+    prefill_schema: gatherSchemaRows(),
+    placement_json: editor && editor.hasDocument()
+      ? editor.getPlacements()
+      : (current ? current.placement_json : { coord_space: 'pdf_user_space', fields: [] }),
+    expiration_days: parseInt(E('ta-exp').value, 10),
+    reminders_off: E('ta-remoff').checked,
+    reminder_seq_id: seq === '' ? null : parseInt(seq, 10),
+    static_body: E('ta-static').checked,
+  };
+}
+
+async function saveTemplate() { await doSave({ quiet: false }); }
+
+async function doSave({ quiet }) {
+  // client mirrors first — friendlier than a 400 round-trip
+  const basicsErrs = peValidateBasics({
+    name: E('ta-name').value, kind: E('ta-kind').value,
+    expirationDays: parseInt(E('ta-exp').value, 10),
+  });
+  E('ta-basics-err').innerText = basicsErrs.join(' ');
+  const schemaOk = validateSchemaInline();
+  const scan = peScanBody(E('ta-body').value, gatherSchemaRows().map(r => r.key));
+  if (basicsErrs.length || !schemaOk || scan.undeclared.length) {
+    Swal.fire({
+      icon: 'error', title: 'Fix these first',
+      html: '<div style="text-align:left;font-size:13px">' +
+        basicsErrs.map(esignEsc).map(x => `<div>${x}</div>`).join('') +
+        (!schemaOk ? '<div>Fill-in field rows have errors (see the table).</div>' : '') +
+        (scan.undeclared.length
+          ? `<div>Undeclared placeholder(s) in the body: ${scan.undeclared.map(k => '{{' + esignEsc(k) + '}}').join(', ')}</div>` : '') +
+        '</div>',
+    });
+    return false;
+  }
+
+  const btn = E('ta-save-btn');
+  btn.disabled = true;
+  try {
+    const payload = buildPayload();
+    const out = current
+      ? await esignApi(`/api/esign/templates/${current.id}`, 'PUT', payload)
+      : await esignApi('/api/esign/templates', 'POST', payload);
+    current = out.template;
+    E('ta-edit-title').innerText = `Edit: ${current.name}`;
+    E('ta-test-btn').style.display = '';
+    E('ta-deact-btn').style.display = current.active ? '' : 'none';
+    savedSnapshot = formSnapshot();
+    setDirty(false);
+    if (!quiet) {
+      Toast.fire({ icon: 'success', title: 'Saved' });
+      (out.warnings || []).forEach(w => Toast.fire({ icon: 'warning', title: w }));
+    }
+    return true;
+  } catch (err) {
+    // server errors are written to be shown — verbatim
+    Swal.fire({ icon: 'error', title: 'Save failed', text: err.message });
+    return false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── deactivate / test send ───────────────────────────────────
+async function deactivate() {
+  const r = await Swal.fire({
+    icon: 'warning', title: 'Deactivate this template?',
+    text: 'It disappears from the send pickers. Existing signing requests keep their history. There is no reactivate switch — deactivation is one-way.',
+    showCancelButton: true, confirmButtonText: 'Deactivate',
+  });
+  if (!r.isConfirmed) return;
+  try {
+    const out = await esignApi(`/api/esign/templates/${current.id}/deactivate`, 'POST', {});
+    current = out.template;
+    Toast.fire({ icon: 'success', title: 'Deactivated' });
+    E('ta-deact-btn').style.display = 'none';
+  } catch (err) {
+    Swal.fire({ icon: 'error', title: 'Deactivate failed', text: err.message });
+  }
+}
+
+function sendTest() {
+  if (isDirty()) { Toast.fire({ icon: 'info', title: 'Save first — the test send uses the saved template' }); return; }
+  // Navigate this iframe (shell relay stays reachable); sendForm's standalone
+  // mode opens its CasePicker — pick any test case, put your own email on the
+  // recipient, and (with esign_test_mode on) nothing is charged.
+  location.href = `/esign/sendForm.html?template_id=${encodeURIComponent(current.id)}`;
+}
+</script>
+</body>
+</html>

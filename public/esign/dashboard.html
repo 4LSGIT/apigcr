@@ -54,6 +54,12 @@
   <div class="spacer2"></div>
   <span class="db-refreshed" id="db-refreshed"></span>
   <button onclick="refresh()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+  <!-- 2D: template admin lives one navigation away, in THIS iframe, so the
+       shell relay (window.top.apiSend) stays reachable — caseWidget→sendForm
+       posture. Dashboard-level edit; the shells are untouched. -->
+  <button onclick="location.href='/esign/templateAdmin.html'" title="Author contract templates">
+    <i class="fa-solid fa-gear"></i> Templates
+  </button>
 </div>
 
 <table id="db-table" class="logTable">

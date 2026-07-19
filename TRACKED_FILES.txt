@@ -161,7 +161,9 @@ public/docs.html
 public/esign/caseWidget.html
 public/esign/dashboard.html
 public/esign/esignActions.js
+public/esign/placementEditor.js
 public/esign/sendForm.html
+public/esign/templateAdmin.html
 public/etch.html
 public/evergreen.html
 public/featureRequests.html
@@ -415,6 +417,7 @@ tests/esignActionsUi.test.js
 tests/esignAlert.test.js
 tests/esignCredits.test.js
 tests/esignFiling.test.js
+tests/esignPlacementEditor.test.js
 tests/esignProvider.zoho.test.js
 tests/esignReconcile.test.js
 tests/esignSend.test.js
