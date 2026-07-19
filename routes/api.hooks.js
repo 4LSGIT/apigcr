@@ -105,6 +105,23 @@ function stripSensitiveHeaders(headers) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// CATCH-ALL — reserved slug for unmatched webhooks
+//
+// If a POST arrives for a slug with no active hook, the receiver falls back
+// to the hook with this slug (if it exists and is active) instead of 404ing.
+// The execution row records the ATTEMPTED slug (executeHook inserts the slug
+// argument, not hook.slug), so unmatched traffic is reviewable per-slug in
+// the executions views, and raw_input preserves the full payload even when
+// the catch-all's filter suppresses its alert targets.
+//
+// Keep the catch-all hook's auth_type = 'none' — senders aimed at a real
+// slug won't carry the catch-all's credentials, and a 401 here would drop
+// exactly the data this exists to preserve.
+// ─────────────────────────────────────────────────────────────
+
+const CATCHALL_SLUG = '_catchall';
+
+// ─────────────────────────────────────────────────────────────
 // RECEIVER — the catch-all webhook endpoint
 // ─────────────────────────────────────────────────────────────
 
@@ -133,9 +150,18 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
 
   try {
     // Look up hook for auth check, then pass it through to avoid double lookup
-    const hook = await hookService.getHookBySlug(db, slug);
+    let hook = await hookService.getHookBySlug(db, slug);
+    let unmatched = false;
+
+    // Catch-all fallback: unknown slug → route to the reserved '_catchall'
+    // hook so the payload is stored and reviewable instead of dropped.
+    // See the CATCHALL_SLUG block above for rationale.
     if (!hook) {
-      return res.status(404).json({ status: 'error', message: 'Hook not found' });
+      hook = await hookService.getHookBySlug(db, CATCHALL_SLUG);
+      if (!hook) {
+        return res.status(404).json({ status: 'error', message: 'Hook not found' });
+      }
+      unmatched = true;
     }
 
     // Authenticate
@@ -159,6 +185,7 @@ router.post('/hooks/:slug', hookReceiveLimiter, async (req, res) => {
         received_at: new Date().toISOString(),
         slug,
         remote_ip: req.ip,
+        ...(unmatched ? { unmatched: true } : {}),
       },
     };
 
