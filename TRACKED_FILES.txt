@@ -349,6 +349,7 @@ services/emailIngestSuppressionService.js
 services/emailIngestValidator.js
 services/emailRouter.js
 services/emailService.js
+services/esignService.js
 services/eventService.js
 services/firmBlocksService.js
 services/formService.js
@@ -383,6 +384,7 @@ services/videoService.js
 startup/db.js
 startup/dbReadonly.js
 startup/init.js
+tests/ esignservice.test.js
 tests/adminapikeys.k2.test.js
 tests/aiService.attachments.test.js
 tests/apiAppSettings.validate.test.js
