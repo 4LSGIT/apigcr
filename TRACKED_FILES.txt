@@ -229,6 +229,7 @@ routes/api.emailIngest.js
 routes/api.email_router.js
 routes/api.esign.actions.js
 routes/api.esign.js
+routes/api.esign.templates.js
 routes/api.events.js
 routes/api.featureRequests.js
 routes/api.firmData.js
@@ -360,8 +361,10 @@ services/esign/placements.js
 services/esign/zohoSignProvider.js
 services/esignAlertService.js
 services/esignFilingService.js
+services/esignPrefillService.js
 services/esignSendService.js
 services/esignService.js
+services/esignTemplateService.js
 services/esignWebhookService.js
 services/eventService.js
 services/firmBlocksService.js
@@ -376,6 +379,7 @@ services/logService.js
 services/oauthService.js
 services/pabblyService.js
 services/pageService.js
+services/pdfRenderService.js
 services/pdfService.js
 services/phoneIngestExecutionsService.js
 services/phoneIngestMetaService.js
@@ -410,10 +414,12 @@ tests/esignProvider.zoho.test.js
 tests/esignReconcile.test.js
 tests/esignSend.test.js
 tests/esignService.test.js
+tests/esignTemplates.test.js
 tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventservice.remindertitle.test.js
 tests/firmConfig.test.js
+tests/helpers/renderSmoke.js
 tests/hookMapper.test.js
 tests/hookService.duplicate.test.js
 tests/hookTransforms.test.js
@@ -423,6 +429,8 @@ tests/jest.setup.js
 tests/logService.updateLogLink.test.js
 tests/logservice.buildcaselogwhere.test.js
 tests/moduleLoad.smoke.test.js
+tests/pdfRender.test.js
+tests/pdfRenderIntegration.test.js
 tests/phoneingestservice.dedup.test.js
 tests/refreshonmiss.k3.test.js
 tests/taskService.test.js

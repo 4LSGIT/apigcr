@@ -37,9 +37,11 @@
  * failed when it did not, and they would send it again — spending five more.
  *
  * ── WHAT THIS FILE DELIBERATELY DOES NOT DO ─────────────────────────────────
- * No templates or HTML→PDF rendering (2B). No UI (2C). No placement editor
- * (2D). No reminder cadence or sequence enrollment (Phase 3). It takes a PDF
- * buffer from its caller and asks no questions about where it came from.
+ * No UI (2C). No placement editor (2D). No reminder cadence or sequence
+ * enrollment (Phase 3). The 2B template branch (sendFromTemplate, below)
+ * manufactures its PDF via pdfRenderService and then joins the SAME pipeline;
+ * sendPipeline itself still takes a PDF buffer from its caller and asks no
+ * questions about where it came from.
  */
 
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
@@ -418,7 +420,13 @@ async function validateSendInput(db, {
   placements = null, expirationDays = null,
 } = {}) {
   if (!KINDS.includes(kind)) {
-    throw _err('ESIGN_BAD_KIND', `Unknown document kind "${kind}" (expected one of: ${KINDS.join(', ')}).`);
+    // 2B: templates may DEFINE kinds beyond the static list. The legal set is
+    // the union — KINDS ∪ kinds carried by ACTIVE templates. Lazy require:
+    // sendService → templateService is the only direction; never the reverse.
+    const templateKinds = await require('./esignTemplateService').listActiveTemplateKinds(db);
+    if (!templateKinds.includes(kind)) {
+      throw _err('ESIGN_BAD_KIND', `Unknown document kind "${kind}" (expected one of: ${[...new Set([...KINDS, ...templateKinds])].join(', ')}).`);
+    }
   }
 
   const documentNameClean = _validateDocumentName(documentName);
@@ -497,11 +505,15 @@ async function _tryAppendEvent(db, id, payload) {
  * @param {Buffer}  o.pdfBuffer
  * @param {number}  [o.draftId]       reuse an existing draft row instead of
  *                                    minting one (retry after a failed send)
+ * @param {number}  [o.templateId]    contract_templates.id when the document
+ *                                    came from a template (2B) — provenance
+ *                                    only, stored on the row, never dereferenced
  * @returns {Promise<{row: object, testing: boolean}>}
  */
 async function sendPipeline(db, {
   linkableType, linkableId, kind, documentName, recipients,
   placements = null, expirationDays = null, createdBy, pdfBuffer, draftId = null,
+  templateId = null,
 } = {}) {
   let row;
 
@@ -557,6 +569,7 @@ async function sendPipeline(db, {
       documentName:  clean.documentName,
       recipients:    clean.recipients,
       placementJson: clean.placements,
+      templateId,
       createdBy,
     });
     row.__send = clean;
@@ -953,6 +966,242 @@ async function markSatisfiedExternal(db, id, { note = null, pdfBuffer = null, cr
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TEMPLATE SEND (Phase 2B)
+//
+// The template branch: load → resolve prefills → interpolate → render →
+// sendPipeline. Everything downstream of the render is the SAME pipeline an
+// ad-hoc send uses — a template send is an ad-hoc send whose PDF happens to be
+// manufactured rather than uploaded.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Minimal HTML escape — the five characters that matter: & < > " ' */
+function _escapeHtml(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Matches esignTemplateService.extractPlaceholders — broad on purpose. */
+const _PLACEHOLDER_RE = /\{\{([^{}]*)\}\}/g;
+
+/**
+ * Replace every {{key}} in `body` with the HTML-ESCAPED value from `values`.
+ *
+ * Escaping is unconditional: a prefill value is DATA, never markup. A debtor
+ * named <script>… renders as text; a value of 'Smith & Sons' renders as
+ * 'Smith &amp; Sons' and displays correctly. Templates wanting markup put it
+ * in the template body, where the author controls it.
+ *
+ * An unknown {{key}} at send time throws — the belt to
+ * esignTemplateService's save-time braces. It can only fire when a value map
+ * with a hole reaches this function (a bug upstream), and a contract shipping
+ * with a literal '{{fee_amount}}' on it is the outcome this line exists to
+ * prevent.
+ *
+ * @param {string} body
+ * @param {Object<string,string>} values
+ * @returns {string} html
+ * @throws  ESIGN_UNDECLARED_PLACEHOLDER
+ */
+function interpolateTemplate(body, values) {
+  const vals = values || {};
+  return String(body == null ? '' : body).replace(_PLACEHOLDER_RE, (_, rawKey) => {
+    const key = rawKey.trim();
+    if (!Object.prototype.hasOwnProperty.call(vals, key)) {
+      throw _err(
+        'ESIGN_UNDECLARED_PLACEHOLDER',
+        `The template body uses {{${key}}}, but no value was resolved or supplied for it.`
+      );
+    }
+    return _escapeHtml(vals[key]);
+  });
+}
+
+/**
+ * The debtor-visible default document name: '{template.name} – {last name}'.
+ * Last name = final whitespace token of the primary debtor's name. It only
+ * needs to be HUMAN ("Retainer Agreement – Smith"), not legally perfect —
+ * suffix-bearing names ('John Smith Jr') yield 'Jr', and staff can override
+ * documentName when it matters.
+ */
+function _defaultTemplateDocName(templateName, context) {
+  const debtorName = context && context.debtor1 && context.debtor1.contact_name
+    ? String(context.debtor1.contact_name).trim()
+    : '';
+  if (!debtorName) return templateName;
+  const tokens = debtorName.split(/\s+/).filter(Boolean);
+  const last = tokens.length ? tokens[tokens.length - 1] : '';
+  return last ? `${templateName} – ${last}` : templateName;
+}
+
+/**
+ * Merge resolved prefills with caller-supplied values (CALLER WINS — the UI
+ * shows staff the resolved defaults and lets them edit), format overrides by
+ * their declared type, and interpolate.
+ *
+ * Shared by sendFromTemplate and previewFromTemplate so the preview a staff
+ * member approves and the document that goes out are the SAME rendering path.
+ *
+ * @returns {Promise<{html, merged, missingRequired, context, template}>}
+ */
+async function _resolveAndInterpolate(db, template, { linkableType, linkableId, values }) {
+  const esignPrefillService = require('./esignPrefillService');
+
+  const linkable = linkableId != null && linkableId !== ''
+    ? { linkableType, linkableId }
+    : null;
+
+  const resolved = await esignPrefillService.resolvePrefills(db, template, linkable);
+
+  const schema = Array.isArray(template.prefill_schema) ? template.prefill_schema : [];
+  const typeByKey = new Map(schema.map((e) => [e.key, e.type]));
+
+  const merged = { ...resolved.values };
+  if (values && typeof values === 'object') {
+    for (const [k, v] of Object.entries(values)) {
+      // Only DECLARED keys are accepted; a stray caller key has no type, no
+      // placeholder, and no business on the document.
+      if (!typeByKey.has(k)) continue;
+      merged[k] = esignPrefillService.formatValue(typeByKey.get(k), v);
+    }
+  }
+
+  const missingRequired = schema
+    .filter((e) => e.required && (merged[e.key] == null || merged[e.key] === ''))
+    .map((e) => e.key);
+
+  return {
+    merged,
+    missingRequired,
+    context: resolved.context,
+    template,
+    // Interpolated lazily by callers that get past the required check —
+    // preview fills blanks instead of failing.
+    interpolate: (vals) => interpolateTemplate(template.body, vals),
+  };
+}
+
+/**
+ * Send a document manufactured from a template.
+ *
+ * @param {object} db
+ * @param {object} o
+ * @param {number}  o.templateId
+ * @param {string}  o.linkableType     'case' | 'contact'
+ * @param {string}  o.linkableId
+ * @param {object}  [o.values]         caller overrides, key → raw value; wins
+ *                                     over resolved prefills
+ * @param {Array}   o.recipients       [{name, email, order}] — recipients are
+ *                                     ALWAYS explicit; a template does not
+ *                                     guess who signs
+ * @param {string}  [o.documentName]   default '{template.name} – {debtor1 last name}'
+ * @param {number}  [o.expirationDays] default template.expiration_days
+ * @param {number}  o.createdBy
+ * @returns {Promise<{row, testing}>}
+ * @throws  ESIGN_NOT_FOUND | ESIGN_TEMPLATE_INACTIVE | ESIGN_MISSING_PREFILL
+ *          + everything sendPipeline throws
+ */
+async function sendFromTemplate(db, {
+  templateId, linkableType, linkableId, values = null,
+  recipients, documentName = null, expirationDays = null, createdBy,
+} = {}) {
+  const esignTemplateService = require('./esignTemplateService');
+  const pdfRenderService     = require('./pdfRenderService');
+
+  const template = await esignTemplateService.getTemplate(db, templateId);
+  if (!template) throw _err('ESIGN_NOT_FOUND', `Template ${templateId} not found.`);
+  if (!template.active) {
+    throw _err(
+      'ESIGN_TEMPLATE_INACTIVE',
+      `Template "${template.name}" is inactive and cannot be sent. Reactivate it, or pick another.`
+    );
+  }
+
+  const r = await _resolveAndInterpolate(db, template, { linkableType, linkableId, values });
+
+  if (r.missingRequired.length) {
+    throw _err(
+      'ESIGN_MISSING_PREFILL',
+      `Required value(s) are still empty: ${r.missingRequired.join(', ')}. ` +
+      `Fill them in and send again.`,
+      { missing: r.missingRequired }
+    );
+  }
+
+  const html = r.interpolate(r.merged);
+  const pdfBuffer = await pdfRenderService.renderHtmlToPdf(html);
+
+  return sendPipeline(db, {
+    linkableType,
+    linkableId,
+    kind:           template.kind,
+    documentName:   documentName || _defaultTemplateDocName(template.name, r.context),
+    recipients,
+    placements:     template.placement_json,
+    expirationDays: expirationDays != null ? expirationDays : template.expiration_days,
+    createdBy,
+    pdfBuffer,
+    templateId:     template.id,
+  });
+}
+
+/**
+ * Render a template to PDF WITHOUT sending — the authoring/pre-send preview.
+ *
+ * NEVER creates rows, NEVER calls the provider, NEVER spends credits: this
+ * function touches esignTemplateService, esignPrefillService and the renderer,
+ * and nothing else. With no linkable, resolvers are skipped and only defaults
+ * + supplied values apply (authoring-time preview). Keys still empty render as
+ * '' — a preview with blanks is information; a preview that 400s is not.
+ * Inactive templates ARE previewable: the author deactivating and reworking a
+ * template still needs to see it.
+ *
+ * @returns {Promise<{pdfBuffer: Buffer, missing: string[], template: {id,name}}>}
+ */
+async function previewFromTemplate(db, {
+  templateId, linkableType = null, linkableId = null, values = null,
+} = {}) {
+  const esignTemplateService = require('./esignTemplateService');
+  const pdfRenderService     = require('./pdfRenderService');
+
+  const template = await esignTemplateService.getTemplate(db, templateId);
+  if (!template) throw _err('ESIGN_NOT_FOUND', `Template ${templateId} not found.`);
+
+  const r = await _resolveAndInterpolate(db, template, { linkableType, linkableId, values });
+
+  // Fill every remaining hole with '' so interpolation cannot throw — the
+  // schema is the complete key set, so this covers every declared placeholder,
+  // and save-time validation guarantees the body declares nothing else.
+  const filled = { ...r.merged };
+  const schema = Array.isArray(template.prefill_schema) ? template.prefill_schema : [];
+  for (const e of schema) {
+    if (filled[e.key] == null) filled[e.key] = '';
+  }
+
+  const html = r.interpolate(filled);
+  const pdfBuffer = await pdfRenderService.renderHtmlToPdf(html);
+
+  const missing = schema
+    .filter((e) => filled[e.key] === '')
+    .map((e) => e.key);
+
+  return { pdfBuffer, missing, template: { id: template.id, name: template.name } };
+}
+
+/**
+ * The complete legal `kind` set at this moment: static KINDS ∪ kinds on
+ * active templates. What validateSendInput enforces; exported so the UI can
+ * populate a picker from the same truth.
+ */
+async function legalKinds(db) {
+  const templateKinds = await require('./esignTemplateService').listActiveTemplateKinds(db);
+  return [...new Set([...KINDS, ...templateKinds])];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // READS
 //
 // DIVERGENCE, reported: these two run SQL from outside esignService, which 1A's
@@ -1087,6 +1336,11 @@ module.exports = {
   recallPipeline,
   remindPipeline,
   markSatisfiedExternal,
+  // template branch (2B)
+  sendFromTemplate,
+  previewFromTemplate,
+  interpolateTemplate,
+  legalKinds,
   // reads
   listRequests,
   getRequestDetail,

@@ -399,8 +399,13 @@ router.get('/api/esign', jwtOrApiKey, async (req, res) => {
 });
 
 // ─── GET /api/esign/:id ──────────────────────────────────────
+//
+// :id is constrained to DIGITS (2B). routes/ auto-mounts alphabetically, so
+// this router registers before api.esign.templates.js — an unconstrained :id
+// would swallow GET /api/esign/templates as id='templates' and 404 it. With
+// the constraint, non-numeric paths fall through to the templates router.
 
-router.get('/api/esign/:id', jwtOrApiKey, async (req, res) => {
+router.get('/api/esign/:id(\\d+)', jwtOrApiKey, async (req, res) => {
   try {
     const out = await esignSendService.getRequestDetail(req.db, asInt(req.params.id));
     return res.json(out);

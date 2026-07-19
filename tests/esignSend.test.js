@@ -1059,7 +1059,7 @@ describe('routes/api.esign.actions.js', () => {
     const sigs = routesOf(actions).map((r) => `${r.methods[0].toUpperCase()} ${r.path}`).sort();
     expect(sigs).toEqual([
       'GET /api/esign',
-      'GET /api/esign/:id',
+      'GET /api/esign/:id(\\d+)',   // digits-only since 2B — see the route's comment
       'POST /api/esign/:id/recall',
       'POST /api/esign/:id/remind',
       'POST /api/esign/:id/resend',
