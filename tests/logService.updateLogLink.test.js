@@ -1,4 +1,6 @@
 /**
+ * tests/logService.updateLogLink.test.js
+ *
  * Tests for services/logService.updateLogLink (params-mapping Slice, Part D).
  *
  * updateLogLink is RE-LINK ONLY: it writes log_link_type / log_link_id /
@@ -21,6 +23,9 @@
  * logService has zero module-level requires (it takes `db` by injection), so
  * this suite mocks db.query and needs no env vars — unlike
  * internal_functions.meta.test.js, which pulls the whole registry.
+ *
+ * Run:
+ *   npx jest tests/logService.updateLogLink.test.js
  */
 /*
 # jest is a committed devDependency (package.json: "jest": "^30.4.2").

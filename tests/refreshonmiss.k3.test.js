@@ -1,4 +1,6 @@
 /**
+ * tests/refreshonmiss.k3.test.js
+ *
  * Tests for K3 — refresh-on-miss in auth.jwtOrApiKey.
  *
  * Scenario: rotation just happened on instance A; instance B's firmConfig
@@ -9,6 +11,9 @@
  *
  * Also pinned: the forced refresh is throttled, and non-yci_ garbage never
  * triggers it.
+ *
+ * Run:
+ *   npx jest tests/refreshonmiss.k3.test.js
  */
 
 const ENV_KEYS = ['INTERNAL_API_KEY'];

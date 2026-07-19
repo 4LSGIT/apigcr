@@ -1,7 +1,9 @@
 /**
+ * tests/courtexecutor.eventlog.test.js
+ *
  * Deferred slice — route courtExecutor event writes through eventService.createEvent.
  *
- *   npx jest tests/courtExecutor.eventLog.test.js
+ *   npx jest tests/courtexecutor.eventlog.test.js
  *
  * The executor's doCreateEvent used to run a RAW `INSERT INTO events`, which
  * wrote NO `log` row — so court-created events were invisible in the case /

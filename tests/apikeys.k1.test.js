@@ -1,4 +1,6 @@
 /**
+ * tests/apikeys.k1.test.js
+ *
  * Tests for K1 — external api_keys service + jwtOrApiKey auth paths.
  *
  * Contracts pinned here:
@@ -9,6 +11,9 @@
  *              via settings (rotation overlap), external key attribution
  *              (req.auth.key_label + audit username), unknown key → 401,
  *              JWT path unchanged.
+ *
+ * Run:
+ *   npx jest tests/apikeys.k1.test.js
  */
 
 const crypto = require('crypto');

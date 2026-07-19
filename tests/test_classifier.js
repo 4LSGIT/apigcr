@@ -1,5 +1,13 @@
+// tests/test_classifier.js
+//
 // Quick smoke test for isTransientError.
 // Mirrors the failure-mode table in the bug investigation.
+//
+// Not a formal jest suite — the test- / test_ prefix is this repo's
+// convention for "not a jest file".
+//
+// Run:
+//   node tests/test_classifier.js
 
 // Inline copy of the classifier (kept in sync with services/campaignService.js)
 function isTransientError(err) {

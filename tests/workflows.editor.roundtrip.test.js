@@ -1,4 +1,6 @@
 /**
+ * tests/workflows.editor.roundtrip.test.js
+ *
  * Render → gather round-trip for the metadata-driven internal_function editor
  * in public/automation/workflows.html.
  *

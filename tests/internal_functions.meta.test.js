@@ -1,4 +1,6 @@
 /**
+ * tests/internal_functions.meta.test.js
+ *
  * Tests for the __meta registry and validator on lib/internal_functions.js.
  *
  * Two layers:
@@ -13,6 +15,9 @@
  * list to go stale. Functions that intentionally carry no __meta are exempted
  * by name in META_EXEMPT below, and a guard test ensures the exemption list
  * itself can't go stale (every entry must exist and must genuinely lack meta).
+ *
+ * Run:
+ *   npx jest tests/internal_functions.meta.test.js
  */
 /*
 # jest is a COMMITTED devDependency now (package.json: "jest": "^30.4.2") — it

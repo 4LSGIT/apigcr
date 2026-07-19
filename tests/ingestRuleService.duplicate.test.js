@@ -1,4 +1,6 @@
 /**
+ * tests/ingestRuleService.duplicate.test.js
+ *
  * Tests for duplicateRule on emailIngestRuleService + phoneIngestRuleService.
  *
  * WHAT DUPLICATE GUARANTEES (both services, symmetric):

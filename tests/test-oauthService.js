@@ -1,6 +1,11 @@
-// test/oauthService.test.js
+// tests/test-oauthService.js
 //
-// Tests run with `node --test`. No external test framework dep.
+// Tests run with `node --test`. No external test framework dep. Renamed from
+// oauthService.test.js — the .test.js suffix made jest auto-discover it, and
+// the test- prefix is this repo's convention for "not a jest file".
+//
+// Run:
+//   node --test tests/test-oauthService.js
 //
 // Strategy:
 //   - Stand up a tiny local HTTP server per test, configured to behave as

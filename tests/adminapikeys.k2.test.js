@@ -1,4 +1,6 @@
 /**
+ * tests/adminapikeys.k2.test.js
+ *
  * Tests for K2 — internal key rotation (routes/admin.apiKeys.js).
  *
  * Contracts pinned:
@@ -9,6 +11,9 @@
  *   - Missing settings rows (K1 SQL not run) → throws, nothing half-written.
  *   - firmConfig cache is invalidated so this instance verifies the new key
  *     immediately.
+ *
+ * Run:
+ *   npx jest tests/adminapikeys.k2.test.js
  */
 
 const ENV_KEYS = ['INTERNAL_API_KEY'];

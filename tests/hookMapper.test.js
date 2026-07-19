@@ -1,4 +1,6 @@
 /**
+ * tests/hookMapper.test.js
+ *
  * Tests for services/hookMapper.js — the declarative mapping engine.
  *
  * Shared kernel: this module is used by hooks (hookService), email ingest
@@ -17,14 +19,10 @@
  * The type contract is load-bearing and must not drift: a template that is
  * EXACTLY one token returns the RAW resolved value (a number stays a number);
  * anything else returns a string.
+ *
+ * Run:
+ *   npx jest tests/hookMapper.test.js
  */
-/*
-npm install --save-dev jest
-
-npx jest tests/hookMapper.test.js
-
-npm uninstall --save-dev jest
-*/
 const {
   resolvePath,
   setNestedValue,

@@ -1,4 +1,6 @@
 /**
+ * tests/eventDedup.phaseB.test.js
+ *
  * Slice 4 Phase B — event de-duplication + ingest hardening.
  *
  *   npx jest tests/eventDedup.phaseB.test.js

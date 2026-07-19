@@ -1,4 +1,6 @@
 /**
+ * tests/phoneingestservice.dedup.test.js
+ *
  * Tests for services/phoneIngestService.js — provider-ref normalization (C1)
  * and the true-redelivery guard (C2). MTH-2.
  *
@@ -34,24 +36,20 @@
  * The db is a scripted FAKE (the module takes `db` as a parameter). The three
  * collaborators (logService, suppression, rules) are jest-mocked. The module
  * under test is never mocked.
+ *
+ * Run:
+ *   npx jest tests/phoneingestservice.dedup.test.js
  */
-/*
-npm install --save-dev jest
 
-npx jest local/tests/phoneIngestService.dedup.test.js
+jest.mock('../services/logService', () => ({ createLogEntry: jest.fn() }));
+jest.mock('../services/phoneIngestSuppressionService', () => ({ evaluateSuppressions: jest.fn() }));
+jest.mock('../services/phoneIngestRuleService', () => ({ evaluateRules: jest.fn() }));
 
-npm uninstall --save-dev jest
-*/
+const logService = require('../services/logService');
+const suppressionService = require('../services/phoneIngestSuppressionService');
+const ruleService = require('../services/phoneIngestRuleService');
 
-jest.mock('/services/logService', () => ({ createLogEntry: jest.fn() }));
-jest.mock('/services/phoneIngestSuppressionService', () => ({ evaluateSuppressions: jest.fn() }));
-jest.mock('/services/phoneIngestRuleService', () => ({ evaluateRules: jest.fn() }));
-
-const logService = require('/services/logService');
-const suppressionService = require('/services/phoneIngestSuppressionService');
-const ruleService = require('/services/phoneIngestRuleService');
-
-const phoneIngestService = require('/services/phoneIngestService');
+const phoneIngestService = require('../services/phoneIngestService');
 const { ingestPhoneEvent, resetFirmNumberCache, _normalizeProviderRef } = phoneIngestService;
 
 

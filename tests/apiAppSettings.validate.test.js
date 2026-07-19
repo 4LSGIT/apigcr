@@ -1,4 +1,6 @@
 /**
+ * tests/apiAppSettings.validate.test.js
+ *
  * Tests for routes/api.appSettings.js — validateByType.
  *
  * The contract: validation is PERMISSIVE, runs on a trimmed working copy,

@@ -1,4 +1,6 @@
 /**
+ * tests/eventservice.remindertitle.test.js
+ *
  * Tests for the reminder-title CLAMP in services/eventService.js
  * (spawnReminderTask).
  *
@@ -31,17 +33,10 @@
  * unrouted; unrouted SQL is also recorded, because createTask's setImmediate
  * body and notifyAssignment both wrap themselves in try/catch and would
  * otherwise swallow a mock miss and make it look like success.
+ *
+ * Run:
+ *   npx jest tests/eventservice.remindertitle.test.js
  */
-/*
-npm install --save-dev jest
-
-# eventService top-level-requires emailService → credentialCrypto, which throws
-# at require time without this. Any random key works — tests never decrypt.
-export CREDENTIALS_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
-npx jest tests/eventService.reminderTitle.test.js
-
-npm uninstall --save-dev jest
-*/
 
 process.env.CREDENTIALS_ENCRYPTION_KEY =
   process.env.CREDENTIALS_ENCRYPTION_KEY ||

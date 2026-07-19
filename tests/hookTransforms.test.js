@@ -1,4 +1,6 @@
 /**
+ * tests/hookTransforms.test.js
+ *
  * Tests for services/hookTransforms.js — the transform kernel.
  *
  * This module is NOT hook-specific despite the name. It is the shared transform
@@ -16,14 +18,10 @@
  * errors: `\` was treated as a universal escape and discarded, so `regex:(\d+)`
  * compiled as `(d+)` and matched the letter "d". The fix: `\` escapes only `:`
  * and `\`; every other `\x` keeps both characters.
+ *
+ * Run:
+ *   npx jest tests/hookTransforms.test.js
  */
-/*
-npm install --save-dev jest
-
-npx jest tests/hookTransforms.test.js
-
-npm uninstall --save-dev jest
-*/
 const {
   parseTransformDescriptor,
   applyTransform,

@@ -2,7 +2,13 @@
 //
 // Ad-hoc test script for the timing-extensions slice. Same style as the other
 // scripts in tests/ (test-cron.js, test_classifier.js) — not a formal jest
-// suite. Run with `node tests/test-timing-extensions.js`.
+// suite.
+//
+// Run (the env var is REQUIRED: this script reaches services/adapters/email/
+// smtp.js → lib/credentialCrypto, which throws at require time without it.
+// Jest suites get it free from tests/jest.setup.js; standalone scripts don't):
+//   CREDENTIALS_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))") \
+//     node tests/test-timing-extensions.js
 //
 // Exercises:
 //   - services/timezoneService.parseUserDateTime

@@ -17,6 +17,9 @@
 //   open. mysql2 pools connect lazily, so startup/db requires are safe.
 // - If a module ever legitimately cannot load in the test environment,
 //   add it to SKIP with a comment saying why — don't delete the test.
+//
+// Run:
+//   npx jest tests/moduleLoad.smoke.test.js
 
 const fs = require("fs");
 const path = require("path");

@@ -1,4 +1,6 @@
 /**
+ * tests/emailservice.normalizebodies.test.js
+ *
  * Tests for services/emailService.js → normalizeBodies. MTH-2 Fix D.
  *
  * THE DEFECT
@@ -26,19 +28,11 @@
  *   That is what the first describe block pins.
  *
  * Pure function — no db, no SMTP, no adapters touched.
+ *
+ * Run:
+ *   npx jest tests/emailservice.normalizebodies.test.js
  */
-/*
-npm install --save-dev jest
-
-# credentialCrypto (pulled in via emailService → adapters/email/smtp) throws at
-# require time without this env var. Any random key works — the tests never
-# decrypt anything.
-export CREDENTIALS_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")
-npx jest local/tests/emailService.normalizeBodies.test.js
-
-npm uninstall --save-dev jest
-*/
-const { normalizeBodies } = require('/services/emailService');
+const { normalizeBodies } = require('../services/emailService');
 
 
 // ─────────────────────────────────────────────────────────────

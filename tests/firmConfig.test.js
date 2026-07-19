@@ -1,4 +1,6 @@
 /**
+ * tests/firmConfig.test.js
+ *
  * Tests for lib/firmConfig.js — the cached sync config reader.
  *
  * Pins down the resolution order (DB → env → legacyEnv → null), the

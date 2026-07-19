@@ -2,7 +2,10 @@
 //
 // Ad-hoc test script for lib/credentialCrypto. Same style as the other
 // scripts in tests/ (test-cron.js, test-timing-extensions.js) — not a
-// formal jest suite. Run with `node tests/test-credential-crypto.js`.
+// formal jest suite.
+//
+// Run:
+//   node tests/test-credential-crypto.js
 //
 // Covers:
 //   - round-trip (encrypt → decrypt yields original plaintext, ASCII + UTF-8 + empty)

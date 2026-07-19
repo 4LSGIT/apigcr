@@ -1,4 +1,6 @@
 /**
+ * tests/aiService.attachments.test.js
+ *
  * Tests for the attachments (multimodal) extension to services/aiService.js.
  *
  * Two layers:
@@ -17,12 +19,10 @@
  * aiPrompts) lazy-requires oauthService only at oauth2 runtime, so no
  * crypto module loads at require time. Unlike internal_functions tests,
  * no env setup is needed here.
+ *
+ * Run:
+ *   npx jest tests/aiService.attachments.test.js
  */
-/*
-npm install --save-dev jest
-npx jest tests/aiService.attachments.test.js
-npm uninstall --save-dev jest
-*/
 
 const aiService = require('../services/aiService');
 

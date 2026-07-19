@@ -1,4 +1,6 @@
 /**
+ * tests/logservice.buildcaselogwhere.test.js
+ *
  * Tests for logService._buildCaseLogWhere — the empty-sentinel fix.
  *
  * The bug: the helper used to substitute '' for NULL case_number /
@@ -19,17 +21,10 @@
  *   - the related-contact merge gating is undisturbed by the refactor.
  *
  * db.query is mocked — no live DB.
+ *
+ * Run:
+ *   npx jest tests/logservice.buildcaselogwhere.test.js
  */
-/*
-npm install --save-dev jest
-
-# logService requires nothing (verified: zero require() calls in the module),
-# so unlike internal_functions.meta.test.js there is no credentialCrypto in
-# the graph and no CREDENTIALS_ENCRYPTION_KEY export is needed here.
-npx jest tests/logService.buildCaseLogWhere.test.js
-
-npm uninstall --save-dev jest
-*/
 const logService = require('../services/logService');
 
 const { _buildCaseLogWhere } = logService;

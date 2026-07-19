@@ -1,4 +1,6 @@
 /**
+ * tests/hookService.duplicate.test.js
+ *
  * Tests for hookService.duplicateHook.
  *
  * WHAT DUPLICATE GUARANTEES:

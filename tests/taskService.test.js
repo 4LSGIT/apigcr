@@ -1,4 +1,6 @@
 /**
+ * tests/taskService.test.js
+ *
  * Tests for services/taskService.js — the status-transition half:
  * completeTask / deleteTask, their logExtra payloads, and the completion
  * email's optional note block.
@@ -22,21 +24,16 @@
  * lazy-requires email/settings per call and property-looks-up createLogEntry, so
  * patching the cached module objects intercepts cleanly — no jest.mock needed,
  * consistent with the other suites here).
+ *
+ * Run:
+ *   npx jest tests/taskService.test.js
  */
 /*
-npx jest tests/taskservice.test.js
+npx jest tests/taskService.test.js
 
 (jest is already a committed devDependency — package.json "jest": "^30.4.2".
  No install/uninstall dance needed; the older suites' header comments predate
  that and are stale.)
-
-FILENAME: this file is `taskservice.test.js`, all-lowercase 's'. It is the only
-suite here that does not mirror its source module's casing — services/taskService.js
-is camelCase, and aiService / hookMapper / hookTransforms / logService / oauthService
-all match theirs exactly. Cosmetic only: jest's path argument is a CASE-INSENSITIVE
-regex, so `npx jest tests/taskService.test.js` also resolves here and runs. Renaming
-the file to taskService.test.js would restore the convention (it would also need the
-matching line in TRACKED_FILES.txt); nothing is broken until then.
 */
 
 // credentialCrypto (pulled in via emailService → adapters/email/smtp →
