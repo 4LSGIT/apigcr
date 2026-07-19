@@ -108,7 +108,7 @@ const NEUTRAL_PAGE_BASE = 1;
 const FIELD_TYPES = Object.freeze({
   signature: { field_type_name: 'Signature',  field_category: 'image'     },
   initial:   { field_type_name: 'Initial',    field_category: 'image'     },
-  date:      { field_type_name: 'date', field_category: 'datefield',
+  date:      { field_type_name: 'Date', field_category: 'datefield',
                date_format: 'MM/dd/yyyy' },   // US format; firm is Michigan
 });
 
