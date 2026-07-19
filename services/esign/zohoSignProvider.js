@@ -99,17 +99,54 @@ const NEUTRAL_PAGE_BASE = 1;
  * "How to add different signer fields" reference
  * (zoho.com/sign/api/how-tos/signer-fields.html).
  *
- * ASSUMPTION on `date`: Zoho documents BOTH 'Date' and 'CustomDate' as legal
- * field_type_name values, but only publishes a worked example for CustomDate,
- * so CustomDate is what ships. If the smoke run shows CustomDate renders as a
- * signer-editable date picker where an auto-stamped signing date was wanted,
- * change the one string below to 'Date' — that is the entire fix.
+ * ── `date` — VERIFIED 2026-07-19, was an assumption in 1B ────────────────────
+ *
+ * Zoho exposes TWO datefield types, and they are NOT interchangeable:
+ *
+ *   Date        auto-stamped signing date. "Basic info" in Zoho's own UI
+ *               taxonomy, alongside Full Name / Email / Company / Job Title —
+ *               populated by the ACT of signing, not typed by the signer.
+ *   CustomDate  a signer-editable date picker. "Input fields" in the same
+ *               taxonomy, alongside Textfield / Checkbox / Dropdown. Used when
+ *               the sender wants an arbitrary past/future date (a DOB, say).
+ *
+ * The firm wants the signing date, so 'Date' is correct. Both carry
+ * field_category 'datefield' — confirmed against GET /api/v1/requests/
+ * fieldtypes, which lists field_type_id 2000000000151 as
+ * {field_category:'datefield', field_type_name:'Date', is_mandatory:true} and
+ * 10696000000005001 as {field_category:'datefield', ..., 'CustomDate'}. So the
+ * category below is right for either type and needs no change.
+ *
+ * `date_format` IS DELIBERATELY NOT SENT. Zoho documents it only under the
+ * CustomDate example ("field_category to be set as 'datefield' and date_format
+ * param to be passed" — zoho.com/sign/api/how-tos/signer-fields.html, Date
+ * category section, whose sole worked example is CustomDate). There is no
+ * published example of date_format on a `Date` field, and 1B's smoke run
+ * proved Zoho is NOT uniformly tolerant of unrecognized keys — GET /requests
+ * returned code 9043 "Extra key found" for exactly that class of mistake. An
+ * undocumented param on the one call that spends credits is not worth the
+ * cosmetic upside; an auto-stamped date takes its format from the account /
+ * document settings anyway.
+ *
+ * ── FALLBACK LADDER, if the deploy-time checkpoint contradicts the above ─────
+ * The checkpoint (scripts/esign_e2e_check.js) is where this gets settled live;
+ * nothing here has been sent to Zoho as 'Date' yet. In order:
+ *
+ *   1. Date renders in a non-US format  → add `date_format: 'MM/dd/yyyy'` back
+ *      to the entry below. One line. (Firm is Michigan.)
+ *   2. Date 400s, or renders as a signer-EDITABLE picker → revert to
+ *      { field_type_name: 'CustomDate', field_category: 'datefield',
+ *        date_format: 'MM/dd/yyyy', is_read_only: true }
+ *      `is_read_only` is documented — it appears in Zoho's own submit and
+ *      update-document field examples — and is the supported way to make a
+ *      CustomDate non-editable. neutralToZohoFields already copies
+ *      `date_format` through when the entry carries it; `is_read_only` would
+ *      need the same one-line passthrough.
  */
 const FIELD_TYPES = Object.freeze({
   signature: { field_type_name: 'Signature',  field_category: 'image'     },
   initial:   { field_type_name: 'Initial',    field_category: 'image'     },
-  date:      { field_type_name: 'Date', field_category: 'datefield',
-               date_format: 'MM/dd/yyyy' },   // US format; firm is Michigan
+  date:      { field_type_name: 'Date',       field_category: 'datefield' },
 });
 
 /**
@@ -587,14 +624,16 @@ class ZohoSignProvider {
    * @param {string} o.documentName
    * @param {Array}  o.recipients   [{name, email, order}]
    * @param {object} o.placements   neutral schema (see neutralToZohoFields)
-   * @param {number} [o.expirationDays=15]
+   * @param {number} [o.expirationDays=14]  matches contract_templates
+   *        .expiration_days DEFAULT 14 (verified live), so a template that
+   *        does not override it and a caller that passes nothing agree.
    * @param {boolean} [o.testing]   overrides the esign_test_mode setting
    * @param {object} [o.pageInfo]   page geometry for the percent coords
    * @returns {Promise<{providerId:string, status:string|null, providerStatus:string, raw:object}>}
    */
   async sendForSignature({
     pdfBuffer, documentName, recipients, placements,
-    expirationDays = 15, testing, pageInfo,
+    expirationDays = 14, testing, pageInfo,
   } = {}) {
     if (!Buffer.isBuffer(pdfBuffer) || pdfBuffer.length === 0) {
       throw inputError('pdfBuffer must be a non-empty Buffer');
@@ -844,12 +883,32 @@ class ZohoSignProvider {
    * (zoho.com/sign/api/document-managment/get-document-list.html).
    * start_index is 1-BASED (per the getting-started example).
    *
-   * The `search_columns` key for status filtering is NOT documented — only a
-   * request_name example is published. So we send {request_status:'inprogress'}
-   * AND re-filter client-side. If Zoho ignores the filter we still return the
-   * right rows, just after reading more pages; if it honours it, the local
-   * filter is a no-op. Never trust an unverified server-side filter to be the
-   * only thing standing between you and wrong results.
+   * ── WHY page_context CARRIES ONLY TWO KEYS ──────────────────────────────
+   * 1B shipped this sending four: row_count, start_index, search_columns
+   * ({request_status:'inprogress'}), sort_column and sort_order. Live, that
+   * 400'd with Zoho code 9043 "Extra key found" — so Zoho VALIDATES this
+   * object against an allowlist rather than ignoring what it does not know.
+   * (Contrast the QUERY string, where unknown params really are ignored —
+   * that is why sending testing=true on both send calls is safe. The two
+   * behaviours are not the same and must not be reasoned about as one.)
+   *
+   * Rather than bisect which of the three keys Zoho objects to — a live
+   * experiment costing API calls to answer a question we do not need
+   * answered — page_context is reduced to the two keys the documentation
+   * actually publishes. Nothing is lost:
+   *
+   *   - the status filter was NEVER load-bearing. The client-side re-filter
+   *     below was written precisely so an ignored/rejected server-side
+   *     filter could not produce wrong results, and it is now the only
+   *     filter. Cost is reading more pages, not reading wrong rows.
+   *   - sort_column/sort_order only affected WHICH rows survive truncation
+   *     at the rowCap. `capped` already tells the caller the result is
+   *     partial, and the reconciliation job iterates OUR outstanding rows
+   *     and asks getStatus per row — it never treats absence from this list
+   *     as evidence a document finished. See the cap warning below.
+   *
+   * If a future need makes server-side filtering worth having, add ONE key
+   * back at a time and watch for 9043 — do not restore the block wholesale.
    *
    * @returns {Promise<{items:Array<{providerId,status,providerStatus,documentName}>,
    *                    capped:boolean, pagesFetched:number}>}
@@ -861,13 +920,11 @@ class ZohoSignProvider {
     let pagesFetched = 0;
 
     for (;;) {
+      // Two documented keys ONLY — see the 9043 note above before adding any.
       const data = JSON.stringify({
         page_context: {
-          row_count:      pageSize,
-          start_index:    startIndex,
-          search_columns: { request_status: 'inprogress' },
-          sort_column:    'created_time',
-          sort_order:     'DESC',
+          row_count:   pageSize,
+          start_index: startIndex,
         },
       });
 
@@ -878,7 +935,7 @@ class ZohoSignProvider {
       for (const r of rows) {
         const providerStatus = r?.request_status;
         if (!ZOHO_IN_PROGRESS_STATUSES.includes(String(providerStatus || '').toLowerCase())) {
-          continue;  // the local re-filter described above
+          continue;  // THE status filter — nothing narrows this server-side
         }
         if (items.length >= rowCap) { capped = true; break; }
         items.push({

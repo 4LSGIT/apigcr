@@ -136,15 +136,21 @@ describe('neutralToZohoFields', () => {
       x_value:  11.7647, y_value: 77.2727, width: 35.2941, height: 4.5455,
     });
 
-    // Date. y_coord = 792 - 144 - 24 = 624. Carries date_format; CustomDate.
+    // Date. y_coord = 792 - 144 - 24 = 624.
+    //
+    // 'Date' (auto-stamped signing date), NOT 'CustomDate' (a signer-editable
+    // picker) — see the FIELD_TYPES header. field_category stays 'datefield'
+    // for both, confirmed against Zoho's own fieldtypes response.
     expect(bySigner[1][1]).toMatchObject({
-      field_name:      'CustomDate_2',
-      field_type_name: 'CustomDate',
+      field_name:      'Date_2',
+      field_type_name: 'Date',
       field_category:  'datefield',
-      date_format:     'MM/dd/yyyy',
       x_coord: 360, y_coord: 624, abs_width: 144, abs_height: 24,
       x_value: 58.8235, y_value: 78.7879, width: 23.5294, height: 3.0303,
     });
+    // date_format is NOT sent: undocumented for 'Date', and Zoho rejects
+    // unrecognized keys with code 9043 on at least one endpoint.
+    expect(bySigner[1][1]).not.toHaveProperty('date_format');
 
     // Initial, signer 2, page 2. y_coord = 792 - 700 - 24 = 68 (near the top).
     expect(bySigner[2][0]).toMatchObject({
@@ -246,7 +252,7 @@ describe('bindFieldsToActions', () => {
 
     expect(out[0].action_id).toBe('ACT_BOB');
     expect(out[0].fields.map((f) => f.field_type_name)).toEqual(['Initial']);   // signer 2
-    expect(out[1].fields.map((f) => f.field_type_name)).toEqual(['Signature', 'CustomDate']);
+    expect(out[1].fields.map((f) => f.field_type_name)).toEqual(['Signature', 'Date']);
 
     for (const a of out) {
       for (const f of a.fields) {
@@ -391,7 +397,7 @@ describe('sendForSignature', () => {
     const data = JSON.parse(form.get('data'));
     expect(data.requests).toMatchObject({
       request_name: 'Retainer',
-      expiration_days: 15,
+      expiration_days: 14,         // matches contract_templates.expiration_days DEFAULT
       is_sequential: false,        // joint debtors sign in PARALLEL
     });
     expect(data.requests.actions).toEqual([
@@ -410,7 +416,7 @@ describe('sendForSignature', () => {
     expect(data.requests.actions).toHaveLength(2);
     const [a1, a2] = data.requests.actions;
     expect(a1.action_id).toBe('ACT1');
-    expect(a1.fields.map((f) => f.field_type_name)).toEqual(['Signature', 'CustomDate']);
+    expect(a1.fields.map((f) => f.field_type_name)).toEqual(['Signature', 'Date']);
     expect(a2.action_id).toBe('ACT2');
     expect(a2.fields.map((f) => f.field_type_name)).toEqual(['Initial']);
     expect(a1.fields.every((f) => f.document_id === 'DOC7')).toBe(true);
@@ -648,23 +654,26 @@ describe('listInProgress', () => {
     expect(out.items).toHaveLength(1);
   });
 
-  test('re-filters locally in case Zoho ignores search_columns', async () => {
+  test('filters locally — nothing narrows the result server-side', async () => {
     const db = makeDb();
     global.fetch = pagedFetch([[row(1), row(2, 'completed'), row(3, 'recalled'), row(4)]]);
     const out = await new ZohoSignProvider(db, { credentialId: '13' }).listInProgress();
     expect(out.items.map((i) => i.providerId)).toEqual(['1', '4']);
   });
 
-  test('sends the status filter Zoho may or may not honour', async () => {
+  // REGRESSION GUARD, not a formality. 1B shipped page_context with
+  // search_columns + sort_column + sort_order and Zoho answered 400 code 9043
+  // "Extra key found" — it allowlists this object rather than ignoring
+  // unknowns. An EXACT key match (not toMatchObject) is the point: the bug
+  // this catches is a key being ADDED back, which a subset assertion would
+  // wave through.
+  test('page_context carries ONLY the two documented keys (Zoho 400s on extras)', async () => {
     const db = makeDb();
     global.fetch = pagedFetch([[]]);
     await new ZohoSignProvider(db, { credentialId: '13' }).listInProgress();
     const ctx = JSON.parse(new URL(global.fetch.mock.calls[0][0]).searchParams.get('data')).page_context;
-    expect(ctx).toMatchObject({
-      row_count: 100, start_index: 1,
-      search_columns: { request_status: 'inprogress' },
-      sort_column: 'created_time', sort_order: 'DESC',
-    });
+    expect(Object.keys(ctx).sort()).toEqual(['row_count', 'start_index']);
+    expect(ctx).toEqual({ row_count: 100, start_index: 1 });
   });
 
   test('the row cap truncates and says so — absence must not imply completion', async () => {

@@ -37,6 +37,7 @@ lib/internal_functions/court.js
 lib/internal_functions/db.js
 lib/internal_functions/dev.js
 lib/internal_functions/dropbox.js
+lib/internal_functions/esign.js
 lib/internal_functions/events.js
 lib/internal_functions/forwarding.js
 lib/internal_functions/index.js
@@ -191,6 +192,7 @@ public/sw.js
 public/systemAlerts.html
 public/tabLeads.html
 public/videoManager.html
+ref/2026-07-19_esign_phase1c.sql
 ref/database.sql
 ref/files.md
 ref/gas.js
@@ -225,6 +227,7 @@ routes/api.dropbox.js
 routes/api.emailCredentials.js
 routes/api.emailIngest.js
 routes/api.email_router.js
+routes/api.esign.js
 routes/api.events.js
 routes/api.featureRequests.js
 routes/api.firmData.js
@@ -309,6 +312,7 @@ scripts/courtReviewTest.js
 scripts/courtSummaryTest.js
 scripts/courtTitleMatchTest.js
 scripts/encrypt-smtp-passwords.js
+scripts/esign_e2e_check.js
 scripts/esign_zoho_smoke.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js
@@ -352,7 +356,10 @@ services/emailRouter.js
 services/emailService.js
 services/esign/index.js
 services/esign/zohoSignProvider.js
+services/esignAlertService.js
+services/esignFilingService.js
 services/esignService.js
+services/esignWebhookService.js
 services/eventService.js
 services/firmBlocksService.js
 services/formService.js
@@ -393,8 +400,13 @@ tests/apiAppSettings.validate.test.js
 tests/apikeys.k1.test.js
 tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
+tests/esignAlert.test.js
+tests/esignCredits.test.js
+tests/esignFiling.test.js
 tests/esignProvider.zoho.test.js
+tests/esignReconcile.test.js
 tests/esignService.test.js
+tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventservice.remindertitle.test.js
 tests/firmConfig.test.js

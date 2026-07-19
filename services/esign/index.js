@@ -146,7 +146,7 @@
  */
 
 const esignService = require('../esignService');
-const { getSetting } = require('../settingsService');
+const { getSetting, getSettings } = require('../settingsService');
 const { ZohoSignProvider } = require('./zohoSignProvider');
 
 /** name → constructor. The whole registry. */
@@ -156,6 +156,31 @@ const PROVIDERS = Object.freeze({
 
 /** app_settings key holding the Connections credential id. */
 const CREDENTIAL_SETTING_KEY = 'esign_credential_id';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CREDIT ACCOUNTING (slice 1C)
+//
+// Zoho exposes NO credit-balance endpoint — getCreditBalance() returns
+// {supported:false} and 1B's smoke run confirmed GET /accounts carries nothing
+// credit-shaped. So the balance is a LOCAL counter that Fred tops up by hand
+// after buying credits, decremented by this module on every real send.
+//
+// That makes it an ESTIMATE, not a ledger. It drifts whenever an envelope is
+// sent from the Zoho dashboard rather than through YisraCase, and it cannot
+// self-heal because there is nothing to reconcile against. It exists to raise
+// "buy more credits soon", not to be authoritative — which is exactly why the
+// alert text says "approx" and points at the dashboard for the real number.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CREDIT_BALANCE_KEY    = 'esign_credit_balance';
+const CREDIT_THRESHOLD_KEY  = 'esign_credit_alert_threshold';
+const CREDIT_ALERT_SENT_KEY = 'esign_credit_alert_sent';
+
+/** Zoho's API-only plan bills 5 credits per envelope. */
+const CREDITS_PER_ENVELOPE = 5;
+
+/** Used when esign_credit_alert_threshold is missing or unparseable. */
+const DEFAULT_ALERT_THRESHOLD = 50;
 
 function _err(code, message) {
   const err = new Error(message);
@@ -213,9 +238,126 @@ function listProviders() {
   return Object.keys(PROVIDERS);
 }
 
+/** Parse an app_settings string to an integer, or fall back. */
+function _int(raw, fallback) {
+  if (raw == null || String(raw).trim() === '') return fallback;
+  const n = Number(String(raw).trim());
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
+/**
+ * Record that a REAL (testing=false) envelope was sent: decrement the local
+ * credit estimate and raise a staff task the first time it crosses below the
+ * alert threshold.
+ *
+ * Called by Phase 2's send flow, at the point markSent succeeds — NOT from the
+ * webhook, which is inbound and long past the moment credits were spent. It is
+ * exported here rather than from esignService because spending credits is a
+ * PROVIDER fact (Zoho's pricing), not a row fact, and esignService is
+ * deliberately provider-free.
+ *
+ * ── ONCE PER CROSSING ───────────────────────────────────────────────────────
+ * A third setting, esign_credit_alert_sent ('1' | '0'), latches the alert:
+ *
+ *   balance >= threshold  →  latch CLEARED (so the next fall re-arms it)
+ *   balance <  threshold  →  task raised ONLY if the latch was clear, then SET
+ *
+ * A boolean latch beats the alternative of checking whether a matching task
+ * already exists: task-existence is the wrong question (a staff member may
+ * legitimately complete the task and still be below threshold — re-alerting
+ * every send after that is the exact spam this prevents), and it re-arms for
+ * free the moment Fred tops the balance back up. The cost is one extra
+ * app_settings row, which is also the thing an admin can eyeball and reset by
+ * hand if it ever gets stuck.
+ *
+ * NEVER THROWS. A credit-accounting failure must not fail a send that Zoho has
+ * already accepted — the envelope is out, the credits are gone, and turning
+ * that into a 500 would leave the caller believing the send failed. Errors are
+ * logged and swallowed; the return value says what happened.
+ *
+ * @param {object} db
+ * @param {object} [opts]
+ * @param {number} [opts.credits=CREDITS_PER_ENVELOPE]
+ * @returns {Promise<{ok, balance, previous, threshold, alerted, reason?}>}
+ */
+async function recordCreditSpend(db, { credits = CREDITS_PER_ENVELOPE } = {}) {
+  try {
+    const rows = await getSettings(db, [
+      CREDIT_BALANCE_KEY, CREDIT_THRESHOLD_KEY, CREDIT_ALERT_SENT_KEY,
+    ]);
+
+    // A missing/blank balance means "nobody has told us the balance yet".
+    // Counting down from an invented number would be worse than not counting:
+    // skip, say so, and leave the row alone.
+    if (rows[CREDIT_BALANCE_KEY] == null || String(rows[CREDIT_BALANCE_KEY]).trim() === '') {
+      console.warn(`[ESIGN CREDITS] ${CREDIT_BALANCE_KEY} is unset — not counting down from an unknown balance`);
+      return { ok: false, reason: 'balance_unset', balance: null, previous: null, threshold: null, alerted: false };
+    }
+
+    const previous  = _int(rows[CREDIT_BALANCE_KEY], 0);
+    const threshold = _int(rows[CREDIT_THRESHOLD_KEY], DEFAULT_ALERT_THRESHOLD);
+    const latched   = String(rows[CREDIT_ALERT_SENT_KEY] ?? '0').trim() === '1';
+
+    // Floor at 0. A negative balance is not information — it just means the
+    // manual figure was stale — and it would read as nonsense in the alert.
+    const balance = Math.max(0, previous - credits);
+
+    await db.query('UPDATE app_settings SET `value` = ? WHERE `key` = ?', [String(balance), CREDIT_BALANCE_KEY]);
+
+    let alerted = false;
+    if (balance < threshold && !latched) {
+      await _raiseLowCreditTask(db, balance, threshold);
+      await db.query('UPDATE app_settings SET `value` = ? WHERE `key` = ?', ['1', CREDIT_ALERT_SENT_KEY]);
+      alerted = true;
+    } else if (balance >= threshold && latched) {
+      // Re-arm. Reached after Fred tops up and sends again.
+      await db.query('UPDATE app_settings SET `value` = ? WHERE `key` = ?', ['0', CREDIT_ALERT_SENT_KEY]);
+    }
+
+    console.log(`[ESIGN CREDITS] ${previous} → ${balance} (spent ${credits}, threshold ${threshold}${alerted ? ', ALERTED' : ''})`);
+    return { ok: true, balance, previous, threshold, alerted };
+  } catch (err) {
+    console.error('[ESIGN CREDITS] recordCreditSpend failed:', err && err.message);
+    return { ok: false, reason: 'error', error: err && err.message, balance: null, previous: null, threshold: null, alerted: false };
+  }
+}
+
+/**
+ * Staff task for a low balance. Assignee resolution and the length rules live
+ * in esignAlertService so every e-sign alert reads the same setting the same
+ * way. Required lazily: this module is required at boot by the webhook route,
+ * and esignAlertService pulls in taskService → emailService → the mail stack.
+ * Deferring keeps that off the boot path of anything that only wants
+ * getProvider().
+ */
+async function _raiseLowCreditTask(db, balance, threshold) {
+  const esignAlertService = require('../esignAlertService');
+  await esignAlertService.raiseTask(db, {
+    // Well under the 100-char clip for any plausible balance.
+    title: `Zoho Sign credits low: ${balance} remaining`,
+    desc:
+      `The local Zoho Sign credit estimate has fallen to approximately ${balance}, ` +
+      `below the alert threshold of ${threshold}.\n\n` +
+      `Each envelope costs ${CREDITS_PER_ENVELOPE} credits, so this is roughly ` +
+      `${Math.floor(balance / CREDITS_PER_ENVELOPE)} more send(s).\n\n` +
+      `THIS IS AN ESTIMATE, not a ledger. Zoho exposes no balance API, so the ` +
+      `number is counted down locally from whatever was last entered by hand, and ` +
+      `it drifts whenever anyone sends from the Zoho dashboard directly.\n\n` +
+      `Action: check the real balance in the Zoho Sign dashboard, buy credits if ` +
+      `needed, then set 'esign_credit_balance' to the true figure in ` +
+      `Settings → E-Sign. Saving a value at or above ${threshold} re-arms this alert.`,
+  });
+}
+
 module.exports = {
   getProvider,
   listProviders,
+  recordCreditSpend,
   PROVIDERS,
   CREDENTIAL_SETTING_KEY,
+  CREDIT_BALANCE_KEY,
+  CREDIT_THRESHOLD_KEY,
+  CREDIT_ALERT_SENT_KEY,
+  CREDITS_PER_ENVELOPE,
+  DEFAULT_ALERT_THRESHOLD,
 };

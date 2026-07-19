@@ -46,6 +46,18 @@ console.log(`app build: ${appBuild.build} (mtime ${appBuild.mtime})`);
 app.use('/hooks', express.json({
   verify: (req, res, buf) => { req.rawBody = buf.toString(); }
 }));
+// Same treatment for /webhooks/* (e-sign providers). Two reasons, neither of
+// which the generic parser below can serve:
+//   1. Zoho Sign's webhook payload shape is undocumented, so slice 1C stores
+//      each delivery VERBATIM against the signing request. Re-serializing the
+//      parsed object would silently normalize key order, numeric precision and
+//      unicode escaping — i.e. it would destroy the evidence we are collecting.
+//   2. If a provider later signs its payloads, HMAC verification needs the
+//      exact bytes. Retrofitting that after the fact means editing this file
+//      under time pressure during an incident.
+app.use('/webhooks', express.json({
+  verify: (req, res, buf) => { req.rawBody = buf.toString(); }
+}));
 app.use(express.json({ limit: '10mb' }));//maybe limit to /upload?
 app.use(express.urlencoded({ extended: true }));
 // Landing pages: vanity-host middleware must run BEFORE express.static so a
