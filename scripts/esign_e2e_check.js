@@ -508,5 +508,14 @@ async function runVerify() {
     process.exitCode = 2;
   })
   .finally(async () => {
+    // esignService fires the log hook fire-and-forget (_fireLogHook does not
+    // return the promise), so there is no handle to await. A short drain lets
+    // the in-flight createLogEntry INSERT land before the pool closes —
+    // without it, `--send` reliably loses the 'sent' log row to
+    // "Can't add new command when connection is in closed state".
+    //
+    // Cloud Run never hits this: its pool is long-lived and is not closed
+    // per request. This is a short-lived-script problem.
+    await new Promise((r) => setTimeout(r, 1500));
     try { await db.end(); } catch { /* pool may already be closed */ }
   });

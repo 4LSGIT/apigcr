@@ -222,8 +222,34 @@ function _shape(row) {
  * Accepts Date | ISO string | 'YYYY-MM-DD HH:MM:SS' | null/undefined.
  * Returns 'YYYY-MM-DD HH:MM:SS' (UTC) or null.
  */
+/**
+ * Already in DB shape: 'YYYY-MM-DD HH:MM:SS' (or with a 'T'), no zone.
+ * Values in this shape are ALREADY UTC — _nowDb() and _toDbDateTime both emit
+ * it — so they must be passed through untouched.
+ */
+const DB_DATETIME_RE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/;
+
 function _toDbDateTime(v) {
   if (v == null || v === '') return null;
+
+  // IDEMPOTENCE. Without this, round-tripping our own output silently shifts
+  // the value by the PROCESS's UTC offset:
+  //
+  //   markSent: sentStamp = _nowDb()          → '2026-07-19 09:48:10' (UTC)
+  //             _insertEvent({occurredAt: sentStamp})
+  //             → new Date('2026-07-19 09:48:10')
+  //
+  // That string has no zone designator and a space separator, so ECMAScript
+  // parses it as LOCAL time. On a UTC box local === UTC and nothing happens,
+  // which is why production never showed it. Run the same code from a laptop
+  // in UTC+3 and the event lands three hours in the past — observed live on
+  // 2026-07-19: signing_request_events id 2 stored occurred_at 06:48:10
+  // against created_at 09:48:10, so the 'sent' event appeared to precede the
+  // 'created' event in a legal audit trail.
+  if (typeof v === 'string' && DB_DATETIME_RE.test(v.trim())) {
+    return v.trim().replace('T', ' ');
+  }
+
   const d = (v instanceof Date) ? v : new Date(v);
   if (Number.isNaN(d.getTime())) {
     throw _err('INVALID_ESIGN_DATETIME', `Not a usable datetime: ${JSON.stringify(v)}`);
@@ -902,6 +928,7 @@ module.exports = {
   // internal/test handles
   __setTrackingSuffixGenerator,
   _buildTrackingId,
+  _toDbDateTime,
   _normalizeRecipients,
   _assertTransition,
 };

@@ -973,3 +973,65 @@ describe('log hook seam (slice 1C)', () => {
     await expect(esignService.createRequest(db, baseArgs())).resolves.toBeTruthy();
   });
 });
+// ─────────────────────────────────────────────────────────────
+// _toDbDateTime idempotence — regression, found live 2026-07-19
+//
+// markSent computes sentStamp = _nowDb() and passes that SAME STRING on to
+// _insertEvent as occurredAt. If _toDbDateTime re-parses it, the value shifts
+// by the process's UTC offset, because 'YYYY-MM-DD HH:MM:SS' has no zone
+// designator and ECMAScript parses it as LOCAL time.
+//
+// On Cloud Run (TZ=UTC) local === UTC and the bug is invisible. The live
+// failure came from running a script on a laptop at UTC+3: event id 2 stored
+// occurred_at 06:48:10 against created_at 09:48:10 — a 'sent' event three
+// hours BEFORE the 'created' event it followed.
+//
+// These tests force TZ so they fail on a UTC CI box too, which the original
+// bug would not have.
+// ─────────────────────────────────────────────────────────────
+
+describe('_toDbDateTime is idempotent across timezones', () => {
+  const { _toDbDateTime } = esignService;
+  const ORIGINAL_TZ = process.env.TZ;
+
+  afterEach(() => {
+    process.env.TZ = ORIGINAL_TZ;
+  });
+
+  test('passes an already-formatted DB string through untouched', () => {
+    expect(_toDbDateTime('2026-07-19 09:48:10')).toBe('2026-07-19 09:48:10');
+  });
+
+  test('normalises a T separator without shifting the value', () => {
+    expect(_toDbDateTime('2026-07-19T09:48:10')).toBe('2026-07-19 09:48:10');
+  });
+
+  // The actual regression. Before the fix this returned '2026-07-19 06:48:10'.
+  test('does not shift by the process offset — the live 3-hour bug', () => {
+    process.env.TZ = 'Asia/Jerusalem';          // UTC+3 in July
+    expect(_toDbDateTime('2026-07-19 09:48:10')).toBe('2026-07-19 09:48:10');
+    process.env.TZ = 'America/Detroit';         // UTC-4 in July
+    expect(_toDbDateTime('2026-07-19 09:48:10')).toBe('2026-07-19 09:48:10');
+  });
+
+  test('round-trips its own output any number of times', () => {
+    let v = _toDbDateTime(new Date('2026-07-19T09:48:10Z'));
+    expect(v).toBe('2026-07-19 09:48:10');
+    for (let i = 0; i < 5; i++) v = _toDbDateTime(v);
+    expect(v).toBe('2026-07-19 09:48:10');
+  });
+
+  // Zone-designated input must still be converted — that path was never broken
+  // and is how the webhook's ISO occurredAt arrives.
+  test('still converts a zoned ISO string to UTC', () => {
+    expect(_toDbDateTime('2026-07-19T09:48:10.000Z')).toBe('2026-07-19 09:48:10');
+    expect(_toDbDateTime('2026-07-19T12:48:10+03:00')).toBe('2026-07-19 09:48:10');
+  });
+
+  test('still accepts Date objects and still rejects garbage', () => {
+    expect(_toDbDateTime(new Date('2026-07-19T09:48:10Z'))).toBe('2026-07-19 09:48:10');
+    expect(_toDbDateTime(null)).toBeNull();
+    expect(_toDbDateTime('')).toBeNull();
+    expect(() => _toDbDateTime('not a date')).toThrow(/INVALID_ESIGN_DATETIME|usable datetime/);
+  });
+});
