@@ -1,5 +1,5 @@
 -- DB Console schema snapshot
--- Generated: 2026-07-09T15:07:02.572Z
+-- Generated: 2026-07-19T07:54:24.352Z
 -- Source: POST /admin/db/schema/save-to-ref
 -- Contains schema only (no data, no database identifier).
 
@@ -177,6 +177,47 @@ CREATE TABLE `alert_state` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `api_keys`
+--
+
+DROP TABLE IF EXISTS `api_keys`;
+CREATE TABLE `api_keys` (
+  `id` int NOT NULL,
+  `label` varchar(100) NOT NULL,
+  `key_hash` char(64) NOT NULL,
+  `key_prefix` varchar(12) NOT NULL,
+  `created_by` int DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `last_used_at` timestamp NULL DEFAULT NULL,
+  `revoked_at` timestamp NULL DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `api_saved_requests`
+--
+
+DROP TABLE IF EXISTS `api_saved_requests`;
+CREATE TABLE `api_saved_requests` (
+  `id` int NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `method` varchar(32) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'GET',
+  `url` text COLLATE utf8mb4_general_ci NOT NULL,
+  `headers` json DEFAULT NULL COMMENT '{"Header-Name":"value", ...}',
+  `body` mediumtext COLLATE utf8mb4_general_ci COMMENT 'raw body string (JSON or otherwise)',
+  `content_type` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `credential_id` int DEFAULT NULL COMMENT 'FK-by-convention to credentials.id; resolved at send time',
+  `follow_redirects` tinyint(1) NOT NULL DEFAULT '1',
+  `notes` text COLLATE utf8mb4_general_ci,
+  `sort_order` int NOT NULL DEFAULT '0',
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `app_settings`
 --
 
@@ -186,6 +227,11 @@ CREATE TABLE `app_settings` (
   `value` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `is_secret` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'never returned by any settings API',
   `is_editable` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'exposed in settings.html',
+  `category` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `label` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `description` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `type` varchar(20) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `sort_order` int DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -271,7 +317,8 @@ CREATE TABLE `booking_views` (
   `thankyou_html` text COLLATE utf8mb4_general_ci,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-  `page_windows` json DEFAULT NULL
+  `page_windows` json DEFAULT NULL,
+  `footer_html` text COLLATE utf8mb4_general_ci
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -942,6 +989,28 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `contract_templates`
+--
+
+DROP TABLE IF EXISTS `contract_templates`;
+CREATE TABLE `contract_templates` (
+  `id` int unsigned NOT NULL,
+  `name` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `kind` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `body` mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'HTML, rendered to PDF in a later phase',
+  `prefill_schema` json NOT NULL COMMENT '[{key,label,type,resolver,default,required}]',
+  `placement_json` json NOT NULL COMMENT '{"coord_space":"pdf_user_space","fields":[{page,x,y,w,h,type,signer}]}',
+  `reminder_seq_id` int unsigned DEFAULT NULL COMMENT 'sequence_templates.id; NULL = firm default sequence',
+  `reminders_off` tinyint(1) NOT NULL DEFAULT '0',
+  `expiration_days` int NOT NULL DEFAULT '14',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `court_ai_log`
 --
 
@@ -958,6 +1027,7 @@ CREATE TABLE `court_ai_log` (
   `case_name` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `actions_json` json DEFAULT NULL,
   `citations_json` json DEFAULT NULL,
+  `skipped_json` json DEFAULT NULL,
   `outcome` enum('executed','queued','none','error') COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `review_reason` varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `raw_response` mediumtext COLLATE utf8mb4_unicode_ci
@@ -1526,7 +1596,7 @@ CREATE TABLE `legacy_route_log` (
 DROP TABLE IF EXISTS `log`;
 CREATE TABLE `log` (
   `log_id` int NOT NULL,
-  `log_type` enum('email','sms','call','other','form','status','note','court email','docs','appt','update','task','event') COLLATE utf8mb4_general_ci NOT NULL,
+  `log_type` enum('email','sms','call','other','form','status','note','court email','docs','appt','update','task','event','esign') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_date` datetime NOT NULL,
   `log_link` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `log_link_type` enum('contact','case','appt','bill','phone','email','task','event') COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -1682,7 +1752,7 @@ DROP TABLE IF EXISTS `phone_ingest_executions`;
 CREATE TABLE `phone_ingest_executions` (
   `id` bigint unsigned NOT NULL,
   `event_log_id` int unsigned DEFAULT NULL,
-  `status` enum('logged','suppressed','error') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `status` enum('logged','suppressed','error','duplicate') COLLATE utf8mb4_general_ci NOT NULL,
   `log_id` int DEFAULT NULL,
   `error` text CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci,
   `metadata` json DEFAULT NULL,
@@ -2148,6 +2218,90 @@ CREATE TABLE `settings` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `signing_request_events`
+--
+
+DROP TABLE IF EXISTS `signing_request_events`;
+CREATE TABLE `signing_request_events` (
+  `id` int unsigned NOT NULL,
+  `signing_request_id` int unsigned NOT NULL,
+  `event` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'created/sent/delivered/viewed/signed/declined/bounced/reminded/recalled/expired/satisfied_external/...',
+  `recipient_email` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `payload` json DEFAULT NULL,
+  `occurred_at` datetime NOT NULL COMMENT 'provider-reported time; NO default on purpose, so a missing one is visible',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'our ingest time'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `signing_requests`
+--
+
+DROP TABLE IF EXISTS `signing_requests`;
+CREATE TABLE `signing_requests` (
+  `id` int unsigned NOT NULL,
+  `provider` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'e.g. zoho_sign',
+  `provider_id` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-side request id; NULL until sent',
+  `linkable_type` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'case | contact',
+  `linkable_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'cases.case_id (string) OR contacts.contact_id (int as string)',
+  `kind` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'retainer_prepetition | retainer_postpetition | schedules | other',
+  `status` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft' COMMENT 'draft/sent/viewed/signed/declined/expired/recalled/bounced/satisfied_external',
+  `document_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'debtor-visible, human-friendly',
+  `tracking_id` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'YC-{linkable_id}-{kind}-{suffix}; opaque, do not parse',
+  `recipients` json NOT NULL COMMENT '[{name,email,order,status,signed_at,ip}]',
+  `placement_json` json DEFAULT NULL,
+  `template_id` int unsigned DEFAULT NULL COMMENT 'contract_templates.id',
+  `seq_instance_id` bigint unsigned DEFAULT NULL COMMENT 'sequence_enrollments.id — for reminder cancellation',
+  `signed_pdf_path` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Dropbox path; convention defined in slice 1C',
+  `cert_pdf_path` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `sent_at` datetime DEFAULT NULL,
+  `completed_at` datetime DEFAULT NULL COMMENT 'stamped on terminal SUCCESS only (signed, satisfied_external)',
+  `expires_at` datetime DEFAULT NULL,
+  `raw_payload` json DEFAULT NULL COMMENT 'last provider payload seen',
+  `created_by` int unsigned NOT NULL DEFAULT '0' COMMENT 'users.user; 0 = system/automations',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `streak_boards`
+--
+
+DROP TABLE IF EXISTS `streak_boards`;
+CREATE TABLE `streak_boards` (
+  `id` int unsigned NOT NULL,
+  `slug` varchar(64) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'url key: /streak?b=<slug>',
+  `title` varchar(160) COLLATE utf8mb4_general_ci NOT NULL,
+  `description` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `tz` varchar(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'America/Detroit' COMMENT 'IANA tz that defines when a day rolls over',
+  `members` json NOT NULL COMMENT '[{"u":"fred","name":"Fred","h":"<bcrypt>"}]',
+  `archived` tinyint(1) NOT NULL DEFAULT '0',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `streak_checkins`
+--
+
+DROP TABLE IF EXISTS `streak_checkins`;
+CREATE TABLE `streak_checkins` (
+  `id` int unsigned NOT NULL,
+  `board_id` int unsigned NOT NULL,
+  `username` varchar(32) COLLATE utf8mb4_general_ci NOT NULL COMMENT 'matches streak_boards.members[].u — deliberately not an FK',
+  `checkin_date` date NOT NULL COMMENT 'the day being credited (board-local)',
+  `logged_date` date NOT NULL COMMENT 'board-local day the row was actually created; logged_date > checkin_date === ticked late',
+  `note` varchar(280) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'audit only — no logic reads this'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `system_alerts`
 --
 
@@ -2192,6 +2346,7 @@ CREATE TABLE `tasks` (
   `task_title` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_desc` varchar(1000) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `task_notification` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'notify task assigner upon completion?',
+  `task_source` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `task_last_update` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `task_due_job_id` bigint DEFAULT NULL,
   `task_action_token` char(22) COLLATE utf8mb4_general_ci DEFAULT NULL
@@ -2630,6 +2785,20 @@ ALTER TABLE `alert_state`
   ADD PRIMARY KEY (`group_key`);
 
 --
+-- Indexes for table `api_keys`
+--
+ALTER TABLE `api_keys`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_api_keys_hash` (`key_hash`);
+
+--
+-- Indexes for table `api_saved_requests`
+--
+ALTER TABLE `api_saved_requests`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_api_saved_requests_sort` (`sort_order`,`name`);
+
+--
 -- Indexes for table `app_settings`
 --
 ALTER TABLE `app_settings`
@@ -2775,6 +2944,13 @@ ALTER TABLE `contacts`
   ADD UNIQUE KEY `uq_contacts_booking_token` (`booking_token`),
   ADD KEY `idx_contact_email` (`contact_email`),
   ADD FULLTEXT KEY `contact_name` (`contact_name`);
+
+--
+-- Indexes for table `contract_templates`
+--
+ALTER TABLE `contract_templates`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_ct_kind_active` (`kind`,`active`);
 
 --
 -- Indexes for table `court_ai_log`
@@ -3201,6 +3377,38 @@ ALTER TABLE `settings`
   ADD UNIQUE KEY `uniq_setting_name` (`setting_name`);
 
 --
+-- Indexes for table `signing_request_events`
+--
+ALTER TABLE `signing_request_events`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_sre_request_occurred` (`signing_request_id`,`occurred_at`);
+
+--
+-- Indexes for table `signing_requests`
+--
+ALTER TABLE `signing_requests`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_sr_tracking` (`tracking_id`),
+  ADD UNIQUE KEY `uq_provider` (`provider`,`provider_id`),
+  ADD KEY `idx_sr_linkable` (`linkable_type`,`linkable_id`),
+  ADD KEY `idx_sr_status` (`status`);
+
+--
+-- Indexes for table `streak_boards`
+--
+ALTER TABLE `streak_boards`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_streak_boards_slug` (`slug`);
+
+--
+-- Indexes for table `streak_checkins`
+--
+ALTER TABLE `streak_checkins`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uk_streak_checkin` (`board_id`,`username`,`checkin_date`),
+  ADD KEY `idx_streak_board_date` (`board_id`,`checkin_date`);
+
+--
 -- Indexes for table `system_alerts`
 --
 ALTER TABLE `system_alerts`
@@ -3358,6 +3566,18 @@ ALTER TABLE `ai_change_log`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `api_keys`
+--
+ALTER TABLE `api_keys`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `api_saved_requests`
+--
+ALTER TABLE `api_saved_requests`
+  MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `appts`
 --
 ALTER TABLE `appts`
@@ -3452,6 +3672,12 @@ ALTER TABLE `contact_relations`
 --
 ALTER TABLE `contacts`
   MODIFY `contact_id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `contract_templates`
+--
+ALTER TABLE `contract_templates`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `court_ai_log`
@@ -3772,6 +3998,30 @@ ALTER TABLE `settings`
   MODIFY `setting_id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `signing_request_events`
+--
+ALTER TABLE `signing_request_events`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `signing_requests`
+--
+ALTER TABLE `signing_requests`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `streak_boards`
+--
+ALTER TABLE `streak_boards`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `streak_checkins`
+--
+ALTER TABLE `streak_checkins`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `system_alerts`
 --
 ALTER TABLE `system_alerts`
@@ -4014,115 +4264,6 @@ ALTER TABLE `workflow_executions`
 --
 ALTER TABLE `workflow_steps`
   ADD CONSTRAINT `fk_workflow_steps_workflow` FOREIGN KEY (`workflow_id`) REFERENCES `workflows` (`id`) ON DELETE CASCADE;
-
---
--- E-SIGN PHASE 1A (2026-07-19) - appended by ref/2026-07-19_esign_phase1a.sql
---
--- Same DDL as the migration, verbatim. This block sits outside the
--- generated body above; the next `POST /admin/db/schema/save-to-ref`
--- snapshot will absorb these tables into the main listing and this
--- section can then be deleted. CREATE TABLE IF NOT EXISTS is harmless
--- here: on a fresh restore the tables never exist, so it behaves
--- exactly like the DROP + CREATE pairs above.
---
-
--- --------------------------------------------------------
--- signing_requests - one row per document sent (or about to be sent) for
--- signature. Draft rows exist BEFORE the provider knows about them, which is
--- why `provider_id` is nullable.
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `signing_requests` (
-  `id`              int unsigned NOT NULL AUTO_INCREMENT,
-  `provider`        varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'e.g. zoho_sign',
-  `provider_id`     varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-side request id; NULL until sent',
-  `linkable_type`   varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'case | contact',
-  `linkable_id`     varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'cases.case_id (string) OR contacts.contact_id (int as string)',
-  `kind`            varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'retainer_prepetition | retainer_postpetition | schedules | other',
-  `status`          varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft' COMMENT 'draft/sent/viewed/signed/declined/expired/recalled/bounced/satisfied_external',
-  `document_name`   varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'debtor-visible, human-friendly',
-  `tracking_id`     varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'YC-{linkable_id}-{kind}-{suffix}; opaque, do not parse',
-  `recipients`      json NOT NULL COMMENT '[{name,email,order,status,signed_at,ip}]',
-  `placement_json`  json DEFAULT NULL,
-  `template_id`     int unsigned DEFAULT NULL COMMENT 'contract_templates.id',
-  `seq_instance_id` bigint unsigned DEFAULT NULL COMMENT 'sequence_enrollments.id - for reminder cancellation',
-  `signed_pdf_path` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Dropbox path; convention defined in slice 1C',
-  `cert_pdf_path`   varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `sent_at`         datetime DEFAULT NULL,
-  `completed_at`    datetime DEFAULT NULL COMMENT 'stamped on terminal SUCCESS only (signed, satisfied_external)',
-  `expires_at`      datetime DEFAULT NULL,
-  `raw_payload`     json DEFAULT NULL COMMENT 'last provider payload seen',
-  `created_by`      int unsigned NOT NULL DEFAULT '0' COMMENT 'users.user; 0 = system/automations',
-  `created_at`      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at`      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  -- NULL provider_id (drafts) does NOT collide here. MySQL treats NULLs as
-  -- distinct in a UNIQUE index, so any number of ('zoho_sign', NULL) drafts
-  -- coexist. Confirmed empirically on the LIVE server, not from docs:
-  -- phone_event_log carries UNIQUE KEY (provider, provider_ref) and currently
-  -- holds 13 rows that are all ('ringcentral', NULL).
-  UNIQUE KEY `uq_provider` (`provider`,`provider_id`),
-  -- UNIQUE, not a plain KEY: getByTrackingId() encodes a one-row assumption,
-  -- and DB-enforced beats check-then-insert (a SELECT probe is racy by
-  -- construction). createRequest() catches ER_DUP_ENTRY on this key, re-rolls
-  -- the random suffix and retries, bounded at 3 attempts.
-  UNIQUE KEY `uq_sr_tracking` (`tracking_id`),
-  KEY `idx_sr_linkable` (`linkable_type`,`linkable_id`),
-  KEY `idx_sr_status` (`status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
--- signing_request_events - APPEND-ONLY audit trail. Legal defensibility: this
--- is the record that shows who was sent what, when they opened it, and when
--- they signed. Nothing in the service updates or deletes a row here.
---
--- Deliberately NO foreign key to signing_requests. ON DELETE CASCADE would let
--- deleting a request silently destroy its audit trail, which is the opposite of
--- what this table is for; ON DELETE RESTRICT would be defensible but was not
--- specified, and the two services this slice mirrors (events, tasks) carry no
--- FKs either. Orphan protection is app-side: nothing deletes signing_requests.
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `signing_request_events` (
-  `id`                 int unsigned NOT NULL AUTO_INCREMENT,
-  `signing_request_id` int unsigned NOT NULL,
-  `event`              varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'created/sent/delivered/viewed/signed/declined/bounced/reminded/recalled/expired/satisfied_external/...',
-  `recipient_email`    varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `payload`            json DEFAULT NULL,
-  `occurred_at`        datetime NOT NULL COMMENT 'provider-reported time; NO default on purpose, so a missing one is visible',
-  `created_at`         datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'our ingest time',
-  PRIMARY KEY (`id`),
-  KEY `idx_sre_request_occurred` (`signing_request_id`,`occurred_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
--- contract_templates - the document library. `body` is HTML rendered to PDF in
--- a later phase; `placement_json` carries PROVIDER-NEUTRAL field coordinates so
--- swapping Zoho for another provider does not require re-authoring templates.
---
--- reminder_seq_id points at `sequence_templates.id` (int unsigned) - the ACTIVE
--- sequence engine (lib/sequenceEngine.js). It is NOT the legacy
--- `sequences`/`seq_types`/`seq_steps` trio, which uses seq_id/seq_type_id and
--- is not driven by that engine.
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `contract_templates` (
-  `id`              int unsigned NOT NULL AUTO_INCREMENT,
-  `name`            varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `kind`            varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `body`            mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'HTML, rendered to PDF in a later phase',
-  `prefill_schema`  json NOT NULL COMMENT '[{key,label,type,resolver,default,required}]',
-  `placement_json`  json NOT NULL COMMENT '{"coord_space":"pdf_user_space","fields":[{page,x,y,w,h,type,signer}]}',
-  `reminder_seq_id` int unsigned DEFAULT NULL COMMENT 'sequence_templates.id; NULL = firm default sequence',
-  `reminders_off`   tinyint(1) NOT NULL DEFAULT '0',
-  `expiration_days` int NOT NULL DEFAULT '14',
-  `active`          tinyint(1) NOT NULL DEFAULT '1',
-  `created_at`      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at`      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  -- Not in the slice spec. Added because the only read pattern this table has
-  -- is "the active template(s) for kind X", mirroring sequenceEngine's
-  -- `WHERE type = ? AND active = 1`. Drop it if you disagree - nothing depends
-  -- on it existing.
-  KEY `idx_ct_kind_active` (`kind`,`active`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;
 COMMIT;
