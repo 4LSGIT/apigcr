@@ -226,31 +226,52 @@ async function runSend() {
 
   section('CREATE + SEND');
 
-  const request = await esignService.createRequest(db, {
-    linkableType: 'case',
-    linkableId:   caseId,
-    kind:         'pipeline_check',
-    documentName: 'Phase 1C pipeline check',
-    recipients:   [{ name: 'Checkpoint Signer', email, order: 1 }],
-    placementJson: PLACEMENTS,
-    createdBy:    1,
-  });
-  check(`signing_requests row created (id ${request.id})`, true, `tracking_id ${request.tracking_id}`);
+  // Reuse an unsent draft from a previous failed attempt rather than leaving a
+  // trail of orphans. markSent only accepts draft → sent, so a draft is
+  // exactly as usable as a fresh row.
+  const [[existing]] = await db.query(
+    `SELECT id FROM signing_requests
+      WHERE linkable_type = 'case' AND linkable_id = ?
+        AND kind = 'pipeline_check' AND status = 'draft'
+      ORDER BY id DESC LIMIT 1`, [String(caseId)]
+  );
+
+  let request;
+  if (existing) {
+    request = await esignService.getById(db, existing.id);
+    check(`reusing draft from a previous attempt (id ${request.id})`, true, `tracking_id ${request.tracking_id}`);
+  } else {
+    request = await esignService.createRequest(db, {
+      linkableType: 'case',
+      linkableId:   caseId,
+      kind:         'pipeline_check',
+      documentName: 'Phase 1C pipeline check',
+      recipients:   [{ name: 'Checkpoint Signer', email, order: 1 }],
+      placementJson: PLACEMENTS,
+      createdBy:    1,
+    });
+    check(`signing_requests row created (id ${request.id})`, true, `tracking_id ${request.tracking_id}`);
+  }
 
   const provider = await getProvider(db);
   let sent;
   try {
     sent = await provider.sendForSignature({
+      // The provider's contract is `pdfBuffer`, and it derives the uploaded
+      // filename as `${documentName}.pdf` — there is no fileName parameter.
+      pdfBuffer:    buildTestPdf(),
       documentName: 'Phase 1C pipeline check',
-      fileBuffer:   buildTestPdf(),
-      fileName:     'phase1c-check.pdf',
       recipients:   [{ name: 'Checkpoint Signer', email, order: 1 }],
       placements:   PLACEMENTS,
       testing:      testMode,
     });
   } catch (err) {
     check('Zoho accepted the envelope', false, err.message);
-    console.log(`\n  Request ${request.id} is left as a draft. Nothing was sent.\n`);
+    console.log(`
+  Request ${request.id} is still a DRAFT — nothing was sent, no credits spent.
+  Fix the cause and re-run the same command; this script reuses the draft
+  rather than piling up a new row per attempt.
+`);
     return 1;
   }
   check('Zoho accepted the envelope', true, `provider_id ${sent.providerId}`);
