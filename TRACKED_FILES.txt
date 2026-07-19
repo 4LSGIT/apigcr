@@ -309,6 +309,7 @@ scripts/courtReviewTest.js
 scripts/courtSummaryTest.js
 scripts/courtTitleMatchTest.js
 scripts/encrypt-smtp-passwords.js
+scripts/esign_zoho_smoke.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js
 scripts/test_court_revert.js
@@ -349,6 +350,8 @@ services/emailIngestSuppressionService.js
 services/emailIngestValidator.js
 services/emailRouter.js
 services/emailService.js
+services/esign/index.js
+services/esign/zohoSignProvider.js
 services/esignService.js
 services/eventService.js
 services/firmBlocksService.js
@@ -390,6 +393,7 @@ tests/apiAppSettings.validate.test.js
 tests/apikeys.k1.test.js
 tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
+tests/esignProvider.zoho.test.js
 tests/esignService.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventservice.remindertitle.test.js
