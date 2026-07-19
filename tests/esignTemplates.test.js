@@ -868,7 +868,7 @@ describe('routes/api.esign.templates.js', () => {
 
   test('every template route is behind jwtOrApiKey', () => {
     const routes = routesOf(templatesRouter);
-    expect(routes.length).toBe(7);
+    expect(routes.length).toBe(8);
     for (const r of routes) {
       expect(r.handles).toContain(jwtOrApiKey);
     }
@@ -883,9 +883,44 @@ describe('routes/api.esign.templates.js', () => {
       'POST /api/esign/send-from-template',
       'POST /api/esign/templates',
       'POST /api/esign/templates/:id/deactivate',
+      'POST /api/esign/templates/:id/prefills',
       'POST /api/esign/templates/:id/preview',
       'PUT /api/esign/templates/:id',
     ]);
+  });
+
+  // ── POST /:id/prefills (2C) ───────────────────────────────
+  // Behavioral: returns {values, missing} and NOTHING else — resolvePrefills
+  // also yields `context` (raw case + debtor rows, SSN included), which must
+  // never reach the browser.
+  test('prefills route returns values+missing only — context never leaks', async () => {
+    const handler = routesOf(templatesRouter)
+      .find((r) => r.path === '/api/esign/templates/:id/prefills').handles.slice(-1)[0];
+
+    const req = {
+      db: wiredDb({}),
+      params: { id: '7' },
+      body: { linkable_type: 'case', linkable_id: 'AbC12dEf' },
+    };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    await handler(req, res);
+
+    expect(res.json).toHaveBeenCalledTimes(1);
+    const body = res.json.mock.calls[0][0];
+    expect(Object.keys(body).sort()).toEqual(['missing', 'values']);
+    expect(body.values.debtor_name).toBe('John Q Smith');
+    expect(res.status).not.toHaveBeenCalled();   // 200 path
+  });
+
+  test('prefills route with no linkable resolves defaults only (authoring mode)', async () => {
+    const handler = routesOf(templatesRouter)
+      .find((r) => r.path === '/api/esign/templates/:id/prefills').handles.slice(-1)[0];
+    const req = { db: wiredDb({}), params: { id: '7' }, body: {} };
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+    await handler(req, res);
+    const body = res.json.mock.calls[0][0];
+    // No case → resolver-backed keys come back empty and land in missing.
+    expect(body.missing).toContain('debtor_name');
   });
 
   test('the actions router GET :id is digit-constrained so /templates falls through to this router', () => {

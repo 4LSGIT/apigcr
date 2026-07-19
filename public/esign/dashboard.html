@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Signatures Dashboard</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <script src="/esign/esignActions.js"></script>
+  <style>
+    body { margin: 0; padding: 16px; background: #fff; }
+    .db-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+    .db-top h2 { margin: 0; }
+    .db-top .spacer2 { flex: 1; }
+    .db-refreshed { font-size: 11px; color: #999; }
+    #db-table th { cursor: default; white-space: nowrap; }
+    #db-table th.sortable { cursor: pointer; }
+    #db-table td { text-align: left; }
+    .db-link { color: #07adef; cursor: pointer; }
+    .db-days-hot { color: #dc2626; font-weight: bold; }
+    .db-empty { color: #999; padding: 20px; text-align: center; }
+    .db-toggle { display: inline-flex; border: 1px solid #ccc; border-radius: 4px; overflow: hidden; }
+    .db-toggle button { border: none; background: #f2f2f2; padding: 7px 14px; cursor: pointer; }
+    .db-toggle button.on { background: #26abe2; color: #fff; }
+  </style>
+</head>
+<body>
+<!-- ═══════════════════════════════════════════════════════════
+  SIGNATURES DASHBOARD (Phase 2C) — the "no way of knowing" cure.
+  Standalone page reached from the shell's More tab (index.html →
+  esignDashDiv, a lazy data-src more-panel). Iframed in the shell like
+  automationManager/connections, so window.top.apiSend exists.
+
+  Default filter outstanding=1 (sent/viewed/bounced — the service's
+  OUTSTANDING_STATUSES); toggle to All. Client-side sort — firm volume makes
+  a server ORDER BY pointless. Auto-refresh 60s, paused while the tab is
+  hidden (document.visibilitychange), immediate catch-up refresh on return.
+
+  Case/contact labels: GET /api/esign rows carry only linkable_type/id
+  (case_id is an OPAQUE 8-char string — repo rule, never parsed). Labels are
+  hydrated per unique linkable via GET /api/cases/:id (case_number) or
+  GET /api/contacts/:id (contact_name), cached for the page's lifetime.
+  Case links open the file via top.addFile(label,'case',id) — the shell's
+  own navigation, same as every other cross-link in the app.
+═══════════════════════════════════════════════════════════════ -->
+<div class="db-top">
+  <h2><i class="fa-solid fa-file-signature"></i> Signatures</h2>
+  <div class="db-toggle">
+    <button id="db-f-out" class="on" onclick="setFilter('outstanding')">Outstanding</button>
+    <button id="db-f-all" onclick="setFilter('all')">All</button>
+  </div>
+  <div class="spacer2"></div>
+  <span class="db-refreshed" id="db-refreshed"></span>
+  <button onclick="refresh()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+</div>
+
+<table id="db-table" class="logTable">
+  <tr>
+    <th>Case / Contact</th>
+    <th>Document</th>
+    <th>Kind</th>
+    <th class="sortable" onclick="setSort('status')">Status <span id="db-s-status"></span></th>
+    <th>Recipients</th>
+    <th class="sortable" onclick="setSort('sent')">Sent <span id="db-s-sent"></span></th>
+    <th class="sortable" onclick="setSort('days')">Days pending <span id="db-s-days"></span></th>
+    <th>Expires</th>
+    <th></th>
+  </tr>
+</table>
+<div id="db-empty" class="db-empty" style="display:none"></div>
+<div id="db-load" style="text-align:center;padding:14px"><i class="fa-solid fa-spinner fa-spin-pulse fa-2x"></i></div>
+
+<script>
+let filter   = 'outstanding';
+let sortKey  = 'days';          // default: days pending desc — oldest debt first
+let sortDir  = -1;              // -1 desc, 1 asc
+let rows     = [];
+const labelCache = new Map();   // 'case:ID' / 'contact:ID' → display label
+let timer = null;
+
+(function waitForShell() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') return init();
+  } catch (_) { }
+  setTimeout(waitForShell, 100);
+})();
+
+function init() {
+  refresh();
+  // 60s auto-refresh while visible. Hidden tab → timer keeps firing but the
+  // guard skips the fetch; on return the visibilitychange handler catches up
+  // immediately, so a background tab never shows stale data on focus.
+  timer = setInterval(() => { if (document.visibilityState === 'visible') refresh(true); }, 60000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refresh(true);
+  });
+}
+
+function setFilter(f) {
+  filter = f;
+  E('db-f-out').className = f === 'outstanding' ? 'on' : '';
+  E('db-f-all').className = f === 'all' ? 'on' : '';
+  refresh();
+}
+
+function setSort(key) {
+  if (sortKey === key) sortDir = -sortDir;
+  else { sortKey = key; sortDir = key === 'days' ? -1 : (key === 'sent' ? -1 : 1); }
+  render();
+}
+
+async function refresh(quiet) {
+  if (!quiet) E('db-load').style.display = 'block';
+  try {
+    const params = filter === 'outstanding' ? { outstanding: 1 } : {};
+    const data = await esignApi('/api/esign', 'GET', params);
+    rows = data.requests || [];
+    await hydrateLabels();
+    render();
+    E('db-refreshed').innerText = 'Updated ' + new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+  } catch (err) {
+    if (!quiet) Toast.fire({ icon: 'error', title: 'Error loading signatures', text: err.message });
+  }
+  E('db-load').style.display = 'none';
+}
+
+async function hydrateLabels() {
+  const wanted = [...new Set(rows.map(r => r.linkable_type + ':' + r.linkable_id))]
+    .filter(k => !labelCache.has(k));
+  await Promise.all(wanted.map(async k => {
+    const [type, ...idParts] = k.split(':');
+    const id = idParts.join(':');
+    try {
+      if (type === 'case') {
+        const d = await esignApi(`/api/cases/${id}`, 'GET');
+        const c = d && d.case;
+        labelCache.set(k, c ? (c.case_number_full || c.case_number || id) : id);
+      } else {
+        const d = await esignApi(`/api/contacts/${id}`, 'GET');
+        const c = d && (d.contact || d);
+        labelCache.set(k, (c && c.contact_name) || id);
+      }
+    } catch (_) {
+      labelCache.set(k, id);   // label is cosmetic; never block the table on it
+    }
+  }));
+}
+
+function sortedRows() {
+  const statusRank = s => ['bounced', 'declined', 'expired', 'sent', 'viewed', 'draft', 'recalled', 'satisfied_external', 'signed'].indexOf(s);
+  return rows.slice().sort((a, b) => {
+    let va, vb;
+    if (sortKey === 'days') {
+      va = a.days_pending == null ? -1 : a.days_pending;
+      vb = b.days_pending == null ? -1 : b.days_pending;
+    } else if (sortKey === 'sent') {
+      va = a.sent_at ? new Date(a.sent_at).getTime() : 0;
+      vb = b.sent_at ? new Date(b.sent_at).getTime() : 0;
+    } else {
+      va = statusRank(a.status); vb = statusRank(b.status);
+    }
+    return (va < vb ? -1 : va > vb ? 1 : 0) * sortDir;
+  });
+}
+
+function render() {
+  ['status', 'sent', 'days'].forEach(k => {
+    E('db-s-' + k).innerText = sortKey === k ? (sortDir === 1 ? '↑' : '↓') : '';
+  });
+  const table = E('db-table');
+  while (table.rows.length > 1) table.deleteRow(1);
+  const list = sortedRows();
+  E('db-empty').style.display = list.length ? 'none' : 'block';
+  E('db-empty').innerText = filter === 'outstanding'
+    ? 'Nothing outstanding — every signing request is settled.'
+    : 'No signing requests yet.';
+  list.forEach(r => {
+    const tr = table.insertRow();
+    const key = r.linkable_type + ':' + r.linkable_id;
+    const label = labelCache.get(key) || r.linkable_id;
+    const days = r.days_pending;
+    const daysHtml = (!esignIsTerminal(r.status) && days != null)
+      ? `<span${days >= 7 ? ' class="db-days-hot"' : ''}>${days}</span>` : '';
+    tr.innerHTML =
+      `<td><span class="db-link" onclick="openLinkable('${r.linkable_type}','${esignEsc(String(r.linkable_id)).replace(/'/g, '')}','${esignEsc(label).replace(/'/g, "\\'")}')">` +
+      `<i class="fa-solid ${r.linkable_type === 'case' ? 'fa-landmark' : 'fa-user'}"></i> ${esignEsc(label)}</span></td>` +
+      `<td style="max-width:20em;overflow-wrap:anywhere">${esignEsc(r.document_name || '')}</td>` +
+      `<td>${esignEsc(r.kind || '')}</td>` +
+      `<td>${esignChipHtml(r.status)}</td>` +
+      `<td>${esignRecipientsHtml(r.recipients)}</td>` +
+      `<td>${esignEsc(esignFmtDate(r.sent_at))}</td>` +
+      `<td style="text-align:center">${daysHtml}</td>` +
+      `<td>${esignEsc(esignFmtDate(r.expires_at))}</td>` +
+      `<td><button onclick="openActionsFor(${r.id})"><i class="fa-solid fa-ellipsis"></i></button></td>`;
+  });
+}
+
+function openActionsFor(id) {
+  const row = rows.find(r => r.id === id);
+  if (row) esignOpenActions(row, () => refresh(true));
+}
+
+// Case/contact link → the shell's file tabs. addFile lives on the shell
+// (index.html); every cross-link in the app opens files this way.
+function openLinkable(type, id, label) {
+  const t = window.top;
+  if (t && typeof t.addFile === 'function') {
+    t.addFile(label, type === 'case' ? 'case' : 'contact', id);
+  } else {
+    Toast.fire({ icon: 'info', title: 'Open this page inside YisraCase to jump to files' });
+  }
+}
+</script>
+</body>
+</html>

@@ -8,8 +8,13 @@
  *
  *   POST /webhooks/esign/zoho?token=…   — PUBLIC receiver. Auth is the token.
  *
- * Phase 2's send/recall/remind endpoints belong in this file too, behind
- * jwtOrApiKey. They are not here yet.
+ * Phase 2's authed endpoints deliberately do NOT live in this file. They are
+ * in routes/api.esign.actions.js (send/recall/remind/resend/list) and
+ * routes/api.esign.templates.js (templates/preview/prefills/send-from-
+ * template) precisely so no future edit can accidentally hang jwtOrApiKey on
+ * the public webhook below (breaking inbound delivery) or leave it off an
+ * action route (opening a send endpoint to the internet). Keep this file
+ * webhook-only.
  *
  * ── WHY THIS ENDPOINT IS UNAUTHENTICATED ────────────────────────────────────
  * There is no global auth middleware in this app. server.js mounts every

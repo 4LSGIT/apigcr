@@ -2210,7 +2210,7 @@
   <br><br>
   <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
   <button class="big-button" data-target="assetManagerDiv"    data-exclusive-group="more"><i class="fa-solid fa-photo-film fa-2xl"></i><br><br>Asset Manager</button>
-  <button class="big-button" onclick="this.querySelector('i').classList.toggle('fa-bounce')"><i class="fa-solid fa-cat fa-2xl"></i><br><br>placeholder!</button>
+  <button class="big-button" data-target="esignDashboardDiv" data-exclusive-group="more"><i class="fa-solid fa-file-signature fa-2xl"></i><br><br>Signatures</button>
 
 
   <div id="manualsDiv"         class="more-panel" style="display:none">
@@ -2242,6 +2242,12 @@
   </div>
   <div id="assetManagerDiv" class="more-panel" style="display:none">
     <iframe data-src="/assetManager.html"></iframe>
+  </div>
+  <!-- Signatures dashboard (e-sign Phase 2C). Lazy data-src like every other
+       more-panel; the page rides window.top.apiSend, so shell-hosting is all
+       it needs. -->
+  <div id="esignDashboardDiv" class="more-panel" style="display:none">
+    <iframe data-src="/esign/dashboard.html"></iframe>
   </div>
 </div>
 <script>

@@ -12,6 +12,7 @@
  *   PUT  /api/esign/templates/:id             update (partial)
  *   POST /api/esign/templates/:id/deactivate  soft off (never DELETE)
  *   POST /api/esign/templates/:id/preview     resolve+render → application/pdf
+ *   POST /api/esign/templates/:id/prefills    resolve values only (2C, no render)
  *   POST /api/esign/send-from-template        the real thing
  *
  * ── ROUTE ORDER ─────────────────────────────────────────────────────────────
@@ -82,6 +83,12 @@ function fail(res, err, route) {
     code: (err && err.code) || 'ESIGN_ERROR',
   };
   if (err && err.missing) body.missing = err.missing;
+  // Present after a failed provider send (sendPipeline attaches it): lets the
+  // send form retry the SAME draft row — preview-render the PDF and POST
+  // /api/esign/send with draft_id — rather than orphaning it and minting a
+  // second tracking id. Mirrors the actions router's fail(); its absence here
+  // was an oversight — sendFromTemplate flows through the same sendPipeline.
+  if (err && err.draftId != null) body.draft_id = err.draftId;
   return res.status(status).json(body);
 }
 
@@ -218,6 +225,39 @@ router.post('/api/esign/templates/:id/preview', jwtOrApiKey, async (req, res) =>
     return res.send(out.pdfBuffer);
   } catch (err) {
     return fail(res, err, 'POST /api/esign/templates/:id/preview');
+  }
+});
+
+// ─── POST /api/esign/templates/:id/prefills ──────────────────
+//
+// Phase 2C. Resolve a template's prefill_schema against a linkable and return
+// the values WITHOUT rendering anything — the send form seeds its input fields
+// from this, then previews/sends with staff edits layered on top. A thin
+// auth'd wrapper over esignPrefillService.resolvePrefills; no rows, no
+// provider, no chromium, no credits.
+//
+// Deliberately returns ONLY {values, missing}. resolvePrefills also returns
+// `context` — the raw case + debtor contact rows, SSN and DOB included. That
+// object exists for the SERVER (document-name derivation); shipping it to the
+// browser would leak every column of two contacts to any authed caller who
+// only asked for prefill strings. Do not add it.
+
+router.post('/api/esign/templates/:id/prefills', jwtOrApiKey, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const out = await esignPrefillService.resolvePrefills(
+      req.db,
+      asInt(req.params.id),
+      // No linkable → authoring-time resolution (defaults only) — same
+      // degradation previewFromTemplate uses, so the form still works if a
+      // caller omits the case.
+      body.linkable_id != null && body.linkable_id !== ''
+        ? { linkableType: body.linkable_type, linkableId: body.linkable_id }
+        : null
+    );
+    return res.json({ values: out.values, missing: out.missing });
+  } catch (err) {
+    return fail(res, err, 'POST /api/esign/templates/:id/prefills');
   }
 });
 

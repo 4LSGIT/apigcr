@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Send for Signature</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <script src="/esign/esignActions.js"></script>
+  <style>
+    /* Layout only — colors/inputs come from /style.css so the page reads
+       native next to the case forms. */
+    body { margin: 0; background: #fff; }
+    .sf-wrap { max-width: 760px; margin: 0 auto; padding: 16px; text-align: left; }
+    .sf-section { border: 1px solid #ddd; border-radius: 4px; padding: 14px 16px; margin-bottom: 14px; }
+    .sf-section h3 { margin: 0 0 10px; font-size: 15px; }
+    .sf-row { margin: 6px 0; }
+    .sf-row label { font-weight: bold; display: inline-block; min-width: 170px; vertical-align: top; }
+    .sf-row .req { color: #dc2626; }
+    .sf-row input, .sf-row select { width: 300px; }
+    .sf-hint { font-size: 11px; color: #888; margin-left: 4px; }
+    .sf-missing { color: #b45309; font-size: 12px; }
+    .sf-recip { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+    .sf-recip .order { width: 22px; text-align: center; color: #888; font-weight: bold; }
+    .sf-recip input { width: 240px; }
+    .sf-recip button { padding: 6px 9px; }
+    .sf-actions { text-align: center; margin: 16px 0; }
+    .sf-actions button { margin: 0 6px; }
+    #sf-preview-frame { width: 100%; height: 70vh; border: 1px solid #ccc; display: none; margin-top: 10px; }
+    #sf-success { display: none; border: 2px solid #059669; border-radius: 4px; padding: 14px 16px; }
+    #sf-testmode { display: none; background: #fde68a; color: #7c4a03; font-weight: bold;
+                   padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; }
+    #sf-header h2 { margin: 4px 0; }
+    #sf-header .sub { color: #666; font-size: 13px; }
+    .sf-warn-list { color: #b45309; font-size: 12px; margin: 6px 0 0; }
+  </style>
+</head>
+<body>
+<div class="sf-wrap">
+  <div id="sf-header">
+    <h2><i class="fa-solid fa-file-signature"></i> Send for Signature</h2>
+    <div class="sub" id="sf-case-line">Loading…</div>
+  </div>
+
+  <!-- ── 1. Template + prefills ─────────────────────────────── -->
+  <div class="sf-section">
+    <h3>1. Template</h3>
+    <div class="sf-row">
+      <label>Template:</label>
+      <select id="sf-template" onchange="templateChanged(this.value)">
+        <option value="" selected disabled>Loading templates…</option>
+      </select>
+    </div>
+    <div id="sf-fields"></div>
+  </div>
+
+  <!-- ── 2. Recipients ──────────────────────────────────────── -->
+  <div class="sf-section">
+    <h3>2. Recipients <span class="sf-hint">signing order top to bottom, max 5</span></h3>
+    <div id="sf-recips"></div>
+    <button onclick="addRecipRow('','')"><i class="fa-solid fa-user-plus"></i> Add recipient</button>
+  </div>
+
+  <!-- ── 3. Document ────────────────────────────────────────── -->
+  <div class="sf-section">
+    <h3>3. Document</h3>
+    <div class="sf-row">
+      <label>Document name:</label>
+      <input id="sf-docname" maxlength="255">
+    </div>
+    <div class="sf-row">
+      <label>Expires after:</label>
+      <input id="sf-expiry" type="number" min="1" max="90" style="width:80px"> <span class="sf-hint">days (1–90)</span>
+    </div>
+  </div>
+
+  <!-- ── 4. Actions ─────────────────────────────────────────── -->
+  <div class="sf-actions">
+    <button class="big-button" style="background:#6b7280" id="sf-preview-btn" onclick="doPreview()">
+      <i class="fa-solid fa-eye"></i> Preview PDF
+    </button>
+    <button class="big-button" id="sf-send-btn" onclick="doSend()">
+      <i class="fa-solid fa-paper-plane"></i> Send
+    </button>
+  </div>
+  <div id="sf-preview-missing" class="sf-missing"></div>
+  <iframe id="sf-preview-frame"></iframe>
+
+  <!-- ── Success panel ──────────────────────────────────────── -->
+  <div id="sf-success">
+    <div id="sf-testmode"><i class="fa-solid fa-flask"></i> TEST MODE — watermarked, no credits spent</div>
+    <h3 style="margin-top:0"><i class="fa-solid fa-circle-check" style="color:#059669"></i> Sent</h3>
+    <div id="sf-success-body"></div>
+    <div style="margin-top:10px">
+      <button onclick="goBack()"><i class="fa-solid fa-arrow-left"></i> Back to case signatures</button>
+      <button onclick="location.reload()"><i class="fa-solid fa-plus"></i> Send another</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// SEND FORM (Phase 2C). Two entries:
+//   ?case_id=X            — primary flow (from the case Signatures widget)
+//   no case_id            — standalone: CasePicker (scripts.js) first
+// Optional ?template_id=Y preselects a template (resend-from-template link).
+//
+// Network: JSON via esignActions.js's esignApi (window.top.apiSend relay —
+// courtpreview precedent); preview/retry-upload via esignFetchPdf/esignUpload
+// (Bearer jwt raw fetch — the preview response is binary and the retry upload
+// must be multipart; apiSend is JSON-only).
+//
+// scripts.js note: its `P = window.parent` pickers call P.apiSend, so this
+// page aliases window.apiSend to the top relay — a CasePicker mounted HERE
+// then works whether the page sits 1 or 2 iframes below the shell.
+// ═══════════════════════════════════════════════════════════════
+window.apiSend = function () { return esignApi.apply(null, arguments); };
+
+const qs = new URLSearchParams(location.search);
+let caseId       = qs.get('case_id') || '';
+const wantTplId  = qs.get('template_id') || '';
+
+let caseData   = null;   // { case, clients } from GET /api/cases/:id?include=contacts
+let template   = null;   // full template row (GET /api/esign/templates/:id)
+let lastError  = null;   // last send error body (for draft_id retry)
+
+// ── boot ─────────────────────────────────────────────────────
+(function waitForShell() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') return init();
+  } catch (_) { /* fall through to retry */ }
+  setTimeout(waitForShell, 100);
+})();
+
+async function init() {
+  if (!caseId) return pickCaseFirst();
+  try {
+    await loadCase();
+    await loadTemplates();
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+  }
+}
+
+// Standalone entry: pick a case before anything else. Reuses the shared
+// CasePicker from scripts.js — no per-page fork.
+function pickCaseFirst() {
+  let picker = null;
+  Swal.fire({
+    title: 'Which case?',
+    html: '<div id="sf-cp-mount"></div>',
+    showConfirmButton: false,
+    showCloseButton: true,
+    allowOutsideClick: false,
+    didOpen: () => {
+      picker = CasePicker(E('sf-cp-mount'), {
+        placeholder: 'Search by case number or client…',
+        onSelect: (cid) => {
+          if (picker) picker.destroy();
+          Swal.close();
+          caseId = cid;
+          // Keep the URL truthful so reload / send-another keeps the case.
+          const u = new URL(location.href);
+          u.searchParams.set('case_id', cid);
+          history.replaceState(null, '', u);
+          init();
+        },
+      });
+      picker.focus();
+    },
+    willClose: () => { if (picker) picker.destroy(); },
+  });
+}
+
+// ── case + recipients prefill ───────────────────────────────
+// Same source case.html's loadEntityData uses: GET /api/cases/:id
+// ?include=contacts. Primary → recipient 1, Secondary (joint debtor) →
+// recipient 2. contact_email may be empty — staff fill it in.
+async function loadCase() {
+  caseData = await esignApi(`/api/cases/${caseId}`, 'GET', { include: 'contacts' });
+  if (!caseData || !caseData.case) throw new Error(`Case ${caseId} not found`);
+  const c = caseData.case;
+  const clients = caseData.clients || [];
+  const pc = clients.find(x => (x.relate_type || x.case_relate_type) === 'Primary')   || null;
+  const sc = clients.find(x => (x.relate_type || x.case_relate_type) === 'Secondary') || null;
+
+  E('sf-case-line').innerHTML =
+    `Case <b>${esignEsc(c.case_number_full || c.case_number || c.case_id)}</b>` +
+    (pc ? ` — ${esignEsc(pc.contact_name || '')}` : '');
+
+  E('sf-recips').innerHTML = '';
+  if (pc) addRecipRow(pc.contact_name || '', pc.contact_email || '');
+  if (sc) addRecipRow(sc.contact_name || '', sc.contact_email || '');
+  if (!pc && !sc) addRecipRow('', '');
+}
+
+function addRecipRow(name, email) {
+  const rows = document.querySelectorAll('.sf-recip');
+  if (rows.length >= 5) {
+    Toast.fire({ icon: 'info', title: 'At most 5 signers are supported' });
+    return;
+  }
+  const div = document.createElement('div');
+  div.className = 'sf-recip';
+  div.innerHTML =
+    `<span class="order"></span>` +
+    `<input class="sf-r-name" placeholder="Name" value="${esignEsc(name).replace(/"/g, '&quot;')}">` +
+    `<input class="sf-r-email" placeholder="Email" value="${esignEsc(email).replace(/"/g, '&quot;')}">` +
+    `<button title="Remove" onclick="this.parentNode.remove();renumber()"><i class="fa-solid fa-trash-can"></i></button>`;
+  E('sf-recips').appendChild(div);
+  renumber();
+}
+function renumber() {
+  document.querySelectorAll('.sf-recip .order').forEach((el, i) => { el.innerText = i + 1; });
+}
+function gatherRecipients() {
+  return Array.from(document.querySelectorAll('.sf-recip')).map((row, i) => ({
+    name:  row.querySelector('.sf-r-name').value.trim(),
+    email: row.querySelector('.sf-r-email').value.trim(),
+    order: i + 1,
+  }));
+}
+
+// ── templates ────────────────────────────────────────────────
+async function loadTemplates() {
+  const data = await esignApi('/api/esign/templates', 'GET');
+  const list = data.templates || [];
+  const sel = E('sf-template');
+  sel.innerHTML = '<option value="" selected disabled>Select a template…</option>' +
+    list.map(t => `<option value="${t.id}">${esignEsc(t.name)} (${esignEsc(t.kind)})</option>`).join('');
+  if (!list.length) {
+    sel.innerHTML = '<option value="" selected disabled>No active templates — create one first</option>';
+  }
+  if (wantTplId && list.some(t => String(t.id) === String(wantTplId))) {
+    sel.value = wantTplId;
+    await templateChanged(wantTplId);
+  }
+}
+
+async function templateChanged(id) {
+  E('sf-fields').innerHTML = '<i class="fa-solid fa-spinner fa-spin-pulse"></i> Loading…';
+  lastError = null;
+  try {
+    const [tplOut, prefills] = await Promise.all([
+      esignApi(`/api/esign/templates/${id}`, 'GET'),
+      esignApi(`/api/esign/templates/${id}/prefills`, 'POST',
+        { linkable_type: 'case', linkable_id: caseId }),
+    ]);
+    template = tplOut.template;
+    renderFields(template.prefill_schema || [], prefills.values || {}, prefills.missing || []);
+
+    // Doc name default mirrors the server's _defaultTemplateDocName:
+    // '{Template name} – {last whitespace token of Primary's name}'.
+    const pc = (caseData.clients || []).find(x => (x.relate_type || x.case_relate_type) === 'Primary');
+    const tokens = pc && pc.contact_name ? pc.contact_name.trim().split(/\s+/) : [];
+    const last = tokens.length ? tokens[tokens.length - 1] : '';
+    E('sf-docname').value = last ? `${template.name} – ${last}` : template.name;
+    E('sf-expiry').value = template.expiration_days != null ? template.expiration_days : 14;
+  } catch (err) {
+    E('sf-fields').innerHTML = '';
+    Toast.fire({ icon: 'error', title: 'Error loading template', text: err.message });
+  }
+}
+
+// prefill_schema entries: {key, label, type(text|number|date|money), resolver,
+// default, required}. Values arrive FORMATTED (money '$1,234.50', date
+// 'MM/DD/YYYY'). Overrides are re-parsed server-side by formatValue, so text
+// inputs sending '1234.5' or a date input sending ISO yyyy-mm-dd are both fine.
+function renderFields(schema, values, missing) {
+  const missingSet = new Set(missing);
+  E('sf-fields').innerHTML = schema.length
+    ? schema.map(e => {
+        const val = values[e.key] != null ? values[e.key] : '';
+        const isMissing = missingSet.has(e.key) && e.required;
+        let input;
+        if (e.type === 'date') {
+          input = `<input type="date" class="sf-f" data-key="${e.key}" value="${mdyToIso(val)}">`;
+        } else {
+          const ph = e.type === 'money' ? '$0.00' : (e.type === 'number' ? '0' : '');
+          input = `<input type="text" class="sf-f" data-key="${e.key}" ` +
+            `inputmode="${e.type === 'text' ? 'text' : 'decimal'}" placeholder="${ph}" ` +
+            `value="${esignEsc(val).replace(/"/g, '&quot;')}">`;
+        }
+        return `<div class="sf-row">` +
+          `<label${isMissing ? ' style="color:#b45309"' : ''}>${esignEsc(e.label)}` +
+          `${e.required ? ' <span class="req">*</span>' : ''}:</label>` +
+          input +
+          (isMissing ? ` <span class="sf-missing"><i class="fa-solid fa-triangle-exclamation"></i> required — not resolved from the case</span>` : '') +
+          `</div>`;
+      }).join('')
+    : '<div class="sf-hint">This template has no fill-in fields.</div>';
+}
+
+function mdyToIso(v) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(v || '').trim());
+  return m ? `${m[3]}-${m[1]}-${m[2]}` : '';
+}
+function isoToMdy(v) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v || '').trim());
+  return m ? `${m[2]}/${m[3]}/${m[1]}` : v;
+}
+
+function gatherValues() {
+  const out = {};
+  document.querySelectorAll('.sf-f').forEach(el => {
+    const v = el.type === 'date' ? isoToMdy(el.value) : el.value.trim();
+    if (v !== '') out[el.dataset.key] = v;
+  });
+  return out;
+}
+
+// ── preview ──────────────────────────────────────────────────
+// Free — no rows, no provider, no credits. Same rendering path as send.
+async function doPreview() {
+  if (!template) { Toast.fire({ icon: 'info', title: 'Pick a template first' }); return; }
+  const btn = E('sf-preview-btn');
+  btn.disabled = true;
+  try {
+    const out = await esignFetchPdf(`/api/esign/templates/${template.id}/preview`, {
+      linkable_type: 'case', linkable_id: caseId, values: gatherValues(),
+    });
+    E('sf-preview-missing').innerHTML = out.missing.length
+      ? `<i class="fa-solid fa-triangle-exclamation"></i> Still blank on the document: ` +
+        out.missing.map(esignEsc).join(', ')
+      : '';
+    const frame = E('sf-preview-frame');
+    if (frame.dataset.url) URL.revokeObjectURL(frame.dataset.url);
+    const url = URL.createObjectURL(out.blob);
+    frame.dataset.url = url;
+    frame.src = url;
+    frame.style.display = 'block';
+    frame.scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    Toast.fire({ icon: 'error', title: 'Preview failed', text: err.message });
+  }
+  btn.disabled = false;
+}
+
+// ── send ─────────────────────────────────────────────────────
+async function doSend() {
+  if (!template) { Toast.fire({ icon: 'info', title: 'Pick a template first' }); return; }
+  const btn = E('sf-send-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin-pulse"></i> Sending…';
+  try {
+    const out = await esignApi('/api/esign/send-from-template', 'POST', {
+      template_id:     template.id,
+      linkable_type:   'case',
+      linkable_id:     caseId,
+      values:          gatherValues(),
+      recipients:      gatherRecipients(),
+      document_name:   E('sf-docname').value.trim() || null,
+      expiration_days: parseInt(E('sf-expiry').value, 10) || null,
+    });
+    showSuccess(out);
+  } catch (err) {
+    lastError = err.body || {};
+    // Typed service errors are written to be shown — show them verbatim,
+    // keep the form state.
+    if (lastError.code === 'ESIGN_PROVIDER_ERROR' && lastError.draft_id != null) {
+      offerRetry(lastError);
+    } else {
+      Swal.fire({ icon: 'error', title: 'Send failed', text: err.message });
+    }
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<i class="fa-solid fa-paper-plane"></i> Send';
+}
+
+// Provider failed AFTER the draft row was minted: the row keeps its tracking
+// id and the server attached draft_id to the error. Retry = re-render via the
+// preview endpoint (documented as the SAME rendering path as send) and POST
+// /api/esign/send multipart with draft_id — the draft's own metadata wins;
+// recipients are re-supplied in case staff corrected one.
+function offerRetry(errBody) {
+  Swal.fire({
+    icon: 'warning',
+    title: 'Zoho send failed',
+    html: `<div style="text-align:left;font-size:14px">` +
+      `<p>${esignEsc(errBody.error || 'The provider rejected the send.')}</p>` +
+      `<p>A draft (request #${errBody.draft_id}) was saved with its tracking id. ` +
+      `Retrying re-uses that exact draft — no second tracking id is minted.</p></div>`,
+    showCancelButton: true,
+    confirmButtonText: 'Retry send',
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async () => {
+      try {
+        const pv = await esignFetchPdf(`/api/esign/templates/${template.id}/preview`, {
+          linkable_type: 'case', linkable_id: caseId, values: gatherValues(),
+        });
+        const fd = new FormData();
+        fd.append('file', pv.blob, 'document.pdf');
+        fd.append('draft_id', String(errBody.draft_id));
+        fd.append('recipients', JSON.stringify(gatherRecipients()));
+        return await esignUpload('/api/esign/send', fd);
+      } catch (err) {
+        Swal.showValidationMessage(err.message);
+        return false;
+      }
+    },
+  }).then(result => {
+    if (result.isConfirmed && result.value) showSuccess(result.value);
+  });
+}
+
+function showSuccess(out) {
+  const r = out.request || {};
+  E('sf-testmode').style.display = out.testing ? 'block' : 'none';
+  E('sf-success-body').innerHTML =
+    `<div style="margin-bottom:6px">${esignChipHtml(r.status)}</div>` +
+    `<table class="es-meta">` +
+    `<tr><td>Request</td><td>#${r.id}</td></tr>` +
+    `<tr><td>Document</td><td>${esignEsc(r.document_name || '')}</td></tr>` +
+    `<tr><td>Tracking id</td><td>${esignEsc(r.tracking_id || '')}</td></tr>` +
+    `<tr><td>Expires</td><td>${esignEsc(esignFmtDate(r.expires_at))}</td></tr>` +
+    `</table>`;
+  document.querySelectorAll('.sf-section, .sf-actions, #sf-preview-frame, #sf-preview-missing')
+    .forEach(el => { el.style.display = 'none'; });
+  E('sf-success').style.display = 'block';
+  E('sf-success').scrollIntoView();
+}
+
+// Back = swap this iframe back to the case widget (the widget navigated here
+// in-place). Standalone (no widget context) just reloads clean.
+function goBack() {
+  location.href = `/esign/caseWidget.html?case_id=${encodeURIComponent(caseId)}`;
+}
+</script>
+</body>
+</html>

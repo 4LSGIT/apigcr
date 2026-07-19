@@ -55,6 +55,13 @@
       <button class="tab" onclick="openTab(this, 'tabLog')">
         <i class="fa-solid fa-receipt"></i> Case Log
       </button>
+      <!-- Signatures (e-sign, Phase 2C). Standard tab — every case type can
+           send documents. Lazy src (tabEvents idiom): the widget iframe only
+           loads on first open, so case pages without signing activity pay
+           nothing. -->
+      <button class="tab" id="esignButton" onclick="openTab(this, 'tabEsign'); if (!E('esignFrame').src) E('esignFrame').src = `esign/caseWidget.html?case_id=${caseID}`;">
+        <i class="fa-solid fa-file-signature"></i> Signatures
+      </button>
       <button
         class="tab"
         onclick="Swal.fire({ title: 'Reload Page',html: '<p>Are you sure you want to reload the page?</p><p>You will lose all unsaved data!</p>',
@@ -366,6 +373,11 @@
         style="border: 1px solid grey; padding: 20px"
         id="checklistDiv"
       ></div>
+    </div>
+
+    <!-- Signatures widget (Phase 2C). src set lazily by the tab button. -->
+    <div id="tabEsign" class="tab-content">
+      <iframe id="esignFrame"></iframe>
     </div>
 
     <div id="tabDB" class="tab-content">

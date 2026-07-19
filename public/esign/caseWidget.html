@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Signatures</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <script src="/esign/esignActions.js"></script>
+  <style>
+    body { margin: 0; padding: 12px; background: #fff; }
+    .cw-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .cw-top h3 { margin: 0; }
+    .cw-empty { color: #999; padding: 14px 4px; text-align: center; }
+    .cw-days { color: #b45309; font-size: 12px; white-space: nowrap; }
+    #cw-table td { cursor: pointer; }
+    #cw-table .cw-doc { text-align: left; max-width: 22em; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+<!-- ═══════════════════════════════════════════════════════════
+  PER-CASE SIGNATURES WIDGET (Phase 2C).
+  Iframed into case.html's Signatures tab (lazy src on first open, mirroring
+  the tabEvents pattern). Reads ?case_id=. Talks to the shell via
+  window.top.apiSend (courtpreview precedent — this page sits two iframes
+  below the shell: caseWidget → case.html → index.html).
+
+  Refresh contract:
+    • on load
+    • after any action dialog reports a change (onChange callback)
+    • window.refreshEsign exposed, mirroring case.html's window.refreshEvents,
+      so the parent can push a refresh if it ever broadcasts one
+    • on visibilitychange→visible (cheap; catches "sent from the send form,
+      navigated back" without any messaging machinery)
+═══════════════════════════════════════════════════════════════ -->
+<div class="cw-top">
+  <h3><i class="fa-solid fa-file-signature"></i> Signing requests</h3>
+  <button class="file-button" onclick="newRequest()">
+    <i class="fa-solid fa-plus"></i> New signature request
+  </button>
+</div>
+<table id="cw-table" class="logTable" style="display:none">
+  <tr><th>Status</th><th>Document</th><th>Recipients</th><th>Pending</th><th></th></tr>
+</table>
+<div id="cw-empty" class="cw-empty" style="display:none">No signing requests on this case yet.</div>
+<div id="cw-load"><i class="fa-solid fa-spinner fa-spin-pulse"></i></div>
+
+<script>
+const caseId = new URLSearchParams(location.search).get('case_id') || '';
+let rows = [];
+
+(function waitForShell() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') return init();
+  } catch (_) { }
+  setTimeout(waitForShell, 100);
+})();
+
+function init() {
+  refresh();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refresh(true);
+  });
+}
+
+async function refresh(quiet) {
+  if (!quiet) E('cw-load').style.display = 'block';
+  try {
+    const data = await esignApi('/api/esign', 'GET',
+      { linkable_type: 'case', linkable_id: caseId });
+    rows = data.requests || [];
+    render();
+  } catch (err) {
+    if (!quiet) Toast.fire({ icon: 'error', title: 'Error loading signatures', text: err.message });
+  }
+  E('cw-load').style.display = 'none';
+}
+// Parent hook (same shape as case.html's window.refreshEvents).
+window.refreshEsign = refresh;
+
+function render() {
+  const table = E('cw-table');
+  table.innerHTML = '<tr><th>Status</th><th>Document</th><th>Recipients</th><th>Pending</th><th></th></tr>';
+  if (!rows.length) {
+    table.style.display = 'none';
+    E('cw-empty').style.display = 'block';
+    return;
+  }
+  E('cw-empty').style.display = 'none';
+  table.style.display = '';
+  rows.forEach((r, i) => {
+    const tr = table.insertRow();
+    const pending = (!esignIsTerminal(r.status) && r.days_pending != null)
+      ? `<span class="cw-days">${r.days_pending} day${r.days_pending === 1 ? '' : 's'}</span>` : '';
+    tr.innerHTML =
+      `<td>${esignChipHtml(r.status)}</td>` +
+      `<td class="cw-doc">${esignEsc(r.document_name || '')}` +
+      `<div style="font-size:11px;color:#888">${esignEsc(r.kind || '')} · sent ${esignEsc(esignFmtDate(r.sent_at)) || '—'}</div></td>` +
+      `<td>${esignRecipientsHtml(r.recipients)}</td>` +
+      `<td>${pending}</td>` +
+      `<td><button onclick="event.stopPropagation();esignOpenActions(rows[${i}], refresh)">` +
+      `<i class="fa-solid fa-ellipsis"></i></button></td>`;
+    // Row click → detail dialog; the ellipsis button → full action menu.
+    tr.onclick = () => esignDetailDialog(r.id, refresh);
+  });
+}
+
+// In-place navigation to the send form (this iframe IS the tab panel; the
+// form's Back button returns here). No dialog machinery needed.
+function newRequest() {
+  location.href = `/esign/sendForm.html?case_id=${encodeURIComponent(caseId)}`;
+}
+</script>
+</body>
+</html>

@@ -158,6 +158,10 @@ public/css/yc-forms.css
 public/dbConsole.html
 public/docReq.html
 public/docs.html
+public/esign/caseWidget.html
+public/esign/dashboard.html
+public/esign/esignActions.js
+public/esign/sendForm.html
 public/etch.html
 public/evergreen.html
 public/featureRequests.html
@@ -407,6 +411,7 @@ tests/apiAppSettings.validate.test.js
 tests/apikeys.k1.test.js
 tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
+tests/esignActionsUi.test.js
 tests/esignAlert.test.js
 tests/esignCredits.test.js
 tests/esignFiling.test.js
