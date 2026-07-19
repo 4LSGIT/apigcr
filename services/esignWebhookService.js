@@ -36,7 +36,7 @@
  * request or job runs. startup/init.js is a documented no-op kept only for
  * back-compat and is NOT the place for new wiring.
  */
-
+/*todo: hmac*/
 const crypto = require('crypto');
 
 const esignService = require('./esignService');
