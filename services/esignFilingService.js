@@ -199,6 +199,150 @@ async function _upload(db, credentialId, folderPath, filename, content) {
 }
 
 /**
+ * Resolve the case's "Signed Documents" folder and the filename budget inside it.
+ *
+ * Extracted in Phase 2A so that fileSignedDocuments (which downloads bytes FROM
+ * the provider) and fileExternalDocument (which is HANDED bytes) share one copy
+ * of "where does this case's paperwork go, and how long may the name be". The
+ * two callers differ only in where the buffer comes from; the folder logic was
+ * never provider-specific and should not have to be duplicated to prove it.
+ *
+ * The `skipped` flag in the failure shape preserves the original semantics
+ * exactly: a target that does not apply (contact-linked, no case_dropbox) is a
+ * SKIP, while Dropbox being unreachable or the path being too long is a
+ * FAILURE. Callers copy the flag through rather than re-deriving it.
+ *
+ * @returns {Promise<{ok:true, credentialId:*, folderPath:string, nameBudget:number}
+ *                 | {ok:false, skipped:boolean, reason:string, note:string}>}
+ */
+async function prepareCaseFolder(db, request) {
+  const target = await resolveTarget(db, request);
+  if (!target.ok) {
+    return { ok: false, skipped: true, reason: target.reason, note: target.note };
+  }
+
+  let credentialId;
+  let folderPath;
+  try {
+    credentialId = await dropboxService._resolveCredential(db, {});
+    const caseFolder = await dropboxService.resolveLocation(db, credentialId, {
+      sharedLink: target.sharedLink, expectFolder: true,
+    });
+    // files/upload creates missing parents, but creating it explicitly keeps
+    // the failure legible: "could not make the folder" beats a 409 buried in
+    // an upload error. Idempotent — an existing folder returns existed:true.
+    const created = await dropboxService.createFolder(db, {
+      credentialId, path: dropboxService.joinPath(caseFolder, SUBFOLDER),
+    });
+    folderPath = created.path;
+  } catch (err) {
+    return {
+      ok: false, skipped: false, reason: 'dropbox_unreachable',
+      note: `Could not open the case's Dropbox folder: ${err.message}`,
+    };
+  }
+
+  // Budget the name so the stored path fits varchar(512).
+  const nameBudget = Math.min(
+    MAX_NAME_FRAGMENT,
+    MAX_STORED_PATH - PATH_HEADROOM - folderPath.length - '/YYYY-MM-DD  (certificate).pdf'.length
+  );
+  if (nameBudget < 8) {
+    return {
+      ok: false, skipped: false, reason: 'path_too_long',
+      note: `The case's Dropbox folder path is ${folderPath.length} characters, which leaves ` +
+            `no room for a filename inside the ${MAX_STORED_PATH}-character limit on the stored path.`,
+    };
+  }
+
+  return { ok: true, credentialId, folderPath, nameBudget };
+}
+
+/**
+ * File a document we were HANDED rather than one we downloaded — the paper /
+ * in-office signature that satisfies a request outside the provider entirely
+ * (see esignSendService.markSatisfiedExternal).
+ *
+ * There is no completion certificate to chase: nobody generated one, because
+ * nobody signed electronically. So this is the signed-document half of
+ * fileSignedDocuments and nothing else.
+ *
+ * NEVER THROWS, for the same reason as the rest of this module: by the time it
+ * runs, the request has ALREADY been marked satisfied_external. A Dropbox
+ * outage must not un-say that.
+ *
+ * @param {object} db
+ * @param {object} request               shaped signing_requests row
+ * @param {object} o
+ * @param {Buffer} o.buffer              the externally-signed document
+ * @param {string} [o.suffix='signed - external']
+ * @param {Date|string} [o.completedAt]  defaults to the row's completed_at
+ */
+async function fileExternalDocument(db, request, { buffer, suffix = 'signed - external', completedAt = null } = {}) {
+  const out = {
+    filed: false, skipped: false, reason: null, note: null,
+    signedPdfPath: null, certPdfPath: null, warnings: [],
+  };
+
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    out.skipped = true;
+    out.reason = 'no_buffer';
+    out.note = 'No document was supplied, so there was nothing to file.';
+    return out;
+  }
+
+  const prep = await prepareCaseFolder(db, request);
+  if (!prep.ok) {
+    out.skipped = prep.skipped;
+    out.reason = prep.reason;
+    out.note = prep.note;
+    return out;
+  }
+
+  const kind = sniffBuffer(buffer);
+  let ext = 'pdf';
+  if (kind === 'zip') {
+    ext = 'zip';
+    out.warnings.push(
+      'The uploaded document is a ZIP archive, not a PDF. It has been filed as a .zip; ' +
+      'open it and split out the individual documents by hand.'
+    );
+  } else if (kind === 'unknown') {
+    out.warnings.push(
+      `The uploaded document did not begin with a PDF or ZIP signature (${buffer.length} bytes). ` +
+      'It has been filed as-is with a .pdf extension — check that it opens.'
+    );
+  }
+
+  try {
+    const res = await _upload(db, prep.credentialId, prep.folderPath, buildFilename({
+      completedAt: completedAt || request.completed_at,
+      documentName: request.document_name,
+      suffix, ext, nameBudget: prep.nameBudget,
+    }), buffer);
+    out.signedPdfPath = res.path;
+    out.filed = true;
+  } catch (err) {
+    out.reason = 'signed_upload_failed';
+    out.note = `Dropbox rejected the document: ${err.message}`;
+    return out;
+  }
+
+  try {
+    await esignService.setPdfPaths(db, request.id, { signedPdfPath: out.signedPdfPath });
+  } catch (err) {
+    // The file IS in Dropbox. Only the pointer failed.
+    out.warnings.push(
+      `Filed to Dropbox, but the path could not be recorded against signing request ` +
+      `${request.id} (${err.message}). Signed: ${out.signedPdfPath}`
+    );
+  }
+
+  console.log(`[ESIGN FILING] request ${request.id} externally-signed → ${out.signedPdfPath}`);
+  return out;
+}
+
+/**
  * Download the signed document (and, best-effort, its completion certificate)
  * and file both into the case's Dropbox folder.
  *
@@ -246,45 +390,14 @@ async function fileSignedDocuments(db, request, { provider } = {}) {
     return out;
   }
 
-  const target = await resolveTarget(db, request);
-  if (!target.ok) {
-    out.skipped = true;
-    out.reason = target.reason;
-    out.note = target.note;
+  const prep = await prepareCaseFolder(db, request);
+  if (!prep.ok) {
+    out.skipped = prep.skipped;
+    out.reason = prep.reason;
+    out.note = prep.note;
     return out;
   }
-
-  let credentialId;
-  let folderPath;
-  try {
-    credentialId = await dropboxService._resolveCredential(db, {});
-    const caseFolder = await dropboxService.resolveLocation(db, credentialId, {
-      sharedLink: target.sharedLink, expectFolder: true,
-    });
-    // files/upload creates missing parents, but creating it explicitly keeps
-    // the failure legible: "could not make the folder" beats a 409 buried in
-    // an upload error. Idempotent — an existing folder returns existed:true.
-    const created = await dropboxService.createFolder(db, {
-      credentialId, path: dropboxService.joinPath(caseFolder, SUBFOLDER),
-    });
-    folderPath = created.path;
-  } catch (err) {
-    out.reason = 'dropbox_unreachable';
-    out.note = `Could not open the case's Dropbox folder: ${err.message}`;
-    return out;
-  }
-
-  // Budget the name so the stored path fits varchar(512).
-  const nameBudget = Math.min(
-    MAX_NAME_FRAGMENT,
-    MAX_STORED_PATH - PATH_HEADROOM - folderPath.length - '/YYYY-MM-DD  (certificate).pdf'.length
-  );
-  if (nameBudget < 8) {
-    out.reason = 'path_too_long';
-    out.note = `The case's Dropbox folder path is ${folderPath.length} characters, which leaves ` +
-               `no room for a filename inside the ${MAX_STORED_PATH}-character limit on the stored path.`;
-    return out;
-  }
+  const { credentialId, folderPath, nameBudget } = prep;
 
   // ── signed document ───────────────────────────────────────────────────────
   let signedBuf;
@@ -365,6 +478,8 @@ async function fileSignedDocuments(db, request, { provider } = {}) {
 
 module.exports = {
   fileSignedDocuments,
+  fileExternalDocument,
+  prepareCaseFolder,
   resolveTarget,
   // exported for tests
   sniffBuffer,

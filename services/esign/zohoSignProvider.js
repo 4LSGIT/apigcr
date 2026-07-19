@@ -52,6 +52,7 @@
 
 const oauthService = require('../oauthService');
 const { getSettings } = require('../settingsService');
+const { validatePlacements, NEUTRAL_PAGE_BASE } = require('./placements');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
@@ -87,8 +88,11 @@ const DEFAULT_PAGE = Object.freeze({ width: 612, height: 792 });
  * Neutral `page` numbers are 1-BASED (the schema's example is "page":3).
  * Zoho's page_no is 0-BASED (every documented example places on page_no 0).
  * ASSUMPTION — see the assumption block above neutralToZohoFields.
+ *
+ * The constant itself now lives in ./placements (it is a property of the
+ * NEUTRAL schema, not of Zoho) and is imported above. Re-exported unchanged so
+ * existing importers of this module see no difference.
  */
-const NEUTRAL_PAGE_BASE = 1;
 
 /**
  * Neutral field type → Zoho field descriptor.
@@ -319,20 +323,11 @@ const round4 = (n) => Math.round(n * 10000) / 10000;
  * @returns {object} { bySigner: { <signer>: [zohoField, ...] }, count }
  */
 function neutralToZohoFields(placements, pageInfo) {
-  if (!placements || typeof placements !== 'object') {
-    throw inputError('placements must be an object');
-  }
-  const { coord_space: coordSpace, fields } = placements;
-
-  // Guard rather than silently mis-transform. The neutral schema declares one
-  // coord space; if a caller ever introduces another, the flip below is wrong
-  // and we want a throw, not a document with signatures in the margin.
-  if (coordSpace != null && coordSpace !== 'pdf_user_space') {
-    throw inputError(`unsupported coord_space "${coordSpace}" (expected pdf_user_space)`);
-  }
-  if (!Array.isArray(fields)) {
-    throw inputError('placements.fields must be an array');
-  }
+  // Schema validation lives in ./placements so the send service can run the
+  // SAME rules before it mints a draft row. Throws ESIGN_INVALID_INPUT, which
+  // is what this function threw before the extraction — callers unchanged.
+  validatePlacements(placements);
+  const { fields } = placements;
 
   const defaultPage = {
     width:  Number(pageInfo?.width)  > 0 ? Number(pageInfo.width)  : DEFAULT_PAGE.width,
@@ -344,34 +339,19 @@ function neutralToZohoFields(placements, pageInfo) {
   let count = 0;
 
   fields.forEach((f, i) => {
-    if (!f || typeof f !== 'object') {
-      throw inputError(`placements.fields[${i}] must be an object`);
-    }
+    // Shape, type, page base and geometry finiteness were all settled by
+    // validatePlacements above. What remains here is transform, not checking.
     const spec = FIELD_TYPES[f.type];
-    if (!spec) {
-      throw inputError(
-        `placements.fields[${i}].type "${f.type}" unsupported ` +
-        `(expected one of: ${Object.keys(FIELD_TYPES).join(', ')})`
-      );
-    }
 
     const signer = Number.isInteger(f.signer) ? f.signer : 1;
     const page   = Number.isInteger(f.page)   ? f.page   : NEUTRAL_PAGE_BASE;
     const pageNo = page - NEUTRAL_PAGE_BASE;
-    if (pageNo < 0) {
-      throw inputError(`placements.fields[${i}].page ${page} is below the 1-based minimum`);
-    }
 
     const geom = perPage[page] || perPage[String(page)] || defaultPage;
     const pw = Number(geom.width)  > 0 ? Number(geom.width)  : defaultPage.width;
     const ph = Number(geom.height) > 0 ? Number(geom.height) : defaultPage.height;
 
     const x = Number(f.x), y = Number(f.y), w = Number(f.w), h = Number(f.h);
-    for (const [k, v] of Object.entries({ x, y, w, h })) {
-      if (!Number.isFinite(v)) {
-        throw inputError(`placements.fields[${i}].${k} must be a finite number`);
-      }
-    }
 
     // THE FLIP (assumptions 1 + 2).
     const yTop = ph - y - h;

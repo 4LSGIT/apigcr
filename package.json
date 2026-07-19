@@ -37,6 +37,7 @@
     "multer": "^2.0.2",
     "mysql2": "^3.10.2",
     "nodemailer": "^9.0.0",
+    "pdf-lib": "1.17.1",
     "pdf-parse": "^1.1.4"
   },
   "devDependencies": {

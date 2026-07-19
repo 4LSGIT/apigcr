@@ -227,6 +227,7 @@ routes/api.dropbox.js
 routes/api.emailCredentials.js
 routes/api.emailIngest.js
 routes/api.email_router.js
+routes/api.esign.actions.js
 routes/api.esign.js
 routes/api.events.js
 routes/api.featureRequests.js
@@ -355,9 +356,11 @@ services/emailIngestValidator.js
 services/emailRouter.js
 services/emailService.js
 services/esign/index.js
+services/esign/placements.js
 services/esign/zohoSignProvider.js
 services/esignAlertService.js
 services/esignFilingService.js
+services/esignSendService.js
 services/esignService.js
 services/esignWebhookService.js
 services/eventService.js
@@ -405,6 +408,7 @@ tests/esignCredits.test.js
 tests/esignFiling.test.js
 tests/esignProvider.zoho.test.js
 tests/esignReconcile.test.js
+tests/esignSend.test.js
 tests/esignService.test.js
 tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
