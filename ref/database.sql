@@ -4015,6 +4015,115 @@ ALTER TABLE `workflow_executions`
 ALTER TABLE `workflow_steps`
   ADD CONSTRAINT `fk_workflow_steps_workflow` FOREIGN KEY (`workflow_id`) REFERENCES `workflows` (`id`) ON DELETE CASCADE;
 
+--
+-- E-SIGN PHASE 1A (2026-07-19) - appended by ref/2026-07-19_esign_phase1a.sql
+--
+-- Same DDL as the migration, verbatim. This block sits outside the
+-- generated body above; the next `POST /admin/db/schema/save-to-ref`
+-- snapshot will absorb these tables into the main listing and this
+-- section can then be deleted. CREATE TABLE IF NOT EXISTS is harmless
+-- here: on a fresh restore the tables never exist, so it behaves
+-- exactly like the DROP + CREATE pairs above.
+--
+
+-- --------------------------------------------------------
+-- signing_requests - one row per document sent (or about to be sent) for
+-- signature. Draft rows exist BEFORE the provider knows about them, which is
+-- why `provider_id` is nullable.
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `signing_requests` (
+  `id`              int unsigned NOT NULL AUTO_INCREMENT,
+  `provider`        varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'e.g. zoho_sign',
+  `provider_id`     varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider-side request id; NULL until sent',
+  `linkable_type`   varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'case | contact',
+  `linkable_id`     varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'cases.case_id (string) OR contacts.contact_id (int as string)',
+  `kind`            varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'retainer_prepetition | retainer_postpetition | schedules | other',
+  `status`          varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'draft' COMMENT 'draft/sent/viewed/signed/declined/expired/recalled/bounced/satisfied_external',
+  `document_name`   varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'debtor-visible, human-friendly',
+  `tracking_id`     varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'YC-{linkable_id}-{kind}-{suffix}; opaque, do not parse',
+  `recipients`      json NOT NULL COMMENT '[{name,email,order,status,signed_at,ip}]',
+  `placement_json`  json DEFAULT NULL,
+  `template_id`     int unsigned DEFAULT NULL COMMENT 'contract_templates.id',
+  `seq_instance_id` bigint unsigned DEFAULT NULL COMMENT 'sequence_enrollments.id - for reminder cancellation',
+  `signed_pdf_path` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Dropbox path; convention defined in slice 1C',
+  `cert_pdf_path`   varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `sent_at`         datetime DEFAULT NULL,
+  `completed_at`    datetime DEFAULT NULL COMMENT 'stamped on terminal SUCCESS only (signed, satisfied_external)',
+  `expires_at`      datetime DEFAULT NULL,
+  `raw_payload`     json DEFAULT NULL COMMENT 'last provider payload seen',
+  `created_by`      int unsigned NOT NULL DEFAULT '0' COMMENT 'users.user; 0 = system/automations',
+  `created_at`      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  -- NULL provider_id (drafts) does NOT collide here. MySQL treats NULLs as
+  -- distinct in a UNIQUE index, so any number of ('zoho_sign', NULL) drafts
+  -- coexist. Confirmed empirically on the LIVE server, not from docs:
+  -- phone_event_log carries UNIQUE KEY (provider, provider_ref) and currently
+  -- holds 13 rows that are all ('ringcentral', NULL).
+  UNIQUE KEY `uq_provider` (`provider`,`provider_id`),
+  -- UNIQUE, not a plain KEY: getByTrackingId() encodes a one-row assumption,
+  -- and DB-enforced beats check-then-insert (a SELECT probe is racy by
+  -- construction). createRequest() catches ER_DUP_ENTRY on this key, re-rolls
+  -- the random suffix and retries, bounded at 3 attempts.
+  UNIQUE KEY `uq_sr_tracking` (`tracking_id`),
+  KEY `idx_sr_linkable` (`linkable_type`,`linkable_id`),
+  KEY `idx_sr_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- signing_request_events - APPEND-ONLY audit trail. Legal defensibility: this
+-- is the record that shows who was sent what, when they opened it, and when
+-- they signed. Nothing in the service updates or deletes a row here.
+--
+-- Deliberately NO foreign key to signing_requests. ON DELETE CASCADE would let
+-- deleting a request silently destroy its audit trail, which is the opposite of
+-- what this table is for; ON DELETE RESTRICT would be defensible but was not
+-- specified, and the two services this slice mirrors (events, tasks) carry no
+-- FKs either. Orphan protection is app-side: nothing deletes signing_requests.
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `signing_request_events` (
+  `id`                 int unsigned NOT NULL AUTO_INCREMENT,
+  `signing_request_id` int unsigned NOT NULL,
+  `event`              varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'created/sent/delivered/viewed/signed/declined/bounced/reminded/recalled/expired/satisfied_external/...',
+  `recipient_email`    varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `payload`            json DEFAULT NULL,
+  `occurred_at`        datetime NOT NULL COMMENT 'provider-reported time; NO default on purpose, so a missing one is visible',
+  `created_at`         datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'our ingest time',
+  PRIMARY KEY (`id`),
+  KEY `idx_sre_request_occurred` (`signing_request_id`,`occurred_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+-- contract_templates - the document library. `body` is HTML rendered to PDF in
+-- a later phase; `placement_json` carries PROVIDER-NEUTRAL field coordinates so
+-- swapping Zoho for another provider does not require re-authoring templates.
+--
+-- reminder_seq_id points at `sequence_templates.id` (int unsigned) - the ACTIVE
+-- sequence engine (lib/sequenceEngine.js). It is NOT the legacy
+-- `sequences`/`seq_types`/`seq_steps` trio, which uses seq_id/seq_type_id and
+-- is not driven by that engine.
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `contract_templates` (
+  `id`              int unsigned NOT NULL AUTO_INCREMENT,
+  `name`            varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `kind`            varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `body`            mediumtext CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT 'HTML, rendered to PDF in a later phase',
+  `prefill_schema`  json NOT NULL COMMENT '[{key,label,type,resolver,default,required}]',
+  `placement_json`  json NOT NULL COMMENT '{"coord_space":"pdf_user_space","fields":[{page,x,y,w,h,type,signer}]}',
+  `reminder_seq_id` int unsigned DEFAULT NULL COMMENT 'sequence_templates.id; NULL = firm default sequence',
+  `reminders_off`   tinyint(1) NOT NULL DEFAULT '0',
+  `expiration_days` int NOT NULL DEFAULT '14',
+  `active`          tinyint(1) NOT NULL DEFAULT '1',
+  `created_at`      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`      datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  -- Not in the slice spec. Added because the only read pattern this table has
+  -- is "the active template(s) for kind X", mirroring sequenceEngine's
+  -- `WHERE type = ? AND active = 1`. Drop it if you disagree - nothing depends
+  -- on it existing.
+  KEY `idx_ct_kind_active` (`kind`,`active`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;
 COMMIT;
 
