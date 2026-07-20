@@ -264,7 +264,7 @@ routes/api.sending.js
 routes/api.streak.js
 routes/api.systemStatus.js
 routes/api.tasks.js
-routes/api.temp.gcal.js
+routes/api.temp.zohosign.js
 routes/api.users.js
 routes/api.version.js
 routes/api.videos.js
