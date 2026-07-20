@@ -221,8 +221,13 @@ const ZOHO_IN_PROGRESS_STATUSES = Object.freeze(['inprogress']);
 function providerError(method, path, httpStatus, parsed, rawText) {
   const providerCode    = parsed && parsed.code    != null ? parsed.code    : null;
   const providerMessage = parsed && parsed.message != null ? String(parsed.message) : null;
+  // Zoho names the offending parameter in `error_param` — e.g. the 9011
+  // "too many characters" hunt of 2026-07-20 would have been a one-look
+  // diagnosis had this been surfaced. Keep it, and keep the raw body.
+  const providerParam   = parsed && parsed.error_param != null ? String(parsed.error_param) : null;
   const detail = providerMessage
-    || (rawText ? String(rawText).slice(0, 500) : '(empty body)');
+    ? (providerParam ? `${providerMessage} (param: ${providerParam})` : providerMessage)
+    : (rawText ? String(rawText).slice(0, 500) : '(empty body)');
 
   const err = new Error(`zoho_sign: ${method} ${path} → ${httpStatus}: ${detail}`);
   err.code            = 'ESIGN_PROVIDER_ERROR';
@@ -230,6 +235,8 @@ function providerError(method, path, httpStatus, parsed, rawText) {
   err.httpStatus      = httpStatus;
   err.providerCode    = providerCode;
   err.providerMessage = providerMessage;
+  err.providerParam   = providerParam;
+  err.providerRaw     = rawText ? String(rawText).slice(0, 2000) : null;
   return err;
 }
 
@@ -370,11 +377,19 @@ function neutralToZohoFields(placements, pageInfo) {
       field_category:   spec.field_category,
       is_mandatory:     f.required === false ? false : true,
       page_no:          pageNo,
-      // absolute, points
-      x_coord:          round2(x),
-      y_coord:          round2(yTop),
-      abs_width:        round2(w),
-      abs_height:       round2(h),
+      // absolute, points — INTEGERS, not round2. Zoho's columns for the
+      // absolute set reject decimal values with 9011 "You have entered too
+      // many characters" (error_param: x_coord) — proven live 2026-07-20 by
+      // an A/B submit pair on request …49119: identical payloads, decimal
+      // x_coord 400s, integer x_coord sends. The 1B/1C smokes never tripped
+      // it because their hand-written placements were integer points; every
+      // editor-drawn box has decimals. The percent set below carries the
+      // sub-point precision (Zoho's own docs show 6-decimal percents), so
+      // rounding here loses nothing visible at signing.
+      x_coord:          Math.round(x),
+      y_coord:          Math.round(yTop),
+      abs_width:        Math.round(w),
+      abs_height:       Math.round(h),
       // percent of page — same geometry, so these can never contradict the above
       x_value:          round4((x    / pw) * 100),
       y_value:          round4((yTop / ph) * 100),
@@ -985,6 +1000,9 @@ module.exports = {
   ZohoSignProvider,
   PROVIDER_NAME,
   API_BASE,
+  // test hook (firmConfig._test precedent): providerError's error_param /
+  // raw-body preservation is a diagnosis lifeline — pin it directly.
+  _test: { providerError },
   // transform + mapping — exported so slice 1C's webhook shares one source of truth
   neutralToZohoFields,
   bindFieldsToActions,

@@ -814,3 +814,54 @@ describe('getProvider', () => {
     expect(esignFactory.listProviders()).toEqual(['zoho_sign']);
   });
 });
+// ═════════════════════════════════════════════════════════════════════════════
+// REGRESSION — Zoho 9011 "You have entered too many characters" (2026-07-20)
+//
+// Zoho's absolute-coordinate columns (x_coord / y_coord / abs_width /
+// abs_height) REJECT decimal values: an A/B submit pair on live request
+// …49119 proved identical payloads pass with integer coords and 400 with
+// x_coord 131.87 (code 9011, error_param 'x_coord'). Every editer-drawn box
+// carries decimals, so before this fix every real UI send failed while the
+// integer-point smoke placements passed. The percent set keeps 4-decimal
+// precision — Zoho's own docs use 6-decimal percents.
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('neutralToZohoFields — absolute set is INTEGER (9011 regression)', () => {
+  test('decimal placement → integer abs/coords, decimal percents preserved', () => {
+    const { bySigner } = neutralToZohoFields({
+      fields: [{ page: 1, x: 131.87, y: 482.89, w: 222.44, h: 24.6, type: 'signature', signer: 1 }],
+    });
+    const f = bySigner[1][0];
+    // yTop = 792 - 482.89 - 24.6 = 284.51 → 285
+    expect(f.x_coord).toBe(132);
+    expect(f.y_coord).toBe(285);
+    expect(f.abs_width).toBe(222);
+    expect(f.abs_height).toBe(25);
+    for (const k of ['x_coord', 'y_coord', 'abs_width', 'abs_height']) {
+      expect(Number.isInteger(f[k])).toBe(true);
+    }
+    // The percent set carries the precision — unchanged by the fix.
+    expect(f.x_value).toBeCloseTo((131.87 / 612) * 100, 4);
+    expect(String(f.width)).toMatch(/\d+\.\d{1,4}$/);
+  });
+});
+
+describe('providerError — error_param + raw body survive (9011 postmortem)', () => {
+  const { _providerError } = require('../services/esign/zohoSignProvider');
+  const build = _providerError || null;
+  // providerError isn't exported directly; exercise it through the public
+  // path if absent: construct via the module's error on a fake response is
+  // overkill — assert through the exported test hook when present, else via
+  // the shape contract on a thrown _request (covered elsewhere). Minimal
+  // direct check when the helper is reachable:
+  const providerMod = require('../services/esign/zohoSignProvider');
+  const fn = providerMod._test && providerMod._test.providerError;
+  (fn ? test : test.skip)('direct: parsed error_param lands on the error', () => {
+    const err = fn('POST', '/requests/1/submit', 400,
+      { code: 9011, message: 'You have entered too many characters', error_param: 'x_coord' },
+      '{"code":9011,"error_param":"x_coord"}');
+    expect(err.providerParam).toBe('x_coord');
+    expect(err.message).toContain('(param: x_coord)');
+    expect(err.providerRaw).toContain('error_param');
+  });
+});

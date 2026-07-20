@@ -638,6 +638,11 @@ async function sendPipeline(db, {
         error: err && err.message,
         code: err && err.code,
         provider_code: err && err.providerCode,
+        // Zoho names the offending parameter (error_param) and the raw body
+        // often says more than the message — keep both. The 9011 hunt of
+        // 2026-07-20 would have been a one-look diagnosis with these stored.
+        provider_param: err && err.providerParam,
+        provider_raw: err && err.providerRaw,
         http_status: err && err.httpStatus,
       },
     });
