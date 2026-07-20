@@ -81,6 +81,13 @@ var PE_SIGNER_COLORS = { 1: '#2563eb', 2: '#059669' };
     not a signer's. */
 var PE_TEXT_COLOR = '#d97706';
 
+/** Signer-field tag: the author's label when set, else TYPE · S#. */
+function peSignerTag(f) {
+  return f.label
+    ? f.label + ' \u00b7 S' + f.signer
+    : f.type.toUpperCase() + ' \u00b7 S' + f.signer;
+}
+
 // ── validation mirrors of services/esignTemplateService.js ──
 // (server authoritative; tests drift-guard KEY_RE + types by import and the
 //  unexported bounds behaviorally via validateTemplateInput)
@@ -436,7 +443,13 @@ if (typeof window !== 'undefined') (function () {
         '<select class="pe-signer">' +
           '<option value="1" style="color:' + PE_SIGNER_COLORS[1] + '">1 (blue)</option>' +
           '<option value="2" style="color:' + PE_SIGNER_COLORS[2] + '">2 (green)</option>' +
-        '</select></span>' +
+        '</select>' +
+        // What the SIGNER SEES rendered in the box on Zoho's signing page.
+        // Optional; empty falls back to the provider's Type_N naming.
+        '<label>Shown to signer:</label>' +
+        '<input class="pe-label" size="14" maxlength="60" placeholder="e.g. Client initials" ' +
+          'spellcheck="false" autocomplete="off">' +
+        '</span>' +
         // Text fields carry a KEY instead of a signer; the two controls swap
         // visibility with the type. keySuggest (opts) feeds the datalist so
         // templateAdmin can offer the schema's declared keys.
@@ -464,6 +477,19 @@ if (typeof window !== 'undefined') (function () {
       // With a box selected, the type select retypes it (min size re-enforced).
       var f = self._selected();
       if (f) { self._retype(f, e.target.value); }
+    });
+    var labelInput = container.querySelector('.pe-label');
+    labelInput.addEventListener('input', function (e) {
+      var f = self._selected();
+      if (!f || f.type === 'text') return;
+      var v = e.target.value.trim();
+      if (v) f.label = v; else delete f.label;
+      var tagEl = self.container.querySelector('.pe-box[data-uid="' + f.uid + '"] .pe-tag');
+      if (tagEl) tagEl.textContent = peSignerTag(f);
+    });
+    labelInput.addEventListener('change', function () {
+      var f = self._selected();
+      if (f && f.type !== 'text') { self._renderFields(); self._changed(); }
     });
     var keyInput = container.querySelector('.pe-key');
     keyInput.addEventListener('input', function (e) {
@@ -553,6 +579,7 @@ if (typeof window !== 'undefined') (function () {
           if (typeof f.font_size === 'number' && f.font_size > 0) out.font_size = f.font_size;
         } else {
           out.signer = (typeof f.signer === 'number' && f.signer >= 1) ? Math.floor(f.signer) : 1;
+          if (typeof f.label === 'string' && f.label.trim()) out.label = f.label.trim();
         }
         return out;
       });
@@ -578,6 +605,7 @@ if (typeof window !== 'undefined') (function () {
           if (typeof f.font_size === 'number' && f.font_size > 0) out.font_size = f.font_size;
         } else {
           out.signer = f.signer;
+          if (typeof f.label === 'string' && f.label.trim()) out.label = f.label.trim();
         }
         return out;
       }),
@@ -674,7 +702,7 @@ if (typeof window !== 'undefined') (function () {
       box.style.borderColor = color;
       var tag = isText
         ? 'TEXT \u00b7 ' + (f.key || '?')
-        : f.type.toUpperCase() + ' \u00b7 S' + f.signer;
+        : peSignerTag(f);
       box.innerHTML =
         '<span class="pe-tag" style="background:' + color + '">' + tag + '</span>' +
         '<span class="pe-ctl">' +
@@ -708,6 +736,7 @@ if (typeof window !== 'undefined') (function () {
         this.container.querySelector('.pe-key').value = this._drawKey;
       } else {
         this.container.querySelector('.pe-signer').value = String(f.signer);
+        this.container.querySelector('.pe-label').value = f.label || '';
         this._drawSigner = f.signer;
       }
       this._syncToolbarMode();

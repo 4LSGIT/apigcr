@@ -367,8 +367,6 @@ services/emailRouter.js
 services/emailService.js
 services/esign/index.js
 services/esign/pdfFill.js
-services/esign/placements.js
-services/esign/zohoSignProvider.js
 services/esignAlertService.js
 services/esignFilingService.js
 services/esignPrefillService.js

@@ -865,3 +865,43 @@ describe('providerError — error_param + raw body survive (9011 postmortem)', (
     expect(err.providerRaw).toContain('error_param');
   });
 });
+
+// ─── signer-facing labels (2E hotfix, 2026-07-20) ────────────────────────────
+// Zoho renders field_name INSIDE the box on the signing page; unlabeled
+// fields showed 'Initial_2' to a client. An authored label now drives both
+// field_label and a unique-ified field_name; unlabeled fields keep Type_N.
+
+describe('neutralToZohoFields — signer-facing labels', () => {
+  const sig = (over = {}) => ({ page: 1, x: 72, y: 144, w: 216, h: 36, type: 'signature', signer: 1, ...over });
+
+  test('label drives field_name + field_label; unlabeled keeps Type_N', () => {
+    const { bySigner } = neutralToZohoFields({
+      fields: [sig({ label: 'Client signature' }), sig({ type: 'initial', y: 300 })],
+    });
+    expect(bySigner[1][0].field_name).toBe('Client signature');
+    expect(bySigner[1][0].field_label).toBe('Client signature');
+    expect(bySigner[1][1].field_name).toBe('Initial_2');
+    expect(bySigner[1][1].field_label).toBe('Initial');
+  });
+
+  test('duplicate labels are unique-ified per document, not rejected', () => {
+    const { bySigner } = neutralToZohoFields({
+      fields: [
+        sig({ label: 'Initials' }),
+        sig({ type: 'initial', y: 300, label: 'Initials' }),
+        sig({ type: 'initial', y: 400, label: 'Initials', signer: 2 }),
+      ],
+    });
+    const names = [bySigner[1][0].field_name, bySigner[1][1].field_name, bySigner[2][0].field_name];
+    expect(new Set(names).size).toBe(3);
+    expect(names).toContain('Initials');
+    expect(names).toContain('Initials 2');
+  });
+
+  test('validator: blank or oversize label throws; text fields unaffected', () => {
+    const { validatePlacements } = require('../services/esign/placements');
+    expect(() => validatePlacements({ fields: [sig({ label: '   ' })] })).toThrow();
+    expect(() => validatePlacements({ fields: [sig({ label: 'x'.repeat(61) })] })).toThrow();
+    expect(validatePlacements({ fields: [sig({ label: 'Client signature' })] }).count).toBe(1);
+  });
+});
