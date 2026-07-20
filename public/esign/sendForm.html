@@ -40,12 +40,14 @@
                    padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; }
     #sf-header h2 { margin: 4px 0; }
     #sf-header .sub { color: #666; font-size: 13px; }
+    .sf-back { color: #07adef; cursor: pointer; font-size: 13px; display: inline-block; margin-bottom: 2px; }
     .sf-warn-list { color: #b45309; font-size: 12px; margin: 6px 0 0; }
   </style>
 </head>
 <body>
 <div class="sf-wrap">
   <div id="sf-header">
+    <span class="sf-back" onclick="goBack()"><i class="fa-solid fa-arrow-left"></i> <span id="sf-back-label">Signatures</span></span>
     <h2><i class="fa-solid fa-file-signature"></i> Send for Signature</h2>
     <div class="sub" id="sf-case-line">Loading…</div>
   </div>
@@ -132,7 +134,7 @@
     <h3 style="margin-top:0"><i class="fa-solid fa-circle-check" style="color:#059669"></i> Sent</h3>
     <div id="sf-success-body"></div>
     <div style="margin-top:10px">
-      <button onclick="goBack()"><i class="fa-solid fa-arrow-left"></i> Back to case signatures</button>
+      <button onclick="goBack()"><i class="fa-solid fa-arrow-left"></i> <span id="sf-success-back-label">Back to case signatures</span></button>
       <button onclick="location.reload()"><i class="fa-solid fa-plus"></i> Send another</button>
     </div>
   </div>
@@ -286,6 +288,17 @@ async function fillFromCase() {
 const qs = new URLSearchParams(location.search);
 let caseId       = qs.get('case_id') || '';
 const wantTplId  = qs.get('template_id') || '';
+
+// Where did we come from? Captured from the INITIAL url, before the standalone
+// CasePicker's history.replaceState writes case_id in (see pickCaseFirst) — so
+// after a pick both paths look identical and this const is the only tell.
+//   case_id present up-front ⇒ launched from the per-case widget (caseWidget's
+//     newRequest always carries it) → Back returns to the case widget.
+//   absent ⇒ standalone (dashboard "New request", or a template resend link)
+//     → Back returns to the Signatures dashboard.
+const fromCase = !!caseId;
+E('sf-back-label').textContent = fromCase ? 'Case signatures' : 'Signatures';
+E('sf-success-back-label').textContent = fromCase ? 'Back to case signatures' : 'Back to Signatures';
 
 let caseData   = null;   // { case, clients } from GET /api/cases/:id?include=contacts
 let template   = null;   // full template row (GET /api/esign/templates/:id)
@@ -675,10 +688,15 @@ function showSuccess(out) {
   E('sf-success').scrollIntoView();
 }
 
-// Back = swap this iframe back to the case widget (the widget navigated here
-// in-place). Standalone (no widget context) just reloads clean.
+// Back = swap this iframe back to wherever we came from (see fromCase). The
+// per-case flow returns to the case widget (this iframe IS case.html's
+// Signatures tab, the widget navigated here in-place); the standalone flow
+// returns to the Signatures dashboard. Unchanged for the case path, so
+// case.html's Signatures tab is unaffected.
 function goBack() {
-  location.href = `/esign/caseWidget.html?case_id=${encodeURIComponent(caseId)}`;
+  location.href = fromCase
+    ? `/esign/caseWidget.html?case_id=${encodeURIComponent(caseId)}`
+    : '/esign/dashboard.html';
 }
 </script>
 </body>
