@@ -1,5 +1,5 @@
 -- DB Console schema snapshot
--- Generated: 2026-07-19T07:54:24.352Z
+-- Generated: 2026-07-20T05:26:03.926Z
 -- Source: POST /admin/db/schema/save-to-ref
 -- Contains schema only (no data, no database identifier).
 
@@ -12,64 +12,6 @@ SET FOREIGN_KEY_CHECKS = 0;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
 /*!40101 SET NAMES utf8mb4 */;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `_dead_email_router_config`
---
-
-DROP TABLE IF EXISTS `_dead_email_router_config`;
-CREATE TABLE `_dead_email_router_config` (
-  `id` int NOT NULL DEFAULT '1',
-  `auth_type` enum('none','api_key') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'api_key',
-  `auth_config` json DEFAULT NULL,
-  `capture_mode` enum('off','capturing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
-  `captured_sample` json DEFAULT NULL,
-  `captured_at` datetime DEFAULT NULL,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `_dead_email_router_executions`
---
-
-DROP TABLE IF EXISTS `_dead_email_router_executions`;
-CREATE TABLE `_dead_email_router_executions` (
-  `id` bigint NOT NULL,
-  `raw_input` json DEFAULT NULL,
-  `matched_route_id` int DEFAULT NULL,
-  `resolved_slug` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `hook_execution_id` bigint DEFAULT NULL,
-  `status` enum('routed','unrouted','captured','error') COLLATE utf8mb4_general_ci NOT NULL,
-  `error` text COLLATE utf8mb4_general_ci,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `_dead_email_routes`
---
-
-DROP TABLE IF EXISTS `_dead_email_routes`;
-CREATE TABLE `_dead_email_routes` (
-  `id` int NOT NULL,
-  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
-  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `match_mode` enum('conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
-  `match_config` json NOT NULL,
-  `position` int NOT NULL DEFAULT '100',
-  `active` tinyint(1) NOT NULL DEFAULT '1',
-  `last_matched_at` datetime DEFAULT NULL,
-  `match_count` int NOT NULL DEFAULT '0',
-  `last_modified_by` int DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -2723,30 +2665,6 @@ CREATE TABLE `workflows` (
 --
 
 --
--- Indexes for table `_dead_email_router_config`
---
-ALTER TABLE `_dead_email_router_config`
-  ADD PRIMARY KEY (`id`);
-
---
--- Indexes for table `_dead_email_router_executions`
---
-ALTER TABLE `_dead_email_router_executions`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_created_at` (`created_at`),
-  ADD KEY `idx_status` (`status`),
-  ADD KEY `idx_route` (`matched_route_id`),
-  ADD KEY `idx_hook_exec` (`hook_execution_id`);
-
---
--- Indexes for table `_dead_email_routes`
---
-ALTER TABLE `_dead_email_routes`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_active_position` (`active`,`position`),
-  ADD KEY `idx_slug` (`slug`);
-
---
 -- Indexes for table `admin_audit_log`
 --
 ALTER TABLE `admin_audit_log`
@@ -3528,18 +3446,6 @@ ALTER TABLE `workflows`
 --
 -- AUTO_INCREMENT for dumped tables
 --
-
---
--- AUTO_INCREMENT for table `_dead_email_router_executions`
---
-ALTER TABLE `_dead_email_router_executions`
-  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT for table `_dead_email_routes`
---
-ALTER TABLE `_dead_email_routes`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `admin_audit_log`
