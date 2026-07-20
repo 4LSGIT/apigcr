@@ -334,16 +334,20 @@ async function init() {
 // CasePicker from scripts.js — no per-page fork.
 function pickCaseFirst() {
   let picker = null;
+  let picked = false;   // tells a real selection apart from a dismissal
   Swal.fire({
     title: 'Which case?',
     html: '<div id="sf-cp-mount"></div>',
     showConfirmButton: false,
+    showCancelButton: true,
+    cancelButtonText: 'Cancel',
     showCloseButton: true,
     allowOutsideClick: false,
     didOpen: () => {
       picker = CasePicker(E('sf-cp-mount'), {
         placeholder: 'Search by case number or client…',
         onSelect: (cid) => {
+          picked = true;
           if (picker) picker.destroy();
           Swal.close();
           caseId = cid;
@@ -356,7 +360,13 @@ function pickCaseFirst() {
       });
       picker.focus();
     },
-    willClose: () => { if (picker) picker.destroy(); },
+    // Dismissed (Cancel / ✕ / Esc) without choosing a case → there's nothing to
+    // fill in, so leave instead of stranding a blank form. goBack() here means
+    // the dashboard: this picker only runs when no case_id was supplied up front.
+    willClose: () => {
+      if (picker) picker.destroy();
+      if (!picked) goBack();
+    },
   });
 }
 
