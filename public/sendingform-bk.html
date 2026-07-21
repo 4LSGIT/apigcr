@@ -816,9 +816,7 @@ async function send() {
         from: emailFrom, to: r.email,
         subject: 'Credit Counseling Information',
         text: mmsText,
-        attachment_names: 'Evergreen Credit Counseling.png',
-        attachment_urls: ccImgUrl,
-        attachments: [{ filename: 'Evergreen Credit Counseling.png', path: ccImgUrl }],
+        attachment_urls: [{ url: ccImgUrl, name: 'Evergreen Credit Counseling.png' }],
       });
       successes.push(`Credit Counseling Email → ${r.name}`);
     }
@@ -839,9 +837,7 @@ async function send() {
               from: emailFrom, to: r.email,
               subject: 'Instructions for Getting a Title from Secretary of State',
               text: `Hi ${r.fname},\n\nPlease see the attached instructions for getting a title from the Secretary of State.`,
-              attachment_names: 'SOS Title Instructions.pdf',
-              attachment_urls: titlePdf,
-              attachments: [{ filename: 'SOS Title Instructions.pdf', path: titlePdf }],
+              attachment_urls: [{ url: titlePdf, name: 'SOS Title Instructions.pdf' }],
             });
             successes.push(`SOS Title Email → ${r.name}`);
           }
