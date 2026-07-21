@@ -422,6 +422,7 @@ tests/esignAlert.test.js
 tests/esignCredits.test.js
 tests/esignExpressions.test.js
 tests/esignFiling.test.js
+tests/esignInputFields.test.js
 tests/esignPdfFill.test.js
 tests/esignPlacementEditor.test.js
 tests/esignProvider.zoho.test.js

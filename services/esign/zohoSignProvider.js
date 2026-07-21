@@ -151,6 +151,17 @@ const FIELD_TYPES = Object.freeze({
   signature: { field_type_name: 'Signature',  field_category: 'image'     },
   initial:   { field_type_name: 'Initial',    field_category: 'image'     },
   date:      { field_type_name: 'Date',       field_category: 'datefield' },
+  // ── Phase 2F signer-input types — every name/category VERIFIED live against
+  //    GET /api/v1/fieldtypes AND a full submit + GET round-trip, 2026-07-21.
+  //    Zoho accepted all of them in the FLAT `fields` array this provider
+  //    already emits; the typed buckets its docs show (check_boxes /
+  //    dropdown_fields / …) are an alternative shape, not a requirement.
+  //    `radio` is deliberately ABSENT here: it has no 1:1 mapping — neutral
+  //    radio boxes are aggregated into one Radiogroup with sub_fields inside
+  //    neutralToZohoFields (see the radio section there).
+  input_text: { field_type_name: 'Textfield', field_category: 'textfield' },
+  checkbox:   { field_type_name: 'Checkbox',  field_category: 'checkbox'  },
+  dropdown:   { field_type_name: 'Dropdown',  field_category: 'dropdown'  },
 });
 
 /**
@@ -328,6 +339,8 @@ const round4 = (n) => Math.round(n * 10000) / 10000;
  *                             { pages: { <1-based page>: {width,height} } }.
  *                             Defaults to US Letter.
  * @returns {object} { bySigner: { <signer>: [zohoField, ...] }, count }
+ *          count = fields ON THE WIRE: text fields contribute 0, a radio
+ *          group of N boxes contributes 1 (Phase 2F aggregation).
  */
 function neutralToZohoFields(placements, pageInfo) {
   // Schema validation lives in ./placements so the send service can run the
@@ -357,6 +370,51 @@ function neutralToZohoFields(placements, pageInfo) {
     return name;
   };
 
+  // Shared geometry math — one implementation for single-box fields AND radio
+  // sub_fields, so the two can never disagree about the flip or the rounding.
+  const geomFor = (f) => {
+    const page   = Number.isInteger(f.page) ? f.page : NEUTRAL_PAGE_BASE;
+    const pageNo = page - NEUTRAL_PAGE_BASE;
+    const geom = perPage[page] || perPage[String(page)] || defaultPage;
+    const pw = Number(geom.width)  > 0 ? Number(geom.width)  : defaultPage.width;
+    const ph = Number(geom.height) > 0 ? Number(geom.height) : defaultPage.height;
+    const x = Number(f.x), y = Number(f.y), w = Number(f.w), h = Number(f.h);
+    // THE FLIP (assumptions 1 + 2).
+    const yTop = ph - y - h;
+    return {
+      page_no: pageNo,
+      // absolute, points — INTEGERS, not round2. Zoho's columns for the
+      // absolute set reject decimal values with 9011 "You have entered too
+      // many characters" (error_param: x_coord) — proven live 2026-07-20 by
+      // an A/B submit pair on request …49119: identical payloads, decimal
+      // x_coord 400s, integer x_coord sends. The 1B/1C smokes never tripped
+      // it because their hand-written placements were integer points; every
+      // editor-drawn box has decimals. The percent set below carries the
+      // sub-point precision (Zoho's own docs show 6-decimal percents), so
+      // rounding here loses nothing visible at signing. Applied to radio
+      // sub_fields too (Phase 2F): they go through the same Zoho column
+      // validation layer, and integer points are strictly safe.
+      x_coord:    Math.round(x),
+      y_coord:    Math.round(yTop),
+      abs_width:  Math.round(w),
+      abs_height: Math.round(h),
+      // percent of page — same geometry, so these can never contradict the above
+      x_value:    round4((x    / pw) * 100),
+      y_value:    round4((yTop / ph) * 100),
+      width:      round4((w    / pw) * 100),
+      height:     round4((h    / ph) * 100),
+    };
+  };
+
+  // Radio aggregation (Phase 2F). The neutral schema is one box per OPTION;
+  // Zoho's wire shape is one Radiogroup per GROUP whose sub_fields carry all
+  // the geometry (the group itself has none — verified by live round-trip
+  // 2026-07-21). Boxes of one group may be scattered anywhere in the fields
+  // array, so they are collected here and emitted AFTER the loop, in
+  // first-seen group order. validatePlacements already guaranteed: one signer
+  // per group, unique values, ≤1 checked, consistent required.
+  const radioGroups = new Map(); // group → { signer, required, boxes:[f...] }
+
   fields.forEach((f, i) => {
     // Shape, type, page base and geometry finiteness were all settled by
     // validatePlacements above. What remains here is transform, not checking.
@@ -367,21 +425,20 @@ function neutralToZohoFields(placements, pageInfo) {
     // box ON TOP of the filled value. They are not this provider's business.
     if (f.type === 'text') return;
 
-    const spec = FIELD_TYPES[f.type];
-
     const signer = Number.isInteger(f.signer) ? f.signer : 1;
-    const page   = Number.isInteger(f.page)   ? f.page   : NEUTRAL_PAGE_BASE;
-    const pageNo = page - NEUTRAL_PAGE_BASE;
 
-    const geom = perPage[page] || perPage[String(page)] || defaultPage;
-    const pw = Number(geom.width)  > 0 ? Number(geom.width)  : defaultPage.width;
-    const ph = Number(geom.height) > 0 ? Number(geom.height) : defaultPage.height;
+    if (f.type === 'radio') {
+      const group = f.group.trim();
+      let g = radioGroups.get(group);
+      if (!g) {
+        g = { signer, required: f.required === false ? false : true, boxes: [] };
+        radioGroups.set(group, g);
+      }
+      g.boxes.push(f);
+      return; // emitted after the loop
+    }
 
-    const x = Number(f.x), y = Number(f.y), w = Number(f.w), h = Number(f.h);
-
-    // THE FLIP (assumptions 1 + 2).
-    const yTop = ph - y - h;
-
+    const spec = FIELD_TYPES[f.type];
     const label = typeof f.label === 'string' && f.label.trim() ? f.label.trim() : null;
     const field = {
       field_name:       uniqueName(label || `${spec.field_type_name}_${i + 1}`),
@@ -389,31 +446,60 @@ function neutralToZohoFields(placements, pageInfo) {
       field_type_name:  spec.field_type_name,
       field_category:   spec.field_category,
       is_mandatory:     f.required === false ? false : true,
-      page_no:          pageNo,
-      // absolute, points — INTEGERS, not round2. Zoho's columns for the
-      // absolute set reject decimal values with 9011 "You have entered too
-      // many characters" (error_param: x_coord) — proven live 2026-07-20 by
-      // an A/B submit pair on request …49119: identical payloads, decimal
-      // x_coord 400s, integer x_coord sends. The 1B/1C smokes never tripped
-      // it because their hand-written placements were integer points; every
-      // editor-drawn box has decimals. The percent set below carries the
-      // sub-point precision (Zoho's own docs show 6-decimal percents), so
-      // rounding here loses nothing visible at signing.
-      x_coord:          Math.round(x),
-      y_coord:          Math.round(yTop),
-      abs_width:        Math.round(w),
-      abs_height:       Math.round(h),
-      // percent of page — same geometry, so these can never contradict the above
-      x_value:          round4((x    / pw) * 100),
-      y_value:          round4((yTop / ph) * 100),
-      width:            round4((w    / pw) * 100),
-      height:           round4((h    / ph) * 100),
+      ...geomFor(f),
     };
     if (spec.date_format) field.date_format = spec.date_format;
+
+    // ── Phase 2F per-type extras — every key VERIFIED by live submit + GET
+    //    round-trip 2026-07-21; Zoho allowlists submit keys (9043 on extras),
+    //    so nothing speculative goes here.
+    if (f.type === 'input_text') {
+      // default_value = signer-EDITABLE prefill on the signing page. Distinct
+      // from the neutral 'text' class, which is ink the signer can't touch.
+      if (typeof f.default === 'string' && f.default.length) field.default_value = f.default;
+      if (f.max_length != null) field.text_property = { max_field_length: Number(f.max_length) };
+    } else if (f.type === 'checkbox') {
+      // Emitted only when actually pre-ticked — an omitted default_value IS
+      // "unchecked" at Zoho, and the less surface on the credit-spending call
+      // the better.
+      if (f.checked === true) field.default_value = true;
+    } else if (f.type === 'dropdown') {
+      field.dropdown_values = f.options.map((opt, order) => ({
+        dropdown_value: String(opt).trim(),
+        dropdown_order: order,
+      }));
+      if (typeof f.default === 'string' && f.default.trim()) field.default_value = f.default.trim();
+    }
 
     (bySigner[signer] || (bySigner[signer] = [])).push(field);
     count += 1;
   });
+
+  // ── emit one Radiogroup per collected group ────────────────────────────────
+  for (const [group, g] of radioGroups) {
+    // The group name is what the signer sees AND Zoho's per-document-unique
+    // field_name — same uniqueName pool as every other field, so a label
+    // "Approve" and a group "Approve" cannot collide on the wire.
+    const checkedBox = g.boxes.find((b) => b.checked === true) || null;
+    const field = {
+      field_name:      uniqueName(group),
+      field_label:     group,
+      field_type_name: 'Radiogroup',
+      field_category:  'radiogroup',
+      is_mandatory:    g.required,
+      // The group has no geometry of its own; page_no follows the first box
+      // (Zoho's own example carries a group page_no alongside per-sub ones).
+      page_no: (Number.isInteger(g.boxes[0].page) ? g.boxes[0].page : NEUTRAL_PAGE_BASE) - NEUTRAL_PAGE_BASE,
+      sub_fields: g.boxes.map((b) => ({
+        sub_field_name: b.value.trim(),
+        ...geomFor(b),
+      })),
+    };
+    if (checkedBox) field.default_value = checkedBox.value.trim();
+
+    (bySigner[g.signer] || (bySigner[g.signer] = [])).push(field);
+    count += 1; // one Zoho field per GROUP — count is fields-on-the-wire
+  }
 
   return { bySigner, count };
 }
@@ -432,11 +518,21 @@ function bindFieldsToActions(bySigner, actions, recipients, documentId) {
   return actions.map((action, idx) => {
     const recip  = recipients[idx] || {};
     const order  = Number.isInteger(recip.order) ? recip.order : idx + 1;
-    const fields = (bySigner[order] || []).map((f) => ({
-      ...f,
-      document_id: documentId,
-      action_id:   action.action_id,
-    }));
+    const fields = (bySigner[order] || []).map((f) => {
+      const bound = {
+        ...f,
+        document_id: documentId,
+        action_id:   action.action_id,
+      };
+      // Radio sub_fields carry their OWN document_id (Zoho's documented shape,
+      // confirmed by the 2026-07-21 round-trip — each persisted sub_field
+      // echoes it). The spread above shares the array reference; map a fresh
+      // one so the pure transform output is never mutated.
+      if (Array.isArray(f.sub_fields)) {
+        bound.sub_fields = f.sub_fields.map((sf) => ({ ...sf, document_id: documentId }));
+      }
+      return bound;
+    });
 
     return {
       action_id:        action.action_id,

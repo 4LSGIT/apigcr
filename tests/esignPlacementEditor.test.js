@@ -437,3 +437,122 @@ describe('GET /api/esign/template-meta', () => {
     expect(out.kinds).toEqual([...new Set([...sendService.KINDS, 'retainer_custom', 'schedules'])]);
   });
 });
+// ─── Phase 2F — signer-input types in the editor's pure layer ─────────────────
+
+describe('Phase 2F editor helpers', () => {
+  test('min sizes exist for every neutral type — a drawn box of ANY type has a floor', () => {
+    for (const t of placements.NEUTRAL_FIELD_TYPES) {
+      const m = pe.PE_MIN_SIZES[t];
+      expect(m && m.w > 0 && m.h > 0).toBe(true);
+    }
+    // tick targets are square-ish and small; text-entry family matches 'text'
+    expect(pe.PE_MIN_SIZES.checkbox).toEqual({ w: 12, h: 12 });
+    expect(pe.PE_MIN_SIZES.radio).toEqual({ w: 12, h: 12 });
+    expect(pe.PE_MIN_SIZES.input_text).toEqual(pe.PE_MIN_SIZES.text);
+  });
+
+  test('peParseOptions: trims, drops empties, keeps order AND duplicates', () => {
+    expect(pe.peParseOptions(' Chapter 7 , Chapter 13 ,, ')).toEqual(['Chapter 7', 'Chapter 13']);
+    // duplicates survive — the SERVER validator is the voice that rejects
+    // them; silent client dedupe would make the saved value disagree with
+    // what the author sees in the input
+    expect(pe.peParseOptions('A, A, B')).toEqual(['A', 'A', 'B']);
+    expect(pe.peParseOptions('')).toEqual([]);
+    expect(pe.peParseOptions(null)).toEqual([]);
+  });
+
+  test('peSignerTag: radio shows GROUP: VALUE; others label-or-type', () => {
+    expect(pe.peSignerTag({ type: 'radio', group: 'Approve?', value: 'Yes', signer: 1 }))
+      .toBe('Approve?: Yes \u00b7 S1');
+    expect(pe.peSignerTag({ type: 'radio', signer: 2 })).toBe('?: ? \u00b7 S2');
+    expect(pe.peSignerTag({ type: 'input_text', signer: 1 })).toBe('INPUT \u00b7 S1');
+    expect(pe.peSignerTag({ type: 'checkbox', label: 'I agree', signer: 1 })).toBe('I agree \u00b7 S1');
+    expect(pe.peSignerTag({ type: 'signature', signer: 2 })).toBe('SIGNATURE \u00b7 S2');
+  });
+
+  test('normalized geometry for the new types passes the server validator', () => {
+    const cases = [
+      ['checkbox', { signer: 1 }],
+      ['radio',    { signer: 1, group: 'Approve', value: 'Yes' }],
+      ['dropdown', { signer: 1, options: ['A', 'B'] }],
+      ['input_text', { signer: 1, max_length: 40 }],
+    ];
+    for (const [type, extra] of cases) {
+      const r = pe.peNormalizeRect({ x: 5, y: 5, w: 1, h: 1 }, type, 612, 792);
+      expect(() => placements.validatePlacements({
+        coord_space: 'pdf_user_space',
+        fields: [{ page: 1, ...r, type, ...extra }],
+      })).not.toThrow();
+    }
+  });
+});
+
+// ─── peCarryProps — the ONE round-trip carrier for Phase 2F properties ───────
+
+describe('peCarryProps (shared by _seed and getPlacements)', () => {
+  const carry = (src) => pe.peCarryProps(src, {});
+
+  test('input_text: max_length floored, default carried; absent stays absent', () => {
+    expect(carry({ type: 'input_text', max_length: 50.9, default: 'pre' }))
+      .toEqual({ max_length: 50, default: 'pre' });
+    expect(carry({ type: 'input_text' })).toEqual({});
+    expect(carry({ type: 'input_text', max_length: 0, default: '' })).toEqual({});
+    expect(carry({ type: 'input_text', max_length: 'fifty' })).toEqual({});
+  });
+
+  test('checkbox: checked carried ONLY as literal true', () => {
+    expect(carry({ type: 'checkbox', checked: true })).toEqual({ checked: true });
+    expect(carry({ type: 'checkbox', checked: false })).toEqual({});
+    expect(carry({ type: 'checkbox', checked: 'yes' })).toEqual({});
+  });
+
+  test('dropdown: options sanitized (trim, drop empties), default trimmed', () => {
+    expect(carry({ type: 'dropdown', options: [' A ', '', 'B', 7, '  '], default: ' B ' }))
+      .toEqual({ options: ['A', 'B'], default: 'B' });
+    // options ALWAYS present on a dropdown, even when the input was garbage —
+    // the server requires the key, and an absent one reads as data loss
+    expect(carry({ type: 'dropdown' })).toEqual({ options: [] });
+  });
+
+  test('radio: group/value trimmed and always present; checked as literal true', () => {
+    expect(carry({ type: 'radio', group: ' Approve? ', value: ' Yes ', checked: true }))
+      .toEqual({ group: 'Approve?', value: 'Yes', checked: true });
+    expect(carry({ type: 'radio' })).toEqual({ group: '', value: '' });
+  });
+
+  test('non-2F types carry nothing — no cross-type leakage', () => {
+    expect(carry({ type: 'signature', options: ['A'], group: 'G', checked: true })).toEqual({});
+    expect(carry({ type: 'date', max_length: 9 })).toEqual({});
+  });
+
+  test('round-trip stability: carry(carry(x)) === carry(x) for every 2F type', () => {
+    const srcs = [
+      { type: 'input_text', max_length: 40, default: 'pre' },
+      { type: 'checkbox', checked: true },
+      { type: 'dropdown', options: ['A', 'B'], default: 'A' },
+      { type: 'radio', group: 'G', value: 'V', checked: true },
+    ];
+    for (const s of srcs) {
+      const once = pe.peCarryProps(s, { type: s.type });
+      const twice = pe.peCarryProps(once, { type: s.type });
+      delete once.type; delete twice.type;
+      expect(twice).toEqual(once);
+    }
+  });
+
+  test('carried output passes the server validator when placed', () => {
+    const geom = { page: 1, x: 72, y: 300, w: 60, h: 16 };
+    const seeds = [
+      { type: 'input_text', signer: 1, max_length: 40.7, default: 'x' },
+      { type: 'checkbox', signer: 1, checked: true },
+      { type: 'dropdown', signer: 1, options: [' A ', 'B', ''], default: ' A ' },
+      { type: 'radio', signer: 1, group: ' G ', value: ' Yes ' },
+    ];
+    for (const s of seeds) {
+      const out = pe.peCarryProps(s, { ...geom, type: s.type, signer: s.signer });
+      expect(() => placements.validatePlacements({
+        coord_space: 'pdf_user_space', fields: [out],
+      })).not.toThrow();
+    }
+  });
+});

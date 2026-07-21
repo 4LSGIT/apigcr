@@ -59,15 +59,23 @@
 
 /** Neutral field types — mirror of services/esign/placements.js
     NEUTRAL_FIELD_TYPES (drift-guarded by tests). */
-var PE_FIELD_TYPES = ['signature', 'initial', 'date', 'text'];
+var PE_FIELD_TYPES = ['signature', 'initial', 'date', 'text',
+  'input_text', 'checkbox', 'dropdown', 'radio'];
 
 /** Minimum field sizes in PDF POINTS (2D spec). Enforced in points — never in
     pixels — so the floor is the same physical size at every zoom. */
 var PE_MIN_SIZES = {
-  signature: { w: 120, h: 24 },
-  initial:   { w: 40,  h: 18 },
-  date:      { w: 60,  h: 16 },
-  text:      { w: 60,  h: 14 },
+  signature:  { w: 120, h: 24 },
+  initial:    { w: 40,  h: 18 },
+  date:       { w: 60,  h: 16 },
+  text:       { w: 60,  h: 14 },
+  // Phase 2F signer-input types. checkbox/radio are square-ish tick targets
+  // (Zoho renders the control inside the box); input_text/dropdown match the
+  // text-entry family.
+  input_text: { w: 60,  h: 14 },
+  checkbox:   { w: 12,  h: 12 },
+  dropdown:   { w: 60,  h: 16 },
+  radio:      { w: 12,  h: 12 },
 };
 
 /** Signer color code (2D spec: pick one and document it).
@@ -83,9 +91,55 @@ var PE_TEXT_COLOR = '#d97706';
 
 /** Signer-field tag: the author's label when set, else TYPE · S#. */
 function peSignerTag(f) {
+  // Radio boxes have no label — the tag shows GROUP · VALUE so two circles of
+  // the same group read as siblings at a glance, plus the signer.
+  if (f.type === 'radio') {
+    return (f.group || '?') + ': ' + (f.value || '?') + ' \u00b7 S' + f.signer;
+  }
+  var TAG_NAMES = { input_text: 'INPUT', checkbox: 'CHECK', dropdown: 'DROP' };
   return f.label
     ? f.label + ' \u00b7 S' + f.signer
-    : f.type.toUpperCase() + ' \u00b7 S' + f.signer;
+    : (TAG_NAMES[f.type] || f.type.toUpperCase()) + ' \u00b7 S' + f.signer;
+}
+
+/** Dropdown options come from ONE comma-separated toolbar input. Trim, drop
+    empties, keep order, keep duplicates — the server validator is the voice
+    that rejects dupes, and silently deduping here would make the saved value
+    disagree with what the author can see in the input. */
+function peParseOptions(str) {
+  if (typeof str !== 'string') return [];
+  return str.split(',')
+    .map(function (s) { return s.trim(); })
+    .filter(function (s) { return s.length > 0; });
+}
+
+/**
+ * Copy a signer field's Phase 2F per-type properties from `src` onto `out`,
+ * sanitized. ONE function on purpose: it runs on the way IN (_seed) and on
+ * the way OUT (getPlacements), so the two can never disagree about which
+ * properties survive the round-trip — a property dropped on either leg is a
+ * property silently STRIPPED from the stored template on the next save.
+ * Pure and exported so jest (node-only) can cover the round-trip even though
+ * the component itself is browser-guarded.
+ */
+function peCarryProps(src, out) {
+  if (src.type === 'input_text') {
+    if (typeof src.max_length === 'number' && src.max_length >= 1) out.max_length = Math.floor(src.max_length);
+    if (typeof src.default === 'string' && src.default) out.default = src.default;
+  } else if (src.type === 'checkbox') {
+    if (src.checked === true) out.checked = true;
+  } else if (src.type === 'dropdown') {
+    out.options = Array.isArray(src.options)
+      ? src.options.filter(function (o) { return typeof o === 'string' && o.trim(); })
+                   .map(function (o) { return o.trim(); })
+      : [];
+    if (typeof src.default === 'string' && src.default.trim()) out.default = src.default.trim();
+  } else if (src.type === 'radio') {
+    out.group = typeof src.group === 'string' ? src.group.trim() : '';
+    out.value = typeof src.value === 'string' ? src.value.trim() : '';
+    if (src.checked === true) out.checked = true;
+  }
+  return out;
 }
 
 // ── validation mirrors of services/esignTemplateService.js ──
@@ -342,6 +396,9 @@ if (typeof module !== 'undefined' && module.exports) {
     peValidateSchemaRow: peValidateSchemaRow,
     peValidateSchemaRows: peValidateSchemaRows,
     peValidateBasics: peValidateBasics,
+    peSignerTag: peSignerTag,
+    peParseOptions: peParseOptions,
+    peCarryProps: peCarryProps,
   };
 }
 
@@ -364,6 +421,10 @@ if (typeof window !== 'undefined') (function () {
       '.pe-toolbar label { font-weight:bold; }',
       '.pe-toolbar select { padding:4px 6px; }',
       '.pe-toolbar input.pe-jump { width:52px; padding:4px 6px; }',
+      '.pe-toolbar input.pe-maxlen { width:60px; padding:4px 6px; }',
+      '.pe-toolbar .pe-inline { font-weight:normal; white-space:nowrap; }',
+      '.pe-itext-wrap, .pe-check-wrap, .pe-drop-wrap, .pe-radio-wrap, .pe-signer-wrap, .pe-label-wrap, .pe-key-wrap {',
+      '  display:inline-flex; align-items:center; gap:6px; }',
       '.pe-hint { color:#888; font-size:11px; }',
       '.pe-pages { border:1px solid #ddd; border-top:none; border-radius:0 0 4px 4px;',
       '  background:#e5e7eb; max-height:75vh; overflow:auto; padding:14px 0; }',
@@ -429,8 +490,26 @@ if (typeof window !== 'undefined') (function () {
     this._drawType = 'signature';
     this._drawSigner = 1;
     this._drawKey = '';        // key applied to the NEXT drawn text field
+    // Phase 2F sticky draw-state — same idiom as _drawKey: the toolbar value
+    // is applied to the NEXT drawn box of its type AND live-updates the
+    // selected one. `checked` is deliberately NOT sticky: a default belongs
+    // to one box, and drawing five pre-checked checkboxes by accident is
+    // exactly the mistake stickiness would make easy.
+    this._drawMaxLen  = null;  // input_text
+    this._drawDefault = '';    // input_text prefill
+    this._drawOptions = [];    // dropdown choices
+    this._drawDdDefault = '';  // dropdown default
+    this._drawGroup   = '';    // radio group (sticky ACROSS boxes of a group)
+    this._drawValue   = '';    // radio option value
     this._renderSeq = 0;
     this._scrollRaf = null;
+
+    // The type dropdown shows friendly names; values stay the neutral types.
+    var PE_TYPE_NAMES = {
+      signature: 'Signature', initial: 'Initial', date: 'Date',
+      text: 'Text (we fill)', input_text: 'Text input (signer)',
+      checkbox: 'Checkbox', dropdown: 'Dropdown', radio: 'Radio option',
+    };
 
     container.classList.add('pe-root');
     container.innerHTML =
@@ -438,7 +517,7 @@ if (typeof window !== 'undefined') (function () {
         '<label>Field:</label>' +
         '<select class="pe-type">' +
           PE_FIELD_TYPES.map(function (t) {
-            return '<option value="' + t + '">' + t.charAt(0).toUpperCase() + t.slice(1) + '</option>';
+            return '<option value="' + t + '">' + (PE_TYPE_NAMES[t] || t) + '</option>';
           }).join('') +
         '</select>' +
         '<span class="pe-signer-wrap"><label>Signer:</label>' +
@@ -447,10 +526,12 @@ if (typeof window !== 'undefined') (function () {
           '<option value="2" style="color:' + PE_SIGNER_COLORS[2] + '">2 (green)</option>' +
         '</select>' +
         // What the SIGNER SEES rendered in the box on Zoho's signing page.
-        // Optional; empty falls back to the provider's Type_N naming.
-        '<label>Shown to signer:</label>' +
+        // Optional; empty falls back to the provider's Type_N naming. Its own
+        // wrap because RADIO hides it (the group name is the display name)
+        // while keeping the signer select.
+        '<span class="pe-label-wrap"><label>Shown to signer:</label>' +
         '<input class="pe-label" size="14" maxlength="60" placeholder="e.g. Client initials" ' +
-          'spellcheck="false" autocomplete="off">' +
+          'spellcheck="false" autocomplete="off"></span>' +
         '</span>' +
         // Text fields carry a KEY instead of a signer; the two controls swap
         // visibility with the type. keySuggest (opts) feeds the datalist so
@@ -463,6 +544,37 @@ if (typeof window !== 'undefined') (function () {
             return '<option value="' + String(k).replace(/"/g, '&quot;') + '">';
           }).join('')) +
         '</datalist></span>' +
+        // ── Phase 2F per-type property clusters — exactly one visible at a
+        //    time (or none), driven by _syncToolbarMode.
+        '<span class="pe-itext-wrap" style="display:none">' +
+          '<label>Max len:</label>' +
+          '<input class="pe-maxlen" type="number" min="1" max="2048" placeholder="\u2013" ' +
+            'title="Longest answer the signer can type (blank = no cap)">' +
+          '<label>Prefill:</label>' +
+          '<input class="pe-itext-default" size="12" placeholder="optional" ' +
+            'title="Pre-typed text the signer can edit" spellcheck="false" autocomplete="off">' +
+        '</span>' +
+        '<span class="pe-check-wrap" style="display:none">' +
+          '<label class="pe-inline"><input class="pe-checked" type="checkbox"> Pre-checked</label>' +
+        '</span>' +
+        '<span class="pe-drop-wrap" style="display:none">' +
+          '<label>Options:</label>' +
+          '<input class="pe-options" size="24" placeholder="Chapter 7, Chapter 13, \u2026" ' +
+            'title="The choices, comma-separated, in order" spellcheck="false" autocomplete="off">' +
+          '<label>Default:</label>' +
+          '<input class="pe-dd-default" size="10" placeholder="optional" ' +
+            'title="Pre-selected option (must be one of the choices)" spellcheck="false" autocomplete="off">' +
+        '</span>' +
+        '<span class="pe-radio-wrap" style="display:none">' +
+          '<label>Group:</label>' +
+          '<input class="pe-group" size="10" maxlength="100" placeholder="e.g. Approve?" ' +
+            'title="Boxes sharing a group are one pick-one question; the group name is what the signer sees" ' +
+            'spellcheck="false" autocomplete="off">' +
+          '<label>Option:</label>' +
+          '<input class="pe-value" size="8" maxlength="100" placeholder="e.g. Yes" ' +
+            'title="What picking THIS circle means" spellcheck="false" autocomplete="off">' +
+          '<label class="pe-inline"><input class="pe-radio-checked" type="checkbox"> Default</label>' +
+        '</span>' +
         '<label>Zoom:</label>' +
         '<select class="pe-zoom">' +
           '<option value="75">75%</option><option value="100" selected>100%</option>' +
@@ -515,11 +627,117 @@ if (typeof window !== 'undefined') (function () {
       self._drawSigner = parseInt(e.target.value, 10) || 1;
       var f = self._selected();
       if (f && f.signer !== self._drawSigner) {
-        f.signer = self._drawSigner;
+        if (f.type === 'radio') {
+          // Same rule as the box swap button: the whole group moves.
+          self.fields.forEach(function (o) {
+            if (o.type === 'radio' && o.group === f.group) o.signer = self._drawSigner;
+          });
+        } else {
+          f.signer = self._drawSigner;
+        }
         self._renderFields();
         self._changed();
       }
     });
+
+    // ── Phase 2F property inputs ─────────────────────────────
+    // One idiom throughout, copied from the key input: 'input' updates the
+    // sticky draw-state AND the selected box (with a cheap tag refresh where
+    // the tag shows the property); 'change' commits — full re-render + dirty.
+    function liveTag(f) {
+      var el = self.container.querySelector('.pe-box[data-uid="' + f.uid + '"] .pe-tag');
+      if (el) el.textContent = peSignerTag(f);
+    }
+    function commitIf(type) {
+      return function () {
+        var f = self._selected();
+        if (f && f.type === type) { self._renderFields(); self._changed(); }
+      };
+    }
+
+    var maxlenInput = container.querySelector('.pe-maxlen');
+    maxlenInput.addEventListener('input', function (e) {
+      var n = parseInt(e.target.value, 10);
+      self._drawMaxLen = (Number.isInteger(n) && n >= 1) ? n : null;
+      var f = self._selected();
+      if (f && f.type === 'input_text') {
+        if (self._drawMaxLen != null) f.max_length = self._drawMaxLen;
+        else delete f.max_length;
+      }
+    });
+    maxlenInput.addEventListener('change', commitIf('input_text'));
+
+    var itextDefaultInput = container.querySelector('.pe-itext-default');
+    itextDefaultInput.addEventListener('input', function (e) {
+      self._drawDefault = e.target.value;
+      var f = self._selected();
+      if (f && f.type === 'input_text') {
+        if (self._drawDefault) f.default = self._drawDefault;
+        else delete f.default;
+      }
+    });
+    itextDefaultInput.addEventListener('change', commitIf('input_text'));
+
+    container.querySelector('.pe-checked').addEventListener('change', function (e) {
+      var f = self._selected();
+      if (!f || f.type !== 'checkbox') return;
+      if (e.target.checked) f.checked = true; else delete f.checked;
+      self._renderFields();
+      self._changed();
+    });
+
+    var optionsInput = container.querySelector('.pe-options');
+    optionsInput.addEventListener('input', function (e) {
+      self._drawOptions = peParseOptions(e.target.value);
+      var f = self._selected();
+      if (f && f.type === 'dropdown') f.options = self._drawOptions.slice();
+    });
+    optionsInput.addEventListener('change', commitIf('dropdown'));
+
+    var ddDefaultInput = container.querySelector('.pe-dd-default');
+    ddDefaultInput.addEventListener('input', function (e) {
+      self._drawDdDefault = e.target.value.trim();
+      var f = self._selected();
+      if (f && f.type === 'dropdown') {
+        if (self._drawDdDefault) f.default = self._drawDdDefault;
+        else delete f.default;
+      }
+    });
+    ddDefaultInput.addEventListener('change', commitIf('dropdown'));
+
+    var groupInput = container.querySelector('.pe-group');
+    groupInput.addEventListener('input', function (e) {
+      self._drawGroup = e.target.value.trim();
+      var f = self._selected();
+      if (f && f.type === 'radio') { f.group = self._drawGroup; liveTag(f); }
+    });
+    groupInput.addEventListener('change', commitIf('radio'));
+
+    var valueInput = container.querySelector('.pe-value');
+    valueInput.addEventListener('input', function (e) {
+      self._drawValue = e.target.value.trim();
+      var f = self._selected();
+      if (f && f.type === 'radio') { f.value = self._drawValue; liveTag(f); }
+    });
+    valueInput.addEventListener('change', commitIf('radio'));
+
+    container.querySelector('.pe-radio-checked').addEventListener('change', function (e) {
+      var f = self._selected();
+      if (!f || f.type !== 'radio') return;
+      if (e.target.checked) {
+        // A group has ONE default — mirror the server rule in the UI instead
+        // of letting the author save into a guaranteed rejection.
+        self.fields.forEach(function (o) {
+          if (o !== f && o.type === 'radio' && o.group === f.group) delete o.checked;
+        });
+        f.checked = true;
+      } else {
+        delete f.checked;
+      }
+      self._renderFields();
+      self._changed();
+    });
+
     container.querySelector('.pe-zoom').addEventListener('change', function (e) {
       self.setZoom(parseInt(e.target.value, 10) || 100);
     });
@@ -641,7 +859,10 @@ if (typeof window !== 'undefined') (function () {
           if (typeof f.font_size === 'number' && f.font_size > 0) out.font_size = f.font_size;
         } else {
           out.signer = (typeof f.signer === 'number' && f.signer >= 1) ? Math.floor(f.signer) : 1;
-          if (typeof f.label === 'string' && f.label.trim()) out.label = f.label.trim();
+          if (f.type !== 'radio' && typeof f.label === 'string' && f.label.trim()) out.label = f.label.trim();
+          // Phase 2F per-type properties — peCarryProps is the ONE carrier
+          // shared with getPlacements; see its header for why.
+          peCarryProps(f, out);
         }
         return out;
       });
@@ -667,7 +888,8 @@ if (typeof window !== 'undefined') (function () {
           if (typeof f.font_size === 'number' && f.font_size > 0) out.font_size = f.font_size;
         } else {
           out.signer = f.signer;
-          if (typeof f.label === 'string' && f.label.trim()) out.label = f.label.trim();
+          if (f.type !== 'radio' && typeof f.label === 'string' && f.label.trim()) out.label = f.label.trim();
+          peCarryProps(f, out); // Phase 2F — same carrier as _seed
         }
         return out;
       }),
@@ -778,11 +1000,20 @@ if (typeof window !== 'undefined') (function () {
     });
   };
 
-  /** Signer select vs key input: exactly one is visible, driven by the type. */
+  /** Toolbar clusters vs the draw type: key input for 'text', signer select
+      for every signer type (label hidden for radio — the group name is the
+      display name), plus exactly one Phase 2F property cluster. */
   PlacementEditor.prototype._syncToolbarMode = function () {
-    var isText = this._drawType === 'text';
-    this.container.querySelector('.pe-signer-wrap').style.display = isText ? 'none' : '';
-    this.container.querySelector('.pe-key-wrap').style.display = isText ? '' : 'none';
+    var t = this._drawType;
+    var isText = t === 'text';
+    var q = this.container.querySelector.bind(this.container);
+    q('.pe-signer-wrap').style.display = isText ? 'none' : '';
+    q('.pe-label-wrap').style.display  = (isText || t === 'radio') ? 'none' : '';
+    q('.pe-key-wrap').style.display    = isText ? '' : 'none';
+    q('.pe-itext-wrap').style.display  = t === 'input_text' ? '' : 'none';
+    q('.pe-check-wrap').style.display  = t === 'checkbox'   ? '' : 'none';
+    q('.pe-drop-wrap').style.display   = t === 'dropdown'   ? '' : 'none';
+    q('.pe-radio-wrap').style.display  = t === 'radio'      ? '' : 'none';
   };
 
   PlacementEditor.prototype._select = function (uid) {
@@ -791,15 +1022,37 @@ if (typeof window !== 'undefined') (function () {
     if (f) {
       // Toolbar mirrors the selection so the next draw matches, and so the
       // toolbar selects can retarget the selected box.
-      this.container.querySelector('.pe-type').value = f.type;
+      var q = this.container.querySelector.bind(this.container);
+      q('.pe-type').value = f.type;
       this._drawType = f.type;
       if (f.type === 'text') {
         this._drawKey = f.key || '';
-        this.container.querySelector('.pe-key').value = this._drawKey;
+        q('.pe-key').value = this._drawKey;
       } else {
-        this.container.querySelector('.pe-signer').value = String(f.signer);
-        this.container.querySelector('.pe-label').value = f.label || '';
+        q('.pe-signer').value = String(f.signer);
+        q('.pe-label').value = f.label || '';
         this._drawSigner = f.signer;
+        // Phase 2F: property inputs mirror the selection AND become the
+        // sticky values for the next draw — same as label/signer above.
+        if (f.type === 'input_text') {
+          this._drawMaxLen  = (typeof f.max_length === 'number') ? f.max_length : null;
+          this._drawDefault = f.default || '';
+          q('.pe-maxlen').value = this._drawMaxLen == null ? '' : String(this._drawMaxLen);
+          q('.pe-itext-default').value = this._drawDefault;
+        } else if (f.type === 'checkbox') {
+          q('.pe-checked').checked = f.checked === true;
+        } else if (f.type === 'dropdown') {
+          this._drawOptions   = Array.isArray(f.options) ? f.options.slice() : [];
+          this._drawDdDefault = f.default || '';
+          q('.pe-options').value = this._drawOptions.join(', ');
+          q('.pe-dd-default').value = this._drawDdDefault;
+        } else if (f.type === 'radio') {
+          this._drawGroup = f.group || '';
+          this._drawValue = f.value || '';
+          q('.pe-group').value = this._drawGroup;
+          q('.pe-value').value = this._drawValue;
+          q('.pe-radio-checked').checked = f.checked === true;
+        }
       }
       this._syncToolbarMode();
     }
@@ -818,19 +1071,39 @@ if (typeof window !== 'undefined') (function () {
   PlacementEditor.prototype._retype = function (f, type) {
     if (f.type === type) return;
     f.type = type;
+    // Per-type properties do NOT survive a retype — a dropdown retyped to a
+    // checkbox that silently kept `options` would fail server validation (or
+    // worse, pass it and confuse the provider). Strip everything the NEW type
+    // doesn't own, then let the toolbar re-apply its current values.
+    delete f.max_length; delete f.default; delete f.checked;
+    delete f.options; delete f.group; delete f.value;
     if (type === 'text') {
       delete f.signer;                       // server THROWS on text+signer
+      delete f.label;
       f.key = this._drawKey || f.key || '';
-    } else if (f.key !== undefined) {
-      delete f.key;
-      delete f.font_size;
-      f.signer = this._drawSigner || 1;
+    } else {
+      if (f.key !== undefined) { delete f.key; delete f.font_size; }
+      if (f.signer === undefined) f.signer = this._drawSigner || 1;
+      if (type === 'radio') {
+        delete f.label;                      // group name is the display name
+        f.group = this._drawGroup || '';     // sticky, same as the draw path
+        f.value = '';                        // never inherit a sibling's value
+      } else if (type === 'dropdown') {
+        f.options = (this._drawOptions || []).slice();
+        if (this._drawDdDefault) f.default = this._drawDdDefault;
+      } else if (type === 'input_text') {
+        if (this._drawMaxLen != null) f.max_length = this._drawMaxLen;
+        if (this._drawDefault) f.default = this._drawDefault;
+      }
     }
     var vp = this.viewports[f.page];
     var size = vp ? pePageSize(vp) : { w: 612, h: 792 };
     var r = peNormalizeRect(f, type, size.w, size.h);
     f.x = r.x; f.y = r.y; f.w = r.w; f.h = r.h;
-    this._renderFields();
+    // _select (not a bare re-render): the toolbar must mirror the retyped
+    // field's now-stripped properties, or the inputs keep showing the OLD
+    // type's values against the NEW type's box.
+    this._select(f.uid);
     this._changed();
   };
 
@@ -884,7 +1157,35 @@ if (typeof window !== 'undefined') (function () {
           type: self._drawType,
         };
         if (self._drawType === 'text') { f.key = self._drawKey; }
-        else { f.signer = self._drawSigner; }
+        else {
+          f.signer = self._drawSigner;
+          // Phase 2F: sticky properties transfer to the new box so a run of
+          // same-shaped fields (five dropdowns with the same choices; the
+          // circles of one radio group) doesn't mean re-typing per box.
+          // `checked` never transfers — a default belongs to ONE box.
+          if (self._drawType === 'input_text') {
+            if (self._drawMaxLen != null) f.max_length = self._drawMaxLen;
+            if (self._drawDefault) f.default = self._drawDefault;
+          } else if (self._drawType === 'dropdown') {
+            f.options = self._drawOptions.slice();
+            if (self._drawDdDefault) f.default = self._drawDdDefault;
+          } else if (self._drawType === 'radio') {
+            f.group = self._drawGroup;
+            // The sticky VALUE transfers only if no sibling already claims it
+            // — drawing "Yes" then a second circle should demand a new name,
+            // not silently mint a duplicate the server will reject.
+            var taken = self.fields.some(function (o) {
+              return o.type === 'radio' && o.group === self._drawGroup &&
+                     o.value === self._drawValue && self._drawValue !== '';
+            });
+            f.value = taken ? '' : self._drawValue;
+            if (taken) {
+              self._drawValue = '';
+              var vi = self.container.querySelector('.pe-value');
+              if (vi) vi.value = '';
+            }
+          }
+        }
         self.fields.push(f);
         self.selectedUid = f.uid;
         self._renderFields();
@@ -908,7 +1209,17 @@ if (typeof window !== 'undefined') (function () {
     if (swap) swap.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
     if (swap) swap.addEventListener('click', function (ev) {
       ev.stopPropagation();
-      f.signer = f.signer === 1 ? 2 : 1;
+      var to = f.signer === 1 ? 2 : 1;
+      if (f.type === 'radio') {
+        // A group belongs to exactly one signer (server rule) — swapping one
+        // circle must carry its siblings, or the next save is a guaranteed
+        // rejection the author didn't ask for.
+        self.fields.forEach(function (o) {
+          if (o.type === 'radio' && o.group === f.group) o.signer = to;
+        });
+      } else {
+        f.signer = to;
+      }
       self._select(f.uid);   // re-render + toolbar sync
       self._changed();
     });
