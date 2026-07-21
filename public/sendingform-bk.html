@@ -706,7 +706,7 @@ async function preview() {
   for (const action of actions) {
     if (action.type === 'credit_counseling') {
       const names = recipients.map(r => r.fname).join(' and ');
-      lines.push(`── CREDIT COUNSELING INFO ──\nMMS to: ${recipients.map(r => formatPhone(r.phone)).join(', ')}\nHi ${names}! Here is information about the credit counseling course that we discussed. Just go to EVERGREENCLASS.COM. If you use the code LSG, you will get a $25 discount and they will automatically send us your certificate!`);
+      lines.push(`── CREDIT COUNSELING INFO ──\nMMS to: ${recipients.map(r => formatPhone(r.phone)).join(', ')}\nHi ${names}! Here is information about the credit counseling course that we discussed. Just go to:\nEVERGREENCLASS.COM/LOGIN?CODE=LSG\n\nIf you use the code LSG, you will get a $25 discount and they will automatically send us your certificate!`);
     }
     if (action.type === 'sos_title') {
       lines.push('── SOS TITLE INSTRUCTIONS ──\nSMS: Link to instructions PDF\nEmail: PDF attached');
@@ -794,7 +794,7 @@ async function send() {
   const ccImgUrl = 'https://storage.googleapis.com/uploads.4lsg.com/be38469da984371bdb8b18905abc113a.png';
 
   for (const r of recipients) {
-    const mmsText = `Hi ${r.fname}! Here is information about the credit counseling course that we discussed. Just go to EVERGREENCLASS.COM. If you use the code LSG, you will get a $25 discount and they will automatically send us your certificate!`;
+    const mmsText = `Hi ${r.fname}! Here is information about the credit counseling course that we discussed. Just go to:\nEVERGREENCLASS.COM/LOGIN?CODE=LSG\n\nIf you use the code LSG, you will get a $25 discount and they will automatically send us your certificate!`;
 
     if (smsOn && r.phone) {
       if (mmsCapable) {
