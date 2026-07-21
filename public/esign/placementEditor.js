@@ -363,6 +363,7 @@ if (typeof window !== 'undefined') (function () {
       '  border-radius:4px 4px 0 0; font-size:13px; position:sticky; top:0; z-index:5; }',
       '.pe-toolbar label { font-weight:bold; }',
       '.pe-toolbar select { padding:4px 6px; }',
+      '.pe-toolbar input.pe-jump { width:52px; padding:4px 6px; }',
       '.pe-hint { color:#888; font-size:11px; }',
       '.pe-pages { border:1px solid #ddd; border-top:none; border-radius:0 0 4px 4px;',
       '  background:#e5e7eb; max-height:75vh; overflow:auto; padding:14px 0; }',
@@ -429,6 +430,7 @@ if (typeof window !== 'undefined') (function () {
     this._drawSigner = 1;
     this._drawKey = '';        // key applied to the NEXT drawn text field
     this._renderSeq = 0;
+    this._scrollRaf = null;
 
     container.classList.add('pe-root');
     container.innerHTML =
@@ -466,6 +468,9 @@ if (typeof window !== 'undefined') (function () {
           '<option value="75">75%</option><option value="100" selected>100%</option>' +
           '<option value="125">125%</option><option value="150">150%</option>' +
         '</select>' +
+        '<label>Page:</label>' +
+        '<input class="pe-jump" type="number" min="1" value="1" title="Jump to page" spellcheck="false" autocomplete="off">' +
+        '<span class="pe-pagecount pe-hint">of \u2013</span>' +
         '<span class="pe-hint">Click-drag on the page to draw a field \u00b7 click a box to select \u00b7 Del removes it</span>' +
       '</div>' +
       '<div class="pe-pages"><div class="pe-empty">No document rendered yet.</div></div>';
@@ -519,6 +524,28 @@ if (typeof window !== 'undefined') (function () {
       self.setZoom(parseInt(e.target.value, 10) || 100);
     });
 
+    // Page jump + live current-page indicator.
+    var jump = container.querySelector('.pe-jump');
+    function doJump() {
+      var n = parseInt(jump.value, 10);
+      if (!self.pdfDoc || !n) return;
+      n = Math.min(Math.max(n, 1), self.pdfDoc.numPages);
+      jump.value = String(n);
+      self.goToPage(n);
+    }
+    jump.addEventListener('change', doJump);
+    jump.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); doJump(); }
+    });
+
+    container.querySelector('.pe-pages').addEventListener('scroll', function () {
+      if (self._scrollRaf) return;
+      self._scrollRaf = requestAnimationFrame(function () {
+        self._scrollRaf = null;
+        self._updateCurrentPageIndicator();
+      });
+    });
+
     this._keyHandler = function (e) {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       var t = e.target;
@@ -539,11 +566,46 @@ if (typeof window !== 'undefined') (function () {
 
   PlacementEditor.prototype.hasDocument = function () { return !!this.pdfDoc; };
 
+  /** Scroll a page into view. In the lazy build this also triggers its render;
+      in the eager build the page is already painted. Public — the send/admin
+      UI can deep-link to a signature page. */
+  PlacementEditor.prototype.goToPage = function (n) {
+    var wrap = this.container.querySelector('.pe-page[data-page="' + n + '"]');
+    if (wrap) wrap.scrollIntoView({ block: 'start' });
+  };
+
+  /** Reflect page count in the jump control's "of N" label and max attribute. */
+  PlacementEditor.prototype._syncPageCount = function () {
+    var n = this.pdfDoc ? this.pdfDoc.numPages : 0;
+    var cnt = this.container.querySelector('.pe-pagecount');
+    var jmp = this.container.querySelector('.pe-jump');
+    if (cnt) cnt.textContent = 'of ' + (n || '\u2013');
+    if (jmp) { jmp.max = String(n || 1); if (!jmp.value) jmp.value = '1'; }
+  };
+
+  /** Point the jump input at the top-most page currently in the scroll area.
+      Skipped while the input is focused so it never fights the user's typing. */
+  PlacementEditor.prototype._updateCurrentPageIndicator = function () {
+    var pagesEl = this.container.querySelector('.pe-pages');
+    var jmp = this.container.querySelector('.pe-jump');
+    if (!pagesEl || !jmp || !this.pdfDoc) return;
+    if (document.activeElement === jmp) return;
+    var wraps = pagesEl.querySelectorAll('.pe-page');
+    var top = pagesEl.getBoundingClientRect().top;
+    var current = 1;
+    for (var i = 0; i < wraps.length; i++) {
+      var r = wraps[i].getBoundingClientRect();
+      if (r.bottom > top + 40) { current = parseInt(wraps[i].dataset.page, 10) || 1; break; }
+    }
+    jmp.value = String(current);
+  };
+
   // ── loading + rendering ────────────────────────────────────
 
   PlacementEditor.prototype.loadPdf = async function (arrayBuffer, placementJson) {
     if (this.pdfDoc && this.pdfDoc.destroy) { try { this.pdfDoc.destroy(); } catch (_) { } }
     this.pdfDoc = await this.pdfjs.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+    this._syncPageCount();
     if (placementJson) this._seed(placementJson); // silent — loading isn't a user edit
     await this._renderAll();
   };
