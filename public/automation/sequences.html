@@ -3385,6 +3385,23 @@ function seqEnrollStatusBadge(status) {
   return `<span class="exec-status-badge exec-status-${esc(status)}">${esc(status)}</span>`;
 }
 
+// Human gloss for sequence_step_log.skip_reason — mirrors cseqSkipDetail in
+// public/contact.html. 'unschedulable' reads like a fault but is intended
+// behavior; see scheduleFromStep in lib/sequenceEngine.js.
+const SEQ_SKIP_TEXT = {
+  unschedulable:
+    "window passed — this step's send time was already behind when the "
+    + "sequence started (e.g. appointment booked on short notice)",
+  condition_failed:      'template condition not met — enrollment cancelled',
+  step_condition_failed: 'step condition not met',
+  fire_guard_failed:     'fire guard blocked — too close to the appointment',
+  enrollment_not_active: 'enrollment was no longer active when the step fired',
+};
+function seqSkipDetail(reason) {
+  const key  = String(reason || '');
+  const text = SEQ_SKIP_TEXT[key] || key;
+  return `<span title="skip_reason: ${esc(key)}">skipped — ${esc(text)}</span>`;
+}
 function seqJobStatusBadge(status) {
   return `<span class="job-status-badge job-status-${esc(status)}">${esc(status)}</span>`;
 }
@@ -3792,10 +3809,16 @@ async function viewSequenceEnrollment(id) {
           const hasLog    = h.log_id != null;
           const rowCls    = hasLog ? '' : 'row-muted';
           const primary   = hasLog ? seqLogStatusBadge(h.log_status) : seqJobStatusBadge(h.job_status);
-          const secondary = hasLog
-            ? `<span style="margin-left:4px;opacity:0.75">${seqJobStatusBadge(h.job_status)}</span>`
-            : '';
-          const errText = h.error_message || h.skip_reason || '';
+          // h.job_status is null when the step never got a scheduled_jobs row
+          // (skipped at scheduling time) — render a plain note, not an empty pill.
+          const secondary = !hasLog
+            ? ''
+            : (h.job_status
+                ? `<span style="margin-left:4px;opacity:0.75">${seqJobStatusBadge(h.job_status)}</span>`
+                : `<span style="margin-left:4px;opacity:0.6;font-size:10px">never scheduled</span>`);
+          const errHtml = h.error_message
+            ? `<span>${esc(h.error_message)}</span>`
+            : (h.skip_reason ? seqSkipDetail(h.skip_reason) : '');
           const attemptsCell = (h.attempts != null && h.max_attempts != null)
             ? `${h.attempts}/${h.max_attempts}`
             : '—';
@@ -3803,7 +3826,7 @@ async function viewSequenceEnrollment(id) {
 
           // action_config_resolved — collapsible inside the Error/Detail column.
           let detailCell = '—';
-          if (errText) detailCell = `<span>${esc(errText)}</span>`;
+          if (errHtml) detailCell = errHtml;
           if (h.action_config_resolved) {
             const cfgJson = JSON.stringify(h.action_config_resolved, null, 2);
             const prefix = (detailCell === '—') ? '' : detailCell;

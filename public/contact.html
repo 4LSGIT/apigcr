@@ -1344,6 +1344,23 @@ function cseqJobBadge(status) {
   const s = String(status || '').toLowerCase();
   return `<span class="cseq-job-badge cseq-job-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
 }
+// Human gloss for sequence_step_log.skip_reason. Raw enum stays available
+// as a tooltip. 'unschedulable' in particular reads like a fault but is
+// intended behavior — see scheduleFromStep in lib/sequenceEngine.js.
+const CSEQ_SKIP_TEXT = {
+  unschedulable:
+    "window passed — this step's send time was already behind when the "
+    + "sequence started (e.g. appointment booked on short notice)",
+  condition_failed:      'template condition not met — enrollment cancelled',
+  step_condition_failed: 'step condition not met',
+  fire_guard_failed:     'fire guard blocked — too close to the appointment',
+  enrollment_not_active: 'enrollment was no longer active when the step fired',
+};
+function cseqSkipDetail(reason) {
+  const key  = String(reason || '');
+  const text = CSEQ_SKIP_TEXT[key] || key;
+  return `<span title="skip_reason: ${cseqEsc(key)}">skipped — ${cseqEsc(text)}</span>`;
+}
 function cseqLogBadge(status) {
   const s = String(status || '').toLowerCase();
   return `<span class="cseq-log-badge cseq-log-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
@@ -1678,15 +1695,21 @@ async function viewContactEnrollment(id) {
           const primary   = hasLog
             ? cseqLogBadge(h.log_status || '—')
             : cseqJobBadge(h.job_status || '—');
+          // job_id null = this step never got a scheduled_jobs row (skipped at
+          // scheduling time, not at execution time).
           const secondary = hasLog
-            ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">job: ${cseqEsc(h.job_status || '—')}</div>`
+            ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">${
+                 h.job_id == null
+                   ? 'never scheduled'
+                   : `job: ${cseqEsc(h.job_status || '—')}`
+               }</div>`
             : '';
           const attempts  = (h.attempts != null && h.max_attempts != null)
             ? `${cseqEsc(h.attempts)}/${cseqEsc(h.max_attempts)}` : '—';
           const duration  = (h.duration_ms != null) ? `${cseqEsc(h.duration_ms)} ms` : '—';
           const detail    = h.error_message
             ? cseqEsc(h.error_message)
-            : (h.skip_reason ? `skipped: ${cseqEsc(h.skip_reason)}` : '');
+            : (h.skip_reason ? cseqSkipDetail(h.skip_reason) : '');
           return `
             <tr class="${rowCls}">
               <td>${stepCell}</td>

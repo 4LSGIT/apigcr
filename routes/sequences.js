@@ -1283,10 +1283,32 @@ router.get('/sequences/enrollments/:id', jwtOrApiKey, async (req, res) => {
       });
     }
 
-    // ── NEW: derived step history from scheduled_jobs LEFT JOIN sequence_step_log ──
-    // One row per scheduled_jobs entry for this enrollment, scheduled_time ASC.
-    // Log fields are NULL for rows that never executed (pending, or cancelled-before-fire).
-    // step_number is read from sj.data JSON — scheduled_jobs has no dedicated column.
+    // ── Derived step history: scheduled_jobs LEFT JOIN sequence_step_log,
+    //    UNIONed with log rows that have no job row at all. ──
+    //
+    // Pass 1 (jobs-driven): one row per scheduled_jobs entry for this
+    // enrollment. Log fields are NULL for rows that never executed (pending,
+    // or cancelled-before-fire). step_number is read from sj.data JSON —
+    // scheduled_jobs has no dedicated column.
+    //
+    // Pass 2 (orphan log rows): steps that were logged but never got a
+    // scheduled_jobs row. In practice this is exactly the
+    // 'skipped'/'unschedulable' set — scheduleFromStep logs the skip and
+    // advances WITHOUT calling scheduleStepJob, so an appt booked inside a
+    // step's lead time leaves no job behind. Every other skip reason
+    // (condition_failed / fire_guard_failed / step_condition_failed) is
+    // logged inside executeStep, which only runs because a job fired, so
+    // those already appear via pass 1.
+    //
+    // Without pass 2 the drill-down silently starts at the first placeable
+    // step — e.g. an enrollment whose steps 1-2 were out of runway renders
+    // as "step 3, 4" with no explanation, which reads like data loss rather
+    // than intended behavior.
+    //
+    // Ordering is step_number ASC (nulls last) rather than scheduled_time —
+    // orphan rows have no scheduled_time to sort on, and step order is the
+    // natural reading order for this table. The two coincide in practice:
+    // scheduleFromStep walks steps in order against a non-decreasing floor.
     let history;
     if (includeHistory) {
       const [histRows] = await db.query(
@@ -1319,15 +1341,63 @@ router.get('/sequences/enrollments/:id', jwtOrApiKey, async (req, res) => {
         [id]
       );
 
-      history = histRows.map(r => {
-        // Defensively parse JSON columns (mysql2 may return object or string).
-        ['job_data','action_config_resolved','output_data'].forEach(col => {
-          if (typeof r[col] === 'string') {
-            try { r[col] = JSON.parse(r[col]); } catch {}
-          }
+      // Pass 2 — log rows with no corresponding scheduled_jobs row.
+      // NULL-safe compare (<=>) so a log row with a NULL step_number (the
+      // 'enrollment_not_active' path) is treated as unmatched and surfaces
+      // here rather than vanishing.
+      const [orphanRows] = await db.query(
+        `SELECT
+           NULL                       AS job_id,
+           NULL                       AS scheduled_time,
+           NULL                       AS job_status,
+           NULL                       AS attempts,
+           NULL                       AS max_attempts,
+           NULL                       AS job_updated_at,
+           NULL                       AS job_data,
+           l.step_number,
+           l.id                       AS log_id,
+           l.status                   AS log_status,
+           l.skip_reason,
+           l.error_message,
+           l.duration_ms,
+           l.executed_at,
+           l.action_config_resolved,
+           l.output_data,
+           l.step_id                  AS log_step_id,
+           s.action_type
+         FROM sequence_step_log l
+         LEFT JOIN sequence_steps s ON s.id = l.step_id
+         WHERE l.enrollment_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM scheduled_jobs sj
+              WHERE sj.type = 'sequence_step'
+                AND sj.sequence_enrollment_id = l.enrollment_id
+                AND CAST(JSON_UNQUOTE(JSON_EXTRACT(sj.data, '$.stepNumber')) AS UNSIGNED)
+                    <=> l.step_number
+           )`,
+        [id]
+      );
+
+      const stepOrd = v => (v == null ? Number.POSITIVE_INFINITY : Number(v));
+      const timeOrd = v => (v ? new Date(v).getTime() : 0);
+
+      history = [...histRows, ...orphanRows]
+        .map(r => {
+          // Defensively parse JSON columns (mysql2 may return object or string).
+          ['job_data','action_config_resolved','output_data'].forEach(col => {
+            if (typeof r[col] === 'string') {
+              try { r[col] = JSON.parse(r[col]); } catch {}
+            }
+          });
+          return r;
+        })
+        .sort((a, b) => {
+          const d = stepOrd(a.step_number) - stepOrd(b.step_number);
+          if (d) return d;
+          const t = timeOrd(a.scheduled_time) - timeOrd(b.scheduled_time);
+          if (t) return t;
+          return Number(a.job_id || 0) - Number(b.job_id || 0);
         });
-        return r;
-      });
     }
 
     res.json({
