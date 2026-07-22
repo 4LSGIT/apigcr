@@ -146,7 +146,6 @@ public/availabilitymanager.html
 public/book.html
 public/bookingviewsmanager.html
 public/calendar.html
-public/caltest.html
 public/campaign.html
 public/case.html
 public/caseerror.html
