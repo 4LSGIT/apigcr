@@ -574,7 +574,16 @@ async function _tryEnrollReminders(db, row, reminderPolicy) {
     if (!seqTemplateId) return { enrolled: false, reason: 'no_sequence_configured' };
 
     const { buildContext } = require('./esignPrefillService');
-    const ctx = await buildContext(db, row.linkable_type, row.linkable_id);
+    // OPTIONS-OBJECT signature — buildContext(db, { linkableType, linkableId }).
+    // The original Phase 3 code called it positionally; a string second arg
+    // destructures to {linkableType: undefined} and returns an EMPTY context,
+    // so every send evented reminders_not_enrolled/no_contact even with a
+    // Primary relate present (live request 23). The mock in the test suite
+    // hid the drift — see the signature-contract test in esignReminders.
+    const ctx = await buildContext(db, {
+      linkableType: row.linkable_type,
+      linkableId:   row.linkable_id,
+    });
     const contactId = ctx && ctx.debtor1 ? Number(ctx.debtor1.contact_id) : null;
     if (!contactId) {
       await _tryAppendEvent(db, row.id, {

@@ -172,6 +172,14 @@ describe('_tryEnrollReminders — the resolution ladder', () => {
   test('rung 2: template sequence wins over the firm default', async () => {
     const out = await sendService._tryEnrollReminders({}, row(), { off: false, seqId: 12 });
     expect(out.enrolled).toBe(true);
+    // buildContext takes an OPTIONS OBJECT — the original Phase 3 code called
+    // it positionally and this mock happily accepted it, hiding a live bug
+    // (request 23: every send evented no_contact). Pin the shape here so the
+    // mock can never absorb that drift again; the contract test at the bottom
+    // of this describe proves the real function rejects the positional form.
+    expect(prefillService.buildContext).toHaveBeenCalledWith({}, {
+      linkableType: 'case', linkableId: 'ABC12345',
+    });
     expect(sequenceEngine.enrollContactByTemplateId)
       .toHaveBeenCalledWith({}, 301, 12, expect.objectContaining({
         signing_request_id: 7, case_id: 'ABC12345', tracking_id: 'TRK-7',
@@ -217,6 +225,22 @@ describe('_tryEnrollReminders — the resolution ladder', () => {
     const td = sequenceEngine.enrollContactByTemplateId.mock.calls[0][3];
     expect(td).not.toHaveProperty('case_id');
     expect(td.signing_request_id).toBe(7);
+  });
+
+  test('CONTRACT: the real buildContext requires the options object — positional args yield an empty context', async () => {
+    // Guards the exact drift the mock hid: if buildContext ever moves to a
+    // positional signature (or the helper regresses to one), one of these two
+    // assertions goes red. The real module runs against a db stub that would
+    // answer any query it makes.
+    const real = jest.requireActual('../services/esignPrefillService');
+    const db = { query: jest.fn(async () => [[{ contact_id: 301, contact_name: 'X' }]]) };
+
+    const positional = await real.buildContext(db, 'case', 'ABC12345');
+    expect(positional).toEqual({ caseRow: null, debtor1: null, debtor2: null });
+    expect(db.query).not.toHaveBeenCalled(); // never even reached the db
+
+    const objectForm = await real.buildContext(db, { linkableType: 'contact', linkableId: '301' });
+    expect(objectForm.debtor1).toMatchObject({ contact_id: 301 });
   });
 
   test('an enrollment failure is evented and swallowed — the send already happened', async () => {
