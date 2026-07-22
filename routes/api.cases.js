@@ -269,6 +269,100 @@ router.get('/api/cases/:id/log', jwtOrApiKey, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/cases/:id/sequences
+ * GET /api/cases/:id/workflows
+ *
+ * Case-scoped automation lists — mirrors of the contact-scoped endpoints in
+ * routes/api.contacts.js, aggregated across the case's related contacts
+ * (Primary/Secondary/Other via case_relate; Bystander excluded — see
+ * caseService.listCaseSequences for the convention note). Query params and
+ * response envelope match the contact endpoints exactly so
+ * public/automation/automationsWidget.html can consume either without
+ * branching; rows additionally carry contact_id + contact_name.
+ *
+ * Query params (both):
+ *   ?limit   (default 50, max 200)
+ *   ?offset  (default 0)
+ *   ?status  optional — validated against the entity's status enum
+ *   ?scope   'active' (default) or 'all'; ignored when ?status is supplied
+ *
+ * Response: { success: true, sequences|workflows: [...], total, active_total }
+ */
+router.get('/api/cases/:id/sequences', jwtOrApiKey, async (req, res) => {
+  try {
+    const caseId = req.params.id;
+
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit)  || 50));
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+
+    const status = req.query.status || null;
+    if (status && !['active', 'completed', 'cancelled'].includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid status. Must be one of: active, completed, cancelled',
+      });
+    }
+
+    const scope = req.query.scope === 'all' ? 'all' : 'active';
+
+    const result = await caseService.listCaseSequences(req.db, caseId, {
+      limit, offset, status, scope,
+    });
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Case not found' });
+    }
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('GET /api/cases/:id/sequences error:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch sequences',
+      message: err.message,
+    });
+  }
+});
+
+router.get('/api/cases/:id/workflows', jwtOrApiKey, async (req, res) => {
+  try {
+    const caseId = req.params.id;
+
+    const limit  = Math.min(200, Math.max(1, parseInt(req.query.limit)  || 50));
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+
+    const VALID_STATUSES = [
+      'active', 'processing', 'delayed',
+      'completed', 'completed_with_errors', 'failed', 'cancelled',
+    ];
+    const status = req.query.status || null;
+    if (status && !VALID_STATUSES.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
+      });
+    }
+
+    const scope = req.query.scope === 'all' ? 'all' : 'active';
+
+    const result = await caseService.listCaseWorkflows(req.db, caseId, {
+      limit, offset, status, scope,
+    });
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Case not found' });
+    }
+
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('GET /api/cases/:id/workflows error:', err);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch workflows',
+      message: err.message,
+    });
+  }
+});
+
 router.patch('/api/cases/:id/contacts/:contactId', jwtOrApiKey, async (req, res) => {
   const { relate_type } = req.body;
   if (!relate_type) return res.status(400).json({ status: 'error', message: 'relate_type required' });

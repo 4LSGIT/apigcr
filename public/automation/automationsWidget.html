@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Automations</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <style>
+    /* Widget chrome (esign/caseWidget idiom). */
+    body { margin: 0; padding: 12px; background: #fff; }
+
+  /* ── Sequences + Workflows tab (slice 4.3) — all classes prefixed
+         .cauto- (shared), .cseq- (sequence-specific),
+         or .cwf- (workflow-specific) for scoping ── */
+
+/* Shared tab-level header: holds the scope toggle + refresh. Governs BOTH
+   the sequences section and the workflows section below it. */
+.cauto-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px 14px;
+  flex-wrap: wrap;
+}
+
+/* Per-section sub-header: section title + "N active" / "N active of M total"
+   count. Each section (sequences, workflows) gets one. */
+.cauto-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 4px 6px;
+  border-top: 1px solid #e2e8f0;
+}
+.cauto-section-head:first-of-type { border-top: none; }
+.cauto-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+.cauto-section-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+}
+
+/* Divider between sections. */
+.cauto-divider {
+  border: none;
+  border-top: 1px solid #e2e8f0;
+  margin: 18px 0 6px;
+}
+
+/* Scope toggle — shared across both sections. */
+.cseq-scope-toggle {
+  display: inline-flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.cseq-scope-btn {
+  background: #fff;
+  border: none;
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #334155;
+}
+.cseq-scope-btn.active { background: #2563eb; color: #fff; }
+.cseq-scope-btn:not(.active):hover { background: #f1f5f9; }
+
+/* Refresh button — shared header. */
+.cseq-refresh-btn {
+  background: #fff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  color: #334155;
+}
+.cseq-refresh-btn:hover { background: #f1f5f9; }
+
+/* Tables — sequences + workflows share the same layout treatment. */
+.cseq-table th, .cseq-table td,
+.cwf-table  th, .cwf-table  td { text-align: left; padding: 6px 8px; vertical-align: top; }
+.cseq-template-name,
+.cwf-workflow-name { font-weight: 600; color: #0f172a; }
+.cseq-template-type { font-size: 11px; color: #64748b; }
+.cseq-id,
+.cwf-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #475569; }
+
+.cseq-empty,
+.cwf-empty {
+  color: #94a3b8;
+  font-weight: 400;
+  padding: 18px;
+  text-align: center;
+  margin: 6px 0;
+}
+
+.cseq-pagination,
+.cwf-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 4px;
+  font-size: 12px;
+  color: #475569;
+}
+.cseq-pagination button,
+.cwf-pagination button {
+  padding: 3px 10px;
+  font-size: 11px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  color: #334155;
+}
+.cseq-pagination button:disabled,
+.cwf-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Status badges — sequence.status enum (active, completed, cancelled). */
+.cseq-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.cseq-status-active    { background: #dbeafe; color: #1e40af; }
+.cseq-status-completed { background: #dcfce7; color: #166534; }
+.cseq-status-cancelled { background: #fee2e2; color: #991b1b; }
+
+/* Status badges — workflow_executions.status enum (superset; kept distinct
+   from sequence badges because the enums don't line up even where names
+   do — e.g. workflows have 'processing' and 'delayed' which sequences
+   don't). */
+.cwf-status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.cwf-status-pending               { background: #fef3c7; color: #92400e; }
+.cwf-status-active                { background: #dbeafe; color: #1e40af; }
+.cwf-status-processing            { background: #e0e7ff; color: #3730a3; }
+.cwf-status-delayed               { background: #fef9c3; color: #854d0e; }
+.cwf-status-completed             { background: #dcfce7; color: #166534; }
+.cwf-status-completed_with_errors { background: #fed7aa; color: #9a3412; }
+.cwf-status-failed                { background: #fee2e2; color: #991b1b; }
+.cwf-status-cancelled             { background: #e2e8f0; color: #475569; }
+
+/* Step-history badges (drill-down modal) — sequence variant. */
+.cseq-job-badge, .cseq-log-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.cseq-job-pending    { background: #fef3c7; color: #92400e; }
+.cseq-job-running    { background: #dbeafe; color: #1e40af; }
+.cseq-job-completed  { background: #dcfce7; color: #166534; }
+.cseq-job-failed     { background: #fee2e2; color: #991b1b; }
+.cseq-log-sent       { background: #dcfce7; color: #166534; }
+.cseq-log-skipped    { background: #e5e7eb; color: #374151; }
+.cseq-log-failed     { background: #fee2e2; color: #991b1b; }
+
+/* Step-history badges (drill-down modal) — workflow variant, uses
+   workflow_execution_steps.status enum (success | failed, engine-written). */
+.cwf-step-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.cwf-step-success { background: #dcfce7; color: #166534; }
+.cwf-step-failed  { background: #fee2e2; color: #991b1b; }
+.cwf-step-skipped { background: #e5e7eb; color: #374151; }
+.cwf-step-delayed { background: #fef9c3; color: #854d0e; }
+
+/* Row buttons — shared between sections. */
+.cseq-view-btn, .cseq-cancel-btn,
+.cwf-view-btn,  .cwf-cancel-btn {
+  padding: 3px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 4px;
+}
+.cseq-view-btn, .cwf-view-btn {
+  background: #fff;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+}
+.cseq-view-btn:hover, .cwf-view-btn:hover { background: #f1f5f9; }
+.cseq-cancel-btn, .cwf-cancel-btn {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+.cseq-cancel-btn:hover, .cwf-cancel-btn:hover { background: #fecaca; }
+
+/* Drill-down step-history tables (rendered inside a Swal modal; styles
+   are global because Swal renders into document.body, not a shadow DOM). */
+.cseq-history-table,
+.cwf-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-top: 6px;
+}
+.cseq-history-table th,
+.cseq-history-table td,
+.cwf-history-table th,
+.cwf-history-table td {
+  border: 1px solid #e2e8f0;
+  padding: 4px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+.cseq-history-table th,
+.cwf-history-table th { background: #f1f5f9; font-weight: 600; }
+.cseq-history-table tr.cseq-row-muted td,
+.cwf-history-table  tr.cwf-row-muted  td { color: #94a3b8; background: #f8fafc; }
+.cseq-history-table .cseq-error-cell,
+.cwf-history-table  .cwf-error-cell {
+  max-width: 260px;
+  word-break: break-word;
+  color: #991b1b;
+}
+
+
+    /* Case-mode caveat note. Automations are contact-scoped; the case view
+       is a convenience union across related contacts, so rows here may
+       belong to another matter. Hidden in contact mode (no ambiguity there). */
+    .wcase-note { display: none; }
+    body.mode-case .wcase-note {
+      display: block;
+      font-size: 12px;
+      color: #64748b;
+      padding: 0 4px 10px;
+    }
+
+    /* Contact column — case mode only. Hidden wholesale in contact mode
+       (single-contact view; the column would repeat one name). */
+    body.mode-contact .wcol-contact { display: none; }
+    .wcol-contact a { color: #07ADEF; text-decoration: none; font-weight: 500; }
+    .wcol-contact a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+<!-- ═══════════════════════════════════════════════════════════════════════
+  AUTOMATIONS WIDGET — sequences + workflows for one entity.
+
+  Iframed into case.html's Automations tab AND contact.html's tabSeq (lazy
+  src on first tab open, mirroring esign/caseWidget.html). Reads exactly one
+  of ?case_id= / ?contact_id=; that decides which list endpoints it talks to:
+
+    case mode     GET /api/cases/:id/sequences|workflows
+                  (union across the case's related contacts —
+                   Primary/Secondary/Other via case_relate; rows carry
+                   contact_id + contact_name, surfaced in the Contact column)
+    contact mode  GET /api/contacts/:id/sequences|workflows
+                  (Contact column hidden — see body.mode-contact CSS)
+
+  Drill-down / cancel / fire-now / recover endpoints are entity-agnostic
+  (they key on enrollment/execution ids) and identical in both modes.
+
+  This file IS the former contact.html tabSeq implementation (slice 4.3
+  Parts A+B), lifted verbatim where possible. Deliberate deltas from the
+  inline original:
+    • transport: window.top.apiSend, NOT P.apiSend — this page sits two
+      iframes below the shell (widget → case/contact.html → index.html),
+      same as esign/caseWidget.html (courtpreview precedent). scripts.js's
+      `P = window.parent` would point at the entity page, which has no
+      apiSend.
+    • SPA entity-change guards removed: the entity id is pinned in this
+      iframe's URL for its whole lifetime (the shell opens one iframe per
+      file), so the `clientID !== contactAtCall` re-checks are meaningless
+      here.
+    • tab-visibility polling stop: the inline version checked
+      E('tabSeq').style.display; here the equivalent signal is
+      window.frameElement.offsetParent (null while the parent tab-content
+      div is display:none). Same-origin, so frameElement is readable.
+    • parent lifecycle contract: window.reloadAutomations() (parent tab
+      button calls it on re-entry) and window.stopAutomationPolling()
+      (parent openTab calls it on tab-away, for an immediate stop — the
+      offsetParent check inside the tick is the ≤5s belt-and-suspenders).
+
+  Function names drop the "Contact" infix of the originals; the cseq-/cwf-
+  helper + CSS namespaces are kept verbatim.
+═══════════════════════════════════════════════════════════════════════ -->
+
+<!-- Shared tab-level controls: scope toggle + refresh govern BOTH sections. -->
+<div class="cauto-header">
+  <div class="cseq-scope-toggle" role="tablist" aria-label="Automation scope">
+    <button type="button" class="cseq-scope-btn active"
+            data-scope="active"
+            onclick="sequencesSetScope('active')">Active only</button>
+    <button type="button" class="cseq-scope-btn"
+            data-scope="all"
+            onclick="sequencesSetScope('all')">Show all</button>
+  </div>
+  <button type="button" class="cseq-refresh-btn"
+          onclick="reloadAutomations()" title="Refresh both lists">
+    <i class="fa-solid fa-arrows-rotate"></i> Refresh
+  </button>
+</div>
+
+<div class="wcase-note">
+  <i class="fa-solid fa-circle-info"></i>
+  Automations are tracked per <b>contact</b>, not per case. This list is a
+  convenience view of everything for this case's related contacts — rows may
+  have been triggered by another matter.
+</div>
+
+<!-- ── SEQUENCES section ─────────────────────────────────────────── -->
+<div class="cauto-section-head">
+  <h3 class="cauto-section-title"><i class="fa-solid fa-repeat"></i> Sequences</h3>
+  <span id="cseq-count" class="cauto-section-count">—</span>
+</div>
+<table id="cseq-table" class="logTable cseq-table" style="display:none">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Template</th>
+      <th class="wcol-contact">Contact</th>
+      <th>Status</th>
+      <th>Step</th>
+      <th>Next Step</th>
+      <th>Enrolled</th>
+      <th>Completed</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody id="cseq-tbody"></tbody>
+</table>
+<h2 id="cseq-empty" class="cseq-empty" style="display:none">No active sequences.</h2>
+<div id="cseq-pagination" class="cseq-pagination"></div>
+
+<hr class="cauto-divider">
+
+<!-- ── WORKFLOWS section ─────────────────────────────────────────── -->
+<div class="cauto-section-head">
+  <h3 class="cauto-section-title"><i class="fa-solid fa-diagram-project"></i> Workflows</h3>
+  <span id="cwf-count" class="cauto-section-count">—</span>
+</div>
+<table id="cwf-table" class="logTable cwf-table" style="display:none">
+  <thead>
+    <tr>
+      <th>Execution</th>
+      <th>Workflow</th>
+      <th class="wcol-contact">Contact</th>
+      <th>Status</th>
+      <th>Step</th>
+      <th>Started</th>
+      <th>Completed</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody id="cwf-tbody"></tbody>
+</table>
+<h2 id="cwf-empty" class="cwf-empty" style="display:none">No active workflows.</h2>
+<div id="cwf-pagination" class="cwf-pagination"></div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────
+// Mode + entity resolution. Exactly one of ?case_id / ?contact_id.
+// ─────────────────────────────────────────────────────────────────────────
+const _qs       = new URLSearchParams(location.search);
+const CASE_ID    = _qs.get('case_id')    || '';
+const CONTACT_ID = _qs.get('contact_id') || '';
+const MODE       = CASE_ID ? 'case' : 'contact';
+const ENTITY_ID  = CASE_ID || CONTACT_ID;
+// List-endpoint base. Everything else (drill-down, cancel, fire-now,
+// recover) is entity-agnostic and identical in both modes.
+const LIST_BASE  = MODE === 'case'
+  ? `/api/cases/${ENTITY_ID}`
+  : `/api/contacts/${ENTITY_ID}`;
+
+document.body.classList.add(MODE === 'case' ? 'mode-case' : 'mode-contact');
+
+// Spinner/error-row colspans track the visible column count.
+const SEQ_COLSPAN = MODE === 'case' ? 9 : 8;
+const WF_COLSPAN  = MODE === 'case' ? 8 : 7;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shell transport — esign/caseWidget idiom. window.top, not P: scripts.js's
+// P = window.parent is the entity page here, which has no apiSend.
+// ─────────────────────────────────────────────────────────────────────────
+function api() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') {
+      return window.top.apiSend.apply(window.top, arguments);
+    }
+  } catch (_) { }
+  return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
+}
+
+// Hidden while the parent tab-content div is display:none. frameElement is
+// same-origin-readable; standalone opens (no frameElement) count as visible.
+function widgetHidden() {
+  try {
+    return !!(window.frameElement && !window.frameElement.offsetParent);
+  } catch (_) { return false; }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared state (one timer drives both lists).
+// ─────────────────────────────────────────────────────────────────────────
+const CAUTO = {
+  scope:     'active',   // 'active' | 'all' — shared across both sections
+  pollTimer: null,
+};
+
+const CSEQ = {
+  offset:       0,
+  limit:        50,
+  total:        0,
+  activeTotal:  0,
+  // Snapshot of last rendered rows so row-level helpers (Cancel, the case-
+  // mode Contact link) can look up names by id without squeezing them
+  // through inline onclick attributes (quote-escaping nightmare).
+  lastRows:     [],
+};
+
+const CWF = {
+  offset:       0,
+  limit:        50,
+  total:        0,
+  activeTotal:  0,
+  lastRows:     [],
+};
+
+const CSEQ_TERMINAL = new Set(['completed', 'cancelled']);
+// Workflow status enum has more entries. Non-terminal: active, processing,
+// delayed. Everything else terminates the execution.
+const CWF_TERMINAL  = new Set([
+  'completed', 'completed_with_errors', 'failed', 'cancelled'
+]);
+
+// ── Shared helpers (used by both sections + drill-down modals) ──────────
+function cseqEsc(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function cseqFmtDate(d) {
+  if (!d) return '—';
+  try { return new Date(d).toLocaleString(); } catch { return String(d); }
+}
+function cseqFmtDateShort(d) {
+  if (!d) return '—';
+  try {
+    return new Date(d).toLocaleDateString('en-US',
+      { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return String(d); }
+}
+function cseqStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cseq-status-badge cseq-status-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cwfStatusBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cwf-status-badge cwf-status-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cseqJobBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cseq-job-badge cseq-job-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+// Human gloss for sequence_step_log.skip_reason. Raw enum stays available
+// as a tooltip. 'unschedulable' in particular reads like a fault but is
+// intended behavior — see scheduleFromStep in lib/sequenceEngine.js.
+const CSEQ_SKIP_TEXT = {
+  unschedulable:
+    "window passed — this step's send time was already behind when the "
+    + "sequence started (e.g. appointment booked on short notice)",
+  condition_failed:      'template condition not met — enrollment cancelled',
+  step_condition_failed: 'step condition not met',
+  fire_guard_failed:     'fire guard blocked — too close to the appointment',
+  enrollment_not_active: 'enrollment was no longer active when the step fired',
+};
+function cseqSkipDetail(reason) {
+  const key  = String(reason || '');
+  const text = CSEQ_SKIP_TEXT[key] || key;
+  return `<span title="skip_reason: ${cseqEsc(key)}">skipped — ${cseqEsc(text)}</span>`;
+}
+function cseqLogBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cseq-log-badge cseq-log-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cwfStepBadge(status) {
+  const s = String(status || '').toLowerCase();
+  return `<span class="cwf-step-badge cwf-step-${cseqEsc(s)}">${cseqEsc(s)}</span>`;
+}
+function cseqParseJson(v) {
+  if (v == null) return null;
+  if (typeof v === 'object') return v;
+  try { return JSON.parse(v); } catch { return null; }
+}
+function cseqToast(icon, title, text) {
+  const T = (typeof Toast !== 'undefined') ? Toast
+          : (window.top && window.top.Toast);
+  if (T && typeof T.fire === 'function') T.fire({ icon, title, text });
+}
+
+// Case-mode Contact cell + click-through. Name lookup goes through the
+// cached rows (cancel-button pattern) so inline onclicks carry only ids.
+function contactCellHtml(r) {
+  if (MODE !== 'case') return '';
+  const name = r.contact_name || (r.contact_id != null ? `#${r.contact_id}` : '—');
+  const link = (r.contact_id != null)
+    ? `<a href="#" onclick="openAutomationContact(${r.contact_id});return false">${cseqEsc(name)}</a>`
+    : '—';
+  return `<td class="wcol-contact">${link}</td>`;
+}
+function openAutomationContact(contactId) {
+  const row = CSEQ.lastRows.find(r => r.contact_id === contactId)
+           || CWF.lastRows.find(r => r.contact_id === contactId);
+  const name = (row && row.contact_name) || String(contactId);
+  try {
+    if (window.top && typeof window.top.addFile === 'function') {
+      window.top.addFile(name, 'client', contactId);
+      return;
+    }
+  } catch (_) { }
+  cseqToast('error', 'Cannot open contact', 'Shell navigation unavailable.');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Combined reload — fires both loaders in parallel. Called by the scope
+// toggle handler, the Refresh button, first boot, and the PARENT page's
+// tab button on tab re-entry (window.reloadAutomations contract).
+// ─────────────────────────────────────────────────────────────────────────
+async function reloadAutomations() {
+  // Promise.all so a slow endpoint doesn't block the fast one. Individual
+  // errors are swallowed by the loader's own try/catch.
+  await Promise.all([
+    loadSequences(),
+    loadWorkflows(),
+  ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// SEQUENCES — list load, render, paging.
+// ─────────────────────────────────────────────────────────────────────────
+async function loadSequences() {
+  const tbody = E('cseq-tbody');
+  const empty = E('cseq-empty');
+  const table = E('cseq-table');
+  const count = E('cseq-count');
+  const pager = E('cseq-pagination');
+  if (!tbody || !empty || !table || !count || !pager) return;
+
+  // Inline spinner; the widget is already visible so the row swap is fine.
+  tbody.innerHTML = `<tr><td colspan="${SEQ_COLSPAN}" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>`;
+  table.style.display = '';
+  empty.style.display = 'none';
+
+  try {
+    const data = await api(
+      `${LIST_BASE}/sequences`, 'GET',
+      { limit: CSEQ.limit, offset: CSEQ.offset, scope: CAUTO.scope }
+    );
+
+    CSEQ.total       = data.total        || 0;
+    CSEQ.activeTotal = data.active_total || 0;
+    const rows = data.sequences || [];
+
+    count.textContent = CAUTO.scope === 'active'
+      ? `${CSEQ.activeTotal} active`
+      : `${CSEQ.activeTotal} active of ${CSEQ.total} total`;
+
+    if (!rows.length) {
+      table.style.display = 'none';
+      empty.style.display = '';
+      empty.textContent   = CAUTO.scope === 'active'
+        ? 'No active sequences.'
+        : 'No sequences yet.';
+      pager.innerHTML = '';
+      CSEQ.lastRows   = [];
+      // Don't stop polling here — the workflow side might still have active rows.
+      // The unified tick stops only when BOTH sides are all-terminal.
+      maybeStopAutomationPolling();
+      return;
+    }
+
+    tbody.innerHTML = renderSequenceRows(rows);
+    pager.innerHTML = renderSeqPager(rows.length);
+
+    const anySeqActive = rows.some(r =>
+      !CSEQ_TERMINAL.has(String(r.status).toLowerCase())
+    );
+    // Start polling if anything here is active. The workflow loader runs the
+    // same check; whichever runs later may flip back to "no polling needed"
+    // via maybeStopAutomationPolling.
+    if (anySeqActive) startAutomationPolling();
+    else              maybeStopAutomationPolling();
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="${SEQ_COLSPAN}" style="color:#991b1b;padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
+    pager.innerHTML = '';
+    // Transient fetch errors don't force a polling stop — they're often
+    // recoverable and the tick will retry on its own.
+  }
+}
+
+function renderSequenceRows(rows) {
+  CSEQ.lastRows = rows;  // cached for cancelEnrollment / Contact-link lookup
+  return rows.map(r => {
+    const typeLabel = (r.template_type && String(r.template_type).trim())
+      ? cseqEsc(r.template_type) : '—';
+    const isActive  = String(r.status).toLowerCase() === 'active';
+    const stepCell  = (r.current_step != null && r.total_steps != null)
+      ? `${cseqEsc(r.current_step)}/${cseqEsc(r.total_steps)}` : '—';
+    // Next-step time: only meaningful when the row is active AND the backend
+    // returned a non-null next_step_at (MIN scheduled_time of pending jobs).
+    // Belt-and-suspenders the isActive check too in case of transient race
+    // during a step transition (current step running, next not yet inserted).
+    const nextStepCell = (isActive && r.next_step_at)
+      ? cseqFmtDate(r.next_step_at)
+      : '—';
+    const cancelBtn = isActive
+      ? `<button type="button" class="cseq-cancel-btn"
+                 onclick="cancelEnrollment(${r.enrollment_id})">
+           <i class="fa-solid fa-ban"></i> Cancel
+         </button>`
+      : '';
+    const cancelReasonLine = r.cancel_reason
+      ? `<div style="font-size:10px;color:#991b1b;margin-top:2px">${cseqEsc(r.cancel_reason)}</div>`
+      : '';
+    return `
+      <tr>
+        <td class="cseq-id">#${cseqEsc(r.enrollment_id)}</td>
+        <td>
+          <div class="cseq-template-name">${cseqEsc(r.template_name || '—')}</div>
+          <div class="cseq-template-type">${typeLabel}</div>
+        </td>
+        ${contactCellHtml(r)}
+        <td>${cseqStatusBadge(r.status)}${cancelReasonLine}</td>
+        <td>${stepCell}</td>
+        <td>${nextStepCell}</td>
+        <td>${cseqFmtDateShort(r.enrolled_at)}</td>
+        <td>${cseqFmtDateShort(r.completed_at)}</td>
+        <td>
+          <button type="button" class="cseq-view-btn"
+                  onclick="viewEnrollment(${r.enrollment_id})">
+            <i class="fa-solid fa-eye"></i> View
+          </button>
+          ${cancelBtn}
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function renderSeqPager(visibleCount) {
+  if (CSEQ.total <= CSEQ.limit && CSEQ.offset === 0) return '';
+  const from    = CSEQ.offset + 1;
+  const to      = CSEQ.offset + visibleCount;
+  const hasPrev = CSEQ.offset > 0;
+  const hasNext = CSEQ.offset + CSEQ.limit < CSEQ.total;
+  return `
+    <button type="button" ${hasPrev ? '' : 'disabled'} onclick="sequencesPrevPage()">‹ Previous</button>
+    <span>Showing ${from}–${to} of ${CSEQ.total}</span>
+    <button type="button" ${hasNext ? '' : 'disabled'} onclick="sequencesNextPage()">Next ›</button>
+  `;
+}
+
+function sequencesPrevPage() {
+  CSEQ.offset = Math.max(0, CSEQ.offset - CSEQ.limit);
+  loadSequences();
+}
+function sequencesNextPage() {
+  if (CSEQ.offset + CSEQ.limit >= CSEQ.total) return;
+  CSEQ.offset += CSEQ.limit;
+  loadSequences();
+}
+
+// Scope toggle — drives BOTH sections via reloadAutomations().
+function sequencesSetScope(scope) {
+  if (scope !== 'active' && scope !== 'all') return;
+  if (CAUTO.scope === scope) return;
+  CAUTO.scope   = scope;
+  CSEQ.offset   = 0;
+  CWF.offset    = 0;
+  document.querySelectorAll('.cseq-scope-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.scope === scope);
+  });
+  stopAutomationPolling();  // fresh load decides whether to restart it
+  reloadAutomations();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// WORKFLOWS — list load, render, paging.
+// Mirrors the sequences shape exactly — same envelope, same scope rules,
+// same polling decisions. Status enum differs, so CWF_TERMINAL ≠ CSEQ_TERMINAL.
+// ─────────────────────────────────────────────────────────────────────────
+async function loadWorkflows() {
+  const tbody = E('cwf-tbody');
+  const empty = E('cwf-empty');
+  const table = E('cwf-table');
+  const count = E('cwf-count');
+  const pager = E('cwf-pagination');
+  if (!tbody || !empty || !table || !count || !pager) return;
+
+  tbody.innerHTML = `<tr><td colspan="${WF_COLSPAN}" style="text-align:center;padding:20px;color:#64748b"><i class="fa-solid fa-spinner fa-spin-pulse"></i></td></tr>`;
+  table.style.display = '';
+  empty.style.display = 'none';
+
+  try {
+    const data = await api(
+      `${LIST_BASE}/workflows`, 'GET',
+      { limit: CWF.limit, offset: CWF.offset, scope: CAUTO.scope }
+    );
+
+    CWF.total       = data.total        || 0;
+    CWF.activeTotal = data.active_total || 0;
+    const rows = data.workflows || [];
+
+    count.textContent = CAUTO.scope === 'active'
+      ? `${CWF.activeTotal} active`
+      : `${CWF.activeTotal} active of ${CWF.total} total`;
+
+    if (!rows.length) {
+      table.style.display = 'none';
+      empty.style.display = '';
+      empty.textContent   = CAUTO.scope === 'active'
+        ? 'No active workflows.'
+        : 'No workflows yet.';
+      pager.innerHTML = '';
+      CWF.lastRows    = [];
+      maybeStopAutomationPolling();
+      return;
+    }
+
+    tbody.innerHTML = renderWorkflowRows(rows);
+    pager.innerHTML = renderWfPager(rows.length);
+
+    const anyWfActive = rows.some(r =>
+      !CWF_TERMINAL.has(String(r.status).toLowerCase())
+    );
+    if (anyWfActive) startAutomationPolling();
+    else             maybeStopAutomationPolling();
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="${WF_COLSPAN}" style="color:#991b1b;padding:12px">Error: ${cseqEsc(err.message || String(err))}</td></tr>`;
+    pager.innerHTML = '';
+  }
+}
+
+function renderWorkflowRows(rows) {
+  CWF.lastRows = rows;  // cached for cancelWorkflow / Contact-link lookup
+  return rows.map(r => {
+    const status    = String(r.status || '').toLowerCase();
+    const isCancellable = ['active', 'processing', 'delayed'].includes(status);
+    const stepCell  = (r.current_step_number != null)
+      ? `${cseqEsc(r.current_step_number)}` : '—';
+    const cancelBtn = isCancellable
+      ? `<button type="button" class="cwf-cancel-btn"
+                 onclick="cancelWorkflow(${r.execution_id})">
+           <i class="fa-solid fa-ban"></i> Cancel
+         </button>`
+      : '';
+    const cancelReasonLine = r.cancel_reason
+      ? `<div style="font-size:10px;color:#991b1b;margin-top:2px">${cseqEsc(r.cancel_reason)}</div>`
+      : '';
+    return `
+      <tr>
+        <td class="cwf-id">#${cseqEsc(r.execution_id)}</td>
+        <td>
+          <div class="cwf-workflow-name">${cseqEsc(r.workflow_name || '—')}</div>
+          <div class="cseq-template-type">wf #${cseqEsc(r.workflow_id)}</div>
+        </td>
+        ${contactCellHtml(r)}
+        <td>${cwfStatusBadge(r.status)}${cancelReasonLine}</td>
+        <td>${stepCell}</td>
+        <td>${cseqFmtDateShort(r.created_at)}</td>
+        <td>${cseqFmtDateShort(r.completed_at)}</td>
+        <td>
+          <button type="button" class="cwf-view-btn"
+                  onclick="viewWorkflow(${r.execution_id})">
+            <i class="fa-solid fa-eye"></i> View
+          </button>
+          ${cancelBtn}
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function renderWfPager(visibleCount) {
+  if (CWF.total <= CWF.limit && CWF.offset === 0) return '';
+  const from    = CWF.offset + 1;
+  const to      = CWF.offset + visibleCount;
+  const hasPrev = CWF.offset > 0;
+  const hasNext = CWF.offset + CWF.limit < CWF.total;
+  return `
+    <button type="button" ${hasPrev ? '' : 'disabled'} onclick="workflowsPrevPage()">‹ Previous</button>
+    <span>Showing ${from}–${to} of ${CWF.total}</span>
+    <button type="button" ${hasNext ? '' : 'disabled'} onclick="workflowsNextPage()">Next ›</button>
+  `;
+}
+
+function workflowsPrevPage() {
+  CWF.offset = Math.max(0, CWF.offset - CWF.limit);
+  loadWorkflows();
+}
+function workflowsNextPage() {
+  if (CWF.offset + CWF.limit >= CWF.total) return;
+  CWF.offset += CWF.limit;
+  loadWorkflows();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sequences drill-down modal — mirrors viewSequenceEnrollment from
+// automationManager, with an inline Cancel action when enrollment.status
+// === 'active'.
+// ─────────────────────────────────────────────────────────────────────────
+async function viewEnrollment(id) {
+  try {
+    const data = await api(
+      `/sequences/enrollments/${id}`, 'GET',
+      { history: 'true', log: 'false' }
+    );
+    const en      = data.enrollment;
+    const history = data.history || [];
+    const trig    = cseqParseJson(en.trigger_data);
+
+    const historyRows = history.length
+      ? history.map(h => {
+          const hasLog    = h.log_id != null;
+          const rowCls    = hasLog ? '' : 'cseq-row-muted';
+          const stepCell  = h.step_number != null ? cseqEsc(h.step_number) : '—';
+          const actCell   = h.action_type ? cseqEsc(h.action_type) : '—';
+          // If a log row exists: primary badge = log_status; show job_status as
+          // a small secondary. If not: primary = job_status; row is muted.
+          const primary   = hasLog
+            ? cseqLogBadge(h.log_status || '—')
+            : cseqJobBadge(h.job_status || '—');
+          // job_id null = this step never got a scheduled_jobs row (skipped at
+          // scheduling time, not at execution time).
+          const secondary = hasLog
+            ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">${
+                 h.job_id == null
+                   ? 'never scheduled'
+                   : `job: ${cseqEsc(h.job_status || '—')}`
+               }</div>`
+            : '';
+          const attempts  = (h.attempts != null && h.max_attempts != null)
+            ? `${cseqEsc(h.attempts)}/${cseqEsc(h.max_attempts)}` : '—';
+          const duration  = (h.duration_ms != null) ? `${cseqEsc(h.duration_ms)} ms` : '—';
+          const detail    = h.error_message
+            ? cseqEsc(h.error_message)
+            : (h.skip_reason ? cseqSkipDetail(h.skip_reason) : '');
+          return `
+            <tr class="${rowCls}">
+              <td>${stepCell}</td>
+              <td>${actCell}</td>
+              <td>${primary}${secondary}</td>
+              <td>${cseqFmtDate(h.scheduled_time)}${cseqFireNowBtnHtml(en, h)}</td>
+              <td>${hasLog ? cseqFmtDate(h.executed_at) : '—'}</td>
+              <td>${attempts}</td>
+              <td>${duration}</td>
+              <td class="cseq-error-cell">${detail}</td>
+            </tr>`;
+        }).join('')
+      : '<tr><td colspan="8" style="text-align:center;padding:12px;color:#94a3b8">No step history.</td></tr>';
+
+    const cancelReasonBlock = (String(en.status).toLowerCase() === 'cancelled' && en.cancel_reason)
+      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+           <b>Cancel reason:</b> ${cseqEsc(en.cancel_reason)}
+         </div>`
+      : '';
+
+    const isActive = String(en.status).toLowerCase() === 'active';
+    const typeLabel = (en.template_type && String(en.template_type).trim())
+      ? cseqEsc(en.template_type) : '—';
+    const stepCell  = (en.current_step != null && en.total_steps != null)
+      ? `${cseqEsc(en.current_step)}/${cseqEsc(en.total_steps)}` : '—';
+
+    // Recover button shows only when the enrollment is wedged: active AND
+    // no pending/running scheduled_jobs row in history. Distinct from
+    // Fire Now, which targets an EXISTING pending job. If a pending row
+    // exists, the Fire Now button in that row's Scheduled cell is the
+    // right control and Recover stays hidden. See routes/sequences.js
+    // POST /enrollments/:id/recover for the backend contract.
+    const hasInFlightJob = history.some(h =>
+      h.job_status === 'pending' || h.job_status === 'running'
+    );
+    const showRecoverBtn = isActive && !hasInFlightJob;
+
+    const res = await Swal.fire({
+      title: `Enrollment #${id}`,
+      width: 820,
+      html: `
+        <div style="text-align:left;font-size:12px;max-height:65vh;overflow:auto">
+          <p><b>Status:</b> ${cseqStatusBadge(en.status)}</p>
+          <p style="margin-top:6px"><b>Template:</b>
+             ${cseqEsc(en.template_name || '—')}
+             <span style="color:#64748b">(${typeLabel})</span>
+          </p>
+          <p style="margin-top:6px"><b>Enrolled:</b> ${cseqFmtDate(en.enrolled_at)}</p>
+          <p style="margin-top:6px"><b>Completed:</b> ${cseqFmtDate(en.completed_at)}</p>
+          <p style="margin-top:6px"><b>Step:</b> ${stepCell}</p>
+          ${cancelReasonBlock}
+
+          ${trig ? `
+            <details style="margin-top:12px">
+              <summary style="cursor:pointer;font-weight:600">Trigger Data</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(trig, null, 2))}</pre>
+            </details>` : ''}
+
+          <h4 style="margin-top:14px;font-size:13px">Step History</h4>
+          <table class="cseq-history-table">
+            <thead>
+              <tr>
+                <th>Step</th><th>Action</th><th>Status</th>
+                <th>Scheduled</th><th>Executed</th>
+                <th>Attempts</th><th>Duration</th><th>Error / Detail</th>
+              </tr>
+            </thead>
+            <tbody>${historyRows}</tbody>
+          </table>
+        </div>`,
+      showCancelButton: true,
+      cancelButtonText:  'Close',
+      showConfirmButton: isActive,
+      confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel enrollment',
+      confirmButtonColor: '#dc2626',
+      showDenyButton:    showRecoverBtn,
+      denyButtonText:    '<i class="fa-solid fa-wand-magic-sparkles"></i> Recover stuck enrollment',
+      denyButtonColor:   '#4f8ef7',
+      reverseButtons: true,   // [Cancel enrollment] [Recover] [Close]
+      didOpen: (popup) => {
+        popup.querySelectorAll('.cseq-fire-now-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            handleSequenceFireNow(id, btn.dataset.jobId, btn.dataset.scheduledRaw);
+          });
+        });
+      },
+    });
+
+    if (res.isConfirmed && isActive) {
+      // Fire the shared cancel helper, explicitly passing the template_name
+      // so we don't need to look it up from the list cache (which may be on
+      // a different page of the paginated list).
+      cancelEnrollment(id, en.template_name || '');
+    } else if (res.isDenied && showRecoverBtn) {
+      handleSequenceRecover(id);
+    }
+  } catch (err) {
+    Swal.fire({ icon: 'error', title: 'Failed to load enrollment',
+                text: err.message || String(err) });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Fire Now — render helper + handler. Parallel to handleSequenceFireNow
+// in automation/sequences.html. Rendered as a small button in the Scheduled
+// column of the step-history table, only on the row representing the next-
+// to-execute step:
+//   - enrollment.status === 'active'
+//   - row has no log entry (step hasn't run)
+//   - job_status === 'pending'
+// Engine invariant guarantees at most one such row per enrollment.
+//
+// Reschedules the job to NOW; the next /process-jobs tick picks it up.
+// fire_guard and condition still apply at execution — this is NOT a
+// force-execute, just a scheduling override.
+// ─────────────────────────────────────────────────────────────────────────
+function cseqFireNowBtnHtml(en, h) {
+  const hasLog      = h.log_id != null;
+  const isActive    = String(en.status).toLowerCase() === 'active';
+  const showFireBtn = isActive && !hasLog && h.job_status === 'pending';
+  if (!showFireBtn) return '';
+  return `
+    <button type="button" class="cseq-fire-now-btn"
+            data-job-id="${h.job_id}"
+            data-scheduled-raw="${cseqEsc(h.scheduled_time || '')}"
+            title="Reschedule this step to fire on the next process-jobs tick"
+            style="margin-left:8px;padding:2px 8px;font-size:10px;
+                   background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer">
+      <i class="fa-solid fa-play"></i> Fire Now
+    </button>`;
+}
+
+async function handleSequenceFireNow(enrollmentId, jobId, scheduledRaw) {
+  // Close the enrollment-detail modal first so the confirmation dialog
+  // owns the screen; we'll re-open the detail modal after success.
+  Swal.close();
+
+  const result = await Swal.fire({
+    title: 'Fire this step now?',
+    html: `
+      <div style="text-align:left;font-size:13px;line-height:1.5">
+        <p><b>Job:</b> #${cseqEsc(String(jobId))}</p>
+        <p style="margin-top:6px"><b>Original scheduled:</b> ${cseqFmtDate(scheduledRaw)}</p>
+        <p style="margin-top:10px">This reschedules the job to <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
+        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply — a step that fails its condition will skip, just as it would have at the original time.</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Fire now',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#2563eb',
+  });
+  if (!result.isConfirmed) {
+    // User backed out — re-open the enrollment-detail modal.
+    viewEnrollment(enrollmentId);
+    return;
+  }
+
+  try {
+    const resp = await api(`/sequences/enrollments/${enrollmentId}/fire-next`, 'POST');
+    cseqToast('success', `Job ${resp.job_id} → NOW. Will fire on next process-jobs tick.`);
+    // Refresh the list (scheduled_time changed) then re-open the detail modal.
+    await loadSequences();
+    setTimeout(() => viewEnrollment(enrollmentId), 250);
+  } catch (e) {
+    cseqToast('error', e.message || 'Fire-now failed');
+    // Re-open the detail modal so the user sees current state.
+    setTimeout(() => viewEnrollment(enrollmentId), 250);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Recover stuck enrollment — handler for the denyButton in the enrollment-
+// detail modal. Distinct from Fire Now: this CREATES a new scheduled_jobs
+// row (because the enrollment has no pending/running job), whereas Fire Now
+// reschedules an EXISTING pending job. Parallel handler lives in
+// public/automation/sequences.html as seqEnrollRecover.
+//
+// Flow mirrors handleSequenceFireNow: close drill-down modal so the
+// confirm dialog owns the screen, confirm, POST /recover, toast, reload
+// list, reopen drill-down.
+// ─────────────────────────────────────────────────────────────────────────
+async function handleSequenceRecover(enrollmentId) {
+  Swal.close();
+  const result = await Swal.fire({
+    title: 'Recover stuck enrollment?',
+    html: `
+      <div style="text-align:left;font-size:13px;line-height:1.5">
+        <p>This enrollment is <b>active</b> but has no pending job — likely wedged when scheduling the next step failed (e.g. a transient calendar API blip).</p>
+        <p style="margin-top:10px">Recovery schedules the next step for <b>now</b>. The next <code>/process-jobs</code> tick (up to ~5 min away) will pick it up.</p>
+        <p style="margin-top:8px;color:#64748b;font-size:11px">The step's <code>fire_guard</code> and <code>condition</code> still apply at execution — a step that fails its condition will skip, just as it would have at the original time.</p>
+      </div>
+    `,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Recover',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#4f8ef7',
+  });
+  if (!result.isConfirmed) {
+    viewEnrollment(enrollmentId);
+    return;
+  }
+
+  try {
+    const resp = await api(`/sequences/enrollments/${enrollmentId}/recover`, 'POST');
+    if (resp.status === 'completed') {
+      cseqToast('success', `Enrollment ${enrollmentId} → completed (no next step).`);
+    } else {
+      cseqToast('success', `Step ${resp.step_number} scheduled (job ${resp.job_id}).`);
+    }
+    await loadSequences();
+    setTimeout(() => viewEnrollment(enrollmentId), 250);
+  } catch (e) {
+    cseqToast('error', e.message || 'Recovery failed');
+    setTimeout(() => viewEnrollment(enrollmentId), 250);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared enrollment-cancel helper — used by both row-level and drill-down.
+// Reason is required (min 3 chars). On success: toast + reload list.
+// ─────────────────────────────────────────────────────────────────────────
+async function cancelEnrollment(enrollmentId, templateNameOverride) {
+  // Row-level callers don't know the template_name inline (avoids quote-
+  // escaping nightmares), so look it up from the cached rows. Drill-down
+  // callers pass it explicitly.
+  const templateName = (templateNameOverride != null && templateNameOverride !== '')
+    ? templateNameOverride
+    : (CSEQ.lastRows.find(r => r.enrollment_id === enrollmentId)?.template_name || '');
+
+  // If the drill-down modal was left open, close it before opening confirm.
+  if (Swal.isVisible()) Swal.close();
+
+  const result = await Swal.fire({
+    title: `Cancel enrollment #${enrollmentId}?`,
+    html: templateName
+      ? `<div style="color:#64748b;margin-bottom:4px">Template: <b>${cseqEsc(templateName)}</b></div>`
+      : '',
+    input: 'text',
+    inputLabel: 'Reason (required, min 3 characters)',
+    inputPlaceholder: 'e.g. client asked to stop, duplicate enrollment',
+    inputValidator: (v) => {
+      if (!v || v.trim().length < 3) return 'Please enter a reason (min 3 characters).';
+    },
+    showCancelButton: true,
+    confirmButtonText: 'Confirm Cancel',
+    confirmButtonColor: '#dc2626',
+    reverseButtons: true,
+    showLoaderOnConfirm: true,
+    preConfirm: async (reason) => {
+      try {
+        await api(`/sequences/enrollments/${enrollmentId}/cancel`, 'POST',
+                  { reason: reason.trim() });
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    },
+  });
+
+  if (result.isConfirmed && result.value === true) {
+    cseqToast('success', 'Enrollment cancelled');
+    await loadSequences();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Workflows drill-down modal — lifted from automationManager's
+// viewWorkflowExecution, adapted to .cwf-* CSS namespace, and extended
+// with a Cancel-with-reason button (which the manager's version lacks).
+//
+// Shape note: workflow_execution_steps rows carry `step_number`, `step_id`
+// (soft-ref to workflow_steps), `status` enum 'success|failed', optional
+// `error_message`, `duration_ms`, `executed_at`. Resolved-config isn't
+// stored on the step row today — we surface the step_id as a thin ref.
+// ─────────────────────────────────────────────────────────────────────────
+async function viewWorkflow(id) {
+  try {
+    const data = await api(`/executions/${id}`, 'GET', { history: 'true' });
+    const ex      = data.execution || {};
+    const history = data.history   || [];
+
+    // Promote a nominally-completed execution to completed_with_errors if
+    // any step failed. Matches the automationManager heuristic so the badge
+    // doesn't lie; the engine itself also computes this via getWorkflowFinalStatus.
+    const rawStatus = String(ex.status || '').toLowerCase();
+    const displayStatus = (rawStatus.startsWith('completed')
+                            && history.some(h => h.status === 'failed'))
+      ? 'completed_with_errors'
+      : rawStatus;
+
+    const initDataObj  = cseqParseJson(ex.init_data);
+    const variablesObj = cseqParseJson(ex.variables);
+
+    const historyRowsHtml = history.length ? history.map(h => {
+      const fn = h.step_id != null ? `step_id ${cseqEsc(h.step_id)}` : '—';
+      const errorCell = h.error_message
+        ? `<div class="cwf-error-cell">${cseqEsc(h.error_message)}</div>`
+        : '';
+      return `
+        <tr>
+          <td>${h.step_number != null ? cseqEsc(h.step_number) : '—'}</td>
+          <td>${fn}</td>
+          <td>${cwfStepBadge(h.status)}</td>
+          <td>${h.duration_ms != null ? cseqEsc(h.duration_ms) + ' ms' : '—'}</td>
+          <td>${cseqFmtDate(h.executed_at)}</td>
+          <td>${errorCell}</td>
+        </tr>`;
+    }).join('')
+      : '<tr><td colspan="6" style="text-align:center;padding:12px;color:#94a3b8">No steps executed.</td></tr>';
+
+    const cancelReasonBlock = (rawStatus === 'cancelled' && ex.cancel_reason)
+      ? `<div style="margin-top:10px;padding:8px 10px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;color:#991b1b;font-size:12px">
+           <b>Cancel reason:</b> ${cseqEsc(ex.cancel_reason)}
+         </div>`
+      : '';
+
+    const isCancellable = ['active', 'processing', 'delayed'].includes(rawStatus);
+
+    const res = await Swal.fire({
+      title: `Execution #${id}`,
+      width: 820,
+      html: `
+        <div style="text-align:left;font-size:12px;max-height:65vh;overflow:auto">
+          <p><b>Workflow:</b>
+             ${cseqEsc(ex.workflow_name || '—')}
+             <span style="color:#64748b">(wf #${cseqEsc(ex.workflow_id)})</span>
+          </p>
+          <p style="margin-top:6px"><b>Status:</b> ${cwfStatusBadge(displayStatus)}</p>
+          <p style="margin-top:6px"><b>Started:</b> ${cseqFmtDate(ex.created_at)}</p>
+          <p style="margin-top:6px"><b>Updated:</b> ${cseqFmtDate(ex.updated_at)}</p>
+          <p style="margin-top:6px"><b>Completed:</b> ${cseqFmtDate(ex.completed_at)}</p>
+          <p style="margin-top:6px"><b>Current step:</b> ${ex.current_step_number == null ? '—' : cseqEsc(ex.current_step_number)}</p>
+          <p style="margin-top:6px"><b>Steps executed:</b> ${ex.steps_executed_count ?? 0}</p>
+          ${cancelReasonBlock}
+
+          ${initDataObj ? `
+            <details style="margin-top:12px">
+              <summary style="cursor:pointer;font-weight:600">Init Data</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(initDataObj, null, 2))}</pre>
+            </details>` : ''}
+
+          ${variablesObj ? `
+            <details style="margin-top:8px">
+              <summary style="cursor:pointer;font-weight:600">Variables</summary>
+              <pre style="background:#1e293b;color:#e2e8f0;padding:10px;border-radius:6px;font-size:11px;overflow:auto;max-height:220px;margin-top:6px">${cseqEsc(JSON.stringify(variablesObj, null, 2))}</pre>
+            </details>` : ''}
+
+          <h4 style="margin-top:14px;font-size:13px">Step History</h4>
+          <table class="cwf-history-table">
+            <thead>
+              <tr>
+                <th>Step</th><th>Ref</th><th>Status</th>
+                <th>Duration</th><th>Executed</th><th>Error</th>
+              </tr>
+            </thead>
+            <tbody>${historyRowsHtml}</tbody>
+          </table>
+        </div>`,
+      showCancelButton: true,
+      cancelButtonText:  'Close',
+      showConfirmButton: isCancellable,
+      confirmButtonText: '<i class="fa-solid fa-ban"></i> Cancel execution',
+      confirmButtonColor: '#dc2626',
+      reverseButtons: true,   // [Cancel execution] [Close]
+    });
+
+    if (res.isConfirmed && isCancellable) {
+      cancelWorkflow(id, ex.workflow_name || '');
+    }
+  } catch (err) {
+    Swal.fire({ icon: 'error', title: 'Failed to load execution',
+                text: err.message || String(err) });
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Shared workflow-cancel helper — mirrors cancelEnrollment.
+// Reason required (min 3 chars, trimmed), server enforces same validation.
+// ─────────────────────────────────────────────────────────────────────────
+async function cancelWorkflow(executionId, workflowNameOverride) {
+  const workflowName = (workflowNameOverride != null && workflowNameOverride !== '')
+    ? workflowNameOverride
+    : (CWF.lastRows.find(r => r.execution_id === executionId)?.workflow_name || '');
+
+  if (Swal.isVisible()) Swal.close();
+
+  const result = await Swal.fire({
+    title: `Cancel execution #${executionId}?`,
+    html: workflowName
+      ? `<div style="color:#64748b;margin-bottom:4px">Workflow: <b>${cseqEsc(workflowName)}</b></div>`
+      : '',
+    input: 'text',
+    inputLabel: 'Reason (required, min 3 characters)',
+    inputPlaceholder: 'e.g. client rescheduled, workflow stuck, manual intervention',
+    inputValidator: (v) => {
+      if (!v || v.trim().length < 3) return 'Please enter a reason (min 3 characters).';
+    },
+    showCancelButton: true,
+    confirmButtonText: 'Confirm Cancel',
+    confirmButtonColor: '#dc2626',
+    reverseButtons: true,
+    showLoaderOnConfirm: true,
+    preConfirm: async (reason) => {
+      try {
+        await api(`/executions/${executionId}/cancel`, 'POST',
+                  { reason: reason.trim() });
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err.message || String(err));
+        return false;
+      }
+    },
+  });
+
+  if (result.isConfirmed && result.value === true) {
+    cseqToast('success', 'Execution cancelled');
+    await loadWorkflows();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Unified polling — 5s cadence, one timer drives both lists.
+// Stop triggers (any of):
+//   (1) widget hidden — parent tab-content div went display:none
+//       (the parent page ALSO relays an immediate stopAutomationPolling()
+//        on tab-away; this in-tick check is the fallback)
+//   (2) BOTH lists have no non-terminal rows in their visible scope
+// The inline original also guarded against SPA contact switches; the entity
+// id is pinned in this iframe's URL, so that guard has no equivalent here.
+// ─────────────────────────────────────────────────────────────────────────
+function startAutomationPolling() {
+  // Idempotent: if already running, no-op.
+  if (CAUTO.pollTimer) return;
+  CAUTO.pollTimer = setInterval(async () => {
+    // Stop (1): widget hidden.
+    if (widgetHidden()) {
+      stopAutomationPolling();
+      return;
+    }
+
+    try {
+      // Parallel fetch. Both endpoints are idempotent GETs; the fast one
+      // doesn't block on the slow one.
+      const [seqData, wfData] = await Promise.all([
+        api(`${LIST_BASE}/sequences`, 'GET',
+            { limit: CSEQ.limit, offset: CSEQ.offset, scope: CAUTO.scope }),
+        api(`${LIST_BASE}/workflows`, 'GET',
+            { limit: CWF.limit,  offset: CWF.offset,  scope: CAUTO.scope }),
+      ]);
+
+      // Re-check after the awaits: the tab may have changed underneath us.
+      if (widgetHidden()) { stopAutomationPolling(); return; }
+
+      // ── Sequences section render ─────────────────────────────────────
+      {
+        const rows = seqData.sequences || [];
+        CSEQ.total       = seqData.total        || 0;
+        CSEQ.activeTotal = seqData.active_total || 0;
+        const count = E('cseq-count');
+        if (count) {
+          count.textContent = CAUTO.scope === 'active'
+            ? `${CSEQ.activeTotal} active`
+            : `${CSEQ.activeTotal} active of ${CSEQ.total} total`;
+        }
+        const tbody = E('cseq-tbody');
+        const empty = E('cseq-empty');
+        const table = E('cseq-table');
+        const pager = E('cseq-pagination');
+        if (tbody && empty && table && pager) {
+          if (!rows.length) {
+            table.style.display = 'none';
+            empty.style.display = '';
+            empty.textContent = CAUTO.scope === 'active'
+              ? 'No active sequences.'
+              : 'No sequences yet.';
+            pager.innerHTML = '';
+            CSEQ.lastRows   = [];
+          } else {
+            table.style.display = '';
+            empty.style.display = 'none';
+            tbody.innerHTML = renderSequenceRows(rows);
+            pager.innerHTML = renderSeqPager(rows.length);
+          }
+        }
+      }
+
+      // ── Workflows section render ─────────────────────────────────────
+      {
+        const rows = wfData.workflows || [];
+        CWF.total       = wfData.total        || 0;
+        CWF.activeTotal = wfData.active_total || 0;
+        const count = E('cwf-count');
+        if (count) {
+          count.textContent = CAUTO.scope === 'active'
+            ? `${CWF.activeTotal} active`
+            : `${CWF.activeTotal} active of ${CWF.total} total`;
+        }
+        const tbody = E('cwf-tbody');
+        const empty = E('cwf-empty');
+        const table = E('cwf-table');
+        const pager = E('cwf-pagination');
+        if (tbody && empty && table && pager) {
+          if (!rows.length) {
+            table.style.display = 'none';
+            empty.style.display = '';
+            empty.textContent = CAUTO.scope === 'active'
+              ? 'No active workflows.'
+              : 'No workflows yet.';
+            pager.innerHTML = '';
+            CWF.lastRows    = [];
+          } else {
+            table.style.display = '';
+            empty.style.display = 'none';
+            tbody.innerHTML = renderWorkflowRows(rows);
+            pager.innerHTML = renderWfPager(rows.length);
+          }
+        }
+      }
+
+      // Stop (2): both lists all-terminal. Evaluated against the fresh rows.
+      const anySeqActive = (seqData.sequences || []).some(r =>
+        !CSEQ_TERMINAL.has(String(r.status).toLowerCase()));
+      const anyWfActive  = (wfData.workflows || []).some(r =>
+        !CWF_TERMINAL.has(String(r.status).toLowerCase()));
+      if (!anySeqActive && !anyWfActive) stopAutomationPolling();
+
+    } catch (err) {
+      // Transient errors: keep the loop alive, next tick retries.
+      console.warn('[cauto] poll error:', err.message || err);
+    }
+  }, 5000);
+}
+
+function stopAutomationPolling() {
+  if (CAUTO.pollTimer) {
+    clearInterval(CAUTO.pollTimer);
+    CAUTO.pollTimer = null;
+  }
+}
+
+// Called by each loader's empty-list path. Stops the poll only if BOTH
+// lists currently have no active rows — avoids the sequences loader's
+// empty state from killing the timer while workflows is still running.
+function maybeStopAutomationPolling() {
+  const seqHasActive = (CSEQ.activeTotal || 0) > 0;
+  const wfHasActive  = (CWF.activeTotal  || 0) > 0;
+  if (!seqHasActive && !wfHasActive) stopAutomationPolling();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Boot — esign/caseWidget idiom: wait for the shell's apiSend, then load.
+// Parent lifecycle contract (case.html / contact.html):
+//   • tab button, first open  → sets iframe src (this file boots + loads)
+//   • tab button, re-entry    → calls contentWindow.reloadAutomations()
+//   • openTab away            → calls contentWindow.stopAutomationPolling()
+// ─────────────────────────────────────────────────────────────────────────
+(function waitForShell() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') {
+      if (!ENTITY_ID) {
+        document.body.insertAdjacentHTML('afterbegin',
+          '<h2 class="cseq-empty">Missing ?case_id or ?contact_id.</h2>');
+        return;
+      }
+      reloadAutomations();
+      return;
+    }
+  } catch (_) { }
+  setTimeout(waitForShell, 100);
+})();
+</script>
+</body>
+</html>

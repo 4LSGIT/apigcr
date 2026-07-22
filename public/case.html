@@ -55,6 +55,13 @@
       <button class="tab" onclick="openTab(this, 'tabLog')">
         <i class="fa-solid fa-receipt"></i> Case Log
       </button>
+      <!-- Automations widget (sequences + workflows across the case's related
+           contacts). Lazy iframe src on first open (esignButton idiom); on
+           re-entry pushes a reload into the widget so the lists are fresh.
+           id follows the ?Button URL-restore convention (?tab=auto). -->
+      <button class="tab" id="autoButton" onclick="openTab(this, 'tabAuto'); if (!E('autoFrame').src) E('autoFrame').src = `automation/automationsWidget.html?case_id=${caseID}`; else E('autoFrame').contentWindow?.reloadAutomations?.();">
+        <i class="fa-solid fa-robot"></i> Automations
+      </button>
       <!-- Signatures (e-sign, Phase 2C). Standard tab — every case type can
            send documents. Lazy src (tabEvents idiom): the widget iframe only
            loads on first open, so case pages without signing activity pay
@@ -378,6 +385,11 @@
     <!-- Signatures widget (Phase 2C). src set lazily by the tab button. -->
     <div id="tabEsign" class="tab-content">
       <iframe id="esignFrame"></iframe>
+    </div>
+
+    <!-- Automations widget. src set lazily by the tab button. -->
+    <div id="tabAuto" class="tab-content">
+      <iframe id="autoFrame"></iframe>
     </div>
 
     <div id="tabDB" class="tab-content">
@@ -1308,6 +1320,12 @@ function openTab(tab, tabName) {
   }
   document.querySelectorAll(".tab-content").forEach(t => t.style.display = "none");
   E(tabName).style.display = "block";
+  // Automations widget iframe: stop its 5s polling the moment the user
+  // leaves the tab. Entry-side lifecycle (lazy src + reload) lives on the
+  // tab button's onclick.
+  if (tabName !== 'tabAuto') {
+    try { E('autoFrame')?.contentWindow?.stopAutomationPolling?.(); } catch (_) { }
+  }
 }
 
 // ── Utilities ───────────────────────────────────────────────

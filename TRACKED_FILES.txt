@@ -131,6 +131,7 @@ public/assets/icon-512-dev.png
 public/assets/icon-512.png
 public/assets/manifest.json
 public/automation/activity.html
+public/automation/automationsWidget.html
 public/automation/courtReview.html
 public/automation/emailIngest.html
 public/automation/fnPicker.js

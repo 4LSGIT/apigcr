@@ -809,6 +809,187 @@ async function ensureCaseDropboxFolder(db, caseId, { force = false } = {}) {
 }
 
 
+
+// ─────────────────────────────────────────────────────────────
+// listCaseSequences / listCaseWorkflows
+// ─────────────────────────────────────────────────────────────
+//
+// Case-scoped automation lists. Neither sequence_enrollments nor
+// workflow_executions carries a case_id — both are contact-scoped — so
+// "the case's automations" is defined as the union of automations for the
+// case's related contacts, resolved via case_relate. Same aggregation
+// convention as the case log view (logService._buildCaseLogWhere, default
+// relateFilter) and the tasks include in getCase step 4: relate types
+// Primary/Secondary/Other, Bystander excluded.
+//
+// Row shapes mirror contactService.listContactSequences /
+// listContactWorkflows exactly, plus contact_id + contact_name (a case can
+// have several related contacts, so each row must say whose automation it
+// is). Consumed by public/automation/automationsWidget.html in case mode;
+// the contact-scoped twins in contactService stay untouched and serve the
+// same widget in contact mode.
+
+const CASE_AUTOMATION_RELATE_TYPES = ['Primary', 'Secondary', 'Other'];
+
+/**
+ * Resolve the contact ids whose automations count as "this case's".
+ * @returns {number[]|null} null if the case doesn't exist (route 404s);
+ *   [] if the case has no qualifying related contacts.
+ */
+async function _caseAutomationContactIds(db, caseId) {
+  const [[caseRow]] = await db.query(
+    'SELECT case_id FROM cases WHERE case_id = ?',
+    [caseId]
+  );
+  if (!caseRow) return null;
+
+  const [rels] = await db.query(
+    `SELECT case_relate_client_id
+       FROM case_relate
+      WHERE case_relate_case_id = ?
+        AND case_relate_type IN (?)`,
+    [caseId, CASE_AUTOMATION_RELATE_TYPES]
+  );
+  return rels.map(r => r.case_relate_client_id);
+}
+
+/**
+ * Sequence enrollments across the case's related contacts.
+ * Params + envelope mirror contactService.listContactSequences:
+ *   { sequences, total, active_total } — rows add contact_id, contact_name.
+ */
+async function listCaseSequences(db, caseId, {
+  limit  = 50,
+  offset = 0,
+  status = null,
+  scope  = 'active',
+} = {}) {
+  const clientIds = await _caseAutomationContactIds(db, caseId);
+  if (clientIds === null) return null;
+  if (!clientIds.length)  return { sequences: [], total: 0, active_total: 0 };
+
+  const effectiveStatus = status || (scope === 'active' ? 'active' : null);
+
+  const whereParts  = ['se.contact_id IN (?)'];
+  const whereParams = [clientIds];
+  if (effectiveStatus) {
+    whereParts.push('se.status = ?');
+    whereParams.push(effectiveStatus);
+  }
+  const whereSQL = whereParts.join(' AND ');
+
+  const [sequences] = await db.query(
+    `SELECT
+       se.id           AS enrollment_id,
+       se.template_id,
+       se.contact_id,
+       co.contact_name,
+       se.status,
+       se.current_step,
+       se.total_steps,
+       se.cancel_reason,
+       se.enrolled_at,
+       se.completed_at,
+       se.updated_at,
+       st.name         AS template_name,
+       st.type         AS template_type,
+       (SELECT MIN(sj.scheduled_time)
+          FROM scheduled_jobs sj
+         WHERE sj.sequence_enrollment_id = se.id
+           AND sj.status = 'pending') AS next_step_at
+     FROM sequence_enrollments se
+     JOIN sequence_templates st ON st.id = se.template_id
+     LEFT JOIN contacts co      ON co.contact_id = se.contact_id
+     WHERE ${whereSQL}
+     ORDER BY se.enrolled_at DESC
+     LIMIT ? OFFSET ?`,
+    [...whereParams, parseInt(limit, 10), parseInt(offset, 10)]
+  );
+
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM sequence_enrollments se WHERE ${whereSQL}`,
+    whereParams
+  );
+
+  const [[{ active_total }]] = await db.query(
+    `SELECT COUNT(*) AS active_total
+       FROM sequence_enrollments
+      WHERE contact_id IN (?) AND status = 'active'`,
+    [clientIds]
+  );
+
+  return { sequences, total, active_total };
+}
+
+/**
+ * Workflow executions across the case's related contacts.
+ * Params + envelope mirror contactService.listContactWorkflows:
+ *   { workflows, total, active_total } — rows add contact_id, contact_name.
+ * Executions that were never contact-tied (contact_id NULL — see
+ * lib/workflow_engine.js resolveExecutionContactId) don't appear here,
+ * exactly as on the contact view.
+ */
+async function listCaseWorkflows(db, caseId, {
+  limit  = 50,
+  offset = 0,
+  status = null,
+  scope  = 'active',
+} = {}) {
+  const clientIds = await _caseAutomationContactIds(db, caseId);
+  if (clientIds === null) return null;
+  if (!clientIds.length)  return { workflows: [], total: 0, active_total: 0 };
+
+  const NON_TERMINAL = ['active', 'processing', 'delayed'];
+
+  const whereParts  = ['we.contact_id IN (?)'];
+  const whereParams = [clientIds];
+  if (status) {
+    whereParts.push('we.status = ?');
+    whereParams.push(status);
+  } else if (scope === 'active') {
+    whereParts.push('we.status IN (?)');
+    whereParams.push(NON_TERMINAL);
+  }
+  const whereSQL = whereParts.join(' AND ');
+
+  const [workflows] = await db.query(
+    `SELECT
+       we.id                     AS execution_id,
+       we.workflow_id,
+       we.contact_id,
+       co.contact_name,
+       we.status,
+       we.current_step_number,
+       we.steps_executed_count,
+       we.cancel_reason,
+       we.created_at,
+       we.updated_at,
+       we.completed_at,
+       w.name                    AS workflow_name
+     FROM workflow_executions we
+     LEFT JOIN workflows w  ON w.id = we.workflow_id
+     LEFT JOIN contacts  co ON co.contact_id = we.contact_id
+     WHERE ${whereSQL}
+     ORDER BY we.created_at DESC
+     LIMIT ? OFFSET ?`,
+    [...whereParams, parseInt(limit, 10), parseInt(offset, 10)]
+  );
+
+  const [[{ total }]] = await db.query(
+    `SELECT COUNT(*) AS total FROM workflow_executions we WHERE ${whereSQL}`,
+    whereParams
+  );
+
+  const [[{ active_total }]] = await db.query(
+    `SELECT COUNT(*) AS active_total
+       FROM workflow_executions
+      WHERE contact_id IN (?) AND status IN (?)`,
+    [clientIds, NON_TERMINAL]
+  );
+
+  return { workflows, total, active_total };
+}
+
 module.exports = {
   listCases,
   getCase,
@@ -818,5 +999,7 @@ module.exports = {
   getCaseContacts,
   searchCases,
   checkCaseNumberCollision,
-  ensureCaseDropboxFolder
+  ensureCaseDropboxFolder,
+  listCaseSequences,
+  listCaseWorkflows
 };
