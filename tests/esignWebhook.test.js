@@ -161,6 +161,135 @@ describe('token verification', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+describe('token rotation — comma-separated candidates', () => {
+  test('any listed token passes', async () => {
+    const db = makeDb({ token: `NEWTOKEN,${TOKEN}` });
+    expect(await svc.verifyToken(db, 'NEWTOKEN')).toEqual({ ok: true });
+    expect(await svc.verifyToken(makeDb({ token: `NEWTOKEN,${TOKEN}` }), TOKEN)).toEqual({ ok: true });
+  });
+
+  test('unlisted token still fails', async () => {
+    const out = await svc.verifyToken(makeDb({ token: `NEWTOKEN,${TOKEN}` }), 'c'.repeat(64));
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('token_mismatch');
+  });
+
+  test('whitespace around candidates is tolerated', async () => {
+    expect(await svc.verifyToken(makeDb({ token: ` NEWTOKEN , ${TOKEN} ` }), 'NEWTOKEN')).toEqual({ ok: true });
+  });
+
+  test('a value of only commas/spaces is token_unset (fails closed)', async () => {
+    const out = await svc.verifyToken(makeDb({ token: ' , , ' }), TOKEN);
+    expect(out.ok).toBe(false);
+    // ' , , ' trims to ',' non-empty → candidates filter to none → unset.
+    expect(out.reason).toBe('token_unset');
+  });
+
+  test('single-token behavior is unchanged', async () => {
+    expect(await svc.verifyToken(makeDb(), TOKEN)).toEqual({ ok: true });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+describe('hmac verification', () => {
+  const crypto = require('crypto');
+  const SECRET = 'zoho-webhook-secret-key';
+  const BODY = '{"requests":{"request_id":"ZS-9001"}}';
+  const sigB64 = (secret, body) =>
+    crypto.createHmac('sha256', secret).update(body, 'utf8').digest('base64');
+  const sigHex = (secret, body) =>
+    crypto.createHmac('sha256', secret).update(body, 'utf8').digest('hex');
+
+  /** db serving the two-key IN query for hmac config (plus token reads). */
+  function hmacDb({ secret = SECRET, mode = 'log' } = {}) {
+    return {
+      query: jest.fn(async (sql, params) => {
+        if (/`key`\s+IN/i.test(sql)) {
+          const rows = [];
+          if (secret !== undefined) rows.push({ key: svc.WEBHOOK_SECRET_KEY, value: secret });
+          if (mode !== undefined) rows.push({ key: svc.WEBHOOK_HMAC_MODE_KEY, value: mode });
+          return [rows];
+        }
+        if (/FROM app_settings/i.test(sql)) return [[{ value: TOKEN }]];
+        return [[]];
+      }),
+    };
+  }
+
+  test('secret unset → mode off, always ok', async () => {
+    const out = await svc.evaluateHmac(hmacDb({ secret: '' }), { rawBody: BODY, signature: 'whatever' });
+    expect(out).toEqual({ mode: 'off', ok: true, reason: 'disabled' });
+  });
+
+  test('missing settings rows entirely → off (code-before-SQL is inert)', async () => {
+    const db = { query: jest.fn(async () => [[]]) };
+    const out = await svc.evaluateHmac(db, { rawBody: BODY, signature: 'x' });
+    expect(out.mode).toBe('off');
+    expect(out.ok).toBe(true);
+  });
+
+  test('valid base64 signature matches', async () => {
+    const out = await svc.evaluateHmac(hmacDb(), { rawBody: BODY, signature: sigB64(SECRET, BODY) });
+    expect(out).toEqual({ mode: 'log', ok: true, reason: 'match' });
+  });
+
+  test('mode setting "enforce" is reported; anything else is log', async () => {
+    const good = sigB64(SECRET, BODY);
+    expect((await svc.evaluateHmac(hmacDb({ mode: 'enforce' }), { rawBody: BODY, signature: good })).mode).toBe('enforce');
+    expect((await svc.evaluateHmac(hmacDb({ mode: '' }), { rawBody: BODY, signature: good })).mode).toBe('log');
+    expect((await svc.evaluateHmac(hmacDb({ mode: 'garbage' }), { rawBody: BODY, signature: good })).mode).toBe('log');
+  });
+
+  test('wrong signature → signature_mismatch with truncated diagnostics', async () => {
+    const out = await svc.evaluateHmac(hmacDb(), { rawBody: BODY, signature: 'AAAA'.repeat(11) });
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('signature_mismatch');
+    expect(out.presented.length).toBeLessThanOrEqual(16);
+    expect(out.expected.length).toBeLessThanOrEqual(16);
+  });
+
+  test('signature over DIFFERENT bytes mismatches (re-serialization guard)', async () => {
+    const out = await svc.evaluateHmac(hmacDb(), {
+      rawBody: BODY, signature: sigB64(SECRET, BODY + ' '),
+    });
+    expect(out.ok).toBe(false);
+  });
+
+  test('hex-encoded correct MAC is named, not accepted', async () => {
+    const out = await svc.evaluateHmac(hmacDb(), { rawBody: BODY, signature: sigHex(SECRET, BODY) });
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('mismatch_but_hex_encoding_matched');
+  });
+
+  test('missing signature → signature_missing', async () => {
+    const out = await svc.evaluateHmac(hmacDb(), { rawBody: BODY, signature: null });
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('signature_missing');
+  });
+
+  test('no raw body → raw_body_unavailable (never silently passes)', async () => {
+    const out = await svc.evaluateHmac(hmacDb(), { rawBody: null, signature: sigB64(SECRET, BODY) });
+    expect(out.ok).toBe(false);
+    expect(out.reason).toBe('raw_body_unavailable');
+  });
+
+  test('config read failure → enforce-shaped failure (fails closed)', async () => {
+    const db = { query: jest.fn(async () => { throw new Error('boom'); }) };
+    const out = await svc.evaluateHmac(db, { rawBody: BODY, signature: 'x' });
+    expect(out.ok).toBe(false);
+    expect(out.mode).toBe('enforce');
+    expect(out.reason).toBe('config_unreadable');
+  });
+
+  test('getHmacConfig trims and maps values', async () => {
+    expect(await svc.getHmacConfig(hmacDb({ secret: `  ${SECRET}  `, mode: ' enforce ' })))
+      .toEqual({ secret: SECRET, mode: 'enforce' });
+    expect(await svc.getHmacConfig(hmacDb({ secret: '   ', mode: 'enforce' })))
+      .toEqual({ secret: null, mode: 'off' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 describe('payload parsing', () => {
   test('reads the inferred requests + notifications shape', () => {
     const p = svc.parseZohoWebhook(zohoBody());

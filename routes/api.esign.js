@@ -115,13 +115,43 @@ router.post(WEBHOOK_PATH, esignWebhookLimiter, rawTextFallback, async (req, res)
     return res.status(401).json({ status: 'error' });
   }
 
-  // ── respond, then work ────────────────────────────────────────────────────
-  res.status(200).json({ status: 'received' });
-
+  // ── hmac gate ─────────────────────────────────────────────────────────────
+  // Second lock on the same door: the URL token proves the caller knows the
+  // URL; the signature proves the caller holds Zoho's webhook secret AND that
+  // the body wasn't altered in flight. Verification runs over the verbatim
+  // bytes (req.rawBody — captured by server.js's verify hooks; the text
+  // fallback's string body IS the raw bytes), never over a re-serialization.
+  //
+  // Mode semantics live in esignWebhookService (see WEBHOOK_HMAC_MODE_KEY):
+  // secret unset = off; 'enforce' rejects failures; anything else is log-only
+  // so the header's real-world shape can be observed before it is trusted to
+  // gate deliveries.
   const body = req.body;
   const rawBody = typeof req.rawBody === 'string'
     ? req.rawBody
     : (typeof body === 'string' ? body : null);
+
+  const hmac = await esignWebhookService.evaluateHmac(db, {
+    rawBody,
+    signature: req.get(esignWebhookService.SIGNATURE_HEADER),
+  });
+  if (hmac.mode !== 'off') {
+    const detail =
+      `mode=${hmac.mode} ok=${hmac.ok} reason=${hmac.reason}` +
+      (hmac.presented ? ` presented=${hmac.presented}…` : '') +
+      (hmac.expected ? ` expected=${hmac.expected}…` : '');
+    if (hmac.mode === 'enforce' && !hmac.ok) {
+      console.warn(`[ESIGN WEBHOOK] hmac REJECTED delivery from ip=${req.ip}: ${detail}`);
+      return res.status(401).json({ status: 'error' });
+    }
+    // Log-only mode narrates every verdict; enforce mode narrates passes too,
+    // so a healthy hmac leaves the same evidence trail either way.
+    (hmac.ok ? console.log : console.warn)(`[ESIGN WEBHOOK] hmac ${detail}`);
+  }
+
+  // ── respond, then work ────────────────────────────────────────────────────
+  res.status(200).json({ status: 'received' });
+
   const ip = req.ip;
 
   Promise.resolve()

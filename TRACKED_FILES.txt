@@ -198,6 +198,7 @@ ref/2026-07-19_esign_phase1c.sql
 ref/2026-07-20_esign_phase2e.sql
 ref/2026-07-20_firm_identity.sql
 ref/2026-07-21_esign_phase3.sql
+ref/2026-07-22_esign_webhook_hmac.sql
 ref/database.sql
 ref/files.md
 ref/gas.js

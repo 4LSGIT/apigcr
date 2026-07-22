@@ -36,7 +36,6 @@
  * request or job runs. startup/init.js is a documented no-op kept only for
  * back-compat and is NOT the place for new wiring.
  */
-/*todo: hmac*/
 const crypto = require('crypto');
 
 const esignService = require('./esignService');
@@ -48,6 +47,40 @@ const { mapRequestStatus, mapActionStatus } = require('./esign/zohoSignProvider'
 
 /** app_settings key holding the shared secret in the webhook URL. */
 const WEBHOOK_TOKEN_KEY = 'esign_webhook_token';
+
+/**
+ * app_settings key holding Zoho's webhook secret key (the one Zoho shows in
+ * its webhook configuration UI). EMPTY = HMAC verification is OFF entirely —
+ * the endpoint runs on the URL token alone, exactly as it did before this
+ * feature existed. Setting it arms verification in whatever mode
+ * WEBHOOK_HMAC_MODE_KEY selects.
+ */
+const WEBHOOK_SECRET_KEY = 'esign_webhook_secret';
+
+/**
+ * app_settings key selecting the HMAC posture once a secret is set:
+ *
+ *   'enforce'        — a delivery whose signature is missing, uncomputable
+ *                      (no raw body) or wrong is REJECTED with 401.
+ *   anything else    — LOG-ONLY: verification runs and its verdict is logged,
+ *   (incl. unset)      but no delivery is ever rejected for it.
+ *
+ * Log-only is the deliberate default because the signature header has never
+ * been OBSERVED on a live delivery — the header name and encoding come from
+ * Zoho's documentation, not from a captured request. Arming 'enforce' on an
+ * untested assumption would silently stop ALL inbound signing status (the
+ * endpoint fails closed) until nightly reconciliation caught up. The rollout
+ * is therefore: set the secret → watch the logs report 'match' on a real
+ * delivery → flip this to 'enforce'.
+ */
+const WEBHOOK_HMAC_MODE_KEY = 'esign_webhook_hmac_mode';
+
+/**
+ * The header Zoho signs deliveries with: base64(HMAC-SHA256(secret, rawBody)).
+ * Express lower-cases incoming header names; req.get() is case-insensitive
+ * anyway. Kept here so the route and the tests share one spelling.
+ */
+const SIGNATURE_HEADER = 'x-zs-webhook-signature';
 
 /** The only provider with a webhook route today. */
 const PROVIDER = 'zoho_sign';
@@ -182,6 +215,18 @@ async function getWebhookToken(db) {
 
 /**
  * @returns {Promise<{ok:boolean, reason?:string}>}
+ *
+ * ROTATION SUPPORT: the setting may hold SEVERAL tokens, comma-separated —
+ * any one of them passes. Zero-downtime rotation is therefore a pure data
+ * operation, no redeploy:
+ *
+ *   1. value = 'NEW,OLD'                 (both accepted)
+ *   2. update the URL in Zoho's console  (Zoho now presents NEW)
+ *   3. value = 'NEW'                     (OLD dies)
+ *
+ * Every candidate is still compared in constant time; the loop runs over ALL
+ * candidates unconditionally (no early return) so a match's position in the
+ * list is not observable either.
  */
 async function verifyToken(db, presented) {
   let expected;
@@ -195,7 +240,107 @@ async function verifyToken(db, presented) {
   // unauthenticated status-mutation endpoint is worse than a broken one.
   if (!expected) return { ok: false, reason: 'token_unset' };
   if (!presented) return { ok: false, reason: 'token_missing' };
-  return safeEqual(presented, expected) ? { ok: true } : { ok: false, reason: 'token_mismatch' };
+  const candidates = expected.split(',').map((s) => s.trim()).filter(Boolean);
+  if (candidates.length === 0) return { ok: false, reason: 'token_unset' };
+  let matched = false;
+  for (const c of candidates) {
+    if (safeEqual(presented, c)) matched = true;
+  }
+  return matched ? { ok: true } : { ok: false, reason: 'token_mismatch' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HMAC  (X-ZS-WEBHOOK-SIGNATURE)
+//
+// Zoho signs each delivery: base64(HMAC-SHA256(webhook secret, raw body)).
+// This is verification of the BYTES ON THE WIRE, which is why req.rawBody
+// (captured by server.js's verify hooks before any parser touches the stream)
+// is the only acceptable input — re-serializing req.body can produce different
+// bytes and a false mismatch. A delivery that reached the handler without a
+// captured raw body is 'raw_body_unavailable', never silently passed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Read the HMAC config. One query, both keys; missing rows tolerated (feature
+ * simply off until the migration runs — code-before-SQL is inert by design).
+ * Same direct-read posture as getWebhookToken (see its comment).
+ *
+ * @returns {Promise<{secret:string|null, mode:'off'|'log'|'enforce'}>}
+ */
+async function getHmacConfig(db) {
+  const [rows] = await db.query(
+    'SELECT `key`, `value` FROM app_settings WHERE `key` IN (?, ?)',
+    [WEBHOOK_SECRET_KEY, WEBHOOK_HMAC_MODE_KEY]
+  );
+  let secret = null;
+  let modeRaw = '';
+  for (const r of rows || []) {
+    if (r.key === WEBHOOK_SECRET_KEY) secret = r.value == null ? null : String(r.value).trim() || null;
+    if (r.key === WEBHOOK_HMAC_MODE_KEY) modeRaw = r.value == null ? '' : String(r.value).trim();
+  }
+  if (!secret) return { secret: null, mode: 'off' };
+  return { secret, mode: modeRaw === 'enforce' ? 'enforce' : 'log' };
+}
+
+/**
+ * Verify a delivery's signature against the configured secret.
+ *
+ * Never throws for a bad input — every outcome is a verdict object, because
+ * the ROUTE decides what a verdict costs (log mode: nothing; enforce mode:
+ * a 401). A config-read failure is reported as its own reason so enforce mode
+ * fails CLOSED on it, matching verifyToken's 'token_unreadable' posture.
+ *
+ * Diagnostic courtesy (the 9011 lesson — make the wrong assumption visible in
+ * one look): on a base64 mismatch the HEX digest is also compared, and a hex
+ * match is reported as its own reason. If Zoho turns out to encode the
+ * signature as hex rather than base64, the very first log-mode line says so
+ * instead of leaving a generic mismatch to bisect.
+ *
+ * @param {object} db
+ * @param {object} o
+ * @param {string|null} o.rawBody   verbatim request bytes (utf8 string)
+ * @param {string|null} o.signature presented X-ZS-WEBHOOK-SIGNATURE value
+ * @returns {Promise<{mode:'off'|'log'|'enforce', ok:boolean, reason:string, presented?:string, expected?:string}>}
+ */
+async function evaluateHmac(db, { rawBody = null, signature = null } = {}) {
+  let cfg;
+  try {
+    cfg = await getHmacConfig(db);
+  } catch (err) {
+    console.error(`[ESIGN WEBHOOK] could not read HMAC config: ${err.message}`);
+    return { mode: 'enforce', ok: false, reason: 'config_unreadable' };
+  }
+  if (cfg.mode === 'off') return { mode: 'off', ok: true, reason: 'disabled' };
+
+  const trunc = (s) => (s == null ? null : String(s).slice(0, 16));
+
+  if (rawBody == null) {
+    return { mode: cfg.mode, ok: false, reason: 'raw_body_unavailable', presented: trunc(signature) };
+  }
+  const presented = signature == null ? '' : String(signature).trim();
+  if (!presented) {
+    return { mode: cfg.mode, ok: false, reason: 'signature_missing' };
+  }
+
+  const mac = crypto.createHmac('sha256', cfg.secret).update(String(rawBody), 'utf8');
+  // .digest() consumes the hmac — compute once, encode twice.
+  const digest = mac.digest();
+  const b64 = digest.toString('base64');
+  const hex = digest.toString('hex');
+
+  if (safeEqual(presented, b64)) {
+    return { mode: cfg.mode, ok: true, reason: 'match' };
+  }
+  if (safeEqual(presented, hex) || safeEqual(presented.toLowerCase(), hex)) {
+    // Right MAC, wrong encoding assumption on OUR side. Not accepted — the
+    // contract is base64 until a live delivery proves otherwise — but named
+    // loudly so the fix is a one-liner, not a hunt.
+    return { mode: cfg.mode, ok: false, reason: 'mismatch_but_hex_encoding_matched', presented: trunc(presented) };
+  }
+  return {
+    mode: cfg.mode, ok: false, reason: 'signature_mismatch',
+    presented: trunc(presented), expected: trunc(b64),
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -800,12 +945,17 @@ module.exports = {
   processStatusChange,
   verifyToken,
   getWebhookToken,
+  getHmacConfig,
+  evaluateHmac,
   parseZohoWebhook,
   coerceBody,
   isDuplicateEvent,
   writeEventLog,
   safeEqual,
   WEBHOOK_TOKEN_KEY,
+  WEBHOOK_SECRET_KEY,
+  WEBHOOK_HMAC_MODE_KEY,
+  SIGNATURE_HEADER,
   LOGGED_EVENTS,
   OUTGOING_EVENTS,
   BOUNCE_HINT,

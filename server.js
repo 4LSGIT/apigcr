@@ -58,6 +58,16 @@ app.use('/hooks', express.json({
 app.use('/webhooks', express.json({
   verify: (req, res, buf) => { req.rawBody = buf.toString(); }
 }));
+// Urlencoded deliveries to /webhooks/* get the same raw-body capture. Without
+// this, a form-encoded webhook would be parsed by the GLOBAL urlencoded parser
+// below (which has no verify hook), req.rawBody would stay unset, and HMAC
+// verification over the wire bytes would be impossible for exactly that
+// content-type. Parsers short-circuit on req._body, so this scoped one wins
+// for /webhooks and the global one still serves everything else.
+app.use('/webhooks', express.urlencoded({
+  extended: true,
+  verify: (req, res, buf) => { req.rawBody = buf.toString(); }
+}));
 app.use(express.json({ limit: '10mb' }));//maybe limit to /upload?
 app.use(express.urlencoded({ extended: true }));
 // Landing pages: vanity-host middleware must run BEFORE express.static so a
