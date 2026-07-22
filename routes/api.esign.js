@@ -80,7 +80,15 @@ const esignWebhookLimiter = rateLimit({
  * Catch-all body parser for content-types the global parsers ignore.
  * No-ops when req._body is already set.
  */
-const rawTextFallback = express.text({ type: '*/*', limit: '2mb' });
+const rawTextFallback = express.text({
+  type: '*/*',
+  limit: '2mb',
+  // Exact wire bytes for HMAC (see server.js's /webhooks hooks): the string
+  // body express.text produces has been through a UTF-8 decode, which is not
+  // reversible for invalid sequences. Signature verification prefers this
+  // Buffer; the string keeps serving payload capture.
+  verify: (req, res, buf) => { req.rawBodyBuf = buf; },
+});
 
 /**
  * POST /webhooks/esign/zoho?token=…
@@ -130,9 +138,14 @@ router.post(WEBHOOK_PATH, esignWebhookLimiter, rawTextFallback, async (req, res)
   const rawBody = typeof req.rawBody === 'string'
     ? req.rawBody
     : (typeof body === 'string' ? body : null);
+  // Exact bytes beat decoded text: a Buffer captured by a verify hook is the
+  // wire payload verbatim; the string is a UTF-8 decode of it and can differ
+  // on invalid sequences. handleZohoWebhook still receives the STRING —
+  // payload capture wants readable text, only the MAC wants bytes.
+  const rawBytes = Buffer.isBuffer(req.rawBodyBuf) ? req.rawBodyBuf : rawBody;
 
   const hmac = await esignWebhookService.evaluateHmac(db, {
-    rawBody,
+    rawBody: rawBytes,
     signature: req.get(esignWebhookService.SIGNATURE_HEADER),
   });
   if (hmac.mode !== 'off') {

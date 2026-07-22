@@ -298,7 +298,10 @@ async function getHmacConfig(db) {
  *
  * @param {object} db
  * @param {object} o
- * @param {string|null} o.rawBody   verbatim request bytes (utf8 string)
+ * @param {Buffer|string|null} o.rawBody verbatim request bytes. A Buffer is
+ *   used as-is (byte-exact); a string is encoded back to UTF-8 bytes, which
+ *   round-trips correctly for any valid-UTF-8 payload but not for invalid
+ *   sequences — callers with access to the wire Buffer should pass it.
  * @param {string|null} o.signature presented X-ZS-WEBHOOK-SIGNATURE value
  * @returns {Promise<{mode:'off'|'log'|'enforce', ok:boolean, reason:string, presented?:string, expected?:string}>}
  */
@@ -322,7 +325,8 @@ async function evaluateHmac(db, { rawBody = null, signature = null } = {}) {
     return { mode: cfg.mode, ok: false, reason: 'signature_missing' };
   }
 
-  const mac = crypto.createHmac('sha256', cfg.secret).update(String(rawBody), 'utf8');
+  const macInput = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody), 'utf8');
+  const mac = crypto.createHmac('sha256', cfg.secret).update(macInput);
   // .digest() consumes the hmac — compute once, encode twice.
   const digest = mac.digest();
   const b64 = digest.toString('base64');

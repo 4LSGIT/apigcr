@@ -56,7 +56,7 @@ app.use('/hooks', express.json({
 //      exact bytes. Retrofitting that after the fact means editing this file
 //      under time pressure during an incident.
 app.use('/webhooks', express.json({
-  verify: (req, res, buf) => { req.rawBody = buf.toString(); }
+  verify: (req, res, buf) => { req.rawBody = buf.toString(); req.rawBodyBuf = buf; }
 }));
 // Urlencoded deliveries to /webhooks/* get the same raw-body capture. Without
 // this, a form-encoded webhook would be parsed by the GLOBAL urlencoded parser
@@ -64,9 +64,15 @@ app.use('/webhooks', express.json({
 // verification over the wire bytes would be impossible for exactly that
 // content-type. Parsers short-circuit on req._body, so this scoped one wins
 // for /webhooks and the global one still serves everything else.
+//
+// rawBodyBuf: buf.toString() is a UTF-8 DECODE — an invalid UTF-8 sequence
+// becomes U+FFFD, so re-encoding the string can differ from the wire bytes
+// and an HMAC computed over it would falsely mismatch. The Buffer is kept
+// alongside the string so signature verification uses exact bytes while every
+// string consumer (payload capture, logging) keeps its existing shape.
 app.use('/webhooks', express.urlencoded({
   extended: true,
-  verify: (req, res, buf) => { req.rawBody = buf.toString(); }
+  verify: (req, res, buf) => { req.rawBody = buf.toString(); req.rawBodyBuf = buf; }
 }));
 app.use(express.json({ limit: '10mb' }));//maybe limit to /upload?
 app.use(express.urlencoded({ extended: true }));

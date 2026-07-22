@@ -273,6 +273,33 @@ describe('hmac verification', () => {
     expect(out.reason).toBe('raw_body_unavailable');
   });
 
+  test('Buffer input is verified byte-exactly', async () => {
+    const buf = Buffer.from(BODY, 'utf8');
+    const sig = crypto.createHmac('sha256', SECRET).update(buf).digest('base64');
+    const out = await svc.evaluateHmac(hmacDb(), { rawBody: buf, signature: sig });
+    expect(out).toEqual({ mode: 'log', ok: true, reason: 'match' });
+  });
+
+  test('invalid-UTF-8 bytes: Buffer matches where the decoded string could not', async () => {
+    // 0x80 alone is not valid UTF-8. buf.toString() turns it into U+FFFD, so
+    // re-encoding the string yields DIFFERENT bytes — the exact hazard that
+    // motivated keeping the wire Buffer (req.rawBodyBuf) for verification.
+    const wire = Buffer.concat([Buffer.from('{"a":"'), Buffer.from([0x80]), Buffer.from('"}')]);
+    const sig = crypto.createHmac('sha256', SECRET).update(wire).digest('base64');
+
+    const viaBuffer = await svc.evaluateHmac(hmacDb(), { rawBody: wire, signature: sig });
+    expect(viaBuffer.ok).toBe(true);
+
+    const viaString = await svc.evaluateHmac(hmacDb(), { rawBody: wire.toString('utf8'), signature: sig });
+    expect(viaString.ok).toBe(false); // documents WHY the Buffer path exists
+  });
+
+  test('valid-UTF-8: Buffer and string inputs produce the same verdict', async () => {
+    const sig = sigB64(SECRET, BODY);
+    expect((await svc.evaluateHmac(hmacDb(), { rawBody: Buffer.from(BODY, 'utf8'), signature: sig })).ok).toBe(true);
+    expect((await svc.evaluateHmac(hmacDb(), { rawBody: BODY, signature: sig })).ok).toBe(true);
+  });
+
   test('config read failure → enforce-shaped failure (fails closed)', async () => {
     const db = { query: jest.fn(async () => { throw new Error('boom'); }) };
     const out = await svc.evaluateHmac(db, { rawBody: BODY, signature: 'x' });
