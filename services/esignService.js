@@ -828,6 +828,38 @@ async function applyStatus(db, id, { status, recipients = null, raw = null, occu
     payload:        { from_status: request.status, ...(raw != null ? { raw } : {}) },
   }, updated);
 
+  // ── Phase 3: a terminal row must never be nudged again ─────────────────────
+  // applyStatus is THE choke point — webhook, reconciliation, staff recall,
+  // satisfied_external and the esign_remind race guard all land here — so this
+  // is the one place where cancelling the reminder enrollment covers every
+  // path at once. BEST-EFFORT: a sequence-side hiccup must not un-say a status
+  // transition that already committed; the esign_remind step's own live status
+  // re-check is the second line of defense if this cancel is ever missed.
+  // Lazy require: sequenceEngine → job_executor → internal_functions →
+  // internal_functions/esign → THIS FILE is a load-time cycle; requiring at
+  // call time resolves it (repo precedent: sendService → templateService).
+  if (TERMINAL.has(status) && updated.seq_instance_id) {
+    try {
+      const { cancelEnrollment } = require('../lib/sequenceEngine');
+      await cancelEnrollment(db, updated.seq_instance_id, `esign_${status}`);
+      await _insertEvent(db, id, {
+        event: 'reminders_cancelled',
+        occurredAt: stamp,
+        payload: { enrollment_id: updated.seq_instance_id, reason: `esign_${status}` },
+      }, updated).catch(() => {});
+    } catch (err) {
+      console.error(
+        `[ESIGN] request ${id}: reminder enrollment ${updated.seq_instance_id} ` +
+        `could not be cancelled after '${status}': ${err.message}`
+      );
+      await _insertEvent(db, id, {
+        event: 'reminder_cancel_failed',
+        occurredAt: stamp,
+        payload: { enrollment_id: updated.seq_instance_id, error: err.message },
+      }, updated).catch(() => {});
+    }
+  }
+
   return { changed: true, request: updated };
 }
 

@@ -510,6 +510,112 @@ async function _tryStoreSource(db, id, buffer) {
 }
 
 /**
+ * Recover the reminder policy for a row from its provenance: a template-made
+ * row (template_id set) answers with its template's {off, seqId}; a one-time
+ * row answers null, which _tryEnrollReminders reads as "fall to the firm
+ * default". Used wherever a send happens WITHOUT the template in hand — the
+ * draft-retry path, and both resend branches. Never throws: an unreadable
+ * template degrades to the firm-default rung, not to a failed send.
+ */
+async function _reminderPolicyForRow(db, row) {
+  if (!row || !row.template_id) return null;
+  try {
+    const t = await require('./esignTemplateService').getTemplate(db, row.template_id);
+    if (!t) return null;
+    return { off: Boolean(t.reminders_off), seqId: t.reminder_seq_id || null };
+  } catch (err) {
+    console.warn(`[ESIGN SEND] could not read template ${row.template_id} for reminder policy: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * BEST-EFFORT reminder enrollment (Phase 3). Runs after a send has already
+ * succeeded, so — like source storage and credits above — a failure here may
+ * warn, event and NOTHING else. A client not getting nudges is a smaller
+ * failure than a sent envelope reported as an error.
+ *
+ * ── THE RESOLUTION LADDER ────────────────────────────────────────────────────
+ *   1. reminderPolicy.off === true            → no reminders (template said so)
+ *   2. reminderPolicy.seqId                   → that sequence template
+ *   3. app_settings.esign_reminder_seq_id     → the firm default
+ *   4. otherwise                              → no reminders
+ * One-time uploads pass no policy and land on rung 3/4.
+ *
+ * ── WHO GETS ENROLLED ────────────────────────────────────────────────────────
+ * Sequences are contact-keyed. The enrollment contact is debtor1 exactly as
+ * the prefill layer defines it (esignPrefillService.buildContext): the case's
+ * Primary relate, MIN(contact_id) tiebreak; a contact-linked send stands in as
+ * its own debtor1. No resolvable contact → event, no enrollment. The signer
+ * EMAILS are deliberately not matched against contacts — recipients can be a
+ * spouse's shared inbox or a paralegal, and the reminder clock belongs to the
+ * case's client either way.
+ *
+ * ── WIRING ───────────────────────────────────────────────────────────────────
+ * trigger_data carries signing_request_id (the seq step's esign_remind param
+ * AND the engine's duplicate-enrollment scope — Phase 3 migration), plus
+ * case_id/tracking_id/document_name for step-copy placeholders. The
+ * enrollment id is written back to signing_requests.seq_instance_id (the 1A
+ * pointer), which is what applyStatus cancels on a terminal transition.
+ * Lazy require of sequenceEngine: it reaches internal_functions/esign, which
+ * requires esignService — call-time require breaks the load cycle.
+ */
+async function _tryEnrollReminders(db, row, reminderPolicy) {
+  try {
+    if (reminderPolicy && reminderPolicy.off === true) return { enrolled: false, reason: 'template_off' };
+
+    let seqTemplateId = reminderPolicy && reminderPolicy.seqId ? Number(reminderPolicy.seqId) : null;
+    if (!seqTemplateId) {
+      const { getSettings } = require('./settingsService');
+      const s = await getSettings(db, ['esign_reminder_seq_id']);
+      const v = s.esign_reminder_seq_id != null ? String(s.esign_reminder_seq_id).trim() : '';
+      seqTemplateId = /^\d+$/.test(v) ? Number(v) : null;
+    }
+    if (!seqTemplateId) return { enrolled: false, reason: 'no_sequence_configured' };
+
+    const { buildContext } = require('./esignPrefillService');
+    const ctx = await buildContext(db, row.linkable_type, row.linkable_id);
+    const contactId = ctx && ctx.debtor1 ? Number(ctx.debtor1.contact_id) : null;
+    if (!contactId) {
+      await _tryAppendEvent(db, row.id, {
+        event: 'reminders_not_enrolled',
+        payload: { reason: 'no_contact', seq_template_id: seqTemplateId },
+      });
+      return { enrolled: false, reason: 'no_contact' };
+    }
+
+    const { enrollContactByTemplateId } = require('../lib/sequenceEngine');
+    const triggerData = {
+      signing_request_id: row.id,
+      tracking_id:        row.tracking_id,
+      document_name:      row.document_name,
+      ...(row.linkable_type === 'case' ? { case_id: row.linkable_id } : {}),
+    };
+    const enrollment = await enrollContactByTemplateId(db, contactId, seqTemplateId, triggerData);
+
+    await esignService.setSeqInstance(db, row.id, enrollment.enrollmentId);
+    await _tryAppendEvent(db, row.id, {
+      event: 'reminders_enrolled',
+      payload: {
+        enrollment_id: enrollment.enrollmentId,
+        seq_template_id: seqTemplateId,
+        sequence_name: enrollment.templateName,
+        first_reminder_at: enrollment.firstJobScheduledAt,
+        contact_id: contactId,
+      },
+    });
+    return { enrolled: true, enrollmentId: enrollment.enrollmentId };
+  } catch (err) {
+    console.warn(`[ESIGN SEND] reminder enrollment failed for request ${row.id}: ${err.message}`);
+    await _tryAppendEvent(db, row.id, {
+      event: 'reminders_enroll_failed',
+      payload: { error: err && err.message },
+    });
+    return { enrolled: false, reason: 'error', error: err && err.message };
+  }
+}
+
+/**
  * Stamp → send → mark sent → spend a credit.
  *
  * @param {object} db
@@ -540,7 +646,7 @@ async function _tryStoreSource(db, id, buffer) {
 async function sendPipeline(db, {
   linkableType, linkableId, kind, documentName, recipients,
   placements = null, expirationDays = null, createdBy, pdfBuffer, draftId = null,
-  templateId = null, textValues = null,
+  templateId = null, textValues = null, reminderPolicy = null,
 } = {}) {
   let row;
 
@@ -666,6 +772,14 @@ async function sendPipeline(db, {
   // fact: a storage hiccup must not un-say a successful send. Draft retries
   // upsert — the retried bytes may carry corrected fill-ins.
   await _tryStoreSource(db, row.id, sourceBuffer);
+
+  // ── reminder enrollment (Phase 3) ─────────────────────────────────────────
+  // Same best-effort posture, same reason. `updated` (post-markSent) carries
+  // the fields trigger_data wants. An explicit policy (sendFromTemplate) wins;
+  // otherwise the row's own template provenance answers (covers the draft-
+  // retry and duplicate-resend paths, which reach here without a template in
+  // hand); a one-time row falls through to the firm default inside.
+  await _tryEnrollReminders(db, updated, reminderPolicy || await _reminderPolicyForRow(db, updated));
 
   // ── credits ───────────────────────────────────────────────────────────────
   // ONLY for a real send. In test mode Zoho bills nothing, and decrementing a
@@ -796,6 +910,29 @@ async function resendPipeline(db, id, { recipients = null, pdfBuffer, createdBy 
     // out. Upserting the (possibly identical) buffer keeps that invariant
     // without needing to know which case this was.
     await _tryStoreSource(db, row.id, pdfBuffer);
+
+    // ── reminders (Phase 3) ─────────────────────────────────────────────────
+    // A bounce never cancelled the enrollment (cancellation is TERMINAL-only),
+    // so usually the clock is still running and the dup guard would refuse a
+    // second one anyway. Re-arm ONLY when the prior enrollment is finished or
+    // was never made — e.g. the sequence ran out while the envelope sat
+    // bounced, and this resend opens a fresh 14-day window that deserves
+    // fresh nudges. Policy rung: this path has no template in hand, so the
+    // row's own provenance decides — a template-made row re-reads its
+    // template's policy; a one-time row falls to the firm default.
+    let priorActive = false;
+    if (updated.seq_instance_id) {
+      try {
+        const [enr] = await db.query(
+          `SELECT status FROM sequence_enrollments WHERE id = ? LIMIT 1`,
+          [updated.seq_instance_id]
+        );
+        priorActive = Boolean(enr.length && enr[0].status === 'active');
+      } catch (_) { /* unknowable → treat as inactive; the dup guard is the backstop */ }
+    }
+    if (!priorActive) {
+      await _tryEnrollReminders(db, updated, await _reminderPolicyForRow(db, updated));
+    }
 
     if (result.testing === false) {
       try { await recordCreditSpend(db); } catch (_) { /* see sendPipeline */ }
@@ -1244,6 +1381,9 @@ async function sendFromTemplate(db, {
     pdfBuffer,
     textValues,
     templateId:     template.id,
+    // Phase 3 — rungs 1+2 of the reminder resolution ladder; sendPipeline's
+    // _tryEnrollReminders handles the firm-default and off rungs.
+    reminderPolicy: { off: Boolean(template.reminders_off), seqId: template.reminder_seq_id || null },
   });
 }
 
@@ -1477,4 +1617,6 @@ module.exports = {
   _validateRecipients,
   _validateExpirationDays,
   _daysPending,
+  _tryEnrollReminders,
+  _reminderPolicyForRow,
 };

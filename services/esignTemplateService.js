@@ -450,6 +450,35 @@ async function getTemplatePdf(db, templateId) {
 }
 
 /**
+ * Phase 3 closes 2B's passthrough: reminder_seq_id must reference an EXISTING,
+ * ACTIVE sequence_templates row at save time. Same posture as
+ * assertExpressionColumnsExist below — the author is right there, so a
+ * dangling id stops the save instead of silently producing sends that never
+ * nudge. Runtime stays defensive anyway (enrollContactByTemplateId throws on
+ * a missing/inactive template and the send's best-effort wrapper records it):
+ * a sequence deactivated AFTER the template saved degrades, never breaks.
+ *
+ * @throws ESIGN_BAD_TEMPLATE
+ */
+async function _assertReminderSeqExists(db, seqId) {
+  if (seqId == null) return;
+  const [rows] = await db.query(
+    `SELECT id, name, active FROM sequence_templates WHERE id = ? LIMIT 1`,
+    [Number(seqId)]
+  );
+  if (!rows.length) {
+    throw _err('ESIGN_BAD_TEMPLATE',
+      `reminder_seq_id ${seqId} does not match any sequence template. ` +
+      `Pick an existing sequence, or leave it blank to use the firm default.`);
+  }
+  if (!rows[0].active) {
+    throw _err('ESIGN_BAD_TEMPLATE',
+      `Sequence "${rows[0].name}" (#${seqId}) is inactive. ` +
+      `Reactivate it, pick another, or leave the field blank for the firm default.`);
+  }
+}
+
+/**
  * SAVE-TIME column-existence check for expression resolvers (Phase 2E).
  *
  * validateTemplateInput's pure checks already settled syntax, allowed table
@@ -506,6 +535,7 @@ async function assertExpressionColumnsExist(db, prefillSchema) {
 async function createTemplate(db, input, resolverWhitelist) {
   const { clean, warnings } = validateTemplateInput(input, resolverWhitelist);
   await assertExpressionColumnsExist(db, clean.prefillSchema);
+  await _assertReminderSeqExists(db, clean.reminderSeqId);
 
   // Both JSON columns supplied EXPLICITLY — non-strict sql_mode turns an
   // omitted NOT NULL JSON column into JSON null, and nothing errors until a
@@ -570,6 +600,7 @@ async function updateTemplate(db, id, input, resolverWhitelist) {
 
   const { clean, warnings } = validateTemplateInput(merged, resolverWhitelist);
   await assertExpressionColumnsExist(db, clean.prefillSchema);
+  await _assertReminderSeqExists(db, clean.reminderSeqId);
 
   await db.query(
     `UPDATE contract_templates

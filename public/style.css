@@ -23,16 +23,18 @@ body{font-family: Arial, Helvetica, sans-serif}
   padding: 20px;
   text-align:center;
 }
-input, select, .input-ta, .input{
+input:not([type=radio]):not([type=checkbox]), select, .input-ta, .input{
   width: 200px;
   box-sizing: border-box;
   padding: 10px;
   border: 1px solid #cccccc;
   border-radius: 3px;
 }
-checkbox {
-  width:auto;
-}
+/* The global rule above (specificity 0,2,1) outranks ContactPicker's own
+   .cp-input { width:100% } (0,1,0), pinning the search box to 200px. Scope the
+   fix to this one dialog's mount so the input fills its 300px container without
+   resizing pickers elsewhere. */
+#acc-picker-mount .cp-input { width: 100%; }
 .kselect {
   margin-left: -5px;
 }

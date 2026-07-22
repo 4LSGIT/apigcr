@@ -201,6 +201,7 @@ public/videoManager.html
 ref/2026-07-19_esign_phase1c.sql
 ref/2026-07-20_esign_phase2e.sql
 ref/2026-07-20_firm_identity.sql
+ref/2026-07-21_esign_phase3.sql
 ref/database.sql
 ref/files.md
 ref/gas.js
@@ -426,6 +427,7 @@ tests/esignPdfFill.test.js
 tests/esignPlacementEditor.test.js
 tests/esignProvider.zoho.test.js
 tests/esignReconcile.test.js
+tests/esignReminders.test.js
 tests/esignSend.test.js
 tests/esignService.test.js
 tests/esignTemplates.test.js
