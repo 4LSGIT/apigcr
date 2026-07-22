@@ -2211,6 +2211,12 @@
   <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
   <button class="big-button" data-target="assetManagerDiv"    data-exclusive-group="more"><i class="fa-solid fa-photo-film fa-2xl"></i><br><br>Asset Manager</button>
   <button class="big-button" data-target="esignDashboardDiv" data-exclusive-group="more"><i class="fa-solid fa-file-signature fa-2xl"></i><br><br>Signatures</button>
+  <br><br>
+  <!-- Placeholder buttons: no wiring, just fun. Each click toggles its icon's
+       animation on/off (successor to the old jumping-cat button). -->
+  <button class="big-button" onclick="this.classList.toggle('anim-bounce')"><i class="fa-solid fa-rocket fa-2xl"></i><br><br>Placeholder</button>
+  <button class="big-button" onclick="this.classList.toggle('anim-spin')"><i class="fa-solid fa-ghost fa-2xl"></i><br><br>Placeholder</button>
+  <button class="big-button" onclick="this.classList.toggle('anim-wobble')"><i class="fa-solid fa-frog fa-2xl"></i><br><br>Placeholder</button>
 
 
   <div id="manualsDiv"         class="more-panel" style="display:none">
@@ -2349,6 +2355,15 @@
   .pill-button.no-icon .pill-label { display:inline; }
   .pill-button:hover { border-color:#1d7fe0; }
   .pill-button.active { background:#1d7fe0; border-color:#1d7fe0; color:#fff; }
+
+  /* Placeholder-button toys: click toggles the class → icon animates until
+     clicked again. Targets both <i> and the <svg> Font Awesome swaps it for. */
+  @keyframes bb-bounce { 0%,100%{ transform:translateY(0) } 30%{ transform:translateY(-12px) } 60%{ transform:translateY(-4px) } }
+  @keyframes bb-spin   { to { transform:rotate(360deg) } }
+  @keyframes bb-wobble { 0%,100%{ transform:rotate(0) } 25%{ transform:rotate(-20deg) } 75%{ transform:rotate(20deg) } }
+  .big-button.anim-bounce > i, .big-button.anim-bounce > svg { animation: bb-bounce .6s ease-in-out infinite; }
+  .big-button.anim-spin   > i, .big-button.anim-spin   > svg { animation: bb-spin 1s linear infinite; }
+  .big-button.anim-wobble > i, .big-button.anim-wobble > svg { animation: bb-wobble .7s ease-in-out infinite; transform-origin:50% 60%; }
 </style>
 <script>
   function adminTask(){
