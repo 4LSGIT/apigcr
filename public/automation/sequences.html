@@ -852,6 +852,10 @@ const FUNCTIONS = { workflow: [], sequence: [], meta: {} };
 // ─────────────────────────────────────────────────────────────
 const SEQ_HIDDEN_PARAMS      = new Set(['output_var', 'count_var', 'date_var']);
 const SEQ_HIDE_SETVARS_FIELD = true;
+// Mirror of workflows.html's WF_PLACEHOLDER_RE — used by the numeric param
+// render/gather paths so {{tokens}} on integer/number params round-trip
+// instead of blanking (render) or toasting (gather).
+const SEQ_PLACEHOLDER_RE     = /\{\{[^}]+\}\}/;
 
 // Slice 3.3 — caches for the new webhook + start_workflow step editors.
 // Fetched lazily on first open of a step that needs them; the async load is
@@ -1791,10 +1795,24 @@ function seqRenderParamField(spec, value, visible) {
     case 'integer':
     case 'number': {
       const v = (value === null || value === undefined) ? '' : value;
-      const step = spec.type === 'integer' ? 'step="1"' : '';
-      const min  = spec.min !== undefined ? `min="${spec.min}"` : '';
-      const max  = spec.max !== undefined ? `max="${spec.max}"` : '';
-      inputHtml = `<input id="${id}" type="number" ${step} ${min} ${max} value="${esc(v)}">`;
+      // A NON-NUMERIC STRING on a numeric param is a {{placeholder}} — legal
+      // at save and at run time. But <input type="number"> runs the HTML
+      // value-sanitization algorithm and BLANKS any value that isn't a valid
+      // floating-point number — the field renders empty and gather reads '',
+      // silently clobbering the stored token on save. workflows.html's
+      // renderer fixed this ("open wf7 s3, save, and {{attorney_user_id}} is
+      // gone"); this is the same fix, which the sequence editor had never
+      // inherited — found when the seeded esign_remind step's
+      // {{trigger_data.signing_request_id}} rendered as a blank id field.
+      const isPlaceholderish = typeof v === 'string' && v !== '' && !Number.isFinite(Number(v));
+      if (isPlaceholderish) {
+        inputHtml = `<input id="${id}" value="${esc(v)}">`;
+      } else {
+        const step = spec.type === 'integer' ? 'step="1"' : '';
+        const min  = spec.min !== undefined ? `min="${spec.min}"` : '';
+        const max  = spec.max !== undefined ? `max="${spec.max}"` : '';
+        inputHtml = `<input id="${id}" type="number" ${step} ${min} ${max} value="${esc(v)}">`;
+      }
       break;
     }
     case 'object':
@@ -2148,12 +2166,19 @@ function seqGatherActionConfig(actionType) {
 
     switch (spec.type) {
       case 'integer': {
+        // {{placeholder}} on a numeric param is legal — the server's bypass
+        // runs before the type check. Pass it through verbatim rather than
+        // parseInt-ing it to NaN and toasting (workflows.html precedent; the
+        // seeded esign_remind step was un-saveable without this). Any OTHER
+        // non-numeric text is still a typo and still errors.
+        if (SEQ_PLACEHOLDER_RE.test(raw)) { params[spec.name] = raw; break; }
         const n = parseInt(raw, 10);
         if (Number.isFinite(n)) params[spec.name] = n;
         else { Swal.fire('Error', `${spec.name} must be an integer`, 'error'); return null; }
         break;
       }
       case 'number': {
+        if (SEQ_PLACEHOLDER_RE.test(raw)) { params[spec.name] = raw; break; }
         const n = Number(raw);
         if (Number.isFinite(n)) params[spec.name] = n;
         else { Swal.fire('Error', `${spec.name} must be a number`, 'error'); return null; }
