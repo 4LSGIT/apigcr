@@ -119,7 +119,6 @@ package.json
 public/apiTester.html
 public/apikeys.html
 public/appt.html
-public/apptform.html
 public/apptform2.html
 public/assetManager.html
 public/assets/icon-180-dev.png
@@ -152,7 +151,6 @@ public/caseerror.html
 public/communicate.html
 public/connections.html
 public/contact.html
-public/contactform.html
 public/courtpreview.html
 public/css/yc-forms.css
 public/dbConsole.html
@@ -180,14 +178,12 @@ public/js/videoInsert.js
 public/js/yc-forms.js
 public/manage.html
 public/manuals.html
-public/mms.html
 public/pageManager.html
 public/rating.html
 public/readonlyKeys.html
 public/redirects.html
 public/reset-password.html
 public/scripts.js
-public/send-sms.html
 public/sendingform-bk.html
 public/sendingform.html
 public/settings.html
