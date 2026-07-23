@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>User Management</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161a23;
+    --border: #2a3040;
+    --fg: #d8dde6;
+    --muted: #8a93a3;
+    --accent: #07ADEF;
+    --danger: #d94c4c;
+    --ok: #4ad28b;
+    --warn: #e0b341;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+  }
+  body { padding: 12px; }
+  h2 { margin: 0 0 8px; font-size: 16px; }
+  .muted { color: var(--muted); font-size: 11px; }
+  button {
+    background: var(--accent); color: white; border: none;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer;
+    font-size: 12px;
+  }
+  button:hover { opacity: 0.85; }
+  button.danger { background: var(--danger); }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+  button.small { font-size: 11px; padding: 2px 6px; }
+  input, select {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    padding: 6px 8px; border-radius: 4px; font-size: 12px;
+    font-family: inherit; width: 100%;
+  }
+  input[type="checkbox"] { width: auto; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px; margin-bottom: 12px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  tr.disabled td { opacity: 0.45; }
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: 500; white-space: nowrap;
+  }
+  .badge.auth     { background: rgba(74,210,139,.15);  color: var(--ok); }
+  .badge.su       { background: rgba(7,173,239,.15);   color: var(--accent); }
+  .badge.disabled { background: rgba(217,76,76,.15);   color: var(--danger); }
+  .badge.other    { background: rgba(224,179,65,.15);  color: var(--warn); }
+  .badge.nopw     { background: rgba(224,179,65,.15);  color: var(--warn); }
+  .form-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 8px 12px; margin-bottom: 10px;
+  }
+  .form-grid label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .form-grid .wide { grid-column: span 2; }
+  .check-row { display: flex; gap: 18px; align-items: center; margin: 8px 0 10px; font-size: 12px; }
+  .check-row label { display: flex; gap: 5px; align-items: center; cursor: pointer; }
+  .err { color: var(--danger); font-size: 12px; margin-top: 6px; }
+  @media (max-width: 800px) { .form-grid { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <h2>
+    Users
+    <button style="float:right;" onclick="openForm(null)">+ Add user</button>
+    <button class="ghost small" style="float:right;margin-right:8px;margin-top:2px;" onclick="loadUsers()">Refresh</button>
+  </h2>
+  <div class="muted" style="margin-bottom:8px;">
+    Users are never deleted — rows are referenced across the system. Use Disable instead.
+    Disabling clears passwords immediately; an already-issued login session can persist up to 24h.
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th><th>Name</th><th>Username</th><th>Init</th><th>Access</th>
+        <th>Email</th><th>Phone</th><th>Flags</th><th>PW</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="usersTbody">
+      <tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="panel" id="formPanel" style="display:none;">
+  <h2 id="formTitle">Add user</h2>
+  <div class="form-grid">
+    <div><label>Username *</label><input id="f_username" maxlength="50"></div>
+    <div><label>First name *</label><input id="f_user_fname" maxlength="20"></div>
+    <div><label>Last name *</label><input id="f_user_lname" maxlength="50"></div>
+    <div><label>Initials * (≤3)</label><input id="f_user_initials" maxlength="3" style="text-transform:uppercase;"></div>
+    <div><label>Display name (≤20)</label><input id="f_user_name" maxlength="20" placeholder="auto: First Last"></div>
+    <div><label>Access</label>
+      <select id="f_user_auth">
+        <option value="authorized">authorized</option>
+        <option value="authorized - SU">authorized - SU</option>
+        <option value="disabled">disabled</option>
+      </select>
+    </div>
+    <div class="wide"><label>Email</label><input id="f_email" maxlength="50"></div>
+    <div><label>Phone (10 digits)</label><input id="f_phone" maxlength="14"></div>
+    <div><label>User type</label><input id="f_user_type" type="number" min="0" max="9" value="1"></div>
+    <div class="wide"><label>Default email (send-as)</label><input id="f_default_email" maxlength="255"></div>
+    <div><label>Default phone (send-as)</label><input id="f_default_phone" maxlength="14"></div>
+    <div class="wide"><label>Google Calendar ID</label><input id="f_user_gcal_id" maxlength="255"></div>
+    <div class="wide" id="pwWrap"><label>Initial password (optional, min 4)</label><input id="f_password" type="text" autocomplete="off"></div>
+  </div>
+  <div class="check-row">
+    <label><input type="checkbox" id="f_allow_sms"> allow SMS</label>
+    <label><input type="checkbox" id="f_does_appts"> does appointments</label>
+    <label><input type="checkbox" id="f_ringcentral"> RingCentral</label>
+  </div>
+  <div class="row" style="display:flex;gap:8px;">
+    <button onclick="saveForm()">Save</button>
+    <button class="ghost" onclick="closeForm()">Cancel</button>
+    <span id="formErr" class="err"></span>
+  </div>
+</div>
+
+<script>
+  const P = window.parent;
+
+  // Wait for parent's apiSend to be ready, then init.
+  (function waitForParent() {
+    if (P && P.apiSend) return init();
+    setTimeout(waitForParent, 100);
+  })();
+
+  let USERS = [];        // last-loaded list
+  let EDIT_ID = null;    // null = add mode
+
+  function init() { loadUsers(); }
+
+  function esc(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function fmtPhone(p) {
+    if (!p) return "—";
+    const d = String(p);
+    return d.length === 10 ? `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}` : esc(d);
+  }
+
+  function authBadge(a) {
+    if (a === "authorized - SU") return `<span class="badge su">SU</span>`;
+    if (a === "authorized")      return `<span class="badge auth">authorized</span>`;
+    if (a === "disabled")        return `<span class="badge disabled">disabled</span>`;
+    return `<span class="badge other">${esc(a)}</span>`;
+  }
+
+  function flags(u) {
+    const f = [];
+    if (u.does_appts)  f.push("appts");
+    if (u.allow_sms)   f.push("sms");
+    if (u.ringcentral) f.push("rc");
+    return f.length ? f.join(" · ") : "—";
+  }
+
+  function pwBadge(u) {
+    if (u.has_hash) return `<span class="badge auth">set</span>` +
+      (u.reset_pending ? ` <span class="badge other" title="reset link pending">reset</span>` : "");
+    return `<span class="badge nopw">none</span>`;
+  }
+
+  async function loadUsers() {
+    const tbody = document.getElementById("usersTbody");
+    tbody.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
+    try {
+      const data = await P.apiSend("/api/admin/users", "GET");
+      USERS = data.users || [];
+      if (!USERS.length) {
+        tbody.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">No users.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = USERS.map(u => {
+        const isAutomations = u.user === 0;
+        const isDisabled = u.user_auth === "disabled";
+        const actions = isAutomations
+          ? `<span class="muted">system</span>`
+          : `
+            <button class="ghost small" onclick="openForm(${u.user})">Edit</button>
+            <button class="ghost small" onclick="setPassword(${u.user})">Set PW</button>
+            ${isDisabled
+              ? `<button class="small" onclick="enableUser(${u.user})">Enable</button>`
+              : `<button class="danger small" onclick="disableUser(${u.user})">Disable</button>`}
+          `;
+        return `
+          <tr class="${isDisabled ? "disabled" : ""}">
+            <td>${u.user}</td>
+            <td>${esc(u.user_name)}</td>
+            <td>${esc(u.username)}</td>
+            <td>${esc(u.user_initials)}</td>
+            <td>${authBadge(u.user_auth)}</td>
+            <td>${esc(u.email || "—")}</td>
+            <td>${fmtPhone(u.phone)}</td>
+            <td class="muted">${flags(u)}</td>
+            <td>${pwBadge(u)}</td>
+            <td style="white-space:nowrap;">${actions}</td>
+          </tr>
+        `;
+      }).join("");
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="10" style="color:var(--danger);padding:20px;">Error: ${esc(err.message)}</td></tr>`;
+    }
+  }
+
+  // ── add / edit form ────────────────────────────────────────────────────────
+
+  const F = id => document.getElementById("f_" + id);
+
+  function openForm(userId) {
+    EDIT_ID = userId;
+    document.getElementById("formErr").textContent = "";
+    const u = userId != null ? USERS.find(x => x.user === userId) : null;
+    document.getElementById("formTitle").textContent =
+      u ? `Edit user #${u.user} — ${u.user_name}` : "Add user";
+    // Password field only in add mode; edits use the Set PW action.
+    document.getElementById("pwWrap").style.display = u ? "none" : "";
+
+    F("username").value      = u ? u.username : "";
+    F("user_fname").value    = u ? u.user_fname : "";
+    F("user_lname").value    = u ? u.user_lname : "";
+    F("user_initials").value = u ? u.user_initials : "";
+    F("user_name").value     = u ? u.user_name : "";
+    F("user_auth").value     = u && ["authorized","authorized - SU","disabled"].includes(u.user_auth)
+                                 ? u.user_auth : "authorized";
+    F("email").value         = u ? (u.email || "") : "";
+    F("phone").value         = u ? (u.phone || "") : "";
+    F("user_type").value     = u ? u.user_type : 1;
+    F("default_email").value = u ? (u.default_email || "") : "";
+    F("default_phone").value = u ? (u.default_phone || "") : "";
+    F("user_gcal_id").value  = u ? (u.user_gcal_id || "") : "";
+    F("password").value      = "";
+    F("allow_sms").checked   = u ? !!u.allow_sms : false;
+    F("does_appts").checked  = u ? !!u.does_appts : false;
+    F("ringcentral").checked = u ? !!u.ringcentral : false;
+
+    document.getElementById("formPanel").style.display = "";
+    document.getElementById("formPanel").scrollIntoView({ behavior: "smooth" });
+  }
+
+  function closeForm() {
+    document.getElementById("formPanel").style.display = "none";
+    EDIT_ID = null;
+  }
+
+  async function saveForm() {
+    const errEl = document.getElementById("formErr");
+    errEl.textContent = "";
+    const body = {
+      username:      F("username").value.trim(),
+      user_fname:    F("user_fname").value.trim(),
+      user_lname:    F("user_lname").value.trim(),
+      user_initials: F("user_initials").value.trim().toUpperCase(),
+      user_name:     F("user_name").value.trim(),
+      user_auth:     F("user_auth").value,
+      email:         F("email").value.trim(),
+      phone:         F("phone").value.trim(),
+      user_type:     Number(F("user_type").value || 1),
+      default_email: F("default_email").value.trim(),
+      default_phone: F("default_phone").value.trim(),
+      user_gcal_id:  F("user_gcal_id").value.trim(),
+      allow_sms:     F("allow_sms").checked ? 1 : 0,
+      does_appts:    F("does_appts").checked ? 1 : 0,
+      ringcentral:   F("ringcentral").checked ? 1 : 0,
+    };
+    try {
+      if (EDIT_ID == null) {
+        const pw = F("password").value;
+        if (pw) body.password = pw;
+        const data = await P.apiSend("/api/admin/users", "POST", body);
+        alert(`User created (id ${data.user}).` + (pw ? "" : " No password set — use Set PW before they can log in."));
+      } else {
+        await P.apiSend(`/api/admin/users/${EDIT_ID}`, "PATCH", body);
+      }
+      closeForm();
+      loadUsers();
+    } catch (err) {
+      errEl.textContent = err.message;
+    }
+  }
+
+  // ── row actions ────────────────────────────────────────────────────────────
+
+  async function setPassword(id) {
+    const u = USERS.find(x => x.user === id);
+    const pw = prompt(`New password for ${u ? u.user_name : "#" + id} (min 4 chars):`);
+    if (pw == null) return;
+    if (pw.length < 4) { alert("Password must be at least 4 characters."); return; }
+    try {
+      await P.apiSend(`/api/admin/users/${id}/set-password`, "POST", { password: pw });
+      alert("Password set.");
+      loadUsers();
+    } catch (err) {
+      alert("Set password failed: " + err.message);
+    }
+  }
+
+  async function disableUser(id) {
+    const u = USERS.find(x => x.user === id);
+    if (!confirm(
+      `Disable ${u ? u.user_name : "#" + id}?\n\n` +
+      `This clears their passwords and blocks new logins immediately. ` +
+      `A session they already have open can persist up to 24 hours.`
+    )) return;
+    try {
+      await P.apiSend(`/api/admin/users/${id}/disable`, "POST");
+      loadUsers();
+    } catch (err) {
+      alert("Disable failed: " + err.message);
+    }
+  }
+
+  async function enableUser(id) {
+    const u = USERS.find(x => x.user === id);
+    if (!confirm(`Re-enable ${u ? u.user_name : "#" + id}? You'll need to set a new password before they can log in.`)) return;
+    try {
+      await P.apiSend(`/api/admin/users/${id}/enable`, "POST");
+      loadUsers();
+    } catch (err) {
+      alert("Enable failed: " + err.message);
+    }
+  }
+</script>
+</body>
+</html>

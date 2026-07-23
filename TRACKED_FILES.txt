@@ -194,6 +194,7 @@ public/survey.html
 public/sw.js
 public/systemAlerts.html
 public/tabLeads.html
+public/users.html
 public/videoManager.html
 ref/2026-07-19_esign_phase1c.sql
 ref/2026-07-20_esign_phase2e.sql
@@ -214,6 +215,7 @@ routes/admin.apiKeys.js
 routes/admin.apiTester.js
 routes/admin.dbConsole.js
 routes/admin.systemAlerts.js
+routes/admin.users.js
 routes/alert-test.js
 routes/api.ai.js
 routes/api.appSettings.js
