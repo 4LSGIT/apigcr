@@ -294,6 +294,113 @@ function peScanBody(body, schemaKeys) {
 }
 
 /**
+ * External <img> URL extraction (authoring-time image inliner, 2026-07-22).
+ *
+ * MVP scope, ratified: <img src> ONLY. css url(), @font-face, <link href>
+ * and every other external reference stay fail-loudly at render
+ * (ESIGN_RENDER_EXTERNAL_REF) — inlining those is explicitly out of scope.
+ *
+ * Regex-over-tags rather than DOM parsing so the same function runs in the
+ * browser (templateAdmin's confirm dialog) AND under node jest. http:// urls
+ * are extracted too — the server rejects them (https_only) and the failure
+ * shows in the summary, which beats silently not offering them.
+ *
+ * @param {string} html
+ * @returns {string[]} unique urls, first-seen order
+ */
+var PE_IMG_TAG_RE = /<img\b[^>]*>/gi;
+var PE_IMG_SRC_RE = /\bsrc\s*=\s*("([^"]*)"|'([^']*)')/i;
+function peExtractExternalImageUrls(html) {
+  var s = String(html == null ? '' : html);
+  var seen = {};
+  var out = [];
+  var m;
+  PE_IMG_TAG_RE.lastIndex = 0;
+  while ((m = PE_IMG_TAG_RE.exec(s)) !== null) {
+    var sm = PE_IMG_SRC_RE.exec(m[0]);
+    if (!sm) continue;
+    var url = String(sm[2] != null ? sm[2] : sm[3]).trim();
+    if (!/^https?:\/\//i.test(url)) continue;   // data:, relative, blank — skip
+    if (!Object.prototype.hasOwnProperty.call(seen, url)) {
+      seen[url] = true;
+      out.push(url);
+    }
+  }
+  return out;
+}
+
+/** Escape a literal for use inside a RegExp. */
+function _peEscRe(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Swap fetched images into the body: every src="URL" / src='URL' whose URL is
+ * a key of `map` becomes the mapped data URI, quote style preserved. Exact
+ * URL match only — a URL the map does not name is left byte-identical.
+ *
+ * @param {string} html
+ * @param {Object<string,string>} map  url → data URI
+ * @returns {string}
+ */
+function peInlineImageSrcs(html, map) {
+  var s = String(html == null ? '' : html);
+  Object.keys(map || {}).forEach(function (url) {
+    var dataUri = map[url];
+    if (!dataUri) return;
+    var re = new RegExp(
+      '(src\\s*=\\s*)("' + _peEscRe(url) + '"|\'' + _peEscRe(url) + '\')', 'g');
+    s = s.replace(re, function (_full, pre, quoted) {
+      var q = quoted.charAt(0);
+      return pre + q + dataUri + q;
+    });
+  });
+  return s;
+}
+
+/**
+ * Placement ↔ schema key diff (editor-key auto-create, 2026-07-22 slice).
+ *
+ * The placement editor's Key input lets an author TYPE a key that no schema
+ * row declares yet; the server then rejects the save with
+ * ESIGN_UNDECLARED_PLACEHOLDER (the pdf-type mirror cross-check). This helper
+ * feeds templateAdmin's auto-create prompt: which placed text-field keys are
+ * missing from the declared schema, unique, in order of first appearance.
+ *
+ * Accepts the neutral placement shape ({fields:[...]}), a bare fields array,
+ * or null/undefined. Only type==='text' fields carry a key — signer-class
+ * fields (signature/initial/date/input_text/checkbox/dropdown/radio) have no
+ * schema counterpart and are ignored.
+ *
+ * PROMPT, NOT SILENT (ratified): the caller must confirm with the author
+ * before appending rows — silent add turns typo'd keys into real schema rows.
+ *
+ * @param {object|Array|null} placements  neutral placement JSON or fields array
+ * @param {string[]} schemaKeys           declared prefill-schema keys
+ * @returns {string[]}                    missing keys, unique, first-seen order
+ */
+function peDiffPlacementKeys(placements, schemaKeys) {
+  var fields = Array.isArray(placements)
+    ? placements
+    : (placements && Array.isArray(placements.fields) ? placements.fields : []);
+  var declared = {};
+  (schemaKeys || []).forEach(function (k) {
+    if (k != null && k !== '') declared[String(k)] = true;
+  });
+  var seen = {};
+  var missing = [];
+  fields.forEach(function (f) {
+    if (!f || f.type !== 'text') return;
+    var key = f.key != null ? String(f.key).trim() : '';
+    if (!key) return;
+    if (declared[key] || Object.prototype.hasOwnProperty.call(seen, key)) return;
+    seen[key] = true;
+    missing.push(key);
+  });
+  return missing;
+}
+
+/**
  * One prefill-schema row → error strings (empty = valid). Mirrors the server
  * checks a row can fail on its own; duplicate keys are a rows-level concern
  * (peValidateSchemaRows).
@@ -393,6 +500,9 @@ if (typeof module !== 'undefined' && module.exports) {
     peSortFields: peSortFields,
     peExtractPlaceholders: peExtractPlaceholders,
     peScanBody: peScanBody,
+    peExtractExternalImageUrls: peExtractExternalImageUrls,
+    peInlineImageSrcs: peInlineImageSrcs,
+    peDiffPlacementKeys: peDiffPlacementKeys,
     peValidateSchemaRow: peValidateSchemaRow,
     peValidateSchemaRows: peValidateSchemaRows,
     peValidateBasics: peValidateBasics,

@@ -892,7 +892,7 @@ describe('routes/api.esign.templates.js', () => {
 
   test('every template route is behind jwtOrApiKey', () => {
     const routes = routesOf(templatesRouter);
-    expect(routes.length).toBe(12);  // 2E: POST+GET /templates/:id/pdf, POST /resolve-prefills
+    expect(routes.length).toBe(13);  // 2E: POST+GET /templates/:id/pdf, POST /resolve-prefills; 2026-07-22: POST /inline-images
     for (const r of routes) {
       expect(r.handles).toContain(jwtOrApiKey);
     }
@@ -906,6 +906,7 @@ describe('routes/api.esign.templates.js', () => {
       'GET /api/esign/templates',
       'GET /api/esign/templates/:id',
       'GET /api/esign/templates/:id/pdf',
+      'POST /api/esign/inline-images',
       'POST /api/esign/resolve-prefills',
       'POST /api/esign/send-from-template',
       'POST /api/esign/templates',
@@ -967,6 +968,7 @@ describe('routes/api.esign.templates.js', () => {
     ['ESIGN_UNDECLARED_PLACEHOLDER', 400],
     ['ESIGN_MISSING_PREFILL',        400],
     ['ESIGN_RENDER_EXTERNAL_REF',    400],
+    ['ESIGN_INLINE_BAD_INPUT',       400],
     ['ESIGN_TEMPLATE_INACTIVE',      409],
     ['ESIGN_RENDER_NO_BROWSER',      502],
     ['ESIGN_RENDER_FAILED',          502],
@@ -977,6 +979,35 @@ describe('routes/api.esign.templates.js', () => {
     ['SOMETHING_UNEXPECTED',         500],
   ])('%s maps to HTTP %i', (code, status) => {
     expect(templatesRouter._errorToStatus(code)).toBe(status);
+  });
+
+  // ── fail() forwards .urls (2026-07-22) ─────────────────────
+  // ESIGN_RENDER_EXTERNAL_REF names the blocked urls; templateAdmin's
+  // error-flow offer for the image inliner reads them from the error body,
+  // so the route must forward them the way it already forwards `missing`.
+  test('an ESIGN_RENDER_EXTERNAL_REF response body carries the blocked urls', async () => {
+    const err = new Error('The template references external resources.');
+    err.code = 'ESIGN_RENDER_EXTERNAL_REF';
+    err.urls = ['https://cdn.example.com/logo.png'];
+    // sendService is the REAL module in this suite — spy, don't reach for a
+    // mock that isn't there. The route requires the same module instance.
+    const spy = jest.spyOn(sendService, 'previewFromTemplate').mockRejectedValueOnce(err);
+
+    const handler = routesOf(templatesRouter)
+      .find((r) => r.path === '/api/esign/templates/:id/preview').handles.slice(-1)[0];
+    const req = { db: wiredDb({}), params: { id: '7' }, body: {} };
+    const res = {
+      status: jest.fn().mockReturnThis(), json: jest.fn(),
+      set: jest.fn(), send: jest.fn(),
+    };
+    await handler(req, res);
+    spy.mockRestore();
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json.mock.calls[0][0]).toMatchObject({
+      code: 'ESIGN_RENDER_EXTERNAL_REF',
+      urls: ['https://cdn.example.com/logo.png'],
+    });
   });
 });
 // ═════════════════════════════════════════════════════════════════════════════

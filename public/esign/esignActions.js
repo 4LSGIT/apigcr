@@ -508,7 +508,13 @@ if (typeof window !== 'undefined') (function () {
         '<textarea id="es-recall-reason" maxlength="500" ' +
         'style="width:100%;height:80px;resize:vertical;box-sizing:border-box" ' +
         'oninput="document.getElementById(\'es-recall-count\').innerText=this.value.trim().length+\' / 500\'"></textarea>' +
-        '<div id="es-recall-count" class="es-counter">0 / 500</div>',
+        '<div id="es-recall-count" class="es-counter">0 / 500</div>' +
+        // Drafts never emailed the client a signing link, so no notice goes
+        // out for them (recallPipeline skips the email) — the hint would lie.
+        (row.status !== 'draft'
+          ? '<div class="es-dialog-note" style="margin-top:6px"><i class="fa-solid fa-envelope"></i> ' +
+            'The reason is included <b>verbatim</b> in the cancellation email sent to the client.</div>'
+          : ''),
       showCancelButton: true,
       confirmButtonText: 'Recall',
       confirmButtonColor: '#b91c1c',

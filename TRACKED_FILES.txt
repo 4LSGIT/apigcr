@@ -369,6 +369,7 @@ services/esign/placements.js
 services/esign/zohoSignProvider.js
 services/esignAlertService.js
 services/esignFilingService.js
+services/esignInlineImageService.js
 services/esignPrefillService.js
 services/esignSendService.js
 services/esignService.js
@@ -420,6 +421,7 @@ tests/esignAlert.test.js
 tests/esignCredits.test.js
 tests/esignExpressions.test.js
 tests/esignFiling.test.js
+tests/esignInlineImages.test.js
 tests/esignInputFields.test.js
 tests/esignPdfFill.test.js
 tests/esignPlacementEditor.test.js

@@ -71,9 +71,23 @@ jest.mock('../services/esignFilingService', () => {
   return { ...actual, fileExternalDocument: jest.fn() };
 });
 
+// Recall-reason client notification (2026-07-22 slice). emailService is
+// lazy-required by _tryNotifyRecall; mocking at the module boundary here keeps
+// the adapters (nodemailer/googleapis) out of this suite. A CONTRACT test
+// below runs jest.requireActual against the real sendEmail signature — the
+// buildContext lesson: a bare mock accepts any arg shape and proves nothing.
+jest.mock('../services/emailService', () => ({
+  sendEmail: jest.fn(async () => ({ ok: true })),
+}));
+jest.mock('../lib/firmConfig', () => ({
+  cfg: jest.fn(),
+}));
+
 const esignService       = require('../services/esignService');
 const esignFilingService = require('../services/esignFilingService');
 const { getProvider, recordCreditSpend } = require('../services/esign');
+const emailService       = require('../services/emailService');
+const { cfg }            = require('../lib/firmConfig');
 const svc = require('../services/esignSendService');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,6 +231,11 @@ beforeEach(() => {
   jest.clearAllMocks();
   provider = makeProvider();
   getProvider.mockResolvedValue(provider);
+  emailService.sendEmail.mockResolvedValue({ ok: true });
+  cfg.mockImplementation((key) => ({
+    email_automations: 'automations@4lsg.com',
+    firm_name:         'Legal Solutions Group',
+  }[key] ?? null));
   recordCreditSpend.mockResolvedValue({ ok: true, balance: 95, previous: 100 });
   esignService.createRequest.mockResolvedValue(makeRow());
   esignService.markSent.mockImplementation(async (db, id, { providerId, sentAt, expiresAt }) =>
@@ -942,6 +961,154 @@ describe('recallPipeline', () => {
     await expect(svc.recallPipeline(makeDb(), 42, { reason: 'x' }))
       .rejects.toMatchObject({ code: 'ESIGN_PROVIDER_ERROR' });
     expect(esignService.applyStatus).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// recall-reason client notification (2026-07-22 slice)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('recall-reason client notification', () => {
+  const TWO_RECIPS = [
+    { name: 'John Smith', email: 'john@example.com',  order: 1, status: 'signed'  },
+    { name: 'Jane Smith', email: 'jane@example.com',  order: 2, status: 'pending' },
+  ];
+
+  test('a SENT recall emails EVERY recipient — signed co-signers included', async () => {
+    esignService.getById.mockResolvedValue(
+      makeRow({ status: 'sent', provider_id: 'ZS-9001', recipients: TWO_RECIPS }));
+    await svc.recallPipeline(makeDb(), 42, { reason: 'Wrong version attached', createdBy: 1 });
+
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(2);
+    const tos = emailService.sendEmail.mock.calls.map((c) => c[1].to).sort();
+    expect(tos).toEqual(['jane@example.com', 'john@example.com']);
+    expect(esignService.appendEvent).toHaveBeenCalledWith(
+      expect.anything(), 42,
+      expect.objectContaining({
+        event: 'recall_notice_sent',
+        payload: expect.objectContaining({ recipient_count: 2 }),
+      }));
+  });
+
+  test('the exact call shape: {from,to,subject,text,html}, reason verbatim in text, escaped in html', async () => {
+    esignService.getById.mockResolvedValue(makeRow({ status: 'sent', provider_id: 'ZS-9001' }));
+    await svc.recallPipeline(makeDb(), 42, { reason: 'Client <changed> & re-signed', createdBy: 1 });
+
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+    const [dbArg, opts] = emailService.sendEmail.mock.calls[0];
+    expect(dbArg).toBeDefined();
+    expect(Object.keys(opts).sort()).toEqual(['from', 'html', 'subject', 'text', 'to']);
+    expect(opts.from).toBe('automations@4lsg.com');
+    expect(opts.to).toBe('john@example.com');
+    expect(opts.subject).toContain('Retainer Agreement');
+    // verbatim on the text side (ratified), escaped on the html side
+    expect(opts.text).toContain('Reason: Client <changed> & re-signed');
+    expect(opts.text).toContain('Legal Solutions Group');
+    expect(opts.html).toContain('Client &lt;changed&gt; &amp; re-signed');
+    expect(opts.html).not.toContain('<changed>');
+  });
+
+  test('a DRAFT recall sends no email — the client never had a signing link', async () => {
+    esignService.getById.mockResolvedValue(makeRow({ status: 'draft', provider_id: null }));
+    await svc.recallPipeline(makeDb(), 42, { reason: 'Started over', createdBy: 1 });
+
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    const events = esignService.appendEvent.mock.calls.map((c) => c[2].event);
+    expect(events).not.toContain('recall_notice_sent');
+    expect(events).not.toContain('recall_notice_failed');
+  });
+
+  test('email failure NEVER fails the recall — recall_notice_failed lands instead', async () => {
+    esignService.getById.mockResolvedValue(makeRow({ status: 'sent', provider_id: 'ZS-9001' }));
+    emailService.sendEmail.mockRejectedValue(new Error('smtp down'));
+
+    const out = await svc.recallPipeline(makeDb(), 42, { reason: 'Wrong client', createdBy: 1 });
+    expect(out.row.status).toBe('recalled');
+    expect(esignService.appendEvent).toHaveBeenCalledWith(
+      expect.anything(), 42,
+      expect.objectContaining({
+        event: 'recall_notice_failed',
+        payload: expect.objectContaining({
+          reason: 'send_failed',
+          errors: [{ to: 'john@example.com', error: 'smtp down' }],
+        }),
+      }));
+  });
+
+  test('partial failure: recall_notice_sent carries the delivered count and the failures', async () => {
+    esignService.getById.mockResolvedValue(
+      makeRow({ status: 'sent', provider_id: 'ZS-9001', recipients: TWO_RECIPS }));
+    emailService.sendEmail
+      .mockResolvedValueOnce({ ok: true })
+      .mockRejectedValueOnce(new Error('mailbox full'));
+
+    await svc.recallPipeline(makeDb(), 42, { reason: 'Superseded', createdBy: 1 });
+    expect(esignService.appendEvent).toHaveBeenCalledWith(
+      expect.anything(), 42,
+      expect.objectContaining({
+        event: 'recall_notice_sent',
+        payload: expect.objectContaining({
+          recipient_count: 1,
+          failed: [{ to: 'jane@example.com', error: 'mailbox full' }],
+        }),
+      }));
+  });
+
+  test('no email_automations setting → recall_notice_failed no_from_address, recall stands', async () => {
+    cfg.mockImplementation(() => null);
+    esignService.getById.mockResolvedValue(makeRow({ status: 'sent', provider_id: 'ZS-9001' }));
+
+    const out = await svc.recallPipeline(makeDb(), 42, { reason: 'x', createdBy: 1 });
+    expect(out.row.status).toBe('recalled');
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    expect(esignService.appendEvent).toHaveBeenCalledWith(
+      expect.anything(), 42,
+      expect.objectContaining({
+        event: 'recall_notice_failed',
+        payload: expect.objectContaining({ reason: 'no_from_address' }),
+      }));
+  });
+
+  test('no recipients on the row → recall_notice_failed no_recipients', async () => {
+    esignService.getById.mockResolvedValue(
+      makeRow({ status: 'sent', provider_id: 'ZS-9001', recipients: [] }));
+    await svc.recallPipeline(makeDb(), 42, { reason: 'x', createdBy: 1 });
+
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    expect(esignService.appendEvent).toHaveBeenCalledWith(
+      expect.anything(), 42,
+      expect.objectContaining({
+        event: 'recall_notice_failed',
+        payload: expect.objectContaining({ reason: 'no_recipients' }),
+      }));
+  });
+
+  // CONTRACT test — the buildContext lesson (HOTFIX P3-2): a jest.mock accepts
+  // any arg shape, so on its own it proves the helper against the manager's
+  // assumption, not the real function. Run the REAL sendEmail against our
+  // exact call shape: validation must PASS (i.e. it proceeds to the
+  // credentials lookup and fails THERE), while a wrong/positional shape must
+  // be rejected by the same validation. Drift on either side goes red.
+  test('CONTRACT: the real emailService.sendEmail accepts our exact call shape', async () => {
+    const real = jest.requireActual('../services/emailService');
+    const dbStub = { query: jest.fn(async () => [[]]) };  // no email_credentials row
+
+    // Our shape → past validation, dies at the credentials lookup.
+    await expect(real.sendEmail(dbStub, {
+      from: 'automations@4lsg.com',
+      to: 'john@example.com',
+      subject: 'Signature request cancelled — Retainer Agreement',
+      text: 'The signature request has been cancelled.\n\nReason: x',
+      html: '<p>The signature request has been cancelled.</p><p>Reason: x</p>',
+    })).rejects.toThrow(/No credentials found for sender/);
+    expect(dbStub.query).toHaveBeenCalled();
+
+    // Positional form (the buildContext failure mode) → rejected by validation
+    // BEFORE any query.
+    const dbStub2 = { query: jest.fn(async () => [[]]) };
+    await expect(real.sendEmail(dbStub2, 'automations@4lsg.com', 'john@example.com'))
+      .rejects.toThrow(/Missing required email fields/);
+    expect(dbStub2.query).not.toHaveBeenCalled();
   });
 });
 

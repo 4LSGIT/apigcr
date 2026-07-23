@@ -321,6 +321,119 @@ describe('peExtractPlaceholders mirrors esignTemplateService.extractPlaceholders
   });
 });
 
+// ─── image-inliner pure helpers (2026-07-22 slice) ───────────
+
+describe('peExtractExternalImageUrls — <img src> only, MVP scope', () => {
+  test('extracts http(s) img srcs, both quote styles, unique, first-seen order', () => {
+    const html =
+      '<p>x</p><img src="https://cdn.example.com/logo.png" style="max-width:100%">' +
+      "<img class='a' src='https://cdn.example.com/seal.jpg'>" +
+      '<img src="https://cdn.example.com/logo.png">' +      // dup
+      '<img src="http://insecure.example.com/x.gif">';       // http extracted; server rejects it
+    expect(pe.peExtractExternalImageUrls(html)).toEqual([
+      'https://cdn.example.com/logo.png',
+      'https://cdn.example.com/seal.jpg',
+      'http://insecure.example.com/x.gif',
+    ]);
+  });
+
+  test('data URIs, relative srcs, srcless imgs and non-img refs are all ignored', () => {
+    const html =
+      '<img src="data:image/png;base64,AAAA">' +
+      '<img src="/local/logo.png"><img alt="no src">' +
+      '<link href="https://fonts.example.com/f.css">' +           // not an <img> — out of MVP scope
+      '<div style="background:url(https://cdn.example.com/bg.png)"></div>';
+    expect(pe.peExtractExternalImageUrls(html)).toEqual([]);
+  });
+
+  test('tolerates whitespace around = and null input', () => {
+    expect(pe.peExtractExternalImageUrls('<img src = "https://a.example.com/x.png">'))
+      .toEqual(['https://a.example.com/x.png']);
+    expect(pe.peExtractExternalImageUrls(null)).toEqual([]);
+  });
+});
+
+describe('peInlineImageSrcs — swap fetched urls for data URIs', () => {
+  const URI = 'data:image/png;base64,AAAA';
+
+  test('swaps every occurrence, both quote styles, quote preserved', () => {
+    const html =
+      '<img src="https://a.example.com/x.png">' +
+      "<img src='https://a.example.com/x.png'>" +
+      '<img src="https://b.example.com/y.png">';
+    const out = pe.peInlineImageSrcs(html, { 'https://a.example.com/x.png': URI });
+    expect(out).toBe(
+      `<img src="${URI}">` +
+      `<img src='${URI}'>` +
+      '<img src="https://b.example.com/y.png">');
+  });
+
+  test('exact-match only: unmapped urls and near-misses stay byte-identical', () => {
+    const html = '<img src="https://a.example.com/x.png?v=2">';
+    expect(pe.peInlineImageSrcs(html, { 'https://a.example.com/x.png': URI })).toBe(html);
+  });
+
+  test('regex metacharacters in the url are literal (the ?v=2 case, mapped)', () => {
+    const html = '<img src="https://a.example.com/x.png?v=2">';
+    expect(pe.peInlineImageSrcs(html, { 'https://a.example.com/x.png?v=2': URI }))
+      .toBe(`<img src="${URI}">`);
+  });
+
+  test('whitespace around = survives the swap; empty map is a no-op', () => {
+    const html = '<img src = "https://a.example.com/x.png">';
+    expect(pe.peInlineImageSrcs(html, { 'https://a.example.com/x.png': URI }))
+      .toBe(`<img src = "${URI}">`);
+    expect(pe.peInlineImageSrcs(html, {})).toBe(html);
+    expect(pe.peInlineImageSrcs(html, null)).toBe(html);
+  });
+});
+
+// ─── editor-key auto-create diff (2026-07-22 slice) ──────────
+
+describe('peDiffPlacementKeys — placed text keys missing from the schema', () => {
+  const F = (type, key, extra) => Object.assign({ type, page: 1, x: 10, y: 10, w: 60, h: 14 }, key != null ? { key } : {}, extra || {});
+
+  test('unique missing keys, first-seen order, declared ones excluded', () => {
+    const placements = { coord_space: 'pdf_user_space', fields: [
+      F('text', 'client_name'), F('text', 'fee'), F('text', 'client_name'),
+      F('text', 'case_no'), F('text', 'fee'),
+    ] };
+    expect(pe.peDiffPlacementKeys(placements, ['fee']))
+      .toEqual(['client_name', 'case_no']);
+  });
+
+  test('only type=text carries a key — every signer-class type is ignored', () => {
+    const placements = { fields: [
+      F('signature', null, { signer: 1 }), F('initial', null, { signer: 1 }),
+      F('date', null, { signer: 1 }),
+      F('input_text', null, { signer: 1, label: 'Middle name' }),
+      F('checkbox', null, { signer: 1 }),
+      F('dropdown', null, { signer: 1, options: ['a', 'b'] }),
+      F('radio', null, { signer: 1, group: 'G', value: 'v1' }),
+      F('text', 'the_only_key'),
+    ] };
+    expect(pe.peDiffPlacementKeys(placements, [])).toEqual(['the_only_key']);
+  });
+
+  test('accepts a bare fields array, null, and shapes without fields', () => {
+    expect(pe.peDiffPlacementKeys([F('text', 'k1')], [])).toEqual(['k1']);
+    expect(pe.peDiffPlacementKeys(null, ['a'])).toEqual([]);
+    expect(pe.peDiffPlacementKeys({}, ['a'])).toEqual([]);
+    expect(pe.peDiffPlacementKeys({ fields: 'nope' }, [])).toEqual([]);
+  });
+
+  test('blank/whitespace keys and empty schema entries never match or emit', () => {
+    const placements = { fields: [F('text', ''), F('text', '   '), F('text', 'real')] };
+    expect(pe.peDiffPlacementKeys(placements, ['', null, undefined]))
+      .toEqual(['real']);
+  });
+
+  test('all declared → empty diff (the no-dialog path)', () => {
+    const placements = { fields: [F('text', 'a'), F('text', 'b')] };
+    expect(pe.peDiffPlacementKeys(placements, ['a', 'b', 'c'])).toEqual([]);
+  });
+});
+
 // ─── schema-row validation mirrors (drift guards) ────────────
 
 describe('schema-row mirrors vs the server', () => {

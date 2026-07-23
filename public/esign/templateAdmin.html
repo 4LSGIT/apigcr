@@ -144,6 +144,9 @@
       <button onclick="E('ta-img-file').click()"><i class="fa-solid fa-image"></i> Insert image</button>
       <input type="file" id="ta-img-file" accept="image/png,image/jpeg,image/gif,image/webp"
              style="display:none" onchange="insertImage(this.files[0]); this.value='';">
+      <button onclick="inlineExternalImages()" style="margin-left:6px"
+              title="Fetch external &lt;img&gt; images once and embed them as data URIs — the render pipeline never goes online">
+        <i class="fa-solid fa-cloud-arrow-down"></i> Inline external images</button>
       <label class="ta-hint" style="margin-left:4px">
         <input type="checkbox" id="ta-img-asset"> also save original to asset library</label>
     </div>
@@ -549,6 +552,16 @@ async function renderAndPlace() {
     E('ta-stale').style.display = 'none';
     E('ta-samples').style.display = 'none';
   } catch (err) {
+    // The render lockdown fired: if any of the blocked references are <img>
+    // images, the inliner can fix them — offer the same flow as the button
+    // (its own confirm shows the URLs). Non-image refs (css url(), fonts,
+    // link href) stay fail-loudly — out of MVP scope by design.
+    if (err && err.body && err.body.code === 'ESIGN_RENDER_EXTERNAL_REF' &&
+        peExtractExternalImageUrls(E('ta-body').value).length) {
+      const embedded = await inlineExternalImages();
+      if (embedded) Toast.fire({ icon: 'info', title: 'Images embedded — render again' });
+      return;
+    }
     Toast.fire({ icon: 'error', title: 'Render failed', text: err.message });
   } finally {
     btn.disabled = false;
@@ -657,6 +670,67 @@ async function insertImage(file) {
   }
 }
 
+// ── inline external images (2026-07-22 slice) ────────────────
+// The render pipeline is network-locked BY DESIGN; the fix for a template
+// that references web images is at the AUTHORING layer: fetch once, freeze
+// the bytes in as data URIs, render stays offline. NEVER silent (ratified —
+// silent inlining hides a template quietly growing MB of frozen bytes): the
+// author confirms the URL list before anything is fetched, and gets a
+// what-was-embedded summary with sizes after.
+async function inlineExternalImages() {
+  const urls = peExtractExternalImageUrls(E('ta-body').value);
+  if (!urls.length) {
+    Toast.fire({ icon: 'info', title: 'No external <img> images found in the body' });
+    return false;
+  }
+  const r = await Swal.fire({
+    icon: 'question', title: 'Fetch & embed these images?',
+    html:
+      '<div style="text-align:left;font-size:12px">Each image below is downloaded <b>once</b> and ' +
+      'frozen into the template as a data URI — the rendered document never depends on these sites again. ' +
+      'This grows the template body (~33% over the image size).' +
+      '<ul style="margin:8px 0 0;padding-left:18px">' +
+      urls.map(u => '<li style="word-break:break-all">' + esignEsc(u) + '</li>').join('') +
+      '</ul></div>',
+    showCancelButton: true, confirmButtonText: 'Fetch & embed',
+  });
+  if (!r.isConfirmed) return false;
+
+  try {
+    const out = await esignApi('/api/esign/inline-images', 'POST', { urls });
+    const okMap = {};
+    const done = [];
+    const failed = [];
+    (out.images || []).forEach(im => {
+      if (im.ok) { okMap[im.url] = im.data_uri; done.push(im); }
+      else failed.push(im);
+    });
+    if (done.length) {
+      E('ta-body').value = peInlineImageSrcs(E('ta-body').value, okMap);
+      E('ta-body').dispatchEvent(new Event('input', { bubbles: true })); // dirty + stale banner
+    }
+    Swal.fire({
+      icon: failed.length ? (done.length ? 'warning' : 'error') : 'success',
+      title: done.length ? 'Images embedded' : 'Nothing embedded',
+      html:
+        '<div style="text-align:left;font-size:12px">' +
+        done.map(im =>
+          '<div><i class="fa-solid fa-circle-check" style="color:#059669"></i> ' +
+          '<span style="word-break:break-all">' + esignEsc(im.url) + '</span> — ' +
+          Math.max(1, Math.round(im.bytes / 1024)) + ' KB embedded</div>').join('') +
+        failed.map(im =>
+          '<div><i class="fa-solid fa-circle-xmark" style="color:#dc2626"></i> ' +
+          '<span style="word-break:break-all">' + esignEsc(im.url) + '</span> — ' +
+          esignEsc(im.error || 'failed') + '</div>').join('') +
+        '</div>',
+    });
+    return done.length > 0;
+  } catch (err) {
+    Swal.fire({ icon: 'error', title: 'Inline failed', text: err.message });
+    return false;
+  }
+}
+
 // ── save ─────────────────────────────────────────────────────
 function buildPayload() {
   const seq = E('ta-seqid').value.trim();
@@ -679,6 +753,36 @@ function buildPayload() {
 async function saveTemplate() { await doSave({ quiet: false }); }
 
 async function doSave({ quiet }) {
+  // ── editor-key auto-create (2026-07-22 slice) ──────────────
+  // A key typed straight into the placement editor's Key input has no schema
+  // row yet, and the server rejects that save (ESIGN_UNDECLARED_PLACEHOLDER —
+  // the pdf-type mirror cross-check). Offer to create the rows — ONE confirm,
+  // never silent (silent add turns typo'd keys into real schema rows). Cancel
+  // aborts the save so the author can fix the editor instead.
+  const placementsForSave = editor && editor.hasDocument()
+    ? editor.getPlacements()
+    : (current ? current.placement_json : null);
+  const missingKeys = peDiffPlacementKeys(placementsForSave, gatherSchemaRows().map(r => r.key));
+  if (missingKeys.length) {
+    const r = await Swal.fire({
+      icon: 'question', title: 'Add fields for placed keys?',
+      html: '<div style="text-align:left;font-size:13px">These placed keys aren\u2019t in the ' +
+        'field schema:<div style="margin:8px 0"><b>' +
+        missingKeys.map(esignEsc).join('</b>, <b>') + '</b></div>' +
+        'Add them as plain text fields?</div>',
+      showCancelButton: true, confirmButtonText: 'Add fields & save',
+    });
+    if (!r.isConfirmed) {
+      Toast.fire({ icon: 'info', title: 'Save cancelled — fix the keys in the editor, or add the fields yourself' });
+      return false;
+    }
+    missingKeys.forEach(k => addSchemaRow({
+      key: k, label: k, type: 'text', resolver: null, default: '', required: false,
+    }));
+    scanBody();
+    validateSchemaInline();  // a key the schema rules reject shows its row error now
+  }
+
   // client mirrors first — friendlier than a 400 round-trip
   const basicsErrs = peValidateBasics({
     name: E('ta-name').value, kind: E('ta-kind').value,

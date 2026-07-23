@@ -38,6 +38,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const esignTemplateService = require('../services/esignTemplateService');
 const esignPrefillService  = require('../services/esignPrefillService');
 const esignSendService     = require('../services/esignSendService');
+const esignInlineImageService = require('../services/esignInlineImageService');
 
 // The 2A router's code→status map is the baseline; only 2B's new codes are
 // added here. One source of truth for the shared codes.
@@ -56,6 +57,7 @@ function errorToStatus(code) {
     case 'ESIGN_UNDECLARED_PLACEHOLDER':
     case 'ESIGN_MISSING_PREFILL':
     case 'ESIGN_RENDER_EXTERNAL_REF':
+    case 'ESIGN_INLINE_BAD_INPUT':
       return 400;
     case 'ESIGN_TEMPLATE_INACTIVE':
       return 409;
@@ -83,6 +85,11 @@ function fail(res, err, route) {
     code: (err && err.code) || 'ESIGN_ERROR',
   };
   if (err && err.missing) body.missing = err.missing;
+  // ESIGN_RENDER_EXTERNAL_REF carries the blocked urls (.urls) — forwarded so
+  // templateAdmin's error-flow can offer the authoring-time image inliner.
+  // Same class of forwarding as `missing`; nothing sensitive rides here (the
+  // urls came out of the caller's own template body).
+  if (err && err.urls) body.urls = err.urls;
   // Present after a failed provider send (sendPipeline attaches it): lets the
   // send form retry the SAME draft row — preview-render the PDF and POST
   // /api/esign/send with draft_id — rather than orphaning it and minting a
@@ -284,6 +291,29 @@ router.post('/api/esign/templates/:id/prefills', jwtOrApiKey, async (req, res) =
     return res.json({ values: out.values, missing: out.missing });
   } catch (err) {
     return fail(res, err, 'POST /api/esign/templates/:id/prefills');
+  }
+});
+
+// ─── POST /api/esign/inline-images (2026-07-22) ──────────────
+//
+// The authoring-time external-image inliner: templateAdmin sends the external
+// <img> URLs from a template body, gets data URIs back, and freezes the bytes
+// into the body — the render pipeline's network lockdown stays untouched.
+// Per-URL results ({url, ok, ...}); only malformed input is a request-level
+// error. Full guard rationale in services/esignInlineImageService.js —
+// including why an authed fetch-me-this-URL endpoint is an SSRF surface and
+// how it is screened.
+//
+// Path safety: 3 literal segments — the actions router's POSTs are either
+// literal (/api/esign/send) or 4-segment (/api/esign/:id/recall), so nothing
+// there shadows this.
+
+router.post('/api/esign/inline-images', jwtOrApiKey, async (req, res) => {
+  try {
+    const out = await esignInlineImageService.inlineImages((req.body || {}).urls);
+    return res.json({ images: out.images, total_bytes: out.totalBytes });
+  } catch (err) {
+    return fail(res, err, 'POST /api/esign/inline-images');
   }
 });
 

@@ -1006,9 +1006,14 @@ async function resendPipeline(db, id, { recipients = null, pdfBuffer, createdBy 
  * calling Zoho with a NULL provider_id would be a guaranteed 4xx. The row is
  * simply moved to 'recalled', which the transition table permits from draft.
  *
- * `reason` is stored LOCALLY and only locally: Zoho's recall endpoint accepts
- * no reason field. The event payload records that fact explicitly so nobody
- * later assumes the client was told why.
+ * `reason` is never sent THROUGH the provider: Zoho's recall endpoint accepts
+ * no reason field and its own cancellation email to signers is reason-less.
+ * Since 2026-07-22 the reason DOES reach the client — after a successful
+ * provider recall, _tryNotifyRecall emails it to every recipient on the
+ * envelope (best-effort; the recall stands regardless). The recall dialog
+ * warns staff the reason goes to the client verbatim. Draft recalls skip the
+ * notice: the client never received a signing link, so there is nothing to
+ * explain.
  */
 async function recallPipeline(db, id, { reason, createdBy = null } = {}) {
   const row = await esignService.getById(db, id);
@@ -1053,7 +1058,118 @@ async function recallPipeline(db, id, { reason, createdBy = null } = {}) {
     },
   });
 
+  // Tell the client WHY (2026-07-22 slice). Only after a real provider recall
+  // — a draft's client never got a signing link, so there is nothing to
+  // explain — and only best-effort: the recall already happened.
+  if (row.status !== 'draft' && reasonClean) {
+    await _tryNotifyRecall(db, row, reasonClean);
+  }
+
   return { row: applied.request, changed: applied.changed };
+}
+
+/**
+ * RECALL-REASON CLIENT NOTIFICATION.
+ *
+ * Zoho's recall endpoint takes no reason field and its own "this request was
+ * cancelled" email to signers says nothing about why — so the client's only
+ * source of WHY is us. This emails the reason to EVERY recipient on the
+ * envelope, not just pending ones: a co-signer who already signed deserves to
+ * know the document they signed is void (ratified 2026-07-22).
+ *
+ * The reason reaches the client VERBATIM (ratified — the recall dialog says
+ * so under the input); it is HTML-escaped on the html side only, exactly like
+ * template interpolation.
+ *
+ * BEST-EFFORT, same posture as everything else that runs after the action
+ * succeeded: the recall stands whatever happens here. Outcomes land on the
+ * audit trail (the observability surface):
+ *
+ *   recall_notice_sent    {recipient_count, failed?}  ≥1 email delivered
+ *   recall_notice_failed  {reason, ...}               nothing delivered
+ *
+ * Never throws. One email per recipient rather than one To: line — a single
+ * bad address must not sink the other signer's notice, and recipients need
+ * not see each other's email addresses.
+ *
+ * emailService is required LAZILY: most consumers of this module never
+ * recall, and a top-level require would pull the email adapter stack
+ * (nodemailer, googleapis) into every suite that mocks only the esign
+ * boundary. firmConfig's cfg() is jest-inert (serves env/null, no DB).
+ */
+async function _tryNotifyRecall(db, row, reason) {
+  try {
+    const recipients = (row.recipients || [])
+      .map((r) => r && r.email)
+      .filter(Boolean);
+    if (!recipients.length) {
+      await _tryAppendEvent(db, row.id, {
+        event: 'recall_notice_failed',
+        payload: { reason: 'no_recipients' },
+      });
+      return;
+    }
+
+    // Same sender source wf30 uses (email_automations setting, AUTO_EMAIL
+    // env fallback via firmConfig). Unset → no notice, said on the trail.
+    const { cfg } = require('../lib/firmConfig');
+    const from = cfg('email_automations');
+    if (!from) {
+      await _tryAppendEvent(db, row.id, {
+        event: 'recall_notice_failed',
+        payload: {
+          reason: 'no_from_address',
+          detail: 'email_automations setting (AUTO_EMAIL env) is not set',
+        },
+      });
+      return;
+    }
+    const firmName = cfg('firm_name') || 'Legal Solutions Group';
+
+    const subject = `Signature request cancelled — ${row.document_name}`;
+    const text =
+      `The signature request '${row.document_name}' from ${firmName} has been cancelled.\n\n` +
+      `Reason: ${reason}\n\n` +
+      `No further action is needed on this document.`;
+    const html =
+      `<p>The signature request '<b>${_escapeHtml(row.document_name)}</b>' from ` +
+      `${_escapeHtml(firmName)} has been cancelled.</p>` +
+      `<p>Reason: ${_escapeHtml(reason)}</p>` +
+      `<p>No further action is needed on this document.</p>`;
+
+    const emailService = require('./emailService');
+    const failed = [];
+    for (const to of recipients) {
+      try {
+        await emailService.sendEmail(db, { from, to, subject, text, html });
+      } catch (err) {
+        failed.push({ to, error: err && err.message });
+      }
+    }
+
+    if (failed.length === recipients.length) {
+      await _tryAppendEvent(db, row.id, {
+        event: 'recall_notice_failed',
+        payload: { reason: 'send_failed', errors: failed },
+      });
+    } else {
+      await _tryAppendEvent(db, row.id, {
+        event: 'recall_notice_sent',
+        payload: {
+          recipient_count: recipients.length - failed.length,
+          ...(failed.length ? { failed } : {}),
+        },
+      });
+    }
+  } catch (err) {
+    // Even the bookkeeping path is guarded: a recall notice must never turn a
+    // completed recall into a thrown error.
+    console.warn(`[ESIGN SEND] recall notice for request ${row && row.id} failed: ${err && err.message}`);
+    await _tryAppendEvent(db, row && row.id, {
+      event: 'recall_notice_failed',
+      payload: { reason: 'unexpected_error', error: err && err.message },
+    });
+  }
 }
 
 /**
@@ -1628,4 +1744,5 @@ module.exports = {
   _daysPending,
   _tryEnrollReminders,
   _reminderPolicyForRow,
+  _tryNotifyRecall,
 };
