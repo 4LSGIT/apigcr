@@ -130,6 +130,16 @@ public/assets/icon-32.png
 public/assets/icon-512-dev.png
 public/assets/icon-512.png
 public/assets/manifest.json
+public/assets/streak/icon-180-dev.png
+public/assets/streak/icon-180.png
+public/assets/streak/icon-192-dev.png
+public/assets/streak/icon-192.png
+public/assets/streak/icon-32-dev.png
+public/assets/streak/icon-32.png
+public/assets/streak/icon-512-dev.png
+public/assets/streak/icon-512.png
+public/assets/streak/icon-dev.svg
+public/assets/streak/icon.svg
 public/automation/activity.html
 public/automation/automationsWidget.html
 public/automation/courtReview.html

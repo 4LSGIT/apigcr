@@ -5,6 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#4f46e5">
 <title>Streak</title>
+
+<link rel="icon" type="image/svg+xml" href="/assets/streak/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/streak/icon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/assets/streak/icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/streak/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Streak">
+
+<!-- DEV FAVICON — same convention as index.html: orange icons + tagged title on
+     localhost, no-op on GCR. Remove this whole <script> block to disable. -->
+<script>
+  if (['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+    document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"]').forEach(l => {
+      l.href = l.href
+        .replace(/icon-(\d+)\.png/, 'icon-$1-dev.png')
+        .replace(/icon\.svg/, 'icon-dev.svg');
+    });
+    document.title = '[DEV] ' + document.title;
+  }
+</script>
+
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   /* Two rows of 14 = the last 4 weeks. Today is the bottom-right cell.
@@ -111,6 +132,51 @@ function loading(label = 'Loading…') {
 
 let BOARD = null;   // last payload from GET /api/streak/board/:slug
 
+/* ─── dynamic PWA manifest ───────────────────────────────────────────────────
+ * Chrome installs to the manifest's start_url, so one static manifest would
+ * drop every member onto the admin console (/streak with no ?b=). Mint one per
+ * board at runtime instead.
+ *
+ * A blob: URL has no hierarchical path, so relative AND root-relative URLs
+ * inside the manifest fail to resolve — every URL below must be absolute.
+ *
+ * No service worker required: Chrome dropped the SW-with-fetch-handler rule for
+ * installability (v108 mobile / v112 desktop). iOS ignores the manifest for
+ * Add to Home Screen and uses apple-touch-icon + the open URL, which already
+ * carries ?b=<slug>.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+let manifestURL = null, manifestTitle = null;
+
+function setManifest(title) {
+  if (!SLUG || title === manifestTitle) return;   // admin console isn't installable
+  manifestTitle = title;
+
+  const O = location.origin;
+  const mf = {
+    name:             title || 'Streak',
+    short_name:       title || 'Streak',
+    start_url:        O + '/streak?b=' + encodeURIComponent(SLUG),
+    scope:            O + '/streak',
+    display:          'standalone',
+    background_color: '#f1f5f9',                  // bg-slate-100, matches <body>
+    theme_color:      '#4f46e5',
+    icons: [
+      { src: O + '/assets/streak/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+      { src: O + '/assets/streak/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+    ],
+  };
+
+  if (manifestURL) URL.revokeObjectURL(manifestURL);
+  manifestURL = URL.createObjectURL(
+    new Blob([JSON.stringify(mf)], { type: 'application/manifest+json' })
+  );
+
+  let link = document.querySelector('link[rel="manifest"]');
+  if (!link) { link = document.createElement('link'); link.rel = 'manifest'; document.head.appendChild(link); }
+  link.href = manifestURL;
+}
+
 async function bootBoard() {
   loading();
   if (!getCred()) return renderLogin();
@@ -130,6 +196,8 @@ async function renderLogin(msg) {
     app.innerHTML = '<p class="py-24 text-center text-sm text-rose-600">' + esc(err.message) + '</p>';
     return;
   }
+
+  setManifest(meta.title);
 
   const people = meta.members.map((m) =>
     '<button data-u="' + esc(m.username) + '" class="who ' + SEC + ' w-full justify-start">' + esc(m.name) + '</button>'
@@ -264,6 +332,7 @@ function memberCard(m, board) {
 
 function renderBoard() {
   const b = BOARD;
+  setManifest(b.title);
   // Mirror the server's backfill rule client-side so we only offer taps the API
   // will accept. The server re-checks; this is UI only.
   const t = new Date(b.today + 'T00:00:00Z');
