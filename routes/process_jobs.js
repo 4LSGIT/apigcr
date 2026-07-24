@@ -190,7 +190,11 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
     }
   } catch (err) {
     console.error("[PROCESS-JOBS] Claim failed:", err);
-    return res.status(500).json({ error: "Failed to claim jobs" });
+    return res.status(500).json({
+      error: "Failed to claim jobs",
+      code: err.code || err.errno || null,
+      detail: String(err.message || "").slice(0, 300),
+    });
   }
 
   // STEP 2: Execute jobs one by one
