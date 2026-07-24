@@ -151,9 +151,22 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
   let jobs = [];
 
-  // STEP 1: Atomically claim a batch of due jobs (pure-DB → retries: 1).
+  // STEP 1: Atomically claim a batch of due jobs (pure-DB → retries: 3).
+  //
+  // Why retries: 3 — observed failure mode (7/2026): the MySQL server drops all
+  // idle pooled connections at once (PROTOCOL_CONNECTION_LOST); each failed
+  // attempt evicts one dead socket from the pool, so a single retry can pull a
+  // second corpse and still fail. Three retries drains a small pool of stale
+  // sockets and lands on a fresh dial. Claim is pure-DB and rolls back on
+  // failure, so extra retries are side-effect-safe.
   try {
-    await recoverStuckJobs(db);
+    // Housekeeping — must never kill the poll cycle. It re-runs on every poll,
+    // so a skipped pass costs at most one minute of recovery delay.
+    try {
+      await recoverStuckJobs(db);
+    } catch (recoveryErr) {
+      console.warn(`[PROCESS-JOBS] recoverStuckJobs failed (non-fatal): ${recoveryErr.code || ""} ${recoveryErr.message}`);
+    }
 
     jobs = await db.withTransaction(async (connection) => {
       const [rows] = await connection.query(
@@ -182,7 +195,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
       );
 
       return rows;
-    }, { retries: 1 });
+    }, { retries: 3 });
 
     if (jobs.length === 0) {
       stampHeartbeat(db); // fire-and-forget — poll cycle ran (common path)
