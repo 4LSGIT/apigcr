@@ -232,7 +232,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
 
         console.log(`[RESUME] Resuming execution ${executionId} at step ${nextStep}`);
 
-        // Update execution state in its own short transaction (pure-DB → retries: 1).
+        // Update execution state in its own short transaction (pure-DB → retries: 3).
         await db.withTransaction(async (conn) => {
           await conn.query(
             `UPDATE workflow_executions 
@@ -409,7 +409,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
       });
 
     } catch (err) {
-      // Record failed attempt in its own transaction (pure-DB → retries: 1). The
+      // Record failed attempt in its own transaction (pure-DB → retries: 3). The
       // results.push is moved outside the callback so a transient retry cannot
       // double-record into the results array.
       try {
