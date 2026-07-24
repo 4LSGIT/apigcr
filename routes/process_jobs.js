@@ -240,7 +240,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
              WHERE id = ?`,
             [nextStep, executionId]
           );
-        }, { retries: 1 });
+        }, { retries: 3 });
 
         // Advance in background (non-blocking).
         // The job's scheduled_jobs.status update happens AFTER advanceWorkflow
@@ -452,7 +452,7 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
             );
             return { status: "failed", error: err.message };
           }
-        }, { retries: 1 });
+        }, { retries: 3 });
 
         results.push({ id: job.id, ...outcome });
       } catch (recordErr) {
