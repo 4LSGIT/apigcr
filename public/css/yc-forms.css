@@ -957,3 +957,8 @@ body {
 .yc-toast-info {
   background: #495057;
 }
+/* Copy-on-click hint (data-yc-copy fields in view mode) */
+.yc-readonly .yc-field:has(input[data-yc-copy]),
+.yc-readonly .yc-field:has(textarea[data-yc-copy]) {
+  cursor: copy;
+}

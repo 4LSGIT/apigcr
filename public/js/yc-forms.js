@@ -107,6 +107,9 @@ class YCForm {
       // 5c. Set up locked field click messages
       this._setupLockedFieldMessages();
 
+      // 5d. Set up copy-on-click for view mode (data-yc-copy)
+      this._setupCopyOnView();
+
       // 6. Apply initial readonly state
       this.setReadonly(this.config.readonly);
 
@@ -887,6 +890,54 @@ if (this.config.endpoints.load) {
         this._toast('info', msg);
       });
     });
+  }
+
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // COPY-ON-CLICK (VIEW MODE)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * View-mode copy-to-clipboard. Any input/textarea with a data-yc-copy
+   * attribute becomes click-to-copy while the form is in readonly mode.
+   * (In readonly mode inputs have pointer-events:none, so the click lands
+   * on the .yc-field wrapper — same mechanism as locked-field messages.)
+   */
+  _setupCopyOnView() {
+    this.el.querySelectorAll('input[data-yc-copy], textarea[data-yc-copy]').forEach(input => {
+      const field = input.closest('.yc-field');
+      if (!field) return;
+      field.addEventListener('click', async () => {
+        if (!this.el.classList.contains('yc-readonly')) return; // view mode only
+        const val = (input.value || '').trim();
+        if (!val) return;
+        const ok = await this._copyText(val);
+        if (ok) this._toast('success', 'Copied', val);
+        else this._toast('error', 'Copy failed');
+      });
+    });
+  }
+
+  async _copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      // Fallback (older browsers / clipboard permission edge cases)
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e2) {
+        return false;
+      }
+    }
   }
 
 
