@@ -957,8 +957,27 @@ body {
 .yc-toast-info {
   background: #495057;
 }
-/* Copy-on-click hint (data-yc-copy fields in view mode) */
-.yc-readonly .yc-field:has(input[data-yc-copy]),
-.yc-readonly .yc-field:has(textarea[data-yc-copy]) {
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COPY-ON-CLICK (VIEW MODE) — cursor hints
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.yc-readonly .yc-field:has(input[type="text"]),
+.yc-readonly .yc-field:has(input[type="email"]),
+.yc-readonly .yc-field:has(input[type="tel"]),
+.yc-readonly .yc-field:has(input[type="date"]),
+.yc-readonly .yc-field:has(input[type="number"]),
+.yc-readonly .yc-field:has(select),
+.yc-readonly .yc-field:has(textarea) {
+  cursor: copy;
+}
+
+/* Repeater text inputs stay clickable (readOnly, not pointer-events:none) */
+.yc-readonly .yc-repeater-item input[readonly] {
+  cursor: copy;
+}
+
+/* Tags: pills copy as a joined list (overrides cursor:default above) */
+.yc-readonly .yc-tags-wrap {
   cursor: copy;
 }

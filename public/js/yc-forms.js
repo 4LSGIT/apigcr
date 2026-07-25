@@ -107,7 +107,8 @@ class YCForm {
       // 5c. Set up locked field click messages
       this._setupLockedFieldMessages();
 
-      // 5d. Set up copy-on-click for view mode (data-yc-copy)
+      // 5d. Copy-on-click for view mode (delegated — covers repeater rows
+      // created later). No-op on forms that never enter .yc-readonly.
       this._setupCopyOnView();
 
       // 6. Apply initial readonly state
@@ -898,24 +899,116 @@ if (this.config.endpoints.load) {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * View-mode copy-to-clipboard. Any input/textarea with a data-yc-copy
-   * attribute becomes click-to-copy while the form is in readonly mode.
-   * (In readonly mode inputs have pointer-events:none, so the click lands
-   * on the .yc-field wrapper — same mechanism as locked-field messages.)
+   * View-mode copy-to-clipboard for ALL fields. While the form has
+   * .yc-readonly, clicking a field copies its value to the clipboard.
+   *
+   * One delegated listener on the form root — repeater rows are destroyed
+   * and rebuilt by populate() on every load/save, so per-element listeners
+   * would be lost. Delegation covers them automatically.
+   *
+   * How clicks arrive in view mode:
+   *   - Regular .yc-field inputs have pointer-events:none → the click lands
+   *     on the .yc-field wrapper; we resolve the control from there.
+   *   - Repeater text inputs use readOnly (still clickable) → the click
+   *     lands on the input directly.
+   *   - Repeater selects/checkboxes are disabled → browsers dispatch no
+   *     click event at all → naturally excluded.
+   *   - Tags fields hide their input in readonly → special-cased to copy
+   *     the pill texts.
+   *
+   * Forms that never enter .yc-readonly (casedetails, issn, 341notes,
+   * external fill-in forms) are unaffected — the handler returns
+   * immediately.
+   *
+   * Opt-out: data-yc-no-copy on a control or any ancestor.
    */
   _setupCopyOnView() {
-    this.el.querySelectorAll('input[data-yc-copy], textarea[data-yc-copy]').forEach(input => {
-      const field = input.closest('.yc-field');
+    this.el.addEventListener('click', (e) => this._handleCopyClick(e));
+  }
+
+  _handleCopyClick(e) {
+    // Only active in view mode
+    if (!this.el.classList.contains('yc-readonly')) return;
+
+    // Never hijack controls that stay interactive in view mode
+    // (advanced ⚙ toggles, history buttons, links, tag-remove buttons)
+    if (e.target.closest('button, a')) return;
+
+    // Explicit opt-out
+    if (e.target.closest('[data-yc-no-copy]')) return;
+
+    // Don't clobber an in-progress text selection (repeater inputs remain
+    // selectable in view mode)
+    const sel = window.getSelection();
+    if (sel && sel.toString()) return;
+
+    // ── Tags field: copy pill texts ──
+    const tagsWrap = e.target.closest('.yc-tags-wrap');
+    if (tagsWrap) {
+      const tags = Array.from(tagsWrap.querySelectorAll('.yc-tag-pill .yc-tag-text'))
+        .map(el => el.textContent.trim())
+        .filter(Boolean);
+      if (tags.length) this._copyWithToast(tags.join(', '));
+      return;
+    }
+
+    // ── Direct hit on a control (repeater readOnly inputs) ──
+    let control = e.target.closest('input, select, textarea');
+
+    // ── Otherwise resolve through the .yc-field wrapper ──
+    if (!control) {
+      const field = e.target.closest('.yc-field');
       if (!field) return;
-      field.addEventListener('click', async () => {
-        if (!this.el.classList.contains('yc-readonly')) return; // view mode only
-        const val = (input.value || '').trim();
-        if (!val) return;
-        const ok = await this._copyText(val);
-        if (ok) this._toast('success', 'Copied', val);
-        else this._toast('error', 'Copy failed');
-      });
-    });
+      const candidates = Array.from(field.querySelectorAll('input, select, textarea'))
+        .filter(el => this._isCopyable(el));
+      // Only copy when unambiguous (radio/checkbox groups resolve to zero)
+      if (candidates.length !== 1) return;
+      control = candidates[0];
+    }
+
+    if (!this._isCopyable(control)) return;
+
+    // In-input selection guard (Firefox doesn't reflect input selection in
+    // window.getSelection)
+    if (typeof control.selectionStart === 'number' &&
+        control.selectionStart !== control.selectionEnd) return;
+
+    let val = '';
+    if (control.tagName === 'SELECT') {
+      // Copy the visible label, not the option value — but skip empty-value
+      // placeholder options ("-- select --")
+      if (!control.value) return;
+      const opt = control.options[control.selectedIndex];
+      val = opt ? opt.text.trim() : '';
+    } else {
+      val = (control.value || '').trim();
+    }
+    if (!val) return;
+
+    this._copyWithToast(val);
+  }
+
+  /**
+   * A control is copyable if it's a visible text-like input, select, or
+   * textarea. Checkboxes, radios, hidden inputs, and the tags typing input
+   * (handled via pills) are excluded.
+   */
+  _isCopyable(el) {
+    if (!el || el.hasAttribute('data-yc-no-copy')) return false;
+    if (el.classList.contains('yc-tags-input')) return false;
+    // Exclude hidden elements (e.g. the original element behind a tags widget)
+    if (el.offsetParent === null) return false;
+    if (el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') return true;
+    if (el.tagName !== 'INPUT') return false;
+    const t = (el.type || 'text').toLowerCase();
+    return !['checkbox', 'radio', 'button', 'submit', 'reset',
+             'file', 'hidden', 'range', 'color', 'image'].includes(t);
+  }
+
+  async _copyWithToast(text) {
+    const ok = await this._copyText(text);
+    if (ok) this._toast('success', 'Copied', text);
+    else this._toast('error', 'Copy failed');
   }
 
   async _copyText(text) {
