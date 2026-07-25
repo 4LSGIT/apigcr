@@ -2196,28 +2196,30 @@
 
 <div id="tabMore" class="tab-main">
   <h2>More Features</h2>
-  <button class="big-button" data-target="manualsDiv"         data-exclusive-group="more"><i class="fa-solid fa-book fa-2xl"></i><br><br>Manuals</button>
-  <button class="big-button" data-target="automationsDiv"     data-exclusive-group="more"><i class="fa-solid fa-robot fa-2xl"></i><br><br>Automations</button>
-  <button class="big-button" data-target="featureRequestsDiv" data-exclusive-group="more"><i class="fa-solid fa-lightbulb fa-2xl"></i><br><br>Feature Requests</button>
+  <!-- data-hover-anim: Font Awesome animation class(es) played on the icon while
+       the pointer is over the button (see the hover-animation script below).
+       Tune speed/axis per button with inline --fa-* custom properties. -->
+  <button class="big-button" data-target="manualsDiv"         data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-book fa-2xl"></i><br><br>Manuals</button>
+  <button class="big-button" data-target="automationsDiv"     data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-robot fa-2xl"></i><br><br>Automations</button>
+  <button class="big-button" data-target="featureRequestsDiv" data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-scale:1.15; --fa-animation-duration:1.1s"><i class="fa-solid fa-lightbulb fa-2xl"></i><br><br>Feature Requests</button>
   <br><br>
-  <button class="big-button" data-target="videoManagerDiv"    data-exclusive-group="more"><i class="fa-solid fa-video fa-2xl"></i><br><br>Video Manager</button>
-  <button class="big-button" data-target="redirectsDiv"    data-exclusive-group="more"><i class="fa-solid fa-signs-post fa-2xl"></i><br><br>Redirects Manager</button>
-  <button class="big-button" data-target="landingPagesDiv" data-exclusive-group="more"><i class="fa-solid fa-sitemap fa-2xl"></i><br><br>Landing Pages</button>
+  <button class="big-button" data-target="videoManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.15; --fa-animation-duration:0.9s"><i class="fa-solid fa-video fa-2xl"></i><br><br>Video Manager</button>
+  <button class="big-button" data-target="redirectsDiv"    data-exclusive-group="more" data-hover-anim="fa-spin" style="--fa-animation-duration:2.5s"><i class="fa-solid fa-signs-post fa-2xl"></i><br><br>Redirects Manager</button>
+  <button class="big-button" data-target="landingPagesDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sitemap fa-2xl"></i><br><br>Landing Pages</button>
   <br><br>
-  <button class="big-button" data-target="bookingDiv" data-exclusive-group="more"><i class="fa-solid fa-calendar-week fa-2xl"></i><br><br>Booking Manager</button>
-  <button class="big-button" onclick="showClioCode()"><i class="fa-solid fa-c fa-2xl"></i><br><br>Get Clio Code</button>
-  <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
+  <button class="big-button" data-target="bookingDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:2s; --fa-flip-y:0; --fa-flip-x:1"><i class="fa-solid fa-calendar-week fa-2xl"></i><br><br>Booking Manager</button>
+  <button class="big-button" onclick="showClioCode()" data-hover-anim="fa-spin-pulse" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-c fa-2xl"></i><br><br>Get Clio Code</button>
+  <button class="big-button" data-target="courtPreviewDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.6s"><i class="fa-solid fa-gavel fa-2xl"></i><br><br>Court Preview</button>
   <br><br>
-  <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
-  <button class="big-button" data-target="assetManagerDiv"    data-exclusive-group="more"><i class="fa-solid fa-photo-film fa-2xl"></i><br><br>Asset Manager</button>
-  <button class="big-button" data-target="esignDashboardDiv" data-exclusive-group="more"><i class="fa-solid fa-file-signature fa-2xl"></i><br><br>Signatures</button>
+  <button class="big-button" data-target="availabilityDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-calendar fa-2xl"></i><br><br>Availability Manager</button>
+  <button class="big-button" data-target="assetManagerDiv"    data-exclusive-group="more" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-opacity:0.5; --fa-animation-duration:2s"><i class="fa-solid fa-photo-film fa-2xl"></i><br><br>Asset Manager</button>
+  <button class="big-button" data-target="esignDashboardDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.6s; --fa-animation-direction:reverse"><i class="fa-solid fa-file-signature fa-2xl"></i><br><br>Signatures</button>
   <br><br>
-  <!-- Placeholder buttons: no wiring, just fun. Each click toggles a built-in
-       Font Awesome animation on its icon (successor to the old jumping-cat
-       button). querySelector('i,svg') covers both webfont and SVG kit modes. -->
-  <button class="big-button" onclick="this.querySelector('i,svg').classList.toggle('fa-bounce')"><i class="fa-solid fa-rocket fa-2xl"></i><br><br>Placeholder</button>
-  <button class="big-button" onclick="this.querySelector('i,svg').classList.toggle('fa-fade')"><i class="fa-solid fa-ghost fa-2xl"></i><br><br>Placeholder</button>
-  <button class="big-button" onclick="this.querySelector('i,svg').classList.toggle('fa-shake')"><i class="fa-solid fa-frog fa-2xl"></i><br><br>Placeholder</button>
+  <!-- Placeholder buttons: no wiring, just fun. Hover animates the icon like
+       every other button here (successor to the old jumping-cat button). -->
+  <button class="big-button" data-hover-anim="fa-bounce" style="--fa-animation-duration:0.8s"><i class="fa-solid fa-rocket fa-2xl"></i><br><br>Placeholder</button>
+  <button class="big-button" data-hover-anim="fa-fade" style="--fa-animation-duration:2.2s"><i class="fa-solid fa-ghost fa-2xl"></i><br><br>Placeholder</button>
+  <button class="big-button" data-hover-anim="fa-shake" style="--fa-animation-duration:0.9s"><i class="fa-solid fa-frog fa-2xl"></i><br><br>Placeholder</button>
 
 
   <div id="manualsDiv"         class="more-panel" style="display:none">
@@ -2305,15 +2307,16 @@
   
 <div id="tabAdmin" class="tab-main" data-all-icons='<i class="fa-solid fa-arrow-left"></i><i class="fa-solid fa-crown"></i>'>
   <h2>Admin</h2>
-  <button class="big-button" onclick="etchSwal()"><i class="fa-solid fa-pen-ruler fa-2xl"></i><br><br>Etch</button>
-  <button class="big-button" data-target="readonlyKeysDiv" data-exclusive-group="admin"><i class="fa-solid fa-eye fa-2xl"></i><br><br>Readonly Keys (SU)</button>
-  <button class="big-button" data-target="apiKeysDiv" data-exclusive-group="admin"><i class="fa-solid fa-key fa-2xl"></i><br><br>API Keys (SU)</button>
-  <button class="big-button" data-target="dbConsoleDiv" data-exclusive-group="admin"><i class="fa-solid fa-database fa-2xl"></i><br><br>DB Console (SU)</button>
+  <!-- data-hover-anim: see the More Features grid / hover-animation script below. -->
+  <button class="big-button" onclick="etchSwal()" data-hover-anim="fa-shake" style="--fa-animation-duration:1.5s"><i class="fa-solid fa-pen-ruler fa-2xl"></i><br><br>Etch</button>
+  <button class="big-button" data-target="readonlyKeysDiv" data-exclusive-group="admin" data-hover-anim="fa-fade" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-eye fa-2xl"></i><br><br>Readonly Keys (SU)</button>
+  <button class="big-button" data-target="apiKeysDiv" data-exclusive-group="admin" data-hover-anim="fa-flip" style="--fa-animation-duration:1.8s; --fa-flip-y:0; --fa-flip-x:1"><i class="fa-solid fa-key fa-2xl"></i><br><br>API Keys (SU)</button>
+  <button class="big-button" data-target="dbConsoleDiv" data-exclusive-group="admin" data-hover-anim="fa-beat-fade" style="--fa-beat-fade-opacity:0.55; --fa-animation-duration:1.4s"><i class="fa-solid fa-database fa-2xl"></i><br><br>DB Console (SU)</button>
   <br><br>
-  <button class="big-button" data-target="connectionsDiv" data-exclusive-group="admin"><i class="fa-solid fa-plug fa-2xl"></i><br><br>Connections (SU)</button>
-  <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin"><i class="fa-solid fa-vial fa-2xl"></i><br><br>API Tester (SU)</button>
-  <button class="big-button" data-target="systemAlertsDiv" data-exclusive-group="admin"><i class="fa-solid fa-triangle-exclamation fa-2xl"></i><br><br>System Alerts (SU)</button>
-  <button class="big-button" data-target="usersDiv" data-exclusive-group="admin"><i class="fa-solid fa-users-gear fa-2xl"></i><br><br>Users (SU)</button>
+  <button class="big-button" data-target="connectionsDiv" data-exclusive-group="admin" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.2s"><i class="fa-solid fa-plug fa-2xl"></i><br><br>Connections (SU)</button>
+  <button class="big-button" data-target="apiTesterDiv" data-exclusive-group="admin" data-hover-anim="fa-shake" style="--fa-animation-duration:0.7s"><i class="fa-solid fa-vial fa-2xl"></i><br><br>API Tester (SU)</button>
+  <button class="big-button" data-target="systemAlertsDiv" data-exclusive-group="admin" data-hover-anim="fa-beat" style="--fa-beat-scale:1.25; --fa-animation-duration:0.7s"><i class="fa-solid fa-triangle-exclamation fa-2xl"></i><br><br>System Alerts (SU)</button>
+  <button class="big-button" data-target="usersDiv" data-exclusive-group="admin" data-hover-anim="fa-spin" style="--fa-animation-duration:3s"><i class="fa-solid fa-users-gear fa-2xl"></i><br><br>Users (SU)</button>
 
   <div id="sequencesDiv" style="display:none"></div>
   <div id="readonlyKeysDiv" style="display:none; margin-top:10px;">
@@ -2381,6 +2384,45 @@
       showCloseButton: true,
     });
   }
+  // ── Big-button hover animations ── HOW TO USE ─────────────────────────
+  // Give any .big-button a data-hover-anim of one or more Font Awesome
+  // animation classes (fa-beat, fa-fade, fa-beat-fade, fa-bounce, fa-flip,
+  // fa-shake, fa-spin, fa-spin-pulse, + fa-spin-reverse). It's applied to the
+  // icon while the pointer is over the button and stripped on the way out, so
+  // nothing keeps animating once you move off. Speed/scale/axis come from the
+  // --fa-* custom properties set inline on the button (they inherit to the
+  // icon). FA's own reduced-motion media query disables all of it for users
+  // who ask for that. querySelector('i,svg') covers webfont and SVG kit modes.
+  const hoverAnimClasses = btn => (btn.dataset.hoverAnim || '').split(/\s+/).filter(Boolean);
+
+  function setHoverAnim(btn, on) {
+    const icon = btn.querySelector('i,svg');
+    if (!icon) return;
+    icon.classList[on ? 'add' : 'remove'](...hoverAnimClasses(btn));
+  }
+
+  document.addEventListener('mouseover', (e) => {
+    const btn = e.target.closest('.big-button[data-hover-anim]');
+    // relatedTarget inside the same button = moving between the icon and the
+    // label, not a real enter; restarting the animation there would stutter.
+    if (!btn || btn.contains(e.relatedTarget)) return;
+    setHoverAnim(btn, true);
+  });
+
+  document.addEventListener('mouseout', (e) => {
+    const btn = e.target.closest('.big-button[data-hover-anim]');
+    if (!btn || btn.contains(e.relatedTarget)) return;
+    setHoverAnim(btn, false);
+  });
+
+  // Drilling in hides the grid, and a hidden element doesn't reliably get a
+  // mouseout — clear on click so the icon isn't still animating when the grid
+  // comes back (and so the pill strip clones a clean icon).
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.big-button[data-hover-anim][data-target]');
+    if (btn) setHoverAnim(btn, false);
+  });
+
   // ── Panel toggle + drill-in pill strip ── HOW TO USE ──────────────────
   // Panel button:  <button class="big-button" data-target="myDiv" data-exclusive-group="more">
   //                + sibling <div id="myDiv" style="display:none"><iframe data-src="/x.html"></iframe></div>
@@ -2458,7 +2500,7 @@
       const icon = src.querySelector('i');
       if (icon) {
         const i = icon.cloneNode(false);
-        i.classList.remove('fa-2xl');
+        i.classList.remove('fa-2xl', ...hoverAnimClasses(src)); // never clone a live hover animation
         pill.appendChild(i);
       } else {
         pill.classList.add('no-icon');
