@@ -328,8 +328,13 @@ const round4 = (n) => Math.round(n * 10000) / 10000;
  * ║                                                                          ║
  * ║ 7. PAGE GEOMETRY IS NOT READ FROM THE PDF. Percent coords need page      ║
  * ║    dimensions and this layer never parses the buffer, so it trusts       ║
- * ║    pageInfo and falls back to US Letter. A non-Letter page silently      ║
- * ║    skews only the PERCENT pair; the absolute pair stays correct.         ║
+ * ║    pageInfo and falls back to US Letter. WITHOUT pageInfo a non-Letter   ║
+ * ║    page breaks BOTH pairs: the percent pair divides by the wrong dims,   ║
+ * ║    and the ABSOLUTE y_coord is wrong too because the flip is             ║
+ * ║    y = pageH − y − h (proven live 2026-07-26: A4 receipt, request 30,    ║
+ * ║    every field 50pt high). Only x_coord/abs_width/abs_height survive.    ║
+ * ║    esignSendService.readPdfPageInfo now supplies real geometry on every  ║
+ * ║    send; the Letter fallback remains only as a can't-parse safety net.   ║
  * ╚══════════════════════════════════════════════════════════════════════════╝
  *
  * @param {object} placements  neutral schema:

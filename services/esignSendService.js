@@ -239,6 +239,49 @@ async function stampTrackingFooter(pdfBuffer, trackingId) {
   return Buffer.from(await doc.save({ useObjectStreams: false }));
 }
 
+/**
+ * Actual page geometry of a PDF, in points, shaped for the provider's
+ * `pageInfo` parameter: { width, height, pages: { <1-based>: {width,height} } }.
+ *
+ * WHY THIS EXISTS (2026-07-26, request 30): the provider's Y-flip
+ * (y_zoho = pageH − y − h) defaults pageH to US Letter's 792 when no
+ * pageInfo is supplied, and nothing ever supplied it. Every Letter document
+ * matched the default by coincidence; the first A4 upload (595×842) landed
+ * every signer field 50pt too high. The neutral coords were always right —
+ * the editor reads true geometry via pdf.js — only the provider transform
+ * was flipping against the wrong height.
+ *
+ * Per-page map included because scanned exhibits mix page sizes; the
+ * provider already resolves per-page before falling back to width/height.
+ *
+ * width/height (the fallback pair) come from page 1.
+ *
+ * Rotation: getSize() is the unrotated MediaBox, which is also the space the
+ * editor's neutral coords live in (pdf.js viewBox). Rotated pages keep the
+ * same caveat as stampTrackingFooter — not handled until one exists.
+ *
+ * Returns null on any parse failure rather than throwing: by the time this
+ * runs the buffer has already survived stampTrackingFooter, and a send must
+ * not die on a geometry read — null degrades to the old Letter fallback.
+ *
+ * @param {Buffer} pdfBuffer
+ * @returns {Promise<{width:number,height:number,pages:Object}|null>}
+ */
+async function readPdfPageInfo(pdfBuffer) {
+  try {
+    const doc = await PDFDocument.load(pdfBuffer, { updateMetadata: false });
+    const pages = {};
+    doc.getPages().forEach((p, i) => {
+      const { width, height } = p.getSize();
+      pages[i + 1] = { width, height };
+    });
+    if (!pages[1]) return null;
+    return { width: pages[1].width, height: pages[1].height, pages };
+  } catch (_) {
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // VALIDATION
 // ─────────────────────────────────────────────────────────────────────────────
@@ -735,6 +778,10 @@ async function sendPipeline(db, {
 
   const provider = await getProvider(db, row.provider);
 
+  // True page geometry — without it the provider Y-flips against US Letter
+  // and any A4/Legal document lands its fields high. See readPdfPageInfo.
+  const pageInfo = await readPdfPageInfo(stamped);
+
   let result;
   try {
     result = await provider.sendForSignature({
@@ -743,6 +790,7 @@ async function sendPipeline(db, {
       recipients:     send.recipients,
       placements:     send.placements || { fields: [] },
       expirationDays: send.expirationDays,
+      pageInfo,
     });
   } catch (err) {
     // The row stays a DRAFT. Nothing was sent, so no status has changed and
@@ -886,6 +934,7 @@ async function resendPipeline(db, id, { recipients = null, pdfBuffer, createdBy 
     // SAME tracking id — that is the whole point of reusing the row.
     const stamped  = await stampTrackingFooter(pdfBuffer, row.tracking_id);
     const provider = await getProvider(db, row.provider);
+    const pageInfo = await readPdfPageInfo(stamped);   // see sendPipeline
 
     const expirationDays = DEFAULT_EXPIRATION_DAYS;
     let result;
@@ -896,6 +945,7 @@ async function resendPipeline(db, id, { recipients = null, pdfBuffer, createdBy 
         recipients:   recips,
         placements:   row.placement_json || { fields: [] },
         expirationDays,
+        pageInfo,
       });
     } catch (err) {
       await _tryAppendEvent(db, row.id, {
@@ -1727,6 +1777,7 @@ module.exports = {
   getRequestDetail,
   // pure helpers
   stampTrackingFooter,
+  readPdfPageInfo,
   validateSendInput,
   // constants — routes and tests share one source of truth
   KINDS,
