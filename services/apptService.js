@@ -74,6 +74,25 @@ function alertGcalFailure(db, kind, detail) {
 }
 
 /**
+ * Normalize a naive firm-local appt datetime — a string ('YYYY-MM-DD HH:mm[:ss]'
+ * or 'YYYY-MM-DDTHH:mm[:ss]', with or WITHOUT seconds) or a mysql2 fake-UTC
+ * Date — to a full 'YYYY-MM-DDTHH:mm:ss' string. Routing through luxon
+ * guarantees seconds are ALWAYS present. A bare datetime-local value like
+ * '2026-04-12T13:13' (no seconds — what an HTML <input type="datetime-local">
+ * emits, e.g. the 341 form's {{new_control_datetime}}) would otherwise reach
+ * Google as start.dateTime verbatim and be rejected with 400 "Bad Request".
+ * Returns null when the input can't be parsed.
+ */
+function apptDateToNaiveLocal(apptDateLocal) {
+  // apptDateLocal may be a Date (read by mysql2 as fake-UTC) or a string.
+  const naive = apptDateLocal instanceof Date
+    ? apptDateLocal.toISOString().slice(0, 19)
+    : String(apptDateLocal).replace(' ', 'T').slice(0, 19);
+  const dt = DateTime.fromISO(naive, { zone: FIRM_TZ });
+  return dt.isValid ? dt.toFormat("yyyy-MM-dd'T'HH:mm:ss") : null;
+}
+
+/**
  * Compute the naive firm-local end-datetime string for an appointment, as
  * 'YYYY-MM-DDTHH:MM:SS' (RFC3339-shaped, no offset — gcalService attaches
  * timeZone: FIRM_TZ). Used ONLY to set the calendar event's end time —
@@ -83,12 +102,11 @@ function alertGcalFailure(db, kind, detail) {
  */
 function computeApptEndLocal(apptDateLocal, lengthMinutes) {
   const len = Number(lengthMinutes) || 0;
-  // apptDateLocal may be a Date (read by mysql2 as fake-UTC) or a string.
-  const base = apptDateLocal instanceof Date
-    ? DateTime.fromISO(apptDateLocal.toISOString().slice(0, 19), { zone: FIRM_TZ })
-    : DateTime.fromISO(String(apptDateLocal).replace(' ', 'T').slice(0, 19), { zone: FIRM_TZ });
-  if (!base.isValid) return null;
-  return base.plus({ minutes: len }).toFormat("yyyy-MM-dd'T'HH:mm:ss");
+  const startNaive = apptDateToNaiveLocal(apptDateLocal);
+  if (startNaive === null) return null;
+  return DateTime.fromISO(startNaive, { zone: FIRM_TZ })
+    .plus({ minutes: len })
+    .toFormat("yyyy-MM-dd'T'HH:mm:ss");
 }
 
 /**
@@ -153,11 +171,14 @@ async function syncApptToCalendar(db, { appt_id, appt_date, appt_length, appt_ty
   // malformed date can't kill both writes silently without an alert).
   let resource, startLocal, endLocal;
   try {
-    endLocal = computeApptEndLocal(appt_date, appt_length);
-    resource = buildApptEventResource({ appt_type, contact_name, appt_platform, case_id, note });
-    startLocal = typeof appt_date === 'string'
-      ? appt_date.replace(' ', 'T').slice(0, 19)
-      : appt_date.toISOString().slice(0, 19);       // naive local → FIRM_TZ in service
+    // Normalize BOTH ends through luxon so start always carries seconds — a
+    // no-seconds datetime-local value (e.g. the 341 form's new_control_datetime,
+    // "2026-04-12T13:13") otherwise reaches Google as an invalid RFC3339
+    // start.dateTime and 400s. See apptDateToNaiveLocal.
+    startLocal = apptDateToNaiveLocal(appt_date);
+    if (startLocal === null) throw new Error(`unparseable appt_date ${JSON.stringify(appt_date)}`);
+    endLocal   = computeApptEndLocal(appt_date, appt_length);
+    resource   = buildApptEventResource({ appt_type, contact_name, appt_platform, case_id, note });
   } catch (err) {
     console.error(`[APPT SERVICE] GCal create (appt ${appt_id}) — event build failed:`, err.message);
     alertGcalFailure(db, 'create', `appt_id=${appt_id}: event build failed: ${err.message}`);
