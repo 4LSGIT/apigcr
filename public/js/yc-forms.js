@@ -578,6 +578,7 @@ if (this.config.endpoints.load) {
 
   validate() {
     let isValid = true;
+    let firstUndisplayed = null;
 
     // Clear all errors first
     this.el.querySelectorAll('.yc-error').forEach(el => {
@@ -663,7 +664,22 @@ if (this.config.endpoints.load) {
         if (errorEl) {
           errorEl.textContent = error;
           errorEl.classList.add('visible');
+        } else if (!firstUndisplayed) {
+          // No .yc-error element in this field's markup — remember it so we
+          // can surface the message some other way instead of a silently
+          // dead Save button.
+          firstUndisplayed = { fieldName, error };
         }
+      }
+    }
+
+    // Never fail validation invisibly: if any error had nowhere to render,
+    // toast it; otherwise a generic nudge toward the highlighted fields.
+    if (!isValid) {
+      if (firstUndisplayed) {
+        this._toast('error', firstUndisplayed.fieldName.replace(/_/g, ' '), firstUndisplayed.error);
+      } else {
+        this._toast('error', 'Please fix the highlighted fields');
       }
     }
 
@@ -726,7 +742,7 @@ if (this.config.endpoints.load) {
       ).catch(err => console.warn('[YCForm] Draft cleanup failed (non-blocking):', err));
       this._draftData = null;
       if (this._draftBannerEl) this._draftBannerEl.style.display = 'none';
-      
+
 
       // 5. Trigger workflow (if configured, fire-and-forget)
       if (this.config.onSubmit.workflow) {
