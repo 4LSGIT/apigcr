@@ -31,9 +31,12 @@ const ipOf = (req) =>
 // has only the key string — a human, or an AI session handed the key with no other
 // context — can tell whether it's dead without spending a request to find out.
 //
-// Advisory only: expiry is always enforced from the DB's expires_at. The stamp cannot
-// be forged upward, since it sits inside the sha256'd material — editing it changes
-// key_hash and the lookup simply misses. Seconds are truncated, so the stamp can read
+// The stamp sits AFTER the second underscore, outside the key's hashed identity
+// (only "ycro_<hex>" is hashed — see canonicalKey in lib/auth.readonly). So the whole
+// suffix is advisory and freely editable: a holder may rewrite the stamp, replace it
+// with a human note, or drop it entirely and the key still authenticates. Forging the
+// stamp later grants nothing — expiry is always enforced from the DB's expires_at, so
+// the DB remains the sole source of truth. Seconds are truncated, so the stamp can read
 // up to 59s earlier than the true expiry; erring early is the safe direction.
 const stampExpiry = (d) => d.toISOString().replace(/[-:]/g, "").slice(0, 13) + "Z";
 
