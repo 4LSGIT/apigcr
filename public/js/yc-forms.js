@@ -300,7 +300,20 @@ if (this.config.endpoints.load) {
     if (restoreBtn) {
       restoreBtn.onclick = () => {
         const draftPayload = typeof draft.data === 'string' ? JSON.parse(draft.data) : draft.data;
+        // populate() ends with resetBaseline(), which would make the restored
+        // draft the clean state — save() would then see an empty diff and
+        // silently never submit ("No changes to save"). Keep the baseline at
+        // the pre-restore state so the form is honestly dirty after restore.
+        const prevOriginal = this._original;
+        const prevAutosaveJson = this._lastAutosaveJson;
         this.populate(draftPayload);
+        this._original = prevOriginal;
+        this._lastAutosaveJson = prevAutosaveJson;
+        this.el.classList.add('yc-dirty');
+        this._markChangedFields();
+        // populate() alone doesn't re-evaluate conditionals (init does it in
+        // step 13b) — restored values may show/hide sections.
+        this._evaluateConditionals();
         this._draftBannerEl.style.display = 'none';
       };
     }
@@ -579,8 +592,29 @@ if (this.config.endpoints.load) {
       const el = this.el.querySelector(fieldConfig.el);
       if (!el) continue;
 
-      const value = el.value.trim();
-      const errorEl = el.parentElement.querySelector('.yc-error');
+      // Extract the value the same way collect() does. Reading el.value
+      // directly is wrong for: radio (first radio's value attr regardless of
+      // checked state — required always passed), checkgroup (container has no
+      // value), tags (original element is hidden/empty), checkbox (checked
+      // state matters, not value).
+      let raw;
+      if (fieldConfig.type === 'checkbox') {
+        raw = el.checked ? 'true' : '';
+      } else if (fieldConfig.type === 'radio') {
+        const checked = this.el.querySelector(`input[name="${el.getAttribute('name')}"]:checked`);
+        raw = checked ? checked.value : '';
+      } else if (fieldConfig.type === 'tags') {
+        raw = this._getTags(fieldName);
+      } else if (fieldConfig.type === 'checkgroup') {
+        raw = this._getCheckgroup(el);
+      } else {
+        raw = el.value;
+      }
+      const value = String(raw).trim();
+      const wrapper = el.closest('.yc-field');
+      const errorEl = wrapper
+        ? wrapper.querySelector('.yc-error')
+        : el.parentElement.querySelector('.yc-error');
       let error = null;
 
       // Required
@@ -682,6 +716,17 @@ if (this.config.endpoints.load) {
         schema_version: this.config.schemaVersion,
         data:           this.collect(),
       });
+
+      // 4b. Clean up the now-superseded draft row (non-blocking). Leaving it
+      // keeps dead rows around and invites a confusing draft banner on a
+      // timestamp tie.
+      this._api(
+        `/api/forms/draft?form_key=${encodeURIComponent(this.config.formKey)}&link_type=${encodeURIComponent(this.config.linkType)}&link_id=${encodeURIComponent(this.config.linkId)}`,
+        'DELETE'
+      ).catch(err => console.warn('[YCForm] Draft cleanup failed (non-blocking):', err));
+      this._draftData = null;
+      if (this._draftBannerEl) this._draftBannerEl.style.display = 'none';
+      
 
       // 5. Trigger workflow (if configured, fire-and-forget)
       if (this.config.onSubmit.workflow) {
