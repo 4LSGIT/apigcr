@@ -906,7 +906,7 @@ describe('recallPipeline', () => {
 
     expect(getProvider).not.toHaveBeenCalled();
     expect(esignService.applyStatus).toHaveBeenCalledWith(
-      expect.anything(), 42, { status: 'recalled' }
+      expect.anything(), 42, { status: 'recalled', source: 'staff_recall' }
     );
   });
 
@@ -1160,7 +1160,7 @@ describe('markSatisfiedExternal', () => {
   test('applies the status BEFORE anything that can fail', async () => {
     const out = await svc.markSatisfiedExternal(makeDb(), 42, { note: 'Signed in office', createdBy: 1 });
     expect(esignService.applyStatus).toHaveBeenCalledWith(
-      expect.anything(), 42, { status: 'satisfied_external' }
+      expect.anything(), 42, { status: 'satisfied_external', source: 'staff_satisfy' }
     );
     expect(out.changed).toBe(true);
   });

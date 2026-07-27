@@ -25,6 +25,7 @@ jest.mock('../services/esignService', () => ({
 
 jest.mock('../services/esignWebhookService', () => ({
   processStatusChange: jest.fn(async () => ({ changed: true, filed: true })),
+  WEBHOOK_LAST_SEEN_KEY: 'esign_webhook_last_seen_at',
 }));
 
 jest.mock('../services/esignFilingService', () => ({
@@ -56,10 +57,15 @@ function row(over = {}) {
   };
 }
 
-function makeDb({ unfiled = [] } = {}) {
+function makeDb({ unfiled = [], settings = {} } = {}) {
   return {
-    query: jest.fn(async (sql) => {
+    query: jest.fn(async (sql, params = []) => {
       if (/FROM signing_requests/i.test(sql)) return [unfiled];
+      // settingsService.getSetting — serve the heartbeat (and anything else).
+      if (/FROM app_settings/i.test(sql)) {
+        const v = settings[params[0]];
+        return [v != null ? [{ value: v }] : []];
+      }
       return [[]];
     }),
   };
@@ -173,6 +179,105 @@ describe('pass A — outstanding rows', () => {
     expect(task.title).toMatch(/6 problem/);
     expect(task.desc).toMatch(/and 1 more/);
     expect(task.desc).toMatch(/Connections/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+describe('dead-channel check — moved rows + webhook silence', () => {
+  const HEARTBEAT_KEY = 'esign_webhook_last_seen_at';
+
+  /** One outstanding row that Zoho reports as moved. */
+  function armOneMove() {
+    esignService.listOutstanding.mockResolvedValue([row()]);
+    getProvider.mockResolvedValue(makeProvider({
+      'ZS-1': { status: 'signed', providerStatus: 'completed', recipients: [], raw: {} },
+    }));
+  }
+
+  test('moved ≥1 with NO heartbeat on record → one loud task', async () => {
+    armOneMove();
+    const out = await reconcile({}, makeDb()); // settings empty = never seen
+
+    expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
+    const task = esignAlertService.raiseTask.mock.calls[0][1];
+    expect(task.title).toMatch(/webhooks appear to be DOWN/);
+    expect(task.desc).toMatch(/YC-ESIGN-0001: sent → signed/);
+    expect(task.desc).toMatch(/EVER/);
+    expect(task.desc).toMatch(/esign_webhook_hmac_mode/);
+    expect(task.desc).toMatch(/esign_webhook_token/);
+    expect(out.output.webhook_silence_alerted).toBe(true);
+  });
+
+  test('moved ≥1 with a STALE heartbeat (>24h) → task, timestamp named', async () => {
+    armOneMove();
+    const stale = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+    await reconcile({}, makeDb({ settings: { [HEARTBEAT_KEY]: stale } }));
+
+    expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
+    expect(esignAlertService.raiseTask.mock.calls[0][1].desc).toContain(stale);
+  });
+
+  test('moved ≥1 with a FRESH heartbeat → no task (a single dropped delivery is routine)', async () => {
+    armOneMove();
+    const fresh = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const out = await reconcile({}, makeDb({ settings: { [HEARTBEAT_KEY]: fresh } }));
+
+    expect(esignAlertService.raiseTask).not.toHaveBeenCalled();
+    expect(out.output).toMatchObject({ moved: 1, webhook_silence_alerted: false });
+  });
+
+  test('moved = 0 with a stale heartbeat → no task (silence alone is normal)', async () => {
+    esignService.listOutstanding.mockResolvedValue([row()]); // status unchanged
+    const out = await reconcile({}, makeDb());
+
+    expect(esignAlertService.raiseTask).not.toHaveBeenCalled();
+    expect(out.output).toMatchObject({ moved: 0, webhook_silence_alerted: false });
+  });
+
+  test('dry run never raises the task, even when rows would move', async () => {
+    armOneMove();
+    const out = await reconcile({ dry_run: true }, makeDb());
+
+    expect(esignAlertService.raiseTask).not.toHaveBeenCalled();
+    expect(out.output).toMatchObject({ dry_run: true, moved: 1, webhook_silence_alerted: false });
+  });
+
+  test('many moved rows → still exactly ONE task, capped at 5 listed', async () => {
+    esignService.listOutstanding.mockResolvedValue(
+      Array.from({ length: 7 }, (_, i) =>
+        row({ id: i + 1, provider_id: `ZS-${i + 1}`, tracking_id: `YC-ESIGN-000${i + 1}` }))
+    );
+    getProvider.mockResolvedValue({
+      getStatus: jest.fn(async () => ({ status: 'signed', providerStatus: 'completed', recipients: [], raw: {} })),
+    });
+
+    await reconcile({}, makeDb());
+    expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
+    const task = esignAlertService.raiseTask.mock.calls[0][1];
+    expect(task.desc).toMatch(/and 2 more/);
+  });
+
+  test('an unparseable heartbeat value counts as silence, not as fresh', async () => {
+    armOneMove();
+    await reconcile({}, makeDb({ settings: { [HEARTBEAT_KEY]: 'not-a-date' } }));
+    expect(esignAlertService.raiseTask).toHaveBeenCalledTimes(1);
+  });
+
+  test('a settings-read failure is contained — the run still succeeds', async () => {
+    armOneMove();
+    const db = makeDb();
+    const inner = db.query.getMockImplementation();
+    db.query.mockImplementation(async (sql, params) => {
+      if (/FROM app_settings/i.test(sql)) throw new Error('pool exhausted');
+      return inner(sql, params);
+    });
+
+    const out = await reconcile({}, db);
+    expect(out.success).toBe(true);
+    expect(out.output.moved).toBe(1);
+    expect(out.output.errors).toContainEqual(
+      expect.objectContaining({ pass: 'dead-channel-check' })
+    );
   });
 });
 

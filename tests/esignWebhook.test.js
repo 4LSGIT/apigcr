@@ -526,7 +526,10 @@ describe('handleZohoWebhook — failure statuses', () => {
     const task = esignAlertService.raiseTask.mock.calls[0][1];
     expect(task.title).toMatch(/^E-sign DECLINED/);
     expect(task.desc).toMatch(/john@example\.com/);
-    expect(task.desc).toMatch(/does not pass on a decline reason/i);
+    // This payload carries no reason → the honest fallback, and NEVER the old
+    // false claim that Zoho withholds the reason (it doesn't — see event 75).
+    expect(task.desc).toMatch(/No reason was recorded/);
+    expect(task.desc).not.toMatch(/does not pass on a decline reason/i);
     expect(esignFilingService.fileSignedDocuments).not.toHaveBeenCalled();
   });
 
@@ -565,6 +568,96 @@ describe('handleZohoWebhook — failure statuses', () => {
   test('processStatusChange still handles a bounced status if one ever arrives', async () => {
     await svc.processStatusChange(makeDb(), makeRequest(), { status: 'bounced', source: 'reconcile' });
     expect(esignAlertService.raiseTask.mock.calls[0][1].title).toMatch(/^E-sign BOUNCED/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+describe('decline reason — surfaced from BOTH delivery shapes', () => {
+  // Both shapes below are captured from live traffic on 2026-07-26
+  // (signing_request_events 75 and 69), not inferred.
+
+  test('webhook shape: notifications.reason reaches the task, trimmed', async () => {
+    const body = zohoBody({ status: 'declined' });
+    body.notifications.reason = 'bored to death\n';   // event 75, trailing \n real
+    await svc.handleZohoWebhook(makeDb(), { body });
+
+    const task = esignAlertService.raiseTask.mock.calls[0][1];
+    expect(task.desc).toContain('Reason given: "bored to death"');
+    expect(task.desc).not.toMatch(/No reason was recorded/);
+  });
+
+  test('REST shape: requests.decline_reason reaches the task (reconcile path)', async () => {
+    // getStatus().raw — requests is an OBJECT here, and there is no
+    // notifications node at all (event 69).
+    const raw = {
+      requests: {
+        request_id: 'ZS-9001', request_status: 'declined',
+        decline_reason: 'I dont like fish!!',
+      },
+    };
+    await svc.processStatusChange(makeDb(), makeRequest(), {
+      status: 'declined', providerStatus: 'declined', raw, source: 'reconcile',
+    });
+
+    const task = esignAlertService.raiseTask.mock.calls[0][1];
+    expect(task.desc).toContain('Reason given: "I dont like fish!!"');
+  });
+
+  test('no reason anywhere → the honest fallback, never the old false claim', () => {
+    expect(svc._declineReason(zohoBody({ status: 'declined' }))).toBeNull();
+    expect(svc._declineReason(null)).toBeNull();
+    expect(svc._declineReason('a string')).toBeNull();
+  });
+
+  test('whitespace-only reason is null, never ""', () => {
+    const body = zohoBody({ status: 'declined' });
+    body.notifications.reason = '   \n  ';
+    expect(svc._declineReason(body)).toBeNull();
+  });
+
+  test('an over-length reason is capped with an ellipsis', () => {
+    const body = zohoBody({ status: 'declined' });
+    body.notifications.reason = 'x'.repeat(svc.DECLINE_REASON_MAX + 200);
+    const out = svc._declineReason(body);
+    expect(out.length).toBe(svc.DECLINE_REASON_MAX);
+    expect(out.endsWith('…')).toBe(true);
+  });
+
+  test('a bare "reason" key OUTSIDE notifications is NOT mined — too common a word', () => {
+    // The fallback key list deliberately holds only decline_reason spellings;
+    // a stray `reason` in an unanticipated node must not be presented as the
+    // client's words.
+    expect(svc._declineReason({ requests: { request_id: 'ZS-1' }, audit: { reason: 'internal note' } }))
+      .toBeNull();
+  });
+
+  test('array-shaped containers are tolerated (shapes not yet seen)', () => {
+    expect(svc._declineReason({ notifications: [{ reason: 'changed my mind' }] })).toBe('changed my mind');
+    expect(svc._declineReason({ requests: [{ decline_reason: 'wrong name on form' }] })).toBe('wrong name on form');
+  });
+
+  test('a bounce task is unaffected by reason mining', async () => {
+    await svc.processStatusChange(makeDb(), makeRequest(), {
+      status: 'bounced', raw: { notifications: { reason: 'should not appear' } }, source: 'reconcile',
+    });
+    expect(esignAlertService.raiseTask.mock.calls[0][1].desc).not.toContain('should not appear');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+describe('source stamping — applyStatus learns which path delivered', () => {
+  test('the webhook path passes source:"webhook" through to applyStatus', async () => {
+    await svc.handleZohoWebhook(makeDb(), { body: zohoBody() });
+    expect(esignService.applyStatus).toHaveBeenCalledWith(
+      expect.anything(), 42, expect.objectContaining({ source: 'webhook' })
+    );
+  });
+
+  test('the reconcile path passes source:"reconcile" through to applyStatus', async () => {
+    await svc.processStatusChange(makeDb(), makeRequest(), { status: 'signed', source: 'reconcile' });
+    expect(esignService.applyStatus).toHaveBeenCalledWith(
+      expect.anything(), 42, expect.objectContaining({ source: 'reconcile' })
+    );
   });
 });
 

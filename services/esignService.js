@@ -777,8 +777,16 @@ async function markSent(db, id, { providerId, sentAt = null, expiresAt = null } 
  * @param {object} [opts.raw]             stored to raw_payload
  * @param {Date|string} [opts.occurredAt]
  * @param {string} [opts.recipientEmail]  which recipient the event is about
+ * @param {string} [opts.source]          which path delivered this transition
+ *   ('webhook' | 'reconcile' | 'reminder_check' | 'staff_recall' |
+ *   'satisfied_external' | …). Stamped into the event payload so "did this
+ *   arrive in real time or hours late via reconcile?" is a query, not a
+ *   per-event comparison of occurred_at against the provider's action_time —
+ *   which is what diagnosing the 2026-07 webhook outage took. null = unknown;
+ *   callers must NOT guess. Events written before 2026-07-27 predate this
+ *   field: an absent source means unknown, never 'webhook'.
  */
-async function applyStatus(db, id, { status, recipients = null, raw = null, occurredAt = null, recipientEmail = null } = {}) {
+async function applyStatus(db, id, { status, recipients = null, raw = null, occurredAt = null, recipientEmail = null, source = null } = {}) {
   // Validated before anything else: an unknown status is a programming error
   // regardless of what the row currently holds.
   _assertStatus(status);
@@ -825,7 +833,7 @@ async function applyStatus(db, id, { status, recipients = null, raw = null, occu
     event:          status,
     recipientEmail,
     occurredAt:     stamp,
-    payload:        { from_status: request.status, ...(raw != null ? { raw } : {}) },
+    payload:        { from_status: request.status, ...(source ? { source } : {}), ...(raw != null ? { raw } : {}) },
   }, updated);
 
   // ── Phase 3: a terminal row must never be nudged again ─────────────────────

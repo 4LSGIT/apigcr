@@ -162,6 +162,24 @@ router.post(WEBHOOK_PATH, esignWebhookLimiter, rawTextFallback, async (req, res)
     (hmac.ok ? console.log : console.warn)(`[ESIGN WEBHOOK] hmac ${detail}`);
   }
 
+  // ── heartbeat ─────────────────────────────────────────────────────────────
+  // "Zoho reached us and was let in." Stamped for EVERY delivery that passes
+  // both gates above — including ones the pipeline later fails to parse or
+  // match to a row — because the signal is delivery, not comprehension. The
+  // nightly reconcile's dead-channel alert keys off this timestamp: rows
+  // moving in reconcile while this is stale means deliveries are being
+  // rejected upstream (crossed token, hmac misconfig — the 2026-07-22
+  // outage). An enforce-mode hmac reject 401s above and deliberately does
+  // NOT stamp; a log-mode hmac failure proceeds and does. Fire-and-forget,
+  // mirroring stampHeartbeat in routes/process_jobs.js — a settings write
+  // must never delay or break webhook processing.
+  db.query(
+    `INSERT INTO app_settings (\`key\`, \`value\`, is_secret, is_editable)
+     VALUES (?, ?, 0, 0)
+     ON DUPLICATE KEY UPDATE \`value\` = VALUES(\`value\`)`,
+    [esignWebhookService.WEBHOOK_LAST_SEEN_KEY, new Date().toISOString()]
+  ).catch((err) => console.error('[ESIGN WEBHOOK] heartbeat stamp failed:', err.message));
+
   // ── respond, then work ────────────────────────────────────────────────────
   res.status(200).json({ status: 'received' });
 

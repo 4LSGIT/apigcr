@@ -603,6 +603,33 @@ describe('status transitions (exhaustive)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// 6b. source lands in the stored event payload
+// ─────────────────────────────────────────────────────────────
+// The 2026-07 outage diagnosis required comparing occurred_at against Zoho's
+// action_time by hand per event to tell real-time from reconcile-applied.
+// This makes it a query.
+
+describe('applyStatus — source stamping', () => {
+  test.each(['webhook', 'reconcile'])('source:"%s" is stored in the event payload', async (source) => {
+    const { db, request } = await seedAt('sent');
+    await esignService.applyStatus(db, request.id, { status: 'signed', source });
+
+    const ev = db.state.events.at(-1);
+    expect(ev.event).toBe('signed');
+    expect(JSON.parse(ev.payload)).toMatchObject({ from_status: 'sent', source });
+  });
+
+  test('omitted source stays absent — never defaulted to "webhook"', async () => {
+    const { db, request } = await seedAt('sent');
+    await esignService.applyStatus(db, request.id, { status: 'signed' });
+
+    const payload = JSON.parse(db.state.events.at(-1).payload);
+    expect(payload.from_status).toBe('sent');
+    expect('source' in payload).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
 // 7. Late events are still recordable via appendEvent
 // ─────────────────────────────────────────────────────────────
 

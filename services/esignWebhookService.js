@@ -76,6 +76,20 @@ const WEBHOOK_SECRET_KEY = 'esign_webhook_secret';
 const WEBHOOK_HMAC_MODE_KEY = 'esign_webhook_hmac_mode';
 
 /**
+ * app_settings key holding the ISO-8601 UTC timestamp of the last delivery
+ * that made it past the token and hmac gates. Stamped by the route (see
+ * routes/api.esign.js) for EVERY authenticated delivery, including ones the
+ * pipeline later fails to parse or match — the signal is "Zoho reached us and
+ * was let in", not "we understood it". The nightly reconcile job's
+ * dead-channel alert (lib/internal_functions/esign.js) keys off this: rows
+ * moving in reconcile while this timestamp is stale means deliveries are
+ * being rejected upstream — exactly the 2026-07-22 outage, where a crossed
+ * token + armed 'enforce' 401'd every delivery for four days and only the
+ * console said so.
+ */
+const WEBHOOK_LAST_SEEN_KEY = 'esign_webhook_last_seen_at';
+
+/**
  * The header Zoho signs deliveries with: base64(HMAC-SHA256(secret, rawBody)).
  * Express lower-cases incoming header names; req.get() is case-insensitive
  * anyway. Kept here so the route and the tests share one spelling.
@@ -410,6 +424,53 @@ function _findValue(root, keys, maxDepth = 5) {
   return null;
 }
 
+/** Client-typed free text headed for a task body; MAX_DESC there is 1000. */
+const DECLINE_REASON_MAX = 500;
+
+/**
+ * Pull the recipient's decline reason out of a stored provider payload.
+ *
+ * TWO SHAPES, because two paths deliver declines:
+ *   - webhook  → notifications.reason        (confirmed: event 75, 2026-07-26)
+ *   - REST     → requests.decline_reason     (confirmed: event 69, 2026-07-26)
+ * The webhook's `requests` node is a slimmer object (18 keys vs the REST
+ * response's ~37) that omits decline_reason entirely, so neither path alone
+ * is sufficient.
+ *
+ * Explicit paths are checked before the generic _findValue fallback on
+ * purpose: a bare 'reason' key is too common to search for blindly and could
+ * match an unrelated node in a payload shape we have not seen yet — so the
+ * fallback list holds only the unambiguous spellings.
+ *
+ * @param {*} raw  the stored payload (webhook body or getStatus().raw)
+ * @returns {string|null} trimmed, length-capped reason — never ''
+ */
+function _declineReason(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  // Mirror parseZohoWebhook's node handling: either container may arrive as
+  // an array in shapes we have not seen yet.
+  const notif = raw.notifications ?? raw.notification ?? null;
+  const notifNode = Array.isArray(notif) ? (notif[0] ?? null) : notif;
+
+  let reqNode = raw.requests ?? raw.request ?? null;
+  if (Array.isArray(reqNode)) reqNode = reqNode[0] ?? null;
+
+  const candidates = [
+    (notifNode && typeof notifNode === 'object') ? notifNode.reason : null,
+    (reqNode && typeof reqNode === 'object') ? reqNode.decline_reason : null,
+    _findValue(raw, ['decline_reason', 'declineReason']),
+  ];
+
+  for (const c of candidates) {
+    if (c == null) continue;
+    const s = String(c).trim();
+    if (!s) continue;
+    return s.length > DECLINE_REASON_MAX ? `${s.slice(0, DECLINE_REASON_MAX - 1)}…` : s;
+  }
+  return null;
+}
+
 /**
  * Coerce whatever body-parser produced into a plain object.
  *
@@ -628,7 +689,7 @@ async function processStatusChange(db, request, {
   let applied;
   try {
     applied = await esignService.applyStatus(db, request.id, {
-      status, recipients, raw, occurredAt, recipientEmail,
+      status, recipients, raw, occurredAt, recipientEmail, source,
     });
   } catch (err) {
     // INVALID_ESIGN_TRANSITION is a real bug (draft → viewed). Terminal and
@@ -681,7 +742,7 @@ async function processStatusChange(db, request, {
 
   // ── declined / bounced → tell someone, loudly ─────────────────────────────
   if (status === 'declined' || status === 'bounced') {
-    result.alerted = await _announceFailure(db, updated, status, recipientEmail);
+    result.alerted = await _announceFailure(db, updated, status, { recipientEmail, raw });
   }
 
   return result;
@@ -739,12 +800,30 @@ async function _announceFiling(db, request, result) {
   }).catch((e) => console.error(`[ESIGN] could not record filing-attention event: ${e.message}`));
 }
 
-/** Loud task for a declined or bounced envelope. */
-async function _announceFailure(db, request, status, recipientEmail) {
+/**
+ * Loud task for a declined or bounced envelope.
+ *
+ * Takes an options object rather than more positionals: the decline reason
+ * lives inside the delivery payload, so the payload has to travel here.
+ *
+ * @param {object} db
+ * @param {object} request   the (already updated) signing_requests row
+ * @param {string} status    'declined' | 'bounced'
+ * @param {object} [o]
+ * @param {string} [o.recipientEmail]  who acted, when the payload named them
+ * @param {*}      [o.raw]             the delivery payload — mined for the
+ *                                     decline reason via _declineReason
+ */
+async function _announceFailure(db, request, status, { recipientEmail = null, raw = null } = {}) {
   const label = request.document_name || request.kind;
   const who = recipientEmail
     || (Array.isArray(request.recipients) && request.recipients[0] && request.recipients[0].email)
     || 'the recipient';
+
+  // Both delivery paths DO carry the reason (webhook: notifications.reason;
+  // REST: requests.decline_reason) — this task used to claim Zoho withheld it,
+  // which sent staff chasing clients for an answer the system already had.
+  const declineReason = status === 'declined' ? _declineReason(raw) : null;
 
   const body = status === 'declined'
     ? [
@@ -754,7 +833,9 @@ async function _announceFailure(db, request, status, recipientEmail) {
         `Tracking: ${request.tracking_id}`,
         `Linked to: ${request.linkable_type} ${request.linkable_id}`,
         ``,
-        `Zoho does not pass on a decline reason, so the client has to be asked directly.`,
+        declineReason != null
+          ? `Reason given: "${declineReason}"`
+          : `No reason was recorded with the decline.`,
         `Nothing further happens automatically — this envelope is closed and a replacement`,
         `must be sent if the document is still needed.`,
       ]
@@ -885,7 +966,7 @@ async function handleZohoWebhook(db, { body, rawBody = null, ip = null } = {}) {
     // the heuristic.
     if (BOUNCE_HINT.test(eventName)) {
       console.warn(`[ESIGN WEBHOOK] request ${request.id}: "${eventName}" looks like a failed delivery`);
-      await _announceFailure(db, request, 'bounced', parsed.performedByEmail);
+      await _announceFailure(db, request, 'bounced', { recipientEmail: parsed.performedByEmail, raw: stored });
       return { ok: true, action: 'event_only', event: eventName, requestId: request.id, alerted: true };
     }
 
@@ -959,6 +1040,9 @@ module.exports = {
   WEBHOOK_TOKEN_KEY,
   WEBHOOK_SECRET_KEY,
   WEBHOOK_HMAC_MODE_KEY,
+  WEBHOOK_LAST_SEEN_KEY,
+  _declineReason,
+  DECLINE_REASON_MAX,
   SIGNATURE_HEADER,
   LOGGED_EVENTS,
   OUTGOING_EVENTS,

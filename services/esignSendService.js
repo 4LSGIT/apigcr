@@ -1095,7 +1095,7 @@ async function recallPipeline(db, id, { reason, createdBy = null } = {}) {
     reasonSentToProvider = Boolean(out && out.reasonSentToProvider);
   }
 
-  const applied = await esignService.applyStatus(db, id, { status: 'recalled' });
+  const applied = await esignService.applyStatus(db, id, { status: 'recalled', source: 'staff_recall' });
 
   await _tryAppendEvent(db, id, {
     event: 'recalled',
@@ -1288,7 +1288,7 @@ async function markSatisfiedExternal(db, id, { note = null, pdfBuffer = null, cr
 
   const noteClean = note == null ? null : String(note).trim().slice(0, MAX_NOTE);
 
-  const applied = await esignService.applyStatus(db, id, { status: 'satisfied_external' });
+  const applied = await esignService.applyStatus(db, id, { status: 'satisfied_external', source: 'staff_satisfy' });
   const updated = applied.request;
 
   // ── best-effort recall ───────────────────────────────────────────────────
