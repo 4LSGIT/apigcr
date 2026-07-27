@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Form</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+  <link href="/css/yc-forms.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* Local-only. yc-forms.css is untouched (per contract §8). A single note
+       banner for preview mode + a hook for the disabled preview save button. */
+    .ycr-preview-note {
+      margin: 8px 0;
+      padding: 6px 12px;
+      background: #fff7ed;
+      border: 1px solid #fdba74;
+      border-radius: 4px;
+      color: #9a3412;
+      font-size: 13px;
+    }
+    .ycr-fatal {
+      color: #b91c1c;
+      padding: 20px;
+      font-family: system-ui, sans-serif;
+    }
+    #saveBtn[disabled] { opacity: .55; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+<!-- Body is built at runtime from the template definition. Nothing here is
+     static form content: render.html is generic. -->
+
+<script src="/js/yc-forms.js"></script>
+<script>
+/* ============================================================================
+ * render.html — generic YisraForm template renderer (Slice 1 / Phase B).
+ *
+ * Turns a published form_templates.definition (or a draft, in preview) into a
+ * working YCForm with no per-form code. Governing contract:
+ * ref/FORM_TEMPLATE_SCHEMA_V1.md §§3–4, §8.
+ *
+ * SLICE 1 SCOPE (contract §10): plain sections/rows/fields; every field type
+ * EXCEPT checkgroup `allowOther`. NOT in this slice (skipped gracefully, one
+ * console.warn each): repeater sections (§4.2), showWhen (§4.4), allowOther,
+ * prefill (§5), hooks wiring. External/unauthed mode is Slice 4.
+ *
+ * MODES
+ *   Normal : ?form_key=X&<linkType>_id=N   (param name follows the template's
+ *            link_type: case_id | contact_id | appt_id)
+ *   Preview: ?template_id=N&preview=1[&link_id=M]  — renders draft_definition.
+ *            NEVER writes: autosave off, Save disabled, draft banner omitted,
+ *            endpoints.load skipped when no link_id.
+ *
+ * SECURITY (contract §8): every template-sourced string reaches the DOM via
+ * textContent / setAttribute only. The el() helper below has no innerHTML path.
+ * ==========================================================================*/
+
+(function () {
+  'use strict';
+
+  var params  = new URLSearchParams(location.search);
+  var preview = params.get('preview') === '1';
+
+  // ── DOM builder (no innerHTML; text via textContent, attrs via setAttribute) ──
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) {
+      for (var k in attrs) {
+        if (!Object.prototype.hasOwnProperty.call(attrs, k)) continue;
+        var v = attrs[k];
+        if (v == null || v === false) continue;
+        if (k === 'class') n.className = v;
+        else if (k === 'text') n.textContent = v;          // safe
+        else n.setAttribute(k, v === true ? '' : String(v)); // safe
+      }
+    }
+    if (kids != null) {
+      (Array.isArray(kids) ? kids : [kids]).forEach(function (c) {
+        if (c == null) return;
+        n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+      });
+    }
+    return n;
+  }
+
+  function fatal(msg) {
+    document.body.textContent = '';
+    document.body.appendChild(el('p', { class: 'ycr-fatal', text: msg }));
+  }
+
+  // ── Wait for the parent iframe chain to expose apiSend (standard boot). ──
+  // Slice 1 is internal-only: render.html lives in an iframe whose parent
+  // (case.html / contact.html / the builder page) relays window.apiSend.
+  function waitForParent(cb) {
+    var tries = 0;
+    (function loop() {
+      var ok = false;
+      try { ok = !!(window.parent && window.parent.apiSend); } catch (e) { ok = false; }
+      if (ok) return cb();
+      if (++tries > 100) {                       // ~10s
+        return fatal('This form must run inside the app (no parent apiSend found). '
+                   + 'Standalone/external rendering is not available in this version.');
+      }
+      setTimeout(loop, 100);
+    })();
+  }
+
+  function api(url, method, body) {
+    return window.parent.apiSend(url, method, body);
+  }
+
+  // ── Type maps ──
+  var YC_TYPE = {
+    text: 'text', textarea: 'textarea', number: 'number', date: 'date',
+    datetime: 'text',            // datetime-local input; YCForm auto-detects it
+    select: 'select', radio: 'radio', checkbox: 'checkbox',
+    checkgroup: 'checkgroup', tags: 'tags', hidden: 'text'
+  };
+  var WIDTH_CLASS = {
+    '2x': 'yc-2x', '3x': 'yc-3x', 'fixed-sm': 'yc-fixed-sm', 'fixed-md': 'yc-fixed-md'
+  };
+
+  function fieldSelector(f) {
+    return f.type === 'checkgroup'
+      ? '[data-yc-checkgroup="' + f.name + '"]'
+      : '[name="' + f.name + '"]';
+  }
+
+  function optOf(o) {
+    if (o && typeof o === 'object') {
+      return { value: String(o.value != null ? o.value : ''),
+               label: String(o.label != null ? o.label : (o.value != null ? o.value : '')) };
+    }
+    return { value: String(o), label: String(o) };
+  }
+
+  // ── Build one field's DOM. Returns an element (or null for hidden, which is
+  //    appended bare so it never affects row layout). ──
+  function buildField(f, warn) {
+    if (f.type === 'hidden') {
+      return el('input', { type: 'hidden', name: f.name });
+    }
+
+    var wrapClass = 'yc-field';
+    if (WIDTH_CLASS[f.width]) wrapClass += ' ' + WIDTH_CLASS[f.width];
+    if (f.readonly) wrapClass += ' yc-field-locked';
+    var wrap = el('div', { class: wrapClass });
+
+    if (f.label != null && f.label !== '' && f.type !== 'checkbox') {
+      wrap.appendChild(el('label', { class: 'yc-label', text: f.label }));
+    }
+    if (f.sublabel) {
+      wrap.appendChild(el('div', { class: 'yc-sublabel', text: f.sublabel }));
+    }
+
+    var input;
+    switch (f.type) {
+      case 'textarea':
+        input = el('textarea', {
+          name: f.name, rows: f.rows || 3,
+          placeholder: f.placeholder || null,
+          maxlength: (f.maxLength > 0 ? f.maxLength : null)
+        });
+        break;
+
+      case 'number':
+        input = el('input', {
+          type: 'number', name: f.name,
+          placeholder: f.placeholder || null,
+          min: (f.min != null ? f.min : null),
+          max: (f.max != null ? f.max : null),
+          step: (f.step != null ? f.step : null),
+          maxlength: (f.maxLength > 0 ? f.maxLength : null)
+        });
+        break;
+
+      case 'date':
+        input = el('input', { type: 'date', name: f.name });
+        break;
+
+      case 'datetime':
+        input = el('input', { type: 'datetime-local', name: f.name });
+        break;
+
+      case 'select': {
+        input = el('select', { name: f.name });
+        input.appendChild(el('option', { value: '', text: (f.placeholder || 'Select\u2026') }));
+        (f.options || []).forEach(function (o) {
+          var op = optOf(o);
+          input.appendChild(el('option', { value: op.value, text: op.label }));
+        });
+        break;
+      }
+
+      case 'radio': {
+        input = el('div', { class: 'yc-radio-group' });
+        (f.options || []).forEach(function (o) {
+          var op = optOf(o);
+          input.appendChild(el('label', null, [
+            el('input', { type: 'radio', name: f.name, value: op.value }),
+            ' ' + op.label
+          ]));
+        });
+        break;
+      }
+
+      case 'checkbox':
+        // Single checkbox — label sits beside the box.
+        input = el('label', null, [
+          el('input', { type: 'checkbox', name: f.name }),
+          ' ' + (f.label != null ? f.label : '')
+        ]);
+        break;
+
+      case 'checkgroup': {
+        input = el('div', { class: 'yc-check-grid', 'data-yc-checkgroup': f.name });
+        (f.options || []).forEach(function (o) {
+          var op = optOf(o);
+          input.appendChild(el('label', null, [
+            el('input', { type: 'checkbox', value: op.value }),
+            ' ' + op.label
+          ]));
+        });
+        if (f.allowOther) {
+          warn('field "' + f.name + '": allowOther is a Slice 2 feature — rendered without the "Other" option');
+        }
+        break;
+      }
+
+      case 'tags':
+        // Source input; yc-forms hides it and builds the pill UI on init.
+        input = el('input', { type: 'text', name: f.name });
+        break;
+
+      case 'text':
+      default:
+        input = el('input', {
+          type: 'text', name: f.name,
+          placeholder: f.placeholder || null,
+          maxlength: (f.maxLength > 0 ? f.maxLength : null)
+        });
+        break;
+    }
+
+    // Locked message + mask attribute apply to the actual control element.
+    var control = (f.type === 'checkbox') ? input.querySelector('input') : input;
+    if (f.readonly && f.lockedMsg && control && control.setAttribute) {
+      control.setAttribute('data-yc-locked-msg', f.lockedMsg);
+    }
+    if (f.mask && control && control.setAttribute && control.tagName === 'INPUT') {
+      control.setAttribute('data-yc-mask', f.mask);
+    }
+
+    wrap.appendChild(input);
+    wrap.appendChild(el('small', { class: 'yc-error' }));   // §4.3 locked decision
+    return wrap;
+  }
+
+  // ── Build the skeleton chrome (header + optional draft banner + form). ──
+  function buildSkeleton(def) {
+    var toggle = def.toggle !== false;
+    var warningText = (def.warningText != null) ? def.warningText : 'You must press SAVE to keep changes!';
+
+    // Header
+    var toggleBox;
+    if (toggle) {
+      toggleBox = el('div', { class: 'yc-toggle' }, [
+        el('span', { class: 'yc-toggle-label-view', text: 'View Mode' }),
+        el('div', { class: 'form-check form-switch' }, [
+          el('input', { class: 'form-check-input', type: 'checkbox', id: 'toggleBtn' }),
+          el('label', { class: 'form-check-label', for: 'toggleBtn', id: 'toggleLabel', text: 'Mode' })
+        ]),
+        el('span', { class: 'yc-toggle-label-edit', text: 'Edit Mode' })
+      ]);
+    } else {
+      toggleBox = el('div', { class: 'yc-toggle', style: 'display:none;' }, [
+        el('input', { class: 'form-check-input', type: 'checkbox', id: 'toggleBtn' }),
+        el('label', { class: 'form-check-label', for: 'toggleBtn', id: 'toggleLabel', text: 'View Mode' })
+      ]);
+    }
+    var header = el('div', { class: 'yc-form-header' }, [
+      toggleBox,
+      el('span', { class: 'yc-save-status', id: 'saveStatus' }),
+      // Initial display:none; setReadonly() shows it in edit mode.
+      el('span', { class: 'yc-warning', id: 'warning', style: 'display:none;', text: warningText })
+    ]);
+    document.body.appendChild(header);
+
+    // Draft banner — OMITTED in preview so the Discard→DELETE path can't exist
+    // and _showDraftBanner() no-ops (it returns early when #draftBanner absent).
+    if (!preview) {
+      document.body.appendChild(
+        el('div', { class: 'yc-draft-banner', id: 'draftBanner', style: 'display:none;' }, [
+          el('span', null, [
+            'You have unsaved changes from ',
+            el('strong', { id: 'draftTimestamp' })
+          ]),
+          el('button', { class: 'yc-btn yc-btn-sm yc-btn-primary', id: 'draftRestore', text: 'Restore' }),
+          el('button', { class: 'yc-btn yc-btn-sm yc-btn-secondary', id: 'draftDiscard', text: 'Discard' })
+        ])
+      );
+    } else {
+      document.body.appendChild(
+        el('div', { class: 'ycr-preview-note', text:
+          'Preview' + (params.get('link_id') ? ' (reading live data — nothing is saved)' : ' (layout only — no entity loaded)') })
+      );
+    }
+
+    // Form
+    var form = el('form', { id: 'ycRenderForm', class: 'yc-form' });
+    document.body.appendChild(form);
+    return form;
+  }
+
+  // ── Render sections into the form + collect field configs. ──
+  function renderBody(def, form, warn) {
+    var fields = {}, validation = {}, apiMap = {};
+    var forwardMap = {};   // fieldName -> apiColumn (only fields with apiColumn)
+    var readonlySet = {};
+
+    function registerField(f) {
+      var ycType = YC_TYPE[f.type] || 'text';
+      var fc = { el: fieldSelector(f), type: ycType };
+      if (f.readonly) { fc.readonly = true; readonlySet[f.name] = true; }
+      fields[f.name] = fc;
+
+      if (f.apiColumn) {
+        apiMap[f.apiColumn] = f.name;   // {apiColumn: fieldName} — _mergeApiData direction
+        forwardMap[f.name] = f.apiColumn;
+      }
+
+      // Validation derivation (§4.3). pattern MUST be a RegExp — validate()
+      // calls rules.pattern.test(). Bad regexes are rejected at publish (§7),
+      // but guard here too so a preview of a bad draft doesn't throw.
+      var rules = {};
+      if (f.required) rules.required = true;
+      if (f.minLength > 0) rules.minLength = f.minLength;
+      if (f.maxLength > 0) rules.maxLength = f.maxLength;
+      if (f.email) rules.email = true;
+      if (f.mask) rules.mask = f.mask;
+      if (f.pattern) {
+        try {
+          rules.pattern = new RegExp(f.pattern);
+          if (f.patternMessage) rules.patternMessage = f.patternMessage;
+        } catch (e) {
+          warn('field "' + f.name + '": pattern is not a valid RegExp — skipped (' + e.message + ')');
+        }
+      }
+      if (Object.keys(rules).length) validation[f.name] = rules;
+    }
+
+    (def.sections || []).forEach(function (section, i) {
+      if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
+        warn('section[' + i + '] "' + section.repeater + '": repeater sections are a Slice 2 feature — skipped');
+        return;
+      }
+      if (section && section.showWhen) {
+        warn('section[' + i + ']: showWhen is a Slice 2 feature — section shown unconditionally');
+      }
+
+      var sec = el('div', { class: 'yc-section' });
+      if (section.title)    sec.appendChild(el('div', { class: 'yc-section-title', text: section.title }));
+      if (section.subtitle) sec.appendChild(el('div', { class: 'yc-section-subtitle', text: section.subtitle }));
+
+      (section.rows || []).forEach(function (row, j) {
+        if (row && row.showWhen) {
+          warn('section[' + i + '].rows[' + j + ']: showWhen is a Slice 2 feature — row shown unconditionally');
+        }
+        var rowEl = el('div', { class: 'yc-row' });
+        (row.fields || []).forEach(function (f) {
+          if (f && f.showWhen) {
+            warn('field "' + (f.name || '?') + '": showWhen is a Slice 2 feature — field shown unconditionally');
+          }
+          if (f && f.prefill) {
+            warn('field "' + (f.name || '?') + '": prefill is a Slice 2 feature — ignored');
+          }
+          var node = buildField(f, warn);
+          if (node) rowEl.appendChild(node);
+          registerField(f);
+        });
+        sec.appendChild(rowEl);
+      });
+
+      form.appendChild(sec);
+    });
+
+    // Save button (label from definition). Disabled in preview → its click
+    // listener (added by yc-forms) never fires, so save() can't run.
+    var saveLabel = def.saveLabel || 'Save';
+    var saveBtn = el('button', {
+      type: 'button', class: 'yc-btn yc-btn-primary yc-btn-block',
+      id: 'saveBtn', text: preview ? (saveLabel + ' \u2014 disabled in preview') : saveLabel
+    });
+    if (preview) saveBtn.setAttribute('disabled', '');
+    form.appendChild(saveBtn);
+
+    if (def.hooks) {
+      warn('hooks ("' + def.hooks + '") are a Slice 2 feature — not loaded');
+    }
+
+    return { fields: fields, validation: validation, apiMap: apiMap,
+             forwardMap: forwardMap, readonlySet: readonlySet };
+  }
+
+  // ── Assemble the YCForm config and boot. ──
+  function boot(def, meta) {
+    var warned = {};
+    function warn(msg) { if (!warned[msg]) { warned[msg] = 1; console.warn('[render] ' + msg); } }
+
+    document.title = meta.title || 'Form';
+
+    var form = buildSkeleton(def);
+    var maps = renderBody(def, form, warn);
+
+    var toggle = def.toggle !== false;
+
+    var config = {
+      formKey:       meta.formKey,
+      schemaVersion: meta.schemaVersion,
+      linkType:      meta.linkType,
+      linkId:        meta.linkId || '',
+      container:     '#ycRenderForm',
+      dataMode:      def.dataMode === 'snapshot' ? 'snapshot' : 'live',
+      autosave:      preview ? false : (def.autosave !== false),
+      autosaveMs:    (typeof def.autosaveMs === 'number' && def.autosaveMs > 0) ? def.autosaveMs : 3000,
+      readonly:      toggle,                 // toggle:true → start read-only; false → always edit
+      fields:        maps.fields,
+      validation:    maps.validation,
+      apiMap:        maps.apiMap,
+      endpoints:     {},
+      onSubmit:      def.onSubmit || {}
+    };
+
+    // endpoints.load: pass through the definition's. Skipped entirely in
+    // preview-without-entity (pure layout). Included (read-only GET) when a
+    // link_id is present.
+    var wantLoad = def.endpoints && def.endpoints.load && (!preview || !!meta.linkId);
+    if (wantLoad) config.endpoints.load = def.endpoints.load;
+
+    var form_ = new YCForm(config);
+
+    // apiColumn whitelist PATCH payload (contract §3): changed ∧ has apiColumn
+    // ∧ not readonly. Deliberately narrower than the default _buildPatchPayload
+    // (which would send every changed non-readonly field under its own name).
+    form_._buildPatchPayload = function () {
+      var diff = this.getDiff();
+      var payload = {};
+      for (var name in diff) {
+        if (!Object.prototype.hasOwnProperty.call(diff, name)) continue;
+        var col = maps.forwardMap[name];
+        if (!col) continue;                    // no apiColumn → not part of PATCH
+        if (maps.readonlySet[name]) continue;  // readonly → excluded
+        payload[col] = diff[name][1];          // [oldVal, newVal]
+      }
+      return payload;
+    };
+
+    form_.init();
+  }
+
+  // ── Resolve the definition + metadata, then boot. ──
+  function start() {
+    if (preview) {
+      var templateId = params.get('template_id');
+      if (!templateId) return fatal('Preview mode requires a template_id parameter.');
+      api('/api/form-templates/' + encodeURIComponent(templateId), 'GET')
+        .then(function (res) {
+          var t = res && res.template;
+          if (!t) return fatal('Template ' + templateId + ' not found.');
+          var def = t.draft_definition;
+          if (!def || typeof def !== 'object') return fatal('Template has no draft definition to preview.');
+          boot(def, {
+            formKey:       t.form_key,
+            schemaVersion: t.schema_version,
+            linkType:      t.link_type,
+            title:         t.title,
+            linkId:        params.get('link_id') || ''    // optional in preview
+          });
+        })
+        .catch(function (e) { fatal('Could not load template for preview: ' + (e && e.message || e)); });
+      return;
+    }
+
+    // Normal mode
+    var formKey = params.get('form_key');
+    if (!formKey) return fatal('Missing form_key parameter.');
+    api('/api/form-templates/render/' + encodeURIComponent(formKey), 'GET')
+      .then(function (res) {
+        if (!res || res.status !== 'success' || !res.definition) {
+          return fatal('No published form found for "' + formKey + '".');
+        }
+        var linkParam = res.link_type + '_id';           // case_id | contact_id | appt_id
+        var linkId = params.get(linkParam);
+        if (!linkId) return fatal('Missing ' + linkParam + ' parameter.');
+        boot(res.definition, {
+          formKey:       formKey,
+          schemaVersion: res.schema_version,
+          linkType:      res.link_type,
+          title:         res.title,
+          linkId:        linkId
+        });
+      })
+      .catch(function (e) { fatal('Could not load form: ' + (e && e.message || e)); });
+  }
+
+  waitForParent(start);
+})();
+</script>
+</body>
+</html>

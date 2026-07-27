@@ -182,6 +182,7 @@ public/forms/casedetails-bk.html
 public/forms/casedetails.html
 public/forms/contact-form.html
 public/forms/issn.html
+public/forms/render.html
 public/index.html
 public/js/assetpicker.js
 public/js/versionGuard.js
@@ -211,6 +212,7 @@ ref/2026-07-20_esign_phase2e.sql
 ref/2026-07-20_firm_identity.sql
 ref/2026-07-21_esign_phase3.sql
 ref/2026-07-22_esign_webhook_hmac.sql
+ref/2026-07-26_form_templates.sql
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/database.sql
 ref/files.md
@@ -253,6 +255,7 @@ routes/api.esign.templates.js
 routes/api.events.js
 routes/api.featureRequests.js
 routes/api.firmData.js
+routes/api.formTemplates.js
 routes/api.forms.js
 routes/api.gcal.js
 routes/api.gcontacts.js
@@ -391,6 +394,7 @@ services/esignWebhookService.js
 services/eventService.js
 services/firmBlocksService.js
 services/formService.js
+services/formTemplateService.js
 services/gContactsService.js
 services/gcalService.js
 services/hookFilter.js
