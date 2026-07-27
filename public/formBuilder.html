@@ -1,0 +1,1684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Form Builder</title>
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+<style>
+  /* Admin-page conventions (users.html palette). Page-local only — no shared CSS touched. */
+  :root {
+    --bg: #0f1117;
+    --panel: #161a23;
+    --panel2: #1b2030;
+    --border: #2a3040;
+    --fg: #d8dde6;
+    --muted: #8a93a3;
+    --accent: #07ADEF;
+    --danger: #d94c4c;
+    --ok: #4ad28b;
+    --warn: #e0b341;
+    --repeat: #9a6ff0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+  }
+  body { padding: 10px; display: flex; flex-direction: column; }
+  h2 { margin: 0 0 8px; font-size: 16px; }
+  .muted { color: var(--muted); font-size: 11px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  button {
+    background: var(--accent); color: white; border: none;
+    padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px;
+  }
+  button:hover { opacity: 0.85; }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--border); }
+  button.danger { background: var(--danger); }
+  button.small { font-size: 11px; padding: 2px 6px; }
+  button[disabled] { opacity: .5; cursor: not-allowed; }
+  input, select, textarea {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+    padding: 5px 8px; border-radius: 4px; font-size: 12px;
+    font-family: inherit; width: 100%;
+  }
+  textarea { resize: vertical; min-height: 54px; }
+  input[type="checkbox"] { width: auto; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  input.bad, textarea.bad { border-color: var(--danger); }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px;
+  }
+  .err { color: var(--danger); font-size: 12px; }
+  .ok  { color: var(--ok); font-size: 12px; }
+
+  /* ── Flash (transient status, e.g. blocked repeater drop) ── */
+  #flash {
+    position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--warn); color: var(--warn);
+    padding: 6px 14px; border-radius: 4px; font-size: 12px; z-index: 50;
+    display: none; max-width: 70vw;
+  }
+
+  /* ── Top bar ─────────────────────────────────────────────── */
+  #topbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px; margin-bottom: 8px;
+  }
+  #topbar input#titleInput { width: 260px; font-size: 13px; font-weight: 600; }
+  #keyWrap { display: flex; align-items: center; gap: 6px; }
+  #keyWrap input { width: 180px; }
+  .badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: 500; white-space: nowrap;
+  }
+  .badge.link  { background: rgba(7,173,239,.15);  color: var(--accent); }
+  .badge.pub   { background: rgba(74,210,139,.15); color: var(--ok); }
+  .badge.draft { background: rgba(224,179,65,.15); color: var(--warn); }
+  #dirtyDot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); display: none; }
+  #topSpacer { flex: 1; }
+  #errBar { max-width: 420px; }
+
+  /* ── Panes ───────────────────────────────────────────────── */
+  #panes { display: flex; gap: 8px; flex: 1; min-height: 0; }
+  #palette   { width: 170px; flex: none; overflow-y: auto; }
+  #canvasCol { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #tabStrip  { display: flex; gap: 4px; margin-bottom: 6px; }
+  #tabStrip button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #canvas    { flex: 1; overflow-y: auto; padding: 10px; }
+  #jsonPane  { flex: 1; display: none; flex-direction: column; padding: 10px; }
+  #jsonPane.show { display: flex; }
+  #jsonTa { flex: 1; min-height: 200px; }
+  #inspector { width: 320px; flex: none; overflow-y: auto; }
+  .pane {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px;
+  }
+  .pane h3 {
+    margin: 0 0 8px; font-size: 12px; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .04em; font-weight: 600;
+  }
+
+  /* ── Palette ─────────────────────────────────────────────── */
+  .pal-item {
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 5px 8px; margin-bottom: 5px; font-size: 12px;
+    background: var(--panel2); cursor: grab; user-select: none;
+  }
+  .pal-item:hover { border-color: var(--accent); }
+  .pal-sep { margin: 10px 0 6px; }
+
+  /* ── Canvas ──────────────────────────────────────────────── */
+  #canvas:empty::after {
+    content: 'No sections — drag one in from the palette, or click "Section".';
+    color: var(--muted); font-size: 11px; font-style: italic; display: block; padding: 8px;
+  }
+  .cv-section {
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel2); margin-bottom: 10px; overflow: hidden;
+  }
+  .cv-section.repeater { border-color: var(--repeat); }
+  .cv-sec-head {
+    padding: 7px 10px; cursor: grab; display: flex; align-items: center; gap: 8px;
+    border-bottom: 1px solid var(--border); user-select: none;
+  }
+  .cv-sec-head:hover { background: rgba(255,255,255,.03); }
+  .cv-sec-title { font-weight: 600; font-size: 13px; }
+  .cv-sec-sub { color: var(--muted); font-size: 11px; margin-left: 2px; }
+  .badge.rep { background: rgba(154,111,240,.18); color: var(--repeat); }
+  .badge.sw  { background: rgba(224,179,65,.15);  color: var(--warn); }
+  .badge.col { background: rgba(74,210,139,.15);  color: var(--ok); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .cv-rows { padding: 8px; min-height: 20px; }
+  .cv-rows:empty::after {
+    content: 'no rows — click "+ row" below, or drop a row here';
+    color: var(--muted); font-size: 11px; font-style: italic; display: block; padding: 4px;
+  }
+  .cv-sec-foot { padding: 0 8px 8px; }
+  .cv-row {
+    display: flex; align-items: stretch; gap: 6px; margin-bottom: 6px;
+  }
+  .cv-row-handle {
+    flex: none; width: 46px; border-radius: 4px; border: 1px dashed var(--border);
+    color: var(--muted); font-size: 9px; cursor: grab; user-select: none;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  }
+  .cv-row-handle:hover { border-color: var(--accent); color: var(--accent); }
+  .cv-row-fields {
+    flex: 1; display: flex; flex-wrap: wrap; gap: 6px; min-height: 34px;
+    border-radius: 4px;
+  }
+  .cv-row-fields:empty { border: 1px dashed var(--border); }
+  .cv-row-fields:empty::after {
+    content: 'drop fields here'; color: var(--muted); font-size: 11px;
+    font-style: italic; padding: 8px; align-self: center;
+  }
+  .cv-rep-body { padding: 8px; }
+  .cv-field {
+    border: 1px solid var(--border); border-radius: 4px; background: var(--bg);
+    padding: 5px 8px; cursor: grab; min-width: 120px; user-select: none;
+  }
+  .cv-field:hover { border-color: var(--accent); }
+  .cv-field .fname { font-size: 11px; }
+  .cv-field .flabel { font-size: 12px; margin-top: 1px; }
+  .badge.ftype { background: rgba(138,147,163,.15); color: var(--muted); }
+  .selected { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .cv-sec-head.selected { outline-offset: -2px; }
+  .req-star { color: var(--danger); }
+  .sortable-ghost { opacity: .4; }
+  .sortable-drag { opacity: .9; }
+
+  /* ── Inspector ───────────────────────────────────────────── */
+  #insHead { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  #insHead .spacer { flex: 1; }
+  .ins-group { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 8px; }
+  .ins-group:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+  .ins-group > .gtitle {
+    font-size: 11px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: .04em; margin-bottom: 6px; font-weight: 600;
+  }
+  .prop { margin-bottom: 8px; }
+  .prop > label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+  .prop .help { font-size: 10px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+  .prop .perr { font-size: 11px; color: var(--danger); margin-top: 3px; display: none; }
+  .prop .perr.show { display: block; }
+  .prop.inline { display: flex; align-items: center; gap: 6px; }
+  .prop.inline > label { margin: 0; font-size: 12px; color: var(--fg); cursor: pointer; }
+  .prop.inline input[type=checkbox] { margin: 0; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+  /* options editor */
+  .opt-row { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; cursor: grab; }
+  .opt-row input { flex: 1; }
+  .opt-row button { flex: none; }
+</style>
+</head>
+<body>
+
+<div id="flash"></div>
+
+<!-- ══════════ Opener (no ?id) ══════════ -->
+<div id="opener" class="panel" style="display:none; max-width:520px; margin:30px auto;">
+  <h2>Form Builder</h2>
+  <div class="prop">
+    <label>Open a template</label>
+    <div style="display:flex; gap:8px;">
+      <select id="opSelect"></select>
+      <button onclick="openSelected()">Open</button>
+    </div>
+  </div>
+  <div class="ins-group">
+    <div class="gtitle">New template</div>
+    <div class="two-col">
+      <div class="prop">
+        <label>Form key <span class="muted">(a-z 0-9 _ · permanent once published)</span></label>
+        <input id="opKey" maxlength="50" placeholder="my_new_form">
+        <div class="perr" id="opKeyErr"></div>
+      </div>
+      <div class="prop">
+        <label>Link type</label>
+        <select id="opLink">
+          <option value="case">case</option>
+          <option value="contact">contact</option>
+          <option value="appt">appt</option>
+        </select>
+      </div>
+    </div>
+    <div class="prop">
+      <label>Title</label>
+      <input id="opTitle" maxlength="150" placeholder="My New Form">
+    </div>
+    <button onclick="createTemplate()">Create &amp; open</button>
+    <span id="opErr" class="err" style="margin-left:8px;"></span>
+  </div>
+</div>
+
+<!-- ══════════ Builder ══════════ -->
+<div id="builderWrap" style="display:none; flex:1; min-height:0; flex-direction:column;">
+  <div id="topbar">
+    <input id="titleInput" maxlength="150" title="Template title (row column, not part of the JSON)">
+    <div id="keyWrap"></div>
+    <span id="linkBadge" class="badge link"></span>
+    <span id="verBadge" class="badge draft"></span>
+    <span id="dirtyDot" title="Unsaved changes"></span>
+    <div id="topSpacer"></div>
+    <span id="errBar" class="err"></span>
+    <span id="okBar" class="ok"></span>
+    <button id="saveBtn" onclick="saveDraft()">Save draft</button>
+  </div>
+
+  <div id="panes">
+    <div id="palette" class="pane">
+      <h3>Palette</h3>
+      <div class="muted" style="margin-bottom:8px;">Drag onto the canvas, or click to add at the selection.</div>
+      <div id="palFields"></div>
+      <div class="pal-sep muted">Structure</div>
+      <div id="palStruct"></div>
+    </div>
+
+    <div id="canvasCol">
+      <div id="tabStrip">
+        <button id="tabCanvas" class="ghost small active" onclick="showTab('canvas')">Canvas</button>
+        <button id="tabJson" class="ghost small" onclick="showTab('json')">JSON</button>
+      </div>
+      <div id="canvas" class="pane"></div>
+      <div id="jsonPane" class="pane">
+        <div class="muted" style="margin-bottom:6px;">
+          Raw draft definition. Apply parses and replaces the working model (canvas and JSON edit the same in-memory model).
+        </div>
+        <textarea id="jsonTa" class="mono" spellcheck="false"></textarea>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+          <button onclick="applyJson()">Apply</button>
+          <span id="jsonErr" class="err"></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="inspector" class="pane"></div>
+  </div>
+</div>
+
+<script>
+/* ============================================================================
+ * formBuilder.html — YisraForm template builder (Slice 3, Phases A+B).
+ *
+ * A three-pane visual editor for form_templates.draft_definition. The builder
+ * is an editor for a JSON record; the renderer (public/forms/render.html) is
+ * the product — the canvas here is STRUCTURAL, not WYSIWYG. Governing
+ * contract: ref/FORM_TEMPLATE_SCHEMA_V1.md.
+ *
+ * PHASE A: opener, load, structural canvas, selection, inspector editing
+ * (fields / sections / repeaters / form settings), dirty tracking, save draft
+ * with verbatim server-400 surfacing.
+ * PHASE B (this file): palette (drag + click-to-add), SortableJS DnD for
+ * fields / rows / sections with the §4.2 repeater type-subset enforced at the
+ * drop point (visible reason), node delete with reference-aware cascade
+ * confirms, auto name generation that follows the label until manually
+ * edited, rename cascade into showWhen references, showWhen editor,
+ * structured options editor, JSON tab escape hatch.
+ * PHASE C (next): preview iframe + apiSend relay, publish flow with
+ * client-side signature confirm, proof script, index.html mount snippet.
+ *
+ * ARCHITECTURE NOTE: all structural mutations go through the model-ops layer
+ * (addFieldAt / moveField / moveRow / moveSection / addSectionAt / addRowAt /
+ * deleteSelected). SortableJS handlers and palette click handlers are thin
+ * adapters over the same ops — and the page degrades to click-to-add if the
+ * SortableJS CDN fails to load (every Sortable hookup is guarded).
+ *
+ * CONVENTIONS (verified against users.html / connections.html):
+ *   - Runs as an iframe inside the index.html shell; P = window.parent,
+ *     waitForParent loop on P.apiSend (users.html pattern).
+ *   - P.apiSend throws Error whose .message is the server's `message`
+ *     verbatim (index.html apiSend) — surfaced as-is next to Save.
+ *   - SECURITY: every template-sourced string reaches the DOM via
+ *     textContent / value / setAttribute. No innerHTML path exists for
+ *     model data (contract §8 discipline, extended to the builder).
+ * ==========================================================================*/
+'use strict';
+
+const P = window.parent;
+
+// ── Constants (mirrors of formTemplateService.js) ────────────────────────────
+const FIELD_NAME_RE = /^[a-zA-Z0-9_]{1,50}$/;
+const FORM_KEY_RE   = /^[a-z0-9_]{1,50}$/;
+const HOOKS_RE      = /^[a-zA-Z0-9_-]{1,50}$/;
+const FIELD_TYPES   = ['text','textarea','number','date','datetime','select','radio','checkbox','checkgroup','tags','hidden'];
+const OPTIONS_TYPES = ['select','radio','checkgroup'];
+const REPEATER_TYPES= ['text','number','date','select','checkbox'];   // contract §4.2
+const WIDTHS        = ['default','2x','3x','fixed-sm','fixed-md'];
+const MASKS         = ['','phone','ssn','zip','ein','currency'];      // yc-forms _formatMask
+const SHOWWHEN_OPS  = ['eq','neq','in','notEmpty'];
+const TYPE_LABEL = { text:'New text', textarea:'New textarea', number:'New number',
+  date:'New date', datetime:'New date & time', select:'New select', radio:'New radio',
+  checkbox:'New checkbox', checkgroup:'New check group', tags:'New tags', hidden:'new_hidden' };
+
+// ── State ────────────────────────────────────────────────────────────────────
+let ROW    = null;   // server row (meta: id, form_key, title, link_type, schema_version, published_at, definition)
+let MODEL  = null;   // working draft_definition (in-memory; canvas + inspector + JSON tab all edit this)
+let TITLE  = '';     // working title (row column, not in the JSON)
+let FKEY   = '';     // working form_key
+let SEL    = null;   // null=form settings | {t:'section',si} | {t:'row',si,ri} | {t:'field',si,ri,fi} | {t:'rfield',si,fi}
+let SAVED  = { def: '', title: '', key: '' };   // snapshot for dirty check
+let AUTO_NAMES = new WeakSet();   // fields whose name still auto-follows the label (never serialized)
+let SORTABLES  = [];              // live canvas Sortable instances (rebuilt each render)
+let JSON_DIRTY = false;           // JSON textarea has unapplied user edits
+
+// ── DOM helper (no innerHTML; text via textContent) ─────────────────────────
+function el(tag, attrs, kids) {
+  const n = document.createElement(tag);
+  if (attrs) for (const k in attrs) {
+    const v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k === 'class') n.className = v;
+    else if (k === 'text') n.textContent = v;
+    else if (k.slice(0,2) === 'on') n[k] = v;             // handler fn
+    else n.setAttribute(k, v === true ? '' : String(v));
+  }
+  if (kids != null) (Array.isArray(kids) ? kids : [kids]).forEach(c => {
+    if (c == null) return;
+    n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
+  });
+  return n;
+}
+const E = id => document.getElementById(id);
+const clone = o => JSON.parse(JSON.stringify(o));
+
+// ── Flash (transient status, e.g. a blocked repeater drop) ──────────────────
+let flashTimer = null, lastFlash = { msg: '', at: 0 };
+function flash(msg) {
+  const now = Date.now();
+  if (msg === lastFlash.msg && now - lastFlash.at < 1500) return;   // throttle repeats mid-drag
+  lastFlash = { msg, at: now };
+  const f = E('flash');
+  f.textContent = msg;
+  f.style.display = 'block';
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { f.style.display = 'none'; }, 2400);
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+(function waitForParent() {
+  if (P && P.apiSend) return init();
+  setTimeout(waitForParent, 100);
+})();
+
+function init() {
+  buildPalette();
+  const id = new URLSearchParams(location.search).get('id');
+  if (id) openTemplate(id);
+  else showOpener();
+  window.addEventListener('beforeunload', (e) => {
+    if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
+  });
+}
+
+// ── Opener ───────────────────────────────────────────────────────────────────
+async function showOpener() {
+  E('opener').style.display = '';
+  const sel = E('opSelect');
+  sel.textContent = '';
+  sel.appendChild(el('option', { value: '', text: 'Loading…' }));
+  try {
+    const data = await P.apiSend('/api/form-templates', 'GET');
+    sel.textContent = '';
+    const list = data.templates || [];
+    if (!list.length) sel.appendChild(el('option', { value: '', text: '(no templates yet)' }));
+    list.forEach(t => {
+      sel.appendChild(el('option', {
+        value: t.id,
+        text: `${t.form_key} — ${t.title} (v${t.schema_version}${t.published_at ? '' : ', never published'})`
+      }));
+    });
+  } catch (err) {
+    sel.textContent = '';
+    sel.appendChild(el('option', { value: '', text: 'Error: ' + err.message }));
+  }
+}
+
+function openSelected() {
+  const id = E('opSelect').value;
+  if (id) gotoTemplate(id);
+}
+
+async function createTemplate() {
+  const key = E('opKey').value.trim();
+  const title = E('opTitle').value.trim();
+  const errEl = E('opErr'); errEl.textContent = '';
+  const keyErr = E('opKeyErr'); keyErr.classList.remove('show');
+  if (!FORM_KEY_RE.test(key)) {
+    keyErr.textContent = 'must match ^[a-z0-9_]{1,50}$';
+    keyErr.classList.add('show');
+    return;
+  }
+  if (!title) { errEl.textContent = 'title is required'; return; }
+  try {
+    const data = await P.apiSend('/api/form-templates', 'POST', {
+      form_key: key,
+      title: title,
+      link_type: E('opLink').value,
+      draft_definition: { sections: [ { title: 'Section 1', rows: [] } ] }
+    });
+    gotoTemplate(data.template.id);
+  } catch (err) {
+    errEl.textContent = err.message;   // server message verbatim
+  }
+}
+
+function gotoTemplate(id) {
+  history.replaceState(null, '', location.pathname + '?id=' + encodeURIComponent(id));
+  E('opener').style.display = 'none';
+  openTemplate(id);
+}
+
+// ── Load ─────────────────────────────────────────────────────────────────────
+async function openTemplate(id) {
+  try {
+    const data = await P.apiSend('/api/form-templates/' + encodeURIComponent(id), 'GET');
+    ROW   = data.template;
+    MODEL = clone(ROW.draft_definition || { sections: [] });
+    TITLE = ROW.title;
+    FKEY  = ROW.form_key;
+    AUTO_NAMES = new WeakSet();
+    snapshot();
+    SEL = null;
+    E('builderWrap').style.display = 'flex';
+    renderTopbar();
+    renderCanvas();
+    renderInspector();
+    markDirty();
+  } catch (err) {
+    E('opener').style.display = '';
+    E('opErr') && (E('opErr').textContent = 'Load failed: ' + err.message);
+  }
+}
+
+function snapshot() {
+  SAVED = { def: JSON.stringify(MODEL), title: TITLE, key: FKEY };
+}
+function isDirty() {
+  return !!MODEL && (JSON.stringify(MODEL) !== SAVED.def || TITLE !== SAVED.title || FKEY !== SAVED.key);
+}
+
+// ── Topbar ───────────────────────────────────────────────────────────────────
+function renderTopbar() {
+  const ti = E('titleInput');
+  ti.value = TITLE;
+  ti.oninput = () => { TITLE = ti.value; markDirty(); };
+
+  const kw = E('keyWrap');
+  kw.textContent = '';
+  const neverPublished = ROW.definition == null && ROW.published_at == null;
+  if (neverPublished) {
+    // Rename affordance while never-published (server enforces; also blocks if
+    // submissions exist — that rejection is surfaced verbatim on save).
+    const ki = el('input', { class: 'mono', maxlength: '50', title: 'form_key — renameable until first publish' });
+    ki.value = FKEY;
+    ki.oninput = () => {
+      FKEY = ki.value.trim();
+      ki.classList.toggle('bad', !FORM_KEY_RE.test(FKEY));
+      markDirty();
+    };
+    kw.appendChild(el('span', { class: 'muted', text: 'key:' }));
+    kw.appendChild(ki);
+  } else {
+    kw.appendChild(el('span', { class: 'muted', text: 'key:' }));
+    kw.appendChild(el('span', { class: 'mono', text: FKEY, title: 'form_key is permanent once published' }));
+    kw.appendChild(el('span', { class: 'muted', text: '🔒' }));
+  }
+
+  E('linkBadge').textContent = ROW.link_type;
+  const vb = E('verBadge');
+  if (ROW.published_at) {
+    vb.className = 'badge pub';
+    vb.textContent = 'v' + ROW.schema_version + ' published';
+    vb.title = 'published ' + ROW.published_at;
+  } else {
+    vb.className = 'badge draft';
+    vb.textContent = 'never published';
+    vb.title = '';
+  }
+}
+
+function markDirty() {
+  const d = isDirty();
+  E('dirtyDot').style.display = d ? 'inline-block' : 'none';
+  E('saveBtn').disabled = !d;
+  if (d) E('okBar').textContent = '';
+}
+
+// ── Save draft ───────────────────────────────────────────────────────────────
+async function saveDraft() {
+  const errBar = E('errBar'), okBar = E('okBar');
+  errBar.textContent = ''; okBar.textContent = '';
+  const body = { draft_definition: MODEL };
+  if (TITLE !== SAVED.title) body.title = TITLE;
+  if (FKEY !== SAVED.key)    body.form_key = FKEY;
+  try {
+    const data = await P.apiSend('/api/form-templates/' + ROW.id, 'PUT', body);
+    ROW = data.template;
+    MODEL = clone(ROW.draft_definition);
+    TITLE = ROW.title;
+    FKEY  = ROW.form_key;
+    AUTO_NAMES = new WeakSet();       // model objects were replaced by the clone
+    snapshot();
+    renderTopbar();
+    syncCanvas();
+    renderInspector();
+    markDirty();
+    okBar.textContent = 'Draft saved';
+    setTimeout(() => { if (!isDirty()) okBar.textContent = ''; }, 2500);
+  } catch (err) {
+    errBar.textContent = err.message;   // server's path-named 400 message, verbatim
+  }
+}
+
+// ── Palette ──────────────────────────────────────────────────────────────────
+function buildPalette() {
+  const pf = E('palFields');
+  FIELD_TYPES.forEach(t => {
+    pf.appendChild(el('div', { class: 'pal-item', 'data-pal': t, text: t,
+      onclick: () => clickAddField(t) }));
+  });
+  const ps = E('palStruct');
+  ps.appendChild(el('div', { class: 'pal-item', 'data-pal-sec': 'section', text: 'Section',
+    onclick: () => { addSectionAt(MODEL ? MODEL.sections.length : 0, 'section'); } }));
+  ps.appendChild(el('div', { class: 'pal-item', 'data-pal-sec': 'repeater', text: 'Repeater section',
+    onclick: () => { addSectionAt(MODEL ? MODEL.sections.length : 0, 'repeater'); } }));
+
+  if (window.Sortable) {
+    new Sortable(pf, { group: { name: 'fields', pull: 'clone', put: false }, sort: false, animation: 150 });
+    new Sortable(ps, { group: { name: 'sections', pull: 'clone', put: false }, sort: false, animation: 150 });
+  }
+}
+
+// ── Canvas ───────────────────────────────────────────────────────────────────
+function selKey(s) {
+  if (!s) return '';
+  if (s.t === 'section') return 's:' + s.si;
+  if (s.t === 'row')     return 'r:' + s.si + ':' + s.ri;
+  if (s.t === 'field')   return 'f:' + s.si + ':' + s.ri + ':' + s.fi;
+  if (s.t === 'rfield')  return 'rf:' + s.si + ':' + s.fi;
+  return '';
+}
+
+function renderCanvas() {
+  SORTABLES.forEach(s => { try { s.destroy(); } catch (e) {} });
+  SORTABLES = [];
+
+  const cv = E('canvas');
+  cv.textContent = '';
+  cv.onclick = (e) => { if (e.target === cv) select(null); };   // click background → form settings
+
+  (MODEL.sections || []).forEach((sec, si) => {
+    const isRep = Object.prototype.hasOwnProperty.call(sec, 'repeater');
+    const card = el('div', { class: 'cv-section' + (isRep ? ' repeater' : '') });
+
+    // Header (selects the section; also the section drag handle)
+    const head = el('div', { class: 'cv-sec-head', 'data-sel': 's:' + si,
+      onclick: () => select({ t: 'section', si }) });
+    if (isRep) head.appendChild(el('span', { class: 'badge rep', text: 'repeater · ' + (sec.repeater || '?') }));
+    head.appendChild(el('span', { class: 'cv-sec-title', text: sec.title || (isRep ? '(untitled repeater)' : '(untitled section)') }));
+    if (sec.subtitle) head.appendChild(el('span', { class: 'cv-sec-sub', text: sec.subtitle }));
+    if (sec.showWhen) head.appendChild(swBadge(sec.showWhen));
+    card.appendChild(head);
+
+    if (isRep) {
+      // Repeater: one field strip (renders one .yc-row per item at runtime)
+      const body = el('div', { class: 'cv-rep-body' });
+      const strip = el('div', { class: 'cv-row-fields', 'data-loc': 'rfields:' + si });
+      (sec.fields || []).forEach((f, fi) => {
+        strip.appendChild(fieldChip(f, 'rf:' + si + ':' + fi, () => select({ t: 'rfield', si, fi })));
+      });
+      body.appendChild(strip);
+      body.appendChild(el('div', { class: 'muted', style: 'margin-top:4px;', text: 'Add button: “' + (sec.addLabel || '+ Add') + '”' }));
+      card.appendChild(body);
+      hookFieldStrip(strip, true);
+    } else {
+      const rowsEl = el('div', { class: 'cv-rows', 'data-loc': 'rows:' + si });
+      (sec.rows || []).forEach((row, ri) => {
+        const rowEl = el('div', { class: 'cv-row' });
+        const handle = el('div', { class: 'cv-row-handle', 'data-sel': 'r:' + si + ':' + ri,
+          title: 'Drag to move row · click to select (visibility condition)' + (row.showWhen ? '\n' + swSummary(row.showWhen) : ''),
+          onclick: () => select({ t: 'row', si, ri }) },
+          [ el('div', { text: 'row ' + (ri + 1) }),
+            row.showWhen ? swBadge(row.showWhen, true) : null ]);
+        rowEl.appendChild(handle);
+        const fieldsEl = el('div', { class: 'cv-row-fields', 'data-loc': 'fields:' + si + ':' + ri });
+        (row.fields || []).forEach((f, fi) => {
+          fieldsEl.appendChild(fieldChip(f, 'f:' + si + ':' + ri + ':' + fi, () => select({ t: 'field', si, ri, fi })));
+        });
+        rowEl.appendChild(fieldsEl);
+        rowsEl.appendChild(rowEl);
+        hookFieldStrip(fieldsEl, false);
+      });
+      card.appendChild(rowsEl);
+      card.appendChild(el('div', { class: 'cv-sec-foot' }, [
+        el('button', { class: 'ghost small', text: '+ row', onclick: () => addRowAt(si) }),
+      ]));
+      if (window.Sortable) {
+        SORTABLES.push(new Sortable(rowsEl, {
+          group: 'rows', handle: '.cv-row-handle', draggable: '.cv-row', animation: 150,
+          onUpdate: (evt) => moveRow(rowsLoc(evt.from), evt.oldIndex, rowsLoc(evt.to), evt.newIndex),
+          onAdd:    (evt) => moveRow(rowsLoc(evt.from), evt.oldIndex, rowsLoc(evt.to), domIndex(evt.to, evt.item)),
+        }));
+      }
+    }
+    cv.appendChild(card);
+  });
+
+  if (window.Sortable) {
+    SORTABLES.push(new Sortable(cv, {
+      group: 'sections', handle: '.cv-sec-head', draggable: '.cv-section', animation: 150,
+      onUpdate: (evt) => moveSection(evt.oldIndex, evt.newIndex),
+      onAdd: (evt) => {   // palette structure clone
+        const kind = evt.item.dataset.palSec;
+        const idx = domIndex(cv, evt.item);
+        evt.item.remove();
+        if (kind) addSectionAt(idx, kind);
+      },
+    }));
+  }
+  applySelection();
+}
+
+function rowsLoc(container) { return container.dataset.loc; }
+function domIndex(container, item) { return Array.prototype.indexOf.call(container.children, item); }
+
+function hookFieldStrip(strip, isRepeater) {
+  if (!window.Sortable) return;
+  SORTABLES.push(new Sortable(strip, {
+    group: {
+      name: 'fields',
+      put: !isRepeater ? true : (to, from, dragEl) => {
+        const t = dragEl.dataset.pal || dragEl.dataset.ftype;
+        if (REPEATER_TYPES.includes(t)) return true;
+        flash('Only ' + REPEATER_TYPES.join(', ') + ' fields can go inside a repeater — "' + t + '" is not supported there.');
+        return false;
+      },
+    },
+    draggable: '.cv-field', animation: 150,
+    onUpdate: (evt) => moveField(evt.from.dataset.loc, evt.oldIndex, evt.to.dataset.loc, evt.newIndex),
+    onAdd: (evt) => {
+      const toLoc = evt.to.dataset.loc;
+      const idx = domIndex(evt.to, evt.item);
+      if (evt.item.dataset.pal) {              // palette clone → new field
+        const type = evt.item.dataset.pal;
+        evt.item.remove();
+        addFieldAt(toLoc, type, idx);
+      } else {                                  // moved from another strip
+        moveField(evt.from.dataset.loc, evt.oldIndex, toLoc, idx);
+      }
+    },
+  }));
+}
+
+function fieldChip(f, selAttr, onclick) {
+  const chip = el('div', { class: 'cv-field', 'data-sel': selAttr, 'data-ftype': f.type || 'text', onclick });
+  const top = el('div', { class: 'fname mono' });
+  top.appendChild(document.createTextNode(f.name || '(unnamed)'));
+  if (f.required) top.appendChild(el('span', { class: 'req-star', text: ' *' }));
+  chip.appendChild(top);
+  const mid = el('div', { class: 'flabel' });
+  mid.appendChild(el('span', { class: 'badge ftype', text: f.type || '?' }));
+  if (f.label) mid.appendChild(document.createTextNode(' ' + f.label));
+  chip.appendChild(mid);
+  const chips = el('div');
+  if (f.apiColumn) chips.appendChild(el('span', { class: 'badge col', text: '⛁ ' + f.apiColumn, title: 'Database column' }));
+  if (f.showWhen) chips.appendChild(swBadge(f.showWhen));
+  if (f.prefill) chips.appendChild(el('span', { class: 'badge ftype', text: 'prefill', title: f.prefill }));
+  if (chips.childNodes.length) chip.appendChild(chips);
+  return chip;
+}
+
+function swBadge(sw, compact) {
+  return el('span', { class: 'badge sw', text: compact ? '⚡' : '⚡ showWhen', title: swSummary(sw) });
+}
+function swSummary(sw) {
+  if (!sw) return '';
+  const val = Array.isArray(sw.value) ? sw.value.join(', ') : (sw.value != null ? sw.value : '');
+  return sw.op === 'notEmpty'
+    ? `shows when ${sw.field} is not empty`
+    : `shows when ${sw.field} ${sw.op} ${val}`;
+}
+
+// Re-render canvas preserving scroll + selection (called after model edits).
+function syncCanvas() {
+  const cv = E('canvas');
+  const top = cv.scrollTop;
+  renderCanvas();
+  cv.scrollTop = top;
+  refreshJsonTab();
+}
+
+function select(sel) {
+  SEL = sel;
+  applySelection();
+  renderInspector();
+}
+
+function applySelection() {
+  const key = selKey(SEL);
+  document.querySelectorAll('#canvas .selected').forEach(n => n.classList.remove('selected'));
+  if (key) {
+    const n = document.querySelector('#canvas [data-sel="' + key + '"]');
+    if (n) n.classList.add('selected');
+  }
+}
+
+// ── Model access ─────────────────────────────────────────────────────────────
+function selNode() {
+  if (!SEL) return null;
+  const s = MODEL.sections[SEL.si];
+  if (!s) return null;
+  if (SEL.t === 'section') return s;
+  if (SEL.t === 'row')     return (s.rows || [])[SEL.ri] || null;
+  if (SEL.t === 'field')   return (((s.rows || [])[SEL.ri] || {}).fields || [])[SEL.fi] || null;
+  if (SEL.t === 'rfield')  return (s.fields || [])[SEL.fi] || null;
+  return null;
+}
+
+// All field names form-wide (for uniqueness checks), optionally excluding one node.
+function allNames(exceptNode) {
+  const names = [];
+  (MODEL.sections || []).forEach(sec => {
+    if (Object.prototype.hasOwnProperty.call(sec, 'repeater')) {
+      if (sec !== exceptNode && sec.repeater) names.push(sec.repeater);  // repeater keys share the data namespace
+      (sec.fields || []).forEach(f => { if (f !== exceptNode) names.push(f.name); });
+    } else {
+      (sec.rows || []).forEach(r => (r.fields || []).forEach(f => { if (f !== exceptNode) names.push(f.name); }));
+    }
+  });
+  return names;
+}
+
+// Top-level field names (valid showWhen targets), optionally excluding one node.
+function topLevelNames(exceptNode) {
+  const names = [];
+  (MODEL.sections || []).forEach(sec => {
+    if (Object.prototype.hasOwnProperty.call(sec, 'repeater')) return;
+    (sec.rows || []).forEach(r => (r.fields || []).forEach(f => {
+      if (f !== exceptNode && f.name) names.push(f.name);
+    }));
+  });
+  return names;
+}
+
+// Every node carrying a showWhen that references `name`, with a human description.
+function refsTo(name) {
+  const out = [];
+  (MODEL.sections || []).forEach((sec, si) => {
+    const secDesc = (Object.prototype.hasOwnProperty.call(sec, 'repeater'))
+      ? `repeater section "${sec.title || sec.repeater}"`
+      : `section "${sec.title || '#' + (si + 1)}"`;
+    if (sec.showWhen && sec.showWhen.field === name) out.push({ node: sec, desc: secDesc });
+    if (Object.prototype.hasOwnProperty.call(sec, 'repeater')) return;   // repeater fields carry no showWhen targets
+    (sec.rows || []).forEach((row, ri) => {
+      if (row.showWhen && row.showWhen.field === name) out.push({ node: row, desc: `row ${ri + 1} of ${secDesc}` });
+      (row.fields || []).forEach(f => {
+        if (f.showWhen && f.showWhen.field === name) out.push({ node: f, desc: `field "${f.name}"` });
+      });
+    });
+  });
+  return out;
+}
+
+// ── Name generation ──────────────────────────────────────────────────────────
+function slugify(label) {
+  return String(label || '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 50) || 'field';
+}
+function genName(base, exceptNode) {
+  const taken = new Set(allNames(exceptNode));
+  let name = slugify(base);
+  if (!taken.has(name)) return name;
+  for (let i = 2; ; i++) {
+    const cand = (name.slice(0, 50 - String(i).length - 1)) + '_' + i;
+    if (!taken.has(cand)) return cand;
+  }
+}
+
+// Central rename: writes the name AND cascades into every showWhen that
+// referenced the old one (references would otherwise silently break — the
+// server 400s on dangling showWhen targets at save/publish).
+function renameField(f, newName) {
+  const old = f.name;
+  f.name = newName;
+  if (old && old !== newName) {
+    refsTo(old).forEach(r => { r.node.showWhen.field = newName; });
+  }
+}
+
+// ── Structural model ops (Sortable + palette clicks both route here) ────────
+function locArr(loc) {
+  const p = String(loc).split(':');
+  if (p[0] === 'sections') return MODEL.sections;
+  const s = MODEL.sections[+p[1]];
+  if (!s) return null;
+  if (p[0] === 'rows')    return s.rows;
+  if (p[0] === 'rfields') return s.fields;
+  if (p[0] === 'fields')  return ((s.rows || [])[+p[2]] || {}).fields;
+  return null;
+}
+const isRepLoc = loc => String(loc).indexOf('rfields:') === 0;
+
+function newField(type) {
+  const label = TYPE_LABEL[type] || ('New ' + type);
+  const f = { name: genName(type === 'hidden' ? 'hidden' : label), type };
+  if (type !== 'hidden') f.label = label;
+  if (OPTIONS_TYPES.includes(type)) f.options = ['Option 1'];
+  AUTO_NAMES.add(f);
+  return f;
+}
+
+function addFieldAt(loc, type, idx) {
+  if (isRepLoc(loc) && !REPEATER_TYPES.includes(type)) {
+    flash('Only ' + REPEATER_TYPES.join(', ') + ' fields can go inside a repeater — "' + type + '" is not supported there.');
+    return null;
+  }
+  const arr = locArr(loc);
+  if (!arr) return null;
+  const f = newField(type);
+  arr.splice(idx, 0, f);
+  const p = loc.split(':');
+  SEL = isRepLoc(loc)
+    ? { t: 'rfield', si: +p[1], fi: idx }
+    : { t: 'field', si: +p[1], ri: +p[2], fi: idx };
+  touched();
+  renderInspector();
+  return f;
+}
+
+function moveField(fromLoc, oldIdx, toLoc, newIdx) {
+  const from = locArr(fromLoc), to = locArr(toLoc);
+  if (!from || !to) return;
+  const f = from[oldIdx];
+  if (!f) return;
+
+  if (isRepLoc(toLoc) && !isRepLoc(fromLoc)) {
+    // Moving a top-level field into a repeater removes it from the showWhen
+    // target namespace — cascade-remove referencing conditions after a confirm.
+    const refs = refsTo(f.name);
+    if (refs.length) {
+      const ok = confirm(
+        `"${f.name}" is referenced by visibility conditions on:\n • ` +
+        refs.map(r => r.desc).join('\n • ') +
+        `\n\nMove it into the repeater and remove those conditions?`
+      );
+      if (!ok) { deferSync(); return; }        // model untouched → re-render reverts the DOM
+      refs.forEach(r => { delete r.node.showWhen; });
+    }
+  }
+
+  from.splice(oldIdx, 1);
+  to.splice(newIdx, 0, f);
+  const p = toLoc.split(':');
+  SEL = isRepLoc(toLoc)
+    ? { t: 'rfield', si: +p[1], fi: newIdx }
+    : { t: 'field', si: +p[1], ri: +p[2], fi: newIdx };
+  touched();
+  renderInspector();
+}
+
+function moveRow(fromLoc, oldIdx, toLoc, newIdx) {
+  const from = locArr(fromLoc), to = locArr(toLoc);
+  if (!from || !to) return;
+  const row = from.splice(oldIdx, 1)[0];
+  if (!row) { deferSync(); return; }
+  to.splice(newIdx, 0, row);
+  SEL = { t: 'row', si: +toLoc.split(':')[1], ri: newIdx };
+  touched();
+  renderInspector();
+}
+
+function moveSection(oldIdx, newIdx) {
+  const s = MODEL.sections.splice(oldIdx, 1)[0];
+  if (!s) { deferSync(); return; }
+  MODEL.sections.splice(newIdx, 0, s);
+  SEL = { t: 'section', si: newIdx };
+  touched();
+  renderInspector();
+}
+
+function addSectionAt(idx, kind) {
+  if (!MODEL.sections) MODEL.sections = [];
+  let sec;
+  if (kind === 'repeater') {
+    // A repeater must have a non-empty fields array to pass server validation —
+    // seed with one text field.
+    sec = { repeater: genName('repeater'), title: 'Repeater', addLabel: '+ Add', fields: [] };
+    const f = { name: genName('new_text'), type: 'text', label: 'New text' };
+    AUTO_NAMES.add(f);
+    sec.fields.push(f);
+  } else {
+    sec = { title: 'Section ' + (MODEL.sections.length + 1), rows: [] };
+  }
+  MODEL.sections.splice(idx, 0, sec);
+  SEL = { t: 'section', si: idx };
+  touched();
+  renderInspector();
+  return sec;
+}
+
+function addRowAt(si) {
+  const s = MODEL.sections[si];
+  if (!s || !s.rows) return;
+  s.rows.push({ fields: [] });
+  SEL = { t: 'row', si, ri: s.rows.length - 1 };
+  touched();
+  renderInspector();
+}
+
+// Click-to-add fallback: insert a field relative to the current selection.
+function clickAddField(type) {
+  if (!MODEL) return;
+  if (SEL) {
+    if (SEL.t === 'field')  return addFieldAt('fields:' + SEL.si + ':' + SEL.ri, type, SEL.fi + 1);
+    if (SEL.t === 'rfield') return addFieldAt('rfields:' + SEL.si, type, SEL.fi + 1);
+    if (SEL.t === 'row')    return addFieldAt('fields:' + SEL.si + ':' + SEL.ri, type, (selNode().fields || []).length);
+    if (SEL.t === 'section') {
+      const s = selNode();
+      if (isRepeaterSection(s)) return addFieldAt('rfields:' + SEL.si, type, (s.fields || []).length);
+      if (!s.rows.length) s.rows.push({ fields: [] });
+      return addFieldAt('fields:' + SEL.si + ':' + (s.rows.length - 1), type, s.rows[s.rows.length - 1].fields.length);
+    }
+  }
+  // Nothing selected: last standard section's last row (created as needed).
+  let si = -1;
+  (MODEL.sections || []).forEach((s, i) => { if (!isRepeaterSection(s)) si = i; });
+  if (si === -1) {
+    addSectionAt((MODEL.sections || []).length, 'section');
+    si = MODEL.sections.length - 1;
+  }
+  const s = MODEL.sections[si];
+  if (!s.rows.length) s.rows.push({ fields: [] });
+  return addFieldAt('fields:' + si + ':' + (s.rows.length - 1), type, s.rows[s.rows.length - 1].fields.length);
+}
+
+// ── Delete (reference-aware, cascade after confirm) ─────────────────────────
+function deleteSelected() {
+  const node = selNode();
+  if (!SEL || !node) return false;
+
+  if (SEL.t === 'field' || SEL.t === 'rfield') {
+    const refs = SEL.t === 'field' ? refsTo(node.name) : [];   // rfield names are never showWhen targets
+    let msg = `Delete field "${node.name}"?`;
+    if (refs.length) {
+      msg = `Field "${node.name}" is referenced by visibility conditions on:\n • ` +
+            refs.map(r => r.desc).join('\n • ') +
+            `\n\nDelete the field and remove those conditions?`;
+    }
+    if (!confirm(msg)) return false;
+    refs.forEach(r => { delete r.node.showWhen; });
+    const arr = SEL.t === 'field'
+      ? MODEL.sections[SEL.si].rows[SEL.ri].fields
+      : MODEL.sections[SEL.si].fields;
+    arr.splice(SEL.fi, 1);
+  } else if (SEL.t === 'row') {
+    const inside = new Set((node.fields || []).map(f => f));
+    const names  = (node.fields || []).map(f => f.name);
+    const outsideRefs = collectOutsideRefs(names, inside, node);
+    if (!confirm(deleteContainerMsg(`row ${SEL.ri + 1}`, (node.fields || []).length + ' field(s)', outsideRefs))) return false;
+    outsideRefs.forEach(r => { delete r.node.showWhen; });
+    MODEL.sections[SEL.si].rows.splice(SEL.ri, 1);
+  } else if (SEL.t === 'section') {
+    const isRep = isRepeaterSection(node);
+    const fields = isRep
+      ? (node.fields || [])
+      : (node.rows || []).flatMap(r => r.fields || []);
+    const inside = new Set(fields);
+    if (!isRep) (node.rows || []).forEach(r => inside.add(r));
+    inside.add(node);
+    const names = isRep ? [] : fields.map(f => f.name);        // repeater fields aren't showWhen targets
+    const outsideRefs = collectOutsideRefs(names, inside, node);
+    const what = isRep ? `repeater section "${node.title || node.repeater}"` : `section "${node.title || '#' + (SEL.si + 1)}"`;
+    if (!confirm(deleteContainerMsg(what, fields.length + ' field(s)', outsideRefs))) return false;
+    outsideRefs.forEach(r => { delete r.node.showWhen; });
+    MODEL.sections.splice(SEL.si, 1);
+  }
+
+  SEL = null;
+  touched();
+  renderInspector();
+  return true;
+}
+
+function collectOutsideRefs(names, insideSet, containerNode) {
+  const out = [];
+  names.forEach(n => refsTo(n).forEach(r => {
+    if (!insideSet.has(r.node) && r.node !== containerNode) out.push(r);
+  }));
+  return out;
+}
+function deleteContainerMsg(what, contains, outsideRefs) {
+  let msg = `Delete ${what} (contains ${contains})?`;
+  if (outsideRefs.length) {
+    msg += `\n\nFields inside are referenced by visibility conditions on:\n • ` +
+           outsideRefs.map(r => r.desc).join('\n • ') +
+           `\n\nDeleting will also remove those conditions.`;
+  }
+  return msg;
+}
+
+// ── Edit plumbing ────────────────────────────────────────────────────────────
+function touched() {
+  markDirty();
+  syncCanvas();
+}
+// Deferred re-render for cancelled drags (lets Sortable finish its DOM cleanup
+// before the canvas is rebuilt from the untouched model).
+function deferSync() { setTimeout(syncCanvas, 0); }
+
+// set/delete a key on obj; '' / null / undefined / false deletes (keeps JSON lean)
+function setOrDel(obj, key, val) {
+  if (val === '' || val == null || val === false) delete obj[key];
+  else obj[key] = val;
+}
+
+// ── JSON tab ─────────────────────────────────────────────────────────────────
+function showTab(which) {
+  const json = which === 'json';
+  E('tabCanvas').classList.toggle('active', !json);
+  E('tabJson').classList.toggle('active', json);
+  E('canvas').style.display = json ? 'none' : '';
+  E('jsonPane').classList.toggle('show', json);
+  if (json) {
+    JSON_DIRTY = false;
+    E('jsonTa').value = JSON.stringify(MODEL, null, 2);
+    E('jsonErr').textContent = '';
+    E('jsonTa').oninput = () => { JSON_DIRTY = true; };
+  }
+}
+// Keep the JSON view live while the user hasn't typed into it.
+function refreshJsonTab() {
+  if (E('jsonPane').classList.contains('show') && !JSON_DIRTY) {
+    E('jsonTa').value = JSON.stringify(MODEL, null, 2);
+  }
+}
+function applyJson() {
+  const errEl = E('jsonErr');
+  errEl.textContent = '';
+  let parsed;
+  try {
+    parsed = JSON.parse(E('jsonTa').value);
+  } catch (e) {
+    errEl.textContent = 'Invalid JSON: ' + e.message;
+    return;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    errEl.textContent = 'Definition must be a JSON object.';
+    return;
+  }
+  MODEL = parsed;
+  AUTO_NAMES = new WeakSet();
+  SEL = null;
+  JSON_DIRTY = false;
+  E('jsonTa').value = JSON.stringify(MODEL, null, 2);   // normalized pretty print
+  markDirty();
+  syncCanvas();
+  renderInspector();
+}
+
+// ── Inspector prop builders ─────────────────────────────────────────────────
+function pText(label, value, onInput, opts) {
+  opts = opts || {};
+  const input = el(opts.textarea ? 'textarea' : 'input', {});
+  if (!opts.textarea) input.type = 'text';
+  input.value = value != null ? value : '';
+  if (opts.placeholder) input.placeholder = opts.placeholder;
+  if (opts.mono) input.classList.add('mono');
+  const perr = el('div', { class: 'perr' });
+  input.oninput = () => {
+    const raw = input.value;
+    if (opts.validate) {
+      const msg = opts.validate(raw);
+      if (msg) {
+        input.classList.add('bad');
+        perr.textContent = msg; perr.classList.add('show');
+        return;                       // invalid → model untouched
+      }
+    }
+    input.classList.remove('bad');
+    perr.classList.remove('show');
+    onInput(raw);
+  };
+  const wrap = el('div', { class: 'prop' }, [ el('label', { text: label }), input, perr ]);
+  if (opts.help) wrap.appendChild(el('div', { class: 'help', text: opts.help }));
+  wrap._input = input;
+  return wrap;
+}
+
+function pNum(label, value, onInput, opts) {
+  opts = opts || {};
+  const input = el('input', { type: 'number' });
+  if (opts.min != null) input.min = opts.min;
+  input.value = value != null ? value : '';
+  input.oninput = () => {
+    const raw = input.value.trim();
+    if (raw === '') return onInput(null);
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+    onInput(n);
+  };
+  const wrap = el('div', { class: 'prop' }, [ el('label', { text: label }), input ]);
+  if (opts.help) wrap.appendChild(el('div', { class: 'help', text: opts.help }));
+  return wrap;
+}
+
+function pCheck(label, checked, onInput, opts) {
+  opts = opts || {};
+  const input = el('input', { type: 'checkbox' });
+  input.checked = !!checked;
+  input.onchange = () => onInput(input.checked);
+  const lab = el('label', null, [input, ' ' + label]);
+  const wrap = el('div', { class: 'prop inline' }, [lab]);
+  if (opts.help) wrap.appendChild(el('div', { class: 'help', text: opts.help }));
+  return wrap;
+}
+
+function pSelect(label, value, choices, onInput, opts) {
+  opts = opts || {};
+  const input = el('select', {});
+  choices.forEach(c => {
+    const v = Array.isArray(c) ? c[0] : c;
+    const t = Array.isArray(c) ? c[1] : (c === '' ? '(none)' : c);
+    input.appendChild(el('option', { value: v, text: t }));
+  });
+  input.value = value != null ? value : (Array.isArray(choices[0]) ? choices[0][0] : choices[0]);
+  input.onchange = () => onInput(input.value);
+  const wrap = el('div', { class: 'prop' }, [ el('label', { text: label }), input ]);
+  if (opts.help) wrap.appendChild(el('div', { class: 'help', text: opts.help }));
+  return wrap;
+}
+
+function group(title, kids) {
+  const g = el('div', { class: 'ins-group' });
+  if (title) g.appendChild(el('div', { class: 'gtitle', text: title }));
+  kids.forEach(k => k && g.appendChild(k));
+  return g;
+}
+
+// ── Inspector ────────────────────────────────────────────────────────────────
+function renderInspector() {
+  const ins = E('inspector');
+  ins.textContent = '';
+
+  const head = el('div', { id: 'insHead' });
+  if (SEL) {
+    head.appendChild(el('button', { class: 'ghost small', text: '← Form settings', onclick: () => select(null) }));
+    head.appendChild(el('div', { class: 'spacer' }));
+    head.appendChild(el('button', { class: 'ghost small danger', text: 'Delete', onclick: deleteSelected,
+      style: 'background:transparent; color:var(--danger); border-color:var(--danger);' }));
+  }
+  ins.appendChild(head);
+
+  const node = selNode();
+  if (SEL && !node) { SEL = null; }   // stale selection guard
+
+  if (!SEL)                    return insSettings(ins);
+  if (SEL.t === 'section')     return isRepeaterSection(node) ? insRepeater(ins, node) : insSection(ins, node);
+  if (SEL.t === 'row')         return insRow(ins, node);
+  if (SEL.t === 'field')       return insField(ins, node, false);
+  if (SEL.t === 'rfield')      return insField(ins, node, true);
+}
+
+function isRepeaterSection(sec) {
+  return sec && Object.prototype.hasOwnProperty.call(sec, 'repeater');
+}
+
+// ── Inspector: form settings (nothing selected) ─────────────────────────────
+function insSettings(ins) {
+  ins.appendChild(el('h3', { text: 'Form settings' }));
+
+  ins.appendChild(group('Behavior', [
+    pSelect('Data mode', MODEL.dataMode === 'snapshot' ? 'snapshot' : 'live', ['live', 'snapshot'], v => {
+      if (v === 'live') delete MODEL.dataMode; else MODEL.dataMode = v;
+      touched();
+    }, { help: 'live: fields with a database column load from and save to the entity. snapshot: loads from the latest submission once one exists.' }),
+    pCheck('Autosave', MODEL.autosave !== false, v => {
+      if (v) delete MODEL.autosave; else MODEL.autosave = false;
+      touched();
+    }),
+    pNum('Autosave interval (ms)', typeof MODEL.autosaveMs === 'number' ? MODEL.autosaveMs : null, v => {
+      setOrDel(MODEL, 'autosaveMs', v); touched();
+    }, { min: 0, help: 'Default 3000.' }),
+    pCheck('View/edit toggle', MODEL.toggle !== false, v => {
+      if (v) delete MODEL.toggle; else MODEL.toggle = false;
+      touched();
+    }, { help: 'On: form starts read-only with a toggle header. Off: always-edit.' }),
+    pText('Warning text', MODEL.warningText != null ? MODEL.warningText : '', v => {
+      // '' is meaningful here (silences the warning) — only absent means default
+      if (v === '') MODEL.warningText = ''; else MODEL.warningText = v;
+      touched();
+    }, { placeholder: 'You must press SAVE to keep changes!', help: 'Empty string silences the warning; use the reset button to return to the default.' }),
+    (() => {
+      const b = el('button', { class: 'ghost small', text: 'Reset warning text to default', onclick: () => {
+        delete MODEL.warningText; touched(); renderInspector();
+      }});
+      return el('div', { class: 'prop' }, [b]);
+    })(),
+    pText('Save button label', MODEL.saveLabel || '', v => { setOrDel(MODEL, 'saveLabel', v); touched(); },
+      { placeholder: 'Save' }),
+  ]));
+
+  // endpoints.load
+  const hasLoad = !!(MODEL.endpoints && MODEL.endpoints.load);
+  const loadKids = [
+    pCheck('Load entity data (endpoints.load)', hasLoad, v => {
+      if (v) {
+        MODEL.endpoints = MODEL.endpoints || {};
+        MODEL.endpoints.load = MODEL.endpoints.load || defaultLoad();
+      } else {
+        if (MODEL.endpoints) { delete MODEL.endpoints.load; if (!Object.keys(MODEL.endpoints).length) delete MODEL.endpoints; }
+      }
+      touched(); renderInspector();
+    }),
+  ];
+  if (hasLoad) {
+    const L = MODEL.endpoints.load;
+    loadKids.push(
+      pText('URL', L.url || '', v => { L.url = v; touched(); },
+        { mono: true, placeholder: '/api/cases/{linkId}', help: '{linkId} is replaced with the entity id.' }),
+      pSelect('Method', L.method || 'GET', ['GET', 'POST'], v => { L.method = v; touched(); }),
+      pText('Response path', L.path || '', v => { setOrDel(L, 'path', v); touched(); },
+        { mono: true, placeholder: 'case', help: 'Key in the response holding the entity (e.g. "case").' })
+    );
+  }
+  ins.appendChild(group('Load', loadKids));
+
+  // onSubmit.patch
+  const hasPatch = !!(MODEL.onSubmit && MODEL.onSubmit.patch);
+  const patchKids = [
+    pCheck('PATCH entity on save (onSubmit.patch)', hasPatch, v => {
+      if (v) {
+        MODEL.onSubmit = MODEL.onSubmit || {};
+        MODEL.onSubmit.patch = MODEL.onSubmit.patch || defaultPatch();
+      } else if (MODEL.onSubmit) {
+        delete MODEL.onSubmit.patch;
+        if (!Object.keys(MODEL.onSubmit).length) delete MODEL.onSubmit;
+      }
+      touched(); renderInspector();
+    }, { help: 'Sends changed fields that declare a database column (readonly fields excluded). Requires at least one field with a database column.' }),
+  ];
+  if (hasPatch) {
+    const Pt = MODEL.onSubmit.patch;
+    patchKids.push(
+      pText('URL', Pt.url || '', v => { Pt.url = v; touched(); }, { mono: true, placeholder: '/api/cases/{linkId}' }),
+      pSelect('Method', Pt.method || 'PATCH', ['PATCH', 'PUT', 'POST'], v => { Pt.method = v; touched(); })
+    );
+  }
+  ins.appendChild(group('Save → entity', patchKids));
+
+  // onSubmit.workflow
+  const hasWf = !!(MODEL.onSubmit && MODEL.onSubmit.workflow);
+  const wfKids = [
+    pCheck('Trigger workflow on save (onSubmit.workflow)', hasWf, v => {
+      if (v) {
+        MODEL.onSubmit = MODEL.onSubmit || {};
+        MODEL.onSubmit.workflow = MODEL.onSubmit.workflow || { id: 0 };
+      } else if (MODEL.onSubmit) {
+        delete MODEL.onSubmit.workflow;
+        if (!Object.keys(MODEL.onSubmit).length) delete MODEL.onSubmit;
+      }
+      touched(); renderInspector();
+    }),
+  ];
+  if (hasWf) {
+    const W = MODEL.onSubmit.workflow;
+    wfKids.push(
+      pNum('Workflow id', W.id != null ? W.id : null, v => { W.id = v == null ? 0 : v; touched(); }),
+      pText('Init data (JSON object)', W.initData ? JSON.stringify(W.initData, null, 2) : '', v => {
+        if (v.trim() === '') { delete W.initData; touched(); return; }
+        W.initData = JSON.parse(v);   // validate() below guarantees parseability
+        touched();
+      }, {
+        textarea: true, mono: true, placeholder: '{ "source": "templated_form" }',
+        validate: raw => {
+          if (raw.trim() === '') return null;
+          try {
+            const p = JSON.parse(raw);
+            if (!p || typeof p !== 'object' || Array.isArray(p)) return 'must be a JSON object';
+            return null;
+          } catch (e) { return 'invalid JSON: ' + e.message; }
+        },
+        help: 'Form data is spread as workflow init vars; system fields win.'
+      })
+    );
+  }
+  ins.appendChild(group('Save → workflow', wfKids));
+
+  ins.appendChild(group('Hooks', [
+    pText('Hooks file', MODEL.hooks != null ? MODEL.hooks : '', v => {
+      if (v === '') { MODEL.hooks = null; delete MODEL.hooks; }
+      else MODEL.hooks = v;
+      touched();
+    }, {
+      mono: true, placeholder: '(none)',
+      validate: raw => raw === '' || HOOKS_RE.test(raw) ? null : 'must match ^[a-zA-Z0-9_-]{1,50}$',
+      help: 'Names a repo file /forms/hooks/{name}.js (onLoad / onSave). Executable code lives in the repo only — never in the database. Not loaded in preview.'
+    }),
+  ]));
+}
+
+function defaultLoad() {
+  const t = ROW.link_type;
+  return { url: `/api/${t === 'case' ? 'cases' : t + 's'}/{linkId}`, method: 'GET', path: t };
+}
+function defaultPatch() {
+  const t = ROW.link_type;
+  return { url: `/api/${t === 'case' ? 'cases' : t + 's'}/{linkId}`, method: 'PATCH' };
+}
+
+// ── Inspector: standard section ─────────────────────────────────────────────
+function insSection(ins, sec) {
+  ins.appendChild(el('h3', { text: 'Section' }));
+  ins.appendChild(group(null, [
+    pText('Title', sec.title || '', v => { setOrDel(sec, 'title', v); touched(); }),
+    pText('Subtitle', sec.subtitle || '', v => { setOrDel(sec, 'subtitle', v); touched(); },
+      { help: 'Gray hint text under the title.' }),
+  ]));
+  ins.appendChild(swGroup(sec));
+}
+
+// ── Inspector: repeater section ─────────────────────────────────────────────
+function insRepeater(ins, sec) {
+  ins.appendChild(el('h3', { text: 'Repeater section' }));
+  ins.appendChild(group(null, [
+    pText('Repeater key', sec.repeater || '', v => { sec.repeater = v; touched(); }, {
+      mono: true,
+      validate: raw => {
+        if (!FIELD_NAME_RE.test(raw)) return 'must match ^[a-zA-Z0-9_]{1,50}$';
+        if (allNames(sec).includes(raw)) return `"${raw}" is already used by another field or repeater`;
+        return null;
+      },
+      help: 'Data key for the item array in submissions. Shares the namespace with field names.'
+    }),
+    pText('Title', sec.title || '', v => { setOrDel(sec, 'title', v); touched(); }),
+    pText('Subtitle', sec.subtitle || '', v => { setOrDel(sec, 'subtitle', v); touched(); }),
+    pText('Add button label', sec.addLabel || '', v => { setOrDel(sec, 'addLabel', v); touched(); },
+      { placeholder: '+ Add' }),
+  ]));
+  ins.appendChild(swGroup(sec));
+  ins.appendChild(group('Fields', [
+    el('div', { class: 'help', text: 'Repeater fields allow only: ' + REPEATER_TYPES.join(', ') + '. No masks, validation, prefill, or conditions inside repeaters (v1 runtime). A repeater needs at least one field to save.' }),
+  ]));
+}
+
+// ── Inspector: row ──────────────────────────────────────────────────────────
+function insRow(ins, row) {
+  ins.appendChild(el('h3', { text: 'Row' }));
+  ins.appendChild(group(null, [
+    el('div', { class: 'help', text: 'A row groups fields side by side. Rows have no properties besides a visibility condition.' }),
+  ]));
+  ins.appendChild(swGroup(row));
+}
+
+// ── showWhen editor (sections, rows, fields) ────────────────────────────────
+function swGroup(node) {
+  const kids = [];
+  const targets = topLevelNames(node);   // top-level field names only, excluding the node itself
+
+  if (!node.showWhen) {
+    if (targets.length) {
+      kids.push(el('div', { class: 'prop' }, [
+        el('button', { class: 'ghost small', text: '+ Add condition', onclick: () => {
+          node.showWhen = { field: targets[0], op: 'eq', value: '' };
+          touched(); renderInspector();
+        }}),
+      ]));
+      kids.push(el('div', { class: 'help', text: 'Show this only when another field has a given value.' }));
+    } else {
+      kids.push(el('div', { class: 'help', text: 'No possible condition targets yet — conditions reference top-level fields.' }));
+    }
+    return group('Visibility', kids);
+  }
+
+  const sw = node.showWhen;
+  // Legacy-safe: if the current target no longer exists, keep it listed so the
+  // user can see (and fix) the dangling reference rather than it silently changing.
+  const choices = targets.includes(sw.field) ? targets : [sw.field].concat(targets);
+
+  kids.push(pSelect('When field', sw.field, choices, v => { sw.field = v; touched(); },
+    targets.includes(sw.field) ? null : { help: '⚠ current target no longer exists — pick a valid field' }));
+
+  kids.push(pSelect('Operator', SHOWWHEN_OPS.includes(sw.op) ? sw.op : 'eq',
+    [['eq', 'equals'], ['neq', 'does not equal'], ['in', 'is one of'], ['notEmpty', 'is not empty']],
+    v => {
+      sw.op = v;
+      if (v === 'notEmpty') delete sw.value;
+      else if (v === 'in' && !Array.isArray(sw.value)) sw.value = sw.value ? [String(sw.value)] : [];
+      else if ((v === 'eq' || v === 'neq') && Array.isArray(sw.value)) sw.value = sw.value[0] || '';
+      touched(); renderInspector();
+    }));
+
+  if (sw.op === 'in') {
+    kids.push(pText('Values (comma-separated)', Array.isArray(sw.value) ? sw.value.join(', ') : '', v => {
+      sw.value = v.split(',').map(s => s.trim()).filter(Boolean);
+      touched();
+    }, { help: 'Shows when the field matches any of these.' }));
+  } else if (sw.op === 'eq' || sw.op === 'neq') {
+    kids.push(pText('Value', sw.value != null && !Array.isArray(sw.value) ? sw.value : '', v => {
+      sw.value = v; touched();
+    }, { help: 'For checkboxes use "true" / "false".' }));
+  }
+
+  kids.push(el('div', { class: 'prop' }, [
+    el('button', { class: 'ghost small', text: 'Remove condition', onclick: () => {
+      delete node.showWhen;
+      touched(); renderInspector();
+    }}),
+  ]));
+
+  return group('Visibility', kids);
+}
+
+// ── Options editor (structured; select / radio / checkgroup) ────────────────
+function optionsEditor(f) {
+  const kids = [];
+  const list = el('div', {});
+  const rows = [];   // in DOM order at read time
+
+  function readBack() {
+    const out = [];
+    Array.prototype.forEach.call(list.children, rowEl => {
+      const value = rowEl._v.value;
+      const label = rowEl._l.value;
+      if (value === '' && label === '') return;             // fully empty rows excluded
+      out.push(label === '' || label === value ? value : { value, label });
+    });
+    if (!out.length) { flash('At least one option is required.'); return; }
+    f.options = out;
+    touched();
+  }
+
+  function optRow(value, label) {
+    const v = el('input', { type: 'text', placeholder: 'value', class: 'mono' });
+    const l = el('input', { type: 'text', placeholder: 'label (optional)' });
+    v.value = value; l.value = label;
+    v.oninput = readBack; l.oninput = readBack;
+    const del = el('button', { class: 'ghost small', text: '×', title: 'Remove option', onclick: () => {
+      if (list.children.length <= 1) { flash('At least one option is required.'); return; }
+      rowEl.remove();
+      readBack();
+    }});
+    const rowEl = el('div', { class: 'opt-row' }, [v, l, del]);
+    rowEl._v = v; rowEl._l = l;
+    return rowEl;
+  }
+
+  (f.options || []).forEach(o => {
+    if (o && typeof o === 'object') {
+      const v = o.value != null ? String(o.value) : '';
+      const l = o.label != null ? String(o.label) : '';
+      list.appendChild(optRow(v, l === v ? '' : l));
+    } else {
+      list.appendChild(optRow(String(o), ''));
+    }
+  });
+
+  if (window.Sortable) {
+    new Sortable(list, { animation: 150, draggable: '.opt-row', onUpdate: readBack });
+  }
+
+  kids.push(el('div', { class: 'prop' }, [ el('label', { text: 'Options (drag to reorder)' }), list ]));
+  kids.push(el('div', { class: 'prop' }, [
+    el('button', { class: 'ghost small', text: '+ Add option', onclick: () => {
+      list.appendChild(optRow('', ''));
+    }}),
+  ]));
+  kids.push(el('div', { class: 'help', text: 'Label is optional — leave it empty to reuse the value.' }));
+
+  if (f.type === 'checkgroup') {
+    kids.push(pCheck('Allow "Other" with free text', !!f.allowOther, v => {
+      if (v) f.allowOther = true; else delete f.allowOther;
+      touched();
+    }));
+  }
+  return group('Options', kids);
+}
+
+// ── Inspector: field ────────────────────────────────────────────────────────
+function insField(ins, f, inRepeater) {
+  ins.appendChild(el('h3', { text: inRepeater ? 'Repeater field' : 'Field' }));
+
+  // Identity — the label input keeps a live ref to the name input so an
+  // auto-generated name can follow the label without rebuilding the inspector
+  // (which would drop keyboard focus mid-typing).
+  const nameProp = pText('Name', f.name || '', v => { renameField(f, v); AUTO_NAMES.delete(f); touched(); }, {
+    mono: true,
+    validate: raw => {
+      if (!FIELD_NAME_RE.test(raw)) return 'must match ^[a-zA-Z0-9_]{1,50}$';
+      if (allNames(f).includes(raw)) return `"${raw}" is already in use (names are unique form-wide)`;
+      return null;
+    },
+    help: 'Auto-generated from the label until you edit it manually. Renaming counts as remove + add for schema versioning — the next publish will bump the version. Conditions referencing this field are updated automatically.'
+  });
+  const labelProp = pText('Label', f.label || '', v => {
+    setOrDel(f, 'label', v);
+    if (AUTO_NAMES.has(f)) {
+      renameField(f, genName(v || f.type, f));
+      nameProp._input.value = f.name;
+      nameProp._input.classList.remove('bad');
+    }
+    touched();
+  });
+
+  ins.appendChild(group('Identity', [
+    labelProp,
+    nameProp,
+    pSelect('Type', f.type, inRepeater ? REPEATER_TYPES : FIELD_TYPES, v => {
+      changeType(f, v); touched(); renderInspector();
+    }),
+  ]));
+
+  const isOpt   = OPTIONS_TYPES.includes(f.type);
+  const canHide = f.type !== 'hidden';
+
+  // Layout (hidden fields render nothing visible)
+  if (canHide) {
+    ins.appendChild(group('Layout', [
+      pSelect('Width', WIDTHS.includes(f.width) ? f.width : 'default', WIDTHS, v => {
+        if (v === 'default') delete f.width; else f.width = v;
+        touched();
+      }),
+      pText('Sublabel', f.sublabel || '', v => { setOrDel(f, 'sublabel', v); touched(); },
+        { help: 'Hint text under the input.' }),
+      (['text','textarea','number','select'].includes(f.type)
+        ? pText('Placeholder', f.placeholder || '', v => { setOrDel(f, 'placeholder', v); touched(); })
+        : null),
+      (f.type === 'textarea'
+        ? pNum('Rows', f.rows != null ? f.rows : null, v => { setOrDel(f, 'rows', v); touched(); }, { min: 1 })
+        : null),
+    ]));
+  }
+
+  if (isOpt) ins.appendChild(optionsEditor(f));
+
+  // Number bounds
+  if (f.type === 'number') {
+    ins.appendChild(group('Number', [
+      el('div', { class: 'three-col' }, [
+        pNum('Min', f.min != null ? f.min : null, v => { setOrDel(f, 'min', v); touched(); }),
+        pNum('Max', f.max != null ? f.max : null, v => { setOrDel(f, 'max', v); touched(); }),
+        pNum('Step', f.step != null ? f.step : null, v => { setOrDel(f, 'step', v); touched(); }),
+      ]),
+    ]));
+  }
+
+  // Data (not applicable inside repeaters — values live in the item array)
+  if (!inRepeater) {
+    const live = MODEL.dataMode !== 'snapshot';
+    ins.appendChild(group('Data', [
+      pText('Database column', f.apiColumn || '', v => { setOrDel(f, 'apiColumn', v); touched(); }, {
+        mono: true,
+        help: live
+          ? 'Loads from and saves to this column on the ' + ROW.link_type + ' record.'
+          : 'Saves to this column on the ' + ROW.link_type + ' record. (Snapshot mode: values load from the latest submission.)'
+      }),
+      pText('Prefill expression', f.prefill || '', v => { setOrDel(f, 'prefill', v); touched(); }, {
+        mono: true, placeholder: '{{cases.case_trustee}}',
+        help: 'Resolver expression for data outside the loaded entity (joins, lookups). Entity columns should use the database column instead.'
+      }),
+      (f.prefill
+        ? pSelect('Prefill mode', f.prefillMode === 'always' ? 'always' : 'ifEmpty',
+            [['ifEmpty', 'ifEmpty (default — fill only when empty)'], ['always', 'always (overwrite every load)']],
+            v => { if (v === 'ifEmpty') delete f.prefillMode; else f.prefillMode = v; touched(); })
+        : null),
+      pCheck('Read-only', !!f.readonly, v => {
+        if (v) f.readonly = true; else { delete f.readonly; delete f.lockedMsg; }
+        touched(); renderInspector();
+      }, { help: 'Read-only fields are excluded from the entity PATCH.' }),
+      (f.readonly
+        ? pText('Locked message', f.lockedMsg || '', v => { setOrDel(f, 'lockedMsg', v); touched(); },
+            { help: 'Shown when the user tries to edit the locked field.' })
+        : null),
+    ]));
+
+    // Validation (not supported inside repeaters — v1 runtime)
+    if (canHide) {
+      ins.appendChild(group('Validation', [
+        pCheck('Required', !!f.required, v => { if (v) f.required = true; else delete f.required; touched(); }),
+        el('div', { class: 'two-col' }, [
+          pNum('Min length', f.minLength != null ? f.minLength : null, v => { setOrDel(f, 'minLength', v); touched(); }, { min: 0 }),
+          pNum('Max length', f.maxLength != null ? f.maxLength : null, v => { setOrDel(f, 'maxLength', v); touched(); }, { min: 0 }),
+        ]),
+        pText('Pattern (regex)', f.pattern || '', v => { setOrDel(f, 'pattern', v); touched(); }, {
+          mono: true,
+          validate: raw => {
+            if (raw === '') return null;
+            try { new RegExp(raw); return null; }
+            catch (e) { return 'invalid regular expression: ' + e.message; }
+          },
+        }),
+        pText('Pattern message', f.patternMessage || '', v => { setOrDel(f, 'patternMessage', v); touched(); }),
+        pCheck('Email format', !!f.email, v => { if (v) f.email = true; else delete f.email; touched(); }),
+        pSelect('Mask', MASKS.includes(f.mask) ? (f.mask || '') : '', MASKS, v => {
+          if (v === '') delete f.mask; else f.mask = v;
+          touched();
+        }),
+      ]));
+    }
+
+    ins.appendChild(swGroup(f));
+  } else {
+    ins.appendChild(group('Repeater limits', [
+      el('div', { class: 'help', text: 'Inside repeaters: no database column, prefill, masks, validation, or conditions (v1 runtime).' }),
+    ]));
+  }
+}
+
+// Type change with cleanup so the definition stays server-valid
+// (options iff select/radio/checkgroup; type-specific keys stripped).
+function changeType(f, newType) {
+  const wasOpt = OPTIONS_TYPES.includes(f.type);
+  const isOpt  = OPTIONS_TYPES.includes(newType);
+  f.type = newType;
+  if (isOpt && !Array.isArray(f.options)) f.options = ['Option 1'];
+  if (!isOpt && wasOpt) { delete f.options; delete f.allowOther; }
+  if (newType !== 'checkgroup') delete f.allowOther;
+  if (newType !== 'textarea') delete f.rows;
+  if (newType !== 'number') { delete f.min; delete f.max; delete f.step; }
+}
+
+// ── Debug / test surface ─────────────────────────────────────────────────────
+// Top-level let/const don't attach to window; this read view + narrow setters
+// serve automated assertions and devtools inspection. Not a public API.
+window.FB = {
+  get model() { return MODEL; },
+  get row()   { return ROW; },
+  get sel()   { return SEL; },
+  get title() { return TITLE; },
+  set title(v){ TITLE = v; E('titleInput').value = v; markDirty(); },
+  get formKey(){ return FKEY; },
+  ops: {
+    addFieldAt, moveField, moveRow, moveSection, addSectionAt, addRowAt,
+    clickAddField, deleteSelected, genName, renameField, refsTo,
+    topLevelNames, allNames,
+  },
+};
+</script>
+</body>
+</html>

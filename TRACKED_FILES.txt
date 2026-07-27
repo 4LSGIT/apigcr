@@ -177,6 +177,7 @@ public/etch.html
 public/evergreen.html
 public/featureRequests.html
 public/feedback.html
+public/formBuilder.html
 public/forms/341notes.html
 public/forms/casedetails-bk.html
 public/forms/casedetails.html
@@ -214,7 +215,7 @@ ref/2026-07-20_firm_identity.sql
 ref/2026-07-21_esign_phase3.sql
 ref/2026-07-22_esign_webhook_hmac.sql
 ref/2026-07-26_form_templates.sql
-ref/2026-07-27_test_quick_notes_slice2_definition.json.json
+ref/2026-07-27_test_quick_notes_slice2_definition.json
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/database.sql
 ref/files.md
@@ -454,6 +455,8 @@ tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventservice.remindertitle.test.js
 tests/firmConfig.test.js
+tests/formBuilder_phaseA_test.js
+tests/formBuilder_phaseB_test.js
 tests/formRender.slice2.test.js
 tests/helpers/renderSmoke.js
 tests/hookMapper.test.js
