@@ -704,6 +704,11 @@ if (typeof window !== 'undefined') (function () {
       // With a box selected, the type select retypes it (min size re-enforced).
       var f = self._selected();
       if (f) { self._retype(f, e.target.value); }
+      else {
+        // Label is per-box, never sticky — switching draw type with nothing
+        // selected must not carry the previous box's display text forward.
+        container.querySelector('.pe-label').value = '';
+      }
     });
     var labelInput = container.querySelector('.pe-label');
     labelInput.addEventListener('input', function (e) {
@@ -727,6 +732,11 @@ if (typeof window !== 'undefined') (function () {
         // Live tag update without a full re-render per keystroke.
         var box = self.container.querySelector('.pe-box[data-uid="' + f.uid + '"] .pe-tag');
         if (box) box.textContent = 'TEXT \u00b7 ' + (f.key || '?');
+        // Commit per keystroke: the blur 'change' event is unreliable here —
+        // clicking the PDF preventDefault()s the mousedown (no blur fires)
+        // and a plain click deselects, so the change handler finds no field
+        // and the key edit never reached onChange (sendForm's value rows).
+        self._changed();
       }
     });
     keyInput.addEventListener('change', function () {
@@ -1297,8 +1307,10 @@ if (typeof window !== 'undefined') (function () {
           }
         }
         self.fields.push(f);
-        self.selectedUid = f.uid;
-        self._renderFields();
+        // _select (not a bare selectedUid+render): the toolbar must mirror
+        // the NEW box, or non-sticky inputs (label) keep showing the previous
+        // box's values against a field that doesn't carry them.
+        self._select(f.uid);
         self._changed();
       }
       document.addEventListener('mousemove', onMove);
