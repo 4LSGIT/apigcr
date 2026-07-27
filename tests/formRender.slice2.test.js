@@ -203,6 +203,31 @@ describe('DOM derivation', () => {
     expect(neField.getAttribute('data-yc-show-value')).toBe('*');
   });
 
+  test('checkbox fields sit inside .yc-check (view-mode CSS lock contract)', () => {
+    // Regression (found in manual test 2026-07-27): view-mode locking is
+    // CSS-only — .yc-readonly .yc-check input/label { pointer-events:none }.
+    // A checkbox emitted without the .yc-check wrapper misses those selectors
+    // and stays toggleable in view mode (label-activation bypasses
+    // pointer-events on the input). jsdom doesn't simulate pointer-events, so
+    // the enforceable invariant is the markup: every checkbox-type input,
+    // standard AND repeater-template, must be inside .yc-check with its label.
+    const doc = w.document;   // shared DOM-derivation boot (beforeAll)
+
+    // Standard checkbox field
+    const std = doc.querySelector('input[name="sample_checkbox"]');
+    expect(std).toBeTruthy();
+    expect(std.closest('.yc-check')).toBeTruthy();
+    expect(std.closest('label')).toBeTruthy();
+    expect(std.closest('label').closest('.yc-check')).toBeTruthy();
+
+    // Repeater-template checkbox
+    const tpl = doc.querySelector('#ycRepTpl_vehicles');
+    const rep = tpl.content.querySelector('input[name="veh_insured"]');
+    expect(rep).toBeTruthy();
+    expect(rep.closest('.yc-check')).toBeTruthy();
+    expect(rep.closest('label')).toBeTruthy();
+  });
+
   test('allowOther emits the runtime checkgroup markup', () => {
     const grid = w.document.querySelector('[data-yc-checkgroup="sample_checkgroup"]');
     const otherCb = grid.querySelector('input[type="checkbox"][data-yc-other]');

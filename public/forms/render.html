@@ -282,10 +282,18 @@
       }
 
       case 'checkbox':
-        // Single checkbox — label sits beside the box.
-        input = el('label', null, [
-          el('input', { type: 'checkbox', name: f.name }),
-          ' ' + (f.label != null ? f.label : '')
+        // Single checkbox — production .yc-check wrapper (issn.html pattern).
+        // Required: view-mode locking is CSS-only (.yc-readonly .yc-check
+        // input/label { pointer-events:none }). A bare <label><input></label>
+        // misses those selectors and the label's activation click bypasses
+        // pointer-events on the input — the box stays toggleable in view mode.
+        // Label nested inside (no for/id) so the same structure is clone-safe
+        // for repeaters.
+        input = el('div', { class: 'yc-check' }, [
+          el('label', null, [
+            el('input', { type: 'checkbox', name: f.name }),
+            ' ' + (f.label != null ? f.label : '')
+          ])
         ]);
         break;
 
@@ -392,9 +400,13 @@
         break;
       }
       case 'checkbox':
-        input = el('label', null, [
-          el('input', { type: 'checkbox', name: f.name }),
-          ' ' + (f.label != null ? f.label : '')
+        // Same .yc-check wrapper as standard checkboxes (see buildField) —
+        // clone-safe (no ids), and the CSS view-mode lock covers it.
+        input = el('div', { class: 'yc-check' }, [
+          el('label', null, [
+            el('input', { type: 'checkbox', name: f.name }),
+            ' ' + (f.label != null ? f.label : '')
+          ])
         ]);
         break;
       case 'text':
