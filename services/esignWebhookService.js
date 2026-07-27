@@ -833,11 +833,15 @@ async function _announceFailure(db, request, status, { recipientEmail = null, ra
         `Tracking: ${request.tracking_id}`,
         `Linked to: ${request.linkable_type} ${request.linkable_id}`,
         ``,
+        // declineReason != null
+        //   ? `Reason given: "${declineReason}"`
+        //   : `No reason was recorded with the decline.`,
+        // `Nothing further happens automatically — this envelope is closed and a replacement`,
+        // `must be sent if the document is still needed.`,
         declineReason != null
           ? `Reason given: "${declineReason}"`
           : `No reason was recorded with the decline.`,
-        `Nothing further happens automatically — this envelope is closed and a replacement`,
-        `must be sent if the document is still needed.`,
+        `Nothing further happens automatically — this envelope is closed and a replacement must be sent if the document is still needed.`,
       ]
     : [
         `The signing invitation for this document BOUNCED — ${who} never received it.`,
