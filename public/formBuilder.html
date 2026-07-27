@@ -102,6 +102,14 @@
     flex: 1; border: 1px solid var(--border); border-radius: 4px;
     background: #fff; width: 100%;
   }
+  #livePane { flex: 1; min-width: 0; display: none; flex-direction: column; padding: 10px; }
+  #livePane.show { display: flex; }
+  #liveBar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  #liveBar input { width: auto; }
+  #liveFrame {
+    flex: 1; border: 1px solid var(--border); border-radius: 4px;
+    background: #fff; width: 100%;
+  }
   #inspector { width: 320px; flex: none; overflow-y: auto; }
   .pane {
     background: var(--panel); border: 1px solid var(--border);
@@ -276,7 +284,7 @@
         <button id="tabCanvas" class="ghost small active" onclick="showTab('canvas')">Canvas</button>
         <button id="tabJson" class="ghost small" onclick="showTab('json')">JSON</button>
         <button id="tabPreview" class="ghost small" onclick="showTab('preview')">Preview</button>
-        <button id="tabLive" class="ghost small" onclick="showTab('live')" title="Full-width preview that auto-refreshes as you edit (inspector stays usable)">Live</button>
+        <button id="tabLive" class="ghost small" onclick="showTab('live')" title="The real published form in normal mode — actual writes">Live</button>
       </div>
       <div id="workArea">
       <div id="canvas" class="pane"></div>
@@ -295,9 +303,20 @@
           <span class="muted">Test link id (optional):</span>
           <input id="prevLinkId" class="mono" placeholder="(none — pure layout preview)" style="width:160px;">
           <button class="ghost small" onclick="showPreview()">Refresh</button>
-          <span class="muted">Preview renders the saved draft via the production renderer — the draft is saved first (the Live tab saves on every edit, debounced). Autosave, prefill and hooks are off; with a link id the entity loads read-only.</span>
+          <span class="muted">Preview renders the saved draft via the production renderer — the draft is saved first. Autosave, prefill and hooks are off; with a link id the entity loads read-only.</span>
         </div>
         <iframe id="previewFrame"></iframe>
+      </div>
+      <div id="livePane" class="pane">
+        <div id="liveBar">
+          <span class="muted" id="liveLinkLabel">Link id:</span>
+          <input id="liveLinkId" class="mono" placeholder="e.g. rIxpyvYG" style="width:160px;">
+          <button class="ghost small" onclick="showLive()">Reload</button>
+          <span class="err">REAL form (normal mode): drafts, autosave and Save write to the database and run any configured PATCH / workflow.</span>
+          <span class="muted" id="liveHint"></span>
+        </div>
+        <div id="liveMsg" class="muted" style="display:none; padding:14px; font-style:italic;"></div>
+        <iframe id="liveFrame"></iframe>
       </div>
       </div>
     </div>
@@ -420,7 +439,7 @@ function init() {
   buildPalette();
   const params = new URLSearchParams(location.search);
   const lid = params.get('link_id');
-  if (lid) E('prevLinkId').value = lid;   // per-template test link id persisted in the URL
+  if (lid) { E('prevLinkId').value = lid; E('liveLinkId').value = lid; }   // per-template test link id persisted in the URL
   const id = params.get('id');
   if (id) openTemplate(id);
   else showOpener();
@@ -495,6 +514,7 @@ function backToOpener() {
   ROW = null; MODEL = null; SEL = null;
   E('builderWrap').style.display = 'none';
   E('previewFrame').removeAttribute('src');
+  E('liveFrame').removeAttribute('src');
   showTab('canvas');
   showOpener();
 }
@@ -1093,7 +1113,6 @@ function deleteContainerMsg(what, contains, outsideRefs) {
 function touched() {
   markDirty();
   syncCanvas();
-  maybeLiveRefresh();
 }
 // Deferred re-render for cancelled drags (lets Sortable finish its DOM cleanup
 // before the canvas is rebuilt from the untouched model).
@@ -1110,33 +1129,67 @@ let TAB = 'canvas';
 function showTab(which) {
   TAB = which;
   const showJson = which === 'json';
-  const showPrev = which === 'preview' || which === 'live';
   E('tabCanvas').classList.toggle('active', which === 'canvas');
   E('tabJson').classList.toggle('active', showJson);
   E('tabPreview').classList.toggle('active', which === 'preview');
   E('tabLive').classList.toggle('active', which === 'live');
   E('canvas').style.display = which === 'canvas' ? '' : 'none';
   E('jsonPane').classList.toggle('show', showJson);
-  E('previewPane').classList.toggle('show', showPrev);
+  E('previewPane').classList.toggle('show', which === 'preview');
+  E('livePane').classList.toggle('show', which === 'live');
   if (showJson) {
     JSON_DIRTY = false;
     E('jsonTa').value = JSON.stringify(MODEL, null, 2);
     E('jsonErr').textContent = '';
     E('jsonTa').oninput = () => { JSON_DIRTY = true; };
   }
-  if (showPrev) showPreview();
+  if (which === 'preview') showPreview();
+  if (which === 'live') showLive();
 }
 
-// Live tab: full-width preview (same pane as Preview) that auto-refreshes —
-// after any model edit, debounce-save the draft and reload the frame. The
-// inspector stays visible, so field properties can be tweaked while watching;
-// structural edits happen on the Canvas tab. A failed save shows its verbatim
-// message and the next edit retries.
-let liveTimer = null;
-function maybeLiveRefresh() {
-  if (!ROW || TAB !== 'live') return;
-  clearTimeout(liveTimer);
-  liveTimer = setTimeout(showPreview, 900);
+// ── Live tab: the REAL published form (normal mode, actual writes) ──────────
+// Renders /forms/render.html?form_key=K&{link_type}_id=N — the published
+// definition with the full production behavior: draft banner, autosave,
+// drafts/submissions written, PATCH + workflow fired on save. Requires a
+// published template and a link id. The draft is NOT involved: live shows the
+// published version, so no save happens here — a hint appears when the draft
+// differs from what's published.
+function showLive() {
+  if (!ROW) return;
+  const msg = E('liveMsg'), frame = E('liveFrame'), hint = E('liveHint');
+  hint.textContent = '';
+
+  function blocked(text) {
+    msg.textContent = text;
+    msg.style.display = '';
+    frame.style.display = 'none';
+    frame.removeAttribute('src');
+  }
+
+  if (ROW.published_at == null || ROW.definition == null) {
+    return blocked('Not published yet — the Live tab renders the published form. Publish first, then reload.');
+  }
+  const lid = E('liveLinkId').value.trim();
+  if (!lid) {
+    return blocked('Enter a test ' + ROW.link_type + ' id above to load the live form.');
+  }
+
+  // Share the persisted test id with the Preview tab (same URL param).
+  const params = new URLSearchParams(location.search);
+  params.set('link_id', lid);
+  history.replaceState(null, '', location.pathname + '?' + params.toString());
+  E('prevLinkId').value = lid;
+
+  if (JSON.stringify(MODEL) !== JSON.stringify(ROW.definition)) {
+    hint.textContent = 'Draft differs from published v' + ROW.schema_version +
+      ' — publish to see draft changes here.';
+  }
+
+  msg.style.display = 'none';
+  frame.style.display = '';
+  frame.src = '/forms/render.html?form_key=' + encodeURIComponent(FKEY)
+            + '&' + ROW.link_type + '_id=' + encodeURIComponent(lid)
+            + '&_=' + Date.now();
 }
 // Keep the JSON view live while the user hasn't typed into it.
 function refreshJsonTab() {
