@@ -457,6 +457,7 @@ tests/eventservice.remindertitle.test.js
 tests/firmConfig.test.js
 tests/formBuilder_phaseA_test.js
 tests/formBuilder_phaseB_test.js
+tests/formBuilder_phaseC_test.js
 tests/formRender.slice2.test.js
 tests/helpers/renderSmoke.js
 tests/hookMapper.test.js

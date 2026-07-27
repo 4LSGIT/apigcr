@@ -89,10 +89,19 @@
   #canvasCol { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   #tabStrip  { display: flex; gap: 4px; margin-bottom: 6px; }
   #tabStrip button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-  #canvas    { flex: 1; overflow-y: auto; padding: 10px; }
-  #jsonPane  { flex: 1; display: none; flex-direction: column; padding: 10px; }
+  #workArea  { display: flex; gap: 8px; flex: 1; min-height: 0; }
+  #canvas    { flex: 1; min-width: 0; overflow-y: auto; padding: 10px; }
+  #jsonPane  { flex: 1; min-width: 0; display: none; flex-direction: column; padding: 10px; }
   #jsonPane.show { display: flex; }
   #jsonTa { flex: 1; min-height: 200px; }
+  #previewPane { flex: 1; min-width: 0; display: none; flex-direction: column; padding: 10px; }
+  #previewPane.show { display: flex; }
+  #prevBar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+  #prevBar input { width: auto; }
+  #previewFrame {
+    flex: 1; border: 1px solid var(--border); border-radius: 4px;
+    background: #fff; width: 100%;
+  }
   #inspector { width: 320px; flex: none; overflow-y: auto; }
   .pane {
     background: var(--panel); border: 1px solid var(--border);
@@ -240,6 +249,7 @@
 <!-- ══════════ Builder ══════════ -->
 <div id="builderWrap" style="display:none; flex:1; min-height:0; flex-direction:column;">
   <div id="topbar">
+    <button class="ghost small" onclick="backToOpener()" title="Open another template">⇄ Open</button>
     <input id="titleInput" maxlength="150" title="Template title (row column, not part of the JSON)">
     <div id="keyWrap"></div>
     <span id="linkBadge" class="badge link"></span>
@@ -249,6 +259,7 @@
     <span id="errBar" class="err"></span>
     <span id="okBar" class="ok"></span>
     <button id="saveBtn" onclick="saveDraft()">Save draft</button>
+    <button id="publishBtn" class="ghost" onclick="publishFlow()">Publish</button>
   </div>
 
   <div id="panes">
@@ -264,7 +275,10 @@
       <div id="tabStrip">
         <button id="tabCanvas" class="ghost small active" onclick="showTab('canvas')">Canvas</button>
         <button id="tabJson" class="ghost small" onclick="showTab('json')">JSON</button>
+        <button id="tabPreview" class="ghost small" onclick="showTab('preview')">Preview</button>
+        <button id="tabLive" class="ghost small" onclick="showTab('live')" title="Full-width preview that auto-refreshes as you edit (inspector stays usable)">Live</button>
       </div>
+      <div id="workArea">
       <div id="canvas" class="pane"></div>
       <div id="jsonPane" class="pane">
         <div class="muted" style="margin-bottom:6px;">
@@ -275,6 +289,16 @@
           <button onclick="applyJson()">Apply</button>
           <span id="jsonErr" class="err"></span>
         </div>
+      </div>
+      <div id="previewPane" class="pane">
+        <div id="prevBar">
+          <span class="muted">Test link id (optional):</span>
+          <input id="prevLinkId" class="mono" placeholder="(none — pure layout preview)" style="width:160px;">
+          <button class="ghost small" onclick="showPreview()">Refresh</button>
+          <span class="muted">Preview renders the saved draft via the production renderer — the draft is saved first (the Live tab saves on every edit, debounced). Autosave, prefill and hooks are off; with a link id the entity loads read-only.</span>
+        </div>
+        <iframe id="previewFrame"></iframe>
+      </div>
       </div>
     </div>
 
@@ -300,8 +324,13 @@
  * confirms, auto name generation that follows the label until manually
  * edited, rename cascade into showWhen references, showWhen editor,
  * structured options editor, JSON tab escape hatch.
- * PHASE C (next): preview iframe + apiSend relay, publish flow with
- * client-side signature confirm, proof script, index.html mount snippet.
+ * PHASE C (this file): preview tab hosting an iframe of the production
+ * renderer (render.html?template_id=N&preview=1[&link_id=…]) with the draft
+ * saved before every refresh and the test link id persisted in the page URL;
+ * apiSend relay for the preview iframe (case.html line-~1059 pattern);
+ * publish flow with a client-side field-set signature confirm (display-only
+ * mirror of formTemplateService.fieldSignature — the server stays the
+ * authority) surfacing the returned { schema_version, bumped }.
  *
  * ARCHITECTURE NOTE: all structural mutations go through the model-ops layer
  * (addFieldAt / moveField / moveRow / moveSection / addSectionAt / addRowAt /
@@ -387,8 +416,12 @@ function flash(msg) {
 })();
 
 function init() {
+  window.apiSend = P.apiSend;   // relay for the preview iframe (case.html pattern)
   buildPalette();
-  const id = new URLSearchParams(location.search).get('id');
+  const params = new URLSearchParams(location.search);
+  const lid = params.get('link_id');
+  if (lid) E('prevLinkId').value = lid;   // per-template test link id persisted in the URL
+  const id = params.get('id');
   if (id) openTemplate(id);
   else showOpener();
   window.addEventListener('beforeunload', (e) => {
@@ -452,6 +485,18 @@ function gotoTemplate(id) {
   history.replaceState(null, '', location.pathname + '?id=' + encodeURIComponent(id));
   E('opener').style.display = 'none';
   openTemplate(id);
+}
+
+// Return to the opener to switch templates (interim UX — the Slice 4 admin
+// list page supersedes this).
+function backToOpener() {
+  if (isDirty() && !confirm('You have unsaved changes. Leave this template without saving?')) return;
+  history.replaceState(null, '', location.pathname);
+  ROW = null; MODEL = null; SEL = null;
+  E('builderWrap').style.display = 'none';
+  E('previewFrame').removeAttribute('src');
+  showTab('canvas');
+  showOpener();
 }
 
 // ── Load ─────────────────────────────────────────────────────────────────────
@@ -531,24 +576,25 @@ function markDirty() {
 }
 
 // ── Save draft ───────────────────────────────────────────────────────────────
+// Live-save safe: the local MODEL object is kept (the server stores exactly
+// what we send — no transformation), so inspector closures stay valid, focus
+// is never dropped, and auto-name tracking survives. The snapshot is captured
+// BEFORE the await — anything typed during the PUT stays dirty and rides the
+// next save instead of being silently marked clean (or worse, clobbered by
+// re-cloning the response, as the previous implementation did).
 async function saveDraft() {
   const errBar = E('errBar'), okBar = E('okBar');
   errBar.textContent = ''; okBar.textContent = '';
   const body = { draft_definition: MODEL };
   if (TITLE !== SAVED.title) body.title = TITLE;
   if (FKEY !== SAVED.key)    body.form_key = FKEY;
+  const sent = { def: JSON.stringify(MODEL), title: TITLE, key: FKEY };
   try {
     const data = await P.apiSend('/api/form-templates/' + ROW.id, 'PUT', body);
     ROW = data.template;
-    MODEL = clone(ROW.draft_definition);
-    TITLE = ROW.title;
-    FKEY  = ROW.form_key;
-    AUTO_NAMES = new WeakSet();       // model objects were replaced by the clone
-    snapshot();
-    renderTopbar();
-    syncCanvas();
-    renderInspector();
-    markDirty();
+    ROW.draft_definition = MODEL;   // preserve local object identity
+    SAVED = sent;                   // exactly what reached the server
+    markDirty();                    // edits made during the await stay dirty
     okBar.textContent = 'Draft saved';
     setTimeout(() => { if (!isDirty()) okBar.textContent = ''; }, 2500);
   } catch (err) {
@@ -1047,6 +1093,7 @@ function deleteContainerMsg(what, contains, outsideRefs) {
 function touched() {
   markDirty();
   syncCanvas();
+  maybeLiveRefresh();
 }
 // Deferred re-render for cancelled drags (lets Sortable finish its DOM cleanup
 // before the canvas is rebuilt from the untouched model).
@@ -1058,19 +1105,38 @@ function setOrDel(obj, key, val) {
   else obj[key] = val;
 }
 
-// ── JSON tab ─────────────────────────────────────────────────────────────────
+// ── Tabs (canvas / JSON / preview / live) ───────────────────────────────────
+let TAB = 'canvas';
 function showTab(which) {
-  const json = which === 'json';
-  E('tabCanvas').classList.toggle('active', !json);
-  E('tabJson').classList.toggle('active', json);
-  E('canvas').style.display = json ? 'none' : '';
-  E('jsonPane').classList.toggle('show', json);
-  if (json) {
+  TAB = which;
+  const showJson = which === 'json';
+  const showPrev = which === 'preview' || which === 'live';
+  E('tabCanvas').classList.toggle('active', which === 'canvas');
+  E('tabJson').classList.toggle('active', showJson);
+  E('tabPreview').classList.toggle('active', which === 'preview');
+  E('tabLive').classList.toggle('active', which === 'live');
+  E('canvas').style.display = which === 'canvas' ? '' : 'none';
+  E('jsonPane').classList.toggle('show', showJson);
+  E('previewPane').classList.toggle('show', showPrev);
+  if (showJson) {
     JSON_DIRTY = false;
     E('jsonTa').value = JSON.stringify(MODEL, null, 2);
     E('jsonErr').textContent = '';
     E('jsonTa').oninput = () => { JSON_DIRTY = true; };
   }
+  if (showPrev) showPreview();
+}
+
+// Live tab: full-width preview (same pane as Preview) that auto-refreshes —
+// after any model edit, debounce-save the draft and reload the frame. The
+// inspector stays visible, so field properties can be tweaked while watching;
+// structural edits happen on the Canvas tab. A failed save shows its verbatim
+// message and the next edit retries.
+let liveTimer = null;
+function maybeLiveRefresh() {
+  if (!ROW || TAB !== 'live') return;
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(showPreview, 900);
 }
 // Keep the JSON view live while the user hasn't typed into it.
 function refreshJsonTab() {
@@ -1100,6 +1166,86 @@ function applyJson() {
   markDirty();
   syncCanvas();
   renderInspector();
+}
+
+// ── Preview (production renderer in an iframe) ──────────────────────────────
+// Preview renders the STORED draft (render.html fetches the row itself), so
+// the working model is saved before every refresh. A failed save leaves the
+// verbatim server message in the top bar and the frame untouched.
+async function ensureSaved() {
+  if (!isDirty()) return true;
+  await saveDraft();
+  return !isDirty();   // saveDraft re-snapshots on success only
+}
+
+async function showPreview() {
+  if (!ROW) return;
+  if (!await ensureSaved()) {
+    flash('Draft could not be saved — fix the error shown next to Save, then refresh the preview.');
+    return;
+  }
+  const lid = E('prevLinkId').value.trim();
+  // Persist the last-used test link id per template in the page URL (no storage).
+  const params = new URLSearchParams(location.search);
+  if (lid) params.set('link_id', lid); else params.delete('link_id');
+  history.replaceState(null, '', location.pathname + '?' + params.toString());
+  let url = '/forms/render.html?template_id=' + encodeURIComponent(ROW.id)
+          + '&preview=1&_=' + Date.now();               // nonce forces a reload
+  if (lid) url += '&link_id=' + encodeURIComponent(lid);
+  E('previewFrame').src = url;
+}
+
+// ── Publish ─────────────────────────────────────────────────────────────────
+// Client-side mirror of formTemplateService.fieldSignature: sorted
+// (name \u0000 type) across all fields incl. repeater fields, joined with '|'.
+// DISPLAY-ONLY — the confirm message predicts the version decision; the server
+// recomputes and remains the authority.
+function clientFieldSignature(def) {
+  const parts = [];
+  for (const section of (def && def.sections) || []) {
+    if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
+      for (const f of section.fields || []) parts.push(`${f.name}\u0000${f.type}`);
+    } else if (section) {
+      for (const row of (section && section.rows) || []) {
+        for (const f of (row && row.fields) || []) parts.push(`${f.name}\u0000${f.type}`);
+      }
+    }
+  }
+  return parts.sort().join('|');
+}
+
+async function publishFlow() {
+  if (!ROW) return;
+  const errBar = E('errBar'), okBar = E('okBar');
+  errBar.textContent = ''; okBar.textContent = '';
+
+  // The server publishes the STORED draft — save the working model first.
+  if (!await ensureSaved()) return;   // failed save already shows the verbatim message
+
+  const vNow = ROW.schema_version;
+  let msg;
+  if (ROW.definition == null) {
+    msg = `Publish "${FKEY}" for the first time as v1?`;
+  } else if (clientFieldSignature(MODEL) === clientFieldSignature(ROW.definition)) {
+    msg = `No schema change — republish "${FKEY}" as v${vNow}?`;
+  } else {
+    msg = `Field set changed — "${FKEY}" will publish as v${vNow + 1}; ` +
+          `older drafts against v${vNow} will show a version warning.\n\nContinue?`;
+  }
+  if (!confirm(msg)) return;
+
+  try {
+    const result = await P.apiSend('/api/form-templates/' + ROW.id + '/publish', 'POST');
+    // Refetch the row so published_at / definition / schema_version reflect the
+    // server's truth (the version decision above was a client-side prediction).
+    const data = await P.apiSend('/api/form-templates/' + ROW.id, 'GET');
+    ROW = data.template;
+    renderTopbar();
+    okBar.textContent = `Published v${result.schema_version}` +
+      (result.bumped ? ' (schema version bumped)' : ' (no schema change)');
+  } catch (err) {
+    errBar.textContent = err.message;   // server message verbatim
+  }
 }
 
 // ── Inspector prop builders ─────────────────────────────────────────────────
@@ -1676,7 +1822,7 @@ window.FB = {
   ops: {
     addFieldAt, moveField, moveRow, moveSection, addSectionAt, addRowAt,
     clickAddField, deleteSelected, genName, renameField, refsTo,
-    topLevelNames, allNames,
+    topLevelNames, allNames, clientFieldSignature,
   },
 };
 </script>
