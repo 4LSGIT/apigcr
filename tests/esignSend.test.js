@@ -1409,3 +1409,52 @@ describe('routes/api.esign.actions.js', () => {
     expect(actions._resolveCreatedBy({})).toBe(0);
   });
 });
+// ─────────────────────────────────────────────────────────────────────────────
+// readPdfPageInfo — the A4 regression (request 30, 2026-07-26)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The provider Y-flips against pageInfo and falls back to US Letter; before
+// this helper nothing supplied pageInfo, so the first A4 upload landed every
+// signer field 50pt high. These tests pin the geometry read; if a call site
+// ever drops pageInfo again, at least the helper contract stays proven.
+
+describe('readPdfPageInfo', () => {
+  const { PDFDocument } = require('pdf-lib');
+
+  test('reads A4 dimensions (the exact page size that exposed the bug)', async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([595.28, 841.89]);
+    const info = await svc.readPdfPageInfo(Buffer.from(await doc.save()));
+    expect(info).not.toBeNull();
+    expect(info.width).toBeCloseTo(595.28, 1);
+    expect(info.height).toBeCloseTo(841.89, 1);
+    expect(info.pages[1].height).toBeCloseTo(841.89, 1);
+  });
+
+  test('mixed-size document yields a per-page map; fallback pair is page 1', async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([612, 792]);      // Letter
+    doc.addPage([612, 1008]);     // Legal — 216pt taller; the worst realistic skew
+    const info = await svc.readPdfPageInfo(Buffer.from(await doc.save()));
+    expect(info.width).toBe(612);
+    expect(info.height).toBe(792);
+    expect(info.pages[2].height).toBe(1008);
+  });
+
+  test('unparseable buffer returns null (send must degrade, not die)', async () => {
+    expect(await svc.readPdfPageInfo(Buffer.from('%PDF-1.4 not really'))).toBeNull();
+  });
+
+  test('provider flip is correct when fed real A4 geometry (end of the chain)', () => {
+    // Request 30's date field, verbatim from the live row.
+    const { neutralToZohoFields } = require('../services/esign/zohoSignProvider');
+    const out = neutralToZohoFields(
+      { coord_space: 'pdf_user_space',
+        fields: [{ type: 'date', page: 1, x: 444.25, y: 506.86, w: 136.24, h: 40.78, signer: 1 }] },
+      { width: 595.28, height: 841.89 }
+    );
+    const f = out.bySigner[1][0];
+    expect(f.y_coord).toBe(294);          // 841.89 − 506.86 − 40.78 → 294.25 → round
+    expect(f.y_coord).not.toBe(244);      // the Letter-flip value that shipped wrong
+  });
+});
