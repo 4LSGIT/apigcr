@@ -20,7 +20,7 @@ const gcal         = require('./gcalService');
 const taskService  = require('./taskService');
 const logService   = require('./logService');
 const { resolve: resolveTemplate } = require('./resolverService');
-const { localToUTC, FIRM_TZ } = require('./timezoneService');
+const { parseUserDateTime, FIRM_TZ } = require('./timezoneService');
 const { DateTime } = require('luxon');
 const { alert } = require('../lib/alerting');
 const crypto = require('crypto');
@@ -881,8 +881,28 @@ async function createAppt(db, {
     throw new Error('Confirmation message required when sending SMS or email');
   }
 
-  // Compute real UTC from local firm time
-  const apptDateUTC = localToUTC(new Date(appt_date));
+  // Canonicalize appt_date at the boundary (fixes two latent bugs at once):
+  //  1) HOST-TZ DEPENDENCE — the old localToUTC(new Date(appt_date)) parsed
+  //     the naive string via the MACHINE's timezone. Correct on Cloud Run
+  //     (TZ=UTC), but silently skewed appt_date_utc whenever createAppt ran
+  //     on a non-UTC host (local dev at UTC+2/+3 produced the twelve
+  //     +60/+120-minute rows, appts 3790–3940). parseUserDateTime interprets
+  //     naive input in FIRM_TZ deterministically — host-independent — and
+  //     still honors explicit Z/offset strings.
+  //  2) SECONDS — appt_date is re-derived from the parsed instant, so the
+  //     stored value and everything downstream (INSERT, supersession UPDATE,
+  //     syncApptToCalendar, view hooks) always sees a canonical
+  //     'YYYY-MM-DD HH:mm:ss' regardless of caller shape (an HTML
+  //     datetime-local sends 'YYYY-MM-DDTHH:mm', no seconds).
+  // Date inputs (mysql2 fake-UTC convention) keep their historical wall-clock
+  // semantics: strip the fake Z, parse the naive wall time as FIRM_TZ.
+  const apptDateUTC = parseUserDateTime(
+    appt_date instanceof Date ? appt_date.toISOString().slice(0, 19) : String(appt_date)
+  );
+  if (!apptDateUTC) throw new Error(`Invalid appt_date: ${JSON.stringify(appt_date)}`);
+  appt_date = DateTime.fromJSDate(apptDateUTC, { zone: 'utc' })
+    .setZone(FIRM_TZ)
+    .toFormat('yyyy-MM-dd HH:mm:ss');
 
   // ────────────────────────────────────────────────────────────
   // Atomic core writes (transaction): INSERT appt + log + 341 supersession + pointer.

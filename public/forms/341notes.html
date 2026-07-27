@@ -179,6 +179,7 @@
         <div class="yc-field">
           <label class="yc-label">New Control Date & Time</label>
           <input type="datetime-local" name="new_control_datetime">
+          <small class="yc-error"></small>
         </div>
         <div class="yc-field">
           <label class="yc-label">Documents Due By</label>
@@ -192,6 +193,7 @@
             <label><input type="radio" name="appearance_required" value="YES"> YES</label>
             <label><input type="radio" name="appearance_required" value="NO"> NO</label>
           </div>
+          <small class="yc-error"></small>
         </div>
       </div>
     </div>
@@ -254,6 +256,17 @@
 
       validation: {
         outcome: { required: true },
+        appearance_required: {
+          custom: (v, all) =>
+            (all.outcome === 'Continued' && !v)
+              ? 'Select YES or NO' : true
+        },
+        new_control_datetime: {
+          custom: (v, all) =>
+            (all.outcome === 'Continued' && all.appearance_required === 'YES' && !v)
+              ? 'Required when appearance is required — this books the follow-up 341'
+              : true
+        },
       },
 
       endpoints: {
