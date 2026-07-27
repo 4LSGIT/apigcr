@@ -125,7 +125,21 @@ if (this.config.endpoints.load) {
         const P = window.parent;
         const path = this.config.endpoints.load.path;
         if (P.entityData && path && P.entityData[path]) {
-          loadResult = P.entityData;
+          // Wrong-entity guard: an injected/embedded form whose linkId differs
+          // from the parent's open entity must NOT populate from the parent's
+          // data. Derive the PK column from linkType (case → case_id,
+          // contact → contact_id, …). If the parent's entity object carries
+          // that PK and it doesn't loosely equal our linkId (!= — string/
+          // number tolerant), skip the fast-path and fall through to the API
+          // fetch below. Entities without the PK property keep the old
+          // behavior (all five existing forms' ids always match today).
+          const entity = P.entityData[path];
+          const pk = this.config.linkType + '_id';
+          const wrongEntity = entity && typeof entity === 'object' &&
+                              (pk in entity) && entity[pk] != this.config.linkId;
+          if (!wrongEntity) {
+            loadResult = P.entityData;
+          }
         }
       } catch (_) { /* cross-origin or no parent */ }
     }

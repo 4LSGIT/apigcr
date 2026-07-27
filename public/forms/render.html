@@ -35,23 +35,44 @@
 <script src="/js/yc-forms.js"></script>
 <script>
 /* ============================================================================
- * render.html — generic YisraForm template renderer (Slice 1 / Phase B).
+ * render.html — generic YisraForm template renderer (Slice 2).
  *
  * Turns a published form_templates.definition (or a draft, in preview) into a
  * working YCForm with no per-form code. Governing contract:
- * ref/FORM_TEMPLATE_SCHEMA_V1.md §§3–4, §8.
+ * ref/FORM_TEMPLATE_SCHEMA_V1.md §§3–5, §8.
  *
- * SLICE 1 SCOPE (contract §10): plain sections/rows/fields; every field type
- * EXCEPT checkgroup `allowOther`. NOT in this slice (skipped gracefully, one
- * console.warn each): repeater sections (§4.2), showWhen (§4.4), allowOther,
- * prefill (§5), hooks wiring. External/unauthed mode is Slice 4.
+ * SLICE 2 SCOPE (contract §10) — everything Slice 1 rendered, plus:
+ *   - Repeater sections (§4.2): container + <template> + add/remove wired to
+ *     yc-forms' _setupRepeaters/_addRepeaterItemWithData/collect expectations.
+ *   - showWhen (§4.4) on sections, rows, and fields — translated to the
+ *     existing data-yc-show-when / -value / -values runtime attrs. No runtime
+ *     changes; _setupConditionals consumes them as-is.
+ *   - Checkgroup allowOther (§4.3): the data-yc-other checkbox +
+ *     data-yc-other-text input + .yc-other-text wrapper markup that
+ *     _getCheckgroup/_setCheckgroup expect, plus the user-click toggle the
+ *     runtime does NOT provide (hand-built forms wire it themselves — see
+ *     341notes setupOtherToggle).
+ *   - Resolver prefill (§5): one batched POST /resolve in the generated
+ *     onLoad; refs auto-built from linkType; ||| separator; prefillMode
+ *     ifEmpty (default) / always. Runs before init step 13c so prefilled
+ *     values are part of the clean baseline. Skipped in preview and when
+ *     there is no linkId.
+ *   - Hooks (§3): /forms/hooks/{name}.js loaded and awaited before YCForm
+ *     construction; window.ycHooks.onLoad(form, data) called at the END of
+ *     the generated onLoad (after prefill); ycHooks.onSave(form, result)
+ *     from onSave. Missing file → console.warn, render proceeds. Hooks are
+ *     NOT loaded in preview (preview must never execute side-effecting code).
+ *
+ * Still out (Slice 3/4 + reserved): tabs, external/portal mode, builder UI,
+ * computed fields.
  *
  * MODES
  *   Normal : ?form_key=X&<linkType>_id=N   (param name follows the template's
  *            link_type: case_id | contact_id | appt_id)
  *   Preview: ?template_id=N&preview=1[&link_id=M]  — renders draft_definition.
  *            NEVER writes: autosave off, Save disabled, draft banner omitted,
- *            endpoints.load skipped when no link_id.
+ *            endpoints.load skipped when no link_id, prefill + hooks skipped
+ *            always.
  *
  * SECURITY (contract §8): every template-sourced string reaches the DOM via
  * textContent / setAttribute only. The el() helper below has no innerHTML path.
@@ -91,7 +112,7 @@
   }
 
   // ── Wait for the parent iframe chain to expose apiSend (standard boot). ──
-  // Slice 1 is internal-only: render.html lives in an iframe whose parent
+  // Slice 2 is still internal-only: render.html lives in an iframe whose parent
   // (case.html / contact.html / the builder page) relays window.apiSend.
   function waitForParent(cb) {
     var tries = 0;
@@ -121,6 +142,23 @@
   var WIDTH_CLASS = {
     '2x': 'yc-2x', '3x': 'yc-3x', 'fixed-sm': 'yc-fixed-sm', 'fixed-md': 'yc-fixed-md'
   };
+  // Contract §4.2: field subset allowed inside repeaters. Anything else is
+  // rendered as text (with a warn) — server validation doesn't restrict
+  // repeater field types today, so degrade rather than break.
+  var REPEATER_TYPES = { text: 1, number: 1, date: 1, select: 1, checkbox: 1 };
+
+  // Mirror of the resolver-prefill separator in contract §5 and the 341notes
+  // pattern. NOTE (accepted risk, per contract): a resolved VALUE containing
+  // "|||" would break part alignment — the count guard below aborts the whole
+  // prefill write in that case instead of writing misaligned values.
+  var PREFILL_SEP = '|||';
+
+  // refs auto-build (contract §5): linkType → { table: { pk: linkId } }
+  var REFS_FOR = {
+    case:    function (id) { return { cases:    { case_id:    id } }; },
+    contact: function (id) { return { contacts: { contact_id: id } }; },
+    appt:    function (id) { return { appts:    { appt_id:    id } }; }
+  };
 
   function fieldSelector(f) {
     return f.type === 'checkgroup'
@@ -136,10 +174,44 @@
     return { value: String(o), label: String(o) };
   }
 
-  // ── Build one field's DOM. Returns an element (or null for hidden, which is
-  //    appended bare so it never affects row layout). ──
+  // ── showWhen (§4.4) → the existing runtime attrs. Nothing new at runtime:
+  //    _setupConditionals/_evaluateConditionals consume exactly these. ──
+  function applyShowWhen(node, sw, path, warn) {
+    if (!sw || typeof sw !== 'object' || !node) return;
+    var field = (typeof sw.field === 'string') ? sw.field : '';
+    if (!field) { warn(path + ': showWhen.field missing — condition ignored'); return; }
+
+    switch (sw.op) {
+      case 'eq':
+        node.setAttribute('data-yc-show-when', field);
+        node.setAttribute('data-yc-show-value', String(sw.value != null ? sw.value : ''));
+        break;
+      case 'neq':
+        node.setAttribute('data-yc-show-when', field);
+        node.setAttribute('data-yc-show-value', '!' + String(sw.value != null ? sw.value : ''));
+        break;
+      case 'in': {
+        var vals = Array.isArray(sw.value) ? sw.value : [sw.value];
+        node.setAttribute('data-yc-show-when', field);
+        node.setAttribute('data-yc-show-values',
+          vals.map(function (v) { return String(v != null ? v : ''); }).join(','));
+        break;
+      }
+      case 'notEmpty':
+        node.setAttribute('data-yc-show-when', field);
+        node.setAttribute('data-yc-show-value', '*');
+        break;
+      default:
+        warn(path + ': showWhen.op "' + sw.op + '" is unknown — condition ignored');
+    }
+  }
+
+  // ── Build one field's DOM. Returns an element (or a bare hidden input,
+  //    which never affects row layout). ──
   function buildField(f, warn) {
     if (f.type === 'hidden') {
+      // showWhen on a hidden field is meaningless (nothing to show/hide) —
+      // silently ignored.
       return el('input', { type: 'hidden', name: f.name });
     }
 
@@ -147,6 +219,9 @@
     if (WIDTH_CLASS[f.width]) wrapClass += ' ' + WIDTH_CLASS[f.width];
     if (f.readonly) wrapClass += ' yc-field-locked';
     var wrap = el('div', { class: wrapClass });
+
+    // Field-level showWhen wraps the individual .yc-field (contract §4.4).
+    if (f.showWhen) applyShowWhen(wrap, f.showWhen, 'field "' + f.name + '"', warn);
 
     if (f.label != null && f.label !== '' && f.type !== 'checkbox') {
       wrap.appendChild(el('label', { class: 'yc-label', text: f.label }));
@@ -224,7 +299,20 @@
           ]));
         });
         if (f.allowOther) {
-          warn('field "' + f.name + '": allowOther is a Slice 2 feature — rendered without the "Other" option');
+          // Exactly the markup _getCheckgroup/_setCheckgroup expect (mirrors
+          // 341notes): data-yc-other checkbox, then a .yc-other-text wrapper
+          // (initially hidden) containing the data-yc-other-text input.
+          // _setCheckgroup manages the wrapper's visibility on populate; the
+          // USER-click toggle is wired in renderBody (the runtime doesn't do
+          // it — hand-built forms wire it themselves).
+          input.appendChild(el('label', null, [
+            el('input', { type: 'checkbox', 'data-yc-other': true, value: 'Other' }),
+            ' Other'
+          ]));
+          input.appendChild(el('div', { class: 'yc-other-text', style: 'display:none;' }, [
+            el('input', { type: 'text', 'data-yc-other-text': true,
+                          placeholder: 'Please specify\u2026' })
+          ]));
         }
         break;
       }
@@ -256,6 +344,122 @@
     wrap.appendChild(input);
     wrap.appendChild(el('small', { class: 'yc-error' }));   // §4.3 locked decision
     return wrap;
+  }
+
+  // ── Build one REPEATER field's DOM (contract §4.2 subset: text, number,
+  //    date, select, checkbox). No masks, no validation, no showWhen, no
+  //    prefill inside repeaters in v1 (matches runtime capability). ──
+  function buildRepeaterField(f, repKey, warn) {
+    var type = f.type;
+    if (!REPEATER_TYPES[type]) {
+      warn('repeater "' + repKey + '" field "' + f.name + '": type "' + type
+         + '" is not supported inside repeaters — rendered as text');
+      type = 'text';
+    }
+    if (f.prefill)  warn('repeater "' + repKey + '" field "' + f.name + '": prefill is not supported inside repeaters — ignored');
+    if (f.showWhen) warn('repeater "' + repKey + '" field "' + f.name + '": showWhen is not supported inside repeaters — ignored');
+    if (f.mask)     warn('repeater "' + repKey + '" field "' + f.name + '": masks are not supported inside repeaters — ignored');
+
+    var wrapClass = 'yc-field';
+    if (WIDTH_CLASS[f.width]) wrapClass += ' ' + WIDTH_CLASS[f.width];
+    var wrap = el('div', { class: wrapClass });
+
+    if (f.label != null && f.label !== '' && type !== 'checkbox') {
+      wrap.appendChild(el('label', { class: 'yc-label', text: f.label }));
+    }
+
+    var input;
+    switch (type) {
+      case 'number':
+        input = el('input', {
+          type: 'number', name: f.name,
+          placeholder: f.placeholder || null,
+          min: (f.min != null ? f.min : null),
+          max: (f.max != null ? f.max : null),
+          step: (f.step != null ? f.step : null)
+        });
+        break;
+      case 'date':
+        input = el('input', { type: 'date', name: f.name });
+        break;
+      case 'select': {
+        input = el('select', { name: f.name });
+        input.appendChild(el('option', { value: '', text: (f.placeholder || 'Select\u2026') }));
+        (f.options || []).forEach(function (o) {
+          var op = optOf(o);
+          input.appendChild(el('option', { value: op.value, text: op.label }));
+        });
+        break;
+      }
+      case 'checkbox':
+        input = el('label', null, [
+          el('input', { type: 'checkbox', name: f.name }),
+          ' ' + (f.label != null ? f.label : '')
+        ]);
+        break;
+      case 'text':
+      default:
+        input = el('input', {
+          type: 'text', name: f.name,
+          placeholder: f.placeholder || null
+        });
+        break;
+    }
+
+    wrap.appendChild(input);
+    wrap.appendChild(el('small', { class: 'yc-error' }));   // uniform markup (§4.3)
+    return wrap;
+  }
+
+  // ── Build a repeater section (contract §4.2). Emits:
+  //      <div.yc-section>
+  //        title / subtitle
+  //        <div.yc-repeater id=ycRep_{key}>          ← repConfig.container
+  //        <button.yc-repeater-add data-repeater={key}>  ← _setupRepeaters binds
+  //        <template id=ycRepTpl_{key}>              ← repConfig.template
+  //          <div.yc-repeater-item><div.yc-row> fields… <button.yc-repeater-remove>
+  //    Add button sits AFTER the container (contact-form pattern):
+  //    _addRepeaterItemWithData finds no .yc-repeater-add inside the container
+  //    and appends items at the container end. The button IS inside the form
+  //    root, which is what _setupRepeaters' this.el scan requires.
+  //    IMPORTANT: children of a programmatically-built <template> must go into
+  //    template.content — appendChild on the element itself leaves .content
+  //    empty and _addRepeaterItemWithData would clone nothing. ──
+  function buildRepeaterSection(section, warn) {
+    var repKey = section.repeater;
+    var sec = el('div', { class: 'yc-section' });
+    if (section.showWhen) applyShowWhen(sec, section.showWhen, 'repeater section "' + repKey + '"', warn);
+    if (section.title)    sec.appendChild(el('div', { class: 'yc-section-title', text: section.title }));
+    if (section.subtitle) sec.appendChild(el('div', { class: 'yc-section-subtitle', text: section.subtitle }));
+
+    var contId = 'ycRep_' + repKey;
+    var tplId  = 'ycRepTpl_' + repKey;
+
+    sec.appendChild(el('div', { class: 'yc-repeater', id: contId }));
+    sec.appendChild(el('button', {
+      type: 'button', class: 'yc-repeater-add', 'data-repeater': repKey,
+      text: section.addLabel || '+ Add'
+    }));
+
+    var tpl  = el('template', { id: tplId });
+    var item = el('div', { class: 'yc-repeater-item' });
+    var row  = el('div', { class: 'yc-row' });
+    var repFields = {};
+    (section.fields || []).forEach(function (f) {
+      if (!f || !f.name) return;
+      row.appendChild(buildRepeaterField(f, repKey, warn));
+      repFields[f.name] = { type: (f.type === 'checkbox' ? 'checkbox' : (YC_TYPE[f.type] || 'text')) };
+    });
+    row.appendChild(el('button', { type: 'button', class: 'yc-repeater-remove',
+                                   title: 'Remove', text: '\u00d7' }));
+    item.appendChild(row);
+    tpl.content.appendChild(item);       // ← .content, not the element (see above)
+    sec.appendChild(tpl);
+
+    return {
+      node: sec,
+      config: { container: '#' + contId, template: '#' + tplId, fields: repFields }
+    };
   }
 
   // ── Build the skeleton chrome (header + optional draft banner + form). ──
@@ -316,9 +520,10 @@
 
   // ── Render sections into the form + collect field configs. ──
   function renderBody(def, form, warn) {
-    var fields = {}, validation = {}, apiMap = {};
+    var fields = {}, validation = {}, apiMap = {}, repeaters = {};
     var forwardMap = {};   // fieldName -> apiColumn (only fields with apiColumn)
     var readonlySet = {};
+    var prefills = [];     // [{ name, expr, mode }] — batched /resolve in onLoad (§5)
 
     function registerField(f) {
       var ycType = YC_TYPE[f.type] || 'text';
@@ -329,6 +534,16 @@
       if (f.apiColumn) {
         apiMap[f.apiColumn] = f.name;   // {apiColumn: fieldName} — _mergeApiData direction
         forwardMap[f.name] = f.apiColumn;
+      }
+
+      // Prefill (§5): collected here, resolved in one batched call by the
+      // generated onLoad. prefillMode defaults to ifEmpty.
+      if (typeof f.prefill === 'string' && f.prefill) {
+        prefills.push({
+          name: f.name,
+          expr: f.prefill,
+          mode: f.prefillMode === 'always' ? 'always' : 'ifEmpty'
+        });
       }
 
       // Validation derivation (§4.3). pattern MUST be a RegExp — validate()
@@ -353,29 +568,24 @@
 
     (def.sections || []).forEach(function (section, i) {
       if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
-        warn('section[' + i + '] "' + section.repeater + '": repeater sections are a Slice 2 feature — skipped');
+        var rep = buildRepeaterSection(section, warn);
+        // Repeater field names are validated unique form-wide (server §7), so
+        // they can never shadow a top-level [name=…] the conditional engine or
+        // validate() would query.
+        repeaters[section.repeater] = rep.config;
+        form.appendChild(rep.node);
         return;
-      }
-      if (section && section.showWhen) {
-        warn('section[' + i + ']: showWhen is a Slice 2 feature — section shown unconditionally');
       }
 
       var sec = el('div', { class: 'yc-section' });
+      if (section.showWhen) applyShowWhen(sec, section.showWhen, 'sections[' + i + ']', warn);
       if (section.title)    sec.appendChild(el('div', { class: 'yc-section-title', text: section.title }));
       if (section.subtitle) sec.appendChild(el('div', { class: 'yc-section-subtitle', text: section.subtitle }));
 
       (section.rows || []).forEach(function (row, j) {
-        if (row && row.showWhen) {
-          warn('section[' + i + '].rows[' + j + ']: showWhen is a Slice 2 feature — row shown unconditionally');
-        }
         var rowEl = el('div', { class: 'yc-row' });
+        if (row && row.showWhen) applyShowWhen(rowEl, row.showWhen, 'sections[' + i + '].rows[' + j + ']', warn);
         (row.fields || []).forEach(function (f) {
-          if (f && f.showWhen) {
-            warn('field "' + (f.name || '?') + '": showWhen is a Slice 2 feature — field shown unconditionally');
-          }
-          if (f && f.prefill) {
-            warn('field "' + (f.name || '?') + '": prefill is a Slice 2 feature — ignored');
-          }
           var node = buildField(f, warn);
           if (node) rowEl.appendChild(node);
           registerField(f);
@@ -384,6 +594,19 @@
       });
 
       form.appendChild(sec);
+    });
+
+    // Wire the user-click "Other" toggle on every allowOther checkgroup. The
+    // runtime only manages .yc-other-text visibility on populate
+    // (_setCheckgroup); the click behavior is form-page responsibility (see
+    // 341notes setupOtherToggle — mirrored here).
+    form.querySelectorAll('.yc-check-grid').forEach(function (grid) {
+      var otherCb  = grid.querySelector('input[data-yc-other]');
+      var otherDiv = grid.querySelector('.yc-other-text');
+      if (!otherCb || !otherDiv) return;
+      otherCb.addEventListener('change', function () {
+        otherDiv.style.display = otherCb.checked ? '' : 'none';
+      });
     });
 
     // Save button (label from definition). Disabled in preview → its click
@@ -396,12 +619,79 @@
     if (preview) saveBtn.setAttribute('disabled', '');
     form.appendChild(saveBtn);
 
-    if (def.hooks) {
-      warn('hooks ("' + def.hooks + '") are a Slice 2 feature — not loaded');
-    }
-
     return { fields: fields, validation: validation, apiMap: apiMap,
+             repeaters: repeaters, prefills: prefills,
              forwardMap: forwardMap, readonlySet: readonlySet };
+  }
+
+  // ── Hooks (§3): load /forms/hooks/{name}.js and wait for it. Missing or
+  //    broken file → console.warn + resolve anyway (render proceeds without
+  //    hooks). 10s safety timeout in case the request never settles. ──
+  function loadHooks(name) {
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish() { if (!done) { done = true; resolve(); } }
+
+      // Same guard the server enforces (§7). Published definitions have
+      // already passed it; belt-and-braces for anything else.
+      if (!/^[a-zA-Z0-9_-]{1,50}$/.test(name)) {
+        console.warn('[render] hooks "' + name + '" has an invalid name — not loaded');
+        return finish();
+      }
+      var s = document.createElement('script');
+      s.src = '/forms/hooks/' + name + '.js';
+      s.onload = finish;
+      s.onerror = function () {
+        console.warn('[render] hooks file /forms/hooks/' + name + '.js failed to load — continuing without hooks');
+        finish();
+      };
+      setTimeout(function () {
+        if (!done) console.warn('[render] hooks file /forms/hooks/' + name + '.js load timed out — continuing without hooks');
+        finish();
+      }, 10000);
+      document.head.appendChild(s);
+    });
+  }
+
+  // ── Prefill write helper: set one field's value the way populate() would,
+  //    honoring prefillMode. Runs inside onLoad — i.e. BEFORE init step 13c's
+  //    resetBaseline — so prefilled values are part of the clean state. ──
+  function writePrefill(form_, fields, name, rawVal, mode) {
+    var fc = fields[name];
+    if (!fc) return;
+    var ctl = form_.el.querySelector(fc.el);
+    if (!ctl) return;
+
+    // Current value, read the way collect() reads it (ifEmpty guard).
+    var cur;
+    if (fc.type === 'checkbox') {
+      cur = ctl.checked ? 'x' : '';
+    } else if (fc.type === 'radio') {
+      var ck = form_.el.querySelector('input[name="' + name + '"]:checked');
+      cur = ck ? ck.value : '';
+    } else if (fc.type === 'tags') {
+      cur = form_._getTags(name);
+    } else if (fc.type === 'checkgroup') {
+      cur = form_._getCheckgroup(ctl);
+    } else {
+      cur = ctl.value;
+    }
+    if (mode !== 'always' && String(cur).trim() !== '') return;   // ifEmpty
+
+    var val = form_._formatForDisplay(rawVal, fc);   // date/datetime/mask normalization
+    if (fc.type === 'checkbox') {
+      ctl.checked = !!rawVal && rawVal !== 'false' && rawVal !== '0';
+    } else if (fc.type === 'radio') {
+      form_.el.querySelectorAll('input[name="' + name + '"]').forEach(function (r) {
+        r.checked = r.value === String(val);
+      });
+    } else if (fc.type === 'tags') {
+      form_._setTags(name, String(val));
+    } else if (fc.type === 'checkgroup') {
+      form_._setCheckgroup(ctl, String(val));
+    } else {
+      ctl.value = val;
+    }
   }
 
   // ── Assemble the YCForm config and boot. ──
@@ -427,6 +717,7 @@
       autosaveMs:    (typeof def.autosaveMs === 'number' && def.autosaveMs > 0) ? def.autosaveMs : 3000,
       readonly:      toggle,                 // toggle:true → start read-only; false → always edit
       fields:        maps.fields,
+      repeaters:     maps.repeaters,
       validation:    maps.validation,
       apiMap:        maps.apiMap,
       endpoints:     {},
@@ -438,6 +729,63 @@
     // link_id is present.
     var wantLoad = def.endpoints && def.endpoints.load && (!preview || !!meta.linkId);
     if (wantLoad) config.endpoints.load = def.endpoints.load;
+
+    // Prefill is active only in normal mode with a linkId. (Preview never
+    // executes prefill — a preview must not fire resolver calls; and without a
+    // linkId there is nothing to anchor the refs on.)
+    var wantPrefill = maps.prefills.length > 0 && !preview && !!meta.linkId;
+    if (maps.prefills.length && !wantPrefill) {
+      warn('prefill skipped (' + (preview ? 'preview mode' : 'no linkId') + ')');
+    }
+
+    // Generated onLoad (§5 prefill + §3 hooks.onLoad). Runs at init step 13,
+    // BEFORE step 13c's resetBaseline — so nothing written here dirties the
+    // form — and before 13b, so prefilled values drive conditionals.
+    config.onLoad = async function (data) {
+      if (wantPrefill) {
+        try {
+          var res = await api('/resolve', 'POST', {
+            text: maps.prefills.map(function (p) { return p.expr; }).join(PREFILL_SEP),
+            refs: REFS_FOR[meta.linkType] ? REFS_FOR[meta.linkType](meta.linkId) : {}
+          });
+          if (res && (res.status === 'success' || res.status === 'partial_success')
+              && typeof res.text === 'string') {
+            var parts = res.text.split(PREFILL_SEP);
+            if (parts.length === maps.prefills.length) {
+              maps.prefills.forEach(function (p, i) {
+                // Unresolved placeholders come back LITERAL ("{{…}}" — see
+                // resolverService replacePlaceholders). Never write those.
+                if (parts[i].indexOf('{{') !== -1) return;
+                writePrefill(form_, maps.fields, p.name, parts[i], p.mode);
+              });
+            } else {
+              warn('prefill: resolver part count mismatch (a resolved value likely contains "' + PREFILL_SEP + '") — prefill skipped');
+            }
+          } else if (res && res.status === 'failed') {
+            warn('prefill: resolver returned failed — ' + ((res.errors || []).join('; ') || 'no detail'));
+          }
+        } catch (e) {
+          console.warn('[render] prefill failed:', e);
+        }
+      }
+
+      // Hooks onLoad — LAST in the generated onLoad, after prefill (§3).
+      // Isolated: a broken hook degrades, it must not abort init (which would
+      // skip steps 13c/13b and leave the form dirty with stale conditionals).
+      if (window.ycHooks && typeof window.ycHooks.onLoad === 'function') {
+        try { await window.ycHooks.onLoad(form_, data); }
+        catch (e) { console.warn('[render] ycHooks.onLoad failed:', e); }
+      }
+    };
+
+    // Hooks onSave — awaited by save() step 11, then save() re-baselines
+    // (unless the user typed during the await; yc-forms fences that).
+    config.onSave = async function (result) {
+      if (window.ycHooks && typeof window.ycHooks.onSave === 'function') {
+        try { await window.ycHooks.onSave(form_, result); }
+        catch (e) { console.warn('[render] ycHooks.onSave failed:', e); }
+      }
+    };
 
     var form_ = new YCForm(config);
 
@@ -457,7 +805,15 @@
       return payload;
     };
 
-    form_.init();
+    // Hooks file (§3): loaded + awaited BEFORE init so window.ycHooks exists
+    // by the time the generated onLoad runs. Not loaded in preview — preview
+    // must never execute side-effecting per-form code.
+    if (def.hooks && !preview) {
+      loadHooks(String(def.hooks)).then(function () { form_.init(); });
+    } else {
+      if (def.hooks && preview) warn('hooks ("' + def.hooks + '") are not loaded in preview mode');
+      form_.init();
+    }
   }
 
   // ── Resolve the definition + metadata, then boot. ──

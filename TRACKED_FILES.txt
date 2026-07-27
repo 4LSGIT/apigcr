@@ -213,10 +213,12 @@ ref/2026-07-20_firm_identity.sql
 ref/2026-07-21_esign_phase3.sql
 ref/2026-07-22_esign_webhook_hmac.sql
 ref/2026-07-26_form_templates.sql
+ref/2026_07_27-test_quick_notes_slice2_definition.json
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/database.sql
 ref/files.md
 ref/gas.js
+ref/hooks_readme.md
 ref/legacy-trap-schema.sql
 ref/plans.md
 ref/review.md
@@ -452,6 +454,7 @@ tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventservice.remindertitle.test.js
 tests/firmConfig.test.js
+tests/formRender.slice2.test.js
 tests/helpers/renderSmoke.js
 tests/hookMapper.test.js
 tests/hookService.duplicate.test.js

@@ -1,0 +1,107 @@
+{
+  "dataMode": "live",
+  "autosave": true,
+  "autosaveMs": 3000,
+  "toggle": true,
+  "warningText": "You must press SAVE to keep changes!",
+  "saveLabel": "Save Test Form",
+  "endpoints": {
+    "load": { "url": "/api/cases/{linkId}", "path": "case", "method": "GET" }
+  },
+  "onSubmit": {
+    "patch": { "url": "/api/cases/{linkId}", "method": "PATCH" }
+  },
+  "sections": [
+    {
+      "title": "Case Link",
+      "subtitle": "Two live columns + a locked passthrough + resolver prefill",
+      "rows": [
+        {
+          "fields": [
+            { "name": "case_id", "type": "text", "label": "Case ID", "readonly": true, "lockedMsg": "The Case ID cannot be changed" },
+            { "name": "src_ref", "type": "text", "label": "Source Ref", "width": "2x", "sublabel": "cases.case_source_ref (live)", "apiColumn": "case_source_ref" },
+            { "name": "primary_reason", "type": "text", "label": "Primary Reason", "required": true, "sublabel": "cases.case_primary_reason (live, required)", "apiColumn": "case_primary_reason" }
+          ]
+        },
+        {
+          "fields": [
+            { "name": "prefill_trustee", "type": "text", "label": "Trustee (prefill ifEmpty)", "sublabel": "{{cases.case_trustee}} — fills only when empty", "prefill": "{{cases.case_trustee}}", "prefillMode": "ifEmpty" },
+            { "name": "prefill_docket", "type": "text", "label": "Docket (prefill always)", "sublabel": "{{cases.case_number_full|default:no docket on file}} — overwrites every load", "prefill": "{{cases.case_number_full|default:no docket on file}}", "prefillMode": "always" }
+          ]
+        },
+        { "fields": [ { "name": "wf_note", "type": "hidden" } ] }
+      ]
+    },
+    {
+      "title": "All Field Types",
+      "subtitle": "JSON-only fields (no apiColumn) — land in form_submissions.data",
+      "rows": [
+        {
+          "fields": [
+            { "name": "sample_number", "type": "number", "label": "Number", "min": 0, "max": 999, "step": 1 },
+            { "name": "sample_date", "type": "date", "label": "Date" },
+            { "name": "sample_datetime", "type": "datetime", "label": "Date & Time" }
+          ]
+        },
+        {
+          "fields": [
+            { "name": "sample_select", "type": "select", "label": "Select", "options": ["Red", { "label": "Green", "value": "g" }, "Blue"] },
+            { "name": "sample_radio", "type": "radio", "label": "Radio", "options": ["YES", "NO"] },
+            { "name": "sample_checkbox", "type": "checkbox", "label": "I agree to nothing in particular" }
+          ]
+        },
+        {
+          "fields": [
+            { "name": "sample_checkgroup", "type": "checkgroup", "label": "Check Group (with Other)", "options": ["Alpha", "Bravo", "Charlie"], "allowOther": true },
+            { "name": "sample_tags", "type": "tags", "label": "Tags" }
+          ]
+        },
+        {
+          "fields": [
+            { "name": "sample_textarea", "type": "textarea", "label": "Textarea", "rows": 3, "maxLength": 500 },
+            { "name": "sample_phone", "type": "text", "label": "Phone (mask)", "mask": "phone" },
+            { "name": "sample_code", "type": "text", "label": "Code (pattern)", "pattern": "^[A-Z]{3}$", "patternMessage": "Exactly 3 capital letters" }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Conditional Demo",
+      "subtitle": "Section shows only while the checkbox above is checked",
+      "showWhen": { "field": "sample_checkbox", "op": "eq", "value": "true" },
+      "rows": [
+        {
+          "fields": [
+            { "name": "cond_always", "type": "text", "label": "Visible whenever this section shows" }
+          ]
+        },
+        {
+          "showWhen": { "field": "sample_select", "op": "in", "value": ["Red", "g"] },
+          "fields": [
+            { "name": "cond_row_note", "type": "text", "label": "Row shows when Select is Red or Green" }
+          ]
+        },
+        {
+          "fields": [
+            { "name": "cond_field_yes", "type": "text", "label": "Radio = YES", "showWhen": { "field": "sample_radio", "op": "eq", "value": "YES" } },
+            { "name": "cond_field_neq", "type": "text", "label": "Select ≠ Blue", "showWhen": { "field": "sample_select", "op": "neq", "value": "Blue" } },
+            { "name": "cond_field_notempty", "type": "text", "label": "Primary Reason not empty", "showWhen": { "field": "primary_reason", "op": "notEmpty" } }
+          ]
+        }
+      ]
+    },
+    {
+      "repeater": "vehicles",
+      "title": "Vehicles (repeater)",
+      "subtitle": "text / number / date / select / checkbox subset",
+      "addLabel": "+ Add Vehicle",
+      "fields": [
+        { "name": "veh_desc", "type": "text", "label": "Description", "placeholder": "2019 Honda Accord" },
+        { "name": "veh_year", "type": "number", "label": "Year", "min": 1950, "max": 2030 },
+        { "name": "veh_acquired", "type": "date", "label": "Acquired" },
+        { "name": "veh_status", "type": "select", "label": "Status", "options": ["Owned", "Financed", "Leased"] },
+        { "name": "veh_insured", "type": "checkbox", "label": "Insured" }
+      ]
+    }
+  ]
+}
