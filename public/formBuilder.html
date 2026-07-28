@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>Form Builder</title>
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 <style>
   /* Admin-page conventions (users.html palette). Page-local only — no shared CSS touched. */
   :root {
@@ -421,11 +422,41 @@ function flash(msg) {
   const now = Date.now();
   if (msg === lastFlash.msg && now - lastFlash.at < 1500) return;   // throttle repeats mid-drag
   lastFlash = { msg, at: now };
+  if (window.Swal) {
+    // `text` (not title/html) — Swal renders it via textContent, keeping the
+    // no-innerHTML rule for any model strings inside the message.
+    Swal.fire({ toast: true, position: 'top', icon: 'warning', text: msg,
+      timer: 2600, showConfirmButton: false,
+      background: 'var(--panel2)', color: 'var(--warn)' });
+    return;
+  }
   const f = E('flash');
   f.textContent = msg;
   f.style.display = 'block';
   clearTimeout(flashTimer);
   flashTimer = setTimeout(() => { f.style.display = 'none'; }, 2400);
+}
+
+// Confirm via SweetAlert2 (native confirm() fallback when the CDN is absent).
+// The message is passed as a DOM node built with el()/textContent — never as
+// an html STRING — because Swal's title/html string options are innerHTML
+// paths and confirm messages embed model strings (field names, titles).
+function ycConfirm(message, opts) {
+  opts = opts || {};
+  if (!window.Swal) return Promise.resolve(window.confirm(message));
+  const node = el('div', {
+    style: 'text-align:left; font-size:13px; white-space:pre-wrap; line-height:1.45;',
+    text: message,
+  });
+  return Swal.fire({
+    html: node,                                  // an HTMLElement is appended, not parsed
+    showCancelButton: true,
+    confirmButtonText: opts.confirmText || 'OK',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: opts.danger ? 'var(--danger)' : 'var(--accent)',
+    background: 'var(--panel)', color: 'var(--fg)',
+    width: 480, reverseButtons: true, focusCancel: !!opts.danger,
+  }).then(r => !!r.isConfirmed);
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
@@ -508,8 +539,9 @@ function gotoTemplate(id) {
 
 // Return to the opener to switch templates (interim UX — the Slice 4 admin
 // list page supersedes this).
-function backToOpener() {
-  if (isDirty() && !confirm('You have unsaved changes. Leave this template without saving?')) return;
+async function backToOpener() {
+  if (isDirty() && !await ycConfirm('You have unsaved changes. Leave this template without saving?',
+      { confirmText: 'Leave without saving', danger: true })) return;
   history.replaceState(null, '', location.pathname);
   ROW = null; MODEL = null; SEL = null;
   E('builderWrap').style.display = 'none';
@@ -623,17 +655,37 @@ async function saveDraft() {
 }
 
 // ── Palette ──────────────────────────────────────────────────────────────────
+// Click-to-add can't use per-item onclick: Sortable preventDefaults the
+// pointerdown while arming a drag, which suppresses the browser's synthesized
+// click event. Detect clicks ourselves — pointerdown/pointerup on the same
+// item with <6px of movement.
+function bindPaletteClicks(container, handler) {
+  let down = null;
+  container.addEventListener('pointerdown', e => {
+    const it = e.target && e.target.closest ? e.target.closest('.pal-item') : null;
+    down = it ? { it, x: e.clientX || 0, y: e.clientY || 0 } : null;
+  });
+  container.addEventListener('pointerup', e => {
+    if (!down) return;
+    const it = e.target && e.target.closest ? e.target.closest('.pal-item') : null;
+    const moved = Math.hypot((e.clientX || 0) - down.x, (e.clientY || 0) - down.y) > 5;
+    if (it && it === down.it && !moved) handler(it);
+    down = null;
+  });
+}
+
 function buildPalette() {
   const pf = E('palFields');
   FIELD_TYPES.forEach(t => {
-    pf.appendChild(el('div', { class: 'pal-item', 'data-pal': t, text: t,
-      onclick: () => clickAddField(t) }));
+    pf.appendChild(el('div', { class: 'pal-item', 'data-pal': t, text: t }));
   });
   const ps = E('palStruct');
-  ps.appendChild(el('div', { class: 'pal-item', 'data-pal-sec': 'section', text: 'Section',
-    onclick: () => { addSectionAt(MODEL ? MODEL.sections.length : 0, 'section'); } }));
-  ps.appendChild(el('div', { class: 'pal-item', 'data-pal-sec': 'repeater', text: 'Repeater section',
-    onclick: () => { addSectionAt(MODEL ? MODEL.sections.length : 0, 'repeater'); } }));
+  ps.appendChild(el('div', { class: 'pal-item', 'data-pal-sec': 'section', text: 'Section' }));
+  ps.appendChild(el('div', { class: 'pal-item', 'data-pal-sec': 'repeater', text: 'Repeater section' }));
+
+  bindPaletteClicks(pf, it => clickAddField(it.dataset.pal));
+  bindPaletteClicks(ps, it => addSectionAt(MODEL ? MODEL.sections.length : 0,
+    it.dataset.palSec === 'repeater' ? 'repeater' : 'section'));
 
   if (window.Sortable) {
     new Sortable(pf, { group: { name: 'fields', pull: 'clone', put: false }, sort: false, animation: 150 });
@@ -736,16 +788,13 @@ function domIndex(container, item) { return Array.prototype.indexOf.call(contain
 
 function hookFieldStrip(strip, isRepeater) {
   if (!window.Sortable) return;
+  // NOTE: no `put` filter. Refusing at put time makes Sortable's ghost fall
+  // back to the last container that DID accept it (a neighboring section
+  // strip), silently moving the field there. Instead every drop is accepted
+  // by Sortable and the ops layer rejects invalid ones with a toast and a
+  // model-untouched re-render — i.e. the chip snaps back to where it came from.
   SORTABLES.push(new Sortable(strip, {
-    group: {
-      name: 'fields',
-      put: !isRepeater ? true : (to, from, dragEl) => {
-        const t = dragEl.dataset.pal || dragEl.dataset.ftype;
-        if (REPEATER_TYPES.includes(t)) return true;
-        flash('Only ' + REPEATER_TYPES.join(', ') + ' fields can go inside a repeater — "' + t + '" is not supported there.');
-        return false;
-      },
-    },
+    group: 'fields',
     draggable: '.cv-field', animation: 150,
     onUpdate: (evt) => moveField(evt.from.dataset.loc, evt.oldIndex, evt.to.dataset.loc, evt.newIndex),
     onAdd: (evt) => {
@@ -938,21 +987,30 @@ function addFieldAt(loc, type, idx) {
   return f;
 }
 
-function moveField(fromLoc, oldIdx, toLoc, newIdx) {
+async function moveField(fromLoc, oldIdx, toLoc, newIdx) {
   const from = locArr(fromLoc), to = locArr(toLoc);
   if (!from || !to) return;
   const f = from[oldIdx];
   if (!f) return;
+
+  if (isRepLoc(toLoc) && !REPEATER_TYPES.includes(f.type)) {
+    // Type gate for drags (Sortable accepts the drop; the ops layer rejects
+    // it) and belt-and-braces for any other caller.
+    flash('Only ' + REPEATER_TYPES.join(', ') + ' fields can go inside a repeater — "' + f.type + '" is not supported there.');
+    deferSync();                               // model untouched → chip snaps back to origin
+    return;
+  }
 
   if (isRepLoc(toLoc) && !isRepLoc(fromLoc)) {
     // Moving a top-level field into a repeater removes it from the showWhen
     // target namespace — cascade-remove referencing conditions after a confirm.
     const refs = refsTo(f.name);
     if (refs.length) {
-      const ok = confirm(
+      const ok = await ycConfirm(
         `"${f.name}" is referenced by visibility conditions on:\n • ` +
         refs.map(r => r.desc).join('\n • ') +
-        `\n\nMove it into the repeater and remove those conditions?`
+        `\n\nMove it into the repeater and remove those conditions?`,
+        { confirmText: 'Move & remove' }
       );
       if (!ok) { deferSync(); return; }        // model untouched → re-render reverts the DOM
       refs.forEach(r => { delete r.node.showWhen; });
@@ -1045,7 +1103,7 @@ function clickAddField(type) {
 }
 
 // ── Delete (reference-aware, cascade after confirm) ─────────────────────────
-function deleteSelected() {
+async function deleteSelected() {
   const node = selNode();
   if (!SEL || !node) return false;
 
@@ -1057,7 +1115,7 @@ function deleteSelected() {
             refs.map(r => r.desc).join('\n • ') +
             `\n\nDelete the field and remove those conditions?`;
     }
-    if (!confirm(msg)) return false;
+    if (!await ycConfirm(msg, { confirmText: 'Delete', danger: true })) return false;
     refs.forEach(r => { delete r.node.showWhen; });
     const arr = SEL.t === 'field'
       ? MODEL.sections[SEL.si].rows[SEL.ri].fields
@@ -1067,7 +1125,8 @@ function deleteSelected() {
     const inside = new Set((node.fields || []).map(f => f));
     const names  = (node.fields || []).map(f => f.name);
     const outsideRefs = collectOutsideRefs(names, inside, node);
-    if (!confirm(deleteContainerMsg(`row ${SEL.ri + 1}`, (node.fields || []).length + ' field(s)', outsideRefs))) return false;
+    if (!await ycConfirm(deleteContainerMsg(`row ${SEL.ri + 1}`, (node.fields || []).length + ' field(s)', outsideRefs),
+        { confirmText: 'Delete', danger: true })) return false;
     outsideRefs.forEach(r => { delete r.node.showWhen; });
     MODEL.sections[SEL.si].rows.splice(SEL.ri, 1);
   } else if (SEL.t === 'section') {
@@ -1081,7 +1140,8 @@ function deleteSelected() {
     const names = isRep ? [] : fields.map(f => f.name);        // repeater fields aren't showWhen targets
     const outsideRefs = collectOutsideRefs(names, inside, node);
     const what = isRep ? `repeater section "${node.title || node.repeater}"` : `section "${node.title || '#' + (SEL.si + 1)}"`;
-    if (!confirm(deleteContainerMsg(what, fields.length + ' field(s)', outsideRefs))) return false;
+    if (!await ycConfirm(deleteContainerMsg(what, fields.length + ' field(s)', outsideRefs),
+        { confirmText: 'Delete', danger: true })) return false;
     outsideRefs.forEach(r => { delete r.node.showWhen; });
     MODEL.sections.splice(SEL.si, 1);
   }
@@ -1285,7 +1345,7 @@ async function publishFlow() {
     msg = `Field set changed — "${FKEY}" will publish as v${vNow + 1}; ` +
           `older drafts against v${vNow} will show a version warning.\n\nContinue?`;
   }
-  if (!confirm(msg)) return;
+  if (!await ycConfirm(msg, { confirmText: 'Publish' })) return;
 
   try {
     const result = await P.apiSend('/api/form-templates/' + ROW.id + '/publish', 'POST');
