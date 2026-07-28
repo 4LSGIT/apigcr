@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live form</title>
+<style>
+  html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  #bar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 6px 12px; font-size: 12px;
+    background: #fef2f2; border-bottom: 1px solid #fecaca; color: #991b1b;
+  }
+  #bar .key { font-family: ui-monospace, Menlo, Consolas, monospace; color: #374151; }
+  #frame { flex: 1 1 auto; width: 100%; border: 0; }
+  #gate { padding: 28px; max-width: 640px; line-height: 1.5; }
+  #gate h1 { font-size: 17px; margin: 0 0 10px; color: #b91c1c; }
+  #gate button { margin-top: 14px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+</style>
+</head>
+<body>
+<!-- ===========================================================================
+   liveHost.html — standalone host for public/forms/render.html.
+
+   WHY THIS EXISTS: render.html is internal-only. It calls window.parent.apiSend
+   for every authorized request and shows a fatal error without it, so it cannot
+   be opened directly in a browser tab. Inside the app it is always a grandchild
+   of the shell (index.html), which owns the JWT; case.html / contact.html /
+   formBuilder.html each relay `window.apiSend = P.apiSend` for their iframes.
+
+   This page is the smallest possible stand-in for that chain: a top-level page
+   that reuses the shell's JWT from localStorage, exposes the same apiSend
+   contract on its own window, and hosts render.html in a full-viewport iframe
+   as its DIRECT parent (which is what render.html reads).
+
+   It does NOT replicate the shell's interactive login. If the JWT is missing or
+   expired, it says so and asks the user to sign in on the main app tab — the
+   login prompt belongs to the shell, and duplicating it here would mean a
+   second place that handles credentials.
+
+   Query params are forwarded to render.html verbatim, so this page stays
+   agnostic of form_key / link_type.
+============================================================================ -->
+<div id="bar" style="display:none;">
+  <strong>LIVE form</strong>
+  <span>— real mode: drafts, autosave and Save write to the database and run any configured PATCH / workflow.</span>
+  <span class="key" id="ctx"></span>
+</div>
+<iframe id="frame" style="display:none;" title="Live form"></iframe>
+<div id="gate" style="display:none;"></div>
+
+<script>
+(function () {
+  'use strict';
+  var E = function (id) { return document.getElementById(id); };
+
+  // ── JWT (shared with the shell — same origin, same localStorage key) ──
+  function jwt() { return localStorage.getItem('jwt'); }          // re-read per call:
+                                                                  // a fresh login in the
+                                                                  // main tab is picked up
+                                                                  // without reloading this one.
+  function jwtExpired(token) {
+    try {
+      var p = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+      return !p || !p.exp || p.exp < Math.floor(Date.now() / 1000);
+    } catch (e) { return true; }
+  }
+
+  function gate(msg) {
+    E('bar').style.display = 'none';
+    E('frame').style.display = 'none';
+    var g = E('gate');
+    g.style.display = '';
+    g.innerHTML = '';
+    var h = document.createElement('h1'); h.textContent = 'Not signed in';
+    var p = document.createElement('p'); p.textContent = msg;
+    var b = document.createElement('button');
+    b.textContent = 'Reload';
+    b.onclick = function () { location.reload(); };
+    g.appendChild(h); g.appendChild(p); g.appendChild(b);
+  }
+
+  // ── apiSend — same signature and result/throw contract as the shell's ──
+  // (index.html): GET/HEAD put the payload in the query string, others send
+  // JSON; 204 -> null; !ok -> ApiError carrying status/statusText/body.
+  window.apiSend = async function (endpoint, method, payload, extraHeaders) {
+    method = method || 'GET';
+    var token = jwt();
+    if (!token || jwtExpired(token)) {
+      gate('Your session expired. Sign in on the main app tab, then press Reload here.');
+      throw new Error('Not authenticated');
+    }
+    var url = endpoint;
+    var options = {
+      method: method.toUpperCase(),
+      headers: Object.assign({
+        'Authorization': 'Bearer ' + token,
+        'Content-Type': 'application/json'
+      }, extraHeaders || {})
+    };
+    if (payload != null) {
+      if (options.method === 'GET' || options.method === 'HEAD') {
+        url += (url.indexOf('?') === -1 ? '?' : '&') + new URLSearchParams(payload).toString();
+      } else {
+        options.body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+      }
+    }
+    var res = await fetch(url, options);
+    if (res.status === 401) {
+      gate('The server rejected this session (401). Sign in on the main app tab, then press Reload here.');
+    }
+    if (res.status === 204) return null;
+    var text = await res.text();
+    var data;
+    try { data = text ? JSON.parse(text) : null; } catch (e) { data = text; }
+    if (!res.ok) {
+      var msg = (data && (data.message || data.error)) ||
+                ('HTTP ' + res.status + ' ' + (res.statusText || '')).trim();
+      var err = new Error(msg);
+      err.name = 'ApiError';
+      err.status = res.status;
+      err.statusText = res.statusText;
+      err.body = (data && typeof data === 'object') ? data : { _raw: data };
+      err.url = url;
+      err.method = options.method;
+      throw err;
+    }
+    return data;
+  };
+
+  // ── Boot ──
+  var qs = location.search.replace(/^\?/, '');
+  if (!qs) {
+    return gate('Missing query parameters — open this page from the builder’s Live tab.');
+  }
+  var token = jwt();
+  if (!token || jwtExpired(token)) {
+    return gate('Sign in on the main app tab, then press Reload here.');
+  }
+
+  var params = new URLSearchParams(qs);
+  var ctx = [];
+  params.forEach(function (v, k) { if (k !== '_') ctx.push(k + '=' + v); });
+  E('ctx').textContent = ctx.join('  ');
+  document.title = 'Live form — ' + (params.get('form_key') || '');
+
+  E('bar').style.display = '';
+  E('frame').style.display = '';
+  E('frame').src = '/forms/render.html?' + qs;
+})();
+</script>
+</body>
+</html>

@@ -189,6 +189,7 @@ public/forms/hooks/issn_extras.js
 public/forms/hooks/notes_341.js
 public/forms/hooks/readme.md
 public/forms/issn.html
+public/forms/liveHost.html
 public/forms/render.html
 public/index.html
 public/js/assetpicker.js

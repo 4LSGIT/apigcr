@@ -313,6 +313,10 @@
           <span class="muted" id="liveLinkLabel">Link id:</span>
           <input id="liveLinkId" class="mono" placeholder="e.g. rIxpyvYG" style="width:160px;">
           <button class="ghost small" onclick="showLive()">Reload</button>
+          <button class="ghost small" onclick="openLive()"
+                  title="Open the live form in a standalone tab">↗ New tab</button>
+          <button class="ghost small" onclick="copyLive(this)"
+                  title="Copy the standalone live form URL">Copy link</button>
           <span class="err">REAL form (normal mode): drafts, autosave and Save write to the database and run any configured PATCH / workflow.</span>
           <span class="muted" id="liveHint"></span>
         </div>
@@ -369,7 +373,7 @@
  * ==========================================================================*/
 'use strict';
 
-const P = window.parent;
+const P = window.top;
 
 // ── Constants (mirrors of formTemplateService.js) ────────────────────────────
 const FIELD_NAME_RE = /^[a-zA-Z0-9_]{1,50}$/;
@@ -1247,9 +1251,56 @@ function showLive() {
 
   msg.style.display = 'none';
   frame.style.display = '';
-  frame.src = '/forms/render.html?form_key=' + encodeURIComponent(FKEY)
-            + '&' + ROW.link_type + '_id=' + encodeURIComponent(lid)
-            + '&_=' + Date.now();
+  frame.src = liveUrl(lid) + '&_=' + Date.now();
+}
+
+// URL of the live (published) form for a given link id — shared by the Live
+// iframe and the "open in a new tab" button.
+function liveUrl(lid) {
+  return '/forms/render.html?form_key=' + encodeURIComponent(FKEY)
+       + '&' + ROW.link_type + '_id=' + encodeURIComponent(lid);
+}
+
+// Same guards as showLive(), shared by the two out-of-builder buttons: returns
+// the absolute live URL, or null after alerting why there isn't one.
+function liveUrlOrWarn() {
+  if (!ROW) return null;
+  if (ROW.published_at == null || ROW.definition == null) {
+    alert('Not published yet — the Live tab renders the published form. Publish first, then try again.');
+    return null;
+  }
+  const lid = E('liveLinkId').value.trim();
+  if (!lid) {
+    alert('Enter a test ' + ROW.link_type + ' id first.');
+    return null;
+  }
+  // NOT render.html directly: it needs a parent window exposing apiSend, which a
+  // bare tab has none of. /forms/liveHost.html is that parent — it reuses the
+  // shell's JWT and iframes the same render URL. Works in a browser tab or in a
+  // PWA window, so link capturing stops mattering.
+  return location.origin + '/forms/liveHost.html?' + liveUrl(lid).split('?')[1];
+}
+
+// Open the live form outside the builder, standalone.
+function openLive() {
+  const url = liveUrlOrWarn();
+  if (url) window.open(url, '_blank', 'noopener');
+}
+
+// Clipboard alternative — same URL, pasteable into any tab of this browser.
+function copyLive(btn) {
+  const url = liveUrlOrWarn();
+  if (!url) return;
+  const done = () => {
+    const was = btn.textContent;
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = was; }, 1200);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(url).then(done, () => prompt('Copy the live form URL:', url));
+  } else {
+    prompt('Copy the live form URL:', url);
+  }
 }
 // Keep the JSON view live while the user hasn't typed into it.
 function refreshJsonTab() {
