@@ -10,6 +10,8 @@
  *     change, append a form_template_versions row) — contract §6.
  *   - Structural validation of a definition — contract §7.
  *   - getPublishedByKey — what public/forms/render.html consumes.
+ *   - Version history reads + restore-to-draft (Slice 4): listVersions /
+ *     getVersion / restoreVersion over form_template_versions.
  *
  * Governing contract: ref/FORM_TEMPLATE_SCHEMA_V1.md.
  *
@@ -504,6 +506,114 @@ async function getPublishedByKey(db, formKey) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// VERSION HISTORY (Slice 4) — reads over form_template_versions + restore
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Cheap existence check (no definition bodies). 404 if the template is unknown.
+async function assertTemplateExists(db, id) {
+  const [[row]] = await db.query(
+    'SELECT id FROM form_templates WHERE id = ? LIMIT 1', [id]
+  );
+  if (!row) throw notFound(`Template ${id} not found`);
+}
+
+/**
+ * List the publish history of a template, newest first. Each entry carries a
+ * computed `schema_changed` boolean: whether that publish's field-set
+ * signature (fieldSignature, §6) differs from the CHRONOLOGICALLY previous
+ * version row. The first-ever publish is `schema_changed: true` (it
+ * established the schema). Rows where the signature did not change are the
+ * "no schema change" republishes the builder labels.
+ *
+ * Definitions are read internally for the signature computation but are NOT
+ * included in the payload — fetch one via getVersion.
+ *
+ * @returns {Array<{ id, schema_version, published_by, user_name, published_at, schema_changed }>}
+ */
+async function listVersions(db, id) {
+  await assertTemplateExists(db, id);
+  const [rows] = await db.query(
+    `SELECT v.id, v.schema_version, v.definition, v.published_by, v.published_at,
+            u.user_name AS user_name
+     FROM form_template_versions v
+     LEFT JOIN users u ON u.user = v.published_by
+     WHERE v.template_id = ?
+     ORDER BY v.id ASC`,
+    [id]
+  );
+  let prevSig = null;
+  const out = rows.map((r) => {
+    const sig = fieldSignature(parseJsonCol(r.definition));
+    const schema_changed = prevSig === null ? true : sig !== prevSig;
+    prevSig = sig;
+    return {
+      id: r.id,
+      schema_version: r.schema_version,
+      published_by: r.published_by,
+      user_name: r.user_name,
+      published_at: r.published_at,
+      schema_changed,
+    };
+  });
+  return out.reverse();   // newest first for the history view
+}
+
+/**
+ * One version row including its definition (parsed). 404 when the version id
+ * does not exist OR does not belong to the given template.
+ */
+async function getVersion(db, id, versionId) {
+  await assertTemplateExists(db, id);
+  const [[row]] = await db.query(
+    `SELECT v.id, v.template_id, v.schema_version, v.definition, v.published_by,
+            v.published_at, u.user_name AS user_name
+     FROM form_template_versions v
+     LEFT JOIN users u ON u.user = v.published_by
+     WHERE v.id = ? AND v.template_id = ?
+     LIMIT 1`,
+    [versionId, id]
+  );
+  if (!row) throw notFound(`Version ${versionId} not found for template ${id}`);
+  row.definition = parseJsonCol(row.definition);
+  return row;
+}
+
+/**
+ * Restore: copy a historical version's definition into draft_definition. The
+ * PUBLISHED definition is untouched — the normal save/publish flow applies
+ * from the restored draft. JSON is copied column-to-column in SQL (same
+ * convention as publish) so no parsed object is re-bound to a placeholder.
+ *
+ * No structural re-validation here: the definition passed §7 when it was
+ * published, and the draft column tolerates anything — PUT/publish remain the
+ * validation gates.
+ *
+ * @returns {{ template: object, restored: { version_id, schema_version } }}
+ */
+async function restoreVersion(db, id, versionId, userId) {
+  await assertTemplateExists(db, id);
+  const [[v]] = await db.query(
+    `SELECT id, schema_version FROM form_template_versions
+     WHERE id = ? AND template_id = ? LIMIT 1`,
+    [versionId, id]
+  );
+  if (!v) throw notFound(`Version ${versionId} not found for template ${id}`);
+
+  await db.query(
+    `UPDATE form_templates ft
+       JOIN form_template_versions v ON v.id = ? AND v.template_id = ft.id
+        SET ft.draft_definition = v.definition,
+            ft.updated_by = ?
+      WHERE ft.id = ?`,
+    [versionId, userId, id]
+  );
+
+  const template = await fetchRow(db, id);
+  return { template, restored: { version_id: v.id, schema_version: v.schema_version } };
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -515,6 +625,9 @@ module.exports = {
   publishTemplate,
   deleteTemplate,
   getPublishedByKey,
+  listVersions,
+  getVersion,
+  restoreVersion,
   // exported for tests / reuse:
   validateDefinition,
   fieldSignature,

@@ -218,6 +218,92 @@ async function getHistory(db, formKey, linkType, linkId, limit = 10) {
 
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BROWSE SUBMISSIONS (Slice 4 — admin, read-only)
+// ─────────────────────────────────────────────────────────────────────────────
+// Unlike the older functions in this file, the two below throw Errors carrying
+// `.status` (400/404) for the route to map — the accepted improvement pattern
+// from api.formTemplates (existing functions/routes are untouched).
+
+function httpError(status, message) {
+  const err = new Error(message);
+  err.status = status;
+  return err;
+}
+
+/**
+ * Admin browse over form_submissions — summary columns only (no `data`).
+ * All filters optional; newest first; `before_id` is a keyset cursor
+ * (pass the smallest id from the previous page to get the next one).
+ *
+ * @param {object} db
+ * @param {object} filters  { form_key?, link_type?, link_id?, status?, limit?, before_id? }
+ * @returns {{ submissions: Array<object>, limit: number }}
+ */
+async function browseSubmissions(db, filters) {
+  const f = filters || {};
+  const where = [];
+  const params = [];
+
+  if (f.form_key)  { where.push('fs.form_key = ?');  params.push(f.form_key); }
+  if (f.link_type) { where.push('fs.link_type = ?'); params.push(f.link_type); }
+  if (f.link_id)   { where.push('fs.link_id = ?');   params.push(f.link_id); }
+
+  if (f.status) {
+    if (f.status !== 'draft' && f.status !== 'submitted') {
+      throw httpError(400, "status must be 'draft' or 'submitted'");
+    }
+    where.push('fs.status = ?');
+    params.push(f.status);
+  }
+
+  if (f.before_id !== undefined && f.before_id !== null && f.before_id !== '') {
+    const n = Number(f.before_id);
+    if (!Number.isInteger(n) || n <= 0) {
+      throw httpError(400, 'before_id must be a positive integer');
+    }
+    where.push('fs.id < ?');
+    params.push(n);
+  }
+
+  const limit = Math.min(Math.max(1, parseInt(f.limit, 10) || 50), 200);
+  params.push(limit);
+
+  const [rows] = await db.query(
+    `SELECT fs.id, fs.form_key, fs.link_type, fs.link_id, fs.status, fs.version,
+            fs.schema_version, fs.submitted_by, u.user_name AS user_name,
+            fs.created_at, fs.updated_at
+     FROM form_submissions fs
+     LEFT JOIN users u ON u.user = fs.submitted_by
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+     ORDER BY fs.id DESC
+     LIMIT ?`,
+    params
+  );
+
+  return { submissions: rows, limit };
+}
+
+
+/**
+ * One submission row including `data`. 404 when the id is unknown.
+ */
+async function getSubmission(db, id) {
+  const [[row]] = await db.query(
+    `SELECT fs.id, fs.form_key, fs.link_type, fs.link_id, fs.status, fs.version,
+            fs.schema_version, fs.data, fs.submitted_by, u.user_name AS user_name,
+            fs.created_at, fs.updated_at
+     FROM form_submissions fs
+     LEFT JOIN users u ON u.user = fs.submitted_by
+     WHERE fs.id = ?
+     LIMIT 1`,
+    [id]
+  );
+  if (!row) throw httpError(404, `Submission ${id} not found`);
+  return row;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -227,4 +313,6 @@ module.exports = {
   submitForm,
   deleteDraft,
   getHistory,
+  browseSubmissions,
+  getSubmission,
 };

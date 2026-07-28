@@ -8,8 +8,12 @@
  * POST   /api/forms/submit   — record explicit submission
  * DELETE /api/forms/draft     — discard draft
  * GET    /api/forms/history   — submission history
+ * GET    /api/forms/submissions      — admin browse (filters + before_id cursor; no data bodies)
+ * GET    /api/forms/submissions/:id  — one submission incl. data
  *
- * All routes require JWT or API key auth.
+ * All routes require JWT or API key auth. The two Slice-4 submissions routes
+ * map service `.status` errors to 400/404 (the api.formTemplates pattern);
+ * the older handlers keep their original 500-everything mapping untouched.
  */
 
 const express = require('express');
@@ -143,6 +147,45 @@ router.get('/api/forms/history', jwtOrApiKey, async (req, res) => {
   } catch (err) {
     console.error('[api.forms] getHistory error:', err);
     res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+
+// Map a thrown service error to an HTTP response (api.formTemplates pattern —
+// used by the Slice-4 routes below only).
+function fail(res, tag, err) {
+  const status = err.status || 500;
+  if (status >= 500) console.error(`[api.forms] ${tag} error:`, err);
+  res.status(status).json({ status: 'error', message: err.message });
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/forms/submissions — admin browse (Slice 4)
+// Filters: form_key, link_type, link_id, status; limit (default 50, max 200)
+// + before_id keyset cursor. Summary columns only — no data bodies.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/api/forms/submissions', jwtOrApiKey, async (req, res) => {
+  try {
+    const result = await formService.browseSubmissions(req.db, req.query);
+    res.json({ status: 'success', ...result });
+  } catch (err) {
+    fail(res, 'browseSubmissions', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/forms/submissions/:id — one submission incl. data (Slice 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/api/forms/submissions/:id', jwtOrApiKey, async (req, res) => {
+  try {
+    const submission = await formService.getSubmission(req.db, req.params.id);
+    res.json({ status: 'success', submission });
+  } catch (err) {
+    fail(res, 'getSubmission', err);
   }
 });
 

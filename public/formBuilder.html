@@ -213,22 +213,57 @@
   .opt-row { display: flex; gap: 4px; align-items: center; margin-bottom: 4px; cursor: grab; }
   .opt-row input { flex: 1; }
   .opt-row button { flex: none; }
+
+  /* ── Opener list (Slice 4 admin list) ─────────────────────── */
+  #opBar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  #opSearch { flex: 1; }
+  table.op-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .op-table th, .op-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .op-table th { color: var(--muted); font-weight: 500; }
+  .op-table tr.op-row:hover td { background: rgba(255,255,255,.03); }
+  .op-table td.acts { white-space: nowrap; text-align: right; }
+  .op-table td.acts button { margin-left: 4px; }
+
+  /* ── History pane (versions + submissions) ────────────────── */
+  #historyPane { flex: 1; min-width: 0; display: none; flex-direction: column; padding: 10px; }
+  #historyPane.show { display: flex; }
+  #histLists { display: flex; gap: 12px; flex: 1; min-height: 0; }
+  .hist-col { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+  .hist-scroll { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
+  table.hist-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .hist-table th, .hist-table td { text-align: left; padding: 5px 7px; border-bottom: 1px solid var(--border); }
+  .hist-table th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+  .hist-table td.acts { white-space: nowrap; text-align: right; }
+  .hist-table td.acts button { margin-left: 4px; }
+  .badge.nochange { background: rgba(138,147,163,.15); color: var(--muted); }
+  .badge.sub  { background: rgba(74,210,139,.15); color: var(--ok); }
+  .badge.drft { background: rgba(224,179,65,.15); color: var(--warn); }
+  #histSubFilters { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+  #histSubFilters input, #histSubFilters select { width: auto; }
+  #histDetail { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  #histDetail.show { display: flex; }
+  #histDetailBar { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+  #histDetailTa { flex: 1; min-height: 200px; }
 </style>
 </head>
 <body>
 
 <div id="flash"></div>
 
-<!-- ══════════ Opener (no ?id) ══════════ -->
-<div id="opener" class="panel" style="display:none; max-width:520px; margin:30px auto;">
+<!-- ══════════ Opener (no ?id) — Slice 4 admin list ══════════ -->
+<div id="opener" class="panel" style="display:none; max-width:860px; margin:24px auto;">
   <h2>Form Builder</h2>
-  <div class="prop">
-    <label>Open a template</label>
-    <div style="display:flex; gap:8px;">
-      <select id="opSelect"></select>
-      <button onclick="openSelected()">Open</button>
-    </div>
+  <div id="opBar">
+    <input id="opSearch" placeholder="Filter by key, title, or link type…">
+    <span id="opCount" class="muted"></span>
   </div>
+  <table class="op-table">
+    <thead><tr>
+      <th>Key</th><th>Title</th><th>Link</th><th>Version</th><th>Updated</th><th></th>
+    </tr></thead>
+    <tbody id="opTbody"></tbody>
+  </table>
+  <div id="opListErr" class="err" style="margin-top:6px;"></div>
   <div class="ins-group">
     <div class="gtitle">New template</div>
     <div class="two-col">
@@ -286,6 +321,7 @@
         <button id="tabJson" class="ghost small" onclick="showTab('json')">JSON</button>
         <button id="tabPreview" class="ghost small" onclick="showTab('preview')">Preview</button>
         <button id="tabLive" class="ghost small" onclick="showTab('live')" title="The real published form in normal mode — actual writes">Live</button>
+        <button id="tabHistory" class="ghost small" onclick="showTab('history')" title="Published versions + submissions (read-only)">History</button>
       </div>
       <div id="workArea">
       <div id="canvas" class="pane"></div>
@@ -323,6 +359,51 @@
         <div id="liveMsg" class="muted" style="display:none; padding:14px; font-style:italic;"></div>
         <iframe id="liveFrame"></iframe>
       </div>
+      <div id="historyPane" class="pane">
+        <div id="histLists">
+          <div class="hist-col">
+            <h3 style="margin:0 0 6px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em;">Published versions</h3>
+            <div class="hist-scroll">
+              <table class="hist-table">
+                <thead><tr><th>v</th><th>Published</th><th>By</th><th></th></tr></thead>
+                <tbody id="histVerTbody"></tbody>
+              </table>
+            </div>
+            <div id="histVerErr" class="err" style="margin-top:4px;"></div>
+          </div>
+          <div class="hist-col">
+            <h3 style="margin:0 0 6px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em;">Submissions</h3>
+            <div id="histSubFilters">
+              <select id="histSubStatus">
+                <option value="">any status</option>
+                <option value="submitted">submitted</option>
+                <option value="draft">draft</option>
+              </select>
+              <input id="histSubLinkId" class="mono" placeholder="link id (optional)" style="width:130px;">
+              <button class="ghost small" onclick="loadHistSubs(true)">Apply</button>
+            </div>
+            <div class="hist-scroll">
+              <table class="hist-table">
+                <thead><tr><th>#</th><th>Status</th><th>Link id</th><th>Ver</th><th>Updated</th><th>By</th><th></th></tr></thead>
+                <tbody id="histSubTbody"></tbody>
+              </table>
+            </div>
+            <div style="margin-top:4px; display:flex; gap:8px; align-items:center;">
+              <button id="histSubMore" class="ghost small" style="display:none;" onclick="loadHistSubs(false)">Load more</button>
+              <span id="histSubErr" class="err"></span>
+            </div>
+          </div>
+        </div>
+        <div id="histDetail">
+          <div id="histDetailBar">
+            <button class="ghost small" onclick="histBack()">← Back</button>
+            <span id="histDetailTitle" class="muted"></span>
+            <div style="flex:1;"></div>
+            <button id="histDetailRestore" class="ghost small" style="display:none;">Restore to draft</button>
+          </div>
+          <textarea id="histDetailTa" class="mono" readonly spellcheck="false"></textarea>
+        </div>
+      </div>
       </div>
     </div>
 
@@ -355,6 +436,14 @@
  * publish flow with a client-side field-set signature confirm (display-only
  * mirror of formTemplateService.fieldSignature — the server stays the
  * authority) surfacing the returned { schema_version, bumped }.
+ * SLICE 4 (this file, final): opener replaced with the admin template list
+ * (search-as-you-type filter, Open, Delete for never-published templates);
+ * History tab — published version list with "no schema change" labels
+ * (GET /:id/versions), read-only definition viewer, server-side restore-to-
+ * draft (POST /:id/versions/:vid/restore → full model swap à la JSON Apply);
+ * submissions browser for this form_key (GET /api/forms/submissions, keyset
+ * before_id paging, read-only data viewer); rows containers accept field
+ * drops wrapped into a new row (closes the empty-section drop gap).
  *
  * ARCHITECTURE NOTE: all structural mutations go through the model-ops layer
  * (addFieldAt / moveField / moveRow / moveSection / addSectionAt / addRowAt /
@@ -483,32 +572,88 @@ function init() {
   });
 }
 
-// ── Opener ───────────────────────────────────────────────────────────────────
+// ── Opener (Slice 4 admin list) ─────────────────────────────────────────────
+let OP_LIST = [];   // last-fetched template summaries
+
 async function showOpener() {
   E('opener').style.display = '';
-  const sel = E('opSelect');
-  sel.textContent = '';
-  sel.appendChild(el('option', { value: '', text: 'Loading…' }));
+  const search = E('opSearch');
+  if (!search.oninput) search.oninput = () => renderOpList();
+  E('opListErr').textContent = '';
+  const tbody = E('opTbody');
+  tbody.textContent = '';
+  tbody.appendChild(el('tr', null, el('td', { colspan: '6', class: 'muted', text: 'Loading…' })));
   try {
     const data = await P.apiSend('/api/form-templates', 'GET');
-    sel.textContent = '';
-    const list = data.templates || [];
-    if (!list.length) sel.appendChild(el('option', { value: '', text: '(no templates yet)' }));
-    list.forEach(t => {
-      sel.appendChild(el('option', {
-        value: t.id,
-        text: `${t.form_key} — ${t.title} (v${t.schema_version}${t.published_at ? '' : ', never published'})`
-      }));
-    });
+    OP_LIST = data.templates || [];
+    renderOpList();
   } catch (err) {
-    sel.textContent = '';
-    sel.appendChild(el('option', { value: '', text: 'Error: ' + err.message }));
+    tbody.textContent = '';
+    E('opListErr').textContent = 'Load failed: ' + err.message;
   }
 }
 
-function openSelected() {
-  const id = E('opSelect').value;
-  if (id) gotoTemplate(id);
+// Local date-time for list columns ('' for null/invalid).
+function fmtWhen(v) {
+  if (!v) return '';
+  const d = new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleString();
+}
+
+function renderOpList() {
+  const q = E('opSearch').value.trim().toLowerCase();
+  const tbody = E('opTbody');
+  tbody.textContent = '';
+  const rows = OP_LIST.filter(t => !q ||
+    (t.form_key || '').toLowerCase().includes(q) ||
+    (t.title || '').toLowerCase().includes(q) ||
+    (t.link_type || '').toLowerCase().includes(q));
+  E('opCount').textContent = rows.length === OP_LIST.length
+    ? OP_LIST.length + ' template' + (OP_LIST.length === 1 ? '' : 's')
+    : rows.length + ' of ' + OP_LIST.length;
+  if (!rows.length) {
+    tbody.appendChild(el('tr', null, el('td', { colspan: '6', class: 'muted',
+      text: OP_LIST.length ? 'No templates match the filter.' : 'No templates yet — create one below.' })));
+    return;
+  }
+  rows.forEach(t => {
+    const verBadge = t.published_at
+      ? el('span', { class: 'badge pub', text: 'v' + t.schema_version, title: 'published ' + t.published_at })
+      : el('span', { class: 'badge draft', text: 'never published' });
+    const acts = el('td', { class: 'acts' }, [
+      el('button', { class: 'small', text: 'Open', onclick: () => gotoTemplate(t.id) }),
+    ]);
+    // Delete only while never-published (the client-knowable half of the
+    // server rule; the server also blocks when submissions exist — that
+    // rejection is surfaced verbatim below).
+    if (!t.published_at) {
+      acts.appendChild(el('button', { class: 'ghost small danger', text: 'Delete',
+        style: 'background:transparent; color:var(--danger); border-color:var(--danger);',
+        onclick: () => deleteTemplateRow(t) }));
+    }
+    tbody.appendChild(el('tr', { class: 'op-row' }, [
+      el('td', { class: 'mono', text: t.form_key }),
+      el('td', { text: t.title }),
+      el('td', null, el('span', { class: 'badge link', text: t.link_type })),
+      el('td', null, verBadge),
+      el('td', { class: 'muted', text: fmtWhen(t.updated_at) }),
+      acts,
+    ]));
+  });
+}
+
+async function deleteTemplateRow(t) {
+  const ok = await ycConfirm(
+    `Delete never-published template "${t.form_key}" — ${t.title}?\n\nThis cannot be undone.`,
+    { confirmText: 'Delete', danger: true });
+  if (!ok) return;
+  E('opListErr').textContent = '';
+  try {
+    await P.apiSend('/api/form-templates/' + t.id, 'DELETE');
+    showOpener();
+  } catch (err) {
+    E('opListErr').textContent = err.message;   // e.g. submissions exist — server message verbatim
+  }
 }
 
 async function createTemplate() {
@@ -541,8 +686,7 @@ function gotoTemplate(id) {
   openTemplate(id);
 }
 
-// Return to the opener to switch templates (interim UX — the Slice 4 admin
-// list page supersedes this).
+// Return to the admin list to switch templates.
 async function backToOpener() {
   if (isDirty() && !await ycConfirm('You have unsaved changes. Leave this template without saving?',
       { confirmText: 'Leave without saving', danger: true })) return;
@@ -762,10 +906,27 @@ function renderCanvas() {
         el('button', { class: 'ghost small', text: '+ row', onclick: () => addRowAt(si) }),
       ]));
       if (window.Sortable) {
+        // put also accepts the 'fields' group: a field chip (or palette field)
+        // dropped directly on the rows container — including an EMPTY one,
+        // which previously had no field drop target at all — is wrapped in a
+        // new row at the drop position (dropFieldAsNewRow).
         SORTABLES.push(new Sortable(rowsEl, {
-          group: 'rows', handle: '.cv-row-handle', draggable: '.cv-row', animation: 150,
+          group: { name: 'rows', put: ['rows', 'fields'] },
+          handle: '.cv-row-handle', draggable: '.cv-row', animation: 150,
           onUpdate: (evt) => moveRow(rowsLoc(evt.from), evt.oldIndex, rowsLoc(evt.to), evt.newIndex),
-          onAdd:    (evt) => moveRow(rowsLoc(evt.from), evt.oldIndex, rowsLoc(evt.to), domIndex(evt.to, evt.item)),
+          onAdd: (evt) => {
+            const toSi = +rowsLoc(evt.to).split(':')[1];
+            const idx = domIndex(evt.to, evt.item);
+            if (evt.item.classList.contains('cv-row')) {          // row from another section
+              moveRow(rowsLoc(evt.from), evt.oldIndex, rowsLoc(evt.to), idx);
+            } else if (evt.item.dataset.pal) {                     // palette field clone
+              const type = evt.item.dataset.pal;
+              evt.item.remove();
+              dropFieldAsNewRow(toSi, idx, { type });
+            } else {                                               // field chip from a strip
+              dropFieldAsNewRow(toSi, idx, { fromLoc: evt.from.dataset.loc, oldIdx: evt.oldIndex });
+            }
+          },
         }));
       }
     }
@@ -1080,6 +1241,35 @@ function addRowAt(si) {
   renderInspector();
 }
 
+// A field dropped directly on a standard section's rows container (empty or
+// between rows) becomes a NEW row holding that field at the drop position.
+// src is either { type } (palette clone) or { fromLoc, oldIdx } (existing
+// field chip). Source references are resolved BEFORE the row splice, so a
+// same-section move is immune to the row-index shift.
+function dropFieldAsNewRow(si, rowIdx, src) {
+  const s = MODEL.sections[si];
+  if (!s || !Array.isArray(s.rows)) { deferSync(); return null; }
+
+  if (src.type) {                                  // new field from the palette
+    s.rows.splice(rowIdx, 0, { fields: [] });
+    return addFieldAt('fields:' + si + ':' + rowIdx, src.type, 0);   // selects + touched()
+  }
+
+  const from = locArr(src.fromLoc);                // array REFERENCE — survives index shifts
+  const f = from && from[src.oldIdx];
+  if (!f) { deferSync(); return null; }
+  // Target is a standard section, so no repeater type gate applies; a move
+  // OUT of a repeater is always type-legal at top level. Moves between
+  // top-level locations keep showWhen references valid (same namespace).
+  const row = { fields: [f] };
+  from.splice(src.oldIdx, 1);
+  s.rows.splice(rowIdx, 0, row);
+  SEL = { t: 'field', si, ri: rowIdx, fi: 0 };
+  touched();
+  renderInspector();
+  return f;
+}
+
 // Click-to-add fallback: insert a field relative to the current selection.
 function clickAddField(type) {
   if (!MODEL) return;
@@ -1188,7 +1378,7 @@ function setOrDel(obj, key, val) {
   else obj[key] = val;
 }
 
-// ── Tabs (canvas / JSON / preview / live) ───────────────────────────────────
+// ── Tabs (canvas / JSON / preview / live / history) ─────────────────────────
 let TAB = 'canvas';
 function showTab(which) {
   TAB = which;
@@ -1197,10 +1387,12 @@ function showTab(which) {
   E('tabJson').classList.toggle('active', showJson);
   E('tabPreview').classList.toggle('active', which === 'preview');
   E('tabLive').classList.toggle('active', which === 'live');
+  E('tabHistory').classList.toggle('active', which === 'history');
   E('canvas').style.display = which === 'canvas' ? '' : 'none';
   E('jsonPane').classList.toggle('show', showJson);
   E('previewPane').classList.toggle('show', which === 'preview');
   E('livePane').classList.toggle('show', which === 'live');
+  E('historyPane').classList.toggle('show', which === 'history');
   if (showJson) {
     JSON_DIRTY = false;
     E('jsonTa').value = JSON.stringify(MODEL, null, 2);
@@ -1209,6 +1401,190 @@ function showTab(which) {
   }
   if (which === 'preview') showPreview();
   if (which === 'live') showLive();
+  if (which === 'history') showHistory();
+}
+
+// ── History tab (Slice 4): published versions + submissions, read-only ──────
+// Versions come from GET /:id/versions (list carries a computed schema_changed
+// flag; the "no schema change" label is the locked Slice-1 decision). Restore
+// copies a version's definition into draft_definition SERVER-SIDE — after it
+// succeeds, the local model is refreshed from the returned row exactly like
+// the JSON tab's Apply (selection + auto-name tracking reset, re-render). The
+// published definition is untouched; publish from the restored draft as usual.
+let HIST_SUB_CURSOR = null;   // smallest submission id seen (before_id keyset cursor)
+
+function showHistory() {
+  histBack();                  // always land on the lists, not a stale detail
+  loadHistVersions();
+  loadHistSubs(true);
+}
+
+function histBack() {
+  E('histDetail').classList.remove('show');
+  E('histLists').style.display = '';
+  E('histDetailRestore').style.display = 'none';
+  E('histDetailRestore').onclick = null;
+}
+
+function histShowDetail(title, obj, restoreVer) {
+  E('histLists').style.display = 'none';
+  E('histDetail').classList.add('show');
+  E('histDetailTitle').textContent = title;
+  E('histDetailTa').value = JSON.stringify(obj, null, 2);
+  const rb = E('histDetailRestore');
+  if (restoreVer) {
+    rb.style.display = '';
+    rb.onclick = () => restoreVersionFlow(restoreVer.id, restoreVer.schema_version);
+  } else {
+    rb.style.display = 'none';
+    rb.onclick = null;
+  }
+}
+
+async function loadHistVersions() {
+  const tbody = E('histVerTbody'), errEl = E('histVerErr');
+  errEl.textContent = '';
+  tbody.textContent = '';
+  tbody.appendChild(el('tr', null, el('td', { colspan: '4', class: 'muted', text: 'Loading…' })));
+  try {
+    const data = await P.apiSend('/api/form-templates/' + ROW.id + '/versions', 'GET');
+    tbody.textContent = '';
+    const list = data.versions || [];
+    if (!list.length) {
+      tbody.appendChild(el('tr', null, el('td', { colspan: '4', class: 'muted', text: 'No published versions yet.' })));
+      return;
+    }
+    list.forEach(v => {
+      const vCell = el('td', null, [ el('span', { class: 'mono', text: 'v' + v.schema_version }) ]);
+      if (v.schema_changed === false) {
+        vCell.appendChild(document.createTextNode(' '));
+        vCell.appendChild(el('span', { class: 'badge nochange', text: 'no schema change',
+          title: 'Republished with the same field set — the schema version did not bump.' }));
+      }
+      tbody.appendChild(el('tr', null, [
+        vCell,
+        el('td', { class: 'muted', text: fmtWhen(v.published_at) }),
+        el('td', { class: 'muted', text: v.user_name || (v.published_by != null ? '#' + v.published_by : '') }),
+        el('td', { class: 'acts' }, [
+          el('button', { class: 'ghost small', text: 'View', onclick: () => viewVersion(v) }),
+          el('button', { class: 'ghost small', text: 'Restore',
+            title: 'Copy this version into the draft (the published form is untouched).',
+            onclick: () => restoreVersionFlow(v.id, v.schema_version) }),
+        ]),
+      ]));
+    });
+  } catch (err) {
+    tbody.textContent = '';
+    errEl.textContent = err.message;
+  }
+}
+
+async function viewVersion(v) {
+  E('histVerErr').textContent = '';
+  try {
+    const data = await P.apiSend('/api/form-templates/' + ROW.id + '/versions/' + v.id, 'GET');
+    histShowDetail(
+      'Version v' + data.version.schema_version + ' — published ' + fmtWhen(data.version.published_at) +
+      (data.version.user_name ? ' by ' + data.version.user_name : ''),
+      data.version.definition,
+      { id: v.id, schema_version: v.schema_version }
+    );
+  } catch (err) {
+    E('histVerErr').textContent = err.message;
+  }
+}
+
+async function restoreVersionFlow(versionId, schemaVersion) {
+  let msg = `Restore v${schemaVersion} into the draft?\n\nThe current draft will be replaced. ` +
+            `The published form is untouched — publish the restored draft when ready.`;
+  if (isDirty()) msg += '\n\nYou also have unsaved changes in this session — they will be lost.';
+  if (!await ycConfirm(msg, { confirmText: 'Restore', danger: true })) return;
+  const errBar = E('errBar'), okBar = E('okBar');
+  errBar.textContent = ''; okBar.textContent = '';
+  try {
+    const data = await P.apiSend(
+      '/api/form-templates/' + ROW.id + '/versions/' + versionId + '/restore', 'POST');
+    // Refresh the working model from the server's restored draft — the same
+    // full model swap the JSON tab's Apply performs. The model now equals the
+    // stored draft, so the dirty indicator correctly clears (SAVED.title/key
+    // are deliberately untouched: restore only replaces the draft definition,
+    // and unsaved title/key edits should stay dirty).
+    ROW = data.template;
+    MODEL = clone(ROW.draft_definition);
+    SAVED.def = JSON.stringify(MODEL);
+    AUTO_NAMES = new WeakSet();
+    SEL = null;
+    JSON_DIRTY = false;
+    renderTopbar();
+    markDirty();
+    showTab('canvas');
+    syncCanvas();
+    renderInspector();
+    okBar.textContent = 'Restored v' + schemaVersion + ' into the draft';
+    setTimeout(() => { if (!isDirty()) okBar.textContent = ''; }, 3500);
+  } catch (err) {
+    errBar.textContent = err.message;   // server message verbatim
+  }
+}
+
+// Submissions browse — this template's form_key only, via the Slice-4 admin
+// route. Purely read-only. reset=true reloads page 1; reset=false appends the
+// next page using the before_id keyset cursor.
+async function loadHistSubs(reset) {
+  const tbody = E('histSubTbody'), errEl = E('histSubErr'), moreBtn = E('histSubMore');
+  errEl.textContent = '';
+  if (reset) {
+    HIST_SUB_CURSOR = null;
+    tbody.textContent = '';
+    tbody.appendChild(el('tr', null, el('td', { colspan: '7', class: 'muted', text: 'Loading…' })));
+  }
+  const params = new URLSearchParams({ form_key: FKEY, limit: '50' });
+  const st = E('histSubStatus').value;
+  const lid = E('histSubLinkId').value.trim();
+  if (st) params.set('status', st);
+  if (lid) params.set('link_id', lid);
+  if (!reset && HIST_SUB_CURSOR != null) params.set('before_id', String(HIST_SUB_CURSOR));
+  try {
+    const data = await P.apiSend('/api/forms/submissions?' + params.toString(), 'GET');
+    if (reset) tbody.textContent = '';
+    const list = data.submissions || [];
+    if (!list.length && reset) {
+      tbody.appendChild(el('tr', null, el('td', { colspan: '7', class: 'muted', text: 'No submissions.' })));
+    }
+    list.forEach(s => {
+      HIST_SUB_CURSOR = HIST_SUB_CURSOR == null ? s.id : Math.min(HIST_SUB_CURSOR, s.id);
+      tbody.appendChild(el('tr', null, [
+        el('td', { class: 'mono', text: '#' + s.id }),
+        el('td', null, el('span', { class: 'badge ' + (s.status === 'draft' ? 'drft' : 'sub'), text: s.status })),
+        el('td', { class: 'mono', text: s.link_id }),
+        el('td', { class: 'muted', text: 'v' + s.version + ' · sv' + s.schema_version,
+          title: 'submission version · schema version' }),
+        el('td', { class: 'muted', text: fmtWhen(s.updated_at) }),
+        el('td', { class: 'muted', text: s.user_name || (s.submitted_by != null ? '#' + s.submitted_by : '') }),
+        el('td', { class: 'acts' }, el('button', { class: 'ghost small', text: 'View', onclick: () => viewSubmission(s.id) })),
+      ]));
+    });
+    moreBtn.style.display = list.length >= (data.limit || 50) ? '' : 'none';
+  } catch (err) {
+    if (reset) tbody.textContent = '';
+    errEl.textContent = err.message;
+  }
+}
+
+async function viewSubmission(id) {
+  E('histSubErr').textContent = '';
+  try {
+    const data = await P.apiSend('/api/forms/submissions/' + id, 'GET');
+    const s = data.submission;
+    histShowDetail(
+      'Submission #' + s.id + ' · ' + s.status + ' v' + s.version + ' · ' + s.link_type + ' ' + s.link_id +
+      ' · ' + fmtWhen(s.updated_at) + (s.user_name ? ' by ' + s.user_name : ''),
+      s.data,
+      null
+    );
+  } catch (err) {
+    E('histSubErr').textContent = err.message;
+  }
 }
 
 // ── Live tab: the REAL published form (normal mode, actual writes) ──────────
@@ -1985,6 +2361,7 @@ window.FB = {
   get formKey(){ return FKEY; },
   ops: {
     addFieldAt, moveField, moveRow, moveSection, addSectionAt, addRowAt,
+    dropFieldAsNewRow,
     clickAddField, deleteSelected, genName, renameField, refsTo,
     topLevelNames, allNames, clientFieldSignature,
   },

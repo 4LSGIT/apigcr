@@ -87,6 +87,8 @@ manual/02-YisraForms/09-advanced-features.md
 manual/02-YisraForms/10-hosting-and-wiring.md
 manual/02-YisraForms/11-api-reference.md
 manual/02-YisraForms/12-database-schema.md
+manual/02-YisraForms/13-template-system.md
+manual/02-YisraForms/14-form-builder.md
 manual/02-YisraForms/README.md
 manual/03-YisraFlow/01-overview.md
 manual/03-YisraFlow/02-workflows.md
@@ -475,6 +477,7 @@ tests/formBuilder_phaseA_test.js
 tests/formBuilder_phaseB_test.js
 tests/formBuilder_phaseC_test.js
 tests/formRender.slice2.test.js
+tests/formTemplates_slice4_service_test.js
 tests/helpers/renderSmoke.js
 tests/hookMapper.test.js
 tests/hookService.duplicate.test.js

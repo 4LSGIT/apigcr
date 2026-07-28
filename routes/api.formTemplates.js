@@ -10,6 +10,9 @@
  * PUT    /api/form-templates/:id              — update { title?, draft_definition?, form_key? }
  * POST   /api/form-templates/:id/publish      — publish (§6): { schema_version, bumped }
  * DELETE /api/form-templates/:id              — delete (never-published AND no-submissions only)
+ * GET    /api/form-templates/:id/versions             — publish history (no definitions; computed schema_changed)
+ * GET    /api/form-templates/:id/versions/:versionId  — one version row incl. definition
+ * POST   /api/form-templates/:id/versions/:versionId/restore — copy version definition → draft_definition
  *
  * Auto-mounted from routes/ (server.js readdir loop). All routes require JWT or
  * API key. Response envelope { status: 'success', ... } / on error
@@ -135,6 +138,49 @@ router.delete('/api/form-templates/:id', jwtOrApiKey, async (req, res) => {
     res.json({ status: 'success', ...result });
   } catch (err) {
     fail(res, 'delete', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/form-templates/:id/versions — publish history (Slice 4)
+// (An extra path segment, so /:id above can never shadow these.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/api/form-templates/:id/versions', jwtOrApiKey, async (req, res) => {
+  try {
+    const versions = await svc.listVersions(req.db, req.params.id);
+    res.json({ status: 'success', versions });
+  } catch (err) {
+    fail(res, 'listVersions', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/form-templates/:id/versions/:versionId — one version incl. definition
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get('/api/form-templates/:id/versions/:versionId', jwtOrApiKey, async (req, res) => {
+  try {
+    const version = await svc.getVersion(req.db, req.params.id, req.params.versionId);
+    res.json({ status: 'success', version });
+  } catch (err) {
+    fail(res, 'getVersion', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/form-templates/:id/versions/:versionId/restore — version → draft
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post('/api/form-templates/:id/versions/:versionId/restore', jwtOrApiKey, async (req, res) => {
+  try {
+    const result = await svc.restoreVersion(req.db, req.params.id, req.params.versionId, userId(req));
+    res.json({ status: 'success', ...result });
+  } catch (err) {
+    fail(res, 'restoreVersion', err);
   }
 });
 

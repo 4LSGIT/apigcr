@@ -20,3 +20,5 @@ The forms system replaces external form tools (JotForm) with internal, reusable 
 | 10 | [10-hosting-and-wiring.md](10-hosting-and-wiring.md) | Loading forms in iframes, apiSend relay, parent communication |
 | 11 | [11-api-reference.md](11-api-reference.md) | All form submission API endpoints |
 | 12 | [12-database-schema.md](12-database-schema.md) | The form_submissions table and constraints |
+| 13 | [13-template-system.md](13-template-system.md) | Template-driven forms — definitions, publish/versioning, apiColumn, prefill, hooks routing |
+| 14 | [14-form-builder.md](14-form-builder.md) | The Form Builder — admin list, editor, tabs (incl. Live), publish, history & restore |

@@ -55,6 +55,16 @@ POST   /api/form-templates/:id/publish        — publish flow (§6); returns { 
 DELETE /api/form-templates/:id                — allowed only if never published AND no submissions
 GET    /api/form-templates/render/:form_key   — published { title, link_type, schema_version, definition } only.
                                                 What render.html consumes. 404 if unpublished.
+GET    /api/form-templates/:id/versions             — publish history (Slice 4): id, schema_version,
+                                                      published_by, published_at + computed schema_changed
+                                                      (field-set signature vs the chronologically previous
+                                                      row; first publish = true). No definition bodies.
+GET    /api/form-templates/:id/versions/:versionId  — one version row incl. definition (404 on ownership
+                                                      mismatch)
+POST   /api/form-templates/:id/versions/:versionId/restore
+                                                    — copy the version's definition into draft_definition
+                                                      (SQL column-to-column; published untouched; no
+                                                      re-validation — PUT/publish remain the gates)
 ```
 
 Server-side validation on create/update: `form_key` matches `^[a-z0-9_]{1,50}$`; `link_type` in the allowed set; `draft_definition` passes structural validation (§7). External/public access to the render route is a Slice 4 concern — v1 is authed only.
@@ -268,4 +278,4 @@ Reject with a message naming the offending path:
 | 1 | §1 tables, §2 routes, §7 validation, §8 renderer for §3–§4 **minus** repeaters/showWhen/prefill (plain sections/rows/fields, all types except checkgroup-`allowOther` if time-boxed), preview mode |
 | 2 | §4.2 repeaters, §4.4 showWhen, §4.3 `allowOther`, §5 prefill, `hooks` wiring |
 | 3 | Builder UI editing this JSON; publish UX invoking §6 |
-| 4 | Admin list + history viewer; external render mode |
+| 4 | Admin list + history viewer + submissions browser (delivered 2026-07). **External render mode: DEFERRED out of Slice 4 to the client-portal build** — unauthed endpoints need the portal token design, and building it twice was the wrong trade. Every template route remains authed; §5's external-prefill note and §9's reservation stand. Decision recorded in the build state (`rw_scratch ns=fred k=formbuilder_build_state`). |
