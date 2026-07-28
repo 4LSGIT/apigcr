@@ -200,12 +200,15 @@
 
 <div id="runPanel" class="panel hidden">
   <div class="row" style="justify-content: space-between;">
-    <h3 id="runTitle" style="margin:0"></h3>
+    <div class="row" style="min-width:0">
+      <button class="ghost" onclick="closeRun()" title="Back to all reports"><i class="fa-solid fa-arrow-left"></i> All reports</button>
+      <select id="reportSwitcher" onchange="openReport(Number(this.value))" style="max-width:260px"></select>
+    </div>
     <div class="row">
       <button id="editBtn" class="ghost hidden" onclick="openEditor(currentReport)"><i class="fa-solid fa-pen"></i> Edit</button>
-      <button class="ghost" onclick="closeRun()">Close</button>
     </div>
   </div>
+  <h3 id="runTitle" style="margin:10px 0 0"></h3>
   <p id="runDesc" class="muted small" style="line-height:1.5"></p>
 
   <div id="paramRow" class="row" style="margin-bottom:10px"></div>
@@ -321,6 +324,12 @@ function init() {
   loadReports();
 }
 
+/** Message + optional server detail from an apiSend ApiError. */
+function errText(e) {
+  const detail = e && e.body && e.body.detail;
+  return esc(e.message) + (detail ? `<br><span class="muted small">${esc(detail)}</span>` : "");
+}
+
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => (
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
@@ -328,6 +337,37 @@ function esc(s) {
 }
 
 function E(id) { return document.getElementById(id); }
+
+/**
+ * One view at a time: 'list' | 'run' | 'editor'. The selection grid used to
+ * stay on screen above the results, pushing them below the fold — now opening
+ * a report collapses the list entirely and the results render at the top, with
+ * the switcher dropdown covering "jump to another report" without a round trip.
+ */
+function showView(name) {
+  E("listPanel").classList.toggle("hidden", name !== "list");
+  E("runPanel").classList.toggle("hidden", name !== "run");
+  E("editorPanel").classList.toggle("hidden", name !== "editor");
+  if (name !== "list") {
+    E("askPanel").classList.add("hidden");
+    E("schemaPanel").classList.add("hidden");
+  }
+  if (name !== "run") destroyChart();
+  window.scrollTo(0, 0);
+}
+
+function renderSwitcher() {
+  const sel = E("reportSwitcher");
+  if (!sel || !currentReport) return;
+  const byCat = {};
+  for (const r of reports) (byCat[r.category] ||= []).push(r);
+  sel.innerHTML = Object.keys(byCat).sort().map(cat =>
+    `<optgroup label="${esc(cat)}">` +
+    byCat[cat].map(r =>
+      `<option value="${r.id}" ${r.id === currentReport.id ? "selected" : ""}>${esc(r.title)}</option>`
+    ).join("") + `</optgroup>`
+  ).join("");
+}
 
 // ─── list ────────────────────────────────────────────────────────────────────
 
@@ -402,10 +442,6 @@ async function toggleSchema() {
 // ─── run ─────────────────────────────────────────────────────────────────────
 
 async function openReport(id) {
-  document.querySelectorAll(".rpt-card").forEach(c =>
-    c.classList.toggle("active", Number(c.dataset.id) === id));
-  E("editorPanel").classList.add("hidden");
-
   try {
     const d = await P.apiSend(`/api/reports/${id}`, "GET");
     currentReport = d.report;
@@ -414,9 +450,10 @@ async function openReport(id) {
     return;
   }
 
+  showView("run");
+  renderSwitcher();
   E("runTitle").textContent = currentReport.title;
   E("runDesc").textContent = currentReport.description || "";
-  E("runPanel").classList.remove("hidden");
   E("runResult").innerHTML = "";
   E("runMeta").textContent = "";
   E("csvBtn").classList.add("hidden");
@@ -434,7 +471,8 @@ function renderParams() {
   row.innerHTML = ps.map(p => {
     const type = p.type === "number" ? "number" : (p.type === "date" ? "date" : "text");
     return `<label class="fld">${esc(p.label || p.name)}
-      <input id="p_${esc(p.name)}" type="${type}" data-name="${esc(p.name)}">
+      <input id="p_${esc(p.name)}" type="${type}" data-name="${esc(p.name)}"
+             onkeypress="if(event.key==='Enter') runCurrent()">
     </label>`;
   }).join("");
 
@@ -493,7 +531,7 @@ async function runCurrent() {
     renderResult(d);
   } catch (e) {
     E("runMeta").textContent = "";
-    E("runResult").innerHTML = `<div class="errbox"><b>Report failed.</b><br>${esc(e.message)}</div>`;
+    E("runResult").innerHTML = `<div class="errbox"><b>Report failed.</b><br>${errText(e)}</div>`;
   } finally {
     btn.disabled = false;
   }
@@ -706,10 +744,8 @@ function fmtCell(v) {
 }
 
 function closeRun() {
-  destroyChart();
-  E("runPanel").classList.add("hidden");
   currentReport = null;
-  document.querySelectorAll(".rpt-card").forEach(c => c.classList.remove("active"));
+  showView("list");
 }
 
 // ─── CSV ─────────────────────────────────────────────────────────────────────
@@ -765,7 +801,7 @@ async function askDraft(refineInstruction) {
     renderDraft(d);
   } catch (e) {
     E("askMsg").textContent = "";
-    E("askResult").innerHTML = `<div class="errbox"><b>Couldn't draft that.</b><br>${esc(e.message)}</div>`;
+    E("askResult").innerHTML = `<div class="errbox"><b>Couldn't draft that.</b><br>${errText(e)}</div>`;
   } finally {
     btn.disabled = false;
   }
@@ -922,8 +958,7 @@ function openEditorFromDraft() {
 
 function openEditor(report) {
   editingId = report ? report.id : null;
-  E("editorPanel").classList.remove("hidden");
-  E("runPanel").classList.add("hidden");
+  showView("editor");
   E("editorTitle").textContent = report ? `Edit: ${report.title}` : "New report";
   E("edMsg").textContent = "";
   E("edResult").innerHTML = "";
@@ -941,8 +976,10 @@ function openEditor(report) {
 }
 
 function closeEditor() {
-  E("editorPanel").classList.add("hidden");
+  // Back to the report if we came from one, otherwise the list.
+  const backTo = editingId && currentReport && currentReport.id === editingId ? "run" : "list";
   editingId = null;
+  if (backTo === "run") { openReport(currentReport.id); } else { showView("list"); }
 }
 
 function readEditor() {
@@ -1026,7 +1063,7 @@ async function previewEditor() {
       drawStandaloneChart("edChart", rows, d.fields, vz);
     }
   } catch (e) {
-    E("edResult").innerHTML = `<div class="errbox">${esc(e.message)}</div>`;
+    E("edResult").innerHTML = `<div class="errbox">${errText(e)}</div>`;
   }
 }
 
