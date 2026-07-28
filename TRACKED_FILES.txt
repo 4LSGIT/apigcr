@@ -182,6 +182,11 @@ public/forms/341notes.html
 public/forms/casedetails-bk.html
 public/forms/casedetails.html
 public/forms/contact-form.html
+public/forms/hooks/_yc_hook_util.js
+public/forms/hooks/case_clients.js
+public/forms/hooks/case_details_bk.js
+public/forms/hooks/issn_extras.js
+public/forms/hooks/notes_341.js
 public/forms/hooks/readme.md
 public/forms/issn.html
 public/forms/render.html
