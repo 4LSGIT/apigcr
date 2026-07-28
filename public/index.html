@@ -2218,7 +2218,7 @@
   <!-- Placeholder buttons: no wiring, just fun. Hover animates the icon like
        every other button here (successor to the old jumping-cat button). -->
   <button class="big-button" data-target="formBuilderDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-rectangle-list fa-2xl"></i><br><br>Form Builder</button>
-  <button class="big-button" data-hover-anim="fa-fade" style="--fa-animation-duration:2.2s"><i class="fa-solid fa-ghost fa-2xl"></i><br><br>Placeholder</button>
+  <button class="big-button" data-target="reportsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.3s"><i class="fa-solid fa-chart-column fa-2xl"></i><br><br>Reports</button>
   <button class="big-button" data-hover-anim="fa-shake" style="--fa-animation-duration:0.9s"><i class="fa-solid fa-frog fa-2xl"></i><br><br>Placeholder</button>
 
 
@@ -2252,14 +2252,14 @@
   <div id="assetManagerDiv" class="more-panel" style="display:none">
     <iframe data-src="/assetManager.html"></iframe>
   </div>
-  <!-- Signatures dashboard (e-sign Phase 2C). Lazy data-src like every other
-       more-panel; the page rides window.top.apiSend, so shell-hosting is all
-       it needs. -->
   <div id="esignDashboardDiv" class="more-panel" style="display:none">
     <iframe data-src="/esign/dashboard.html"></iframe>
   </div>
   <div id="formBuilderDiv" class="more-panel" style="display:none">
     <iframe data-src="/formBuilder.html"></iframe>
+  </div>
+  <div id="reportsDiv" class="more-panel" style="display:none">
+    <iframe data-src="/reports.html"></iframe>
   </div>
 </div>
 <script>

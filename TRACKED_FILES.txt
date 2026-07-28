@@ -10,6 +10,7 @@ lib/actionDispatchers.js
 lib/aiPrompts/courtExtract.js
 lib/aiPrompts/echo.js
 lib/aiPrompts/index.js
+lib/aiPrompts/reportBuild.js
 lib/alerting.js
 lib/apiKeys.js
 lib/appBuild.js
@@ -53,6 +54,8 @@ lib/job_executor.js
 lib/legacyTrap.js
 lib/logMeta.js
 lib/parseName.js
+lib/reportSchema/manifest.js
+lib/reportSchema/validator.js
 lib/responseObserver.js
 lib/sequenceEngine.js
 lib/sqlGuard.js
@@ -193,6 +196,7 @@ public/forms/liveHost.html
 public/forms/render.html
 public/index.html
 public/js/assetpicker.js
+public/js/reportCharts.js
 public/js/versionGuard.js
 public/js/videoInsert.js
 public/js/yc-forms.js
@@ -202,6 +206,7 @@ public/pageManager.html
 public/rating.html
 public/readonlyKeys.html
 public/redirects.html
+public/reports.html
 public/reset-password.html
 public/scripts.js
 public/sendingform-bk.html
@@ -281,6 +286,7 @@ routes/api.phoneLines.js
 routes/api.readonly.js
 routes/api.readonlyKeys.js
 routes/api.redirects.js
+routes/api.reports.js
 routes/api.scratch.js
 routes/api.search.js
 routes/api.sending.js
@@ -424,6 +430,8 @@ services/phoneIngestService.js
 services/phoneIngestSuppressionService.js
 services/phoneService.js
 services/quoService.js
+services/reportAuthorService.js
+services/reportService.js
 services/resolverService.js
 services/ringcentralService.js
 services/searchService.js
@@ -485,5 +493,6 @@ tests/test-cron.js
 tests/test-oauthService.js
 tests/test-timing-extensions.js
 tests/test_classifier.js
+tests/test_report_author.sh
 tests/workflows.editor.roundtrip.test.js
 views/v.html

@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reports</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<!-- Chart.js pinned, matching how the repo pins bootstrap/quill. If the CDN is
+     unreachable the tables still render; only the charts drop out. -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+<script src="/js/reportCharts.js"></script>
+<!--
+  public/reports.html — Reports engine UI (Slice 1).
+
+  Runs as an iframe child inside index.html's "More Features" tab, using the
+  parent's apiSend for auth (same pattern as readonlyKeys.html). Boot waits for
+  the parent to expose apiSend before doing anything.
+
+  Deliberately has NO chart library. Slice 1 renders tables and CSV; charts land
+  in Slice 4 once we know which reports people actually keep. The `viz` hint is
+  stored and displayed as a label so the definitions are already chart-ready.
+
+  Authoring (the SQL editor) is superuser-only and mirrors the server's
+  requireSU gate — the server is the real check, this just hides a panel that
+  would 403 anyway.
+-->
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2430; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #2563eb; --accent-dark: #1d4ed8; --ok: #16a34a;
+    --warn: #d97706; --danger: #dc2626; --panel: #f9fafb;
+  }
+  body.dark {
+    --bg: #151a23; --fg: #e6e8ee; --muted: #9aa3b2; --line: #2a313d;
+    --accent: #60a5fa; --accent-dark: #3b82f6; --ok: #4ade80;
+    --warn: #fbbf24; --danger: #f87171; --panel: #1d2230;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+  }
+  h2 { margin: 0 0 12px; font-size: 17px; }
+  h3 { margin: 0 0 8px; font-size: 14px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 14px; margin-bottom: 14px;
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  button {
+    background: var(--accent); color: #fff; border: none; border-radius: 6px;
+    padding: 7px 13px; cursor: pointer; font-size: 13px; font-family: inherit;
+  }
+  button:hover { background: var(--accent-dark); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
+  button.ghost:hover { background: var(--line); }
+  button.danger { background: var(--danger); }
+  input, select, textarea {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 9px; font-size: 13px; font-family: inherit;
+  }
+  textarea {
+    width: 100%; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px; line-height: 1.5; resize: vertical;
+  }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+  /* Report list */
+  .rpt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+  .rpt-card {
+    border: 1px solid var(--line); border-radius: 8px; padding: 11px;
+    cursor: pointer; background: var(--bg); transition: border-color .12s;
+  }
+  .rpt-card:hover { border-color: var(--accent); }
+  .rpt-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .rpt-card .t { font-weight: 600; margin-bottom: 3px; }
+  .rpt-card .d { font-size: 12px; color: var(--muted); line-height: 1.45; }
+  .cat-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); margin: 12px 0 6px; font-weight: 600;
+  }
+
+  /* Results */
+  table.rpt { border-collapse: collapse; width: 100%; font-size: 13px; }
+  table.rpt th, table.rpt td {
+    border-bottom: 1px solid var(--line); padding: 6px 9px; text-align: left;
+  }
+  table.rpt th { font-weight: 600; color: var(--muted); font-size: 12px; white-space: nowrap; }
+  table.rpt td.num, table.rpt th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.rpt tr:hover td { background: var(--panel); }
+  .scroll-x { overflow-x: auto; }
+
+  /* Charts */
+  .chart-wrap {
+    position: relative; height: 320px; margin: 4px 0 12px;
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--bg);
+  }
+  .chart-wrap.tall { height: 400px; }
+  .chart-bar {
+    display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    margin: 10px 0 4px;
+  }
+  .chart-bar select, .chart-bar button.mini {
+    font-size: 12px; padding: 3px 8px;
+  }
+  button.mini {
+    background: transparent; color: var(--muted); border: 1px solid var(--line);
+    border-radius: 5px; padding: 3px 8px; font-size: 12px;
+  }
+  button.mini:hover { background: var(--line); color: var(--fg); }
+  button.mini.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .stat-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px; margin: 4px 0 12px;
+  }
+  .stat-card {
+    border: 1px solid var(--line); border-radius: 8px; padding: 13px 14px; background: var(--bg);
+  }
+  .stat-card .v {
+    font-size: 26px; font-weight: 650; line-height: 1.15;
+    font-variant-numeric: tabular-nums; color: var(--accent);
+  }
+  .stat-card .l {
+    font-size: 11.5px; color: var(--muted); margin-top: 4px;
+    text-transform: uppercase; letter-spacing: .03em;
+  }
+
+  .caveat {
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+    border-left: 3px solid var(--warn); padding: 8px 11px; border-radius: 4px;
+    font-size: 12px; margin-top: 10px; line-height: 1.5;
+  }
+  .caveat b { display: block; margin-bottom: 3px; }
+  .caveat ul { margin: 4px 0 0; padding-left: 18px; }
+  .errbox {
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+    border-left: 3px solid var(--danger); padding: 9px 11px; border-radius: 4px;
+    font-size: 13px; line-height: 1.5;
+  }
+  .sqlbox {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 9px; white-space: pre-wrap; word-break: break-word; margin-top: 8px;
+    line-height: 1.5;
+  }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; user-select: none; }
+  details[open] summary { margin-bottom: 6px; }
+  .spin { display: inline-block; animation: sp 1s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  .pill {
+    display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px;
+    background: var(--line); color: var(--muted);
+  }
+  .hidden { display: none !important; }
+  label.fld { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div id="askPanel" class="panel hidden">
+  <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Ask for a report</h3>
+  <p class="muted small" style="margin-top:0; line-height:1.5">
+    Describe what you want to see. This writes the query — it doesn't answer the
+    question. Review the SQL and the sample rows, then save it as a report that
+    runs the same way every time.
+  </p>
+  <textarea id="askQ" rows="2" placeholder="e.g. appointment no-show rate by month for the last 6 months"></textarea>
+  <div class="row" style="margin-top:8px">
+    <button id="askBtn" onclick="askDraft()"><i class="fa-solid fa-wand-magic-sparkles"></i> Draft it</button>
+    <span id="askMsg" class="muted small"></span>
+  </div>
+  <div id="askResult" style="margin-top:12px"></div>
+</div>
+
+<div id="listPanel" class="panel">
+  <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+    <h2 style="margin:0">Reports</h2>
+    <div class="row">
+      <button class="ghost" onclick="loadReports()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+      <button id="askToggle" class="ghost hidden" onclick="toggleAsk()"><i class="fa-solid fa-wand-magic-sparkles"></i> Ask</button>
+      <button id="newBtn" class="ghost hidden" onclick="openEditor(null)"><i class="fa-solid fa-plus"></i> New</button>
+      <button class="ghost" onclick="toggleSchema()"><i class="fa-solid fa-table-list"></i> What can I report on?</button>
+    </div>
+  </div>
+  <div id="reportList"><span class="muted">Loading…</span></div>
+</div>
+
+<div id="schemaPanel" class="panel hidden">
+  <h3>Reportable tables</h3>
+  <p class="muted small" style="margin-top:0">
+    Reports can only read this curated set. Everything else in the database —
+    telemetry, backups, credentials — is deliberately invisible.
+  </p>
+  <div id="schemaBody"></div>
+</div>
+
+<div id="runPanel" class="panel hidden">
+  <div class="row" style="justify-content: space-between;">
+    <h3 id="runTitle" style="margin:0"></h3>
+    <div class="row">
+      <button id="editBtn" class="ghost hidden" onclick="openEditor(currentReport)"><i class="fa-solid fa-pen"></i> Edit</button>
+      <button class="ghost" onclick="closeRun()">Close</button>
+    </div>
+  </div>
+  <p id="runDesc" class="muted small" style="line-height:1.5"></p>
+
+  <div id="paramRow" class="row" style="margin-bottom:10px"></div>
+  <div class="row">
+    <button id="runBtn" onclick="runCurrent()"><i class="fa-solid fa-play"></i> Run</button>
+    <button id="csvBtn" class="ghost hidden" onclick="downloadCsv()"><i class="fa-solid fa-download"></i> CSV</button>
+    <span id="runMeta" class="muted small"></span>
+  </div>
+
+  <div id="runResult" style="margin-top:12px"></div>
+</div>
+
+<div id="editorPanel" class="panel hidden">
+  <div class="row" style="justify-content: space-between;">
+    <h3 id="editorTitle" style="margin:0">New report</h3>
+    <button class="ghost" onclick="closeEditor()">Close</button>
+  </div>
+  <p class="muted small" style="margin-top:4px; line-height:1.5">
+    SQL must be a single SELECT reading only allowlisted tables. Use <code>?</code>
+    placeholders and declare one parameter per placeholder, in order. Validation
+    runs on save and again on every run.
+  </p>
+
+  <div class="row" style="margin-bottom:8px">
+    <label class="fld" style="flex:1; min-width:160px">Key (immutable)
+      <input id="edKey" placeholder="cases_by_stage">
+    </label>
+    <label class="fld" style="flex:2; min-width:200px">Title
+      <input id="edTitle" placeholder="Cases by stage">
+    </label>
+    <label class="fld" style="width:150px">Category
+      <input id="edCategory" placeholder="Cases">
+    </label>
+  </div>
+
+  <label class="fld" style="margin-bottom:8px">Description — say what it counts AND what it excludes
+    <textarea id="edDesc" rows="2"></textarea>
+  </label>
+
+  <label class="fld" style="margin-bottom:8px">SQL
+    <textarea id="edSql" rows="9" spellcheck="false"></textarea>
+  </label>
+
+  <div class="row" style="margin-bottom:8px; align-items:flex-start">
+    <label class="fld" style="flex:1">Parameters (JSON array, order = placeholder order)
+      <textarea id="edParams" rows="4" spellcheck="false">[]</textarea>
+    </label>
+    <label class="fld" style="flex:1">Caveats (JSON array of strings)
+      <textarea id="edCaveats" rows="4" spellcheck="false">[]</textarea>
+    </label>
+  </div>
+
+  <label class="fld" style="margin-bottom:8px">Chart (JSON, or leave null to pick one automatically)
+    <textarea id="edViz" rows="3" spellcheck="false" placeholder='{"type":"bar","x":"stage","y":"n"}'>null</textarea>
+  </label>
+
+  <div class="row">
+    <button onclick="saveReport()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+    <button class="ghost" onclick="previewEditor()"><i class="fa-solid fa-eye"></i> Validate &amp; preview</button>
+    <button id="edDelete" class="danger hidden" onclick="deleteCurrent()"><i class="fa-solid fa-trash"></i> Delete</button>
+    <span id="edMsg" class="small"></span>
+  </div>
+  <div id="edResult" style="margin-top:10px"></div>
+</div>
+
+<script>
+const P = window.parent;
+
+let reports = [];
+let currentReport = null;   // full definition of the open report
+let lastRows = null;        // for CSV
+let lastFields = null;
+let isSU = false;
+let editingId = null;
+let lastSaveWarning = null;
+
+// Wait for the parent shell to expose apiSend before booting — same pattern
+// as readonlyKeys.html.
+(function waitForParent() {
+  if (P && P.apiSend) return init();
+  setTimeout(waitForParent, 100);
+})();
+
+function init() {
+  // Inherit the parent's dark mode, and keep following it — the parent's
+  // theme toggle flips body.dark after this iframe has already booted.
+  try {
+    const syncTheme = () => {
+      const wasDark = document.body.classList.contains("dark");
+      const isDark = P.document.body.classList.contains("dark");
+      document.body.classList.toggle("dark", isDark);
+      // Chart.js bakes axis/label colours in at construction, so a theme flip
+      // needs a redraw or the chart keeps light-mode greys on a dark panel.
+      if (wasDark !== isDark && chartState) drawCurrent();
+    };
+    syncTheme();
+    new MutationObserver(syncTheme).observe(P.document.body, {
+      attributes: true, attributeFilter: ["class"],
+    });
+  } catch (_) {}
+
+  // Mirror the server's SU gate so we don't show authoring UI that would 403.
+  try {
+    const u = P.user || {};
+    isSU = String(u.user_auth || "").indexOf("SU") !== -1;
+  } catch (_) { isSU = false; }
+  if (isSU) {
+    document.getElementById("newBtn").classList.remove("hidden");
+    document.getElementById("editBtn").classList.remove("hidden");
+    document.getElementById("askToggle").classList.remove("hidden");
+  }
+
+  loadReports();
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function E(id) { return document.getElementById(id); }
+
+// ─── list ────────────────────────────────────────────────────────────────────
+
+async function loadReports() {
+  const box = E("reportList");
+  box.innerHTML = `<span class="muted"><i class="fa-solid fa-spinner spin"></i> Loading…</span>`;
+  try {
+    const d = await P.apiSend("/api/reports", "GET");
+    reports = d.reports || [];
+    renderList();
+  } catch (e) {
+    box.innerHTML = `<div class="errbox">Couldn't load reports: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderList() {
+  const box = E("reportList");
+  if (!reports.length) {
+    box.innerHTML = `<span class="muted">No reports yet.</span>`;
+    return;
+  }
+  const byCat = {};
+  for (const r of reports) (byCat[r.category] ||= []).push(r);
+
+  box.innerHTML = Object.keys(byCat).sort().map(cat => `
+    <div class="cat-label">${esc(cat)}</div>
+    <div class="rpt-grid">
+      ${byCat[cat].map(r => `
+        <div class="rpt-card" data-id="${r.id}" onclick="openReport(${r.id})">
+          <div class="t">${esc(r.title)}</div>
+          <div class="d">${esc((r.description || "").slice(0, 130))}${(r.description || "").length > 130 ? "…" : ""}</div>
+          ${r.params && r.params.length
+            ? `<div style="margin-top:6px"><span class="pill">${r.params.length} parameter${r.params.length > 1 ? "s" : ""}</span></div>`
+            : ""}
+        </div>
+      `).join("")}
+    </div>
+  `).join("");
+}
+
+// ─── schema panel ────────────────────────────────────────────────────────────
+
+let schemaLoaded = false;
+async function toggleSchema() {
+  const p = E("schemaPanel");
+  if (!p.classList.contains("hidden")) { p.classList.add("hidden"); return; }
+  p.classList.remove("hidden");
+  if (schemaLoaded) return;
+  try {
+    const d = await P.apiSend("/api/reports/schema", "GET");
+    E("schemaBody").innerHTML = `
+      <div class="rpt-grid">
+        ${(d.tables || []).map(t => `
+          <div style="border:1px solid var(--line); border-radius:6px; padding:9px">
+            <div style="font-weight:600; font-family:ui-monospace,Menlo,monospace; font-size:12px">${esc(t.table)}</div>
+            <div class="muted small" style="margin-top:3px; line-height:1.45">${esc(t.note || "")}</div>
+          </div>
+        `).join("")}
+      </div>
+      <div class="caveat" style="margin-top:12px">
+        <b>Not available to reports</b>
+        Client SSN and date of birth, staff passwords and reset tokens, and all
+        credential tables are blocked outright — a report cannot reference them
+        even indirectly.
+      </div>`;
+    schemaLoaded = true;
+  } catch (e) {
+    E("schemaBody").innerHTML = `<div class="errbox">${esc(e.message)}</div>`;
+  }
+}
+
+// ─── run ─────────────────────────────────────────────────────────────────────
+
+async function openReport(id) {
+  document.querySelectorAll(".rpt-card").forEach(c =>
+    c.classList.toggle("active", Number(c.dataset.id) === id));
+  E("editorPanel").classList.add("hidden");
+
+  try {
+    const d = await P.apiSend(`/api/reports/${id}`, "GET");
+    currentReport = d.report;
+  } catch (e) {
+    alert("Couldn't open report: " + e.message);
+    return;
+  }
+
+  E("runTitle").textContent = currentReport.title;
+  E("runDesc").textContent = currentReport.description || "";
+  E("runPanel").classList.remove("hidden");
+  E("runResult").innerHTML = "";
+  E("runMeta").textContent = "";
+  E("csvBtn").classList.add("hidden");
+  lastRows = null;
+
+  renderParams();
+  runCurrent();   // reports are cheap; show something immediately
+}
+
+function renderParams() {
+  const row = E("paramRow");
+  const ps = currentReport.params || [];
+  if (!ps.length) { row.innerHTML = ""; return; }
+
+  row.innerHTML = ps.map(p => {
+    const type = p.type === "number" ? "number" : (p.type === "date" ? "date" : "text");
+    return `<label class="fld">${esc(p.label || p.name)}
+      <input id="p_${esc(p.name)}" type="${type}" data-name="${esc(p.name)}">
+    </label>`;
+  }).join("");
+
+  // Resolve relative defaults client-side purely for display. The SERVER
+  // resolves them again on run, and the server's value is authoritative —
+  // this is only so the boxes aren't empty.
+  for (const p of ps) {
+    const el = E(`p_${p.name}`);
+    if (!el || p.default === undefined || p.default === null) continue;
+    el.value = p.type === "date" ? displayDate(p.default) : p.default;
+  }
+}
+
+function displayDate(token) {
+  const t = String(token).trim().toLowerCase();
+  const d = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  const fmt = x => `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}`;
+  if (t === "today") return fmt(d);
+  if (t === "yesterday") { d.setDate(d.getDate() - 1); return fmt(d); }
+  if (t === "month_start") return fmt(new Date(d.getFullYear(), d.getMonth(), 1));
+  if (t === "year_start") return fmt(new Date(d.getFullYear(), 0, 1));
+  let m = t.match(/^-(\d+)d$/);
+  if (m) { d.setDate(d.getDate() - Number(m[1])); return fmt(d); }
+  m = t.match(/^-(\d+)m$/);
+  if (m) { d.setMonth(d.getMonth() - Number(m[1])); return fmt(d); }
+  return /^\d{4}-\d{2}-\d{2}$/.test(token) ? token : "";
+}
+
+function collectParams() {
+  const out = {};
+  for (const p of (currentReport.params || [])) {
+    const el = E(`p_${p.name}`);
+    if (el && el.value !== "") out[p.name] = el.value;
+  }
+  return out;
+}
+
+async function runCurrent() {
+  if (!currentReport) return;
+  const btn = E("runBtn");
+  btn.disabled = true;
+  E("runMeta").innerHTML = `<i class="fa-solid fa-spinner spin"></i> Running…`;
+  E("runResult").innerHTML = "";
+
+  try {
+    const d = await P.apiSend(`/api/reports/${currentReport.id}/run`, "POST", {
+      params: collectParams(),
+    });
+    lastRows = d.rows || [];
+    lastFields = d.fields || [];
+    E("runMeta").textContent =
+      `${d.rowCount} row${d.rowCount === 1 ? "" : "s"} · ${d.durationMs} ms` +
+      (d.truncated ? " · truncated" : "");
+    E("csvBtn").classList.toggle("hidden", !lastRows.length);
+    renderResult(d);
+  } catch (e) {
+    E("runMeta").textContent = "";
+    E("runResult").innerHTML = `<div class="errbox"><b>Report failed.</b><br>${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ─── chart rendering ─────────────────────────────────────────────────────────
+
+let chartInstance = null;      // live Chart.js instance for the run panel
+let chartState = null;         // { rows, fields, profile, viz, savedViz }
+
+/** Tear down the current chart so canvases don't leak between reports. */
+function destroyChart() {
+  if (chartInstance) { try { chartInstance.destroy(); } catch (_) {} chartInstance = null; }
+}
+
+/**
+ * Decide what to draw and draw it. Falls back through:
+ *   saved viz → inferred viz → nothing (table only).
+ * Any failure here is contained: the table has already rendered.
+ */
+function renderChartArea(rows, fields, savedViz) {
+  const host = E("chartArea");
+  if (!host) return;
+  destroyChart();
+  host.innerHTML = "";
+  chartState = null;
+
+  if (!window.ReportCharts || !rows || !rows.length) return;
+  const RC = window.ReportCharts;
+
+  const profile = RC.profileColumns(rows, fields);
+  let viz = RC.normalizeViz(savedViz, rows, profile) || RC.inferViz(rows, profile);
+  if (!viz) return;
+
+  chartState = { rows, fields, profile, viz, savedViz };
+  drawCurrent();
+}
+
+function drawCurrent() {
+  const host = E("chartArea");
+  const RC = window.ReportCharts;
+  destroyChart();
+  host.innerHTML = "";
+
+  const { rows, profile, viz } = chartState;
+  let built;
+  try {
+    built = RC.buildChartConfig(viz, rows, profile, RC.currentTheme());
+  } catch (e) {
+    host.innerHTML = `<p class="muted small">Couldn't draw a chart for this shape.</p>`;
+    return;
+  }
+
+  // Chart-type switcher — a chart you can't re-shape is a screenshot.
+  const options = chartOptionsFor(profile, viz);
+  if (options.length > 1) {
+    const bar = document.createElement("div");
+    bar.className = "chart-bar";
+    bar.innerHTML = options.map(o =>
+      `<button class="mini ${o.type === viz.type ? "on" : ""}" data-t="${o.type}">
+         <i class="fa-solid ${o.icon}"></i> ${o.label}</button>`).join("") +
+      `<span style="flex:1"></span>
+       <button class="mini" id="chartPng"><i class="fa-solid fa-image"></i> PNG</button>`;
+    host.appendChild(bar);
+    bar.querySelectorAll("button[data-t]").forEach(b => {
+      b.onclick = () => { chartState.viz = switchType(chartState.viz, b.dataset.t, profile); drawCurrent(); };
+    });
+    const png = bar.querySelector("#chartPng");
+    if (png) png.onclick = downloadChartPng;
+  }
+
+  if (built.kind === "stat") {
+    const g = document.createElement("div");
+    g.className = "stat-grid";
+    g.innerHTML = built.cards.map(c =>
+      `<div class="stat-card"><div class="v">${esc(c.display)}</div><div class="l">${esc(c.label)}</div></div>`
+    ).join("");
+    host.appendChild(g);
+    return;
+  }
+
+  if (built.kind !== "chart") return;
+
+  const wrap = document.createElement("div");
+  wrap.className = "chart-wrap" + (built.config.data.labels.length > 14 ? " tall" : "");
+  const canvas = document.createElement("canvas");
+  wrap.appendChild(canvas);
+  host.appendChild(wrap);
+
+  try {
+    chartInstance = new Chart(canvas.getContext("2d"), built.config);
+  } catch (e) {
+    // Chart.js missing (CDN blocked) or a config it rejects — the table above
+    // is already on screen, so degrade quietly rather than blanking the panel.
+    wrap.remove();
+  }
+}
+
+/** Which chart types make sense for this result shape. */
+function chartOptionsFor(profile, viz) {
+  const nums = profile.filter(c => c.kind === "number");
+  const cats = profile.filter(c => c.kind !== "number");
+  const opts = [];
+  if (cats.length && nums.length) {
+    opts.push({ type: "bar", label: "Bar", icon: "fa-chart-column" });
+    opts.push({ type: "line", label: "Line", icon: "fa-chart-line" });
+    opts.push({ type: "area", label: "Area", icon: "fa-chart-area" });
+    if (nums.length === 1) {
+      opts.push({ type: "pie", label: "Pie", icon: "fa-chart-pie" });
+      opts.push({ type: "doughnut", label: "Donut", icon: "fa-circle-notch" });
+    }
+    if (nums.length > 1) opts.push({ type: "combo", label: "Combo", icon: "fa-layer-group" });
+  }
+  if (nums.length) opts.push({ type: "stat", label: "Figures", icon: "fa-hashtag" });
+  return opts;
+}
+
+/** Re-shape the current viz for a new chart type, preserving columns. */
+function switchType(viz, type, profile) {
+  const next = Object.assign({}, viz, { type });
+  if (type === "pie" || type === "doughnut") {
+    next.series = viz.series.slice(0, 1);   // one metric only
+    next.limit = viz.limit || 12;
+  } else if (type === "combo") {
+    next.series = viz.series.map((s, i) => Object.assign({}, s, {
+      type: i === 0 ? "bar" : "line",
+      axis: i === 0 ? "y" : "y1",
+    }));
+  } else if (type === "stat") {
+    next.series = profile.filter(c => c.kind === "number").map(c => ({ key: c.key, label: c.label }));
+  } else {
+    next.series = viz.series.map(s => Object.assign({}, s, { type: null, axis: "y" }));
+  }
+  return next;
+}
+
+function downloadChartPng() {
+  if (!chartInstance) return;
+  const a = document.createElement("a");
+  // Flatten onto the panel colour — a transparent PNG looks broken in email.
+  const src = chartInstance.canvas;
+  const out = document.createElement("canvas");
+  out.width = src.width; out.height = src.height;
+  const ctx = out.getContext("2d");
+  ctx.fillStyle = document.body.classList.contains("dark") ? "#151a23" : "#ffffff";
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(src, 0, 0);
+  a.href = out.toDataURL("image/png");
+  a.download = `${(currentReport && currentReport.report_key) || "chart"}_${new Date().toISOString().slice(0, 10)}.png`;
+  a.click();
+}
+
+function renderResult(d) {
+  const rows = d.rows || [];
+  const caveats = (d.report && d.report.caveats) || [];
+  let html = "";
+
+  // Chart mounts above the table — the picture is the point, the table is the
+  // audit trail underneath it.
+  html += `<div id="chartArea"></div>`;
+
+  if (!rows.length) {
+    html += `<p class="muted">No rows matched.</p>`;
+  } else {
+    const cols = Object.keys(rows[0]);
+    const numeric = {};
+    for (const c of cols) {
+      numeric[c] = rows.every(r => r[c] === null || r[c] === "" || !isNaN(Number(r[c])));
+    }
+    html += `<details ${rows.length <= 12 ? "open" : ""}>
+      <summary>${rows.length <= 12 ? "Data" : `Data (${d.rowCount} rows)`}</summary>
+      <div class="scroll-x"><table class="rpt">
+      <thead><tr>${cols.map(c =>
+        `<th class="${numeric[c] ? "num" : ""}">${esc(c)}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map(r => `<tr>${cols.map(c =>
+        `<td class="${numeric[c] ? "num" : ""}">${esc(fmtCell(r[c]))}</td>`).join("")}</tr>`).join("")}
+      </tbody></table></div></details>`;
+  }
+
+  if (d.truncated) {
+    html += `<p class="muted small" style="margin-top:6px">
+      Showing the first ${rows.length} of ${d.rowCount} rows. Narrow the parameters for the full set.</p>`;
+  }
+
+  if (caveats.length) {
+    html += `<div class="caveat"><b>What this does and doesn't cover</b>
+      <ul>${caveats.map(c => `<li>${esc(c)}</li>`).join("")}</ul></div>`;
+  }
+
+  // Always show the SQL. A number nobody can check is a number nobody should
+  // act on — this is the entire trust model of the feature.
+  html += `<details style="margin-top:10px"><summary>Show the SQL behind this number</summary>
+    <div class="sqlbox">${esc(currentReport.sql_text)}</div>
+    ${d.boundValues && d.boundValues.length
+      ? `<div class="muted small" style="margin-top:5px">Bound values: ${esc(JSON.stringify(d.boundValues))}</div>`
+      : ""}</details>`;
+
+  E("runResult").innerHTML = html;
+  renderChartArea(rows, d.fields, currentReport.viz);
+}
+
+function fmtCell(v) {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "object") return JSON.stringify(v);
+  // Collapse the ISO datetimes mysql2 hands back to something readable.
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
+    return v.slice(0, 10);
+  }
+  return v;
+}
+
+function closeRun() {
+  destroyChart();
+  E("runPanel").classList.add("hidden");
+  currentReport = null;
+  document.querySelectorAll(".rpt-card").forEach(c => c.classList.remove("active"));
+}
+
+// ─── CSV ─────────────────────────────────────────────────────────────────────
+
+function downloadCsv() {
+  if (!lastRows || !lastRows.length) return;
+  const cols = Object.keys(lastRows[0]);
+  const cell = v => {
+    if (v === null || v === undefined) return "";
+    const s = typeof v === "object" ? JSON.stringify(v) : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [cols.join(",")]
+    .concat(lastRows.map(r => cols.map(c => cell(r[c])).join(",")))
+    .join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${currentReport.report_key}_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ─── AI author (SU only) ─────────────────────────────────────────────────────
+
+let lastDraft = null;   // the definition currently on screen, pre-save
+
+function toggleAsk() {
+  const p = E("askPanel");
+  p.classList.toggle("hidden");
+  if (!p.classList.contains("hidden")) E("askQ").focus();
+}
+
+async function askDraft(refineInstruction) {
+  const q = E("askQ").value.trim();
+  if (!q) { E("askQ").focus(); return; }
+
+  const btn = E("askBtn");
+  btn.disabled = true;
+  E("askMsg").innerHTML = `<i class="fa-solid fa-spinner spin"></i> Writing the query…`;
+  E("askResult").innerHTML = "";
+
+  const body = { question: q };
+  if (refineInstruction && lastDraft) {
+    body.previous = lastDraft;
+    body.instruction = refineInstruction;
+  }
+
+  try {
+    const d = await P.apiSend("/api/reports/draft", "POST", body);
+    E("askMsg").textContent = "";
+    renderDraft(d);
+  } catch (e) {
+    E("askMsg").textContent = "";
+    E("askResult").innerHTML = `<div class="errbox"><b>Couldn't draft that.</b><br>${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderDraft(d) {
+  const box = E("askResult");
+
+  // Refusal — a legitimate answer, not an error. Present it as information.
+  if (d.outcome === "refused") {
+    lastDraft = null;
+    box.innerHTML = `
+      <div class="caveat">
+        <b>This can't be answered from the data as it stands</b>
+        ${esc(d.reason)}
+        ${d.suggestion ? `<div style="margin-top:7px"><b>What is possible</b>${esc(d.suggestion)}</div>` : ""}
+      </div>`;
+    return;
+  }
+
+  // Generated but wouldn't validate or run. Show the SQL so the failure is
+  // diagnosable rather than mysterious.
+  if (d.outcome === "invalid") {
+    lastDraft = null;
+    box.innerHTML = `
+      <div class="errbox"><b>${esc(d.error)}</b>${d.detail ? "<br>" + esc(d.detail) : ""}</div>
+      ${d.definition ? `<div class="sqlbox">${esc(d.definition.sql_text)}</div>` : ""}
+      <p class="muted small">Try rewording, or write it by hand with “New”.</p>`;
+    return;
+  }
+
+  const def = d.definition;
+  const pv = d.preview;
+  lastDraft = def;
+
+  let html = `<div style="border:1px solid var(--line); border-radius:8px; padding:12px">
+    <div style="font-weight:600; font-size:15px">${esc(def.title)}</div>
+    <div class="muted small" style="margin-top:4px; line-height:1.5">${esc(def.description || "")}</div>
+    <div style="margin-top:7px">
+      <span class="pill">${esc(def.category)}</span>
+      <span class="pill">${def.params.length} parameter${def.params.length === 1 ? "" : "s"}</span>
+      ${d.attempts > 1 ? `<span class="pill">repaired on attempt ${d.attempts}</span>` : ""}
+    </div>`;
+
+  if (pv.rows && pv.rows.length) {
+    const cols = Object.keys(pv.rows[0]);
+    html += `<div class="muted small" style="margin-top:10px">
+      Sample result — ${pv.rowCount} row${pv.rowCount === 1 ? "" : "s"}, ${pv.durationMs} ms</div>
+      <div id="draftChart"></div>
+      <details><summary>Data</summary><div class="scroll-x"><table class="rpt">
+        <thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+        <tbody>${pv.rows.slice(0, 8).map(r =>
+          `<tr>${cols.map(c => `<td>${esc(fmtCell(r[c]))}</td>`).join("")}</tr>`).join("")}</tbody>
+      </table></div></details>`;
+  } else {
+    html += `<p class="muted small" style="margin-top:10px">
+      The query ran cleanly but matched no rows. That may be correct, or the filters may be too narrow.</p>`;
+  }
+
+  if (def.caveats && def.caveats.length) {
+    html += `<div class="caveat"><b>What this does and doesn't cover</b>
+      <ul>${def.caveats.map(c => `<li>${esc(c)}</li>`).join("")}</ul></div>`;
+  }
+
+  html += `<details style="margin-top:10px"><summary>Show the SQL</summary>
+    <div class="sqlbox">${esc(def.sql_text)}</div></details>`;
+
+  html += `<div class="row" style="margin-top:11px">
+      <button onclick="saveDraft()"><i class="fa-solid fa-floppy-disk"></i> Save as report</button>
+      <button class="ghost" onclick="openEditorFromDraft()"><i class="fa-solid fa-pen"></i> Edit first</button>
+      <span id="draftMsg" class="small"></span>
+    </div>
+    <div class="row" style="margin-top:9px">
+      <input id="refineBox" placeholder="Change something — e.g. break it down by month" style="flex:1; min-width:200px"
+             onkeypress="if(event.key==='Enter') doRefine()">
+      <button class="ghost" onclick="doRefine()">Refine</button>
+    </div>
+  </div>`;
+
+  box.innerHTML = html;
+  drawStandaloneChart("draftChart", pv.rows, pv.fields, def.viz);
+}
+
+/**
+ * Draw a one-off chart into an arbitrary container (draft preview, editor
+ * preview). Separate from the run panel's chart so the two never fight over
+ * the same Chart.js instance.
+ */
+const sideCharts = {};
+function drawStandaloneChart(hostId, rows, fields, savedViz) {
+  const host = E(hostId);
+  if (!host || !window.ReportCharts || !rows || !rows.length) return;
+  if (sideCharts[hostId]) { try { sideCharts[hostId].destroy(); } catch (_) {} delete sideCharts[hostId]; }
+
+  const RC = window.ReportCharts;
+  const profile = RC.profileColumns(rows, fields);
+  const viz = RC.normalizeViz(savedViz, rows, profile) || RC.inferViz(rows, profile);
+  if (!viz) return;
+
+  let built;
+  try { built = RC.buildChartConfig(viz, rows, profile, RC.currentTheme()); }
+  catch (_) { return; }
+
+  if (built.kind === "stat") {
+    host.innerHTML = `<div class="stat-grid">${built.cards.map(c =>
+      `<div class="stat-card"><div class="v">${esc(c.display)}</div><div class="l">${esc(c.label)}</div></div>`
+    ).join("")}</div>`;
+    return;
+  }
+  if (built.kind !== "chart") return;
+
+  host.innerHTML = `<div class="chart-wrap"><canvas></canvas></div>`;
+  try {
+    sideCharts[hostId] = new Chart(host.querySelector("canvas").getContext("2d"), built.config);
+  } catch (_) {
+    host.innerHTML = "";
+  }
+}
+
+function doRefine() {
+  const v = E("refineBox").value.trim();
+  if (v) askDraft(v);
+}
+
+async function saveDraft() {
+  if (!lastDraft) return;
+  const msg = E("draftMsg");
+  msg.innerHTML = `<i class="fa-solid fa-spinner spin"></i> Saving…`;
+  try {
+    const d = await P.apiSend("/api/reports", "POST", lastDraft);
+    msg.innerHTML = `<span style="color:var(--ok)">Saved.</span>`;
+    await loadReports();
+    openReport(d.report.id);
+  } catch (e) {
+    // Most likely a duplicate report_key — actionable, so say so plainly.
+    msg.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+  }
+}
+
+function openEditorFromDraft() {
+  if (!lastDraft) return;
+  openEditor(null);
+  E("edKey").value      = lastDraft.report_key;
+  E("edTitle").value    = lastDraft.title;
+  E("edCategory").value = lastDraft.category;
+  E("edDesc").value     = lastDraft.description || "";
+  E("edSql").value      = lastDraft.sql_text;
+  E("edParams").value   = JSON.stringify(lastDraft.params || [], null, 2);
+  E("edCaveats").value  = JSON.stringify(lastDraft.caveats || [], null, 2);
+  E("edViz").value      = JSON.stringify(lastDraft.viz || null, null, 2);
+}
+
+// ─── editor (SU only) ────────────────────────────────────────────────────────
+
+function openEditor(report) {
+  editingId = report ? report.id : null;
+  E("editorPanel").classList.remove("hidden");
+  E("runPanel").classList.add("hidden");
+  E("editorTitle").textContent = report ? `Edit: ${report.title}` : "New report";
+  E("edMsg").textContent = "";
+  E("edResult").innerHTML = "";
+
+  E("edKey").value      = report ? report.report_key : "";
+  E("edKey").disabled   = !!report;
+  E("edTitle").value    = report ? report.title : "";
+  E("edCategory").value = report ? report.category : "General";
+  E("edDesc").value     = report ? (report.description || "") : "";
+  E("edSql").value      = report ? report.sql_text : "SELECT ";
+  E("edParams").value   = JSON.stringify(report ? report.params : [], null, 2);
+  E("edCaveats").value  = JSON.stringify(report ? report.caveats : [], null, 2);
+  E("edViz").value      = JSON.stringify(report ? (report.viz || null) : null, null, 2);
+  E("edDelete").classList.toggle("hidden", !report);
+}
+
+function closeEditor() {
+  E("editorPanel").classList.add("hidden");
+  editingId = null;
+}
+
+function readEditor() {
+  let params, caveats, viz;
+  try { params = JSON.parse(E("edParams").value || "[]"); }
+  catch { throw new Error("Parameters is not valid JSON"); }
+  try { caveats = JSON.parse(E("edCaveats").value || "[]"); }
+  catch { throw new Error("Caveats is not valid JSON"); }
+  try { viz = JSON.parse(E("edViz").value || "null"); }
+  catch { throw new Error("Chart is not valid JSON"); }
+
+  return {
+    report_key: E("edKey").value.trim(),
+    title: E("edTitle").value.trim(),
+    category: E("edCategory").value.trim() || "General",
+    description: E("edDesc").value.trim() || null,
+    sql_text: E("edSql").value.trim(),
+    params, caveats, viz,
+  };
+}
+
+async function saveReport() {
+  const msg = E("edMsg");
+  let body;
+  try { body = readEditor(); }
+  catch (e) { msg.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; return; }
+
+  msg.innerHTML = `<i class="fa-solid fa-spinner spin"></i> Saving…`;
+  try {
+    if (editingId) {
+      delete body.report_key;   // immutable server-side; don't even send it
+      const up = await P.apiSend(`/api/reports/${editingId}`, "PUT", body);
+      lastSaveWarning = up.report.vizWarning || null;
+    } else {
+      const d = await P.apiSend("/api/reports", "POST", body);
+      lastSaveWarning = d.report.vizWarning || null;
+      editingId = d.report.id;
+      E("edKey").disabled = true;
+      E("edDelete").classList.remove("hidden");
+    }
+    msg.innerHTML = `<span style="color:var(--ok)">Saved.</span>`;
+    if (lastSaveWarning) {
+      msg.innerHTML += ` <span style="color:var(--warn)">${esc(lastSaveWarning)}</span>`;
+      lastSaveWarning = null;
+    }
+    await loadReports();
+  } catch (e) {
+    msg.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+  }
+}
+
+async function previewEditor() {
+  // Runs the UNSAVED definition through /api/reports/preview — validated by
+  // the same validator, executed on the same SELECT-only pool, logged to
+  // report_runs with report_id NULL, and never persisted.
+  let body;
+  try { body = readEditor(); }
+  catch (e) { E("edMsg").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; return; }
+
+  E("edResult").innerHTML = `<i class="fa-solid fa-spinner spin"></i> Running…`;
+  E("edMsg").textContent = "";
+  try {
+    const d = await P.apiSend("/api/reports/preview", "POST", {
+      sql_text: body.sql_text,
+      params: body.params,
+      row_limit: 50,
+    });
+    const rows = d.rows || [];
+    E("edResult").innerHTML = rows.length
+      ? `<div class="muted small">Valid — ${d.rowCount} row(s), ${d.durationMs} ms</div>
+         <div id="edChart"></div>
+         <details><summary>Data</summary><div class="scroll-x"><table class="rpt">
+           <thead><tr>${Object.keys(rows[0]).map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+           <tbody>${rows.slice(0, 10).map(r =>
+             `<tr>${Object.values(r).map(v => `<td>${esc(fmtCell(v))}</td>`).join("")}</tr>`).join("")}</tbody>
+         </table></div></details>`
+      : `<span class="muted">Valid — no rows matched.</span>`;
+    if (rows.length) {
+      let vz = null;
+      try { vz = JSON.parse(E("edViz").value || "null"); } catch (_) {}
+      drawStandaloneChart("edChart", rows, d.fields, vz);
+    }
+  } catch (e) {
+    E("edResult").innerHTML = `<div class="errbox">${esc(e.message)}</div>`;
+  }
+}
+
+async function deleteCurrent() {
+  if (!editingId) return;
+  if (!confirm("Delete this report definition? This cannot be undone.")) return;
+  try {
+    await P.apiSend(`/api/reports/${editingId}`, "DELETE");
+    closeEditor();
+    await loadReports();
+  } catch (e) {
+    E("edMsg").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
+  }
+}
+</script>
+</body>
+</html>
