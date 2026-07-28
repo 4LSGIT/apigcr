@@ -227,6 +227,8 @@ ref/2026-07-21_esign_phase3.sql
 ref/2026-07-22_esign_webhook_hmac.sql
 ref/2026-07-26_form_templates.sql
 ref/2026-07-27_test_quick_notes_slice2_definition.json
+ref/2026-07-28_report_charts.sql
+ref/2026-07-28_reports.sql
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/database.sql
 ref/files.md

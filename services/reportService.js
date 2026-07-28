@@ -191,6 +191,53 @@ function logRun(db, fields) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Estimate rows examined from a classic EXPLAIN plan.
+ *
+ * MySQL emits one plan row per table access, tagged with a select-block `id`.
+ * The cost model that matches how the server actually executes:
+ *
+ *   - Rows sharing an `id` are one nested-loop join → their row counts
+ *     MULTIPLY. (A 991-row table hash-joined against 50k rows really is ~50M.)
+ *   - Different `id`s are separate select blocks — a derived table or plain
+ *     subquery is MATERIALISED ONCE and then read, so blocks SUM. Multiplying
+ *     across them was the original bug: a cheap
+ *     `SELECT ... FROM (SELECT ... FROM appts GROUP BY month) t` produced two
+ *     ~2.8k-row plan rows and got "estimated" at 7.9M — a production false
+ *     positive that cost the AI author a 15-second repair turn and would
+ *     hard-block any report that genuinely needs a subquery.
+ *   - The exception is DEPENDENT / UNCACHEABLE blocks, which genuinely
+ *     re-execute per outer row → those multiply by the outer product.
+ *
+ * MySQL's `rows` figures are estimates either way; this is a safety net for
+ * runaway cross joins, not an optimiser.
+ *
+ * @param {Array<object>} plan  rows from `EXPLAIN <sql>`
+ * @returns {number}
+ */
+function estimateRowsExamined(plan) {
+  const blocks = new Map(); // id → { product, dependent }
+  for (const r of plan) {
+    const id = String(r.id ?? "1");
+    const n = Number(r.rows);
+    const rows = Number.isFinite(n) && n > 0 ? n : 1;
+    const sel = String(r.select_type || "");
+    const b = blocks.get(id) || { product: 1, dependent: false };
+    b.product *= rows;
+    if (/DEPENDENT|UNCACHEABLE/i.test(sel)) b.dependent = true;
+    blocks.set(id, b);
+  }
+  // The outer block drives how often dependent blocks re-run. id "1" is the
+  // PRIMARY/SIMPLE block in classic EXPLAIN output.
+  const outer = (blocks.get("1") || { product: 1 }).product;
+  let total = 0;
+  for (const [id, b] of blocks) {
+    if (id !== "1" && b.dependent) total += b.product * outer;
+    else total += b.product;
+  }
+  return total;
+}
+
+/**
  * Run a SQL statement against the read-only pool with every guard applied.
  * Used by both saved-report runs and (Slice 3) AI preview runs.
  *
@@ -233,10 +280,7 @@ async function execute(db, opts = {}) {
     try {
       const [plan] = await conn.query(`EXPLAIN ${sql}`, values);
       if (Array.isArray(plan) && plan.length) {
-        estimatedRows = plan.reduce((acc, r) => {
-          const n = Number(r.rows);
-          return acc * (Number.isFinite(n) && n > 0 ? n : 1);
-        }, 1);
+        estimatedRows = estimateRowsExamined(plan);
         if (estimatedRows > MAX_ESTIMATED_ROWS) {
           logRun(db, {
             ...logMeta, sql_text: sql, duration_ms: Date.now() - started,
