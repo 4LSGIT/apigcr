@@ -853,6 +853,9 @@ async function createAppt(db, {
   appt_with       = 1,
   note            = '',
   appt_source     = null,
+  // Optional external-system reference (varchar(100) NOT NULL, no DB default).
+  // Omitted by every internal caller → stored as '' exactly as before.
+  appt_ref_id     = '',
   confirm_sms     = false,
   confirm_email   = false,
   confirm_message = '',
@@ -922,12 +925,16 @@ async function createAppt(db, {
       `INSERT INTO appts
          (appt_client_id, appt_case_id, appt_type, appt_length,
           appt_platform, appt_date, appt_date_utc, appt_status, appt_with,
-          appt_note, appt_source, appt_manage_token, appt_view_id,
+          appt_note, appt_source, appt_ref_id, appt_manage_token, appt_view_id,
           appt_create_date)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?, ?, ?, NOW())`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'Scheduled', ?, ?, ?, ?, ?, ?, NOW())`,
       [contact_id, case_id, appt_type, appt_length,
        appt_platform, appt_date, apptDateUTC, appt_with, note,
-       appt_source, manageToken,
+       appt_source,
+       // Clamp to the column width so a long caller value can never error
+       // under strict SQL mode (non-strict would silently truncate).
+       String(appt_ref_id ?? '').slice(0, 100),
+       manageToken,
        Number.isInteger(Number(appt_view_id)) && Number(appt_view_id) > 0
          ? Number(appt_view_id) : null]
     );
