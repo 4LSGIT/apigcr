@@ -1394,7 +1394,7 @@ function ContactPicker(hostEl, options = {}) {
    Row layout (3 lines, top-to-bottom):
      L1 (prominent): case_number_full || case_number || '(no case#)'
      L2 (muted):     case_id · case_type · case_stage
-     L3 (muted):     primary_contact_name || '(no primary contact)'
+     L3 (muted):     [case_caption — ] primary_contact_name || '(no primary contact)'
 
    All text rendered via textContent (no innerHTML) → no escaping needed.
    ────────────────────────────────────────────────────────────────────────── */
@@ -1459,10 +1459,11 @@ function CasePicker(hostEl, options = {}) {
       line2.textContent = meta;
       row.appendChild(line2);
 
-      // L3 — primary contact
+      // L3 — caption (when set) + primary contact
       const line3 = document.createElement('div');
       line3.className = 'cp-sub';
-      line3.textContent = r.primary_contact_name || '(no primary contact)';
+      const cpWho = r.primary_contact_name || '(no primary contact)';
+      line3.textContent = r.case_caption ? `${r.case_caption} \u2014 ${cpWho}` : cpWho;
       row.appendChild(line3);
 
       row.addEventListener('click', () => {

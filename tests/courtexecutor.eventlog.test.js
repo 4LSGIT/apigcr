@@ -55,6 +55,7 @@ const CASE_ROW = {
   case_id: 'ayx7GJ7j',
   case_number: '26-47542',        // SHORT docket → becomes event_link_id
   case_number_full: '26-47542-mlo',
+  case_caption: null,             // Slice A: resolver now returns case_caption
   primary_contact_id: 111,
   primary_contact_name: 'Marquita Renea Smith',
 };

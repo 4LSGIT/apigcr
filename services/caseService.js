@@ -121,6 +121,7 @@ async function listCases(db, {
     `SELECT
      c.case_id,
      COALESCE(c.case_number_full, c.case_number, c.case_id) AS case_number,
+     c.case_caption,
      c.case_type, c.case_subtype, c.case_stage, c.case_status,
      c.case_judge, c.case_trustee, c.case_chapter,
      IFNULL(DATE_FORMAT(c.case_open_date,  '%b. %e, %Y'), '') AS open,
@@ -565,6 +566,7 @@ async function checkCaseNumberCollision(db, caseId, { case_number = null, case_n
  *   - case_id           exact match on the typed query
  *   - case_number       LIKE %q%
  *   - case_number_full  LIKE %q%
+ *   - case_caption      LIKE %q%
  *   - Primary contact name LIKE %q% (EXISTS subquery)
  *
  * Primary contact is resolved via a pre-aggregated subquery picking
@@ -607,6 +609,7 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
        c.case_id,
        c.case_number,
        c.case_number_full,
+       c.case_caption,
        c.case_type,
        c.case_subtype,
        c.case_chapter,
@@ -624,6 +627,7 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
      WHERE c.case_id = ?
         OR c.case_number      LIKE ?
         OR c.case_number_full LIKE ?
+        OR c.case_caption     LIKE ?
         OR EXISTS (
              SELECT 1
                FROM case_relate cr2
@@ -634,7 +638,7 @@ async function searchCases(db, { q = '', limit = 20 } = {}) {
            )
      ORDER BY (c.case_stage = 'Open') DESC, c.case_open_date DESC, c.case_id DESC
      LIMIT ?`,
-    [q, like, like, like, lim]
+    [q, like, like, like, like, lim]
   );
 
   return { cases, total: cases.length };

@@ -107,6 +107,12 @@
         <i class="fa-solid fa-landmark"></i> Case Details
       </button>
     </div>
+    <!-- Caption line — hidden unless cases.case_caption is set (adversary
+         proceedings, creditor-side cases, litigation). updateHeader toggles. -->
+    <h4 id="captionLine" style="color: #000; display: none">
+      Caption:
+      <span id="caption" onclick="copy(this.innerText)" style="color: #07adef"></span>
+    </h4>
     <h4 style="color: #000">
       Primary Client Name:
       <span onclick="copy(this.innerText)">
@@ -1109,6 +1115,12 @@ function updateHeader() {
   if (!c) return;
 
   E("leadID").innerHTML      = c.case_id || "";
+
+  // Caption — shown only when set; Primary Client line always stays.
+  const caption = (c.case_caption || "").trim();
+  E("caption").textContent = caption;
+  E("captionLine").style.display = caption ? "" : "none";
+
   E("clientName").innerHTML  = PC?.contact_name || "";
   E("phone").innerHTML       = PC?.contact_phone
     ? PC.contact_phone.replace(/(\d{3})(\d{3})(\d{4})/, "$1-$2-$3") : "";

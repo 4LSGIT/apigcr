@@ -239,8 +239,12 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
 
   // ── STEP 2: RESOLVE ───────────────────────────────────────────────────
   const resolved = await resolveCase(db, caseNumber);
+  // Name preference: email's own case_name → case_caption (adversary captions /
+  // creditor-side cases where the debtor isn't our client) → Primary client.
   const caseName =
-    payload.case_name || (resolved.found ? resolved.primary_contact_name : null) || null;
+    payload.case_name ||
+    (resolved.found ? (resolved.case_caption || resolved.primary_contact_name) : null) ||
+    null;
 
   // Identity tokens for this case, built ONCE from what resolveCase already
   // fetched (both docket forms + the primary debtor name) — no extra queries.
@@ -249,6 +253,7 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   const identityTokens = buildIdentityTokens([
     resolved.case_number,
     resolved.case_number_full,
+    resolved.case_caption,
     resolved.primary_contact_name,
   ]);
 

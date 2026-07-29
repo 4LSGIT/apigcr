@@ -50,6 +50,19 @@
 
   <div class="yc-row">
     <div class="yc-field yc-2x">
+      <label class="yc-label">Case Caption</label>
+      <input type="text" name="case_caption" maxlength="150" placeholder="e.g. Schneyer v. Childs">
+      <div class="yc-hint">Court caption / matter title. Shown in the case header and pickers when set.</div>
+    </div>
+    <div class="yc-field yc-2x">
+      <label class="yc-label">Our Role</label>
+      <input type="text" name="case_our_role" maxlength="40" placeholder="e.g. Debtor / Creditor / Plaintiff / Defendant">
+      <div class="yc-hint">Which side we represent in this matter.</div>
+    </div>
+  </div>
+
+  <div class="yc-row">
+    <div class="yc-field yc-2x">
       <label class="yc-label">Case / Docket Number</label>
       <input type="text" name="case_number" maxlength="20" placeholder="e.g. 1:26-cv-00123-RML">
       <div class="yc-hint">Stored exactly as entered — no formatting applied.</div>
@@ -138,6 +151,8 @@
         case_id:          { el: '[name="case_id"]',       type: 'text', readonly: true },
 
         // Editable case details (form field names == DB column names; no apiMap)
+        case_caption:     { el: '[name="case_caption"]',     type: 'text' },
+        case_our_role:    { el: '[name="case_our_role"]',    type: 'text' },
         case_number:      { el: '[name="case_number"]',      type: 'text' },
         case_number_full: { el: '[name="case_number_full"]', type: 'text' },
         case_judge:       { el: '[name="case_judge"]',       type: 'text' },

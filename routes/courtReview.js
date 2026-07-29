@@ -338,7 +338,7 @@ router.post('/api/court-review/adopt-rerun', jwtOrApiKey, async (req, res) => {
 
     // Target must exist; fetch current docket for the same-vs-different guard.
     const [targetRows] = await req.db.query(
-      `SELECT case_id, case_number, case_number_full, case_type
+      `SELECT case_id, case_number, case_number_full, case_type, case_caption
          FROM cases WHERE case_id = ? LIMIT 1`,
       [caseId]
     );
@@ -388,6 +388,15 @@ router.post('/api/court-review/adopt-rerun', jwtOrApiKey, async (req, res) => {
     const fields = {};
     if (caseNumber     != null) fields.case_number      = caseNumber;
     if (caseNumberFull != null) fields.case_number_full = caseNumberFull;
+
+    // Caption stamp — ADDITIVE ONLY. The queued row's case_name is the email's
+    // verbatim case name (debtor or adversary caption). Fill case_caption only
+    // when the target has none; a DIFFERENT existing caption is NOT a conflict
+    // (unlike dockets) — skip silently and leave the human's value alone.
+    const rowCaption = (row.case_name || '').trim();
+    if (rowCaption && !((target.case_caption || '').trim())) {
+      fields.case_caption = rowCaption.slice(0, 150);
+    }
     if (Object.keys(fields).length) {
       await caseService.updateCase(req.db, caseId, fields);
     }
