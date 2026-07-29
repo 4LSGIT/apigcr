@@ -31,8 +31,7 @@ These are two distinct fields that work together to describe where a matter stan
 
 | Stage | Meaning |
 |---|---|
-| **Lead** | A prospective client — interest has been expressed but the firm has not yet formally taken the matter. See below. |
-| **Open** | Active engagement; work is in progress |
+| **Open** | Active engagement; work is in progress — the default for a newly created matter, including a prospective one |
 | **Pending** | Awaiting something before proceeding — documents, payment, a court action, client response |
 | **Filed** | Petition or filing has been submitted to the court |
 | **Concluded** | The legal process has reached its end (e.g., discharge granted, settlement reached) but the file is not yet closed |
@@ -44,15 +43,14 @@ Think of Stage as the milestone and Status as the current note on that milestone
 
 ---
 
-## The Lead Stage
+## Leads
 
-Leads are prospective matters. They are stored as cases with `case_stage = 'Lead'` and have their own dedicated **Leads tab** in the main interface, separate from the Cases tab. The Leads tab shows supplementary fields relevant to the intake process (first course completion, pre-petition course status, etc.).
+Leads are prospective matters. There is no separate "Lead" stage — a lead is an ordinary case that has not progressed yet, so it carries the normal `Open` default. Leads have their own dedicated **Leads tab** in the main interface, separate from the Cases tab, showing supplementary fields relevant to the intake process (first course completion, pre-petition course status, etc.).
 
 A few things to know about Leads:
 
 - Leads are created automatically through the intake process when a new prospective client is entered
-- The stage dropdown on the case edit page starts at Open — Lead is not an option there. Once a case moves past Lead stage, it stays moved
-- Leads that do not convert to open matters should be set to Closed or left as Lead for reporting purposes
+- Leads that do not convert should be set to Closed
 
 ---
 

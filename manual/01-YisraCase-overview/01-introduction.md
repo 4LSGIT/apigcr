@@ -14,7 +14,7 @@ Everything in YisraCase revolves around a small set of interconnected record typ
 
 **Matters** (called *cases* internally) are the legal engagements the firm takes on. A case always has at least one contact attached to it as the primary client. It can have additional contacts as well — spouse, co-debtor, or others. Cases track the type of matter, its stage in the legal process, court filing information, and a full history of activity.
 
-> **Leads** are prospective matters that have not yet been formally opened. They use the same case record structure, but with a stage of "Lead." Leads have their own dedicated tab in the interface, separate from the main Cases tab.
+> **Leads** are prospective matters that have not yet been formally opened. They are ordinary case records — there is no separate "Lead" stage — but they have their own dedicated tab in the interface, separate from the main Cases tab.
 
 **Appointments** are scheduled meetings — consultations, strategy sessions, 341 meetings, and so on. An appointment always belongs to a contact. It usually also belongs to a case, but it does not have to (for example, an initial consultation before a case has been opened). The appointment record tracks the date, time, type, platform, attending staff member, and outcome status.
 
@@ -51,7 +51,7 @@ Tasks and log entries can be linked to a contact, a case, an appointment, or a b
 YisraCase is organized into tabs in the main interface:
 
 - **Contacts** — search, browse, and open contact records
-- **Leads** — prospective matters filtered to Lead stage; dedicated follow-up view
+- **Leads** — prospective matters not yet worked; dedicated follow-up view
 - **Cases** — active and historical matters; searchable and filterable by type, stage, and status
 - **Appointments** — all scheduled meetings; filterable by date range, type, and status
 - **Tasks** — your personal task queue
@@ -73,4 +73,4 @@ The system uses some shorthand internally that differs from what appears on scre
 | Appointment | `appt` / `appts` table | All scheduled meetings |
 | Staff / Attorney | `user` / `users` table | Firm employees with system logins |
 
-Throughout this documentation, "matter" and "case" are used interchangeably. A Lead is simply a case at an early stage.
+Throughout this documentation, "matter" and "case" are used interchangeably. A Lead is simply a case that has not been worked yet.

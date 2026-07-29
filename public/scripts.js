@@ -1584,6 +1584,17 @@ function newContact(prefill = {}, onSuccess = null) {
       <select id="NCApptTypeSel" style="width:280px; margin-top:6px;"
         onchange="[E('NCApptType').value,E('NCApptLen').value]=this.value.split(',');E('NCApptOtherSpan').style.display=this.value==','?'':'none'">
         <option disabled selected>Appointment Type:</option>
+        <!-- "Initial Strategy Session" is deliberately ONLY offered here, in the
+             new-client dialog. It is the first-contact appointment type and it
+             is the cascade key for the pre_appt "Initial Strategy Session"
+             sequence template (welcome video + intake-form nag chain), which is
+             wrong for an existing client. The shared newApptDialog() — used by
+             case.html, contact.html, calendar.html and the shell Appointments
+             tab — deliberately does NOT list it; those surfaces book follow-ups
+             for clients who already exist. Keep the string byte-identical to
+             sequence_templates.filters -> appt_type or the cascade silently
+             falls through to the generic fallback template. -->
+        <option value="Initial Strategy Session,15">Initial Strategy Session (15 min)</option>
         <option value="Strategy Session,15">Strategy Session (15 min)</option>
         <option value="Strategy Session Follow Up,15">Strategy Session Follow Up (15 min)</option>
         <option value="Strategy Session Follow Up,30">Strategy Session Follow Up (30 min)</option>
@@ -1634,7 +1645,7 @@ function newContact(prefill = {}, onSuccess = null) {
           <option>Other</option>
          </select>
          <input style="width:200px; display:none;" type="text" id="NCOtherType" placeholder="Enter case type"><br>
-         <label class="sub-label">Optional, select type to create lead.</label><br>
+         <label class="sub-label">Optional, select type to open a case.</label><br>
          ${apptBlockHtml}
          `,
     showCancelButton: true,

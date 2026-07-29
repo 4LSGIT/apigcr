@@ -585,6 +585,12 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
     // `OR cases.case_type LIKE CONCAT(?, ' - Ch%')` branch matched the legacy
     // combined "Bankruptcy - Ch. X" format, removed after the 2026-06
     // case_type/case_subtype split (backfill + triggers normalized the data).
+    //
+    // The stage list is the "still live" half of the case_stage enum, which is
+    // ('Open','Pending','Filed','Concluded','Closed'). A 'Lead' value was also
+    // listed here historically; it is NOT in the enum and never has been in the
+    // current schema, so it could never match — removed. New cases from this
+    // route carry no explicit stage and take the column default, 'Open'.
     if (effectiveDuplicate !== "duplicate") {
       const [existing] = await req.db.query(
         `SELECT cases.case_id
@@ -592,7 +598,7 @@ router.post("/api/intake/case", jwtOrApiKey, async (req, res) => {
          LEFT JOIN case_relate cr ON cases.case_id = cr.case_relate_case_id
          WHERE cr.case_relate_client_id = ?
            AND cr.case_relate_type = 'Primary'
-           AND cases.case_stage IN ('Lead', 'Open', 'Pending', 'Filed')
+           AND cases.case_stage IN ('Open', 'Pending', 'Filed')
            AND cases.case_type = ?
          ORDER BY cases.case_open_date DESC
          LIMIT 1`,
