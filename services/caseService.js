@@ -34,6 +34,7 @@
 const crypto = require('crypto');
 const { stripSsn } = require('./contactService');
 const logService = require('./logService');
+const { blankDatesToNull } = require('../lib/blankDateToNull');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -380,8 +381,14 @@ async function updateCase(db, caseId, fields) {
     }
   }
 
+  // Blank date -> NULL. This UPDATE writes caller values verbatim, and the
+  // session sql_mode has no STRICT_TRANS_TABLES, so '' on a DATE column would
+  // silently become '0000-00-00' — which reads back as 1899-11-30 and is then
+  // indistinguishable from a real date. See lib/blankDateToNull.js.
+  const safeFields = blankDatesToNull('cases', fields);
+
   const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');
-  const values = [...keys.map(k => fields[k]), caseId];
+  const values = [...keys.map(k => safeFields[k]), caseId];
 
   const [result] = await db.query(
     `UPDATE cases SET ${setClauses} WHERE case_id = ?`,

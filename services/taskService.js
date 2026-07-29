@@ -65,6 +65,7 @@ const crypto       = require('crypto');
 const { DateTime } = require('luxon');
 const { FIRM_TZ }  = require('./timezoneService');
 const logService   = require('./logService');
+const { blankDatesToNull } = require('../lib/blankDateToNull');
 
 // ─── lazy-load to avoid circular deps ───────────────────────────────────────
 function emailSvc() { return require('./emailService'); }
@@ -936,9 +937,14 @@ async function updateTask(db, taskId, fields, actingUserId = 0) {
   const blocked = Object.keys(fields).filter(k => !ALLOWED.has(k));
   if (blocked.length) throw new Error(`updateTask: blocked fields: ${blocked.join(', ')}`);
 
-  const keys      = Object.keys(fields);
+  // Blank date -> NULL before binding: task_start / task_due are DATE columns
+  // and non-strict sql_mode would turn '' into '0000-00-00'. task_id 1039
+  // already had both. See lib/blankDateToNull.js.
+  const safeFields = blankDatesToNull('tasks', fields);
+
+  const keys      = Object.keys(safeFields);
   const setClauses = keys.map(k => `\`${k}\` = ?`).join(', ');
-  const values    = [...keys.map(k => fields[k]), taskId];
+  const values    = [...keys.map(k => safeFields[k]), taskId];
 
   const [res] = await db.query(
     `UPDATE tasks SET ${setClauses}, task_last_update = NOW() WHERE task_id = ?`,

@@ -17,6 +17,7 @@ lib/appBuild.js
 lib/auth.jwtOrApiKey.js
 lib/auth.readonly.js
 lib/auth.superuser.js
+lib/blankDateToNull.js
 lib/contactMirror.js
 lib/courtCitation.js
 lib/courtResolve.js

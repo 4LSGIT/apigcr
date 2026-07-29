@@ -67,6 +67,7 @@ const emailSvc = require('./contactEmailService');
 const addrSvc  = require('./contactAddressService');
 const logService = require('./logService');
 const crypto = require('crypto');
+const { blankDatesToNull } = require('../lib/blankDateToNull');
 
 const DEFAULT_LOG_LIMIT = 200;
 const SSN_COLUMN = 'contact_ssn';
@@ -2187,8 +2188,12 @@ async function updateContact(db, contactId, fields, { userId = 0, force = false 
     throw new Error(`updateContact: blocked columns: ${blocked.join(', ')}`);
   }
 
-  // Normalize phone + email fields if present
-  const normalized = { ...scalarFields };
+  // Normalize phone + email fields if present.
+  // blankDatesToNull also does the shallow copy: contact_dob = '' would
+  // otherwise land as '0000-00-00' under non-strict sql_mode and become
+  // indistinguishable from a real 1899-11-30 birthday. Two rows already had
+  // this. See lib/blankDateToNull.js.
+  const normalized = blankDatesToNull('contacts', scalarFields);
   if (normalized.contact_phone)  normalized.contact_phone  = normalizePhone(normalized.contact_phone);
   if (normalized.contact_phone2) normalized.contact_phone2 = normalizePhone(normalized.contact_phone2);
   if (normalized.contact_email)  normalized.contact_email  = normalizeEmail(normalized.contact_email);

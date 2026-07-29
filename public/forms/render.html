@@ -1246,6 +1246,10 @@
     // apiColumn whitelist PATCH payload (contract §3): changed ∧ has apiColumn
     // ∧ not readonly. Deliberately narrower than the default _buildPatchPayload
     // (which would send every changed non-readonly field under its own name).
+    // This REPLACES the default, so it must repeat the blank-date guard —
+    // a cleared date must reach the server as null, never '' (non-strict
+    // sql_mode would store '0000-00-00', which reads back as 1899-11-30 and
+    // then blocks the derive rules below forever).
     form_._buildPatchPayload = function () {
       var diff = this.getDiff();
       var payload = {};
@@ -1254,7 +1258,7 @@
         var col = maps.forwardMap[name];
         if (!col) continue;                    // no apiColumn → not part of PATCH
         if (maps.readonlySet[name]) continue;  // readonly → excluded
-        payload[col] = diff[name][1];          // [oldVal, newVal]
+        payload[col] = this._nullIfBlankDate(name, diff[name][1]);  // [oldVal, newVal]
       }
       return payload;
     };

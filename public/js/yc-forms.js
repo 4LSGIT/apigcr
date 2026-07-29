@@ -559,6 +559,40 @@ if (this.config.endpoints.load) {
   }
 
   /**
+   * Is this form field backed by a date control?
+   *
+   * Two sources, because they disagree: config.type is 'date' for date inputs
+   * but 'text' for datetime-local (render.html's YC_TYPE maps schema
+   * 'datetime' -> 'text' and lets YCForm auto-detect the element, same as
+   * _formatForDisplay does). So check the config first, then the live element.
+   *
+   * Used ONLY by the PATCH builders — see _buildPatchPayload.
+   */
+  _isDateField(fieldName) {
+    const fc = this.config.fields[fieldName];
+    if (!fc) return false;
+    if (fc.type === 'date') return true;
+    const el = this.el.querySelector(fc.el);
+    return !!(el && (el.type === 'date' || el.type === 'datetime-local'));
+  }
+
+  /**
+   * A cleared date input yields ''. Sent to a MySQL DATE column under the
+   * server's non-strict sql_mode that becomes '0000-00-00', which reads back
+   * as 1899-11-30 and is then indistinguishable from a real date — and, being
+   * non-empty, permanently suppresses render.html's fill-when-empty `derive`
+   * rules on that field. Send null instead.
+   *
+   * Server-side lib/blankDateToNull.js is the authoritative guard; this is the
+   * belt that keeps the wire honest. Non-date fields keep '' — it is a
+   * legitimate value for a varchar.
+   */
+  _nullIfBlankDate(fieldName, value) {
+    if (value !== '' && value !== null && value !== undefined) return value;
+    return this._isDateField(fieldName) ? null : value;
+  }
+
+  /**
    * Build the PATCH payload: only changed fields, excluding readonly fields.
    * Uses reverse apiMap to convert form field names back to API column names.
    */
@@ -579,7 +613,7 @@ if (this.config.endpoints.load) {
 
       // Map back to API column name
       const apiName = forwardMap[fieldName] || fieldName;
-      payload[apiName] = newVal;
+      payload[apiName] = this._nullIfBlankDate(fieldName, newVal);
     }
 
     return payload;

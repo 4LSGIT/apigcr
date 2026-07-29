@@ -400,7 +400,11 @@
     }
 
     // Custom PATCH payload: only send columns that actually changed
-// Maps form field names to cases table column names
+// Maps form field names to cases table column names.
+// Replaces the default builder, so it repeats the blank-date guard: clearing
+// docs_due_by must send null, not '' — under the server's non-strict sql_mode
+// '' lands in cases.docs_due as '0000-00-00', reads back as 1899-11-30, and
+// permanently suppresses the -14d derive on the Case Details form.
 form._buildPatchPayload = function() {
   const diff = this.getDiff();
   const payload = {};
@@ -412,7 +416,7 @@ form._buildPatchPayload = function() {
     payload['341_status'] = diff.outcome[1];
   }
   if ('docs_due_by' in diff) {
-    payload.docs_due = diff.docs_due_by[1];
+    payload.docs_due = this._nullIfBlankDate('docs_due_by', diff.docs_due_by[1]);
   }
 
   return payload;
