@@ -1435,13 +1435,22 @@ if (this.config.endpoints.load) {
       const watchField = el.dataset.ycShowWhen;
       const showValue = el.dataset.ycShowValue;
       const showValues = el.dataset.ycShowValues;
+      const showIncludes = el.dataset.ycShowIncludes;
 
       // Find the watched field's current value
       const watchEl = this.el.querySelector(`[name="${watchField}"]`);
-      if (!watchEl) return;
-
       let currentVal;
-      if (watchEl.type === 'checkbox') {
+      if (!watchEl) {
+        // Checkgroup fallback (Slice 2.5A): checkgroup member checkboxes carry
+        // no name attribute, so a checkgroup can never match the [name=…]
+        // lookup — resolve the container instead. Value is the comma-joined
+        // selection (_getCheckgroup), incl. the Other free text. The change/
+        // input listeners on this.el already cover the member checkboxes
+        // (they're inside the form root), so no extra binding is needed.
+        const grid = this.el.querySelector(`[data-yc-checkgroup="${watchField}"]`);
+        if (!grid) return;
+        currentVal = this._getCheckgroup(grid);
+      } else if (watchEl.type === 'checkbox') {
         currentVal = watchEl.checked ? 'true' : 'false';
       } else if (watchEl.type === 'radio') {
         const checked = this.el.querySelector(`input[name="${watchField}"]:checked`);
@@ -1452,7 +1461,13 @@ if (this.config.endpoints.load) {
 
       let show = false;
 
-      if (showValues) {
+      if (showIncludes) {
+        // includes op (Slice 2.5A, checkgroup targets): show when ANY of the
+        // wanted values is present in the comma-joined current selection.
+        const want = showIncludes.split(',').map(v => v.trim()).filter(Boolean);
+        const have = String(currentVal).split(',').map(v => v.trim());
+        show = want.some(w => have.includes(w));
+      } else if (showValues) {
         // Match any of comma-separated values
         const vals = showValues.split(',').map(v => v.trim());
         show = vals.includes(currentVal);

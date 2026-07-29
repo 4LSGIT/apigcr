@@ -30,7 +30,7 @@ const { JSDOM, ResourceLoader } = require('jsdom');
 const ROOT        = path.join(__dirname, '..');
 const RENDER_HTML = fs.readFileSync(path.join(ROOT, 'public/forms/render.html'), 'utf8');
 const YC_FORMS_JS = fs.readFileSync(path.join(ROOT, 'public/js/yc-forms.js'), 'utf8');
-const FIXTURE_DEF = JSON.parse(fs.readFileSync(path.join(ROOT, 'fixture_slice2_draft_definition.json'), 'utf8'));
+const FIXTURE_DEF = JSON.parse(fs.readFileSync(path.join(ROOT, 'ref/2026-07-27_test_quick_notes_slice2_definition.json'), 'utf8'));
 
 // Serve the real yc-forms.js; serve a per-test hook script; empty out CDN
 // assets; 404 (reject) anything else under /forms/hooks/ so the <script>

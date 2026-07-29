@@ -33,7 +33,11 @@ const FORM_KEY_RE   = /^[a-z0-9_]{1,50}$/;          // contract §2
 const FIELD_NAME_RE = /^[a-zA-Z0-9_]{1,50}$/;       // contract §4.3
 const HOOKS_RE      = /^[a-zA-Z0-9_-]{1,50}$/;      // contract §3 / §7 (path-traversal guard)
 const LINK_TYPES    = new Set(['case', 'contact', 'appt']);
-const SHOWWHEN_OPS  = new Set(['eq', 'neq', 'in', 'notEmpty']);
+const SHOWWHEN_OPS  = new Set(['eq', 'neq', 'in', 'notEmpty', 'includes']); // includes: 2.5A, checkgroup targets only
+
+// $load prefill grammar (contract §5, Slice 2.5A):
+//   $load ( '.' key | '[' field '=' value ']' )+   — literal filter values only.
+const LOAD_PREFILL_RE = /^\$load(\.[A-Za-z0-9_]+|\[[A-Za-z0-9_]+=[^\]]+\])+$/;
 
 // The full type vocabulary (contract §4.3). Slice 1's renderer draws a subset,
 // but validation accepts every declared type so drafts using repeaters/showWhen
@@ -67,6 +71,15 @@ const notFound   = (msg) => httpError(404, msg);
  * Validate a definition object. Throws a 400 Error naming the offending path on
  * the first failure. Returns silently on success.
  *
+ * Name scoping (contract §7, Slice 2.5A A4):
+ *   - TOP-LEVEL names (standard-section fields + repeater KEYS — they share the
+ *     submission data namespace) are unique form-wide.
+ *   - Repeater FIELD names are unique within their own repeater and distinct
+ *     from every top-level name — but two repeaters may share a row-field name
+ *     (collect()/populate() scope repeater lookups to one .yc-repeater-item;
+ *     only form-wide [name=…] queries — conditionals, validate() — need the
+ *     top-level guarantee).
+ *
  * @param {object} def  parsed definition JSON
  */
 function validateDefinition(def) {
@@ -77,26 +90,40 @@ function validateDefinition(def) {
     throw badRequest('definition.sections must be a non-empty array');
   }
 
-  const seen        = new Set();  // all field names, form-wide (incl. repeater fields)
-  const topLevel    = new Set();  // names of fields in STANDARD sections (valid showWhen targets)
-  const showWhenRefs = [];        // { path, field } collected for a second pass
-  let hasApiColumn  = false;
+  const topLevel      = new Set();  // standard-section field names + repeater keys (shared data namespace)
+  const topLevelTypes = {};         // top-level field name -> type (for includes-op target checks)
+  const repFieldRefs  = [];         // { name, path } — cross-checked vs topLevel in a second pass
+  const condRefs      = [];         // { path, field, op, key } collected for the second pass
+  let hasApiColumn    = false;
 
-  const noteShowWhen = (sw, path) => {
-    if (sw == null) return;
-    if (typeof sw !== 'object' || Array.isArray(sw)) {
-      throw badRequest(`${path}.showWhen must be an object`);
+  // One normalized condition { field, op, value }. `key` names the carrying
+  // property ("showWhen" / "requiredWhen") for error messages.
+  const noteCondition = (cond, path, key) => {
+    if (typeof cond !== 'object' || cond == null || Array.isArray(cond)) {
+      throw badRequest(`${path}.${key} conditions must be objects`);
     }
-    if (!SHOWWHEN_OPS.has(sw.op)) {
-      throw badRequest(`${path}.showWhen.op "${sw.op}" is not one of eq, neq, in, notEmpty`);
+    if (!SHOWWHEN_OPS.has(cond.op)) {
+      throw badRequest(`${path}.${key}.op "${cond.op}" is not one of eq, neq, in, notEmpty, includes`);
     }
-    if (typeof sw.field !== 'string' || !sw.field) {
-      throw badRequest(`${path}.showWhen.field is required`);
+    if (typeof cond.field !== 'string' || !cond.field) {
+      throw badRequest(`${path}.${key}.field is required`);
     }
-    showWhenRefs.push({ path, field: sw.field });
+    condRefs.push({ path, field: cond.field, op: cond.op, key });
   };
 
-  const validateField = (field, path, { topLevelField }) => {
+  // A condition slot: a single condition object, or an array = AND (2.5A).
+  const noteConditionSlot = (sw, path, key) => {
+    if (sw == null) return;
+    if (Array.isArray(sw)) {
+      if (sw.length === 0) throw badRequest(`${path}.${key} must not be an empty array`);
+      sw.forEach((c, i) => noteCondition(c, `${path}`, `${key}[${i}]`));
+      return;
+    }
+    noteCondition(sw, path, key);
+  };
+  const noteShowWhen = (sw, path) => noteConditionSlot(sw, path, 'showWhen');
+
+  const validateField = (field, path, { topLevelField, repScope }) => {
     if (!field || typeof field !== 'object' || Array.isArray(field)) {
       throw badRequest(`${path} must be an object`);
     }
@@ -106,11 +133,20 @@ function validateDefinition(def) {
     if (!KNOWN_TYPES.has(field.type)) {
       throw badRequest(`${path}.type "${field.type}" is not a known field type`);
     }
-    if (seen.has(field.name)) {
-      throw badRequest(`duplicate field name "${field.name}" (${path}); names must be unique form-wide`);
+
+    if (topLevelField) {
+      if (topLevel.has(field.name)) {
+        throw badRequest(`duplicate field name "${field.name}" (${path}); top-level names must be unique form-wide`);
+      }
+      topLevel.add(field.name);
+      topLevelTypes[field.name] = field.type;
+    } else {
+      if (repScope.has(field.name)) {
+        throw badRequest(`duplicate field name "${field.name}" (${path}); names must be unique within a repeater`);
+      }
+      repScope.add(field.name);
+      repFieldRefs.push({ name: field.name, path });   // vs topLevel: second pass (order-independent)
     }
-    seen.add(field.name);
-    if (topLevelField) topLevel.add(field.name);
 
     // options present iff type is select/radio/checkgroup
     const wantsOptions = OPTIONS_TYPES.has(field.type);
@@ -123,6 +159,16 @@ function validateDefinition(def) {
       throw badRequest(`${path}.options is not allowed for type "${field.type}"`);
     }
 
+    // checkgroup columns (2.5A A5): integer 1–3, checkgroup only.
+    if (field.columns !== undefined && field.columns !== null) {
+      if (field.type !== 'checkgroup') {
+        throw badRequest(`${path}.columns is only allowed on type "checkgroup"`);
+      }
+      if (!Number.isInteger(field.columns) || field.columns < 1 || field.columns > 3) {
+        throw badRequest(`${path}.columns must be an integer between 1 and 3`);
+      }
+    }
+
     // pattern, if present, must compile
     if (field.pattern !== undefined && field.pattern !== null && field.pattern !== '') {
       if (typeof field.pattern !== 'string') {
@@ -132,9 +178,26 @@ function validateDefinition(def) {
       catch (e) { throw badRequest(`${path}.pattern is not a valid regular expression: ${e.message}`); }
     }
 
+    // $load prefill (2.5A A1): grammar-checked here; non-$load prefill stays a
+    // free-form resolver expression (unchanged).
+    if (typeof field.prefill === 'string' && field.prefill.startsWith('$load')) {
+      if (!LOAD_PREFILL_RE.test(field.prefill)) {
+        throw badRequest(`${path}.prefill "${field.prefill}" is not a valid $load expression `
+          + `(grammar: $load ( '.' key | '[' field '=' value ']' )+ — literal filter values only)`);
+      }
+    }
+
+    // requiredMessage, if present, must be a string (rendered as the error text).
+    if (field.requiredMessage !== undefined && field.requiredMessage !== null
+        && typeof field.requiredMessage !== 'string') {
+      throw badRequest(`${path}.requiredMessage must be a string`);
+    }
+
     if (typeof field.apiColumn === 'string' && field.apiColumn) hasApiColumn = true;
 
     noteShowWhen(field.showWhen, path);
+    // requiredWhen (2.5A A2): same normalized-condition shape; array = AND.
+    noteConditionSlot(field.requiredWhen, path, 'requiredWhen');
   };
 
   def.sections.forEach((section, i) => {
@@ -158,11 +221,18 @@ function validateDefinition(def) {
       if (typeof section.repeater !== 'string' || !FIELD_NAME_RE.test(section.repeater)) {
         throw badRequest(`${sPath}.repeater "${section.repeater}" is invalid (must match ^[a-zA-Z0-9_]{1,50}$)`);
       }
+      // Repeater keys live in the top-level data namespace (collect() writes
+      // data[repeater] beside data[fieldName]) — enforce uniqueness there too.
+      if (topLevel.has(section.repeater)) {
+        throw badRequest(`${sPath}.repeater "${section.repeater}" collides with a top-level field or repeater name`);
+      }
+      topLevel.add(section.repeater);
       if (!Array.isArray(section.fields) || section.fields.length === 0) {
         throw badRequest(`${sPath} (repeater) requires a non-empty "fields" array`);
       }
+      const repScope = new Set();
       section.fields.forEach((f, k) => {
-        validateField(f, `${sPath}.fields[${k}]`, { topLevelField: false });
+        validateField(f, `${sPath}.fields[${k}]`, { topLevelField: false, repScope });
       });
     } else {
       if (!Array.isArray(section.rows)) {
@@ -183,10 +253,22 @@ function validateDefinition(def) {
     noteShowWhen(section.showWhen, sPath);
   });
 
-  // Second pass: showWhen.field must reference an existing TOP-LEVEL field name.
-  for (const ref of showWhenRefs) {
-    if (!topLevel.has(ref.field)) {
-      throw badRequest(`${ref.path}.showWhen.field "${ref.field}" does not reference an existing top-level field`);
+  // Second pass A: repeater field names must be distinct from every top-level
+  // name (incl. repeater keys) — deferred so section order doesn't matter.
+  for (const ref of repFieldRefs) {
+    if (topLevel.has(ref.name)) {
+      throw badRequest(`repeater field name "${ref.name}" (${ref.path}) collides with a top-level field or repeater name`);
+    }
+  }
+
+  // Second pass B: every condition's field must reference an existing TOP-LEVEL
+  // field; the includes op additionally requires a checkgroup target.
+  for (const ref of condRefs) {
+    if (!topLevel.has(ref.field) || !(ref.field in topLevelTypes)) {
+      throw badRequest(`${ref.path}.${ref.key}.field "${ref.field}" does not reference an existing top-level field`);
+    }
+    if (ref.op === 'includes' && topLevelTypes[ref.field] !== 'checkgroup') {
+      throw badRequest(`${ref.path}.${ref.key}: op "includes" requires the target field "${ref.field}" to be a checkgroup`);
     }
   }
 

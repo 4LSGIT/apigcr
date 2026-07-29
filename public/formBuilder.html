@@ -453,7 +453,7 @@ const OPTIONS_TYPES = ['select','radio','checkgroup'];
 const REPEATER_TYPES= ['text','number','date','select','checkbox'];   // contract §4.2
 const WIDTHS        = ['default','2x','3x','fixed-sm','fixed-md'];
 const MASKS         = ['','phone','ssn','zip','ein','currency'];      // yc-forms _formatMask
-const SHOWWHEN_OPS  = ['eq','neq','in','notEmpty'];
+const SHOWWHEN_OPS  = ['eq','neq','in','notEmpty','includes'];   // includes: 2.5A, checkgroup targets only
 const TYPE_LABEL = { text:'New text', textarea:'New textarea', number:'New number',
   date:'New date', datetime:'New date & time', select:'New select', radio:'New radio',
   checkbox:'New checkbox', checkgroup:'New check group', tags:'New tags', hidden:'new_hidden' };
@@ -904,7 +904,7 @@ function renderCanvas() {
       (sec.rows || []).forEach((row, ri) => {
         const rowEl = el('div', { class: 'cv-row' });
         const handle = el('div', { class: 'cv-row-handle', 'data-sel': 'r:' + si + ':' + ri,
-          title: 'Drag to move row · click to select (visibility condition)' + (row.showWhen ? '\n' + swSummary(row.showWhen) : ''),
+          title: 'Drag to move row · click to select (visibility condition)' + (row.showWhen ? '\nshows when ' + swSummary(row.showWhen) : ''),
           onclick: () => select({ t: 'row', si, ri }) },
           [ el('div', { text: 'row ' + (ri + 1) }),
             row.showWhen ? swBadge(row.showWhen, true) : null ]);
@@ -1005,20 +1005,27 @@ function fieldChip(f, selAttr, onclick) {
   const chips = el('div');
   if (f.apiColumn) chips.appendChild(el('span', { class: 'badge col', text: '⛁ ' + f.apiColumn, title: 'Database column' }));
   if (f.showWhen) chips.appendChild(swBadge(f.showWhen));
+  if (f.requiredWhen) chips.appendChild(el('span', { class: 'badge sw', text: '⚡ requiredWhen',
+    title: 'required when ' + swSummary(f.requiredWhen) }));
   if (f.prefill) chips.appendChild(el('span', { class: 'badge ftype', text: 'prefill', title: f.prefill }));
   if (chips.childNodes.length) chip.appendChild(chips);
   return chip;
 }
 
 function swBadge(sw, compact) {
-  return el('span', { class: 'badge sw', text: compact ? '⚡' : '⚡ showWhen', title: swSummary(sw) });
+  return el('span', { class: 'badge sw', text: compact ? '⚡' : '⚡ showWhen', title: 'shows when ' + swSummary(sw) });
 }
+// One condition or an AND array (2.5A) → human summary (no leading verb —
+// callers prefix "shows when" / "required when").
 function swSummary(sw) {
   if (!sw) return '';
-  const val = Array.isArray(sw.value) ? sw.value.join(', ') : (sw.value != null ? sw.value : '');
-  return sw.op === 'notEmpty'
-    ? `shows when ${sw.field} is not empty`
-    : `shows when ${sw.field} ${sw.op} ${val}`;
+  const conds = Array.isArray(sw) ? sw : [sw];
+  return conds.map(c => {
+    const val = Array.isArray(c.value) ? c.value.join(', ') : (c.value != null ? c.value : '');
+    if (c.op === 'notEmpty') return `${c.field} is not empty`;
+    if (c.op === 'includes') return `${c.field} includes ${val}`;
+    return `${c.field} ${c.op} ${val}`;
+  }).join(' AND ');
 }
 
 // Re-render canvas preserving scroll + selection (called after model edits).
@@ -1058,6 +1065,10 @@ function selNode() {
 }
 
 // All field names form-wide (for uniqueness checks), optionally excluding one node.
+// This remains the correct CHECK-SET for top-level fields and repeater keys:
+// a top-level name must differ from every repeater field (2.5A A4 — repeater
+// fields must be distinct from every top-level name, so the collision is
+// symmetric no matter which side is renamed).
 function allNames(exceptNode) {
   const names = [];
   (MODEL.sections || []).forEach(sec => {
@@ -1069,6 +1080,47 @@ function allNames(exceptNode) {
     }
   });
   return names;
+}
+
+// The top-level data namespace: standard-section field names + repeater keys.
+// (2.5A A4) — the check-set for a REPEATER FIELD, together with its own
+// repeater's other fields. Two repeaters may share a row-field name.
+function topLevelNamespace(exceptNode) {
+  const names = [];
+  (MODEL.sections || []).forEach(sec => {
+    if (Object.prototype.hasOwnProperty.call(sec, 'repeater')) {
+      if (sec !== exceptNode && sec.repeater) names.push(sec.repeater);
+    } else {
+      (sec.rows || []).forEach(r => (r.fields || []).forEach(f => { if (f !== exceptNode) names.push(f.name); }));
+    }
+  });
+  return names;
+}
+
+// The repeater section containing field f (null when f is top-level).
+function containingRepeater(f) {
+  return (MODEL.sections || []).find(sec =>
+    Object.prototype.hasOwnProperty.call(sec, 'repeater') && (sec.fields || []).includes(f)) || null;
+}
+
+// The uniqueness check-set for one FIELD node per the A4 scoping rule:
+// top-level field → all names form-wide; repeater field → its own repeater's
+// other fields + the top-level namespace (NOT other repeaters' fields).
+function namesForField(f) {
+  const rep = containingRepeater(f);
+  if (!rep) return allNames(f);
+  const own = (rep.fields || []).filter(x => x !== f).map(x => x.name);
+  return own.concat(topLevelNamespace(f));
+}
+
+// Top-level field name -> type (includes-op targets must be checkgroups).
+function topLevelFieldTypes() {
+  const types = {};
+  (MODEL.sections || []).forEach(sec => {
+    if (Object.prototype.hasOwnProperty.call(sec, 'repeater')) return;
+    (sec.rows || []).forEach(r => (r.fields || []).forEach(f => { if (f.name) types[f.name] = f.type; }));
+  });
+  return types;
 }
 
 // Top-level field names (valid showWhen targets), optionally excluding one node.
@@ -1083,23 +1135,51 @@ function topLevelNames(exceptNode) {
   return names;
 }
 
-// Every node carrying a showWhen that references `name`, with a human description.
+// Every CONDITION (showWhen on sections/rows/fields, requiredWhen on fields)
+// referencing `name`, with a human description. Arrays (AND, 2.5A) are scanned
+// per-condition; each hit carries the condition object so cascades can remove
+// or rename just that condition.
 function refsTo(name) {
   const out = [];
+  const scan = (node, key, desc) => {
+    const slot = node[key];
+    if (!slot) return;
+    (Array.isArray(slot) ? slot : [slot]).forEach(cond => {
+      if (cond && cond.field === name) {
+        out.push({ node, key, cond, desc: key === 'requiredWhen' ? desc + ' (required condition)' : desc });
+      }
+    });
+  };
   (MODEL.sections || []).forEach((sec, si) => {
     const secDesc = (Object.prototype.hasOwnProperty.call(sec, 'repeater'))
       ? `repeater section "${sec.title || sec.repeater}"`
       : `section "${sec.title || '#' + (si + 1)}"`;
-    if (sec.showWhen && sec.showWhen.field === name) out.push({ node: sec, desc: secDesc });
+    scan(sec, 'showWhen', secDesc);
     if (Object.prototype.hasOwnProperty.call(sec, 'repeater')) return;   // repeater fields carry no showWhen targets
     (sec.rows || []).forEach((row, ri) => {
-      if (row.showWhen && row.showWhen.field === name) out.push({ node: row, desc: `row ${ri + 1} of ${secDesc}` });
+      scan(row, 'showWhen', `row ${ri + 1} of ${secDesc}`);
       (row.fields || []).forEach(f => {
-        if (f.showWhen && f.showWhen.field === name) out.push({ node: f, desc: `field "${f.name}"` });
+        scan(f, 'showWhen', `field "${f.name}"`);
+        scan(f, 'requiredWhen', `field "${f.name}"`);
       });
     });
   });
   return out;
+}
+
+// Remove ONE referenced condition (a refsTo hit): drop it from its slot; a
+// slot emptied or reduced to one condition collapses back to the minimal
+// JSON shape (object, or gone).
+function removeCondRef(r) {
+  const slot = r.node[r.key];
+  if (Array.isArray(slot)) {
+    const rest = slot.filter(c => c !== r.cond);
+    if (!rest.length) delete r.node[r.key];
+    else if (rest.length === 1) r.node[r.key] = rest[0];
+    else r.node[r.key] = rest;
+  } else {
+    delete r.node[r.key];
+  }
 }
 
 // ── Name generation ──────────────────────────────────────────────────────────
@@ -1107,24 +1187,25 @@ function slugify(label) {
   return String(label || '').toLowerCase()
     .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 50) || 'field';
 }
-function genName(base, exceptNode) {
-  const taken = new Set(allNames(exceptNode));
+function genName(base, exceptNode, taken) {
+  const set = new Set(taken || allNames(exceptNode));
   let name = slugify(base);
-  if (!taken.has(name)) return name;
+  if (!set.has(name)) return name;
   for (let i = 2; ; i++) {
     const cand = (name.slice(0, 50 - String(i).length - 1)) + '_' + i;
-    if (!taken.has(cand)) return cand;
+    if (!set.has(cand)) return cand;
   }
 }
 
-// Central rename: writes the name AND cascades into every showWhen that
-// referenced the old one (references would otherwise silently break — the
-// server 400s on dangling showWhen targets at save/publish).
+// Central rename: writes the name AND cascades into every condition
+// (showWhen AND requiredWhen, incl. inside AND arrays) that referenced the
+// old one (references would otherwise silently break — the server 400s on
+// dangling condition targets at save/publish).
 function renameField(f, newName) {
   const old = f.name;
   f.name = newName;
   if (old && old !== newName) {
-    refsTo(old).forEach(r => { r.node.showWhen.field = newName; });
+    refsTo(old).forEach(r => { r.cond.field = newName; });
   }
 }
 
@@ -1141,9 +1222,17 @@ function locArr(loc) {
 }
 const isRepLoc = loc => String(loc).indexOf('rfields:') === 0;
 
-function newField(type) {
+function newField(type, loc) {
   const label = TYPE_LABEL[type] || ('New ' + type);
-  const f = { name: genName(type === 'hidden' ? 'hidden' : label), type };
+  // Auto-name dedupe follows the A4 scoping rule: a field headed into a
+  // repeater only needs to avoid that repeater's own names + the top-level
+  // namespace — another repeater's "new_text" is not a collision.
+  let taken = null;
+  if (loc && isRepLoc(loc)) {
+    const sec = MODEL.sections[+String(loc).split(':')[1]];
+    if (sec) taken = (sec.fields || []).map(x => x.name).concat(topLevelNamespace());
+  }
+  const f = { name: genName(type === 'hidden' ? 'hidden' : label, null, taken), type };
   if (type !== 'hidden') f.label = label;
   if (OPTIONS_TYPES.includes(type)) f.options = ['Option 1'];
   AUTO_NAMES.add(f);
@@ -1157,7 +1246,7 @@ function addFieldAt(loc, type, idx) {
   }
   const arr = locArr(loc);
   if (!arr) return null;
-  const f = newField(type);
+  const f = newField(type, loc);
   arr.splice(idx, 0, f);
   const p = loc.split(':');
   SEL = isRepLoc(loc)
@@ -1188,13 +1277,13 @@ async function moveField(fromLoc, oldIdx, toLoc, newIdx) {
     const refs = refsTo(f.name);
     if (refs.length) {
       const ok = await ycConfirm(
-        `"${f.name}" is referenced by visibility conditions on:\n • ` +
+        `"${f.name}" is referenced by conditions on:\n • ` +
         refs.map(r => r.desc).join('\n • ') +
         `\n\nMove it into the repeater and remove those conditions?`,
         { confirmText: 'Move & remove' }
       );
       if (!ok) { deferSync(); return; }        // model untouched → re-render reverts the DOM
-      refs.forEach(r => { delete r.node.showWhen; });
+      refs.forEach(removeCondRef);
     }
   }
 
@@ -1235,7 +1324,7 @@ function addSectionAt(idx, kind) {
     // A repeater must have a non-empty fields array to pass server validation —
     // seed with one text field.
     sec = { repeater: genName('repeater'), title: 'Repeater', addLabel: '+ Add', fields: [] };
-    const f = { name: genName('new_text'), type: 'text', label: 'New text' };
+    const f = { name: genName('new_text', null, topLevelNamespace()), type: 'text', label: 'New text' };
     AUTO_NAMES.add(f);
     sec.fields.push(f);
   } else {
@@ -1321,12 +1410,12 @@ async function deleteSelected() {
     const refs = SEL.t === 'field' ? refsTo(node.name) : [];   // rfield names are never showWhen targets
     let msg = `Delete field "${node.name}"?`;
     if (refs.length) {
-      msg = `Field "${node.name}" is referenced by visibility conditions on:\n • ` +
+      msg = `Field "${node.name}" is referenced by conditions on:\n • ` +
             refs.map(r => r.desc).join('\n • ') +
             `\n\nDelete the field and remove those conditions?`;
     }
     if (!await ycConfirm(msg, { confirmText: 'Delete', danger: true })) return false;
-    refs.forEach(r => { delete r.node.showWhen; });
+    refs.forEach(removeCondRef);
     const arr = SEL.t === 'field'
       ? MODEL.sections[SEL.si].rows[SEL.ri].fields
       : MODEL.sections[SEL.si].fields;
@@ -1337,7 +1426,7 @@ async function deleteSelected() {
     const outsideRefs = collectOutsideRefs(names, inside, node);
     if (!await ycConfirm(deleteContainerMsg(`row ${SEL.ri + 1}`, (node.fields || []).length + ' field(s)', outsideRefs),
         { confirmText: 'Delete', danger: true })) return false;
-    outsideRefs.forEach(r => { delete r.node.showWhen; });
+    outsideRefs.forEach(removeCondRef);
     MODEL.sections[SEL.si].rows.splice(SEL.ri, 1);
   } else if (SEL.t === 'section') {
     const isRep = isRepeaterSection(node);
@@ -1352,7 +1441,7 @@ async function deleteSelected() {
     const what = isRep ? `repeater section "${node.title || node.repeater}"` : `section "${node.title || '#' + (SEL.si + 1)}"`;
     if (!await ycConfirm(deleteContainerMsg(what, fields.length + ' field(s)', outsideRefs),
         { confirmText: 'Delete', danger: true })) return false;
-    outsideRefs.forEach(r => { delete r.node.showWhen; });
+    outsideRefs.forEach(removeCondRef);
     MODEL.sections.splice(SEL.si, 1);
   }
 
@@ -1372,7 +1461,7 @@ function collectOutsideRefs(names, insideSet, containerNode) {
 function deleteContainerMsg(what, contains, outsideRefs) {
   let msg = `Delete ${what} (contains ${contains})?`;
   if (outsideRefs.length) {
-    msg += `\n\nFields inside are referenced by visibility conditions on:\n • ` +
+    msg += `\n\nFields inside are referenced by conditions on:\n • ` +
            outsideRefs.map(r => r.desc).join('\n • ') +
            `\n\nDeleting will also remove those conditions.`;
   }
@@ -2043,6 +2132,12 @@ function insSettings(ins) {
       help: 'Names a repo file /forms/hooks/{name}.js (onLoad / onSave). Executable code lives in the repo only — never in the database. Not loaded in preview.'
     }),
   ]));
+
+  // Documentation note (2.5A A8) — form-level.
+  ins.appendChild(group('Notes', [
+    pText('Note (documentation only)', MODEL.note || '', v => { setOrDel(MODEL, 'note', v); touched(); },
+      { textarea: true, help: 'Free-form documentation stored in the definition. Ignored by the renderer; never affects schema versioning.' }),
+  ]));
 }
 
 function defaultLoad() {
@@ -2061,6 +2156,8 @@ function insSection(ins, sec) {
     pText('Title', sec.title || '', v => { setOrDel(sec, 'title', v); touched(); }),
     pText('Subtitle', sec.subtitle || '', v => { setOrDel(sec, 'subtitle', v); touched(); },
       { help: 'Gray hint text under the title.' }),
+    pText('Note (documentation only)', sec.note || '', v => { setOrDel(sec, 'note', v); touched(); },
+      { textarea: true, help: 'Free-form documentation stored in the definition. Ignored by the renderer; never affects schema versioning.' }),
   ]));
   ins.appendChild(swGroup(sec));
 }
@@ -2082,6 +2179,8 @@ function insRepeater(ins, sec) {
     pText('Subtitle', sec.subtitle || '', v => { setOrDel(sec, 'subtitle', v); touched(); }),
     pText('Add button label', sec.addLabel || '', v => { setOrDel(sec, 'addLabel', v); touched(); },
       { placeholder: '+ Add' }),
+    pText('Note (documentation only)', sec.note || '', v => { setOrDel(sec, 'note', v); touched(); },
+      { textarea: true, help: 'Free-form documentation stored in the definition. Ignored by the renderer; never affects schema versioning.' }),
   ]));
   ins.appendChild(swGroup(sec));
   ins.appendChild(group('Fields', [
@@ -2093,68 +2192,115 @@ function insRepeater(ins, sec) {
 function insRow(ins, row) {
   ins.appendChild(el('h3', { text: 'Row' }));
   ins.appendChild(group(null, [
-    el('div', { class: 'help', text: 'A row groups fields side by side. Rows have no properties besides a visibility condition.' }),
+    el('div', { class: 'help', text: 'A row groups fields side by side. Rows have no properties besides a visibility condition and a note.' }),
+    pText('Note (documentation only)', row.note || '', v => { setOrDel(row, 'note', v); touched(); },
+      { textarea: true, help: 'Free-form documentation stored in the definition. Ignored by the renderer; never affects schema versioning.' }),
   ]));
   ins.appendChild(swGroup(row));
 }
 
-// ── showWhen editor (sections, rows, fields) ────────────────────────────────
-function swGroup(node) {
+// ── Condition editor (2.5A A8) — shared by the showWhen editor (sections,
+//    rows, fields) and the requiredWhen editor (fields). Manages node[key],
+//    which is a single condition object or an array = AND. A single condition
+//    is stored as an object (minimal JSON); adding a second converts to an
+//    array; removing back to one collapses to an object again. The `includes`
+//    op is offered only when the selected target is a checkgroup (server
+//    enforces the same at save/publish). Target dropdowns offer TOP-LEVEL
+//    fields only — unchanged. ────────────────────────────────────────────────
+function swGroup(node) { return condGroup(node, 'showWhen', 'Visibility'); }
+
+function condGroup(node, key, title) {
   const kids = [];
   const targets = topLevelNames(node);   // top-level field names only, excluding the node itself
+  const types   = topLevelFieldTypes();
+  const isReq   = key === 'requiredWhen';
+  const slot    = node[key];
+  const conds   = slot == null ? [] : (Array.isArray(slot) ? slot : [slot]);
 
-  if (!node.showWhen) {
+  const addLabel = isReq ? '+ Add required-when condition' : '+ Add condition';
+  const helpAdd  = isReq
+    ? 'Make this field required only while a condition holds. Prefer this over plain Required for fields inside conditional sections — a hidden required field blocks Save invisibly.'
+    : 'Show this only when another field has a given value.';
+
+  if (!conds.length) {
     if (targets.length) {
       kids.push(el('div', { class: 'prop' }, [
-        el('button', { class: 'ghost small', text: '+ Add condition', onclick: () => {
-          node.showWhen = { field: targets[0], op: 'eq', value: '' };
+        el('button', { class: 'ghost small', text: addLabel, onclick: () => {
+          node[key] = { field: targets[0], op: 'eq', value: '' };
           touched(); renderInspector();
         }}),
       ]));
-      kids.push(el('div', { class: 'help', text: 'Show this only when another field has a given value.' }));
+      kids.push(el('div', { class: 'help', text: helpAdd }));
     } else {
       kids.push(el('div', { class: 'help', text: 'No possible condition targets yet — conditions reference top-level fields.' }));
     }
-    return group('Visibility', kids);
+    return group(title, kids);
   }
 
-  const sw = node.showWhen;
-  // Legacy-safe: if the current target no longer exists, keep it listed so the
-  // user can see (and fix) the dangling reference rather than it silently changing.
-  const choices = targets.includes(sw.field) ? targets : [sw.field].concat(targets);
+  conds.forEach((sw, ci) => {
+    if (conds.length > 1 && ci > 0) {
+      kids.push(el('div', { class: 'help', text: 'AND', style: 'text-align:center; font-weight:600;' }));
+    }
 
-  kids.push(pSelect('When field', sw.field, choices, v => { sw.field = v; touched(); },
-    targets.includes(sw.field) ? null : { help: '⚠ current target no longer exists — pick a valid field' }));
+    // Legacy-safe: if the current target no longer exists, keep it listed so the
+    // user can see (and fix) the dangling reference rather than it silently changing.
+    const choices = targets.includes(sw.field) ? targets : [sw.field].concat(targets);
 
-  kids.push(pSelect('Operator', SHOWWHEN_OPS.includes(sw.op) ? sw.op : 'eq',
-    [['eq', 'equals'], ['neq', 'does not equal'], ['in', 'is one of'], ['notEmpty', 'is not empty']],
-    v => {
-      sw.op = v;
-      if (v === 'notEmpty') delete sw.value;
-      else if (v === 'in' && !Array.isArray(sw.value)) sw.value = sw.value ? [String(sw.value)] : [];
-      else if ((v === 'eq' || v === 'neq') && Array.isArray(sw.value)) sw.value = sw.value[0] || '';
-      touched(); renderInspector();
-    }));
+    kids.push(pSelect('When field', sw.field, choices, v => { sw.field = v; touched(); renderInspector(); },
+      targets.includes(sw.field) ? null : { help: '⚠ current target no longer exists — pick a valid field' }));
 
-  if (sw.op === 'in') {
-    kids.push(pText('Values (comma-separated)', Array.isArray(sw.value) ? sw.value.join(', ') : '', v => {
-      sw.value = v.split(',').map(s => s.trim()).filter(Boolean);
-      touched();
-    }, { help: 'Shows when the field matches any of these.' }));
-  } else if (sw.op === 'eq' || sw.op === 'neq') {
-    kids.push(pText('Value', sw.value != null && !Array.isArray(sw.value) ? sw.value : '', v => {
-      sw.value = v; touched();
-    }, { help: 'For checkboxes use "true" / "false".' }));
+    // includes is offered only for checkgroup targets (or kept listed when
+    // already selected, flagged, so a legacy value never silently changes).
+    const targetIsCg = types[sw.field] === 'checkgroup';
+    const opChoices = [['eq', 'equals'], ['neq', 'does not equal'], ['in', 'is one of'], ['notEmpty', 'is not empty']];
+    if (targetIsCg || sw.op === 'includes') opChoices.push(['includes', 'includes any of (checkgroup)']);
+
+    kids.push(pSelect('Operator', SHOWWHEN_OPS.includes(sw.op) ? sw.op : 'eq', opChoices,
+      v => {
+        sw.op = v;
+        if (v === 'notEmpty') delete sw.value;
+        else if ((v === 'in' || v === 'includes') && !Array.isArray(sw.value)) sw.value = sw.value ? [String(sw.value)] : [];
+        else if ((v === 'eq' || v === 'neq') && Array.isArray(sw.value)) sw.value = sw.value[0] || '';
+        touched(); renderInspector();
+      },
+      sw.op === 'includes' && !targetIsCg
+        ? { help: '⚠ includes requires a checkgroup target — save will be rejected' } : null));
+
+    if (sw.op === 'in' || sw.op === 'includes') {
+      kids.push(pText('Values (comma-separated)', Array.isArray(sw.value) ? sw.value.join(', ') : '', v => {
+        sw.value = v.split(',').map(s => s.trim()).filter(Boolean);
+        touched();
+      }, { help: sw.op === 'includes'
+            ? 'Matches when any of these is checked in the target check group.'
+            : 'Shows when the field matches any of these.' }));
+    } else if (sw.op === 'eq' || sw.op === 'neq') {
+      kids.push(pText('Value', sw.value != null && !Array.isArray(sw.value) ? sw.value : '', v => {
+        sw.value = v; touched();
+      }, { help: 'For checkboxes use "true" / "false".' }));
+    }
+
+    kids.push(el('div', { class: 'prop' }, [
+      el('button', { class: 'ghost small', text: conds.length > 1 ? 'Remove this condition' : 'Remove condition', onclick: () => {
+        removeCondRef({ node, key, cond: sw });
+        touched(); renderInspector();
+      }}),
+    ]));
+  });
+
+  if (targets.length) {
+    kids.push(el('div', { class: 'prop' }, [
+      el('button', { class: 'ghost small', text: '+ AND condition', onclick: () => {
+        const cur = node[key];
+        node[key] = (Array.isArray(cur) ? cur : [cur]).concat([{ field: targets[0], op: 'eq', value: '' }]);
+        touched(); renderInspector();
+      }}),
+    ]));
+    if (conds.length > 1) {
+      kids.push(el('div', { class: 'help', text: 'All conditions must hold (AND).' }));
+    }
   }
 
-  kids.push(el('div', { class: 'prop' }, [
-    el('button', { class: 'ghost small', text: 'Remove condition', onclick: () => {
-      delete node.showWhen;
-      touched(); renderInspector();
-    }}),
-  ]));
-
-  return group('Visibility', kids);
+  return group(title, kids);
 }
 
 // ── Options editor (structured; select / radio / checkgroup) ────────────────
@@ -2218,6 +2364,14 @@ function optionsEditor(f) {
       if (v) f.allowOther = true; else delete f.allowOther;
       touched();
     }));
+    // columns 1–3 (2.5A A5): inline grid override; default (absent) keeps the
+    // stylesheet's 3 columns and its mobile collapse-to-1 media query. An
+    // explicit value (even 3) is an inline style and also applies on mobile.
+    kids.push(pSelect('Columns', f.columns != null ? String(f.columns) : '',
+      [['', 'default (3)'], ['1', '1'], ['2', '2'], ['3', '3']], v => {
+        if (v === '') delete f.columns; else f.columns = +v;
+        touched();
+      }, { help: 'Checkbox grid columns. Default follows the stylesheet (3, collapsing to 1 on mobile); an explicit value applies everywhere.' }));
   }
   return group('Options', kids);
 }
@@ -2233,7 +2387,14 @@ function insField(ins, f, inRepeater) {
     mono: true,
     validate: raw => {
       if (!FIELD_NAME_RE.test(raw)) return 'must match ^[a-zA-Z0-9_]{1,50}$';
-      if (allNames(f).includes(raw)) return `"${raw}" is already in use (names are unique form-wide)`;
+      // A4 scoping: repeater fields only collide with their OWN repeater's
+      // names + the top-level namespace; top-level fields collide with
+      // everything (the repeater-vs-top-level rule is symmetric).
+      if (namesForField(f).includes(raw)) {
+        return inRepeater
+          ? `"${raw}" is already used in this repeater or by a top-level field`
+          : `"${raw}" is already in use (top-level names are unique form-wide)`;
+      }
       return null;
     },
     help: 'Auto-generated from the label until you edit it manually. Renaming counts as remove + add for schema versioning — the next publish will bump the version. Conditions referencing this field are updated automatically.'
@@ -2241,7 +2402,7 @@ function insField(ins, f, inRepeater) {
   const labelProp = pText('Label', f.label || '', v => {
     setOrDel(f, 'label', v);
     if (AUTO_NAMES.has(f)) {
-      renameField(f, genName(v || f.type, f));
+      renameField(f, genName(v || f.type, f, namesForField(f)));
       nameProp._input.value = f.name;
       nameProp._input.classList.remove('bad');
     }
@@ -2321,8 +2482,17 @@ function insField(ins, f, inRepeater) {
 
     // Validation (not supported inside repeaters — v1 runtime)
     if (canHide) {
+      // A7 lint: plain required on a field that can be hidden (its own
+      // showWhen or a row/section ancestor's) blocks Save invisibly when
+      // hidden — validate() does not skip display:none fields. requiredWhen
+      // is the cure; point at it. Non-blocking.
+      const governed = fieldVisibilityGoverned(f);
       ins.appendChild(group('Validation', [
-        pCheck('Required', !!f.required, v => { if (v) f.required = true; else delete f.required; touched(); }),
+        pCheck('Required', !!f.required, v => { if (v) f.required = true; else delete f.required; touched(); renderInspector(); }),
+        (f.required && governed
+          ? el('div', { class: 'help', style: 'color:var(--warn);', text:
+              '⚠ This field can be hidden but is always required — a hidden required field blocks Save invisibly. Consider a required-when condition below instead.' })
+          : null),
         el('div', { class: 'two-col' }, [
           pNum('Min length', f.minLength != null ? f.minLength : null, v => { setOrDel(f, 'minLength', v); touched(); }, { min: 0 }),
           pNum('Max length', f.maxLength != null ? f.maxLength : null, v => { setOrDel(f, 'maxLength', v); touched(); }, { min: 0 }),
@@ -2342,6 +2512,16 @@ function insField(ins, f, inRepeater) {
           touched();
         }),
       ]));
+
+      // requiredWhen editor (2.5A A8) — same machinery as the visibility
+      // editor; array = AND; includes offered for checkgroup targets.
+      ins.appendChild(condGroup(f, 'requiredWhen', 'Required when'));
+      if (f.requiredWhen) {
+        ins.appendChild(group(null, [
+          pText('Required message', f.requiredMessage || '', v => { setOrDel(f, 'requiredMessage', v); touched(); },
+            { placeholder: 'This field is required', help: 'Error text shown when the condition holds and the field is empty.' }),
+        ]));
+      }
     }
 
     ins.appendChild(swGroup(f));
@@ -2350,6 +2530,27 @@ function insField(ins, f, inRepeater) {
       el('div', { class: 'help', text: 'Inside repeaters: no database column, prefill, masks, validation, or conditions (v1 runtime).' }),
     ]));
   }
+
+  // Documentation note (2.5A A8) — explicitly-ignored contract key, never
+  // rendered, never affects the schema signature. Both field kinds.
+  ins.appendChild(group('Notes', [
+    pText('Note (documentation only)', f.note || '', v => { setOrDel(f, 'note', v); touched(); },
+      { textarea: true, help: 'Free-form documentation stored in the definition. Ignored by the renderer; never affects schema versioning.' }),
+  ]));
+}
+
+// A7 helper: is this field's visibility governed by its own showWhen or a
+// row/section ancestor's? Ancestors resolved through the current selection
+// (the inspector only renders the selected field).
+function fieldVisibilityGoverned(f) {
+  if (f.showWhen) return true;
+  if (SEL && SEL.t === 'field') {
+    const s = MODEL.sections[SEL.si];
+    if (s && s.showWhen) return true;
+    const r = s && (s.rows || [])[SEL.ri];
+    if (r && r.showWhen) return true;
+  }
+  return false;
 }
 
 // Type change with cleanup so the definition stays server-valid

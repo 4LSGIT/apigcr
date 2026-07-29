@@ -103,6 +103,7 @@ Server-side validation on create/update: `form_key` matches `^[a-z0-9_]{1,50}$`;
 | `onSubmit.patch` | optional | If present, PATCH payload = **changed fields that declare `apiColumn`**, excluding `readonly` fields (explicit whitelist — deliberately narrower than the default `_buildPatchPayload`; renderer overrides it) |
 | `onSubmit.workflow` | optional | Same semantics as YCForm: form data spread as init vars, system fields win |
 | `hooks` | string or null | Names a repo file `/forms/hooks/{hooks}.js`. If set, renderer loads it via `<script>`; the file may define `window.ycHooks = { onLoad(form, data), onSave(form, result) }`, called at the same points hand-built forms use them. **Executable code lives in the repo only — never in the DB.** |
+| `note` | string, optional | **Documentation only, explicitly ignored** (2.5A). Valid at form, section, row, and field level. Never rendered, never validated beyond being ignored, never part of the schema signature (§6 hashes `(name, type)` only). The migration ports use it to record why a field exists. |
 
 `formKey`, `linkType`, `title`, `schemaVersion` are NOT in the JSON — they come from the template row (single source of truth).
 
@@ -166,7 +167,18 @@ Renderer generates the container, `<template>`, add/remove buttons, and the YCFo
 }
 ```
 
-Only `name` and `type` are required; everything else optional. `name` unique across the whole form (incl. repeater field names vs top-level — enforce in §7), `^[a-zA-Z0-9_]{1,50}$`.
+Only `name` and `type` are required; everything else optional. `name` matches `^[a-zA-Z0-9_]{1,50}$`.
+
+**Name scoping (2.5A A4):** TOP-LEVEL names — standard-section field names **plus repeater keys** (they share the submission data namespace: `collect()` writes `data[repeater]` beside `data[fieldName]`) — are unique form-wide. Repeater FIELD names are unique **within their own repeater** and distinct from every top-level name, but two repeaters may share a row-field name (`collect()`/`populate()` scope repeater lookups to one `.yc-repeater-item`; only form-wide `[name=…]` queries — conditionals, `validate()` — need the top-level guarantee). Rationale: renaming to avoid a cross-repeater duplicate is **data loss** against existing submissions.
+
+**Additional field keys (2.5A):**
+
+| Key | Type | Notes |
+|---|---|---|
+| `requiredWhen` | condition or condition[] | Conditionally required (A2). Same normalized condition shape as `showWhen` (§4.4); **an array means AND**. Compiled by the renderer into `validation.custom` — `validate()` already passes `collect()` as the second argument, so no runtime change. Use this instead of `required: true` on any field that can be hidden: `validate()` does **not** skip `display:none` fields, so a plain required field inside a hidden section blocks Save with an invisible error. Ignored (with a warn) inside repeaters. |
+| `requiredMessage` | string | Error text for a failed `requiredWhen` (default "This field is required"). |
+| `columns` | 1 \| 2 \| 3 | Checkgroup only (A5). Emits an inline `grid-template-columns` override (`1fr` for 1, `repeat(N,1fr)` for 2/3), matching casedetails-bk's hand-built pattern. Absent → the stylesheet default (3 columns, collapsing to 1 on mobile). NOTE: an explicit value — including an explicit 3 — is an inline style and therefore also overrides the mobile media query. |
+| `note` | string | Documentation only — see §3. |
 
 **Types → rendering → YCForm `fields` type:**
 
@@ -196,8 +208,10 @@ Only `name` and `type` are required; everything else optional. `name` unique acr
 
 ### 4.4 `showWhen` (sections, rows, fields)
 
-Normalized form: `{ "field": "<name>", "op": "eq"|"neq"|"in"|"notEmpty", "value": "x" | ["x","y"] }`.
-Renderer translates to the existing runtime attrs — nothing new at runtime:
+Normalized form: `{ "field": "<name>", "op": "eq"|"neq"|"in"|"notEmpty"|"includes", "value": "x" | ["x","y"] }`.
+**An array of conditions means AND** (2.5A). The same normalized condition (single or array) is what `requiredWhen` (§4.3) accepts.
+
+Renderer translation to runtime attrs:
 
 | op | emitted |
 |---|---|
@@ -205,8 +219,13 @@ Renderer translates to the existing runtime attrs — nothing new at runtime:
 | `neq` | `data-yc-show-value="!{value}"` |
 | `in` | `data-yc-show-values="a,b,c"` |
 | `notEmpty` | `data-yc-show-value="*"` |
+| `includes` | `data-yc-show-includes="a,b"` (2.5A) |
 
-Only these four ops exist because only these four exist in `yc-forms.js`. Field-level `showWhen` wraps the individual `.yc-field`.
+`includes` (2.5A A3) requires a **checkgroup** target (enforced in §7): checkgroup member checkboxes carry no `name` attribute, so `_evaluateConditionals` resolves the `[data-yc-checkgroup="{field}"]` container instead and matches when ANY listed value is present in the comma-joined selection (`_getCheckgroup`, incl. the Other free text). This checkgroup fallback is the ONE `yc-forms.js` runtime change in 2.5A.
+
+**AND arrays** (2.5A A3): the renderer puts condition `[0]` on the node itself (single-condition output is byte-identical to pre-2.5) and wraps one `<div class="ycr-and-wrap">` per additional condition — nested `data-yc-show-when` elements compose as AND at runtime (an outer `display:none` hides everything inside). The wrapper is `display: contents` (render.html-local CSS) so `.yc-row`'s flex layout is untouched. Zero runtime change.
+
+Field-level `showWhen` wraps the individual `.yc-field`. Conditions target TOP-LEVEL fields only (repeater keys and repeater fields are not valid targets).
 
 ---
 
@@ -220,7 +239,27 @@ Only these four ops exist because only these four exist in `yc-forms.js`. Field-
 3. Splits the result, writes values honoring `prefillMode`: `ifEmpty` (default — the snapshot-guard pattern) or `always`.
 4. `resetBaseline()` is handled by the normal init flow (step 13c) — no extra work.
 
-Notes: prefill is for data **outside** the loaded entity (joins, lookups). Data on the entity itself flows through `endpoints.load` + `apiColumn` (populate/apiMap) as usual. Prefill is skipped in preview-without-entity mode. **External forms cannot use resolver prefill** (`/resolve` is authed) — portal prefill is a server-side/token concern for the portal build.
+### 5.1 `$load` prefill (2.5A A1)
+
+A `prefill` value beginning with `$load` resolves against the load payload (`form._loadResult` — the full `endpoints.load` response / parent `entityData`) instead of `POST /resolve`:
+
+```
+grammar:  $load ( '.' key | '[' field '=' value ']' )+      (validated: ^\$load(\.[A-Za-z0-9_]+|\[[A-Za-z0-9_]+=[^\]]+\])+$)
+
+$load.case.case_trustee
+$load.clients[relate_type=Primary].contact_fname
+$load.clients[relate_type=Secondary].contact_id
+```
+
+- Dot steps are plain property access; `[field=value]` filters an array via `Array.prototype.find` with a **literal** value, compared string-loosely (`String(item[field]) === value`, so numeric ids match). Nested `$load` inside a filter value is OUT of scope (the 341 attorney two-hop stays a hook).
+- Any miss (absent key, filter on a non-array, no matching item) → the write is skipped; `"undefined"` is never written. A path that resolves to an object/array is skipped with a warn.
+- Writes go through the same helper as resolver prefill, so `prefillMode` (`ifEmpty`/`always`), date/datetime/mask normalization and the pre-`resetBaseline` ordering all apply.
+- Runs at the **top** of the generated `onLoad`, before the resolver call — a form using both is deterministic.
+- Unlike resolver prefill, `$load` prefill ALSO runs in **preview when a `link_id` is supplied** (the payload is already fetched; no extra request, no write). Without `endpoints.load` there is nothing to read — skipped with a warn.
+
+**Known trap (documented, not fixed):** `prefillMode: "ifEmpty"` runs *after* populate, so a prefill (either kind) on a field that also declares an `apiColumn` is dead code whenever that column is non-empty in live mode — populate fills the field first and ifEmpty then sees a value.
+
+Notes: prefill is for data **outside** the loaded entity (joins, lookups) — with `$load` covering related data already IN the load payload, and `/resolve` covering true lookups. Data on the entity itself flows through `endpoints.load` + `apiColumn` (populate/apiMap) as usual. Prefill is skipped in preview-without-entity mode. **External forms cannot use resolver prefill** (`/resolve` is authed) — portal prefill is a server-side/token concern for the portal build.
 
 ---
 
@@ -242,12 +281,17 @@ Renderer passes the row's `schema_version` into YCForm — draft-recovery versio
 Reject with a message naming the offending path:
 
 - `sections` is a non-empty array; each section has `rows` (standard) xor `repeater`+`fields`.
-- Every field has valid `name` (regex above) and known `type`; names unique form-wide.
+- Every field has valid `name` (regex above) and known `type`.
+- **Name scoping (2.5A A4):** top-level field names AND repeater keys unique form-wide (shared data namespace); repeater field names unique within their repeater and distinct from every top-level name — two repeaters MAY share a field name. (This tightens the repeater-key rule — previously unchecked — and relaxes cross-repeater field names; every pre-2.5A published definition satisfies both.)
 - `options` present iff type is select/radio/checkgroup.
-- `showWhen.field` references an existing top-level field name; `op` in the allowed set.
+- Conditions (`showWhen` anywhere, `requiredWhen` on fields): single object or non-empty array (= AND); each `field` references an existing top-level FIELD (repeater keys are not valid targets); `op` in `eq|neq|in|notEmpty|includes`; `includes` requires the target field to be a `checkgroup`.
+- `columns`, if present: integer 1–3, checkgroup fields only.
+- `prefill` starting with `$load` matches the §5.1 grammar regex. Other prefill strings stay free-form resolver expressions.
+- `requiredMessage`, if present, is a string.
 - `pattern`, if present, compiles under `new RegExp`.
 - `onSubmit.patch` requires at least one field with `apiColumn`.
 - `hooks`, if set, matches `^[a-zA-Z0-9_-]{1,50}$` (path traversal guard).
+- `note` (form/section/row/field) is explicitly ignored — no validation, no rendering, no signature impact.
 
 ---
 
@@ -278,4 +322,5 @@ Reject with a message naming the offending path:
 | 1 | §1 tables, §2 routes, §7 validation, §8 renderer for §3–§4 **minus** repeaters/showWhen/prefill (plain sections/rows/fields, all types except checkgroup-`allowOther` if time-boxed), preview mode |
 | 2 | §4.2 repeaters, §4.4 showWhen, §4.3 `allowOther`, §5 prefill, `hooks` wiring |
 | 3 | Builder UI editing this JSON; publish UX invoking §6 |
+| 2.5A | (delivered 2026-07) §5.1 `$load` prefill; §4.3 `requiredWhen`/`requiredMessage` + checkgroup `columns` + the `note` key; §4.4 `includes` op + AND condition arrays (one yc-forms change: the checkgroup fallback in `_evaluateConditionals`); §7 per-repeater name scoping. 2.5B (optionsFrom, derive, apiColumn load/save split, per-form css) and tabs (2.6) are separate; `embed`/css/external mode wait for the portal security review. |
 | 4 | Admin list + history viewer + submissions browser (delivered 2026-07). **External render mode: DEFERRED out of Slice 4 to the client-portal build** — unauthed endpoints need the portal token design, and building it twice was the wrong trade. Every template route remains authed; §5's external-prefill note and §9's reservation stand. Decision recorded in the build state (`rw_scratch ns=fred k=formbuilder_build_state`). |

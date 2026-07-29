@@ -26,6 +26,10 @@
       font-family: system-ui, sans-serif;
     }
     #saveBtn[disabled] { opacity: .55; cursor: not-allowed; }
+    /* AND-array showWhen wrappers (Slice 2.5A): display:contents keeps them
+       out of flex layout (.yc-row equal-width columns) while the inline
+       display:none set by _evaluateConditionals still hides the subtree. */
+    .ycr-and-wrap { display: contents; }
   </style>
 </head>
 <body>
@@ -63,8 +67,27 @@
  *     from onSave. Missing file → console.warn, render proceeds. Hooks are
  *     NOT loaded in preview (preview must never execute side-effecting code).
  *
- * Still out (Slice 3/4 + reserved): tabs, external/portal mode, builder UI,
- * computed fields.
+ * SLICE 2.5A ADDITIONS (SLICE_2_5_SPEC.md + addendum):
+ *   - $load prefill (§5): "prefill": "$load.case.case_trustee" resolves
+ *     against form._loadResult locally — related-entity data already in the
+ *     load payload (clients, appts) becomes reachable without a hook. Runs
+ *     at the top of the generated onLoad, before the resolver call; unlike
+ *     resolver prefill it ALSO runs in preview when a link_id supplied
+ *     endpoints.load (no request, no write).
+ *   - requiredWhen (§4.3/§4.4): conditionally-required fields, compiled into
+ *     validation.custom (yc-forms already supports it — no runtime change).
+ *     Array = AND. Cures the hidden-required-field-blocks-Save trap.
+ *   - showWhen op "includes" (§4.4): checkgroup condition targets, via the
+ *     new data-yc-show-includes attr + the checkgroup fallback added to
+ *     _evaluateConditionals (THE one yc-forms change in 2.5A).
+ *   - showWhen arrays = AND (§4.4): condition[0] on the node, each extra
+ *     condition on a display:contents .ycr-and-wrap wrapper (nested
+ *     display:none composes; flex layout untouched). Zero runtime change.
+ *   - checkgroup "columns" 1–3 (§4.3): inline grid-template-columns override
+ *     matching casedetails-bk's hand-built pattern.
+ *
+ * Still out (Slice 2.5B/2.6 + reserved): optionsFrom, derive, apiColumn
+ * load/save split, per-form css, tabs, external/portal mode, computed fields.
  *
  * MODES
  *   Normal : ?form_key=X&<linkType>_id=N   (param name follows the template's
@@ -201,9 +224,69 @@
         node.setAttribute('data-yc-show-when', field);
         node.setAttribute('data-yc-show-value', '*');
         break;
+      case 'includes': {
+        // Slice 2.5A: checkgroup target — ANY of the listed values present in
+        // the comma-joined selection. Emits data-yc-show-includes; the runtime
+        // fallback in _evaluateConditionals consumes it.
+        var incVals = Array.isArray(sw.value) ? sw.value : [sw.value];
+        node.setAttribute('data-yc-show-when', field);
+        node.setAttribute('data-yc-show-includes',
+          incVals.map(function (v) { return String(v != null ? v : ''); }).join(','));
+        break;
+      }
       default:
         warn(path + ': showWhen.op "' + sw.op + '" is unknown — condition ignored');
     }
+  }
+
+  // ── showWhen arrays = AND (Slice 2.5A §4.4). A single condition (object)
+  //    goes straight on the node — byte-identical to pre-2.5 output. An array
+  //    puts condition [0] on the node and wraps one .ycr-and-wrap div per
+  //    additional condition: nested data-yc-show-when elements compose as AND
+  //    at runtime (an outer display:none hides everything inside), and
+  //    display:contents keeps the wrappers out of flex layout (.yc-row is a
+  //    flexbox — a plain block wrapper between row and .yc-field would break
+  //    the equal-width columns). Returns the OUTERMOST node to append. ──
+  function wrapShowWhen(node, sw, path, warn) {
+    if (!sw || !node) return node;
+    if (!Array.isArray(sw)) { applyShowWhen(node, sw, path, warn); return node; }
+    if (!sw.length) return node;
+    applyShowWhen(node, sw[0], path + '.showWhen[0]', warn);
+    var out = node;
+    for (var i = 1; i < sw.length; i++) {
+      var w = el('div', { class: 'ycr-and-wrap' }, [out]);
+      applyShowWhen(w, sw[i], path + '.showWhen[' + i + ']', warn);
+      out = w;
+    }
+    return out;
+  }
+
+  // ── Shared condition evaluator (Slice 2.5A) over collect()ed values —
+  //    requiredWhen compiles to validation.custom around this. Semantics
+  //    mirror _evaluateConditionals: checkbox → 'true'/'false', checkgroup →
+  //    comma-joined selection (collect() already produces both). ──
+  function evalCondition(c, all) {
+    if (!c || typeof c !== 'object') return false;
+    var raw = all[c.field];
+    var cur = typeof raw === 'boolean' ? (raw ? 'true' : 'false')
+            : (raw == null ? '' : String(raw));
+    switch (c.op) {
+      case 'eq':  return cur === String(c.value != null ? c.value : '');
+      case 'neq': return cur !== String(c.value != null ? c.value : '');
+      case 'in': {
+        var vals = Array.isArray(c.value) ? c.value : [c.value];
+        return vals.some(function (v) { return String(v != null ? v : '') === cur; });
+      }
+      case 'notEmpty': return !!cur;
+      case 'includes': {
+        var want = (Array.isArray(c.value) ? c.value : [c.value])
+          .map(function (v) { return String(v != null ? v : '').trim(); })
+          .filter(Boolean);
+        var have = cur.split(',').map(function (s) { return s.trim(); });
+        return want.some(function (w) { return have.indexOf(w) !== -1; });
+      }
+    }
+    return false;
   }
 
   // ── Build one field's DOM. Returns an element (or a bare hidden input,
@@ -219,9 +302,6 @@
     if (WIDTH_CLASS[f.width]) wrapClass += ' ' + WIDTH_CLASS[f.width];
     if (f.readonly) wrapClass += ' yc-field-locked';
     var wrap = el('div', { class: wrapClass });
-
-    // Field-level showWhen wraps the individual .yc-field (contract §4.4).
-    if (f.showWhen) applyShowWhen(wrap, f.showWhen, 'field "' + f.name + '"', warn);
 
     if (f.label != null && f.label !== '' && f.type !== 'checkbox') {
       wrap.appendChild(el('label', { class: 'yc-label', text: f.label }));
@@ -299,6 +379,16 @@
 
       case 'checkgroup': {
         input = el('div', { class: 'yc-check-grid', 'data-yc-checkgroup': f.name });
+        // columns 1–3 (Slice 2.5A A5): inline override of the stylesheet's
+        // 3-column default, matching casedetails-bk's hand-built pattern
+        // exactly (1 → "1fr", 2/3 → repeat(N,1fr)). Absent/3-by-default →
+        // no style attr, so the CSS default (and its mobile 1fr media query)
+        // stays in charge.
+        if (f.columns === 1) {
+          input.setAttribute('style', 'grid-template-columns:1fr;');
+        } else if (f.columns === 2 || f.columns === 3) {
+          input.setAttribute('style', 'grid-template-columns:repeat(' + f.columns + ',1fr);');
+        }
         (f.options || []).forEach(function (o) {
           var op = optOf(o);
           input.appendChild(el('label', null, [
@@ -351,7 +441,9 @@
 
     wrap.appendChild(input);
     wrap.appendChild(el('small', { class: 'yc-error' }));   // §4.3 locked decision
-    return wrap;
+    // Field-level showWhen wraps the individual .yc-field (contract §4.4);
+    // an array (AND, Slice 2.5A) adds .ycr-and-wrap layers around it.
+    return wrapShowWhen(wrap, f.showWhen, 'field "' + f.name + '"', warn);
   }
 
   // ── Build one REPEATER field's DOM (contract §4.2 subset: text, number,
@@ -366,6 +458,7 @@
     }
     if (f.prefill)  warn('repeater "' + repKey + '" field "' + f.name + '": prefill is not supported inside repeaters — ignored');
     if (f.showWhen) warn('repeater "' + repKey + '" field "' + f.name + '": showWhen is not supported inside repeaters — ignored');
+    if (f.requiredWhen) warn('repeater "' + repKey + '" field "' + f.name + '": requiredWhen is not supported inside repeaters — ignored');
     if (f.mask)     warn('repeater "' + repKey + '" field "' + f.name + '": masks are not supported inside repeaters — ignored');
 
     var wrapClass = 'yc-field';
@@ -440,7 +533,6 @@
   function buildRepeaterSection(section, warn) {
     var repKey = section.repeater;
     var sec = el('div', { class: 'yc-section' });
-    if (section.showWhen) applyShowWhen(sec, section.showWhen, 'repeater section "' + repKey + '"', warn);
     if (section.title)    sec.appendChild(el('div', { class: 'yc-section-title', text: section.title }));
     if (section.subtitle) sec.appendChild(el('div', { class: 'yc-section-subtitle', text: section.subtitle }));
 
@@ -469,7 +561,9 @@
     sec.appendChild(tpl);
 
     return {
-      node: sec,
+      node: section.showWhen
+        ? wrapShowWhen(sec, section.showWhen, 'repeater section "' + repKey + '"', warn)
+        : sec,
       config: { container: '#' + contId, template: '#' + tplId, fields: repFields }
     };
   }
@@ -536,6 +630,7 @@
     var forwardMap = {};   // fieldName -> apiColumn (only fields with apiColumn)
     var readonlySet = {};
     var prefills = [];     // [{ name, expr, mode }] — batched /resolve in onLoad (§5)
+    var loadPrefills = []; // [{ name, expr, mode }] — "$load.…" paths, resolved locally (§5, 2.5A)
 
     function registerField(f) {
       var ycType = YC_TYPE[f.type] || 'text';
@@ -548,14 +643,18 @@
         forwardMap[f.name] = f.apiColumn;
       }
 
-      // Prefill (§5): collected here, resolved in one batched call by the
-      // generated onLoad. prefillMode defaults to ifEmpty.
+      // Prefill (§5): "$load.…" expressions resolve against the load payload
+      // (form._loadResult) locally — no request; everything else is a resolver
+      // expression, batched into one /resolve call by the generated onLoad.
+      // prefillMode defaults to ifEmpty for both.
       if (typeof f.prefill === 'string' && f.prefill) {
-        prefills.push({
+        var pf = {
           name: f.name,
           expr: f.prefill,
           mode: f.prefillMode === 'always' ? 'always' : 'ifEmpty'
-        });
+        };
+        if (f.prefill.indexOf('$load') === 0) loadPrefills.push(pf);
+        else prefills.push(pf);
       }
 
       // Validation derivation (§4.3). pattern MUST be a RegExp — validate()
@@ -575,7 +674,25 @@
           warn('field "' + f.name + '": pattern is not a valid RegExp — skipped (' + e.message + ')');
         }
       }
-      if (Object.keys(rules).length) validation[f.name] = rules;
+      if (Object.keys(rules).length || f.requiredWhen) {
+        // requiredWhen (Slice 2.5A A2): conditionally required — an array
+        // means AND. Compiled into validation.custom, which validate() already
+        // supports (it passes collect() as the second argument), so no runtime
+        // change. Unlike plain required:true, this cannot invisibly block Save
+        // from inside a hidden section: the condition and the visibility
+        // condition are authored to match.
+        if (f.requiredWhen) {
+          var conds = Array.isArray(f.requiredWhen) ? f.requiredWhen : [f.requiredWhen];
+          rules.custom = (function (conds, msg) {
+            return function (v, all) {
+              return conds.every(function (c) { return evalCondition(c, all); }) && !v
+                ? msg
+                : true;
+            };
+          })(conds, f.requiredMessage || 'This field is required');
+        }
+        validation[f.name] = rules;
+      }
     }
 
     (def.sections || []).forEach(function (section, i) {
@@ -590,22 +707,24 @@
       }
 
       var sec = el('div', { class: 'yc-section' });
-      if (section.showWhen) applyShowWhen(sec, section.showWhen, 'sections[' + i + ']', warn);
       if (section.title)    sec.appendChild(el('div', { class: 'yc-section-title', text: section.title }));
       if (section.subtitle) sec.appendChild(el('div', { class: 'yc-section-subtitle', text: section.subtitle }));
 
       (section.rows || []).forEach(function (row, j) {
         var rowEl = el('div', { class: 'yc-row' });
-        if (row && row.showWhen) applyShowWhen(rowEl, row.showWhen, 'sections[' + i + '].rows[' + j + ']', warn);
         (row.fields || []).forEach(function (f) {
           var node = buildField(f, warn);
           if (node) rowEl.appendChild(node);
           registerField(f);
         });
-        sec.appendChild(rowEl);
+        sec.appendChild(row && row.showWhen
+          ? wrapShowWhen(rowEl, row.showWhen, 'sections[' + i + '].rows[' + j + ']', warn)
+          : rowEl);
       });
 
-      form.appendChild(sec);
+      form.appendChild(section.showWhen
+        ? wrapShowWhen(sec, section.showWhen, 'sections[' + i + ']', warn)
+        : sec);
     });
 
     // Wire the user-click "Other" toggle on every allowOther checkgroup. The
@@ -632,7 +751,7 @@
     form.appendChild(saveBtn);
 
     return { fields: fields, validation: validation, apiMap: apiMap,
-             repeaters: repeaters, prefills: prefills,
+             repeaters: repeaters, prefills: prefills, loadPrefills: loadPrefills,
              forwardMap: forwardMap, readonlySet: readonlySet };
   }
 
@@ -663,6 +782,39 @@
       }, 10000);
       document.head.appendChild(s);
     });
+  }
+
+  // ── $load path resolver (Slice 2.5A A1). Walks form._loadResult with the
+  //    grammar  $load ( '.' key | '[' field '=' value ']' )+  — dot steps are
+  //    plain property access; bracket steps are Array.prototype.find with a
+  //    LITERAL value compared string-loosely (String(item[field]) === value),
+  //    so numeric ids match their string form. Any miss (absent key, filter on
+  //    a non-array, no matching item) → undefined → the caller skips the write
+  //    ("undefined" is never written). Nested $load inside a filter value is
+  //    out of scope for 2.5A (the 341 attorney two-hop stays a hook). ──
+  function resolveLoadPath(loadResult, expr) {
+    if (loadResult == null || typeof expr !== 'string' || expr.indexOf('$load') !== 0) return undefined;
+    var rest = expr.slice(5);
+    var re = /\.([A-Za-z0-9_]+)|\[([A-Za-z0-9_]+)=([^\]]*)\]/g;
+    var cur = loadResult, m, consumed = 0, steps = 0;
+    while ((m = re.exec(rest)) !== null) {
+      if (m.index !== consumed) return undefined;      // junk between tokens
+      consumed = re.lastIndex;
+      steps++;
+      if (cur == null) return undefined;
+      if (m[1] !== undefined) {                        // .key
+        if (typeof cur !== 'object') return undefined;
+        cur = cur[m[1]];
+      } else {                                         // [field=value]
+        if (!Array.isArray(cur)) return undefined;
+        var fld = m[2], val = m[3];
+        cur = cur.find(function (it) {
+          return it && typeof it === 'object' && String(it[fld]) === val;
+        });
+      }
+    }
+    if (!steps || consumed !== rest.length) return undefined;
+    return cur;
   }
 
   // ── Prefill write helper: set one field's value the way populate() would,
@@ -750,10 +902,35 @@
       warn('prefill skipped (' + (preview ? 'preview mode' : 'no linkId') + ')');
     }
 
+    // $load prefill (2.5A) reads the already-fetched load payload — no request,
+    // no write — so unlike resolver prefill it ALSO runs in preview whenever a
+    // link_id supplied endpoints.load (wantLoad). Without endpoints.load there
+    // is no payload to read.
+    var wantLoadPrefill = maps.loadPrefills.length > 0 && !!wantLoad;
+    if (maps.loadPrefills.length && !wantLoadPrefill) {
+      warn('$load prefill skipped (' + (def.endpoints && def.endpoints.load
+        ? 'no entity loaded' : 'definition has no endpoints.load') + ')');
+    }
+
     // Generated onLoad (§5 prefill + §3 hooks.onLoad). Runs at init step 13,
     // BEFORE step 13c's resetBaseline — so nothing written here dirties the
     // form — and before 13b, so prefilled values drive conditionals.
     config.onLoad = async function (data) {
+      // $load prefills first (2.5A): local, synchronous, deterministic —
+      // a form using both $load and resolver prefill always applies $load
+      // before the resolver round-trip.
+      if (wantLoadPrefill) {
+        maps.loadPrefills.forEach(function (p) {
+          var v = resolveLoadPath(form_._loadResult, p.expr);
+          if (v === undefined || v === null) return;         // missing → skip, never write "undefined"
+          if (typeof v === 'object') {                        // path stopped on an object/array
+            warn('prefill "' + p.name + '": ' + p.expr + ' resolved to an object — skipped');
+            return;
+          }
+          writePrefill(form_, maps.fields, p.name, v, p.mode);
+        });
+      }
+
       if (wantPrefill) {
         try {
           var res = await api('/resolve', 'POST', {
