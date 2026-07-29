@@ -191,6 +191,7 @@ public/forms/contact-form.html
 public/forms/hooks/_yc_hook_util.js
 public/forms/hooks/case_clients.js
 public/forms/hooks/case_details_bk.js
+public/forms/hooks/case_details_bk2.js
 public/forms/hooks/issn_extras.js
 public/forms/hooks/notes_341.js
 public/forms/hooks/readme.md
@@ -478,8 +479,10 @@ tests/formBuilder_phaseA_test.js
 tests/formBuilder_phaseB_test.js
 tests/formBuilder_phaseC_test.js
 tests/formBuilder_slice25A.test.js
+tests/formBuilder_slice25B.test.js
 tests/formRender.slice2.test.js
 tests/formRender.slice25A.test.js
+tests/formRender.slice25B.test.js
 tests/formTemplates_slice4_service_test.js
 tests/helpers/renderSmoke.js
 tests/hookMapper.test.js

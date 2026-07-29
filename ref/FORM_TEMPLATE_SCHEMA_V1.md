@@ -104,6 +104,8 @@ Server-side validation on create/update: `form_key` matches `^[a-z0-9_]{1,50}$`;
 | `onSubmit.workflow` | optional | Same semantics as YCForm: form data spread as init vars, system fields win |
 | `hooks` | string or null | Names a repo file `/forms/hooks/{hooks}.js`. If set, renderer loads it via `<script>`; the file may define `window.ycHooks = { onLoad(form, data), onSave(form, result) }`, called at the same points hand-built forms use them. **Executable code lives in the repo only — never in the DB.** |
 | `note` | string, optional | **Documentation only, explicitly ignored** (2.5A). Valid at form, section, row, and field level. Never rendered, never validated beyond being ignored, never part of the schema signature (§6 hashes `(name, type)` only). The migration ports use it to record why a field exists. |
+| `derive` | rule[], optional | **(2.5B B2)** Date suggestions from a fixed verb registry — no expressions, no eval. Each rule: `{ "target": "case_180", "from": "case_file_date", "op": "addDays", "n": 180 }`. Verbs: `addDays` (date + N days; `n` REQUIRED, may be negative) and `dateFromDatetime` (date part of a `datetime` value ± N days; `n` optional, absent = pure extraction). Semantics — the casedetails-bk lessons, now contract: (1) fill **only when the target is empty**, inside the generated `onLoad`, i.e. BEFORE init 13c's `resetBaseline` — later than that and the form reports dirty forever on a form nobody touched, which also blocks versionGuard's forced reload; (2) a derived value the user never edits is not in `getDiff()` and is **not persisted** — it is a deterministic function of its source, recomputed on every load; (3) a USER `change` of the source recomputes the target **unconditionally** (including clearing it when the source is cleared) — fill-only-empty is a LOAD-time rule; on live change the suggestion follows the source (this is the hand-built listener's exact behaviour). One rule per target; `target`/`from` must name existing top-level FIELDS (`target ≠ from`). Local + deterministic → active in preview too. |
+| `css` | string, optional | **(2.5B B4)** Per-form CSS, injected by the renderer as a `<style>` element via `textContent` (never innerHTML) appended to `<head>` AFTER the shared stylesheet — wins ties at equal specificity. `textContent` means the string can only ever be CSS text — no element/script injection path (§8). **INTERNAL-ONLY pending the portal security review**: CSS on an untrusted rendering surface is a lower-grade but real injection channel (exfiltration selectors, UI redress) — same review bucket as `type:"embed"` and external mode (§9). |
 
 `formKey`, `linkType`, `title`, `schemaVersion` are NOT in the JSON — they come from the template row (single source of truth).
 
@@ -179,6 +181,13 @@ Only `name` and `type` are required; everything else optional. `name` matches `^
 | `requiredMessage` | string | Error text for a failed `requiredWhen` (default "This field is required"). |
 | `columns` | 1 \| 2 \| 3 | Checkgroup only (A5). Emits an inline `grid-template-columns` override (`1fr` for 1, `repeat(N,1fr)` for 2/3), matching casedetails-bk's hand-built pattern. Absent → the stylesheet default (3 columns, collapsing to 1 on mobile). NOTE: an explicit value — including an explicit 3 — is an inline style and therefore also overrides the mobile media query. |
 | `note` | string | Documentation only — see §3. |
+
+**Additional field keys (2.5B):**
+
+| Key | Type | Notes |
+|---|---|---|
+| `apiColumn` | string **or** `{ load?, save? }` | **(B3)** A plain string keeps meaning BOTH directions (unchanged since Slice 1). The object form maps each direction independently: `load` feeds populate (apiMap / `_mergeApiData`); `save` feeds the PATCH whitelist. At least one key required; each a non-empty string. **Save-only** (`{ "save": "col" }`) = the column never pre-fills the form — this reverts the migration's 341 behaviour change (snapshot forms whose columns must not pre-fill). **Load-only** = displayed but never PATCHed. Scope is **one column per direction** — multi-column writes (the BK docket split) and value transforms stay hooks; that is the honest boundary. `onSubmit.patch` requires at least one field with a SAVE-direction column. CAVEAT: a save-only column only prevents pre-fill when the field NAME differs from an entity column name — `_mergeApiData` passes unmapped entity keys through under their own names, so a field literally named after a column still populates via that identity path. |
+| `optionsFrom` | object | **(B1)** Select only. Rebuilds the options at load time from live data: `{ "source": "firmData.settings.trustees", "value": "name", "label": "name", "groupBy": "case_type", "groupLabels": { "7": "Chapter 7" } }`. `source` is whitelisted to two prefixes: `firmData.<dot-path>` (walked off the relayed `window.parent.firmData` — case.html, contact.html, formBuilder and liveHost all relay it) and `$load.<path>` (the load payload, sharing §5.1's grammar and resolver — covers "dropdown of this contact's cases"). Must resolve to a non-empty array of objects; `value` names the item key holding the option value, `label` (optional) the display key, `groupBy` (optional) emits `<optgroup>` per distinct value in first-seen source order, `groupLabels` (optional, session extension) maps raw group values to display text (unmapped groups show the raw value). Rebuild runs in the generated `onLoad` AFTER populate/prefill; the field's current value is captured first and re-applied after — **a stored value not in the list is injected as a flagged option** (`⚠ … (not in list)`, `data-unlisted="1"`) so legacy data is never silently dropped on save (the casedetails-bk behaviour, preserved not reinvented). Unreachable/empty source → the static `options` (still REQUIRED — they are the guaranteed fallback) stay in place with a console warn; the control is never blanked. Active in preview ($load-sourced falls back without a loaded payload). |
 
 **Types → rendering → YCForm `fields` type:**
 
@@ -257,7 +266,7 @@ $load.clients[relate_type=Secondary].contact_id
 - Runs at the **top** of the generated `onLoad`, before the resolver call — a form using both is deterministic.
 - Unlike resolver prefill, `$load` prefill ALSO runs in **preview when a `link_id` is supplied** (the payload is already fetched; no extra request, no write). Without `endpoints.load` there is nothing to read — skipped with a warn.
 
-**Known trap (documented, not fixed):** `prefillMode: "ifEmpty"` runs *after* populate, so a prefill (either kind) on a field that also declares an `apiColumn` is dead code whenever that column is non-empty in live mode — populate fills the field first and ifEmpty then sees a value.
+**Known trap (documented; 2.5B provides the cure):** `prefillMode: "ifEmpty"` runs *after* populate, so a prefill (either kind) on a field that also declares a LOAD-direction `apiColumn` is dead code whenever that column is non-empty in live mode — populate fills the field first and ifEmpty then sees a value. When this is the INTENT (a fallback: "show the full docket, fall back to the short one"), it composes correctly. When it isn't, use the 2.5B `apiColumn: { "save": "col" }` form — a save-only column never populates, so the prefill owns the load path.
 
 Notes: prefill is for data **outside** the loaded entity (joins, lookups) — with `$load` covering related data already IN the load payload, and `/resolve` covering true lookups. Data on the entity itself flows through `endpoints.load` + `apiColumn` (populate/apiMap) as usual. Prefill is skipped in preview-without-entity mode. **External forms cannot use resolver prefill** (`/resolve` is authed) — portal prefill is a server-side/token concern for the portal build.
 
@@ -287,9 +296,13 @@ Reject with a message naming the offending path:
 - Conditions (`showWhen` anywhere, `requiredWhen` on fields): single object or non-empty array (= AND); each `field` references an existing top-level FIELD (repeater keys are not valid targets); `op` in `eq|neq|in|notEmpty|includes`; `includes` requires the target field to be a `checkgroup`.
 - `columns`, if present: integer 1–3, checkgroup fields only.
 - `prefill` starting with `$load` matches the §5.1 grammar regex. Other prefill strings stay free-form resolver expressions.
+- `apiColumn` (2.5B): non-empty string, or `{ load?, save? }` with at least one key, each a non-empty string.
+- `optionsFrom` (2.5B): select fields only; object with `source` (a `firmData.<dot-path>` — `^firmData(\.[A-Za-z0-9_]+)+$` — or a §5.1 `$load` expression), required non-empty `value`; optional non-empty `label`/`groupBy` strings; optional `groupLabels` object of string values. Static `options` remain required (the fallback).
+- `derive` (2.5B): non-empty array of `{ target, from, op, n? }`; `op` in `addDays|dateFromDatetime`; `target`/`from` reference existing top-level FIELDS (repeater keys are not valid), `target ≠ from`, one rule per target; `n` is a required integer for `addDays`, optional integer for `dateFromDatetime`.
+- `css` (2.5B): string.
 - `requiredMessage`, if present, is a string.
 - `pattern`, if present, compiles under `new RegExp`.
-- `onSubmit.patch` requires at least one field with `apiColumn`.
+- `onSubmit.patch` requires at least one field with a SAVE-direction `apiColumn` (a plain string, or an object carrying `save` — load-only columns don't count).
 - `hooks`, if set, matches `^[a-zA-Z0-9_-]{1,50}$` (path traversal guard).
 - `note` (form/section/row/field) is explicitly ignored — no validation, no rendering, no signature impact.
 
@@ -308,9 +321,12 @@ Reject with a message naming the offending path:
 
 ## 9. Explicitly out of v1 (reserved, don't build)
 
-- **Tabs** — reserved top-level key `tabs: [{ label, sections: [...] }]` as an alternative to `sections`; renderer support later (Detailed Questionnaire territory).
+- **Tabs** — reserved top-level key `tabs: [{ label, sections: [...] }]` as an alternative to `sections`; renderer support later (Detailed Questionnaire territory). Slice 2.6, gating `issn` alone.
 - Collapsible sections; per-repeater-field masks/validation; nested repeaters; repeater min/max enforcement.
-- Public/unauthed render route + server-side portal prefill (Slice 4 / portal build).
+- Public/unauthed render route + server-side portal prefill (client-portal build).
+- **Portal security review bucket** (nothing here ships to external rendering before that review): `type: "embed"`, the 2.5B `css` key, and external/portal render mode itself. `css` is live for INTERNAL forms only.
+- Multi-column / value-transforming `apiColumn` — hooks are the boundary (see §4.3 B3).
+- `showWhen` inside repeaters (runtime cannot scope a condition to one row); second-entity writes on save (that's a workflow, not a schema feature).
 - Migrating any existing hand-built form.
 
 ---
@@ -322,5 +338,6 @@ Reject with a message naming the offending path:
 | 1 | §1 tables, §2 routes, §7 validation, §8 renderer for §3–§4 **minus** repeaters/showWhen/prefill (plain sections/rows/fields, all types except checkgroup-`allowOther` if time-boxed), preview mode |
 | 2 | §4.2 repeaters, §4.4 showWhen, §4.3 `allowOther`, §5 prefill, `hooks` wiring |
 | 3 | Builder UI editing this JSON; publish UX invoking §6 |
-| 2.5A | (delivered 2026-07) §5.1 `$load` prefill; §4.3 `requiredWhen`/`requiredMessage` + checkgroup `columns` + the `note` key; §4.4 `includes` op + AND condition arrays (one yc-forms change: the checkgroup fallback in `_evaluateConditionals`); §7 per-repeater name scoping. 2.5B (optionsFrom, derive, apiColumn load/save split, per-form css) and tabs (2.6) are separate; `embed`/css/external mode wait for the portal security review. |
+| 2.5A | (delivered 2026-07) §5.1 `$load` prefill; §4.3 `requiredWhen`/`requiredMessage` + checkgroup `columns` + the `note` key; §4.4 `includes` op + AND condition arrays (one yc-forms change: the checkgroup fallback in `_evaluateConditionals`); §7 per-repeater name scoping. |
+| 2.5B | (delivered 2026-07) §4.3 `optionsFrom` (firmData.* AND $load.* sources, groupBy/groupLabels, flagged unlisted value, static-options fallback) + `apiColumn` `{load, save}` split; §3 `derive` (addDays/dateFromDatetime, fill-only-empty in onLoad, unconditional recompute on source change) + `css` (textContent-injected, internal-only pending portal review); B0 firmData relay in formBuilder + liveHost. ZERO yc-forms.js changes. Tabs = 2.6; `embed`/`css`-external/portal mode = the §9 portal-review bucket. |
 | 4 | Admin list + history viewer + submissions browser (delivered 2026-07). **External render mode: DEFERRED out of Slice 4 to the client-portal build** — unauthed endpoints need the portal token design, and building it twice was the wrong trade. Every template route remains authed; §5's external-prefill note and §9's reservation stand. Decision recorded in the build state (`rw_scratch ns=fred k=formbuilder_build_state`). |

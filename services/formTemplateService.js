@@ -39,6 +39,14 @@ const SHOWWHEN_OPS  = new Set(['eq', 'neq', 'in', 'notEmpty', 'includes']); // i
 //   $load ( '.' key | '[' field '=' value ']' )+   — literal filter values only.
 const LOAD_PREFILL_RE = /^\$load(\.[A-Za-z0-9_]+|\[[A-Za-z0-9_]+=[^\]]+\])+$/;
 
+// optionsFrom firmData source grammar (contract §4.3, Slice 2.5B B1):
+//   firmData.<key>(.<key>)*  — dot path off the relayed window.firmData.
+const FIRMDATA_SOURCE_RE = /^firmData(\.[A-Za-z0-9_]+)+$/;
+
+// derive verb set (contract §3, Slice 2.5B B2). Fixed registry — no
+// expressions, no eval; the renderer interprets these two verbs only.
+const DERIVE_OPS = new Set(['addDays', 'dateFromDatetime']);
+
 // The full type vocabulary (contract §4.3). Slice 1's renderer draws a subset,
 // but validation accepts every declared type so drafts using repeaters/showWhen
 // (Slice 2 render targets) still create/publish cleanly.
@@ -94,7 +102,7 @@ function validateDefinition(def) {
   const topLevelTypes = {};         // top-level field name -> type (for includes-op target checks)
   const repFieldRefs  = [];         // { name, path } — cross-checked vs topLevel in a second pass
   const condRefs      = [];         // { path, field, op, key } collected for the second pass
-  let hasApiColumn    = false;
+  let hasSaveColumn   = false;      // any field with a SAVE-direction apiColumn (string, or {save}) — 2.5B B3
 
   // One normalized condition { field, op, value }. `key` names the carrying
   // property ("showWhen" / "requiredWhen") for error messages.
@@ -193,7 +201,72 @@ function validateDefinition(def) {
       throw badRequest(`${path}.requiredMessage must be a string`);
     }
 
-    if (typeof field.apiColumn === 'string' && field.apiColumn) hasApiColumn = true;
+    // apiColumn (2.5B B3): a plain non-empty string (both directions,
+    // unchanged), or { load?, save? } — each a non-empty string, at least one
+    // present. One column per direction; multi-column writes and value
+    // transforms stay hooks.
+    if (field.apiColumn !== undefined && field.apiColumn !== null) {
+      const ac = field.apiColumn;
+      if (typeof ac === 'string') {
+        if (!ac) throw badRequest(`${path}.apiColumn must not be an empty string`);
+        hasSaveColumn = true;
+      } else if (typeof ac === 'object' && !Array.isArray(ac)) {
+        const hasLoad = ac.load !== undefined && ac.load !== null;
+        const hasSave = ac.save !== undefined && ac.save !== null;
+        if (!hasLoad && !hasSave) {
+          throw badRequest(`${path}.apiColumn object must have at least one of "load", "save"`);
+        }
+        if (hasLoad && (typeof ac.load !== 'string' || !ac.load)) {
+          throw badRequest(`${path}.apiColumn.load must be a non-empty string`);
+        }
+        if (hasSave && (typeof ac.save !== 'string' || !ac.save)) {
+          throw badRequest(`${path}.apiColumn.save must be a non-empty string`);
+        }
+        if (hasSave) hasSaveColumn = true;
+      } else {
+        throw badRequest(`${path}.apiColumn must be a string or a { load, save } object`);
+      }
+    }
+
+    // optionsFrom (2.5B B1): dynamic select options. select only; source is a
+    // whitelisted prefix (firmData.* dot path, or a $load expression sharing
+    // the §5.1 grammar); "value" names the item key holding the option value;
+    // optional "label" / "groupBy" name item keys; optional "groupLabels"
+    // maps raw groupBy values to display text. Static `options` remain
+    // REQUIRED (rule above) — they are the guaranteed fallback when the
+    // source is unreachable at render time.
+    if (field.optionsFrom !== undefined && field.optionsFrom !== null) {
+      const of = field.optionsFrom;
+      if (field.type !== 'select') {
+        throw badRequest(`${path}.optionsFrom is only allowed on type "select"`);
+      }
+      if (typeof of !== 'object' || Array.isArray(of)) {
+        throw badRequest(`${path}.optionsFrom must be an object`);
+      }
+      if (typeof of.source !== 'string'
+          || !(FIRMDATA_SOURCE_RE.test(of.source) || LOAD_PREFILL_RE.test(of.source))) {
+        throw badRequest(`${path}.optionsFrom.source "${of.source}" must be a firmData.* dot path or a $load expression`);
+      }
+      if (typeof of.value !== 'string' || !of.value) {
+        throw badRequest(`${path}.optionsFrom.value is required (the item key holding the option value)`);
+      }
+      if (of.label !== undefined && of.label !== null && (typeof of.label !== 'string' || !of.label)) {
+        throw badRequest(`${path}.optionsFrom.label must be a non-empty string when present`);
+      }
+      if (of.groupBy !== undefined && of.groupBy !== null && (typeof of.groupBy !== 'string' || !of.groupBy)) {
+        throw badRequest(`${path}.optionsFrom.groupBy must be a non-empty string when present`);
+      }
+      if (of.groupLabels !== undefined && of.groupLabels !== null) {
+        if (typeof of.groupLabels !== 'object' || Array.isArray(of.groupLabels)) {
+          throw badRequest(`${path}.optionsFrom.groupLabels must be an object mapping group values to labels`);
+        }
+        for (const k of Object.keys(of.groupLabels)) {
+          if (typeof of.groupLabels[k] !== 'string') {
+            throw badRequest(`${path}.optionsFrom.groupLabels["${k}"] must be a string`);
+          }
+        }
+      }
+    }
 
     noteShowWhen(field.showWhen, path);
     // requiredWhen (2.5A A2): same normalized-condition shape; array = AND.
@@ -272,9 +345,57 @@ function validateDefinition(def) {
     }
   }
 
-  // onSubmit.patch requires at least one field declaring apiColumn.
-  if (def.onSubmit && def.onSubmit.patch && !hasApiColumn) {
-    throw badRequest('onSubmit.patch is set but no field declares an apiColumn');
+  // onSubmit.patch requires at least one field with a SAVE-direction apiColumn
+  // (a plain string, or an object carrying "save" — 2.5B B3): a load-only
+  // column contributes nothing to the PATCH whitelist.
+  if (def.onSubmit && def.onSubmit.patch && !hasSaveColumn) {
+    throw badRequest('onSubmit.patch is set but no field declares a save-direction apiColumn');
+  }
+
+  // derive (2.5B B2): top-level array of { target, from, op, n? } rules.
+  // Fixed verb set; target/from reference existing TOP-LEVEL fields; one rule
+  // per target (deterministic — last-write-wins is a footgun, reject it).
+  if (def.derive !== undefined && def.derive !== null) {
+    if (!Array.isArray(def.derive) || def.derive.length === 0) {
+      throw badRequest('derive must be a non-empty array of rules');
+    }
+    const deriveTargets = new Set();
+    def.derive.forEach((r, i) => {
+      const dPath = `derive[${i}]`;
+      if (!r || typeof r !== 'object' || Array.isArray(r)) {
+        throw badRequest(`${dPath} must be an object`);
+      }
+      if (!DERIVE_OPS.has(r.op)) {
+        throw badRequest(`${dPath}.op "${r.op}" is not one of addDays, dateFromDatetime`);
+      }
+      if (typeof r.target !== 'string' || !(r.target in topLevelTypes)) {
+        throw badRequest(`${dPath}.target "${r.target}" does not reference an existing top-level field`);
+      }
+      if (typeof r.from !== 'string' || !(r.from in topLevelTypes)) {
+        throw badRequest(`${dPath}.from "${r.from}" does not reference an existing top-level field`);
+      }
+      if (r.target === r.from) {
+        throw badRequest(`${dPath}: target and from must be different fields`);
+      }
+      if (deriveTargets.has(r.target)) {
+        throw badRequest(`${dPath}: duplicate derive target "${r.target}"`);
+      }
+      deriveTargets.add(r.target);
+      // n: required integer for addDays (an offset of 0 is legal but must be
+      // explicit); optional integer for dateFromDatetime (absent = pure
+      // date-part extraction).
+      if (r.op === 'addDays') {
+        if (!Number.isInteger(r.n)) throw badRequest(`${dPath}.n must be an integer (days offset) for addDays`);
+      } else if (r.n !== undefined && r.n !== null && !Number.isInteger(r.n)) {
+        throw badRequest(`${dPath}.n must be an integer when present`);
+      }
+    });
+  }
+
+  // css (2.5B B4): free-form string, injected via textContent only.
+  // INTERNAL-ONLY pending the portal security review (contract §9).
+  if (def.css !== undefined && def.css !== null && typeof def.css !== 'string') {
+    throw badRequest('css must be a string');
   }
 
   // hooks, if set, must be a safe file-name token.

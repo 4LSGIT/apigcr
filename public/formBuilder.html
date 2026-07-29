@@ -466,6 +466,7 @@ let FKEY   = '';     // working form_key
 let SEL    = null;   // null=form settings | {t:'section',si} | {t:'row',si,ri} | {t:'field',si,ri,fi} | {t:'rfield',si,fi}
 let SAVED  = { def: '', title: '', key: '' };   // snapshot for dirty check
 let AUTO_NAMES = new WeakSet();   // fields whose name still auto-follows the label (never serialized)
+const SPLIT_AC = new WeakSet();   // fields with the apiColumn split editor open (2.5B — UI state only, never serialized)
 let SORTABLES  = [];              // live canvas Sortable instances (rebuilt each render)
 let JSON_DIRTY = false;           // JSON textarea has unapplied user edits
 
@@ -540,6 +541,11 @@ function ycConfirm(message, opts) {
 
 function init() {
   window.apiSend = P.apiSend;   // relay for the preview iframe (case.html pattern)
+  // B0 (2.5B): relay firmData too — optionsFrom sources like
+  // firmData.settings.trustees read window.parent.firmData from inside the
+  // preview/live iframes; without this relay they'd fall back to the static
+  // options in the builder (case.html:~1060 / contact.html:~865 pattern).
+  window.firmData = P.firmData;
   buildPalette();
   const params = new URLSearchParams(location.search);
   const lid = params.get('link_id');
@@ -1197,15 +1203,38 @@ function genName(base, exceptNode, taken) {
   }
 }
 
+// Derive rules (2.5B) referencing a field name — rename/delete cascade
+// companion to refsTo (derive rules are {target, from, op, n}, not
+// condition-shaped, so they get their own scanner).
+function deriveRefsTo(name) {
+  const out = [];
+  (MODEL.derive || []).forEach((r, i) => {
+    if (!r || typeof r !== 'object') return;
+    if (r.target === name) out.push({ rule: r, idx: i, role: 'target', desc: `derive rule ${i + 1} (fills "${r.target}")` });
+    if (r.from === name)   out.push({ rule: r, idx: i, role: 'from',   desc: `derive rule ${i + 1} (source of "${r.target}")` });
+  });
+  return out;
+}
+// Remove every derive rule touching any of the given names; drops the key
+// when the array empties (keeps JSON lean, mirrors setOrDel).
+function removeDeriveRulesTouching(names) {
+  if (!Array.isArray(MODEL.derive)) return;
+  const set = new Set(names);
+  MODEL.derive = MODEL.derive.filter(r => !(r && (set.has(r.target) || set.has(r.from))));
+  if (!MODEL.derive.length) delete MODEL.derive;
+}
+
 // Central rename: writes the name AND cascades into every condition
 // (showWhen AND requiredWhen, incl. inside AND arrays) that referenced the
 // old one (references would otherwise silently break — the server 400s on
-// dangling condition targets at save/publish).
+// dangling condition targets at save/publish). Derive rules (2.5B) cascade
+// the same way: the server 400s on dangling derive target/from too.
 function renameField(f, newName) {
   const old = f.name;
   f.name = newName;
   if (old && old !== newName) {
     refsTo(old).forEach(r => { r.cond.field = newName; });
+    deriveRefsTo(old).forEach(r => { r.rule[r.role] = newName; });
   }
 }
 
@@ -1407,15 +1436,18 @@ async function deleteSelected() {
   if (!SEL || !node) return false;
 
   if (SEL.t === 'field' || SEL.t === 'rfield') {
-    const refs = SEL.t === 'field' ? refsTo(node.name) : [];   // rfield names are never showWhen targets
+    const refs  = SEL.t === 'field' ? refsTo(node.name) : [];        // rfield names are never showWhen targets
+    const dRefs = SEL.t === 'field' ? deriveRefsTo(node.name) : [];  // …or derive targets/sources
     let msg = `Delete field "${node.name}"?`;
-    if (refs.length) {
-      msg = `Field "${node.name}" is referenced by conditions on:\n • ` +
-            refs.map(r => r.desc).join('\n • ') +
-            `\n\nDelete the field and remove those conditions?`;
+    const mentions = refs.map(r => r.desc).concat(dRefs.map(r => r.desc));
+    if (mentions.length) {
+      msg = `Field "${node.name}" is referenced by:\n • ` +
+            mentions.join('\n • ') +
+            `\n\nDelete the field and remove those references?`;
     }
     if (!await ycConfirm(msg, { confirmText: 'Delete', danger: true })) return false;
     refs.forEach(removeCondRef);
+    if (dRefs.length) removeDeriveRulesTouching([node.name]);
     const arr = SEL.t === 'field'
       ? MODEL.sections[SEL.si].rows[SEL.ri].fields
       : MODEL.sections[SEL.si].fields;
@@ -1424,9 +1456,12 @@ async function deleteSelected() {
     const inside = new Set((node.fields || []).map(f => f));
     const names  = (node.fields || []).map(f => f.name);
     const outsideRefs = collectOutsideRefs(names, inside, node);
-    if (!await ycConfirm(deleteContainerMsg(`row ${SEL.ri + 1}`, (node.fields || []).length + ' field(s)', outsideRefs),
+    const dRefs = names.flatMap(deriveRefsTo);
+    if (!await ycConfirm(deleteContainerMsg(`row ${SEL.ri + 1}`, (node.fields || []).length + ' field(s)',
+        outsideRefs.concat(dRefs)),
         { confirmText: 'Delete', danger: true })) return false;
     outsideRefs.forEach(removeCondRef);
+    removeDeriveRulesTouching(names);
     MODEL.sections[SEL.si].rows.splice(SEL.ri, 1);
   } else if (SEL.t === 'section') {
     const isRep = isRepeaterSection(node);
@@ -1438,10 +1473,12 @@ async function deleteSelected() {
     inside.add(node);
     const names = isRep ? [] : fields.map(f => f.name);        // repeater fields aren't showWhen targets
     const outsideRefs = collectOutsideRefs(names, inside, node);
+    const dRefs = names.flatMap(deriveRefsTo);
     const what = isRep ? `repeater section "${node.title || node.repeater}"` : `section "${node.title || '#' + (SEL.si + 1)}"`;
-    if (!await ycConfirm(deleteContainerMsg(what, fields.length + ' field(s)', outsideRefs),
+    if (!await ycConfirm(deleteContainerMsg(what, fields.length + ' field(s)', outsideRefs.concat(dRefs)),
         { confirmText: 'Delete', danger: true })) return false;
     outsideRefs.forEach(removeCondRef);
+    removeDeriveRulesTouching(names);
     MODEL.sections.splice(SEL.si, 1);
   }
 
@@ -1461,9 +1498,9 @@ function collectOutsideRefs(names, insideSet, containerNode) {
 function deleteContainerMsg(what, contains, outsideRefs) {
   let msg = `Delete ${what} (contains ${contains})?`;
   if (outsideRefs.length) {
-    msg += `\n\nFields inside are referenced by conditions on:\n • ` +
+    msg += `\n\nFields inside are referenced by:\n • ` +
            outsideRefs.map(r => r.desc).join('\n • ') +
-           `\n\nDeleting will also remove those conditions.`;
+           `\n\nDeleting will also remove those references.`;
   }
   return msg;
 }
@@ -2133,6 +2170,92 @@ function insSettings(ins) {
     }),
   ]));
 
+  // Derived dates (2.5B B2) — optRow pattern: the DOM rows are the working
+  // state; readBack writes only COMPLETE rules to the model (an incomplete
+  // rule would 400 on draft save — the server validates every PUT). Rows are
+  // complete when target + from are picked and differ; n is required for
+  // addDays (0 is legal but explicit) and optional for dateFromDatetime.
+  ins.appendChild((() => {
+    const fieldNames = topLevelNames();
+    const list = el('div', {});
+
+    function readBack() {
+      const rules = [];
+      const seen = new Set();
+      Array.prototype.forEach.call(list.children, rowEl => {
+        const target = rowEl._t.value, from = rowEl._f.value, op = rowEl._o.value;
+        const nRaw = rowEl._n.value.trim();
+        if (!target || !from) return;                      // incomplete — stays DOM-only
+        if (target === from || seen.has(target)) return;   // invalid — stays DOM-only
+        const rule = { target, from, op };
+        if (nRaw !== '') {
+          const n = Number(nRaw);
+          if (!Number.isInteger(n)) return;
+          rule.n = n;
+        } else if (op === 'addDays') {
+          return;                                          // addDays requires n
+        }
+        seen.add(target);
+        rules.push(rule);
+      });
+      if (rules.length) MODEL.derive = rules; else delete MODEL.derive;
+      touched();
+    }
+
+    function ruleRow(r) {
+      const t = el('select', { class: 'mono', style: 'flex:1; min-width:110px;' });
+      const f = el('select', { class: 'mono', style: 'flex:1; min-width:110px;' });
+      [t, f].forEach(s => {
+        s.appendChild(el('option', { value: '', text: s === t ? '(target)' : '(source)' }));
+        fieldNames.forEach(n => s.appendChild(el('option', { value: n, text: n })));
+      });
+      t.value = r && fieldNames.includes(r.target) ? r.target : '';
+      f.value = r && fieldNames.includes(r.from) ? r.from : '';
+      const o = el('select', {});
+      [['addDays', 'addDays'], ['dateFromDatetime', 'dateFromDatetime']].forEach(([v, txt]) =>
+        o.appendChild(el('option', { value: v, text: txt })));
+      o.value = r ? r.op : 'addDays';
+      const n = el('input', { type: 'number', placeholder: '\u00b1days', style: 'width:80px; flex:none;' });
+      n.value = r && r.n != null ? r.n : '';
+      [t, f, o].forEach(s => s.onchange = readBack);
+      n.oninput = readBack;
+      const del = el('button', { class: 'ghost small', text: '×', title: 'Remove rule', onclick: () => {
+        rowEl.remove();
+        readBack();
+      }});
+      const rowEl = el('div', { class: 'opt-row', style: 'cursor:default; flex-wrap:wrap;' },
+        [t, f, o, n, del]);
+      rowEl._t = t; rowEl._f = f; rowEl._o = o; rowEl._n = n;
+      return rowEl;
+    }
+
+    (MODEL.derive || []).forEach(r => list.appendChild(ruleRow(r)));
+
+    return group('Derived dates', [
+      el('div', { class: 'prop' }, [ el('label', { text: 'Rules (target ← source)' }), list ]),
+      el('div', { class: 'prop' }, [
+        el('button', { class: 'ghost small', text: '+ Add rule', onclick: () => {
+          list.appendChild(ruleRow(null));
+        }}),
+      ]),
+      el('div', { class: 'help', text:
+        'Suggestions, not stored values: filled only when the target is EMPTY at load, recomputed when the source changes, and not persisted unless the user edits them. addDays: date + N days (N required, may be negative). dateFromDatetime: date part of a datetime ± N days (N optional). One rule per target.' }),
+    ]);
+  })());
+
+  // Custom CSS (2.5B B4) — free-form, injected by the renderer as a <style>
+  // via textContent after the shared stylesheet. INTERNAL-ONLY pending the
+  // portal security review (contract §9).
+  ins.appendChild(group('Custom CSS', [
+    pText('CSS (advanced)', typeof MODEL.css === 'string' ? MODEL.css : '', v => {
+      setOrDel(MODEL, 'css', v); touched();
+    }, {
+      textarea: true, mono: true,
+      placeholder: '.yc-section-title { font-size: 1rem; }',
+      help: 'Appended after the shared stylesheet, so it wins ties. Internal forms only — this key is part of the portal security review bucket and must not ship to external rendering.'
+    }),
+  ]));
+
   // Documentation note (2.5A A8) — form-level.
   ins.appendChild(group('Notes', [
     pText('Note (documentation only)', MODEL.note || '', v => { setOrDel(MODEL, 'note', v); touched(); },
@@ -2373,8 +2496,67 @@ function optionsEditor(f) {
         touched();
       }, { help: 'Checkbox grid columns. Default follows the stylesheet (3, collapsing to 1 on mobile); an explicit value applies everywhere.' }));
   }
+
+  // optionsFrom (2.5B B1) — dynamic select options from firmData.* or $load.*.
+  // The static options above are REQUIRED regardless: they are the fallback
+  // when the source is unreachable at render time. When the checkbox is off,
+  // toggling on seeds a valid skeleton (source grammar is server-validated on
+  // every draft save, so incomplete states must never reach the model).
+  if (f.type === 'select') {
+    const OF_SOURCE_RE = /^(firmData(\.[A-Za-z0-9_]+)+|\$load(\.[A-Za-z0-9_]+|\[[A-Za-z0-9_]+=[^\]]+\])+)$/;
+    const ofKids = [
+      pCheck('Load options from data (optionsFrom)', !!f.optionsFrom, v => {
+        if (v) f.optionsFrom = f.optionsFrom || { source: 'firmData.settings.trustees', value: 'name' };
+        else delete f.optionsFrom;
+        touched(); renderInspector();
+      }, { help: 'Rebuilds the options at load time from firm settings (firmData.*) or the load payload ($load.*). The static options above stay as the fallback when the source is unreachable.' }),
+    ];
+    if (f.optionsFrom) {
+      const OF = f.optionsFrom;
+      ofKids.push(
+        pText('Source', OF.source || '', v => { OF.source = v; touched(); }, {
+          mono: true, placeholder: 'firmData.settings.trustees',
+          validate: raw => OF_SOURCE_RE.test(raw) ? null : 'must be a firmData.* dot path or a $load expression',
+          help: 'Must resolve to an array of objects at render time (e.g. firmData.settings.trustees, $load.clients).'
+        }),
+        pText('Value key', OF.value || '', v => { OF.value = v; touched(); }, {
+          mono: true, placeholder: 'name',
+          validate: raw => raw ? null : 'required — the item key holding the option value',
+        }),
+        pText('Label key', OF.label || '', v => { setOrDel(OF, 'label', v); touched(); },
+          { mono: true, help: 'Optional — item key for the display text. Empty reuses the value key.' }),
+        pText('Group by', OF.groupBy || '', v => { setOrDel(OF, 'groupBy', v); touched(); renderInspector(); },
+          { mono: true, help: 'Optional — item key to group options into <optgroup> (first-seen source order).' }),
+        (OF.groupBy
+          ? pText('Group labels (JSON object)', OF.groupLabels ? JSON.stringify(OF.groupLabels, null, 2) : '', v => {
+              if (v.trim() === '') { delete OF.groupLabels; touched(); return; }
+              OF.groupLabels = JSON.parse(v);   // validate() below guarantees parseability
+              touched();
+            }, {
+              textarea: true, mono: true, placeholder: '{ "7": "Chapter 7", "13": "Chapter 13" }',
+              validate: raw => {
+                if (raw.trim() === '') return null;
+                try {
+                  const p = JSON.parse(raw);
+                  if (!p || typeof p !== 'object' || Array.isArray(p)) return 'must be a JSON object';
+                  if (Object.keys(p).some(k => typeof p[k] !== 'string')) return 'all values must be strings';
+                  return null;
+                } catch (e) { return 'invalid JSON: ' + e.message; }
+              },
+              help: 'Optional — maps raw group values to display text. Unmapped groups show the raw value.'
+            })
+          : null),
+        el('div', { class: 'help', text: 'A stored value not in the loaded list is shown as a flagged option (\u26A0) so legacy data is never silently dropped on save.' })
+      );
+    }
+    kids.push(group('Dynamic options', ofKids));
+  }
   return group('Options', kids);
 }
+
+// insField appends optionsEditor's return value directly; keep it one node.
+// The "Dynamic options" block above intentionally renders as a nested
+// ins-group inside Options — it belongs to the same concern.
 
 // ── Inspector: field ────────────────────────────────────────────────────────
 function insField(ins, f, inRepeater) {
@@ -2454,13 +2636,71 @@ function insField(ins, f, inRepeater) {
   // Data (not applicable inside repeaters — values live in the item array)
   if (!inRepeater) {
     const live = MODEL.dataMode !== 'snapshot';
-    ins.appendChild(group('Data', [
-      pText('Database column', f.apiColumn || '', v => { setOrDel(f, 'apiColumn', v); touched(); }, {
-        mono: true,
-        help: live
-          ? 'Loads from and saves to this column on the ' + ROW.link_type + ' record.'
-          : 'Saves to this column on the ' + ROW.link_type + ' record. (Snapshot mode: values load from the latest submission.)'
-      }),
+    // apiColumn (2.5B B3): plain string (both directions) or { load, save }.
+    // SPLIT_AC (WeakSet, AUTO_NAMES pattern) tracks fields whose split editor
+    // is open — the MODEL never holds an invalid placeholder shape (empty-
+    // string columns would 400 on draft save; server validates every PUT).
+    // setAc writes only non-empty keys and deletes the key when both are
+    // empty; {load:x, save:x} stays an object while the editor is open
+    // (server-valid, renders identically) and collapses to the string form on
+    // toggle-off.
+    const acIsObj = f.apiColumn != null && typeof f.apiColumn === 'object';
+    if (acIsObj) SPLIT_AC.add(f);
+    const splitOpen = SPLIT_AC.has(f);
+    const acStr = typeof f.apiColumn === 'string' ? f.apiColumn : '';
+    const acO   = acIsObj ? f.apiColumn : {};
+    const setAc = (load, save) => {
+      if (!load && !save) delete f.apiColumn;
+      else {
+        const o = {};
+        if (load) o.load = load;
+        if (save) o.save = save;
+        f.apiColumn = o;
+      }
+      touched();
+    };
+    const dataKids = [
+      pCheck('Separate load/save columns', splitOpen, v => {
+        if (v) {
+          SPLIT_AC.add(f);
+          // read the CURRENT model value — the single-column input edits the
+          // model without re-rendering, so a render-time capture goes stale
+          const cur = typeof f.apiColumn === 'string' ? f.apiColumn : '';
+          if (cur) f.apiColumn = { load: cur, save: cur };
+        } else {
+          SPLIT_AC.delete(f);
+          const o = (f.apiColumn && typeof f.apiColumn === 'object') ? f.apiColumn : {};
+          const collapsed = (typeof o.save === 'string' && o.save) ? o.save
+                          : (typeof o.load === 'string' && o.load) ? o.load : '';
+          if (collapsed) f.apiColumn = collapsed; else delete f.apiColumn;
+        }
+        touched(); renderInspector();
+      }, { help: 'Off: one column loads AND saves. On: load and save map independently — e.g. load the full docket, or save to a column that must not pre-fill a snapshot form. One column per direction; multi-column writes stay hooks.' }),
+    ];
+    if (splitOpen) {
+      dataKids.push(
+        pText('Load column', typeof acO.load === 'string' ? acO.load : '', v => {
+          const cur = (f.apiColumn && typeof f.apiColumn === 'object') ? f.apiColumn : {};
+          setAc(v, typeof cur.save === 'string' ? cur.save : '');
+        }, { mono: true, help: live
+            ? 'Populates the field from this column on the ' + ROW.link_type + ' record. Empty = never populated (save-only).'
+            : 'Snapshot mode: only pre-fills before the first submission. Empty = never pre-filled (save-only).' }),
+        pText('Save column', typeof acO.save === 'string' ? acO.save : '', v => {
+          const cur = (f.apiColumn && typeof f.apiColumn === 'object') ? f.apiColumn : {};
+          setAc(typeof cur.load === 'string' ? cur.load : '', v);
+        }, { mono: true, help: 'Changed values PATCH to this column. Empty = load-only (excluded from the save whitelist).' })
+      );
+    } else {
+      dataKids.push(
+        pText('Database column', acStr, v => { setOrDel(f, 'apiColumn', v); touched(); }, {
+          mono: true,
+          help: live
+            ? 'Loads from and saves to this column on the ' + ROW.link_type + ' record.'
+            : 'Saves to this column on the ' + ROW.link_type + ' record. (Snapshot mode: values load from the latest submission.)'
+        })
+      );
+    }
+    dataKids.push(
       pText('Prefill expression', f.prefill || '', v => { setOrDel(f, 'prefill', v); touched(); }, {
         mono: true, placeholder: '{{cases.case_trustee}}',
         help: 'Resolver expression for data outside the loaded entity (joins, lookups). Entity columns should use the database column instead.'
@@ -2477,8 +2717,9 @@ function insField(ins, f, inRepeater) {
       (f.readonly
         ? pText('Locked message', f.lockedMsg || '', v => { setOrDel(f, 'lockedMsg', v); touched(); },
             { help: 'Shown when the user tries to edit the locked field.' })
-        : null),
-    ]));
+        : null)
+    );
+    ins.appendChild(group('Data', dataKids));
 
     // Validation (not supported inside repeaters — v1 runtime)
     if (canHide) {
@@ -2562,6 +2803,7 @@ function changeType(f, newType) {
   if (isOpt && !Array.isArray(f.options)) f.options = ['Option 1'];
   if (!isOpt && wasOpt) { delete f.options; delete f.allowOther; }
   if (newType !== 'checkgroup') delete f.allowOther;
+  if (newType !== 'select') delete f.optionsFrom;   // 2.5B: select-only key
   if (newType !== 'textarea') delete f.rows;
   if (newType !== 'number') { delete f.min; delete f.max; delete f.step; }
 }

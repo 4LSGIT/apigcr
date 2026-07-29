@@ -86,8 +86,29 @@
  *   - checkgroup "columns" 1–3 (§4.3): inline grid-template-columns override
  *     matching casedetails-bk's hand-built pattern.
  *
- * Still out (Slice 2.5B/2.6 + reserved): optionsFrom, derive, apiColumn
- * load/save split, per-form css, tabs, external/portal mode, computed fields.
+ * SLICE 2.5B ADDITIONS (SLICE_2_5_SPEC.md + addendum):
+ *   - optionsFrom (§4.3): select options rebuilt at load from firmData.* (frame
+ *     chain relay) or $load.* (the load payload, same grammar/resolver as A1).
+ *     Rebuild runs in the generated onLoad AFTER populate/prefill; the field's
+ *     current value is captured first and re-applied after — a stored value
+ *     not in the source list is injected as a flagged option (casedetails-bk
+ *     pattern: legacy data is never silently dropped). Unreachable source →
+ *     static `options` stay as the fallback, with a warn. groupBy emits
+ *     <optgroup>; optional groupLabels maps raw group values to display text.
+ *   - derive (§3): fixed-verb date suggestions (addDays, dateFromDatetime),
+ *     filled ONLY when the target is empty, inside the generated onLoad (i.e.
+ *     before init 13c's resetBaseline — the casedetails-bk dirty-forever
+ *     lesson), and recomputed unconditionally on `change` of the source field
+ *     (mirrors the hand-built listener exactly). Never eval — a verb registry.
+ *   - apiColumn {load, save} split (§4.3): a string keeps meaning both; the
+ *     object form maps each direction independently. save-only columns don't
+ *     populate; load-only columns are excluded from the PATCH whitelist.
+ *   - per-form css (§3): injected as a <style> via textContent (never
+ *     innerHTML) appended to <head> after the shared stylesheet so it wins the
+ *     cascade. INTERNAL-ONLY pending the portal security review.
+ *
+ * Still out (2.6 + reserved): tabs, external/portal mode, type:"embed",
+ * computed fields, multi-column/transforming apiColumn (stays hooks).
  *
  * MODES
  *   Normal : ?form_key=X&<linkType>_id=N   (param name follows the template's
@@ -631,6 +652,7 @@
     var readonlySet = {};
     var prefills = [];     // [{ name, expr, mode }] — batched /resolve in onLoad (§5)
     var loadPrefills = []; // [{ name, expr, mode }] — "$load.…" paths, resolved locally (§5, 2.5A)
+    var optionsFroms = []; // [{ name, cfg, placeholder }] — dynamic select options (2.5B B1)
 
     function registerField(f) {
       var ycType = YC_TYPE[f.type] || 'text';
@@ -638,9 +660,34 @@
       if (f.readonly) { fc.readonly = true; readonlySet[f.name] = true; }
       fields[f.name] = fc;
 
+      // apiColumn (§4.3): a string maps BOTH directions (unchanged). The
+      // {load, save} object form (2.5B B3) maps each independently: `load`
+      // feeds apiMap (populate via _mergeApiData), `save` feeds the PATCH
+      // whitelist. Scope is one column per direction — multi-column writes
+      // and value transforms stay hooks (the honest boundary).
       if (f.apiColumn) {
-        apiMap[f.apiColumn] = f.name;   // {apiColumn: fieldName} — _mergeApiData direction
-        forwardMap[f.name] = f.apiColumn;
+        var acLoad = null, acSave = null;
+        if (typeof f.apiColumn === 'string') {
+          acLoad = acSave = f.apiColumn;
+        } else if (typeof f.apiColumn === 'object') {
+          if (typeof f.apiColumn.load === 'string' && f.apiColumn.load) acLoad = f.apiColumn.load;
+          if (typeof f.apiColumn.save === 'string' && f.apiColumn.save) acSave = f.apiColumn.save;
+        }
+        if (acLoad) apiMap[acLoad] = f.name;   // {column: fieldName} — _mergeApiData direction
+        if (acSave) forwardMap[f.name] = acSave;
+      }
+
+      // optionsFrom (2.5B B1): dynamic select options from firmData.* or
+      // $load.*. Collected here; the rebuild runs in the generated onLoad
+      // (after populate — the field's value is re-applied afterwards).
+      // Static `options` (required by validation) remain the fallback.
+      if (f.optionsFrom) {
+        if (f.type === 'select' && typeof f.optionsFrom === 'object') {
+          optionsFroms.push({ name: f.name, cfg: f.optionsFrom,
+                              placeholder: f.placeholder || 'Select\u2026' });
+        } else {
+          warn('field "' + f.name + '": optionsFrom is only supported on type "select" — ignored');
+        }
       }
 
       // Prefill (§5): "$load.…" expressions resolve against the load payload
@@ -752,6 +799,7 @@
 
     return { fields: fields, validation: validation, apiMap: apiMap,
              repeaters: repeaters, prefills: prefills, loadPrefills: loadPrefills,
+             optionsFroms: optionsFroms,
              forwardMap: forwardMap, readonlySet: readonlySet };
   }
 
@@ -817,6 +865,146 @@
     return cur;
   }
 
+  // ── optionsFrom source resolver (2.5B B1). Two whitelisted prefixes:
+  //      firmData.<path>  — walked off window.parent.firmData (the frame chain
+  //                         relays it: case.html / contact.html / formBuilder /
+  //                         liveHost all set window.firmData for their iframe).
+  //      $load.<path>     — resolveLoadPath over form._loadResult (shared
+  //                         grammar with A1 prefill).
+  //    Anything else, or a result that isn't a non-empty array → null → the
+  //    caller keeps the static options (never blank the control). ──
+  function resolveOptionsSource(source, loadResult, warn) {
+    if (typeof source !== 'string') return null;
+    var out;
+    if (source.indexOf('firmData.') === 0) {
+      var fd = null;
+      try { fd = window.parent && window.parent.firmData; } catch (e) { fd = null; }
+      if (!fd) { warn('optionsFrom: firmData is not available from the parent frame'); return null; }
+      out = fd;
+      var parts = source.slice('firmData.'.length).split('.');
+      for (var i = 0; i < parts.length; i++) {
+        if (out == null || typeof out !== 'object') { out = undefined; break; }
+        out = out[parts[i]];
+      }
+    } else if (source.indexOf('$load') === 0) {
+      out = resolveLoadPath(loadResult, source);
+    } else {
+      warn('optionsFrom: source "' + source + '" must start with firmData. or $load — ignored');
+      return null;
+    }
+    if (!Array.isArray(out) || !out.length) return null;
+    return out;
+  }
+
+  // ── Rebuild one select from a resolved source array. Mirrors the hand-built
+  //    casedetails-bk trustee dropdown: placeholder first, then a FLAGGED
+  //    option when the intended value is not in the list (legacy data is never
+  //    silently dropped on save), then options — grouped into <optgroup> when
+  //    cfg.groupBy is set (groups in first-seen source order; labels from the
+  //    optional cfg.groupLabels map, else the raw group value). `intended` is
+  //    supplied by the caller (DOM value, falling back to the data source's —
+  //    an unlisted stored value never sticks on a select's DOM) and is
+  //    re-applied at the end. All nodes via el() — textContent/setAttribute
+  //    only (contract §8). ──
+  function rebuildSelectOptions(sel, items, cfg, placeholderText, intended, warn) {
+    var valueKey = cfg.value;
+    var labelKey = (typeof cfg.label === 'string' && cfg.label) ? cfg.label : valueKey;
+    if (typeof valueKey !== 'string' || !valueKey) {
+      warn('optionsFrom: "value" key missing — static options kept');
+      return;
+    }
+
+    var current = (intended != null) ? String(intended) : '';
+
+    var opts = [];
+    items.forEach(function (it) {
+      if (!it || typeof it !== 'object' || it[valueKey] == null) return;   // skip malformed rows
+      opts.push({
+        value: String(it[valueKey]),
+        label: String(it[labelKey] != null ? it[labelKey] : it[valueKey]),
+        group: cfg.groupBy ? String(it[cfg.groupBy] != null ? it[cfg.groupBy] : '') : null
+      });
+    });
+    if (!opts.length) { warn('optionsFrom: source resolved but no usable rows — static options kept'); return; }
+
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    sel.appendChild(el('option', { value: '', text: placeholderText }));
+
+    // Intended value not in the rebuilt list → flagged option as a DIRECT
+    // child (an option inside an <optgroup> is fine for value matching, but
+    // the flag reads better at the top — matches the hand-built form).
+    if (current && !opts.some(function (o) { return o.value === current; })) {
+      sel.appendChild(el('option', { value: current, 'data-unlisted': '1',
+                                     text: '\u26A0 ' + current + ' (not in list)' }));
+    }
+
+    if (cfg.groupBy) {
+      var groups = {}, order = [];
+      opts.forEach(function (o) {
+        if (!groups[o.group]) { groups[o.group] = []; order.push(o.group); }
+        groups[o.group].push(o);
+      });
+      var labels = (cfg.groupLabels && typeof cfg.groupLabels === 'object') ? cfg.groupLabels : {};
+      order.forEach(function (g) {
+        var og = el('optgroup', { label: (labels[g] != null ? String(labels[g]) : g) });
+        groups[g].forEach(function (o) { og.appendChild(el('option', { value: o.value, text: o.label })); });
+        sel.appendChild(og);
+      });
+    } else {
+      opts.forEach(function (o) { sel.appendChild(el('option', { value: o.value, text: o.label })); });
+    }
+
+    sel.value = current;   // re-apply — rebuild reset it
+  }
+
+  // ── derive (2.5B B2): fixed verb registry — no expressions, no eval.
+  //    Date math ported verbatim from casedetails-bk.html / the
+  //    case_details_bk hook: parse LOCAL (never UTC) to avoid TZ drift.
+  //      addDays(dateStr, n)          "YYYY-MM-DD…" → date + n days
+  //      dateFromDatetime(dtStr, n)   "YYYY-MM-DDTHH:mm" → date part + n days
+  //    Both return '' on unparseable input (clearing the source clears the
+  //    target on the change-listener path, exactly like the hand-built form).──
+  function deriveFmt(d) {
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+  var DERIVE_OPS = {
+    addDays: function (v, n) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(v || '');
+      if (!m) return '';
+      var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      if (isNaN(d)) return '';
+      d.setDate(d.getDate() + (n || 0));
+      return deriveFmt(d);
+    },
+    dateFromDatetime: function (v, n) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(v || '');
+      if (!m) return '';
+      var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+      if (isNaN(d)) return '';
+      d.setDate(d.getDate() + (n || 0));
+      return deriveFmt(d);
+    }
+  };
+
+  // Normalize def.derive into runnable rules; invalid entries warn + skip
+  // (published definitions have passed §7 — belt-and-braces for drafts).
+  function deriveRules(def, warn) {
+    if (!Array.isArray(def.derive)) return [];
+    var rules = [];
+    def.derive.forEach(function (r, i) {
+      if (!r || typeof r !== 'object' || !DERIVE_OPS[r.op]
+          || typeof r.target !== 'string' || typeof r.from !== 'string') {
+        warn('derive[' + i + '] is invalid — skipped');
+        return;
+      }
+      rules.push({ target: r.target, from: r.from, op: r.op,
+                   n: (typeof r.n === 'number' ? r.n : 0) });
+    });
+    return rules;
+  }
+
   // ── Prefill write helper: set one field's value the way populate() would,
   //    honoring prefillMode. Runs inside onLoad — i.e. BEFORE init step 13c's
   //    resetBaseline — so prefilled values are part of the clean state. ──
@@ -865,6 +1053,19 @@
 
     document.title = meta.title || 'Form';
 
+    // Per-form CSS (2.5B B4). textContent-injected <style> appended to <head>
+    // AFTER the shared stylesheet + the local block, so it wins the cascade at
+    // equal specificity. textContent means the string is CSS text only — no
+    // element/script injection path (contract §8). INTERNAL-ONLY pending the
+    // portal security review: CSS on an untrusted rendering surface is a
+    // lower-grade but real injection channel (same review bucket as "embed").
+    if (typeof def.css === 'string' && def.css) {
+      var cssEl = document.createElement('style');
+      cssEl.setAttribute('data-yc-form-css', '');
+      cssEl.textContent = def.css;
+      document.head.appendChild(cssEl);
+    }
+
     var form = buildSkeleton(def);
     var maps = renderBody(def, form, warn);
 
@@ -912,6 +1113,11 @@
         ? 'no entity loaded' : 'definition has no endpoints.load') + ')');
     }
 
+    // derive rules (2.5B B2) — local, deterministic, no requests: active in
+    // every mode (a preview with a link_id shows the suggested dates; a
+    // layout-only preview has empty sources, so the rules are vacuous).
+    var derives = deriveRules(def, warn);
+
     // Generated onLoad (§5 prefill + §3 hooks.onLoad). Runs at init step 13,
     // BEFORE step 13c's resetBaseline — so nothing written here dirties the
     // form — and before 13b, so prefilled values drive conditionals.
@@ -958,6 +1164,46 @@
         }
       }
 
+      // optionsFrom rebuild (2.5B B1) — AFTER populate (init step 10) and
+      // prefill. The INTENDED value is the select's DOM value when populate/
+      // prefill managed to apply one, falling back to the data source's value
+      // (`data` — what populate tried to write): a stored value NOT in the
+      // static options never sticks on the DOM (select.value only accepts
+      // listed values), so the DOM alone would silently lose it. The rebuild
+      // re-applies the intended value, injecting a flagged option when it
+      // isn't in the loaded list. Local + read-only, so it runs in preview
+      // too; a $load source without a loaded payload falls back to the static
+      // options with a warn.
+      maps.optionsFroms.forEach(function (of) {
+        var sel = form_.el.querySelector('select[name="' + of.name + '"]');
+        if (!sel) return;
+        var items = resolveOptionsSource(of.cfg.source, form_._loadResult, warn);
+        if (!items) {
+          warn('optionsFrom "' + of.name + '": source "' + of.cfg.source
+             + '" unreachable or empty — static options kept');
+          return;
+        }
+        var intended = sel.value;
+        if (!intended && data && typeof data === 'object' && data[of.name] != null && data[of.name] !== '') {
+          intended = String(data[of.name]);
+        }
+        rebuildSelectOptions(sel, items, of.cfg, of.placeholder, intended, warn);
+      });
+
+      // derive fill (2.5B B2) — ONLY when the target is empty (these are
+      // suggestions; a stored value always wins). Runs after prefill (a
+      // prefill may fill the source) and inside onLoad, i.e. BEFORE init step
+      // 13c's resetBaseline — a derived value is part of the clean state, is
+      // NOT in getDiff(), and is therefore not persisted unless the user
+      // edits it (deterministic function of its source; recomputed every
+      // load). The casedetails-bk dirty-forever lesson, honored.
+      derives.forEach(function (r) {
+        var s = form_.el.querySelector('[name="' + r.from + '"]');
+        var t = form_.el.querySelector('[name="' + r.target + '"]');
+        if (!s || !t) return;
+        if (!t.value && s.value) t.value = DERIVE_OPS[r.op](s.value, r.n);
+      });
+
       // Hooks onLoad — LAST in the generated onLoad, after prefill (§3).
       // Isolated: a broken hook degrades, it must not abort init (which would
       // skip steps 13c/13b and leave the form dirty with stale conditionals).
@@ -977,6 +1223,25 @@
     };
 
     var form_ = new YCForm(config);
+
+    // derive change listeners (2.5B B2): a USER change of the source
+    // recomputes the target UNCONDITIONALLY — including clearing it when the
+    // source is cleared. This mirrors the hand-built casedetails-bk listener
+    // exactly (the fill-only-empty rule is a LOAD-time rule; on live change
+    // the user is actively driving and the suggestion follows the source).
+    // Bound before init: change events only fire from user interaction, never
+    // from populate()'s programmatic writes, so early binding is safe.
+    derives.forEach(function (r) {
+      var s = form.querySelector('[name="' + r.from + '"]');
+      var t = form.querySelector('[name="' + r.target + '"]');
+      if (!s || !t) {
+        warn('derive: field "' + (!s ? r.from : r.target) + '" not found — rule skipped');
+        return;
+      }
+      s.addEventListener('change', function () {
+        t.value = DERIVE_OPS[r.op](s.value, r.n);
+      });
+    });
 
     // apiColumn whitelist PATCH payload (contract §3): changed ∧ has apiColumn
     // ∧ not readonly. Deliberately narrower than the default _buildPatchPayload

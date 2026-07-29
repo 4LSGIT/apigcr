@@ -147,7 +147,31 @@
 
   E('bar').style.display = '';
   E('frame').style.display = '';
-  E('frame').src = '/forms/render.html?' + qs;
+
+  // firmData relay (2.5B): render.html's optionsFrom reads
+  // window.parent.firmData — the in-app frame chain relays it, and this page
+  // is the standalone stand-in for that chain, so it must too. One GET, same
+  // endpoint the shell uses (index.html loadFirmData). The iframe boots only
+  // after the fetch settles (success OR failure) so the read is deterministic;
+  // a failed fetch degrades exactly like a missing relay: optionsFrom falls
+  // back to the template's static options with a console warn.
+  window.apiSend('/api/firm-data', 'GET')
+    .then(function (data) {
+      window.firmData = {
+        phoneLines:   (data && data.phoneLines)  || [],
+        emailFrom:    (data && data.emailFrom)   || [],
+        currentUser:  (data && data.currentUser) || null,
+        users:        (data && data.users)       || [],
+        settings:     (data && data.settings)    || {},
+        firmTimezone: (data && data.firmTimezone) || 'America/Detroit'
+      };
+    })
+    .catch(function (e) {
+      console.warn('[liveHost] firm-data fetch failed — optionsFrom will use static fallbacks:', e && e.message);
+    })
+    .then(function () {
+      E('frame').src = '/forms/render.html?' + qs;
+    });
 })();
 </script>
 </body>
