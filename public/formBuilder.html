@@ -215,6 +215,7 @@
   .opt-row button { flex: none; }
 
   /* ── Opener list (Slice 4 admin list) ─────────────────────── */
+  #opHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   #opBar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
   #opSearch { flex: 1; }
   table.op-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -252,7 +253,10 @@
 
 <!-- ══════════ Opener (no ?id) — Slice 4 admin list ══════════ -->
 <div id="opener" class="panel" style="display:none; max-width:860px; margin:24px auto;">
-  <h2>Form Builder</h2>
+  <h2 id="opHead">
+    Form Builder
+    <button onclick="newTemplateDialog()">+ New template</button>
+  </h2>
   <div id="opBar">
     <input id="opSearch" placeholder="Filter by key, title, or link type…">
     <span id="opCount" class="muted"></span>
@@ -264,30 +268,6 @@
     <tbody id="opTbody"></tbody>
   </table>
   <div id="opListErr" class="err" style="margin-top:6px;"></div>
-  <div class="ins-group">
-    <div class="gtitle">New template</div>
-    <div class="two-col">
-      <div class="prop">
-        <label>Form key <span class="muted">(a-z 0-9 _ · permanent once published)</span></label>
-        <input id="opKey" maxlength="50" placeholder="my_new_form">
-        <div class="perr" id="opKeyErr"></div>
-      </div>
-      <div class="prop">
-        <label>Link type</label>
-        <select id="opLink">
-          <option value="case">case</option>
-          <option value="contact">contact</option>
-          <option value="appt">appt</option>
-        </select>
-      </div>
-    </div>
-    <div class="prop">
-      <label>Title</label>
-      <input id="opTitle" maxlength="150" placeholder="My New Form">
-    </div>
-    <button onclick="createTemplate()">Create &amp; open</button>
-    <span id="opErr" class="err" style="margin-left:8px;"></span>
-  </div>
 </div>
 
 <!-- ══════════ Builder ══════════ -->
@@ -613,7 +593,7 @@ function renderOpList() {
     : rows.length + ' of ' + OP_LIST.length;
   if (!rows.length) {
     tbody.appendChild(el('tr', null, el('td', { colspan: '6', class: 'muted',
-      text: OP_LIST.length ? 'No templates match the filter.' : 'No templates yet — create one below.' })));
+      text: OP_LIST.length ? 'No templates match the filter.' : 'No templates yet — use “+ New template”.' })));
     return;
   }
   rows.forEach(t => {
@@ -656,28 +636,64 @@ async function deleteTemplateRow(t) {
   }
 }
 
-async function createTemplate() {
-  const key = E('opKey').value.trim();
-  const title = E('opTitle').value.trim();
-  const errEl = E('opErr'); errEl.textContent = '';
-  const keyErr = E('opKeyErr'); keyErr.classList.remove('show');
-  if (!FORM_KEY_RE.test(key)) {
-    keyErr.textContent = 'must match ^[a-z0-9_]{1,50}$';
-    keyErr.classList.add('show');
-    return;
-  }
-  if (!title) { errEl.textContent = 'title is required'; return; }
-  try {
-    const data = await P.apiSend('/api/form-templates', 'POST', {
-      form_key: key,
-      title: title,
-      link_type: E('opLink').value,
-      draft_definition: { sections: [ { title: 'Section 1', rows: [] } ] }
-    });
-    gotoTemplate(data.template.id);
-  } catch (err) {
-    errEl.textContent = err.message;   // server message verbatim
-  }
+// New-template dialog: the three creation fields in a modal. Validation and the
+// POST both run in preConfirm, so the popup stays open (with the field values
+// intact) on a bad key, a missing title, or a server rejection — e.g. a
+// duplicate form_key — and only closes once the row exists.
+async function newTemplateDialog() {
+  if (!window.Swal) { flash('Dialog library failed to load — reload the page.'); return; }
+
+  const keyIn   = el('input', { class: 'mono', maxlength: '50', placeholder: 'my_new_form' });
+  const titleIn = el('input', { maxlength: '150', placeholder: 'My New Form' });
+  const linkIn  = el('select', null,
+    ['case', 'contact', 'appt'].map(v => el('option', { value: v, text: v })));
+
+  const body = el('div', { style: 'text-align:left;' }, [
+    el('div', { class: 'two-col' }, [
+      el('div', { class: 'prop' }, [
+        el('label', null, ['Form key ',
+          el('span', { class: 'muted', text: '(a-z 0-9 _ · permanent once published)' })]),
+        keyIn,
+      ]),
+      el('div', { class: 'prop' }, [ el('label', { text: 'Link type' }), linkIn ]),
+    ]),
+    el('div', { class: 'prop' }, [ el('label', { text: 'Title' }), titleIn ]),
+  ]);
+
+  const r = await Swal.fire({
+    title: 'New template',
+    html: body,                                  // an HTMLElement is appended, not parsed
+    showCancelButton: true,
+    confirmButtonText: 'Create & open',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: 'var(--accent)',
+    background: 'var(--panel)', color: 'var(--fg)',
+    width: 520, reverseButtons: true,
+    didOpen: () => keyIn.focus(),
+    showLoaderOnConfirm: true,
+    allowOutsideClick: () => !Swal.isLoading(),
+    preConfirm: async () => {
+      const key = keyIn.value.trim(), title = titleIn.value.trim();
+      if (!FORM_KEY_RE.test(key)) {
+        Swal.showValidationMessage('Form key must match ^[a-z0-9_]{1,50}$');
+        return false;
+      }
+      if (!title) { Swal.showValidationMessage('Title is required'); return false; }
+      try {
+        const data = await P.apiSend('/api/form-templates', 'POST', {
+          form_key: key,
+          title: title,
+          link_type: linkIn.value,
+          draft_definition: { sections: [ { title: 'Section 1', rows: [] } ] }
+        });
+        return data.template.id;
+      } catch (err) {
+        Swal.showValidationMessage(err.message);   // server message verbatim
+        return false;
+      }
+    },
+  });
+  if (r.isConfirmed && r.value) gotoTemplate(r.value);
 }
 
 function gotoTemplate(id) {
@@ -716,8 +732,8 @@ async function openTemplate(id) {
     renderInspector();
     markDirty();
   } catch (err) {
-    E('opener').style.display = '';
-    E('opErr') && (E('opErr').textContent = 'Load failed: ' + err.message);
+    await showOpener();          // bad ?id= — fall back to a loaded, usable list
+    E('opListErr').textContent = 'Load failed: ' + err.message;
   }
 }
 
