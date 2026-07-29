@@ -143,6 +143,11 @@
 // contract as hooks.html. The CASE PICKER for "Adopt" uses the SHELL's
 // scripts.js CasePicker via window.top.CasePicker mounted in a window.top.Swal
 // (so the shell's cp-* CSS + P.apiSend apply) — no per-page picker fork.
+// "Create case…" (Slice B) reuses the SHELL's NewCaseForm + splitDocket the
+// same way: one case-creation dialog in the app, docket prefilled from the
+// queued row; the follow-up adopt-rerun stamps case_caption server-side from
+// the row's case_name (Slice A additive stamp), so no caption field is needed
+// in the create dialog.
 // ═══════════════════════════════════════════════════════════════
 const P = window.parent;
 const api = (...args) => P.apiSend(...args);
@@ -230,6 +235,9 @@ function reasonLabel(cat){
               <button class="btn btn-green btn-sm" onclick="event.stopPropagation();window.crGroupAdopt('${esc(key).replace(/'/g,"\\'")}')" title="Adopt this docket onto a case, then re-run every row in the group">
                 <i class="fa-solid fa-folder-plus"></i> Adopt all
               </button>
+              <button class="btn btn-sm" style="background:#0e7490;color:#fff" onclick="event.stopPropagation();window.crGroupCreate('${esc(key).replace(/'/g,"\\'")}')" title="Create a NEW case with this docket (shell New Case form), then adopt &amp; re-run every row in the group">
+                <i class="fa-solid fa-folder-open"></i> Create + adopt all
+              </button>
             </span>
           </div>
           <div class="group-rows">${rowsHtml}</div>
@@ -304,7 +312,7 @@ function reasonLabel(cat){
 
     const resolveHtml = resolvesNow
       ? `<div class="resolve-box resolve-ok"><i class="fa-solid fa-circle-check"></i> Docket resolves to <b>${esc(caseLabel)}</b>${res.primary_contact_name ? ' · '+esc(res.primary_contact_name) : ''} (case_id ${esc(res.case_id)})</div>`
-      : `<div class="resolve-box resolve-no"><i class="fa-solid fa-triangle-exclamation"></i> No case resolves for <b class="mono">${esc(docket)}</b> — adopt the docket onto a case to proceed.</div>`;
+      : `<div class="resolve-box resolve-no"><i class="fa-solid fa-triangle-exclamation"></i> No case resolves for <b class="mono">${esc(docket)}</b> — adopt the docket onto an existing case, or create one, to proceed.</div>`;
 
     E('cr-detail').innerHTML = `
       <div class="d-head">
@@ -329,6 +337,9 @@ function reasonLabel(cat){
         ${reextractBtn}
         <button class="btn btn-green btn-sm" onclick="window.crAdopt(${r.id})" ${docket==='(no docket)'?'disabled':''}>
           <i class="fa-solid fa-folder-plus"></i> Adopt → case…
+        </button>
+        <button class="btn btn-sm" style="background:#0e7490;color:#fff" onclick="window.crCreateCase(${r.id})" ${docket==='(no docket)'?'disabled':''} title="Create a NEW case with this docket (shell New Case form), then adopt & re-run this row">
+          <i class="fa-solid fa-folder-open"></i> Create case…
         </button>
         <button class="btn btn-danger btn-sm" onclick="window.crDismiss(${r.id})">
           <i class="fa-solid fa-xmark"></i> Dismiss
@@ -511,17 +522,12 @@ function reasonLabel(cat){
     }
   }
 
-  // Group adopt: pick a case ONCE, adopt+rerun the first row, then re-run the
+  // Shared group batch: adopt+rerun the first row onto caseId, then re-run the
   // rest sequentially (they share the docket, so the case now resolves).
-  async function groupAdopt(key){
-    const rows = rowsForGroup(key);
-    if (!rows.length) return;
-    const chosen = await pickCase(key);
-    if (!chosen) return;
-
+  // Aborts the batch if the adopt itself conflicts.
+  async function adoptGroupOnto(rows, caseId){
     let ok = 0, fail = 0;
-    // First row carries the adopt; abort the batch if the adopt itself conflicts.
-    const first = await doAdoptRerun(rows[0].id, chosen.case_id);
+    const first = await doAdoptRerun(rows[0].id, caseId);
     if (!first){ await load(); return; }
     ok++;
     for (let i = 1; i < rows.length; i++){
@@ -530,6 +536,66 @@ function reasonLabel(cat){
     }
     Toast.fire({ icon: fail?'warning':'success', title:`Group re-run: ${ok} ok${fail?', '+fail+' failed':''}` });
     await load();
+  }
+
+  // Group adopt: pick a case ONCE, then batch.
+  async function groupAdopt(key){
+    const rows = rowsForGroup(key);
+    if (!rows.length) return;
+    const chosen = await pickCase(key);
+    if (!chosen) return;
+    await adoptGroupOnto(rows, chosen.case_id);
+  }
+
+  // ── Create-case flows (Slice B) ──────────────────────────────
+  // Open the SHELL's NewCaseForm with the row's docket prefilled (split via the
+  // shell's splitDocket — the same client-side BK convenience NewCaseForm's
+  // other callers use). suppressOpen keeps the user in the review queue.
+  // onSuccess(data) fires only on an actual create — cancel simply never calls
+  // back, so onCreated is the whole continuation. The follow-up adopt-rerun
+  // stamps case_caption from the row's case_name server-side (Slice A).
+  function openShellNewCase(docket, onCreated){
+    const top = window.top;
+    if (!top || typeof top.NewCaseForm !== 'function'){
+      Toast.fire({ icon:'error', title:'New-case form unavailable (open inside the app shell).' });
+      return;
+    }
+    const sd = (typeof top.splitDocket === 'function')
+      ? top.splitDocket(docket)
+      : { short: docket, full: null };
+    top.NewCaseForm(
+      {
+        case_number:      sd.short || '',
+        case_number_full: sd.full  || '',
+        suppressOpen: true,
+      },
+      (data) => {
+        const caseId = data && data.id;
+        if (!caseId){
+          Toast.fire({ icon:'error', title:'Case created but no id returned — adopt manually.' });
+          return;
+        }
+        onCreated(caseId);
+      }
+    );
+  }
+
+  function createCase(id){
+    const row = queue.rows.find(x => x.id === id);
+    const docket = (row && row.case_number || '').trim();
+    if (!docket) return;
+    openShellNewCase(docket, async (caseId) => {
+      await doAdoptRerun(id, caseId);
+      await load();
+    });
+  }
+
+  function groupCreate(key){
+    const rows = rowsForGroup(key);
+    if (!rows.length) return;
+    openShellNewCase(key, async (caseId) => {
+      await adoptGroupOnto(rows, caseId);
+    });
   }
 
   async function dismiss(id){
@@ -568,6 +634,8 @@ function reasonLabel(cat){
   window.crApprove     = approve;
   window.crAdopt       = adopt;
   window.crGroupAdopt  = groupAdopt;
+  window.crCreateCase  = createCase;
+  window.crGroupCreate = groupCreate;
   window.crDismiss     = dismiss;
   window.crToggleGroup = toggleGroup;
 
