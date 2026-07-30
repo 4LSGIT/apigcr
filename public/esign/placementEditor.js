@@ -478,6 +478,199 @@ function peValidateBasics(o) {
   return errs;
 }
 
+// ─── PLACEMENT TEXT KEYS (2G) ────────────────────────────────
+//
+// TWO different things in this codebase are called a "key", and conflating
+// them is how a bad key reaches the server:
+//
+//   PE_KEY_RE       TEMPLATE PREFILL-SCHEMA keys (esignTemplateService.KEY_RE)
+//                   — lowercase, must start with a letter, ≤40. This is the
+//                   identifier a template BODY writes as {{key}}.
+//   PE_TEXT_KEY_RE  PLACED TEXT-FIELD keys (services/esign/placements.js
+//                   TEXT_KEY_RE) — the name on an amber fill-in box. Looser,
+//                   because the ad-hoc upload flow mints its own: any of
+//                   A-Z a-z 0-9 _ . - , 1..64 chars.
+//
+// A placed key must satisfy PE_TEXT_KEY_RE or the SERVER THROWS. In the
+// template flow it must ALSO name a declared schema key — that second rule is
+// already reported by peDiffPlacementKeys and stays a warning, not a block.
+//
+// Before 2G neither rule was checked in the browser at all: an illegal key
+// survived the whole authoring session and surfaced at SEND time as a Swal
+// reading "Send failed" whose body was a raw regex literal. Staff read that as
+// the provider rejecting the document. It was us.
+var PE_TEXT_KEY_RE  = /^[A-Za-z0-9_.\-]{1,64}$/;
+var PE_TEXT_KEY_MAX = 64;
+
+/**
+ * THE SAME TRAP AGAIN, for `label`.
+ *
+ *   PE_LABEL_MAX (80)           esignTemplateService's PREFILL-SCHEMA ROW
+ *                               label — the human name of a row in the
+ *                               template's schema table.
+ *   PE_PLACEMENT_LABEL_MAX (60) services/esign/placements.js LABEL_MAX — the
+ *                               "shown to signer" string rendered INSIDE a
+ *                               placed box on the provider's signing page.
+ *
+ * They are different limits on different strings. Using 80 for a placed
+ * label lets an author type 61–80 characters that the server then refuses.
+ */
+var PE_PLACEMENT_LABEL_MAX = 60;
+
+/** Mirror of placements.OPTION_TEXT_MAX — dropdown options, radio group/value. */
+var PE_OPTION_TEXT_MAX = 100;
+
+/** Characters a placed key may contain — used for the "remove X" hint. */
+var PE_TEXT_KEY_CHAR_RE = /[A-Za-z0-9_.\-]/;
+
+/**
+ * Human sentence for an illegal placed key, '' when it is fine. Shown INLINE
+ * under the key input as it is typed — the constraint has to be visible where
+ * the mistake is made, not in a modal three screens later.
+ *
+ * @param {string} key
+ * @returns {string} '' if valid, else a sentence naming the offending chars
+ */
+function peTextKeyError(key) {
+  var k = typeof key === 'string' ? key : '';
+  if (!k) return 'Give this box a key.';
+  if (k.length > PE_TEXT_KEY_MAX) {
+    return 'Key is too long \u2014 ' + k.length + ' characters, max ' + PE_TEXT_KEY_MAX + '.';
+  }
+  if (PE_TEXT_KEY_RE.test(k)) return '';
+  var bad = [], seen = {};
+  for (var i = 0; i < k.length; i++) {
+    var c = k.charAt(i);
+    if (PE_TEXT_KEY_CHAR_RE.test(c) || seen[c]) continue;
+    seen[c] = true;
+    bad.push(c === ' ' ? 'spaces' : '"' + c + '"');
+  }
+  return 'A key names the box \u2014 letters, numbers, _ . and - only' +
+    (bad.length ? ' (remove ' + bad.join(', ') + ')' : '') + '.';
+}
+
+/**
+ * Coerce arbitrary text into a legal placed key. Illegal runs collapse to one
+ * underscore; leading/trailing underscores go. '$1,000 fee' → '1_000_fee'.
+ * Never returns '' — an unnamable string becomes 'field'.
+ */
+function peSlugifyKey(s) {
+  var out = String(s == null ? '' : s)
+    .replace(/[^A-Za-z0-9_.\-]+/g, '_')
+    .replace(/_{2,}/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, PE_TEXT_KEY_MAX);
+  return out || 'field';
+}
+
+/** First `base_N` (N from 1) not already used by a text field in `fields`. */
+function peNextFreeKey(fields, base) {
+  var b = peSlugifyKey(base || 'field');
+  var taken = {};
+  (Array.isArray(fields) ? fields : []).forEach(function (f) {
+    if (f && f.type === 'text' && typeof f.key === 'string' && f.key) taken[f.key] = true;
+  });
+  for (var n = 1; n <= 9999; n++) {
+    if (!taken[b + '_' + n]) return b + '_' + n;
+  }
+  return b + '_' + Date.now();
+}
+
+/**
+ * Comfortable default box size in POINTS for TAP-TO-PLACE.
+ *
+ * Deliberately NOT PE_MIN_SIZES: the minimum is what a box may be shrunk TO
+ * by a deliberate drag, not a sensible size to hand somebody who never
+ * dragged one. A 120×24pt signature (the floor) is a cramped smear; 170×40
+ * is a signature.
+ */
+var PE_DEFAULT_SIZES = {
+  signature:  { w: 170, h: 40 },
+  initial:    { w: 62,  h: 34 },
+  date:       { w: 110, h: 22 },
+  text:       { w: 140, h: 16 },
+  input_text: { w: 140, h: 20 },
+  checkbox:   { w: 16,  h: 16 },
+  dropdown:   { w: 130, h: 22 },
+  radio:      { w: 16,  h: 16 },
+};
+
+/** Default {w,h} in points for a tapped field of `type`. */
+function peDefaultSize(type) {
+  var d = PE_DEFAULT_SIZES[type] || PE_DEFAULT_SIZES.text;
+  return { w: d.w, h: d.h };
+}
+
+/**
+ * One-line description of a field for the inspector's field list. Pure so the
+ * list and the on-page tag can never drift into two different vocabularies.
+ */
+function peFieldSummary(f) {
+  if (!f || !f.type) return '';
+  if (f.type === 'text') return 'Fill-in \u00b7 ' + (f.key || 'no key');
+  if (f.type === 'radio') return 'Radio \u00b7 ' + (f.group || '?') + ': ' + (f.value || '?');
+  var NAMES = {
+    signature: 'Signature', initial: 'Initial', date: 'Date',
+    input_text: 'Signer text', checkbox: 'Checkbox', dropdown: 'Dropdown',
+  };
+  return (NAMES[f.type] || f.type) + (f.label ? ' \u00b7 ' + f.label : '');
+}
+
+/**
+ * Every problem that would make the SERVER reject these fields, found in the
+ * browser. Returns [] when clean. Each problem carries the uid so the caller
+ * can select + scroll to the offending box instead of describing it.
+ *
+ * Mirrors the subset of services/esign/placements.js that an author can
+ * actually get wrong in the editor; the server stays authoritative.
+ *
+ * @param {object[]} fields  editor fields (uid-bearing)
+ * @returns {{uid:number, page:number, message:string}[]}
+ */
+function peFindProblems(fields) {
+  var out = [];
+  var list = Array.isArray(fields) ? fields : [];
+  var groups = {};   // group → { signer, values:{}, checked:0 }
+
+  list.forEach(function (f) {
+    function bad(msg) { out.push({ uid: f.uid, page: f.page, message: msg }); }
+
+    if (f.type === 'text') {
+      var ke = peTextKeyError(f.key);
+      if (ke) bad('Fill-in box on page ' + f.page + ': ' + ke);
+      return;
+    }
+    if (f.label != null && String(f.label).length > PE_PLACEMENT_LABEL_MAX) {
+      bad('"Shown to signer" on page ' + f.page + ' is over ' +
+          PE_PLACEMENT_LABEL_MAX + ' characters.');
+    }
+    if (f.type === 'dropdown' && (!Array.isArray(f.options) || !f.options.length)) {
+      bad('Dropdown on page ' + f.page + ' has no options to pick from.');
+    }
+    if (f.type === 'dropdown' && Array.isArray(f.options) && f.default &&
+        f.options.indexOf(String(f.default).trim()) === -1) {
+      bad('Dropdown default "' + f.default + '" is not one of its options.');
+    }
+    if (f.type === 'radio') {
+      if (!f.group) { bad('Radio box on page ' + f.page + ' has no group name.'); return; }
+      if (!f.value) { bad('Radio box in "' + f.group + '" has no option name.'); return; }
+      var g = groups[f.group];
+      if (!g) { g = groups[f.group] = { signer: f.signer, values: {}, checked: 0 }; }
+      else if (g.signer !== f.signer) {
+        bad('Radio group "' + f.group + '" is split across signer ' + g.signer +
+            ' and ' + f.signer + ' \u2014 a group belongs to one signer.');
+      }
+      if (g.values[f.value]) {
+        bad('Radio group "' + f.group + '" has two boxes named "' + f.value + '".');
+      }
+      g.values[f.value] = true;
+      if (f.checked === true && ++g.checked > 1) {
+        bad('Radio group "' + f.group + '" has more than one default.');
+      }
+    }
+  });
+  return out;
+}
 /* Guarded export — tests/esignPlacementEditor.test.js requires the pure
    section under node jest. In the browser `module` is undefined. */
 if (typeof module !== 'undefined' && module.exports) {
@@ -509,14 +702,122 @@ if (typeof module !== 'undefined' && module.exports) {
     peSignerTag: peSignerTag,
     peParseOptions: peParseOptions,
     peCarryProps: peCarryProps,
+    PE_TEXT_KEY_RE: PE_TEXT_KEY_RE,
+    PE_TEXT_KEY_MAX: PE_TEXT_KEY_MAX,
+    PE_PLACEMENT_LABEL_MAX: PE_PLACEMENT_LABEL_MAX,
+    PE_OPTION_TEXT_MAX: PE_OPTION_TEXT_MAX,
+    PE_DEFAULT_SIZES: PE_DEFAULT_SIZES,
+    peTextKeyError: peTextKeyError,
+    peSlugifyKey: peSlugifyKey,
+    peNextFreeKey: peNextFreeKey,
+    peDefaultSize: peDefaultSize,
+    peFieldSummary: peFieldSummary,
+    peFindProblems: peFindProblems,
   };
 }
 
 /* ══════════════════════════════════════════════════════════════
    SECTION 2 — BROWSER ONLY (the component)
+
+   ── 2H LAYOUT: A BARE BAR AND ONE PULL-OUT DRAWER ────────────
+   The authoring controls have been in three places at once, and every
+   revision so far only moved which two:
+
+     2D/2F  ONE sticky flex-wrap toolbar above the pages carried all fourteen
+            controls. On a phone it wrapped to five or six rows, so you drew a
+            box at the bottom of page 3, scrolled to the TOP to name it,
+            scrolled back down, then scrolled past the whole document to type
+            its value in the send form's list at the BOTTOM.
+     2G     Per-field properties moved into a side panel — but the field-type
+            picker stayed in the bar (top) and the send form's value list
+            stayed under the pages (bottom). Same trip, shorter.
+
+   2H puts the whole authoring loop in one surface:
+
+     .pe-bar      the document, and nothing else: zoom, page N of M.
+     .pe-drawer   pick what to add, place it, name it, say what it prints,
+                  review every field. Absolutely positioned OVER the pages
+                  and closed by default, so the document is full width until
+                  you ask for the controls. A tab on the right edge pulls it
+                  out; the tab is anchored to the editor frame (not the
+                  scrolling page), so it stays in one place over the page's
+                  right margin however far you scroll — and it can be dragged
+                  up or down if it ever sits on something.
+
+   The drawer has TWO modes and swaps between them on its own:
+     ADD    nothing selected — the type grid and the field list.
+     EDIT   a field selected — its properties, its value, delete/duplicate.
+
+   Choosing a type CLOSES the drawer (you asked to place something; you need
+   to see the page). Placing a field that needs a decision — a fill-in with no
+   value yet, a radio with no group, anything flagged — REOPENS it on that
+   field. A signature or a date, which need nothing, are placed silently, so a
+   run of them is one gesture each.
+
+   ── INPUT: POINTER EVENTS, AND TAP-TO-PLACE ──────────────────
+   The 2D/2F build listened for mousedown/mousemove/mouseup only. Touch
+   browsers synthesise a click after a tap but never the mousemove stream a
+   drag needs, so on a phone or tablet drawing, moving and resizing did
+   nothing at all. Everything below is Pointer Events with setPointerCapture.
+
+   Drag-to-draw cannot simply be enabled for touch: the overlay covers the
+   page, so a drag that draws is a drag that no longer SCROLLS. The rule:
+
+     mouse            drag on empty page draws; click places (or deselects).
+     touch / pen      the page scrolls normally. "Place on the page" arms the
+                      next tap; that tap drops a correctly-sized box and
+                      disarms. Boxes themselves are always draggable — they
+                      carry touch-action:none, the overlay does not.
    ══════════════════════════════════════════════════════════════ */
 if (typeof window !== 'undefined') (function () {
   'use strict';
+
+  /** Local, so the component stays loadable without esignActions.js. */
+  function peEsc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  /** Friendly type names — the neutral value stays the wire form. */
+  var PE_TYPE_NAMES = {
+    signature: 'Signature', initial: 'Initial', date: 'Date',
+    text: 'Fill-in', input_text: 'Text box',
+    checkbox: 'Checkbox', dropdown: 'Dropdown', radio: 'Radio',
+  };
+
+  /** Sub-label in the type grid: whose job the field is. Two classes of field
+      look identical on the page and behave nothing alike, so say it here. */
+  var PE_TYPE_WHO = {
+    signature: 'signer draws it', initial: 'signer initials',
+    date: 'date they sign', text: 'WE type it',
+    input_text: 'signer types', checkbox: 'signer ticks',
+    dropdown: 'signer picks', radio: 'pick one of',
+  };
+
+  var PE_TYPE_ICON = {
+    signature: 'fa-signature', initial: 'fa-pen-nib', date: 'fa-calendar-day',
+    text: 'fa-i-cursor', input_text: 'fa-keyboard',
+    checkbox: 'fa-square-check', dropdown: 'fa-list', radio: 'fa-circle-dot',
+  };
+
+  /** One-line "what is this for", shown under the type select in EDIT mode. */
+  var PE_TYPE_HELP = {
+    signature: 'The signer draws or adopts a signature here.',
+    initial:   'A small initials box for the signer.',
+    date:      'Filled with the date the signer signs.',
+    text:      'WE fill this in before sending. The signer cannot edit it.',
+    input_text: 'An empty box the SIGNER types into on the signing page.',
+    checkbox:  'A tick box the signer can check.',
+    dropdown:  'A list the signer picks one option from.',
+    radio:     'One circle of a pick-one group. Give every circle the same Group.',
+  };
+
+  /** Types that get placed silently — nothing about them needs a decision, so
+      reopening the drawer would only be something else to close. */
+  var PE_SILENT_PLACE = { signature: 1, initial: 1, date: 1, checkbox: 1, input_text: 1 };
+
+  var PE_ZOOM_STEPS = [50, 75, 100, 125, 150, 200];
 
   // ── styles (guarded single injection — esignActions.js idiom) ──
   function injectStyles() {
@@ -524,44 +825,198 @@ if (typeof window !== 'undefined') (function () {
     var style = document.createElement('style');
     style.id = 'pe-styles';
     style.textContent = [
-      '.pe-root { text-align:left; }',
-      '.pe-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap;',
-      '  padding:8px 10px; background:#f7f7f7; border:1px solid #ddd;',
-      '  border-radius:4px 4px 0 0; font-size:13px; position:sticky; top:0; z-index:5; }',
-      '.pe-toolbar label { font-weight:bold; }',
-      '.pe-toolbar select { padding:4px 6px; }',
-      '.pe-toolbar input.pe-jump { width:52px; padding:4px 6px; }',
-      '.pe-toolbar input.pe-maxlen { width:60px; padding:4px 6px; }',
-      '.pe-toolbar .pe-inline { font-weight:normal; white-space:nowrap; }',
-      '.pe-itext-wrap, .pe-check-wrap, .pe-drop-wrap, .pe-radio-wrap, .pe-signer-wrap, .pe-label-wrap, .pe-key-wrap {',
-      '  display:inline-flex; align-items:center; gap:6px; }',
+      '.pe-root { text-align:left; --pe-drawer-w:320px; --pe-tab-w:28px; }',
+      '.pe-root button { font-family:inherit; }',
+
+      /* ── the bar: the DOCUMENT, and nothing else ── */
+      '.pe-bar { display:flex; align-items:center; gap:9px; flex-wrap:wrap;',
+      '  padding:7px 9px; background:#f7f7f7; border:1px solid #ddd;',
+      '  border-radius:4px 4px 0 0; font-size:13px; position:sticky; top:0; z-index:6; }',
+      '.pe-bar label { font-weight:bold; }',
+      '.pe-grp { display:inline-flex; align-items:center; gap:6px; }',
+      '.pe-bar-sep { width:1px; height:20px; background:#ddd; }',
+      '.pe-spacer { flex:1 1 auto; }',
       '.pe-hint { color:#888; font-size:11px; }',
-      '.pe-pages { border:1px solid #ddd; border-top:none; border-radius:0 0 4px 4px;',
-      '  background:#e5e7eb; max-height:75vh; overflow:auto; padding:14px 0; }',
+      '.pe-btn { font-size:13px; padding:6px 10px; border:1px solid #bbb; border-radius:4px;',
+      '  background:#fff; cursor:pointer; line-height:1.15; }',
+      '.pe-btn:hover { background:#f0f0f0; }',
+      '.pe-btn.pe-primary { background:#2563eb; border-color:#2563eb; color:#fff; font-weight:600; }',
+      '.pe-btn.pe-primary:hover { background:#1d4fd7; }',
+      '.pe-btn.pe-danger { color:#b91c1c; border-color:#e5b4b4; }',
+      '.pe-btn.pe-danger:hover { background:#fef2f2; }',
+      '.pe-btn[disabled] { opacity:.45; cursor:default; }',
+      '.pe-zoombtn { width:30px; padding:6px 0; text-align:center; }',
+      '.pe-zoomval { min-width:42px; text-align:center; font-size:12px; color:#555; }',
+      '.pe-jump { width:50px; padding:6px; font-size:13px; }',
+      /* live "what happens if you touch the page now" */
+      '.pe-mode { font-size:12px; font-weight:600; color:#1d4fd7; display:none;',
+      '  align-items:center; gap:6px; }',
+      '.pe-mode.on { display:inline-flex; }',
+      '.pe-mode .pe-mode-x { border:none; background:none; color:#888; cursor:pointer;',
+      '  font-size:15px; line-height:1; padding:0 2px; }',
+
+      /* ── body: pages full width, drawer OVER them ── */
+      '.pe-body { position:relative; border:1px solid #ddd; border-top:none;',
+      '  border-radius:0 0 4px 4px; background:#e5e7eb; overflow:hidden; }',
+      '.pe-pages { max-height:74vh; overflow:auto; padding:14px 0;',
+      '  -webkit-overflow-scrolling:touch; overscroll-behavior:contain; }',
       '.pe-page { position:relative; margin:0 auto 8px; box-shadow:0 1px 4px rgba(0,0,0,.35);',
       '  background:#fff; }',
       '.pe-page canvas { display:block; }',
-      '.pe-overlay { position:absolute; inset:0; cursor:crosshair; }',
+      '.pe-overlay { position:absolute; inset:0; cursor:crosshair; touch-action:auto; }',
+      /* Armed (touch): the overlay claims the gesture so a drag can size a box. */
+      '.pe-pages.pe-armed .pe-overlay { touch-action:none; background:rgba(37,99,235,.05); }',
       '.pe-pagelabel { text-align:center; color:#6b7280; font-size:11px; margin:0 0 12px; }',
+      '.pe-empty { padding:30px; text-align:center; color:#888; }',
+
+      /* ── placed boxes ── */
       '.pe-box { position:absolute; box-sizing:border-box; border:2px solid;',
-      '  background:rgba(37,99,235,.12); cursor:move; font-size:10px; }',
+      '  background:rgba(37,99,235,.12); cursor:move; font-size:10px; touch-action:none; }',
       '.pe-box.pe-s2 { background:rgba(5,150,105,.12); }',
       '.pe-box.pe-text { background:rgba(217,119,6,.10); }',
+      '.pe-box.pe-bad { border-style:dashed; box-shadow:0 0 0 2px rgba(220,38,38,.35); }',
       '.pe-box .pe-tag { position:absolute; top:-1px; left:-1px; color:#fff;',
       '  font-weight:bold; font-size:9px; padding:0 4px; border-radius:0 0 3px 0;',
-      '  white-space:nowrap; pointer-events:none; line-height:13px; }',
+      '  white-space:nowrap; pointer-events:none; line-height:13px; max-width:100%;',
+      '  overflow:hidden; text-overflow:ellipsis; }',
       '.pe-box.pe-selected { border-style:solid; box-shadow:0 0 0 2px rgba(255,255,255,.7),',
       '  0 0 0 4px rgba(0,0,0,.25); z-index:3; }',
-      '.pe-handle { position:absolute; right:-6px; bottom:-6px; width:11px; height:11px;',
-      '  border:1px solid #fff; border-radius:2px; cursor:nwse-resize; display:none; }',
+      '.pe-handle { position:absolute; right:-7px; bottom:-7px; width:13px; height:13px;',
+      '  border:1px solid #fff; border-radius:2px; cursor:nwse-resize; display:none;',
+      '  touch-action:none; }',
       '.pe-box.pe-selected .pe-handle { display:block; }',
-      '.pe-ctl { position:absolute; top:-20px; right:-1px; display:none; gap:2px; }',
+      /* Fat touch target without a fat visual. */
+      '.pe-handle::after { content:""; position:absolute; inset:-11px; }',
+      '.pe-ctl { position:absolute; top:-22px; right:-1px; display:none; gap:3px; }',
       '.pe-box.pe-selected .pe-ctl { display:flex; }',
-      '.pe-ctl button { font-size:10px; padding:0 5px; line-height:16px; border:1px solid #999;',
-      '  border-radius:3px; background:#fff; cursor:pointer; }',
+      '.pe-ctl button { font-size:11px; min-width:22px; padding:0 6px; line-height:19px;',
+      '  border:1px solid #999; border-radius:3px; background:#fff; cursor:pointer;',
+      '  touch-action:none; }',
       '.pe-rubber { position:absolute; border:1.5px dashed #374151;',
       '  background:rgba(55,65,81,.08); pointer-events:none; }',
-      '.pe-empty { padding:30px; text-align:center; color:#888; }',
+
+      /* ── THE DRAWER ── absolutely positioned over the pages, closed by
+         default. Width is fixed, so opening it never changes the pages
+         column and never triggers a re-render. ── */
+      '.pe-drawer { position:absolute; top:0; right:0; bottom:0;',
+      '  width:var(--pe-drawer-w); max-width:86%;',
+      '  display:flex; flex-direction:column; background:#fff;',
+      '  border-left:1px solid #cfcfcf; box-shadow:-7px 0 20px rgba(0,0,0,.17);',
+      '  transform:translateX(100%); transition:transform .2s ease-out;',
+      '  z-index:20; font-size:13px; }',
+      '.pe-drawer.pe-open { transform:translateX(0); }',
+
+      /* The pull tab rides on the drawer's outer edge, so it sits at the frame
+         edge when closed and at the drawer's edge when open. Anchored to the
+         FRAME, not the scroller, so it holds one position over the page's
+         right margin however far the document scrolls. */
+      '.pe-tab { position:absolute; left:calc(-1 * var(--pe-tab-w)); top:44%;',
+      '  width:var(--pe-tab-w); height:78px; padding:0;',
+      '  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px;',
+      '  background:#374151; color:#fff; border:none; border-radius:6px 0 0 6px;',
+      '  cursor:pointer; box-shadow:-2px 0 7px rgba(0,0,0,.22); touch-action:none;',
+      '  opacity:.82; transition:opacity .15s; }',
+      '.pe-tab:hover, .pe-drawer.pe-open .pe-tab { opacity:1; }',
+      '.pe-tab i { font-size:13px; }',
+      '.pe-tab-n { font-size:10px; font-weight:700; background:rgba(255,255,255,.22);',
+      '  border-radius:8px; padding:0 5px; line-height:15px; min-width:15px; text-align:center; }',
+      '.pe-tab-grip { font-size:9px; opacity:.55; letter-spacing:1px; }',
+
+      '.pe-drawer-head { display:flex; align-items:center; gap:7px; padding:9px 11px;',
+      '  border-bottom:1px solid #e5e7eb; background:#fafafa; flex:0 0 auto; }',
+      '.pe-panel-title { font-weight:700; font-size:13px; flex:1 1 auto;',
+      '  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
+      '.pe-panel-dot { width:10px; height:10px; border-radius:2px; flex:0 0 auto; }',
+      '.pe-panel-x, .pe-back { border:none; background:none; font-size:19px; line-height:1;',
+      '  color:#888; cursor:pointer; padding:0 4px; }',
+      '.pe-back { display:none; font-size:21px; }',
+      '.pe-drawer.pe-edit .pe-back { display:block; }',
+      '.pe-drawer-scroll { flex:1 1 auto; overflow:auto; padding:11px;',
+      '  -webkit-overflow-scrolling:touch; }',
+
+      /* ── ADD mode: the type grid ── */
+      '.pe-addgrid { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-bottom:11px; }',
+      '.pe-tt { display:flex; flex-direction:column; align-items:flex-start; gap:1px;',
+      '  padding:9px 8px; border:1px solid #d5d5d5; border-radius:6px; background:#fff;',
+      '  cursor:pointer; text-align:left; line-height:1.25; }',
+      '.pe-tt:hover { border-color:#2563eb; background:#f5f8ff; }',
+      '.pe-tt.on { border-color:#2563eb; background:#eef4ff; box-shadow:inset 0 0 0 1px #2563eb; }',
+      '.pe-tt-n { font-size:12.5px; font-weight:700; color:#111; }',
+      '.pe-tt-n i { color:#2563eb; margin-right:5px; width:14px; text-align:center; }',
+      '.pe-tt.pe-tt-fill .pe-tt-n i { color:#d97706; }',
+      '.pe-tt-w { font-size:10.5px; color:#777; }',
+      '.pe-place { width:100%; padding:11px; font-size:14px; }',
+      '.pe-sect { font-size:11px; font-weight:700; color:#666; text-transform:uppercase;',
+      '  letter-spacing:.4px; margin:0 0 6px; }',
+
+      /* ── EDIT mode fields ── */
+      '.pe-f { margin-bottom:11px; }',
+      '.pe-f > label { display:block; font-weight:700; font-size:11px; color:#444;',
+      '  text-transform:uppercase; letter-spacing:.4px; margin-bottom:4px; }',
+      '.pe-f input[type=text], .pe-f input[type=number], .pe-f select {',
+      '  width:100%; box-sizing:border-box; padding:8px; font-size:14px;',
+      '  border:1px solid #ccc; border-radius:4px; background:#fff; color:#111; }',
+      '.pe-f input:focus, .pe-f select:focus { outline:2px solid #93c5fd; outline-offset:-1px; }',
+      '.pe-f .pe-sub { font-size:11px; color:#777; margin-top:4px; line-height:1.4; }',
+      '.pe-f .pe-err { font-size:11.5px; color:#b91c1c; margin-top:4px; font-weight:600; }',
+      '.pe-f input.pe-invalid { border-color:#dc2626; background:#fef2f2; }',
+      '.pe-f .pe-check { display:flex; align-items:center; gap:8px; font-weight:normal;',
+      '  text-transform:none; letter-spacing:0; font-size:13px; }',
+      '.pe-f .pe-check input { width:auto; }',
+      '.pe-row2 { display:flex; gap:8px; }',
+      '.pe-row2 > * { flex:1 1 0; min-width:0; }',
+      '.pe-seg { display:flex; }',
+      '.pe-seg button { flex:1 1 0; padding:8px 4px; font-size:13px; border:1px solid #bbb;',
+      '  background:#fff; cursor:pointer; }',
+      '.pe-seg button:first-child { border-radius:4px 0 0 4px; }',
+      '.pe-seg button:last-child { border-radius:0 4px 4px 0; border-left:none; }',
+      '.pe-seg button.on { color:#fff; font-weight:700; border-color:transparent; }',
+      '.pe-acts { display:flex; gap:6px; margin:14px 0 4px; }',
+      '.pe-acts .pe-btn { flex:1 1 0; }',
+      '.pe-adv { margin-top:2px; }',
+      '.pe-adv > summary { cursor:pointer; font-size:11.5px; color:#2563eb; padding:3px 0; }',
+      /* resolver binding — the HOST owns resolvers; this is just the doorway */
+      '.pe-bind { display:flex; align-items:center; gap:6px; width:100%;',
+      '  padding:8px; font-size:12.5px; border:1px dashed #c9c9c9; border-radius:4px;',
+      '  background:#fafafa; cursor:pointer; text-align:left; color:#444; }',
+      '.pe-bind:hover { border-color:#2563eb; color:#1d4fd7; background:#f5f8ff; }',
+      '.pe-bind.on { border-style:solid; border-color:#059669; background:#f0fdf8; color:#065f46; }',
+      '.pe-bind i { flex:0 0 auto; }',
+      '.pe-bind span { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
+
+      /* field list */
+      '.pe-list { border-top:1px solid #e5e7eb; padding:9px 11px 16px; }',
+      '.pe-li { display:flex; align-items:center; gap:7px; width:100%; text-align:left;',
+      '  padding:7px 6px; border:none; border-bottom:1px solid #f0f0f0;',
+      '  background:none; cursor:pointer; font-size:12.5px; color:#222; }',
+      '.pe-li:hover { background:#f5f8ff; }',
+      '.pe-li.on { background:#eef4ff; font-weight:600; }',
+      '.pe-li .pe-li-dot { width:9px; height:9px; border-radius:2px; flex:0 0 auto; }',
+      '.pe-li .pe-li-txt { flex:1 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }',
+      '.pe-li .pe-li-pg { color:#999; font-size:11px; flex:0 0 auto; }',
+      '.pe-li.bad .pe-li-txt { color:#b91c1c; }',
+      '.pe-none { color:#888; font-size:12px; padding:4px 0 8px; line-height:1.5; }',
+
+      /* problems banner */
+      '.pe-probs { background:#fef2f2; border:1px solid #fecaca; border-radius:5px;',
+      '  padding:8px 10px; margin-bottom:11px; font-size:12px; color:#991b1b; }',
+      '.pe-probs b { display:block; margin-bottom:3px; }',
+      '.pe-probs button { display:block; margin-top:5px; background:none; border:none;',
+      '  color:#991b1b; text-decoration:underline; cursor:pointer; padding:2px 0;',
+      '  font-size:12px; text-align:left; }',
+
+      '@media (max-width:820px) {',
+      '  .pe-root { --pe-drawer-w:330px; }',
+      '  .pe-pages { max-height:64vh; }',
+      '}',
+      /* Coarse pointers get bigger grab targets regardless of width. */
+      '@media (any-pointer:coarse) {',
+      '  .pe-handle { width:17px; height:17px; right:-9px; bottom:-9px; }',
+      '  .pe-ctl button { min-width:30px; line-height:25px; font-size:13px; }',
+      '  .pe-ctl { top:-28px; }',
+      '  .pe-root { --pe-tab-w:34px; }',
+      '  .pe-tab { height:92px; }',
+      '}',
     ].join('\n');
     document.head.appendChild(style);
   }
@@ -569,15 +1024,33 @@ if (typeof window !== 'undefined') (function () {
   /**
    * PlacementEditor(container, opts)
    *
-   *   opts.onChange   fn()     — fired after any field mutation (dirty tracking)
-   *   opts.pdfjs      object   — pdf.js lib; default window.pdfjsLib
-   *   opts.workerSrc  string   — set on GlobalWorkerOptions if given
+   *   opts.onChange   fn()      — fired after any field mutation (dirty tracking)
+   *   opts.pdfjs      object    — pdf.js lib; default window.pdfjsLib
+   *   opts.workerSrc  string    — set on GlobalWorkerOptions if given
+   *   opts.keySuggest string[]  — declared prefill keys (template flow). When
+   *                               present a newly drawn fill-in claims the next
+   *                               UNPLACED one instead of minting field_N.
+   *   opts.textValue  object    — optional, supplied by the one-time upload
+   *                               flow, which OWNS the ad-hoc values:
+   *         get(key) → string          current value
+   *         set(key, value)            store it
+   *         binding(key) → string      optional: label of a bound resolver, ''
+   *                                    if none — rendered as a chip
+   *         onBind(key)                optional: host opens its own resolver
+   *                                    picker. The component never learns what
+   *                                    a resolver IS; it only offers the door.
    *
    * API:
    *   await loadPdf(arrayBuffer, placementJson)  render + seed fields
    *   getPlacements() → neutral JSON (sorted)
    *   setPlacements(json)                        replace fields, re-render
-   *   setZoom(pct)                               75/100/125/150
+   *   setZoom(pct)                               50…200
+   *   validate() → [{uid, page, message}]        browser-side mirror of the
+   *                                              server rules; [] when clean
+   *   revealField(uid)                           select + scroll a box into view
+   *   refreshTags()                              repaint tags after the host
+   *                                              changed values behind us
+   *   openDrawer(bool)                           show/hide the control drawer
    *   hasDocument() → bool
    *   destroy()
    */
@@ -599,12 +1072,13 @@ if (typeof window !== 'undefined') (function () {
     this._uid = 0;
     this._drawType = 'signature';
     this._drawSigner = 1;
-    this._drawKey = '';        // key applied to the NEXT drawn text field
-    // Phase 2F sticky draw-state — same idiom as _drawKey: the toolbar value
-    // is applied to the NEXT drawn box of its type AND live-updates the
-    // selected one. `checked` is deliberately NOT sticky: a default belongs
-    // to one box, and drawing five pre-checked checkboxes by accident is
-    // exactly the mistake stickiness would make easy.
+    // Phase 2F sticky draw-state: the panel value is applied to the NEXT box
+    // of its type AND live-updates the selected one. `checked` is deliberately
+    // NOT sticky — a default belongs to one box, and drawing five pre-checked
+    // boxes by accident is exactly the mistake it would make easy.
+    // 2G note: _drawKey is GONE. Fill-in keys are minted (see _mintTextKey);
+    // a sticky key silently welded two boxes to one value, which reads as a
+    // bug every time it is not exactly what was wanted.
     this._drawMaxLen  = null;  // input_text
     this._drawDefault = '';    // input_text prefill
     this._drawOptions = [];    // dropdown choices
@@ -613,256 +1087,67 @@ if (typeof window !== 'undefined') (function () {
     this._drawValue   = '';    // radio option value
     this._renderSeq = 0;
     this._scrollRaf = null;
+    this._panelSig = null;
+    this._lastRenderW = 0;
+    this._armed = false;
+    this._open = false;
 
-    // The type dropdown shows friendly names; values stay the neutral types.
-    var PE_TYPE_NAMES = {
-      signature: 'Signature', initial: 'Initial', date: 'Date',
-      text: 'Text (we fill)', input_text: 'Text input (signer)',
-      checkbox: 'Checkbox', dropdown: 'Dropdown', radio: 'Radio option',
-    };
+    // Touch AVAILABLE (not "touch only") — a touchscreen laptop needs the
+    // place button for its finger and free drag for its mouse, both at once.
+    this._touch = !!(window.matchMedia && window.matchMedia('(any-pointer: coarse)').matches);
 
     container.classList.add('pe-root');
     container.innerHTML =
-      '<div class="pe-toolbar">' +
-        '<label>Field:</label>' +
-        '<select class="pe-type">' +
-          PE_FIELD_TYPES.map(function (t) {
-            return '<option value="' + t + '">' + (PE_TYPE_NAMES[t] || t) + '</option>';
-          }).join('') +
-        '</select>' +
-        '<span class="pe-signer-wrap"><label>Signer:</label>' +
-        '<select class="pe-signer">' +
-          '<option value="1" style="color:' + PE_SIGNER_COLORS[1] + '">1 (blue)</option>' +
-          '<option value="2" style="color:' + PE_SIGNER_COLORS[2] + '">2 (green)</option>' +
-        '</select>' +
-        // What the SIGNER SEES rendered in the box on Zoho's signing page.
-        // Optional; empty falls back to the provider's Type_N naming. Its own
-        // wrap because RADIO hides it (the group name is the display name)
-        // while keeping the signer select.
-        '<span class="pe-label-wrap"><label>Shown to signer:</label>' +
-        '<input class="pe-label" size="14" maxlength="60" placeholder="e.g. Client initials" ' +
-          'spellcheck="false" autocomplete="off"></span>' +
+      '<div class="pe-bar">' +
+        '<span class="pe-grp">' +
+          '<button type="button" class="pe-btn pe-zoombtn pe-zoom-out" title="Zoom out">\u2212</button>' +
+          '<span class="pe-zoomval">100%</span>' +
+          '<button type="button" class="pe-btn pe-zoombtn pe-zoom-in" title="Zoom in">+</button>' +
         '</span>' +
-        // Text fields carry a KEY instead of a signer; the two controls swap
-        // visibility with the type. keySuggest (opts) feeds the datalist so
-        // templateAdmin can offer the schema's declared keys.
-        '<span class="pe-key-wrap" style="display:none"><label>Key:</label>' +
-        '<input class="pe-key" list="pe-key-list" size="16" placeholder="prefill key" ' +
-          'spellcheck="false" autocomplete="off">' +
-        '<datalist id="pe-key-list">' +
-          ((this.opts.keySuggest || []).map(function (k) {
-            return '<option value="' + String(k).replace(/"/g, '&quot;') + '">';
-          }).join('')) +
-        '</datalist></span>' +
-        // ── Phase 2F per-type property clusters — exactly one visible at a
-        //    time (or none), driven by _syncToolbarMode.
-        '<span class="pe-itext-wrap" style="display:none">' +
-          '<label>Max len:</label>' +
-          '<input class="pe-maxlen" type="number" min="1" max="2048" placeholder="\u2013" ' +
-            'title="Longest answer the signer can type (blank = no cap)">' +
-          '<label>Prefill:</label>' +
-          '<input class="pe-itext-default" size="12" placeholder="optional" ' +
-            'title="Pre-typed text the signer can edit" spellcheck="false" autocomplete="off">' +
-        '</span>' +
-        '<span class="pe-check-wrap" style="display:none">' +
-          '<label class="pe-inline"><input class="pe-checked" type="checkbox"> Pre-checked</label>' +
-        '</span>' +
-        '<span class="pe-drop-wrap" style="display:none">' +
-          '<label>Options:</label>' +
-          '<input class="pe-options" size="24" placeholder="Chapter 7, Chapter 13, \u2026" ' +
-            'title="The choices, comma-separated, in order" spellcheck="false" autocomplete="off">' +
-          '<label>Default:</label>' +
-          '<input class="pe-dd-default" size="10" placeholder="optional" ' +
-            'title="Pre-selected option (must be one of the choices)" spellcheck="false" autocomplete="off">' +
-        '</span>' +
-        '<span class="pe-radio-wrap" style="display:none">' +
-          '<label>Group:</label>' +
-          '<input class="pe-group" size="10" maxlength="100" placeholder="e.g. Approve?" ' +
-            'title="Boxes sharing a group are one pick-one question; the group name is what the signer sees" ' +
+        '<span class="pe-bar-sep"></span>' +
+        '<span class="pe-grp">' +
+          '<label>Page</label>' +
+          '<input class="pe-jump" type="number" min="1" value="1" title="Jump to page" ' +
             'spellcheck="false" autocomplete="off">' +
-          '<label>Option:</label>' +
-          '<input class="pe-value" size="8" maxlength="100" placeholder="e.g. Yes" ' +
-            'title="What picking THIS circle means" spellcheck="false" autocomplete="off">' +
-          '<label class="pe-inline"><input class="pe-radio-checked" type="checkbox"> Default</label>' +
+          '<span class="pe-pagecount pe-hint">of \u2013</span>' +
         '</span>' +
-        '<label>Zoom:</label>' +
-        '<select class="pe-zoom">' +
-          '<option value="75">75%</option><option value="100" selected>100%</option>' +
-          '<option value="125">125%</option><option value="150">150%</option>' +
-        '</select>' +
-        '<label>Page:</label>' +
-        '<input class="pe-jump" type="number" min="1" value="1" title="Jump to page" spellcheck="false" autocomplete="off">' +
-        '<span class="pe-pagecount pe-hint">of \u2013</span>' +
-        '<span class="pe-hint">Click-drag on the page to draw a field \u00b7 click a box to select \u00b7 Del removes it</span>' +
+        '<span class="pe-spacer"></span>' +
+        '<span class="pe-mode">' +
+          '<span class="pe-mode-t"></span>' +
+          '<button type="button" class="pe-mode-x" title="Cancel">\u00d7</button>' +
+        '</span>' +
       '</div>' +
-      '<div class="pe-pages"><div class="pe-empty">No document rendered yet.</div></div>';
+      '<div class="pe-body">' +
+        '<div class="pe-pages"><div class="pe-empty">No document rendered yet.</div></div>' +
+        '<div class="pe-drawer">' +
+          '<button type="button" class="pe-tab" title="Fields \u2014 drag to move">' +
+            '<i class="fa-solid fa-chevron-left pe-tab-i"></i>' +
+            '<span class="pe-tab-n">0</span>' +
+            '<span class="pe-tab-grip">\u22ee\u22ee</span>' +
+          '</button>' +
+          '<div class="pe-drawer-head">' +
+            '<button type="button" class="pe-back" title="Back to all fields">\u2039</button>' +
+            '<span class="pe-panel-dot" style="background:#bbb"></span>' +
+            '<span class="pe-panel-title">Add a field</span>' +
+            '<button type="button" class="pe-panel-x" title="Close">\u00d7</button>' +
+          '</div>' +
+          '<div class="pe-drawer-scroll">' +
+            '<div class="pe-insp"></div>' +
+            '<div class="pe-list"></div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
 
     var self = this;
-    container.querySelector('.pe-type').addEventListener('change', function (e) {
-      self._drawType = e.target.value;
-      self._syncToolbarMode();
-      // With a box selected, the type select retypes it (min size re-enforced).
-      var f = self._selected();
-      if (f) { self._retype(f, e.target.value); }
-      else {
-        // Label is per-box, never sticky — switching draw type with nothing
-        // selected must not carry the previous box's display text forward.
-        container.querySelector('.pe-label').value = '';
-      }
-    });
-    var labelInput = container.querySelector('.pe-label');
-    labelInput.addEventListener('input', function (e) {
-      var f = self._selected();
-      if (!f || f.type === 'text') return;
-      var v = e.target.value.trim();
-      if (v) f.label = v; else delete f.label;
-      var tagEl = self.container.querySelector('.pe-box[data-uid="' + f.uid + '"] .pe-tag');
-      if (tagEl) tagEl.textContent = peSignerTag(f);
-    });
-    labelInput.addEventListener('change', function () {
-      var f = self._selected();
-      if (f && f.type !== 'text') { self._renderFields(); self._changed(); }
-    });
-    var keyInput = container.querySelector('.pe-key');
-    keyInput.addEventListener('input', function (e) {
-      self._drawKey = e.target.value.trim();
-      var f = self._selected();
-      if (f && f.type === 'text') {
-        f.key = self._drawKey;
-        // Live tag update without a full re-render per keystroke.
-        var box = self.container.querySelector('.pe-box[data-uid="' + f.uid + '"] .pe-tag');
-        if (box) box.textContent = 'TEXT \u00b7 ' + (f.key || '?');
-        // Commit per keystroke: the blur 'change' event is unreliable here —
-        // clicking the PDF preventDefault()s the mousedown (no blur fires)
-        // and a plain click deselects, so the change handler finds no field
-        // and the key edit never reached onChange (sendForm's value rows).
-        self._changed();
-      }
-    });
-    keyInput.addEventListener('change', function () {
-      var f = self._selected();
-      if (f && f.type === 'text') { self._renderFields(); self._changed(); }
-    });
-    container.querySelector('.pe-signer').addEventListener('change', function (e) {
-      self._drawSigner = parseInt(e.target.value, 10) || 1;
-      var f = self._selected();
-      if (f && f.signer !== self._drawSigner) {
-        if (f.type === 'radio') {
-          // Same rule as the box swap button: the whole group moves.
-          self.fields.forEach(function (o) {
-            if (o.type === 'radio' && o.group === f.group) o.signer = self._drawSigner;
-          });
-        } else {
-          f.signer = self._drawSigner;
-        }
-        self._renderFields();
-        self._changed();
-      }
+
+    // ── bar wiring ───────────────────────────────────────────
+    container.querySelector('.pe-zoom-out').addEventListener('click', function () { self._stepZoom(-1); });
+    container.querySelector('.pe-zoom-in').addEventListener('click', function () { self._stepZoom(1); });
+    container.querySelector('.pe-mode-x').addEventListener('click', function () {
+      self._setArmed(false);
+      self.openDrawer(true);
     });
 
-    // ── Phase 2F property inputs ─────────────────────────────
-    // One idiom throughout, copied from the key input: 'input' updates the
-    // sticky draw-state AND the selected box (with a cheap tag refresh where
-    // the tag shows the property); 'change' commits — full re-render + dirty.
-    function liveTag(f) {
-      var el = self.container.querySelector('.pe-box[data-uid="' + f.uid + '"] .pe-tag');
-      if (el) el.textContent = peSignerTag(f);
-    }
-    function commitIf(type) {
-      return function () {
-        var f = self._selected();
-        if (f && f.type === type) { self._renderFields(); self._changed(); }
-      };
-    }
-
-    var maxlenInput = container.querySelector('.pe-maxlen');
-    maxlenInput.addEventListener('input', function (e) {
-      var n = parseInt(e.target.value, 10);
-      self._drawMaxLen = (Number.isInteger(n) && n >= 1) ? n : null;
-      var f = self._selected();
-      if (f && f.type === 'input_text') {
-        if (self._drawMaxLen != null) f.max_length = self._drawMaxLen;
-        else delete f.max_length;
-      }
-    });
-    maxlenInput.addEventListener('change', commitIf('input_text'));
-
-    var itextDefaultInput = container.querySelector('.pe-itext-default');
-    itextDefaultInput.addEventListener('input', function (e) {
-      self._drawDefault = e.target.value;
-      var f = self._selected();
-      if (f && f.type === 'input_text') {
-        if (self._drawDefault) f.default = self._drawDefault;
-        else delete f.default;
-      }
-    });
-    itextDefaultInput.addEventListener('change', commitIf('input_text'));
-
-    container.querySelector('.pe-checked').addEventListener('change', function (e) {
-      var f = self._selected();
-      if (!f || f.type !== 'checkbox') return;
-      if (e.target.checked) f.checked = true; else delete f.checked;
-      self._renderFields();
-      self._changed();
-    });
-
-    var optionsInput = container.querySelector('.pe-options');
-    optionsInput.addEventListener('input', function (e) {
-      self._drawOptions = peParseOptions(e.target.value);
-      var f = self._selected();
-      if (f && f.type === 'dropdown') f.options = self._drawOptions.slice();
-    });
-    optionsInput.addEventListener('change', commitIf('dropdown'));
-
-    var ddDefaultInput = container.querySelector('.pe-dd-default');
-    ddDefaultInput.addEventListener('input', function (e) {
-      self._drawDdDefault = e.target.value.trim();
-      var f = self._selected();
-      if (f && f.type === 'dropdown') {
-        if (self._drawDdDefault) f.default = self._drawDdDefault;
-        else delete f.default;
-      }
-    });
-    ddDefaultInput.addEventListener('change', commitIf('dropdown'));
-
-    var groupInput = container.querySelector('.pe-group');
-    groupInput.addEventListener('input', function (e) {
-      self._drawGroup = e.target.value.trim();
-      var f = self._selected();
-      if (f && f.type === 'radio') { f.group = self._drawGroup; liveTag(f); }
-    });
-    groupInput.addEventListener('change', commitIf('radio'));
-
-    var valueInput = container.querySelector('.pe-value');
-    valueInput.addEventListener('input', function (e) {
-      self._drawValue = e.target.value.trim();
-      var f = self._selected();
-      if (f && f.type === 'radio') { f.value = self._drawValue; liveTag(f); }
-    });
-    valueInput.addEventListener('change', commitIf('radio'));
-
-    container.querySelector('.pe-radio-checked').addEventListener('change', function (e) {
-      var f = self._selected();
-      if (!f || f.type !== 'radio') return;
-      if (e.target.checked) {
-        // A group has ONE default — mirror the server rule in the UI instead
-        // of letting the author save into a guaranteed rejection.
-        self.fields.forEach(function (o) {
-          if (o !== f && o.type === 'radio' && o.group === f.group) delete o.checked;
-        });
-        f.checked = true;
-      } else {
-        delete f.checked;
-      }
-      self._renderFields();
-      self._changed();
-    });
-
-    container.querySelector('.pe-zoom').addEventListener('change', function (e) {
-      self.setZoom(parseInt(e.target.value, 10) || 100);
-    });
-
-    // Page jump + live current-page indicator.
     var jump = container.querySelector('.pe-jump');
     function doJump() {
       var n = parseInt(jump.value, 10);
@@ -884,19 +1169,67 @@ if (typeof window !== 'undefined') (function () {
       });
     });
 
+    // ── drawer wiring: ONE delegated listener per event kind ──
+    // Rebuilding the inspector re-creates its inputs, so per-input listeners
+    // would have to be re-attached on every rebuild — and a rebuild mid-typing
+    // would steal focus. Delegation plus a rebuild guarded by a signature
+    // (see _renderPanel) means the input being typed into is never replaced.
+    var drawer = container.querySelector('.pe-drawer');
+    drawer.addEventListener('input',  function (e) { self._onPanelInput(e, false); });
+    drawer.addEventListener('change', function (e) { self._onPanelInput(e, true); });
+    drawer.addEventListener('click',  function (e) { self._onPanelClick(e); });
+
+    container.querySelector('.pe-panel-x').addEventListener('click', function () {
+      self.openDrawer(false);
+    });
+    container.querySelector('.pe-back').addEventListener('click', function () {
+      self._select(null);          // EDIT → ADD, drawer stays open
+    });
+    this._wireTab(container.querySelector('.pe-tab'));
+
     this._keyHandler = function (e) {
-      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       var t = e.target;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
-      if (self.selectedUid == null) return;
+      var typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' ||
+                         t.tagName === 'SELECT' || t.isContentEditable);
+      if (e.key === 'Escape') {
+        if (self._armed) { self._setArmed(false); self.openDrawer(true); return; }
+        if (!typing && self.selectedUid != null) self._select(null);
+        else if (!typing && self._open) self.openDrawer(false);
+        return;
+      }
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      if (typing || self.selectedUid == null) return;
       e.preventDefault();
       self._deleteSelected();
     };
     document.addEventListener('keydown', this._keyHandler);
+
+    // Rotating a phone changes the fit-width scale. Re-render only on a real
+    // width change — a soft keyboard opening fires resize too, and re-rendering
+    // every page because somebody tapped an input is not a feature. (Opening
+    // the drawer can never trigger this: it is absolutely positioned, so the
+    // pages column keeps its width.)
+    this._onResize = function () {
+      clearTimeout(self._resizeT);
+      self._resizeT = setTimeout(function () {
+        if (!self.pdfDoc) return;
+        var pagesEl = self.container.querySelector('.pe-pages');
+        if (!pagesEl || Math.abs(pagesEl.clientWidth - self._lastRenderW) < 40) return;
+        self._renderAll();
+      }, 260);
+    };
+    window.addEventListener('resize', this._onResize);
+    window.addEventListener('orientationchange', this._onResize);
+
+    this._renderPanel(true);
+    this._syncMode();
   }
 
   PlacementEditor.prototype.destroy = function () {
     document.removeEventListener('keydown', this._keyHandler);
+    window.removeEventListener('resize', this._onResize);
+    window.removeEventListener('orientationchange', this._onResize);
+    clearTimeout(this._resizeT);
     if (this.pdfDoc && this.pdfDoc.destroy) { try { this.pdfDoc.destroy(); } catch (_) { } }
     this.pdfDoc = null;
     this.container.innerHTML = '';
@@ -904,15 +1237,52 @@ if (typeof window !== 'undefined') (function () {
 
   PlacementEditor.prototype.hasDocument = function () { return !!this.pdfDoc; };
 
-  /** Scroll a page into view. In the lazy build this also triggers its render;
-      in the eager build the page is already painted. Public — the send/admin
-      UI can deep-link to a signature page. */
+  /** Scroll a page into view. Public — the send/admin UI can deep-link. */
   PlacementEditor.prototype.goToPage = function (n) {
     var wrap = this.container.querySelector('.pe-page[data-page="' + n + '"]');
     if (wrap) wrap.scrollIntoView({ block: 'start' });
   };
 
-  /** Reflect page count in the jump control's "of N" label and max attribute. */
+  /** Select a field AND bring it on screen, with the drawer open on it.
+      Public — preflight uses it to point at the box it is complaining about
+      instead of describing it. */
+  PlacementEditor.prototype.revealField = function (uid) {
+    var f = this.fields.find(function (o) { return o.uid === uid; });
+    if (!f) return;
+    this._select(uid);
+    var el = this.container.querySelector('.pe-box[data-uid="' + uid + '"]');
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center', inline: 'center' });
+    else this.goToPage(f.page);
+    this.openDrawer(true);
+  };
+
+  /** Browser-side mirror of the server placement rules. [] when clean. */
+  PlacementEditor.prototype.validate = function () {
+    return peFindProblems(this.fields);
+  };
+
+  /**
+   * Repaint every box tag. Public because the HOST owns fill-in values
+   * (opts.textValue) and can change them behind the editor's back — binding a
+   * resolver and filling from the case both do. Without this the page would
+   * show a blank the drawer says is filled.
+   */
+  PlacementEditor.prototype.refreshTags = function () {
+    var self = this;
+    this.fields.forEach(function (f) { self._liveTag(f); });
+    this._renderPanel(true);
+  };
+
+  /** Show / hide the control drawer. */
+  PlacementEditor.prototype.openDrawer = function (on) {
+    this._open = !!on;
+    var d = this.container.querySelector('.pe-drawer');
+    if (d) d.classList.toggle('pe-open', this._open);
+    var i = this.container.querySelector('.pe-tab-i');
+    if (i) i.className = 'fa-solid pe-tab-i ' + (this._open ? 'fa-chevron-right' : 'fa-chevron-left');
+    return this._open;
+  };
+
   PlacementEditor.prototype._syncPageCount = function () {
     var n = this.pdfDoc ? this.pdfDoc.numPages : 0;
     var cnt = this.container.querySelector('.pe-pagecount');
@@ -938,6 +1308,96 @@ if (typeof window !== 'undefined') (function () {
     jmp.value = String(current);
   };
 
+  // ── the pull tab ───────────────────────────────────────────
+
+  /**
+   * Click toggles; a vertical drag moves the tab.
+   *
+   * The tab is the one piece of chrome that sits over the document, so it is
+   * the one piece that can cover something. Two things keep it out of the way:
+   * it is anchored to the editor FRAME rather than the scrolling page (so it
+   * holds a single position over the right margin no matter how far you
+   * scroll), and if that position ever lands on something it can be dragged
+   * anywhere up or down the edge.
+   */
+  PlacementEditor.prototype._wireTab = function (tab) {
+    var self = this;
+    var moved = false;
+
+    tab.addEventListener('pointerdown', function (ev) {
+      if (ev.button != null && ev.button !== 0) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      moved = false;
+      var body = self.container.querySelector('.pe-body');
+      var startY = ev.clientY;
+      var startTop = tab.getBoundingClientRect().top - body.getBoundingClientRect().top;
+      try { tab.setPointerCapture(ev.pointerId); } catch (_) { }
+
+      function onMove(ev2) {
+        if (ev2.pointerId !== ev.pointerId) return;
+        if (Math.abs(ev2.clientY - startY) < 5) return;
+        moved = true;
+        var h = body.clientHeight || 400;
+        var top = Math.min(Math.max(startTop + (ev2.clientY - startY), 4), h - tab.offsetHeight - 4);
+        tab.style.top = top + 'px';
+      }
+      function onUp(ev2) {
+        if (ev2.pointerId !== ev.pointerId) return;
+        tab.removeEventListener('pointermove', onMove);
+        tab.removeEventListener('pointerup', onUp);
+        tab.removeEventListener('pointercancel', onUp);
+        try { tab.releasePointerCapture(ev.pointerId); } catch (_) { }
+        if (!moved) self.openDrawer(!self._open);
+      }
+      tab.addEventListener('pointermove', onMove);
+      tab.addEventListener('pointerup', onUp);
+      tab.addEventListener('pointercancel', onUp);
+    });
+
+    // Keyboard / synthetic clicks (and jsdom) never see the pointer sequence.
+    tab.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      if (ev.detail === 0 || !ev.isTrusted) self.openDrawer(!self._open);
+    });
+  };
+
+  // ── bar mode chip ──────────────────────────────────────────
+
+  /** "What happens if you touch the page right now", in the bar. */
+  PlacementEditor.prototype._syncMode = function () {
+    var el = this.container.querySelector('.pe-mode');
+    var txt = this.container.querySelector('.pe-mode-t');
+    if (!el || !txt) return;
+    var name = PE_TYPE_NAMES[this._drawType] || this._drawType;
+    if (this._armed) {
+      txt.textContent = 'Tap the page to place a ' + name;
+      el.classList.add('on');
+    } else if (!this._open && !this._touch) {
+      txt.textContent = 'Drag to draw a ' + name;
+      el.classList.add('on');
+    } else {
+      el.classList.remove('on');
+    }
+  };
+
+  PlacementEditor.prototype._setArmed = function (on) {
+    this._armed = !!on;
+    var pages = this.container.querySelector('.pe-pages');
+    if (pages) pages.classList.toggle('pe-armed', this._armed);
+    // Arming means "the next tap is a placement" — a selected box would make
+    // that tap a dismiss instead, which is the one thing it must not do.
+    if (this._armed && this.selectedUid != null) this._select(null);
+    this._syncMode();
+  };
+
+  PlacementEditor.prototype._stepZoom = function (dir) {
+    var i = PE_ZOOM_STEPS.indexOf(this.zoom);
+    if (i === -1) i = PE_ZOOM_STEPS.indexOf(100);
+    var next = PE_ZOOM_STEPS[Math.min(Math.max(i + dir, 0), PE_ZOOM_STEPS.length - 1)];
+    if (next !== this.zoom) this.setZoom(next);
+  };
+
   // ── loading + rendering ────────────────────────────────────
 
   PlacementEditor.prototype.loadPdf = async function (arrayBuffer, placementJson) {
@@ -946,12 +1406,21 @@ if (typeof window !== 'undefined') (function () {
     this._syncPageCount();
     if (placementJson) this._seed(placementJson); // silent — loading isn't a user edit
     await this._renderAll();
+    this._renderPanel(true);
+    // A fresh document has nothing on it: lead with the controls rather than
+    // a blank page and a tab somebody has to notice.
+    this.openDrawer(this.fields.length === 0);
+    this._syncMode();
   };
 
   PlacementEditor.prototype.setZoom = async function (pct) {
     this.zoom = pct;
-    var sel = this.container.querySelector('.pe-zoom');
-    if (sel && sel.value !== String(pct)) sel.value = String(pct);
+    var lbl = this.container.querySelector('.pe-zoomval');
+    if (lbl) lbl.textContent = pct + '%';
+    var out = this.container.querySelector('.pe-zoom-out');
+    var inn = this.container.querySelector('.pe-zoom-in');
+    if (out) out.disabled = pct <= PE_ZOOM_STEPS[0];
+    if (inn) inn.disabled = pct >= PE_ZOOM_STEPS[PE_ZOOM_STEPS.length - 1];
     if (this.pdfDoc) await this._renderAll();
   };
 
@@ -994,6 +1463,7 @@ if (typeof window !== 'undefined') (function () {
   PlacementEditor.prototype.setPlacements = function (json) {
     this._seed(json);
     this._renderFields();
+    this._renderPanel(true);
     this._changed();
   };
 
@@ -1017,7 +1487,17 @@ if (typeof window !== 'undefined') (function () {
   };
 
   PlacementEditor.prototype._changed = function () {
+    this._renderFieldList();   // safe on every keystroke: the list holds no inputs
+    this._syncTabCount();
     if (typeof this.opts.onChange === 'function') this.opts.onChange();
+  };
+
+  PlacementEditor.prototype._syncTabCount = function () {
+    var n = this.container.querySelector('.pe-tab-n');
+    if (!n) return;
+    var bad = peFindProblems(this.fields).length;
+    n.textContent = bad ? '!' + bad : String(this.fields.length);
+    n.style.background = bad ? '#dc2626' : 'rgba(255,255,255,.22)';
   };
 
   PlacementEditor.prototype._renderAll = async function () {
@@ -1031,6 +1511,7 @@ if (typeof window !== 'undefined') (function () {
     if (seq !== this._renderSeq) return;
     var base = page1.getViewport({ scale: 1 });
     var avail = Math.max(pagesEl.clientWidth - 40, 200);   // padding allowance
+    this._lastRenderW = pagesEl.clientWidth;
     var scale = (avail / base.width) * (this.zoom / 100);
 
     pagesEl.innerHTML = '';
@@ -1084,8 +1565,17 @@ if (typeof window !== 'undefined') (function () {
     return this.fields.find(function (f) { return f.uid === uid; }) || null;
   };
 
+  PlacementEditor.prototype._fieldColor = function (f) {
+    return f.type === 'text'
+      ? PE_TEXT_COLOR
+      : (PE_SIGNER_COLORS[f.signer] || PE_SIGNER_COLORS[1]);
+  };
+
   PlacementEditor.prototype._renderFields = function () {
     var self = this;
+    var badUids = {};
+    peFindProblems(this.fields).forEach(function (p) { badUids[p.uid] = true; });
+
     this.container.querySelectorAll('.pe-box').forEach(function (el) { el.remove(); });
     this.fields.forEach(function (f) {
       var vp = self.viewports[f.page];
@@ -1093,10 +1583,11 @@ if (typeof window !== 'undefined') (function () {
       if (!vp || !wrap) return;    // field beyond the rendered page count — kept in data, not drawn
       var r = peNeutralToViewport(f, vp);
       var isText = f.type === 'text';
-      var color = isText ? PE_TEXT_COLOR : (PE_SIGNER_COLORS[f.signer] || PE_SIGNER_COLORS[1]);
+      var color = self._fieldColor(f);
       var box = document.createElement('div');
       box.className = 'pe-box' + (!isText && f.signer === 2 ? ' pe-s2' : '') +
         (isText ? ' pe-text' : '') +
+        (badUids[f.uid] ? ' pe-bad' : '') +
         (f.uid === self.selectedUid ? ' pe-selected' : '');
       box.dataset.uid = String(f.uid);
       box.style.left = r.x + 'px';
@@ -1104,11 +1595,8 @@ if (typeof window !== 'undefined') (function () {
       box.style.width = r.w + 'px';
       box.style.height = r.h + 'px';
       box.style.borderColor = color;
-      var tag = isText
-        ? 'TEXT \u00b7 ' + (f.key || '?')
-        : peSignerTag(f);
       box.innerHTML =
-        '<span class="pe-tag" style="background:' + color + '">' + tag + '</span>' +
+        '<span class="pe-tag" style="background:' + color + '">' + peEsc(self._tagFor(f)) + '</span>' +
         '<span class="pe-ctl">' +
           (isText ? '' :
             '<button class="pe-swap" title="Switch signer">S' + (f.signer === 1 ? 2 : 1) + '</button>') +
@@ -1118,65 +1606,44 @@ if (typeof window !== 'undefined') (function () {
       self._wireBox(box, f);
       wrap.appendChild(box);
     });
+    this._syncTabCount();
   };
 
-  /** Toolbar clusters vs the draw type: key input for 'text', signer select
-      for every signer type (label hidden for radio — the group name is the
-      display name), plus exactly one Phase 2F property cluster. */
-  PlacementEditor.prototype._syncToolbarMode = function () {
-    var t = this._drawType;
-    var isText = t === 'text';
-    var q = this.container.querySelector.bind(this.container);
-    q('.pe-signer-wrap').style.display = isText ? 'none' : '';
-    q('.pe-label-wrap').style.display  = (isText || t === 'radio') ? 'none' : '';
-    q('.pe-key-wrap').style.display    = isText ? '' : 'none';
-    q('.pe-itext-wrap').style.display  = t === 'input_text' ? '' : 'none';
-    q('.pe-check-wrap').style.display  = t === 'checkbox'   ? '' : 'none';
-    q('.pe-drop-wrap').style.display   = t === 'dropdown'   ? '' : 'none';
-    q('.pe-radio-wrap').style.display  = t === 'radio'      ? '' : 'none';
+  /** On-page tag. Fill-ins show the VALUE once one exists — the point of the
+      box is what it prints, and a page of boxes all reading "FILL · field_3"
+      tells the author nothing about the document they are assembling. */
+  PlacementEditor.prototype._tagFor = function (f) {
+    if (f.type !== 'text') return peSignerTag(f);
+    var tv = this.opts.textValue;
+    var v = (tv && typeof tv.get === 'function' && f.key) ? (tv.get(f.key) || '') : '';
+    if (v) return String(v).slice(0, 28);
+    return 'FILL \u00b7 ' + (f.key || '?');
   };
 
   PlacementEditor.prototype._select = function (uid) {
     this.selectedUid = uid;
     var f = this._selected();
     if (f) {
-      // Toolbar mirrors the selection so the next draw matches, and so the
-      // toolbar selects can retarget the selected box.
-      var q = this.container.querySelector.bind(this.container);
-      q('.pe-type').value = f.type;
+      // The drawer mirrors the selection, and the selection's properties become
+      // the sticky draw-state for the next box of that type.
       this._drawType = f.type;
-      if (f.type === 'text') {
-        this._drawKey = f.key || '';
-        q('.pe-key').value = this._drawKey;
-      } else {
-        q('.pe-signer').value = String(f.signer);
-        q('.pe-label').value = f.label || '';
+      if (f.type !== 'text') {
         this._drawSigner = f.signer;
-        // Phase 2F: property inputs mirror the selection AND become the
-        // sticky values for the next draw — same as label/signer above.
         if (f.type === 'input_text') {
           this._drawMaxLen  = (typeof f.max_length === 'number') ? f.max_length : null;
           this._drawDefault = f.default || '';
-          q('.pe-maxlen').value = this._drawMaxLen == null ? '' : String(this._drawMaxLen);
-          q('.pe-itext-default').value = this._drawDefault;
-        } else if (f.type === 'checkbox') {
-          q('.pe-checked').checked = f.checked === true;
         } else if (f.type === 'dropdown') {
           this._drawOptions   = Array.isArray(f.options) ? f.options.slice() : [];
           this._drawDdDefault = f.default || '';
-          q('.pe-options').value = this._drawOptions.join(', ');
-          q('.pe-dd-default').value = this._drawDdDefault;
         } else if (f.type === 'radio') {
           this._drawGroup = f.group || '';
           this._drawValue = f.value || '';
-          q('.pe-group').value = this._drawGroup;
-          q('.pe-value').value = this._drawValue;
-          q('.pe-radio-checked').checked = f.checked === true;
         }
       }
-      this._syncToolbarMode();
     }
     this._renderFields();
+    this._renderPanel();
+    this._syncMode();
   };
 
   PlacementEditor.prototype._deleteSelected = function () {
@@ -1185,6 +1652,7 @@ if (typeof window !== 'undefined') (function () {
     this.fields = this.fields.filter(function (f) { return f.uid !== uid; });
     this.selectedUid = null;
     this._renderFields();
+    this._renderPanel();
     this._changed();
   };
 
@@ -1194,13 +1662,13 @@ if (typeof window !== 'undefined') (function () {
     // Per-type properties do NOT survive a retype — a dropdown retyped to a
     // checkbox that silently kept `options` would fail server validation (or
     // worse, pass it and confuse the provider). Strip everything the NEW type
-    // doesn't own, then let the toolbar re-apply its current values.
+    // doesn't own, then let the drawer re-apply its current values.
     delete f.max_length; delete f.default; delete f.checked;
     delete f.options; delete f.group; delete f.value;
     if (type === 'text') {
       delete f.signer;                       // server THROWS on text+signer
       delete f.label;
-      f.key = this._drawKey || f.key || '';
+      if (!f.key) f.key = this._mintTextKey();
     } else {
       if (f.key !== undefined) { delete f.key; delete f.font_size; }
       if (f.signer === undefined) f.signer = this._drawSigner || 1;
@@ -1220,10 +1688,520 @@ if (typeof window !== 'undefined') (function () {
     var size = vp ? pePageSize(vp) : { w: 612, h: 792 };
     var r = peNormalizeRect(f, type, size.w, size.h);
     f.x = r.x; f.y = r.y; f.w = r.w; f.h = r.h;
-    // _select (not a bare re-render): the toolbar must mirror the retyped
-    // field's now-stripped properties, or the inputs keep showing the OLD
-    // type's values against the NEW type's box.
-    this._select(f.uid);
+    this._select(f.uid);   // drawer must mirror the now-stripped properties
+    this._changed();
+  };
+
+  /**
+   * A key for a NEW fill-in box.
+   *
+   * Template flow (opts.keySuggest non-empty): claim the next DECLARED key
+   * that is not placed yet. Minting field_N there would guarantee a
+   * "placed key not in the schema" warning on every single box.
+   *
+   * Upload flow: mint field_1, field_2… The author never has to invent an
+   * identifier — which is the whole reason a key of "$1000" was ever typed.
+   * They rename it only when two boxes should share one value.
+   */
+  PlacementEditor.prototype._mintTextKey = function () {
+    var sug = this.opts.keySuggest || [];
+    if (sug.length) {
+      var used = {};
+      this.fields.forEach(function (f) { if (f.type === 'text' && f.key) used[f.key] = true; });
+      for (var i = 0; i < sug.length; i++) if (!used[sug[i]]) return sug[i];
+      return '';   // every declared key is already placed — the author picks
+    }
+    return peNextFreeKey(this.fields, 'field');
+  };
+
+  // ══ THE DRAWER ══════════════════════════════════════════════
+
+  /**
+   * Rebuild the drawer body, but ONLY when the thing it describes changed
+   * identity — otherwise a keystroke would replace the input being typed into
+   * and focus would jump to the top on every character.
+   */
+  PlacementEditor.prototype._renderPanel = function (force) {
+    var f = this._selected();
+    var sig = f ? (f.uid + '|' + f.type) : ('add|' + this._drawType);
+    var insp = this.container.querySelector('.pe-insp');
+    if (!insp) return;
+    if (force || sig !== this._panelSig) {
+      this._panelSig = sig;
+      insp.innerHTML = f ? this._inspectorHtml(f) : this._addModeHtml();
+    }
+    var drawer = this.container.querySelector('.pe-drawer');
+    if (drawer) drawer.classList.toggle('pe-edit', !!f);
+    this._syncPanelChrome();
+    this._renderFieldList();
+    this._syncTabCount();
+  };
+
+  PlacementEditor.prototype._syncPanelChrome = function () {
+    var f = this._selected();
+    var dot   = this.container.querySelector('.pe-panel-dot');
+    var title = this.container.querySelector('.pe-panel-title');
+    if (!dot || !title) return;
+    if (f) {
+      dot.style.background = this._fieldColor(f);
+      title.textContent = (PE_TYPE_NAMES[f.type] || f.type) +
+        (f.type === 'text' ? '' : ' \u00b7 Signer ' + f.signer) +
+        ' \u00b7 p' + f.page;
+    } else {
+      dot.style.background = '#bbb';
+      title.textContent = 'Add a field';
+    }
+  };
+
+  /**
+   * ADD mode. The type grid used to be a <select> in the bar; here it has room
+   * to say what each type IS, which matters because `text` and `input_text`
+   * look identical on the page and are opposites — one we fill before sending,
+   * one the signer types into.
+   */
+  PlacementEditor.prototype._addModeHtml = function () {
+    var self = this;
+    var probs = peFindProblems(this.fields);
+    return this._problemsHtml(probs) +
+      '<div class="pe-sect">Add a field</div>' +
+      '<div class="pe-addgrid">' +
+        PE_FIELD_TYPES.map(function (t) {
+          return '<button type="button" class="pe-tt' +
+            (t === self._drawType ? ' on' : '') + (t === 'text' ? ' pe-tt-fill' : '') +
+            '" data-pe="addtype" data-t="' + t + '">' +
+            '<span class="pe-tt-n"><i class="fa-solid ' + PE_TYPE_ICON[t] + '"></i>' +
+              peEsc(PE_TYPE_NAMES[t] || t) + '</span>' +
+            '<span class="pe-tt-w">' + peEsc(PE_TYPE_WHO[t] || '') + '</span>' +
+          '</button>';
+        }).join('') +
+      '</div>' +
+      '<button type="button" class="pe-btn pe-primary pe-place" data-pe="place">' +
+        '<i class="fa-solid fa-crosshairs"></i> ' +
+        (this._touch ? 'Place on the page' : 'Place \u2014 or drag on the page') +
+      '</button>' +
+      '<div class="pe-none" style="margin-top:9px">' +
+        (this._touch
+          ? 'Tap a placed box to name it, set what it prints, or delete it.'
+          : 'Drag on the page to draw one at any size. Click a placed box to edit it.') +
+      '</div>';
+  };
+
+  PlacementEditor.prototype._problemsHtml = function (probs) {
+    if (!probs.length) return '';
+    return '<div class="pe-probs"><b>' + probs.length +
+      (probs.length === 1 ? ' thing needs fixing' : ' things need fixing') + ' before sending</b>' +
+      probs.slice(0, 6).map(function (p) {
+        return '<button type="button" data-pe="goto" data-uid="' + p.uid + '">' +
+          peEsc(p.message) + '</button>';
+      }).join('') +
+      (probs.length > 6 ? '<div>\u2026and ' + (probs.length - 6) + ' more</div>' : '') +
+      '</div>';
+  };
+
+  /** EDIT mode: everything about the selected field. */
+  PlacementEditor.prototype._inspectorHtml = function (f) {
+    var h = '';
+    var isText = f.type === 'text';
+
+    h += '<div class="pe-f"><label>Field type</label>' +
+      '<select data-pe="type">' +
+        PE_FIELD_TYPES.map(function (t) {
+          return '<option value="' + t + '"' + (t === f.type ? ' selected' : '') + '>' +
+            peEsc(PE_TYPE_NAMES[t] || t) + '</option>';
+        }).join('') +
+      '</select>' +
+      '<div class="pe-sub">' + peEsc(PE_TYPE_HELP[f.type] || '') + '</div></div>';
+
+    if (isText) {
+      h += this._textInspectorHtml(f);
+    } else {
+      h += '<div class="pe-f"><label>Who signs this</label>' +
+        '<div class="pe-seg">' +
+          '<button type="button" data-pe="signer" data-v="1"' +
+            (f.signer === 1 ? ' class="on" style="background:' + PE_SIGNER_COLORS[1] + '"' : '') +
+            '>Signer 1</button>' +
+          '<button type="button" data-pe="signer" data-v="2"' +
+            (f.signer === 2 ? ' class="on" style="background:' + PE_SIGNER_COLORS[2] + '"' : '') +
+            '>Signer 2</button>' +
+        '</div></div>';
+
+      if (f.type !== 'radio') {
+        h += '<div class="pe-f"><label>Shown to signer</label>' +
+          '<input type="text" data-pe="label" maxlength="' + PE_PLACEMENT_LABEL_MAX + '" ' +
+            'placeholder="e.g. Client initials" spellcheck="false" autocomplete="off" ' +
+            'value="' + peEsc(f.label || '') + '">' +
+          '<div class="pe-sub">Optional. What the signer reads inside the box.</div></div>';
+      }
+
+      if (f.type === 'input_text') {
+        h += '<div class="pe-row2">' +
+          '<div class="pe-f"><label>Max length</label>' +
+            '<input type="number" data-pe="maxlen" min="1" max="2048" placeholder="\u2013" ' +
+              'value="' + (f.max_length != null ? peEsc(f.max_length) : '') + '"></div>' +
+          '<div class="pe-f"><label>Prefill</label>' +
+            '<input type="text" data-pe="idefault" placeholder="optional" spellcheck="false" ' +
+              'autocomplete="off" value="' + peEsc(f.default || '') + '"></div>' +
+          '</div>' +
+          '<div class="pe-sub" style="margin:-6px 0 11px">Prefilled text the signer can still edit.</div>';
+      } else if (f.type === 'checkbox') {
+        h += '<div class="pe-f"><label class="pe-check">' +
+          '<input type="checkbox" data-pe="checked"' + (f.checked === true ? ' checked' : '') + '> ' +
+          'Ticked by default</label></div>';
+      } else if (f.type === 'dropdown') {
+        h += '<div class="pe-f"><label>Options</label>' +
+          '<input type="text" data-pe="options" placeholder="Chapter 7, Chapter 13" ' +
+            'spellcheck="false" autocomplete="off" ' +
+            'value="' + peEsc((f.options || []).join(', ')) + '">' +
+          '<div class="pe-sub">Comma-separated, in the order the signer sees them.</div></div>' +
+          '<div class="pe-f"><label>Pre-selected</label>' +
+          '<input type="text" data-pe="ddefault" placeholder="optional" spellcheck="false" ' +
+            'autocomplete="off" value="' + peEsc(f.default || '') + '">' +
+          '<div class="pe-sub">Must be one of the options above.</div></div>';
+      } else if (f.type === 'radio') {
+        h += '<div class="pe-f"><label>Group</label>' +
+          '<input type="text" data-pe="group" maxlength="' + PE_OPTION_TEXT_MAX + '" placeholder="e.g. Approve?" ' +
+            'spellcheck="false" autocomplete="off" value="' + peEsc(f.group || '') + '">' +
+          '<div class="pe-sub">Every circle of one question shares this. It is also what the signer reads.</div></div>' +
+          '<div class="pe-f"><label>This option means</label>' +
+          '<input type="text" data-pe="rvalue" maxlength="' + PE_OPTION_TEXT_MAX + '" placeholder="e.g. Yes" ' +
+            'spellcheck="false" autocomplete="off" value="' + peEsc(f.value || '') + '"></div>' +
+          '<div class="pe-f"><label class="pe-check">' +
+          '<input type="checkbox" data-pe="rchecked"' + (f.checked === true ? ' checked' : '') + '> ' +
+          'Selected by default</label></div>';
+      }
+    }
+
+    h += '<div class="pe-acts">' +
+      '<button type="button" class="pe-btn" data-pe="dup"><i class="fa-solid fa-clone"></i> Duplicate</button>' +
+      '<button type="button" class="pe-btn pe-danger" data-pe="del"><i class="fa-solid fa-trash-can"></i> Delete</button>' +
+      '</div>';
+    return h;
+  };
+
+  /**
+   * Fill-in inspector. VALUE first, key demoted to an "advanced" disclosure.
+   *
+   * The key exists so several boxes can share one value and so a value can be
+   * bound to a case resolver. For the overwhelmingly common one-box-one-value
+   * case it is pure ceremony — and being asked to "name" a box is exactly what
+   * produced a key of "$1000": the author was told to name the thing and
+   * answered with what belongs IN it. So the box names itself and the primary
+   * input asks the question the author is actually holding in mind.
+   *
+   * The resolver binding is a DOOR, not a control: the host owns resolvers
+   * (they are a send-flow concept), so this renders a chip and calls
+   * opts.textValue.onBind. The component never learns what a resolver is.
+   */
+  PlacementEditor.prototype._textInspectorHtml = function (f) {
+    var tv = this.opts.textValue;
+    var h = '';
+    if (tv && typeof tv.get === 'function') {
+      h += '<div class="pe-f"><label>Value \u2014 what prints here</label>' +
+        '<input type="text" data-pe="value" spellcheck="false" autocomplete="off" ' +
+          'placeholder="e.g. $1,000.00" value="' + peEsc(tv.get(f.key) || '') + '">' +
+        '<div class="pe-sub">Typed onto the PDF before it is sent. The signer cannot change it.</div></div>';
+
+      if (typeof tv.onBind === 'function') {
+        var bound = (typeof tv.binding === 'function' ? (tv.binding(f.key) || '') : '');
+        h += '<div class="pe-f">' +
+          '<button type="button" class="pe-bind' + (bound ? ' on' : '') + '" data-pe="bind">' +
+            '<i class="fa-solid ' + (bound ? 'fa-link' : 'fa-wand-magic-sparkles') + '"></i>' +
+            '<span>' + (bound
+              ? 'From the case: ' + peEsc(bound)
+              : 'Pull this from the case\u2026') + '</span>' +
+          '</button></div>';
+      }
+    }
+    var err = peTextKeyError(f.key);
+    var sug = this.opts.keySuggest || [];
+    h += '<details class="pe-adv"' + (err ? ' open' : '') + '>' +
+      '<summary>Key: <b>' + peEsc(f.key || '(none)') + '</b> \u2014 ' +
+        (err ? 'needs fixing' : 'change only to reuse a value') + '</summary>' +
+      '<div class="pe-f" style="margin-top:7px"><label>Key</label>' +
+        '<input type="text" data-pe="key" class="' + (err ? 'pe-invalid' : '') + '" ' +
+          (sug.length ? 'list="pe-key-list-' + this._uid + '" ' : '') +
+          'spellcheck="false" autocomplete="off" value="' + peEsc(f.key || '') + '">' +
+        (sug.length
+          ? '<datalist id="pe-key-list-' + this._uid + '">' +
+            sug.map(function (k) { return '<option value="' + peEsc(k) + '">'; }).join('') +
+            '</datalist>'
+          : '') +
+        '<div class="pe-err" data-pe-err="key"' + (err ? '' : ' style="display:none"') + '>' +
+          peEsc(err) + '</div>' +
+        '<div class="pe-sub">Letters, numbers, _ . and - only. Two boxes with the same key print the same value.</div>' +
+        (err ? '<button type="button" class="pe-btn" style="margin-top:6px" data-pe="fixkey">' +
+               'Fix it for me \u2192 ' + peEsc(peSlugifyKey(f.key)) + '</button>' : '') +
+      '</div></details>';
+    return h;
+  };
+
+  PlacementEditor.prototype._renderFieldList = function () {
+    var self = this;
+    var el = this.container.querySelector('.pe-list');
+    if (!el) return;
+    if (!this.fields.length) { el.innerHTML = ''; return; }
+    var bad = {};
+    peFindProblems(this.fields).forEach(function (p) { bad[p.uid] = true; });
+    var tv = this.opts.textValue;
+    el.innerHTML = '<div class="pe-sect">' + this.fields.length + ' field' +
+      (this.fields.length === 1 ? '' : 's') + ' on this document</div>' +
+      peSortFields(this.fields).map(function (f) {
+        // Fill-ins list what they PRINT when they have it — this list is also
+        // the "check everything before sending" surface that used to live in
+        // the send form, below the document.
+        var txt = peFieldSummary(f);
+        if (f.type === 'text' && tv && typeof tv.get === 'function') {
+          var v = tv.get(f.key) || '';
+          if (v) txt = 'Fill-in \u00b7 ' + v;
+        }
+        return '<button type="button" class="pe-li' +
+          (f.uid === self.selectedUid ? ' on' : '') + (bad[f.uid] ? ' bad' : '') +
+          '" data-pe="goto" data-uid="' + f.uid + '">' +
+          '<span class="pe-li-dot" style="background:' + self._fieldColor(f) + '"></span>' +
+          '<span class="pe-li-txt">' + peEsc(txt) + '</span>' +
+          '<span class="pe-li-pg">p' + f.page + '</span></button>';
+      }).join('');
+  };
+
+  /** Refresh a box's on-page tag without a full re-render (per-keystroke). */
+  PlacementEditor.prototype._liveTag = function (f) {
+    var el = this.container.querySelector('.pe-box[data-uid="' + f.uid + '"] .pe-tag');
+    if (el) el.textContent = this._tagFor(f);
+    this._refreshBadFlags();
+  };
+
+  /**
+   * Toggle the "this box would be rejected" outline on the boxes already in
+   * the DOM. Cheap enough for a keystroke (one pass over fields, then a class
+   * toggle) and — unlike _renderFields — it does not replace elements, so a
+   * drag or a focused input is never yanked out from under the user.
+   */
+  PlacementEditor.prototype._refreshBadFlags = function () {
+    var bad = {};
+    peFindProblems(this.fields).forEach(function (p) { bad[p.uid] = true; });
+    this.container.querySelectorAll('.pe-box').forEach(function (el) {
+      el.classList.toggle('pe-bad', !!bad[el.dataset.uid]);
+    });
+    this._syncTabCount();
+  };
+
+  /**
+   * Delegated drawer input. `commit` distinguishes the 'change' event (blur /
+   * Enter / select) from 'input' (per keystroke): keystrokes update the model
+   * and the on-page tag cheaply, commits do the full re-render.
+   */
+  PlacementEditor.prototype._onPanelInput = function (ev, commit) {
+    var t = ev.target;
+    var what = t && t.dataset ? t.dataset.pe : null;
+    if (!what) return;
+    var f = this._selected();
+    if (!f) return;
+    var v = t.value;
+
+    switch (what) {
+      case 'type':
+        if (commit || t.tagName === 'SELECT') {
+          this._drawType = v;
+          this._retype(f, v);
+          this._renderPanel(true);
+        }
+        return;
+
+      case 'label':
+        if (f.type === 'text') return;
+        if (v.trim()) f.label = v.trim(); else delete f.label;
+        this._liveTag(f);
+        break;
+
+      case 'key': {
+        if (f.type !== 'text') return;
+        var next = v.trim();
+        var tv = this.opts.textValue;
+        // Carry the typed value across a rename, or renaming a box silently
+        // blanks what it prints.
+        if (tv && typeof tv.set === 'function' && f.key && next && next !== f.key) {
+          var carried = tv.get(f.key);
+          if (carried) tv.set(next, carried);
+        }
+        f.key = next;
+        var err = peTextKeyError(next);
+        var errEl = this.container.querySelector('[data-pe-err="key"]');
+        if (errEl) {
+          errEl.textContent = err;
+          errEl.style.display = err ? '' : 'none';
+        }
+        t.classList.toggle('pe-invalid', !!err);
+        this._liveTag(f);
+        break;
+      }
+
+      case 'value': {
+        if (f.type !== 'text') return;
+        var tvs = this.opts.textValue;
+        if (tvs && typeof tvs.set === 'function') tvs.set(f.key, v);
+        this._liveTag(f);
+        break;
+      }
+
+      case 'maxlen': {
+        if (f.type !== 'input_text') return;
+        var n = parseInt(v, 10);
+        this._drawMaxLen = (isFinite(n) && n >= 1) ? Math.floor(n) : null;
+        if (this._drawMaxLen != null) f.max_length = this._drawMaxLen; else delete f.max_length;
+        break;
+      }
+
+      case 'idefault':
+        if (f.type !== 'input_text') return;
+        this._drawDefault = v;
+        if (v) f.default = v; else delete f.default;
+        break;
+
+      case 'checked':
+        if (f.type !== 'checkbox') return;
+        if (t.checked) f.checked = true; else delete f.checked;
+        commit = true;
+        break;
+
+      case 'options':
+        if (f.type !== 'dropdown') return;
+        this._drawOptions = peParseOptions(v);
+        f.options = this._drawOptions.slice();
+        break;
+
+      case 'ddefault':
+        if (f.type !== 'dropdown') return;
+        this._drawDdDefault = v.trim();
+        if (this._drawDdDefault) f.default = this._drawDdDefault; else delete f.default;
+        break;
+
+      case 'group':
+        if (f.type !== 'radio') return;
+        this._drawGroup = v.trim();
+        f.group = this._drawGroup;
+        this._liveTag(f);
+        break;
+
+      case 'rvalue':
+        if (f.type !== 'radio') return;
+        this._drawValue = v.trim();
+        f.value = this._drawValue;
+        this._liveTag(f);
+        break;
+
+      case 'rchecked': {
+        if (f.type !== 'radio') return;
+        if (t.checked) {
+          // A group has ONE default — mirror the server rule here rather than
+          // letting the author save into a guaranteed rejection.
+          this.fields.forEach(function (o) {
+            if (o !== f && o.type === 'radio' && o.group === f.group) delete o.checked;
+          });
+          f.checked = true;
+        } else {
+          delete f.checked;
+        }
+        commit = true;
+        break;
+      }
+
+      default:
+        return;
+    }
+
+    if (commit) this._renderFields(); else this._refreshBadFlags();
+    // Fill-in key/value changes must reach the host on EVERY keystroke: the
+    // send form's dirty tracking is driven by onChange, and the blur-'change'
+    // event is unreliable here (clicking the PDF preventDefault()s the
+    // pointerdown, so no blur fires).
+    this._changed();
+  };
+
+  PlacementEditor.prototype._onPanelClick = function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('[data-pe]') : null;
+    if (!btn || btn.tagName === 'INPUT' || btn.tagName === 'SELECT') return;
+    var what = btn.dataset.pe;
+    var f = this._selected();
+
+    if (what === 'goto') {
+      this.revealField(parseInt(btn.dataset.uid, 10));
+      return;
+    }
+    if (what === 'addtype') {
+      this._drawType = btn.dataset.t;
+      this._renderPanel(true);
+      // Choosing a type means "I am about to place one" — get out of the way.
+      // Touch needs the arm as well; a mouse can just drag.
+      if (this._touch) this._setArmed(true);
+      this.openDrawer(false);
+      this._syncMode();
+      return;
+    }
+    if (what === 'place') {
+      if (this._touch) this._setArmed(true);
+      this.openDrawer(false);
+      this._syncMode();
+      return;
+    }
+    if (what === 'signer' && f) {
+      this._setSigner(f, parseInt(btn.dataset.v, 10) || 1);
+      this._renderPanel(true);
+      return;
+    }
+    if (what === 'del' && f) { this._deleteSelected(); return; }
+    if (what === 'dup' && f) { this._duplicate(f); return; }
+    if (what === 'bind' && f && f.type === 'text') {
+      var tv = this.opts.textValue;
+      if (tv && typeof tv.onBind === 'function') tv.onBind(f.key);
+      return;
+    }
+    if (what === 'fixkey' && f && f.type === 'text') {
+      var fixed = peSlugifyKey(f.key);
+      var tvf = this.opts.textValue;
+      if (tvf && typeof tvf.set === 'function' && f.key) {
+        var carried = tvf.get(f.key);
+        if (carried) tvf.set(fixed, carried);
+      }
+      f.key = fixed;
+      this._renderFields();
+      this._renderPanel(true);
+      this._changed();
+    }
+  };
+
+  PlacementEditor.prototype._setSigner = function (f, to) {
+    if (f.type === 'text' || f.signer === to) return;
+    this._drawSigner = to;
+    if (f.type === 'radio') {
+      // A group belongs to exactly one signer (server rule) — moving one
+      // circle must carry its siblings, or the next save is a guaranteed
+      // rejection the author did not ask for.
+      var g = f.group;
+      this.fields.forEach(function (o) {
+        if (o.type === 'radio' && o.group === g) o.signer = to;
+      });
+    } else {
+      f.signer = to;
+    }
+    this._renderFields();
+    this._changed();
+  };
+
+  /** Copy the selected box a little up-page. Cheap, and the difference
+      between placing twelve initials boxes and placing one twelve times. */
+  PlacementEditor.prototype._duplicate = function (f) {
+    var copy = JSON.parse(JSON.stringify(f));
+    copy.uid = ++this._uid;
+    delete copy.checked;                          // a default belongs to ONE box
+    if (copy.type === 'text') copy.key = this._mintTextKey();
+    if (copy.type === 'radio') copy.value = '';   // never mint a duplicate value
+    var vp = this.viewports[f.page];
+    var size = vp ? pePageSize(vp) : { w: 612, h: 792 };
+    var r = peNormalizeRect({ x: f.x, y: f.y - f.h - 6, w: f.w, h: f.h },
+                            copy.type, size.w, size.h);
+    copy.x = r.x; copy.y = r.y; copy.w = r.w; copy.h = r.h;
+    this.fields.push(copy);
+    this._select(copy.uid);
     this._changed();
   };
 
@@ -1235,17 +2213,88 @@ if (typeof window !== 'undefined') (function () {
     return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
   }
 
+  /** Movement below this (CSS px) is a tap, not a drag. */
+  var PE_TAP_SLOP = 6;
+
+  /** Drop a default-sized box of the current type centred on a page point. */
+  PlacementEditor.prototype._placeAt = function (pageNum, ptPx) {
+    var vp = this.viewports[pageNum];
+    if (!vp) return;
+    var size = pePageSize(vp);
+    var d = peDefaultSize(this._drawType);
+    // Size is defined in POINTS, so convert a zero-area point to neutral and
+    // grow it there — the box is the same physical size at every zoom.
+    var at = peViewportToNeutral({ x: ptPx.x, y: ptPx.y, w: 0, h: 0 }, vp);
+    var r = peNormalizeRect(
+      { x: at.x - d.w / 2, y: at.y - d.h / 2, w: d.w, h: d.h },
+      this._drawType, size.w, size.h);
+    this._commitNewField(pageNum, r);
+  };
+
+  /** Shared tail of both placement paths (drag-drawn and tap-placed). */
+  PlacementEditor.prototype._commitNewField = function (pageNum, r) {
+    var self = this;
+    var f = {
+      uid: ++this._uid, page: pageNum,
+      x: r.x, y: r.y, w: r.w, h: r.h,
+      type: this._drawType,
+    };
+    if (this._drawType === 'text') {
+      f.key = this._mintTextKey();
+    } else {
+      f.signer = this._drawSigner;
+      // Phase 2F: sticky properties transfer to the new box so a run of
+      // same-shaped fields (five dropdowns with the same choices; the circles
+      // of one radio group) doesn't mean re-typing per box.
+      if (this._drawType === 'input_text') {
+        if (this._drawMaxLen != null) f.max_length = this._drawMaxLen;
+        if (this._drawDefault) f.default = this._drawDefault;
+      } else if (this._drawType === 'dropdown') {
+        f.options = this._drawOptions.slice();
+        if (this._drawDdDefault) f.default = this._drawDdDefault;
+      } else if (this._drawType === 'radio') {
+        f.group = this._drawGroup;
+        // The sticky VALUE transfers only if no sibling already claims it —
+        // drawing "Yes" then a second circle should demand a new name, not
+        // silently mint a duplicate the server will reject.
+        var taken = this.fields.some(function (o) {
+          return o.type === 'radio' && o.group === self._drawGroup &&
+                 o.value === self._drawValue && self._drawValue !== '';
+        });
+        f.value = taken ? '' : this._drawValue;
+        if (taken) this._drawValue = '';
+      }
+    }
+    this.fields.push(f);
+    this._select(f.uid);
+    this._changed();
+
+    // Reopen the drawer only for a field that needs a decision. A signature or
+    // a date needs nothing, so a run of them stays one gesture each; a fill-in
+    // with no value, or anything the validator flags, gets the drawer back.
+    var needs = !PE_SILENT_PLACE[f.type] || peFindProblems([f]).length > 0;
+    if (needs) this.openDrawer(true);
+  };
+
   PlacementEditor.prototype._wireOverlay = function (overlay, pageNum) {
     var self = this;
-    overlay.addEventListener('mousedown', function (ev) {
-      if (ev.button !== 0) return;
+
+    overlay.addEventListener('pointerdown', function (ev) {
+      if (ev.button != null && ev.button !== 0) return;
+      // Touch/pen only claims the gesture when armed — otherwise the finger
+      // belongs to the scroller, which is the whole reason the arm exists.
+      // A mouse always draws.
+      var isMouse = ev.pointerType === 'mouse' || ev.pointerType === undefined;
+      if (!isMouse && !self._armed) return;
+
       ev.preventDefault();
       var wrap = overlay.parentNode;
       var start = localPoint(wrap, ev);
+      var moved = false;
       var rubber = document.createElement('div');
       rubber.className = 'pe-rubber';
       wrap.appendChild(rubber);
-      var moved = false;
+      try { overlay.setPointerCapture(ev.pointerId); } catch (_) { }
 
       function toRect(ev2) {
         var p = localPoint(wrap, ev2);
@@ -1257,151 +2306,142 @@ if (typeof window !== 'undefined') (function () {
         };
       }
       function onMove(ev2) {
+        if (ev2.pointerId !== ev.pointerId) return;
         var r = toRect(ev2);
-        if (r.w > 3 || r.h > 3) moved = true;
+        if (r.w > PE_TAP_SLOP || r.h > PE_TAP_SLOP) moved = true;
         rubber.style.left = r.x + 'px'; rubber.style.top = r.y + 'px';
         rubber.style.width = r.w + 'px'; rubber.style.height = r.h + 'px';
       }
       function onUp(ev2) {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
+        if (ev2.pointerId !== ev.pointerId) return;
+        overlay.removeEventListener('pointermove', onMove);
+        overlay.removeEventListener('pointerup', onUp);
+        overlay.removeEventListener('pointercancel', onUp);
+        try { overlay.releasePointerCapture(ev.pointerId); } catch (_) { }
         rubber.remove();
-        if (!moved) { self._select(null); return; }   // plain click = deselect
-        var vp = self.viewports[pageNum];
-        var size = pePageSize(vp);
-        var neutral = peViewportToNeutral(toRect(ev2), vp);
-        var r = peNormalizeRect(neutral, self._drawType, size.w, size.h);
-        var f = {
-          uid: ++self._uid, page: pageNum,
-          x: r.x, y: r.y, w: r.w, h: r.h,
-          type: self._drawType,
-        };
-        if (self._drawType === 'text') { f.key = self._drawKey; }
-        else {
-          f.signer = self._drawSigner;
-          // Phase 2F: sticky properties transfer to the new box so a run of
-          // same-shaped fields (five dropdowns with the same choices; the
-          // circles of one radio group) doesn't mean re-typing per box.
-          // `checked` never transfers — a default belongs to ONE box.
-          if (self._drawType === 'input_text') {
-            if (self._drawMaxLen != null) f.max_length = self._drawMaxLen;
-            if (self._drawDefault) f.default = self._drawDefault;
-          } else if (self._drawType === 'dropdown') {
-            f.options = self._drawOptions.slice();
-            if (self._drawDdDefault) f.default = self._drawDdDefault;
-          } else if (self._drawType === 'radio') {
-            f.group = self._drawGroup;
-            // The sticky VALUE transfers only if no sibling already claims it
-            // — drawing "Yes" then a second circle should demand a new name,
-            // not silently mint a duplicate the server will reject.
-            var taken = self.fields.some(function (o) {
-              return o.type === 'radio' && o.group === self._drawGroup &&
-                     o.value === self._drawValue && self._drawValue !== '';
-            });
-            f.value = taken ? '' : self._drawValue;
-            if (taken) {
-              self._drawValue = '';
-              var vi = self.container.querySelector('.pe-value');
-              if (vi) vi.value = '';
-            }
-          }
+
+        if (moved) {
+          var vp = self.viewports[pageNum];
+          var size = pePageSize(vp);
+          var neutral = peViewportToNeutral(toRect(ev2), vp);
+          if (self._armed) self._setArmed(false);
+          self._commitNewField(pageNum, peNormalizeRect(neutral, self._drawType, size.w, size.h));
+          return;
         }
-        self.fields.push(f);
-        // _select (not a bare selectedUid+render): the toolbar must mirror
-        // the NEW box, or non-sticky inputs (label) keep showing the previous
-        // box's values against a field that doesn't carry them.
-        self._select(f.uid);
-        self._changed();
+
+        // A TAP on empty page.
+        //   armed (touch)            → place, then disarm.
+        //   something selected       → dismiss it.
+        //   nothing selected (mouse) → place, so a click is never a dead end.
+        if (self._armed) {
+          self._setArmed(false);
+          self._placeAt(pageNum, start);
+        } else if (self.selectedUid != null) {
+          self._select(null);
+        } else {
+          self._placeAt(pageNum, start);
+        }
       }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      overlay.addEventListener('pointermove', onMove);
+      overlay.addEventListener('pointerup', onUp);
+      overlay.addEventListener('pointercancel', onUp);
     });
   };
 
   PlacementEditor.prototype._wireBox = function (box, f) {
     var self = this;
 
-    box.querySelector('.pe-del').addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
-    box.querySelector('.pe-del').addEventListener('click', function (ev) {
+    var del = box.querySelector('.pe-del');
+    del.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+    del.addEventListener('click', function (ev) {
       ev.stopPropagation();
       self.selectedUid = f.uid;
       self._deleteSelected();
     });
-    var swap = box.querySelector('.pe-swap'); // absent on text boxes
-    if (swap) swap.addEventListener('mousedown', function (ev) { ev.stopPropagation(); });
-    if (swap) swap.addEventListener('click', function (ev) {
-      ev.stopPropagation();
-      var to = f.signer === 1 ? 2 : 1;
-      if (f.type === 'radio') {
-        // A group belongs to exactly one signer (server rule) — swapping one
-        // circle must carry its siblings, or the next save is a guaranteed
-        // rejection the author didn't ask for.
-        self.fields.forEach(function (o) {
-          if (o.type === 'radio' && o.group === f.group) o.signer = to;
-        });
-      } else {
-        f.signer = to;
-      }
-      self._select(f.uid);   // re-render + toolbar sync
-      self._changed();
-    });
 
-    // move (drag the box) — live in px, committed to neutral on mouseup
-    box.addEventListener('mousedown', function (ev) {
-      if (ev.button !== 0) return;
+    var swap = box.querySelector('.pe-swap'); // absent on text boxes
+    if (swap) {
+      swap.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+      swap.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        self._setSigner(f, f.signer === 1 ? 2 : 1);
+        self._select(f.uid);
+      });
+    }
+
+    // move (drag the box) — live in px, committed to neutral on pointerup
+    box.addEventListener('pointerdown', function (ev) {
+      if (ev.button != null && ev.button !== 0) return;
       if (ev.target.classList.contains('pe-handle')) return;   // resize path
       ev.preventDefault();
       ev.stopPropagation();
-      if (self.selectedUid !== f.uid) self._select(f.uid);
+      var wasSelected = self.selectedUid === f.uid;
+      if (!wasSelected) self._select(f.uid);
       var el = self.container.querySelector('.pe-box[data-uid="' + f.uid + '"]');
+      if (!el) return;
       var wrap = el.parentNode;
       var start = localPoint(wrap, ev);
       var orig = { x: parseFloat(el.style.left), y: parseFloat(el.style.top) };
       var w = parseFloat(el.style.width), h = parseFloat(el.style.height);
       var movedAny = false;
+      try { el.setPointerCapture(ev.pointerId); } catch (_) { }
 
       function onMove(ev2) {
+        if (ev2.pointerId !== ev.pointerId) return;
         var p = localPoint(wrap, ev2);
         var nx = Math.min(Math.max(orig.x + (p.x - start.x), 0), wrap.clientWidth - w);
         var ny = Math.min(Math.max(orig.y + (p.y - start.y), 0), wrap.clientHeight - h);
-        if (nx !== orig.x || ny !== orig.y) movedAny = true;
+        if (Math.abs(nx - orig.x) > 1 || Math.abs(ny - orig.y) > 1) movedAny = true;
         el.style.left = nx + 'px'; el.style.top = ny + 'px';
       }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        if (!movedAny) return;
-        self._commitBoxRect(f, el);
+      function onUp(ev2) {
+        if (ev2.pointerId !== ev.pointerId) return;
+        el.removeEventListener('pointermove', onMove);
+        el.removeEventListener('pointerup', onUp);
+        el.removeEventListener('pointercancel', onUp);
+        try { el.releasePointerCapture(ev.pointerId); } catch (_) { }
+        if (movedAny) { self._commitBoxRect(f, el); return; }
+        // A tap on a box (rather than a drag) is a request to edit it.
+        self.openDrawer(true);
       }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      el.addEventListener('pointermove', onMove);
+      el.addEventListener('pointerup', onUp);
+      el.addEventListener('pointercancel', onUp);
     });
 
     // resize (corner handle)
-    box.querySelector('.pe-handle').addEventListener('mousedown', function (ev) {
-      if (ev.button !== 0) return;
+    box.querySelector('.pe-handle').addEventListener('pointerdown', function (ev) {
+      if (ev.button != null && ev.button !== 0) return;
       ev.preventDefault();
       ev.stopPropagation();
       if (self.selectedUid !== f.uid) self._select(f.uid);
       var el = self.container.querySelector('.pe-box[data-uid="' + f.uid + '"]');
+      if (!el) return;
+      var handle = el.querySelector('.pe-handle');
       var wrap = el.parentNode;
       var left = parseFloat(el.style.left), top = parseFloat(el.style.top);
       var start = localPoint(wrap, ev);
       var ow = parseFloat(el.style.width), oh = parseFloat(el.style.height);
+      try { handle.setPointerCapture(ev.pointerId); } catch (_) { }
 
       function onMove(ev2) {
+        if (ev2.pointerId !== ev.pointerId) return;
         var p = localPoint(wrap, ev2);
         var nw = Math.min(Math.max(ow + (p.x - start.x), 6), wrap.clientWidth - left);
         var nh = Math.min(Math.max(oh + (p.y - start.y), 6), wrap.clientHeight - top);
         el.style.width = nw + 'px'; el.style.height = nh + 'px';
       }
-      function onUp() {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
+      function onUp(ev2) {
+        if (ev2.pointerId !== ev.pointerId) return;
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        try { handle.releasePointerCapture(ev.pointerId); } catch (_) { }
         self._commitBoxRect(f, el);   // min size re-enforced in points here
       }
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
     });
   };
 

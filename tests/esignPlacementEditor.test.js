@@ -669,3 +669,167 @@ describe('peCarryProps (shared by _seed and getPlacements)', () => {
     }
   });
 });
+
+/* ══════════════════════════════════════════════════════════════
+   PHASE 2G — browser-side validation of placed fields.
+
+   The editor now refuses a bad key/label/group AT THE KEYSTROKE instead of
+   letting the server refuse it at SEND time. That is only an improvement if
+   the two agree, so every rule below is checked against the REAL exported
+   server constants and the REAL validator — never a hand-copied bound.
+
+   The bug that motivated this: a fill-in box keyed "$1000" survived a whole
+   authoring session and surfaced as a Swal titled "Send failed" carrying a
+   raw regex, which staff read as the PROVIDER rejecting the document.
+   ══════════════════════════════════════════════════════════════ */
+describe('2G mirrors are the server constants, not copies', () => {
+  test('PE_TEXT_KEY_RE is placements.TEXT_KEY_RE', () => {
+    expect(String(pe.PE_TEXT_KEY_RE)).toBe(String(placements.TEXT_KEY_RE));
+  });
+
+  test('PE_PLACEMENT_LABEL_MAX is placements.LABEL_MAX (60), NOT the schema-row 80', () => {
+    expect(pe.PE_PLACEMENT_LABEL_MAX).toBe(placements.LABEL_MAX);
+    expect(pe.PE_LABEL_MAX).not.toBe(pe.PE_PLACEMENT_LABEL_MAX);
+  });
+
+  test('PE_OPTION_TEXT_MAX is placements.OPTION_TEXT_MAX', () => {
+    expect(pe.PE_OPTION_TEXT_MAX).toBe(placements.OPTION_TEXT_MAX);
+  });
+});
+
+describe('peTextKeyError / peSlugifyKey', () => {
+  test('"$1000" is rejected and the offending character is named', () => {
+    const err = pe.peTextKeyError('$1000');
+    expect(err).toBeTruthy();
+    expect(err).toContain('$');
+  });
+
+  test('an empty key asks for one rather than describing a regex', () => {
+    expect(pe.peTextKeyError('')).toBe('Give this box a key.');
+    expect(pe.peTextKeyError('')).not.toMatch(/\[|\]|\^|\$/);
+  });
+
+  test('over-long keys report the actual length', () => {
+    const err = pe.peTextKeyError('a'.repeat(pe.PE_TEXT_KEY_MAX + 6));
+    expect(err).toContain(String(pe.PE_TEXT_KEY_MAX + 6));
+  });
+
+  test('legal keys pass — the looser placement alphabet, not the schema one', () => {
+    for (const k of ['field_1', 'case.number', 'Amount-2', 'A', '9']) {
+      expect(pe.peTextKeyError(k)).toBe('');
+    }
+  });
+
+  test('peTextKeyError agrees with TEXT_KEY_RE on both sides', () => {
+    const probe = ['field_1', '$1000', 'hello world', 'a.b-c_D', '', ' ', 'ü',
+                   'x'.repeat(64), 'x'.repeat(65), 'a/b', 'a\\b', '1000'];
+    for (const k of probe) {
+      expect(pe.peTextKeyError(k) === '').toBe(placements.TEXT_KEY_RE.test(k));
+    }
+  });
+
+  test('peSlugifyKey always yields something the SERVER accepts', () => {
+    const junk = ['$1000', '$1,000 fee', '', '   ', '///', 'hello world',
+                  'x'.repeat(200), '—em—dash—', '¿qué?', '__a__'];
+    for (const s of junk) {
+      const slug = pe.peSlugifyKey(s);
+      expect(placements.TEXT_KEY_RE.test(slug)).toBe(true);
+      expect(pe.peTextKeyError(slug)).toBe('');
+    }
+  });
+
+  test('peSlugifyKey leaves an already-legal key alone', () => {
+    for (const k of ['field_1', 'case.number', 'Amount-2']) {
+      expect(pe.peSlugifyKey(k)).toBe(k);
+    }
+  });
+
+  test('peNextFreeKey skips keys already in use', () => {
+    const fields = [
+      { type: 'text', key: 'field_1' },
+      { type: 'text', key: 'field_2' },
+      { type: 'signature', signer: 1 },
+    ];
+    expect(pe.peNextFreeKey(fields, 'field')).toBe('field_3');
+    expect(pe.peNextFreeKey([], 'field')).toBe('field_1');
+  });
+});
+
+describe('peDefaultSize — tap-to-place geometry', () => {
+  test('every neutral type has a default, and it is >= its minimum', () => {
+    for (const t of pe.PE_FIELD_TYPES) {
+      const d = pe.peDefaultSize(t);
+      const min = pe.PE_MIN_SIZES[t];
+      expect(d.w).toBeGreaterThanOrEqual(min.w);
+      expect(d.h).toBeGreaterThanOrEqual(min.h);
+    }
+  });
+
+  test('a tap-placed box of every type passes the server validator', () => {
+    for (const t of pe.PE_FIELD_TYPES) {
+      const d = pe.peDefaultSize(t);
+      const r = pe.peNormalizeRect({ x: 100, y: 100, w: d.w, h: d.h }, t, 612, 792);
+      const f = { page: 1, type: t, ...r };
+      if (t === 'text') f.key = 'field_1';
+      else {
+        f.signer = 1;
+        if (t === 'dropdown') f.options = ['A', 'B'];
+        if (t === 'radio') { f.group = 'G'; f.value = 'Yes'; }
+      }
+      expect(() => placements.validatePlacements({ fields: [f] })).not.toThrow();
+    }
+  });
+});
+
+describe('peFindProblems agrees with the server validator', () => {
+  const G = (o) => ({ page: 1, x: 10, y: 10, w: 80, h: 20, ...o });
+  const cases = [
+    ['clean text',          [G({ type: 'text', key: 'field_1' })]],
+    ['key $1000',           [G({ type: 'text', key: '$1000' })]],
+    ['empty key',           [G({ type: 'text', key: '' })]],
+    ['label at the bound',  [G({ type: 'signature', signer: 1, label: 'x'.repeat(60) })]],
+    ['label over bound',    [G({ type: 'signature', signer: 1, label: 'x'.repeat(61) })]],
+    ['dropdown no options', [G({ type: 'dropdown', signer: 1, options: [] })]],
+    ['dropdown bad default',[G({ type: 'dropdown', signer: 1, options: ['a', 'b'], default: 'c' })]],
+    ['radio no group',      [G({ type: 'radio', signer: 1, group: '', value: 'v' })]],
+    ['radio dup value',     [G({ type: 'radio', signer: 1, group: 'g', value: 'v' }),
+                             G({ type: 'radio', signer: 1, group: 'g', value: 'v' })]],
+    ['radio split signers', [G({ type: 'radio', signer: 1, group: 'g', value: 'a' }),
+                             G({ type: 'radio', signer: 2, group: 'g', value: 'b' })]],
+    ['radio two defaults',  [G({ type: 'radio', signer: 1, group: 'g', value: 'a', checked: true }),
+                             G({ type: 'radio', signer: 1, group: 'g', value: 'b', checked: true })]],
+    ['clean radio pair',    [G({ type: 'radio', signer: 1, group: 'g', value: 'a', checked: true }),
+                             G({ type: 'radio', signer: 1, group: 'g', value: 'b' })]],
+  ];
+
+  test.each(cases)('%s — editor and server reach the same verdict', (_name, fields) => {
+    const withUids = fields.map((f, i) => ({ uid: i + 1, ...f }));
+    const editorSaysBad = pe.peFindProblems(withUids).length > 0;
+    let serverSaysBad = false;
+    try { placements.validatePlacements({ fields }); } catch (_) { serverSaysBad = true; }
+    expect(editorSaysBad).toBe(serverSaysBad);
+  });
+
+  test('every problem carries the uid so the caller can point at the box', () => {
+    const probs = pe.peFindProblems([
+      { uid: 7, page: 2, type: 'text', key: '$1000' },
+      { uid: 9, page: 3, type: 'radio', signer: 1, group: '', value: 'x' },
+    ]);
+    expect(probs.map((p) => p.uid).sort()).toEqual([7, 9]);
+    expect(probs.every((p) => typeof p.message === 'string' && p.message.length > 0)).toBe(true);
+  });
+
+  test('no problems reported for an empty document', () => {
+    expect(pe.peFindProblems([])).toEqual([]);
+  });
+});
+
+describe('peFieldSummary', () => {
+  test('names each class in the vocabulary the panel uses', () => {
+    expect(pe.peFieldSummary({ type: 'text', key: 'amount' })).toContain('amount');
+    expect(pe.peFieldSummary({ type: 'text', key: '' })).toContain('no key');
+    expect(pe.peFieldSummary({ type: 'radio', group: 'Ch', value: '13' })).toContain('Ch: 13');
+    expect(pe.peFieldSummary({ type: 'signature', signer: 1, label: 'Client' })).toContain('Client');
+    expect(pe.peFieldSummary({ type: 'checkbox', signer: 1 })).toBe('Checkbox');
+  });
+});

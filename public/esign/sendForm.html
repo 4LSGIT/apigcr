@@ -35,6 +35,32 @@
     .sf-actions { text-align: center; margin: 16px 0; }
     .sf-actions button { margin: 0 6px; }
     #sf-preview-frame { width: 100%; height: 70vh; border: 1px solid #ccc; display: none; margin-top: 10px; }
+    /* Upload-flow fill-in review list: one compact line per distinct key.
+       The VALUE is edited in the placement editor's panel now (beside the box
+       it prints into); this list stays as the one place to see them all at
+       once, and the only place a resolver can be bound. */
+    .sf-ready { margin-top: 9px; font-size: 13px; color: #444; }
+    .sf-ready i { color: #059669; margin-right: 5px; }
+    .sf-linkish { background: none; border: none; color: #07adef; text-decoration: underline;
+                  cursor: pointer; font-size: inherit; font-family: inherit; padding: 0; }
+
+    /* ── mobile ── a 170px label beside a 300px input needs 470px of row.
+       Under 700px they stack instead of overflowing the viewport. */
+    @media (max-width: 700px) {
+      .sf-wrap { padding: 10px; }
+      .sf-section { padding: 11px 12px; }
+      .sf-row label { display: block; min-width: 0; margin-bottom: 3px; }
+      .sf-row input, .sf-row select { width: 100%; box-sizing: border-box; }
+      .sf-recip { flex-wrap: wrap; }
+      .sf-recip input { flex: 1 1 140px; width: auto; min-width: 0; }
+      .sf-actions button { display: block; width: 100%; margin: 8px 0; }
+      #sf-preview-frame { height: 60vh; }
+    }
+    /* Comfortable tap targets everywhere on touch. */
+    @media (any-pointer: coarse) {
+      .sf-row input, .sf-row select, .sf-recip input { min-height: 40px; font-size: 16px; }
+      .sf-actions button, .sf-row button { min-height: 42px; }
+    }
     #sf-success { display: none; border: 2px solid #059669; border-radius: 4px; padding: 14px 16px; }
     #sf-testmode { display: none; background: #fde68a; color: #7c4a03; font-weight: bold;
                    padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; }
@@ -87,9 +113,9 @@
         <span class="sf-hint">categorizes the request (dashboard filters, reminders later)</span>
       </div>
       <div class="sf-hint" style="margin:6px 0">
-        Draw boxes on the pages below: signature/initial/date boxes for the signer(s);
-        amber <b>Text</b> boxes are fill-ins — give each a Key, then set its value
-        (or bind a case resolver) in the list that appears under the pages.
+        Everything is in the panel on the right of the document — pull it out with the
+        tab. Pick a field type there, place it on the page, then set what it says.
+        Amber <b>Fill-in</b> boxes are ours to type; the rest are for the signer.
       </div>
       <div id="sf-editor-mount"></div>
       <div id="sf-up-values"></div>
@@ -196,6 +222,20 @@ async function uploadChosen(file) {
   upEditor = new PlacementEditor(E('sf-editor-mount'), {
     onChange: syncUploadValueRows,
     workerSrc: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js',
+    // 2G: the ad-hoc fill-in values live HERE (they are this page's business,
+    // not the editor's), but they are EDITED in the editor's panel beside the
+    // box they print into. This pair is the whole bridge. Before it, naming a
+    // box and saying what it prints were two controls a full document apart.
+    textValue: {
+      get: (key) => (key ? (upValues[key] || '') : ''),
+      set: (key, val) => { if (key) upValues[key] = val; },
+      // The editor knows nothing about resolvers — they are a send-flow idea.
+      // It renders whatever binding() names and calls onBind() to open OUR
+      // picker. That keeps the component send-flow-agnostic while putting the
+      // whole authoring loop inside its drawer.
+      binding: (key) => (key ? (upResolvers[key] || '') : ''),
+      onBind:  (key) => bindResolver(key),
+    },
   });
   // pdf.js detaches the ArrayBuffer it is given — hand it a COPY so upBuf
   // stays usable for the multipart send.
@@ -208,80 +248,120 @@ async function uploadChosen(file) {
   syncUploadValueRows();
 }
 
-/** One row per DISTINCT text-field key: value input + optional resolver
-    binding. Typed values and bindings survive box edits (keyed maps). */
+/**
+ * Readiness line under the document. NOT an editor.
+ *
+ * Every fill-in value and every resolver binding is now set in the placement
+ * editor's drawer, beside the box it applies to. What used to live here — a
+ * value input and a resolver select per key, below the whole PDF — was half of
+ * the round trip this page was built to kill: pick the type at the TOP, scroll
+ * the document, type the value at the BOTTOM. All that is left is a summary,
+ * so nobody has to scroll down to find out whether they are done.
+ */
 function syncUploadValueRows() {
-  if (!upEditor) return;
+  if (!upEditor) { E('sf-up-values').innerHTML = ''; return; }
   const fields = (upEditor.getPlacements().fields || []).filter(f => f.type === 'text');
   const keys = [];
   fields.forEach(f => { if (f.key && keys.indexOf(f.key) === -1) keys.push(f.key); });
-  const unkeyed = fields.filter(f => !f.key).length;
-
-  const resolverSel = (key) => {
-    const cur = upResolvers[key] || '';
-    const isExpr = cur && metaResolvers.indexOf(cur) === -1;
-    return `<select class="sf-up-res" data-key="${esignEsc(key)}" onchange="upResolverChanged(this)">` +
-      `<option value="">(type the value)</option>` +
-      metaResolvers.map(r => `<option value="${esignEsc(r)}"${!isExpr && r === cur ? ' selected' : ''}>${esignEsc(r)}</option>`).join('') +
-      `<option value="__expr__"${isExpr ? ' selected' : ''}>Custom expression…</option>` +
-      `</select>` +
-      `<input type="text" class="sf-up-expr" data-key="${esignEsc(key)}" spellcheck="false" ` +
-        `placeholder="{{cases.case_number}}" style="display:${isExpr ? '' : 'none'};width:180px" ` +
-        `value="${isExpr ? esignEsc(cur).replace(/"/g, '&quot;') : ''}">`;
-  };
+  const filled   = keys.filter(k => (upValues[k] || '').trim()).length;
+  // The editor's verdict — the SAME rules the server applies, reported here so
+  // Send is never the first time anyone hears about them.
+  const problems = upEditor.validate();
 
   E('sf-up-values').innerHTML =
-    (unkeyed ? `<div class="sf-missing" style="margin-top:6px"><i class="fa-solid fa-triangle-exclamation"></i> ` +
-      `${unkeyed} text box${unkeyed === 1 ? ' has' : 'es have'} no Key yet — click the box and set one.</div>` : '') +
+    (problems.length
+      ? `<div class="sf-warn-list"><i class="fa-solid fa-triangle-exclamation"></i> ` +
+        `${problems.length} field${problems.length === 1 ? '' : 's'} need${problems.length === 1 ? 's' : ''} attention. ` +
+        `<button type="button" class="sf-linkish" onclick="jumpToProblem()">Show me</button></div>`
+      : '') +
     (keys.length
-      ? `<div style="font-weight:bold;margin:10px 0 4px">Fill-in values</div>` +
-        keys.map(k =>
-          `<div class="sf-row">` +
-          `<label>${esignEsc(k)}:</label>` +
-          `<input type="text" class="sf-up-val" data-key="${esignEsc(k)}" ` +
-            `value="${esignEsc(upValues[k] || '').replace(/"/g, '&quot;')}" ` +
-            `oninput="upValues[this.dataset.key]=this.value">` +
-          resolverSel(k) +
-          `</div>`).join('') +
-        `<button onclick="fillFromCase()"><i class="fa-solid fa-wand-magic-sparkles"></i> Fill bound values from case</button>` +
-        `<span class="sf-hint" style="margin-left:6px">resolved values land in the inputs — edit freely; what's typed is what prints</span>`
+      ? `<div class="sf-ready">` +
+        `<i class="fa-solid ${filled === keys.length ? 'fa-circle-check' : 'fa-circle-half-stroke'}"></i> ` +
+        `${filled} of ${keys.length} fill-in${keys.length === 1 ? '' : 's'} have a value` +
+        `<span class="sf-hint"> \u2014 tap a box on the page to set one</span></div>`
       : '');
 }
 
-function upResolverChanged(sel) {
-  const key = sel.dataset.key;
-  const expr = document.querySelector('.sf-up-expr[data-key="' + CSS.escape(key) + '"]');
-  if (sel.value === '__expr__') {
-    expr.style.display = '';
-    upResolvers[key] = expr.value.trim();
-    expr.oninput = () => { upResolvers[key] = expr.value.trim(); };
-    expr.focus();
-  } else {
-    expr.style.display = 'none';
-    upResolvers[key] = sel.value;
-  }
+/** Select and scroll to the first thing the editor is unhappy about. */
+function jumpToProblem() {
+  if (!upEditor) return;
+  const [p] = upEditor.validate();
+  if (p) upEditor.revealField(p.uid);
 }
 
-/** Resolve every bound key against the case via the ad-hoc endpoint; results
-    land IN the inputs (editable — typed text is always what prints). */
-async function fillFromCase() {
-  const schema = Object.keys(upResolvers)
-    .filter(k => upResolvers[k])
-    .map(k => ({ key: k, label: k, type: 'text', resolver: upResolvers[k], default: null, required: false }));
-  if (!schema.length) { Toast.fire({ icon: 'info', title: 'Bind a resolver on at least one field first' }); return; }
+/**
+ * Bind a fill-in key to a case resolver. Opened FROM the editor's drawer
+ * (textValue.onBind), so the author never leaves the box they are working on.
+ * On confirm the value is resolved immediately and written back, because a
+ * binding whose result you cannot see is a binding you cannot check.
+ */
+async function bindResolver(key) {
+  if (!key) return;
+  const cur = upResolvers[key] || '';
+  const isExpr = cur && metaResolvers.indexOf(cur) === -1;
+  const res = await Swal.fire({
+    title: 'Pull from the case',
+    html:
+      `<div style="text-align:left;font-size:13px">` +
+      `<p style="margin:0 0 8px">Fills <code>${esignEsc(key)}</code> from this case. ` +
+      `The resolved text lands in the box and stays editable.</p>` +
+      `<select id="sf-bind-sel" class="swal2-select" style="width:100%;margin:0">` +
+        `<option value="">(no binding \u2014 I'll type it)</option>` +
+        metaResolvers.map(r =>
+          `<option value="${esignEsc(r)}"${!isExpr && r === cur ? ' selected' : ''}>${esignEsc(r)}</option>`).join('') +
+        `<option value="__expr__"${isExpr ? ' selected' : ''}>Custom expression\u2026</option>` +
+      `</select>` +
+      `<input id="sf-bind-expr" class="swal2-input" style="margin:8px 0 0;width:100%;display:${isExpr ? '' : 'none'}" ` +
+        `placeholder="{{cases.case_number}}" value="${isExpr ? esignEsc(cur).replace(/"/g, '&quot;') : ''}">` +
+      `</div>`,
+    showCancelButton: true,
+    confirmButtonText: 'Use this',
+    didOpen: () => {
+      const sel  = document.getElementById('sf-bind-sel');
+      const expr = document.getElementById('sf-bind-expr');
+      sel.addEventListener('change', () => {
+        expr.style.display = sel.value === '__expr__' ? '' : 'none';
+        if (sel.value === '__expr__') expr.focus();
+      });
+    },
+    preConfirm: () => {
+      const sel  = document.getElementById('sf-bind-sel');
+      const expr = document.getElementById('sf-bind-expr');
+      return sel.value === '__expr__' ? expr.value.trim() : sel.value;
+    },
+  });
+  if (!res.isConfirmed) return;
+
+  const binding = res.value || '';
+  if (binding) upResolvers[key] = binding; else delete upResolvers[key];
+  if (binding) await resolveKeys([key]);
+  syncUploadValueRows();
+  if (upEditor) upEditor.refreshTags();   // repaints tags AND the drawer chip
+}
+
+/**
+ * Resolve bound keys against the case; results land IN upValues (editable —
+ * typed text is always what prints).
+ * @param {string[]} [only]  restrict to these keys; default every bound key
+ */
+async function resolveKeys(only) {
+  const keys = (only || Object.keys(upResolvers)).filter(k => upResolvers[k]);
+  if (!keys.length) return { missing: [] };
+  const schema = keys.map(k => ({
+    key: k, label: k, type: 'text', resolver: upResolvers[k], default: null, required: false,
+  }));
   try {
     const out = await esignApi('/api/esign/resolve-prefills', 'POST', {
       linkable_type: 'case', linkable_id: caseId, schema,
     });
-    Object.entries(out.values || {}).forEach(([k, v]) => {
-      if (v !== '') upValues[k] = v;
-    });
-    syncUploadValueRows();
+    Object.entries(out.values || {}).forEach(([k, v]) => { if (v !== '') upValues[k] = v; });
     if ((out.missing || []).length) {
       Toast.fire({ icon: 'warning', title: 'Not resolved from the case', text: out.missing.join(', ') });
     }
+    return out;
   } catch (err) {
     Toast.fire({ icon: 'error', title: 'Resolve failed', text: err.message });
+    return { missing: keys };
   }
 }
 
@@ -613,9 +693,19 @@ function uploadPreflight() {
   if (!fields.length) {
     Toast.fire({ icon: 'info', title: 'Place at least one field on the document' }); return null;
   }
-  const unkeyed = fields.filter(f => f.type === 'text' && !f.key);
-  if (unkeyed.length) {
-    Toast.fire({ icon: 'warning', title: 'A text box has no Key', text: 'Click the amber box and set its Key (or delete it).' });
+  // Every rule the SERVER would reject, checked here first — and instead of
+  // describing the offending box, select it and scroll to it. The previous
+  // build surfaced these as a Swal titled "Send failed" carrying a raw regex,
+  // which staff reasonably read as Zoho refusing the document. It was us.
+  const problems = upEditor.validate();
+  if (problems.length) {
+    upEditor.revealField(problems[0].uid);
+    Toast.fire({
+      icon: 'warning',
+      title: problems.length === 1 ? 'One field needs fixing' : `${problems.length} fields need fixing`,
+      text: problems[0].message,
+      timer: 6000,
+    });
     return null;
   }
   if (!fields.some(f => f.type !== 'text')) {
@@ -640,7 +730,14 @@ function uploadFormData(placements, draftId) {
   fd.append('document_name', E('sf-docname').value.trim());
   fd.append('recipients', JSON.stringify(gatherRecipients()));
   fd.append('placements', JSON.stringify(placements));
-  fd.append('text_values', JSON.stringify(upValues));
+  // Only the keys actually on the document. Renaming a box leaves its old key
+  // behind in upValues; shipping orphans would be harmless today but is exactly
+  // the kind of drift that becomes a mystery later.
+  const placedKeys = new Set((placements.fields || [])
+    .filter(f => f.type === 'text' && f.key).map(f => f.key));
+  const textValues = {};
+  Object.keys(upValues).forEach(k => { if (placedKeys.has(k)) textValues[k] = upValues[k]; });
+  fd.append('text_values', JSON.stringify(textValues));
   const exp = parseInt(E('sf-expiry').value, 10);
   if (exp) fd.append('expiration_days', String(exp));
   if (draftId != null) fd.append('draft_id', String(draftId));
