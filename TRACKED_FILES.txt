@@ -151,6 +151,7 @@ public/automation/activity.html
 public/automation/automationsWidget.html
 public/automation/courtReview.html
 public/automation/emailIngest.html
+public/automation/esignTplPanel.js
 public/automation/fnPicker.js
 public/automation/hooks.html
 public/automation/paramsMapping.js

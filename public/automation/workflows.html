@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/automation/fnPicker.js"></script>
+  <script src="/automation/esignTplPanel.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        WORKFLOWS SUB-PAGE — self-contained styles.
@@ -908,6 +909,18 @@ function wfWireStartWorkflowPanel() {
   wfRenderTargetPanel();
 }
 
+// ── E-sign template-fields panel (shared module, 'e' prefix) ──
+// Lazy singleton: buildEsignTplPanel comes from /automation/esignTplPanel.js;
+// api/esc are this page's helpers. Wired after each esign_send_from_template
+// form render (same setTimeout(…, 0) timing as 6R/CP-1).
+let WF_ETPL = null;
+function wfWireEsignTplPanel() {
+  if (!WF_ETPL && typeof window.buildEsignTplPanel === 'function') {
+    WF_ETPL = window.buildEsignTplPanel({ prefix: 'e', api, esc });
+  }
+  if (WF_ETPL) WF_ETPL.wire();
+}
+
 // ─────────────────────────────────────────────────────────────
 // enroll_sequence target contract panel (Slice CP-1)
 //
@@ -1591,6 +1604,11 @@ function wfRenderInternalFnBody(fnName, params) {
     if (fnName === 'enroll_sequence' && spec.name === 'trigger_data') {
       html += `<div id="e-esq-target-panel" style="display:none"></div>`;
     }
+    // E-sign template-fields panel — mounts under template_id when editing an
+    // esign_send_from_template step (shared module: /automation/esignTplPanel.js).
+    if (fnName === 'esign_send_from_template' && spec.name === 'template_id') {
+      html += `<div id="e-etpl-panel" style="display:none"></div>`;
+    }
     return html;
   }).join('');
 
@@ -1601,6 +1619,7 @@ function wfRenderInternalFnBody(fnName, params) {
     setTimeout(wfWireStartWorkflowPanel, 0);
   }
   if (fnName === 'enroll_sequence') setTimeout(wfWireEnrollSequencePanel, 0); // Slice CP-1
+  if (fnName === 'esign_send_from_template') setTimeout(wfWireEsignTplPanel, 0);
 
   return `<div id="e-fn-body-inner" data-mode="${current || ''}">${desc}${modeBar}${fieldsHtml}</div>`;
 }

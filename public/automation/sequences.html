@@ -7,6 +7,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
   <script src="/automation/fnPicker.js"></script>
+  <script src="/automation/esignTplPanel.js"></script>
   <style>
     /* ══════════════════════════════════════════════
        SEQUENCES SUB-PAGE — self-contained styles.
@@ -1741,10 +1742,29 @@ function seqRenderInternalFnBody(fnName, params) {
   const fieldsHtml = visibleParams.map(spec => {
     const value = params[spec.name];
     const visible = !spec.modeGroup || spec.modeGroup === current;
-    return seqRenderParamField(spec, value, visible);
+    let html = seqRenderParamField(spec, value, visible);
+    // E-sign template-fields panel — mounts under template_id when editing an
+    // esign_send_from_template step (shared module: /automation/esignTplPanel.js;
+    // 'se' prefix port of the workflows.html panel).
+    if (fnName === 'esign_send_from_template' && spec.name === 'template_id') {
+      html += `<div id="se-etpl-panel" style="display:none"></div>`;
+    }
+    return html;
   }).join('');
 
+  if (fnName === 'esign_send_from_template') setTimeout(seqWireEsignTplPanel, 0);
+
   return `<div id="se-fn-body-inner" data-mode="${current || ''}">${desc}${modeBar}${fieldsHtml}</div>`;
+}
+
+// ── E-sign template-fields panel (shared module, 'se' prefix) ──
+// Same lazy-singleton shape as workflows.html's wfWireEsignTplPanel.
+let SEQ_ETPL = null;
+function seqWireEsignTplPanel() {
+  if (!SEQ_ETPL && typeof window.buildEsignTplPanel === 'function') {
+    SEQ_ETPL = window.buildEsignTplPanel({ prefix: 'se', api, esc });
+  }
+  if (SEQ_ETPL) SEQ_ETPL.wire();
 }
 
 function seqRenderParamField(spec, value, visible) {
