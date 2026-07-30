@@ -199,7 +199,7 @@ function _parseJsonField(v) {
   return v;
 }
 
-const JSON_FIELDS = ['recipients', 'placement_json', 'raw_payload'];
+const JSON_FIELDS = ['recipients', 'placement_json', 'raw_payload', 'completion_targets'];
 
 /** Hydrate a raw signing_requests row. Column names are kept as-is. */
 function _shape(row) {
@@ -585,6 +585,7 @@ async function createRequest(db, {
   expiresAt     = null,
   createdBy,
   provider      = DEFAULT_PROVIDER,
+  completionTargets = null,
 } = {}) {
   _assertLinkableType(linkableType);
 
@@ -631,8 +632,8 @@ async function createRequest(db, {
         `INSERT INTO signing_requests
            (provider, provider_id, linkable_type, linkable_id, kind, status,
             document_name, tracking_id, recipients, placement_json,
-            template_id, expires_at, created_by)
-         VALUES (?, NULL, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?)`,
+            template_id, expires_at, created_by, completion_targets)
+         VALUES (?, NULL, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           provider,
           linkableType,
@@ -645,6 +646,7 @@ async function createRequest(db, {
           templateId == null ? null : Number(templateId),
           expires,
           createdByNum,
+          completionTargets == null ? null : JSON.stringify(completionTargets),
         ]
       );
 
@@ -868,7 +870,176 @@ async function applyStatus(db, id, { status, recipients = null, raw = null, occu
     }
   }
 
+  // ── Completion triggers (esign workflow actions, part 2) ──────────────────
+  // Same choke-point rationale as the reminder cancel above: firing HERE
+  // covers webhook, reconcile, the esign_remind/esign_get_status race guards,
+  // and markSatisfiedExternal in one place. 'signed' fires on BOTH terminal
+  // successes — satisfied_external executes the document just as thoroughly
+  // as a Zoho signature — and 'declined' only on declined. recalled/expired
+  // fire nothing (recall is the firm's own act; expiry has no actor).
+  //
+  // BEST-EFFORT, like everything after the committed UPDATE: a trigger-side
+  // failure must never un-say a status. Unlike the reminder cancel, a failed
+  // trigger also RAISES A TASK — a reminder that was never cancelled corrects
+  // itself at the next occurrence, but "the case-advance workflow never
+  // started" has no second chance and no other witness.
+  {
+    const trigger = TERMINAL_SUCCESS.has(status) ? 'signed'
+      : (status === 'declined' ? 'declined' : null);
+    const target = trigger && updated.completion_targets
+      ? updated.completion_targets[trigger] : null;
+    if (target) {
+      await _fireCompletionTrigger(db, updated, trigger, target, stamp);
+    }
+  }
+
   return { changed: true, request: updated };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPLETION TRIGGERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The payload a completion trigger hands its target — init_data for a
+ * workflow, the dispatch "output" a sequence target reads contact_id and
+ * trigger_data from. Flat scalars only.
+ *
+ * contact_id resolution:
+ *   linkable_type 'contact' → the linkable itself.
+ *   linkable_type 'case'    → the Primary contact via case_relate,
+ *                             MIN(contact_id) — the exact determinism rule
+ *                             esignPrefillService/searchCases use.
+ * A case with no Primary yields contact_id: null — a workflow can still run
+ * (contact is optional there); a sequence target fails cleanly with a named
+ * error, which the caller records.
+ *
+ * case_id is carried as a STRING — cases.case_id is an 8-char varchar (repo
+ * landmine; bound as string at every site).
+ */
+async function _completionPayload(db, request) {
+  const payload = {
+    signing_request_id: request.id,
+    tracking_id:        request.tracking_id,
+    status:             request.status,
+    kind:               request.kind,
+    document_name:      request.document_name,
+    linkable_type:      request.linkable_type,
+    linkable_id:        request.linkable_id,
+    template_id:        request.template_id == null ? null : Number(request.template_id),
+    contact_id:         null,
+    case_id:            null,
+  };
+
+  if (request.linkable_type === 'contact') {
+    const n = Number(request.linkable_id);
+    payload.contact_id = Number.isInteger(n) ? n : request.linkable_id;
+  } else if (request.linkable_type === 'case') {
+    payload.case_id = String(request.linkable_id);
+    const [[d1]] = await db.query(
+      `SELECT case_relate_client_id AS contact_id
+         FROM case_relate
+        WHERE case_relate_case_id = ? AND case_relate_type = 'Primary'
+        ORDER BY case_relate_client_id ASC
+        LIMIT 1`,
+      [String(request.linkable_id)]
+    );
+    payload.contact_id = d1 ? Number(d1.contact_id) : null;
+  }
+
+  return payload;
+}
+
+/** Fields _completionPayload guarantees; a sequence target copies them into trigger_data. */
+const COMPLETION_TRIGGER_DATA_FIELDS = Object.freeze([
+  'signing_request_id', 'tracking_id', 'status', 'kind', 'document_name',
+  'linkable_type', 'linkable_id', 'case_id', 'template_id',
+]);
+
+/**
+ * Fire one completion target through lib/actionDispatchers — the SAME
+ * primitives hooks and email/phone ingest use, so "start workflow 12" means
+ * exactly what it means everywhere else (inactive check, contact resolution
+ * via default_contact_id_from, INSERT + non-blocking advance; duplicate-
+ * enrollment guard on the sequence side).
+ *
+ * NEVER throws. Outcomes land on the audit trail:
+ *   completion_trigger_fired   {trigger, target, response}
+ *   completion_trigger_failed  {trigger, target, error}   (+ a staff task)
+ *
+ * Lazy requires throughout: actionDispatchers → workflow_engine →
+ * internal_functions → internal_functions/esign → THIS FILE is a load-time
+ * cycle (the identical shape the reminder-cancel hook documents), and
+ * esignAlertService pulls taskService into every consumer if required at
+ * top level.
+ */
+async function _fireCompletionTrigger(db, request, trigger, target, stamp) {
+  const label = `${target.type} ${target.id}`;
+  try {
+    const dispatchers = require('../lib/actionDispatchers');
+    const payload = await _completionPayload(db, request);
+
+    // Synthetic target row: the dispatchers only read .id off it, for the
+    // hook_delivery_logs row THEY don't write here (we keep the returned
+    // logData for our own event instead).
+    const synth = { id: null };
+
+    let logData;
+    if (target.type === 'workflow') {
+      logData = await dispatchers.dispatchWorkflow(synth, { workflow_id: target.id }, payload, db);
+    } else if (target.type === 'sequence') {
+      logData = await dispatchers.dispatchSequence(synth, {
+        template_id:         target.id,
+        contact_id_field:    'contact_id',
+        trigger_data_fields: [...COMPLETION_TRIGGER_DATA_FIELDS],
+      }, payload, db);
+    } else {
+      throw new Error(`unknown completion target type "${target.type}"`);
+    }
+
+    if (logData.status !== 'success') {
+      throw new Error(logData.error || `dispatch returned status '${logData.status}'`);
+    }
+
+    let response = null;
+    try { response = JSON.parse(logData.response_body); } catch (_) { /* opaque */ }
+
+    console.log(
+      `[ESIGN] request ${request.id} (${request.tracking_id}): '${trigger}' completion ` +
+      `trigger fired → ${label}`
+    );
+    await _insertEvent(db, request.id, {
+      event: 'completion_trigger_fired',
+      occurredAt: stamp,
+      payload: { trigger, target, response },
+    }, request).catch(() => {});
+  } catch (err) {
+    console.error(
+      `[ESIGN] request ${request.id}: '${trigger}' completion trigger (${label}) ` +
+      `failed: ${err.message}`
+    );
+    await _insertEvent(db, request.id, {
+      event: 'completion_trigger_failed',
+      occurredAt: stamp,
+      payload: { trigger, target, error: err.message },
+    }, request).catch(() => {});
+
+    // A dead trigger has no second chance — tell a human. Best-effort too.
+    try {
+      const esignAlertService = require('./esignAlertService');
+      await esignAlertService.raiseTask(db, {
+        title: `E-sign completion trigger failed: ${request.tracking_id}`,
+        desc:
+          `Signing request ${request.id} ("${request.document_name || request.tracking_id}") ` +
+          `went '${request.status}', but its '${trigger}' completion trigger — start ` +
+          `${label} — could not run:\n\n${err.message}\n\n` +
+          `The status change itself stands; only the follow-on automation did not start. ` +
+          `Action: run it by hand (or fix the target and re-check the ${request.linkable_type}).`,
+      });
+    } catch (taskErr) {
+      console.error(`[ESIGN] request ${request.id}: trigger-failure task could not be raised: ${taskErr.message}`);
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

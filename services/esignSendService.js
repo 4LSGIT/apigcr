@@ -699,6 +699,7 @@ async function sendPipeline(db, {
   linkableType, linkableId, kind, documentName, recipients,
   placements = null, expirationDays = null, createdBy, pdfBuffer, draftId = null,
   templateId = null, textValues = null, reminderPolicy = null,
+  completionTargets = null,
 } = {}) {
   let row;
 
@@ -756,6 +757,11 @@ async function sendPipeline(db, {
       placementJson: clean.placements,
       templateId,
       createdBy,
+      // Snapshotted onto the row — firing (applyStatus) reads the ROW, so a
+      // template edit never rewires an envelope already in a client's inbox.
+      // The retry path (draftId above) deliberately leaves the stored value
+      // untouched: the draft's snapshot was taken at creation.
+      completionTargets,
     });
     row.__send = clean;
   }
@@ -1496,9 +1502,48 @@ async function _resolveAndInterpolate(db, template, { linkableType, linkableId, 
  * @throws  ESIGN_NOT_FOUND | ESIGN_TEMPLATE_INACTIVE | ESIGN_MISSING_PREFILL
  *          + everything sendPipeline throws
  */
+/**
+ * PURE per-key merge of a per-send completion-target override onto a
+ * template's stored targets. Contract (mirrored in sendFromTemplate's docs):
+ *
+ *   override undefined → templateTargets verbatim (normalized)
+ *   override null      → null (no triggers for this send)
+ *   override object    → key-wise: provided key replaces, null-valued key
+ *                        clears, absent key keeps the template's
+ *
+ * Shape validation is delegated to esignTemplateService.validateCompletionTargets
+ * (one validator for the subsystem), with an extra unknown-key check on the
+ * RAW override first — a null-valued unknown key would otherwise vanish in
+ * the merge without the author ever hearing about the typo.
+ *
+ * @throws ESIGN_BAD_TEMPLATE
+ * @returns {?object}
+ */
+function mergeCompletionTargets(templateTargets, override) {
+  const esignTemplateService = require('./esignTemplateService');
+  if (override === undefined) {
+    return esignTemplateService.validateCompletionTargets(templateTargets || null);
+  }
+  if (override === null) return null;
+  if (typeof override !== 'object' || Array.isArray(override)) {
+    throw _err('ESIGN_BAD_TEMPLATE',
+      'completion_targets override must be an object, or null to disable triggers for this send.');
+  }
+  for (const k of Object.keys(override)) {
+    if (!esignTemplateService.COMPLETION_TRIGGER_KEYS.includes(k)) {
+      throw _err('ESIGN_BAD_TEMPLATE',
+        `completion_targets override has unknown trigger "${k}" ` +
+        `(expected: ${esignTemplateService.COMPLETION_TRIGGER_KEYS.join(', ')}).`);
+    }
+  }
+  const mergedRaw = { ...(templateTargets || {}), ...override };
+  return esignTemplateService.validateCompletionTargets(mergedRaw); // drops null-valued keys
+}
+
 async function sendFromTemplate(db, {
   templateId, linkableType, linkableId, values = null,
   recipients, documentName = null, expirationDays = null, createdBy,
+  completionTargets = undefined,
 } = {}) {
   const esignTemplateService = require('./esignTemplateService');
   const pdfRenderService     = require('./pdfRenderService');
@@ -1510,6 +1555,20 @@ async function sendFromTemplate(db, {
       'ESIGN_TEMPLATE_INACTIVE',
       `Template "${template.name}" is inactive and cannot be sent. Reactivate it, or pick another.`
     );
+  }
+
+  // ── completion targets: template default + per-send override ──────────────
+  //   undefined → the template's own completion_targets, verbatim
+  //   null      → explicitly NO triggers for this send
+  //   object    → PER-KEY merge over the template's: a provided key replaces
+  //               that trigger, a key set to null clears it, an absent key
+  //               keeps the template's. Validated (shape + referential) here
+  //               because an override never passes through template save.
+  const effectiveCompletionTargets =
+    mergeCompletionTargets(template.completion_targets, completionTargets);
+  if (completionTargets !== undefined && effectiveCompletionTargets != null) {
+    const esignTemplateSvc = require('./esignTemplateService');
+    await esignTemplateSvc._assertCompletionTargetsExist(db, effectiveCompletionTargets);
   }
 
   const r = await _resolveAndInterpolate(db, template, { linkableType, linkableId, values });
@@ -1559,6 +1618,7 @@ async function sendFromTemplate(db, {
     // Phase 3 — rungs 1+2 of the reminder resolution ladder; sendPipeline's
     // _tryEnrollReminders handles the firm-default and off rungs.
     reminderPolicy: { off: Boolean(template.reminders_off), seqId: template.reminder_seq_id || null },
+    completionTargets: effectiveCompletionTargets,
   });
 }
 
@@ -1772,6 +1832,7 @@ module.exports = {
   previewFromTemplate,
   interpolateTemplate,
   legalKinds,
+  mergeCompletionTargets,
   // reads
   listRequests,
   getRequestDetail,

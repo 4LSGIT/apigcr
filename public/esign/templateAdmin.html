@@ -130,6 +130,24 @@
       <input type="number" id="ta-seqid" min="1" style="width:80px">
       <span class="ta-hint">Phase 3 — leave blank for firm default</span>
     </div>
+    <div class="ta-row"><label>When signed, start:</label>
+      <select id="ta-cts-type" style="width:110px">
+        <option value="">— nothing —</option>
+        <option value="workflow">workflow</option>
+        <option value="sequence">sequence</option>
+      </select>
+      <input type="number" id="ta-cts-id" min="1" style="width:80px" placeholder="id">
+      <span class="ta-hint">fires on signed AND satisfied-external; snapshotted per send</span>
+    </div>
+    <div class="ta-row"><label>When declined, start:</label>
+      <select id="ta-ctd-type" style="width:110px">
+        <option value="">— nothing —</option>
+        <option value="workflow">workflow</option>
+        <option value="sequence">sequence</option>
+      </select>
+      <input type="number" id="ta-ctd-id" min="1" style="width:80px" placeholder="id">
+      <span class="ta-hint">save-time checked: target must exist and be active</span>
+    </div>
     <div id="ta-basics-err" class="ta-err"></div>
   </div>
 
@@ -368,6 +386,12 @@ function fillEditor(t) {
   E('ta-exp').value   = t ? t.expiration_days : 14;
   E('ta-remoff').checked = t ? !!t.reminders_off : false;
   E('ta-seqid').value = t && t.reminder_seq_id != null ? t.reminder_seq_id : '';
+  // Completion triggers — {signed:{type,id}, declined:{type,id}} or null.
+  const ct = (t && t.completion_targets) || {};
+  E('ta-cts-type').value = ct.signed   ? ct.signed.type   : '';
+  E('ta-cts-id').value   = ct.signed   ? ct.signed.id     : '';
+  E('ta-ctd-type').value = ct.declined ? ct.declined.type : '';
+  E('ta-ctd-id').value   = ct.declined ? ct.declined.id   : '';
   E('ta-body').value  = t ? t.body : '';
   // An existing template with zero placeholders saved once already — it was
   // intentional, so pre-check static_body (the server re-demands it per save).
@@ -388,6 +412,8 @@ function formSnapshot() {
   return JSON.stringify({
     name: E('ta-name').value, kind: E('ta-kind').value, exp: E('ta-exp').value,
     remoff: E('ta-remoff').checked, seq: E('ta-seqid').value,
+    ctsT: E('ta-cts-type').value, ctsI: E('ta-cts-id').value,
+    ctdT: E('ta-ctd-type').value, ctdI: E('ta-ctd-id').value,
     body: E('ta-body').value, stat: E('ta-static').checked,
     schema: gatherSchemaRows(),
     placement: editor && editor.hasDocument()
@@ -734,6 +760,20 @@ async function inlineExternalImages() {
 // ── save ─────────────────────────────────────────────────────
 function buildPayload() {
   const seq = E('ta-seqid').value.trim();
+  // Completion triggers: a picked type with a blank id sends {type, id: null},
+  // which the SERVER rejects with a precise message — better than silently
+  // dropping a half-filled row the author thinks they saved.
+  const gatherTrigger = (typeId, idId) => {
+    const type = E(typeId).value;
+    if (!type) return undefined;
+    const idRaw = E(idId).value.trim();
+    return { type, id: idRaw === '' ? null : parseInt(idRaw, 10) };
+  };
+  const ctSigned   = gatherTrigger('ta-cts-type', 'ta-cts-id');
+  const ctDeclined = gatherTrigger('ta-ctd-type', 'ta-ctd-id');
+  const completionTargets = (ctSigned || ctDeclined)
+    ? { ...(ctSigned ? { signed: ctSigned } : {}), ...(ctDeclined ? { declined: ctDeclined } : {}) }
+    : null;
   return {
     name: E('ta-name').value.trim(),
     kind: E('ta-kind').value.trim(),
@@ -746,6 +786,7 @@ function buildPayload() {
     expiration_days: parseInt(E('ta-exp').value, 10),
     reminders_off: E('ta-remoff').checked,
     reminder_seq_id: seq === '' ? null : parseInt(seq, 10),
+    completion_targets: completionTargets,
     static_body: E('ta-static').checked,
   };
 }

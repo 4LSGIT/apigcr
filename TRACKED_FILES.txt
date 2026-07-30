@@ -459,6 +459,7 @@ tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
 tests/esignActionsUi.test.js
 tests/esignAlert.test.js
+tests/esignCompletionTriggers.test.js
 tests/esignCredits.test.js
 tests/esignExpressions.test.js
 tests/esignFiling.test.js

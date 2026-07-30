@@ -58,6 +58,21 @@ const PREFILL_TYPES = Object.freeze(['text', 'number', 'date', 'money']);
 const TEMPLATE_TYPES = Object.freeze(['html', 'pdf']);
 
 /**
+ * Completion triggers (esign workflow actions, part 2). A template may name
+ * what to START when a request sent from it completes:
+ *
+ *   { signed:   { type: 'workflow'|'sequence', id: <int> },
+ *     declined: { type: 'workflow'|'sequence', id: <int> } }
+ *
+ * 'signed' fires on both terminal successes (signed AND satisfied_external);
+ * 'declined' only on declined. The value is SNAPSHOTTED onto the
+ * signing_requests row at send time — firing (esignService.applyStatus)
+ * reads the row, so a template edit never rewires an envelope in flight.
+ */
+const COMPLETION_TRIGGER_KEYS = Object.freeze(['signed', 'declined']);
+const COMPLETION_TARGET_TYPES = Object.freeze(['workflow', 'sequence']);
+
+/**
  * {{placeholder}} extraction. Deliberately BROAD — it captures anything
  * between double braces, including malformed keys, so that a typo like
  * {{Debtor Name}} is caught as undeclared rather than silently shipped as
@@ -97,7 +112,60 @@ function _shapeFull(row) {
     reminders_off:  Number(row.reminders_off) === 1,
     prefill_schema: _parseJsonCol(row.prefill_schema, []),
     placement_json: _parseJsonCol(row.placement_json, { fields: [] }),
+    completion_targets: _parseJsonCol(row.completion_targets, null),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMPLETION TARGETS — pure validator
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Validate + normalize a completion_targets value. PURE — the referential
+ * "does workflow 12 actually exist" check is _assertCompletionTargetsExist
+ * below, kept separate for the same reason the resolver whitelist is injected
+ * into validateTemplateInput: table-testability.
+ *
+ * Accepts null (no triggers). A key whose VALUE is null is dropped — that is
+ * the "cleared" spelling the merge path in esignSendService.sendFromTemplate
+ * relies on. Returns null when nothing survives, so the DB column never holds
+ * a semantically-empty `{}`.
+ *
+ * @throws ESIGN_BAD_TEMPLATE on any shape problem, naming the exact field.
+ * @returns {?object} normalized { signed?: {type,id}, declined?: {type,id} }
+ */
+function validateCompletionTargets(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw _err('ESIGN_BAD_TEMPLATE',
+      'completion_targets must be an object like ' +
+      '{"signed": {"type": "workflow", "id": 12}} — or null for no triggers.');
+  }
+  const out = {};
+  for (const [key, val] of Object.entries(raw)) {
+    if (!COMPLETION_TRIGGER_KEYS.includes(key)) {
+      throw _err('ESIGN_BAD_TEMPLATE',
+        `completion_targets has unknown trigger "${key}" ` +
+        `(expected: ${COMPLETION_TRIGGER_KEYS.join(', ')}).`);
+    }
+    if (val == null) continue; // explicit-null = cleared
+    if (typeof val !== 'object' || Array.isArray(val)) {
+      throw _err('ESIGN_BAD_TEMPLATE',
+        `completion_targets.${key} must be {"type": "workflow"|"sequence", "id": <int>}.`);
+    }
+    if (!COMPLETION_TARGET_TYPES.includes(val.type)) {
+      throw _err('ESIGN_BAD_TEMPLATE',
+        `completion_targets.${key}.type "${val.type}" is invalid ` +
+        `(expected: ${COMPLETION_TARGET_TYPES.join(', ')}).`);
+    }
+    const id = Number(val.id);
+    if (!Number.isInteger(id) || id < 1) {
+      throw _err('ESIGN_BAD_TEMPLATE',
+        `completion_targets.${key}.id must be a positive integer (got ${JSON.stringify(val.id)}).`);
+    }
+    out[key] = { type: val.type, id };
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,7 +220,7 @@ function validateTemplateInput(t, resolverWhitelist) {
   const {
     name, kind, body, prefillSchema, placementJson,
     expirationDays = 14, remindersOff = false, reminderSeqId = null,
-    staticBody = false, templateType = 'html',
+    staticBody = false, templateType = 'html', completionTargets = null,
   } = t || {};
 
   // ── template_type (Phase 2E) ──────────────────────────────────────────────
@@ -326,6 +394,9 @@ function validateTemplateInput(t, resolverWhitelist) {
     throw _err('ESIGN_BAD_TEMPLATE', 'reminder_seq_id must be a positive integer or null.');
   }
 
+  // ── completion_targets ────────────────────────────────────────────────────
+  const completionTargetsClean = validateCompletionTargets(completionTargets);
+
   return {
     clean: {
       name: nameClean,
@@ -337,6 +408,7 @@ function validateTemplateInput(t, resolverWhitelist) {
       expirationDays: exp,
       remindersOff: Boolean(remindersOff),
       reminderSeqId: seqId,
+      completionTargets: completionTargetsClean,
     },
     warnings,
   };
@@ -479,6 +551,53 @@ async function _assertReminderSeqExists(db, seqId) {
 }
 
 /**
+ * SAVE-TIME referential check for completion targets — the completion-trigger
+ * twin of _assertReminderSeqExists, same posture: the author is right there,
+ * so a dangling or inactive target stops the save instead of silently
+ * producing sends whose trigger dead-letters months later. Runtime stays
+ * defensive anyway (applyStatus's fire path records a completion_trigger_failed
+ * event and raises a task): a workflow deactivated AFTER the send degrades
+ * loudly, never breaks the status transition.
+ *
+ * Exported: esignSendService re-runs it on PER-SEND overrides, which never
+ * pass through template save.
+ *
+ * @throws ESIGN_BAD_TEMPLATE
+ */
+async function _assertCompletionTargetsExist(db, targets) {
+  if (targets == null) return;
+  for (const [key, t] of Object.entries(targets)) {
+    if (t.type === 'workflow') {
+      const [rows] = await db.query(
+        'SELECT id, name, active FROM workflows WHERE id = ? LIMIT 1', [t.id]
+      );
+      if (!rows.length) {
+        throw _err('ESIGN_BAD_TEMPLATE',
+          `completion_targets.${key}: workflow ${t.id} does not exist.`);
+      }
+      if (!rows[0].active) {
+        throw _err('ESIGN_BAD_TEMPLATE',
+          `completion_targets.${key}: workflow "${rows[0].name}" (#${t.id}) is inactive. ` +
+          `Reactivate it or pick another.`);
+      }
+    } else if (t.type === 'sequence') {
+      const [rows] = await db.query(
+        'SELECT id, name, active FROM sequence_templates WHERE id = ? LIMIT 1', [t.id]
+      );
+      if (!rows.length) {
+        throw _err('ESIGN_BAD_TEMPLATE',
+          `completion_targets.${key}: sequence template ${t.id} does not exist.`);
+      }
+      if (!rows[0].active) {
+        throw _err('ESIGN_BAD_TEMPLATE',
+          `completion_targets.${key}: sequence "${rows[0].name}" (#${t.id}) is inactive. ` +
+          `Reactivate it or pick another.`);
+      }
+    }
+  }
+}
+
+/**
  * SAVE-TIME column-existence check for expression resolvers (Phase 2E).
  *
  * validateTemplateInput's pure checks already settled syntax, allowed table
@@ -536,6 +655,7 @@ async function createTemplate(db, input, resolverWhitelist) {
   const { clean, warnings } = validateTemplateInput(input, resolverWhitelist);
   await assertExpressionColumnsExist(db, clean.prefillSchema);
   await _assertReminderSeqExists(db, clean.reminderSeqId);
+  await _assertCompletionTargetsExist(db, clean.completionTargets);
 
   // Both JSON columns supplied EXPLICITLY — non-strict sql_mode turns an
   // omitted NOT NULL JSON column into JSON null, and nothing errors until a
@@ -543,8 +663,8 @@ async function createTemplate(db, input, resolverWhitelist) {
   const [result] = await db.query(
     `INSERT INTO contract_templates
        (name, kind, template_type, body, prefill_schema, placement_json,
-        reminder_seq_id, reminders_off, expiration_days, active)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+        reminder_seq_id, reminders_off, expiration_days, completion_targets, active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
     [
       clean.name,
       clean.kind,
@@ -555,6 +675,7 @@ async function createTemplate(db, input, resolverWhitelist) {
       clean.reminderSeqId,
       clean.remindersOff ? 1 : 0,
       clean.expirationDays,
+      clean.completionTargets == null ? null : JSON.stringify(clean.completionTargets),
     ]
   );
 
@@ -595,17 +716,20 @@ async function updateTemplate(db, id, input, resolverWhitelist) {
     expirationDays: has('expirationDays') ? input.expirationDays : existing.expiration_days,
     remindersOff:   has('remindersOff')   ? input.remindersOff   : existing.reminders_off,
     reminderSeqId:  has('reminderSeqId')  ? input.reminderSeqId  : existing.reminder_seq_id,
+    completionTargets: has('completionTargets') ? input.completionTargets : existing.completion_targets,
     staticBody:     Boolean(input && input.staticBody),
   };
 
   const { clean, warnings } = validateTemplateInput(merged, resolverWhitelist);
   await assertExpressionColumnsExist(db, clean.prefillSchema);
   await _assertReminderSeqExists(db, clean.reminderSeqId);
+  await _assertCompletionTargetsExist(db, clean.completionTargets);
 
   await db.query(
     `UPDATE contract_templates
         SET name = ?, kind = ?, body = ?, prefill_schema = ?, placement_json = ?,
-            reminder_seq_id = ?, reminders_off = ?, expiration_days = ?
+            reminder_seq_id = ?, reminders_off = ?, expiration_days = ?,
+            completion_targets = ?
       WHERE id = ?`,
     [
       clean.name,
@@ -616,6 +740,7 @@ async function updateTemplate(db, id, input, resolverWhitelist) {
       clean.reminderSeqId,
       clean.remindersOff ? 1 : 0,
       clean.expirationDays,
+      clean.completionTargets == null ? null : JSON.stringify(clean.completionTargets),
       Number(id),
     ]
   );
@@ -664,9 +789,14 @@ module.exports = {
   // pure — shared with sendService + tests
   validateTemplateInput,
   extractPlaceholders,
+  validateCompletionTargets,
+  // referential — sendService re-runs it on per-send overrides
+  _assertCompletionTargetsExist,
   // constants
   PREFILL_TYPES,
   TEMPLATE_TYPES,
+  COMPLETION_TRIGGER_KEYS,
+  COMPLETION_TARGET_TYPES,
   MAX_TEMPLATE_PDF_BYTES,
   KEY_RE,
   MIN_NAME, MAX_NAME, MAX_KIND,

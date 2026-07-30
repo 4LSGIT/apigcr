@@ -129,6 +129,7 @@ function templateInputFromBody(body) {
     reminder_seq_id: 'reminderSeqId',
     static_body:     'staticBody',
     template_type:   'templateType',
+    completion_targets: 'completionTargets',
   };
   for (const [wire, svc] of Object.entries(map)) {
     if (Object.prototype.hasOwnProperty.call(b, wire)) out[svc] = b[wire];
@@ -335,6 +336,11 @@ router.post('/api/esign/send-from-template', jwtOrApiKey, async (req, res) => {
       documentName:   body.document_name || null,
       expirationDays: asInt(body.expiration_days),
       createdBy:      _resolveCreatedBy(req),
+      // key-presence preserved: absent → template default; null → no triggers
+      // for this send; object → per-key override (sendFromTemplate merges).
+      ...(Object.prototype.hasOwnProperty.call(body, 'completion_targets')
+        ? { completionTargets: body.completion_targets }
+        : {}),
     });
 
     return res.status(201).json({
