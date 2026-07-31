@@ -510,8 +510,27 @@ function taResolverModeChanged(sel) {
   if (sel.value === '__expr__') expr.focus();
 }
 
+/**
+ * A row the author never touched: no key, no label, no default, no resolver
+ * picked (or expression mode with an empty expression). Treated as "no row at
+ * all". New templates auto-add one starter row as a hint — before this skip,
+ * that untouched row failed key/label validation and blocked BOTH save and the
+ * source-PDF upload (upload saves the row first), so section 2 refused to work
+ * until section 3 was invented. The required checkbox alone doesn't count as
+ * touched: it has no meaning without a key.
+ */
+function isBlankSchemaRow(tr) {
+  const resolver = tr.querySelector('.ta-s-resolver').value;
+  return !tr.querySelector('.ta-s-key').value.trim() &&
+         !tr.querySelector('.ta-s-label').value.trim() &&
+         tr.querySelector('.ta-s-default').value === '' &&
+         (!resolver || (resolver === '__expr__' && !tr.querySelector('.ta-s-expr').value.trim()));
+}
+
 function gatherSchemaRows() {
-  return Array.from(document.querySelectorAll('.ta-schema-row')).map(tr => ({
+  return Array.from(document.querySelectorAll('.ta-schema-row'))
+    .filter(tr => !isBlankSchemaRow(tr))
+    .map(tr => ({
     key:      tr.querySelector('.ta-s-key').value.trim(),
     label:    tr.querySelector('.ta-s-label').value.trim(),
     type:     tr.querySelector('.ta-s-type').value,
@@ -525,10 +544,16 @@ function gatherSchemaRows() {
 
 /** Inline mirrors — same rules the server enforces; server stays authoritative. */
 function validateSchemaInline() {
-  const rows = gatherSchemaRows();
+  const trs  = Array.from(document.querySelectorAll('.ta-schema-row'));
+  const rows = gatherSchemaRows();               // blank rows already filtered
   const v = peValidateSchemaRows(rows, meta);
+  // rowErrors index the FILTERED list — walk the DOM rows and skip blanks so
+  // errors land on the row that produced them.
+  let j = 0;
   document.querySelectorAll('.ta-row-err').forEach((td, i) => {
-    td.innerText = v.rowErrors[i] ? v.rowErrors[i].join(' · ') : '';
+    if (trs[i] && isBlankSchemaRow(trs[i])) { td.innerText = ''; return; }
+    td.innerText = v.rowErrors[j] ? v.rowErrors[j].join(' · ') : '';
+    j++;
   });
   return v.ok;
 }

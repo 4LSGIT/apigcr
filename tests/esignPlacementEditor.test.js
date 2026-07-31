@@ -833,3 +833,25 @@ describe('peFieldSummary', () => {
     expect(pe.peFieldSummary({ type: 'checkbox', signer: 1 })).toBe('Checkbox');
   });
 });
+
+// ─── required carry (2026-07-31 contracts slice) ─────────────────────────────
+describe('peCarryProps — required:false carry', () => {
+  const carry = (src) => pe.peCarryProps(src, { type: src.type });
+
+  test('carries required:false for the choice & input types only', () => {
+    for (const type of ['input_text', 'checkbox', 'radio']) {
+      expect(carry({ type, required: false }).required).toBe(false);
+    }
+    expect(carry({ type: 'dropdown', options: ['a'], required: false }).required).toBe(false);
+    // Signature/initial/date: the editor never emits optional for these — an
+    // optional signature on a legal document is a hole, not a feature.
+    for (const type of ['signature', 'initial', 'date']) {
+      expect(carry({ type, required: false }).required).toBeUndefined();
+    }
+  });
+
+  test('absent and true both serialize as ABSENT (server default is required)', () => {
+    expect(carry({ type: 'checkbox' }).required).toBeUndefined();
+    expect(carry({ type: 'checkbox', required: true }).required).toBeUndefined();
+  });
+});

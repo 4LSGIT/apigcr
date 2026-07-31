@@ -379,3 +379,32 @@ describe("class boundary — local 'text' vs signer 'input_text'", () => {
     expect(bySigner[1][0]).not.toHaveProperty('key');
   });
 });
+
+// ─── required:false — the optional-field knob (2026-07-31, contracts slice) ──
+// The provider already mapped `required === false` → is_mandatory:false; the
+// validator now guards the TYPE so a string 'false' cannot silently read as
+// REQUIRED downstream (the exact wrong direction to fail on a legal form).
+
+describe('placements — required (optional signer fields)', () => {
+  test('boolean required is accepted on the choice & input types', () => {
+    expect(validatePlacements({ fields: [inputText({ required: false })] }).count).toBe(1);
+    expect(validatePlacements({ fields: [checkbox({ required: false })] }).count).toBe(1);
+    expect(validatePlacements({ fields: [dropdown({ required: false })] }).count).toBe(1);
+    expect(validatePlacements({ fields: [inputText({ required: true })] }).count).toBe(1);
+  });
+
+  test('non-boolean required is rejected, not misread as mandatory', () => {
+    for (const bad of ['false', 'true', 0, 1]) {
+      expect(() => validatePlacements({ fields: [checkbox({ required: bad })] })).toThrow(INVALID);
+    }
+  });
+
+  test('a whole radio group may be optional; a mixed group still throws', () => {
+    expect(validatePlacements({
+      fields: [radio({ required: false }), radio({ value: 'No', x: 120, required: false })],
+    }).count).toBe(2);   // count is per-box; the GROUP is what's optional
+    expect(() => validatePlacements({
+      fields: [radio({ required: false }), radio({ value: 'No', x: 120 })],
+    })).toThrow(INVALID);
+  });
+});

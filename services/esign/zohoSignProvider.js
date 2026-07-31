@@ -195,9 +195,9 @@ const ZOHO_REQUEST_STATUS_MAP = Object.freeze({
  * STATUSES — but they are kept aligned with it anyway so one vocabulary reads
  * across the whole subsystem.
  *
- * NOACTION means "sequential signing, not their turn yet". With
- * is_sequential:false it should never appear; mapped anyway because a future
- * sequential document would produce it.
+ * NOACTION means "sequential signing, not their turn yet". Requests are
+ * sent is_sequential:true (see createPayload), so signer 2 sits in NOACTION
+ * until signer 1 completes — an expected state, not an anomaly.
  *
  * UNVERIFIED: 'BOUNCED' and 'EXPIRED' are inferred, not observed — Zoho's
  * docs enumerate only NOACTION / UNOPENED / VIEWED / SIGNED for action_status.
@@ -780,8 +780,9 @@ class ZohoSignProvider {
         recipient_name:  r.name == null ? '' : String(r.name),
         recipient_email: email,
         action_type:     'SIGN',
-        // Neutral order is 1-based; Zoho signing_order is 0-based.
-        // Immaterial while is_sequential is false, correct if it ever isn't.
+        // Neutral order is 1-based; Zoho signing_order is 0-based. With
+        // is_sequential:true (below) this ORDER IS THE QUEUE: signer 2's
+        // email goes out only after signer 1 completes.
         signing_order:   (Number.isInteger(r.order) ? r.order : i + 1) - 1,
         verify_recipient: false,
       };
@@ -791,8 +792,16 @@ class ZohoSignProvider {
       requests: {
         request_name:   documentName,
         expiration_days: expirationDays,
-        // FALSE by design: joint debtors sign in parallel, not in a queue.
-        is_sequential:  false,
+        // TRUE as of 2026-07-31 (was false, "joint debtors sign in
+        // parallel"). Parallel turned out to be wrong in practice: Zoho shows
+        // each signer ONLY their own fields until earlier signers finish, so
+        // signer 2 opened the fee agreement and could not see signer 1's
+        // date/choices — a half-blank contract. Sequential means signer 2 is
+        // emailed after signer 1 completes and reads a document with signer
+        // 1's entries in place. Single-recipient envelopes are unaffected,
+        // and the NOACTION status mapping below already handles "not their
+        // turn yet".
+        is_sequential:  true,
         actions:        actionsIn,
       },
     };

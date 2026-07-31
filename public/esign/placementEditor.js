@@ -139,6 +139,15 @@ function peCarryProps(src, out) {
     out.value = typeof src.value === 'string' ? src.value.trim() : '';
     if (src.checked === true) out.checked = true;
   }
+  // `required:false` = the signer may skip it (server default is required, so
+  // only the false form is carried — an absent key IS "required"). Offered for
+  // the choice/input types only: an optional SIGNATURE on a legal document is
+  // a footgun the editor refuses to hand out, even though the server would
+  // accept it.
+  if ((src.type === 'input_text' || src.type === 'checkbox' ||
+       src.type === 'dropdown'   || src.type === 'radio') && src.required === false) {
+    out.required = false;
+  }
   return out;
 }
 
@@ -608,12 +617,16 @@ function peDefaultSize(type) {
 function peFieldSummary(f) {
   if (!f || !f.type) return '';
   if (f.type === 'text') return 'Fill-in \u00b7 ' + (f.key || 'no key');
-  if (f.type === 'radio') return 'Radio \u00b7 ' + (f.group || '?') + ': ' + (f.value || '?');
+  if (f.type === 'radio') {
+    return 'Radio \u00b7 ' + (f.group || '?') + ': ' + (f.value || '?') +
+      (f.required === false ? ' \u00b7 optional' : '');
+  }
   var NAMES = {
     signature: 'Signature', initial: 'Initial', date: 'Date',
     input_text: 'Signer text', checkbox: 'Checkbox', dropdown: 'Dropdown',
   };
-  return (NAMES[f.type] || f.type) + (f.label ? ' \u00b7 ' + f.label : '');
+  return (NAMES[f.type] || f.type) + (f.label ? ' \u00b7 ' + f.label : '') +
+    (f.required === false ? ' \u00b7 optional' : '');
 }
 
 /**
@@ -1871,6 +1884,20 @@ if (typeof window !== 'undefined') (function () {
       }
     }
 
+    // Optional/required — the choice & input types only. Signature, initial
+    // and date stay mandatory: an optional signature on a legal document is a
+    // hole, not a feature (the server would allow it; the editor won't).
+    if (!isText && (f.type === 'input_text' || f.type === 'checkbox' ||
+                    f.type === 'dropdown'   || f.type === 'radio')) {
+      h += '<div class="pe-f"><label class="pe-check">' +
+        '<input type="checkbox" data-pe="req"' + (f.required === false ? '' : ' checked') + '> ' +
+        'Signer must complete this</label>' +
+        (f.type === 'radio'
+          ? '<div class="pe-sub">Applies to the whole "' + peEsc(f.group || '?') + '" group.</div>'
+          : '<div class="pe-sub">Untick to let the signer skip it.</div>') +
+        '</div>';
+    }
+
     h += '<div class="pe-acts">' +
       '<button type="button" class="pe-btn" data-pe="dup"><i class="fa-solid fa-clone"></i> Duplicate</button>' +
       '<button type="button" class="pe-btn pe-danger" data-pe="del"><i class="fa-solid fa-trash-can"></i> Delete</button>' +
@@ -2062,6 +2089,28 @@ if (typeof window !== 'undefined') (function () {
         if (t.checked) f.checked = true; else delete f.checked;
         commit = true;
         break;
+
+      case 'req': {
+        // Stored only in the false form — absent means required (server
+        // default), so ticking the box DELETES the key rather than writing
+        // required:true noise into every field.
+        var applyReq = function (o) {
+          if (t.checked) delete o.required; else o.required = false;
+        };
+        if (f.type === 'radio') {
+          // The server validates required PER GROUP (mixed groups throw), so
+          // the editor keeps every circle of the group in agreement.
+          var grp = f.group;
+          this.fields.forEach(function (o) {
+            if (o.type === 'radio' && o.group === grp) applyReq(o);
+          });
+        } else if (f.type === 'input_text' || f.type === 'checkbox' || f.type === 'dropdown') {
+          applyReq(f);
+        } else return;
+        this._renderFieldList();   // '· optional' markers follow the toggle live
+        commit = true;
+        break;
+      }
 
       case 'options':
         if (f.type !== 'dropdown') return;
@@ -2391,7 +2440,10 @@ if (typeof window !== 'undefined') (function () {
         var p = localPoint(wrap, ev2);
         var nx = Math.min(Math.max(orig.x + (p.x - start.x), 0), wrap.clientWidth - w);
         var ny = Math.min(Math.max(orig.y + (p.y - start.y), 0), wrap.clientHeight - h);
-        if (Math.abs(nx - orig.x) > 1 || Math.abs(ny - orig.y) > 1) movedAny = true;
+        // 3px, not 1: sub-pixel mouse jitter between down and up was
+        // classifying plain clicks as drags, so the tap-to-edit drawer (see
+        // onUp) never opened and the label/required controls looked missing.
+        if (Math.abs(nx - orig.x) > 3 || Math.abs(ny - orig.y) > 3) movedAny = true;
         el.style.left = nx + 'px'; el.style.top = ny + 'px';
       }
       function onUp(ev2) {

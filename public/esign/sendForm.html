@@ -630,6 +630,13 @@ async function doSend() {
       recipients:      gatherRecipients(),
       document_name:   E('sf-docname').value.trim() || null,
       expiration_days: parseInt(E('sf-expiry').value, 10) || null,
+      // Contract templates are authored for TWO signers (joint debtors);
+      // single-filer sends must not require inventing a second recipient.
+      // The server strips fields bound to a signer the envelope doesn't
+      // have (signer 2 on a 1-recipient send) instead of hard-failing —
+      // see esignSendService.dropUnmatchedSignerFields. Harmless when the
+      // recipient count matches the placed signers.
+      drop_unmatched_signers: true,
     });
     showSuccess(out);
   } catch (err) {
@@ -672,6 +679,9 @@ function offerRetry(errBody) {
         fd.append('file', pv.blob, 'document.pdf');
         fd.append('draft_id', String(errBody.draft_id));
         fd.append('recipients', JSON.stringify(gatherRecipients()));
+        // Same joint-template posture as the first attempt (doSend above) —
+        // a retry that corrected the recipient list re-trims to match.
+        fd.append('drop_unmatched_signers', 'true');
         return await esignUpload('/api/esign/send', fd);
       } catch (err) {
         Swal.showValidationMessage(err.message);

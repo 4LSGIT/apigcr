@@ -270,6 +270,14 @@ function validatePlacements(placements) {
       }
     }
 
+    // `required` (optional, signer-class only): false = the signer may leave
+    // the field blank. Boolean or absent — a string 'false' would silently
+    // read as REQUIRED downstream (both this file's radio grouping and the
+    // provider test `=== false`), which is the exact wrong direction to fail.
+    if (f.required != null && typeof f.required !== 'boolean') {
+      throw inputError(`placements.fields[${i}].required must be a boolean when present`);
+    }
+
     if (f.type === 'input_text') {
       if (f.max_length != null) {
         const m = Number(f.max_length);

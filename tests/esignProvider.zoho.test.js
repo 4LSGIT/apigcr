@@ -398,7 +398,8 @@ describe('sendForSignature', () => {
     expect(data.requests).toMatchObject({
       request_name: 'Retainer',
       expiration_days: 14,         // matches contract_templates.expiration_days DEFAULT
-      is_sequential: false,        // joint debtors sign in PARALLEL
+      is_sequential: true,         // signer 2 is emailed AFTER signer 1 completes
+                                   // (parallel hid signer 1's entries from signer 2)
     });
     expect(data.requests.actions).toEqual([
       { recipient_name: 'Alice', recipient_email: 'alice@x.com', action_type: 'SIGN',
