@@ -1458,3 +1458,91 @@ describe('readPdfPageInfo', () => {
     expect(f.y_coord).not.toBe(244);      // the Letter-flip value that shipped wrong
   });
 });
+// ─────────────────────────────────────────────────────────────────────────────
+// dropUnmatchedSignerFields — one joint-authored template serving single filers
+// (drop_unmatched_signers on the send routes; see the helper's docblock)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('dropUnmatchedSignerFields', () => {
+  /** A contract authored for two debtors: signer-1 and signer-2 fields plus a
+   *  locally-filled text field and a signer-2 radio group (two boxes). */
+  const JOINT = () => ({
+    coord_space: 'pdf_user_space',
+    fields: [
+      { page: 1, x: 10, y: 10, w: 100, h: 20, type: 'signature', signer: 1 },
+      { page: 1, x: 10, y: 40, w: 60,  h: 20, type: 'checkbox',  signer: 1 },
+      { page: 1, x: 10, y: 70, w: 80,  h: 20, type: 'text', key: 'client_name' },
+      { page: 1, x: 200, y: 10, w: 100, h: 20, type: 'signature', signer: 2 },
+      { page: 1, x: 200, y: 40, w: 80,  h: 20, type: 'date',      signer: 2 },
+      { page: 1, x: 200, y: 70, w: 12,  h: 12, type: 'radio', signer: 2, group: 'Plan', value: 'Weekly' },
+      { page: 1, x: 200, y: 90, w: 12,  h: 12, type: 'radio', signer: 2, group: 'Plan', value: 'Monthly' },
+    ],
+  });
+
+  test('null / malformed placements pass through untouched', () => {
+    expect(svc.dropUnmatchedSignerFields(null, 1)).toBeNull();
+    expect(svc.dropUnmatchedSignerFields(undefined, 1)).toBeUndefined();
+    const noFields = { coord_space: 'pdf_user_space' };
+    expect(svc.dropUnmatchedSignerFields(noFields, 1)).toBe(noFields);
+  });
+
+  test('invalid recipient counts are a no-op (validator, not this helper, complains)', () => {
+    const p = JOINT();
+    expect(svc.dropUnmatchedSignerFields(p, 0)).toBe(p);
+    expect(svc.dropUnmatchedSignerFields(p, -1)).toBe(p);
+    expect(svc.dropUnmatchedSignerFields(p, 1.5)).toBe(p);
+    expect(svc.dropUnmatchedSignerFields(p, NaN)).toBe(p);
+  });
+
+  test('single-filer send drops EVERY signer-2 field — including all of a radio group — and keeps text + signer-1', () => {
+    const input = JOINT();
+    const out = svc.dropUnmatchedSignerFields(input, 1);
+    expect(out).not.toBe(input);                       // new object
+    expect(input.fields).toHaveLength(7);              // input never mutated
+    expect(out.fields).toHaveLength(3);
+    expect(out.fields.map((f) => f.type).sort()).toEqual(['checkbox', 'signature', 'text']);
+    expect(out.fields.every((f) => f.type === 'text' || f.signer === 1)).toBe(true);
+    expect(out.coord_space).toBe('pdf_user_space');    // non-field keys survive
+  });
+
+  test('joint send (2 recipients) drops nothing and returns the SAME object', () => {
+    const input = JOINT();
+    expect(svc.dropUnmatchedSignerFields(input, 2)).toBe(input);
+  });
+
+  test('a signer-less signer-class field defaults to signer 1 (mirrors validateSendInput) and is kept', () => {
+    const p = { fields: [{ page: 1, x: 0, y: 0, w: 10, h: 10, type: 'signature' }] };
+    expect(svc.dropUnmatchedSignerFields(p, 1)).toBe(p);
+  });
+
+  test('non-integer signer values are left for validatePlacements to reject with its own error', () => {
+    const p = { fields: [{ page: 1, x: 0, y: 0, w: 10, h: 10, type: 'signature', signer: 'two' }] };
+    expect(svc.dropUnmatchedSignerFields(p, 1)).toBe(p);
+  });
+
+  test('validateSendInput: the exact joint-template shape that hard-fails raw passes after the drop', async () => {
+    const joint = JOINT();
+    await expect(svc.validateSendInput(makeDb(), { ...GOOD_SEND, placements: joint }))
+      .rejects.toMatchObject({ code: 'ESIGN_BAD_PLACEMENTS' });
+    await expect(svc.validateSendInput(makeDb(), {
+      ...GOOD_SEND,
+      placements: svc.dropUnmatchedSignerFields(joint, GOOD_SEND.recipients.length),
+    })).resolves.toBeTruthy();
+  });
+
+  test('sendPipeline: flag OFF keeps the strict cross-check (default behavior unchanged)', async () => {
+    await expect(svc.sendPipeline(makeDb(), {
+      ...GOOD_SEND, placements: JOINT(), pdfBuffer: buildPdf(1),
+    })).rejects.toMatchObject({ code: 'ESIGN_BAD_PLACEMENTS' });
+  });
+
+  test('sendPipeline: flag ON sends a joint template to a single filer with only the surviving fields', async () => {
+    const out = await svc.sendPipeline(makeDb(), {
+      ...GOOD_SEND, placements: JOINT(), pdfBuffer: buildPdf(1), dropUnmatchedSigners: true,
+    });
+    expect(out.row).toBeTruthy();
+    const sent = provider.sendForSignature.mock.calls[0][0].placements;
+    expect(sent.fields).toHaveLength(3);
+    expect(sent.fields.some((f) => f.signer === 2)).toBe(false);
+  });
+});

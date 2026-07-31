@@ -102,9 +102,25 @@
     <div class="sf-section-title"><input type="checkbox" id="chkCreditCounseling"> Credit Counseling Info</div>
   </div>
 
-  <!-- ═══ CONTRACT (future) ═══ -->
-  <div class="sf-section sf-disabled">
-    <div class="sf-section-title"><input type="checkbox" disabled> Contracts <span class="sf-badge sf-badge-future">Coming Soon</span></div>
+  <!-- ═══ CONTRACTS (e-sign via Zoho — templates authored in templateAdmin) ═══
+       Templates with kind === 'contract' appear here. Sends go through
+       POST /api/esign/send-from-template with drop_unmatched_signers, so one
+       joint-authored template serves single-filer cases too. The signing link
+       itself always arrives by EMAIL from Zoho regardless of the Method
+       toggles above; the optional heads-up text rides the normal SMS path. -->
+  <div class="sf-section">
+    <div class="sf-section-title"><input type="checkbox" id="chkContracts"> Contracts (E-Sign)</div>
+    <div class="sf-sub" id="contractsSection" style="display:none;">
+      <div id="contractsList" style="font-size:0.88rem; color:#6c757d;">Loading contracts…</div>
+      <div class="sf-docs-instruction" id="contractsFooter" style="display:none;">
+        <label><input type="checkbox" id="chkContractHeadsUp" checked>
+          Also text a heads-up ("we emailed you a document to sign — check your inbox/spam")</label>
+        <div style="font-size:0.8rem; color:#6c757d; margin-top:4px;">
+          Signing invitations are emailed by Zoho Sign to the addresses in the contact cards above.
+          Reminders and follow-up tasks run automatically until signed or expired (14 days).
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- ═══ SOS TITLE INSTRUCTIONS ═══ -->
@@ -308,6 +324,13 @@ let currentUser = {};
 let quillEditor = null;
 let otherMmsAttachmentUrl = null;
 let otherEmailAttachmentUrl = null;
+
+// Contracts (e-sign). esignTemplates: null = never loaded; [] = loaded, none.
+// contractPrefills[tid] = { schema:[...], values:{key:val}, missing:[...] } —
+// fetched lazily per contract on first check so an untouched section costs
+// nothing.
+let esignTemplates = null;
+const contractPrefills = {};
 
 const Toast = Swal.mixin({
   toast: true, position: 'top-end', showConfirmButton: false,
@@ -565,6 +588,11 @@ function setupToggles() {
     document.getElementById('otherSection').style.display = e.target.checked ? '' : 'none';
   });
 
+  document.getElementById('chkContracts').addEventListener('change', e => {
+    document.getElementById('contractsSection').style.display = e.target.checked ? '' : 'none';
+    if (e.target.checked && esignTemplates === null) loadContractTemplates();
+  });
+
   // Sub-selectors for doc items
   const subMap = {
     'PDF copies of pay stubs / proof of all income': 'incomeFromDiv',
@@ -590,6 +618,110 @@ function setupToggles() {
   updateOtherMmsVisibility();
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTRACTS (e-sign)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function loadContractTemplates() {
+  const list = document.getElementById('contractsList');
+  try {
+    const out = await P.apiSend('/api/esign/templates', 'GET');
+    esignTemplates = (out.templates || []).filter(t => t.active && t.kind === 'contract');
+  } catch (err) {
+    list.innerHTML = `<span style="color:#dc3545;">Failed to load contracts: ${escHtml(err.message)}</span>`;
+    esignTemplates = null; // retryable on next toggle
+    return;
+  }
+
+  if (!esignTemplates.length) {
+    list.innerHTML = 'No contract templates found. Author them in the Signatures template admin with kind "contract".';
+    return;
+  }
+
+  list.innerHTML = esignTemplates.map(t => `
+    <div class="sf-sub-item">
+      <input type="checkbox" class="contract-item" value="${t.id}" onchange="toggleContract(${t.id}, this.checked)">
+      ${escHtml(t.name)}
+    </div>
+    <div class="sf-sub-selector" id="contractVals-${t.id}" style="display:none;"></div>
+  `).join('');
+  document.getElementById('contractsFooter').style.display = '';
+}
+
+/**
+ * On check: fetch this template's prefill schema + case-resolved values and
+ * render one editable input per key. Staff can correct anything before send;
+ * required-and-still-empty keys are highlighted — send-from-template will
+ * hard-fail on them anyway (ESIGN_MISSING_PREFILL), this just says so first.
+ */
+async function toggleContract(tid, checked) {
+  const box = document.getElementById(`contractVals-${tid}`);
+  if (!checked) { box.style.display = 'none'; return; }
+  box.style.display = '';
+
+  if (!contractPrefills[tid]) {
+    box.innerHTML = 'Loading values…';
+    try {
+      const [detail, prefills] = await Promise.all([
+        P.apiSend(`/api/esign/templates/${tid}`, 'GET'),
+        P.apiSend(`/api/esign/templates/${tid}/prefills`, 'POST',
+                  { linkable_type: 'case', linkable_id: caseId }),
+      ]);
+      contractPrefills[tid] = {
+        schema:  detail.template?.prefill_schema || [],
+        values:  prefills.values  || {},
+        missing: prefills.missing || [],
+      };
+    } catch (err) {
+      box.innerHTML = `<span style="color:#dc3545;">Failed to load values: ${escHtml(err.message)}</span>`;
+      return;
+    }
+  }
+
+  const { schema, values } = contractPrefills[tid];
+  if (!schema.length) {
+    box.innerHTML = '<span style="color:#6c757d;">No fill-in values — signer completes everything on the document.</span>';
+    return;
+  }
+
+  box.innerHTML = schema.map(f => {
+    const val     = values[f.key] != null ? values[f.key] : (f.default != null ? f.default : '');
+    const isEmpty = String(val).trim() === '';
+    const req     = f.required ? ' <span style="color:#dc3545;">*</span>' : '';
+    const warn    = (f.required && isEmpty) ? 'border-color:#dc3545;' : '';
+    return `<div style="display:flex; align-items:center; gap:8px; margin:4px 0;">
+      <label style="min-width:180px; font-weight:600;">${escHtml(f.label || f.key)}${req}</label>
+      <input type="text" class="contract-val" data-tid="${tid}" data-key="${escHtml(f.key)}"
+             value="${escHtml(val)}" style="flex:1; max-width:320px; padding:3px 6px; ${warn}
+             border:1px solid #ced4da; border-radius:4px; font-size:0.85rem;">
+    </div>`;
+  }).join('');
+}
+
+/** Current edited values for one checked contract, keyed by schema key. */
+function collectContractValues(tid) {
+  const vals = {};
+  document.querySelectorAll(`.contract-val[data-tid="${tid}"]`).forEach(inp => {
+    vals[inp.dataset.key] = inp.value;
+  });
+  return vals;
+}
+
+/**
+ * Signers for the e-sign envelope: the Send-to toggles + card-edited emails,
+ * Primary first so signer 1 on the placed template is always the primary
+ * debtor. Templates are authored for up to two signers; single-recipient
+ * sends rely on drop_unmatched_signers server-side.
+ */
+function getContractSigners() {
+  return getRecipients().map((r, i) => ({ name: r.name, email: (r.email || '').trim(), order: i + 1 }));
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COLLECT
@@ -648,6 +780,19 @@ function collectActions() {
   if (document.getElementById('chkDocsNeeded').checked) actions.push({ type: 'docs_needed', ...collectDocsPayload() });
   if (document.getElementById('chkAllan').checked) actions.push({ type: 'allan_anchill' });
   if (document.getElementById('chkPaymentOptions').checked) actions.push({ type: 'payment_options' });
+  if (document.getElementById('chkContracts').checked) {
+    const items = Array.from(document.querySelectorAll('.contract-item:checked')).map(cb => {
+      const tid = Number(cb.value);
+      const t = (esignTemplates || []).find(x => x.id === tid);
+      return { template_id: tid, name: t ? t.name : `Template ${tid}`, values: collectContractValues(tid) };
+    });
+    if (items.length) {
+      actions.push({
+        type: 'contracts', items,
+        heads_up: document.getElementById('chkContractHeadsUp').checked,
+      });
+    }
+  }
   if (document.getElementById('chkQuestionnaire').checked) {
     actions.push({ type: 'questionnaire', enroll: document.getElementById('chkEnrollReminders').checked });
   }
@@ -734,6 +879,19 @@ async function preview() {
     }
     if (action.type === 'questionnaire') {
       lines.push('── DETAILED BK QUESTIONNAIRE ──\n[Link to questionnaire]' + (action.enroll ? '\n[Will enroll in reminder sequence]' : ''));
+    }
+    if (action.type === 'contracts') {
+      const signers = getContractSigners();
+      let p = '── CONTRACTS (E-SIGN) ──';
+      action.items.forEach(item => {
+        p += `\n• ${item.name}`;
+        const filled = Object.entries(item.values).filter(([, v]) => String(v).trim() !== '');
+        if (filled.length) p += '\n    ' + filled.map(([k, v]) => `${k}: ${v}`).join('\n    ');
+      });
+      p += '\nSigning invitations (via Zoho Sign) to:\n' +
+           signers.map(s => `    ${s.order}. ${s.name} <${s.email || 'NO EMAIL — will fail'}>`).join('\n');
+      if (action.heads_up) p += '\n[Heads-up SMS will be sent]';
+      lines.push(p);
     }
     if (action.type === 'other') {
       if (action.mode === 'sms') {
@@ -948,6 +1106,59 @@ async function send() {
         for (const r of recipients) {
           if (smsOn && r.phone) { await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: PAYMENT_OPTIONS_TEXT }); successes.push(`Payment Options SMS → ${r.name}`); }
           if (emailOn && r.email) { await P.apiSend('/internal/email/send', 'POST', { from: emailFrom, to: r.email, subject: 'Payment Options', html: PAYMENT_OPTIONS_HTML, text: PAYMENT_OPTIONS_TEXT }); successes.push(`Payment Options Email → ${r.name}`); }
+        }
+      }
+
+      // ── CONTRACTS (e-sign) ──
+      // The signing link is EMAILED BY ZOHO — the Method toggles govern only
+      // the optional heads-up text. drop_unmatched_signers lets the same
+      // two-signer template go to a single filer (server strips signer-2
+      // fields). Per-item try/catch: one bad contract must not stop the rest.
+      if (action.type === 'contracts') {
+        const signers = getContractSigners();
+
+        if (!signers.length) {
+          errors.push('Contracts: no signers selected');
+        } else if (primaryContact && secondaryContact &&
+                   !document.getElementById('sendToPrimary').checked) {
+          // Signer 1 on the placed templates is the primary debtor's
+          // signature line; sending secondary-only would put the co-debtor
+          // on the primary's line.
+          errors.push('Contracts: the Primary contact must be included (signer 1 is the primary debtor)');
+        } else if (signers.some(s => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.email))) {
+          errors.push('Contracts: every signer needs a valid email (fix the contact cards above)');
+        } else {
+          let anySent = false;
+          for (const item of action.items) {
+            try {
+              await P.apiSend('/api/esign/send-from-template', 'POST', {
+                template_id:            item.template_id,
+                linkable_type:          'case',
+                linkable_id:            caseId,
+                values:                 item.values,
+                recipients:             signers,
+                drop_unmatched_signers: true,
+              });
+              anySent = true;
+              successes.push(`Contract sent for signature → ${item.name}`);
+            } catch (err) {
+              errors.push(`Contract "${item.name}": ${err.message}`);
+            }
+          }
+
+          if (anySent && action.heads_up && smsOn) {
+            for (const r of recipients) {
+              if (!r.phone) continue;
+              try {
+                await P.apiSend('/internal/sms/send', 'POST', {
+                  from: smsFrom, to: r.phone,
+                  message: `Hi ${r.fname}! We just emailed you a document to review and sign electronically. ` +
+                           `Please check your email (and spam folder) for a message from Zoho Sign.`,
+                });
+                successes.push(`Contract heads-up SMS → ${r.name}`);
+              } catch (err) { errors.push(`Contract heads-up SMS (${r.name}): ${err.message}`); }
+            }
+          }
         }
       }
 

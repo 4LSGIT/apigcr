@@ -266,6 +266,13 @@ router.post('/api/esign/send', jwtOrApiKey, uploadSingle, async (req, res) => {
       createdBy:      resolveCreatedBy(req),
       draftId:        asInt(body.draft_id),
       pdfBuffer,
+      // Multipart fields arrive as strings; JSON callers may send a boolean.
+      // Anything else (absent, '', 'false') means the default: strict
+      // signer↔recipient cross-check, exactly as before this flag existed.
+      dropUnmatchedSigners:
+        body.drop_unmatched_signers === true ||
+        body.drop_unmatched_signers === 'true' ||
+        body.drop_unmatched_signers === '1',
     });
 
     return res.status(201).json({

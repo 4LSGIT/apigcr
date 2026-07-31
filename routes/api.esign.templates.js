@@ -336,6 +336,14 @@ router.post('/api/esign/send-from-template', jwtOrApiKey, async (req, res) => {
       documentName:   body.document_name || null,
       expirationDays: asInt(body.expiration_days),
       createdBy:      _resolveCreatedBy(req),
+      // One template serves joint AND single filers: with this flag, fields
+      // bound to a signer the envelope doesn't have (signer 2 on a
+      // single-debtor case) are dropped instead of hard-failing the
+      // cross-check. Opt-in per send — see dropUnmatchedSignerFields.
+      dropUnmatchedSigners:
+        body.drop_unmatched_signers === true ||
+        body.drop_unmatched_signers === 'true' ||
+        body.drop_unmatched_signers === '1',
       // key-presence preserved: absent → template default; null → no triggers
       // for this send; object → per-key override (sendFromTemplate merges).
       ...(Object.prototype.hasOwnProperty.call(body, 'completion_targets')

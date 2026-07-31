@@ -4,6 +4,7 @@
 DEPLOY_2E.md
 Dockerfile
 README.md
+TEMPLATE_SETUP_CONTRACTS.md
 TRACKED_FILES.txt
 jest.config.js
 lib/actionDispatchers.js
@@ -235,6 +236,7 @@ ref/2026-07-26_form_templates.sql
 ref/2026-07-27_test_quick_notes_slice2_definition.json
 ref/2026-07-28_report_charts.sql
 ref/2026-07-28_reports.sql
+ref/2026-07-31_contract_followup_seq.sql
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/database.sql
 ref/files.md

@@ -287,6 +287,53 @@ async function readPdfPageInfo(pdfBuffer) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * Drop signer-class fields that reference a signer this envelope does not
+ * have — the opt-in behind one template serving BOTH joint and single-filer
+ * sends (`drop_unmatched_signers` on the send routes).
+ *
+ * A contract template authored for two debtors places signature/date/choice
+ * fields for signer 1 AND signer 2. Sent to a single filer, validateSendInput's
+ * cross-check hard-fails (correctly: an unmatched field would render with
+ * nobody to fill it). With the flag, fields whose `signer` exceeds the
+ * recipient count are removed instead — including every box of a signer-2
+ * radio group, since radio carries `signer` per box — and validation then sees
+ * only the surviving set.
+ *
+ * OPT-IN PER SEND, never a default: silently dropping fields from a template
+ * that genuinely requires two signers would send a legal document missing half
+ * its signature blocks. The caller (sendingform-bk, which knows whether the
+ * case has a Secondary) asserts the intent explicitly.
+ *
+ * `text` fields are untouched (filled locally; no signer). A missing `signer`
+ * is treated as 1, mirroring validateSendInput's own default. Signer values
+ * that are not positive integers are left in place for validatePlacements to
+ * reject with its own precise error — this helper filters, it never validates.
+ *
+ * PURE — no db, no mutation. Returns a NEW placements object when anything was
+ * dropped (the caller's template row keeps its full field set for the next
+ * joint send); returns the input untouched when nothing applies.
+ *
+ * @param {?object} placements      neutral placements ({fields:[...]}) or null
+ * @param {number}  recipientCount  how many signers are on this envelope
+ * @returns {?object}
+ */
+function dropUnmatchedSignerFields(placements, recipientCount) {
+  const n = Number(recipientCount);
+  if (!placements || !Array.isArray(placements.fields)) return placements;
+  if (!Number.isInteger(n) || n < 1) return placements;
+
+  const fields = placements.fields.filter((f) => {
+    if (!f || typeof f !== 'object') return true; // validator's problem, not ours
+    if (f.type === 'text') return true;           // local fill — no signer to match
+    const signer = Number.isInteger(f.signer) ? f.signer : 1;
+    return signer <= n;
+  });
+
+  if (fields.length === placements.fields.length) return placements;
+  return { ...placements, fields };
+}
+
+/**
  * document_name is DEBTOR-VISIBLE. Zoho puts it in the subject line of the
  * email the client receives and at the top of the signing page, so
  * '472304-Ch7_Form122A_smith.pdf' is not a cosmetic problem — it is what the
@@ -699,7 +746,7 @@ async function sendPipeline(db, {
   linkableType, linkableId, kind, documentName, recipients,
   placements = null, expirationDays = null, createdBy, pdfBuffer, draftId = null,
   templateId = null, textValues = null, reminderPolicy = null,
-  completionTargets = null,
+  completionTargets = null, dropUnmatchedSigners = false,
 } = {}) {
   let row;
 
@@ -719,13 +766,23 @@ async function sendPipeline(db, {
       );
     }
 
+    // dropUnmatchedSigners applies to whatever placement set is EFFECTIVE for
+    // this attempt (caller's override or the draft's stored set) against the
+    // effective recipients — so a retry that corrected the recipient list gets
+    // the same joint→single trimming a first send would.
+    const effRecipients = recipients || row.recipients;
+    let effPlacements   = placements != null ? placements : row.placement_json;
+    if (dropUnmatchedSigners && Array.isArray(effRecipients)) {
+      effPlacements = dropUnmatchedSignerFields(effPlacements, effRecipients.length);
+    }
+
     const merged = await validateSendInput(db, {
       linkableType:   linkableType || row.linkable_type,
       linkableId:     linkableId   != null ? linkableId : row.linkable_id,
       kind:           kind         || row.kind,
       documentName:   documentName || row.document_name,
-      recipients:     recipients   || row.recipients,
-      placements:     placements   != null ? placements : row.placement_json,
+      recipients:     effRecipients,
+      placements:     effPlacements,
       expirationDays,
     });
 
@@ -745,8 +802,13 @@ async function sendPipeline(db, {
     row.__send = merged;
   } else {
     // ── first send ──────────────────────────────────────────────────────────
+    let effPlacements = placements;
+    if (dropUnmatchedSigners && Array.isArray(recipients)) {
+      effPlacements = dropUnmatchedSignerFields(effPlacements, recipients.length);
+    }
     const clean = await validateSendInput(db, {
-      linkableType, linkableId, kind, documentName, recipients, placements, expirationDays,
+      linkableType, linkableId, kind, documentName, recipients,
+      placements: effPlacements, expirationDays,
     });
     row = await esignService.createRequest(db, {
       linkableType:  clean.linkableType,
@@ -1543,7 +1605,7 @@ function mergeCompletionTargets(templateTargets, override) {
 async function sendFromTemplate(db, {
   templateId, linkableType, linkableId, values = null,
   recipients, documentName = null, expirationDays = null, createdBy,
-  completionTargets = undefined,
+  completionTargets = undefined, dropUnmatchedSigners = false,
 } = {}) {
   const esignTemplateService = require('./esignTemplateService');
   const pdfRenderService     = require('./pdfRenderService');
@@ -1619,6 +1681,7 @@ async function sendFromTemplate(db, {
     // _tryEnrollReminders handles the firm-default and off rungs.
     reminderPolicy: { off: Boolean(template.reminders_off), seqId: template.reminder_seq_id || null },
     completionTargets: effectiveCompletionTargets,
+    dropUnmatchedSigners,
   });
 }
 
@@ -1839,6 +1902,7 @@ module.exports = {
   // pure helpers
   stampTrackingFooter,
   readPdfPageInfo,
+  dropUnmatchedSignerFields,
   validateSendInput,
   // constants — routes and tests share one source of truth
   KINDS,
