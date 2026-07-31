@@ -290,6 +290,20 @@ describe('status mapping', () => {
     ])).toBe('viewed');
   });
 
+  // THE 2026-07-31 REGRESSION CASE. Sequential joint contract: signer 1 signs,
+  // Zoho stays 'inprogress' (signer 2 pending) — the old mapping returned
+  // 'sent', the viewed → sent transition was (rightly) illegal, and every
+  // partial signature logged status_apply_failed while the row hid on
+  // 'viewed'. One signature now outranks any number of views.
+  test('inprogress with any SIGNED action is partially_signed — signature outranks view', () => {
+    expect(mapRequestStatus('inprogress', [
+      { action_status: 'SIGNED' }, { action_status: 'NOACTION' },
+    ])).toBe('partially_signed');
+    expect(mapRequestStatus('inprogress', [
+      { action_status: 'SIGNED' }, { action_status: 'VIEWED' },
+    ])).toBe('partially_signed');
+  });
+
   test('the promotion applies ONLY to inprogress — terminal states are untouched', () => {
     expect(mapRequestStatus('completed', [{ action_status: 'VIEWED' }])).toBe('signed');
     expect(mapRequestStatus('recalled',  [{ action_status: 'VIEWED' }])).toBe('recalled');
@@ -601,7 +615,10 @@ describe('getStatus', () => {
     });
     const st = await new ZohoSignProvider(db, { credentialId: '13' }).getStatus('9001');
 
-    expect(st.status).toBe('viewed');            // promoted: Bob has opened it
+    // Alice SIGNED + Bob VIEWED on an inprogress request = partially_signed —
+    // one completed signature outranks any number of views (pre-2026-07-31
+    // this mapped to 'viewed' and the partial signature was invisible).
+    expect(st.status).toBe('partially_signed');
     expect(st.providerStatus).toBe('inprogress');
     expect(st.recipients[0]).toEqual({
       name: 'Alice',

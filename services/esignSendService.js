@@ -120,8 +120,11 @@ const HAS_LETTER = /[a-z]/i;
 
 /** Statuses from which each action is legal. Read with esignService.TRANSITIONS. */
 const RESENDABLE_SAME_ROW = new Set(['bounced']);
-const REMINDABLE          = new Set(['sent', 'viewed']);
-const SATISFIABLE         = new Set(['sent', 'viewed', 'bounced']);
+// partially_signed is REMINDABLE (Zoho's remind nudges whoever is pending —
+// with sequential signing that is exactly the signer holding things up) and
+// SATISFIABLE (the remaining signer can still sign on paper in the office).
+const REMINDABLE          = new Set(['sent', 'viewed', 'partially_signed']);
+const SATISFIABLE         = new Set(['sent', 'viewed', 'partially_signed', 'bounced']);
 /** Statuses where the provider still holds a live envelope worth recalling. */
 const LIVE_AT_PROVIDER    = new Set(['sent', 'viewed', 'bounced']);
 

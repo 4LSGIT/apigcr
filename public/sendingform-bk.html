@@ -113,11 +113,12 @@
     <div class="sf-sub" id="contractsSection" style="display:none;">
       <div id="contractsList" style="font-size:0.88rem; color:#6c757d;">Loading contracts…</div>
       <div class="sf-docs-instruction" id="contractsFooter" style="display:none;">
-        <label><input type="checkbox" id="chkContractHeadsUp" checked>
+        <label><input type="checkbox" id="chkContractHeadsUp">
           Also text a heads-up ("we emailed you a document to sign — check your inbox/spam")</label>
         <div style="font-size:0.8rem; color:#6c757d; margin-top:4px;">
           Signing invitations are emailed by Zoho Sign to the addresses in the contact cards above.
-          Reminders and follow-up tasks run automatically until signed or expired (14 days).
+          With two signers they sign IN ORDER: signer 2's email goes out only after signer 1
+          finishes. Reminders and follow-up tasks run automatically until signed or expired (14 days).
         </div>
       </div>
     </div>
@@ -1147,13 +1148,22 @@ async function send() {
           }
 
           if (anySent && action.heads_up && smsOn) {
-            for (const r of recipients) {
+            // Signing is SEQUENTIAL (provider is_sequential:true): only the
+            // first signer has an email waiting right now; later signers get
+            // theirs when the person before them finishes. Texting signer 2
+            // "check your inbox" would send them hunting for an email that
+            // does not exist yet.
+            for (const [idx, r] of recipients.entries()) {
               if (!r.phone) continue;
+              const message = idx === 0
+                ? `Hi ${r.fname}! We just emailed you a document to review and sign electronically. ` +
+                  `Please check your email (and spam folder) for a message from Zoho Sign.`
+                : `Hi ${r.fname}! We're sending you a document to sign electronically. ` +
+                  `You'll receive the signing email (from Zoho Sign) right after ` +
+                  `${recipients[0].fname} signs first — keep an eye on your inbox and spam folder.`;
               try {
                 await P.apiSend('/internal/sms/send', 'POST', {
-                  from: smsFrom, to: r.phone,
-                  message: `Hi ${r.fname}! We just emailed you a document to review and sign electronically. ` +
-                           `Please check your email (and spam folder) for a message from Zoho Sign.`,
+                  from: smsFrom, to: r.phone, message,
                 });
                 successes.push(`Contract heads-up SMS → ${r.name}`);
               } catch (err) { errors.push(`Contract heads-up SMS (${r.name}): ${err.message}`); }

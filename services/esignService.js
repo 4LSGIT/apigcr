@@ -95,7 +95,7 @@ const LINKABLE_TYPES = ['case', 'contact'];
  * new status should be zero-migration.
  */
 const STATUSES = [
-  'draft', 'sent', 'viewed', 'signed', 'declined',
+  'draft', 'sent', 'viewed', 'partially_signed', 'signed', 'declined',
   'expired', 'recalled', 'bounced', 'satisfied_external',
 ];
 
@@ -104,15 +104,28 @@ const STATUSES = [
  * this module routes through it.
  *
  *   draft   → sent, recalled
- *   sent    → viewed, signed, declined, expired, recalled, bounced, satisfied_external
- *   viewed  → signed, declined, expired, recalled, bounced, satisfied_external
+ *   sent    → viewed, partially_signed, signed, declined, expired, recalled, bounced, satisfied_external
+ *   viewed  → partially_signed, signed, declined, expired, recalled, bounced, satisfied_external
+ *   partially_signed → signed, declined, expired, recalled, bounced, satisfied_external
  *   bounced → sent (resend after fixing the email), recalled, satisfied_external
  *   signed / declined / expired / recalled / satisfied_external → TERMINAL
+ *
+ * partially_signed (2026-07-31): a multi-signer request where at least one
+ * signer has completed and at least one has not — with is_sequential:true
+ * this is the NORMAL mid-flight state of every joint contract (signer 1
+ * done, signer 2's email just went out). Before it existed, Zoho's
+ * "signer 1 signed" webhook mapped to 'sent', the viewed → sent transition
+ * was (correctly) illegal, and every partial signature logged a
+ * status_apply_failed error while the row sat on 'viewed' hiding real
+ * progress. It never goes BACK to viewed: later views by remaining signers
+ * arrive with the first signature still in the action list and re-map to
+ * partially_signed (an idempotent no-op).
  */
 const TRANSITIONS = Object.freeze({
   draft:              ['sent', 'recalled'],
-  sent:               ['viewed', 'signed', 'declined', 'expired', 'recalled', 'bounced', 'satisfied_external'],
-  viewed:             ['signed', 'declined', 'expired', 'recalled', 'bounced', 'satisfied_external'],
+  sent:               ['viewed', 'partially_signed', 'signed', 'declined', 'expired', 'recalled', 'bounced', 'satisfied_external'],
+  viewed:             ['partially_signed', 'signed', 'declined', 'expired', 'recalled', 'bounced', 'satisfied_external'],
+  partially_signed:   ['signed', 'declined', 'expired', 'recalled', 'bounced', 'satisfied_external'],
   bounced:            ['sent', 'recalled', 'satisfied_external'],
   signed:             [],
   declined:           [],
@@ -133,8 +146,11 @@ const TERMINAL = new Set(['signed', 'declined', 'expired', 'recalled', 'satisfie
  */
 const TERMINAL_SUCCESS = new Set(['signed', 'satisfied_external']);
 
-/** Statuses listOutstanding() considers still in flight. */
-const OUTSTANDING_STATUSES = ['sent', 'viewed', 'bounced'];
+/** Statuses listOutstanding() considers still in flight. partially_signed
+    belongs here: reconcile must keep polling it (the remaining signer can
+    still sign, decline, or let it expire) and the dashboard's outstanding
+    view must keep showing it. */
+const OUTSTANDING_STATUSES = ['sent', 'viewed', 'partially_signed', 'bounced'];
 
 // Column-width guards. sql_mode is not strict, so these THROW (see header).
 const MAX_LINKABLE_ID   = 64;
@@ -796,8 +812,18 @@ async function applyStatus(db, id, { status, recipients = null, raw = null, occu
   const request = await getById(db, id);
   if (!request) throw _err('ESIGN_NOT_FOUND', `Signing request ${id} not found.`);
 
-  // Idempotent: re-delivering the same webhook appends nothing.
+  // Idempotent: re-delivering the same webhook appends nothing — but a
+  // same-status delivery may still carry FRESHER per-recipient data (with
+  // three or more signers, the second partial signature re-maps to
+  // partially_signed, a status no-op whose action list is news). Refresh the
+  // recipients column silently: no event, no transition, terminal rows
+  // untouched.
   if (request.status === status) {
+    if (recipients != null && !TERMINAL.has(status)) {
+      await db.query('UPDATE signing_requests SET recipients = ? WHERE id = ?',
+        [JSON.stringify(_normalizeRecipients(recipients)), id]);
+      return { changed: false, reason: 'noop', request: await getById(db, id) };
+    }
     return { changed: false, reason: 'noop', request };
   }
 

@@ -841,12 +841,12 @@ describe('reads', () => {
     expect(out.map(r => r.id)).toEqual([b.id, a.id]);
   });
 
-  test('listOutstanding covers sent, viewed and bounced', async () => {
-    expect(esignService.OUTSTANDING_STATUSES).toEqual(['sent', 'viewed', 'bounced']);
+  test('listOutstanding covers sent, viewed, partially_signed and bounced', async () => {
+    expect(esignService.OUTSTANDING_STATUSES).toEqual(['sent', 'viewed', 'partially_signed', 'bounced']);
 
     const db = makeDb();
     const made = [];
-    for (const [i, status] of ['sent', 'viewed', 'bounced'].entries()) {
+    for (const [i, status] of ['sent', 'viewed', 'partially_signed', 'bounced'].entries()) {
       const r = await esignService.createRequest(db, baseArgs({ kind: `k${i}` }));
       await esignService.markSent(db, r.id, { providerId: `ZS-${i}` });
       if (status !== 'sent') await esignService.applyStatus(db, r.id, { status });
@@ -1060,5 +1060,48 @@ describe('_toDbDateTime is idempotent across timezones', () => {
     expect(_toDbDateTime(null)).toBeNull();
     expect(_toDbDateTime('')).toBeNull();
     expect(() => _toDbDateTime('not a date')).toThrow(/INVALID_ESIGN_DATETIME|usable datetime/);
+  });
+});
+// ─────────────────────────────────────────────────────────────
+// partially_signed (2026-07-31) — the sequential joint-contract mid-state
+// ─────────────────────────────────────────────────────────────
+
+describe('partially_signed transitions', () => {
+  test('sent → partially_signed and viewed → partially_signed are legal', async () => {
+    for (const from of ['sent', 'viewed']) {
+      const { db, request } = await seedAt(from);
+      const out = await esignService.applyStatus(db, request.id, { status: 'partially_signed' });
+      expect(out.changed).toBe(true);
+      expect(out.request.status).toBe('partially_signed');
+    }
+  });
+
+  test('it never goes BACK to viewed — a late view re-maps upstream, not here', async () => {
+    const { db, request } = await seedAt('partially_signed');
+    await expect(esignService.applyStatus(db, request.id, { status: 'viewed' }))
+      .rejects.toMatchObject({ code: expect.stringContaining('ESIGN') });
+  });
+
+  test('completes forward: partially_signed → signed stamps completed_at', async () => {
+    const { db, request } = await seedAt('partially_signed');
+    const out = await esignService.applyStatus(db, request.id, { status: 'signed' });
+    expect(out.changed).toBe(true);
+    expect(out.request.completed_at).toBeTruthy();
+  });
+
+  test('a same-status redelivery refreshes recipients silently (3+ signer progress)', async () => {
+    const { db, request } = await seedAt('partially_signed');
+    const recips = [
+      { name: 'A', email: 'a@x.com', order: 1, status: 'signed' },
+      { name: 'B', email: 'b@x.com', order: 2, status: 'signed' },
+      { name: 'C', email: 'c@x.com', order: 3, status: 'viewed' },
+    ];
+    const before = db.state.events.length;
+    const out = await esignService.applyStatus(db, request.id,
+      { status: 'partially_signed', recipients: recips });
+    expect(out.changed).toBe(false);
+    expect(out.reason).toBe('noop');
+    expect(out.request.recipients.map(r => r.status)).toEqual(['signed', 'signed', 'viewed']);
+    expect(db.state.events.length).toBe(before);   // silent: no event appended
   });
 });

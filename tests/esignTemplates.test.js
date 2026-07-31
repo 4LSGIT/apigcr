@@ -492,6 +492,24 @@ describe('prefill resolvers', () => {
     expect(await prefillService.RESOLVERS['debtor2.phone'](solo)).toBe('');
   });
 
+  // 2026-07-31 — the fee-agreement CLIENT line and docket resolvers.
+  test('case.debtor_names: both when joint, primary alone when not, never "X and "', async () => {
+    const R = prefillService.RESOLVERS['case.debtor_names'];
+    expect(await R({ debtor1: DEBTOR1, debtor2: DEBTOR2 })).toBe('John Q Smith and Jane Smith');
+    expect(await R({ debtor1: DEBTOR1, debtor2: null })).toBe('John Q Smith');
+    expect(await R({ debtor1: DEBTOR1, debtor2: { contact_name: '  ' } })).toBe('John Q Smith');
+    expect(await R({ debtor1: null, debtor2: DEBTOR2 })).toBe('Jane Smith');
+    expect(await R({})).toBe('');
+  });
+
+  test('case.docket: full form beats short beats blank — coalesced, still opaque', async () => {
+    const R = prefillService.RESOLVERS['case.docket'];
+    expect(await R({ caseRow: CASE_ROW })).toBe('26-41234-tjt');
+    expect(await R({ caseRow: { case_number: '26-41234', case_number_full: null } })).toBe('26-41234');
+    expect(await R({ caseRow: { case_number: null, case_number_full: null } })).toBe('');
+    expect(await R({})).toBe('');
+  });
+
   test('firm.address resolvers (firm-identity fold-in, 2026-07-20)', async () => {
     // Settings-backed as of the firm_identity patch: three resolvers over one
     // json_array setting. Under jest no db is injected and there is no env

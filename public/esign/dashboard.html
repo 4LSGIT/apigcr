@@ -33,7 +33,7 @@
   esignDashDiv, a lazy data-src more-panel). Iframed in the shell like
   automationManager/connections, so window.top.apiSend exists.
 
-  Default filter outstanding=1 (sent/viewed/bounced — the service's
+  Default filter outstanding=1 (sent/viewed/partially_signed/bounced — the service's
   OUTSTANDING_STATUSES); toggle to All. Client-side sort — firm volume makes
   a server ORDER BY pointless. Auto-refresh 60s, paused while the tab is
   hidden (document.visibilitychange), immediate catch-up refresh on return.
@@ -158,7 +158,7 @@ async function hydrateLabels() {
 }
 
 function sortedRows() {
-  const statusRank = s => ['bounced', 'declined', 'expired', 'sent', 'viewed', 'draft', 'recalled', 'satisfied_external', 'signed'].indexOf(s);
+  const statusRank = s => ['bounced', 'declined', 'expired', 'sent', 'viewed', 'partially_signed', 'draft', 'recalled', 'satisfied_external', 'signed'].indexOf(s);
   return rows.slice().sort((a, b) => {
     let va, vb;
     if (sortKey === 'days') {

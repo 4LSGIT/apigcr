@@ -571,10 +571,16 @@ function mapRequestStatus(zohoStatus, actions = []) {
     return null;
   }
   if (base === 'sent' && Array.isArray(actions)) {
-    const anyViewed = actions.some(
-      (a) => ZOHO_ACTION_STATUS_MAP[String(a?.action_status || '').toUpperCase()] === 'viewed'
+    // 'inprogress' covers everything between send and completion, so the
+    // action list decides how far along the request really is. Order matters:
+    // one signature outranks any number of views — a joint contract with
+    // signer 1 SIGNED and signer 2 merely VIEWED is partially_signed, and
+    // 'inprogress' can never mean fully signed (that is 'completed').
+    const acts = actions.map(
+      (a) => ZOHO_ACTION_STATUS_MAP[String(a?.action_status || '').toUpperCase()]
     );
-    if (anyViewed) return 'viewed';
+    if (acts.some((m) => m === 'signed')) return 'partially_signed';
+    if (acts.some((m) => m === 'viewed')) return 'viewed';
   }
   return base;
 }

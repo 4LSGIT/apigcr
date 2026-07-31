@@ -207,6 +207,23 @@ const RESOLVERS = Object.freeze({
   'case.case_name':        (ctx) => s(ctx.debtor1 && ctx.debtor1.contact_name),
   'case.case_number':      (ctx) => s(ctx.caseRow && ctx.caseRow.case_number),
   'case.case_number_full': (ctx) => s(ctx.caseRow && ctx.caseRow.case_number_full),
+  // Both debtors when the case is joint, the primary alone when it isn't —
+  // "John Smith and Jane Smith". Built for the CLIENT line of the fee
+  // agreements, where case.case_name (primary only) forced staff to hand-edit
+  // every joint send. Falls back through each side: a joint case with a
+  // nameless secondary degrades to the primary's name, not to "X and ".
+  'case.debtor_names':     (ctx) => {
+    const d1 = s(ctx.debtor1 && ctx.debtor1.contact_name);
+    const d2 = s(ctx.debtor2 && ctx.debtor2.contact_name);
+    return d1 && d2 ? `${d1} and ${d2}` : (d1 || d2);
+  },
+  // The docket, whichever form the case has: full ("24-48734-mlo") beats
+  // short, short beats blank. Still OPAQUE — coalescing is not parsing.
+  // Pre-filing cases have neither and resolve to '' (a required schema key
+  // then blocks the send, which is right: the post-filing agreement is the
+  // only fee contract that cites a docket, and it cannot exist pre-docket).
+  'case.docket':           (ctx) => s(ctx.caseRow && ctx.caseRow.case_number_full)
+                                 || s(ctx.caseRow && ctx.caseRow.case_number),
   'case.chapter':          (ctx) => s(ctx.caseRow && ctx.caseRow.case_chapter),
   'case.open_date':        (ctx) => ctx.caseRow ? formatDate(ctx.caseRow.case_open_date) : '',
 

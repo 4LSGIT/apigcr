@@ -61,6 +61,7 @@ var ESIGN_STATUS_META = {
   draft:              { label: 'Draft',              fg: '#ffffff', bg: '#4f46e5' },
   sent:               { label: 'Sent',               fg: '#7c4a03', bg: '#fde68a' },
   viewed:             { label: 'Viewed',             fg: '#7c4a03', bg: '#fcd34d' },
+  partially_signed:   { label: 'Partially signed',   fg: '#ffffff', bg: '#0ea5e9' },
   signed:             { label: 'Signed',             fg: '#ffffff', bg: '#059669' },
   declined:           { label: 'Declined',           fg: '#ffffff', bg: '#dc2626' },
   expired:            { label: 'Expired',            fg: '#ffffff', bg: '#b91c1c' },
@@ -76,8 +77,8 @@ function esignStatusChip(status) {
 
 /** Mirrors of the service-side state sets (services/esignSendService.js). */
 var ESIGN_TERMINAL    = ['signed', 'declined', 'expired', 'recalled', 'satisfied_external'];
-var ESIGN_REMINDABLE  = ['sent', 'viewed'];
-var ESIGN_SATISFIABLE = ['sent', 'viewed', 'bounced'];
+var ESIGN_REMINDABLE  = ['sent', 'viewed', 'partially_signed'];
+var ESIGN_SATISFIABLE = ['sent', 'viewed', 'partially_signed', 'bounced'];
 
 function esignIsTerminal(status)  { return ESIGN_TERMINAL.indexOf(status) !== -1; }
 function esignCanRemind(status)   { return ESIGN_REMINDABLE.indexOf(status) !== -1; }

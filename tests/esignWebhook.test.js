@@ -840,3 +840,45 @@ describe('duplicate detection', () => {
     expect(await svc.isDuplicateEvent(db, 42, 'signed', null)).toBe(false);
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// partially_signed routing (2026-07-31) — the sequential-contract regression
+// ─────────────────────────────────────────────────────────────
+// The live failure this pins: joint contract, signer 1 signed, Zoho delivered
+// request_status 'inprogress' with actions [SIGNED, NOACTION]; the old mapping
+// produced 'sent', viewed → sent is illegal, and the delivery died as
+// status_apply_failed. The webhook must now hand applyStatus
+// 'partially_signed' with the per-recipient statuses attached.
+
+describe('handleZohoWebhook — partial signature on a sequential request', () => {
+  test("signer 1's signature routes as partially_signed, recipients carried", async () => {
+    esignService.getByProviderId.mockResolvedValue(makeRequest({ status: 'viewed' }));
+    const out = await svc.handleZohoWebhook(makeDb(), {
+      body: zohoBody({
+        status: 'inprogress', op: 'RequestSigningSuccess',
+        actions: [
+          { recipient_name: 'D1', recipient_email: 'd1@x.com', action_status: 'SIGNED',
+            signing_order: 0, signed_time: 1784500000000 },
+          { recipient_name: 'D2', recipient_email: 'd2@x.com', action_status: 'NOACTION',
+            signing_order: 1 },
+        ],
+      }),
+    });
+
+    expect(out.ok).toBe(true);
+    expect(esignService.applyStatus).toHaveBeenCalledWith(
+      expect.anything(), 42,
+      expect.objectContaining({
+        status: 'partially_signed',
+        source: 'webhook',
+        recipients: [
+          expect.objectContaining({ email: 'd1@x.com', order: 1, status: 'signed' }),
+          expect.objectContaining({ email: 'd2@x.com', order: 2, status: 'pending' }),
+        ],
+      })
+    );
+    // A partial signature is progress, not a problem: nothing files, nobody
+    // gets alerted.
+    expect(esignFilingService.fileSignedDocuments).not.toHaveBeenCalled();
+  });
+});

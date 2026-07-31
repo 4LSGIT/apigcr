@@ -229,9 +229,11 @@ describe('mirrors of service state sets have not drifted', () => {
     // bounced; RESENDABLE_SAME_ROW bounced). If the service changes those
     // sets, update BOTH this test and esignActions.js.
     const esignServiceStatuses = require('../services/esignService').STATUSES;
+    const REMINDABLE  = ['sent', 'viewed', 'partially_signed'];
+    const SATISFIABLE = ['sent', 'viewed', 'partially_signed', 'bounced'];
     for (const s of esignServiceStatuses) {
-      expect(ui.esignCanRemind(s)).toBe(s === 'sent' || s === 'viewed');
-      expect(ui.esignCanSatisfy(s)).toBe(s === 'sent' || s === 'viewed' || s === 'bounced');
+      expect(ui.esignCanRemind(s)).toBe(REMINDABLE.includes(s));
+      expect(ui.esignCanSatisfy(s)).toBe(SATISFIABLE.includes(s));
       expect(ui.esignResendMode(s) === 'bounced').toBe(s === 'bounced');
       expect(ui.esignResendMode(s) === 'duplicate')
         .toBe(s === 'declined' || s === 'recalled' || s === 'expired');
