@@ -923,3 +923,35 @@ describe('neutralToZohoFields — signer-facing labels', () => {
     expect(validatePlacements({ fields: [sig({ label: 'Client signature' })] }).count).toBe(1);
   });
 });
+
+// ─── date_input → CustomDate (2026-07-31, verified by live probe + signed envelope) ───
+
+describe('neutralToZohoFields — date_input', () => {
+  const di = (over = {}) => ({
+    coord_space: 'pdf_user_space',
+    fields: [{ page: 1, x: 72, y: 144, w: 90, h: 18, type: 'date_input', signer: 1, ...over }],
+  });
+
+  test('maps to CustomDate/datefield with an EXPLICIT default format', () => {
+    const { bySigner } = neutralToZohoFields(di(), DEFAULT_PAGE);
+    expect(bySigner[1][0]).toMatchObject({
+      field_type_name: 'CustomDate',
+      field_category:  'datefield',
+      date_format:     'MM/dd/yyyy',   // always sent — completed field_value parses deterministically
+      is_mandatory:    true,
+    });
+    // default_value is NEVER sent: Zoho accepts it on write and silently
+    // drops it on readback (probed 2026-07-31).
+    expect(bySigner[1][0]).not.toHaveProperty('default_value');
+  });
+
+  test('a custom date_format passes through; required:false maps to optional', () => {
+    const { bySigner } = neutralToZohoFields(
+      di({ date_format: 'yyyy-MM-dd', required: false, label: 'First payment' }), DEFAULT_PAGE);
+    expect(bySigner[1][0]).toMatchObject({
+      field_label: 'First payment',
+      date_format: 'yyyy-MM-dd',
+      is_mandatory: false,
+    });
+  });
+});

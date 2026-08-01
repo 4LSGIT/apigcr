@@ -252,7 +252,7 @@ if (window.pdfjsLib) {
 }
 window.apiSend = function () { return esignApi.apply(null, arguments); };
 
-let meta       = { resolvers: [], kinds: [], types: ['text', 'number', 'date', 'money'] };
+let meta       = { resolvers: [], kinds: [], types: ['text', 'number', 'date', 'money', 'options'] };
 let templates  = [];            // list rows
 let current    = null;          // full template row being edited, or null for new
 let editor     = null;          // PlacementEditor instance

@@ -120,6 +120,26 @@ function formatValue(type, raw) {
     case 'money':  return formatMoney(raw);
     case 'date':   return formatDate(raw);
     case 'number': return formatNumber(raw);
+    // 'options' is LIST-valued — the only non-string prefill type. A resolver
+    // hands back an array; the sending forms hand back a newline-joined
+    // string (one option per line in a textarea). Either way the formatted
+    // value is a cleaned string array: trimmed, empties dropped, order kept,
+    // duplicates dropped (validatePlacements rejects duplicate dropdown
+    // options, so dedupe here beats a send-time error for a staff-typo).
+    case 'options': {
+      const parts = Array.isArray(raw)
+        ? raw
+        : String(raw == null ? '' : raw).split(/\r?\n/);
+      const out = [];
+      const seen = new Set();
+      for (const p of parts) {
+        const t = String(p == null ? '' : p).trim();
+        if (!t || seen.has(t)) continue;
+        seen.add(t);
+        out.push(t);
+      }
+      return out;
+    }
     case 'text':
     default:       return String(raw == null ? '' : raw).trim();
   }
@@ -467,13 +487,15 @@ async function resolvePrefills(db, templateOrId, linkable = null) {
       }
     }
 
-    if (raw === '' || raw == null) {
+    const rawEmpty = raw == null || raw === '' || (Array.isArray(raw) && raw.length === 0);
+    if (rawEmpty) {
       raw = entry.default != null ? entry.default : '';
     }
 
-    const formatted = raw === '' ? '' : formatValue(entry.type, raw);
+    const formatted = raw === '' && entry.type !== 'options' ? '' : formatValue(entry.type, raw);
     values[entry.key] = formatted;
-    if (formatted === '') missing.push(entry.key);
+    const isEmpty = Array.isArray(formatted) ? formatted.length === 0 : formatted === '';
+    if (isEmpty) missing.push(entry.key);
   }
 
   return { values, missing, context };

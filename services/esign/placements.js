@@ -105,13 +105,13 @@
 
 /** Every neutral field type, both classes. */
 const NEUTRAL_FIELD_TYPES = Object.freeze([
-  'signature', 'initial', 'date', 'text',
+  'signature', 'initial', 'date', 'date_input', 'text',
   'input_text', 'checkbox', 'dropdown', 'radio',
 ]);
 
 /** The subset the provider transmits; everything else is filled locally. */
 const SIGNER_FIELD_TYPES = Object.freeze([
-  'signature', 'initial', 'date',
+  'signature', 'initial', 'date', 'date_input',
   'input_text', 'checkbox', 'dropdown', 'radio',
 ]);
 
@@ -121,6 +121,13 @@ const SIGNER_FIELD_TYPES = Object.freeze([
  * scratch API's ns/k rule. 1–64 chars.
  */
 const TEXT_KEY_RE = /^[A-Za-z0-9_.\-]{1,64}$/;
+
+/** options_key references a PREFILL SCHEMA key, so it is bound by the schema
+    key grammar (esignTemplateService KEY_RE — lowercase start, then lowercase/
+    digits/underscore, ≤40), not the looser TEXT_KEY_RE above: a key that could
+    never match any schema row should fail here, in the author's face, not at
+    the template cross-check or — worse — resolve to nothing at send time. */
+const SCHEMA_KEY_RE = /^[a-z][a-z0-9_]{0,39}$/;
 
 /**
  * Bounds for signer-visible display strings.
@@ -278,6 +285,22 @@ function validatePlacements(placements) {
       throw inputError(`placements.fields[${i}].required must be a boolean when present`);
     }
 
+    if (f.type === 'date_input') {
+      // Signer-picked date (Zoho CustomDate — probed + live-signed 2026-07-31).
+      // date_format optional (provider defaults MM/dd/yyyy). No default (Zoho
+      // silently drops default_value on CustomDate — verified) and no
+      // min/max/past/future constraints (20 candidate keys rejected — for a
+      // constrained window use a dropdown with options_key instead).
+      if (f.date_format != null) {
+        if (typeof f.date_format !== 'string' || !f.date_format.trim() || f.date_format.length > 32) {
+          throw inputError(`placements.fields[${i}].date_format must be a non-empty string ≤32 chars when present`);
+        }
+      }
+      if (f.default != null) {
+        throw inputError(`placements.fields[${i}].default is not supported on date_input — Zoho drops CustomDate defaults silently (verified 2026-07-31)`);
+      }
+    }
+
     if (f.type === 'input_text') {
       if (f.max_length != null) {
         const m = Number(f.max_length);
@@ -307,26 +330,53 @@ function validatePlacements(placements) {
     }
 
     if (f.type === 'dropdown') {
-      if (!Array.isArray(f.options) || f.options.length === 0) {
-        throw inputError(`placements.fields[${i}].options must be a non-empty array — a dropdown with nothing to pick is not a field`);
-      }
-      if (f.options.length > DROPDOWN_MAX_OPTIONS) {
-        throw inputError(`placements.fields[${i}].options has ${f.options.length} entries (max ${DROPDOWN_MAX_OPTIONS})`);
-      }
-      const seen = new Set();
-      const cleaned = f.options.map((opt, j) => {
-        const t = displayText(opt, OPTION_TEXT_MAX, `placements.fields[${i}].options[${j}]`);
-        if (seen.has(t)) {
-          throw inputError(`placements.fields[${i}].options[${j}] "${t}" is a duplicate — options must be distinct`);
+      // Two sourcing modes, exactly one per field (2026-07-31):
+      //   options      — static list baked into the template (original 2F form)
+      //   options_key  — the list is a per-send VALUE: sendFromTemplate
+      //                  resolves the named options-type prefill key and
+      //                  injects the result as this field's options before
+      //                  validation ever runs at send time. Built for windowed
+      //                  dates ("first payment within 14 days of filing"),
+      //                  where a Dropdown of computed valid dates is the ONLY
+      //                  signing-time enforcement Zoho has (probed 2026-07-31:
+      //                  CustomDate accepts any date, no constraint keys
+      //                  exist). Template-only construct — validateSendInput
+      //                  rejects any options_key that survives to a send.
+      if (f.options_key != null) {
+        if (typeof f.options_key !== 'string' || !SCHEMA_KEY_RE.test(f.options_key)) {
+          throw inputError(`placements.fields[${i}].options_key must match ${SCHEMA_KEY_RE} (a prefill schema key)`);
         }
-        seen.add(t);
-        return t;
-      });
-      if (f.default != null) {
-        if (typeof f.default !== 'string' || !cleaned.includes(f.default.trim())) {
-          throw inputError(
-            `placements.fields[${i}].default ${JSON.stringify(f.default)} is not one of the options`
-          );
+        if (f.options != null) {
+          throw inputError(`placements.fields[${i}] has BOTH options and options_key — pick one sourcing mode`);
+        }
+        if (f.default != null) {
+          throw inputError(`placements.fields[${i}].default cannot be used with options_key — the list does not exist until send time`);
+        }
+        // NO early return — the field still falls through to the signer
+        // bookkeeping below, so signer/count/cross-check treat it exactly
+        // like any other signer field.
+      } else {
+        if (!Array.isArray(f.options) || f.options.length === 0) {
+          throw inputError(`placements.fields[${i}].options must be a non-empty array — a dropdown with nothing to pick is not a field`);
+        }
+        if (f.options.length > DROPDOWN_MAX_OPTIONS) {
+          throw inputError(`placements.fields[${i}].options has ${f.options.length} entries (max ${DROPDOWN_MAX_OPTIONS})`);
+        }
+        const seen = new Set();
+        const cleaned = f.options.map((opt, j) => {
+          const t = displayText(opt, OPTION_TEXT_MAX, `placements.fields[${i}].options[${j}]`);
+          if (seen.has(t)) {
+            throw inputError(`placements.fields[${i}].options[${j}] "${t}" is a duplicate — options must be distinct`);
+          }
+          seen.add(t);
+          return t;
+        });
+        if (f.default != null) {
+          if (typeof f.default !== 'string' || !cleaned.includes(f.default.trim())) {
+            throw inputError(
+              `placements.fields[${i}].default ${JSON.stringify(f.default)} is not one of the options`
+            );
+          }
         }
       }
     }

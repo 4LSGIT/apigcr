@@ -656,6 +656,42 @@ async function loadContractTemplates() {
 }
 
 /**
+ * THE 14-DAY HACK — deliberately a sending-form special case, not an e-sign
+ * feature (Fred, 2026-07-31). The post-filing fee agreement's first payment
+ * must fall "no later than fourteen (14) days after your Petition was filed";
+ * that rule belongs to THIS form, which owns the contract-sending flow and
+ * already has the case in hand — not to the shared prefill layer. Any
+ * options-type value whose key is `first_payment_dates` gets pre-filled with
+ * every date from today through case_file_date + 14 (inclusive), MM/DD/YYYY.
+ *
+ * Staff can edit the list like any other prefill — the escape hatch for a
+ * contract sent after the window closed (empty list here, staff types
+ * whatever dates SS allows). "Today" is the STAFF BROWSER's local date: the
+ * office runs on firm time, and the person about to hit Send is looking at
+ * the list either way.
+ *
+ * If a second windowed-date contract ever appears, promote this into real
+ * machinery; until then one hack stays one hack.
+ */
+function firstPaymentWindow(fileDateRaw) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(fileDateRaw || '').trim());
+  if (!m) return [];
+  const DAY = 24 * 60 * 60 * 1000;
+  // UTC-noon arithmetic — immune to DST and to 'YYYY-MM-DD' parsing as UTC
+  // midnight (which shifts a day in negative-offset zones).
+  const fileMs = Date.UTC(+m[1], +m[2] - 1, +m[3], 12);
+  const now = new Date();
+  const todayMs = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  const endMs = fileMs + 14 * DAY;
+  const out = [];
+  for (let t = Math.max(fileMs, todayMs); t <= endMs; t += DAY) {
+    const d = new Date(t);
+    out.push(`${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}/${d.getUTCFullYear()}`);
+  }
+  return out;
+}
+
+/**
  * On check: fetch this template's prefill schema + case-resolved values and
  * render one editable input per key. Staff can correct anything before send;
  * required-and-still-empty keys are highlighted — send-from-template will
@@ -679,6 +715,17 @@ async function toggleContract(tid, checked) {
         values:  prefills.values  || {},
         missing: prefills.missing || [],
       };
+      // THE 14-DAY HACK (see firstPaymentWindow above): pre-fill an empty
+      // first_payment_dates options row from this case's file date. Only
+      // when empty — a value the server or staff already produced wins.
+      const cp = contractPrefills[tid];
+      for (const f of cp.schema) {
+        if (f.type === 'options' && f.key === 'first_payment_dates' &&
+            (!Array.isArray(cp.values[f.key]) || cp.values[f.key].length === 0)) {
+          const win = firstPaymentWindow(caseData.case_file_date);
+          if (win.length) cp.values[f.key] = win;
+        }
+      }
     } catch (err) {
       box.innerHTML = `<span style="color:#dc3545;">Failed to load values: ${escHtml(err.message)}</span>`;
       return;
@@ -692,9 +739,30 @@ async function toggleContract(tid, checked) {
   }
 
   box.innerHTML = schema.map(f => {
+    const req = f.required ? ' <span style="color:#dc3545;">*</span>' : '';
+
+    // options rows are LIST-valued (they feed a dropdown on the document —
+    // e.g. the valid first-payment dates computed from the case). One option
+    // per line, editable exactly like any other prefill: the odd case sent
+    // after the window closed is staff typing the dates SS allows.
+    if (f.type === 'options') {
+      const list    = Array.isArray(values[f.key]) ? values[f.key] : [];
+      const isEmpty = list.length === 0;
+      const warn    = (f.required && isEmpty) ? 'border-color:#dc3545;' : '';
+      return `<div style="display:flex; align-items:flex-start; gap:8px; margin:4px 0;">
+        <label style="min-width:180px; font-weight:600; padding-top:4px;">${escHtml(f.label || f.key)}${req}</label>
+        <div style="flex:1; max-width:320px;">
+          <textarea class="contract-val" data-tid="${tid}" data-key="${escHtml(f.key)}"
+                    rows="${Math.min(8, Math.max(3, list.length))}"
+                    style="width:100%; padding:3px 6px; ${warn} border:1px solid #ced4da;
+                    border-radius:4px; font-size:0.85rem; font-family:inherit;">${escHtml(list.join('\n'))}</textarea>
+          <div style="font-size:0.75rem; color:#6c757d;">One choice per line — these become the dropdown the client picks from.</div>
+        </div>
+      </div>`;
+    }
+
     const val     = values[f.key] != null ? values[f.key] : (f.default != null ? f.default : '');
     const isEmpty = String(val).trim() === '';
-    const req     = f.required ? ' <span style="color:#dc3545;">*</span>' : '';
     const warn    = (f.required && isEmpty) ? 'border-color:#dc3545;' : '';
     return `<div style="display:flex; align-items:center; gap:8px; margin:4px 0;">
       <label style="min-width:180px; font-weight:600;">${escHtml(f.label || f.key)}${req}</label>
@@ -887,7 +955,11 @@ async function preview() {
       action.items.forEach(item => {
         p += `\n• ${item.name}`;
         const filled = Object.entries(item.values).filter(([, v]) => String(v).trim() !== '');
-        if (filled.length) p += '\n    ' + filled.map(([k, v]) => `${k}: ${v}`).join('\n    ');
+        if (filled.length) {
+          p += '\n    ' + filled
+            .map(([k, v]) => `${k}: ${String(v).split(/\r?\n/).filter(Boolean).join(', ')}`)
+            .join('\n    ');
+        }
       });
       p += '\nSigning invitations (via Zoho Sign) to:\n' +
            signers.map(s => `    ${s.order}. ${s.name} <${s.email || 'NO EMAIL — will fail'}>`).join('\n');

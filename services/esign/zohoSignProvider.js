@@ -159,6 +159,16 @@ const FIELD_TYPES = Object.freeze({
   //    `radio` is deliberately ABSENT here: it has no 1:1 mapping — neutral
   //    radio boxes are aggregated into one Radiogroup with sub_fields inside
   //    neutralToZohoFields (see the radio section there).
+  // date_input → CustomDate: signer-PICKED date (a real date-picker on the
+  // signing page), distinct from `date` above which auto-stamps the signing
+  // date. VERIFIED 2026-07-31 by live probe incl. an end-to-end signed
+  // envelope: name/category round-trip, date_format + is_mandatory persist,
+  // field_value returns as a string in the configured format. default_value
+  // is accepted on write and SILENTLY DROPPED on readback (never send it),
+  // and NO date constraints exist (20 candidate min/max/past/future keys
+  // rejected 9043) — a constrained window must be a Dropdown of computed
+  // valid dates instead (see options_key in placements.js).
+  date_input: { field_type_name: 'CustomDate', field_category: 'datefield' },
   input_text: { field_type_name: 'Textfield', field_category: 'textfield' },
   checkbox:   { field_type_name: 'Checkbox',  field_category: 'checkbox'  },
   dropdown:   { field_type_name: 'Dropdown',  field_category: 'dropdown'  },
@@ -458,7 +468,13 @@ function neutralToZohoFields(placements, pageInfo) {
     // ── Phase 2F per-type extras — every key VERIFIED by live submit + GET
     //    round-trip 2026-07-21; Zoho allowlists submit keys (9043 on extras),
     //    so nothing speculative goes here.
-    if (f.type === 'input_text') {
+    if (f.type === 'date_input') {
+      // Always send an explicit format — Zoho's implicit default is not
+      // documented, and the completed field_value comes back as a string in
+      // exactly this format, so downstream parsers need it deterministic.
+      field.date_format = (typeof f.date_format === 'string' && f.date_format.trim())
+        ? f.date_format.trim() : 'MM/dd/yyyy';
+    } else if (f.type === 'input_text') {
       // default_value = signer-EDITABLE prefill on the signing page. Distinct
       // from the neutral 'text' class, which is ink the signer can't touch.
       if (typeof f.default === 'string' && f.default.length) field.default_value = f.default;
@@ -871,7 +887,14 @@ class ZohoSignProvider {
    * limitation users have raised on their forum and Zoho has not addressed.
    * It stays in this signature because the neutral contract wants it and
    * because 1C should record it locally on the signing_request_events row.
-   * (PUT /requests/{id}/delete does take a reason, but it DELETES the
+   * ⚠ PUT LANDMINE (probed 2026-07-31): a PUT to /requests/{id} with a
+ * `fields` array APPENDS to the action's existing fields — it does not
+ * replace them. Repeated "update" calls accumulate duplicate fields. This
+ * provider never PUTs fields (every send binds fields inline at submit and a
+ * resend creates a FRESH request), and any future update-style edit must
+ * account for the append semantics before it exists.
+ *
+ * (PUT /requests/{id}/delete does take a reason, but it DELETES the
    * document rather than recalling it — not a substitute.)
    */
   async recall(providerId, reason) {

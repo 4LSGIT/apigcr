@@ -95,11 +95,11 @@ function sigField(over = {}) {
 describe('placements — text field class', () => {
   test('constants: text is neutral but not a signer type', () => {
     expect(NEUTRAL_FIELD_TYPES).toEqual([
-      'signature', 'initial', 'date', 'text',
+      'signature', 'initial', 'date', 'date_input', 'text',
       'input_text', 'checkbox', 'dropdown', 'radio',
     ]);
     expect(SIGNER_FIELD_TYPES).toEqual([
-      'signature', 'initial', 'date',
+      'signature', 'initial', 'date', 'date_input',
       'input_text', 'checkbox', 'dropdown', 'radio',
     ]);
     expect(SIGNER_FIELD_TYPES).not.toContain('text');

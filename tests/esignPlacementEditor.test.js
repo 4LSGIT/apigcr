@@ -855,3 +855,30 @@ describe('peCarryProps — required:false carry', () => {
     expect(carry({ type: 'checkbox', required: true }).required).toBeUndefined();
   });
 });
+
+// ─── date_input + options_key carry (2026-07-31 constrained-date slice) ──────
+describe('peCarryProps — date_input and dropdown options_key', () => {
+  const carry = (src) => pe.peCarryProps(src, { type: src.type });
+
+  test('date_input carries date_format and required:false; never a default', () => {
+    expect(carry({ type: 'date_input', date_format: 'yyyy-MM-dd' }).date_format).toBe('yyyy-MM-dd');
+    expect(carry({ type: 'date_input' }).date_format).toBeUndefined();
+    expect(carry({ type: 'date_input', required: false }).required).toBe(false);
+    expect(carry({ type: 'date_input', default: '07/31/2026' })).not.toHaveProperty('default');
+  });
+
+  test('dropdown: options_key WINS over static options (mutually exclusive on the wire)', () => {
+    const out = carry({ type: 'dropdown', options_key: 'first_payment_dates',
+                        options: ['a'], default: 'a' });
+    expect(out.options_key).toBe('first_payment_dates');
+    expect(out).not.toHaveProperty('options');
+    expect(out).not.toHaveProperty('default');
+  });
+
+  test('dropdown without options_key keeps the static path unchanged', () => {
+    const out = carry({ type: 'dropdown', options: ['a', 'b'], default: 'a' });
+    expect(out.options).toEqual(['a', 'b']);
+    expect(out.default).toBe('a');
+    expect(out).not.toHaveProperty('options_key');
+  });
+});

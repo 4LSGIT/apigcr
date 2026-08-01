@@ -52,7 +52,7 @@ const MAX_EXPIRATION_DAYS = 90;
 const KEY_RE = /^[a-z][a-z0-9_]{0,39}$/;
 const MIN_LABEL = 1;
 const MAX_LABEL = 80;
-const PREFILL_TYPES = Object.freeze(['text', 'number', 'date', 'money']);
+const PREFILL_TYPES = Object.freeze(['text', 'number', 'date', 'money', 'options']);
 
 /** Phase 2E. 'html' = body rendered to PDF; 'pdf' = stored PDF filled via pdf-lib. */
 const TEMPLATE_TYPES = Object.freeze(['html', 'pdf']);
@@ -301,6 +301,29 @@ function validateTemplateInput(t, resolverWhitelist) {
     }
 
     const resolver = e.resolver == null ? null : String(e.resolver);
+
+    // 'options' rows (2026-07-31) are LIST-valued: they feed dropdown
+    // placements via options_key, never body placeholders or text fields.
+    // They take NO resolver and NO default — the list is typed by staff at
+    // send time, and any auto-computation (e.g. the post-filing fee
+    // agreement's 14-day first-payment window) lives in the SENDING FORM
+    // that owns that business rule, not here. Deliberate scoping (Fred,
+    // 2026-07-31): every existing resolver is scalar-shaped, and a
+    // form-specific date rule does not belong in the shared prefill layer.
+    if (e.type === 'options') {
+      if (resolver !== null) {
+        throw _err('ESIGN_BAD_RESOLVER',
+          `prefill_schema[${i}] ("${key}") is an options row — resolvers are not ` +
+          `supported; the list is entered at send time (the sending form may ` +
+          `pre-fill it).`);
+      }
+      if (e.default != null && String(e.default).trim() !== '') {
+        throw _err('ESIGN_BAD_PREFILL_SCHEMA',
+          `prefill_schema[${i}] ("${key}") is an options row — defaults are not supported; ` +
+          `the list is entered at send time.`);
+      }
+    }
+
     if (resolver !== null && !resolverWhitelist.has(resolver)) {
       // Phase 2E: not a whitelist name — maybe an EXPRESSION
       // ({{table.column|modifier}}, delegated to resolverService). The pure
@@ -333,6 +356,14 @@ function validateTemplateInput(t, resolverWhitelist) {
   // ── body ↔ schema cross-check (html) ──────────────────────────────────────
   const warnings = [];
   if (!isPdf) {
+    const optionsInBody = placeholders.filter((p) =>
+      schemaClean.some((e) => e.key === p && e.type === 'options'));
+    if (optionsInBody.length) {
+      throw _err('ESIGN_BAD_TEMPLATE',
+        `Body placeholder(s) reference options-type row(s): ` +
+        `${optionsInBody.map((k) => `{{${k}}}`).join(', ')} — a list cannot be ` +
+        `interpolated as prose; options rows feed dropdowns via options_key.`);
+    }
     const undeclared = placeholders.filter((p) => !keys.has(p));
     if (undeclared.length) {
       throw _err('ESIGN_UNDECLARED_PLACEHOLDER',
@@ -361,7 +392,36 @@ function validateTemplateInput(t, resolverWhitelist) {
   // and two injection paths on one template means nobody can say where a
   // value lands without reading both.
   const textFields = (placements.fields || []).filter((f) => f && f.type === 'text');
+  const optionsRowKeys = new Set(schemaClean.filter((e) => e.type === 'options').map((e) => e.key));
+
+  // ── options_key ↔ schema cross-check (2026-07-31, both template types) ────
+  // A dropdown sourcing its list from a prefill value must name a DECLARED,
+  // OPTIONS-TYPE row — a scalar row would inject a string where an array
+  // belongs, and an undeclared key would resolve to nothing at send time.
+  {
+    const optionKeyed = (placements.fields || [])
+      .filter((f) => f && f.type === 'dropdown' && f.options_key != null);
+    for (const f of optionKeyed) {
+      if (!keys.has(f.options_key)) {
+        throw _err('ESIGN_UNDECLARED_PLACEHOLDER',
+          `Dropdown options_key "${f.options_key}" is not declared in prefill_schema.`,
+          { placeholders: [f.options_key] });
+      }
+      if (!optionsRowKeys.has(f.options_key)) {
+        throw _err('ESIGN_BAD_TEMPLATE',
+          `Dropdown options_key "${f.options_key}" must reference an options-type ` +
+          `prefill row (it is declared as a scalar).`);
+      }
+    }
+  }
+
   if (isPdf) {
+    const badTextKeys = [...new Set(textFields.map((f) => f.key))].filter((k) => optionsRowKeys.has(k));
+    if (badTextKeys.length) {
+      throw _err('ESIGN_BAD_TEMPLATE',
+        `Text placement field(s) reference options-type row(s): ${badTextKeys.join(', ')} — ` +
+        `a list cannot be inked as prose; options rows feed dropdowns via options_key.`);
+    }
     const undeclaredText = [...new Set(textFields.map((f) => f.key))].filter((k) => !keys.has(k));
     if (undeclaredText.length) {
       throw _err('ESIGN_UNDECLARED_PLACEHOLDER',
@@ -369,7 +429,11 @@ function validateTemplateInput(t, resolverWhitelist) {
         `${undeclaredText.join(', ')}.`,
         { placeholders: undeclaredText });
     }
+    // "Placed" = inked by a text field OR consumed by a dropdown's options_key.
     const placed = new Set(textFields.map((f) => f.key));
+    (placements.fields || []).forEach((f) => {
+      if (f && f.type === 'dropdown' && f.options_key != null) placed.add(f.options_key);
+    });
     const unplaced = [...keys].filter((k) => !placed.has(k));
     if (unplaced.length) {
       warnings.push(`Declared but not placed on the PDF: ${unplaced.join(', ')}.`);

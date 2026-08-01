@@ -408,3 +408,67 @@ describe('placements — required (optional signer fields)', () => {
     })).toThrow(INVALID);
   });
 });
+
+// ─── date_input + options_key (2026-07-31 — constrained-date slice) ──────────
+
+function dateInput(over = {}) {
+  return { page: 1, x: 10, y: 200, w: 80, h: 18, type: 'date_input', signer: 1, ...over };
+}
+
+describe('placements — date_input (signer-picked date)', () => {
+  test('valid with and without date_format; joins the signer set', () => {
+    expect(validatePlacements({ fields: [dateInput()] }).count).toBe(1);
+    expect(validatePlacements({ fields: [dateInput({ date_format: 'dd/MM/yyyy' })] }).count).toBe(1);
+    expect(validatePlacements({ fields: [dateInput({ required: false })] }).count).toBe(1);
+  });
+
+  test('rejects a default — Zoho silently drops CustomDate defaults (verified 2026-07-31)', () => {
+    expect(() => validatePlacements({ fields: [dateInput({ default: '07/31/2026' })] })).toThrow(INVALID);
+  });
+
+  test('rejects malformed date_format', () => {
+    expect(() => validatePlacements({ fields: [dateInput({ date_format: '' })] })).toThrow(INVALID);
+    expect(() => validatePlacements({ fields: [dateInput({ date_format: 'x'.repeat(33) })] })).toThrow(INVALID);
+    expect(() => validatePlacements({ fields: [dateInput({ date_format: 7 })] })).toThrow(INVALID);
+  });
+});
+
+describe('placements — dropdown options_key (per-send list sourcing)', () => {
+  test('options_key alone is valid; still counted and signer-checked', () => {
+    const out = validatePlacements({ fields: [dropdown({ options: undefined, options_key: 'first_payment_dates' })] });
+    expect(out.count).toBe(1);
+  });
+
+  test('exactly ONE sourcing mode: both present throws, neither throws', () => {
+    expect(() => validatePlacements({
+      fields: [dropdown({ options_key: 'k' })],           // helper default includes options
+    })).toThrow(INVALID);
+    expect(() => validatePlacements({
+      fields: [dropdown({ options: undefined })],
+    })).toThrow(INVALID);
+  });
+
+  test('no default with options_key — the list does not exist until send time', () => {
+    expect(() => validatePlacements({
+      fields: [dropdown({ options: undefined, options_key: 'k', default: 'x' })],
+    })).toThrow(INVALID);
+  });
+
+  test('options_key must be a schema-shaped key', () => {
+    for (const bad of ['Bad-Key', '1abc', 'has space', '']) {
+      expect(() => validatePlacements({
+        fields: [dropdown({ options: undefined, options_key: bad })],
+      })).toThrow(INVALID);
+    }
+  });
+
+  test('signer cross-check still sees an options_key dropdown (no early-return hole)', () => {
+    // signer 2 options_key field + a later invalid field: both must be seen.
+    expect(() => validatePlacements({
+      fields: [
+        dropdown({ options: undefined, options_key: 'k', signer: 2 }),
+        dropdown({ options: [] }),
+      ],
+    })).toThrow(INVALID);
+  });
+});

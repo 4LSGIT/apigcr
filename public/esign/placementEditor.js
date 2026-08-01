@@ -59,7 +59,7 @@
 
 /** Neutral field types — mirror of services/esign/placements.js
     NEUTRAL_FIELD_TYPES (drift-guarded by tests). */
-var PE_FIELD_TYPES = ['signature', 'initial', 'date', 'text',
+var PE_FIELD_TYPES = ['signature', 'initial', 'date', 'date_input', 'text',
   'input_text', 'checkbox', 'dropdown', 'radio'];
 
 /** Minimum field sizes in PDF POINTS (2D spec). Enforced in points — never in
@@ -76,6 +76,8 @@ var PE_MIN_SIZES = {
   checkbox:   { w: 12,  h: 12 },
   dropdown:   { w: 60,  h: 16 },
   radio:      { w: 12,  h: 12 },
+  // Signer-picked date (CustomDate) — text-entry family sizing.
+  date_input: { w: 70,  h: 16 },
 };
 
 /** Signer color code (2D spec: pick one and document it).
@@ -129,11 +131,24 @@ function peCarryProps(src, out) {
   } else if (src.type === 'checkbox') {
     if (src.checked === true) out.checked = true;
   } else if (src.type === 'dropdown') {
-    out.options = Array.isArray(src.options)
-      ? src.options.filter(function (o) { return typeof o === 'string' && o.trim(); })
-                   .map(function (o) { return o.trim(); })
-      : [];
-    if (typeof src.default === 'string' && src.default.trim()) out.default = src.default.trim();
+    // Two sourcing modes, mutually exclusive (mirrors placements.js):
+    // options_key wins when set — the list is a per-send prefill value.
+    if (typeof src.options_key === 'string' && src.options_key.trim()) {
+      out.options_key = src.options_key.trim();
+    } else {
+      out.options = Array.isArray(src.options)
+        ? src.options.filter(function (o) { return typeof o === 'string' && o.trim(); })
+                     .map(function (o) { return o.trim(); })
+        : [];
+      if (typeof src.default === 'string' && src.default.trim()) out.default = src.default.trim();
+    }
+  } else if (src.type === 'date_input') {
+    // Format only — no default (Zoho drops CustomDate defaults, verified
+    // 2026-07-31) and no constraints (none exist; windowed dates are a
+    // dropdown with options_key instead).
+    if (typeof src.date_format === 'string' && src.date_format.trim()) {
+      out.date_format = src.date_format.trim();
+    }
   } else if (src.type === 'radio') {
     out.group = typeof src.group === 'string' ? src.group.trim() : '';
     out.value = typeof src.value === 'string' ? src.value.trim() : '';
@@ -145,7 +160,8 @@ function peCarryProps(src, out) {
   // a footgun the editor refuses to hand out, even though the server would
   // accept it.
   if ((src.type === 'input_text' || src.type === 'checkbox' ||
-       src.type === 'dropdown'   || src.type === 'radio') && src.required === false) {
+       src.type === 'dropdown'   || src.type === 'radio' ||
+       src.type === 'date_input') && src.required === false) {
     out.required = false;
   }
   return out;
@@ -418,7 +434,7 @@ function peDiffPlacementKeys(placements, schemaKeys) {
  */
 function peValidateSchemaRow(row, opts) {
   var errs = [];
-  var types = (opts && opts.types) || ['text', 'number', 'date', 'money'];
+  var types = (opts && opts.types) || ['text', 'number', 'date', 'money', 'options'];
   var key = String(row && row.key != null ? row.key : '');
   if (!PE_KEY_RE.test(key)) {
     errs.push('key: lowercase letter first, then lowercase letters, digits or underscores, at most 40 characters');
@@ -439,6 +455,18 @@ function peValidateSchemaRow(row, opts) {
         row.resolver.length > 4 &&
         row.resolver.slice(0, 2) === '{{' && row.resolver.slice(-2) === '}}')) {
     errs.push('resolver: unknown name (or wrap a custom expression in {{ }})');
+  }
+  // 'options' rows are LIST-valued (they feed dropdowns via options_key):
+  // no default and no resolver — staff enters the list at send time (the
+  // sending form may pre-fill it, e.g. the 14-day first-payment window).
+  // Mirrors the server (esignTemplateService); server stays authoritative.
+  if (row && row.type === 'options') {
+    if (row.default != null && String(row.default).trim() !== '') {
+      errs.push('default: not supported on options rows (the list is entered at send time)');
+    }
+    if (row.resolver != null) {
+      errs.push('resolver: not supported on options rows (the list is entered at send time)');
+    }
   }
   return errs;
 }
@@ -623,6 +651,7 @@ function peFieldSummary(f) {
   }
   var NAMES = {
     signature: 'Signature', initial: 'Initial', date: 'Date',
+    date_input: 'Date picker',
     input_text: 'Signer text', checkbox: 'Checkbox', dropdown: 'Dropdown',
   };
   return (NAMES[f.type] || f.type) + (f.label ? ' \u00b7 ' + f.label : '') +
@@ -657,7 +686,10 @@ function peFindProblems(fields) {
       bad('"Shown to signer" on page ' + f.page + ' is over ' +
           PE_PLACEMENT_LABEL_MAX + ' characters.');
     }
-    if (f.type === 'dropdown' && (!Array.isArray(f.options) || !f.options.length)) {
+    if (f.type === 'dropdown' && f.options_key != null && !PE_KEY_RE.test(String(f.options_key))) {
+      bad('Dropdown on page ' + f.page + ': "options from value" needs a valid key (lowercase letter first; letters, digits, underscores).');
+    }
+    if (f.type === 'dropdown' && f.options_key == null && (!Array.isArray(f.options) || !f.options.length)) {
       bad('Dropdown on page ' + f.page + ' has no options to pick from.');
     }
     if (f.type === 'dropdown' && Array.isArray(f.options) && f.default &&
@@ -795,6 +827,7 @@ if (typeof window !== 'undefined') (function () {
   /** Friendly type names — the neutral value stays the wire form. */
   var PE_TYPE_NAMES = {
     signature: 'Signature', initial: 'Initial', date: 'Date',
+    date_input: 'Date picker',
     text: 'Fill-in', input_text: 'Text box',
     checkbox: 'Checkbox', dropdown: 'Dropdown', radio: 'Radio',
   };
@@ -803,13 +836,14 @@ if (typeof window !== 'undefined') (function () {
       look identical on the page and behave nothing alike, so say it here. */
   var PE_TYPE_WHO = {
     signature: 'signer draws it', initial: 'signer initials',
-    date: 'date they sign', text: 'WE type it',
+    date: 'date they sign', date_input: 'signer picks a date', text: 'WE type it',
     input_text: 'signer types', checkbox: 'signer ticks',
     dropdown: 'signer picks', radio: 'pick one of',
   };
 
   var PE_TYPE_ICON = {
     signature: 'fa-signature', initial: 'fa-pen-nib', date: 'fa-calendar-day',
+    date_input: 'fa-calendar-days',
     text: 'fa-i-cursor', input_text: 'fa-keyboard',
     checkbox: 'fa-square-check', dropdown: 'fa-list', radio: 'fa-circle-dot',
   };
@@ -819,6 +853,7 @@ if (typeof window !== 'undefined') (function () {
     signature: 'The signer draws or adopts a signature here.',
     initial:   'A small initials box for the signer.',
     date:      'Filled with the date the signer signs.',
+    date_input: 'A date-picker the SIGNER chooses any date from. For a limited window of allowed dates, use a Dropdown with "options from value" instead.',
     text:      'WE fill this in before sending. The signer cannot edit it.',
     input_text: 'An empty box the SIGNER types into on the signing page.',
     checkbox:  'A tick box the signer can check.',
@@ -1677,7 +1712,8 @@ if (typeof window !== 'undefined') (function () {
     // worse, pass it and confuse the provider). Strip everything the NEW type
     // doesn't own, then let the drawer re-apply its current values.
     delete f.max_length; delete f.default; delete f.checked;
-    delete f.options; delete f.group; delete f.value;
+    delete f.options; delete f.options_key; delete f.date_format;
+    delete f.group; delete f.value;
     if (type === 'text') {
       delete f.signer;                       // server THROWS on text+signer
       delete f.label;
@@ -1861,15 +1897,41 @@ if (typeof window !== 'undefined') (function () {
           '<input type="checkbox" data-pe="checked"' + (f.checked === true ? ' checked' : '') + '> ' +
           'Ticked by default</label></div>';
       } else if (f.type === 'dropdown') {
-        h += '<div class="pe-f"><label>Options</label>' +
-          '<input type="text" data-pe="options" placeholder="Chapter 7, Chapter 13" ' +
-            'spellcheck="false" autocomplete="off" ' +
-            'value="' + peEsc((f.options || []).join(', ')) + '">' +
-          '<div class="pe-sub">Comma-separated, in the order the signer sees them.</div></div>' +
-          '<div class="pe-f"><label>Pre-selected</label>' +
-          '<input type="text" data-pe="ddefault" placeholder="optional" spellcheck="false" ' +
-            'autocomplete="off" value="' + peEsc(f.default || '') + '">' +
-          '<div class="pe-sub">Must be one of the options above.</div></div>';
+        var fromKey = f.options_key != null;
+        h += '<div class="pe-f"><label>Options come from</label>' +
+          '<select data-pe="optsrc">' +
+            '<option value="static"' + (fromKey ? '' : ' selected') + '>A list typed here</option>' +
+            '<option value="key"'    + (fromKey ? ' selected' : '') + '>A fill-in value (per send)</option>' +
+          '</select></div>';
+        if (fromKey) {
+          h += '<div class="pe-f"><label>Value key</label>' +
+            '<input type="text" data-pe="options_key" placeholder="first_payment_dates" ' +
+              'spellcheck="false" autocomplete="off" value="' + peEsc(f.options_key || '') + '">' +
+            '<div class="pe-sub">An <b>options</b>-type row in section 3. Its resolved list (editable ' +
+              'in the sending form) becomes this dropdown\'s choices at send time — e.g. the valid ' +
+              'first-payment dates computed from the case.</div></div>';
+        } else {
+          h += '<div class="pe-f"><label>Options</label>' +
+            '<input type="text" data-pe="options" placeholder="Chapter 7, Chapter 13" ' +
+              'spellcheck="false" autocomplete="off" ' +
+              'value="' + peEsc((f.options || []).join(', ')) + '">' +
+            '<div class="pe-sub">Comma-separated, in the order the signer sees them.</div></div>' +
+            '<div class="pe-f"><label>Pre-selected</label>' +
+            '<input type="text" data-pe="ddefault" placeholder="optional" spellcheck="false" ' +
+              'autocomplete="off" value="' + peEsc(f.default || '') + '">' +
+            '<div class="pe-sub">Must be one of the options above.</div></div>';
+        }
+      } else if (f.type === 'date_input') {
+        var fmt = f.date_format || 'MM/dd/yyyy';
+        h += '<div class="pe-f"><label>Date format</label>' +
+          '<select data-pe="date_format">' +
+            ['MM/dd/yyyy', 'dd/MM/yyyy', 'yyyy-MM-dd'].map(function (o) {
+              return '<option value="' + o + '"' + (o === fmt ? ' selected' : '') + '>' + o + '</option>';
+            }).join('') +
+          '</select>' +
+          '<div class="pe-sub">The signer picks ANY date — no limits exist. For a limited ' +
+            'window (e.g. within 14 days of filing) use a Dropdown with "options from a ' +
+            'fill-in value" instead.</div></div>';
       } else if (f.type === 'radio') {
         h += '<div class="pe-f"><label>Group</label>' +
           '<input type="text" data-pe="group" maxlength="' + PE_OPTION_TEXT_MAX + '" placeholder="e.g. Approve?" ' +
@@ -1888,7 +1950,8 @@ if (typeof window !== 'undefined') (function () {
     // and date stay mandatory: an optional signature on a legal document is a
     // hole, not a feature (the server would allow it; the editor won't).
     if (!isText && (f.type === 'input_text' || f.type === 'checkbox' ||
-                    f.type === 'dropdown'   || f.type === 'radio')) {
+                    f.type === 'dropdown'   || f.type === 'radio' ||
+                    f.type === 'date_input')) {
       h += '<div class="pe-f"><label class="pe-check">' +
         '<input type="checkbox" data-pe="req"' + (f.required === false ? '' : ' checked') + '> ' +
         'Signer must complete this</label>' +
@@ -2104,13 +2167,42 @@ if (typeof window !== 'undefined') (function () {
           this.fields.forEach(function (o) {
             if (o.type === 'radio' && o.group === grp) applyReq(o);
           });
-        } else if (f.type === 'input_text' || f.type === 'checkbox' || f.type === 'dropdown') {
+        } else if (f.type === 'input_text' || f.type === 'checkbox' ||
+                   f.type === 'dropdown'   || f.type === 'date_input') {
           applyReq(f);
         } else return;
         this._renderFieldList();   // '· optional' markers follow the toggle live
         commit = true;
         break;
       }
+
+      case 'optsrc': {
+        if (f.type !== 'dropdown') return;
+        if (v === 'key') {
+          // Switching to per-send sourcing: static list/default are the OTHER
+          // mode's properties (server rejects both together).
+          delete f.options; delete f.default;
+          if (f.options_key == null) f.options_key = '';
+        } else {
+          delete f.options_key;
+          f.options = (this._drawOptions || []).slice();
+          if (this._drawDdDefault) f.default = this._drawDdDefault;
+        }
+        this._renderPanel(true);   // the mode decides which inputs exist
+        commit = true;
+        break;
+      }
+
+      case 'options_key':
+        if (f.type !== 'dropdown') return;
+        f.options_key = v.trim();
+        break;
+
+      case 'date_format':
+        if (f.type !== 'date_input') return;
+        if (v && v !== 'MM/dd/yyyy') f.date_format = v; else delete f.date_format;
+        commit = true;
+        break;
 
       case 'options':
         if (f.type !== 'dropdown') return;

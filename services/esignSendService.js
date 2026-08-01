@@ -531,6 +531,21 @@ async function validateSendInput(db, {
     // ONE validator, shared with the provider — see services/esign/placements.js.
     validatePlacements(placements);
 
+    // options_key is a TEMPLATE-authoring construct: sendFromTemplate resolves
+    // it into concrete options before ever reaching this function. One
+    // surviving here means a caller shipped template placements to a raw send
+    // path — an envelope with an empty dropdown, caught now instead of on the
+    // signing page.
+    const unresolved = placements.fields
+      .filter((f) => f && f.type === 'dropdown' && f.options_key != null)
+      .map((f) => f.options_key);
+    if (unresolved.length) {
+      throw _err('ESIGN_BAD_PLACEMENTS',
+        `Dropdown options_key (${[...new Set(unresolved)].join(', ')}) is a template ` +
+        `construct and must be resolved to concrete options before sending — ` +
+        `send this document via its template.`);
+    }
+
     // Cross-check the two halves against each other. Neither validator can do
     // this alone: placements knows nothing about recipients, and the recipient
     // rules know nothing about fields. A field bound to signer 3 of a 2-signer
@@ -1533,7 +1548,12 @@ async function _resolveAndInterpolate(db, template, { linkableType, linkableId, 
   }
 
   const missingRequired = schema
-    .filter((e) => e.required && (merged[e.key] == null || merged[e.key] === ''))
+    .filter((e) => {
+      if (!e.required) return false;
+      const v = merged[e.key];
+      // options rows are LIST-valued: empty array = missing, same as '' for scalars.
+      return v == null || v === '' || (Array.isArray(v) && v.length === 0);
+    })
     .map((e) => e.key);
 
   return {
@@ -1668,13 +1688,43 @@ async function sendFromTemplate(db, {
     pdfBuffer = await pdfRenderService.renderHtmlToPdf(html);
   }
 
+  // ── options_key resolution (2026-07-31) ───────────────────────────────────
+  // Dropdowns sourcing their list from an options-type prefill value get it
+  // HERE — the last moment the merged values and the placements are both in
+  // hand. The injected copy is what sendPipeline validates and persists;
+  // template.placement_json keeps its options_key for the next send. Schema
+  // required-ness was already enforced above (an empty required options row
+  // is in missingRequired), so an empty list surviving to this point means a
+  // non-required row — still a hard stop, because an empty dropdown is not a
+  // sendable field and validatePlacements would say so less helpfully.
+  let effPlacements = template.placement_json;
+  if (effPlacements && Array.isArray(effPlacements.fields) &&
+      effPlacements.fields.some((f) => f && f.type === 'dropdown' && f.options_key != null)) {
+    effPlacements = {
+      ...effPlacements,
+      fields: effPlacements.fields.map((f) => {
+        if (!f || f.type !== 'dropdown' || f.options_key == null) return f;
+        const list = r.merged[f.options_key];
+        if (!Array.isArray(list) || list.length === 0) {
+          throw _err('ESIGN_MISSING_PREFILL',
+            `Dropdown "${f.label || f.options_key}" needs at least one option — ` +
+            `"${f.options_key}" resolved to an empty list. Enter the allowed ` +
+            `values in the sending form (one per line) and resend.`,
+            { missing: [f.options_key] });
+        }
+        const { options_key, ...rest } = f;
+        return { ...rest, options: list };
+      }),
+    };
+  }
+
   return sendPipeline(db, {
     linkableType,
     linkableId,
     kind:           template.kind,
     documentName:   documentName || _defaultTemplateDocName(template.name, r.context),
     recipients,
-    placements:     template.placement_json,
+    placements:     effPlacements,
     expirationDays: expirationDays != null ? expirationDays : template.expiration_days,
     createdBy,
     pdfBuffer,

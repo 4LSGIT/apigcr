@@ -551,7 +551,12 @@ function renderFields(schema, values, missing) {
         const val = values[e.key] != null ? values[e.key] : '';
         const isMissing = missingSet.has(e.key) && e.required;
         let input;
-        if (e.type === 'date') {
+        if (e.type === 'options') {
+          const list = Array.isArray(val) ? val : [];
+          input = `<textarea class="sf-f" data-key="${e.key}" rows="${Math.min(8, Math.max(3, list.length))}" ` +
+            `spellcheck="false" style="font-family:inherit;">${esignEsc(list.join('\n'))}</textarea>` +
+            `<div class="sf-hint">One choice per line — the dropdown the signer picks from.</div>`;
+        } else if (e.type === 'date') {
           input = `<input type="date" class="sf-f" data-key="${e.key}" value="${mdyToIso(val)}">`;
         } else {
           const ph = e.type === 'money' ? '$0.00' : (e.type === 'number' ? '0' : '');

@@ -1279,3 +1279,141 @@ describe('previewFromTemplate — pdf type (2E)', () => {
       .rejects.toMatchObject({ code: 'ESIGN_TEMPLATE_NO_PDF' });
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// options prefill rows + options_key sourcing (2026-07-31)
+// The constrained-date mechanism: a LIST-valued prefill row feeds a dropdown
+// placement per send — the only signing-time window enforcement Zoho has.
+// ─────────────────────────────────────────────────────────────
+
+describe('formatValue — options (list-valued)', () => {
+  test('arrays and newline-joined strings both clean to a string array', () => {
+    expect(prefillService.formatValue('options', ['a', ' b ', '', 'a'])).toEqual(['a', 'b']);
+    expect(prefillService.formatValue('options', 'x\n y \n\nx')).toEqual(['x', 'y']);
+    expect(prefillService.formatValue('options', null)).toEqual([]);
+    expect(prefillService.formatValue('options', '')).toEqual([]);
+  });
+});
+
+describe('options schema rows — save-time rules', () => {
+  const optRow = (over = {}) => ({
+    key: 'first_payment_dates', label: 'First payment dates', type: 'options',
+    resolver: null, default: null, required: true, ...over,
+  });
+  const base = (over = {}) => ({
+    name: 'Options rules probe', kind: 'contract', templateType: 'pdf', body: null,
+    prefillSchema: [optRow()], placementJson: null, expirationDays: 14, ...over,
+  });
+
+  test('a bare options row (no resolver, no default) is legal', () => {
+    expect(() => templateService.validateTemplateInput(base(), WL)).not.toThrow();
+  });
+
+  test('ANY resolver on an options row is rejected — the list is entered at send time', () => {
+    // Deliberate scoping (2026-07-31): auto-computation like the 14-day
+    // first-payment window lives in the SENDING FORM that owns the rule,
+    // not in the shared prefill layer.
+    expect(() => templateService.validateTemplateInput(
+      base({ prefillSchema: [optRow({ resolver: 'case.case_name' })] }), WL
+    )).toThrow(/resolvers are not\s+supported/);
+  });
+
+  test('defaults are rejected on options rows', () => {
+    expect(() => templateService.validateTemplateInput(
+      base({ prefillSchema: [optRow({ default: '07/31/2026' })] }), WL
+    )).toThrow(/defaults are not supported/);
+  });
+
+  test('html bodies cannot interpolate an options row', () => {
+    expect(() => templateService.validateTemplateInput(base({
+      templateType: 'html',
+      body: '<p>{{first_payment_dates}}</p>',
+    }), WL)).toThrow(/cannot be\s+interpolated as prose/);
+  });
+});
+
+describe('options_key ↔ schema cross-checks', () => {
+  const dd = (over = {}) => ({
+    page: 1, x: 72, y: 144, w: 130, h: 22, type: 'dropdown', signer: 1,
+    options_key: 'first_payment_dates', ...over,
+  });
+  const base = (over = {}) => ({
+    name: 'Options xcheck probe', kind: 'contract', templateType: 'pdf', body: null,
+    prefillSchema: [{ key: 'first_payment_dates', label: 'First payment dates', type: 'options',
+                      resolver: null, default: null, required: true }],
+    placementJson: { coord_space: 'pdf_user_space', fields: [dd()] },
+    expirationDays: 14, ...over,
+  });
+
+  test('declared options-type key: valid, and counts as PLACED (no unplaced warning)', () => {
+    const v = templateService.validateTemplateInput(base(), WL);
+    expect((v.warnings || []).join(' ')).not.toMatch(/first_payment_dates/);
+  });
+
+  test('undeclared options_key is rejected', () => {
+    expect(() => templateService.validateTemplateInput(
+      base({ prefillSchema: [] }), WL
+    )).toThrow(/not declared/);
+  });
+
+  test('options_key referencing a SCALAR row is rejected', () => {
+    expect(() => templateService.validateTemplateInput(base({
+      prefillSchema: [{ key: 'first_payment_dates', label: 'x', type: 'text',
+                        resolver: null, default: null, required: false }],
+    }), WL)).toThrow(/options-type/);
+  });
+
+  test('a text placement inking an options row is rejected', () => {
+    expect(() => templateService.validateTemplateInput(base({
+      placementJson: { coord_space: 'pdf_user_space', fields: [
+        { page: 1, x: 10, y: 10, w: 80, h: 14, type: 'text', key: 'first_payment_dates' },
+      ]},
+    }), WL)).toThrow(/cannot be inked as prose/);
+  });
+});
+
+describe('sendFromTemplate — options_key injection', () => {
+  const OPT_TEMPLATE = () => templateRow({
+    template_type: 'html',
+    body: '<p>Sign below.</p>',
+    prefill_schema: [
+      { key: 'first_payment_dates', label: 'First payment dates', type: 'options',
+        resolver: null, default: null, required: true },
+    ],
+    placement_json: {
+      coord_space: 'pdf_user_space',
+      fields: [
+        { page: 1, x: 72, y: 600, w: 216, h: 36, type: 'signature', signer: 1 },
+        { page: 1, x: 72, y: 500, w: 130, h: 22, type: 'dropdown', signer: 1,
+          label: 'Date of first payment', options_key: 'first_payment_dates' },
+      ],
+    },
+  });
+
+  test('resolved list becomes the dropdown options; template keeps its options_key', async () => {
+    const template = OPT_TEMPLATE();
+    const db = wiredDb({ template });
+    await sendService.sendFromTemplate(db, {
+      templateId: 7, linkableType: 'case', linkableId: 'AbC12dEf',
+      recipients: RECIPIENTS, createdBy: 22,
+      values: { first_payment_dates: '08/01/2026\n08/02/2026\n' },   // staff textarea shape
+    });
+
+    const created = esignService.createRequest.mock.calls[0][1];
+    const dd = created.placementJson.fields.find((f) => f.type === 'dropdown');
+    expect(dd.options).toEqual(['08/01/2026', '08/02/2026']);
+    expect(dd).not.toHaveProperty('options_key');
+    // The TEMPLATE was not mutated — next send re-resolves fresh.
+    expect(template.placement_json.fields[1].options_key).toBe('first_payment_dates');
+    expect(template.placement_json.fields[1]).not.toHaveProperty('options');
+  });
+
+  test('required options row with no list → ESIGN_MISSING_PREFILL, nothing sent', async () => {
+    const db = wiredDb({ template: OPT_TEMPLATE() });
+    await expect(sendService.sendFromTemplate(db, {
+      templateId: 7, linkableType: 'case', linkableId: 'AbC12dEf',
+      recipients: RECIPIENTS, createdBy: 22,
+    })).rejects.toMatchObject({ code: 'ESIGN_MISSING_PREFILL' });
+    expect(esignService.createRequest).not.toHaveBeenCalled();
+  });
+});
