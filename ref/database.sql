@@ -1,5 +1,5 @@
 -- DB Console schema snapshot
--- Generated: 2026-07-19T07:54:24.352Z
+-- Generated: 2026-08-02T11:26:14.635Z
 -- Source: POST /admin/db/schema/save-to-ref
 -- Contains schema only (no data, no database identifier).
 
@@ -12,64 +12,6 @@ SET FOREIGN_KEY_CHECKS = 0;
 /*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
 /*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
 /*!40101 SET NAMES utf8mb4 */;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `_dead_email_router_config`
---
-
-DROP TABLE IF EXISTS `_dead_email_router_config`;
-CREATE TABLE `_dead_email_router_config` (
-  `id` int NOT NULL DEFAULT '1',
-  `auth_type` enum('none','api_key') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'api_key',
-  `auth_config` json DEFAULT NULL,
-  `capture_mode` enum('off','capturing') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'off',
-  `captured_sample` json DEFAULT NULL,
-  `captured_at` datetime DEFAULT NULL,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `_dead_email_router_executions`
---
-
-DROP TABLE IF EXISTS `_dead_email_router_executions`;
-CREATE TABLE `_dead_email_router_executions` (
-  `id` bigint NOT NULL,
-  `raw_input` json DEFAULT NULL,
-  `matched_route_id` int DEFAULT NULL,
-  `resolved_slug` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `hook_execution_id` bigint DEFAULT NULL,
-  `status` enum('routed','unrouted','captured','error') COLLATE utf8mb4_general_ci NOT NULL,
-  `error` text COLLATE utf8mb4_general_ci,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `_dead_email_routes`
---
-
-DROP TABLE IF EXISTS `_dead_email_routes`;
-CREATE TABLE `_dead_email_routes` (
-  `id` int NOT NULL,
-  `name` varchar(120) COLLATE utf8mb4_general_ci NOT NULL,
-  `description` text COLLATE utf8mb4_general_ci,
-  `slug` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
-  `match_mode` enum('conditions','code') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'conditions',
-  `match_config` json NOT NULL,
-  `position` int NOT NULL DEFAULT '100',
-  `active` tinyint(1) NOT NULL DEFAULT '1',
-  `last_matched_at` datetime DEFAULT NULL,
-  `match_count` int NOT NULL DEFAULT '0',
-  `last_modified_by` int DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -433,6 +375,8 @@ CREATE TABLE `cases` (
   `case_id` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_number` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_number_full` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_caption` varchar(150) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_our_role` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_type` varchar(40) COLLATE utf8mb4_general_ci NOT NULL,
   `case_subtype` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   `case_stage` enum('Open','Pending','Filed','Concluded','Closed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'Open',
@@ -989,6 +933,22 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `contract_template_pdfs`
+--
+
+DROP TABLE IF EXISTS `contract_template_pdfs`;
+CREATE TABLE `contract_template_pdfs` (
+  `template_id` int unsigned NOT NULL,
+  `pdf` mediumblob NOT NULL,
+  `size` int unsigned NOT NULL COMMENT 'byte length of pdf; listable without touching the blob',
+  `original_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `contract_templates`
 --
 
@@ -1002,28 +962,12 @@ CREATE TABLE `contract_templates` (
   `prefill_schema` json NOT NULL COMMENT '[{key,label,type,resolver,default,required}]',
   `placement_json` json NOT NULL COMMENT '{"coord_space":"pdf_user_space","fields":[{page,x,y,w,h,type,signer}]}',
   `reminder_seq_id` int unsigned DEFAULT NULL COMMENT 'sequence_templates.id; NULL = firm default sequence',
+  `completion_targets` json DEFAULT NULL,
   `reminders_off` tinyint(1) NOT NULL DEFAULT '0',
   `expiration_days` int NOT NULL DEFAULT '14',
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `contract_template_pdfs`
---
-
-DROP TABLE IF EXISTS `contract_template_pdfs`;
-CREATE TABLE `contract_template_pdfs` (
-  `template_id` int unsigned NOT NULL,
-  `pdf` mediumblob NOT NULL,
-  `size` int unsigned NOT NULL COMMENT 'byte length of pdf; listable without touching the blob',
-  `original_name` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`template_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1394,6 +1338,43 @@ CREATE TABLE `form_submissions` (
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `draft_key` varchar(100) COLLATE utf8mb4_general_ci GENERATED ALWAYS AS ((case when (`status` = _utf8mb4'draft') then concat(`form_key`,_utf8mb4':',`link_type`,_utf8mb4':',`link_id`) else NULL end)) STORED
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `form_template_versions`
+--
+
+DROP TABLE IF EXISTS `form_template_versions`;
+CREATE TABLE `form_template_versions` (
+  `id` int unsigned NOT NULL,
+  `template_id` int unsigned NOT NULL,
+  `schema_version` int unsigned NOT NULL,
+  `definition` json NOT NULL,
+  `published_by` int unsigned DEFAULT NULL,
+  `published_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `form_templates`
+--
+
+DROP TABLE IF EXISTS `form_templates`;
+CREATE TABLE `form_templates` (
+  `id` int unsigned NOT NULL,
+  `form_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
+  `title` varchar(150) COLLATE utf8mb4_general_ci NOT NULL,
+  `link_type` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `schema_version` int unsigned NOT NULL DEFAULT '1',
+  `definition` json DEFAULT NULL,
+  `draft_definition` json NOT NULL,
+  `published_at` datetime DEFAULT NULL,
+  `updated_by` int unsigned DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1981,6 +1962,54 @@ CREATE TABLE `redirects` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `report_definitions`
+--
+
+DROP TABLE IF EXISTS `report_definitions`;
+CREATE TABLE `report_definitions` (
+  `id` int unsigned NOT NULL,
+  `report_key` varchar(60) NOT NULL,
+  `title` varchar(150) NOT NULL,
+  `description` text,
+  `category` varchar(40) NOT NULL DEFAULT 'General',
+  `sql_text` text NOT NULL,
+  `params` json DEFAULT NULL,
+  `columns_meta` json DEFAULT NULL,
+  `viz` json DEFAULT NULL,
+  `caveats` json DEFAULT NULL,
+  `row_limit` int unsigned NOT NULL DEFAULT '1000',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_by` int DEFAULT NULL,
+  `updated_by` int DEFAULT NULL,
+  `source` varchar(16) NOT NULL DEFAULT 'manual',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `report_runs`
+--
+
+DROP TABLE IF EXISTS `report_runs`;
+CREATE TABLE `report_runs` (
+  `id` bigint unsigned NOT NULL,
+  `report_id` int unsigned DEFAULT NULL,
+  `report_key` varchar(60) DEFAULT NULL,
+  `run_by` int DEFAULT NULL,
+  `params_json` json DEFAULT NULL,
+  `sql_text` text,
+  `row_count` int DEFAULT NULL,
+  `duration_ms` int DEFAULT NULL,
+  `status` varchar(40) NOT NULL,
+  `error_text` text,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `ringcentral_temp`
 --
 
@@ -2113,6 +2142,7 @@ CREATE TABLE `sequence_enrollments` (
   `template_id` int unsigned NOT NULL,
   `contact_id` int unsigned NOT NULL,
   `appt_id` int DEFAULT NULL,
+  `signing_request_id` int unsigned DEFAULT NULL,
   `trigger_data` json DEFAULT NULL,
   `status` enum('active','completed','cancelled') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
   `current_step` int unsigned DEFAULT '1',
@@ -2253,6 +2283,21 @@ CREATE TABLE `signing_request_events` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `signing_request_sources`
+--
+
+DROP TABLE IF EXISTS `signing_request_sources`;
+CREATE TABLE `signing_request_sources` (
+  `signing_request_id` int unsigned NOT NULL,
+  `pdf` longblob NOT NULL,
+  `size` int unsigned NOT NULL COMMENT 'byte length of pdf',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `signing_requests`
 --
 
@@ -2271,6 +2316,7 @@ CREATE TABLE `signing_requests` (
   `placement_json` json DEFAULT NULL,
   `template_id` int unsigned DEFAULT NULL COMMENT 'contract_templates.id',
   `seq_instance_id` bigint unsigned DEFAULT NULL COMMENT 'sequence_enrollments.id — for reminder cancellation',
+  `completion_targets` json DEFAULT NULL,
   `signed_pdf_path` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'Dropbox path; convention defined in slice 1C',
   `cert_pdf_path` varchar(512) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `sent_at` datetime DEFAULT NULL,
@@ -2280,22 +2326,6 @@ CREATE TABLE `signing_requests` (
   `created_by` int unsigned NOT NULL DEFAULT '0' COMMENT 'users.user; 0 = system/automations',
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
--- --------------------------------------------------------
-
---
--- Table structure for table `signing_request_sources`
---
-
-DROP TABLE IF EXISTS `signing_request_sources`;
-CREATE TABLE `signing_request_sources` (
-  `signing_request_id` int unsigned NOT NULL,
-  `pdf` longblob NOT NULL,
-  `size` int unsigned NOT NULL COMMENT 'byte length of pdf',
-  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (`signing_request_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2757,30 +2787,6 @@ CREATE TABLE `workflows` (
 --
 
 --
--- Indexes for table `_dead_email_router_config`
---
-ALTER TABLE `_dead_email_router_config`
-  ADD PRIMARY KEY (`id`);
-
---
--- Indexes for table `_dead_email_router_executions`
---
-ALTER TABLE `_dead_email_router_executions`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_created_at` (`created_at`),
-  ADD KEY `idx_status` (`status`),
-  ADD KEY `idx_route` (`matched_route_id`),
-  ADD KEY `idx_hook_exec` (`hook_execution_id`);
-
---
--- Indexes for table `_dead_email_routes`
---
-ALTER TABLE `_dead_email_routes`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `idx_active_position` (`active`,`position`),
-  ADD KEY `idx_slug` (`slug`);
-
---
 -- Indexes for table `admin_audit_log`
 --
 ALTER TABLE `admin_audit_log`
@@ -2980,6 +2986,12 @@ ALTER TABLE `contacts`
   ADD FULLTEXT KEY `contact_name` (`contact_name`);
 
 --
+-- Indexes for table `contract_template_pdfs`
+--
+ALTER TABLE `contract_template_pdfs`
+  ADD PRIMARY KEY (`template_id`);
+
+--
 -- Indexes for table `contract_templates`
 --
 ALTER TABLE `contract_templates`
@@ -3129,6 +3141,20 @@ ALTER TABLE `form_submissions`
   ADD UNIQUE KEY `idx_draft_unique` (`draft_key`),
   ADD KEY `idx_form_entity` (`form_key`,`link_type`,`link_id`,`status`),
   ADD KEY `idx_updated` (`updated_at`);
+
+--
+-- Indexes for table `form_template_versions`
+--
+ALTER TABLE `form_template_versions`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_tpl` (`template_id`,`published_at`);
+
+--
+-- Indexes for table `form_templates`
+--
+ALTER TABLE `form_templates`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `idx_form_key` (`form_key`);
 
 --
 -- Indexes for table `holidays`
@@ -3324,6 +3350,22 @@ ALTER TABLE `redirects`
   ADD UNIQUE KEY `uk_slug` (`slug`);
 
 --
+-- Indexes for table `report_definitions`
+--
+ALTER TABLE `report_definitions`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uniq_report_key` (`report_key`),
+  ADD KEY `idx_active_category` (`is_active`,`category`);
+
+--
+-- Indexes for table `report_runs`
+--
+ALTER TABLE `report_runs`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_report_created` (`report_id`,`created_at`),
+  ADD KEY `idx_created` (`created_at`);
+
+--
 -- Indexes for table `ringcentral_temp`
 --
 ALTER TABLE `ringcentral_temp`
@@ -3365,7 +3407,8 @@ ALTER TABLE `sequence_enrollments`
   ADD KEY `idx_contact_status` (`contact_id`,`status`),
   ADD KEY `idx_template_status` (`template_id`,`status`),
   ADD KEY `idx_status` (`status`),
-  ADD KEY `idx_appt_id_status` (`appt_id`,`status`);
+  ADD KEY `idx_appt_id_status` (`appt_id`,`status`),
+  ADD KEY `idx_seq_enroll_signing_request` (`signing_request_id`);
 
 --
 -- Indexes for table `sequence_step_log`
@@ -3416,6 +3459,12 @@ ALTER TABLE `settings`
 ALTER TABLE `signing_request_events`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_sre_request_occurred` (`signing_request_id`,`occurred_at`);
+
+--
+-- Indexes for table `signing_request_sources`
+--
+ALTER TABLE `signing_request_sources`
+  ADD PRIMARY KEY (`signing_request_id`);
 
 --
 -- Indexes for table `signing_requests`
@@ -3562,18 +3611,6 @@ ALTER TABLE `workflows`
 --
 -- AUTO_INCREMENT for dumped tables
 --
-
---
--- AUTO_INCREMENT for table `_dead_email_router_executions`
---
-ALTER TABLE `_dead_email_router_executions`
-  MODIFY `id` bigint NOT NULL AUTO_INCREMENT;
-
---
--- AUTO_INCREMENT for table `_dead_email_routes`
---
-ALTER TABLE `_dead_email_routes`
-  MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `admin_audit_log`
@@ -3816,6 +3853,18 @@ ALTER TABLE `form_submissions`
   MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `form_template_versions`
+--
+ALTER TABLE `form_template_versions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `form_templates`
+--
+ALTER TABLE `form_templates`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `holidays`
 --
 ALTER TABLE `holidays`
@@ -3964,6 +4013,18 @@ ALTER TABLE `readonly_query_log`
 --
 ALTER TABLE `redirects`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `report_definitions`
+--
+ALTER TABLE `report_definitions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `report_runs`
+--
+ALTER TABLE `report_runs`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `ringcentral_temp`
