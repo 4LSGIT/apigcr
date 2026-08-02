@@ -1707,6 +1707,31 @@ async function getEventsForDigest(db, { from, to } = {}) {
 }
 
 /**
+ * Escape a value for interpolation into HTML email markup.
+ *
+ * Self-contained by convention — taskService.js and routes/taskActions.js each
+ * carry their own byte-identical copy rather than sharing an import. Keep all
+ * three in sync.
+ *
+ * Covers text nodes AND double-quoted attribute values (both quote forms are
+ * escaped), which is what the digest needs: event_link lands inside an href.
+ * A hostile scheme (javascript:) is NOT filtered here — it is inert in mail
+ * clients, and filtering schemes would break the legitimate non-http links
+ * staff paste (tel:, zoommtg:, msteams:).
+ *
+ * MIME subject headers must NOT be escaped — only the HTML <title>.
+ */
+function htmlEscape(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Build the upcoming-events digest email HTML.
  *
  * @param {string} recipientFName  first name for the greeting ('' = generic)
@@ -1723,9 +1748,12 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
   const groups  = Array.isArray(eventsByDate) ? eventsByDate : [];
   const total   = groups.reduce((n, g) => n + (g.events ? g.events.length : 0), 0);
 
-  // NOTE: event fields are rendered unescaped, matching taskService's
-  // buildDigestEmail behavior (staff-entered content). If we ever decide to
-  // escape, do it in both builders together.
+  // Every interpolated event field goes through htmlEscape(). This builder was
+  // the last unescaped one in the family — taskService's buildDigestEmail was
+  // escaped earlier and the note here claiming parity with it went stale.
+  // Escaped: titles, types, locations, entity names, dockets, links, the
+  // window label, the greeting name, and the <title>. NOT escaped: APP_URL and
+  // HEADER (config/literals), and the MIME subject returned by the caller.
 
   function timeLabel(row) {
     const allDay = row.event_all_day === 1 || row.event_all_day === '1' || row.event_all_day === true;
@@ -1737,19 +1765,21 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
   }
 
   function entityLink(row) {
+    // Emptiness is decided on the RAW value; escaping happens at interpolation
+    // so a name that is only markup characters still counts as present.
     if (row.event_link_type === 'contact') {
       const name = row.contact_name
         || (row.event_link_id != null ? `Contact #${row.event_link_id}` : '');
       if (!name) return '';
-      return `<a href="${APP_URL}?contact=${row.event_link_id || ''}" `
-           + `style="color:${HEADER};text-decoration:none">${name}</a>`;
+      return `<a href="${APP_URL}?contact=${htmlEscape(row.event_link_id || '')}" `
+           + `style="color:${HEADER};text-decoration:none">${htmlEscape(name)}</a>`;
     }
     if (row.event_link_type === 'case') {
       const name = row.case_number_full || row.case_number
         || (row.event_link_id != null ? `Case ${row.event_link_id}` : '');
       if (!name) return '';
-      return `<a href="${APP_URL}?case=${row.case_id || row.event_link_id || ''}" `
-           + `style="color:${HEADER};text-decoration:none">${name}</a>`;
+      return `<a href="${APP_URL}?case=${htmlEscape(row.case_id || row.event_link_id || '')}" `
+           + `style="color:${HEADER};text-decoration:none">${htmlEscape(name)}</a>`;
     }
     if (row.event_link_type === 'case_number') {
       // Label = the docket verbatim. Linked only when the docket currently
@@ -1757,21 +1787,23 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
       const name = row.event_link_id || '';
       if (!name) return '';
       if (row.resolved_case_id) {
-        return `<a href="${APP_URL}?case=${row.resolved_case_id}" `
-             + `style="color:${HEADER};text-decoration:none">${name}</a>`;
+        return `<a href="${APP_URL}?case=${htmlEscape(row.resolved_case_id)}" `
+             + `style="color:${HEADER};text-decoration:none">${htmlEscape(name)}</a>`;
       }
-      return name;
+      return htmlEscape(name);
     }
     return '';
   }
 
   function eventRow(row) {
     const time = timeLabel(row);
+    // entityLink() returns finished markup (already escaped inside); the other
+    // two are raw fields and are escaped as they go into the list.
     const meta = [];
-    if (row.event_type) meta.push(row.event_type);
+    if (row.event_type) meta.push(htmlEscape(row.event_type));
     const ent = entityLink(row);
     if (ent) meta.push(ent);
-    if (row.event_location) meta.push(row.event_location);
+    if (row.event_location) meta.push(htmlEscape(row.event_location));
 
     const sep = '<span style="color:#d1d5db;padding:0 6px">·</span>';
     const metaLine = meta.length
@@ -1779,14 +1811,14 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
       : '';
     const linkLine = row.event_link
       ? `<div style="margin-top:3px;font-size:12px">`
-        + `<a href="${row.event_link}" style="color:${HEADER};text-decoration:none">Open link ↗</a></div>`
+        + `<a href="${htmlEscape(row.event_link)}" style="color:${HEADER};text-decoration:none">Open link ↗</a></div>`
       : '';
 
     return `<tr style="border-bottom:1px solid #f3f4f6">
       <td style="padding:10px 10px 10px 0;font-size:12px;color:#111827;font-weight:600;
                  white-space:nowrap;vertical-align:top;width:80px">${time}</td>
       <td style="padding:10px 0;vertical-align:top">
-        <div style="font-size:14px;color:#111827;font-weight:600">${row.event_title || 'Event'}</div>
+        <div style="font-size:14px;color:#111827;font-weight:600">${htmlEscape(row.event_title || 'Event')}</div>
         ${metaLine}
         ${linkLine}
       </td>
@@ -1797,21 +1829,24 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
     return `<div style="margin-bottom:22px">
       <p style="margin:0 0 6px;font-size:12px;font-weight:700;color:${HEADER};
                 letter-spacing:1px;text-transform:uppercase;
-                border-bottom:2px solid ${HEADER};padding-bottom:6px">${group.dateName}</p>
+                border-bottom:2px solid ${HEADER};padding-bottom:6px">${htmlEscape(group.dateName)}</p>
       <table width="100%" cellpadding="0" cellspacing="0"><tbody>
         ${(group.events || []).map(eventRow).join('')}
       </tbody></table>
     </div>`;
   }
 
-  const greeting = recipientFName ? `Hi ${recipientFName},` : 'Hello,';
+  const greeting = recipientFName ? `Hi ${htmlEscape(recipientFName)},` : 'Hello,';
+  // `subject` is display text for the <title> and the header band only — this
+  // builder returns HTML, and the caller composes its own MIME subject header
+  // (which must stay unescaped). Escaped at each interpolation point below.
   const subject  = `Upcoming Events${windowLabel ? ` — ${windowLabel}` : ''}`;
 
   const body = `
     <h2 style="margin:0 0 2px;font-size:22px;color:#111827">Upcoming Events</h2>
     <p style="margin:0 0 18px;font-size:14px;color:#6b7280">
       ${greeting} here ${total === 1 ? 'is' : 'are'} ${total}
-      scheduled event${total === 1 ? '' : 's'}${windowLabel ? ` for ${windowLabel}` : ''}.
+      scheduled event${total === 1 ? '' : 's'}${windowLabel ? ` for ${htmlEscape(windowLabel)}` : ''}.
     </p>
     ${groups.map(dayBlock).join('')}
     <p style="margin:18px 0 0;font-size:13px;color:#9ca3af">
@@ -1824,7 +1859,7 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${subject}</title>
+<title>${htmlEscape(subject)}</title>
 </head>
 <body style="margin:0;padding:0;background:#f0fdfa;font-family:'Segoe UI',Arial,sans-serif">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0fdfa;padding:32px 0">
@@ -1835,7 +1870,7 @@ function buildEventDigestEmail(recipientFName, eventsByDate, opts = {}) {
       <tr>
         <td style="background:${HEADER};padding:22px 32px 18px">
           <span style="color:#ccfbf1;font-size:11px;font-weight:600;
-                       letter-spacing:2px;text-transform:uppercase">${subject}</span>
+                       letter-spacing:2px;text-transform:uppercase">${htmlEscape(subject)}</span>
         </td>
       </tr>
       <tr>

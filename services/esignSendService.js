@@ -1854,43 +1854,23 @@ async function listRequests(db, { linkableType = null, linkableId = null, status
     return filtered.map(_shapeForList);
   }
 
-  const where = [];
-  const params = [];
-  if (linkableType != null) {
-    if (!esignService.LINKABLE_TYPES.includes(linkableType)) {
-      throw _err('ESIGN_BAD_LINKABLE', `Invalid link type "${linkableType}".`);
-    }
-    where.push('linkable_type = ?');
-    params.push(linkableType);
+  // Validate HERE, not by letting esignService's asserts fire. Those throw
+  // INVALID_LINKABLE_TYPE / INVALID_ESIGN_STATUS; the routes map the
+  // ESIGN_BAD_* vocabulary to 400 and callers pin it. Outward-facing error
+  // codes belong to the API-shaping layer — esignService re-asserts underneath
+  // as a belt for its own direct callers, which is unreachable from here.
+  if (linkableType != null && !esignService.LINKABLE_TYPES.includes(linkableType)) {
+    throw _err('ESIGN_BAD_LINKABLE', `Invalid link type "${linkableType}".`);
   }
-  if (linkableId != null) {
-    where.push('linkable_id = ?');
-    params.push(String(linkableId));   // idx_sr_linkable — see esignService header
-  }
-  if (status != null) {
-    if (!esignService.STATUSES.includes(status)) {
-      throw _err('ESIGN_BAD_STATUS', `Unknown status "${status}".`);
-    }
-    where.push('status = ?');
-    params.push(status);
+  if (status != null && !esignService.STATUSES.includes(status)) {
+    throw _err('ESIGN_BAD_STATUS', `Unknown status "${status}".`);
   }
 
-  const [rows] = await db.query(
-    `SELECT * FROM signing_requests
-      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-      ORDER BY COALESCE(sent_at, created_at) DESC, id DESC`,
-    params
-  );
-
-  // getById's shaping (JSON hydration, recipients-always-an-array) is what the
-  // rest of the subsystem relies on, so route the raw rows back through it
-  // rather than re-implementing _shape here and letting the two drift.
-  return (rows || []).map((r) => _shapeForList({
-    ...r,
-    recipients: typeof r.recipients === 'string'
-      ? (() => { try { return JSON.parse(r.recipients); } catch { return []; } })()
-      : (Array.isArray(r.recipients) ? r.recipients : []),
-  }));
+  // The query lives in esignService with every other signing_requests read —
+  // rows come back already shaped (JSON hydrated, recipients always an array),
+  // so the local re-hydration this used to carry is gone and cannot drift.
+  const rows = await esignService.listRequests(db, { linkableType, linkableId, status });
+  return rows.map(_shapeForList);
 }
 
 /** One request plus its full audit trail, newest event last. */
@@ -1898,13 +1878,10 @@ async function getRequestDetail(db, id) {
   const row = await esignService.getById(db, id);
   if (!row) throw _err('ESIGN_NOT_FOUND', `Signing request ${id} not found.`);
 
-  const [events] = await db.query(
-    `SELECT id, event, recipient_email, payload, occurred_at, created_at
-       FROM signing_request_events
-      WHERE signing_request_id = ?
-      ORDER BY occurred_at ASC, id ASC`,
-    [id]
-  );
+  // Trail query lives in esignService alongside _insertEvent, which is the only
+  // writer — read and write shapes now sit in one file. Payload hydration comes
+  // back done.
+  const events = await esignService.listEvents(db, id);
 
   return {
     request: {
@@ -1923,12 +1900,7 @@ async function getRequestDetail(db, id) {
       created_at:      row.created_at,
       updated_at:      row.updated_at,
     },
-    events: (events || []).map((e) => ({
-      ...e,
-      payload: typeof e.payload === 'string'
-        ? (() => { try { return JSON.parse(e.payload); } catch { return null; } })()
-        : e.payload,
-    })),
+    events,
   };
 }
 

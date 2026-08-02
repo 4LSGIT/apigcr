@@ -560,6 +560,80 @@ async function listOutstanding(db, { linkableType = null, linkableId = null } = 
   return (rows || []).map(_shape);
 }
 
+/**
+ * Every request matching an optional filter set, NEWEST FIRST — the browse
+ * counterpart to listOutstanding's oldest-first work queue.
+ *
+ * Ordering is COALESCE(sent_at, created_at) DESC, id DESC: a draft that was
+ * never sent sorts by when it was created, and id breaks ties so paging is
+ * stable. Deliberately the mirror image of listOutstanding — a queue is worked
+ * from the front, a history is read from the top.
+ *
+ * All three filters are optional and AND together; passing none returns the
+ * whole table. There is no LIMIT: the caller (esignSendService.listRequests)
+ * always narrows by linkable or by outstanding-status in practice, and the
+ * global dashboard wants the full set. Add paging here, not at the call site,
+ * if the table ever outgrows that.
+ *
+ * linkableId is String()-coerced — see the header note on key_len 516.
+ *
+ * Rows come back FULLY SHAPED (JSON hydrated, recipients always an array).
+ * Presentation trimming is the caller's job, not this layer's.
+ *
+ * @throws INVALID_LINKABLE_TYPE | INVALID_ESIGN_STATUS
+ */
+async function listRequests(db, { linkableType = null, linkableId = null, status = null } = {}) {
+  const where  = [];
+  const params = [];
+
+  if (linkableType != null) {
+    _assertLinkableType(linkableType);
+    where.push('linkable_type = ?');
+    params.push(linkableType);
+  }
+  if (linkableId != null) {
+    where.push('linkable_id = ?');
+    params.push(String(linkableId));
+  }
+  if (status != null) {
+    _assertStatus(status);
+    where.push('status = ?');
+    params.push(status);
+  }
+
+  const [rows] = await db.query(
+    `SELECT * FROM signing_requests
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+      ORDER BY COALESCE(sent_at, created_at) DESC, id DESC`,
+    params
+  );
+  return (rows || []).map(_shape);
+}
+
+/**
+ * The append-only audit trail for one request, OLDEST FIRST (occurred_at ASC,
+ * id ASC) — read as a timeline, so the order is the reverse of the request
+ * lists above. id breaks ties because occurred_at has second resolution and a
+ * webhook burst can land several events inside one second.
+ *
+ * payload is hydrated the same way request JSON columns are; a payload that
+ * fails to parse reads as null rather than throwing — this is an audit view,
+ * and one malformed row must never hide the rest of the trail.
+ *
+ * Returns [] for an unknown id. Existence is the caller's question to ask
+ * (getById), not this function's to answer.
+ */
+async function listEvents(db, requestId) {
+  const [rows] = await db.query(
+    `SELECT id, event, recipient_email, payload, occurred_at, created_at
+       FROM signing_request_events
+      WHERE signing_request_id = ?
+      ORDER BY occurred_at ASC, id ASC`,
+    [requestId]
+  );
+  return (rows || []).map((e) => ({ ...e, payload: _parseJsonField(e.payload) }));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CREATE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1194,6 +1268,8 @@ module.exports = {
   getByProviderId,
   getByTrackingId,
   listOutstanding,
+  listRequests,
+  listEvents,
   getSourcePdf,
   hasSourcePdf,
   // logging seam (slice 1C)

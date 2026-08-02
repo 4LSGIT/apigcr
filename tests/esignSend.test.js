@@ -45,6 +45,12 @@ jest.mock('../services/esignService', () => ({
   appendEvent:     jest.fn(async () => ({ ok: true })),
   getById:         jest.fn(),
   listOutstanding: jest.fn(async () => []),
+  // The signing_requests / signing_request_events queries live in esignService.
+  // Mocked at the boundary here; their real SQL behaviour (filter composition,
+  // ordering, linkable_id string coercion, JSON hydration) is pinned in
+  // tests/esignService.test.js against the dispatching stub.
+  listRequests:    jest.fn(async () => []),
+  listEvents:      jest.fn(async () => []),
   setPdfPaths:     jest.fn(),
   setLogHook:      jest.fn(),
   // Phase 2E — source-pdf surface
@@ -243,6 +249,8 @@ beforeEach(() => {
   esignService.applyStatus.mockImplementation(async (db, id, { status }) =>
     ({ changed: true, request: makeRow({ id, status }) }));
   esignService.getById.mockResolvedValue(makeRow());
+  esignService.listRequests.mockResolvedValue([]);
+  esignService.listEvents.mockResolvedValue([]);
   esignService._normalizeRecipients.mockImplementation((r) => r || []);
   esignFilingService.fileExternalDocument.mockResolvedValue({
     filed: true, skipped: false, reason: null, note: null,
@@ -1255,7 +1263,8 @@ describe('listRequests', () => {
       recipients: [{ name: 'John', email: 'j@x.com', order: 1, status: 'viewed', ip: '203.0.113.9' }],
       raw_payload: { secret: true },
     });
-    const rows = await svc.listRequests(makeDb({ rows: [raw] }), {});
+    esignService.listRequests.mockResolvedValue([raw]);
+    const rows = await svc.listRequests(makeDb(), {});
 
     expect(rows).toHaveLength(1);
     expect(rows[0].recipients[0]).toEqual({ name: 'John', email: 'j@x.com', status: 'viewed' });
@@ -1264,8 +1273,16 @@ describe('listRequests', () => {
   });
 
   test('days_pending is null before a request has been sent', async () => {
-    const rows = await svc.listRequests(makeDb({ rows: [makeRow({ status: 'draft', sent_at: null })] }), {});
+    esignService.listRequests.mockResolvedValue([makeRow({ status: 'draft', sent_at: null })]);
+    const rows = await svc.listRequests(makeDb(), {});
     expect(rows[0].days_pending).toBeNull();
+  });
+
+  test('delegates the query to esignService with the filters intact', async () => {
+    await svc.listRequests(makeDb(), { linkableType: 'contact', linkableId: 22, status: 'sent' });
+    expect(esignService.listRequests).toHaveBeenCalledWith(
+      expect.anything(), { linkableType: 'contact', linkableId: 22, status: 'sent' }
+    );
   });
 
   test('outstanding=true routes through esignService.listOutstanding', async () => {
@@ -1277,12 +1294,30 @@ describe('listRequests', () => {
     expect(rows).toHaveLength(1);
   });
 
-  test('linkable_id is bound as a STRING', async () => {
-    const db = makeDb({ rows: [] });
+  test('issues NO SQL of its own — the query belongs to esignService', async () => {
+    const db = makeDb();
     await svc.listRequests(db, { linkableType: 'contact', linkableId: 22 });
-    const call = db.query.mock.calls.find((c) => /FROM signing_requests/i.test(c[0]));
-    expect(call[1]).toContain('22');
-    expect(typeof call[1][call[1].length - 1]).toBe('string');
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  // CONTRACT (the buildContext lesson): the mock above accepts any argument
+  // shape, so pin the REAL function's signature. Positional args must not
+  // silently read as an empty filter set and return the whole table.
+  test('the real esignService.listRequests takes an OPTIONS OBJECT', async () => {
+    const real = jest.requireActual('../services/esignService');
+    expect(typeof real.listRequests).toBe('function');
+    expect(typeof real.listEvents).toBe('function');
+
+    const db = { query: jest.fn(async () => [[]]) };
+    // Object form: the linkableType is validated, so a bad one throws.
+    await expect(real.listRequests(db, { linkableType: 'matter' }))
+      .rejects.toMatchObject({ code: 'INVALID_LINKABLE_TYPE' });
+    // Positional form: the second arg is not an options object, so no filter
+    // is applied — a silent full-table read. Pinned so the shape cannot drift.
+    await real.listRequests(db, 'case');
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toMatch(/FROM signing_requests/i);
+    expect(params).toEqual([]);
   });
 
   test('rejects an unknown status filter', async () => {
@@ -1300,15 +1335,16 @@ describe('listRequests', () => {
 describe('getRequestDetail', () => {
   test('returns the request plus its full event list with parsed payloads', async () => {
     esignService.getById.mockResolvedValue(makeRow({ status: 'sent', provider_id: 'ZS-9001' }));
-    const db = makeDb({
-      events: [
-        { id: 1, event: 'created', recipient_email: null, payload: '{"kind":"retainer_prepetition"}', occurred_at: 'a', created_at: 'a' },
-        { id: 2, event: 'sent',    recipient_email: null, payload: { provider_id: 'ZS-9001' },        occurred_at: 'b', created_at: 'b' },
-      ],
-    });
+    // esignService.listEvents hydrates payloads; this layer passes them through.
+    esignService.listEvents.mockResolvedValue([
+      { id: 1, event: 'created', recipient_email: null, payload: { kind: 'retainer_prepetition' }, occurred_at: 'a', created_at: 'a' },
+      { id: 2, event: 'sent',    recipient_email: null, payload: { provider_id: 'ZS-9001' },       occurred_at: 'b', created_at: 'b' },
+    ]);
+    const db = makeDb();
 
     const out = await svc.getRequestDetail(db, 42);
 
+    expect(esignService.listEvents).toHaveBeenCalledWith(expect.anything(), 42);
     expect(out.request.provider_id).toBe('ZS-9001');
     expect(out.events).toHaveLength(2);
     expect(out.events[0].payload).toEqual({ kind: 'retainer_prepetition' });

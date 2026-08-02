@@ -184,22 +184,58 @@ function makeDb() {
       return [{ affectedRows: 1 }];
     }
 
-    // ── listOutstanding ───────────────────────────────────────
+    // ── listOutstanding (ASC) and listRequests (DESC) ─────────
+    // Both are COALESCE-ordered SELECTs over signing_requests and differ by
+    // direction, so the stub dispatches on the direction rather than growing
+    // two near-identical branches. listOutstanding always carries a
+    // `status IN (...)` clause; listRequests carries `status = ?` only when the
+    // caller filtered, so the param walk must not assume a leading status block.
     if (/ORDER BY COALESCE\(sent_at, created_at\)/i.test(s)) {
-      const statusCount = (s.match(/status IN \(([^)]*)\)/i)[1].match(/\?/g) || []).length;
-      const statuses = params.slice(0, statusCount);
-      let rest = params.slice(statusCount);
+      const desc = /COALESCE\(sent_at, created_at\) DESC/i.test(s);
+      let rows = state.requests.slice();
+      let rest = params.slice();
 
-      let rows = state.requests.filter(r => statuses.includes(r.status));
+      const inMatch = s.match(/status IN \(([^)]*)\)/i);
+      if (inMatch) {
+        const statusCount = (inMatch[1].match(/\?/g) || []).length;
+        const statuses = rest.slice(0, statusCount);
+        rest = rest.slice(statusCount);
+        rows = rows.filter(r => statuses.includes(r.status));
+      }
+      // Clause order mirrors the service's WHERE construction exactly.
       if (/linkable_type = \?/i.test(s)) { rows = rows.filter(r => r.linkable_type === rest[0]); rest = rest.slice(1); }
-      if (/linkable_id = \?/i.test(s))   { rows = rows.filter(r => r.linkable_id === rest[0]);   rest = rest.slice(1); }
+      if (/linkable_id = \?/i.test(s))   { rows = rows.filter(r => r.linkable_id   === rest[0]); rest = rest.slice(1); }
+      if (/status = \?/i.test(s))        { rows = rows.filter(r => r.status        === rest[0]); rest = rest.slice(1); }
 
       rows = rows.slice().sort((a, b) => {
         const ka = a.sent_at || a.created_at;
         const kb = b.sent_at || b.created_at;
-        return ka === kb ? a.id - b.id : (ka < kb ? -1 : 1);
+        if (ka === kb) return desc ? b.id - a.id : a.id - b.id;
+        const cmp = ka < kb ? -1 : 1;
+        return desc ? -cmp : cmp;
       });
       return [rows.map(emit)];
+    }
+
+    // ── listEvents ────────────────────────────────────────────
+    if (/FROM signing_request_events/i.test(s)) {
+      const rows = state.events
+        .filter(e => e.signing_request_id === params[0])
+        .slice()
+        .sort((a, b) => (a.occurred_at === b.occurred_at
+          ? a.id - b.id
+          : (a.occurred_at < b.occurred_at ? -1 : 1)));
+      return [rows.map(e => ({
+        id: e.id,
+        event: e.event,
+        recipient_email: e.recipient_email,
+        // _insertEvent writes payload as a JSON string; hand it back the way
+        // the configured driver would, same switch the request rows use.
+        payload: e.payload == null ? null
+          : (state.jsonAsStrings ? e.payload : JSON.parse(e.payload)),
+        occurred_at: e.occurred_at,
+        created_at: e.created_at,
+      }))];
     }
 
     // ── SELECTs ───────────────────────────────────────────────
@@ -431,6 +467,16 @@ describe('linkable_id string coercion', () => {
   test('listOutstanding binds a numeric linkableId as a string', async () => {
     const db = makeDb();
     await esignService.listOutstanding(db, { linkableType: 'contact', linkableId: 22 });
+
+    const call  = db.query.mock.calls.find(([sql]) => /ORDER BY COALESCE/i.test(sql));
+    const bound = call[1][call[1].length - 1];
+    expect(typeof bound).toBe('string');
+    expect(bound).toBe('22');
+  });
+
+  test('listRequests binds a numeric linkableId as a string', async () => {
+    const db = makeDb();
+    await esignService.listRequests(db, { linkableType: 'contact', linkableId: 22 });
 
     const call  = db.query.mock.calls.find(([sql]) => /ORDER BY COALESCE/i.test(sql));
     const bound = call[1][call[1].length - 1];
@@ -1103,5 +1149,148 @@ describe('partially_signed transitions', () => {
     expect(out.reason).toBe('noop');
     expect(out.request.recipients.map(r => r.status)).toEqual(['signed', 'signed', 'viewed']);
     expect(db.state.events.length).toBe(before);   // silent: no event appended
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// listRequests / listEvents
+//
+// Both queries used to live in esignSendService and were only ever exercised
+// through mocks there, which proved the shaping and nothing about the SQL.
+// They now sit here with the rest of the signing_requests reads, so the real
+// behaviour — filter composition, ordering, hydration — is pinned against the
+// dispatching stub instead.
+// ─────────────────────────────────────────────────────────────
+
+describe('listRequests', () => {
+  /** Three requests with known sort keys and mixed linkables. */
+  async function seedThree() {
+    const db = makeDb();
+    const a = await esignService.createRequest(db, baseArgs({ kind: 'other' }));
+    const b = await esignService.createRequest(db, baseArgs({
+      linkableType: 'contact', linkableId: '22', kind: 'other',
+    }));
+    const c = await esignService.createRequest(db, baseArgs({ kind: 'other' }));
+    await esignService.markSent(db, b.id, { providerId: 'ZS-B' });
+    return { db, a, b, c };
+  }
+
+  test('no filters returns everything, newest first', async () => {
+    const { db, a, b, c } = await seedThree();
+    const rows = await esignService.listRequests(db, {});
+    expect(rows.map(r => r.id)).toEqual([b.id, c.id, a.id]);
+  });
+
+  test('newest-first is the MIRROR of listOutstanding — same key, opposite end', async () => {
+    const { db } = await seedThree();
+    const desc = (await esignService.listRequests(db, {})).map(r => r.id);
+    const asc  = (await esignService.listOutstanding(db, {})).map(r => r.id);
+    // listOutstanding only carries in-flight rows, so compare the overlap.
+    const overlap = desc.filter(id => asc.includes(id));
+    expect(overlap).toEqual(asc.slice().reverse());
+  });
+
+  test('sorts a never-sent row by created_at and a sent row by sent_at', async () => {
+    const { db, b, c } = await seedThree();
+    // b was created SECOND but sent last, so its sent_at outranks c's created_at.
+    const rows = await esignService.listRequests(db, {});
+    expect(rows[0].id).toBe(b.id);
+    expect(rows[0].sent_at).toBeTruthy();
+    expect(rows.find(r => r.id === c.id).sent_at).toBeNull();
+  });
+
+  test('filters compose: linkableType AND linkableId AND status', async () => {
+    const { db, b } = await seedThree();
+    const rows = await esignService.listRequests(db, {
+      linkableType: 'contact', linkableId: '22', status: 'sent',
+    });
+    expect(rows.map(r => r.id)).toEqual([b.id]);
+  });
+
+  test('a non-matching status filter returns [] rather than everything', async () => {
+    const { db } = await seedThree();
+    expect(await esignService.listRequests(db, { status: 'declined' })).toEqual([]);
+  });
+
+  test('rows come back SHAPED — recipients an array, JSON hydrated', async () => {
+    const db = makeDb();
+    await esignService.createRequest(db, baseArgs({
+      kind: 'other',
+      recipients: [{ name: 'John', email: 'j@x.com', order: 1 }],
+    }));
+    const [row] = await esignService.listRequests(db, {});
+    expect(Array.isArray(row.recipients)).toBe(true);
+    expect(row.recipients[0].email).toBe('j@x.com');
+  });
+
+  test('shaping survives a driver that returns JSON as strings', async () => {
+    const db = makeDb();
+    await esignService.createRequest(db, baseArgs({
+      kind: 'other',
+      recipients: [{ name: 'John', email: 'j@x.com', order: 1 }],
+    }));
+    db.state.jsonAsStrings = true;
+    const [row] = await esignService.listRequests(db, {});
+    expect(Array.isArray(row.recipients)).toBe(true);
+    expect(row.recipients[0].email).toBe('j@x.com');
+  });
+
+  test('rejects an unknown linkableType before touching the DB', async () => {
+    const db = makeDb();
+    await expect(esignService.listRequests(db, { linkableType: 'matter' }))
+      .rejects.toMatchObject({ code: 'INVALID_LINKABLE_TYPE' });
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
+  test('rejects an unknown status before touching the DB', async () => {
+    const db = makeDb();
+    await expect(esignService.listRequests(db, { status: 'pending' }))
+      .rejects.toMatchObject({ code: 'INVALID_ESIGN_STATUS' });
+    expect(db.query).not.toHaveBeenCalled();
+  });
+});
+
+describe('listEvents', () => {
+  test('returns the trail oldest-first with payloads parsed', async () => {
+    const db  = makeDb();
+    const req = await esignService.createRequest(db, baseArgs({ kind: 'other' }));
+    await esignService.appendEvent(db, req.id, { event: 'reminded', payload: { n: 1 } });
+    await esignService.appendEvent(db, req.id, { event: 'delivered', payload: { n: 2 } });
+
+    const events = await esignService.listEvents(db, req.id);
+    const names  = events.map(e => e.event);
+    expect(names[0]).toBe('created');                 // createRequest's own event
+    expect(names.slice(-2)).toEqual(['reminded', 'delivered']);
+    expect(events[events.length - 1].payload).toEqual({ n: 2 });
+  });
+
+  test('a null payload stays null rather than becoming {}', async () => {
+    const db  = makeDb();
+    const req = await esignService.createRequest(db, baseArgs({ kind: 'other' }));
+    await esignService.appendEvent(db, req.id, { event: 'reminded' });
+    const last = (await esignService.listEvents(db, req.id)).pop();
+    expect(last.payload).toBeNull();
+  });
+
+  test('scopes to ONE request — a sibling trail never leaks in', async () => {
+    const db = makeDb();
+    const a  = await esignService.createRequest(db, baseArgs({ kind: 'other' }));
+    const b  = await esignService.createRequest(db, baseArgs({ kind: 'other' }));
+    await esignService.appendEvent(db, b.id, { event: 'reminded' });
+
+    const events = await esignService.listEvents(db, a.id);
+    expect(events.every(e => e.event !== 'reminded')).toBe(true);
+  });
+
+  test('an unknown id returns [] — existence is getById\u2019s question', async () => {
+    expect(await esignService.listEvents(makeDb(), 9999)).toEqual([]);
+  });
+
+  test('never exposes signing_request_id — the caller already knows it', async () => {
+    const db  = makeDb();
+    const req = await esignService.createRequest(db, baseArgs({ kind: 'other' }));
+    const [e] = await esignService.listEvents(db, req.id);
+    expect(Object.keys(e).sort())
+      .toEqual(['created_at', 'event', 'id', 'occurred_at', 'payload', 'recipient_email']);
   });
 });
