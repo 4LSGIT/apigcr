@@ -406,6 +406,12 @@ router.post('/api/public/get-upload-link', uploadRateLimit, async (req, res) => 
       return res.status(400).json({ status: 'error', message: 'case_id and filename are required' });
     }
  
+    // Sanitize: public callers must not steer the Dropbox path. Strip path
+    // separators and leading dots; '..' without a separator is just a filename.
+    const safeFilename =
+      String(filename).replace(/[\/\\]/g, '_').replace(/^\.+/, '').slice(0, 200)
+      || 'upload.dat';
+ 
     // Look up the case's Dropbox shared link
     const [[caseRow]] = await req.db.query(
       'SELECT case_dropbox FROM cases WHERE case_id = ?',
@@ -429,7 +435,7 @@ router.post('/api/public/get-upload-link', uploadRateLimit, async (req, res) => 
     try {
       ({ link } = await dropbox.getTemporaryUploadLink(req.db, {
         sharedLink,
-        filename,
+        filename: safeFilename,
         subfolder: 'Client Uploads',
       }));
     } catch (err) {
