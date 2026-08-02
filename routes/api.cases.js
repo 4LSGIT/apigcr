@@ -7,6 +7,7 @@
  * GET    /api/cases                       list with search/filters
  * GET    /api/cases/:id                   single + sub-entities (?include=)
  * PATCH  /api/cases/:id                   update fields
+ * POST   /api/cases/:id/merge             absorb another case into :id
  * GET    /api/cases/:id/contacts          contacts for case
  * POST   /api/cases/:id/contacts          add contact to case
  * DELETE /api/cases/:id/contacts/:contactId  remove contact from case
@@ -80,6 +81,49 @@ router.patch('/api/cases/:id', jwtOrApiKey, async (req, res) => {
     console.error('PATCH /api/cases/:id error:', err);
     const status = err.message.includes('cannot update') ? 400 : err.message.includes('not found') ? 404 : 500;
     res.status(status).json({ status: 'error', message: err.message });
+  }
+});
+
+// ─── MERGE (2026-08) ───
+//
+// POST /api/cases/:id/merge   body { source_case_id, dry_run?, force? }
+//
+// :id = the SURVIVOR (case that remains); source_case_id = the case that is
+// absorbed and deleted. All merge semantics (docket guard, additive field
+// fill, child repointing, snapshot-then-delete) live in
+// caseService.mergeCases — see its doc block.
+//
+//   dry_run: true  → full plan + per-table move counts, zero writes
+//   force:   true  → proceed despite blocking field conflicts (survivor wins;
+//                    loser values preserved in the snapshot)
+//
+// Errors: 404 case missing · 409 self-merge / docket mismatch / adopt
+// collision / blocking conflicts (body carries `conflicts` when applicable).
+router.post('/api/cases/:id/merge', jwtOrApiKey, async (req, res) => {
+  try {
+    const result = await caseService.mergeCases(
+      req.db,
+      req.params.id,
+      req.body.source_case_id,
+      {
+        dryRun: !!req.body.dry_run,
+        force:  !!req.body.force,
+        by:     req.auth?.userId || 0,
+      }
+    );
+    res.json({ status: 'success', data: result });
+  } catch (err) {
+    console.error('POST /api/cases/:id/merge error:', err);
+    const codes = {
+      MERGE_NOT_FOUND: 404,
+      MERGE_SELF: 409,
+      MERGE_DOCKET: 409,
+      MERGE_CONFLICT: 409,
+    };
+    const status = codes[err.code] || 500;
+    const body = { status: 'error', message: err.message };
+    if (err.conflicts) body.conflicts = err.conflicts;
+    res.status(status).json(body);
   }
 });
 

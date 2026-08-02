@@ -15,7 +15,10 @@
  *     Join: cases.case_trustee = trustees.trustee_full_name
  *   - case_stage enum: 'Open','Pending','Filed','Concluded','Closed'
  *   - case_relate has a uniqueness trigger — catch SQLSTATE 45000
- *   - No DELETE for cases (legal records)
+ *   - No DELETE for cases (legal records). SANCTIONED EXCEPTION: mergeCases
+ *     deletes the absorbed case AFTER snapshotting its full row into the
+ *     survivor's log (log_extra) — the record survives, attached to the case
+ *     that absorbed it.
  *
  * Slice 1 (log reader semantic unification):
  *   - getCase's log block now delegates to logService._buildCaseLogWhere,
@@ -1001,6 +1004,386 @@ async function listCaseWorkflows(db, caseId, {
   return { workflows, total, active_total };
 }
 
+// ─────────────────────────────────────────────────────────────
+// mergeCases  (2026-08 — case merge)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Merge (absorb) case `loserId` into case `survivorId`.
+ *
+ * WHY THIS EXISTS: the recurring data shape is a docketless "lead" case
+ * (intake info, dropbox, clio_matter) sitting beside the docketed case it
+ * became. Merge repoints every child record, additively fills the survivor's
+ * empty columns from the loser, snapshots the loser row into the survivor's
+ * log, and deletes the loser.
+ *
+ * SURVIVOR RULE (docket identity is dual): app children link by case_id, but
+ * log rows and 'case_number'-typed events resolve by DOCKET STRING at read
+ * time — they cannot be repointed to a different case_id. Therefore:
+ *   - If both cases carry a non-empty value in the SAME docket column
+ *     (case_number or case_number_full) and the values differ → 409 refuse.
+ *     Different dockets = different court cases. Never merged.
+ *   - If the loser holds docket values the survivor lacks, they are adopted
+ *     onto the survivor (collision-checked against all OTHER cases —
+ *     excluding both participants). Docket-form log rows and case_number
+ *     events then follow the string automatically.
+ *
+ * FIELD MERGE IS ADDITIVE (same principle as CaseAdoptDialog): fill
+ * survivor's empty columns from loser; never overwrite non-empty.
+ *   - Empty = NULL, '', or 0 for numeric columns.
+ *   - Conflicts (both non-empty, different) BLOCK the merge (409 with the
+ *     conflict list) unless `force` — force means survivor-wins, and the
+ *     losing values are still preserved in the snapshot.
+ *   - EXCEPT lifecycle columns case_stage / case_status / case_open_date:
+ *     these differ on virtually every real merge pair (Open lead vs Filed
+ *     case), so they are survivor-wins BY DESIGN — reported, never blocking.
+ *   - case_notes / case_alerts: concatenated with a provenance separator.
+ *   - case_dropbox: folders can't be merged server-side. Survivor keeps its
+ *     own; a differing loser folder URL is appended to case_notes so the
+ *     link is never lost.
+ *
+ * CHILD REPOINTS (loser case_id → survivor case_id), all in one InnoDB
+ * transaction:
+ *   case_relate      — uniqueness trigger (SQLSTATE 45000) blocks dupes, so
+ *                      loser rows whose (client, type) already exist on the
+ *                      survivor are DELETEd first, the rest UPDATEd.
+ *   appts            — appt_case_id
+ *   tasks            — task_link_id  WHERE task_link_type='case'
+ *   checklists       — link          WHERE link_type='case'
+ *   events           — event_link_id WHERE event_link_type='case'
+ *                      ('case_number' rows follow the docket — no touch)
+ *   log              — log_link_id + log_link WHERE log_link_type='case'
+ *                      AND log_link_id = loser case_id
+ *                      (docket-form rows follow the docket — no touch)
+ *   form_submissions — link_id       WHERE link_type='case'
+ *   signing_requests — linkable_id   WHERE linkable_type='case'
+ *   sequences        — seq_case
+ *   court_ai_log     — resolved_case_id
+ *   video_views      — case_id
+ *   ai_change_log    — entity_id     WHERE entity_type='case'
+ *
+ * LOSER DISPOSITION: full row JSON + move counts snapshotted via
+ * logService.createLogEntry (type 'update', link_type 'case', link_id =
+ * survivor; snapshot in log_extra) — THEN hard-deleted. This is the sanctioned
+ * exception to the "no DELETE for cases" rule: the legal record survives in
+ * the snapshot, attached to the case that absorbed it.
+ *
+ * @param {object} db          mysql2 promise pool
+ * @param {string} survivorId  case that remains
+ * @param {string} loserId     case that is absorbed and deleted
+ * @param {object} [opts]
+ * @param {boolean} [opts.dryRun=false]  compute the full plan, write nothing
+ * @param {boolean} [opts.force=false]   proceed despite blocking conflicts
+ *                                       (survivor-wins on those columns)
+ * @param {number}  [opts.by=0]          user id for the snapshot log entry
+ * @returns {object} {
+ *   dry_run, survivor_id, loser_id,
+ *   docket:   { adopted: {col: value} },
+ *   fields:   { filled: [col…], survivor_wins: [{column,survivor,loser}…],
+ *               conflicts: [{column,survivor,loser}…] },   // blocking set
+ *   notes_appended, alerts_appended, dropbox_noted,
+ *   children: { table: rowCount, … , case_relate_deduped }
+ * }
+ * Throws err with .code:
+ *   'MERGE_NOT_FOUND'  — either case missing
+ *   'MERGE_SELF'       — survivor === loser
+ *   'MERGE_DOCKET'     — both hold differing non-empty values in the same
+ *                        docket column, OR adopt collision with a third case
+ *   'MERGE_CONFLICT'   — blocking field conflicts and !force
+ *                        (err.conflicts carries the list)
+ */
+async function mergeCases(db, survivorId, loserId, { dryRun = false, force = false, by = 0 } = {}) {
+  if (!survivorId || !loserId) throw new Error('mergeCases requires survivorId and loserId');
+  if (survivorId === loserId) {
+    const e = new Error('Cannot merge a case into itself');
+    e.code = 'MERGE_SELF';
+    throw e;
+  }
+
+  const [rows] = await db.query(
+    'SELECT * FROM cases WHERE case_id IN (?, ?)',
+    [survivorId, loserId]
+  );
+  const survivor = rows.find(r => r.case_id === survivorId);
+  const loser    = rows.find(r => r.case_id === loserId);
+  if (!survivor || !loser) {
+    const e = new Error(`Case not found: ${!survivor ? survivorId : loserId}`);
+    e.code = 'MERGE_NOT_FOUND';
+    throw e;
+  }
+
+  // ── helpers ──
+  const isEmpty = (v) => v === null || v === undefined || v === '' || v === 0;
+  // Normalize for equality comparison. Date objects (mysql2 DATE/DATETIME)
+  // compare by ISO string; everything else by String().
+  const norm = (v) => {
+    if (v instanceof Date) return v.toISOString();
+    return String(v);
+  };
+  const same = (a, b) => norm(a) === norm(b);
+
+  // ── docket guard + adopt plan ──
+  // Column-wise, shape-agnostic: for each docket column, both non-empty and
+  // different → refuse. Exactly one side non-empty (loser) → adopt.
+  const DOCKET_COLS = ['case_number', 'case_number_full'];
+  const adopt = {};   // {col: value} to copy loser → survivor
+  for (const col of DOCKET_COLS) {
+    const sv = isEmpty(survivor[col]) ? null : survivor[col];
+    const lv = isEmpty(loser[col])    ? null : loser[col];
+    if (sv !== null && lv !== null && !same(sv, lv)) {
+      const e = new Error(
+        `Docket mismatch on ${col}: survivor='${sv}' vs loser='${lv}'. ` +
+        `Different dockets are different court cases — refusing to merge.`
+      );
+      e.code = 'MERGE_DOCKET';
+      throw e;
+    }
+    if (sv === null && lv !== null) adopt[col] = lv;
+  }
+
+  // Adopt collision check against all OTHER cases. Mirrors
+  // checkCaseNumberCollision but excludes BOTH participants (the loser
+  // legitimately holds these values right now).
+  const adoptVals = [...new Set(Object.values(adopt))];
+  if (adoptVals.length) {
+    const ph = adoptVals.map(() => '?').join(', ');
+    const [clash] = await db.query(
+      `SELECT case_id, case_number, case_number_full
+         FROM cases
+        WHERE case_id NOT IN (?, ?)
+          AND ( (case_number      IS NOT NULL AND case_number      <> '' AND case_number      IN (${ph}))
+             OR (case_number_full IS NOT NULL AND case_number_full <> '' AND case_number_full IN (${ph})) )
+        LIMIT 1`,
+      [survivorId, loserId, ...adoptVals, ...adoptVals]
+    );
+    if (clash.length) {
+      const e = new Error(
+        `Docket adopt collision: case ${clash[0].case_id} already holds one of ` +
+        `[${adoptVals.join(', ')}].`
+      );
+      e.code = 'MERGE_DOCKET';
+      throw e;
+    }
+  }
+
+  // ── field merge plan (additive) ──
+  // Special-cased out of the generic pass:
+  //   case_id (PK), docket cols (above), notes/alerts (concat),
+  //   dropbox (keep + note).
+  const SKIP = new Set(['case_id', ...DOCKET_COLS, 'case_notes', 'case_alerts', 'case_dropbox']);
+  // Survivor-wins BY DESIGN — differ on ~every real pair; never blocking.
+  const SILENT_SURVIVOR_WINS = new Set(['case_stage', 'case_status', 'case_open_date']);
+
+  const filled        = {};   // col → loser value to write onto survivor
+  const survivorWins  = [];   // reported, non-blocking
+  const conflicts     = [];   // blocking (unless force)
+  for (const col of Object.keys(loser)) {
+    if (SKIP.has(col)) continue;
+    const sv = survivor[col];
+    const lv = loser[col];
+    if (isEmpty(lv)) continue;
+    if (isEmpty(sv)) { filled[col] = lv; continue; }
+    if (same(sv, lv)) continue;
+    const rec = { column: col, survivor: sv, loser: lv };
+    if (SILENT_SURVIVOR_WINS.has(col)) survivorWins.push(rec);
+    else conflicts.push(rec);
+  }
+
+  // ── notes / alerts / dropbox plan ──
+  const stamp = new Date().toISOString().slice(0, 10);
+  const sep = (what) => `\n\n--- merged from case ${loserId} on ${stamp} (${what}) ---\n`;
+  let notesAppend  = '';
+  let alertsAppend = '';
+  if (!isEmpty(loser.case_notes))  notesAppend  += sep('notes')  + loser.case_notes;
+  if (!isEmpty(loser.case_alerts)) alertsAppend += sep('alerts') + loser.case_alerts;
+
+  let dropboxNoted = false;
+  if (!isEmpty(loser.case_dropbox)) {
+    if (isEmpty(survivor.case_dropbox)) {
+      filled.case_dropbox = loser.case_dropbox;
+    } else if (!same(survivor.case_dropbox, loser.case_dropbox)) {
+      notesAppend += sep('dropbox folder') + loser.case_dropbox;
+      dropboxNoted = true;
+    }
+  }
+
+  // ── child repoint spec ──
+  // [label, countSql, updateSql, params-are-(survivorId, loserId) or (loserId)]
+  // Every UPDATE takes [survivorId, loserId]; every COUNT takes [loserId].
+  const CHILDREN = [
+    ['case_relate',
+      `SELECT COUNT(*) AS c FROM case_relate WHERE case_relate_case_id = ?`,
+      `UPDATE case_relate SET case_relate_case_id = ? WHERE case_relate_case_id = ?`],
+    ['appts',
+      `SELECT COUNT(*) AS c FROM appts WHERE appt_case_id = ?`,
+      `UPDATE appts SET appt_case_id = ? WHERE appt_case_id = ?`],
+    ['tasks',
+      `SELECT COUNT(*) AS c FROM tasks WHERE task_link_type = 'case' AND task_link_id = ?`,
+      `UPDATE tasks SET task_link_id = ? WHERE task_link_type = 'case' AND task_link_id = ?`],
+    ['checklists',
+      `SELECT COUNT(*) AS c FROM checklists WHERE link_type = 'case' AND link = ?`,
+      `UPDATE checklists SET link = ? WHERE link_type = 'case' AND link = ?`],
+    ['events',
+      `SELECT COUNT(*) AS c FROM events WHERE event_link_type = 'case' AND event_link_id = ?`,
+      `UPDATE events SET event_link_id = ? WHERE event_link_type = 'case' AND event_link_id = ?`],
+    ['log',
+      `SELECT COUNT(*) AS c FROM log WHERE log_link_type = 'case' AND log_link_id = ?`,
+      `UPDATE log SET log_link_id = ?, log_link = ? WHERE log_link_type = 'case' AND log_link_id = ?`],
+    ['form_submissions',
+      `SELECT COUNT(*) AS c FROM form_submissions WHERE link_type = 'case' AND link_id = ?`,
+      `UPDATE form_submissions SET link_id = ? WHERE link_type = 'case' AND link_id = ?`],
+    ['signing_requests',
+      `SELECT COUNT(*) AS c FROM signing_requests WHERE linkable_type = 'case' AND linkable_id = ?`,
+      `UPDATE signing_requests SET linkable_id = ? WHERE linkable_type = 'case' AND linkable_id = ?`],
+    ['sequences',
+      `SELECT COUNT(*) AS c FROM sequences WHERE seq_case = ?`,
+      `UPDATE sequences SET seq_case = ? WHERE seq_case = ?`],
+    ['court_ai_log',
+      `SELECT COUNT(*) AS c FROM court_ai_log WHERE resolved_case_id = ?`,
+      `UPDATE court_ai_log SET resolved_case_id = ? WHERE resolved_case_id = ?`],
+    ['video_views',
+      `SELECT COUNT(*) AS c FROM video_views WHERE case_id = ?`,
+      `UPDATE video_views SET case_id = ? WHERE case_id = ?`],
+    ['ai_change_log',
+      `SELECT COUNT(*) AS c FROM ai_change_log WHERE entity_type = 'case' AND entity_id = ?`,
+      `UPDATE ai_change_log SET entity_id = ? WHERE entity_type = 'case' AND entity_id = ?`],
+  ];
+
+  // case_relate dedupe count (rows that would violate the uniqueness trigger
+  // and are therefore deleted, not moved).
+  const DEDUPE_COUNT_SQL =
+    `SELECT COUNT(*) AS c
+       FROM case_relate lr
+       JOIN case_relate sr
+         ON sr.case_relate_case_id  = ?
+        AND sr.case_relate_client_id = lr.case_relate_client_id
+        AND sr.case_relate_type      = lr.case_relate_type
+      WHERE lr.case_relate_case_id = ?`;
+  const DEDUPE_DELETE_SQL =
+    `DELETE lr
+       FROM case_relate lr
+       JOIN case_relate sr
+         ON sr.case_relate_case_id  = ?
+        AND sr.case_relate_client_id = lr.case_relate_client_id
+        AND sr.case_relate_type      = lr.case_relate_type
+      WHERE lr.case_relate_case_id = ?`;
+
+  const plan = {
+    dry_run: dryRun,
+    survivor_id: survivorId,
+    loser_id: loserId,
+    docket: { adopted: adopt },
+    fields: {
+      filled: Object.keys(filled),
+      survivor_wins: survivorWins,
+      conflicts,
+    },
+    notes_appended:  notesAppend  !== '',
+    alerts_appended: alertsAppend !== '',
+    dropbox_noted:   dropboxNoted,
+    children: {},
+  };
+
+  // ── conflicts gate ──
+  if (conflicts.length && !force && !dryRun) {
+    const e = new Error(
+      `Merge blocked: ${conflicts.length} field conflict(s) ` +
+      `(${conflicts.map(c => c.column).join(', ')}). Retry with force to keep survivor values.`
+    );
+    e.code = 'MERGE_CONFLICT';
+    e.conflicts = conflicts;
+    throw e;
+  }
+
+  // ── dry run: counts only, no writes ──
+  if (dryRun) {
+    for (const [label, countSql] of CHILDREN) {
+      const [[{ c }]] = await db.query(countSql, [loserId]);
+      plan.children[label] = c;
+    }
+    const [[{ c: dedupeC }]] = await db.query(DEDUPE_COUNT_SQL, [survivorId, loserId]);
+    plan.children.case_relate_deduped = dedupeC;
+    return plan;
+  }
+
+  // ── execute (single InnoDB transaction) ──
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // 1. case_relate dedupe-delete (trigger would 45000 on the UPDATE otherwise)
+    const [dedupeRes] = await conn.query(DEDUPE_DELETE_SQL, [survivorId, loserId]);
+    plan.children.case_relate_deduped = dedupeRes.affectedRows;
+
+    // 2. child repoints
+    for (const [label, , updateSql] of CHILDREN) {
+      const params = (label === 'log')
+        ? [survivorId, survivorId, loserId]     // SET log_link_id=?, log_link=?
+        : [survivorId, loserId];
+      const [r] = await conn.query(updateSql, params);
+      plan.children[label] = r.affectedRows;
+    }
+
+    // 3. survivor field updates (adopted dockets + additive fills + concats)
+    const setParts = [];
+    const setVals  = [];
+    for (const [col, val] of Object.entries({ ...adopt, ...filled })) {
+      setParts.push(`\`${col}\` = ?`);
+      setVals.push(val);
+    }
+    if (notesAppend)  { setParts.push('`case_notes` = CONCAT(IFNULL(`case_notes`, \'\'), ?)');   setVals.push(notesAppend); }
+    if (alertsAppend) { setParts.push('`case_alerts` = CONCAT(IFNULL(`case_alerts`, \'\'), ?)'); setVals.push(alertsAppend); }
+    if (setParts.length) {
+      await conn.query(
+        `UPDATE cases SET ${setParts.join(', ')} WHERE case_id = ?`,
+        [...setVals, survivorId]
+      );
+    }
+
+    // 4. snapshot the loser onto the survivor's log (full row in log_extra —
+    //    this is the recovery record that sanctions the DELETE below).
+    await logService.createLogEntry(conn, {
+      type: 'update',
+      link_type: 'case',
+      link_id: survivorId,
+      by,
+      subject: `Case merged: ${loserId} absorbed into ${survivorId}`,
+      message:
+        `Merged case ${loserId}` +
+        `${loser.case_number_full || loser.case_number ? ` (${loser.case_number_full || loser.case_number})` : ''}` +
+        ` into ${survivorId}. ` +
+        `Moved: ${Object.entries(plan.children).map(([t, n]) => `${t}=${n}`).join(', ')}. ` +
+        `Filled: ${Object.keys(filled).join(', ') || 'none'}.` +
+        (conflicts.length ? ` Forced past conflicts on: ${conflicts.map(c => c.column).join(', ')}.` : ''),
+      extra: {
+        merge: {
+          loser_snapshot: loser,        // full row — Date objects serialize as ISO
+          adopted: adopt,
+          filled: Object.keys(filled),
+          survivor_wins: survivorWins,
+          forced_conflicts: conflicts,
+          children: plan.children,
+        },
+      },
+    });
+
+    // 5. delete the loser (+ any residual case_relate rows — there should be
+    //    none after step 1+2, but belt-and-braces).
+    await conn.query('DELETE FROM case_relate WHERE case_relate_case_id = ?', [loserId]);
+    await conn.query('DELETE FROM cases WHERE case_id = ?', [loserId]);
+
+    await conn.commit();
+  } catch (err) {
+    try { await conn.rollback(); } catch { /* ignore */ }
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  return plan;
+}
+
+
 module.exports = {
   listCases,
   getCase,
@@ -1012,5 +1395,6 @@ module.exports = {
   checkCaseNumberCollision,
   ensureCaseDropboxFolder,
   listCaseSequences,
-  listCaseWorkflows
+  listCaseWorkflows,
+  mergeCases
 };

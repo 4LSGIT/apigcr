@@ -203,10 +203,10 @@
         </button>
         <button
           class="big-button"
-          onclick="alert('no! I am tired!')"
+          onclick="mergeCaseDialog()"
           style="background-color: blue"
         >
-          Merge Leads
+          Merge Case&hellip;
         </button>
         <button
           class="big-button"
@@ -218,6 +218,154 @@
       </div>
     </div>
 <script>
+    /* ──────────────────────────────────────────────────────────────
+       mergeCaseDialog  (2026-08 — case merge)
+
+       Two-step flow against POST /api/cases/:id/merge:
+         1. Pick the other case (shared CasePicker) + direction. Direction
+            defaults to "selected case is absorbed into this one".
+         2. Dry-run preview: adopted docket, filled columns, survivor-wins
+            columns, per-table move counts. Blocking conflicts render as a
+            required "force" checkbox (survivor keeps its values; loser
+            values survive in the snapshot log entry either way).
+       On success: if this case survived → reload; if this case was
+       absorbed → open the survivor via the shell and blank this tab.
+       ────────────────────────────────────────────────────────────── */
+    async function mergeCaseDialog() {
+      let picker = null;
+      let picked = null;   // case_id of the OTHER case
+
+      const step1 = await Swal.fire({
+        title: 'Merge cases',
+        html: `
+          <p style="text-align:left;margin:0 0 8px;font-size:0.92em">
+            One case absorbs the other: every appointment, task, log entry,
+            form, signature request, and contact link moves to the surviving
+            case, empty fields are filled in, and the absorbed case is
+            <b>deleted</b> (a full snapshot is kept in the survivor's log).
+          </p>
+          <div id="mc-picker"></div>
+          <div style="margin-top:10px;text-align:left">
+            <label for="mc-direction" style="font-size:0.85em;font-weight:600">Direction</label>
+            <select id="mc-direction" style="width:100%;padding:6px">
+              <option value="into_current" selected>Absorb selected case INTO this one (this case survives)</option>
+              <option value="into_selected">Merge THIS case into the selected one (selected survives)</option>
+            </select>
+          </div>`,
+        showCancelButton: true,
+        confirmButtonText: 'Preview merge',
+        showLoaderOnConfirm: true,
+        allowOutsideClick: () => !Swal.isLoading(),
+        didOpen: () => {
+          const confirmBtn = Swal.getConfirmButton();
+          if (confirmBtn) confirmBtn.disabled = true;
+          picker = CasePicker(E('mc-picker'), {
+            placeholder: 'Search for the other case…',
+            onSelect: (cid) => {
+              picked = cid;
+              if (confirmBtn) confirmBtn.disabled = (cid === caseID);
+              if (cid === caseID) Swal.showValidationMessage('That is this case — pick a different one.');
+              else Swal.resetValidationMessage();
+            },
+          });
+        },
+        preConfirm: async () => {
+          if (!picked || picked === caseID) {
+            Swal.showValidationMessage('Pick a different case first.');
+            return false;
+          }
+          const intoCurrent = E('mc-direction').value === 'into_current';
+          const survivor = intoCurrent ? caseID : picked;
+          const loser    = intoCurrent ? picked : caseID;
+          try {
+            const r = await P.apiSend(`/api/cases/${survivor}/merge`, 'POST',
+              { source_case_id: loser, dry_run: true });
+            return { survivor, loser, plan: r.data };
+          } catch (err) {
+            const msg = (err && err.body && err.body.message) || err.message || 'Dry run failed';
+            Swal.showValidationMessage(msg);
+            return false;
+          }
+        },
+        willClose: () => { if (picker) picker.destroy(); },
+      });
+      if (!step1.isConfirmed || !step1.value) return;
+
+      const { survivor, loser, plan } = step1.value;
+      const esc = (v) => String(v ?? '').replace(/[&<>"]/g,
+        (ch) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+
+      const childLines = Object.entries(plan.children || {})
+        .filter(([, n]) => n > 0)
+        .map(([t, n]) => `${esc(t)}: ${n}`)
+        .join(', ') || 'nothing to move';
+      const conflicts = plan.fields.conflicts || [];
+      const conflictHtml = conflicts.length
+        ? `<div style="margin-top:8px;padding:8px;border:1px solid #d9534f;background:#fdecea;border-radius:6px">
+             <b>Conflicting fields</b> (survivor keeps its value; absorbed value is preserved in the snapshot):
+             <ul style="margin:6px 0 0;padding-left:18px">
+               ${conflicts.map(c => `<li><code>${esc(c.column)}</code>: keep "${esc(c.survivor)}", drop "${esc(c.loser)}"</li>`).join('')}
+             </ul>
+             <label style="display:block;margin-top:6px">
+               <input type="checkbox" id="mc-force"> I understand — keep the surviving case's values
+             </label>
+           </div>`
+        : '';
+      const winsHtml = (plan.fields.survivor_wins || []).length
+        ? `<div style="font-size:0.85em;color:#666;margin-top:6px">Lifecycle fields kept from survivor: ${plan.fields.survivor_wins.map(w => esc(w.column)).join(', ')}</div>`
+        : '';
+
+      const step2 = await Swal.fire({
+        title: 'Confirm merge',
+        icon: 'warning',
+        html: `
+          <div style="text-align:left;font-size:0.92em">
+            <p><b>${esc(loser)}</b> will be absorbed into <b>${esc(survivor)}</b> and deleted.</p>
+            ${Object.keys(plan.docket.adopted || {}).length
+              ? `<p>Docket adopted onto survivor: ${Object.values(plan.docket.adopted).map(esc).join(' / ')}</p>` : ''}
+            <p>Fields filled from absorbed case: ${(plan.fields.filled || []).map(esc).join(', ') || 'none'}</p>
+            ${plan.notes_appended ? '<p>Notes will be appended.</p>' : ''}
+            ${plan.dropbox_noted ? '<p>Absorbed case&rsquo;s Dropbox link will be appended to notes (folders are not combined).</p>' : ''}
+            <p>Records moving: ${childLines}</p>
+            ${winsHtml}
+            ${conflictHtml}
+          </div>`,
+        showCancelButton: true,
+        confirmButtonText: 'Merge now',
+        confirmButtonColor: '#d9534f',
+        showLoaderOnConfirm: true,
+        allowOutsideClick: () => !Swal.isLoading(),
+        preConfirm: async () => {
+          if (conflicts.length && !(E('mc-force') && E('mc-force').checked)) {
+            Swal.showValidationMessage('Tick the conflict acknowledgement to proceed.');
+            return false;
+          }
+          try {
+            const r = await P.apiSend(`/api/cases/${survivor}/merge`, 'POST',
+              { source_case_id: loser, force: conflicts.length > 0 });
+            return { result: r.data };
+          } catch (err) {
+            const msg = (err && err.body && err.body.message) || err.message || 'Merge failed';
+            Swal.showValidationMessage(msg);
+            return false;
+          }
+        },
+      });
+      if (!step2.isConfirmed || !step2.value) return;
+
+      Toast.fire({ icon: 'success', title: 'Merged', text: `${loser} absorbed into ${survivor}.` });
+      if (survivor === caseID) {
+        setTimeout(() => location.reload(), 800);
+      } else {
+        // This case no longer exists — open the survivor in the shell and
+        // park this tab on a terminal notice.
+        const openFile = (typeof _resolveAddFile === 'function') ? _resolveAddFile() : null;
+        if (openFile) openFile(survivor, 'case', survivor);
+        document.body.innerHTML =
+          `<h2 style="text-align:center;margin-top:3em">Case ${esc(caseID)} was merged into ${esc(survivor)}.<br>You can close this tab.</h2>`;
+      }
+    }
+
     async function updateCaseNotes() {
       processing();
       const notes = E("overviewCaseNotes").value;

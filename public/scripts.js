@@ -3047,6 +3047,7 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
     html: `
       <div class="ncf-section-label">Primary contact</div>
       <div class="ncf-field"><div id="ncf-picker-mount"></div></div>
+      <div id="ncf-dup-warn" style="display:none;margin:8px 0;padding:8px;border:1px solid #f0ad4e;background:#fff8e6;color:#7a5300;border-radius:6px;text-align:left;font-size:0.88em"></div>
 
       <div class="ncf-field">
         <label for="ncf-type">Case type</label>
@@ -3100,7 +3101,50 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
           + subs.map(s => `<option>${escAttr(s)}</option>`).join('');
         E('ncf-subtype-wrap').style.display = subs.length ? '' : 'none';
         E('ncf-other-type').style.display = (t === 'Other') ? '' : 'none';
+        ncfCheckDupes();
       };
+
+      /* Duplicate-open-case warning (2026-08 — merge prevention).
+         The lead+filed duplicate pattern exists because a second case gets
+         created beside a client's existing open case instead of the docket
+         being adopted onto it. Non-blocking: warn with the list of the
+         contact's non-Closed/Concluded cases of the SAME type so the user
+         can bail out and use the adopt flow (or knowingly proceed —
+         adversary proceedings etc. are legitimate second cases).
+         Fires on contact select and on type change; results cached per
+         contact so re-toggling type doesn't refetch. */
+      let ncfDupeCache = { cid: null, cases: [] };
+      async function ncfCheckDupes() {
+        const warn = E('ncf-dup-warn');
+        if (!warn) return;
+        if (selectedContactId == null) { warn.style.display = 'none'; return; }
+        try {
+          if (ncfDupeCache.cid !== selectedContactId) {
+            const r = await P.apiSend(`/api/contacts/${selectedContactId}/cases`, 'GET');
+            ncfDupeCache = { cid: selectedContactId, cases: r.cases || [] };
+          }
+        } catch { warn.style.display = 'none'; return; }
+        const typeRaw = E('ncf-type').value;
+        const otherTxt = (E('ncf-other-type') && E('ncf-other-type').value || '').trim();
+        const curType = (typeRaw === 'Other' && otherTxt) ? otherTxt : typeRaw;
+        const open = ncfDupeCache.cases.filter(c =>
+          c.case_type === curType && !['Closed', 'Concluded'].includes(c.case_stage));
+        if (!open.length) { warn.style.display = 'none'; return; }
+        const list = open.map(c => {
+          const num = c.case_number_full || c.case_number || c.case_id;
+          return `<b>${escAttr(num)}</b> (${escAttr(c.case_stage)})`;
+        }).join(', ');
+        const hasDocketInput =
+          ((E('ncf-num') && E('ncf-num').value) || (E('ncf-full') && E('ncf-full').value) || '').trim() !== '';
+        const docketlessOpen = open.some(c => !c.case_number && !c.case_number_full);
+        warn.innerHTML =
+          `&#9888; This contact already has ${open.length} open ${escAttr(curType)} `
+          + `case${open.length > 1 ? 's' : ''}: ${list}.`
+          + ((hasDocketInput && docketlessOpen)
+              ? ' If this docket belongs to one of them, cancel and adopt the docket onto that case instead of creating a duplicate.'
+              : ' Only continue if this is genuinely a new, separate case.');
+        warn.style.display = '';
+      }
       E('ncf-type').addEventListener('change', syncNcfType);
       syncNcfType();
 
@@ -3110,6 +3154,7 @@ function NewCaseForm(prefill = {}, onSuccess = null) {
         onSelect: (cid) => {
           selectedContactId = cid;
           if (confirmBtn) confirmBtn.disabled = false;
+          ncfCheckDupes();
         },
       });
 
