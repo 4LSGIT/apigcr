@@ -237,6 +237,7 @@ ref/2026-07-27_test_quick_notes_slice2_definition.json
 ref/2026-07-28_report_charts.sql
 ref/2026-07-28_reports.sql
 ref/2026-07-31_contract_followup_seq.sql
+ref/2026-08-02_pipeline_engine_slice_a.sql
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/database.sql
 ref/files.md
