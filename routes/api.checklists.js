@@ -15,6 +15,12 @@
  *
  * Public (no auth):
  * GET    /api/public/docs/:caseId             rate-limited, returns name + incomplete docs items
+ * POST   /api/public/get-upload-link          rate-limited, Dropbox temp upload link
+ * POST   /api/public/upload-complete          rate-limited, notifies staff + logs
+ *
+ * The three public routes above are UNAUTHENTICATED (case_id is the only
+ * capability). Treat every value off req.body/req.params as hostile: bind it
+ * into SQL, and escapeHtml() it before it reaches an email body.
  */
 
 const express      = require('express');
@@ -26,6 +32,38 @@ const emailService = require('../services/emailService');
 const logService   = require('../services/logService');
 
 // ─── Helpers ────────────────────────────────────────────────────
+
+/**
+ * HTML-escape a value for interpolation into notification email bodies.
+ *
+ * Deliberately file-local rather than imported — matches the existing repo
+ * convention (services/taskService.js, services/eventService.js and
+ * services/esignSendService.js each carry their own copy). Keep in sync.
+ *
+ * Covers text nodes AND double-quoted attribute values (both quote forms are
+ * escaped), which is what the upload notification needs: case_dropbox lands
+ * inside an href.
+ *
+ * MIME subject headers must NOT be escaped — escaping a mail header puts a
+ * literal &amp; in the recipient's inbox. Only HTML bodies go through this.
+ */
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Caps on client-supplied input reaching the public upload-complete route.
+// This route is UNAUTHENTICATED — everything in req.body is hostile until
+// proven otherwise, and unbounded strings would land in a staff inbox and
+// the log table verbatim.
+const MAX_UPLOAD_FILES    = 50;
+const MAX_UPLOAD_FILENAME = 255;
+const MAX_UPLOAD_COMMENT  = 2000;
 
 async function computeAndSaveStatus(db, checklistId) {
   const [items] = await db.query(
@@ -424,6 +462,16 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
       return res.status(400).json({ status: 'error', message: 'case_id and files array are required' });
     }
  
+    // Normalise client input ONCE, before it reaches the email or the log.
+    // Non-string array entries are coerced (a client can POST anything).
+    // Caps applied silently — the true file count is kept for the headline.
+    const fileCount   = files.length;
+    const safeFiles   = files
+      .slice(0, MAX_UPLOAD_FILES)
+      .map(f => String(f ?? '').slice(0, MAX_UPLOAD_FILENAME));
+    const omittedCount = fileCount - safeFiles.length;
+    const safeComment = comment == null ? '' : String(comment).slice(0, MAX_UPLOAD_COMMENT);
+ 
     // Respond first, then handle side effects
     res.json({ status: 'success', message: 'Notification received. Thank you!' });
  
@@ -450,26 +498,35 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
     );
     const clientName = primary?.contact_name || 'Unknown client';
  
-    // Build file list for email
-    const fileListHtml = files.map(f => `<li>${f}</li>`).join('\n');
+    // Build file list for email. EVERY interpolated value is escaped: the
+    // filenames and comment are attacker-controlled (public route), and the
+    // DB-derived values are escaped as defence in depth — case_dropbox in
+    // particular sits inside an href, where an unescaped quote breaks out of
+    // the attribute.
+    const fileListHtml = safeFiles.map(f => `<li>${escapeHtml(f)}</li>`).join('\n');
+    const omittedHtml = omittedCount > 0
+      ? `\n        <li><em>… and ${omittedCount} more file${omittedCount > 1 ? 's' : ''} not listed</em></li>`
+      : '';
     const dropboxLink = caseRow.case_dropbox || '';
-    const commentBlock = comment
-      ? `<p><strong>Client comment:</strong> ${comment}</p>`
+    const commentBlock = safeComment
+      ? `<p><strong>Client comment:</strong> ${escapeHtml(safeComment)}</p>`
       : '';
  
+    // Subject is a MIME header, not HTML — deliberately NOT escaped
+    // (matches services/taskService.js convention).
     const subject = `New Documents Uploaded — ${clientName} (${caseRow.case_display})`;
     const html = `
-      <p><strong>${clientName}</strong> uploaded <strong>${files.length}</strong> document${files.length > 1 ? 's' : ''} to case <strong>${caseRow.case_display}</strong>.</p>
+      <p><strong>${escapeHtml(clientName)}</strong> uploaded <strong>${fileCount}</strong> document${fileCount > 1 ? 's' : ''} to case <strong>${escapeHtml(caseRow.case_display)}</strong>.</p>
  
       <p><strong>Files:</strong></p>
       <ul>
-        ${fileListHtml}
+        ${fileListHtml}${omittedHtml}
       </ul>
  
       ${commentBlock}
  
       ${dropboxLink
-        ? `<p><a href="${dropboxLink}">Open Dropbox Folder</a> — review, rename, and move files from the "Client Uploads" subfolder.</p>`
+        ? `<p><a href="${escapeHtml(dropboxLink)}">Open Dropbox Folder</a> — review, rename, and move files from the "Client Uploads" subfolder.</p>`
         : '<p><em>No Dropbox link on file for this case.</em></p>'}
     `.trim();
  
@@ -487,8 +544,13 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
       link_type: 'case',
       link_id:   case_id,
       by:        0,  // system / client action
-      data:      JSON.stringify({ action: 'client_upload', files, comment: comment || null }),
-      subject:   `Client uploaded ${files.length} document${files.length > 1 ? 's' : ''}`,
+      data:      JSON.stringify({
+        action:     'client_upload',
+        files:      safeFiles,
+        file_count: fileCount,
+        comment:    safeComment || null
+      }),
+      subject:   `Client uploaded ${fileCount} document${fileCount > 1 ? 's' : ''}`,
       direction: 'incoming'
     }).catch(err => console.error('Upload log entry failed:', err.message));
  
