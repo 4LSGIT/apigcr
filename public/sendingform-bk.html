@@ -702,6 +702,13 @@ async function toggleContract(tid, checked) {
   if (!checked) { box.style.display = 'none'; return; }
   box.style.display = '';
 
+  // Staff edits live ONLY in the DOM inputs — the cache below holds the
+  // ORIGINAL resolved values. Re-rendering an already-built box would rebuild
+  // it from that stale cache and wipe every edit (worst on the hand-typed
+  // options textarea, the closed-window escape hatch). So a re-check of an
+  // already-rendered contract just re-shows it; the fetch+render runs once.
+  if (box.dataset.rendered === '1') return;
+
   if (!contractPrefills[tid]) {
     box.innerHTML = 'Loading values…';
     try {
@@ -735,6 +742,7 @@ async function toggleContract(tid, checked) {
   const { schema, values } = contractPrefills[tid];
   if (!schema.length) {
     box.innerHTML = '<span style="color:#6c757d;">No fill-in values — signer completes everything on the document.</span>';
+    box.dataset.rendered = '1';
     return;
   }
 
@@ -771,6 +779,7 @@ async function toggleContract(tid, checked) {
              border:1px solid #ced4da; border-radius:4px; font-size:0.85rem;">
     </div>`;
   }).join('');
+  box.dataset.rendered = '1';
 }
 
 /** Current edited values for one checked contract, keyed by schema key. */
