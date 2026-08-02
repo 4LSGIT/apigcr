@@ -169,7 +169,18 @@
       <input
         id="caseRecInput"
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_Rec:this.value}).then(()=>Toast.fire({icon:'success',title:'Recommendation updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
-      /><br><br>
+      /><br>
+      <label class="input-label">Lead Source:</label>
+      <!-- cases.case_source. As of 2026-08 this means MARKETING LEAD SOURCE
+           (staff-entered). Suggestions come from fe-lead_sources
+           (syncLeadSourceList below); the value stays opaque free text, so
+           legacy intake-channel junk ('https://api.calendly', 'Acuity') is
+           rendered as-is and simply gets overwritten in normal use. -->
+      <input
+        id="caseSourceInput"
+        list="leadSourceList"
+        onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_source:this.value}).then(()=>Toast.fire({icon:'success',title:'Lead source updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
+      /><datalist id="leadSourceList"></datalist><br><br>
     </div><br><div style="margin:0 auto;max-width:650px;border:3px solid black;">
       <h3 style="color: red">Alerts:</h3>
       <div id="alertsDiv">No Alerts</div>
@@ -1280,9 +1291,30 @@ function updateHeader() {
   E("caseStageSelect").value = c.case_stage  || "";
   E("caseStatusInput").value = c.case_status || "N/A";
   E("caseRecInput").value    = c.case_rec    || "N/A";
+  syncLeadSourceList(c);
   E("overviewCaseNotes").value = c.case_notes || "";
   E("alertsDiv").textContent = c.case_alerts || "";
   resizeTextarea(E("overviewCaseNotes"));
+}
+
+// ── Lead source (cases.case_source) ─────────────────────────
+// Suggestions come from the app_settings row 'fe-lead_sources', which
+// /api/firm-data JSON-parses into firmData.settings.lead_sources like every
+// other fe-* row — no extra fetch. The stored value is OPAQUE free text: the
+// input is a datalist (suggest, don't constrain), so pre-2026-08 rows holding
+// intake-channel junk ('https://api.calendly', 'Acuity') still display and are
+// simply overwritten by staff. Missing/malformed setting → no suggestions,
+// field still works as plain text.
+function getLeadSourceOptions() {
+  const raw = window.firmData?.settings?.lead_sources;
+  if (Array.isArray(raw)) return raw.map(s => String(s).trim()).filter(Boolean);
+  if (typeof raw === 'string') return raw.split(',').map(s => s.trim()).filter(Boolean);
+  return [];
+}
+function syncLeadSourceList(c) {
+  E("caseSourceInput").value = c.case_source || "";
+  E("leadSourceList").innerHTML =
+    getLeadSourceOptions().map(s => `<option value="${escAttr(s)}"></option>`).join("");
 }
 
 // ── Case type / subtype cascading selects ───────────────────
