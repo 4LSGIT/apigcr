@@ -151,7 +151,7 @@ function projectLogRow(r) {
  *
  * @param {object} db     mysql2 pool (or transaction connection)
  * @param {string} caseId cases.case_id (varchar)
- * @returns {{template: object|null, current: object|null, history: object[], upcoming: object[]}}
+ * @returns {{template: object|null, current: object|null, history: object[], upcoming: object[], stages: object[]}}
  *   template — {id, name, role, case_type, case_subtype} from resolveTemplate
  *              (null when no template resolves — degrade, don't throw).
  *   current  — latest case_stage_log row (entered_at DESC, id DESC), projected;
@@ -163,6 +163,11 @@ function projectLogRow(r) {
  *              design. When current is null OR its stage_key is not in the
  *              resolved template (case just branched from intake), upcoming is
  *              ALL of the template's active stages.
+ *   stages   — ALL active stages of the resolved template (same projection as
+ *              upcoming), regardless of position. Always present ([] when
+ *              template is null). UI uses it for full-timeline rendering
+ *              (client_label on past/current rows) and the show-all-stages
+ *              advance control; C1 contract as of 2026-08-02.
  * @throws 404 when the case does not exist.
  */
 async function getPipeline(db, caseId) {
@@ -187,6 +192,7 @@ async function getPipeline(db, caseId) {
   const current = history.length ? history[history.length - 1] : null;
 
   let upcoming = [];
+  let stages = [];
   if (template) {
     const [stageRows] = await db.query(
       `SELECT id AS stage_id, stage_key, stage_number, internal_label,
@@ -196,6 +202,7 @@ async function getPipeline(db, caseId) {
         ORDER BY stage_number ASC, id ASC`,
       [template.id]
     );
+    stages = stageRows;
     const matched = current
       ? stageRows.find(s => s.stage_key === current.stage_key)
       : null;
@@ -217,6 +224,7 @@ async function getPipeline(db, caseId) {
     current,
     history,
     upcoming,
+    stages,
   };
 }
 

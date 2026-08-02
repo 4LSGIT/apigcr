@@ -179,6 +179,7 @@ describe('getPipeline', () => {
     expect(p.current.stage_key).toBe('filed');
     expect(p.history).toHaveLength(2);
     expect(p.upcoming.map(s => s.stage_key)).toEqual(['meeting_341', 'discharge', 'closed']);
+    expect(p.stages.map(s => s.stage_key)).toEqual(['docs', 'filed', 'meeting_341', 'discharge', 'closed']);
   });
 
   test('branched from intake: current stage_key not in template → upcoming = ALL stages', async () => {
