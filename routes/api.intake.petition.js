@@ -69,6 +69,7 @@ const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { parseName } = require("../lib/parseName");
 const contactService = require("../services/contactService");
+const pipelineService = require("../services/pipelineService");
 
 // ─────────────────────────────────────────
 // HELPERS
@@ -449,6 +450,27 @@ router.post("/api/intake/petition", jwtOrApiKey, async (req, res) => {
       }
       if (!inserted) throw new Error("Failed to generate unique case ID after 10 attempts");
       await ensureRelate(req.db, caseId, contactId, "Primary");
+    }
+
+    // ─────────────────────────────────────
+    // STEP 3b — Pipeline: advance to the 'filed' stage
+    // ─────────────────────────────────────
+    // Runs once for BOTH branches, after case_subtype is written (resolveTemplate
+    // is a pure function of case_type/case_subtype, so it must read the new value).
+    // Non-fatal by design: untemplated subtypes (e.g. Chapter 11) resolve to the
+    // intake template, which has no 'filed' stage — advanceStage throws 400 and the
+    // legacy case_stage/case_status stamps above stand as the fallback.
+    // On success advanceStage overwrites case_status with the stage internal_label
+    // ('Filed'), sets case_rec from the stage default_rec, and appends a
+    // case_stage_log row; repeat deliveries no-op via its idempotency guard.
+    try {
+      await pipelineService.advanceStage(req.db, caseId, "filed", {
+        userId: null,
+        note: "Petition filed (auto)",
+        source: "system",
+      });
+    } catch (err) {
+      console.error("petition advance_stage failed (non-fatal):", err.message);
     }
 
     // ─────────────────────────────────────
