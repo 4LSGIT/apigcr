@@ -181,7 +181,60 @@
         list="leadSourceList"
         onchange="P.apiSend('/api/cases/'+caseID,'PATCH',{case_source:this.value}).then(()=>Toast.fire({icon:'success',title:'Lead source updated'})).catch(e=>Toast.fire({icon:'error',title:'Error',text:e.message}))"
       /><datalist id="leadSourceList"></datalist><br><br>
-    </div><br><div style="margin:0 auto;max-width:650px;border:3px solid black;">
+    </div><br>
+    <!-- ── Pipeline (Slice C1) ──────────────────────────────────────
+         POSITION-ONLY widget: timeline of case_stage_log (via
+         GET /api/cases/:id/pipeline) + manual advance
+         (POST /api/cases/:id/pipeline/advance). The Stage / Status /
+         Recommendation inputs ABOVE remain the editing surface for those
+         columns — an advance overwrites them server-side
+         (overwrite-on-advance), and the widget then re-fetches the case
+         row and refreshes those three inputs. client_label under each
+         internal_label is deliberate: staff review the client-facing
+         vocabulary here (feeds the C2 stage editor + portal).
+         Rendered by loadPipeline()/renderPipeline() in the script below;
+         hidden until the first payload arrives. -->
+    <style>
+      /* pw- = pipeline widget. The page otherwise styles inline / via
+         style.css; the timeline connector + row states genuinely need a
+         rule block, so this is the page's first (scoped by prefix). */
+      #pipelinePanel { margin:0 auto; max-width:650px; border:3px solid black; text-align:left; padding:2px 18px 14px; box-sizing:border-box; }
+      #pipelinePanel h3 { text-align:center; }
+      .pw-subtitle { display:block; text-align:center; font-weight:normal; font-size:0.72em; color:#555; margin-top:2px; }
+      .pw-msg { color:#777; font-style:italic; margin:6px 0 10px; text-align:center; }
+      .pw-row { position:relative; padding:0 0 12px 24px; }
+      .pw-row::before { content:""; position:absolute; left:6px; top:16px; bottom:-2px; width:2px; background:#ccc; }
+      .pw-row:last-child::before { display:none; }
+      .pw-dot { position:absolute; left:0; top:3px; width:14px; height:14px; border-radius:50%;
+                background:#fff; border:2px solid #999; box-sizing:border-box; }
+      .pw-past .pw-dot { background:#999; }
+      .pw-current .pw-dot { background:#07adef; border-color:#07adef; }
+      .pw-internal { font-weight:600; }
+      .pw-current .pw-internal { color:#07adef; font-weight:bold; }
+      .pw-upcoming .pw-internal, .pw-upcoming .pw-client { color:#aaa; }
+      .pw-when { font-size:0.8em; color:#888; margin-left:8px; }
+      .pw-client { display:block; font-size:0.8em; color:#999; font-style:italic; }
+      .pw-note { font-size:0.85em; color:#555; background:#f5f5f5; border-left:3px solid #ccc;
+                 padding:3px 8px; margin-top:3px; border-radius:3px; white-space:pre-wrap; }
+      .pw-badge { display:inline-block; font-size:0.65em; font-weight:bold; color:#fff; background:#888;
+                  border-radius:3px; padding:1px 5px; margin-left:6px; vertical-align:middle; text-transform:uppercase; }
+      #pwAdvanceRow { border-top:1px solid #ddd; padding-top:10px; margin-top:4px; text-align:center; }
+      #pwAdvanceRow .pw-toggle { font-size:0.8em; color:#555; margin-left:8px; white-space:nowrap; }
+      #pwNoteInput { width:60%; margin-top:6px; }
+    </style>
+    <div id="pipelinePanel" style="display:none">
+      <h3>Pipeline<span class="pw-subtitle" id="pwSubtitle"></span></h3>
+      <div id="pwTimeline"></div>
+      <div id="pwAdvanceRow" style="display:none">
+        <select id="pwStageSelect"></select>
+        <label class="pw-toggle"><input type="checkbox" id="pwShowAll" onchange="pwToggleShowAll(this.checked)" /> show all stages</label>
+        <br />
+        <input id="pwNoteInput" maxlength="255" placeholder="Note (optional)" />
+        <button onclick="pwAdvance()">Advance</button>
+      </div>
+    </div>
+    <br />
+    <div style="margin:0 auto;max-width:650px;border:3px solid black;">
       <h3 style="color: red">Alerts:</h3>
       <div id="alertsDiv">No Alerts</div>
       <br />
@@ -1578,12 +1631,190 @@ window.addEventListener('message', async (e) => {
   }
 });
 
+// ── Pipeline widget (Slice C1) ──────────────────────────────
+// Renders GET /api/cases/:id/pipeline into #pipelinePanel (Overview tab):
+// vertical timeline (past → current → upcoming) + manual advance control.
+//
+// POSITION-ONLY: the Stage/Status/Recommendation inputs above the panel
+// stay the editing surface for those columns. advanceStage overwrites
+// cases.case_stage/case_status/case_rec server-side, so on a real (non-noop)
+// advance the widget re-fetches the case row and refreshes ONLY those three
+// inputs — deliberately NOT a full updateHeader(), which would also reset
+// #overviewCaseNotes and clobber an unsaved notes draft.
+//
+// Past/current rows render the status_label SNAPSHOT and look their
+// client_label up in payload.stages by stage_key; rows whose key no longer
+// matches the resolved template (template edits, branch from intake) degrade
+// to the snapshot alone — the correct record. `stages` also feeds the
+// "show all stages" toggle (corrections / backwards moves).
+
+let pwData = null;      // latest pipeline payload (GET or advance response)
+let pwShowAll = false;  // advance select: false = upcoming only, true = every active stage
+
+const pwDate = (d) => d
+  ? new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+  : "";
+
+async function loadPipeline() {
+  try {
+    pwData = await P.apiSend(`/api/cases/${caseID}/pipeline`, 'GET');
+    renderPipeline();
+  } catch (err) {
+    // Additive widget — a load failure must never break the page.
+    console.error('[pipeline] load failed:', err);
+    E('pipelinePanel').style.display = '';
+    E('pwSubtitle').textContent = '';
+    E('pwTimeline').innerHTML =
+      `<div class="pw-msg">Pipeline unavailable: ${escText(err.message)}</div>`;
+    E('pwAdvanceRow').style.display = 'none';
+  }
+}
+
+function renderPipeline() {
+  const p = pwData;
+  E('pipelinePanel').style.display = '';
+
+  if (!p.template) {
+    E('pwSubtitle').textContent = '';
+    E('pwTimeline').innerHTML =
+      '<div class="pw-msg">No pipeline configured for this case type</div>';
+    E('pwAdvanceRow').style.display = 'none';
+    return;
+  }
+
+  E('pwSubtitle').textContent = p.template.name;
+
+  const byKey = {};
+  (p.stages || []).forEach(s => { byKey[s.stage_key] = s; });
+  const clientLabel = (key) => (byKey[key] ? byKey[key].client_label : '');
+
+  const rows = [];
+
+  // Past = history minus current (history is ascending; current is its last row).
+  const past = p.current ? p.history.slice(0, -1) : [];
+  for (const h of past) rows.push(pwLogRow(h, clientLabel(h.stage_key), 'past'));
+
+  if (p.current) {
+    rows.push(pwLogRow(p.current, clientLabel(p.current.stage_key), 'current'));
+  } else {
+    rows.push('<div class="pw-msg">No pipeline history yet</div>');
+  }
+
+  for (const s of (p.upcoming || [])) {
+    rows.push(
+      `<div class="pw-row pw-upcoming">
+         <span class="pw-dot"></span>
+         <span class="pw-internal">${escText(s.internal_label)}</span>
+         <span class="pw-client">${escText(s.client_label || '')}</span>
+       </div>`
+    );
+  }
+
+  E('pwTimeline').innerHTML = rows.join('');
+  renderPwSelect();
+  E('pwAdvanceRow').style.display = '';
+}
+
+function pwLogRow(h, cLabel, kind) {
+  const badge = (h.source && h.source !== 'manual')
+    ? '<span class="pw-badge">auto</span>' : '';
+  const note = h.note
+    ? `<div class="pw-note">${escText(h.note)}</div>` : '';
+  return `
+    <div class="pw-row pw-${kind}">
+      <span class="pw-dot"></span>
+      <span class="pw-internal">${escText(h.status_label)}</span>${badge}
+      <span class="pw-when">${escText(pwDate(h.entered_at))}</span>
+      <span class="pw-client">${escText(cLabel || '')}</span>
+      ${note}
+    </div>`;
+}
+
+function renderPwSelect() {
+  const p = pwData;
+  const list = pwShowAll ? (p.stages || []) : (p.upcoming || []);
+  const curKey = p.current ? p.current.stage_key : null;
+  const sel = E('pwStageSelect');
+  if (!list.length) {
+    sel.innerHTML = `<option value="" selected disabled>${
+      pwShowAll ? 'No stages in template' : 'No further stages'}</option>`;
+  } else {
+    sel.innerHTML =
+      '<option value="" selected disabled>Select a stage</option>' +
+      list.map(s =>
+        `<option value="${escAttr(s.stage_key)}">${escAttr(s.internal_label)}${
+          s.stage_key === curKey ? ' (current)' : ''}</option>`
+      ).join('');
+  }
+  E('pwShowAll').checked = pwShowAll;
+}
+
+function pwToggleShowAll(on) {
+  pwShowAll = !!on;
+  renderPwSelect();
+}
+
+async function pwAdvance() {
+  const key = E('pwStageSelect').value;
+  if (!key) { Toast.fire({ icon: 'info', title: 'Pick a stage first' }); return; }
+  const stage = (pwData.stages || []).find(s => s.stage_key === key);
+  const label = stage ? stage.internal_label : key;
+  const note = E('pwNoteInput').value.trim();
+
+  const ok = await Swal.fire({
+    title: 'Advance pipeline',
+    html: `<p>Move this case to <b>${escText(label)}</b>?</p>` +
+          (note ? `<p style="font-size:0.9em;color:#555">Note: ${escText(note)}</p>` : ''),
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, advance',
+    cancelButtonText: 'Cancel',
+  });
+  if (!ok.isConfirmed) return;
+
+  try {
+    const payload = await P.apiSend(
+      `/api/cases/${caseID}/pipeline/advance`, 'POST',
+      note ? { stage: key, note } : { stage: key }
+    );
+    pwData = payload;                 // advance returns a fresh pipeline payload
+    E('pwNoteInput').value = '';
+    renderPipeline();
+
+    if (payload.noop) {
+      Toast.fire({ icon: 'info', title: 'Already at this stage' });
+      return;                         // nothing changed server-side — no header refresh
+    }
+    Toast.fire({ icon: 'success', title: `Advanced to ${label}` });
+
+    // Overwrite-on-advance touched case_stage/case_status/case_rec — refresh
+    // the trio from a fresh case row (single-source-of-truth entityData kept
+    // current; NOT full updateHeader(), see block comment above).
+    try {
+      const d = await P.apiSend(`/api/cases/${caseID}`, 'GET');
+      window.entityData.case = d.case;
+      E('caseStageSelect').value = d.case.case_stage  || '';
+      E('caseStatusInput').value = d.case.case_status || 'N/A';
+      E('caseRecInput').value    = d.case.case_rec    || 'N/A';
+    } catch (e2) {
+      console.warn('[pipeline] header refresh failed:', e2);
+    }
+  } catch (err) {
+    if (err.status === 409) {
+      Toast.fire({ icon: 'error', title: 'Busy, try again' });
+    } else {
+      Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+    }
+  }
+}
+
 // ── Initial load ────────────────────────────────────────────
 processing();
 (async () => {
   try {
     await loadEntityData();
     updateHeader();
+    loadPipeline();   // fire-and-forget — pipeline widget must never delay page ready
 
     if (window.entityData.clients.length) putClients();
     if (window.entityData.appts.length)   putAppts();
