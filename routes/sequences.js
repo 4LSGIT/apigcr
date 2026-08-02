@@ -95,7 +95,7 @@ const { parseUserDateTime } = require('../services/timezoneService');
 
 const ALLOWED_TIMING_TYPES = [
   'immediate', 'delay', 'next_business_day', 'business_days',
-  'before_appt', 'before_appt_fixed',
+  'before_appt', 'before_appt_fixed', 'open_delay',
 ];
 
 function _hasPlaceholder(s) {
