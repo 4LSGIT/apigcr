@@ -25,6 +25,7 @@ jest.mock('../services/esignService', () => ({
 
 jest.mock('../services/esignWebhookService', () => ({
   processStatusChange: jest.fn(async () => ({ changed: true, filed: true })),
+  _announceFiling: jest.fn(async () => {}),
   WEBHOOK_LAST_SEEN_KEY: 'esign_webhook_last_seen_at',
 }));
 
@@ -308,6 +309,29 @@ describe('pass B — signed but never filed', () => {
 
     expect(esignFilingService.fileSignedDocuments).not.toHaveBeenCalled();
     expect(out.output.refiled).toBe(0);
+  });
+
+  // The fallback ladder means a late filing can succeed WITH strings attached
+  // — unsorted placement, an auto-created folder, a ZIP. Before this branch
+  // existed those were counted as "failed" and the nightly summary printed
+  // "filing failed" about a document sitting in Dropbox.
+  test('a filing that landed with warnings is refiled AND announced, never counted failed', async () => {
+    esignService.getById.mockResolvedValue(row({ id: 9, status: 'signed' }));
+    esignFilingService.fileSignedDocuments.mockResolvedValue({
+      filed: true, skipped: false, reason: null, note: null, placement: 'unsorted',
+      signedPdfPath: '/  Law Office/   Cases/  Unsorted E-Signed Documents/x (signed).pdf',
+      certPdfPath: null,
+      warnings: ['The document could not be filed to a case folder — …'],
+    });
+
+    const out = await reconcile({}, makeDb({ unfiled: [{ id: 9 }] }));
+
+    expect(out.output.refiled).toBe(1);
+    expect(out.output.failed).toBe(0);
+    expect(esignWebhookService._announceFiling).toHaveBeenCalledTimes(1);
+    const [, , result] = esignWebhookService._announceFiling.mock.calls[0];
+    expect(result).toMatchObject({ source: 'reconcile', late: true });
+    expect(result.filing.placement).toBe('unsorted');
   });
 
   test('a still-unfilable row is counted as a failure, not retried into a loop', async () => {

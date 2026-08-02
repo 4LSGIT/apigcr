@@ -748,15 +748,33 @@ async function processStatusChange(db, request, {
   return result;
 }
 
-/** Task + audit row describing how filing went. */
+/**
+ * Task + audit row describing how filing went.
+ *
+ * Wording branches on the filing's `placement` (see esignFilingService's
+ * fallback ladder): "move this file to the case folder" is a different job
+ * from "download it from the Zoho dashboard by hand", and a task that opens
+ * with "could not be filed" about a document that IS in Dropbox sends staff
+ * to the wrong dashboard.
+ *
+ * Exported: the reconciliation job's Pass B calls fileSignedDocuments
+ * directly (outside processStatusChange) and reuses this for late filings
+ * that landed with warnings, so the task text cannot drift between the two
+ * paths. `result.late` marks those in the audit payload.
+ */
 async function _announceFiling(db, request, result) {
   const f = result.filing || {};
   const label = request.document_name || request.kind;
+  const unsorted = f.placement === 'unsorted';
 
   if (f.filed && !f.warnings?.length) {
     await esignService.appendEvent(db, request.id, {
       event: 'filed',
-      payload: { signed_pdf_path: f.signedPdfPath, cert_pdf_path: f.certPdfPath, source: result.source },
+      payload: {
+        signed_pdf_path: f.signedPdfPath, cert_pdf_path: f.certPdfPath,
+        placement: f.placement || null, source: result.source,
+        ...(result.late ? { late: true } : {}),
+      },
     }).catch((e) => console.error(`[ESIGN] could not record filing event: ${e.message}`));
     return;
   }
@@ -766,8 +784,19 @@ async function _announceFiling(db, request, result) {
   // Anything else is a human's problem. Say exactly what happened and what
   // is left to do; a task that only says "filing failed" costs a person the
   // ten minutes we just saved them.
+  let headline;
+  if (!f.filed) {
+    headline = `A signed document came back from Zoho Sign but could not be filed to Dropbox automatically.`;
+  } else if (unsorted) {
+    headline = `A signed document came back from Zoho Sign but could not be matched to a case Dropbox ` +
+               `folder, so it was filed to the unsorted e-sign folder instead.`;
+  } else {
+    headline = `A signed document came back from Zoho Sign and was filed to the case's Dropbox folder, ` +
+               `but something needs attention.`;
+  }
+
   const lines = [
-    `A signed document came back from Zoho Sign but could not be filed to Dropbox automatically.`,
+    headline,
     ``,
     `Document: ${label}`,
     `Tracking: ${request.tracking_id}`,
@@ -777,13 +806,16 @@ async function _announceFiling(db, request, result) {
   for (const w of (f.warnings || [])) lines.push(``, `Note: ${w}`);
   lines.push(
     ``,
-    f.filed
-      ? `The signed document IS in Dropbox — see the notes above for what still needs doing.`
-      : `Action: download the signed document from the Zoho Sign dashboard and file it by hand.`
+    // eslint-disable-next-line no-nested-ternary
+    !f.filed
+      ? `Action: download the signed document from the Zoho Sign dashboard and file it by hand.`
+      : unsorted
+        ? `Action: move the document (direct link above, if one could be made) into the correct case's Dropbox folder.`
+        : `The signed document IS in Dropbox — see the notes above for what still needs doing.`
   );
 
   const alert = await esignAlertService.raiseTask(db, {
-    title: `File signed doc manually: ${label}`,
+    title: `${f.filed && unsorted ? 'Move signed doc to case folder' : 'File signed doc manually'}: ${label}`,
     desc: lines.join('\n'),
     linkableType: request.linkable_type,
     linkableId: request.linkable_id,
@@ -794,8 +826,10 @@ async function _announceFiling(db, request, result) {
     event: 'filing_needs_attention',
     payload: {
       filed: Boolean(f.filed), reason: f.reason || null,
+      placement: f.placement || null,
       note: f.note || null, warnings: f.warnings || [],
       task_id: alert.taskId || null, source: result.source,
+      ...(result.late ? { late: true } : {}),
     },
   }).catch((e) => console.error(`[ESIGN] could not record filing-attention event: ${e.message}`));
 }
@@ -1045,6 +1079,7 @@ module.exports = {
   WEBHOOK_SECRET_KEY,
   WEBHOOK_HMAC_MODE_KEY,
   WEBHOOK_LAST_SEEN_KEY,
+  _announceFiling,
   _declineReason,
   DECLINE_REASON_MAX,
   SIGNATURE_HEADER,
