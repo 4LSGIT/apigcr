@@ -168,6 +168,10 @@ public/bookingviewsmanager.html
 public/calendar.html
 public/campaign.html
 public/case.html
+public/caseConfigManager.html
+public/caseconfig/fields.html
+public/caseconfig/pipelines.html
+public/caseconfig/types.html
 public/caseerror.html
 public/communicate.html
 public/connections.html
@@ -296,6 +300,7 @@ routes/api.pdf.js
 routes/api.phoneIngest.js
 routes/api.phoneLines.js
 routes/api.pipeline.js
+routes/api.pipelineAdmin.js
 routes/api.readonly.js
 routes/api.readonlyKeys.js
 routes/api.redirects.js
@@ -442,6 +447,7 @@ services/phoneIngestSampleService.js
 services/phoneIngestService.js
 services/phoneIngestSuppressionService.js
 services/phoneService.js
+services/pipelineAdminService.js
 services/pipelineService.js
 services/quoService.js
 services/reportAuthorService.js
@@ -507,6 +513,7 @@ tests/moduleLoad.smoke.test.js
 tests/pdfRender.test.js
 tests/pdfRenderIntegration.test.js
 tests/phoneingestservice.dedup.test.js
+tests/pipelineAdminService.test.js
 tests/pipelineService.test.js
 tests/refreshonmiss.k3.test.js
 tests/taskService.test.js

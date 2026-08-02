@@ -1,0 +1,772 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pipeline Templates</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       PIPELINES SUB-PAGE — self-contained styles.
+       Shared tokens duplicated from the shell (house pattern).
+       ══════════════════════════════════════════════ */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy: #1a1a2e; --blue: #4f8ef7; --blue2: #3a7de8;
+      --green: #22c55e; --red: #ef4444; --amber: #f59e0b; --purple: #8b5cf6;
+      --bg: #f1f5f9; --surface: #ffffff; --border: #e2e8f0;
+      --muted: #94a3b8; --text: #1e293b; --text2: #475569;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px; color: var(--text); background: var(--bg);
+      display: flex; height: 100vh; overflow: hidden;
+    }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: var(--blue2); }
+    .btn-danger  { background: var(--red); color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Left panel: template list ── */
+    .panel-left {
+      width: 300px; flex-shrink: 0; background: var(--surface);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    }
+    .panel-left-head {
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
+      color: var(--text2);
+    }
+    #tpl-list { flex: 1; overflow-y: auto; }
+
+    .tpl-item {
+      padding: 10px 14px; border-bottom: 1px solid var(--bg); cursor: pointer;
+      transition: background 0.12s;
+    }
+    .tpl-item:hover { background: #f8fafc; }
+    .tpl-item.active { background: #eff6ff; border-left: 3px solid var(--blue); padding-left: 11px; }
+    .tpl-item .name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .tpl-item .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .tpl-item.inactive .name { color: var(--muted); text-decoration: line-through; }
+
+    .badge {
+      font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
+      text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0;
+    }
+    .badge-intake   { background: #ede9fe; color: var(--purple); }
+    .badge-case     { background: #dbeafe; color: var(--blue2); }
+    .badge-default  { background: #fef3c7; color: #b45309; }
+    .badge-inactive { background: #f1f5f9; color: var(--muted); }
+    .badge-stage    { background: #f1f5f9; color: var(--text2); text-transform: none; }
+
+    /* ── Right panel: editor ── */
+    .panel-right { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    .tpl-header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 12px 18px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .tpl-header .title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .tpl-header .sub { font-size: 12px; color: var(--muted); width: 100%; }
+
+    #stage-wrap { flex: 1; overflow-y: auto; padding: 16px 18px; }
+
+    table.stages { width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    table.stages th {
+      text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--border);
+      background: #f8fafc; white-space: nowrap;
+    }
+    table.stages td { padding: 8px 10px; border-bottom: 1px solid var(--bg); font-size: 12.5px; vertical-align: middle; }
+    table.stages tr:last-child td { border-bottom: none; }
+    table.stages tr.inactive td { color: var(--muted); }
+    table.stages tr.inactive .st-key, table.stages tr.inactive .st-label { text-decoration: line-through; }
+
+    .drag-handle { cursor: grab; color: var(--muted); padding: 0 4px; }
+    .drag-handle:active { cursor: grabbing; }
+    .sortable-ghost { opacity: .4; }
+    .sortable-drag  { opacity: .9; }
+
+    .st-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--text2);
+      display: inline-flex; align-items: center; gap: 5px; }
+    .st-key .fa-lock { color: var(--amber); font-size: 10px; }
+    .st-label { font-weight: 600; }
+    .st-client { color: var(--text2); font-size: 12px; }
+
+    .icon-btn {
+      border: 1px solid var(--border); background: var(--surface);
+      border-radius: 6px; width: 25px; height: 25px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--text2); font-size: 11px; transition: all 0.12s;
+    }
+    .icon-btn:hover { background: var(--bg); }
+    .icon-btn.del:hover { background: #fee2e2; color: var(--red); border-color: #fecaca; }
+
+    .flag-dot { color: var(--muted); font-size: 11px; margin-right: 5px; }
+    .flag-dot.on { color: var(--blue); }
+
+    /* toggle switch (active) */
+    .tgl { position: relative; display: inline-block; width: 30px; height: 17px; vertical-align: middle; }
+    .tgl input { opacity: 0; width: 0; height: 0; }
+    .tgl .slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 17px; transition: .15s; cursor: pointer; }
+    .tgl .slider:before { content: ""; position: absolute; height: 13px; width: 13px; left: 2px; top: 2px;
+      background: #fff; border-radius: 50%; transition: .15s; }
+    .tgl input:checked + .slider { background: var(--green); }
+    .tgl input:checked + .slider:before { transform: translateX(13px); }
+
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; color: var(--muted);
+      gap: 10px; text-align: center;
+    }
+    .empty-state i { font-size: 36px; opacity: 0.25; }
+
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Swal form bits */
+    .cc-form { text-align: left; font-size: 13px; }
+    .cc-form label { display: block; font-size: 11px; font-weight: 600; color: var(--text2);
+      margin: 10px 0 3px; text-transform: uppercase; letter-spacing: 0.03em; }
+    .cc-form input[type=text], .cc-form select, .cc-form textarea {
+      width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 13px; outline: none; font-family: inherit;
+    }
+    .cc-form input[type=text]:focus, .cc-form select:focus, .cc-form textarea:focus { border-color: var(--blue); }
+    .cc-form textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    .cc-form .row2 { display: flex; gap: 12px; }
+    .cc-form .row2 > div { flex: 1; min-width: 0; }
+    .cc-form .checks { display: flex; gap: 16px; margin-top: 10px; flex-wrap: wrap; }
+    .cc-form .checks label { display: inline-flex; align-items: center; gap: 6px; margin: 0;
+      text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+    .cc-form .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .cc-form .counter { font-size: 11px; color: var(--muted); text-align: right; margin-top: 2px; }
+    .cc-form .counter.over { color: var(--red); font-weight: 700; }
+    .cc-form .locked-note { font-size: 11px; color: #b45309; background: #fef3c7;
+      border-radius: 6px; padding: 6px 8px; margin-top: 4px; }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Left: template list ── -->
+<div class="panel-left">
+  <div class="panel-left-head">
+    <i class="fa-solid fa-timeline"></i> Templates
+    <span style="flex:1"></span>
+    <button class="btn btn-primary btn-sm" onclick="newTemplate()"><i class="fa-solid fa-plus"></i> New</button>
+  </div>
+  <div id="tpl-list">
+    <div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>
+  </div>
+</div>
+
+<!-- ── Right: stage editor ── -->
+<div class="panel-right">
+  <div class="tpl-header" id="tpl-header" style="display:none"></div>
+  <div id="stage-wrap">
+    <div class="empty-state"><i class="fa-solid fa-timeline"></i>
+      <div>Select a template to edit its stages</div></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// PIPELINES SUB-PAGE (Case Config manager)
+//
+// Admin CRUD over pipeline_templates / pipeline_stages through
+// /api/pipeline-admin/* (routes/api.pipelineAdmin.js). The Slice B
+// engine (pipelineService / api.pipeline) is read-only from here.
+//
+// Left pane: template list (name, type/subtype, role, default,
+// active, stage count, usage count). Right pane: selected template's
+// stage table — drag to reorder (SortableJS, CDN include mirrors
+// formBuilder.html; every hookup guarded so a failed CDN load
+// degrades to the up/down buttons, which are always rendered).
+//
+// Server-rule surfacing:
+//   - stage_key shows a lock icon once log_count > 0; the edit dialog
+//     disables the input and explains why (keys are the permanent
+//     contract — labels stay editable, that's the design).
+//   - internal_label input has a live ≤50 counter (cases.case_status
+//     is varchar(50); the server 400s past it).
+//   - DELETE 409s (history references) surface as an offer to
+//     deactivate instead (PUT {active:0}).
+//   - create/update 409 on a duplicate ACTIVE (type, subtype, role)
+//     surfaces as a confirm that retries with force:true.
+//   - config edits go through a validated raw-JSON textarea
+//     (blank = none; must parse to a plain object).
+//
+// Shell protocol: P.apiSend relay; onShow/onRefresh/onNew hooks;
+// topbar buttons via P.setTopbarButtons.
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = id => document.getElementById(id);
+const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+const CASE_STAGES = ['Open', 'Pending', 'Filed', 'Concluded', 'Closed'];
+const KEY_RE = /^[a-z0-9_]{1,50}$/;
+const MAX_INTERNAL = 50;
+
+// ── State ──────────────────────────────────────────────────────
+let templates = [];        // listTemplates rows (+ stage_count, log_count)
+let activeTplId = null;
+let activeTpl = null;      // full row from listStages payload
+let stages = [];           // listStages rows (+ log_count)
+let typesMap = {};         // fe-case_types blob for datalists (best-effort)
+let sortable = null;
+let loaded = false;
+
+// ── Loads ──────────────────────────────────────────────────────
+
+async function loadTemplates(keepSelection = true) {
+  const data = await api('/api/pipeline-admin/templates');
+  templates = data.templates || [];
+  if (keepSelection && activeTplId && !templates.some(t => t.id === activeTplId)) {
+    activeTplId = null; activeTpl = null; stages = [];
+  }
+  renderTplList();
+}
+
+async function loadStages(tplId) {
+  const data = await api(`/api/pipeline-admin/templates/${tplId}/stages`);
+  activeTpl = data.template;
+  stages = data.stages || [];
+  renderEditor();
+}
+
+async function loadTypesMap() {
+  // Best-effort — datalists only. Same single source (fe-case_types) as
+  // everything else; read through the existing app-settings endpoint.
+  try {
+    const data = await api('/api/app-settings');
+    const row = (data.settings || []).find(r => r.key === 'fe-case_types');
+    const map = row ? JSON.parse(row.value) : null;
+    if (map && !Array.isArray(map) && typeof map === 'object') typesMap = map;
+  } catch (_) { /* datalists just stay empty */ }
+}
+
+// ── Left pane render ───────────────────────────────────────────
+
+function renderTplList() {
+  const host = E('tpl-list');
+  if (!templates.length) {
+    host.innerHTML = `<div class="empty-state" style="height:auto;padding:40px 0">
+      <i class="fa-solid fa-timeline"></i><div>No templates yet</div></div>`;
+    return;
+  }
+  host.innerHTML = templates.map(t => `
+    <div class="tpl-item ${t.id === activeTplId ? 'active' : ''} ${t.active ? '' : 'inactive'}"
+         onclick="selectTpl(${t.id})">
+      <div class="name">${esc(t.name)}
+        <span class="badge badge-${esc(t.role)}">${esc(t.role)}</span>
+        ${t.is_default ? '<span class="badge badge-default" title="Default for this case type">default</span>' : ''}
+        ${t.active ? '' : '<span class="badge badge-inactive">inactive</span>'}
+      </div>
+      <div class="meta">
+        ${t.case_type ? esc(t.case_type) + (t.case_subtype ? ': ' + esc(t.case_subtype) : '') : '(no type)'}
+        · ${t.stage_count} stage${Number(t.stage_count) === 1 ? '' : 's'}
+        · ${t.log_count} log row${Number(t.log_count) === 1 ? '' : 's'}
+      </div>
+    </div>
+  `).join('');
+}
+
+async function selectTpl(id) {
+  activeTplId = id;
+  renderTplList();
+  E('stage-wrap').innerHTML = `<div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>`;
+  try { await loadStages(id); }
+  catch (e) {
+    E('stage-wrap').innerHTML = `<div class="empty-state"><i class="fa-solid fa-triangle-exclamation"></i>
+      <div>${esc(e.message)}</div></div>`;
+  }
+}
+window.selectTpl = selectTpl;
+
+// ── Right pane render ──────────────────────────────────────────
+
+function renderEditor() {
+  const t = activeTpl;
+  const head = E('tpl-header');
+  head.style.display = '';
+  head.innerHTML = `
+    <div class="title">${esc(t.name)}
+      <span class="badge badge-${esc(t.role)}">${esc(t.role)}</span>
+      ${t.is_default ? '<span class="badge badge-default">default</span>' : ''}
+      ${t.active ? '' : '<span class="badge badge-inactive">inactive</span>'}
+    </div>
+    <span style="flex:1"></span>
+    <button class="btn btn-outline btn-sm" onclick="editTemplate()"><i class="fa-solid fa-pen"></i> Edit</button>
+    <button class="btn btn-outline btn-sm" onclick="deleteTemplate()"><i class="fa-solid fa-trash"></i> Delete</button>
+    <button class="btn btn-primary btn-sm" onclick="stageDialog(null)"><i class="fa-solid fa-plus"></i> Stage</button>
+    <div class="sub">
+      ${t.case_type ? esc(t.case_type) + (t.case_subtype ? ': ' + esc(t.case_subtype) : '') : '(no type)'}
+      ${t.description ? ' — ' + esc(t.description) : ''}
+    </div>`;
+
+  const wrap = E('stage-wrap');
+  if (!stages.length) {
+    wrap.innerHTML = `<div class="empty-state"><i class="fa-solid fa-list-ol"></i>
+      <div>No stages yet</div>
+      <button class="btn btn-primary" onclick="stageDialog(null)"><i class="fa-solid fa-plus"></i> Add Stage</button></div>`;
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="stages">
+      <thead><tr>
+        <th style="width:26px"></th><th style="width:28px">#</th>
+        <th>Key</th><th>Internal label</th><th>Client label</th>
+        <th>Bucket</th><th style="width:56px" title="client_visible / is_terminal">Flags</th>
+        <th style="width:44px">Active</th><th style="width:150px"></th>
+      </tr></thead>
+      <tbody id="stage-tbody">
+        ${stages.map((s, i) => `
+          <tr data-stage-id="${s.id}" class="${s.active ? '' : 'inactive'}">
+            <td><span class="drag-handle" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></span></td>
+            <td>${s.stage_number}</td>
+            <td><span class="st-key">${esc(s.stage_key)}${Number(s.log_count) > 0
+                  ? `<i class="fa-solid fa-lock" title="Key locked — ${s.log_count} history row(s) reference it"></i>` : ''}</span></td>
+            <td class="st-label">${esc(s.internal_label)}</td>
+            <td class="st-client">${esc(s.client_label || '')}</td>
+            <td><span class="badge badge-stage">${esc(s.case_stage)}</span></td>
+            <td>
+              <i class="fa-solid fa-eye flag-dot ${s.client_visible ? 'on' : ''}" title="client_visible: ${s.client_visible ? 'yes' : 'no'}"></i>
+              <i class="fa-solid fa-flag-checkered flag-dot ${s.is_terminal ? 'on' : ''}" title="is_terminal: ${s.is_terminal ? 'yes' : 'no'}"></i>
+            </td>
+            <td>
+              <label class="tgl"><input type="checkbox" ${s.active ? 'checked' : ''}
+                onchange="toggleStageActive(${s.id}, this)"><span class="slider"></span></label>
+            </td>
+            <td style="white-space:nowrap;text-align:right">
+              <button class="icon-btn" title="Move up"   onclick="nudgeStage(${i},-1)"><i class="fa-solid fa-arrow-up"></i></button>
+              <button class="icon-btn" title="Move down" onclick="nudgeStage(${i},1)"><i class="fa-solid fa-arrow-down"></i></button>
+              <button class="icon-btn" title="Edit"      onclick="stageDialog(${s.id})"><i class="fa-solid fa-pen"></i></button>
+              <button class="icon-btn del" title="Delete" onclick="deleteStage(${s.id})"><i class="fa-solid fa-xmark"></i></button>
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px">
+      Drag rows (or use ↑↓) to reorder. Locked keys (<i class="fa-solid fa-lock" style="color:var(--amber)"></i>)
+      are referenced by case history and can't change — edit the labels instead.
+    </div>`;
+
+  // SortableJS hookup — guarded like formBuilder.html so a failed CDN load
+  // degrades to the always-present up/down buttons.
+  if (sortable) { try { sortable.destroy(); } catch (_) {} sortable = null; }
+  if (window.Sortable) {
+    sortable = new Sortable(E('stage-tbody'), {
+      handle: '.drag-handle', animation: 150,
+      onEnd: () => {
+        const ids = [...E('stage-tbody').querySelectorAll('tr')].map(tr => Number(tr.dataset.stageId));
+        commitOrder(ids);
+      },
+    });
+  }
+}
+
+// ── Reorder ────────────────────────────────────────────────────
+
+async function commitOrder(ids) {
+  try {
+    const data = await api(`/api/pipeline-admin/templates/${activeTplId}/stages/reorder`, 'POST', { stage_ids: ids });
+    activeTpl = data.template; stages = data.stages || [];
+    renderEditor();
+    loadTemplates();   // counts unchanged, but keep list fresh (fire and forget)
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message });
+    loadStages(activeTplId);   // resync — the DOM order no longer matches the DB
+  }
+}
+
+function nudgeStage(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= stages.length) return;
+  const ids = stages.map(s => s.id);
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  commitOrder(ids);
+}
+window.nudgeStage = nudgeStage;
+
+// ── Template dialogs ───────────────────────────────────────────
+
+function datalistHtml() {
+  const types = Object.keys(typesMap);
+  const subs = [...new Set(Object.values(typesMap).flat())];
+  return `
+    <datalist id="dl-types">${types.map(t => `<option value="${esc(t)}"></option>`).join('')}</datalist>
+    <datalist id="dl-subs">${subs.map(s => `<option value="${esc(s)}"></option>`).join('')}</datalist>`;
+}
+
+function templateFormHtml(t) {
+  return `<div class="cc-form">
+    ${datalistHtml()}
+    <label>Name</label>
+    <input type="text" id="tf-name" value="${esc(t.name || '')}" maxlength="100">
+    <div class="row2">
+      <div><label>Case type</label>
+        <input type="text" id="tf-type" list="dl-types" value="${esc(t.case_type || '')}" maxlength="40"></div>
+      <div><label>Case subtype</label>
+        <input type="text" id="tf-subtype" list="dl-subs" value="${esc(t.case_subtype || '')}" maxlength="40"></div>
+    </div>
+    <div class="row2">
+      <div><label>Role</label>
+        <select id="tf-role">
+          <option value="case"   ${t.role !== 'intake' ? 'selected' : ''}>case — runs per case type/subtype</option>
+          <option value="intake" ${t.role === 'intake' ? 'selected' : ''}>intake — runs pre-retention</option>
+        </select></div>
+    </div>
+    <label>Description</label>
+    <textarea id="tf-desc" rows="2">${esc(t.description || '')}</textarea>
+    <div class="checks">
+      <label><input type="checkbox" id="tf-default" ${t.is_default ? 'checked' : ''}>
+        Default for this case type</label>
+      <label><input type="checkbox" id="tf-active" ${t.active == null || t.active ? 'checked' : ''}>
+        Active</label>
+    </div>
+    <div class="hint">Setting default clears the default flag on the type's other templates (single-default invariant).</div>
+  </div>`;
+}
+
+function gatherTemplateForm() {
+  const name = E('tf-name').value;
+  if (!name.trim()) { Swal.showValidationMessage('Name is required'); return false; }
+  return {
+    name,
+    case_type:    E('tf-type').value,
+    case_subtype: E('tf-subtype').value,
+    role:         E('tf-role').value,
+    description:  E('tf-desc').value,
+    is_default:   E('tf-default').checked ? 1 : 0,
+    active:       E('tf-active').checked ? 1 : 0,
+  };
+}
+
+/** POST/PUT with the duplicate-active 409 → force retry flow. */
+async function saveTemplate(method, url, body) {
+  try {
+    return await api(url, method, body);
+  } catch (e) {
+    if (e.status === 409 && /force:true/.test(e.message || '')) {
+      const { isConfirmed } = await Swal.fire({
+        icon: 'warning',
+        title: 'Duplicate active template',
+        html: `<div style="font-size:13px;text-align:left">${esc(e.message)}<br><br>
+               With two active templates on the same type/subtype/role, case → template
+               resolution picks one arbitrarily. Proceed anyway?</div>`,
+        showCancelButton: true,
+        confirmButtonText: 'Proceed (force)',
+      });
+      if (!isConfirmed) return null;
+      return api(url, method, { ...body, force: true });
+    }
+    throw e;
+  }
+}
+
+async function newTemplate() {
+  const { isConfirmed, value } = await Swal.fire({
+    title: 'New pipeline template',
+    html: templateFormHtml({ role: 'case', active: 1 }),
+    width: 560, showCancelButton: true, confirmButtonText: 'Create',
+    focusConfirm: false,
+    preConfirm: gatherTemplateForm,
+  });
+  if (!isConfirmed || !value) return;
+  try {
+    const data = await saveTemplate('POST', '/api/pipeline-admin/templates', value);
+    if (!data) return;
+    Toast.fire({ icon: 'success', title: `Template "${data.template.name}" created` });
+    await loadTemplates();
+    selectTpl(data.template.id);
+  } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
+}
+window.newTemplate = newTemplate;
+
+async function editTemplate() {
+  if (!activeTpl) return;
+  const { isConfirmed, value } = await Swal.fire({
+    title: `Edit "${activeTpl.name}"`,
+    html: templateFormHtml(activeTpl),
+    width: 560, showCancelButton: true, confirmButtonText: 'Save',
+    focusConfirm: false,
+    preConfirm: gatherTemplateForm,
+  });
+  if (!isConfirmed || !value) return;
+  try {
+    const data = await saveTemplate('PUT', `/api/pipeline-admin/templates/${activeTpl.id}`, value);
+    if (!data) return;
+    Toast.fire({ icon: 'success', title: 'Template saved' });
+    await loadTemplates();
+    await loadStages(activeTpl.id);
+  } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
+}
+window.editTemplate = editTemplate;
+
+async function deleteTemplate() {
+  if (!activeTpl) return;
+  const { isConfirmed } = await Swal.fire({
+    icon: 'warning',
+    title: `Delete template "${activeTpl.name}"?`,
+    html: `<div style="font-size:13px">Its stages are deleted with it. Only possible while no
+           case history references it — otherwise you'll be offered deactivation.</div>`,
+    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: '#ef4444',
+  });
+  if (!isConfirmed) return;
+  try {
+    await api(`/api/pipeline-admin/templates/${activeTpl.id}`, 'DELETE');
+    Toast.fire({ icon: 'success', title: 'Template deleted' });
+    activeTplId = null; activeTpl = null; stages = [];
+    E('tpl-header').style.display = 'none';
+    E('stage-wrap').innerHTML = `<div class="empty-state"><i class="fa-solid fa-timeline"></i>
+      <div>Select a template to edit its stages</div></div>`;
+    await loadTemplates();
+  } catch (e) {
+    if (e.status === 409) return offerDeactivateTemplate(e.message);
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+window.deleteTemplate = deleteTemplate;
+
+async function offerDeactivateTemplate(msg) {
+  const { isConfirmed } = await Swal.fire({
+    icon: 'info',
+    title: 'History references this template',
+    html: `<div style="font-size:13px;text-align:left">${esc(msg)}<br><br>Deactivate it instead?</div>`,
+    showCancelButton: true, confirmButtonText: 'Deactivate',
+  });
+  if (!isConfirmed) return;
+  try {
+    await api(`/api/pipeline-admin/templates/${activeTpl.id}`, 'PUT', { active: 0 });
+    Toast.fire({ icon: 'success', title: 'Template deactivated' });
+    await loadTemplates();
+    await loadStages(activeTpl.id);
+  } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
+}
+
+// ── Stage dialog (create + edit) ───────────────────────────────
+
+function stageFormHtml(s) {
+  const locked = s.id && Number(s.log_count) > 0;
+  return `<div class="cc-form">
+    <label>Stage key</label>
+    <input type="text" id="sf-key" value="${esc(s.stage_key || '')}" maxlength="50"
+           ${locked ? 'disabled' : ''} placeholder="e.g. plan_confirmation"
+           style="font-family:ui-monospace,Menlo,monospace">
+    ${locked
+      ? `<div class="locked-note"><i class="fa-solid fa-lock"></i> Key locked — ${s.log_count} case history
+         row(s) reference it. Keys are the permanent contract (automation and history reference keys, not
+         labels). The labels below stay fully editable.</div>`
+      : `<div class="hint">Permanent once any case enters this stage. Lowercase letters, digits, underscores.</div>`}
+    <label>Internal label <span style="text-transform:none;letter-spacing:0">(→ becomes cases.case_status on advance)</span></label>
+    <input type="text" id="sf-internal" value="${esc(s.internal_label || '')}"
+           oninput="sfCount(this)">
+    <div class="counter" id="sf-counter">${(s.internal_label || '').length}/${MAX_INTERNAL}</div>
+    <label>Client label <span style="text-transform:none;letter-spacing:0">(portal-facing)</span></label>
+    <input type="text" id="sf-client" value="${esc(s.client_label || '')}" maxlength="100">
+    <div class="row2">
+      <div><label>Stage bucket (case_stage)</label>
+        <select id="sf-bucket">
+          ${CASE_STAGES.map(b => `<option value="${b}" ${s.case_stage === b ? 'selected' : ''}>${b}</option>`).join('')}
+        </select></div>
+      <div><label>Default rec (suggested next action)</label>
+        <input type="text" id="sf-rec" value="${esc(s.default_rec || '')}" maxlength="128"></div>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" id="sf-visible" ${s.client_visible == null || s.client_visible ? 'checked' : ''}> Client visible</label>
+      <label><input type="checkbox" id="sf-terminal" ${s.is_terminal ? 'checked' : ''}> Terminal stage</label>
+      <label><input type="checkbox" id="sf-active" ${s.active == null || s.active ? 'checked' : ''}> Active</label>
+    </div>
+    <label>Config (JSON — reserved for future stage config; blank = none)</label>
+    <textarea id="sf-config" rows="3" placeholder='{}'>${esc(s.config ? (typeof s.config === 'string' ? s.config : JSON.stringify(s.config, null, 2)) : '')}</textarea>
+  </div>`;
+}
+
+function sfCount(inp) {
+  const c = E('sf-counter');
+  c.textContent = `${inp.value.length}/${MAX_INTERNAL}`;
+  c.classList.toggle('over', inp.value.length > MAX_INTERNAL);
+}
+window.sfCount = sfCount;
+
+function gatherStageForm(locked) {
+  const key = E('sf-key').value;
+  if (!locked && !KEY_RE.test(key)) {
+    Swal.showValidationMessage('stage_key must match ^[a-z0-9_]{1,50}$');
+    return false;
+  }
+  const internal = E('sf-internal').value;
+  if (!internal.trim()) { Swal.showValidationMessage('Internal label is required'); return false; }
+  if (internal.length > MAX_INTERNAL) {
+    Swal.showValidationMessage(`Internal label must be at most ${MAX_INTERNAL} characters — it becomes cases.case_status (varchar(50))`);
+    return false;
+  }
+  let config = null;
+  const rawCfg = E('sf-config').value;
+  if (rawCfg.trim() !== '') {
+    try { config = JSON.parse(rawCfg); }
+    catch (e) { Swal.showValidationMessage('Config is not valid JSON — ' + e.message); return false; }
+    if (typeof config !== 'object' || Array.isArray(config) || config === null) {
+      Swal.showValidationMessage('Config must be a JSON object (or blank)');
+      return false;
+    }
+  }
+  const body = {
+    internal_label: internal,
+    client_label:   E('sf-client').value,
+    case_stage:     E('sf-bucket').value,
+    default_rec:    E('sf-rec').value,
+    client_visible: E('sf-visible').checked ? 1 : 0,
+    is_terminal:    E('sf-terminal').checked ? 1 : 0,
+    active:         E('sf-active').checked ? 1 : 0,
+    config,
+  };
+  if (!locked) body.stage_key = key;   // locked → never send it; server would 409
+  return body;
+}
+
+async function stageDialog(stageId) {
+  if (!activeTplId) return;
+  const s = stageId ? stages.find(x => x.id === stageId) : {};
+  if (stageId && !s) return;
+  const locked = !!(stageId && Number(s.log_count) > 0);
+
+  const { isConfirmed, value } = await Swal.fire({
+    title: stageId ? `Edit stage "${s.stage_key}"` : 'New stage',
+    html: stageFormHtml(s || {}),
+    width: 600, showCancelButton: true,
+    confirmButtonText: stageId ? 'Save' : 'Create',
+    focusConfirm: false,
+    preConfirm: () => gatherStageForm(locked),
+  });
+  if (!isConfirmed || !value) return;
+
+  try {
+    if (stageId) {
+      await api(`/api/pipeline-admin/stages/${stageId}`, 'PUT', value);
+      Toast.fire({ icon: 'success', title: 'Stage saved' });
+    } else {
+      await api(`/api/pipeline-admin/templates/${activeTplId}/stages`, 'POST', value);
+      Toast.fire({ icon: 'success', title: 'Stage created' });
+    }
+    await loadStages(activeTplId);
+    loadTemplates();
+  } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
+}
+window.stageDialog = stageDialog;
+
+async function toggleStageActive(stageId, checkbox) {
+  try {
+    await api(`/api/pipeline-admin/stages/${stageId}`, 'PUT', { active: checkbox.checked ? 1 : 0 });
+    Toast.fire({ icon: 'success', title: checkbox.checked ? 'Stage activated' : 'Stage deactivated' });
+    await loadStages(activeTplId);
+  } catch (e) {
+    checkbox.checked = !checkbox.checked;
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+window.toggleStageActive = toggleStageActive;
+
+async function deleteStage(stageId) {
+  const s = stages.find(x => x.id === stageId);
+  if (!s) return;
+  const { isConfirmed } = await Swal.fire({
+    icon: 'warning',
+    title: `Delete stage "${s.stage_key}"?`,
+    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: '#ef4444',
+  });
+  if (!isConfirmed) return;
+  try {
+    await api(`/api/pipeline-admin/stages/${stageId}`, 'DELETE');
+    Toast.fire({ icon: 'success', title: 'Stage deleted' });
+    await loadStages(activeTplId);
+    loadTemplates();
+  } catch (e) {
+    if (e.status === 409) {
+      const { isConfirmed: deact } = await Swal.fire({
+        icon: 'info',
+        title: 'History references this stage',
+        html: `<div style="font-size:13px;text-align:left">${esc(e.message)}<br><br>Deactivate it instead?
+               (Inactive stages stay in history but leave the advance menu and upcoming list.)</div>`,
+        showCancelButton: true, confirmButtonText: 'Deactivate',
+      });
+      if (deact) return toggleStageActiveById(stageId);
+      return;
+    }
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+window.deleteStage = deleteStage;
+
+async function toggleStageActiveById(stageId) {
+  try {
+    await api(`/api/pipeline-admin/stages/${stageId}`, 'PUT', { active: 0 });
+    Toast.fire({ icon: 'success', title: 'Stage deactivated' });
+    await loadStages(activeTplId);
+  } catch (e) { Toast.fire({ icon: 'error', title: e.message }); }
+}
+
+// ── Lifecycle ──────────────────────────────────────────────────
+
+async function init() {
+  P.setTopbarButtons({ new: true, refresh: true });
+  loadTypesMap();   // fire-and-forget — datalists only
+  try { await loadTemplates(); loaded = true; }
+  catch (e) {
+    E('tpl-list').innerHTML = `<div class="empty-state" style="height:auto;padding:40px 12px">
+      <i class="fa-solid fa-triangle-exclamation"></i><div>${esc(e.message)}</div></div>`;
+  }
+}
+
+function onShow() {
+  P.setTopbarButtons({ new: true, refresh: true });
+  if (loaded) { loadTemplates(); if (activeTplId) loadStages(activeTplId); }
+}
+function onHide()    {}
+function onRefresh() { loadTemplates(); if (activeTplId) loadStages(activeTplId); loadTypesMap(); }
+function onNew()     { newTemplate(); }
+
+window.onShow = onShow;
+window.onHide = onHide;
+window.onRefresh = onRefresh;
+window.onNew = onNew;
+
+// ── Boot ───────────────────────────────────────────────────────
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return init();
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>

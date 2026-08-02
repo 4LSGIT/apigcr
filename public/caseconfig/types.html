@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Case Types &amp; Subtypes</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       TYPES & SUBTYPES SUB-PAGE — self-contained styles.
+       Shared tokens duplicated from the shell (house pattern).
+       ══════════════════════════════════════════════ */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy: #1a1a2e; --blue: #4f8ef7; --blue2: #3a7de8;
+      --green: #22c55e; --red: #ef4444; --amber: #f59e0b;
+      --bg: #f1f5f9; --surface: #ffffff; --border: #e2e8f0;
+      --muted: #94a3b8; --text: #1e293b; --text2: #475569;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px; color: var(--text); background: var(--bg);
+      display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+    }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: var(--blue2); }
+    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .toolbar {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 10px 16px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+      font-size: 12px; color: var(--text2);
+    }
+    .toolbar i { color: var(--muted); }
+
+    #list { flex: 1; overflow-y: auto; padding: 16px; max-width: 760px; }
+
+    .type-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; margin-bottom: 12px; overflow: hidden;
+    }
+    .type-head {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      background: #f8fafc;
+    }
+    .type-name { font-size: 14px; font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .type-meta { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+
+    .sub-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 14px 7px 34px; border-bottom: 1px solid var(--bg);
+    }
+    .sub-row:last-of-type { border-bottom: none; }
+    .sub-name { font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .icon-btn {
+      border: 1px solid var(--border); background: var(--surface);
+      border-radius: 6px; width: 26px; height: 26px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--text2); font-size: 11px; flex-shrink: 0; transition: all 0.12s;
+    }
+    .icon-btn:hover { background: var(--bg); }
+    .icon-btn.del:hover { background: #fee2e2; color: var(--red); border-color: #fecaca; }
+
+    .add-sub {
+      padding: 6px 14px 10px 34px;
+    }
+
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; color: var(--muted);
+      gap: 10px; text-align: center;
+    }
+    .empty-state i { font-size: 36px; opacity: 0.25; }
+
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div class="toolbar">
+  <i class="fa-solid fa-circle-info"></i>
+  <span>Edits the shared <b>fe-case_types</b> setting — the same data the Settings tab edits.
+        Renames can update pipeline templates; existing cases always keep their old value.</span>
+  <span style="flex:1"></span>
+  <button class="btn btn-primary" onclick="addType()"><i class="fa-solid fa-plus"></i> New Type</button>
+</div>
+
+<div id="list">
+  <div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// TYPES & SUBTYPES SUB-PAGE (Case Config manager)
+//
+// ONE combined editor for both levels — the fe-case_types blob
+// ({"Type":["Subtype",...]}) is a single app_settings row and both
+// this page and settings.html write it through the SAME endpoints
+// (GET /api/app-settings, PUT /api/app-settings/fe-case_types).
+// There is deliberately NO second store and NO server-side cache.
+//
+// Persistence model (differs from settings.html's dirty+Save on
+// purpose): every mutation re-fetches the blob fresh, applies the
+// one change, and PUTs immediately. That keeps this page and
+// settings.html from clobbering each other's unsaved work, and it
+// lets the rename/delete flows (usage lookups, template updates)
+// commit atomically per action.
+//
+// Rename flow:  usage counts via GET /api/pipeline-admin/usage →
+//   warn; optionally PUT each matching pipeline template to the new
+//   name (via /api/pipeline-admin/templates/:id). Cases are NEVER
+//   rewritten — out of scope, and the dialogs say so.
+// Delete flow:  blocked while templates still reference the name;
+//   cases referencing it only warn (they keep the old string).
+//
+// Shell protocol: P.apiSend relay; lifecycle hooks onShow/onRefresh/
+// onNew exposed on window; topbar buttons via P.setTopbarButtons.
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = id => document.getElementById(id);
+const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+const ciEq = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
+
+// ── State — ordered [{name, subs:[...]}], always server-fresh ──
+let types = [];
+let loaded = false;
+let busy = false;   // one mutation at a time; each is fetch→mutate→PUT
+
+// ── Blob I/O ───────────────────────────────────────────────────
+
+async function fetchBlob() {
+  const data = await api('/api/app-settings');
+  const row = (data.settings || []).find(r => r.key === 'fe-case_types');
+  if (!row) throw new Error('fe-case_types setting not found');
+  let map;
+  try { map = JSON.parse(row.value); } catch { map = null; }
+  if (!map || Array.isArray(map) || typeof map !== 'object') {
+    throw new Error('fe-case_types is not a {"Type":["Subtype",...]} object — fix it in Settings first');
+  }
+  return Object.entries(map).map(([name, subs]) => ({
+    name, subs: Array.isArray(subs) ? subs.map(String) : []
+  }));
+}
+
+async function putBlob(state) {
+  const obj = {};
+  state.forEach(t => { obj[t.name] = t.subs.slice(); });   // key insertion order preserved
+  await api('/api/app-settings/fe-case_types', 'PUT', { value: JSON.stringify(obj) });
+  // Refresh dropdown sources shell-wide (same call settings.html makes).
+  try { window.top.loadFirmData?.(); } catch (_) {}
+}
+
+/** Run one mutation against a FRESH copy of the blob. mutator receives the
+ *  fresh state array and either mutates it (return undefined/true) or aborts
+ *  (return false). On success, PUT + re-render. */
+async function mutate(mutator, successMsg) {
+  if (busy) return;
+  busy = true;
+  try {
+    const fresh = await fetchBlob();
+    const ok = await mutator(fresh);
+    if (ok === false) return;
+    await putBlob(fresh);
+    types = fresh;
+    render();
+    if (successMsg) Toast.fire({ icon: 'success', title: successMsg });
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message });
+  } finally {
+    busy = false;
+  }
+}
+
+// ── Usage / template helpers ───────────────────────────────────
+
+function usageQs(type, sub) {
+  const p = new URLSearchParams({ case_type: type });
+  if (sub != null && sub !== '') p.set('case_subtype', sub);
+  return p.toString();
+}
+
+async function getUsage(type, sub) {
+  return api(`/api/pipeline-admin/usage?${usageQs(type, sub)}`);  // {cases, templates}
+}
+
+/** Templates matching a type (or type+subtype), CI — for the rename-update
+ *  offer. Includes inactive templates (they must follow the rename too). */
+async function matchingTemplates(type, sub) {
+  const data = await api('/api/pipeline-admin/templates');
+  return (data.templates || []).filter(t =>
+    ciEq(t.case_type, type) && (sub == null || ciEq(t.case_subtype, sub))
+  );
+}
+
+// ── Render ─────────────────────────────────────────────────────
+
+function render() {
+  const host = E('list');
+  if (!types.length) {
+    host.innerHTML = `<div class="empty-state"><i class="fa-solid fa-tags"></i>
+      <div>No case types yet</div>
+      <button class="btn btn-primary" onclick="addType()"><i class="fa-solid fa-plus"></i> New Type</button></div>`;
+    return;
+  }
+  host.innerHTML = types.map((t, ti) => `
+    <div class="type-card">
+      <div class="type-head">
+        <div class="type-name">${esc(t.name)}
+          <span class="type-meta">${t.subs.length ? t.subs.length + ' subtype' + (t.subs.length === 1 ? '' : 's') : 'no subtypes'}</span>
+        </div>
+        <button class="icon-btn" title="Rename type"    onclick="renameType(${ti})"><i class="fa-solid fa-pen"></i></button>
+        <button class="icon-btn" title="Move up"        onclick="moveType(${ti},-1)"><i class="fa-solid fa-arrow-up"></i></button>
+        <button class="icon-btn" title="Move down"      onclick="moveType(${ti},1)"><i class="fa-solid fa-arrow-down"></i></button>
+        <button class="icon-btn del" title="Delete type" onclick="deleteType(${ti})"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      ${t.subs.map((s, si) => `
+        <div class="sub-row">
+          <div class="sub-name">${esc(s)}</div>
+          <button class="icon-btn" title="Rename subtype"    onclick="renameSub(${ti},${si})"><i class="fa-solid fa-pen"></i></button>
+          <button class="icon-btn" title="Move up"           onclick="moveSub(${ti},${si},-1)"><i class="fa-solid fa-arrow-up"></i></button>
+          <button class="icon-btn" title="Move down"         onclick="moveSub(${ti},${si},1)"><i class="fa-solid fa-arrow-down"></i></button>
+          <button class="icon-btn del" title="Delete subtype" onclick="deleteSub(${ti},${si})"><i class="fa-solid fa-xmark"></i></button>
+        </div>`).join('')}
+      <div class="add-sub">
+        <button class="btn btn-outline" onclick="addSub(${ti})"><i class="fa-solid fa-plus"></i> Subtype</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Name prompt (shared) ───────────────────────────────────────
+
+async function promptName(title, current = '') {
+  const { value, isConfirmed } = await Swal.fire({
+    title,
+    input: 'text',
+    inputValue: current,
+    showCancelButton: true,
+    confirmButtonText: 'OK',
+    inputValidator: v => (!v || !v.trim()) ? 'Name cannot be empty' : null,
+  });
+  return isConfirmed ? value : null;   // verbatim — no trim on store (house convention)
+}
+
+// ── Type actions ───────────────────────────────────────────────
+
+async function addType() {
+  const name = await promptName('New case type');
+  if (name == null) return;
+  await mutate(async (state) => {
+    if (state.some(t => ciEq(t.name, name))) {
+      Toast.fire({ icon: 'error', title: `Type "${name}" already exists` });
+      return false;
+    }
+    state.push({ name, subs: [] });
+  }, `Type "${name}" added`);
+}
+window.addType = addType;
+
+async function renameType(ti) {
+  const oldName = types[ti]?.name;
+  if (oldName == null) return;
+  const newName = await promptName(`Rename type "${oldName}"`, oldName);
+  if (newName == null || newName === oldName) return;
+
+  // CI-collision guard — allow pure case changes of the SAME entry.
+  if (types.some((t, i) => i !== ti && ciEq(t.name, newName))) {
+    return Toast.fire({ icon: 'error', title: `Type "${newName}" already exists` });
+  }
+
+  let usage;
+  try { usage = await getUsage(oldName); }
+  catch (e) { return Toast.fire({ icon: 'error', title: e.message }); }
+
+  const lines = [];
+  if (usage.templates > 0) {
+    lines.push(`<div style="margin-bottom:8px"><b>${usage.templates}</b> pipeline template(s) reference type
+      <b>"${esc(oldName)}"</b>.</div>`);
+  }
+  if (usage.cases > 0) {
+    lines.push(`<div style="margin-bottom:8px"><b>${usage.cases}</b> existing case(s) carry
+      <b>"${esc(oldName)}"</b> — cases are <b>not</b> rewritten (out of scope); they keep the old value.</div>`);
+  }
+  if (!lines.length) lines.push('<div style="margin-bottom:8px">Nothing references this type yet.</div>');
+
+  const { isConfirmed, value: updateTpls } = await Swal.fire({
+    title: `Rename to "${newName}"?`,
+    html: `<div style="text-align:left;font-size:13px">${lines.join('')}</div>`,
+    input: usage.templates > 0 ? 'checkbox' : undefined,
+    inputValue: 1,
+    inputPlaceholder: usage.templates > 0
+      ? `Update ${usage.templates} template(s) to "${esc(newName)}"` : undefined,
+    showCancelButton: true,
+    confirmButtonText: 'Rename',
+  });
+  if (!isConfirmed) return;
+
+  await mutate(async (state) => {
+    const t = state.find(x => x.name === oldName) || state[ti];
+    if (!t) { Toast.fire({ icon: 'error', title: 'Type vanished — reloaded' }); return false; }
+    t.name = newName;
+  }, `Renamed to "${newName}"`);
+
+  if (usage.templates > 0 && updateTpls) {
+    try {
+      const tpls = await matchingTemplates(oldName);
+      for (const t of tpls) {
+        await api(`/api/pipeline-admin/templates/${t.id}`, 'PUT', { case_type: newName });
+      }
+      Toast.fire({ icon: 'success', title: `${tpls.length} template(s) updated` });
+    } catch (e) {
+      Swal.fire('Template update failed', esc(e.message) +
+        '<br><br>The type was renamed; fix the remaining template(s) in the Pipelines tab.', 'warning');
+    }
+  }
+}
+window.renameType = renameType;
+
+async function deleteType(ti) {
+  const t = types[ti];
+  if (!t) return;
+
+  let usage;
+  try { usage = await getUsage(t.name); }
+  catch (e) { return Toast.fire({ icon: 'error', title: e.message }); }
+
+  if (usage.templates > 0) {
+    return Swal.fire({
+      icon: 'error',
+      title: 'Cannot delete',
+      html: `<b>${usage.templates}</b> pipeline template(s) still reference type
+             <b>"${esc(t.name)}"</b>.<br>Update or delete those templates first (Pipelines tab).`,
+    });
+  }
+
+  const bits = [];
+  if (t.subs.length) bits.push(`its ${t.subs.length} subtype(s) will be removed with it`);
+  if (usage.cases > 0) bits.push(`<b>${usage.cases}</b> existing case(s) keep the value "${esc(t.name)}" (cases are not rewritten)`);
+  const { isConfirmed } = await Swal.fire({
+    icon: 'warning',
+    title: `Delete type "${t.name}"?`,
+    html: bits.length ? `<div style="font-size:13px">${bits.join('<br>')}</div>` : undefined,
+    showCancelButton: true,
+    confirmButtonText: 'Delete',
+    confirmButtonColor: '#ef4444',
+  });
+  if (!isConfirmed) return;
+
+  await mutate(async (state) => {
+    const i = state.findIndex(x => x.name === t.name);
+    if (i === -1) { Toast.fire({ icon: 'error', title: 'Type vanished — reloaded' }); return false; }
+    state.splice(i, 1);
+  }, `Type "${t.name}" deleted`);
+}
+window.deleteType = deleteType;
+
+async function moveType(ti, dir) {
+  const name = types[ti]?.name;
+  await mutate(async (state) => {
+    const i = state.findIndex(x => x.name === name);
+    const j = i + dir;
+    if (i === -1 || j < 0 || j >= state.length) return false;
+    [state[i], state[j]] = [state[j], state[i]];
+  });
+}
+window.moveType = moveType;
+
+// ── Subtype actions ────────────────────────────────────────────
+
+async function addSub(ti) {
+  const typeName = types[ti]?.name;
+  if (typeName == null) return;
+  const name = await promptName(`New subtype under "${typeName}"`);
+  if (name == null) return;
+  await mutate(async (state) => {
+    const t = state.find(x => x.name === typeName);
+    if (!t) { Toast.fire({ icon: 'error', title: 'Type vanished — reloaded' }); return false; }
+    if (t.subs.some(s => ciEq(s, name))) {
+      Toast.fire({ icon: 'error', title: `Subtype "${name}" already exists under "${typeName}"` });
+      return false;
+    }
+    t.subs.push(name);
+  }, `Subtype "${name}" added`);
+}
+window.addSub = addSub;
+
+async function renameSub(ti, si) {
+  const typeName = types[ti]?.name;
+  const oldName = types[ti]?.subs?.[si];
+  if (typeName == null || oldName == null) return;
+  const newName = await promptName(`Rename subtype "${oldName}" (under "${typeName}")`, oldName);
+  if (newName == null || newName === oldName) return;
+
+  if (types[ti].subs.some((s, i) => i !== si && ciEq(s, newName))) {
+    return Toast.fire({ icon: 'error', title: `Subtype "${newName}" already exists under "${typeName}"` });
+  }
+
+  let usage;
+  try { usage = await getUsage(typeName, oldName); }
+  catch (e) { return Toast.fire({ icon: 'error', title: e.message }); }
+
+  const lines = [];
+  if (usage.templates > 0) {
+    lines.push(`<div style="margin-bottom:8px"><b>${usage.templates}</b> pipeline template(s) reference
+      <b>"${esc(typeName)}: ${esc(oldName)}"</b>.</div>`);
+  }
+  if (usage.cases > 0) {
+    lines.push(`<div style="margin-bottom:8px"><b>${usage.cases}</b> existing case(s) carry subtype
+      <b>"${esc(oldName)}"</b> — cases are <b>not</b> rewritten (out of scope); they keep the old value.</div>`);
+  }
+  if (!lines.length) lines.push('<div style="margin-bottom:8px">Nothing references this subtype yet.</div>');
+
+  const { isConfirmed, value: updateTpls } = await Swal.fire({
+    title: `Rename to "${newName}"?`,
+    html: `<div style="text-align:left;font-size:13px">${lines.join('')}</div>`,
+    input: usage.templates > 0 ? 'checkbox' : undefined,
+    inputValue: 1,
+    inputPlaceholder: usage.templates > 0
+      ? `Update ${usage.templates} template(s) to "${esc(newName)}"` : undefined,
+    showCancelButton: true,
+    confirmButtonText: 'Rename',
+  });
+  if (!isConfirmed) return;
+
+  await mutate(async (state) => {
+    const t = state.find(x => x.name === typeName);
+    const i = t ? t.subs.indexOf(oldName) : -1;
+    if (i === -1) { Toast.fire({ icon: 'error', title: 'Subtype vanished — reloaded' }); return false; }
+    t.subs[i] = newName;
+  }, `Renamed to "${newName}"`);
+
+  if (usage.templates > 0 && updateTpls) {
+    try {
+      const tpls = await matchingTemplates(typeName, oldName);
+      for (const t of tpls) {
+        await api(`/api/pipeline-admin/templates/${t.id}`, 'PUT', { case_subtype: newName });
+      }
+      Toast.fire({ icon: 'success', title: `${tpls.length} template(s) updated` });
+    } catch (e) {
+      Swal.fire('Template update failed', esc(e.message) +
+        '<br><br>The subtype was renamed; fix the remaining template(s) in the Pipelines tab.', 'warning');
+    }
+  }
+}
+window.renameSub = renameSub;
+
+async function deleteSub(ti, si) {
+  const typeName = types[ti]?.name;
+  const subName = types[ti]?.subs?.[si];
+  if (typeName == null || subName == null) return;
+
+  let usage;
+  try { usage = await getUsage(typeName, subName); }
+  catch (e) { return Toast.fire({ icon: 'error', title: e.message }); }
+
+  if (usage.templates > 0) {
+    return Swal.fire({
+      icon: 'error',
+      title: 'Cannot delete',
+      html: `<b>${usage.templates}</b> pipeline template(s) still reference
+             <b>"${esc(typeName)}: ${esc(subName)}"</b>.<br>Update or delete those templates first (Pipelines tab).`,
+    });
+  }
+
+  const { isConfirmed } = await Swal.fire({
+    icon: 'warning',
+    title: `Delete subtype "${subName}"?`,
+    html: usage.cases > 0
+      ? `<div style="font-size:13px"><b>${usage.cases}</b> existing case(s) keep the value
+         "${esc(subName)}" (cases are not rewritten).</div>` : undefined,
+    showCancelButton: true,
+    confirmButtonText: 'Delete',
+    confirmButtonColor: '#ef4444',
+  });
+  if (!isConfirmed) return;
+
+  await mutate(async (state) => {
+    const t = state.find(x => x.name === typeName);
+    const i = t ? t.subs.indexOf(subName) : -1;
+    if (i === -1) { Toast.fire({ icon: 'error', title: 'Subtype vanished — reloaded' }); return false; }
+    t.subs.splice(i, 1);
+  }, `Subtype "${subName}" deleted`);
+}
+window.deleteSub = deleteSub;
+
+async function moveSub(ti, si, dir) {
+  const typeName = types[ti]?.name;
+  const subName = types[ti]?.subs?.[si];
+  await mutate(async (state) => {
+    const t = state.find(x => x.name === typeName);
+    const i = t ? t.subs.indexOf(subName) : -1;
+    const j = i + dir;
+    if (i === -1 || j < 0 || j >= t.subs.length) return false;
+    [t.subs[i], t.subs[j]] = [t.subs[j], t.subs[i]];
+  });
+}
+window.moveSub = moveSub;
+
+// ── Lifecycle ──────────────────────────────────────────────────
+
+async function init() {
+  P.setTopbarButtons({ new: true, refresh: true });
+  await reload();
+}
+
+async function reload() {
+  try {
+    types = await fetchBlob();
+    loaded = true;
+    render();
+  } catch (e) {
+    E('list').innerHTML = `<div class="empty-state"><i class="fa-solid fa-triangle-exclamation"></i>
+      <div>${esc(e.message)}</div></div>`;
+  }
+}
+
+function onShow()    { P.setTopbarButtons({ new: true, refresh: true }); if (loaded) reload(); }
+function onHide()    {}
+function onRefresh() { reload(); }
+function onNew()     { addType(); }
+
+window.onShow = onShow;
+window.onHide = onHide;
+window.onRefresh = onRefresh;
+window.onNew = onNew;
+
+// ── Boot ───────────────────────────────────────────────────────
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return init();
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>
