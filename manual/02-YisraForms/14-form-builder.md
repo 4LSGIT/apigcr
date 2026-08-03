@@ -31,13 +31,28 @@ Working rules worth knowing:
 - **Deletes are reference-aware** — deleting a field/row/section that other conditions depend on lists the affected nodes and cascade-removes the conditions after you confirm.
 - **Save draft** writes `draft_definition` only. Server validation failures surface verbatim next to the button, naming the offending JSON path.
 
+### Tabbed layout (Slice 2.6)
+
+Turn on **Form settings → Layout → Tabbed layout** to convert a flat form into tabs (everything lands on one tab; the reverse toggle only works with a single tab and no sticky sections). A tabbed canvas shows:
+
+- A **tab strip** — click to switch, double-click (or ✎) to rename, **+ Tab** to add (a new tab is seeded with one section — every tab must keep at least one to save), ◀ ▶ to reorder, × to delete (**only when empty** — move its sections out first).
+- **Sticky top / sticky bottom** dashed regions above and below the tab's sections — these render on every tab (case header, running notes).
+- Dragging reorders sections **within** a region only. Moving a section to another tab or a sticky region goes through the **Move to…** button on its header — the section lands at the end of the target region and the canvas follows it. New sections (palette click or drop) land on the **active tab**.
+- Emptying a tab via Move-to is fine as a working state, but an empty tab can't be **saved** (the server rejects it, message verbatim) — delete it or give it a section before saving.
+
+Conditions, renames, deletes, and field drags work across tabs exactly as before — names are form-wide.
+
+### Embed fields (Slice 2.6)
+
+The palette's **embed** type renders an https iframe (Calendly, KBB, dashboards) — display-only: never collected, validated, or saved, and it never affects schema versioning. The inspector takes the URL (https-only, validated as you type), an optional pixel height (default 600), a width, and a visibility condition. **Internal forms only.**
+
 ### Tabs
 
 | Tab | What it is |
 |-----|------------|
 | **Canvas** | The structural editor above |
 | **JSON** | The raw draft definition. Escape hatch — paste, edit, **Apply** replaces the working model (both edit the same in-memory model) |
-| **Preview** | The production renderer in an iframe, rendering the **saved draft** (the draft is auto-saved before every refresh). No autosave, no prefill, no hooks, save disabled; with a test link id the entity loads read-only. Safe to click anything |
+| **Preview** | The production renderer in an iframe, rendering the **saved draft** (the draft is auto-saved before every refresh). No autosave, no prefill, no hooks, no template code, save disabled; with a test link id the entity loads read-only. Safe to click anything |
 | **Live** | The **real published form** in normal mode — drafts, autosave, and Save actually write, and any configured PATCH/workflow fires. Requires a published template and a link id. Shows a hint when your draft differs from what's published. `↗ New tab` / `Copy link` give a standalone URL (via `liveHost.html`) |
 | **History** | Version history + submissions browser (below) |
 
@@ -72,7 +87,7 @@ Two read-only lists side by side:
 
 - All template-sourced strings reach the DOM via `textContent`/`setAttribute` — no `innerHTML` path exists for model data (in the builder and the renderer both).
 - Preview is quadruple-guarded against writes; Live is honest about being real and gated on published + explicit link id.
-- Hook files are named, never inlined — executable code lives only in the repo.
+- **Custom code** (Form settings) stores per-form JavaScript in the definition — syntax-checked as you type (never executed in the builder), ≤ 32 KB, mutually exclusive with a hooks file (each editor disables while the other is set). It runs on the live form only, never in Preview; publishing a template that carries code is superuser-gated. Shared multi-form code still lives in repo hook files (`/forms/hooks/`). Internal surfaces only — see contract §8/§9.
 - If the SortableJS CDN is unreachable, the builder degrades to click-to-add: palette clicks insert at the selection, "+ row" still works. Nothing breaks.
 
 ---

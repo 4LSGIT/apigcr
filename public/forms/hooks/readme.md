@@ -1,48 +1,61 @@
 # YisraForm template hooks
 
-Per-form escape hatch for templated forms rendered by `public/forms/render.html`.
-**Executable code lives in this repo only — never in the DB** (locked decision;
-portal XSS + git review). A template opts in by setting its definition's
-top-level `"hooks"` key to a file name (no path, no extension) matching
-`^[a-zA-Z0-9_-]{1,50}$` — e.g. `"hooks": "intake_extras"` loads
-`/forms/hooks/intake_extras.js`.
+**Shared** browser-side helpers for templated forms rendered by
+`public/forms/render.html`.
 
-## Interface
+Since Slice 2.6 there are TWO places per-form JavaScript can live:
 
-The file runs as a plain browser script (loaded and awaited by render.html
-BEFORE the YCForm is constructed) and may define:
+| Mechanism | Where the code lives | Use it for |
+|---|---|---|
+| `"code"` (definition key) | The template definition (DB, versioned with the form) | **Per-form logic** — the default. Edited in the builder's Form settings, ships with publish, restores with version history. |
+| `"hooks"` (definition key) | This directory — `/forms/hooks/{name}.js` | **Shared code** used by several forms, or code that needs git review workflow. |
+
+The two are **mutually exclusive** on one template (server-enforced). Neither
+runs in preview mode. Both are INTERNAL-ONLY: any future external/portal render
+route must REFUSE templates carrying `code`, `css`, or `hooks` (contract §8/§9
+reformulated invariant, 2026-08-02 — supersedes the old "executable code lives
+in the repo only, never in the DB" rule).
+
+## Interface (identical for both mechanisms)
+
+`code` is executed synchronously (`new Function(code)()`, try/catch-isolated);
+a hooks file is loaded with `<script src>` and awaited. Both happen at the same
+boot point — before `init()` — and both may define:
 
 ```js
 window.ycHooks = {
-  // Called at the END of render.html's generated onLoad — after resolver
-  // prefill has written its values, and BEFORE init re-baselines (step 13c),
-  // so anything you write to fields here lands in the clean state and will
-  // not make the form report dirty. May be async; it is awaited.
-  //   form — the live YCForm instance (form.el, form.collect(), …)
-  //   data — the resolved data source init populated the form from
-  onLoad(form, data) {},
+  // Called at the END of render.html's generated onLoad — after $load and
+  // resolver prefills, BEFORE init re-baselines (step 13c), so anything
+  // written to fields here lands in the clean state and does not dirty the
+  // form. May be async; it is awaited. Isolated: a throw warns and degrades.
+  async onLoad(form, data) {},
 
-  // Called from the form's onSave after a successful save (awaited by
-  // yc-forms save() step 11, which re-baselines afterward unless the user
-  // typed during the await).
-  //   form   — the live YCForm instance
-  //   result — the /api/forms/submit response ({ id, version, updated_at, … })
-  onSave(form, result) {},
+  // Called from save() after the submission persists (awaited). `result` is
+  // the submit response. Isolated the same way.
+  async onSave(form, result) {},
 };
 ```
 
-Both members are optional. Errors thrown by either are caught and
-console.warn-ed by render.html — a broken hook degrades, it never aborts the
-form.
+A hooks file that needs the shared helpers loads `_yc_hook_util.js` itself and
+gates on it (see the loadUtil pattern preserved in
+`tests/fixtures/slice26/legacy_notes_341.js`). Definition `code` uses the same
+pattern — the util stays a repo file either way.
 
-## Rules
+## Files
 
-- A missing/broken hooks file is non-fatal: render.html warns and renders
-  without hooks.
-- Hooks are **not** loaded in preview mode (`?preview=1`) — preview must never
-  execute side-effecting per-form code.
-- Reach the API through `window.parent.apiSend(url, method, body)` (same relay
-  every internal form uses), or via the `form` instance's `_api`.
-- Keep hooks additive: field writes in `onLoad` land before the baseline, so
-  prefer the if-empty pattern (`if (!el.value) el.value = …`) when mixing with
-  drafts/snapshot data — same discipline as the hand-built forms' onLoad.
+- `_yc_hook_util.js` — shared helpers (entity/clients accessors, setIfEmpty,
+  setRadioIfEmpty, checkgroup toggles, frame-chain api). NOT a hooks file;
+  never named by a template's `hooks` key. **Keep** — definition `code` loads
+  it too.
+
+## Removed 2026-08-03 (Slice 2.6 migration)
+
+`notes_341.js`, `case_details_bk2.js`, `issn_extras.js`, `case_details_bk.js`,
+and `case_clients.js` migrated into their templates' `code` keys (or were
+superseded). Pre-deletion copies live in `tests/fixtures/slice26/` (equivalence
+tests) and in git history.
+
+**Restore caveat:** restoring a pre-2.6 published version from template history
+re-references a deleted hook file. That degrades gracefully (console warn, form
+renders without the hook behaviours) — if the old behaviour is needed, re-add
+the file from git history first.

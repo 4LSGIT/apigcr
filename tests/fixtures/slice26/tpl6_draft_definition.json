@@ -1,0 +1,499 @@
+{
+  "note": "Port of public/forms/casedetails-bk.html (formKey case_details). 45 existing submissions. Layout loss: the .yc-section-pair side-by-side pairs (Fee Agreements|Credit Counseling, Matrix|Schedules) become stacked sections — the schema has no section-pair concept. 2.5B: trustee options/derived dates/client names moved into the definition; hook shrunk to case_details_bk2 (341-link on trustee change + docket split + chapter mirror).",
+  "hooks": "case_details_bk2",
+  "derive": [
+    {
+      "n": 60,
+      "op": "addDays",
+      "from": "case_341_initial",
+      "target": "case_objection"
+    },
+    {
+      "n": 180,
+      "op": "addDays",
+      "from": "case_file_date",
+      "target": "case_180"
+    },
+    {
+      "n": -90,
+      "op": "addDays",
+      "from": "case_file_date",
+      "target": "case_preference"
+    },
+    {
+      "n": -14,
+      "op": "dateFromDatetime",
+      "from": "case_341_current",
+      "target": "docs_due"
+    }
+  ],
+  "toggle": false,
+  "autosave": true,
+  "dataMode": "live",
+  "onSubmit": {
+    "patch": {
+      "url": "/api/cases/{linkId}",
+      "method": "PATCH"
+    }
+  },
+  "sections": [
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "debtor_name",
+              "type": "text",
+              "label": "Debtor",
+              "width": "2x",
+              "prefill": "$load.clients[relate_type=Primary].contact_name",
+              "readonly": true,
+              "lockedMsg": "Edit the client name from the Contact page"
+            },
+            {
+              "name": "codebtor_name",
+              "type": "text",
+              "label": "Co-Debtor",
+              "width": "2x",
+              "prefill": "$load.clients[relate_type=Secondary].contact_name",
+              "readonly": true,
+              "showWhen": {
+                "op": "notEmpty",
+                "field": "codebtor_name"
+              },
+              "lockedMsg": "Edit the co-debtor name from the Contact page"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "case_number",
+              "note": "GAP: the hand-built form splits one typed docket into case_number (short) + case_number_full (full) in _buildPatchPayload. apiColumn is 1:1, so the hook re-installs that split by wrapping _buildPatchPayload. apiColumn stays case_number_full for the LOAD direction (matches the original apiMap).",
+              "type": "text",
+              "label": "Case Number",
+              "width": "2x",
+              "prefill": "$load.case.case_number",
+              "apiColumn": "case_number_full",
+              "placeholder": "25-44545 or 25-44545-mar"
+            },
+            {
+              "name": "case_chapter",
+              "note": "GAP: also mirrors to cases.case_subtype (\"Chapter 7\") in the same wrapped _buildPatchPayload.",
+              "type": "text",
+              "label": "Chapter",
+              "width": "fixed-sm",
+              "apiColumn": "case_chapter",
+              "maxLength": 2,
+              "placeholder": "7"
+            },
+            {
+              "name": "case_trustee",
+              "note": "Static options are the fallback snapshot; optionsFrom (2.5B) rebuilds them at load from firmData.settings.trustees, grouped by chapter, with the flagged-unlisted-value behaviour. The 341-link write on trustee CHANGE stays in the hook (case_details_bk2).",
+              "type": "select",
+              "label": "Trustee",
+              "options": [
+                "Basil T. Simon",
+                "Collene K. Corcoran",
+                "Daniel C. Himmelspach",
+                "Douglas S. Ellmann",
+                "Homer W. McClarty",
+                "K. Jin Lim",
+                "Karen E. Evangelista",
+                "Kenneth A. Nathan",
+                "Mark H. Shapiro",
+                "Michael A. Stevenson",
+                "Randall L. Frank",
+                "Samuel D. Sweet",
+                "Stuart A. Gold",
+                "Timothy J. Miller",
+                "Trustee Namee",
+                "Wendy T. Lewis",
+                "Thomas W. McDonald",
+                "Caouette, Melissa A.",
+                "David Wm Ruskin",
+                "Krispen S. Carroll",
+                "Tammy L. Terry",
+                "Thomas W. Jr. McDonald"
+              ],
+              "apiColumn": "case_trustee",
+              "optionsFrom": {
+                "value": "name",
+                "source": "firmData.settings.trustees",
+                "groupBy": "case_type",
+                "groupLabels": {
+                  "7": "Chapter 7",
+                  "12": "Chapter 12",
+                  "13": "Chapter 13"
+                }
+              }
+            },
+            {
+              "name": "case_341_link",
+              "note": "Written by the hook when the user changes trustee (trustee.link from firmData.settings.trustees). Read by the appointment automation (T19) as the 341 meeting link.",
+              "type": "hidden",
+              "apiColumn": "case_341_link"
+            },
+            {
+              "name": "case_id",
+              "type": "text",
+              "label": "Case ID",
+              "readonly": true,
+              "apiColumn": "case_id",
+              "lockedMsg": "The Case ID cannot be changed"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "case_file_date",
+              "type": "date",
+              "label": "Filed",
+              "apiColumn": "case_file_date"
+            },
+            {
+              "name": "case_341_initial",
+              "type": "date",
+              "label": "Initial 341",
+              "apiColumn": "case_341_initial"
+            },
+            {
+              "name": "case_341_current",
+              "type": "datetime",
+              "label": "Current 341",
+              "width": "2x",
+              "readonly": true,
+              "apiColumn": "case_341_current",
+              "lockedMsg": "The 341 date is managed via the 341 Notes form"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "case_objection",
+              "note": "Derived (+60d from case_341_initial) when empty — derive rule (2.5B).",
+              "type": "date",
+              "label": "Objection Deadline",
+              "sublabel": "+60 days from initial 341",
+              "apiColumn": "case_objection"
+            },
+            {
+              "name": "case_180",
+              "note": "Derived (+180d from case_file_date) when empty — derive rule (2.5B).",
+              "type": "date",
+              "label": "180 Days",
+              "sublabel": "+180 days from file date",
+              "apiColumn": "case_180"
+            },
+            {
+              "name": "case_preference",
+              "note": "Derived (−90d from case_file_date) when empty — derive rule (2.5B).",
+              "type": "date",
+              "label": "90 Day Preference",
+              "sublabel": "file date − 90 days",
+              "apiColumn": "case_preference"
+            }
+          ]
+        }
+      ],
+      "title": "Case Details"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "vehicle",
+              "type": "checkgroup",
+              "label": "Vehicle",
+              "width": "2x",
+              "columns": 1,
+              "options": [
+                "Reaffirmation",
+                "Redemption",
+                "Replacement"
+              ],
+              "apiColumn": "case_issues_bk_vehicle"
+            },
+            {
+              "name": "garnishment",
+              "type": "checkgroup",
+              "label": "Garnishment",
+              "width": "2x",
+              "columns": 1,
+              "options": [
+                "Pre-Petition",
+                "Post-Petition"
+              ],
+              "apiColumn": "case_garnish"
+            },
+            {
+              "name": "other_issues",
+              "type": "checkgroup",
+              "label": "Other",
+              "width": "2x",
+              "columns": 1,
+              "options": [
+                "Automatic Stay Violation",
+                "Student Loans",
+                "Confirmation Objections",
+                "Other"
+              ],
+              "apiColumn": "case_issues_bk_other"
+            }
+          ]
+        }
+      ],
+      "title": "Case Issues"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "pre_petition",
+              "type": "checkgroup",
+              "label": "Pre-Petition",
+              "options": [
+                "Sent",
+                "Signed"
+              ],
+              "apiColumn": "case_pre_petition"
+            },
+            {
+              "name": "post_petition",
+              "type": "checkgroup",
+              "label": "Post-Petition",
+              "columns": 3,
+              "options": [
+                "Sent",
+                "Signed",
+                "N/A"
+              ],
+              "apiColumn": "case_post_petition"
+            }
+          ]
+        }
+      ],
+      "title": "Fee Agreement(s)"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "first_course",
+              "type": "checkgroup",
+              "label": "1st Course",
+              "columns": 3,
+              "options": [
+                "Sent Info",
+                "Received",
+                "Filed"
+              ],
+              "apiColumn": "case_1st_course"
+            },
+            {
+              "name": "second_course",
+              "type": "checkgroup",
+              "label": "2nd Course",
+              "columns": 3,
+              "options": [
+                "Sent Info",
+                "Received",
+                "Filed"
+              ],
+              "apiColumn": "case_2nd_course"
+            }
+          ]
+        }
+      ],
+      "title": "Credit Counseling"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "matrix",
+              "type": "checkgroup",
+              "options": [
+                "Extension Motion",
+                "Uploaded"
+              ],
+              "apiColumn": "matrix"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "matrix_date_original",
+              "type": "date",
+              "label": "Original Due",
+              "apiColumn": "matrix_date_original"
+            },
+            {
+              "name": "matrix_date_proposed",
+              "type": "date",
+              "label": "Proposed Due",
+              "apiColumn": "matrix_date_proposed"
+            }
+          ]
+        }
+      ],
+      "title": "Matrix"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "schedules",
+              "type": "checkgroup",
+              "options": [
+                "Extension Motion",
+                "Filed"
+              ],
+              "apiColumn": "schedules"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "schedules_due_original",
+              "type": "date",
+              "label": "Original Due",
+              "apiColumn": "schedules_due_original"
+            },
+            {
+              "name": "schedules_due_proposed",
+              "type": "date",
+              "label": "Proposed Due",
+              "apiColumn": "schedules_due_proposed"
+            }
+          ]
+        }
+      ],
+      "title": "Schedules"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "filing_fee",
+              "type": "checkgroup",
+              "options": [
+                "Order Uploaded",
+                "Show Cause",
+                "Fee Paid",
+                "Order Issued",
+                "Deadline Extended",
+                "Fee Waived"
+              ],
+              "apiColumn": "filing_fee"
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "final_installment",
+              "type": "date",
+              "label": "Final Installment Due",
+              "apiColumn": "final_installment"
+            },
+            {
+              "name": "show_cause",
+              "type": "datetime",
+              "label": "Show Cause Date",
+              "width": "2x",
+              "apiColumn": "show_cause"
+            },
+            {
+              "name": "filing_fee_extended_deadline",
+              "type": "date",
+              "label": "Extended Deadline",
+              "apiColumn": "filing_fee_extended_deadline"
+            }
+          ]
+        }
+      ],
+      "title": "Filing Fee"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "docs_due",
+              "note": "Derived (−14d from case_341_current) when empty — derive rule (2.5B).",
+              "type": "date",
+              "label": "Documents Due",
+              "sublabel": "14 days before current 341",
+              "apiColumn": "docs_due"
+            },
+            {
+              "name": "docs",
+              "type": "checkgroup",
+              "label": "Documents",
+              "columns": 1,
+              "options": [
+                "Uploaded",
+                "Missing"
+              ],
+              "apiColumn": "docs"
+            },
+            {
+              "name": "docs_missing",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Documents Missing for Trustee",
+              "width": "2x",
+              "apiColumn": "docs_missing",
+              "maxLength": 2000
+            }
+          ]
+        }
+      ],
+      "title": "Documents for Trustee"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "case_notes",
+              "rows": 4,
+              "type": "textarea",
+              "label": "Notes",
+              "apiColumn": "case_notes",
+              "maxLength": 5000
+            },
+            {
+              "name": "case_alerts",
+              "rows": 4,
+              "type": "textarea",
+              "label": "Alerts",
+              "apiColumn": "case_alerts",
+              "maxLength": 5000
+            }
+          ]
+        }
+      ],
+      "title": "Notes & Alerts"
+    }
+  ],
+  "endpoints": {
+    "load": {
+      "url": "/api/cases/{linkId}?include=clients",
+      "path": "case",
+      "method": "GET"
+    }
+  },
+  "autosaveMs": 3000
+}

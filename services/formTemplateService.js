@@ -53,6 +53,7 @@ const DERIVE_OPS = new Set(['addDays', 'dateFromDatetime']);
 const KNOWN_TYPES = new Set([
   'text', 'textarea', 'number', 'date', 'datetime',
   'select', 'radio', 'checkbox', 'checkgroup', 'tags', 'hidden',
+  'embed',   // 2.6 — display-only https iframe, INTERNAL-ONLY (contract §4.3/§9)
 ]);
 
 const OPTIONS_TYPES = new Set(['select', 'radio', 'checkgroup']); // options iff these
@@ -94,8 +95,30 @@ function validateDefinition(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) {
     throw badRequest('definition must be an object');
   }
-  if (!Array.isArray(def.sections) || def.sections.length === 0) {
+
+  // Containers (2.6, contract §4.5): exactly one of sections | tabs. The
+  // sticky keys are legal only alongside tabs. Every container's sections run
+  // through the SAME per-section validation below — one code path — and the
+  // name-scoping / condition-target / derive-target / save-column machinery
+  // treats all containers as one pool (the second passes already work off
+  // shared collections, so feeding them per-container is sufficient).
+  const hasSections = def.sections !== undefined && def.sections !== null;
+  const hasTabs     = def.tabs     !== undefined && def.tabs     !== null;
+  if (hasSections && hasTabs) {
+    throw badRequest('definition must have exactly one of "sections" or "tabs", not both');
+  }
+  if (!hasSections && !hasTabs) {
+    throw badRequest('definition.sections must be a non-empty array (or use "tabs")');
+  }
+  if (hasSections && (!Array.isArray(def.sections) || def.sections.length === 0)) {
     throw badRequest('definition.sections must be a non-empty array');
+  }
+  if (!hasTabs) {
+    for (const k of ['stickyTop', 'stickyBottom']) {
+      if (def[k] !== undefined && def[k] !== null) {
+        throw badRequest(`${k} is only allowed together with "tabs"`);
+      }
+    }
   }
 
   const topLevel      = new Set();  // standard-section field names + repeater keys (shared data namespace)
@@ -154,6 +177,45 @@ function validateDefinition(def) {
       }
       repScope.add(field.name);
       repFieldRefs.push({ name: field.name, path });   // vs topLevel: second pass (order-independent)
+    }
+
+    // embed (2.6, contract §4.3/§7 — INTERNAL-ONLY, display-only): an https
+    // iframe, not an input. src is required and must PARSE as an https URL
+    // (new URL in try/catch — no regex heuristics); height is an optional
+    // positive integer. Everything input-shaped is rejected: an embed has no
+    // value, so validation/apiColumn/prefill/options are meaningless and a
+    // silent accept would just hide authoring mistakes. showWhen IS allowed
+    // (the wrapper hides like any field). Repeaters reject it above the type
+    // gate the renderer applies (server-side, unlike the other repeater
+    // subset rules, because a cloned iframe per row is never right).
+    if (field.type === 'embed') {
+      if (!topLevelField) {
+        throw badRequest(`${path}: type "embed" is not allowed inside repeaters`);
+      }
+      if (typeof field.src !== 'string' || !field.src) {
+        throw badRequest(`${path}.src is required for type "embed"`);
+      }
+      if (field.src.length > 2000) {
+        throw badRequest(`${path}.src must be at most 2000 characters`);
+      }
+      let embedUrl = null;
+      try { embedUrl = new URL(field.src); }
+      catch (e) { throw badRequest(`${path}.src is not a valid URL`); }
+      if (embedUrl.protocol !== 'https:') {
+        throw badRequest(`${path}.src must be an https URL`);
+      }
+      if (field.height !== undefined && field.height !== null) {
+        if (!Number.isInteger(field.height) || field.height <= 0) {
+          throw badRequest(`${path}.height must be a positive integer (pixels)`);
+        }
+      }
+      for (const bad of ['required', 'apiColumn', 'prefill', 'mask', 'options',
+                         'optionsFrom', 'readonly', 'requiredWhen']) {
+        const v = field[bad];
+        if (v !== undefined && v !== null && v !== false && v !== '') {
+          throw badRequest(`${path}.${bad} is not allowed on type "embed" (display-only field)`);
+        }
+      }
     }
 
     // options present iff type is select/radio/checkgroup
@@ -273,8 +335,10 @@ function validateDefinition(def) {
     noteConditionSlot(field.requiredWhen, path, 'requiredWhen');
   };
 
-  def.sections.forEach((section, i) => {
-    const sPath = `sections[${i}]`;
+  // One section's validation — shared verbatim by sections mode and every
+  // 2.6 container (tab panels, sticky regions). sPath carries the container
+  // prefix so rejections still name the offending path exactly.
+  const validateSection = (section, sPath) => {
     if (!section || typeof section !== 'object' || Array.isArray(section)) {
       throw badRequest(`${sPath} must be an object`);
     }
@@ -324,7 +388,49 @@ function validateDefinition(def) {
     }
 
     noteShowWhen(section.showWhen, sPath);
-  });
+  };
+
+  if (hasTabs) {
+    // tabs (2.6, contract §4.5): non-empty array; each tab is EXACTLY
+    // { label, sections } — unknown keys rejected (a typo'd "showWhen" on a
+    // tab must fail loudly, not silently do nothing); label non-empty ≤ 60;
+    // sections non-empty. Sticky regions: optional section arrays (empty
+    // tolerated — the builder never serializes empties, but a hand-written
+    // empty array is harmless).
+    if (!Array.isArray(def.tabs) || def.tabs.length === 0) {
+      throw badRequest('tabs must be a non-empty array');
+    }
+    def.tabs.forEach((tab, i) => {
+      const tPath = `tabs[${i}]`;
+      if (!tab || typeof tab !== 'object' || Array.isArray(tab)) {
+        throw badRequest(`${tPath} must be an object`);
+      }
+      for (const k of Object.keys(tab)) {
+        if (k !== 'label' && k !== 'sections') {
+          throw badRequest(`${tPath} has unknown key "${k}" (a tab is exactly { label, sections })`);
+        }
+      }
+      if (typeof tab.label !== 'string' || !tab.label) {
+        throw badRequest(`${tPath}.label must be a non-empty string`);
+      }
+      if (tab.label.length > 60) {
+        throw badRequest(`${tPath}.label must be at most 60 characters`);
+      }
+      if (!Array.isArray(tab.sections) || tab.sections.length === 0) {
+        throw badRequest(`${tPath}.sections must be a non-empty array`);
+      }
+      tab.sections.forEach((s, j) => validateSection(s, `${tPath}.sections[${j}]`));
+    });
+    for (const k of ['stickyTop', 'stickyBottom']) {
+      if (def[k] === undefined || def[k] === null) continue;
+      if (!Array.isArray(def[k])) {
+        throw badRequest(`${k} must be an array of sections`);
+      }
+      def[k].forEach((s, i) => validateSection(s, `${k}[${i}]`));
+    }
+  } else {
+    def.sections.forEach((section, i) => validateSection(section, `sections[${i}]`));
+  }
 
   // Second pass A: repeater field names must be distinct from every top-level
   // name (incl. repeater keys) — deferred so section order doesn't matter.
@@ -339,6 +445,9 @@ function validateDefinition(def) {
   for (const ref of condRefs) {
     if (!topLevel.has(ref.field) || !(ref.field in topLevelTypes)) {
       throw badRequest(`${ref.path}.${ref.key}.field "${ref.field}" does not reference an existing top-level field`);
+    }
+    if (topLevelTypes[ref.field] === 'embed') {
+      throw badRequest(`${ref.path}.${ref.key}.field "${ref.field}" targets an embed — embeds have no value and cannot be condition targets`);
     }
     if (ref.op === 'includes' && topLevelTypes[ref.field] !== 'checkgroup') {
       throw badRequest(`${ref.path}.${ref.key}: op "includes" requires the target field "${ref.field}" to be a checkgroup`);
@@ -377,6 +486,9 @@ function validateDefinition(def) {
       if (r.target === r.from) {
         throw badRequest(`${dPath}: target and from must be different fields`);
       }
+      if (topLevelTypes[r.target] === 'embed' || topLevelTypes[r.from] === 'embed') {
+        throw badRequest(`${dPath}: derive cannot reference an embed field (embeds have no value)`);
+      }
       if (deriveTargets.has(r.target)) {
         throw badRequest(`${dPath}: duplicate derive target "${r.target}"`);
       }
@@ -398,28 +510,79 @@ function validateDefinition(def) {
     throw badRequest('css must be a string');
   }
 
-  // hooks, if set, must be a safe file-name token.
+  // hooks, if set, must be a safe file-name token. Since 2.6 the repo-hook
+  // boundary is SHARED code; per-form logic defaults to `code` below.
   if (def.hooks !== undefined && def.hooks !== null) {
     if (typeof def.hooks !== 'string' || !HOOKS_RE.test(def.hooks)) {
       throw badRequest('hooks must match ^[a-zA-Z0-9_-]{1,50}$');
     }
   }
+
+  // code (2.6 addendum): per-form JavaScript stored in the definition,
+  // executed by the renderer on INTERNAL surfaces only (contract §8
+  // reformulated invariant; never in preview; the future external route must
+  // REFUSE templates carrying it). Syntax-checked by PARSING — new Function
+  // compiles the body without ever calling it — so a typo fails at save with
+  // the parse message instead of dying silently in a colleague's browser.
+  if (def.code !== undefined && def.code !== null) {
+    if (typeof def.code !== 'string') {
+      throw badRequest('code must be a string');
+    }
+    if (def.code.length > 32768) {
+      throw badRequest('code must be at most 32768 characters');
+    }
+    try { new Function(def.code); }
+    catch (e) { throw badRequest(`code has a syntax error: ${e.message}`); }
+  }
+  if (def.code && def.hooks) {
+    throw badRequest('code and hooks are mutually exclusive — a form uses DB-stored code OR a repo hook file, not both');
+  }
 }
 
 
 /**
+ * Every section list a definition carries, in canonical order. Sections mode:
+ * [def.sections]. Tabs mode (2.6): stickyTop, each tab's sections, then
+ * stickyBottom. Order is irrelevant to the sorted signature but canonical
+ * anyway for any future consumer.
+ */
+function allSectionLists(def) {
+  if (!def) return [];
+  if (Array.isArray(def.tabs)) {
+    const lists = [];
+    if (Array.isArray(def.stickyTop)) lists.push(def.stickyTop);
+    for (const t of def.tabs) if (t && Array.isArray(t.sections)) lists.push(t.sections);
+    if (Array.isArray(def.stickyBottom)) lists.push(def.stickyBottom);
+    return lists;
+  }
+  return Array.isArray(def.sections) ? [def.sections] : [];
+}
+
+/**
  * Field-set signature: sorted list of (name, type) across all fields including
- * repeater fields. Used by publish to decide whether schema_version bumps.
- * A rename shows up as remove+add and therefore changes the signature. (§6)
+ * repeater fields, across ALL containers (2.6: tabs + sticky regions too —
+ * without this a tabbed definition would hash to the empty signature and the
+ * publish bump decision would break). Used by publish to decide whether
+ * schema_version bumps. A rename shows up as remove+add and therefore changes
+ * the signature. (§6)
+ *
+ * embed fields are EXCLUDED (2.6): they carry no data, so adding or removing
+ * one is a layout change like a label edit — bumping schema_version for it
+ * would raise spurious draft-recovery version warnings.
  */
 function fieldSignature(def) {
   const parts = [];
-  for (const section of (def && def.sections) || []) {
-    if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
-      for (const f of section.fields || []) parts.push(`${f.name}\u0000${f.type}`);
-    } else if (section) {
-      for (const row of section.rows || []) {
-        for (const f of (row && row.fields) || []) parts.push(`${f.name}\u0000${f.type}`);
+  for (const sections of allSectionLists(def)) {
+    for (const section of sections) {
+      if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
+        for (const f of section.fields || []) parts.push(`${f.name}\u0000${f.type}`);
+      } else if (section) {
+        for (const row of section.rows || []) {
+          for (const f of (row && row.fields) || []) {
+            if (f && f.type === 'embed') continue;   // display-only (2.6)
+            parts.push(`${f.name}\u0000${f.type}`);
+          }
+        }
       }
     }
   }

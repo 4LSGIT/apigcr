@@ -102,7 +102,8 @@ Server-side validation on create/update: `form_key` matches `^[a-z0-9_]{1,50}$`;
 | `endpoints.load` | optional | Same shape YCForm expects, incl. `path`. Omit for JSON-only forms |
 | `onSubmit.patch` | optional | If present, PATCH payload = **changed fields that declare `apiColumn`**, excluding `readonly` fields (explicit whitelist — deliberately narrower than the default `_buildPatchPayload`; renderer overrides it) |
 | `onSubmit.workflow` | optional | Same semantics as YCForm: form data spread as init vars, system fields win |
-| `hooks` | string or null | Names a repo file `/forms/hooks/{hooks}.js`. If set, renderer loads it via `<script>`; the file may define `window.ycHooks = { onLoad(form, data), onSave(form, result) }`, called at the same points hand-built forms use them. **Executable code lives in the repo only — never in the DB.** |
+| `hooks` | string or null | Names a repo file `/forms/hooks/{hooks}.js`. If set, renderer loads it via `<script>`; the file may define `window.ycHooks = { onLoad(form, data), onSave(form, result) }`, called at the same points hand-built forms use them. Since 2.6 the repo-hook boundary is **SHARED code** (`_yc_hook_util.js`, multi-form reuse, anything wanted in git); per-form logic defaults to the `code` key below. **Mutually exclusive with `code`.** |
+| `code` | string, optional | **(2.6)** Per-form JavaScript stored in the definition itself. ≤ 32,768 chars; syntax-checked at validation via `new Function(code)` (parsed, never executed server-side); **mutually exclusive with `hooks`**. The renderer executes it synchronously (`new Function(code)()` in try/catch) at exactly the point the hooks file would load — before `init()`, same boot-branch structure — so it may define `window.ycHooks = { onLoad, onSave }` with the standard interface, wired identically to file hooks; broken code warns and degrades, never aborts init. (Direct call rather than an injected `<script>` element: appended-script execution is task-queue-scheduled and its ordering vs init's await chain is environment-dependent; the direct call is strictly before init everywhere.) **NEVER executed in preview** (any preview mode). Security posture: see §8/§9 — DB-stored `code` and `css` execute on INTERNAL surfaces only; any future external/portal render route MUST REFUSE (never strip) templates carrying `code`, `css`, or `hooks`, pending the portal security review. |
 | `note` | string, optional | **Documentation only, explicitly ignored** (2.5A). Valid at form, section, row, and field level. Never rendered, never validated beyond being ignored, never part of the schema signature (§6 hashes `(name, type)` only). The migration ports use it to record why a field exists. |
 | `derive` | rule[], optional | **(2.5B B2)** Date suggestions from a fixed verb registry — no expressions, no eval. Each rule: `{ "target": "case_180", "from": "case_file_date", "op": "addDays", "n": 180 }`. Verbs: `addDays` (date + N days; `n` REQUIRED, may be negative) and `dateFromDatetime` (date part of a `datetime` value ± N days; `n` optional, absent = pure extraction). Semantics — the casedetails-bk lessons, now contract: (1) fill **only when the target is empty**, inside the generated `onLoad`, i.e. BEFORE init 13c's `resetBaseline` — later than that and the form reports dirty forever on a form nobody touched, which also blocks versionGuard's forced reload; (2) a derived value the user never edits is not in `getDiff()` and is **not persisted** — it is a deterministic function of its source, recomputed on every load; (3) a USER `change` of the source recomputes the target **unconditionally** (including clearing it when the source is cleared) — fill-only-empty is a LOAD-time rule; on live change the suggestion follows the source (this is the hand-built listener's exact behaviour). One rule per target; `target`/`from` must name existing top-level FIELDS (`target ≠ from`). Local + deterministic → active in preview too. |
 | `css` | string, optional | **(2.5B B4)** Per-form CSS, injected by the renderer as a `<style>` element via `textContent` (never innerHTML) appended to `<head>` AFTER the shared stylesheet — wins ties at equal specificity. `textContent` means the string can only ever be CSS text — no element/script injection path (§8). **INTERNAL-ONLY pending the portal security review**: CSS on an untrusted rendering surface is a lower-grade but real injection channel (exfiltration selectors, UI redress) — same review bucket as `type:"embed"` and external mode (§9). |
@@ -204,6 +205,7 @@ Only `name` and `type` are required; everything else optional. `name` matches `^
 | `checkgroup` | `.yc-check-grid[data-yc-checkgroup="{name}"]` | `checkgroup` | `options`; `allowOther` adds the `data-yc-other` checkbox + `data-yc-other-text` input + `.yc-other-text` wrapper |
 | `tags` | hidden source input | `tags` | yc-forms transforms it |
 | `hidden` | `input[type=hidden]` | `text` | for workflow-only values; still collected/submitted |
+| `embed` | `.yc-field` + `<iframe>` | — (not registered) | **(2.6, INTERNAL-ONLY)** Display-only https iframe. `src` required (https-only URL, ≤ 2000 chars); `height` optional positive integer px (default 600). NOT an input: no `.yc-error`, not registered in `fields`/`validation`/`apiMap`, excluded from `collect()`/diff/PATCH (exclusion = simply not registering — `collect()` walks `config.fields`). The iframe carries `src`, `loading="lazy"`, `title` (label \|\| name), `data-yc-embed="{name}"` (a stable per-form-code selector hook), and `style="width:100%;height:{h}px;border:none;"` with `h` parseInt-coerced. `showWhen` IS allowed (the wrapper hides it like any field). Rejected on an embed: `required`, `apiColumn`, `prefill`, `mask`, `options`, `optionsFrom`, `derive` (as target or source), `readonly`, `requiredWhen`; embed inside a repeater is rejected; conditions may not target an embed (it has no value). Excluded from the §6 field-set signature (no data; adding/removing one is a layout change). External exposure stays in the §9 portal-review bucket. |
 
 `options` entries: plain strings (value = label) or `{ "value": "...", "label": "..." }`.
 
@@ -235,6 +237,33 @@ Renderer translation to runtime attrs:
 **AND arrays** (2.5A A3): the renderer puts condition `[0]` on the node itself (single-condition output is byte-identical to pre-2.5) and wraps one `<div class="ycr-and-wrap">` per additional condition — nested `data-yc-show-when` elements compose as AND at runtime (an outer `display:none` hides everything inside). The wrapper is `display: contents` (render.html-local CSS) so `.yc-row`'s flex layout is untouched. Zero runtime change.
 
 Field-level `showWhen` wraps the individual `.yc-field`. Conditions target TOP-LEVEL fields only (repeater keys and repeater fields are not valid targets).
+
+### 4.5 Tabs & sticky regions (2.6)
+
+Top level: **exactly one of** `sections` | `tabs`.
+
+```json
+{
+  "tabs": [
+    { "label": "Client Info", "sections": [ /* ordinary section objects */ ] }
+  ],
+  "stickyTop":    [ /* sections rendered BEFORE the tab container */ ],
+  "stickyBottom": [ /* sections rendered AFTER it */ ]
+}
+```
+
+Rules (enforced in §7):
+
+- `tabs`: non-empty array. Each tab: **exactly** the keys `label` (non-empty string, ≤ 60 chars) and `sections` (non-empty array of ordinary section objects — repeater sections legal). Unknown keys on a tab object are rejected.
+- `stickyTop` / `stickyBottom`: optional arrays of ordinary section objects; legal ONLY when `tabs` is present. (Empty arrays are tolerated by the validator; the builder never serializes them.)
+- **Field-name scoping is unchanged**: form-wide across stickies + all tabs (+ the per-repeater rules from 2.5A) — one namespace pool, exactly as `sections` is treated today. `showWhen` / `requiredWhen` / `prefill` / `derive` / `optionsFrom` work unchanged inside tab panels, and conditions may reference fields on OTHER tabs (the conditional engine queries `[name=…]` form-wide).
+- First tab renders active. No tab-level `showWhen` (out of scope). No nested tabs.
+
+Renderer markup (issn.html classes; zero `yc-forms.js` / `yc-forms.css` changes — `setupTabs` and the `.yc-tabs/.yc-tab-bar/.yc-tab-panel/.yc-tab-sticky` styles already exist):
+
+- One `<div class="yc-tab-sticky">` per non-empty sticky region, wrapping that region's sections, before/after the tab container.
+- `<div class="yc-tabs">` containing `<div class="yc-tab-bar">` with one `<button type="button">` per tab (label via `textContent`, first gets class `active`) and one `<div class="yc-tab-panel">` per tab (first gets `active`). Panels are index-matched to bar buttons; everything renders INSIDE the form element (`setupTabs` and the conditional engine scope to `this.el`).
+- After `init()` resolves, the renderer calls `form.setupTabs('.yc-tab-bar', '.yc-tab-panel')` and registers the **tab-reveal** listener: a second `#saveBtn` click listener (yc-forms binds its own in init step 1, so this one runs second; `validate()` runs synchronously before `save()`'s first await) that finds the first `.yc-error.visible` in DOM order, activates its `.yc-tab-panel` when inactive, and scrolls the `.yc-field` into view. Errors in sticky regions are always visible — scroll only. Known non-fix: an error inside a showWhen-hidden wrapper on the ACTIVE tab (A7-lint territory).
 
 ---
 
@@ -289,7 +318,10 @@ Renderer passes the row's `schema_version` into YCForm — draft-recovery versio
 
 Reject with a message naming the offending path:
 
-- `sections` is a non-empty array; each section has `rows` (standard) xor `repeater`+`fields`.
+- **Containers (2.6):** exactly one of `sections` | `tabs`. `sections` is a non-empty array. `tabs` is a non-empty array of `{ label, sections }` objects (exact keys; `label` non-empty string ≤ 60 chars; `sections` non-empty). `stickyTop`/`stickyBottom` are arrays of sections, legal only with `tabs`. Every container's sections pass the SAME per-section validation (one code path); name scoping, condition/derive/optionsFrom target checks, and the `onSubmit.patch` save-column requirement treat all containers as one pool.
+- Each section has `rows` (standard) xor `repeater`+`fields`.
+- `embed` fields (2.6, internal-only): `src` required — parses under `new URL` with protocol exactly `https:`, ≤ 2000 chars; `height` optional positive integer. Rejected on an embed: `required`, `apiColumn`, `prefill`, `mask`, `options`, `optionsFrom`, `readonly`, `requiredWhen`; embed inside a repeater; a `derive` rule whose `target` or `from` is an embed; a condition (`showWhen`/`requiredWhen` anywhere) targeting an embed. `showWhen` ON an embed is allowed. Embeds are excluded from the §6 field-set signature.
+- `code` (2.6 addendum): string ≤ 32,768 chars; syntax-checked via `new Function(code)` in try/catch (parses, never executes; rejected with the parse error message). **`code` and `hooks` may not both be set.**
 - Every field has valid `name` (regex above) and known `type`.
 - **Name scoping (2.5A A4):** top-level field names AND repeater keys unique form-wide (shared data namespace); repeater field names unique within their repeater and distinct from every top-level name — two repeaters MAY share a field name. (This tightens the repeater-key rule — previously unchecked — and relaxes cross-repeater field names; every pre-2.5A published definition satisfies both.)
 - `options` present iff type is select/radio/checkgroup.
@@ -314,20 +346,23 @@ Reject with a message naming the offending path:
 - Preview mode (builder): `render.html?template_id=N&preview=1[&link_id=N]` — fetches the row via `GET /api/form-templates/:id` and renders `draft_definition`; without `link_id`, skips `endpoints.load`, drafts/submissions, and prefill (pure layout preview). Preview never writes.
 - Emits the required-ID skeleton itself (`toggleBtn`, `toggleLabel`, `saveStatus`, `warning`, `draftBanner`, `draftTimestamp`, `draftRestore`, `draftDiscard`, `saveBtn`) per the `toggle` flag.
 - Boot: `waitForParent` loop when internal (`P.apiSend` + `P.entityData`), per the standard iframe boot pattern.
-- **All template-sourced strings are written via `textContent` / `setAttribute` — never `innerHTML`.** Templates are staff-authored today but portal-exposed tomorrow; no injection path from day one.
+- **All template-sourced DATA strings are written via `textContent` / `setAttribute` — never `innerHTML`.** This rule governs untrusted *data* (labels, options, values) and is unchanged by 2.6. Authored code is governed separately (below).
+- **Reformulated code invariant (2.6, supersedes "no browser-executed JS stored in the DB"):** DB-stored `code` and `css` execute on INTERNAL surfaces only. Any future external/portal render route **MUST REFUSE (never strip)** templates carrying `code`, `css`, or `hooks`, pending the portal security review — this external-refusal gate is a NAMED REQUIREMENT of that route. Preview never executes `code`. Template publish is superuser-gated (`superuserOnlyFor('form_templates')` on POST `/:id/publish`), so code authorship = superusers; drafts stay staff-editable.
+- Tabs mode (2.6): §4.5 markup + `setupTabs` wiring in both boot branches (hooks/code and plain) + the tab-reveal saveBtn listener.
 - Derivation summary: DOM from §4; YCForm config = `{ formKey, schemaVersion, linkType, linkId, container, dataMode, autosave, autosaveMs, readonly: toggle, fields, repeaters, validation, endpoints, apiMap (apiColumn→name), onSubmit }` + overridden `_buildPatchPayload` (apiColumn whitelist) + generated `onLoad` (prefill, Slice 2) + optional hook wiring.
 
 ---
 
-## 9. Explicitly out of v1 (reserved, don't build)
+## 9. Explicitly out / security buckets
 
-- **Tabs** — reserved top-level key `tabs: [{ label, sections: [...] }]` as an alternative to `sections`; renderer support later (Detailed Questionnaire territory). Slice 2.6, gating `issn` alone.
+- ~~Tabs reserved~~ — **DELIVERED in 2.6** (§4.5). Nested tabs and tab-level `showWhen` remain out.
+- `type: "embed"` — **BUILT in 2.6, INTERNAL-ONLY** (the `css`-key precedent: an https-only URL stored in the DB is a URL, not code). External exposure of embed remains in the portal-review bucket below.
 - Collapsible sections; per-repeater-field masks/validation; nested repeaters; repeater min/max enforcement.
 - Public/unauthed render route + server-side portal prefill (client-portal build).
-- **Portal security review bucket** (nothing here ships to external rendering before that review): `type: "embed"`, the 2.5B `css` key, and external/portal render mode itself. `css` is live for INTERNAL forms only.
-- Multi-column / value-transforming `apiColumn` — hooks are the boundary (see §4.3 B3).
-- `showWhen` inside repeaters (runtime cannot scope a condition to one row); second-entity writes on save (that's a workflow, not a schema feature).
-- Migrating any existing hand-built form.
+- **Portal security review bucket** (nothing here ships to external rendering before that review): the `code` key, the 2.5B `css` key, `hooks`, external embed exposure, and external/portal render mode itself. The future external route MUST REFUSE (never strip) templates carrying `code`, `css`, or `hooks` (§8). `code`/`css`/embed are live for INTERNAL forms only.
+- Multi-column / value-transforming `apiColumn` — per-form `code` (or a hook file for shared logic) is the boundary (see §4.3 B3).
+- `showWhen` inside repeaters (runtime cannot scope a condition to one row — 2.7 candidate); second-entity writes on save (that's a workflow, not a schema feature — the issn contact write-back stays client-side `code` pending that decision).
+- Migrating any existing hand-built PAGE (cutover is a separate act; the 2.6 hook migration moved hook FILES to `code`, not pages).
 
 ---
 
@@ -341,3 +376,4 @@ Reject with a message naming the offending path:
 | 2.5A | (delivered 2026-07) §5.1 `$load` prefill; §4.3 `requiredWhen`/`requiredMessage` + checkgroup `columns` + the `note` key; §4.4 `includes` op + AND condition arrays (one yc-forms change: the checkgroup fallback in `_evaluateConditionals`); §7 per-repeater name scoping. |
 | 2.5B | (delivered 2026-07) §4.3 `optionsFrom` (firmData.* AND $load.* sources, groupBy/groupLabels, flagged unlisted value, static-options fallback) + `apiColumn` `{load, save}` split; §3 `derive` (addDays/dateFromDatetime, fill-only-empty in onLoad, unconditional recompute on source change) + `css` (textContent-injected, internal-only pending portal review); B0 firmData relay in formBuilder + liveHost. ZERO yc-forms.js changes. Tabs = 2.6; `embed`/`css`-external/portal mode = the §9 portal-review bucket. |
 | 4 | Admin list + history viewer + submissions browser (delivered 2026-07). **External render mode: DEFERRED out of Slice 4 to the client-portal build** — unauthed endpoints need the portal token design, and building it twice was the wrong trade. Every template route remains authed; §5's external-prefill note and §9's reservation stand. Decision recorded in the build state (`rw_scratch ns=fred k=formbuilder_build_state`). |
+| 2.6 | (delivered 2026-08) §4.5 tabs/stickyTop/stickyBottom (exactly-one-of `sections`\|`tabs`; issn.html markup classes; `setupTabs` wiring + tab-reveal-on-validation-failure listener; ZERO yc-forms.js/yc-forms.css changes); §4.3 `type:"embed"` (https-only iframe, internal-only, display-only, excluded from collect/PATCH and the field-set signature); §3 `code` key (per-form DB-stored JS, ≤32KB, syntax-checked, mutually exclusive with `hooks`, never in preview) under the REFORMULATED §8 invariant — the old "no browser-executed JS stored in the DB" rule is retired for internal surfaces (workflow `custom_code` precedent; publish SU-gated); **full hook-file migration**: `notes_341` / `case_details_bk2` / `issn_extras` ported to `code`, per-form hook files deleted, `_yc_hook_util.js` + readme kept (repo hooks = SHARED code, `code` = per-form default); issn (tpl 7) draft rebuilt on tabs + 2.5A/B declarative features. Builder: flat internal model + layout tags (region/tabIndex) + TABS_META, tab strip, Move-to menu for cross-container moves, sticky pseudo-groups, tabbed-layout toggle, embed + custom-code editors. `fieldSignature` extended across all containers (embeds excluded). |

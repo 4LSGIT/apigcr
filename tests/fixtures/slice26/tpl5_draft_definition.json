@@ -1,0 +1,383 @@
+{
+  "note": "Port of public/forms/341notes.html (formKey 341_notes). PUBLISH AT schema_version 2 — 10 existing form_submissions rows are v2 and a v1 template would trip the draft version-mismatch warning. endpoints.load adds include=appts (the hand-built page relied on case.html's entityData fast-path for appts; that is not available when the form is rendered from the builder).",
+  "hooks": "notes_341",
+  "toggle": false,
+  "autosave": true,
+  "dataMode": "snapshot",
+  "onSubmit": {
+    "patch": {
+      "url": "/api/cases/{linkId}",
+      "method": "PATCH"
+    },
+    "workflow": {
+      "id": 7,
+      "initData": {
+        "source": "341_form"
+      }
+    }
+  },
+  "sections": [
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "primary_contact_id",
+              "type": "hidden",
+              "readonly": true
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "attorney_user_id",
+              "note": "Hidden workflow field. Resolved by the hook from the 341 appt (cases.341_appt_id → appts.appt_with), then users.email / users.user_name via /resolve. Two-hop — not expressible as a prefill expression.",
+              "type": "hidden",
+              "readonly": true
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "attorney_email",
+              "type": "hidden",
+              "readonly": true
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "attorney_name",
+              "type": "hidden",
+              "readonly": true
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "case_id",
+              "type": "text",
+              "label": "Case ID",
+              "readonly": true,
+              "apiColumn": "case_id",
+              "lockedMsg": "The Case ID cannot be changed"
+            },
+            {
+              "name": "case_number",
+              "type": "text",
+              "label": "Case Number",
+              "width": "2x",
+              "readonly": true,
+              "apiColumn": "case_number_full",
+              "lockedMsg": "The Case Number can be changed in the Case Information Form"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "debtor_fname",
+              "type": "text",
+              "label": "First Name",
+              "readonly": true,
+              "lockedMsg": "The Primary client can be changed under the 'People' tab"
+            },
+            {
+              "name": "debtor_mname",
+              "type": "text",
+              "label": "Middle Name",
+              "readonly": true,
+              "lockedMsg": "The Primary client can be changed under the 'People' tab"
+            },
+            {
+              "name": "debtor_lname",
+              "type": "text",
+              "label": "Last Name",
+              "readonly": true,
+              "lockedMsg": "The Primary client can be changed under the 'People' tab"
+            }
+          ]
+        }
+      ],
+      "title": "Debtor"
+    },
+    {
+      "note": "Shown only when the hook found a Secondary client (replaces the #codebtorSection JS toggle).",
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "codebtor_fname",
+              "type": "text",
+              "label": "First Name",
+              "readonly": true,
+              "lockedMsg": "The Secondary client can be changed under the 'People' tab"
+            },
+            {
+              "name": "codebtor_mname",
+              "type": "text",
+              "label": "Middle Name",
+              "readonly": true,
+              "lockedMsg": "The Secondary client can be changed under the 'People' tab"
+            },
+            {
+              "name": "codebtor_lname",
+              "type": "text",
+              "label": "Last Name",
+              "readonly": true,
+              "lockedMsg": "The Secondary client can be changed under the 'People' tab"
+            }
+          ]
+        }
+      ],
+      "title": "Co-Debtor",
+      "showWhen": {
+        "op": "notEmpty",
+        "field": "codebtor_fname"
+      }
+    },
+    {
+      "note": "Split out of the converter's Co-Debtor grouping: in the source markup this row sits AFTER </div> of #codebtorSection, so it must not inherit the co-debtor showWhen.",
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "trustee",
+              "type": "text",
+              "label": "Trustee Name",
+              "readonly": true,
+              "apiColumn": "case_trustee",
+              "lockedMsg": "The Trustee can be changed in the Case Information Form"
+            },
+            {
+              "name": "meeting_datetime",
+              "type": "datetime",
+              "label": "341 Meeting Date & Time",
+              "readonly": true,
+              "lockedMsg": "The 341 can be changed by selecting a new control date below"
+            }
+          ]
+        }
+      ],
+      "title": "Trustee & Meeting"
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "outcome",
+              "note": "apiColumn 341_status. cases.341_status is ENUM(Continued,Completed) — the option values must stay exactly these two strings.",
+              "type": "radio",
+              "options": [
+                "Continued",
+                "Completed"
+              ],
+              "required": true,
+              "apiColumn": {
+                "save": "341_status"
+              }
+            }
+          ]
+        }
+      ],
+      "title": "341 Outcome"
+    },
+    {
+      "note": "Replaces the #continuedSection wrapper. op:neq (not eq:Continued) so the block is visible before an outcome is chosen — same as the hand-built page.",
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "missing_docs",
+              "note": "apiColumn docs_missing (TEXT). checkgroup serialises to a comma-joined string, which is what the column already holds.",
+              "type": "checkgroup",
+              "options": [
+                "2023 Tax Return",
+                "2024 Tax Return",
+                "2025 Tax Return",
+                "Bank Statements",
+                "Pay Stubs",
+                "Vehicle Title(s)",
+                "Retirement Statement",
+                "Life Insurance Info",
+                "Recorded Deed",
+                "Recorded Mortgage",
+                "Mortgage Statement",
+                "SEV Statement",
+                "Homeowner's Policy",
+                "Divorce Judgment",
+                "Business Documents"
+              ],
+              "apiColumn": {
+                "save": "docs_missing"
+              },
+              "allowOther": true
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "missing_docs_notes",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Notes RE: Missing Documents",
+              "maxLength": 2000
+            }
+          ]
+        }
+      ],
+      "title": "Missing Documents",
+      "showWhen": {
+        "op": "neq",
+        "field": "outcome",
+        "value": "Completed"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "amendments",
+              "type": "checkgroup",
+              "options": [
+                "Cover Sheet",
+                "Schedule A",
+                "Schedule B",
+                "Schedule C",
+                "Schedule D",
+                "Schedule E",
+                "Schedule F",
+                "Schedule G",
+                "Schedule H",
+                "Schedule I",
+                "Schedule J",
+                "SOFA",
+                {
+                  "label": "Add creditor(s)?",
+                  "value": "Add creditor(s)"
+                }
+              ],
+              "allowOther": true
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "amendments_notes",
+              "rows": 3,
+              "type": "textarea",
+              "label": "Notes RE: Amendments Needed",
+              "maxLength": 2000
+            }
+          ]
+        }
+      ],
+      "title": "Amendments Needed",
+      "showWhen": {
+        "op": "neq",
+        "field": "outcome",
+        "value": "Completed"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "other_issues",
+              "rows": 4,
+              "type": "textarea",
+              "maxLength": 3000
+            }
+          ]
+        }
+      ],
+      "title": "Other Issues",
+      "showWhen": {
+        "op": "neq",
+        "field": "outcome",
+        "value": "Completed"
+      }
+    },
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "new_control_datetime",
+              "note": "requiredWhen AND-array (2.5A) restores the hand-built rule: required when outcome=Continued AND appearance_required=YES. Closes REPORT.md gap 2.",
+              "type": "datetime",
+              "label": "New Control Date & Time",
+              "requiredWhen": [
+                {
+                  "op": "eq",
+                  "field": "outcome",
+                  "value": "Continued"
+                },
+                {
+                  "op": "eq",
+                  "field": "appearance_required",
+                  "value": "YES"
+                }
+              ],
+              "requiredMessage": "A new control date is required when an appearance is required"
+            },
+            {
+              "name": "docs_due_by",
+              "type": "date",
+              "label": "Documents Due By",
+              "apiColumn": {
+                "save": "docs_due"
+              }
+            }
+          ]
+        },
+        {
+          "fields": [
+            {
+              "name": "appearance_required",
+              "note": "requiredWhen (2.5A) restores the hand-built rule: required only when outcome=Continued. Closes REPORT.md gap 2 — plain required:true would have blocked saving a Completed 341 (validate() does not skip hidden fields).",
+              "type": "radio",
+              "label": "Appearance Required?",
+              "options": [
+                "YES",
+                "NO"
+              ],
+              "requiredWhen": {
+                "op": "eq",
+                "field": "outcome",
+                "value": "Continued"
+              }
+            }
+          ]
+        }
+      ],
+      "title": "Next Steps",
+      "showWhen": {
+        "op": "neq",
+        "field": "outcome",
+        "value": "Completed"
+      }
+    }
+  ],
+  "endpoints": {
+    "load": {
+      "url": "/api/cases/{linkId}?include=clients,appts",
+      "path": "case",
+      "method": "GET"
+    }
+  },
+  "autosaveMs": 3000
+}

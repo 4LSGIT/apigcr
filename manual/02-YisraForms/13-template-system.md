@@ -75,6 +75,31 @@ Top-level keys mirror the YCForm config options from Part 3 (`dataMode`, `autosa
 
 Everything is validated server-side on save and publish (contract §7) — a structurally broken definition never reaches the renderer.
 
+### Tabs and sticky regions (Slice 2.6)
+
+Instead of top-level `sections`, a definition may carry `tabs` — **exactly one of the two, never both** (contract §4.5):
+
+```json
+{
+  "stickyTop":    [ { "rows": [ ... ] } ],
+  "tabs": [
+    { "label": "Client Info", "sections": [ ... ] },
+    { "label": "Taxes",       "sections": [ ... ] }
+  ],
+  "stickyBottom": [ { "rows": [ ... ] } ]
+}
+```
+
+- Each tab is exactly `{ label, sections }` — label ≤ 60 chars, sections non-empty. No tab-level `showWhen`, no nesting.
+- `stickyTop` / `stickyBottom` are optional section arrays rendered above/below **every** tab (case header, running notes) — only legal alongside `tabs`.
+- Field names are scoped **form-wide** across every container; `showWhen` conditions reach across tabs freely.
+- The renderer emits the same `.yc-tab-bar` / `.yc-tab-panel` / `.yc-tab-sticky` markup hand-built tabbed forms use and wires `setupTabs` after init — zero yc-forms.js changes. On a failed save with the first error on an inactive tab, that tab is activated and the field scrolled into view (sticky errors are always visible, so no switch).
+- Versioning ignores layout: the field signature is order-independent across containers, so moving sections between tabs never bumps the schema version.
+
+### `embed` fields (internal-only)
+
+`{ "name": "ash_auto", "type": "embed", "src": "https://calendly.com/…", "height": 600 }` renders an `<iframe>` (https-only, ≤ 2000 chars, positive-int height, default 600). Display-only: never collected, validated, or saved; excluded from the schema signature; not allowed inside repeaters; can't be a condition or derive target; `showWhen` works. The iframe carries `data-yc-embed="{name}"` for code to target. **Internal forms only** — embeds are in the portal security-review bucket.
+
 ---
 
 ## apiColumn — the dual role
@@ -101,15 +126,16 @@ Data that lives on the entity itself should use `apiColumn`, not prefill. Prefil
 
 ## Custom Logic — where it goes
 
-**Executable code is never stored in the database.** The routing rule:
+The routing rule (Slice 2.6 reformulation — the old "executable code never in the DB" rule is superseded; the invariant is now **internal surfaces only**):
 
 | Need | Mechanism |
 |------|-----------|
 | Do something server-side after save | `onSubmit.workflow` → YisraFlow workflow (custom_code steps run in the server VM) |
-| Compute/fetch values on load | `prefill` resolver expressions |
-| Client-side DOM behavior on this form | Repo hook file — `hooks: "myform"` names `/forms/hooks/myform.js`, which may define `window.ycHooks = { onLoad(form, data), onSave(form, result) }` |
+| Compute/fetch values on load | `apiColumn` / `$load` / `prefill` resolver expressions |
+| **Per-form** client-side behavior | Definition `code` key — JavaScript stored in the definition, edited in the builder's Form settings, versioned with the form |
+| **Shared** client-side behavior (several forms) | Repo hook file — `hooks: "myform"` names `/forms/hooks/myform.js` |
 
-Hook files live in the repo, get code review, and are loaded by name only (the name is validated against `^[a-zA-Z0-9_-]{1,50}$` — no paths). See `public/forms/hooks/README.md` for the interface.
+`code` and `hooks` are **mutually exclusive** on one template (server-enforced). Both may define `window.ycHooks = { onLoad(form, data), onSave(form, result) }`, both run before `init()` with try/catch isolation, and **neither runs in preview**. `code` is ≤ 32 KB and syntax-checked at save (`new Function` parse); hooks names are validated against `^[a-zA-Z0-9_-]{1,50}$` (no paths). DB-stored `code`/`css` execute on internal surfaces only — a future external/portal render route must **refuse** (never strip) templates carrying `code`, `css`, or `hooks`. Publishing a template that carries `code` is superuser-gated. See `public/forms/hooks/readme.md`.
 
 ---
 

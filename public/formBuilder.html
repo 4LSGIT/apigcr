@@ -245,6 +245,22 @@
   #histDetail.show { display: flex; }
   #histDetailBar { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
   #histDetailTa { flex: 1; min-height: 200px; }
+/* ── Tabbed layout (2.6) ── */
+#canvas .cv-tabstrip { display:flex; align-items:center; gap:4px; flex-wrap:wrap;
+  padding:6px 4px; border-bottom:2px solid var(--line, #d8d8e0); margin-bottom:10px; }
+#canvas .cv-tab { border:1px solid var(--line, #d8d8e0); border-bottom:none;
+  border-radius:6px 6px 0 0; background:#f2f2f6; padding:5px 14px; cursor:pointer;
+  font-size:.85rem; color:#555; }
+#canvas .cv-tab.active { background:#fff; color:#111; font-weight:600;
+  border-color:#888; position:relative; top:2px; }
+#canvas .cv-tabctl { margin-left:auto; display:inline-flex; gap:3px; }
+#canvas .cv-region { margin-bottom:10px; }
+#canvas .cv-region.sticky { border:1px dashed #b9b9c6; border-radius:8px;
+  padding:6px 8px 8px; background:rgba(120,120,150,.04); }
+#canvas .cv-region-label { font-size:.72rem; text-transform:uppercase;
+  letter-spacing:.05em; color:#888; margin-bottom:6px; }
+#canvas .cv-region-hint { font-size:.8rem; padding:8px 4px; }
+#canvas .cv-moveto { margin-left:auto; flex:none; }
 </style>
 </head>
 <body>
@@ -439,6 +455,40 @@
  *   - SECURITY: every template-sourced string reaches the DOM via
  *     textContent / value / setAttribute. No innerHTML path exists for
  *     model data (contract §8 discipline, extended to the builder).
+ *
+ * SLICE 2.6 — tabs, embed, per-form code (SLICE_2_6_SPEC.md + addendum v2):
+ *   - FLAT MODEL + LAYOUT TAGS (mandated architecture): MODEL.sections stays
+ *     the single flat array in canonical order (stickyTop, tab 0…N,
+ *     stickyBottom) so locArr / SEL indices / refsTo / renameField cascades /
+ *     allNames / delete flows / field-strip Sortables are all UNTOUCHED.
+ *     Layout membership lives outside the model: TABS_META (labels, null =
+ *     sections mode), LAYOUT (WeakMap section → {region, tabIndex}),
+ *     TAB_KEY_ORDER (byte-stable roundtrip), ACTIVE_TAB. serializeModel()
+ *     reassembles {tabs, stickyTop?, stickyBottom?} at save / JSON / preview /
+ *     publish / dirty-check time; sections-mode defs bypass it entirely
+ *     (serializeModel returns MODEL itself — pre-2.6 templates byte-
+ *     untouched by construction). MODEL.sections is INTERNAL-ONLY in tabbed
+ *     mode and never serialized.
+ *   - Canvas tabbed mode: tab strip (switch / dblclick-rename / add /
+ *     reorder ◀▶ / delete-when-empty), sticky pseudo-regions above/below the
+ *     active tab's section list. Section drags reorder WITHIN a region;
+ *     CROSS-container moves go through the section-head "Move to…" menu only
+ *     (retag + reinsert at the target region's canonical end). Cross-region
+ *     drags and palette drops on sticky regions are accepted by Sortable and
+ *     rejected at the ops layer (flash + deferSync — the established
+ *     pattern). An emptied tab is a legal TRANSIENT state (delete it or add
+ *     a section; the server rejects saving it, message verbatim).
+ *   - type:"embed" (internal-only): palette + inspector (https src validated
+ *     at input, positive-int height, showWhen, notes; no Data/Validation/
+ *     Options). newField seeds a valid placeholder src — the model never
+ *     starts invalid. changeType to embed strips every input-shaped key and
+ *     cascade-removes referencing conditions after a confirm.
+ *   - Per-form `code` (Form settings): syntax-checked at input (new Function
+ *     PARSE — never executed in the builder), ≤32KB, mutually exclusive with
+ *     hooks (each editor disables + rejects while the other is set). Runs on
+ *     the live form only, never in preview. Internal surfaces only.
+ *   - clientFieldSignature: accepts both shapes (flat model / stored tabbed
+ *     def) and EXCLUDES embeds, mirroring the server.
  * ==========================================================================*/
 'use strict';
 
@@ -448,7 +498,7 @@ const P = window.top;
 const FIELD_NAME_RE = /^[a-zA-Z0-9_]{1,50}$/;
 const FORM_KEY_RE   = /^[a-z0-9_]{1,50}$/;
 const HOOKS_RE      = /^[a-zA-Z0-9_-]{1,50}$/;
-const FIELD_TYPES   = ['text','textarea','number','date','datetime','select','radio','checkbox','checkgroup','tags','hidden'];
+const FIELD_TYPES   = ['text','textarea','number','date','datetime','select','radio','checkbox','checkgroup','tags','hidden','embed'];
 const OPTIONS_TYPES = ['select','radio','checkgroup'];
 const REPEATER_TYPES= ['text','number','date','select','checkbox'];   // contract §4.2
 const WIDTHS        = ['default','2x','3x','fixed-sm','fixed-md'];
@@ -456,7 +506,12 @@ const MASKS         = ['','phone','ssn','zip','ein','currency'];      // yc-form
 const SHOWWHEN_OPS  = ['eq','neq','in','notEmpty','includes'];   // includes: 2.5A, checkgroup targets only
 const TYPE_LABEL = { text:'New text', textarea:'New textarea', number:'New number',
   date:'New date', datetime:'New date & time', select:'New select', radio:'New radio',
-  checkbox:'New checkbox', checkgroup:'New check group', tags:'New tags', hidden:'new_hidden' };
+  checkbox:'New checkbox', checkgroup:'New check group', tags:'New tags', hidden:'new_hidden',
+  embed:'New embed' };
+// A new embed must carry a VALID https src from birth — the model never holds
+// invalid shapes (SPLIT_AC lesson: an empty src would 400 every draft save
+// until fixed). The inspector shows this placeholder for editing.
+const EMBED_PLACEHOLDER_SRC = 'https://example.com/';
 
 // ── State ────────────────────────────────────────────────────────────────────
 let ROW    = null;   // server row (meta: id, form_key, title, link_type, schema_version, published_at, definition)
@@ -469,6 +524,131 @@ let AUTO_NAMES = new WeakSet();   // fields whose name still auto-follows the la
 const SPLIT_AC = new WeakSet();   // fields with the apiColumn split editor open (2.5B — UI state only, never serialized)
 let SORTABLES  = [];              // live canvas Sortable instances (rebuilt each render)
 let JSON_DIRTY = false;           // JSON textarea has unapplied user edits
+
+// ── Tabbed layout state (2.6) ────────────────────────────────────────────────
+// The MODEL stays FLAT — MODEL.sections always holds every section in
+// canonical order (stickyTop, tab 0…N, stickyBottom) so ALL existing
+// machinery (locArr, SEL indices, refsTo, renameField cascades, allNames,
+// topLevelNamespace, delete flows, Sortable field strips) keeps working on
+// one array, untouched. Layout membership lives OUTSIDE the model:
+//   TABS_META  — null in sections mode; else [{ label }] (tab order/labels)
+//   LAYOUT     — WeakMap: section object → { region, tabIndex }
+//                region ∈ 'stickyTop' | 'tab' | 'stickyBottom'
+//   TAB_KEY_ORDER — the loaded definition's top-level key order, so an
+//                unedited load → serialize roundtrip is byte-stable
+//   ACTIVE_TAB — which tab the canvas is showing
+// serializeModel() reassembles { tabs, stickyTop?, stickyBottom? } from the
+// tags at save/JSON/preview/publish/dirty-check time. Sections-mode
+// definitions bypass ALL of this (serializeModel returns MODEL itself), so
+// pre-2.6 templates are byte-untouched by construction. MODEL.sections is
+// INTERNAL-ONLY in tabbed mode and never serialized.
+let TABS_META     = null;
+let LAYOUT        = new WeakMap();
+let TAB_KEY_ORDER = null;
+let ACTIVE_TAB    = 0;
+
+// Load a stored definition (either shape) into the flat working model.
+function loadDefIntoModel(def) {
+  LAYOUT = new WeakMap();
+  ACTIVE_TAB = 0;
+  if (def && Array.isArray(def.tabs)) {
+    TABS_META = def.tabs.map(t => ({ label: (t && t.label != null) ? String(t.label) : '' }));
+    TAB_KEY_ORDER = Object.keys(def);
+    const flat = [];
+    (Array.isArray(def.stickyTop) ? def.stickyTop : []).forEach(s => {
+      LAYOUT.set(s, { region: 'stickyTop' }); flat.push(s);
+    });
+    def.tabs.forEach((t, i) => {
+      ((t && t.sections) || []).forEach(s => {
+        LAYOUT.set(s, { region: 'tab', tabIndex: i }); flat.push(s);
+      });
+    });
+    (Array.isArray(def.stickyBottom) ? def.stickyBottom : []).forEach(s => {
+      LAYOUT.set(s, { region: 'stickyBottom' }); flat.push(s);
+    });
+    const m = {};
+    for (const k of Object.keys(def)) {
+      if (k === 'tabs' || k === 'stickyTop' || k === 'stickyBottom') continue;
+      m[k] = def[k];
+    }
+    m.sections = flat;
+    MODEL = m;
+  } else {
+    TABS_META = null;
+    TAB_KEY_ORDER = null;
+    MODEL = def;
+  }
+}
+
+// The definition as stored/sent: MODEL itself in sections mode; the
+// reassembled tabbed shape otherwise. Original top-level key order is
+// preserved (byte-stable roundtrip); empty sticky arrays are never emitted.
+function serializeModel() {
+  if (!TABS_META) return MODEL;
+  const tabs = TABS_META.map(t => ({ label: t.label, sections: [] }));
+  const stickyTop = [], stickyBottom = [];
+  (MODEL.sections || []).forEach(s => {
+    const tag = LAYOUT.get(s) || { region: 'tab', tabIndex: 0 };
+    if (tag.region === 'stickyTop') stickyTop.push(s);
+    else if (tag.region === 'stickyBottom') stickyBottom.push(s);
+    else {
+      const ti = Math.min(tag.tabIndex || 0, tabs.length - 1);
+      tabs[ti >= 0 ? ti : 0].sections.push(s);
+    }
+  });
+  const out = {};
+  const order = TAB_KEY_ORDER || Object.keys(MODEL).concat(['tabs']);
+  const containerKeys = ['tabs', 'stickyTop', 'stickyBottom'];
+  const seen = new Set();
+  for (const k of order) {
+    if (k === 'sections') continue;                 // internal-only in tabbed mode
+    if (seen.has(k)) continue;
+    seen.add(k);
+    if (k === 'tabs') out.tabs = tabs;
+    else if (k === 'stickyTop')    { if (stickyTop.length)    out.stickyTop = stickyTop; }
+    else if (k === 'stickyBottom') { if (stickyBottom.length) out.stickyBottom = stickyBottom; }
+    else if (k in MODEL) out[k] = MODEL[k];
+  }
+  // keys added since load (e.g. css turned on mid-session)
+  for (const k of Object.keys(MODEL)) {
+    if (k === 'sections' || seen.has(k) || containerKeys.includes(k)) continue;
+    out[k] = MODEL[k];
+  }
+  if (!seen.has('tabs')) out.tabs = tabs;
+  if (stickyTop.length && !seen.has('stickyTop')) out.stickyTop = stickyTop;
+  if (stickyBottom.length && !seen.has('stickyBottom')) out.stickyBottom = stickyBottom;
+  return out;
+}
+
+// Region helpers. Canonical order (stickyTop, tab 0…N, stickyBottom) is an
+// INVARIANT of MODEL.sections — normalizeSectionOrder() restores it after any
+// retag, so each region is a contiguous flat slice and index math stays exact.
+function layoutOf(sec) {
+  return LAYOUT.get(sec) || { region: 'tab', tabIndex: 0 };
+}
+function regionRank(tag) {
+  if (tag.region === 'stickyTop') return -1;
+  if (tag.region === 'stickyBottom') return TABS_META ? TABS_META.length : 1;
+  return tag.tabIndex || 0;
+}
+function normalizeSectionOrder() {
+  if (!TABS_META || !MODEL || !Array.isArray(MODEL.sections)) return;
+  MODEL.sections = MODEL.sections
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => (regionRank(layoutOf(a.s)) - regionRank(layoutOf(b.s))) || (a.i - b.i))
+    .map(x => x.s);
+}
+// Flat indices of a region's sections, ascending.
+function regionMembers(region, tabIndex) {
+  const out = [];
+  (MODEL.sections || []).forEach((s, i) => {
+    const tag = layoutOf(s);
+    if (tag.region !== region) return;
+    if (region === 'tab' && (tag.tabIndex || 0) !== tabIndex) return;
+    out.push(i);
+  });
+  return out;
+}
 
 // ── DOM helper (no innerHTML; text via textContent) ─────────────────────────
 function el(tag, attrs, kids) {
@@ -714,6 +894,7 @@ async function backToOpener() {
       { confirmText: 'Leave without saving', danger: true })) return;
   history.replaceState(null, '', location.pathname);
   ROW = null; MODEL = null; SEL = null;
+  TABS_META = null; LAYOUT = new WeakMap(); TAB_KEY_ORDER = null; ACTIVE_TAB = 0;
   E('builderWrap').style.display = 'none';
   E('previewFrame').removeAttribute('src');
   E('liveFrame').removeAttribute('src');
@@ -726,7 +907,7 @@ async function openTemplate(id) {
   try {
     const data = await P.apiSend('/api/form-templates/' + encodeURIComponent(id), 'GET');
     ROW   = data.template;
-    MODEL = clone(ROW.draft_definition || { sections: [] });
+    loadDefIntoModel(clone(ROW.draft_definition || { sections: [] }));
     TITLE = ROW.title;
     FKEY  = ROW.form_key;
     AUTO_NAMES = new WeakSet();
@@ -744,10 +925,10 @@ async function openTemplate(id) {
 }
 
 function snapshot() {
-  SAVED = { def: JSON.stringify(MODEL), title: TITLE, key: FKEY };
+  SAVED = { def: JSON.stringify(serializeModel()), title: TITLE, key: FKEY };
 }
 function isDirty() {
-  return !!MODEL && (JSON.stringify(MODEL) !== SAVED.def || TITLE !== SAVED.title || FKEY !== SAVED.key);
+  return !!MODEL && (JSON.stringify(serializeModel()) !== SAVED.def || TITLE !== SAVED.title || FKEY !== SAVED.key);
 }
 
 // ── Topbar ───────────────────────────────────────────────────────────────────
@@ -807,14 +988,18 @@ function markDirty() {
 async function saveDraft() {
   const errBar = E('errBar'), okBar = E('okBar');
   errBar.textContent = ''; okBar.textContent = '';
-  const body = { draft_definition: MODEL };
+  // Tabbed mode (2.6): the server stores the SERIALIZED shape; the flat
+  // MODEL is builder-internal. serializeModel() reuses the same section/field
+  // objects (no cloning), so inspector closures keep their identity either way.
+  const sentDef = serializeModel();
+  const body = { draft_definition: sentDef };
   if (TITLE !== SAVED.title) body.title = TITLE;
   if (FKEY !== SAVED.key)    body.form_key = FKEY;
-  const sent = { def: JSON.stringify(MODEL), title: TITLE, key: FKEY };
+  const sent = { def: JSON.stringify(sentDef), title: TITLE, key: FKEY };
   try {
     const data = await P.apiSend('/api/form-templates/' + ROW.id, 'PUT', body);
     ROW = data.template;
-    ROW.draft_definition = MODEL;   // preserve local object identity
+    ROW.draft_definition = sentDef;   // preserve local object identity
     SAVED = sent;                   // exactly what reached the server
     markDirty();                    // edits made during the await stay dirty
     okBar.textContent = 'Draft saved';
@@ -881,7 +1066,10 @@ function renderCanvas() {
   cv.textContent = '';
   cv.onclick = (e) => { if (e.target === cv) select(null); };   // click background → form settings
 
-  (MODEL.sections || []).forEach((sec, si) => {
+  // One section card — shared verbatim by sections mode and every 2.6 region.
+  // `si` is always the FLAT index into MODEL.sections, so data-sel keys, SEL,
+  // and every ops-layer loc string stay exactly as before.
+  function sectionCard(sec, si) {
     const isRep = Object.prototype.hasOwnProperty.call(sec, 'repeater');
     const card = el('div', { class: 'cv-section' + (isRep ? ' repeater' : '') });
 
@@ -892,6 +1080,13 @@ function renderCanvas() {
     head.appendChild(el('span', { class: 'cv-sec-title', text: sec.title || (isRep ? '(untitled repeater)' : '(untitled section)') }));
     if (sec.subtitle) head.appendChild(el('span', { class: 'cv-sec-sub', text: sec.subtitle }));
     if (sec.showWhen) head.appendChild(swBadge(sec.showWhen));
+    if (TABS_META) {
+      // Cross-container moves go through this menu only (2.6) — dragging
+      // sections between tabs/sticky regions is deliberately not a thing.
+      head.appendChild(el('button', { class: 'ghost small cv-moveto', text: 'Move to…',
+        title: 'Move this section to another tab or a sticky region',
+        onclick: (e) => { e.stopPropagation(); moveSectionMenu(si); } }));
+    }
     card.appendChild(head);
 
     if (isRep) {
@@ -952,22 +1147,266 @@ function renderCanvas() {
         }));
       }
     }
-    cv.appendChild(card);
-  });
-
-  if (window.Sortable) {
-    SORTABLES.push(new Sortable(cv, {
-      group: 'sections', handle: '.cv-sec-head', draggable: '.cv-section', animation: 150,
-      onUpdate: (evt) => moveSection(evt.oldIndex, evt.newIndex),
-      onAdd: (evt) => {   // palette structure clone
-        const kind = evt.item.dataset.palSec;
-        const idx = domIndex(cv, evt.item);
-        evt.item.remove();
-        if (kind) addSectionAt(idx, kind);
-      },
-    }));
+    return card;
   }
+
+  if (!TABS_META) {
+    // ── Sections mode: exactly the pre-2.6 canvas. ──
+    (MODEL.sections || []).forEach((sec, si) => cv.appendChild(sectionCard(sec, si)));
+    if (window.Sortable) {
+      SORTABLES.push(new Sortable(cv, {
+        group: 'sections', handle: '.cv-sec-head', draggable: '.cv-section', animation: 150,
+        onUpdate: (evt) => moveSection(evt.oldIndex, evt.newIndex),
+        onAdd: (evt) => {   // palette structure clone
+          const kind = evt.item.dataset.palSec;
+          const idx = domIndex(cv, evt.item);
+          evt.item.remove();
+          if (kind) addSectionAt(idx, kind);
+        },
+      }));
+    }
+    applySelection();
+    return;
+  }
+
+  // ── Tabbed mode (2.6): tab strip + three region containers (sticky top /
+  //    ACTIVE tab / sticky bottom). Section drags reorder WITHIN a region;
+  //    cross-region drops are accepted by Sortable and rejected by the ops
+  //    layer (flash + deferSync — the established pattern; a `put` refusal
+  //    makes Sortable's ghost fall back somewhere surprising). Palette
+  //    section drops land on the active tab only. ──
+  renderTabStrip(cv);
+  const regionSpecs = [
+    { region: 'stickyTop',    tabIndex: null, label: 'Sticky top — visible on every tab' },
+    { region: 'tab',          tabIndex: ACTIVE_TAB, label: null },
+    { region: 'stickyBottom', tabIndex: null, label: 'Sticky bottom — visible on every tab' },
+  ];
+  regionSpecs.forEach(rg => {
+    const isSticky = rg.region !== 'tab';
+    const wrap = el('div', { class: 'cv-region' + (isSticky ? ' sticky' : '') });
+    if (isSticky) wrap.appendChild(el('div', { class: 'cv-region-label', text: rg.label }));
+    const holder = el('div', { class: 'cv-region-body', 'data-region': rg.region });
+    const members = regionMembers(rg.region, rg.tabIndex);
+    members.forEach(si => holder.appendChild(sectionCard(MODEL.sections[si], si)));
+    if (!members.length) {
+      holder.appendChild(el('div', { class: 'cv-region-hint muted', text: isSticky
+        ? 'empty — use a section’s “Move to…” menu to pin sections here'
+        : 'This tab is empty — add a section, or delete the tab. (Empty tabs can’t be saved.)' }));
+    }
+    wrap.appendChild(holder);
+    cv.appendChild(wrap);
+    if (window.Sortable) {
+      SORTABLES.push(new Sortable(holder, {
+        group: 'sections', handle: '.cv-sec-head', draggable: '.cv-section', animation: 150,
+        onUpdate: (evt) => moveSectionInRegion(rg.region, rg.tabIndex, evt.oldIndex, evt.newIndex),
+        onAdd: (evt) => {
+          const kind = evt.item.dataset.palSec;
+          const idx = domIndex(evt.to, evt.item);
+          if (kind) {                                  // palette structure clone
+            evt.item.remove();
+            if (isSticky) {
+              flash('Drop new sections on a tab — sticky regions are filled via a section’s “Move to…” menu.');
+              deferSync();
+              return;
+            }
+            addSectionAtRegion('tab', ACTIVE_TAB, idx, kind);
+          } else {                                     // section card from another region
+            flash('Sections move between tabs and sticky regions via the section’s “Move to…” menu.');
+            deferSync();                               // model untouched → card snaps back
+          }
+        },
+      }));
+    }
+  });
   applySelection();
+}
+
+// ── Tab strip + tab CRUD + cross-container moves (2.6, tabbed mode only) ────
+function renderTabStrip(cv) {
+  const strip = el('div', { class: 'cv-tabstrip' });
+  TABS_META.forEach((t, i) => {
+    const b = el('button', { class: 'cv-tab' + (i === ACTIVE_TAB ? ' active' : ''),
+      text: t.label || ('Tab ' + (i + 1)),
+      title: 'Click to switch · double-click to rename',
+      onclick: () => { if (ACTIVE_TAB !== i) { ACTIVE_TAB = i; SEL = null; syncCanvas(); renderInspector(); } },
+      ondblclick: () => renameTab(i) });
+    strip.appendChild(b);
+  });
+  strip.appendChild(el('button', { class: 'ghost small', text: '+ Tab', title: 'Add a tab', onclick: addTab }));
+  strip.appendChild(el('span', { class: 'cv-tabctl' }, [
+    el('button', { class: 'ghost small', text: '✎',  title: 'Rename the active tab', onclick: () => renameTab(ACTIVE_TAB) }),
+    el('button', { class: 'ghost small', text: '◀',  title: 'Move the active tab left',  onclick: () => moveTab(ACTIVE_TAB, -1) }),
+    el('button', { class: 'ghost small', text: '▶',  title: 'Move the active tab right', onclick: () => moveTab(ACTIVE_TAB, 1) }),
+    el('button', { class: 'ghost small', text: '×',  title: 'Delete the active tab (must be empty)',
+      style: 'color:var(--danger); border-color:var(--danger);', onclick: () => deleteTab(ACTIVE_TAB) }),
+  ]));
+  cv.appendChild(strip);
+}
+
+async function renameTab(ti) {
+  const t = TABS_META[ti];
+  if (!t) return;
+  let val = null;
+  if (window.Swal) {
+    const r = await Swal.fire({
+      title: 'Rename tab', input: 'text', inputValue: t.label,
+      inputAttributes: { maxlength: '60' }, showCancelButton: true, confirmButtonText: 'Rename',
+      inputValidator: v => {
+        const s = String(v == null ? '' : v).trim();
+        if (!s) return 'Label required';
+        if (s.length > 60) return 'Max 60 characters';
+        return null;
+      },
+    });
+    if (!r.isConfirmed) return;
+    val = String(r.value).trim();
+  } else {
+    val = window.prompt('Tab label', t.label);
+    if (val == null) return;
+    val = val.trim().slice(0, 60);
+    if (!val) return;
+  }
+  t.label = val;
+  touched();
+}
+
+function addTab() {
+  TABS_META.push({ label: 'Tab ' + (TABS_META.length + 1) });
+  ACTIVE_TAB = TABS_META.length - 1;
+  // A tab must have ≥1 section to pass server validation — seed one (the
+  // repeater precedent: the model never STARTS invalid).
+  addSectionAtRegion('tab', ACTIVE_TAB, null, 'section');   // touched() inside
+}
+
+function deleteTab(ti) {
+  if (TABS_META.length <= 1) {
+    flash('A tabbed form needs at least one tab — switch off Tabbed layout in Form settings instead.');
+    return;
+  }
+  if (regionMembers('tab', ti).length) {
+    flash('Move this tab’s sections to another tab first (each section’s “Move to…” menu).');
+    return;
+  }
+  TABS_META.splice(ti, 1);
+  (MODEL.sections || []).forEach(s => {
+    const tag = LAYOUT.get(s);
+    if (tag && tag.region === 'tab' && (tag.tabIndex || 0) > ti) {
+      LAYOUT.set(s, { region: 'tab', tabIndex: tag.tabIndex - 1 });
+    }
+  });
+  if (ACTIVE_TAB >= TABS_META.length) ACTIVE_TAB = TABS_META.length - 1;
+  SEL = null;
+  touched();
+  renderInspector();
+}
+
+function moveTab(ti, dir) {
+  const tj = ti + dir;
+  if (tj < 0 || tj >= TABS_META.length) return;
+  const tmp = TABS_META[ti]; TABS_META[ti] = TABS_META[tj]; TABS_META[tj] = tmp;
+  (MODEL.sections || []).forEach(s => {
+    const tag = LAYOUT.get(s);
+    if (!tag || tag.region !== 'tab') return;
+    const x = tag.tabIndex || 0;
+    if (x === ti)      LAYOUT.set(s, { region: 'tab', tabIndex: tj });
+    else if (x === tj) LAYOUT.set(s, { region: 'tab', tabIndex: ti });
+  });
+  normalizeSectionOrder();
+  ACTIVE_TAB = tj;
+  SEL = null;
+  touched();
+}
+
+// Flat insertion point at the canonical END of a region (works for empty
+// regions too — first index whose rank exceeds the target's).
+function canonicalInsertIndex(tag) {
+  const rank = regionRank(tag);
+  const arr = MODEL.sections || [];
+  for (let i = 0; i < arr.length; i++) {
+    if (regionRank(layoutOf(arr[i])) > rank) return i;
+  }
+  return arr.length;
+}
+
+// Reorder within one region: region indices → flat indices via the members
+// list (regions are contiguous under the canonical-order invariant, but this
+// mapping is exact even if they weren't).
+function moveSectionInRegion(region, tabIndex, oldIdx, newIdx) {
+  const members = regionMembers(region, tabIndex);
+  const fromFlat = members[oldIdx];
+  if (fromFlat == null) { deferSync(); return; }
+  const sec = MODEL.sections.splice(fromFlat, 1)[0];
+  const after = regionMembers(region, tabIndex);
+  const toFlat = newIdx >= after.length
+    ? (after.length ? after[after.length - 1] + 1 : fromFlat)
+    : after[newIdx];
+  MODEL.sections.splice(toFlat, 0, sec);
+  SEL = { t: 'section', si: toFlat };
+  touched();
+  renderInspector();
+}
+
+// New section into a specific region at a region-relative index (null/end →
+// canonical end of the region).
+function addSectionAtRegion(region, tabIndex, regionIdx, kind) {
+  const tag = region === 'tab' ? { region: 'tab', tabIndex: tabIndex } : { region: region };
+  const members = regionMembers(region, tabIndex);
+  const flatIdx = (regionIdx != null && regionIdx < members.length)
+    ? members[regionIdx]
+    : canonicalInsertIndex(tag);
+  return addSectionAt(flatIdx, kind, tag);
+}
+
+// The cross-container move: retag + reinsert at the canonical end of the
+// target region. Switches the canvas to the target tab so the user sees the
+// section land.
+async function moveSectionMenu(si) {
+  const sec = MODEL.sections[si];
+  if (!sec) return;
+  const cur = layoutOf(sec);
+  const opts = {};
+  if (cur.region !== 'stickyTop') opts.stickyTop = 'Sticky top (every tab)';
+  TABS_META.forEach((t, i) => {
+    if (!(cur.region === 'tab' && (cur.tabIndex || 0) === i)) {
+      opts['tab:' + i] = 'Tab: ' + (t.label || ('Tab ' + (i + 1)));
+    }
+  });
+  if (cur.region !== 'stickyBottom') opts.stickyBottom = 'Sticky bottom (every tab)';
+
+  let choice = null;
+  if (window.Swal) {
+    const r = await Swal.fire({
+      title: 'Move section to…', input: 'select', inputOptions: opts,
+      inputPlaceholder: 'Choose a destination', showCancelButton: true, confirmButtonText: 'Move',
+      inputValidator: v => v ? null : 'Pick a destination',
+    });
+    if (!r.isConfirmed || !r.value) return;
+    choice = r.value;
+  } else {
+    const keys = Object.keys(opts);
+    const pick = window.prompt('Move to:\n' + keys.map((k, i) => (i + 1) + '. ' + opts[k]).join('\n'), '1');
+    const n = parseInt(pick, 10);
+    if (!(n >= 1 && n <= keys.length)) return;
+    choice = keys[n - 1];
+  }
+
+  let tag;
+  if (choice === 'stickyTop')         tag = { region: 'stickyTop' };
+  else if (choice === 'stickyBottom') tag = { region: 'stickyBottom' };
+  else                                tag = { region: 'tab', tabIndex: +choice.split(':')[1] };
+  moveSectionToRegion(si, tag);
+}
+
+// The pure cross-container op moveSectionMenu wraps (also the test surface).
+function moveSectionToRegion(si, tag) {
+  const moved = MODEL.sections.splice(si, 1)[0];
+  if (!moved) return;
+  LAYOUT.set(moved, tag);
+  MODEL.sections.splice(canonicalInsertIndex(tag), 0, moved);
+  if (tag.region === 'tab') ACTIVE_TAB = tag.tabIndex;
+  SEL = { t: 'section', si: MODEL.sections.indexOf(moved) };
+  touched();
+  renderInspector();
 }
 
 function rowsLoc(container) { return container.dataset.loc; }
@@ -1264,6 +1703,7 @@ function newField(type, loc) {
   const f = { name: genName(type === 'hidden' ? 'hidden' : label, null, taken), type };
   if (type !== 'hidden') f.label = label;
   if (OPTIONS_TYPES.includes(type)) f.options = ['Option 1'];
+  if (type === 'embed') f.src = EMBED_PLACEHOLDER_SRC;   // model never starts invalid (2.6)
   AUTO_NAMES.add(f);
   return f;
 }
@@ -1346,7 +1786,7 @@ function moveSection(oldIdx, newIdx) {
   renderInspector();
 }
 
-function addSectionAt(idx, kind) {
+function addSectionAt(idx, kind, layoutTag) {
   if (!MODEL.sections) MODEL.sections = [];
   let sec;
   if (kind === 'repeater') {
@@ -1359,8 +1799,14 @@ function addSectionAt(idx, kind) {
   } else {
     sec = { title: 'Section ' + (MODEL.sections.length + 1), rows: [] };
   }
+  // Tabbed mode (2.6): every section carries a layout tag — callers that
+  // don't say where (palette click appends at MODEL.sections.length) get the
+  // ACTIVE tab, and normalizeSectionOrder() then walks the section to its
+  // canonical flat position within that region.
+  if (TABS_META) LAYOUT.set(sec, layoutTag || { region: 'tab', tabIndex: ACTIVE_TAB });
   MODEL.sections.splice(idx, 0, sec);
-  SEL = { t: 'section', si: idx };
+  if (TABS_META) normalizeSectionOrder();
+  SEL = { t: 'section', si: MODEL.sections.indexOf(sec) };
   touched();
   renderInspector();
   return sec;
@@ -1419,11 +1865,17 @@ function clickAddField(type) {
     }
   }
   // Nothing selected: last standard section's last row (created as needed).
+  // Tabbed mode: prefer the ACTIVE tab's sections (adding to an invisible
+  // section on another tab would look like nothing happened).
   let si = -1;
-  (MODEL.sections || []).forEach((s, i) => { if (!isRepeaterSection(s)) si = i; });
+  if (TABS_META) {
+    regionMembers('tab', ACTIVE_TAB).forEach(i => { if (!isRepeaterSection(MODEL.sections[i])) si = i; });
+  } else {
+    (MODEL.sections || []).forEach((s, i) => { if (!isRepeaterSection(s)) si = i; });
+  }
   if (si === -1) {
-    addSectionAt((MODEL.sections || []).length, 'section');
-    si = MODEL.sections.length - 1;
+    const sec = addSectionAt((MODEL.sections || []).length, 'section');
+    si = MODEL.sections.indexOf(sec);
   }
   const s = MODEL.sections[si];
   if (!s.rows.length) s.rows.push({ fields: [] });
@@ -1652,8 +2104,8 @@ async function restoreVersionFlow(versionId, schemaVersion) {
     // are deliberately untouched: restore only replaces the draft definition,
     // and unsaved title/key edits should stay dirty).
     ROW = data.template;
-    MODEL = clone(ROW.draft_definition);
-    SAVED.def = JSON.stringify(MODEL);
+    loadDefIntoModel(clone(ROW.draft_definition));
+    SAVED.def = JSON.stringify(serializeModel());
     AUTO_NAMES = new WeakSet();
     SEL = null;
     JSON_DIRTY = false;
@@ -1762,7 +2214,7 @@ function showLive() {
   history.replaceState(null, '', location.pathname + '?' + params.toString());
   E('prevLinkId').value = lid;
 
-  if (JSON.stringify(MODEL) !== JSON.stringify(ROW.definition)) {
+  if (JSON.stringify(serializeModel()) !== JSON.stringify(ROW.definition)) {
     hint.textContent = 'Draft differs from published v' + ROW.schema_version +
       ' — publish to see draft changes here.';
   }
@@ -1823,7 +2275,7 @@ function copyLive(btn) {
 // Keep the JSON view live while the user hasn't typed into it.
 function refreshJsonTab() {
   if (E('jsonPane').classList.contains('show') && !JSON_DIRTY) {
-    E('jsonTa').value = JSON.stringify(MODEL, null, 2);
+    E('jsonTa').value = JSON.stringify(serializeModel(), null, 2);
   }
 }
 function applyJson() {
@@ -1840,11 +2292,11 @@ function applyJson() {
     errEl.textContent = 'Definition must be a JSON object.';
     return;
   }
-  MODEL = parsed;
+  loadDefIntoModel(parsed);           // either shape — tabs flatten (2.6)
   AUTO_NAMES = new WeakSet();
   SEL = null;
   JSON_DIRTY = false;
-  E('jsonTa').value = JSON.stringify(MODEL, null, 2);   // normalized pretty print
+  E('jsonTa').value = JSON.stringify(serializeModel(), null, 2);   // normalized pretty print
   markDirty();
   syncCanvas();
   renderInspector();
@@ -1883,13 +2335,30 @@ async function showPreview() {
 // DISPLAY-ONLY — the confirm message predicts the version decision; the server
 // recomputes and remains the authority.
 function clientFieldSignature(def) {
+  // 2.6: accepts BOTH shapes — the flat working model (sections) and a stored
+  // tabbed definition (tabs + sticky regions, e.g. ROW.definition in the
+  // publish compare). embed fields are excluded, mirroring the server: they
+  // carry no data, so adding/removing one must not predict a version bump.
+  const lists = [];
+  if (def && Array.isArray(def.tabs)) {
+    if (Array.isArray(def.stickyTop)) lists.push(def.stickyTop);
+    def.tabs.forEach(t => { if (t && Array.isArray(t.sections)) lists.push(t.sections); });
+    if (Array.isArray(def.stickyBottom)) lists.push(def.stickyBottom);
+  } else if (def && Array.isArray(def.sections)) {
+    lists.push(def.sections);
+  }
   const parts = [];
-  for (const section of (def && def.sections) || []) {
-    if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
-      for (const f of section.fields || []) parts.push(`${f.name}\u0000${f.type}`);
-    } else if (section) {
-      for (const row of (section && section.rows) || []) {
-        for (const f of (row && row.fields) || []) parts.push(`${f.name}\u0000${f.type}`);
+  for (const sections of lists) {
+    for (const section of sections) {
+      if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
+        for (const f of section.fields || []) parts.push(`${f.name}\u0000${f.type}`);
+      } else if (section) {
+        for (const row of (section && section.rows) || []) {
+          for (const f of (row && row.fields) || []) {
+            if (f && f.type === 'embed') continue;   // display-only (2.6)
+            parts.push(`${f.name}\u0000${f.type}`);
+          }
+        }
       }
     }
   }
@@ -2158,17 +2627,89 @@ function insSettings(ins) {
   }
   ins.appendChild(group('Save → workflow', wfKids));
 
-  ins.appendChild(group('Hooks', [
-    pText('Hooks file', MODEL.hooks != null ? MODEL.hooks : '', v => {
-      if (v === '') { MODEL.hooks = null; delete MODEL.hooks; }
-      else MODEL.hooks = v;
-      touched();
-    }, {
-      mono: true, placeholder: '(none)',
-      validate: raw => raw === '' || HOOKS_RE.test(raw) ? null : 'must match ^[a-zA-Z0-9_-]{1,50}$',
-      help: 'Names a repo file /forms/hooks/{name}.js (onLoad / onSave). Executable code lives in the repo only — never in the database. Not loaded in preview.'
-    }),
-  ]));
+  // ── Tabbed layout (2.6) ──
+  ins.appendChild((() => {
+    const tabbed = !!TABS_META;
+    const stickies = tabbed
+      ? regionMembers('stickyTop', null).length + regionMembers('stickyBottom', null).length
+      : 0;
+    const canDisable = tabbed && TABS_META.length === 1 && stickies === 0;
+    const kids = [
+      pCheck('Tabbed layout', tabbed, v => {
+        if (v && !TABS_META) {
+          // sections → tabs: everything onto one tab (contract §4.5)
+          TABS_META = [{ label: 'Tab 1' }];
+          TAB_KEY_ORDER = null;
+          LAYOUT = new WeakMap();
+          (MODEL.sections || []).forEach(s => LAYOUT.set(s, { region: 'tab', tabIndex: 0 }));
+          ACTIVE_TAB = 0;
+          SEL = null;
+          touched(); renderInspector();
+        } else if (!v && TABS_META) {
+          if (!canDisable) {
+            flash('Tabbed layout can only be switched off with a single tab and no sticky sections — merge tabs and move sticky sections onto the tab first.');
+            renderInspector();          // reset the checkbox
+            return;
+          }
+          TABS_META = null;
+          TAB_KEY_ORDER = null;
+          LAYOUT = new WeakMap();       // tags are ignored in sections mode
+          SEL = null;
+          touched(); renderInspector();
+        }
+      }, { help: 'On: sections live on tabs, with optional sticky regions shown above/below every tab. Off: one flat page.' }),
+    ];
+    if (tabbed && !canDisable) {
+      kids.push(el('div', { class: 'help', text:
+        (TABS_META.length > 1 ? TABS_META.length + ' tabs' : '1 tab') +
+        (stickies ? ' · ' + stickies + ' sticky section(s)' : '') +
+        ' — switching off requires a single tab and no sticky sections.' }));
+    }
+    return group('Layout', kids);
+  })());
+
+  // ── Hooks / per-form code (2.6): mutually exclusive — the server rejects a
+  //    definition carrying both, so each editor disables while the other has
+  //    a value. Repo hooks = SHARED code; per-form logic defaults to `code`. ──
+  const hooksProp = pText('Hooks file', MODEL.hooks != null ? MODEL.hooks : '', v => {
+    if (v === '') { MODEL.hooks = null; delete MODEL.hooks; }
+    else MODEL.hooks = v;
+    touched(); renderInspector();      // re-evaluate the code editor's disabled state
+  }, {
+    mono: true, placeholder: '(none)',
+    validate: raw => {
+      if (raw === '') return null;
+      if (typeof MODEL.code === 'string' && MODEL.code) return 'this form has Custom code — clear it first';
+      return HOOKS_RE.test(raw) ? null : 'must match ^[a-zA-Z0-9_-]{1,50}$';
+    },
+    help: 'Names a repo file /forms/hooks/{name}.js (onLoad / onSave) — for SHARED code used by multiple forms. Per-form logic belongs in Custom code below. Not loaded in preview.'
+  });
+  if (typeof MODEL.code === 'string' && MODEL.code) {
+    hooksProp._input.disabled = true;
+    hooksProp.appendChild(el('div', { class: 'help', text: 'Disabled — this form has Custom code (a form uses one or the other, never both).' }));
+  }
+  ins.appendChild(group('Hooks', [hooksProp]));
+
+  const codeProp = pText('Custom code (advanced)', typeof MODEL.code === 'string' ? MODEL.code : '', v => {
+    setOrDel(MODEL, 'code', v);        // empty → key deleted (never serialized empty)
+    touched();
+  }, {
+    textarea: true, mono: true,
+    placeholder: 'window.ycHooks = {\n  async onLoad(form) { /* … */ },\n  async onSave(form) { /* … */ }\n};',
+    validate: raw => {
+      if (raw === '') return null;
+      if (MODEL.hooks) return 'this form names a hooks file — clear it first';
+      if (raw.length > 32768) return 'must be at most 32768 characters';
+      try { new Function(raw); return null; }           // parses only — never runs here
+      catch (e) { return 'syntax error: ' + e.message; }
+    },
+    help: 'Per-form JavaScript stored in the definition. Runs on the live form only — never in preview. May define window.ycHooks = { onLoad, onSave }. Internal forms only (portal security-review bucket). Publishing is superuser-gated.'
+  });
+  if (MODEL.hooks) {
+    codeProp._input.disabled = true;
+    codeProp.appendChild(el('div', { class: 'help', text: 'Disabled — this form names a hooks file (a form uses one or the other, never both).' }));
+  }
+  ins.appendChild(group('Custom code', [codeProp]));
 
   // Derived dates (2.5B B2) — optRow pattern: the DOM rows are the working
   // state; readBack writes only COMPLETE rules to the model (an incomplete
@@ -2594,10 +3135,76 @@ function insField(ins, f, inRepeater) {
   ins.appendChild(group('Identity', [
     labelProp,
     nameProp,
-    pSelect('Type', f.type, inRepeater ? REPEATER_TYPES : FIELD_TYPES, v => {
+    pSelect('Type', f.type, inRepeater ? REPEATER_TYPES : FIELD_TYPES, async v => {
+      // → embed (2.6): the field stops being a condition target (embeds have
+      // no value — server rejects conditions targeting them), so referencing
+      // conditions cascade-remove after a confirm, the move-into-repeater
+      // pattern. Cancel = re-render resets the select.
+      if (v === 'embed' && f.type !== 'embed') {
+        const refs  = refsTo(f.name);
+        const dRefs = deriveRefsTo(f.name);
+        const mentions = refs.map(r => r.desc).concat(dRefs.map(r => r.desc));
+        if (mentions.length) {
+          const ok = await ycConfirm(
+            `"${f.name}" is referenced by:\n • ` + mentions.join('\n • ') +
+            `\n\nAn embed has no value — convert it and remove those references?`,
+            { confirmText: 'Convert & remove' });
+          if (!ok) { renderInspector(); return; }
+          refs.forEach(removeCondRef);
+        }
+      }
       changeType(f, v); touched(); renderInspector();
     }),
   ]));
+
+  // ── embed (2.6): display-only https iframe — Identity, Layout, the Embed
+  //    group, visibility, and Notes. No Data / Validation / Options /
+  //    requiredWhen (the validator rejects them all on embeds). ──
+  if (f.type === 'embed') {
+    ins.appendChild(group('Layout', [
+      pSelect('Width', WIDTHS.includes(f.width) ? f.width : 'default', WIDTHS, v => {
+        if (v === 'default') delete f.width; else f.width = v;
+        touched();
+      }),
+      pText('Sublabel', f.sublabel || '', v => { setOrDel(f, 'sublabel', v); touched(); },
+        { help: 'Hint text under the label.' }),
+    ]));
+    ins.appendChild(group('Embed', [
+      pText('URL (https)', typeof f.src === 'string' ? f.src : '', v => { f.src = v; touched(); }, {
+        mono: true, placeholder: EMBED_PLACEHOLDER_SRC,
+        validate: raw => {
+          if (raw.length > 2000) return 'must be at most 2000 characters';
+          try { if (new URL(raw).protocol !== 'https:') return 'must be an https URL'; }
+          catch (e) { return 'not a valid URL'; }
+          return null;
+        },
+        help: 'Rendered as an <iframe>. https only; required.'
+      }),
+      (() => {
+        // positive-integer-only writer (pNum would accept any finite number;
+        // the server requires a positive integer — invalid input never
+        // reaches the model, the pattern-regex pText precedent)
+        const input = el('input', { type: 'number', min: '1', step: '1' });
+        input.value = Number.isInteger(f.height) ? f.height : '';
+        input.oninput = () => {
+          const raw = input.value.trim();
+          if (raw === '') { delete f.height; input.classList.remove('bad'); touched(); return; }
+          const n = Number(raw);
+          if (Number.isInteger(n) && n > 0) { f.height = n; input.classList.remove('bad'); touched(); }
+          else input.classList.add('bad');
+        };
+        return el('div', { class: 'prop' }, [ el('label', { text: 'Height (px)' }), input ]);
+      })(),
+      el('div', { class: 'help', text:
+        'Display-only: never collected, validated, or saved; excluded from schema versioning. Internal forms only — embeds are in the portal security-review bucket and must not ship to external rendering. Default height 600px.' }),
+    ]));
+    ins.appendChild(swGroup(f));
+    ins.appendChild(group('Notes', [
+      pText('Note (documentation only)', f.note || '', v => { setOrDel(f, 'note', v); touched(); },
+        { textarea: true, help: 'Free-form documentation stored in the definition. Ignored by the renderer; never affects schema versioning.' }),
+    ]));
+    return;
+  }
 
   const isOpt   = OPTIONS_TYPES.includes(f.type);
   const canHide = f.type !== 'hidden';
@@ -2806,6 +3413,24 @@ function changeType(f, newType) {
   if (newType !== 'select') delete f.optionsFrom;   // 2.5B: select-only key
   if (newType !== 'textarea') delete f.rows;
   if (newType !== 'number') { delete f.min; delete f.max; delete f.step; }
+  if (newType === 'embed') {
+    // Display-only (2.6): strip every input-shaped key the validator rejects
+    // on embeds, seed a valid src, and remove the derive rules touching the
+    // field (an embed can't be a derive target/source).
+    ['apiColumn', 'prefill', 'prefillMode', 'mask', 'required', 'minLength',
+     'maxLength', 'pattern', 'patternMessage', 'email', 'readonly', 'lockedMsg',
+     'requiredWhen', 'requiredMessage', 'options', 'allowOther', 'optionsFrom',
+     'columns', 'rows', 'min', 'max', 'step', 'placeholder'].forEach(k => delete f[k]);
+    if (typeof f.src !== 'string' || !f.src) f.src = EMBED_PLACEHOLDER_SRC;
+    removeDeriveRulesTouching([f.name]);
+  } else if (wasEmbed(f, newType)) {
+    delete f.src; delete f.height;
+  }
+}
+// changeType runs AFTER f.type is reassigned, so "was it an embed?" is judged
+// by the leftover embed-only keys.
+function wasEmbed(f, newType) {
+  return newType !== 'embed' && (f.src !== undefined || f.height !== undefined);
 }
 
 // ── Debug / test surface ─────────────────────────────────────────────────────
@@ -2818,11 +3443,19 @@ window.FB = {
   get title() { return TITLE; },
   set title(v){ TITLE = v; E('titleInput').value = v; markDirty(); },
   get formKey(){ return FKEY; },
+  get tabsMeta()  { return TABS_META; },
+  get activeTab() { return ACTIVE_TAB; },
+  set activeTab(i){ ACTIVE_TAB = i; syncCanvas(); },
+  get layout()    { return LAYOUT; },
   ops: {
     addFieldAt, moveField, moveRow, moveSection, addSectionAt, addRowAt,
     dropFieldAsNewRow,
     clickAddField, deleteSelected, genName, renameField, refsTo,
     topLevelNames, allNames, clientFieldSignature,
+    // 2.6 tabbed surface
+    serializeModel, addTab, deleteTab, moveTab,
+    addSectionAtRegion, moveSectionInRegion, moveSectionToRegion,
+    regionMembers, changeType,
   },
 };
 </script>

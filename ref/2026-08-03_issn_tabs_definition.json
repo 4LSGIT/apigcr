@@ -1,0 +1,1355 @@
+{
+  "note": "issn — Initial Screening intake form (Slice 2.6 tabbed rebuild from public/forms/issn.html, 2026-08-03). stickyTop = case header, stickyBottom = intake notes, six tabs matching the hand-built panels. Contact fields prefill via $load; employment/debt blocks are declarative showWhen includes; Ash Auto is a type:\"embed\" field. Residual behaviours (docket fallback, secondary-client inference defaults, per-row vehicle Lease conditional, contact write-back on save, Calendly name-passing, KBB link) live in the code key. Repeater field names match issn.html verbatim (incl. \"note\" in both repeaters) — the form has existing submissions keyed to those names.",
+  "toggle": false,
+  "dataMode": "snapshot",
+  "autosaveMs": 3000,
+  "warningText": "",
+  "endpoints": {
+    "load": {
+      "url": "/api/cases/{linkId}?include=clients",
+      "method": "GET",
+      "path": "case"
+    }
+  },
+  "css": ".yc-check-grid[data-yc-checkgroup=\"debt_type\"]{grid-template-columns:repeat(4,1fr);}",
+  "code": "/*\n * issn (template 7) per-form code — Slice 2.6. Successor to\n * /forms/hooks/issn_extras.js (file deleted from the repo; this code lives in\n * the definition, restorable from template history / git history).\n *\n * Everything Slice 2.5/2.6 made declarative has MOVED OUT of here:\n *   - PC/SC contact field fills + marital status  → $load prefills\n *   - checkgroup-driven employment/debt blocks    → showWhen op:\"includes\"\n *   - five tabs + Ash Auto Calendly iframe        → tabs + type:\"embed\" (2.6)\n *\n * Still here — the behaviours with no schema representation:\n *   1. case_number full||short fallback (one prefill per field; the OR is\n *      inexpressible declaratively).\n *   2. Secondary-client inference defaults: a Secondary client on the case\n *      implies married + co-debtor unless the user already said otherwise.\n *   3. Per-row vehicle conditional (ownership === 'Lease' shows lease_end_date\n *      and hides total_owed) — showWhen inside repeaters is out of scope.\n *   4. Contact write-back on save — second-entity writes are a workflow\n *      decision, not a schema feature (contract §9).\n *   5. APPROVED ADDITIONS (2026-08-03, beyond the locked 2.6 residue list;\n *      both are issn.html behaviours the schema cannot express — delimited\n *      blocks below, trivially removable):\n *      5a. Calendly name-passing: appends ?name=<client_name> to the embed src.\n *      5b. KBB link injected after the vehicles repeater's add button.\n */\n(function () {\n  'use strict';\n\n  var UTIL = '/forms/hooks/_yc_hook_util.js';\n  function loadUtil() {\n    if (window.ycHookUtil) return Promise.resolve(window.ycHookUtil);\n    if (window.__ycUtilPromise) return window.__ycUtilPromise;\n    window.__ycUtilPromise = new Promise(function (resolve) {\n      var s = document.createElement('script');\n      s.src = UTIL;\n      s.onload = function () { resolve(window.ycHookUtil); };\n      s.onerror = function () { console.warn('[issn code] util failed to load'); resolve(null); };\n      document.head.appendChild(s);\n    });\n    return window.__ycUtilPromise;\n  }\n\n  window.ycHooks = {\n    async onLoad(form) {\n      var U = await loadUtil();\n      if (!U) return;\n      var e = U.entity(form);\n      var c = U.clients(form);\n\n      // ── 1. docket: full form preferred, short-form fallback ─────────────\n      U.setIfEmpty(form, 'case_number', e.case_number_full || e.case_number);\n\n      // ── 2. inference defaults ───────────────────────────────────────────\n      if (c.secondary) {\n        U.setRadioIfEmpty(form, 'marital_status', 'Married');\n        U.setRadioIfEmpty(form, 'is_codebtor', 'Yes');\n      }\n\n      // ── 3. per-row vehicle conditional ──────────────────────────────────\n      var veh = document.getElementById('ycRep_vehicles');\n      if (veh) {\n        var applyRow = function (item) {\n          var sel = item.querySelector('[name=\"ownership\"]');\n          if (!sel) return;\n          var isLease = sel.value === 'Lease';\n          var lease = item.querySelector('[name=\"lease_end_date\"]');\n          var owed = item.querySelector('[name=\"total_owed\"]');\n          if (lease && lease.closest('.yc-field')) lease.closest('.yc-field').style.display = isLease ? '' : 'none';\n          if (owed && owed.closest('.yc-field')) owed.closest('.yc-field').style.display = isLease ? 'none' : '';\n        };\n        veh.addEventListener('change', function (ev) {\n          if (!ev.target.matches('[name=\"ownership\"]')) return;\n          var item = ev.target.closest('.yc-repeater-item');\n          if (item) applyRow(item);\n        });\n        // Rows added later by the Add button also need it. MutationObserver\n        // rather than patching addRepeaterItem, so nothing in yc-forms is touched.\n        new MutationObserver(function (muts) {\n          muts.forEach(function (m) {\n            Array.prototype.forEach.call(m.addedNodes, function (n) {\n              if (n.nodeType === 1 && n.classList.contains('yc-repeater-item')) applyRow(n);\n            });\n          });\n        }).observe(veh, { childList: true });\n        veh.querySelectorAll('.yc-repeater-item').forEach(applyRow);\n      }\n\n      // ── 5a. Calendly name-passing (approved addition — removable) ───────\n      var nameEl = form.el.querySelector('[name=\"client_name\"]');\n      var frame = form.el.querySelector('[data-yc-embed=\"ash_auto\"]');\n      if (nameEl && nameEl.value && frame && frame.getAttribute('src')) {\n        try {\n          var calUrl = new URL(frame.getAttribute('src'));\n          calUrl.searchParams.set('name', nameEl.value);\n          frame.setAttribute('src', calUrl.toString());\n        } catch (err) { /* invalid URL, skip */ }\n      }\n      // ── end 5a ──\n\n      // ── 5b. KBB link after the vehicles repeater (approved addition — removable) ──\n      if (veh && !document.getElementById('issnKbbLink')) {\n        var vehSec = veh.closest('.yc-section');\n        var addBtn = vehSec ? vehSec.querySelector('.yc-repeater-add') : null;\n        var kbb = document.createElement('a');\n        kbb.id = 'issnKbbLink';\n        kbb.href = 'https://www.kbb.com/whats-my-car-worth/';\n        kbb.target = '_blank';\n        kbb.rel = 'noopener';\n        kbb.textContent = \"KBB — What's My Car Worth?\";\n        kbb.setAttribute('style', 'display:inline-block;margin-top:8px;padding:6px 14px;background:#0d6efd;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85rem;font-weight:500;');\n        if (addBtn && addBtn.parentNode) addBtn.parentNode.insertBefore(kbb, addBtn.nextSibling);\n        else if (vehSec) vehSec.appendChild(kbb);\n      }\n      // ── end 5b ──\n    },\n\n    // ── 4. contact write-back ─────────────────────────────────────────────\n    async onSave(form) {\n      var U = window.ycHookUtil;\n      if (!U) return;\n      var d = form.collect();\n\n      if (d.client_id) {\n        var pc = {};\n        [['client_fname', 'contact_fname'], ['client_mname', 'contact_mname'],\n         ['client_lname', 'contact_lname'], ['client_phone', 'contact_phone'],\n         ['client_email', 'contact_email'], ['client_dob', 'contact_dob'],\n         ['client_ssn', 'contact_ssn'], ['client_address', 'contact_address'],\n         ['client_city', 'contact_city'], ['client_state', 'contact_state'],\n         ['client_zip', 'contact_zip']].forEach(function (p) {\n          if (d[p[0]]) pc[p[1]] = d[p[0]];\n        });\n        if (Object.keys(pc).length) {\n          U.api('/api/contacts/' + d.client_id, 'PATCH', pc)\n            .catch(function (err) { console.warn('[issn] primary contact update failed:', err); });\n        }\n      }\n\n      if (d.is_codebtor !== 'Yes' || !d.cd_fname) return;\n\n      var cd = { contact_fname: d.cd_fname, contact_lname: d.cd_lname };\n      if (d.cd_mname !== undefined) cd.contact_mname = d.cd_mname;\n      ['phone', 'email', 'dob', 'ssn'].forEach(function (k) {\n        if (d['cd_' + k]) cd['contact_' + k] = d['cd_' + k];\n      });\n      if (d.cd_address_type === 'Same as Debtor') {\n        cd.contact_address = d.client_address; cd.contact_city = d.client_city;\n        cd.contact_state = d.client_state; cd.contact_zip = d.client_zip;\n      } else if (d.cd_address_type === 'Different') {\n        ['address', 'city', 'state', 'zip'].forEach(function (k) {\n          if (d['cd_' + k]) cd['contact_' + k] = d['cd_' + k];\n        });\n      }\n\n      if (d.cd_contact_id) {\n        U.api('/api/contacts/' + d.cd_contact_id, 'PATCH', cd)\n          .catch(function (err) { console.warn('[issn] co-debtor update failed:', err); });\n        return;\n      }\n\n      try {\n        var body = {\n          firstName: d.cd_fname, middleName: d.cd_mname || '', lastName: d.cd_lname,\n          phone: d.cd_phone || '', email: d.cd_email || '',\n        };\n        ['contact_dob', 'contact_ssn', 'contact_address', 'contact_city',\n         'contact_state', 'contact_zip'].forEach(function (k) { if (cd[k]) body[k] = cd[k]; });\n\n        var created = await U.api('/api/intake/contact', 'POST', body);\n        var newId = created && (created.contact_id || created.id);\n        if (!newId) return;\n        await U.api('/api/cases/' + d.case_id + '/contacts', 'POST',\n          { contact_id: newId, relate_type: 'Secondary' });\n        U.setAlways(form, 'cd_contact_id', newId);\n        U.setAlways(form, 'cd_id', newId);\n      } catch (err) {\n        console.warn('[issn] co-debtor create failed:', err);\n      }\n    },\n  };\n})();\n",
+  "stickyTop": [
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "case_id",
+              "type": "hidden",
+              "readonly": true,
+              "prefill": "$load.case.case_id"
+            },
+            {
+              "name": "client_id",
+              "type": "hidden",
+              "readonly": true,
+              "prefill": "$load.clients[relate_type=Primary].contact_id"
+            },
+            {
+              "name": "cd_id",
+              "type": "hidden",
+              "readonly": true,
+              "prefill": "$load.clients[relate_type=Secondary].contact_id"
+            },
+            {
+              "name": "client_name",
+              "type": "text",
+              "label": "Client",
+              "readonly": true,
+              "lockedMsg": "Edit from the Contact page",
+              "prefill": "$load.clients[relate_type=Primary].contact_name"
+            },
+            {
+              "name": "cd_name",
+              "type": "text",
+              "label": "Co-Debtor",
+              "readonly": true,
+              "lockedMsg": "Edit from the Contact page",
+              "prefill": "$load.clients[relate_type=Secondary].contact_name",
+              "showWhen": {
+                "field": "cd_name",
+                "op": "notEmpty"
+              }
+            },
+            {
+              "name": "case_number",
+              "type": "text",
+              "label": "Case Number",
+              "width": "fixed-md",
+              "readonly": true,
+              "lockedMsg": "Edit from the Case Details form"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "tabs": [
+    {
+      "label": "Client Info",
+      "sections": [
+        {
+          "title": "Client Information",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "client_fname",
+                  "type": "text",
+                  "label": "First Name",
+                  "prefill": "$load.clients[relate_type=Primary].contact_fname"
+                },
+                {
+                  "name": "client_mname",
+                  "type": "text",
+                  "label": "Middle",
+                  "prefill": "$load.clients[relate_type=Primary].contact_mname"
+                },
+                {
+                  "name": "client_lname",
+                  "type": "text",
+                  "label": "Last Name",
+                  "prefill": "$load.clients[relate_type=Primary].contact_lname"
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "client_phone",
+                  "type": "text",
+                  "label": "Phone",
+                  "mask": "phone",
+                  "prefill": "$load.clients[relate_type=Primary].contact_phone"
+                },
+                {
+                  "name": "client_email",
+                  "type": "text",
+                  "label": "Email",
+                  "email": true,
+                  "prefill": "$load.clients[relate_type=Primary].contact_email"
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "client_dob",
+                  "type": "date",
+                  "label": "DOB",
+                  "prefill": "$load.clients[relate_type=Primary].contact_dob"
+                },
+                {
+                  "name": "client_ssn",
+                  "type": "text",
+                  "label": "SSN",
+                  "mask": "ssn",
+                  "prefill": "$load.clients[relate_type=Primary].contact_ssn"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Address",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "client_address",
+                  "type": "text",
+                  "placeholder": "Street address",
+                  "prefill": "$load.clients[relate_type=Primary].contact_address"
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "client_city",
+                  "type": "text",
+                  "width": "2x",
+                  "placeholder": "City",
+                  "prefill": "$load.clients[relate_type=Primary].contact_city"
+                },
+                {
+                  "name": "client_state",
+                  "type": "text",
+                  "width": "fixed-sm",
+                  "maxLength": 2,
+                  "placeholder": "State",
+                  "prefill": "$load.clients[relate_type=Primary].contact_state"
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "client_zip",
+                  "type": "text",
+                  "width": "fixed-md",
+                  "placeholder": "ZIP code",
+                  "prefill": "$load.clients[relate_type=Primary].contact_zip"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "marital_status",
+                  "type": "radio",
+                  "label": "Marital Status",
+                  "options": [
+                    "Single",
+                    "Married",
+                    "Separated",
+                    "Divorced",
+                    "Widowed"
+                  ],
+                  "prefill": "$load.clients[relate_type=Primary].contact_marital_status"
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "marital_status",
+                "op": "eq",
+                "value": "Divorced"
+              },
+              "fields": [
+                {
+                  "name": "divorce_when",
+                  "type": "text",
+                  "label": "When was the Divorce?"
+                },
+                {
+                  "name": "divorce_court",
+                  "type": "text",
+                  "label": "Court / Case Number"
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "has_dependents",
+                  "type": "checkbox",
+                  "label": "Do you have any dependents?"
+                },
+                {
+                  "name": "dependent_info",
+                  "type": "text",
+                  "label": "Dependent Information",
+                  "showWhen": {
+                    "field": "has_dependents",
+                    "op": "eq",
+                    "value": "true"
+                  }
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "household_size",
+                  "type": "text",
+                  "label": "Household Size"
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "basic_info_notes",
+                  "type": "textarea",
+                  "label": "Notes — Basic Information",
+                  "rows": 3,
+                  "maxLength": 3000
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Co-Debtor",
+          "showWhen": {
+            "field": "marital_status",
+            "op": "in",
+            "value": [
+              "Married",
+              "Separated"
+            ]
+          },
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "is_codebtor",
+                  "type": "radio",
+                  "label": "Is There a Co-Debtor?",
+                  "options": [
+                    "Yes",
+                    "No"
+                  ]
+                },
+                {
+                  "name": "cd_address_type",
+                  "type": "radio",
+                  "label": "Co-Debtor Address",
+                  "options": [
+                    "Same as Debtor",
+                    "Different"
+                  ],
+                  "showWhen": {
+                    "field": "is_codebtor",
+                    "op": "eq",
+                    "value": "Yes"
+                  }
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "is_codebtor",
+                "op": "eq",
+                "value": "Yes"
+              },
+              "fields": [
+                {
+                  "name": "cd_fname",
+                  "type": "text",
+                  "label": "First Name",
+                  "prefill": "$load.clients[relate_type=Secondary].contact_fname"
+                },
+                {
+                  "name": "cd_mname",
+                  "type": "text",
+                  "label": "Middle",
+                  "prefill": "$load.clients[relate_type=Secondary].contact_mname"
+                },
+                {
+                  "name": "cd_lname",
+                  "type": "text",
+                  "label": "Last Name",
+                  "prefill": "$load.clients[relate_type=Secondary].contact_lname"
+                },
+                {
+                  "name": "cd_contact_id",
+                  "type": "text",
+                  "label": "ID",
+                  "width": "fixed-sm",
+                  "readonly": true,
+                  "lockedMsg": "Auto-assigned on save if new",
+                  "prefill": "$load.clients[relate_type=Secondary].contact_id"
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "is_codebtor",
+                "op": "eq",
+                "value": "Yes"
+              },
+              "fields": [
+                {
+                  "name": "cd_phone",
+                  "type": "text",
+                  "label": "Phone",
+                  "mask": "phone",
+                  "prefill": "$load.clients[relate_type=Secondary].contact_phone"
+                },
+                {
+                  "name": "cd_email",
+                  "type": "text",
+                  "label": "Email",
+                  "email": true,
+                  "prefill": "$load.clients[relate_type=Secondary].contact_email"
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "is_codebtor",
+                "op": "eq",
+                "value": "Yes"
+              },
+              "fields": [
+                {
+                  "name": "cd_dob",
+                  "type": "date",
+                  "label": "DOB",
+                  "prefill": "$load.clients[relate_type=Secondary].contact_dob"
+                },
+                {
+                  "name": "cd_ssn",
+                  "type": "text",
+                  "label": "SSN",
+                  "mask": "ssn",
+                  "prefill": "$load.clients[relate_type=Secondary].contact_ssn"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Co-Debtor Address",
+          "showWhen": [
+            {
+              "field": "marital_status",
+              "op": "in",
+              "value": [
+                "Married",
+                "Separated"
+              ]
+            },
+            {
+              "field": "is_codebtor",
+              "op": "eq",
+              "value": "Yes"
+            },
+            {
+              "field": "cd_address_type",
+              "op": "eq",
+              "value": "Different"
+            }
+          ],
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "cd_address",
+                  "type": "text",
+                  "placeholder": "Street address"
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "cd_city",
+                  "type": "text",
+                  "width": "2x",
+                  "placeholder": "City"
+                },
+                {
+                  "name": "cd_state",
+                  "type": "text",
+                  "width": "fixed-sm",
+                  "maxLength": 2,
+                  "placeholder": "State"
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "cd_zip",
+                  "type": "text",
+                  "width": "fixed-md",
+                  "placeholder": "ZIP code"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "prior_bankruptcy",
+                  "type": "radio",
+                  "label": "Prior Bankruptcy?",
+                  "options": [
+                    "Yes",
+                    "No",
+                    "Unknown"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "repeater": "prior_bankruptcies",
+          "title": "Prior Bankruptcies",
+          "addLabel": "+ Add Prior Bankruptcy",
+          "showWhen": {
+            "field": "prior_bankruptcy",
+            "op": "eq",
+            "value": "Yes"
+          },
+          "fields": [
+            {
+              "name": "case_no",
+              "type": "text",
+              "label": "Case No."
+            },
+            {
+              "name": "date_filed",
+              "type": "date",
+              "label": "Date Filed"
+            },
+            {
+              "name": "note",
+              "type": "text",
+              "label": "Note",
+              "width": "2x"
+            }
+          ]
+        },
+        {
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "reasons_for_bk",
+                  "type": "textarea",
+                  "label": "Reasons for Bankruptcy (from Client)",
+                  "rows": 4,
+                  "maxLength": 3000
+                },
+                {
+                  "name": "client_wants",
+                  "type": "textarea",
+                  "label": "Client Wants Us To Know (from Client)",
+                  "rows": 4,
+                  "maxLength": 3000
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "Housing / Auto / Assets",
+      "sections": [
+        {
+          "title": "Housing",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "housing",
+                  "type": "radio",
+                  "options": [
+                    "Own",
+                    "Renting",
+                    "Live with Family",
+                    "Other"
+                  ]
+                },
+                {
+                  "name": "housing_notes",
+                  "type": "textarea",
+                  "label": "Housing Notes",
+                  "width": "2x",
+                  "rows": 2,
+                  "maxLength": 2000
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "housing",
+                "op": "eq",
+                "value": "Own"
+              },
+              "fields": [
+                {
+                  "name": "mortgage_company",
+                  "type": "text",
+                  "label": "Mortgage Company"
+                },
+                {
+                  "name": "monthly_payment",
+                  "type": "text",
+                  "label": "Monthly Payment"
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "housing",
+                "op": "eq",
+                "value": "Own"
+              },
+              "fields": [
+                {
+                  "name": "house_value_assessed",
+                  "type": "text",
+                  "label": "House Value (Assessed)"
+                },
+                {
+                  "name": "house_value_zillow",
+                  "type": "text",
+                  "label": "House Value (Zillow)"
+                },
+                {
+                  "name": "amount_owed_house",
+                  "type": "text",
+                  "label": "Amount Owed"
+                },
+                {
+                  "name": "property_taxes",
+                  "type": "text",
+                  "label": "Property Taxes Owed"
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "housing",
+                "op": "eq",
+                "value": "Own"
+              },
+              "fields": [
+                {
+                  "name": "current_on_payments",
+                  "type": "radio",
+                  "label": "Current on Payments?",
+                  "options": [
+                    "Yes",
+                    "No"
+                  ]
+                },
+                {
+                  "name": "arrearage_amount",
+                  "type": "text",
+                  "label": "Arrearage Amount",
+                  "showWhen": {
+                    "field": "current_on_payments",
+                    "op": "eq",
+                    "value": "No"
+                  }
+                },
+                {
+                  "name": "foreclosure_pending",
+                  "type": "radio",
+                  "label": "Foreclosure Pending?",
+                  "options": [
+                    "Yes",
+                    "No"
+                  ]
+                },
+                {
+                  "name": "foreclosure_sale_date",
+                  "type": "text",
+                  "label": "Foreclosure Sale Date",
+                  "showWhen": {
+                    "field": "foreclosure_pending",
+                    "op": "eq",
+                    "value": "Yes"
+                  }
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "housing",
+                "op": "eq",
+                "value": "Renting"
+              },
+              "fields": [
+                {
+                  "name": "monthly_payment_rent",
+                  "type": "text",
+                  "label": "Monthly Rent"
+                },
+                {
+                  "name": "eviction_case",
+                  "type": "radio",
+                  "label": "Eviction Case Pending?",
+                  "options": [
+                    "Yes",
+                    "No"
+                  ]
+                },
+                {
+                  "name": "eviction_hearing_date",
+                  "type": "text",
+                  "label": "Eviction Hearing Date",
+                  "showWhen": {
+                    "field": "eviction_case",
+                    "op": "eq",
+                    "value": "Yes"
+                  }
+                },
+                {
+                  "name": "lt_judgment",
+                  "type": "radio",
+                  "label": "L/T Judgment?",
+                  "options": [
+                    "Yes",
+                    "No"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "repeater": "vehicles",
+          "title": "Vehicle(s)",
+          "addLabel": "+ Add Vehicle",
+          "fields": [
+            {
+              "name": "ownership",
+              "type": "select",
+              "label": "Ownership",
+              "width": "fixed-sm",
+              "options": [
+                "Own",
+                "Lease",
+                "None",
+                "Other"
+              ]
+            },
+            {
+              "name": "make_model",
+              "type": "text",
+              "label": "Make / Model"
+            },
+            {
+              "name": "vin_plate",
+              "type": "text",
+              "label": "VIN / License Plate"
+            },
+            {
+              "name": "mileage",
+              "type": "text",
+              "label": "Mileage",
+              "width": "fixed-sm"
+            },
+            {
+              "name": "value_kbb",
+              "type": "text",
+              "label": "Value (KBB)",
+              "width": "fixed-sm"
+            },
+            {
+              "name": "monthly_pmt",
+              "type": "text",
+              "label": "Monthly Pmt",
+              "width": "fixed-sm"
+            },
+            {
+              "name": "total_owed",
+              "type": "text",
+              "label": "Total Owed",
+              "width": "fixed-sm"
+            },
+            {
+              "name": "lease_end_date",
+              "type": "date",
+              "label": "Lease End Date",
+              "width": "fixed-md"
+            },
+            {
+              "name": "r4_preference",
+              "type": "select",
+              "label": "R⁴ Preference",
+              "width": "fixed-md",
+              "options": [
+                "Return",
+                "Replace (Ash)",
+                "Redemption (Hatfield)",
+                "Reaffirm"
+              ]
+            },
+            {
+              "name": "r4_status",
+              "type": "select",
+              "label": "R⁴ Status",
+              "width": "fixed-md",
+              "options": [
+                "Yes",
+                "Set Appt.",
+                "Sent Email"
+              ]
+            },
+            {
+              "name": "vehicle_note",
+              "type": "text",
+              "label": "Notes"
+            }
+          ]
+        },
+        {
+          "title": "Major Assets (worth more than $500)",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "has_major_assets",
+                  "type": "radio",
+                  "options": [
+                    "Yes",
+                    "No"
+                  ]
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "has_major_assets",
+                "op": "eq",
+                "value": "Yes"
+              },
+              "fields": [
+                {
+                  "name": "major_assets",
+                  "type": "checkgroup",
+                  "allowOther": true,
+                  "options": [
+                    "Motorcycle",
+                    "Car",
+                    "Truck",
+                    "Trailer",
+                    "Camper",
+                    "Boat",
+                    "Jet Ski",
+                    "Artwork",
+                    "Jewelry",
+                    "Coin collection",
+                    "Stamp collection"
+                  ]
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "has_major_assets",
+                "op": "eq",
+                "value": "Yes"
+              },
+              "fields": [
+                {
+                  "name": "major_assets_notes",
+                  "type": "textarea",
+                  "label": "Major Assets Notes",
+                  "rows": 3,
+                  "maxLength": 3000
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "Employment",
+      "sections": [
+        {
+          "title": "Employment",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "employed",
+                  "type": "checkgroup",
+                  "label": "Employed?",
+                  "columns": 2,
+                  "options": [
+                    "Debtor",
+                    "Spouse",
+                    "Debtor 2nd Job",
+                    "Spouse 2nd Job"
+                  ]
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "employed",
+                "op": "includes",
+                "value": [
+                  "Debtor"
+                ]
+              },
+              "fields": [
+                {
+                  "name": "debtor_job",
+                  "type": "text",
+                  "label": "Debtor Job"
+                },
+                {
+                  "name": "debtor_employer",
+                  "type": "text",
+                  "label": "Place of Employment"
+                },
+                {
+                  "name": "debtor_income",
+                  "type": "text",
+                  "label": "Total Income"
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "employed",
+                "op": "includes",
+                "value": [
+                  "Spouse"
+                ]
+              },
+              "fields": [
+                {
+                  "name": "spouse_job",
+                  "type": "text",
+                  "label": "Spouse Job"
+                },
+                {
+                  "name": "spouse_employer",
+                  "type": "text",
+                  "label": "Place of Employment"
+                },
+                {
+                  "name": "spouse_income",
+                  "type": "text",
+                  "label": "Total Income"
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "employed",
+                "op": "includes",
+                "value": [
+                  "Debtor 2nd Job"
+                ]
+              },
+              "fields": [
+                {
+                  "name": "debtor_2nd_job",
+                  "type": "text",
+                  "label": "Debtor 2nd Job"
+                },
+                {
+                  "name": "debtor_2nd_employer",
+                  "type": "text",
+                  "label": "2nd Place of Employment"
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "employed",
+                "op": "includes",
+                "value": [
+                  "Spouse 2nd Job"
+                ]
+              },
+              "fields": [
+                {
+                  "name": "spouse_2nd_job",
+                  "type": "text",
+                  "label": "Spouse 2nd Job"
+                },
+                {
+                  "name": "spouse_2nd_employer",
+                  "type": "text",
+                  "label": "2nd Place of Employment"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Debtor — Other Income",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "debtor_other_income",
+                  "type": "checkgroup",
+                  "columns": 1,
+                  "allowOther": true,
+                  "options": [
+                    {
+                      "label": "Social Security — Retirement",
+                      "value": "Social Security - Retirement"
+                    },
+                    "SSDI",
+                    "Pension",
+                    "Unemployment",
+                    "Food stamps",
+                    "Gov't support"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Spouse — Other Income",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "spouse_other_income",
+                  "type": "checkgroup",
+                  "columns": 1,
+                  "allowOther": true,
+                  "options": [
+                    {
+                      "label": "Social Security — Retirement",
+                      "value": "Social Security - Retirement"
+                    },
+                    "SSDI",
+                    "Pension",
+                    "Unemployment",
+                    "Food stamps",
+                    "Gov't support"
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "employment_notes",
+                  "type": "textarea",
+                  "label": "Employment Notes",
+                  "rows": 3,
+                  "maxLength": 3000
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "Issues & Student Loans",
+      "sections": [
+        {
+          "title": "Debt",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "total_debt",
+                  "type": "text",
+                  "label": "Total Debt"
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "debt_type",
+                  "type": "checkgroup",
+                  "label": "Type (check all that apply)",
+                  "allowOther": true,
+                  "options": [
+                    {
+                      "label": "Wage Garnishment",
+                      "value": "Wage Garnishment - Active"
+                    },
+                    {
+                      "label": "State Tax Garnish",
+                      "value": "State Tax Garnishment - Active"
+                    },
+                    {
+                      "label": "Lawsuit pending",
+                      "value": "Lawsuit pending (pre-judgment)"
+                    },
+                    {
+                      "label": "Judgment (pre-garn)",
+                      "value": "Judgment (pre-garnishment)"
+                    },
+                    "Mortgage",
+                    "Pre-Foreclosure",
+                    "Post-Foreclosure",
+                    "HELOC?",
+                    "Eviction Threatened",
+                    "L/T Judgment",
+                    {
+                      "label": "Vehicle — due",
+                      "value": "Vehicle - currently due"
+                    },
+                    "Recent Repo",
+                    "Old Repo",
+                    "Credit card",
+                    "Utilities",
+                    "Medical",
+                    "Payday Loans",
+                    "Student Loans"
+                  ]
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "debt_type",
+                "op": "includes",
+                "value": [
+                  "Wage Garnishment - Active",
+                  "State Tax Garnishment - Active"
+                ]
+              },
+              "fields": [
+                {
+                  "name": "garnishment_start",
+                  "type": "date",
+                  "label": "Garnishment Start Date"
+                },
+                {
+                  "name": "garnishment_court",
+                  "type": "text",
+                  "label": "Garnishment Court / Case No / Notes",
+                  "width": "2x"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "repeater": "lawsuits",
+          "title": "Lawsuits",
+          "addLabel": "+ Add Lawsuit",
+          "showWhen": {
+            "field": "debt_type",
+            "op": "includes",
+            "value": [
+              "Lawsuit pending (pre-judgment)",
+              "Pre-Foreclosure",
+              "Post-Foreclosure",
+              "L/T Judgment"
+            ]
+          },
+          "fields": [
+            {
+              "name": "court_name",
+              "type": "text",
+              "label": "Name of Court"
+            },
+            {
+              "name": "case_number_lawsuit",
+              "type": "text",
+              "label": "Case Number"
+            },
+            {
+              "name": "note",
+              "type": "text",
+              "label": "Note",
+              "width": "2x"
+            }
+          ]
+        },
+        {
+          "rows": [
+            {
+              "showWhen": {
+                "field": "debt_type",
+                "op": "includes",
+                "value": [
+                  "HELOC?",
+                  "Payday Loans",
+                  "Student Loans"
+                ]
+              },
+              "fields": [
+                {
+                  "name": "loan_date",
+                  "type": "text",
+                  "label": "Loan Date"
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "debt_notes",
+                  "type": "textarea",
+                  "label": "Debt Notes",
+                  "rows": 3,
+                  "maxLength": 3000
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Student Loans",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "student_loans",
+                  "type": "checkgroup",
+                  "columns": 1,
+                  "options": [
+                    "Needs Student Loans Assistance",
+                    "Student Loans Appointment Set",
+                    {
+                      "label": "Already enrolled in IDR Plan",
+                      "value": "Already enrolled in IDR Plan (eg. SAVE)"
+                    }
+                  ]
+                },
+                {
+                  "name": "student_loan_notes",
+                  "type": "textarea",
+                  "label": "Notes — Student Loans",
+                  "rows": 3,
+                  "maxLength": 3000
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "Taxes",
+      "sections": [
+        {
+          "title": "Taxes",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "current_on_returns",
+                  "type": "radio",
+                  "label": "Current on Tax Returns?",
+                  "options": [
+                    "Yes",
+                    "No",
+                    "Unknown"
+                  ]
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "federal_tax",
+                  "type": "radio",
+                  "label": "Federal Tax Status",
+                  "options": [
+                    {
+                      "label": "Refund",
+                      "value": "Refund expected"
+                    },
+                    {
+                      "label": "Owe",
+                      "value": "Owe taxes"
+                    },
+                    "Neither",
+                    "Unknown"
+                  ]
+                },
+                {
+                  "name": "federal_refund",
+                  "type": "text",
+                  "label": "Refund Amount (Federal)",
+                  "showWhen": {
+                    "field": "federal_tax",
+                    "op": "eq",
+                    "value": "Refund expected"
+                  }
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "state_tax",
+                  "type": "radio",
+                  "label": "State Tax Status",
+                  "options": [
+                    {
+                      "label": "Refund",
+                      "value": "Refund expected"
+                    },
+                    {
+                      "label": "Owe",
+                      "value": "Owe taxes"
+                    },
+                    "Neither",
+                    "Unknown"
+                  ]
+                },
+                {
+                  "name": "state_refund",
+                  "type": "text",
+                  "label": "Refund Amount (State)",
+                  "showWhen": {
+                    "field": "state_tax",
+                    "op": "eq",
+                    "value": "Refund expected"
+                  }
+                }
+              ]
+            },
+            {
+              "showWhen": {
+                "field": "current_on_returns",
+                "op": "neq",
+                "value": "Yes"
+              },
+              "fields": [
+                {
+                  "name": "tax_follow_up",
+                  "type": "radio",
+                  "label": "Tax Follow Up",
+                  "options": [
+                    "Client Has Preparer",
+                    "Need to Contact Allan",
+                    "Sent Email to Allan",
+                    "Unknown"
+                  ]
+                }
+              ]
+            },
+            {
+              "fields": [
+                {
+                  "name": "tax_notes",
+                  "type": "textarea",
+                  "label": "Notes — Taxes",
+                  "rows": 3,
+                  "maxLength": 3000
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "label": "Ash Auto",
+      "sections": [
+        {
+          "title": "Ash Auto Scheduling",
+          "rows": [
+            {
+              "fields": [
+                {
+                  "name": "ash_auto",
+                  "type": "embed",
+                  "height": 600,
+                  "src": "https://calendly.com/theashautogroup/bankruptcy-car-consultation?a2=Stuart%20Sandweiss"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "stickyBottom": [
+    {
+      "rows": [
+        {
+          "fields": [
+            {
+              "name": "intake_notes",
+              "type": "textarea",
+              "label": "Intake Notes — Client Details",
+              "rows": 3,
+              "maxLength": 5000,
+              "placeholder": "Running intake notes visible on all tabs"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

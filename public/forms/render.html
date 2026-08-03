@@ -107,8 +107,46 @@
  *     innerHTML) appended to <head> after the shared stylesheet so it wins the
  *     cascade. INTERNAL-ONLY pending the portal security review.
  *
- * Still out (2.6 + reserved): tabs, external/portal mode, type:"embed",
- * computed fields, multi-column/transforming apiColumn (stays hooks).
+ * SLICE 2.6 ADDITIONS (SLICE_2_6_SPEC.md + addendum v2):
+ *   - Tabs (§4.5): top-level `tabs: [{label, sections}]` (exactly one of
+ *     sections|tabs) + optional stickyTop/stickyBottom section arrays.
+ *     Markup = issn.html classes (.yc-tab-sticky / .yc-tabs / .yc-tab-bar /
+ *     .yc-tab-panel, first tab+panel active); all of it INSIDE the form
+ *     element (setupTabs and the conditional engine scope to this.el). All
+ *     containers route through ONE renderSectionsInto path — sections-mode
+ *     output is byte-identical to pre-2.6. setupTabs is called after init()
+ *     resolves, in BOTH boot branches. Zero yc-forms.js / yc-forms.css
+ *     changes.
+ *   - Tab-reveal on validation failure: a SECOND #saveBtn click listener,
+ *     registered after init() (yc-forms binds its own in init step 1, so this
+ *     one runs second; validate() runs synchronously before save()'s first
+ *     await, so .yc-error.visible classes are set by the time it fires). It
+ *     activates the panel holding the first visible error and scrolls the
+ *     .yc-field into view; sticky-region errors scroll only. KNOWN NON-FIX:
+ *     an error inside a showWhen-hidden wrapper on the ACTIVE tab stays
+ *     invisible — pre-existing A7-lint territory, unchanged by tabs.
+ *   - type:"embed" (§4.3, INTERNAL-ONLY): display-only https iframe.
+ *     .yc-field wrapper WITHOUT .yc-error (not an input); label/sublabel via
+ *     textContent; iframe attrs via setAttribute (src, loading=lazy, title,
+ *     data-yc-embed={name} as a stable per-form-code selector hook, and a
+ *     parseInt-coerced height style). Never registered in fields/validation/
+ *     apiMap — collect() walks config.fields, so exclusion = not registering.
+ *   - `code` key (addendum A1): per-form JS from the DB, executed
+ *     synchronously (new Function + call, try/catch-isolated) at exactly the
+ *     point the hooks file would load (same boot-branch structure; code and
+ *     hooks are mutually exclusive, server-enforced). May define
+ *     window.ycHooks with the standard interface — wired identically to file
+ *     hooks; broken code warns and degrades, never aborts init.
+ *     NEVER executed in preview. REFORMULATED INVARIANT (2026-08-02,
+ *     supersedes "no browser-executed JS stored in the DB"): DB-stored code
+ *     and css execute on INTERNAL surfaces only; any future external/portal
+ *     render route MUST REFUSE (never strip) templates carrying code, css,
+ *     or hooks, pending the portal security review. The textContent-for-data
+ *     rule below is untouched — it governs data, not authored code.
+ *
+ * Still out (reserved): external/portal mode, nested tabs, tab-level
+ * showWhen, computed fields, multi-column/transforming apiColumn (stays
+ * per-form code / shared hooks), showWhen inside repeaters.
  *
  * MODES
  *   Normal : ?form_key=X&<linkType>_id=N   (param name follows the template's
@@ -317,6 +355,40 @@
       // showWhen on a hidden field is meaningless (nothing to show/hide) —
       // silently ignored.
       return el('input', { type: 'hidden', name: f.name });
+    }
+
+    if (f.type === 'embed') {
+      // 2.6 (contract §4.3, INTERNAL-ONLY): display-only https iframe — not
+      // an input, so NO .yc-error and no registration (the caller skips
+      // registerField for embeds; collect()/validate()/PATCH never see it).
+      // Belt-and-braces https re-check: published defs passed §7, but degrade
+      // safely on anything else rather than emitting a non-https frame.
+      var eWrapClass = 'yc-field';
+      if (WIDTH_CLASS[f.width]) eWrapClass += ' ' + WIDTH_CLASS[f.width];
+      var eWrap = el('div', { class: eWrapClass });
+      if (f.label != null && f.label !== '') {
+        eWrap.appendChild(el('label', { class: 'yc-label', text: f.label }));
+      }
+      if (f.sublabel) {
+        eWrap.appendChild(el('div', { class: 'yc-sublabel', text: f.sublabel }));
+      }
+      var eh = parseInt(f.height, 10);           // never string-interpolate raw
+      if (!(eh > 0)) eh = 600;
+      var eSrc = String(f.src || '');
+      var eOk = false;
+      try { eOk = new URL(eSrc).protocol === 'https:'; } catch (e) { eOk = false; }
+      if (eOk) {
+        var frame = document.createElement('iframe');
+        frame.setAttribute('src', eSrc);
+        frame.setAttribute('loading', 'lazy');
+        frame.setAttribute('title', (f.label != null && f.label !== '') ? f.label : f.name);
+        frame.setAttribute('data-yc-embed', f.name);   // stable selector for per-form code
+        frame.setAttribute('style', 'width:100%;height:' + eh + 'px;border:none;');
+        eWrap.appendChild(frame);
+      } else {
+        warn('embed "' + f.name + '": src is not a valid https URL — iframe skipped');
+      }
+      return wrapShowWhen(eWrap, f.showWhen, 'field "' + f.name + '"', warn);
     }
 
     var wrapClass = 'yc-field';
@@ -742,37 +814,83 @@
       }
     }
 
-    (def.sections || []).forEach(function (section, i) {
-      if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
-        var rep = buildRepeaterSection(section, warn);
-        // Repeater field names are validated unique form-wide (server §7), so
-        // they can never shadow a top-level [name=…] the conditional engine or
-        // validate() would query.
-        repeaters[section.repeater] = rep.config;
-        form.appendChild(rep.node);
-        return;
-      }
+    // ── One rendering path for every container (2.6). Sections mode calls
+    //    this ONCE with (form, def.sections, 'sections') — the body below is
+    //    the pre-2.6 loop verbatim (container/prefix parameterized), so
+    //    sections-mode output stays byte-identical. Tabs mode calls it per
+    //    sticky region and per tab panel. ──
+    function renderSectionsInto(container, sections, prefix) {
+      (sections || []).forEach(function (section, i) {
+        if (section && Object.prototype.hasOwnProperty.call(section, 'repeater')) {
+          var rep = buildRepeaterSection(section, warn);
+          // Repeater field names are validated unique form-wide (server §7), so
+          // they can never shadow a top-level [name=…] the conditional engine or
+          // validate() would query.
+          repeaters[section.repeater] = rep.config;
+          container.appendChild(rep.node);
+          return;
+        }
 
-      var sec = el('div', { class: 'yc-section' });
-      if (section.title)    sec.appendChild(el('div', { class: 'yc-section-title', text: section.title }));
-      if (section.subtitle) sec.appendChild(el('div', { class: 'yc-section-subtitle', text: section.subtitle }));
+        var sec = el('div', { class: 'yc-section' });
+        if (section.title)    sec.appendChild(el('div', { class: 'yc-section-title', text: section.title }));
+        if (section.subtitle) sec.appendChild(el('div', { class: 'yc-section-subtitle', text: section.subtitle }));
 
-      (section.rows || []).forEach(function (row, j) {
-        var rowEl = el('div', { class: 'yc-row' });
-        (row.fields || []).forEach(function (f) {
-          var node = buildField(f, warn);
-          if (node) rowEl.appendChild(node);
-          registerField(f);
+        (section.rows || []).forEach(function (row, j) {
+          var rowEl = el('div', { class: 'yc-row' });
+          (row.fields || []).forEach(function (f) {
+            var node = buildField(f, warn);
+            if (node) rowEl.appendChild(node);
+            // embed (2.6) is display-only: never registered, so collect()/
+            // validate()/apiMap/PATCH never see it. Everything else registers
+            // exactly as before.
+            if (f.type !== 'embed') registerField(f);
+          });
+          sec.appendChild(row && row.showWhen
+            ? wrapShowWhen(rowEl, row.showWhen, prefix + '[' + i + '].rows[' + j + ']', warn)
+            : rowEl);
         });
-        sec.appendChild(row && row.showWhen
-          ? wrapShowWhen(rowEl, row.showWhen, 'sections[' + i + '].rows[' + j + ']', warn)
-          : rowEl);
-      });
 
-      form.appendChild(section.showWhen
-        ? wrapShowWhen(sec, section.showWhen, 'sections[' + i + ']', warn)
-        : sec);
-    });
+        container.appendChild(section.showWhen
+          ? wrapShowWhen(sec, section.showWhen, prefix + '[' + i + ']', warn)
+          : sec);
+      });
+    }
+
+    if (Array.isArray(def.tabs)) {
+      // ── Tabs mode (2.6, contract §4.5). issn.html structure exactly: one
+      //    .yc-tab-sticky per non-empty sticky region, then .yc-tabs holding
+      //    the bar (one button per tab, first active) and index-matched
+      //    panels (first active). Everything INSIDE the form element —
+      //    setupTabs and _setupConditionals scope to this.el. ──
+      if (Array.isArray(def.stickyTop) && def.stickyTop.length) {
+        var stTop = el('div', { class: 'yc-tab-sticky' });
+        renderSectionsInto(stTop, def.stickyTop, 'stickyTop');
+        form.appendChild(stTop);
+      }
+      var tabsEl = el('div', { class: 'yc-tabs' });
+      var barEl  = el('div', { class: 'yc-tab-bar' });
+      def.tabs.forEach(function (tab, i) {
+        barEl.appendChild(el('button', {
+          type: 'button',
+          class: i === 0 ? 'active' : null,
+          text: String(tab && tab.label != null ? tab.label : '')
+        }));
+      });
+      tabsEl.appendChild(barEl);
+      def.tabs.forEach(function (tab, i) {
+        var panel = el('div', { class: 'yc-tab-panel' + (i === 0 ? ' active' : '') });
+        renderSectionsInto(panel, (tab && tab.sections) || [], 'tabs[' + i + '].sections');
+        tabsEl.appendChild(panel);
+      });
+      form.appendChild(tabsEl);
+      if (Array.isArray(def.stickyBottom) && def.stickyBottom.length) {
+        var stBot = el('div', { class: 'yc-tab-sticky' });
+        renderSectionsInto(stBot, def.stickyBottom, 'stickyBottom');
+        form.appendChild(stBot);
+      }
+    } else {
+      renderSectionsInto(form, def.sections || [], 'sections');
+    }
 
     // Wire the user-click "Other" toggle on every allowOther checkgroup. The
     // runtime only manages .yc-other-text visibility on populate
@@ -1263,14 +1381,73 @@
       return payload;
     };
 
+    // ── Tabs wiring (2.6): after init() resolves — in BOTH boot branches —
+    //    call setupTabs (issn.html's init().then() pattern) and register the
+    //    tab-reveal listener. ORDER MATTERS for tab-reveal: yc-forms binds its
+    //    own #saveBtn click listener in init step 1 (_setupToggle), so a
+    //    listener registered after init() is guaranteed to run SECOND on the
+    //    same click; validate() runs synchronously inside save() before its
+    //    first await (and returns before any await when invalid), so the
+    //    .yc-error.visible classes are already set when this fires. Sticky-
+    //    region errors are always visible → scroll only. No errors → no-op.
+    //    KNOWN NON-FIX: an error inside a showWhen-hidden wrapper on the
+    //    ACTIVE tab stays invisible (A7-lint territory, unchanged by tabs).
+    var wantTabs = Array.isArray(def.tabs);
+    function afterInit() {
+      if (!wantTabs) return;
+      form_.setupTabs('.yc-tab-bar', '.yc-tab-panel');
+      var saveBtnEl = document.getElementById('saveBtn');
+      if (saveBtnEl) {
+        saveBtnEl.addEventListener('click', function () {
+          var err = form_.el.querySelector('.yc-error.visible');
+          if (!err) return;
+          var panel = err.closest('.yc-tab-panel');
+          if (panel && !panel.classList.contains('active')) {
+            var panels = Array.prototype.slice.call(form_.el.querySelectorAll('.yc-tab-panel'));
+            var idx = panels.indexOf(panel);
+            var btns = form_.el.querySelectorAll('.yc-tab-bar button');
+            if (idx >= 0 && btns[idx]) btns[idx].click();
+          }
+          var fieldEl = err.closest('.yc-field') || err;
+          if (fieldEl.scrollIntoView) {
+            try { fieldEl.scrollIntoView({ block: 'center' }); } catch (e) { /* older engines */ }
+          }
+        });
+      }
+    }
+    function startInit() { form_.init().then(afterInit); }
+
+    // Per-form code (2.6 addendum A1): executed SYNCHRONOUSLY at exactly the
+    // point the hooks file would load — before init, same boot-branch
+    // structure — so window.ycHooks (if the code defines it) is guaranteed to
+    // exist when the generated onLoad runs. new Function + immediate call
+    // rather than an injected <script> element: appended-script execution is
+    // task-queue-scheduled (environment-dependent ordering vs init's await
+    // chain), while this is strictly before startInit in every environment,
+    // and the try/catch gives the degrade guarantee directly (broken code
+    // warns, never aborts init). Stored code is an IIFE assigning
+    // window.ycHooks — the standard interface, wired identically to file
+    // hooks with the same per-call isolation. NEVER executed in preview — any
+    // preview mode. `code` and `hooks` are mutually exclusive (server-
+    // enforced), so the branches below never both fire. This is AUTHORED code
+    // under the reformulated §8 invariant (internal surfaces only; external
+    // routes must refuse) — the textContent-for-data rule governs data, not
+    // this.
+    if (typeof def.code === 'string' && def.code && !preview) {
+      try { new Function(def.code)(); }
+      catch (e) { console.warn('[render] template code failed:', e); }
+    } else if (def.code && preview) {
+      warn('template code is not executed in preview mode');
+    }
+
     // Hooks file (§3): loaded + awaited BEFORE init so window.ycHooks exists
     // by the time the generated onLoad runs. Not loaded in preview — preview
     // must never execute side-effecting per-form code.
     if (def.hooks && !preview) {
-      loadHooks(String(def.hooks)).then(function () { form_.init(); });
+      loadHooks(String(def.hooks)).then(startInit);
     } else {
       if (def.hooks && preview) warn('hooks ("' + def.hooks + '") are not loaded in preview mode');
-      form_.init();
+      startInit();
     }
   }
 

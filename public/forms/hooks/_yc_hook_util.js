@@ -2,9 +2,10 @@
  * /forms/hooks/_yc_hook_util.js — shared helpers for templated-form hooks.
  *
  * NOT a hooks file itself (a template's `hooks` key never names it). Hook files
- * load it with a plain <script src> ahead of their own body; render.html awaits
- * only the named file, so each hook that needs these helpers must inline-load
- * this one first and gate on it. See case_clients.js for the pattern.
+ * and definition `code` (2.6) load it with a plain <script src> ahead of their
+ * own body; render.html awaits only the named hooks file, so anything needing
+ * these helpers must inline-load this one first and gate on it (the loadUtil
+ * pattern — see tests/fixtures/slice26/legacy_notes_341.js).
  *
  * Everything here is deliberately DOM/runtime-level: hooks run inside
  * render.html, which has no build step and no module system.
