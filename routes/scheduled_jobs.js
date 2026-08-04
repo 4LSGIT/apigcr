@@ -86,6 +86,7 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
     type,               // required: "one_time" | "recurring"
     job_type,           // required: "webhook" | "internal_function" | "custom_code"
     name,               // optional but recommended
+    description,        // optional free-text note (what/why)
     delay,              // string e.g. "10m", "1h", "30s" - from now
     scheduled_time,     // ISO string e.g. "2026-02-15T14:30:00Z"
     timezone,
@@ -208,13 +209,14 @@ router.post("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
     const [result] = await db.query(
       `
       INSERT INTO scheduled_jobs
-      (type, scheduled_time, status, name, data, recurrence_rule, max_attempts, backoff_seconds, max_executions, expires_at)
-      VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)
+      (type, scheduled_time, status, name, description, data, recurrence_rule, max_attempts, backoff_seconds, max_executions, expires_at)
+      VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         type,
         finalScheduledTime,
         name || `${job_type} job`,
+        (typeof description === 'string' && description.trim()) ? description.trim() : null,
         JSON.stringify(jobData),
         type === "recurring" ? recurrence_rule : null,
         max_attempts,
@@ -397,14 +399,14 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
   const activeFilter = active === undefined ? null : (active === 'true' ? 1 : 0);
 
   try {
-    let query  = `SELECT id, type, status, active, name, scheduled_time, recurrence_rule,
+    let query  = `SELECT id, type, status, active, name, description, scheduled_time, recurrence_rule,
                     attempts, max_attempts, execution_count, created_at, updated_at
                   FROM scheduled_jobs WHERE 1=1`;
     const params = [];
 
     if (status) { query += ` AND status = ?`;         params.push(status); }
     if (type)   { query += ` AND type = ?`;           params.push(type); }
-    if (search) { query += ` AND name LIKE ?`;        params.push(`%${search}%`); }
+    if (search) { query += ` AND (name LIKE ? OR description LIKE ?)`; params.push(`%${search}%`, `%${search}%`); }
     if (activeFilter !== null) { query += ` AND active = ?`; params.push(activeFilter); }
 
     // Hide internal workflow/sequence jobs from the list by default
@@ -439,7 +441,7 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
 router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
   const db  = req.db;
   const { id } = req.params;
-  const { name, scheduled_time, timezone, recurrence_rule, max_attempts, backoff_seconds, data, max_executions, expires_at } = req.body;
+  const { name, description, scheduled_time, timezone, recurrence_rule, max_attempts, backoff_seconds, data, max_executions, expires_at } = req.body;
 
   try {
     const [[job]] = await db.query(`SELECT id, status, type FROM scheduled_jobs WHERE id = ?`, [id]);
@@ -455,6 +457,7 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
     const params  = [];
 
     if (name             !== undefined) { updates.push("name = ?");             params.push(name); }
+    if (description      !== undefined) { updates.push("description = ?");      params.push((typeof description === 'string' && description.trim()) ? description.trim() : null); }
     if (scheduled_time   !== undefined) {
       let dt;
       if (timezone) {

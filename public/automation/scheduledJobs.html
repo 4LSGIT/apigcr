@@ -581,6 +581,8 @@ async function jobNew() {
         </div>
         <div class="sj-field"><span class="sj-label">Name</span>
           <input id="sj-name" class="sj-el" placeholder="e.g. Daily digest, Reminder SMS"></div>
+        <div class="sj-field"><span class="sj-label">Description</span>
+          <textarea id="sj-desc" class="sj-el" style="font-family:inherit" placeholder="What this job does / why it exists — optional"></textarea></div>
         <hr class="sj-divider">
         <div id="sj-fn-wrap" class="sj-field"><span class="sj-label">Function</span>
           <select id="sj-fn" class="sj-el" ${FUNCTIONS.loaded ? '' : 'disabled'} onchange="sjOnFnChange('sj-fn','sj-params','sj-fn-hints')">${fnOpts}</select></div>
@@ -662,6 +664,8 @@ async function jobNew() {
         backoff_seconds: parseInt(document.getElementById('sj-backoff').value) || 300,
       };
       if (name) payload.name = name;
+      const sjDesc = document.getElementById('sj-desc').value.trim();
+      if (sjDesc) payload.description = sjDesc;
       if (delay) payload.delay = delay;
       if (scheduledTime) payload.scheduled_time = new Date(scheduledTime + 'Z').toISOString();
 
@@ -860,6 +864,8 @@ async function jobEdit(id) {
           <textarea id="sje-params" class="sj-el" rows="8">${esc(JSON.stringify(jobData.params ?? {}, null, 2))}</textarea></div>` : ''}
         <div class="sj-field"><span class="sj-label">Name</span>
           <input id="sje-name" class="sj-el" value="${esc(data.name || '')}"></div>
+        <div class="sj-field"><span class="sj-label">Description</span>
+          <textarea id="sje-desc" class="sj-el" style="font-family:inherit" placeholder="What this job does / why it exists — optional">${esc(data.description || '')}</textarea></div>
         ${isWebhook ? `
         <hr class="sj-divider">
         <div class="sj-row">
@@ -916,6 +922,8 @@ async function jobEdit(id) {
       const name = document.getElementById('sje-name').value.trim();
       const time = document.getElementById('sje-time').value;
       if (name !== data.name) payload.name = name || undefined;
+      const sjeDesc = document.getElementById('sje-desc').value.trim();
+      if (sjeDesc !== (data.description || '')) payload.description = sjeDesc; // '' clears (route nulls blank)
       if (time) payload.scheduled_time = new Date(time + 'Z').toISOString();
       payload.max_attempts = parseInt(document.getElementById('sje-max').value) || 3;
       payload.backoff_seconds = parseInt(document.getElementById('sje-backoff').value) || 300;
@@ -1097,6 +1105,7 @@ async function jobView(id) {
 
     let body = `<div style="text-align:left;font-size:13px;line-height:1.7">
       <strong>Name:</strong> ${esc(data.name || '(unnamed)')}<br>
+      ${data.description ? `<strong>Description:</strong> ${esc(data.description)}<br>` : ''}
       <strong>Type:</strong> ${esc(data.type)} · ${esc(jobType)}<br>
       <strong>Status:</strong> ${esc(data.status)}<br>
       <strong>Scheduled:</strong> ${esc(when)}<br>

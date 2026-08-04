@@ -624,7 +624,7 @@ const _RULE_COLS =
    transform_mode, transform_config, match_count, last_matched_at,
    last_modified_by, created_at, updated_at`;
 
-const _ACTION_COLS = `id, rule_id, position, active, action_type, config`;
+const _ACTION_COLS = `id, rule_id, name, position, active, action_type, config`;
 
 /**
  * All rules (active + inactive), each with an `actions` array (all actions for
@@ -802,9 +802,9 @@ async function duplicateRule(db, id, userId) {
     for (const a of (src.actions || [])) {
       await conn.query(
         `INSERT INTO phone_ingest_rule_actions
-           (rule_id, position, active, action_type, config)
-         VALUES (?, ?, ?, ?, ?)`,
-        [ruleId, a.position ?? 0, a.active ? 1 : 0, a.action_type, _toJsonColumn(a.config)]
+           (rule_id, name, position, active, action_type, config)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [ruleId, a.name ?? null, a.position ?? 0, a.active ? 1 : 0, a.action_type, _toJsonColumn(a.config)]
       );
     }
     return ruleId;
@@ -840,10 +840,11 @@ async function addAction(db, ruleId, payload) {
 
   const [r] = await db.query(
     `INSERT INTO phone_ingest_rule_actions
-       (rule_id, position, active, action_type, config)
-     VALUES (?, ?, ?, ?, ?)`,
+       (rule_id, name, position, active, action_type, config)
+     VALUES (?, ?, ?, ?, ?, ?)`,
     [
       ruleId,
+      (typeof payload.name === 'string' && payload.name.trim()) ? payload.name.trim().slice(0, 100) : null,
       payload.position ?? 0,
       payload.active !== undefined ? (payload.active ? 1 : 0) : 1,
       payload.action_type,
@@ -867,6 +868,7 @@ async function updateAction(db, actionId, payload) {
     config:      payload.config      !== undefined ? payload.config      : existing.config,
     position:    payload.position    !== undefined ? payload.position    : existing.position,
     active:      payload.active      !== undefined ? payload.active      : existing.active,
+    name:        payload.name        !== undefined ? payload.name        : existing.name,
   };
   const { errors } = _validator().validateAction(merged, true);
   if (errors.length) throw new ValidationError(errors);
@@ -876,6 +878,7 @@ async function updateAction(db, actionId, payload) {
   const sets = [];
   const vals = [];
   if (payload.action_type !== undefined) { sets.push('action_type = ?'); vals.push(payload.action_type); }
+  if (payload.name        !== undefined) { sets.push('name = ?');        vals.push((typeof payload.name === 'string' && payload.name.trim()) ? payload.name.trim().slice(0, 100) : null); }
   if (payload.config      !== undefined) { sets.push('config = ?');      vals.push(_toJsonColumn(payload.config)); }
   if (payload.position    !== undefined) { sets.push('position = ?');    vals.push(payload.position); }
   if (payload.active      !== undefined) { sets.push('active = ?');      vals.push(payload.active ? 1 : 0); }

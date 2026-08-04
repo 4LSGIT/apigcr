@@ -2331,7 +2331,8 @@ window.piToggleSidebar = piToggleSidebar;
         <div class="action-card interactive">
           <div class="action-card-head">
             <i class="fa-solid ${info.icon} action-icon" style="color:${info.color}"></i>
-            <span class="action-title">${esc(info.label)}</span>
+            <span class="action-title">${esc(a.name || info.label)}</span>
+            ${a.name ? `<span class="text-muted" style="font-size:11px">${esc(info.label)}</span>` : ''}
             <span class="text-muted" style="font-size:12px">pos ${Number(a.position ?? i)}</span>
             <span class="left-item-badge ${a.active ? 'badge-active':'badge-inactive'}">${a.active?'ON':'OFF'}</span>
             <div class="action-card-actions">
@@ -2414,7 +2415,7 @@ window.piToggleSidebar = piToggleSidebar;
       showCancelButton: true,
       confirmButtonText: 'Add',
       didOpen: () => initActionFormHandlers({}),
-      preConfirm: () => collectActionForm(),
+      preConfirm: () => { const v = collectActionForm(); return v ? _collectWithName(v) : v; },
     });
     if (!value) return;
     try {
@@ -2438,7 +2439,7 @@ window.piToggleSidebar = piToggleSidebar;
       showCancelButton: true,
       confirmButtonText: 'Update',
       didOpen: () => initActionFormHandlers(a),
-      preConfirm: () => collectActionForm(),
+      preConfirm: () => { const v = collectActionForm(); return v ? _collectWithName(v) : v; },
     });
     if (!value) return;
     try {
@@ -2684,8 +2685,12 @@ window.piToggleSidebar = piToggleSidebar;
           </div>
         </div>
 
-        <!-- shared: position + active -->
+        <!-- shared: name + position + active -->
         <div style="display:flex;gap:12px;align-items:flex-end;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+          <div class="fg" style="flex:1;margin:0">
+            <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Name <span style="font-weight:400;color:var(--muted)">— optional</span></label>
+            <input id="swal-a-name" class="swal2-input" maxlength="100" style="margin:0;width:100%" value="${esc(a.name || '')}" placeholder="e.g. Notify Fred on match">
+          </div>
           <div class="fg" style="width:120px;margin:0">
             <label style="display:block;font-size:12px;font-weight:600;margin-bottom:4px">Position</label>
             <input id="swal-a-position" class="swal2-input" type="number" min="0" step="1" style="margin:0;width:100%" value="${Number(a.position ?? 0)}">
@@ -2797,6 +2802,14 @@ window.piToggleSidebar = piToggleSidebar;
   const aPmEl = () => document.getElementById('swal-a-fn-params');
 
   // Harvest the action form → {action_type, config, position, active}.
+  // Action-name slice — attach the (optional) name field to a harvested
+  // action payload. Standalone so both Add/Edit preConfirms share it.
+  function _collectWithName(v) {
+    const n = (document.getElementById('swal-a-name')?.value || '').trim().slice(0, 100) || null;
+    if (v && typeof v === 'object') v.name = n;
+    return v;
+  }
+
   function collectActionForm() {
     const type = document.getElementById('swal-a-type').value;
     const position = Math.max(0, parseInt(document.getElementById('swal-a-position').value, 10) || 0);

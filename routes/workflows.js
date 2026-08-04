@@ -1830,7 +1830,7 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
     // Slice 2.1: also SELECT test_input so the duplicate carries over the
     // authorial init_data shape doc. Symmetric with description carry-over.
     const [wfRows] = await connection.query(
-      `SELECT name, description, test_input FROM workflows WHERE id = ?`,
+      `SELECT name, description, test_input, captured_input, captured_at FROM workflows WHERE id = ?`,
       [originalId]
     );
     if (wfRows.length === 0) {
@@ -1841,9 +1841,11 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
 
     // Create new workflow
     const newName = customName?.trim() || `Copy of ${original.name}`;
+    // Capture slice: sample + timestamp copy (hooks-clone parity) but
+    // capture_mode never copies — the duplicate starts disarmed (default).
     const [newWfResult] = await connection.query(
-      `INSERT INTO workflows (name, description, test_input) VALUES (?, ?, ?)`,
-      [newName, original.description || "", toJson(original.test_input)]
+      `INSERT INTO workflows (name, description, test_input, captured_input, captured_at) VALUES (?, ?, ?, ?, ?)`,
+      [newName, original.description || "", toJson(original.test_input), toJson(original.captured_input), original.captured_at ?? null]
     );
     const newWorkflowId = newWfResult.insertId;
 

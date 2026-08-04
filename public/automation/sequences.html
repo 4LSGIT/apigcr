@@ -658,6 +658,7 @@
     <div class="canvas-head">
       <div class="canvas-title placeholder" id="seq-canvas-title">← Select a sequence template</div>
       <div id="seq-canvas-actions" style="display:none;gap:8px">
+        <button class="btn btn-outline btn-sm" id="seq-capture-btn" onclick="seqCaptureModal()"><i class="fa-solid fa-satellite-dish"></i> Capture</button>
         <button class="btn btn-outline btn-sm" onclick="seqShowExplain()"><i class="fa-regular fa-circle-question"></i> Explain</button>
         <button class="btn btn-outline btn-sm" onclick="seqOpenPreviewForm()" title="Dry-run this template against a contact — no side effects"><i class="fa-solid fa-flask"></i> Preview</button>
         <button class="btn btn-outline btn-sm" onclick="seqEdit()"><i class="fa-solid fa-pencil"></i> Edit</button>
@@ -1053,6 +1054,76 @@ function _seqFilterChipsList(filters) {
   ).join('');
 }
 
+// Capture slice — toolbar button reflects armed state.
+function seqUpdateCaptureBtn() {
+  const btn = document.getElementById('seq-capture-btn');
+  if (!btn) return;
+  const t = SEQ.activeTemplate;
+  btn.innerHTML = (t && t.capture_mode === 'capturing')
+    ? '<i class="fa-solid fa-satellite-dish fa-beat"></i> Capturing…'
+    : '<i class="fa-solid fa-satellite-dish"></i> Capture';
+}
+
+// Capture slice — arm/disarm one-shot capture of the next enrollment's
+// trigger_data, view the last captured sample, or promote it to test_input.
+// Mirrors the workflows capture modal; no "run with it" here because
+// enrollment needs a contact and dup-guards — use Preview/Enroll for that.
+async function seqCaptureModal() {
+  if (!SEQ.activeTemplateId) return;
+  let cap;
+  try {
+    cap = await api(`/sequences/templates/${SEQ.activeTemplateId}/captured`);
+  } catch (e) {
+    Swal.fire('Error', e.message, 'error');
+    return;
+  }
+  const capturing = cap.capture_mode === 'capturing';
+  const sample = cap.captured_input;
+  const sampleJson = sample != null ? JSON.stringify(sample, null, 2) : null;
+  const when = cap.captured_at ? new Date(cap.captured_at).toLocaleString() : null;
+
+  const res = await Swal.fire({
+    title: 'Capture trigger_data',
+    width: 640,
+    html: `
+      <div style="text-align:left;font-size:13px">
+        <p style="margin:0 0 10px;color:#475569">Arms a one-shot capture: the next enrollment into this template —
+        from any source (appt hooks, ingest rules, e-sign, manual enroll) — records its trigger_data here, then disarms itself.</p>
+        <p style="margin:0 0 10px"><b>Status:</b> ${capturing
+          ? '<span style="color:#b45309;font-weight:600">armed — waiting for next enrollment</span>'
+          : '<span style="color:#64748b">off</span>'}</p>
+        ${sampleJson != null ? `
+          <div style="font-weight:600;margin-bottom:4px">Last captured${when ? ` — ${esc(when)}` : ''}</div>
+          <pre style="max-height:260px;overflow:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:11px;text-align:left;margin:0">${esc(sampleJson)}</pre>
+        ` : `<div style="color:#94a3b8">No sample captured yet.</div>`}
+      </div>`,
+    showCancelButton: true,
+    cancelButtonText: 'Close',
+    confirmButtonText: capturing ? 'Disarm' : 'Arm capture',
+    showDenyButton: sampleJson != null,
+    denyButtonText: 'Save as Test Input',
+    denyButtonColor: '#0f4c81',
+  });
+
+  try {
+    if (res.isConfirmed) {
+      await api(`/sequences/templates/${SEQ.activeTemplateId}/capture/${capturing ? 'stop' : 'start'}`, 'POST', {});
+      await loadSeqSteps(SEQ.activeTemplateId);   // refreshes SEQ.activeTemplate → button state
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success',
+        title: capturing ? 'Capture disarmed' : 'Capture armed — next enrollment will be recorded',
+        timer: 2500, showConfirmButton: false });
+    } else if (res.isDenied && sampleJson != null) {
+      // Promote to authorial test_input — explicit action; capture itself
+      // never touches test_input.
+      await api(`/sequences/templates/${SEQ.activeTemplateId}`, 'PUT', { test_input: sample });
+      await loadSeqSteps(SEQ.activeTemplateId);
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Saved as test_input', timer: 2200, showConfirmButton: false });
+    }
+  } catch (e) {
+    Swal.fire('Error', e.message, 'error');
+  }
+}
+
 function seqFilter(q) {
   const needle = q.toLowerCase();
   SEQ.filtered = SEQ.templates.filter(t =>
@@ -1088,6 +1159,7 @@ async function selectSeqTemplate(id) {
   t.textContent = seqTitleText(SEQ.activeTemplate);
   t.classList.remove('placeholder');
   document.getElementById('seq-canvas-actions').style.display = 'flex';
+  seqUpdateCaptureBtn();
   seqClearEditor();
   await loadSeqSteps(id);
 
@@ -1101,6 +1173,10 @@ async function loadSeqSteps(id) {
   document.getElementById('seq-canvas-body').innerHTML = '<div class="empty-state"><i class="fa-solid fa-spinner spin"></i></div>';
   try {
     const data = await api(`/sequences/templates/${id}`);
+    // Capture slice — the single GET is SELECT *, so refresh the active
+    // template row (capture_mode/captured_at ride along; list GET has them
+    // too via t.*, but this is the freshest copy).
+    if (data.template) { SEQ.activeTemplate = data.template; seqUpdateCaptureBtn(); }
     SEQ.steps = (data.steps || []).map(s => ({
       ...s,
       timing:        typeof s.timing === 'string'        ? JSON.parse(s.timing)        : s.timing,

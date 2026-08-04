@@ -2080,15 +2080,16 @@ function wfRenderWfMeta() {
   const d = document.getElementById('wf-canvas-desc');
   if (!d) return;
   const wf = WF.activeWf;
-  if (!wf) { d.style.display = 'none'; return; }
-  const bits = [];
-  if (wf.capture_mode === 'capturing') {
-    bits.push(`<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-satellite-dish"></i> Capturing next run's init_data…</span>`);
+  // Description deliberately NOT rendered here (crowds the first step card) —
+  // it lives in the Edit modal and the Explain doc. The strip only surfaces
+  // the transient capture-armed state.
+  if (wf && wf.capture_mode === 'capturing') {
+    d.innerHTML = `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-satellite-dish"></i> Capturing next run's init_data…</span>`;
+    d.style.display = 'block';
+  } else {
+    d.style.display = 'none';
+    d.innerHTML = '';
   }
-  if (wf.description) bits.push(esc(wf.description));
-  if (!bits.length) { d.style.display = 'none'; d.innerHTML = ''; return; }
-  d.innerHTML = bits.join('<br>');
-  d.style.display = 'block';
   // Reflect capture state on the toolbar button.
   const btn = document.getElementById('wf-capture-btn');
   if (btn) {

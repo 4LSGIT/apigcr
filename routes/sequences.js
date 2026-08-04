@@ -545,7 +545,8 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
       // Slice E Phase 2: SELECT filters JSON in place of the dropped
       // appt_type_filter / appt_with_filter columns.
       const [tplRows] = await connection.query(
-        `SELECT name, type, filters, \`condition\`, description, test_input
+        `SELECT name, type, filters, \`condition\`, description, test_input,
+                captured_input, captured_at
          FROM sequence_templates WHERE id = ?`,
         [originalId]
       );
@@ -561,17 +562,24 @@ router.post('/sequences/templates/:id/duplicate', jwtOrApiKey, async (req, res) 
       // toJson — handles either string or parsed-object return from SELECT.
       // `type` is copied verbatim — if original is NULL (ID-only), the duplicate
       // is NULL (ID-only) too.
+      // Capture slice: captured_input/captured_at copy over (hooks-clone
+      // parity — the sample powers testing against the duplicate) but
+      // capture_mode is NOT copied — live armed state never duplicates
+      // (column default 'off' applies).
       const [newTplResult] = await connection.query(
         `INSERT INTO sequence_templates
-          (name, type, filters, \`condition\`, description, active, test_input)
-         VALUES (?, ?, ?, ?, ?, 0, ?)`,
+          (name, type, filters, \`condition\`, description, active, test_input,
+           captured_input, captured_at)
+         VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)`,
         [
           newName,
           original.type,
           toJson(original.filters),
           toJson(original.condition),
           original.description,
-          toJson(original.test_input)
+          toJson(original.test_input),
+          toJson(original.captured_input),
+          original.captured_at ?? null
         ]
       );
       const newTemplateId = newTplResult.insertId;
@@ -1739,5 +1747,60 @@ router.patch('/sequences/templates/:id/steps/reorder', jwtOrApiKey, async (req, 
   }
 });
 
+
+// ─────────────────────────────────────────────────────────────
+// Capture mode — one-shot capture of the next real trigger_data.
+// Mirrors workflows + hooks: start arms, the next enrollment (any path
+// through _enrollWithTemplate) records trigger_data and disarms via a
+// guarded UPDATE; start/stop never clear the stored sample.
+// ─────────────────────────────────────────────────────────────
+
+router.post('/sequences/templates/:id/capture/start', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const templateId = parseInt(req.params.id, 10);
+  if (isNaN(templateId) || templateId <= 0) return res.status(400).json({ error: 'Invalid template ID' });
+  try {
+    const [[row]] = await db.query(`SELECT id FROM sequence_templates WHERE id = ?`, [templateId]);
+    if (!row) return res.status(404).json({ error: 'Template not found' });
+    await db.query(`UPDATE sequence_templates SET capture_mode = 'capturing' WHERE id = ?`, [templateId]);
+    res.json({ status: 'success', capture_mode: 'capturing' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to start capture', message: err.message });
+  }
+});
+
+router.post('/sequences/templates/:id/capture/stop', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const templateId = parseInt(req.params.id, 10);
+  if (isNaN(templateId) || templateId <= 0) return res.status(400).json({ error: 'Invalid template ID' });
+  try {
+    const [[row]] = await db.query(`SELECT id FROM sequence_templates WHERE id = ?`, [templateId]);
+    if (!row) return res.status(404).json({ error: 'Template not found' });
+    await db.query(`UPDATE sequence_templates SET capture_mode = 'off' WHERE id = ?`, [templateId]);
+    res.json({ status: 'success', capture_mode: 'off' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to stop capture', message: err.message });
+  }
+});
+
+router.get('/sequences/templates/:id/captured', jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const templateId = parseInt(req.params.id, 10);
+  if (isNaN(templateId) || templateId <= 0) return res.status(400).json({ error: 'Invalid template ID' });
+  try {
+    const [[row]] = await db.query(
+      `SELECT capture_mode, captured_input, captured_at FROM sequence_templates WHERE id = ?`,
+      [templateId]
+    );
+    if (!row) return res.status(404).json({ error: 'Template not found' });
+    let sample = row.captured_input;
+    if (typeof sample === 'string') {
+      try { sample = sample ? JSON.parse(sample) : null; } catch { /* leave as-is */ }
+    }
+    res.json({ status: 'success', capture_mode: row.capture_mode, captured_input: sample, captured_at: row.captured_at });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch captured input', message: err.message });
+  }
+});
 
 module.exports = router;

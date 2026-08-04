@@ -248,6 +248,12 @@ function validateAction(payload, isCreate) {
     errors.push({ field: 'position', message: 'must be a non-negative integer' });
   }
 
+  // Action-name slice — optional label; null clears. Length-capped to the
+  // column (VARCHAR(100)); services also defensively slice.
+  if (p.name !== undefined && p.name !== null && typeof p.name !== 'string') {
+    errors.push({ field: 'name', message: 'must be a string or null' });
+  }
+
   if (p.active !== undefined && !_isBool01(p.active)) {
     errors.push({ field: 'active', message: 'must be 0 or 1' });
   }
