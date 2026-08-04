@@ -87,7 +87,9 @@ router.post("/api/auth/update-profile", jwtOrApiKey, async (req, res) => {
     email,
     phone,
     allow_sms,
-    task_remind_freq
+    task_remind_freq,
+    default_email,
+    default_phone
   } = req.body;
 
   // ── Validation ──
@@ -135,22 +137,55 @@ router.post("/api/auth/update-profile", jwtOrApiKey, async (req, res) => {
     // Column is SET type, so MySQL expects comma-separated or empty
     const freq = task_remind_freq || "";
 
+    // ── Default senders (self-service) ──
+    // These only preselect send pickers — they grant no permissions (every
+    // user can already choose any sender on any send screen), which is why
+    // self-service is safe. Signature EDIT rights are deliberately NOT
+    // derived from default_email (see routes/api.mySignatures.js) — they
+    // anchor to the SU-assigned email_credentials.owner_user instead.
+    //
+    // BACK-COMPAT: columns are written ONLY when their key is present in the
+    // body. A caller that never heard of these fields (old cached client,
+    // other integrations) must not silently NULL a user's defaults.
+    const hasDefEmail = 'default_email' in req.body;
+    const hasDefPhone = 'default_phone' in req.body;
+    const defEmail = hasDefEmail ? (default_email || null) : undefined;
+    const defPhone = hasDefPhone
+      ? (default_phone ? String(default_phone).replace(/\D/g, "").slice(-10) : null)
+      : undefined;
+    if (defEmail) {
+      const [[cred]] = await req.db.query(
+        "SELECT id FROM email_credentials WHERE email = ? LIMIT 1",
+        [defEmail]
+      );
+      if (!cred) {
+        return res.status(400).json({ error: "Default email must be one of the configured sending addresses" });
+      }
+    }
+    if (defPhone) {
+      const [[line]] = await req.db.query(
+        "SELECT id FROM phone_lines WHERE phone_number = ? AND active = 1 LIMIT 1",
+        [defPhone]
+      );
+      if (!line) {
+        return res.status(400).json({ error: "Default SMS line must be one of the active phone lines" });
+      }
+    }
+
     // TODO: audit-log this change via the upcoming jwtOrApiKey middleware logging.
 
-    // ── Update ──
+    // ── Update ── (defaults only when provided; see back-compat note above)
+    const sets = [
+      "user_fname = ?", "user_lname = ?", "user_name = ?", "user_initials = ?",
+      "username = ?", "email = ?", "phone = ?", "allow_sms = ?", "task_remind_freq = ?",
+    ];
+    const vals = [user_fname, user_lname, user_name, user_initials, username, email, normalizedPhone, sms, freq];
+    if (hasDefEmail) { sets.push("default_email = ?"); vals.push(defEmail); }
+    if (hasDefPhone) { sets.push("default_phone = ?"); vals.push(defPhone); }
+    vals.push(userId);
     await req.db.query(
-      `UPDATE users
-       SET user_fname = ?,
-           user_lname = ?,
-           user_name = ?,
-           user_initials = ?,
-           username = ?,
-           email = ?,
-           phone = ?,
-           allow_sms = ?,
-           task_remind_freq = ?
-       WHERE user = ?`,
-      [user_fname, user_lname, user_name, user_initials, username, email, normalizedPhone, sms, freq, userId]
+      `UPDATE users SET ${sets.join(", ")} WHERE user = ?`,
+      vals
     );
 
     // ── Return updated user row, stripped of credential fields ──

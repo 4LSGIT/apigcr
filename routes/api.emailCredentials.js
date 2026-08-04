@@ -45,6 +45,7 @@ const jwtOrApiKey = require('../lib/auth.jwtOrApiKey');
 const { superuserOnlyFor, auditAdminAction } = require('../lib/auth.superuser');
 const { encrypt, decrypt, isEncrypted } = require('../lib/credentialCrypto');
 const emailService = require('../services/emailService');
+const { validateSignatures, coerceSignature } = require('../lib/signatureValidation');
 const gmailAdapter = require('../services/adapters/email/gmail');
 
 const TOOL = 'connections';
@@ -53,7 +54,7 @@ const TOOL = 'connections';
 // smtp_pass is intentionally omitted — admin GET single returns it.
 const LIST_COLUMNS = [
   'id', 'email', 'smtp_host', 'smtp_port', 'smtp_user',
-  'smtp_secure', 'provider', 'from_name', 'credential_id',
+  'smtp_secure', 'provider', 'from_name', 'credential_id', 'owner_user',
 ];
 
 // Full column set for admin GET single. smtp_pass column included in the
@@ -62,7 +63,7 @@ const LIST_COLUMNS = [
 const ALL_COLUMNS = [
   'id', 'email', 'smtp_host', 'smtp_port', 'smtp_user',
   'smtp_pass', 'smtp_secure', 'provider', 'from_name', 'credential_id',
-  'signature_html', 'signature_text',
+  'signature_html', 'signature_text', 'owner_user',
 ];
 
 // Per-provider required fields. Always required: email, provider, from_name.
@@ -81,7 +82,7 @@ function requiredForProvider(provider) {
 const UPDATABLE_FIELDS = [
   'email', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass',
   'smtp_secure', 'provider', 'from_name', 'credential_id',
-  'signature_html', 'signature_text',
+  'signature_html', 'signature_text', 'owner_user',
 ];
 
 // Fields whose old/new values are redacted in the audit diff.
@@ -92,26 +93,8 @@ const REDACTED_FIELDS = new Set(['smtp_pass']);
 // for no investigative benefit. We record a length delta instead.
 const SUMMARIZED_FIELDS = new Set(['signature_html', 'signature_text']);
 
-// Signature size cap. The columns are MEDIUMTEXT/TEXT (16MB/64KB), but a
-// legitimate signature is a couple of KB. This is a guard against a paste
-// accident, not a security control.
-const SIGNATURE_MAX = { signature_html: 65535, signature_text: 8192 };
-
-/**
- * Validate signature fields present in a request body.
- * Returns null when valid, or an error message string.
- */
-function validateSignatures(body) {
-  for (const f of Object.keys(SIGNATURE_MAX)) {
-    const v = body[f];
-    if (v === undefined || v === null) continue;
-    if (typeof v !== 'string') return `${f} must be a string`;
-    if (v.length > SIGNATURE_MAX[f]) {
-      return `${f} exceeds the ${SIGNATURE_MAX[f]} character limit (got ${v.length})`;
-    }
-  }
-  return null;
-}
+// Signature validation/coercion shared with the self-service editor:
+// see lib/signatureValidation.js
 
 const VALID_PROVIDERS = ['smtp', 'pabbly', 'gmail'];
 
@@ -152,12 +135,15 @@ function coerceField(field, value) {
     const n = Number(value);
     return Number.isInteger(n) && n > 0 ? n : null;
   }
-  // Empty signature → NULL, so `signature_html IS NOT NULL` stays a reliable
-  // "has a signature" test at send time rather than matching empty strings.
   if (field === 'signature_html' || field === 'signature_text') {
-    if (value === undefined || value === null) return null;
-    const s = String(value).trim();
-    return s === '' ? null : String(value);
+    return coerceSignature(value);
+  }
+  // owner_user: which user may edit this sender's signature via Settings
+  // (self-service). NULL = admin-only (automated/shared boxes).
+  if (field === 'owner_user') {
+    if (value === undefined || value === null || value === '') return null;
+    const n = Number(value);
+    return Number.isInteger(n) && n > 0 ? n : null;
   }
   return value;
 }
@@ -277,6 +263,7 @@ function buildDataRow(body) {
   // signature), which is the correct default for automated senders.
   data.signature_html = coerceField('signature_html', body.signature_html);
   data.signature_text = coerceField('signature_text', body.signature_text);
+  data.owner_user     = coerceField('owner_user', body.owner_user);
 
   return data;
 }

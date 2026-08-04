@@ -172,6 +172,14 @@
             </div>
           </div>
           <div><label class="fld" id="pPhoneLabel">Phone Number</label><input type="text" id="pPhone"></div>
+          <div>
+            <label class="fld">Default Email Sender</label>
+            <select id="pDefaultEmail"><option value="">— none —</option></select>
+          </div>
+          <div>
+            <label class="fld">Default SMS Line</label>
+            <select id="pDefaultPhone"><option value="">— none —</option></select>
+          </div>
         </div>
         <label class="fld">Task Reminder Days</label>
         <div class="checks" id="pDays"></div>
@@ -207,6 +215,32 @@
         <div class="btn-row">
           <button class="btn primary" id="pwSave">Change Password</button>
           <span class="status" id="pwStatus"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Email Signature ────────────────────────────────────── -->
+    <div class="section collapsed">
+      <div class="sec-head"><h2><span class="chev">▸</span>Email Signature</h2><span class="hint" id="sigHint"></span></div>
+      <div class="sec-body">
+        <p class="note" id="sigEmpty" style="display:none"></p>
+        <div id="sigEditor" style="display:none">
+          <div id="sigCredRow" style="display:none;margin-bottom:8px;">
+            <label class="fld">Sending Address</label>
+            <select id="sigCred"></select>
+          </div>
+          <label class="fld">Signature (HTML)</label>
+          <textarea id="sigHtml" class="raw" style="min-height:150px" spellcheck="false"></textarea>
+          <label class="fld" style="margin-top:8px">Signature (plain text)</label>
+          <textarea id="sigText" class="raw" style="min-height:100px" spellcheck="false"></textarea>
+          <label class="fld" style="margin-top:8px">Preview</label>
+          <iframe id="sigPreview" title="Signature preview"
+            style="width:100%;height:170px;border:1px solid var(--border);border-radius:4px;background:#fff;"></iframe>
+          <p class="note">Rendered in isolation — a broken image here is broken for recipients. This signature is offered on sends from the address above (Communicate, Sending Forms, Campaigns).</p>
+          <div class="btn-row">
+            <button class="btn primary" id="sigSave">Save Signature</button>
+            <span class="status" id="sigStatus"></span>
+          </div>
         </div>
       </div>
     </div>
@@ -367,6 +401,26 @@ function renderProfile() {
   E('pDays').innerHTML = DAYS.map(d =>
     `<label><input type="checkbox" value="${d}" ${u.task_remind_freq?.includes(d) ? 'checked' : ''}> ${d}</label>`
   ).join('');
+
+  // Default senders — options come from firmData (same lists every send
+  // picker uses). These only preselect pickers; they grant no permissions
+  // (any user can already choose any sender on any send screen).
+  const fd = window.top.firmData || {};
+  const emailSel = E('pDefaultEmail');
+  emailSel.innerHTML = '<option value="">— none —</option>' +
+    (fd.emailFrom || []).map(em =>
+      `<option value="${esc(em.email)}">${esc(em.from_name ? em.from_name + ' <' + em.email + '>' : em.email)}</option>`
+    ).join('');
+  emailSel.value = u.default_email || '';
+  if (emailSel.value !== (u.default_email || '')) emailSel.value = ''; // stale default not in list
+
+  const phoneSel = E('pDefaultPhone');
+  phoneSel.innerHTML = '<option value="">— none —</option>' +
+    (fd.phoneLines || []).map(l =>
+      `<option value="${esc(l.phone_number)}">${esc(l.display_name ? l.display_name + ' — ' + l.phone_number : l.phone_number)}</option>`
+    ).join('');
+  phoneSel.value = u.default_phone || '';
+  if (phoneSel.value !== (u.default_phone || '')) phoneSel.value = '';
 }
 
 document.addEventListener('change', e => {
@@ -374,6 +428,75 @@ document.addEventListener('change', e => {
     E('pPhoneLabel').textContent = 'Phone Number' + (e.target.value === '1' && e.target.checked ? ' *' : '');
   }
 });
+
+
+/* ── Email Signature (self-service) ─────────────────────────────
+   Edits signature_html/_text on email_credentials rows the current
+   user OWNS (owner_user, assigned by a superuser in Connections).
+   Multiple owned rows (e.g. personal + billing box) get a picker. */
+let _sigRows = [];
+function _sigCurrent() {
+  const id = Number(E('sigCred').value || (_sigRows[0] && _sigRows[0].id));
+  return _sigRows.find(r => r.id === id) || null;
+}
+function _sigPaint() {
+  const body = E('sigHtml').value.trim();
+  E('sigPreview').srcdoc = body
+    ? '<!doctype html><meta charset="utf-8"><body style="margin:8px;font-family:Calibri,Arial,sans-serif;">' + body + '</body>'
+    : '<!doctype html><meta charset="utf-8"><body style="margin:8px;font:13px system-ui;color:#888;">No signature set.</body>';
+}
+function _sigShowRow(r) {
+  E('sigHtml').value = r.signature_html || '';
+  E('sigText').value = r.signature_text || '';
+  _sigPaint();
+}
+async function loadMySignatures() {
+  try {
+    const data = await api('/api/me/signatures');
+    _sigRows = data.signatures || [];
+    if (!_sigRows.length) {
+      E('sigEmpty').style.display = '';
+      E('sigEmpty').innerHTML = data.default_email
+        ? 'You don\'t own a sending address, so there\'s no signature for you to edit here. Your default sender is <b>' + esc(data.default_email) + '</b> — ask an administrator to set you as its owner in <b>Connections → Email Senders</b>. You can still send from it either way.'
+        : 'You don\'t own a sending address, so there\'s no signature for you to edit here. Ask an administrator to assign you one in <b>Connections → Email Senders</b>.';
+      return;
+    }
+    E('sigEditor').style.display = '';
+    E('sigHint').textContent = _sigRows.length === 1 ? _sigRows[0].email : _sigRows.length + ' addresses';
+    if (_sigRows.length > 1) {
+      E('sigCredRow').style.display = '';
+      E('sigCred').innerHTML = _sigRows.map(r =>
+        '<option value="' + r.id + '">' + esc(r.from_name ? r.from_name + ' <' + r.email + '>' : r.email) + '</option>'
+      ).join('');
+      E('sigCred').addEventListener('change', () => _sigShowRow(_sigCurrent()));
+    }
+    _sigShowRow(_sigRows[0]);
+    E('sigHtml').addEventListener('input', _sigPaint);
+    E('sigSave').addEventListener('click', saveMySignature);
+  } catch (err) {
+    E('sigEmpty').style.display = '';
+    E('sigEmpty').textContent = 'Failed to load: ' + (err.message || err);
+  }
+}
+async function saveMySignature() {
+  const r = _sigCurrent();
+  if (!r) return;
+  E('sigSave').disabled = true;
+  try {
+    const data = await api('/api/me/signatures/' + r.id, 'PUT', {
+      signature_html: E('sigHtml').value,
+      signature_text: E('sigText').value,
+    });
+    // keep local row in sync so switching addresses and back shows the save
+    r.signature_html = data.signature.signature_html;
+    r.signature_text = data.signature.signature_text;
+    setStatus('sigStatus', 'Signature saved', true);
+  } catch (err) {
+    setStatus('sigStatus', err.message || 'Failed to save signature', false);
+  } finally {
+    E('sigSave').disabled = false;
+  }
+}
 
 async function saveProfile() {
   const fname = E('pFname').value.trim();
@@ -392,7 +515,9 @@ async function saveProfile() {
   try {
     const data = await api('/api/auth/update-profile', 'POST', {
       user_fname: fname, user_lname: lname, username, email,
-      phone: phone || null, allow_sms: sms, task_remind_freq: days
+      phone: phone || null, allow_sms: sms, task_remind_freq: days,
+      default_email: E('pDefaultEmail').value || null,
+      default_phone: E('pDefaultPhone').value || null
     });
     syncParentUser(data.user);
     renderProfile();
@@ -1097,6 +1222,7 @@ async function saveFreebusyCals() {
 /* ════════════════ BOOT ════════════════ */
 async function init() {
   renderProfile();
+  loadMySignatures(); // self-only, fire-and-forget (same pattern as freebusy)
   E('profileSave').addEventListener('click', saveProfile);
   E('fbSave').addEventListener('click', saveFreebusyCals);
   loadFreebusyCals(); // self-only booking calendars (fire-and-forget)

@@ -62,6 +62,7 @@ lib/reportSchema/manifest.js
 lib/reportSchema/validator.js
 lib/responseObserver.js
 lib/sequenceEngine.js
+lib/signatureValidation.js
 lib/sqlGuard.js
 lib/ssrfGuard.js
 lib/unplacehold.js
@@ -290,6 +291,7 @@ routes/api.intake.js
 routes/api.intake.petition.js
 routes/api.jwt.js
 routes/api.log.js
+routes/api.mySignatures.js
 routes/api.oauth.js
 routes/api.pages.js
 routes/api.pdf.js

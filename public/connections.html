@@ -1471,6 +1471,18 @@ function renderEmailEditor(host) {
         <input id="email-from-name" type="text" value="${esc(e.from_name || '')}" maxlength="64">
       </div>
       <div class="field field-row">
+        <label>Owner</label>
+        <div>
+          <select id="email-owner" data-current="${esc(e.owner_user ?? '')}"><option value="">Loading…</option></select>
+          <div style="color:var(--muted);font-size:11px;margin-top:4px;">
+            The owner can edit this sender's signature themselves in
+            Settings → Email Signature. Leave unassigned to keep the
+            signature editable here only. Does not affect who can send
+            from this address.
+          </div>
+        </div>
+      </div>
+      <div class="field field-row">
         <label>Email address</label>
         <input id="email-email" type="text" value="${esc(e.email || '')}">
       </div>
@@ -1520,6 +1532,7 @@ function renderEmailEditor(host) {
   E('email-cancel').addEventListener('click', backToEmailList);
   E('email-save').addEventListener('click', saveEmail);
   wireSignaturePreview();
+  fillOwnerDropdown();
   if (!isNew) {
     E('email-delete').addEventListener('click', deleteEmailFromEditor);
     E('email-test').addEventListener('click', () => openTestEmailDialog(e.id, e.email));
@@ -1549,6 +1562,38 @@ function sigValue(id) {
   const el = E(id);
   if (!el) return null;
   return el.value.trim() === '' ? null : el.value;
+}
+
+/**
+ * Populate the Owner dropdown from /api/admin/users (cached — this whole
+ * page is SU-gated, so the call is always authorized). Runs async after the
+ * editor renders; the select carries its current value in data-current so
+ * selection survives the late fill.
+ */
+let _usersCache = null;
+async function fillOwnerDropdown() {
+  const sel = E('email-owner');
+  if (!sel) return;
+  try {
+    if (!_usersCache) {
+      const data = await P.apiSend('/api/admin/users', 'GET');
+      _usersCache = data.users || [];
+    }
+    const current = sel.dataset.current;
+    sel.innerHTML = '<option value="">— Unassigned (signature edited here only) —</option>' +
+      _usersCache.map(u =>
+        `<option value="${u.user}">${esc(u.user_name || u.username)} (${esc(u.username)})</option>`
+      ).join('');
+    sel.value = current || '';
+    // Stale owner id (deleted user) → fall back to unassigned visually;
+    // saving without touching the field keeps the stored value (no change).
+    if (sel.value !== (current || '')) sel.value = '';
+    sel.dataset.loaded = '1';
+  } catch (err) {
+    // NOT marked loaded: saveEmail skips the field entirely, so a failed
+    // users fetch can never silently clear an assigned owner.
+    sel.innerHTML = '<option value="">(failed to load users)</option>';
+  }
 }
 
 /**
@@ -1774,6 +1819,11 @@ async function saveEmail() {
     signature_html: sigValue('email-sig-html'),
     signature_text: sigValue('email-sig-text'),
   };
+  // Owner only participates when the dropdown actually loaded — otherwise a
+  // failed /api/admin/users fetch would read as '' and clear the assignment.
+  if (E('email-owner') && E('email-owner').dataset.loaded === '1') {
+    top.owner_user = E('email-owner').value !== '' ? Number(E('email-owner').value) : null;
+  }
 
   if (!top.from_name) { state.email.error = 'From name is required.'; renderEmail(); return; }
   if (!top.email)     { state.email.error = 'Email address is required.'; renderEmail(); return; }

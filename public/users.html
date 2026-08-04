@@ -113,8 +113,8 @@
     <div class="wide"><label>Email</label><input id="f_email" maxlength="50"></div>
     <div><label>Phone (10 digits)</label><input id="f_phone" maxlength="14"></div>
     <div><label>User type</label><input id="f_user_type" type="number" min="0" max="9" value="1"></div>
-    <div class="wide"><label>Default email (send-as)</label><input id="f_default_email" maxlength="255"></div>
-    <div><label>Default phone (send-as)</label><input id="f_default_phone" maxlength="14"></div>
+    <div class="wide"><label>Default email (send-as)</label><select id="f_default_email"><option value="">— none —</option></select></div>
+    <div><label>Default phone (send-as)</label><select id="f_default_phone"><option value="">— none —</option></select></div>
     <div class="wide"><label>Google Calendar ID</label><input id="f_user_gcal_id" maxlength="255"></div>
     <div class="wide" id="pwWrap"><label>Initial password (optional, min 4)</label><input id="f_password" type="text" autocomplete="off"></div>
   </div>
@@ -132,12 +132,6 @@
 
 <script>
   const P = window.parent;
-
-  // Wait for parent's apiSend to be ready, then init.
-  (function waitForParent() {
-    if (P && P.apiSend) return init();
-    setTimeout(waitForParent, 100);
-  })();
 
   let USERS = [];        // last-loaded list
   let EDIT_ID = null;    // null = add mode
@@ -181,6 +175,17 @@
     const tbody = document.getElementById("usersTbody");
     tbody.innerHTML = `<tr><td colspan="10" class="muted" style="text-align:center;padding:20px;">Loading…</td></tr>`;
     try {
+      // Default-sender dropdowns: same lists every send picker uses.
+      const fd = P.firmData || {};
+      F("default_email").innerHTML = '<option value="">— none —</option>' +
+        (fd.emailFrom || []).map(em =>
+          `<option value="${esc(em.email)}">${esc(em.from_name ? em.from_name + " <" + em.email + ">" : em.email)}</option>`
+        ).join("");
+      F("default_phone").innerHTML = '<option value="">— none —</option>' +
+        (fd.phoneLines || []).map(l =>
+          `<option value="${esc(l.phone_number)}">${esc(l.display_name ? l.display_name + " — " + l.phone_number : l.phone_number)}</option>`
+        ).join("");
+
       const data = await P.apiSend("/api/admin/users", "GET");
       USERS = data.users || [];
       if (!USERS.length) {
@@ -223,6 +228,29 @@
 
   const F = id => document.getElementById("f_" + id);
 
+  /**
+   * Select a stored send-as value in a dropdown built from firmData.
+   *
+   * A <select> silently ignores .value when no matching <option> exists, so a
+   * stored address that has since been removed from firmData would render as
+   * "— none —" and be written back as "" by the next save — clearing it
+   * without the admin ever touching the field. Surface the orphan as a marked
+   * option instead, so discarding it is always a deliberate choice.
+   */
+  function setSendAs(id, stored) {
+    const sel = F(id);
+    sel.querySelectorAll("option[data-stale]").forEach(o => o.remove());
+    sel.value = stored || "";
+    if (stored && sel.value !== stored) {
+      const opt = document.createElement("option");
+      opt.value = stored;
+      opt.textContent = stored + " (no longer available)";
+      opt.dataset.stale = "1";
+      sel.appendChild(opt);
+      sel.value = stored;
+    }
+  }
+
   function openForm(userId) {
     EDIT_ID = userId;
     document.getElementById("formErr").textContent = "";
@@ -242,8 +270,8 @@
     F("email").value         = u ? (u.email || "") : "";
     F("phone").value         = u ? (u.phone || "") : "";
     F("user_type").value     = u ? u.user_type : 1;
-    F("default_email").value = u ? (u.default_email || "") : "";
-    F("default_phone").value = u ? (u.default_phone || "") : "";
+    setSendAs("default_email", u ? u.default_email : "");
+    setSendAs("default_phone", u ? u.default_phone : "");
     F("user_gcal_id").value  = u ? (u.user_gcal_id || "") : "";
     F("password").value      = "";
     F("allow_sms").checked   = u ? !!u.allow_sms : false;
@@ -336,6 +364,15 @@
       alert("Enable failed: " + err.message);
     }
   }
+
+  // Bootstrap last: init() reaches for consts declared above (F, esc, …), so
+  // this must not run until the whole script has evaluated. The lazy iframe
+  // in index.html means the parent is usually already warm, so the
+  // P.apiSend check passes on the first tick — there's no timer to save us.
+  (function waitForParent() {
+    if (P && P.apiSend) return init();
+    setTimeout(waitForParent, 100);
+  })();
 </script>
 </body>
 </html>
