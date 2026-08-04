@@ -1089,6 +1089,8 @@ async function seqCaptureModal() {
       <div style="text-align:left;font-size:13px">
         <p style="margin:0 0 10px;color:#475569">Arms a one-shot capture: the next enrollment into this template —
         from any source (appt hooks, ingest rules, e-sign, manual enroll) — records its trigger_data here, then disarms itself.</p>
+        <p style="margin:0 0 10px;color:#475569"><b>The enrollment still proceeds normally</b> — this capture observes without
+        holding it. (Hook capture is the opposite: it intercepts and halts delivery.)</p>
         <p style="margin:0 0 10px"><b>Status:</b> ${capturing
           ? '<span style="color:#b45309;font-weight:600">armed — waiting for next enrollment</span>'
           : '<span style="color:#64748b">off</span>'}</p>

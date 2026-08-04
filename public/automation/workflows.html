@@ -2124,6 +2124,9 @@ async function wfCaptureModal() {
       <div style="text-align:left;font-size:13px">
         <p style="margin:0 0 10px;color:#475569">Arms a one-shot capture: the next execution of this workflow — from any
         source (hook, ingest rule, sequence, wf→wf, manual/scheduled start) — records its init_data here, then disarms itself.</p>
+        <p style="margin:0 0 10px;color:#475569"><b>The execution still runs normally</b> — this capture observes without
+        holding it. (Hook capture is the opposite: it intercepts and halts delivery. To block-and-grab, keep the workflow
+        inactive and arm capture on the upstream hook instead.)</p>
         <p style="margin:0 0 10px"><b>Status:</b> ${capturing
           ? '<span style="color:#b45309;font-weight:600">armed — waiting for next run</span>'
           : '<span style="color:#64748b">off</span>'}</p>
