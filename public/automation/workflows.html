@@ -428,12 +428,14 @@
       <div class="canvas-title placeholder" id="wf-canvas-title">← Select a workflow</div>
       <div id="wf-canvas-actions" style="display:none;gap:8px">
         <button class="btn btn-primary btn-sm" onclick="wfRunWorkflow()"><i class="fa-solid fa-play"></i> Run</button>
+        <button class="btn btn-outline btn-sm" id="wf-capture-btn" onclick="wfCaptureModal()"><i class="fa-solid fa-satellite-dish"></i> Capture</button>
         <button class="btn btn-outline btn-sm" onclick="wfShowExplain()"><i class="fa-regular fa-circle-question"></i> Explain</button>
         <button class="btn btn-outline btn-sm" onclick="wfEdit()"><i class="fa-solid fa-pencil"></i> Edit</button>
         <button class="btn btn-outline btn-sm" onclick="wfDuplicate()"><i class="fa-regular fa-copy"></i> Duplicate</button>
         <button class="btn btn-danger btn-sm" onclick="wfDelete()"><i class="fa-solid fa-trash"></i></button>
       </div>
     </div>
+    <div id="wf-canvas-desc" style="display:none;padding:6px 20px 0;font-size:12px;color:var(--muted);line-height:1.5;white-space:pre-wrap"></div>
     <div class="canvas-body" id="wf-canvas-body">
       <div class="empty-state">
         <i class="fa-solid fa-diagram-project"></i>
@@ -1289,6 +1291,7 @@ async function selectWorkflow(id) {
   t.textContent = WF.activeWf?.name || '';
   t.classList.remove('placeholder');
   document.getElementById('wf-canvas-actions').style.display = 'flex';
+  wfRenderWfMeta();
   wfClearEditor();
   await loadWfSteps(id);
 
@@ -1306,6 +1309,7 @@ async function loadWfSteps(id) {
     // we have the freshest test_input value for the tester. The list-GET value
     // (from loadWorkflows) is used as a fallback; the single-GET is authoritative.
     if (data.workflow) WF.activeWf = data.workflow;
+    wfRenderWfMeta();
     // Steps may have been reordered/renumbered/deleted since last load — old
     // idx→testerState mappings are no longer reliable. Clear it.
     WF.testerState = {};
@@ -1344,6 +1348,9 @@ function wfStepCardHTML(step, idx) {
   if (step.type === 'internal_function') { main = cfg.function_name || 'function'; sub = cfg.params?.to || cfg.params?.url || ''; }
   else if (step.type === 'webhook')      { main = cfg.url ? trimUrl(cfg.url) : 'Webhook'; sub = cfg.method || 'GET'; }
   else if (step.type === 'custom_code')  { main = 'Custom Code'; sub = (cfg.code || '').slice(0, 40); }
+  // Label/note slice — an authored label wins the headline; the derived
+  // heuristic drops to the sub line so the technical detail stays visible.
+  if (step.label) { sub = main + (sub ? ` · ${sub}` : ''); main = step.label; }
   const ep = step.error_policy || {};
   const badges = [];
   if (ep.strategy && ep.strategy !== 'ignore') badges.push(`<span class="badge ${ep.strategy.includes('abort') ? 'badge-abort' : 'badge-retry'}">${ep.strategy}</span>`);
@@ -1358,7 +1365,7 @@ function wfStepCardHTML(step, idx) {
           <div class="step-label-main">${esc(main)}</div>
           ${sub ? `<div class="step-label-sub">${esc(sub)}</div>` : ''}
         </div>
-        <div class="step-badges">${badges.join('')}</div>
+        <div class="step-badges">${badges.join('')}${step.note ? `<span class="badge" title="${esc(step.note)}" style="cursor:help"><i class="fa-regular fa-note-sticky"></i></span>` : ''}</div>
         <div class="step-id-tag">id ${step.id ?? '—'}</div>
       </div>
       ${isActive ? `
@@ -1438,6 +1445,14 @@ function wfRenderEditor(step) {
   WF.origConfig = (() => { try { return JSON.parse(JSON.stringify(cfg)); } catch { return null; } })();
   const strategies = ['ignore', 'abort', 'retry_then_ignore', 'retry_then_abort'];
   document.getElementById('wf-editor-body').innerHTML = `
+    <div class="field">
+      <label>Label <span style="font-weight:400;color:var(--muted)">— optional, shown on the step card</span></label>
+      <input id="e-label" maxlength="100" value="${esc(step.label || '')}" placeholder="e.g. Match contact by Clio ID">
+    </div>
+    <div class="field">
+      <label>Note <span style="font-weight:400;color:var(--muted)">— optional, why this step exists</span></label>
+      <textarea id="e-note" rows="2" placeholder="Free-text note for future you">${esc(step.note || '')}</textarea>
+    </div>
     <div class="field">
       <label>Step Type</label>
       <select id="e-type" onchange="wfOnTypeChange()">
@@ -1998,11 +2013,16 @@ async function wfStepSave() {
     max_retries:     parseInt(document.getElementById('e-ep-retries')?.value) || 0,
     backoff_seconds: parseInt(document.getElementById('e-ep-backoff')?.value) || 5,
   };
+  // Label/note slice — always send both keys (empty → null clears). PUT only
+  // updates these columns when the keys are present in the body, so the
+  // editor is the authority while API-only callers can't accidentally erase.
+  const label = (document.getElementById('e-label')?.value || '').trim() || null;
+  const note  = (document.getElementById('e-note')?.value  || '').trim() || null;
   const wasNew = WF.editingNew;
   let newStepNumber = null;
   try {
     if (wasNew) {
-      const r = await api(`/workflows/${WF.activeWfId}/steps`, 'POST', { type, config, error_policy });
+      const r = await api(`/workflows/${WF.activeWfId}/steps`, 'POST', { type, config, error_policy, label, note });
       // POST returns { stepNumber, type, message } — capture the new step's
       // number so we can re-select it after the canvas refresh below. Without
       // this, activeStepIdx stays at whatever it was (null after wfStepNew)
@@ -2011,7 +2031,7 @@ async function wfStepSave() {
       WF.editingNew = false;
     } else {
       const step = WF.steps[WF.activeStepIdx];
-      await api(`/workflows/${WF.activeWfId}/steps/${step.step_number}`, 'PUT', { type, config, error_policy });
+      await api(`/workflows/${WF.activeWfId}/steps/${step.step_number}`, 'PUT', { type, config, error_policy, label, note });
     }
     await loadWfSteps(WF.activeWfId);
     await loadWorkflows();
@@ -2054,15 +2074,113 @@ function wfStepNew() {
   document.getElementById('wf-editor-foot').style.display = 'flex';
 }
 
+// Description + capture-state strip under the canvas title. Called from
+// selectWorkflow and loadWfSteps (any place WF.activeWf refreshes).
+function wfRenderWfMeta() {
+  const d = document.getElementById('wf-canvas-desc');
+  if (!d) return;
+  const wf = WF.activeWf;
+  if (!wf) { d.style.display = 'none'; return; }
+  const bits = [];
+  if (wf.capture_mode === 'capturing') {
+    bits.push(`<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-satellite-dish"></i> Capturing next run's init_data…</span>`);
+  }
+  if (wf.description) bits.push(esc(wf.description));
+  if (!bits.length) { d.style.display = 'none'; d.innerHTML = ''; return; }
+  d.innerHTML = bits.join('<br>');
+  d.style.display = 'block';
+  // Reflect capture state on the toolbar button.
+  const btn = document.getElementById('wf-capture-btn');
+  if (btn) {
+    btn.innerHTML = wf.capture_mode === 'capturing'
+      ? '<i class="fa-solid fa-satellite-dish fa-beat"></i> Capturing…'
+      : '<i class="fa-solid fa-satellite-dish"></i> Capture';
+  }
+}
+
+// Capture slice — arm/disarm one-shot capture of the next real execution's
+// init_data, view the last captured sample, replay it, or promote it to
+// test_input. Mirrors the hooks capture lifecycle: arming does NOT clear
+// the previous sample; the next capture overwrites it.
+async function wfCaptureModal() {
+  if (!WF.activeWfId) return;
+  let cap;
+  try {
+    cap = await api(`/workflows/${WF.activeWfId}/captured`);
+  } catch (e) {
+    Swal.fire('Error', e.message, 'error');
+    return;
+  }
+  const capturing = cap.capture_mode === 'capturing';
+  const sample = cap.captured_input;
+  const sampleJson = sample != null ? JSON.stringify(sample, null, 2) : null;
+  const when = cap.captured_at ? new Date(cap.captured_at).toLocaleString() : null;
+
+  const res = await Swal.fire({
+    title: 'Capture init_data',
+    width: 640,
+    html: `
+      <div style="text-align:left;font-size:13px">
+        <p style="margin:0 0 10px;color:#475569">Arms a one-shot capture: the next execution of this workflow — from any
+        source (hook, ingest rule, sequence, wf→wf, manual/scheduled start) — records its init_data here, then disarms itself.</p>
+        <p style="margin:0 0 10px"><b>Status:</b> ${capturing
+          ? '<span style="color:#b45309;font-weight:600">armed — waiting for next run</span>'
+          : '<span style="color:#64748b">off</span>'}</p>
+        ${sampleJson != null ? `
+          <div style="font-weight:600;margin-bottom:4px">Last captured${when ? ` — ${esc(when)}` : ''}</div>
+          <pre style="max-height:260px;overflow:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:11px;text-align:left;margin:0">${esc(sampleJson)}</pre>
+        ` : `<div style="color:#94a3b8">No sample captured yet.</div>`}
+      </div>`,
+    showCancelButton: true,
+    cancelButtonText: 'Close',
+    confirmButtonText: capturing ? 'Disarm' : 'Arm capture',
+    showDenyButton: sampleJson != null,
+    denyButtonText: 'Use sample…',
+    denyButtonColor: '#0f4c81',
+  });
+
+  try {
+    if (res.isConfirmed) {
+      await api(`/workflows/${WF.activeWfId}/capture/${capturing ? 'stop' : 'start'}`, 'POST', {});
+      await loadWfSteps(WF.activeWfId);   // refreshes WF.activeWf → meta strip + button
+      Swal.fire({ toast: true, position: 'top-end', icon: 'success',
+        title: capturing ? 'Capture disarmed' : 'Capture armed — next run will be recorded',
+        timer: 2500, showConfirmButton: false });
+    } else if (res.isDenied && sampleJson != null) {
+      const pick = await Swal.fire({
+        title: 'Use captured sample',
+        showCancelButton: true,
+        confirmButtonText: 'Run workflow with it',
+        showDenyButton: true,
+        denyButtonText: 'Save as Test Input',
+        denyButtonColor: '#0f4c81',
+      });
+      if (pick.isConfirmed) {
+        wfRunWorkflow({ initData: sample });
+      } else if (pick.isDenied) {
+        // Promote to authorial test_input — deliberate, explicit action so
+        // the doc field is never clobbered by capture itself.
+        await api(`/workflows/${WF.activeWfId}`, 'PUT', { test_input: sample });
+        WF.testerState = {};
+        await loadWfSteps(WF.activeWfId);
+        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Saved as test_input', timer: 2200, showConfirmButton: false });
+      }
+    }
+  } catch (e) {
+    Swal.fire('Error', e.message, 'error');
+  }
+}
+
 async function wfStepDelete(idx) {
   const step = WF.steps[idx];
   const r = await Swal.fire({ title: `Delete step ${step.step_number}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Delete' });
   if (!r.isConfirmed) return;
   try {
-    await api(`/workflows/${WF.activeWfId}/steps/${step.step_number}`, 'DELETE');
+    const r = await api(`/workflows/${WF.activeWfId}/steps/${step.step_number}`, 'DELETE');
     WF.activeStepIdx = null;
     wfClearEditor();
     await loadWfSteps(WF.activeWfId);
+    wfShowRemapSummary(r?.remap);
   } catch (e) {
     Swal.fire('Error', e.message, 'error');
   }
@@ -2071,10 +2189,35 @@ async function wfStepDelete(idx) {
 async function wfStepMove(idx, dir) {
   const a = WF.steps[idx], b = WF.steps[idx + dir];
   try {
-    await api(`/workflows/${WF.activeWfId}/steps/reorder`, 'PATCH', { fromStep: a.step_number, toStep: b.step_number });
+    const r = await api(`/workflows/${WF.activeWfId}/steps/reorder`, 'PATCH', { fromStep: a.step_number, toStep: b.step_number });
     await loadWfSteps(WF.activeWfId);
+    wfShowRemapSummary(r?.remap);
   } catch (e) {
     Swal.fire('Error', e.message, 'error');
+  }
+}
+
+// Branch-target remap slice — after any renumbering op, the server rewrites
+// literal branch/delay targets (then/else/nextStep/skipToStep/set_next) to
+// follow the moved steps and reports what it did. Rewrites get a quiet
+// toast; warnings (dangling/non-literal targets) get a modal — those need
+// a human decision.
+function wfShowRemapSummary(remap) {
+  if (!remap) return;
+  const rw = remap.rewritten || [], wn = remap.warnings || [];
+  if (wn.length) {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Check branch targets',
+      html: `<div style="text-align:left;font-size:13px">
+        ${rw.length ? `<p><b>Auto-updated:</b></p><ul style="margin:4px 0 10px;padding-left:18px">${rw.map(s => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}
+        <p><b>Needs manual review:</b></p><ul style="margin:4px 0;padding-left:18px">${wn.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
+      </div>`,
+      width: 620,
+    });
+  } else if (rw.length) {
+    Swal.fire({ toast: true, position: 'top-end', icon: 'info',
+      title: `${rw.length} branch target${rw.length > 1 ? 's' : ''} auto-updated`, timer: 3200, showConfirmButton: false });
   }
 }
 
@@ -2084,6 +2227,8 @@ async function wfNew() {
     width: 560,
     html: `
       <input id="swal-wf-name" class="swal2-input" placeholder="Name…" style="margin-bottom:6px">
+      <textarea id="swal-wf-desc" placeholder="Description — what this workflow does, what fires it…"
+                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;min-height:64px;resize:vertical"></textarea>
       <div style="text-align:left;font-size:12px;color:#475569;margin:10px .875em 4px">
         <strong>Test Input (JSON)</strong>
         <span style="color:#94a3b8">— optional</span>
@@ -2113,7 +2258,8 @@ async function wfNew() {
           return false;
         }
       }
-      return { name, test_input };
+      const description = document.getElementById('swal-wf-desc').value.trim();
+      return { name, description, test_input };
     }
   });
   if (!vals) return;
@@ -2147,6 +2293,8 @@ async function wfEdit() {
     width: 560,
     html: `
       <input id="swal-wf-name" class="swal2-input" placeholder="Name" value="${esc(WF.activeWf.name || '')}" style="margin-bottom:6px">
+      <textarea id="swal-wf-desc" placeholder="Description — what this workflow does, what fires it…"
+                style="width:calc(100% - 1.75em);margin:0 .875em;padding:8px 12px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;min-height:64px;resize:vertical">${esc(WF.activeWf.description || '')}</textarea>
       <label style="display:flex;align-items:center;gap:8px;margin:10px .875em 4px;font-size:14px">
         <input type="checkbox" id="swal-wf-active" ${WF.activeWf.active ? 'checked' : ''}> Active
       </label>
@@ -2181,7 +2329,8 @@ async function wfEdit() {
           return false;
         }
       }
-      return { name, test_input, active: document.getElementById('swal-wf-active').checked };
+      const description = document.getElementById('swal-wf-desc').value.trim();
+      return { name, description, test_input, active: document.getElementById('swal-wf-active').checked };
     }
   });
   if (!vals) return;
@@ -2203,6 +2352,7 @@ async function wfEdit() {
       if (data && data.workflow) WF.activeWf = data.workflow;
     } catch { /* non-fatal — fall back to list value */ }
     document.getElementById('wf-canvas-title').textContent = WF.activeWf?.name || '';
+    wfRenderWfMeta();
     // Clear tester state so the next render re-seeds from the updated test_input.
     WF.testerState = {};
     // If the Test tab is currently showing for a step, re-render so the user
@@ -2246,6 +2396,7 @@ async function wfDelete() {
     t.textContent = '← Select a workflow';
     t.classList.add('placeholder');
     document.getElementById('wf-canvas-actions').style.display = 'none';
+    document.getElementById('wf-canvas-desc').style.display = 'none';
     document.getElementById('wf-canvas-body').innerHTML = '<div class="empty-state"><i class="fa-solid fa-diagram-project"></i><p>Select a workflow.</p></div>';
     wfClearEditor();
     await loadWorkflows();
@@ -2313,7 +2464,7 @@ function wfRenderTester(step) {
 
   const varRowsHtml = rows.map(r => wfVarRowHTML(r.key, r.value)).join('');
   document.getElementById('wf-editor-body').innerHTML = `
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Testing: <strong style="color:var(--text)">${esc(cfg.function_name || cfg.url || step.type)}</strong></div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Testing: <strong style="color:var(--text)">${esc(step.label || cfg.function_name || cfg.url || step.type)}</strong></div>
     <div class="section-divider">Variables</div>
     <div id="wf-var-rows">${varRowsHtml}</div>
     <button class="add-var-btn" onclick="wfAddVarRow()"><i class="fa-solid fa-plus"></i> Add variable</button>
@@ -2881,7 +3032,7 @@ async function wfResumeExecution(id) {
       : (history.length ? history[history.length - 1].step_number : 1);
 
     const stepOptions = (WF.steps || []).map(s => {
-      const label = (s.config && s.config.function_name) ? s.config.function_name : s.type;
+      const label = s.label || ((s.config && s.config.function_name) ? s.config.function_name : s.type);
       const sel = s.step_number === defaultStep ? ' selected' : '';
       return `<option value="${s.step_number}"${sel}>#${s.step_number} — ${esc(label)}</option>`;
     }).join('');
@@ -3273,7 +3424,7 @@ function wfExplain(workflow, steps) {
   const stepBlocks = sorted.map(step => `
     <div class="ex-step" id="ex-step-${step.step_number}">
       <div class="ex-step-num">${step.step_number}</div>
-      <div class="ex-step-body">${_wfExplainStep(step)}</div>
+      <div class="ex-step-body">${step.label ? `<div style="font-weight:700;margin-bottom:2px">${_wfEsc(step.label)}</div>` : ''}${step.note ? `<div style="font-size:12px;color:#64748b;margin-bottom:6px">${_wfEsc(step.note)}</div>` : ''}${_wfExplainStep(step)}</div>
     </div>
   `).join('');
   return `

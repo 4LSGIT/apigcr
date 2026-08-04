@@ -9,6 +9,7 @@ const {
   resolveSingle,
   resolveExecutionContactId,
   InvalidContactIdError,
+  captureWorkflowInput,
 } = require("../lib/workflow_engine");
 const { executeJob } = require("../lib/job_executor");
 // JSON columns may come back from mysql2 as either a string (unparsed)
@@ -36,6 +37,108 @@ function validateTestInput(v) {
     };
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Branch-target remap — step-renumbering slice.
+//
+// Several internal functions carry LITERAL step numbers in their params:
+//   evaluate_condition → params.then, params.else
+//   set_next           → params.value
+//   schedule_resume    → params.nextStep, params.skipToStep
+//   wait_for           → params.nextStep, params.skipToStep
+//   wait_until_time    → params.nextStep
+//
+// Historically, inserting/deleting/reordering steps renumbered
+// workflow_steps.step_number but never touched these targets — so every
+// renumbering op silently broke every branch and delay in the workflow.
+// remapBranchTargets() runs inside the same transaction as the renumber
+// and rewrites integer targets through an old→new mapping function.
+//
+// IMPORTANT: the param list is keyed by function_name because `value` is a
+// TARGET for set_next but a COMPARISON OPERAND for evaluate_condition —
+// a blind param-name rewrite would corrupt conditions.
+//
+// Non-integer targets ('cancel', 'fail', templated strings) are left
+// untouched and reported in warnings. custom_code that mentions next_step
+// is flagged too (the engine's isControlStep whitelist ignores next_step
+// from custom_code, but flag it so authors eyeball their intent).
+//
+// mapFn(oldStepNumber) → newStepNumber, or null when the target step was
+// deleted (left as-is + warned; author must fix by hand).
+// ─────────────────────────────────────────────────────────────
+const BRANCH_TARGET_PARAMS = {
+  evaluate_condition: ['then', 'else'],
+  set_next:           ['value'],
+  schedule_resume:    ['nextStep', 'skipToStep'],
+  wait_for:           ['nextStep', 'skipToStep'],
+  wait_until_time:    ['nextStep'],
+};
+
+async function remapBranchTargets(connection, workflowId, mapFn) {
+  const [steps] = await connection.query(
+    `SELECT id, step_number, type, config FROM workflow_steps WHERE workflow_id = ? ORDER BY step_number ASC`,
+    [workflowId]
+  );
+
+  const rewritten = [];
+  const warnings  = [];
+
+  for (const row of steps) {
+    let cfg;
+    try {
+      cfg = typeof row.config === 'string' ? JSON.parse(row.config) : row.config;
+    } catch { continue; }
+    if (!cfg || typeof cfg !== 'object') continue;
+
+    if (row.type === 'custom_code') {
+      if (typeof cfg.code === 'string' && cfg.code.includes('next_step')) {
+        warnings.push(`step ${row.step_number}: custom_code mentions next_step — not auto-remapped, review manually`);
+      }
+      continue;
+    }
+    if (row.type !== 'internal_function') continue;
+
+    const paramNames = BRANCH_TARGET_PARAMS[cfg.function_name];
+    if (!paramNames || !cfg.params || typeof cfg.params !== 'object') continue;
+
+    let changed = false;
+    for (const p of paramNames) {
+      const v = cfg.params[p];
+      if (v === undefined || v === null) continue;
+
+      // Accept integer or all-digits string; leave 'cancel'/'fail'/templates alone.
+      let iv = null;
+      if (Number.isInteger(v)) iv = v;
+      else if (typeof v === 'string' && /^\d+$/.test(v)) iv = parseInt(v, 10);
+      else {
+        if (v !== 'cancel' && v !== 'fail') {
+          warnings.push(`step ${row.step_number}: ${cfg.function_name}.${p} is non-literal (${JSON.stringify(v)}) — not auto-remapped`);
+        }
+        continue;
+      }
+
+      const nv = mapFn(iv);
+      if (nv === null || nv === undefined) {
+        warnings.push(`step ${row.step_number}: ${cfg.function_name}.${p} targeted a deleted step (${iv}) — left as-is, fix manually`);
+        continue;
+      }
+      if (nv !== iv) {
+        cfg.params[p] = nv;
+        changed = true;
+        rewritten.push(`step ${row.step_number}: ${cfg.function_name}.${p} ${iv}→${nv}`);
+      }
+    }
+
+    if (changed) {
+      await connection.query(
+        `UPDATE workflow_steps SET config = ?, updated_at = NOW() WHERE id = ?`,
+        [JSON.stringify(cfg), row.id]
+      );
+    }
+  }
+
+  return { rewritten, warnings };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -251,7 +354,7 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     // Load id + default_contact_id_from in one shot. Adding the column to the
     // SELECT is cheap; skipping it would force a separate round-trip.
     const [wfRows] = await connection.query(
-      `SELECT id, active, default_contact_id_from FROM workflows WHERE id = ?`,
+      `SELECT id, active, default_contact_id_from, capture_mode FROM workflows WHERE id = ?`,
       [workflowId]
     );
     if (wfRows.length === 0) {
@@ -263,6 +366,13 @@ router.post("/workflows/:id/start", jwtOrApiKey, async (req, res) => {
     // workflow active in the editor first.
     if (!workflow.active) {
       return { respond: { status: 409, body: { error: "Workflow is inactive", message: "Activate the workflow before starting it." } } };
+    }
+
+    // Capture slice — one-shot capture of init_data when armed. Guarded
+    // UPDATE inside captureWorkflowInput makes this race-free across the
+    // four execution-creation sites (Cookbook §5.21).
+    if (workflow.capture_mode === 'capturing') {
+      await captureWorkflowInput(connection, workflowId, initData);
     }
 
     // Resolve contact_id via the shared helper. Throws on invalid explicit
@@ -625,7 +735,7 @@ router.get("/workflows", jwtOrApiKey, async (req, res) => {
   try {
     let query = `
       SELECT 
-        id, name, description, active, test_input, created_at, updated_at,
+        id, name, description, active, test_input, capture_mode, captured_at, created_at, updated_at,
         (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id) as step_count
       FROM workflows w
       WHERE 1=1
@@ -704,7 +814,7 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
     const [wfRows] = await db.query(
       `
       SELECT 
-        id, name, description, active, test_input, created_at, updated_at,
+        id, name, description, active, test_input, capture_mode, captured_at, created_at, updated_at,
         (SELECT COUNT(*) FROM workflow_steps WHERE workflow_id = w.id) as step_count
       FROM workflows w
       WHERE id = ?
@@ -724,7 +834,7 @@ router.get("/workflows/:id", jwtOrApiKey, async (req, res) => {
       const [stepRows] = await db.query(
         `
         SELECT 
-          id, step_number, type, config, error_policy, created_at, updated_at
+          id, step_number, label, note, type, config, error_policy, created_at, updated_at
         FROM workflow_steps
         WHERE workflow_id = ?
         ORDER BY step_number ASC
@@ -818,7 +928,7 @@ router.post("/workflows", jwtOrApiKey, async (req, res) => {
 router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id } = req.params;
-  const { stepNumber, type, config, error_policy = null } = req.body;
+  const { stepNumber, type, config, error_policy = null, label = null, note = null } = req.body;
 
   const workflowId = parseInt(id, 10);
   if (isNaN(workflowId) || workflowId <= 0) {
@@ -876,6 +986,7 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
     // Shift existing steps up if inserting in the middle.
     // Two-pass to avoid unique constraint collisions: first move all affected
     // steps to a safe temp range (+10000), then set their final positions.
+    let remap = null;
     if (stepNumber) {
       await connection.query(
         `UPDATE workflow_steps 
@@ -889,19 +1000,28 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
          WHERE workflow_id = ? AND step_number >= ?`,
         [workflowId, targetStep + 10000]
       );
+
+      // Branch-target remap slice — every literal target >= targetStep
+      // moved up by one; rewrite configs to follow. Runs BEFORE the new
+      // step's INSERT so the remap never touches the incoming config
+      // (its targets, if any, are authored against POST-insert numbering).
+      remap = await remapBranchTargets(connection, workflowId, (n) => n >= targetStep ? n + 1 : n);
     }
 
     // Insert the new step
     await connection.query(
       `
       INSERT INTO workflow_steps 
-      (workflow_id, step_number, type, config, error_policy)
-      VALUES (?, ?, ?, ?, ?)
+      (workflow_id, step_number, label, note, type, config, error_policy)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
       `,
-      [workflowId, targetStep, type, JSON.stringify(config), JSON.stringify(error_policy)]
+      [workflowId, targetStep,
+       (typeof label === 'string' && label.trim()) ? label.trim().slice(0, 100) : null,
+       (typeof note  === 'string' && note.trim())  ? note.trim()                : null,
+       type, JSON.stringify(config), JSON.stringify(error_policy)]
     );
 
-      return { targetStep };
+      return { targetStep, remap };
     });
 
     if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
@@ -911,6 +1031,7 @@ router.post("/workflows/:id/steps", jwtOrApiKey, async (req, res) => {
       workflowId,
       stepNumber: outcome.targetStep,
       type,
+      ...(outcome.remap ? { remap: outcome.remap } : {}),
       message: `Step ${outcome.targetStep} added to workflow ${workflowId}`
     });
   } catch (err) {
@@ -1002,6 +1123,8 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
     stepValues.push([
       null,           // workflow_id — filled in after INSERT below
       stepNumber,
+      (typeof step.label === 'string' && step.label.trim()) ? step.label.trim().slice(0, 100) : null,
+      (typeof step.note  === 'string' && step.note.trim())  ? step.note.trim()                : null,
       step.type,
       JSON.stringify(step.config),
       step.error_policy ? JSON.stringify(step.error_policy) : null
@@ -1019,12 +1142,12 @@ router.post("/workflows/bulk", jwtOrApiKey, async (req, res) => {
     const workflowId = workflowResult.insertId;
 
     // Patch in the real workflowId now that we have it
-    const rows = stepValues.map(row => [workflowId, row[1], row[2], row[3], row[4]]);
+    const rows = stepValues.map(row => [workflowId, row[1], row[2], row[3], row[4], row[5], row[6]]);
 
     await connection.query(
       `
       INSERT INTO workflow_steps
-      (workflow_id, step_number, type, config, error_policy)
+      (workflow_id, step_number, label, note, type, config, error_policy)
       VALUES ?
       `,
       [rows]
@@ -1166,7 +1289,14 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
       [workflowId, stepNum]
     );
 
-      return {};
+    // Branch-target remap slice — targets above the deleted step slid down
+    // by one; targets AT the deleted step are dangling (warned, left as-is).
+    const remap = await remapBranchTargets(connection, workflowId, (n) => {
+      if (n === stepNum) return null;
+      return n > stepNum ? n - 1 : n;
+    });
+
+      return { remap };
     });
 
     if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
@@ -1175,6 +1305,7 @@ router.delete("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) 
 
     res.json({
       success: true,
+      remap: outcome.remap,
       message: `Step ${stepNum} deleted and subsequent steps renumbered`
     });
   } catch (err) {
@@ -1213,6 +1344,9 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
     if (wfRows.length === 0) {
       return { respond: { status: 404, body: { error: "Workflow not found" } } };
     }
+
+    // Branch-target remap slice — populated by whichever case runs below.
+    let remapResult = null;
 
     // ────────────────────────────────────────────────
     // Case 1: Simple move (fromStep → toStep)
@@ -1277,6 +1411,15 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
          WHERE workflow_id = ? AND step_number = ?`,
         [to, workflowId, from + 10000]
       );
+
+      // Branch-target remap slice — follow the same old→new mapping the
+      // renumber just applied.
+      remapResult = await remapBranchTargets(connection, workflowId, (n) => {
+        if (n === from) return to;
+        if (from < to && n > from && n <= to) return n - 1;
+        if (to < from && n >= to && n < from) return n + 1;
+        return n;
+      });
     }
 
     // ────────────────────────────────────────────────
@@ -1311,12 +1454,19 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
           [i + 1, workflowId, order[i] + 10000]
         );
       }
+
+      // Branch-target remap slice — order[i] (old number) landed at i+1.
+      // Steps absent from the order array kept their numbers (pre-existing
+      // endpoint behavior), so unmapped targets pass through unchanged.
+      const oldToNew = {};
+      order.forEach((oldN, i) => { oldToNew[oldN] = i + 1; });
+      remapResult = await remapBranchTargets(connection, workflowId, (n) => oldToNew[n] ?? n);
     } 
     else {
       return { respond: { status: 400, body: { error: "Must provide either {fromStep, toStep} or {order: array}" } } };
     }
 
-      return {};
+      return { remap: remapResult };
     });
 
     if (outcome.respond) return res.status(outcome.respond.status).json(outcome.respond.body);
@@ -1325,6 +1475,7 @@ router.patch("/workflows/:id/steps/reorder", jwtOrApiKey, async (req, res) => {
 
     res.json({
       success: true,
+      remap: outcome.remap,
       message: "Steps reordered successfully"
     });
   } catch (err) {
@@ -1437,7 +1588,7 @@ router.put("/workflows/:id", jwtOrApiKey, async (req, res) => {
 router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id, stepNumber } = req.params;
-  const { type, config, error_policy } = req.body;
+  const { type, config, error_policy, label, note } = req.body;
 
   const workflowId = parseInt(id, 10);
   const stepNum = parseInt(stepNumber, 10);
@@ -1483,16 +1634,33 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
       return { respond: { status: 404, body: { error: "Step not found" } } };
     }
 
+    // Label/note slice — deliberately NOT full-replace semantics: existing
+    // API callers (worker prompts) PUT {type, config, error_policy} without
+    // label/note, and nulling labels on every such PUT would silently erase
+    // them. Keys absent from the body → columns left unchanged; keys present
+    // (including explicit null / '') → written.
+    const extraSets = [];
+    const extraVals = [];
+    if (label !== undefined) {
+      extraSets.push('label = ?');
+      extraVals.push((typeof label === 'string' && label.trim()) ? label.trim().slice(0, 100) : null);
+    }
+    if (note !== undefined) {
+      extraSets.push('note = ?');
+      extraVals.push((typeof note === 'string' && note.trim()) ? note.trim() : null);
+    }
+
     await connection.query(
       `
       UPDATE workflow_steps 
-      SET type = ?, config = ?, error_policy = ?, updated_at = NOW()
+      SET type = ?, config = ?, error_policy = ?${extraSets.length ? ', ' + extraSets.join(', ') : ''}, updated_at = NOW()
       WHERE workflow_id = ? AND step_number = ?
       `,
       [
         type,
         JSON.stringify(config),
         error_policy ? JSON.stringify(error_policy) : null,
+        ...extraVals,
         workflowId,
         stepNum
       ]
@@ -1528,7 +1696,7 @@ router.put("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => 
 router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) => {
   const db = req.db;
   const { id, stepNumber } = req.params;
-  const { type, config, error_policy } = req.body;
+  const { type, config, error_policy, label, note } = req.body;
 
   const workflowId = parseInt(id, 10);
   const stepNum = parseInt(stepNumber, 10);
@@ -1538,7 +1706,8 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
   }
 
   // At least one field must be provided
-  if (type === undefined && config === undefined && error_policy === undefined) {
+  if (type === undefined && config === undefined && error_policy === undefined
+      && label === undefined && note === undefined) {
     return res.status(400).json({ error: "At least one field is required" });
   }
 
@@ -1598,6 +1767,14 @@ router.patch("/workflows/:id/steps/:stepNumber", jwtOrApiKey, async (req, res) =
     if (error_policy !== undefined) {
       updates.push("error_policy = ?");
       params.push(error_policy ? JSON.stringify(error_policy) : null);
+    }
+    if (label !== undefined) {
+      updates.push("label = ?");
+      params.push((typeof label === 'string' && label.trim()) ? label.trim().slice(0, 100) : null);
+    }
+    if (note !== undefined) {
+      updates.push("note = ?");
+      params.push((typeof note === 'string' && note.trim()) ? note.trim() : null);
     }
 
     const query = `
@@ -1673,7 +1850,7 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
     // Duplicate all steps
     const [steps] = await connection.query(
       `
-      SELECT step_number, type, config, error_policy 
+      SELECT step_number, label, note, type, config, error_policy 
       FROM workflow_steps 
       WHERE workflow_id = ? 
       ORDER BY step_number ASC
@@ -1685,6 +1862,8 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
       const stepValues = steps.map(step => [
         newWorkflowId,
         step.step_number,
+        step.label ?? null,
+        step.note ?? null,
         step.type,
         toJson(step.config),
         toJson(step.error_policy)
@@ -1693,7 +1872,7 @@ router.post("/workflows/:id/duplicate", jwtOrApiKey, async (req, res) => {
       await connection.query(
         `
         INSERT INTO workflow_steps 
-        (workflow_id, step_number, type, config, error_policy)
+        (workflow_id, step_number, label, note, type, config, error_policy)
         VALUES ?
         `,
         [stepValues]
@@ -2169,6 +2348,90 @@ router.post("/workflows/test-step", jwtOrApiKey, async (req, res) => {
     resolved_config: resolvedConfig,   // handy for debugging placeholder resolution
     ...(retriesSkipped ? { retries_skipped: true } : {})
   });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Capture mode — one-shot capture of the next real init_data.
+//
+// Mirrors the hooks capture lifecycle (routes/api.hooks.js):
+//   - start arms capture_mode='capturing'
+//   - the NEXT execution start (any of the four creation sites) writes
+//     captured_input/captured_at and flips capture_mode back to 'off'
+//     via a guarded UPDATE (race-free across sites/instances)
+//   - start/stop do NOT clear captured_input — the sample is preserved
+//     until the next successful capture overwrites it
+// ─────────────────────────────────────────────────────────────
+
+router.post("/workflows/:id/capture/start", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const workflowId = parseInt(req.params.id, 10);
+  if (isNaN(workflowId) || workflowId <= 0) {
+    return res.status(400).json({ error: "Invalid workflow ID" });
+  }
+  try {
+    const [r] = await db.query(
+      `UPDATE workflows SET capture_mode = 'capturing' WHERE id = ?`,
+      [workflowId]
+    );
+    if (r.affectedRows === 0 && r.changedRows === 0) {
+      const [[row]] = await db.query(`SELECT id FROM workflows WHERE id = ?`, [workflowId]);
+      if (!row) return res.status(404).json({ error: "Workflow not found" });
+    }
+    res.json({ status: 'success', capture_mode: 'capturing' });
+  } catch (err) {
+    console.error("[WF CAPTURE START] Failed:", err);
+    res.status(500).json({ error: "Failed to start capture", message: err.message });
+  }
+});
+
+router.post("/workflows/:id/capture/stop", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const workflowId = parseInt(req.params.id, 10);
+  if (isNaN(workflowId) || workflowId <= 0) {
+    return res.status(400).json({ error: "Invalid workflow ID" });
+  }
+  try {
+    const [r] = await db.query(
+      `UPDATE workflows SET capture_mode = 'off' WHERE id = ?`,
+      [workflowId]
+    );
+    if (r.affectedRows === 0 && r.changedRows === 0) {
+      const [[row]] = await db.query(`SELECT id FROM workflows WHERE id = ?`, [workflowId]);
+      if (!row) return res.status(404).json({ error: "Workflow not found" });
+    }
+    res.json({ status: 'success', capture_mode: 'off' });
+  } catch (err) {
+    console.error("[WF CAPTURE STOP] Failed:", err);
+    res.status(500).json({ error: "Failed to stop capture", message: err.message });
+  }
+});
+
+router.get("/workflows/:id/captured", jwtOrApiKey, async (req, res) => {
+  const db = req.db;
+  const workflowId = parseInt(req.params.id, 10);
+  if (isNaN(workflowId) || workflowId <= 0) {
+    return res.status(400).json({ error: "Invalid workflow ID" });
+  }
+  try {
+    const [[row]] = await db.query(
+      `SELECT capture_mode, captured_input, captured_at FROM workflows WHERE id = ?`,
+      [workflowId]
+    );
+    if (!row) return res.status(404).json({ error: "Workflow not found" });
+    let sample = row.captured_input;
+    if (typeof sample === 'string') {
+      try { sample = sample ? JSON.parse(sample) : null; } catch { /* leave as-is */ }
+    }
+    res.json({
+      status: 'success',
+      capture_mode: row.capture_mode,
+      captured_input: sample,
+      captured_at: row.captured_at,
+    });
+  } catch (err) {
+    console.error("[WF CAPTURED GET] Failed:", err);
+    res.status(500).json({ error: "Failed to fetch captured input", message: err.message });
+  }
 });
 
 module.exports = router;
