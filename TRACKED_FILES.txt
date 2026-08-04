@@ -1,10 +1,7 @@
 .dockerignore
 .github/workflows/node.js.yml
 .gitignore
-DEPLOY_2E.md
 Dockerfile
-README.md
-TEMPLATE_SETUP_CONTRACTS.md
 TRACKED_FILES.txt
 jest.config.js
 lib/actionDispatchers.js
@@ -371,6 +368,7 @@ scripts/courtTitleMatchTest.js
 scripts/encrypt-smtp-passwords.js
 scripts/esign_e2e_check.js
 scripts/esign_zoho_smoke.js
+scripts/gen_signatures.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js
 scripts/test_court_revert.js
