@@ -278,6 +278,19 @@
       <div id="quill-editor"></div>
     </div>
 
+    <!-- Signature block — lives OUTSIDE Quill on purpose. Quill's document
+         model drops <table> markup, so inserting the signature into the body
+         editor would flatten its layout. This contentEditable block preserves
+         it, and its exact contents are appended to the outgoing body. -->
+    <div id="email-sig-section" style="margin-top:6px;">
+      <label id="email-sig-label" style="font-weight:normal;">
+        <input type="checkbox" id="email-include-sig" checked> Include signature
+        <span id="email-sig-note" class="text-muted" style="margin-left:6px;"></span>
+      </label>
+      <div id="email-sig-block" contenteditable="true" spellcheck="false"
+           style="border:1px dashed #bbb;border-radius:4px;padding:8px;margin-top:4px;background:#fafafa;overflow:auto;"></div>
+    </div>
+
     <!-- Email attachment -->
     <div style="margin-top:6px;">
       <button class="btn-outline" onclick="attachEmailFile()">
@@ -427,6 +440,42 @@ async function init() {
     emailSel.add(new Option(label, em.email));
   });
   if (currentUser.default_email) emailSel.value = currentUser.default_email;
+
+  // ── Signature block ──
+  // Seeded from the selected sender's stored signature (firmData ships the
+  // bodies). Switching senders RESEEDS the block, discarding per-send edits —
+  // an edit belongs to the message being composed, not to the next sender.
+  // Sender with no signature: checkbox unchecked + disabled, note explains.
+  const sigChk = E('email-include-sig');
+  const sigBlock = E('email-sig-block');
+  let sigUserChoice = true; // remembers the user's last explicit toggle
+  const senderSig = () => emailFrom.find(em => em.email === emailSel.value) || null;
+
+  const syncSigBlock = () => {
+    const em = senderSig();
+    const has = !!(em && em.signature_html);
+    if (!has) {
+      sigChk.checked = false;
+      sigChk.disabled = true;
+      E('email-sig-note').textContent = em
+        ? 'No signature configured for this sender — add one in Connections → Email Senders.'
+        : '';
+      sigBlock.style.display = 'none';
+      sigBlock.innerHTML = '';
+      return;
+    }
+    sigChk.disabled = false;
+    sigChk.checked = sigUserChoice;
+    E('email-sig-note').textContent = '';
+    sigBlock.innerHTML = em.signature_html;
+    sigBlock.style.display = sigChk.checked ? '' : 'none';
+  };
+  sigChk.addEventListener('change', () => {
+    sigUserChoice = sigChk.checked;
+    sigBlock.style.display = sigChk.checked ? '' : 'none';
+  });
+  emailSel.addEventListener('change', syncSigBlock);
+  syncSigBlock();
 
   // ── Prefill "To" fields ──
   const phoneFmt = contact.contact_phone
@@ -781,9 +830,21 @@ async function send(action) {
 
       processing();
 
+      // Signature — appended VERBATIM from the on-screen block, so edits made
+      // for this send are included and the log records what actually went out.
+      // Text half derives from the block's innerText (reflects edits too).
+      const sigChkS = E('email-include-sig');
+      const sigBlockS = E('email-sig-block');
+      const sigOn = !!(sigChkS && sigChkS.checked && !sigChkS.disabled &&
+                       sigBlockS && sigBlockS.innerHTML.trim());
+      const finalHtml = sigOn ? htmlBody + '<br><br>' + sigBlockS.innerHTML : htmlBody;
+      const finalText = sigOn
+        ? textBody + '\n\n' + sigBlockS.innerText.replace(/\t/g, ' ').trim()
+        : textBody;
+
       // Send
       if (action === 'email') {
-        const emailPayload = { from, to, subject, text: textBody, html: htmlBody };
+        const emailPayload = { from, to, subject, text: finalText, html: finalHtml };
         if (emailAttachmentUrl) {
           const name = emailAttachmentUrl.split('/').pop().split('?')[0] || 'attachment';
           emailPayload.attachment_urls = [{ url: emailAttachmentUrl, name }];
@@ -792,7 +853,7 @@ async function send(action) {
       }
 
       // Log
-      const emailLogData = { from, to, subject, body: textBody };
+      const emailLogData = { from, to, subject, body: finalText };
       if (emailAttachmentUrl) emailLogData.attachment = emailAttachmentUrl;
       if (action === 'logEmail') emailLogData.note = 'Logged without sending';
 

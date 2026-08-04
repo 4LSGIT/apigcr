@@ -17,6 +17,10 @@
  *   attachment_urls  array   - optional [{ url, name }] for Pabbly/Gmail
  *                             also accepts a single { url, name } object
  *                             or legacy comma-separated URL string
+ *   signature        boolean - optional, default false. Append the sender's
+ *                             stored signature (email_credentials
+ *                             .signature_html/_text). No-op when the sender
+ *                             has no signature configured.
  */
 
 const express = require("express");
@@ -25,7 +29,7 @@ const jwtOrApiKey = require("../../lib/auth.jwtOrApiKey");
 const emailService = require("../../services/emailService");
 
 router.post("/internal/email/send", jwtOrApiKey, async (req, res) => {
-  const { from, to, subject, text, html, attachments, attachment_urls } = req.body;
+  const { from, to, subject, text, html, attachments, attachment_urls, signature } = req.body;
 
   if (!from || !to || !subject || !text) {
     return res.status(400).json({
@@ -36,7 +40,8 @@ router.post("/internal/email/send", jwtOrApiKey, async (req, res) => {
 
   try {
     const result = await emailService.sendEmail(req.db, {
-      from, to, subject, text, html, attachments, attachment_urls
+      from, to, subject, text, html, attachments, attachment_urls,
+      signature: signature === true
     });
     res.json({ status: "success", messageId: result.messageId });
   } catch (err) {

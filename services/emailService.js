@@ -12,7 +12,11 @@
  *     text, html,
  *     attachments,        // smtp-style inline (nodemailer format)
  *     attachment_urls,    // string | object | array (see below)
- *     attachment_names    // legacy csv string, Pabbly only
+ *     attachment_names,   // legacy csv string, Pabbly only
+ *     signature,          // OPT-IN boolean, default false. When true, the
+ *                         //   sender's email_credentials.signature_html/_text
+ *                         //   are appended to the bodies after normalization.
+ *                         //   No-op when the sender row has no signature.
  *   })
  *
  * Internal entry point added in Slice 2:
@@ -175,12 +179,27 @@ async function sendEmailDirect(db, emailRow, {
   attachments = [],
   attachment_urls,
   attachment_names,
+  signature = false,
 }) {
   if (!from || !to || !subject) {
     throw new Error('Missing required email fields (from, to, subject)');
   }
   // If sendEmail already normalized, this is a cheap no-op (both fields set).
   const bodies = normalizeBodies(text, html);
+
+  // ── Signature append — OPT-IN ──
+  // Nothing happens unless the caller passes signature: true AND the sender
+  // row has a stored signature. Every pre-existing call site omits the flag,
+  // so their output is byte-identical to before this feature existed.
+  // Appended AFTER normalization on purpose: signature HTML must never be
+  // run through htmlToText body derivation, and vice versa. When only one
+  // side is stored, the other is derived so the multipart halves agree.
+  if (signature && (emailRow.signature_html || emailRow.signature_text)) {
+    const sigHtml = emailRow.signature_html || textToHtml(emailRow.signature_text);
+    const sigText = emailRow.signature_text || htmlToText(emailRow.signature_html);
+    bodies.html = bodies.html + '<br><br>' + sigHtml;
+    bodies.text = bodies.text + '\n\n' + sigText;
+  }
 
   if (!emailRow || !emailRow.provider) {
     throw new Error('sendEmailDirect requires emailRow with a provider');
@@ -232,6 +251,7 @@ async function sendEmailDirect(db, emailRow, {
  * @param {Array}  [opts.attachments]      - smtp-style inline attachments (nodemailer format)
  * @param {*}      [opts.attachment_urls]  - URLs (string | object | array)
  * @param {string} [opts.attachment_names] - legacy csv string of filenames (Pabbly)
+ * @param {boolean} [opts.signature=false] - append the sender's stored signature
  */
 async function sendEmail(db, opts) {
   const { from, to, subject, text, html } = opts || {};

@@ -172,7 +172,7 @@
   <!-- Sender row -->
   <div class="compose-section">
     <label>Sender</label>
-    <select id="c-sender" onchange="updateMmsVisibility()" style="min-width:280px;"><option value="">Loading...</option></select>
+    <select id="c-sender" onchange="updateMmsVisibility(); syncCampaignSig();" style="min-width:280px;"><option value="">Loading...</option></select>
   </div>
 
   <!-- Subject row (email only) -->
@@ -221,6 +221,20 @@
     </div>
     <div id="quill-wrap" class="editor-wrap"><div id="quill-editor"></div></div>
     <textarea id="html-editor" placeholder="Paste or type HTML here..."></textarea>
+
+    <!-- Signature block — kept OUTSIDE the editors on purpose. Quill's
+         document model drops <table> markup, so pulling the signature into
+         the body editor would flatten its layout (and one Rich Text ↔ HTML
+         round-trip would do the same). Contents are appended verbatim to the
+         campaign body at create time, so preview/results show them. -->
+    <div id="c-sig-wrap" style="margin-top:8px;">
+      <label style="font-weight:normal;">
+        <input type="checkbox" id="c-include-sig"> Append sender's signature
+        <span id="c-sig-note" class="text-muted" style="margin-left:6px;"></span>
+      </label>
+      <div id="c-sig-block" contenteditable="true" spellcheck="false"
+           style="display:none;border:1px dashed #bbb;border-radius:4px;padding:8px;margin-top:4px;background:#fafafa;overflow:auto;"></div>
+    </div>
 
     <!-- Email attachment -->
     <div style="margin-top:10px;">
@@ -440,6 +454,13 @@ async function init() {
   // Subject hint
   document.getElementById('c-subject').addEventListener('input', updateSubjectHint);
 
+  // Signature checkbox shows/hides the editable block
+  const _sigChk = document.getElementById('c-include-sig');
+  const _sigBlock = document.getElementById('c-sig-block');
+  if (_sigChk && _sigBlock) _sigChk.addEventListener('change', () => {
+    _sigBlock.style.display = _sigChk.checked && !_sigChk.disabled ? '' : 'none';
+  });
+
   // Populate sender dropdown for default channel
   onChannelChange();
 }
@@ -479,6 +500,7 @@ function onChannelChange() {
       sel.innerHTML += `<option value="${esc(e.email)}">${esc(label)}</option>`;
     });
   }
+  syncCampaignSig();
 
   // Toggle email-only vs SMS-only sections
   document.getElementById('subject-group').classList.toggle('hidden', isSms);
@@ -952,6 +974,46 @@ async function previewCampaign() {
   }
 }
 
+/**
+ * Signature block state:
+ *   SMS channel               → whole section hidden (signatures are email-only)
+ *   email, sender w/o sig     → checkbox unchecked+disabled, note explains why
+ *   email, sender with sig    → checkbox active; block seeded from the stored
+ *                               signature and shown while checked
+ * Switching senders RESEEDS the block (per-send edits belong to the campaign
+ * being composed, not the next sender). Default UNCHECKED: campaign bodies
+ * are often fully composed, sign-off included — appending is a deliberate act.
+ * The block's contents are appended verbatim to the body at create time.
+ */
+function syncCampaignSig() {
+  const wrap = document.getElementById('c-sig-wrap');
+  const chk = document.getElementById('c-include-sig');
+  const block = document.getElementById('c-sig-block');
+  const note = document.getElementById('c-sig-note');
+  if (!wrap || !chk || !block) return;
+
+  const isSms = document.getElementById('f-channel').value === 'sms';
+  wrap.classList.toggle('hidden', isSms);
+  if (isSms) { block.style.display = 'none'; return; }
+
+  const em = emailAddresses.find(e => e.email === document.getElementById('c-sender').value);
+  const has = !!(em && em.signature_html);
+  if (!has) {
+    chk.checked = false;
+    chk.disabled = true;
+    note.textContent = em
+      ? 'No signature configured for this sender — add one in Connections → Email Senders.'
+      : '';
+    block.style.display = 'none';
+    block.innerHTML = '';
+    return;
+  }
+  chk.disabled = false;
+  note.textContent = '';
+  block.innerHTML = em.signature_html;
+  block.style.display = chk.checked ? '' : 'none';
+}
+
 async function createCampaign() {
   if (!selectedContacts.length) return Toast.fire({ icon: 'warning', title: 'No contacts selected' });
 
@@ -990,6 +1052,15 @@ async function createCampaign() {
     };
     const attachment = channel === 'sms' ? mmsAttachmentUrl : emailAttachmentUrl;
     if (attachment) payload.attachmentUrl = attachment;
+    // Signature is baked into the stored body (block contents, edits included)
+    // rather than flagged for send-time append — so preview, results, and the
+    // campaign record all show exactly what recipients get. The server-side
+    // include_signature flag remains available to API callers.
+    const sigChk = document.getElementById('c-include-sig');
+    const sigBlock = document.getElementById('c-sig-block');
+    if (channel === 'email' && sigChk && sigChk.checked && !sigChk.disabled && sigBlock && sigBlock.innerHTML.trim()) {
+      payload.body = payload.body + '<br><br>' + sigBlock.innerHTML;
+    }
 
     const res = await P.apiSend('/api/campaigns', 'POST', payload);
 

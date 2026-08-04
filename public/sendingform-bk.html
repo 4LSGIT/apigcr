@@ -95,6 +95,7 @@
     <select id="smsFrom"></select>
     <span>Email from:</span>
     <select id="emailFrom"></select>
+    <label id="includeSignatureLabel" title=""><input type="checkbox" id="includeSignature" checked> Signature</label>
   </div>
 
   <!-- ═══ CREDIT COUNSELING ═══ -->
@@ -483,15 +484,48 @@ function renderDropdowns() {
     smsSelect.appendChild(opt);
   });
 
-  // Email from — preselect user default
+  // Email from — placeholder first, then options, then preselect user default.
+  //
+  // The placeholder is a BUG FIX, not decoration: without it, when no option
+  // matches the user's default_email (users with a NULL default, or a default
+  // with no email_credentials row) the browser silently auto-selects the FIRST
+  // option — which is stuart@4lsg.com (firmData returns ORDER BY id). Mail
+  // then goes out under the lead attorney's identity, and once signatures
+  // ship, under his signature too. send() refuses to email while the
+  // placeholder is still selected.
   const emailSelect = document.getElementById('emailFrom');
+  const ph = document.createElement('option');
+  ph.value = '';
+  ph.disabled = true;
+  ph.selected = true;
+  ph.textContent = '— Select sender —';
+  emailSelect.appendChild(ph);
   emailAddresses.forEach(em => {
     const opt = document.createElement('option');
     opt.value = em.email;
+    opt.dataset.hasSignature = em.signature_html ? '1' : '0';
     opt.textContent = em.from_name ? `${em.from_name} <${em.email}>` : em.email;
     if (currentUser.default_email && em.email === currentUser.default_email) opt.selected = true;
     emailSelect.appendChild(opt);
   });
+
+  // Signature checkbox tracks whether the selected sender HAS a signature.
+  // No signature → UNCHECK + disable (a checked-but-disabled box reads as
+  // "will be included", which would be a lie) with an explanatory tooltip.
+  // Re-selecting a signature-capable sender restores the user's last choice.
+  const sigChk = document.getElementById('includeSignature');
+  const sigLbl = document.getElementById('includeSignatureLabel');
+  let sigUserChoice = sigChk.checked;
+  sigChk.addEventListener('change', () => { sigUserChoice = sigChk.checked; });
+  function syncSigCheckbox() {
+    const has = emailSelect.selectedOptions[0]?.dataset.hasSignature === '1';
+    sigChk.disabled = !has;
+    sigChk.checked = has ? sigUserChoice : false;
+    sigLbl.title = has ? '' : 'Selected sender has no signature configured (Connections → Email Senders)';
+    sigLbl.style.opacity = has ? '' : '0.5';
+  }
+  emailSelect.addEventListener('change', syncSigCheckbox);
+  syncSigCheckbox();
 
   // Month dropdowns
   ['incomeFrom', 'spouseIncomeFrom', 'bankFrom'].forEach(id => {
@@ -995,12 +1029,26 @@ async function preview() {
     lines.push(`${r.name}: ${smsOn ? formatPhone(r.phone) + ' (SMS)' : ''} ${emailOn ? r.email + ' (Email)' : ''}`);
   });
   lines.push(`\nSMS from: ${document.getElementById('smsFrom').selectedOptions[0]?.textContent || ''}`);
-  lines.push(`Email from: ${document.getElementById('emailFrom').value}`);
+  lines.push(`Email from: ${document.getElementById('emailFrom').value || '(none selected)'}`);
+  const _sigChk = document.getElementById('includeSignature');
+  lines.push(`Signature: ${_sigChk.disabled ? 'n/a (sender has none)' : _sigChk.checked ? 'included' : 'off'}`);
 
   const previewArea = document.getElementById('previewArea');
   document.getElementById('previewContent').textContent = lines.join('\n\n');
   previewArea.style.display = 'block';
   previewArea.scrollIntoView({ behavior: 'smooth' });
+}
+
+
+/**
+ * Attach the include-signature flag to an /internal/email/send payload.
+ * Reads the checkbox at call time; disabled (sender has no signature) or
+ * unchecked → payload untouched, so the request matches pre-feature traffic.
+ */
+function withSig(payload) {
+  const chk = document.getElementById('includeSignature');
+  if (chk && chk.checked && !chk.disabled) payload.signature = true;
+  return payload;
 }
 
 async function send() {
@@ -1014,6 +1062,10 @@ async function send() {
   if (actions.length === 0) return Swal.fire({ icon: 'warning', title: 'Nothing selected', timer: 2500 });
   if (recipients.length === 0) return Swal.fire({ icon: 'warning', title: 'No recipients', timer: 2500 });
   if (!smsOn && !emailOn) return Swal.fire({ icon: 'warning', title: 'No method selected', timer: 2500 });
+  // emailFrom === '' means the "— Select sender —" placeholder is still
+  // selected (user has no matching default). Refuse rather than let the
+  // browser's silent first-option fallback pick a sender for them.
+  if (emailOn && !emailFrom) return Swal.fire({ icon: 'warning', title: 'Select an email sender', text: 'Pick an address in the "Email from" dropdown.', timer: 3500 });
 
   const confirm = await Swal.fire({
     icon: 'question', title: 'Send messages?',
@@ -1052,12 +1104,12 @@ async function send() {
       }
     }
     if (emailOn && r.email) {
-      await P.apiSend('/internal/email/send', 'POST', {
+      await P.apiSend('/internal/email/send', 'POST', withSig({
         from: emailFrom, to: r.email,
         subject: 'Credit Counseling Information',
         text: mmsText,
         attachment_urls: [{ url: ccImgUrl, name: 'Evergreen Credit Counseling.png' }],
-      });
+      }));
       successes.push(`Credit Counseling Email → ${r.name}`);
     }
   }
@@ -1073,12 +1125,12 @@ async function send() {
             successes.push(`SOS Title SMS → ${r.name}`);
           }
           if (emailOn && r.email) {
-            await P.apiSend('/internal/email/send', 'POST', {
+            await P.apiSend('/internal/email/send', 'POST', withSig({
               from: emailFrom, to: r.email,
               subject: 'Instructions for Getting a Title from Secretary of State',
               text: `Hi ${r.fname},\n\nPlease see the attached instructions for getting a title from the Secretary of State.`,
               attachment_urls: [{ url: titlePdf, name: 'SOS Title Instructions.pdf' }],
-            });
+            }));
             successes.push(`SOS Title Email → ${r.name}`);
           }
         }
@@ -1120,7 +1172,7 @@ async function send() {
       }
     }
     if (emailOn && r.email) {
-      await P.apiSend('/internal/email/send', 'POST', {
+      await P.apiSend('/internal/email/send', 'POST', withSig({
         from: emailFrom, to: r.email,
         subject: 'Instructions for Setting Up Your IRS.GOV / ID.ME Account',
         text: `Hi ${r.fname},\n\nPlease see the attached PDF for instructions on setting up your IRS.GOV account through ID.ME and downloading your transcripts.\n\nVideo walkthrough: ${irsVideo}`,
@@ -1129,7 +1181,7 @@ async function send() {
             + `<p>Or click below to watch the video walkthrough:</p>`
             + `<a href="${irsVideo}"><img src="${irsGif}" alt="Watch: Setting up IRS.gov / ID.me and downloading your transcripts" width="600" style="display:block; max-width:100%; height:auto; border:0;"></a>`,
         attachment_urls: { url: irsPdf, name: 'IRS ID.ME Instructions.pdf' },
-      });
+      }));
       successes.push(`IRS/ID.ME Email → ${r.name}`);
     }
   }
@@ -1164,11 +1216,11 @@ async function send() {
             successes.push(`Docs SMS → ${r.name} (${chunks.length} msg)`);
           }
           if (emailOn && r.email) {
-            await P.apiSend('/internal/email/send', 'POST', {
+            await P.apiSend('/internal/email/send', 'POST', withSig({
               from: emailFrom, to: r.email,
               subject: 'Documents Needed - Case ' + (caseData.case_number_full || caseData.case_number || caseId),
               html: composed.email_html, text: composed.email_text,
-            });
+            }));
             successes.push(`Docs Email → ${r.name}`);
           }
         }
@@ -1179,7 +1231,7 @@ async function send() {
         const msg = 'Please call Allan Anchill at (248) 320-3119 to set up an appointment to get your taxes done.';
         for (const r of recipients) {
           if (smsOn && r.phone) { await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: msg }); successes.push(`Allan SMS → ${r.name}`); }
-          if (emailOn && r.email) { await P.apiSend('/internal/email/send', 'POST', { from: emailFrom, to: r.email, subject: 'Tax Preparation Appointment', text: msg }); successes.push(`Allan Email → ${r.name}`); }
+          if (emailOn && r.email) { await P.apiSend('/internal/email/send', 'POST', withSig({ from: emailFrom, to: r.email, subject: 'Tax Preparation Appointment', text: msg })); successes.push(`Allan Email → ${r.name}`); }
         }
       }
 
@@ -1187,7 +1239,7 @@ async function send() {
       if (action.type === 'payment_options') {
         for (const r of recipients) {
           if (smsOn && r.phone) { await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: PAYMENT_OPTIONS_TEXT }); successes.push(`Payment Options SMS → ${r.name}`); }
-          if (emailOn && r.email) { await P.apiSend('/internal/email/send', 'POST', { from: emailFrom, to: r.email, subject: 'Payment Options', html: PAYMENT_OPTIONS_HTML, text: PAYMENT_OPTIONS_TEXT }); successes.push(`Payment Options Email → ${r.name}`); }
+          if (emailOn && r.email) { await P.apiSend('/internal/email/send', 'POST', withSig({ from: emailFrom, to: r.email, subject: 'Payment Options', html: PAYMENT_OPTIONS_HTML, text: PAYMENT_OPTIONS_TEXT })); successes.push(`Payment Options Email → ${r.name}`); }
         }
       }
 
@@ -1260,10 +1312,10 @@ async function send() {
         for (const r of recipients) {
           if (smsOn && r.phone) { await P.apiSend('/internal/sms/send', 'POST', { from: smsFrom, to: r.phone, message: msg }); successes.push(`Questionnaire SMS → ${r.name}`); }
           if (emailOn && r.email) {
-            await P.apiSend('/internal/email/send', 'POST', {
+            await P.apiSend('/internal/email/send', 'POST', withSig({
               from: emailFrom, to: r.email, subject: 'Detailed Bankruptcy Questionnaire',
               html: `<p>Please fill out the Detailed Bankruptcy Questionnaire:</p><p><a href="${qLink}">${qLink}</a></p>`, text: msg,
-            });
+            }));
             successes.push(`Questionnaire Email → ${r.name}`);
           }
         }
@@ -1314,7 +1366,7 @@ async function send() {
               const name = action.email_attachment.split('/').pop().split('?')[0] || 'attachment';
               emailPayload.attachment_urls = [{ url: action.email_attachment, name }];
             }
-            await P.apiSend('/internal/email/send', 'POST', emailPayload);
+            await P.apiSend('/internal/email/send', 'POST', withSig(emailPayload));
             successes.push(`Other Email → ${r.name}`);
           }
         }

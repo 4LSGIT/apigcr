@@ -152,7 +152,7 @@ async function getFilteredContacts(db, filters = {}) {
  *
  * @returns {{ campaignId, contactCount, jobsCreated, status }}
  */
-async function createCampaign(db, { type, sender, subject, body, contactIds, scheduledTime, createdBy, attachmentUrl }) {
+async function createCampaign(db, { type, sender, subject, body, contactIds, scheduledTime, createdBy, attachmentUrl, includeSignature }) {
   if (!type || !sender || !body) {
     throw new Error('Missing required fields: type, sender, body');
   }
@@ -203,9 +203,9 @@ async function createCampaign(db, { type, sender, subject, body, contactIds, sch
   const { campaignId } = await db.withTransaction(async (conn) => {
     // 1. INSERT campaign
     const [campaignResult] = await conn.query(
-      `INSERT INTO campaigns (type, sender, subject, body, attachment_url, status, scheduled_time, contact_count, created_by, created)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-      [type, sender, subject || null, body, attachmentUrl || null, initialStatus, scheduledTime || null, uniqueIds.length, createdBy]
+      `INSERT INTO campaigns (type, sender, subject, body, attachment_url, include_signature, status, scheduled_time, contact_count, created_by, created)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [type, sender, subject || null, body, attachmentUrl || null, includeSignature ? 1 : 0, initialStatus, scheduledTime || null, uniqueIds.length, createdBy]
     );
     const campaignId = campaignResult.insertId;
 
@@ -480,7 +480,7 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
     // ── 1. Load campaign ──
 
     const [[campaign]] = await db.query(
-      'SELECT campaign_id, type, sender, subject, body, attachment_url, status FROM campaigns WHERE campaign_id = ?',
+      'SELECT campaign_id, type, sender, subject, body, attachment_url, include_signature, status FROM campaigns WHERE campaign_id = ?',
       [campaignId]
     );
 
@@ -607,7 +607,11 @@ async function executeSend(db, campaignId, contactId, jobMeta = {}) {
         from:    campaign.sender,
         to:      contact.contact_email,
         subject: resolvedSubject ? resolvedSubject.text : campaign.subject,
-        html:    resolvedBody.text
+        html:    resolvedBody.text,
+        // Per-campaign flag (campaigns.include_signature, default 0). The
+        // append itself lives in emailService.sendEmailDirect and no-ops
+        // when the sender row has no stored signature.
+        signature: !!campaign.include_signature
       };
 
       // Email attachment — pass in both formats so emailService routes correctly

@@ -71,7 +71,7 @@ router.post('/api/campaigns/preview', jwtOrApiKey, async (req, res) => {
 // POST /campaigns — create a new campaign
 // ─────────────────────────────────────────────────────────────
 router.post('/api/campaigns', jwtOrApiKey, async (req, res) => {
-  const { type, sender, subject, body, contactIds, scheduledTime, attachmentUrl } = req.body;
+  const { type, sender, subject, body, contactIds, scheduledTime, attachmentUrl, includeSignature } = req.body;
 
   if (!type || !sender || !body) {
     return res.status(400).json({ error: 'type, sender, and body are required' });
@@ -89,7 +89,8 @@ router.post('/api/campaigns', jwtOrApiKey, async (req, res) => {
       contactIds,
       scheduledTime: scheduledTime || null,
       createdBy: req.auth.userId,
-      attachmentUrl: attachmentUrl || null
+      attachmentUrl: attachmentUrl || null,
+      includeSignature: includeSignature === true
     });
     res.json(result);
   } catch (err) {

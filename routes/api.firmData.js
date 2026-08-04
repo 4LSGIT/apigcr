@@ -56,7 +56,11 @@ router.get('/api/firm-data', jwtOrApiKey, async (req, res) => {
          ORDER BY display_name DESC`
       ),
       req.db.query(
-        `SELECT id, email, from_name, provider
+        // Ships the signature bodies (~2.3KB per configured sender, 4 rows
+        // today) so compose surfaces can render an editable signature block
+        // client-side. Client-side append is what makes the signature visible
+        // before send and lands it in logs / stored campaign bodies.
+        `SELECT id, email, from_name, provider, signature_html, signature_text
          FROM email_credentials
          ORDER BY id`
       ),
