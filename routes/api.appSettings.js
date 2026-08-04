@@ -3,11 +3,18 @@
 /**
  * App Settings API (user-facing settings editor)
  * ----------------------------------------------
- * GET /api/app-settings        — rows where is_editable = 1 AND is_secret = 0,
+ * GET  /api/app-settings       — rows where is_editable = 1 AND is_secret = 0,
  *                                including display metadata (category, label,
  *                                description, type, sort_order)
- * PUT /api/app-settings/:key   — update value of an existing editable row,
+ * PUT  /api/app-settings/:key  — update value of an existing editable row,
  *                                validated against the row's declared `type`
+ * POST /api/app-settings       — create a NEW editable, non-secret setting.
+ *                                Any signed-in user (JWT). API-key auth is
+ *                                rejected — automation must never mint keys
+ *                                (same philosophy as set_setting's
+ *                                key-must-exist gate). Forces is_editable=1,
+ *                                is_secret=0 — secrets are still created
+ *                                ONLY via the DB console.
  *
  * Consumed by public/settings.html (the Settings tab iframe).
  *
@@ -16,7 +23,12 @@
  *     regardless of is_editable. (Belt-and-suspenders: a fat-fingered
  *     is_editable=1 on a secret still can't leak it.)
  *   - PUT only updates rows that already exist with is_editable = 1.
- *     There is no insert path — new keys are created via the DB console.
+ *   - POST is the ONLY insert path and can only mint editable non-secret
+ *     rows. Any JWT user may create; API-key auth (including the internal
+ *     key) is rejected so automation can never mint keys — creation is a
+ *     named human action, attributed by jwt_api_audit_log. A row created
+ *     here is immediately usable by the get_setting / get_settings /
+ *     set_setting internal functions (key exists, non-secret).
  *   - Keys are never renamed or deleted through this route.
  *
  * TYPE VALIDATION (see type vocabulary in the Slice A migration SQL):
@@ -191,6 +203,130 @@ router.put('/api/app-settings/:key', jwtOrApiKey, async (req, res) => {
   } catch (err) {
     console.error(`PUT /api/app-settings/${key} error:`, err);
     res.status(500).json({ status: 'error', message: 'Failed to update setting' });
+  }
+});
+
+// ─────────────────────────────────────────
+// POST /api/app-settings
+// Body: { key, value?, category?, label?, description?, type?, sort_order? }
+// Creates a new editable, non-secret setting. Elevated JWT users only.
+// ─────────────────────────────────────────
+
+// Mirror of the `type` vocabulary the validators + settings.html understand.
+// 'string' and 'template' are verbatim (no validation); the rest map to
+// TYPE_VALIDATORS above. Kept as an explicit allow-list so a typo'd type on
+// creation can't silently produce an unvalidated row.
+const SETTING_TYPES = ['string', 'template', 'number', 'bool', 'email',
+                       'csv', 'phone', 'url', 'json', 'json_array', 'date'];
+
+// app_settings.key is varchar(100). No whitespace (keys travel through csv
+// lists in get_settings and {{placeholders}}), no leading _/- for tidiness.
+const KEY_RE = /^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,99}$/;
+
+router.post('/api/app-settings', jwtOrApiKey, async (req, res) => {
+  // Any signed-in HUMAN may create. API-key auth (including the internal
+  // key) is deliberately rejected: automation must never mint settings keys
+  // — that mirrors set_setting/get_setting's key-must-exist gate, which
+  // exists so a typo'd params_mapping can't silently create a row.
+  const auth = req.auth || {};
+  if (auth.type !== 'jwt') {
+    return res.status(403).json({ status: 'error', message: 'Settings can only be created by a signed-in user' });
+  }
+
+  const b = req.body || {};
+
+  const key = b.key;
+  if (typeof key !== 'string' || !KEY_RE.test(key)) {
+    return res.status(400).json({
+      status: 'error',
+      message: 'key must be 1-100 chars of letters, digits, _ or -, starting with a letter or digit'
+    });
+  }
+
+  // value: optional, defaults to '' (blank = unset, same as everywhere else).
+  const value = (b.value === undefined || b.value === null) ? '' : b.value;
+  if (typeof value !== 'string') {
+    return res.status(400).json({
+      status: 'error',
+      message: 'value must be a string (JSON-stringify structured values client-side)'
+    });
+  }
+  if (value.length > MAX_VALUE_LEN) {
+    return res.status(400).json({
+      status: 'error',
+      message: `value exceeds maximum length of ${MAX_VALUE_LEN} characters`
+    });
+  }
+
+  const type = (b.type == null || b.type === '') ? 'string' : b.type;
+  if (!SETTING_TYPES.includes(type)) {
+    return res.status(400).json({
+      status: 'error',
+      message: `type must be one of: ${SETTING_TYPES.join(', ')}`
+    });
+  }
+
+  const check = validateByType(type, value);
+  if (check !== true) {
+    return res.status(400).json({ status: 'error', message: check });
+  }
+
+  // Optional display metadata — reject over-length rather than silently
+  // truncating (column limits: category 50, label 100, description 500).
+  const optStr = (name, v, max) => {
+    if (v == null || v === '') return { val: null };
+    if (typeof v !== 'string') return { err: `${name} must be a string` };
+    if (v.length > max) return { err: `${name} exceeds ${max} characters` };
+    return { val: v };
+  };
+  const category    = optStr('category',    b.category,    50);
+  const label       = optStr('label',       b.label,       100);
+  const description = optStr('description', b.description, 500);
+  for (const f of [category, label, description]) {
+    if (f.err) return res.status(400).json({ status: 'error', message: f.err });
+  }
+
+  let sortOrder = null;
+  if (b.sort_order != null && b.sort_order !== '') {
+    const n = Number(b.sort_order);
+    if (!Number.isInteger(n)) {
+      return res.status(400).json({ status: 'error', message: 'sort_order must be an integer' });
+    }
+    sortOrder = n;
+  }
+
+  try {
+    // is_secret=0 and is_editable=1 are HARDCODED — this route can never
+    // mint a secret, and a UI-created setting must remain UI-editable.
+    try {
+      await req.db.query(
+        `INSERT INTO app_settings
+           (\`key\`, \`value\`, is_secret, is_editable, category, label, description, \`type\`, sort_order)
+         VALUES (?, ?, 0, 1, ?, ?, ?, ?, ?)`,
+        [key, value, category.val, label.val, description.val, type, sortOrder]
+      );
+    } catch (err) {
+      if (err && err.code === 'ER_DUP_ENTRY') {
+        // Covers secret + non-editable rows too, without existence-leaking
+        // anything beyond "taken" — which the DB console owner already knows.
+        return res.status(409).json({ status: 'error', message: `Setting "${key}" already exists` });
+      }
+      throw err;
+    }
+
+    // Same coherence rule as PUT: if the new key is in firmConfig's REGISTRY
+    // (pre-creating a registry key with a value), this instance sees it now.
+    firmConfig.invalidate();
+
+    const [[row]] = await req.db.query(
+      `SELECT \`key\`, \`value\`, category, label, description, \`type\`, sort_order, updated_at
+       FROM app_settings WHERE \`key\` = ?`,
+      [key]
+    );
+    res.status(201).json({ status: 'success', setting: row });
+  } catch (err) {
+    console.error('POST /api/app-settings error:', err);
+    res.status(500).json({ status: 'error', message: 'Failed to create setting' });
   }
 });
 

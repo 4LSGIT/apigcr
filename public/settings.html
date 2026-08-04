@@ -308,6 +308,48 @@
          editor above never render here. -->
     <div id="dynSections"></div>
 
+    <!-- ── Add Firm Setting ───────────────────────────────────────
+         POST /api/app-settings — any signed-in user. Created rows are
+         always is_editable=1 / is_secret=0 (secrets stay DB-console
+         only) and appear in their category section above immediately
+         (appended at the end until the next reload re-sorts). -->
+    <div class="section collapsed" id="addSettingSection">
+      <div class="sec-head"><h2><span class="chev">▸</span>Add Firm Setting</h2></div>
+      <div class="sec-body">
+        <p class="note">Creates a new firm setting (never a secret — those are created via the DB console only). Once created, it is editable above and readable/writable by automation via <span class="mono">get_setting</span> / <span class="mono">get_settings</span> / <span class="mono">set_setting</span>.</p>
+        <div class="grid2">
+          <div><label class="fld">Key *</label><input type="text" id="asKey" class="mono" placeholder="my_new_setting" spellcheck="false"></div>
+          <div><label class="fld">Label</label><input type="text" id="asLabel" placeholder="My New Setting"></div>
+          <div><label class="fld">Category</label><input type="text" id="asCategory" list="asCatList" placeholder="Other"><datalist id="asCatList"></datalist></div>
+          <div><label class="fld">Type</label>
+            <select id="asType">
+              <option value="string" selected>string (anything, single line)</option>
+              <option value="template">template (anything, multi-line)</option>
+              <option value="number">number</option>
+              <option value="bool">bool (on/off)</option>
+              <option value="email">email</option>
+              <option value="csv">csv (comma-separated list)</option>
+              <option value="phone">phone</option>
+              <option value="url">url</option>
+              <option value="json">json</option>
+              <option value="json_array">json_array</option>
+              <option value="date">date</option>
+            </select>
+          </div>
+          <div><label class="fld">Sort Order</label><input type="text" id="asSort" class="mono" inputmode="numeric" placeholder="(optional)"></div>
+          <div></div>
+        </div>
+        <label class="fld">Description</label>
+        <input type="text" id="asDesc" placeholder="(optional — shown under the label)">
+        <label class="fld">Initial Value</label>
+        <textarea id="asValue" class="raw" style="min-height:60px" spellcheck="false"></textarea>
+        <div class="btn-row">
+          <button class="btn primary" id="asCreate">Create Setting</button>
+          <span class="status" id="asStatus"></span>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -1170,6 +1212,61 @@ function settingRow(row) {
   }
 }
 
+/* ════════════════ ADD FIRM SETTING ════════════════
+   POST /api/app-settings — the server re-validates everything; the checks
+   here only save a round trip. Key rule and type vocabulary MUST mirror
+   routes/api.appSettings.js (KEY_RE / SETTING_TYPES). The initial value is
+   sent VERBATIM (whitespace invariant), same as every other save here. */
+const AS_KEY_RE = /^[a-zA-Z0-9][a-zA-Z0-9_\-]{0,99}$/;
+
+function asPopulateCategories(rows) {
+  // Deliberate order first, then any live categories not in the list.
+  const cats = [...new Set([...CATEGORY_ORDER, ...rows.map(r => r.category).filter(Boolean)])];
+  E('asCatList').innerHTML = cats.map(c => `<option value="${esc(c)}">`).join('');
+}
+
+async function createSetting() {
+  const key = E('asKey').value.trim();
+  if (!AS_KEY_RE.test(key)) {
+    return setStatus('asStatus',
+      'key: 1-100 chars of letters, digits, _ or -, starting with a letter or digit', false);
+  }
+  if (rowMeta[key]) {
+    return setStatus('asStatus', `"${key}" already exists — edit it in its section above`, false);
+  }
+  const type  = E('asType').value;
+  const value = E('asValue').value; // VERBATIM — no trimming
+  const check = validateByType(type, value);
+  if (check !== true) return setStatus('asStatus', 'value ' + check, false);
+  const sortRaw = E('asSort').value.trim();
+  if (sortRaw && !/^-?\d+$/.test(sortRaw)) {
+    return setStatus('asStatus', 'sort order must be an integer', false);
+  }
+
+  const body = {
+    key, type, value,
+    category:    E('asCategory').value.trim() || null,
+    label:       E('asLabel').value.trim() || null,
+    description: E('asDesc').value.trim() || null,
+    sort_order:  sortRaw ? Number(sortRaw) : null,
+  };
+
+  E('asCreate').disabled = true;
+  try {
+    const data = await api('/api/app-settings', 'POST', body);
+    const row = data.setting;
+    rowMeta[row.key] = row;
+    settingRow(row); // appended at the end of its category section; reload re-sorts
+    ['asKey', 'asLabel', 'asCategory', 'asDesc', 'asSort', 'asValue'].forEach(id => E(id).value = '');
+    E('asType').value = 'string';
+    setStatus('asStatus', `Created "${row.key}" — see its category section above`, true);
+  } catch (err) {
+    setStatus('asStatus', err.message || 'Failed to create setting', false);
+  } finally {
+    E('asCreate').disabled = false;
+  }
+}
+
 /* ════════════════ ACCORDION ════════════════
    All sections start collapsed; opening one closes the others.
    Delegated so sections created after boot (dynamic categories)
@@ -1231,11 +1328,13 @@ async function init() {
   E('etSave').addEventListener('click', etSave);
   E('tSave').addEventListener('click', tSave);
   E('dtSave').addEventListener('click', dtSave);
+  E('asCreate').addEventListener('click', createSetting); // bound even if GET below fails
 
   try {
     const data = await api('/api/app-settings');
     const rows = data.settings || [];
     rows.forEach(r => { rowMeta[r.key] = r; });
+    asPopulateCategories(rows);
 
     // Deliberate category order (server orders alphabetically); then
     // sort_order, then key. Sections are created in first-encounter order.
