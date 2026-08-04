@@ -387,6 +387,16 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
     ['strictString insert_db.table rejects number',      'insert_db', { table: 7, values: { a: 1 } }, 'must be a string'],
     ['strictString set_setting.key rejects number',      'set_setting', { key: 42, value: 'v' }, 'must be a string'],
     ['strictString get_setting.key rejects number',      'get_setting', { key: 42 }, 'must be a string'],
+
+    // get_settings — plural read. keys is a csv STRING at save time; a
+    // hardcoded array literal is rejected here (arrays only arrive at
+    // runtime via placeholder resolution). See system.js.
+    ['get_settings valid csv',                'get_settings', { keys: 'court_ingest_live, esign_test_mode' }, null],
+    ['get_settings with output_var',          'get_settings', { keys: 'a,b', output_var: 'settings' }, null],
+    ['get_settings placeholder keys',         'get_settings', { keys: '{{keyList}}' }, null],
+    ['get_settings missing keys',             'get_settings', {}, 'keys is required'],
+    ['get_settings rejects number',           'get_settings', { keys: 42 }, 'must be a string'],
+    ['get_settings rejects array literal',    'get_settings', { keys: ['a', 'b'] }, 'must be a string'],
     // Placeholder still wins on a strict param (the {{token}} bypass runs before
     // the type check); update_db.table carries placeholderAllowed.
     ['strictString update_db.table accepts placeholder', 'update_db', { table: '{{tbl}}', set_column: 'x', set_value: 'y', where_column: 'id', where_value: '1' }, null],
