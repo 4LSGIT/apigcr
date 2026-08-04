@@ -62,6 +62,7 @@ const LIST_COLUMNS = [
 const ALL_COLUMNS = [
   'id', 'email', 'smtp_host', 'smtp_port', 'smtp_user',
   'smtp_pass', 'smtp_secure', 'provider', 'from_name', 'credential_id',
+  'signature_html', 'signature_text',
 ];
 
 // Per-provider required fields. Always required: email, provider, from_name.
@@ -80,10 +81,37 @@ function requiredForProvider(provider) {
 const UPDATABLE_FIELDS = [
   'email', 'smtp_host', 'smtp_port', 'smtp_user', 'smtp_pass',
   'smtp_secure', 'provider', 'from_name', 'credential_id',
+  'signature_html', 'signature_text',
 ];
 
 // Fields whose old/new values are redacted in the audit diff.
 const REDACTED_FIELDS = new Set(['smtp_pass']);
+
+// Fields too large to store verbatim in the audit diff. A full signature is
+// ~2.3KB of HTML; recording both sides on every save would balloon audit rows
+// for no investigative benefit. We record a length delta instead.
+const SUMMARIZED_FIELDS = new Set(['signature_html', 'signature_text']);
+
+// Signature size cap. The columns are MEDIUMTEXT/TEXT (16MB/64KB), but a
+// legitimate signature is a couple of KB. This is a guard against a paste
+// accident, not a security control.
+const SIGNATURE_MAX = { signature_html: 65535, signature_text: 8192 };
+
+/**
+ * Validate signature fields present in a request body.
+ * Returns null when valid, or an error message string.
+ */
+function validateSignatures(body) {
+  for (const f of Object.keys(SIGNATURE_MAX)) {
+    const v = body[f];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'string') return `${f} must be a string`;
+    if (v.length > SIGNATURE_MAX[f]) {
+      return `${f} exceeds the ${SIGNATURE_MAX[f]} character limit (got ${v.length})`;
+    }
+  }
+  return null;
+}
 
 const VALID_PROVIDERS = ['smtp', 'pabbly', 'gmail'];
 
@@ -123,6 +151,13 @@ function coerceField(field, value) {
     if (value === undefined || value === null || value === '') return null;
     const n = Number(value);
     return Number.isInteger(n) && n > 0 ? n : null;
+  }
+  // Empty signature → NULL, so `signature_html IS NOT NULL` stays a reliable
+  // "has a signature" test at send time rather than matching empty strings.
+  if (field === 'signature_html' || field === 'signature_text') {
+    if (value === undefined || value === null) return null;
+    const s = String(value).trim();
+    return s === '' ? null : String(value);
   }
   return value;
 }
@@ -238,6 +273,11 @@ function buildDataRow(body) {
     data.credential_id = null;
   }
 
+  // Signature — provider-independent. Absent from the body → NULL (no
+  // signature), which is the correct default for automated senders.
+  data.signature_html = coerceField('signature_html', body.signature_html);
+  data.signature_text = coerceField('signature_text', body.signature_text);
+
   return data;
 }
 
@@ -255,6 +295,11 @@ function buildAuditDiff(before, after, touchedFields) {
     if (JSON.stringify(a) === JSON.stringify(b)) continue;
     if (REDACTED_FIELDS.has(f)) {
       diff[f] = { from: '(redacted)', to: '(redacted)' };
+    } else if (SUMMARIZED_FIELDS.has(f)) {
+      diff[f] = {
+        from: a == null ? null : `(${String(a).length} chars)`,
+        to:   b == null ? null : `(${String(b).length} chars)`,
+      };
     } else {
       diff[f] = { from: a ?? null, to: b ?? null };
     }
@@ -461,6 +506,11 @@ router.post('/api/email-credentials', superuserOnlyFor(TOOL), async (req, res) =
       }
     }
 
+    const sigErr = validateSignatures(body);
+    if (sigErr) {
+      return res.status(400).json({ status: 'error', message: sigErr });
+    }
+
     // Gmail-specific credential validation. Same call is repeated on PUT.
     if (body.provider === 'gmail') {
       const credId = coerceField('credential_id', body.credential_id);
@@ -558,6 +608,11 @@ router.put('/api/email-credentials/:id', superuserOnlyFor(TOOL), async (req, res
         status: 'error',
         message: `provider must be one of: ${VALID_PROVIDERS.join(', ')}`,
       });
+    }
+
+    const sigErr = validateSignatures(body);
+    if (sigErr) {
+      return res.status(400).json({ status: 'error', message: sigErr });
     }
 
     // For switching provider TO smtp, ensure the resulting state has
