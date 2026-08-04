@@ -310,6 +310,16 @@ async function nextBusinessDay(fromDate, options = {}) {
     randomizeMinutes = 0,
     maxDaysAhead     = 30,
     timezone         = DEFAULT_TZ,
+    // Opt-in; both default to the historical behaviour.
+    //   noSunday     — the firm DOES work Sundays (see isWorkday). Not a
+    //                  closure; for steps that assign a person work that day.
+    //   minDaysAhead — floor on how far forward to start looking. Without it,
+    //                  "next workday at 09:20" called from 09:18 the SAME
+    //                  morning returns 09:20 that same day, because today's
+    //                  target is still in the future. In a drip that collapses
+    //                  several days of messages into one morning.
+    noSunday         = false,
+    minDaysAhead     = 0,
   } = options;
 
   // Anchor everything in the firm timezone. "Have we passed today's target
@@ -353,12 +363,19 @@ async function nextBusinessDay(fromDate, options = {}) {
   // tomorrow only if we're already past today's target moment. Comparing
   // DateTime objects (Luxon) compares instants regardless of zone — no
   // hour/minute field arithmetic.
-  let candidateDt = fromDt.startOf('day');
-  if (fromDt >= todayTargetDt) {
-    candidateDt = candidateDt.plus({ days: 1 });
-  }
+  let candidateDt = fromDt.startOf('day').plus({
+    days: Math.max(minDaysAhead, fromDt >= todayTargetDt ? 1 : 0),
+  });
 
   for (let i = 0; i < maxDaysAhead; i++) {
+    // Opt-in Sunday skip. Luxon weekday: Mon=1 … Sun=7. Checked on the
+    // candidate DAY rather than the jittered slot so jitter cannot smuggle a
+    // Sunday back in across a midnight boundary.
+    if (noSunday && candidateDt.weekday === 7) {
+      candidateDt = candidateDt.plus({ days: 1 });
+      continue;
+    }
+
     // Build the candidate AT its target time first, so the restriction check
     // is time-aware: a Friday-evening (erev Shabbos) or erev-Yom-Tov slot is
     // rejected even though its civil date is not itself in the restricted
