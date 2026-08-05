@@ -558,7 +558,7 @@ async function scheduleDueReminder(db, taskId, dueDate) {
 }
 
 /**
- * Cancel the pending due-reminder job for a task (audit-safe: marks failed, not deleted).
+ * Cancel the pending due-reminder job for a task (audit-safe: marks cancelled, not deleted).
  */
 async function cancelDueReminder(db, taskId) {
   const [[task]] = await db.query(
@@ -569,7 +569,7 @@ async function cancelDueReminder(db, taskId) {
 
   await db.query(
     `UPDATE scheduled_jobs
-     SET status = 'failed', updated_at = NOW()
+     SET status = 'cancelled', updated_at = NOW()
      WHERE id = ? AND status = 'pending'`,
     [task.task_due_job_id]
   );

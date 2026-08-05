@@ -109,6 +109,7 @@
     .dot-running   { background: var(--blue); animation: pulse 1s infinite; }
     .dot-completed { background: var(--green); }
     .dot-failed    { background: var(--red); }
+    .dot-cancelled { background: #9ca3af; }
 
     .job-info { flex: 1; min-width: 0; }
     .job-name { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -143,6 +144,7 @@
     .status-running   { background: #dbeafe; color: #1e40af; }
     .status-completed { background: #dcfce7; color: #166534; }
     .status-failed    { background: #fee2e2; color: #991b1b; }
+    .status-cancelled { background: #e5e7eb; color: #6b7280; }
     .status-paused    { background: #e5e7eb; color: #4b5563; }
 
     /* Scrollbar */
@@ -160,6 +162,7 @@
     <option value="running">Running</option>
     <option value="completed">Completed</option>
     <option value="failed">Failed</option>
+    <option value="cancelled">Cancelled</option>
   </select>
   <select class="jobs-filter-select" id="jobs-filter-type" onchange="loadJobs()">
     <option value="">All types</option>
@@ -483,8 +486,8 @@ function loadJobsDebounced() {
 }
 
 function jobCardHTML(job) {
-  const dotClass    = { pending:'dot-pending', running:'dot-running', completed:'dot-completed', failed:'dot-failed' }[job.status] || 'dot-pending';
-  const statusClass = { pending:'status-pending', running:'status-running', completed:'status-completed', failed:'status-failed' }[job.status] || 'status-pending';
+  const dotClass    = { pending:'dot-pending', running:'dot-running', completed:'dot-completed', failed:'dot-failed', cancelled:'dot-cancelled' }[job.status] || 'dot-pending';
+  const statusClass = { pending:'status-pending', running:'status-running', completed:'status-completed', failed:'status-failed', cancelled:'status-cancelled' }[job.status] || 'status-pending';
   const typeClass = `type-${job.type}`;
   const when = job.scheduled_time ? new Date(job.scheduled_time).toLocaleString() : '—';
   const isPaused = job.active === 0 || job.active === false;
@@ -512,8 +515,8 @@ function jobCardHTML(job) {
         ${canToggleActive ? (isPaused
           ? `<button class="btn btn-outline btn-sm" onclick="jobSetActive(${job.id}, true)" title="Resume"><i class="fa-solid fa-play"></i></button>`
           : `<button class="btn btn-outline btn-sm" onclick="jobSetActive(${job.id}, false)" title="Pause"><i class="fa-solid fa-pause"></i></button>`) : ''}
-        ${['pending','failed'].includes(job.status) ? `<button class="btn btn-outline btn-sm" onclick="jobEdit(${job.id})"><i class="fa-solid fa-pencil"></i></button>` : ''}
-        ${job.status === 'failed' ? `<button class="btn btn-primary btn-sm" onclick="jobRetry(${job.id})" title="Reschedule now"><i class="fa-solid fa-rotate-right"></i></button>` : ''}
+        ${['pending','failed','cancelled'].includes(job.status) ? `<button class="btn btn-outline btn-sm" onclick="jobEdit(${job.id})"><i class="fa-solid fa-pencil"></i></button>` : ''}
+        ${['failed','cancelled'].includes(job.status) ? `<button class="btn btn-primary btn-sm" onclick="jobRetry(${job.id})" title="Reschedule now"><i class="fa-solid fa-rotate-right"></i></button>` : ''}
         <button class="btn btn-sm" style="background:#fee2e2;color:#991b1b;border:none" onclick="jobDelete(${job.id})" title="Delete"><i class="fa-solid fa-trash"></i></button>
         <button class="btn btn-outline btn-sm" onclick="jobView(${job.id})"><i class="fa-solid fa-eye"></i></button>
       </div>

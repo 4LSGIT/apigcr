@@ -1440,7 +1440,7 @@ router.post('/sequences/enrollments/:id/cancel', jwtOrApiKey, async (req, res) =
       [reason, id]
     );
     await db.query(
-      `UPDATE scheduled_jobs SET status = 'failed', updated_at = NOW()
+      `UPDATE scheduled_jobs SET status = 'cancelled', updated_at = NOW()
        WHERE sequence_enrollment_id = ? AND status IN ('pending', 'running')`,
       [id]
     );

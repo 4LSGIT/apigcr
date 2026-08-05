@@ -436,7 +436,7 @@ router.get("/scheduled-jobs", jwtOrApiKey, async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // PATCH /scheduled-jobs/:id — edit a job
-// Only pending/failed jobs can be edited.
+// Only pending/failed/cancelled jobs can be edited.
 // ─────────────────────────────────────────────────────────────
 router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
   const db  = req.db;
@@ -447,9 +447,9 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
     const [[job]] = await db.query(`SELECT id, status, type FROM scheduled_jobs WHERE id = ?`, [id]);
     if (!job) return res.status(404).json({ error: "Job not found" });
 
-    if (!['pending', 'failed'].includes(job.status)) {
+    if (!['pending', 'failed', 'cancelled'].includes(job.status)) {
       return res.status(409).json({
-        error: `Cannot edit a job with status '${job.status}'. Only pending or failed jobs can be edited.`
+        error: `Cannot edit a job with status '${job.status}'. Only pending, failed, or cancelled jobs can be edited.`
       });
     }
 
@@ -503,8 +503,8 @@ router.patch("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
 
     if (!updates.length) return res.status(400).json({ error: "Nothing to update" });
 
-    // If rescheduling a failed job, reset it to pending
-    if (scheduled_time && job.status === 'failed') {
+    // If rescheduling a failed/cancelled job, reset it to pending
+    if (scheduled_time && ['failed', 'cancelled'].includes(job.status)) {
       updates.push("status = 'pending'");
       updates.push("attempts = 0");
     }
@@ -630,11 +630,11 @@ router.delete("/scheduled-jobs/:id", jwtOrApiKey, async (req, res) => {
       return res.json({ success: true, action: "deleted", message: "Pending job deleted" });
     }
 
-    // For running/completed/failed — just mark as failed so it won't run again
+    // For running/completed/failed — mark as cancelled so it won't run again
     await db.query(
-      `UPDATE scheduled_jobs SET status = 'failed', updated_at = NOW() WHERE id = ?`, [id]
+      `UPDATE scheduled_jobs SET status = 'cancelled', updated_at = NOW() WHERE id = ?`, [id]
     );
-    res.json({ success: true, action: "cancelled", message: `Job marked as failed (was ${job.status})` });
+    res.json({ success: true, action: "cancelled", message: `Job cancelled (was ${job.status})` });
   } catch (err) {
     console.error("Failed to delete job:", err);
     res.status(500).json({ error: "Failed to delete job", detail: err.message });
