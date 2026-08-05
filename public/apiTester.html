@@ -150,7 +150,6 @@
     <div class="saved-actions">
       <button id="btnSave" class="small">Save</button>
       <button id="btnSaveAs" class="small">Save As</button>
-      <button id="btnRunSaved" class="small primary" title="Run the SAVED version server-side">Run</button>
       <button id="btnDelete" class="small danger-text">Delete</button>
       <span class="muted" id="savedHint" style="align-self:center;"></span>
     </div>
@@ -215,6 +214,8 @@
       <button id="btnCurl">Copy as cURL</button>
       <button id="btnCurlImport">Import cURL</button>
       <button id="btnClear">Clear</button>
+      <button id="btnRunSaved" class="primary" style="margin-left: auto;"
+              title="Run the SAVED version server-side (Send runs what's in the panel)">Run saved</button>
     </div>
   </div>
 
@@ -461,11 +462,13 @@ function setBusy(on, label) {
     $("respEmpty").textContent = `⏳ ${label || "Running"}…`;
   }
   $("btnSend").disabled = on;
-  $("btnRunSaved").disabled = on || !currentSavedId;
+  $("btnRunSaved").disabled = on;
 }
+// Note: Run is deliberately NOT disabled when nothing is saved — a disabled
+// button just swallows the click, so its own "save this first" message could
+// never fire. It stays live and explains itself instead.
 function updateSavedHint() {
   $("savedHint").textContent = currentSavedId ? `#${currentSavedId}` : "not saved";
-  $("btnRunSaved").disabled = !currentSavedId;
   $("btnDelete").disabled = !currentSavedId;
 }
 
@@ -642,7 +645,13 @@ $("btnDelete").addEventListener("click", async () => {
 // Run the SAVED version server-side (saved/:id/run). This executes what's in
 // the DB, not the panel — hence the dirty-state warning.
 $("btnRunSaved").addEventListener("click", async () => {
-  if (!currentSavedId) { alert("Save this request first, then Run."); return; }
+  if (!currentSavedId) {
+    alert("Nothing saved to run.\n\n" +
+          "“Run saved” executes the version stored in the DB — pick a saved request " +
+          "from the sidebar, or hit Save / Save As first.\n\n" +
+          "To run what's currently in the panel, use Send.");
+    return;
+  }
   if (dirty && !confirm("You have unsaved changes. Run executes the SAVED version. Continue?")) return;
   const btn = $("btnRunSaved");
   setBusy(true, "Running saved request");
