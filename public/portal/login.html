@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client Portal — Sign In</title>
+<style>
+  /*
+   * Client Portal Slice 1 — login. Visual language from public/manage.html
+   * (mobile-first, self-contained, default accent). Plain "Client Portal"
+   * heading on purpose — S2's UX pass owns branding.
+   */
+  :root {
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --bg: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --panel: #f9fafb;
+    --danger: #b91c1c;
+    --danger-bg: #fef2f2;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.45;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 420px; margin: 0 auto; padding: 40px 16px; }
+  .head { text-align: center; margin-bottom: 20px; }
+  .head h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  .head .subtitle { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 16px;
+  }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  input[type="text"], input[type="tel"] {
+    width: 100%; padding: 10px 12px; font-size: 16px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text);
+  }
+  input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: var(--accent); }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+
+  .btn {
+    display: block; width: 100%; margin-top: 14px;
+    padding: 11px 14px; font-size: 15.5px; font-weight: 600;
+    border: none; border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: var(--accent-text);
+  }
+  .btn:disabled { opacity: 0.6; cursor: default; }
+  .btn.secondary {
+    background: transparent; color: var(--muted);
+    font-weight: 500; font-size: 13.5px; margin-top: 8px;
+  }
+
+  .trust { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; }
+  .trust input { width: 17px; height: 17px; accent-color: var(--accent); }
+
+  .msg { border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px; display: none; }
+  .msg.error { display: block; background: var(--danger-bg); border: 1px solid #fecaca; color: var(--danger); }
+  .msg.info { display: block; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>Client Portal</h1>
+    <p class="subtitle" id="subtitle">Sign in with your phone number or email</p>
+  </div>
+
+  <div class="msg" id="msg"></div>
+
+  <!-- Step 1: identifier -->
+  <div class="card" id="step-identifier">
+    <label for="identifier">Phone number or email</label>
+    <input type="text" id="identifier" inputmode="email" autocomplete="username"
+           placeholder="(555) 555-5555 or you@example.com" autofocus>
+    <p class="hint">We&rsquo;ll send you a one-time login code.</p>
+    <button class="btn" id="btn-request">Send code</button>
+  </div>
+
+  <!-- Step 2: PIN -->
+  <div class="card hidden" id="step-pin">
+    <label for="pin">Enter the 6-digit code</label>
+    <input type="text" id="pin" inputmode="numeric" autocomplete="one-time-code"
+           maxlength="6" pattern="[0-9]*" placeholder="123456">
+    <p class="hint" id="pin-hint">The code expires in 10 minutes.</p>
+    <div class="trust">
+      <input type="checkbox" id="trust" checked>
+      <label for="trust" style="margin:0; font-weight:500;">Trust this device</label>
+    </div>
+    <button class="btn" id="btn-verify">Sign in</button>
+    <button class="btn secondary" id="btn-back">Use a different phone or email</button>
+  </div>
+</div>
+
+<script src="portal.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // Already signed in? Straight to home (a stale token bounces back via
+  // Portal.fetch's 401 handling once home calls /me).
+  if (Portal.getToken()) { window.location.href = 'home.html'; return; }
+
+  const $ = id => document.getElementById(id);
+  const msg = $('msg');
+  const stepId = $('step-identifier');
+  const stepPin = $('step-pin');
+
+  function showMsg(kind, text) {
+    msg.className = 'msg ' + kind;
+    msg.textContent = text;
+  }
+  function clearMsg() { msg.className = 'msg'; msg.textContent = ''; }
+
+  function identifier() { return $('identifier').value.trim(); }
+
+  async function requestPin() {
+    clearMsg();
+    const id = identifier();
+    if (!id) { showMsg('error', 'Enter your phone number or email.'); return; }
+
+    const btn = $('btn-request');
+    btn.disabled = true;
+    try {
+      const { res, data } = await Portal.post('/api/portal/request-pin', { identifier: id });
+      if (res.ok) {
+        showMsg('info', (data && data.message) || 'If we found a matching account, a code is on its way.');
+        stepId.classList.add('hidden');
+        stepPin.classList.remove('hidden');
+        $('pin').focus();
+      } else if (res.status === 429) {
+        showMsg('error', 'Too many requests. Please wait a few minutes and try again.');
+      } else {
+        showMsg('error', (data && data.message) || 'Enter a valid phone number or email address.');
+      }
+    } catch (_) {
+      showMsg('error', 'Connection problem. Please try again.');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function verifyPin() {
+    clearMsg();
+    const pin = $('pin').value.trim();
+    if (!/^\d{6}$/.test(pin)) { showMsg('error', 'Enter the 6-digit code.'); return; }
+
+    const btn = $('btn-verify');
+    btn.disabled = true;
+    try {
+      const { res, data } = await Portal.post('/api/portal/verify-pin', {
+        identifier: identifier(),
+        pin: pin,
+        trust_device: $('trust').checked,
+      });
+      if (res.ok && data && data.token) {
+        Portal.setToken(data.token);
+        window.location.href = 'home.html';
+      } else if (res.status === 429) {
+        showMsg('error', 'Too many attempts. Please wait a few minutes and try again.');
+      } else {
+        showMsg('error', (data && data.message) || 'Invalid or expired code.');
+      }
+    } catch (_) {
+      showMsg('error', 'Connection problem. Please try again.');
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  $('btn-request').addEventListener('click', requestPin);
+  $('identifier').addEventListener('keydown', e => { if (e.key === 'Enter') requestPin(); });
+  $('btn-verify').addEventListener('click', verifyPin);
+  $('pin').addEventListener('keydown', e => { if (e.key === 'Enter') verifyPin(); });
+  $('btn-back').addEventListener('click', () => {
+    clearMsg();
+    stepPin.classList.add('hidden');
+    stepId.classList.remove('hidden');
+    $('identifier').focus();
+  });
+})();
+</script>
+</body>
+</html>

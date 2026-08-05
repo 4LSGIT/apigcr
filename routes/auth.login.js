@@ -34,7 +34,7 @@ router.post("/login", loginLimiter, async (req, res) => {
     // Fetch user by username
     const [rows] = await req.db.query(
       `
-      SELECT user, username, user_type, user_auth, password_hash
+      SELECT user, username, user_type, user_auth, roles, password_hash
       FROM users
       WHERE username = ?
       `,
@@ -64,6 +64,12 @@ router.post("/login", loginLimiter, async (req, res) => {
         username: user.username,
         user_type: user.user_type,
         user_auth: user.user_auth,
+        // Portal Slice 1: staff audience + roles. Portal tokens carry
+        // aud:"contact" and NO user_auth — the two token families are
+        // mutually rejectable. users.roles is a SET column; mysql2 returns
+        // it as a comma-joined string.
+        aud: "staff",
+        roles: (user.roles || "").split(",").filter(Boolean),
         ver: parseInt(process.env.JWT_VERSION || 1) // optional global logout
       },
       process.env.JWT_SECRET,
