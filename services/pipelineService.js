@@ -196,7 +196,7 @@ async function getPipeline(db, caseId) {
   if (template) {
     const [stageRows] = await db.query(
       `SELECT id AS stage_id, stage_key, stage_number, internal_label,
-              client_label, case_stage, is_terminal, default_rec
+              client_label, case_stage, is_terminal, default_rec, client_visible
          FROM pipeline_stages
         WHERE template_id = ? AND active = 1
         ORDER BY stage_number ASC, id ASC`,
