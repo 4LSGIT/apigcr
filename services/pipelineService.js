@@ -167,7 +167,9 @@ function projectLogRow(r) {
  *              upcoming), regardless of position. Always present ([] when
  *              template is null). UI uses it for full-timeline rendering
  *              (client_label on past/current rows) and the show-all-stages
- *              advance control; C1 contract as of 2026-08-02.
+ *              advance control; C1 contract as of 2026-08-02. Projection
+ *              includes client_visible (portal filters on it; staff surfaces
+ *              may ignore it).
  * @throws 404 when the case does not exist.
  */
 async function getPipeline(db, caseId) {

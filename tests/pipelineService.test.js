@@ -83,11 +83,11 @@ const TPL_BK_DEFAULT = { id: 4, name: 'Bankruptcy — Default', case_type: 'Bank
 const ALL_TPLS = [TPL_INTAKE, TPL_CH7, TPL_CH13];
 
 const CH7_STAGES = [
-  { stage_id: 21, stage_key: 'docs',        stage_number: 1, internal_label: 'Documents & Prep', client_label: 'Preparing your case', case_stage: 'Pending',   is_terminal: 0, default_rec: 'Complete schedules & matrix' },
-  { stage_id: 22, stage_key: 'filed',       stage_number: 2, internal_label: 'Filed',            client_label: 'Your case is filed',  case_stage: 'Filed',     is_terminal: 0, default_rec: 'Sign post-petition contract (if appl.); 2nd course' },
-  { stage_id: 23, stage_key: 'meeting_341', stage_number: 3, internal_label: '341 Meeting',      client_label: 'Meeting of creditors', case_stage: 'Filed',    is_terminal: 0, default_rec: 'Attend 341; provide requested docs' },
-  { stage_id: 24, stage_key: 'discharge',   stage_number: 4, internal_label: 'Discharge',        client_label: 'Discharge entered',   case_stage: 'Concluded', is_terminal: 0, default_rec: 'Await closing' },
-  { stage_id: 25, stage_key: 'closed',      stage_number: 5, internal_label: 'Closed',           client_label: 'Case closed',         case_stage: 'Closed',    is_terminal: 1, default_rec: '' },
+  { stage_id: 21, stage_key: 'docs',        stage_number: 1, internal_label: 'Documents & Prep', client_label: 'Preparing your case', case_stage: 'Pending',   is_terminal: 0, default_rec: 'Complete schedules & matrix', client_visible: 1 },
+  { stage_id: 22, stage_key: 'filed',       stage_number: 2, internal_label: 'Filed',            client_label: 'Your case is filed',  case_stage: 'Filed',     is_terminal: 0, default_rec: 'Sign post-petition contract (if appl.); 2nd course', client_visible: 1 },
+  { stage_id: 23, stage_key: 'meeting_341', stage_number: 3, internal_label: '341 Meeting',      client_label: 'Meeting of creditors', case_stage: 'Filed',    is_terminal: 0, default_rec: 'Attend 341; provide requested docs', client_visible: 1 },
+  { stage_id: 24, stage_key: 'discharge',   stage_number: 4, internal_label: 'Discharge',        client_label: 'Discharge entered',   case_stage: 'Concluded', is_terminal: 0, default_rec: 'Await closing', client_visible: 1 },
+  { stage_id: 25, stage_key: 'closed',      stage_number: 5, internal_label: 'Closed',           client_label: 'Case closed',         case_stage: 'Closed',    is_terminal: 1, default_rec: '', client_visible: 0 },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -180,6 +180,7 @@ describe('getPipeline', () => {
     expect(p.history).toHaveLength(2);
     expect(p.upcoming.map(s => s.stage_key)).toEqual(['meeting_341', 'discharge', 'closed']);
     expect(p.stages.map(s => s.stage_key)).toEqual(['docs', 'filed', 'meeting_341', 'discharge', 'closed']);
+    expect(p.stages.every(s => s.client_visible === 1 || s.client_visible === 0)).toBe(true);
   });
 
   test('branched from intake: current stage_key not in template → upcoming = ALL stages', async () => {
