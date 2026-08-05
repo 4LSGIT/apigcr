@@ -3,7 +3,7 @@ const express = require("express");
 const router = express.Router();
 const { CronExpressionParser } = require("cron-parser");
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
-const { advanceWorkflow } = require("../lib/workflow_engine");
+const { advanceWorkflow, scheduleResume } = require("../lib/workflow_engine");
 const { executeJob }      = require("../lib/job_executor");
 const { executeStep }     = require("../lib/sequenceEngine");
 
@@ -132,16 +132,57 @@ async function recoverStuckJobs(db) {
     console.warn(`[JOB RECOVERY] Recovered ${jobResult.affectedRows} stuck running jobs (>${RECOVERY_WINDOW_MIN}min)`);
   }
 
-  // Recover stuck workflow executions (e.g. server crashed mid-execution)
-  const [execResult] = await db.query(
-    `UPDATE workflow_executions
-     SET status = 'active', updated_at = NOW()
-     WHERE status = 'processing'
-       AND updated_at < NOW() - INTERVAL ? MINUTE`,
+  // Recover stuck workflow executions (server crashed / Cloud Run instance
+  // reaped mid-advance).
+  //
+  // Old behavior flipped 'processing' → 'active' and stopped. That only
+  // works for executions that ALSO have a pending workflow_resume job (the
+  // delayed path). Hook/manual/sequence-started executions advance in a
+  // detached background call with NO scheduled job — a bare flip stranded
+  // them at 'active' forever (observed 7×, 2026-03→2026-08: executions 16,
+  // 17, 850, 4850, 5060, 6702, 8336). Each flipped row now also gets an
+  // immediate workflow_resume job at its persisted step pointer.
+  //
+  // Correctness of the resume step depends on advanceWorkflow persisting
+  // current_step_number at every advance (shipped together with this
+  // change). GATE: rows with (steps_executed_count > 0 AND
+  // current_step_number = 1) are flipped but NOT auto-resumed — that shape
+  // is either a pre-deploy straggler with a stale pointer (resuming would
+  // re-fire every step: Clio PATCHes, SMS, emails, ...) or a rare crash
+  // while parked at step 1 via a set_next loop-back. Both surface through
+  // the stuck-execution alert scan (lib/alerting.js) for manual triage.
+  //
+  // Concurrency: duplicate resumes from overlapping polls are harmless —
+  // advanceWorkflow's claim-lock (status IN ('active','delayed') ... FOR
+  // UPDATE) lets exactly one claim win; the loser returns 'skipped'.
+  const [stuckExecs] = await db.query(
+    `SELECT id, current_step_number, steps_executed_count
+       FROM workflow_executions
+      WHERE status = 'processing'
+        AND updated_at < NOW() - INTERVAL ? MINUTE
+      LIMIT 50`,
     [RECOVERY_WINDOW_MIN]
   );
-  if (execResult.affectedRows > 0) {
-    console.warn(`[EXEC RECOVERY] Recovered ${execResult.affectedRows} stuck processing executions (>${RECOVERY_WINDOW_MIN}min)`);
+  for (const ex of stuckExecs) {
+    try {
+      await db.query(
+        `UPDATE workflow_executions
+            SET status = 'active', updated_at = NOW()
+          WHERE id = ? AND status = 'processing'`,
+        [ex.id]
+      );
+      const staleFirstStepShape =
+        (ex.steps_executed_count ?? 0) > 0 && ex.current_step_number === 1;
+      if (staleFirstStepShape) {
+        console.warn(`[EXEC RECOVERY] Execution ${ex.id} flipped to active WITHOUT auto-resume (step pointer 1 with ${ex.steps_executed_count} steps executed — needs manual triage; see stuck-execution alerts)`);
+      } else {
+        const resumeStep = ex.current_step_number || 1;
+        await scheduleResume(ex.id, new Date(), resumeStep, db);
+        console.warn(`[EXEC RECOVERY] Execution ${ex.id} recovered — resume scheduled at step ${resumeStep} (>${RECOVERY_WINDOW_MIN}min stale)`);
+      }
+    } catch (err) {
+      console.error(`[EXEC RECOVERY] Failed to recover execution ${ex.id}: ${err.message}`);
+    }
   }
 }
 
@@ -233,14 +274,42 @@ router.all("/process-jobs", jwtOrApiKey, async (req, res) => {
         console.log(`[RESUME] Resuming execution ${executionId} at step ${nextStep}`);
 
         // Update execution state in its own short transaction (pure-DB → retries: 3).
-        await db.withTransaction(async (conn) => {
-          await conn.query(
+        //
+        // STATUS GUARD (2026-08): only non-terminal, non-held statuses are
+        // resumable. Without the guard, a REPLAYED resume job (recovered
+        // from 'running' by recoverStuckJobs after a crash that landed
+        // AFTER the execution completed but BEFORE the job's completed-mark
+        // write) would resurrect a terminal execution to 'active' and
+        // re-run steps from nextStep. 'active' is included because exec
+        // recovery flips crashed 'processing' rows to 'active' before this
+        // job runs; 'processing' covers a stale claim whose job was
+        // recovered first. 'held' stays manual-resume-only.
+        const guarded = await db.withTransaction(async (conn) => {
+          const [r] = await conn.query(
             `UPDATE workflow_executions 
              SET status = 'active', current_step_number = ?, updated_at = NOW()
-             WHERE id = ?`,
+             WHERE id = ?
+               AND status IN ('delayed', 'active', 'processing')`,
             [nextStep, executionId]
           );
+          return r.affectedRows;
         }, { retries: 3 });
+
+        if (guarded === 0) {
+          // Terminal, held, or missing — resume is moot. Close the job so it
+          // never replays; do NOT advance.
+          console.warn(`[RESUME] Execution ${executionId} not resumable (terminal/held/missing) — closing job ${job.id} without advancing`);
+          await db.query(
+            `UPDATE scheduled_jobs SET status = 'completed', updated_at = NOW() WHERE id = ?`,
+            [job.id]
+          );
+          results.push({
+            id: job.id,
+            status: 'skipped',
+            note: `Execution ${executionId} not resumable (terminal/held/missing)`
+          });
+          continue; // next job in the batch
+        }
 
         // Advance in background (non-blocking).
         // The job's scheduled_jobs.status update happens AFTER advanceWorkflow
