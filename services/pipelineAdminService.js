@@ -648,6 +648,262 @@ async function usageCounts(db, case_type, case_subtype) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BOARD (Slice C3 — Kanban board read model)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Normalize for template matching — mirrors pipelineService.ciEq's
+ *  trim+lowercase semantics (which itself mirrors utf8mb4_general_ci). */
+function boardNorm(v) {
+  return String(v == null ? '' : v).trim().toLowerCase();
+}
+
+/**
+ * Board read model: every case that pipelineService.resolveTemplate would
+ * resolve to `templateId`, bucketed into that template's stage columns by the
+ * case's LATEST case_stage_log row (or `unstaged` when it has none, or when
+ * its latest stage_key is not among this template's active stages — the
+ * branched-from-intake shape; C1 matches by stage_key, not stage_id, and so
+ * does the board).
+ *
+ * Membership mirrors resolveTemplate's branch order EXACTLY (that function is
+ * read, not modified — this is the SQL restatement of its JS):
+ *   branch 1 — blank/'' case_subtype → THE intake template (first active
+ *              role='intake' by id). Board clause: TRIM(case_subtype) = ''.
+ *   branch 2 — first active role='case' template exactly matching
+ *              (case_type, case_subtype), CI + trimmed. Board clause:
+ *              non-blank subtype AND both trimmed values equal (collation is
+ *              utf8mb4_general_ci, so SQL `=` is the CI half; TRIM supplies
+ *              the trim half of ciEq).
+ *   branch 3 — first active is_default=1 role='case' template of the
+ *              case_type. Board clause: non-blank subtype, type matches,
+ *              subtype NOT IN the subtypes that have their own exact active
+ *              template for this type (those cases stopped at branch 2).
+ *   branch 4 — fallback to the intake template: non-blank subtype with NO
+ *              exact active template for its (type, subtype) AND no active
+ *              default for its type. Part of the INTAKE board.
+ * First-match-wins ties (resolveTemplate uses .find over id ASC) are mirrored
+ * too: a template shadowed by a lower-id duplicate — or an inactive one —
+ * resolves for NO case, so its board is structurally empty.
+ *
+ * Set-based: one cases scan with the membership WHERE (+ Closed filter),
+ * one groupwise-max scan of case_stage_log (tiny table) — no per-case
+ * queries. Primary contact via the MIN-subquery precedent from
+ * caseService.searchCases; case_display via the listCases COALESCE precedent
+ * hardened with NULLIF (case_number/_full hold '' on a handful of live rows,
+ * and plain COALESCE would display the empty string).
+ *
+ * @param {object} db mysql2 pool
+ * @param {number|string} templateId pipeline_templates.id
+ * @param {object} [opts]
+ * @param {boolean} [opts.includeClosed=false] include case_stage='Closed'
+ *        cases (excluded by default)
+ * @returns {{ template: object,
+ *             stages: object[],           // active, stage_number order, incl. client_visible
+ *             columns: { unstaged: object[], [stage_key]: object[] } }}
+ *   Card: { case_id, case_display, primary_contact_name, case_stage,
+ *           case_status, current_stage_key, current_entered_at,
+ *           days_in_stage }  (the last three null for unstaged-no-history)
+ * @throws 400 bad template_id; 404 unknown template
+ */
+async function getBoard(db, templateId, { includeClosed = false } = {}) {
+  const id = Number(templateId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw badRequest('template_id must be a positive integer');
+  }
+
+  const [[template]] = await db.query(
+    `SELECT * FROM pipeline_templates WHERE id = ?`, [id]
+  );
+  if (!template) throw notFound(`Template ${id} not found`);
+
+  // Active stages, stage_number order — getPipeline's stage projection plus
+  // client_visible (board contract).
+  const [stages] = await db.query(
+    `SELECT id AS stage_id, stage_key, stage_number, internal_label,
+            client_label, client_visible, case_stage, is_terminal, default_rec
+       FROM pipeline_stages
+      WHERE template_id = ? AND active = 1
+      ORDER BY stage_number ASC, id ASC`,
+    [id]
+  );
+
+  // Same load resolveTemplate performs — all active templates, id ASC.
+  const [templates] = await db.query(
+    `SELECT * FROM pipeline_templates WHERE active = 1 ORDER BY id ASC`
+  );
+
+  const intake = templates.find(t => t.role === 'intake') || null;
+
+  // Exact active (type, subtype) case-templates with a NON-BLANK subtype —
+  // the only ones branch 2 can ever match (a case reaching branch 2 has a
+  // non-blank subtype, which can't ci-equal ''). Trimmed originals for SQL
+  // binding; the CI half of ciEq is the column collation.
+  const exactTemplates = templates.filter(
+    t => t.role === 'case' && boardNorm(t.case_subtype) !== ''
+  );
+  // Active default types (branch 3 / branch 4 context).
+  const defaultTypes = templates
+    .filter(t => t.role === 'case' && t.is_default)
+    .map(t => String(t.case_type == null ? '' : t.case_type).trim());
+
+  // Which resolution outcomes land on THIS template? (.find === T mirrors
+  // first-match-wins; an inactive T is absent from `templates`, so nothing
+  // matches and the board is empty by construction.)
+  const isTheIntake = !!(intake && intake.id === template.id);
+  const winsExact = template.role === 'case' &&
+    (templates.find(t =>
+      t.role === 'case' &&
+      boardNorm(t.case_type) === boardNorm(template.case_type) &&
+      boardNorm(t.case_subtype) === boardNorm(template.case_subtype) &&
+      boardNorm(t.case_subtype) !== ''
+    ) || {}).id === template.id;
+  const winsDefault = template.role === 'case' && !!template.is_default &&
+    (templates.find(t =>
+      t.role === 'case' && t.is_default &&
+      boardNorm(t.case_type) === boardNorm(template.case_type)
+    ) || {}).id === template.id;
+
+  const clauses = [];
+  const params = [];
+
+  if (isTheIntake) {
+    // Branch 1: blank subtype.
+    clauses.push(`TRIM(c.case_subtype) = ''`);
+    // Branch 4: subtyped case with no exact template and no type default.
+    let b4 = `TRIM(c.case_subtype) <> ''`;
+    if (exactTemplates.length) {
+      b4 += ` AND (TRIM(c.case_type), TRIM(c.case_subtype)) NOT IN (` +
+        exactTemplates.map(() => `(?, ?)`).join(', ') + `)`;
+      for (const t of exactTemplates) {
+        params.push(String(t.case_type == null ? '' : t.case_type).trim());
+        params.push(String(t.case_subtype).trim());
+      }
+    }
+    if (defaultTypes.length) {
+      b4 += ` AND TRIM(c.case_type) NOT IN (` +
+        defaultTypes.map(() => `?`).join(', ') + `)`;
+      params.push(...defaultTypes);
+    }
+    clauses.push(`(${b4})`);
+  }
+
+  if (winsExact) {
+    // Branch 2: exact (type, subtype), subtype non-blank.
+    clauses.push(
+      `(TRIM(c.case_subtype) <> '' AND TRIM(c.case_type) = ? AND TRIM(c.case_subtype) = ?)`
+    );
+    params.push(String(template.case_type == null ? '' : template.case_type).trim());
+    params.push(String(template.case_subtype).trim());
+  }
+
+  if (winsDefault) {
+    // Branch 3: same type, non-blank subtype, minus subtypes owned by an
+    // exact active template of this type (their cases stopped at branch 2).
+    const siblingSubtypes = exactTemplates
+      .filter(t => boardNorm(t.case_type) === boardNorm(template.case_type))
+      .map(t => String(t.case_subtype).trim());
+    let b3 = `TRIM(c.case_subtype) <> '' AND TRIM(c.case_type) = ?`;
+    const b3Params = [String(template.case_type == null ? '' : template.case_type).trim()];
+    if (siblingSubtypes.length) {
+      b3 += ` AND TRIM(c.case_subtype) NOT IN (` +
+        siblingSubtypes.map(() => `?`).join(', ') + `)`;
+      b3Params.push(...siblingSubtypes);
+    }
+    clauses.push(`(${b3})`);
+    params.push(...b3Params);
+  }
+
+  // Empty columns scaffold — unstaged first, then stage_key order. (A stage
+  // literally keyed 'unstaged' would share the meta bucket; the key regex
+  // permits it but nothing seeds it — theoretical, accepted.)
+  const columns = { unstaged: [] };
+  for (const s of stages) columns[s.stage_key] = columns[s.stage_key] || [];
+
+  if (!clauses.length) {
+    // Shadowed or inactive template: resolveTemplate never picks it.
+    return { template, stages, columns };
+  }
+
+  const closedFilter = includeClosed ? '' : ` AND c.case_stage <> 'Closed'`;
+
+  // Cards: one cases scan. Primary contact = MIN-subquery precedent
+  // (caseService.searchCases); display = listCases COALESCE precedent with
+  // NULLIF hardening for ''-valued docket columns.
+  const [cardRows] = await db.query(
+    `SELECT c.case_id,
+            COALESCE(NULLIF(c.case_number_full, ''), NULLIF(c.case_number, ''), c.case_id) AS case_display,
+            c.case_stage, c.case_status,
+            pc.contact_name AS primary_contact_name
+       FROM cases c
+       LEFT JOIN (
+         SELECT case_relate_case_id, MIN(case_relate_client_id) AS primary_contact_id
+           FROM case_relate
+          WHERE case_relate_type = 'Primary'
+          GROUP BY case_relate_case_id
+       ) p ON p.case_relate_case_id = c.case_id
+       LEFT JOIN contacts pc ON pc.contact_id = p.primary_contact_id
+      WHERE (${clauses.join(' OR ')})${closedFilter}
+      ORDER BY c.case_id ASC`,
+    params
+  );
+
+  // Latest log row per case — groupwise max on (entered_at DESC, id DESC),
+  // the exact ordering advanceStage/getPipeline use for "latest". One
+  // set-based self-join over the (tiny) log; merged in JS.
+  const [latestRows] = await db.query(
+    `SELECT l.case_id, l.stage_key, l.entered_at,
+            GREATEST(TIMESTAMPDIFF(DAY, l.entered_at, NOW()), 0) AS days_in_stage
+       FROM case_stage_log l
+       LEFT JOIN case_stage_log l2
+         ON l2.case_id = l.case_id
+        AND (l2.entered_at > l.entered_at
+             OR (l2.entered_at = l.entered_at AND l2.id > l.id))
+      WHERE l2.id IS NULL`
+  );
+  const latestByCase = new Map(latestRows.map(r => [r.case_id, r]));
+
+  const stageKeys = new Set(stages.map(s => s.stage_key));
+
+  for (const r of cardRows) {
+    const latest = latestByCase.get(r.case_id) || null;
+    const card = {
+      case_id: r.case_id,
+      case_display: r.case_display,
+      primary_contact_name: r.primary_contact_name || null,
+      case_stage: r.case_stage,
+      case_status: r.case_status,
+      current_stage_key: latest ? latest.stage_key : null,
+      current_entered_at: latest ? latest.entered_at : null,
+      days_in_stage: latest ? Number(latest.days_in_stage) : null,
+    };
+    // Latest key not in THIS template's active stages (no history, or history
+    // written under another template — branched-from-intake) → unstaged; the
+    // card keeps its live case_status visible either way.
+    const target = latest && stageKeys.has(latest.stage_key)
+      ? latest.stage_key
+      : 'unstaged';
+    columns[target].push(card);
+  }
+
+  // Unstaged: alphabetical by contact (fallback display) — a browse list.
+  // Staged: longest-in-stage first — the attention order.
+  columns.unstaged.sort((a, b) =>
+    String(a.primary_contact_name || a.case_display).localeCompare(
+      String(b.primary_contact_name || b.case_display)) ||
+    String(a.case_id).localeCompare(String(b.case_id))
+  );
+  for (const s of stages) {
+    if (s.stage_key === 'unstaged') continue;
+    columns[s.stage_key].sort((a, b) =>
+      new Date(a.current_entered_at) - new Date(b.current_entered_at) ||
+      String(a.case_id).localeCompare(String(b.case_id))
+    );
+  }
+
+  return { template, stages, columns };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // EXPORTS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -662,4 +918,5 @@ module.exports = {
   deleteStage,
   reorderStages,
   usageCounts,
+  getBoard,
 };

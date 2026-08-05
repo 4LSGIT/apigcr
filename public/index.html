@@ -594,11 +594,11 @@
     </div>
 
     <div class="sb-section-label">Actions</div>
+    <div class="sb-item" data-tab="tabPipeline" onclick="openMainTab('tabPipeline')" title="Pipeline Board">
+      <i class="fa-solid fa-table-columns"></i><span>Pipeline Board</span>
+    </div>
     <div class="sb-item" onclick="newContact()" title="New Client">
       <i class="fa-solid fa-user-plus"></i><span>New Client</span>
-    </div>
-    <div class="sb-item" data-tab="tabCampaigns" onclick="openMainTab('tabCampaigns')" title="Campaigns">
-      <i class="fa-solid fa-envelopes-bulk"></i><span>Campaigns</span>
     </div>
     <div class="sb-item" id="sbCustom" data-tab="tabCustom" onclick="openMainTab('tabCustom')" title="Custom">
       <i class="fa-solid fa-clock"></i><span>Custom Tab</span>
@@ -641,8 +641,8 @@
     <button class="home-btn" onclick="openMainTab('tabBills')">
       <i class="fa-solid fa-file-invoice-dollar fa-2xl"></i><br /><br />Bills
     </button>
-    <button class="home-btn" onclick="newContact()">
-      <i class="fa-solid fa-user-plus fa-2xl"></i><br /><br />New Client
+    <button class="home-btn" onclick="openMainTab('tabPipeline')">
+      <i class="fa-solid fa-table-columns fa-2xl"></i><br /><br />Pipeline Board
     </button>
     <button class="home-btn" onclick="events?'':tabEventsGet(0);openMainTab('tabEvents')">
       <i class="fa-solid fa-flag fa-2xl"></i><br /><br />Events
@@ -651,8 +651,8 @@
     <button class="home-btn" onclick="tasks?'':tabTasksGet(0);openMainTab('tabTasks')">
       <i class="fa-solid fa-list fa-2xl"></i><br /><br />Tasks
     </button>
-    <button class="home-btn" onclick="openMainTab('tabCampaigns')">
-      <i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br /><br />Campaigns
+    <button class="home-btn" onclick="newContact()">
+      <i class="fa-solid fa-user-plus fa-2xl"></i><br /><br />New Client
     </button>
     <button class="home-btn" onclick="logs?'':tabLogGet(0);openMainTab('tabLogs')">
       <i class="fa-solid fa-box-archive fa-2xl"></i><br /><br />Log
@@ -684,8 +684,12 @@
     <iframe id="tabCustomFrame" src=""></iframe>
   </div>
 
-  <div id="tabCampaigns" class="tab-main">
-    <iframe id="tabCampFrame" iframe data-src="/campaign.html"></iframe>
+  <!-- Promoted from the More Features grid to a first-class tab. openMainTab()
+       swaps data-src → src on first open, so the board's fetch doesn't run
+       until someone actually looks at it. (Campaigns took the reverse trip and
+       now lives in tabMore as campaignsDiv.) -->
+  <div id="tabPipeline" class="tab-main">
+    <iframe data-src="/pipelineBoard.html"></iframe>
   </div>
 
 
@@ -2220,6 +2224,8 @@
   <button class="big-button" data-target="formBuilderDiv" data-exclusive-group="more" data-hover-anim="fa-bounce" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-rectangle-list fa-2xl"></i><br><br>Form Builder</button>
   <button class="big-button" data-target="reportsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.3s"><i class="fa-solid fa-chart-column fa-2xl"></i><br><br>Reports</button>
   <button class="big-button" data-target="caseConfigDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sliders fa-2xl"></i><br><br>Case Config</button>
+  <br><br>
+  <button class="big-button" data-target="campaignsDiv" data-exclusive-group="more" data-hover-anim="fa-shake" style="--fa-animation-duration:0.9s"><i class="fa-solid fa-envelopes-bulk fa-2xl"></i><br><br>Campaigns</button>
 
 
   <div id="manualsDiv"         class="more-panel" style="display:none">
@@ -2263,6 +2269,11 @@
   </div>
   <div id="caseConfigDiv" class="more-panel" style="display:none">
     <iframe data-src="/caseConfigManager.html"></iframe>
+  </div>
+  <!-- Demoted from its own tab (tabCampaigns) — campaign.html reaches the shell
+       via window.parent, which is still index.html from here. -->
+  <div id="campaignsDiv" class="more-panel" style="display:none">
+    <iframe data-src="/campaign.html"></iframe>
   </div>
 </div>
 <script>

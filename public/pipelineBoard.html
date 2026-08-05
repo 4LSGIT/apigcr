@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pipeline Board</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <style>
+    /* pb- = pipeline board. Scoped page styles on top of style.css —
+       esign/dashboard.html posture (light, shell-iframed). */
+    html, body { height: 100%; }
+    body { margin: 0; padding: 12px; background: #fff; display: flex; flex-direction: column; box-sizing: border-box; }
+    .pb-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; flex-shrink: 0; }
+    .pb-top h2 { margin: 0; }
+    .pb-top label { font-size: 13px; white-space: nowrap; cursor: pointer; }
+    .pb-top select, .pb-top input[type="text"] { padding: 6px 8px; font-size: 13px; }
+    .pb-spacer { flex: 1; }
+    .pb-refreshed { font-size: 11px; color: #999; }
+
+    #pb-board { flex: 1; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; align-items: stretch; padding-bottom: 6px; }
+    .pb-col { flex: 0 0 250px; display: flex; flex-direction: column; background: #f4f6f8; border: 1px solid #dde3e8; border-radius: 8px; max-height: 100%; }
+    .pb-col-head { padding: 8px 10px 6px; border-bottom: 1px solid #dde3e8; flex-shrink: 0; }
+    .pb-col-title { font-weight: bold; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+    .pb-col-count { font-weight: normal; font-size: 11px; color: #fff; background: #26abe2; border-radius: 9px; padding: 0 7px; line-height: 17px; }
+    .pb-col.pb-unstaged .pb-col-count { background: #8a93a3; }
+    .pb-col-client { font-size: 11px; color: #999; font-style: italic; min-height: 13px; }
+    .pb-col-body { flex: 1; overflow-y: auto; padding: 8px; min-height: 60px; }
+
+    .pb-card { background: #fff; border: 1px solid #d6dde4; border-radius: 6px; padding: 7px 9px; margin-bottom: 7px; cursor: grab; box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+    .pb-card:active { cursor: grabbing; }
+    .pb-card-name { font-weight: bold; font-size: 13px; }
+    .pb-card-name .pb-noname { color: #999; font-weight: normal; font-style: italic; }
+    .pb-card-num { font-size: 12px; color: #1a73b7; }
+    .pb-card-num:hover { text-decoration: underline; }
+    .pb-card-meta { margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .pb-chip { font-size: 10px; border-radius: 3px; padding: 1px 6px; background: #eef1f4; color: #555; }
+    .pb-chip-days { background: #e3f0e6; color: #2c7a3d; }
+    .pb-chip-days.warm { background: #fdf0dc; color: #a4700d; }
+    .pb-chip-days.hot { background: #fbe3e3; color: #b32222; }
+    .pb-move-btn { border: none; background: transparent; color: #26abe2; cursor: pointer; font-size: 11px; padding: 0; margin-left: auto; }
+
+    .sortable-ghost { opacity: 0.4; }
+    .sortable-drag { opacity: 0.9; }
+    .pb-empty-col { color: #aab2bc; font-size: 11px; text-align: center; padding: 12px 4px; }
+    #pb-load { text-align: center; padding: 30px; }
+    #pb-msg { color: #999; padding: 20px; text-align: center; }
+  </style>
+</head>
+<body>
+<!-- ═══════════════════════════════════════════════════════════
+  PIPELINE BOARD (Slice C3) — Kanban over the Case Pipeline Engine.
+  Iframed by index.html as its own main tab (#tabPipeline, sidebar + home
+  button), lazy via data-src like every other shell iframe. Either way this is
+  a direct child of the shell, so window.top is index.html: apiSend for auth,
+  addFile for opening cases (the esign/dashboard relay idiom).
+
+  Data: GET /api/pipeline-board?template_id=N[&include_closed=1] — membership
+  mirrors resolveTemplate (see pipelineAdminService.getBoard). Columns:
+  Unstaged first (no log rows, or latest stage_key outside this template —
+  branched-from-intake), then active stages in stage_number order. Column
+  headers show internal_label + count with the muted client_label beneath —
+  the SS-vocabulary convention from the case.html widget.
+
+  Drag (SortableJS, guarded): drop on a stage column → Swal confirm with an
+  optional note → POST /api/cases/:id/pipeline/advance {stage, note}.
+  Success → full board re-fetch (stated choice: two cheap queries, and it
+  also picks up the overwrite-on-advance case_status). noop / 409 / error /
+  cancel → re-render from the unmutated in-memory model, which snaps the
+  dragged card back. Drops on Unstaged are rejected client-side — there is
+  no "un-advance". CDN-fail fallback: every card grows a "Move…" button
+  driving the same confirm/advance path.
+
+  Card click opens the case via window.top.addFile(label, 'case', id).
+  Client-side text filter added (judgment call): the intake board's Unstaged
+  column holds ~700 non-closed cases — the seed workflow needs findability.
+═══════════════════════════════════════════════════════════════ -->
+
+<div class="pb-top">
+  <h2><i class="fa-solid fa-table-columns"></i> Pipeline Board</h2>
+  <select id="pb-template" onchange="onTemplateChange()"></select>
+  <input type="text" id="pb-filter" placeholder="Filter cards…" oninput="applyFilter()" style="width:160px">
+  <label><input type="checkbox" id="pb-closed" onchange="loadBoard()"> Include closed</label>
+  <div class="pb-spacer"></div>
+  <span class="pb-refreshed" id="pb-refreshed"></span>
+  <button onclick="loadBoard()"><i class="fa-solid fa-rotate"></i> Refresh</button>
+</div>
+
+<div id="pb-load"><i class="fa-solid fa-spinner fa-spin-pulse fa-2x"></i></div>
+<div id="pb-msg" style="display:none"></div>
+<div id="pb-board" style="display:none"></div>
+
+<script>
+let templates = [];      // active templates for the selector
+let board = null;        // latest GET /api/pipeline-board payload
+let sortables = [];      // live Sortable instances (destroyed each render)
+let dragging = false;    // suppress card-click firing right after a drag
+let advancing = false;   // one in-flight advance at a time
+
+const api = (...args) => window.top.apiSend(...args);
+
+// ── Boot — wait for the shell to expose apiSend (esign/dashboard idiom) ──
+// MUST stay below `const api`: the shell is already booted by the time this
+// iframe is created (it's lazy — built on tab open), so the first check
+// succeeds and init() runs synchronously, right here. A `const` declared
+// after this point would still be in its TDZ, and init()'s `await api(...)`
+// evaluates `api` before it suspends — throwing "Cannot access 'api' before
+// initialization" into init()'s catch, which reports it as a template error.
+(function waitForShell() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') return init();
+  } catch (_) { }
+  setTimeout(waitForShell, 100);
+})();
+
+async function init() {
+  try {
+    const d = await api('/api/pipeline-admin/templates', 'GET');
+    templates = (d.templates || []).filter(t => t.active);
+    if (!templates.length) {
+      showMsg('No active pipeline templates. Create one in Case Config → Pipelines.');
+      return;
+    }
+    E('pb-template').innerHTML = templates.map(t =>
+      `<option value="${escAttr(t.id)}">${escAttr(t.name)}</option>`
+    ).join('');
+    loadBoard();
+  } catch (err) {
+    showMsg('Error loading templates: ' + err.message);
+  }
+}
+
+function showMsg(text) {
+  E('pb-load').style.display = 'none';
+  E('pb-board').style.display = 'none';
+  E('pb-msg').style.display = '';
+  E('pb-msg').textContent = text;
+}
+
+function onTemplateChange() { loadBoard(); }
+
+async function loadBoard() {
+  const templateId = E('pb-template').value;
+  if (!templateId) return;
+  E('pb-load').style.display = '';
+  try {
+    const params = { template_id: templateId };
+    if (E('pb-closed').checked) params.include_closed = 1;
+    board = await api('/api/pipeline-board', 'GET', params);
+    render();
+    E('pb-refreshed').innerText = 'Updated ' +
+      new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  } catch (err) {
+    showMsg('Error loading board: ' + err.message);
+  }
+  E('pb-load').style.display = 'none';
+}
+
+// ── Render — full rebuild from `board`. Also the universal snap-back:
+//    Sortable only moved DOM; the model is untouched until the server says
+//    otherwise, so re-rendering restores every card to its true column. ──
+function render() {
+  sortables.forEach(s => { try { s.destroy(); } catch (_) { } });
+  sortables = [];
+
+  const host = E('pb-board');
+  E('pb-msg').style.display = 'none';
+  host.style.display = '';
+  host.innerHTML = '';
+
+  // Unstaged first, then active stages in stage_number order.
+  host.appendChild(buildColumn({
+    key: 'unstaged',
+    title: 'Unstaged',
+    clientLabel: 'No pipeline history yet',
+    cards: board.columns.unstaged || [],
+    isUnstaged: true,
+  }));
+  for (const s of (board.stages || [])) {
+    host.appendChild(buildColumn({
+      key: s.stage_key,
+      title: s.internal_label,
+      clientLabel: s.client_label || '',
+      cards: board.columns[s.stage_key] || [],
+      isUnstaged: false,
+    }));
+  }
+
+  hookSortables();
+  applyFilter();
+}
+
+function buildColumn({ key, title, clientLabel, cards, isUnstaged }) {
+  const col = document.createElement('div');
+  col.className = 'pb-col' + (isUnstaged ? ' pb-unstaged' : '');
+  col.dataset.stageKey = key;
+  col.innerHTML =
+    `<div class="pb-col-head">
+       <div class="pb-col-title">${escText(title)}
+         <span class="pb-col-count">${cards.length}</span></div>
+       <div class="pb-col-client">${escText(clientLabel)}</div>
+     </div>
+     <div class="pb-col-body" data-stage-key="${escAttr(key)}"></div>`;
+  const body = col.querySelector('.pb-col-body');
+  if (!cards.length) {
+    body.innerHTML = '<div class="pb-empty-col">— empty —</div>';
+  } else {
+    for (const c of cards) body.appendChild(buildCard(c, isUnstaged));
+  }
+  return col;
+}
+
+function buildCard(c, isUnstaged) {
+  const el = document.createElement('div');
+  el.className = 'pb-card';
+  el.dataset.caseId = c.case_id;
+
+  const name = c.primary_contact_name
+    ? escText(c.primary_contact_name)
+    : '<span class="pb-noname">(no primary contact)</span>';
+
+  const chips = [];
+  if (isUnstaged && c.case_status) {
+    chips.push(`<span class="pb-chip">${escText(c.case_status)}</span>`);
+  }
+  if (c.days_in_stage != null) {
+    const d = Number(c.days_in_stage);
+    const heat = d >= 30 ? ' hot' : d >= 14 ? ' warm' : '';
+    chips.push(`<span class="pb-chip pb-chip-days${heat}" title="Days in stage">${d}d</span>`);
+  }
+  // CDN-fail fallback: no window.Sortable → drag is dead, expose Move….
+  if (!window.Sortable) {
+    chips.push(`<button class="pb-move-btn" onclick="movePrompt(event, '${escAttr(c.case_id)}')">
+      <i class="fa-solid fa-arrow-right-arrow-left"></i> Move…</button>`);
+  }
+
+  el.innerHTML =
+    `<div class="pb-card-name">${name}</div>
+     <div class="pb-card-num">${escText(c.case_display)}</div>` +
+    (chips.length ? `<div class="pb-card-meta">${chips.join('')}</div>` : '');
+
+  el.addEventListener('click', (e) => {
+    if (dragging) return;
+    if (e.target.closest('.pb-move-btn')) return;
+    openCase(c);
+  });
+  return el;
+}
+
+// ── Open a case in the shell's file tabs (esign/dashboard relay idiom). ──
+function openCase(c) {
+  const label = c.primary_contact_name || c.case_display || c.case_id;
+  const t = window.top;
+  if (t && typeof t.addFile === 'function') {
+    t.addFile(label, 'case', c.case_id);
+  } else {
+    Toast.fire({ icon: 'info', title: 'Open this page inside YisraCase to jump to files' });
+  }
+}
+
+// ── Drag ──
+function hookSortables() {
+  if (!window.Sortable) return;   // fallback buttons already rendered
+  document.querySelectorAll('.pb-col-body').forEach(body => {
+    sortables.push(new Sortable(body, {
+      group: 'pb-cards',
+      sort: false,                // column ORDER isn't persisted — no intra-column shuffle
+      draggable: '.pb-card',
+      animation: 150,
+      onStart: () => { dragging = true; },
+      onEnd: (evt) => {
+        setTimeout(() => { dragging = false; }, 50);  // swallow the post-drag click
+        handleDrop(evt);
+      },
+    }));
+  });
+}
+
+function handleDrop(evt) {
+  const fromKey = evt.from.dataset.stageKey;
+  const toKey = evt.to.dataset.stageKey;
+  if (fromKey === toKey) return;                      // sort:false — nothing moved
+
+  const caseId = evt.item.dataset.caseId;
+  if (toKey === 'unstaged') {
+    Toast.fire({ icon: 'info', title: "Can't move to Unstaged — there is no un-advance" });
+    render();                                          // snap back
+    return;
+  }
+  confirmAndAdvance(caseId, toKey);
+}
+
+// ── Fallback path: per-card "Move…" select when SortableJS didn't load. ──
+async function movePrompt(e, caseId) {
+  e.stopPropagation();
+  const options = {};
+  for (const s of (board.stages || [])) options[s.stage_key] = s.internal_label;
+  const r = await Swal.fire({
+    title: 'Move to stage',
+    input: 'select',
+    inputOptions: options,
+    inputPlaceholder: 'Select a stage',
+    showCancelButton: true,
+  });
+  if (!r.isConfirmed || !r.value) return;
+  confirmAndAdvance(caseId, r.value);
+}
+
+// ── Confirm + advance. Success → re-fetch board; every other outcome
+//    (cancel / noop / 409 / error) → render() = snap back. ──
+async function confirmAndAdvance(caseId, stageKey) {
+  if (advancing) { render(); return; }
+
+  const card = findCard(caseId);
+  const stage = (board.stages || []).find(s => s.stage_key === stageKey);
+  const stageLabel = stage ? stage.internal_label : stageKey;
+  const who = card ? (card.primary_contact_name || card.case_display || caseId) : caseId;
+
+  const ok = await Swal.fire({
+    title: 'Advance pipeline',
+    html: `<p>Advance <b>${escText(who)}</b> to <b>${escText(stageLabel)}</b>?</p>`,
+    input: 'text',
+    inputLabel: 'Note (optional)',
+    inputAttributes: { maxlength: 255 },
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, advance',
+    cancelButtonText: 'Cancel',
+  });
+  if (!ok.isConfirmed) { render(); return; }          // snap back
+
+  const note = (ok.value || '').trim();
+  advancing = true;
+  try {
+    const payload = await api(
+      `/api/cases/${caseId}/pipeline/advance`, 'POST',
+      note ? { stage: stageKey, note } : { stage: stageKey }
+    );
+    if (payload.noop) {
+      Toast.fire({ icon: 'info', title: 'Already at this stage' });
+      render();                                        // snap back
+    } else {
+      Toast.fire({ icon: 'success', title: `Advanced to ${stageLabel}` });
+      await loadBoard();                               // authoritative refresh
+    }
+  } catch (err) {
+    if (err.status === 409) {
+      Toast.fire({ icon: 'error', title: 'Busy, try again' });
+    } else {
+      Toast.fire({ icon: 'error', title: 'Error', text: err.message });
+    }
+    render();                                          // snap back
+  }
+  advancing = false;
+}
+
+function findCard(caseId) {
+  for (const key of Object.keys(board.columns || {})) {
+    const hit = (board.columns[key] || []).find(c => c.case_id === caseId);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// ── Client-side text filter (view-only; counts stay totals). ──
+function applyFilter() {
+  const q = E('pb-filter').value.trim().toLowerCase();
+  document.querySelectorAll('.pb-card').forEach(el => {
+    el.style.display = (!q || el.textContent.toLowerCase().includes(q)) ? '' : 'none';
+  });
+}
+</script>
+</body>
+</html>
