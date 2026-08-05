@@ -3076,6 +3076,80 @@ async function initAuth() {
     }
 
     function addFile(fileName, fileType, fileID) {
+      // `fileID` arrives as either "123" or "123&tab=docs" (see quickPick), so
+      // split the sub-tab back out before anything else — the dedup guard below
+      // and the fileSpec restore token both need the parts.
+      //
+      // ID SHAPES — do not "simplify" this to /^\d+$/:
+      //   contact_id  numeric        (1405)
+      //   case_id     [A-Za-z0-9]{8} (DnmGvcrB) — crypto.randomBytes(6) →
+      //               base64url, sliced to 8, with '-' and '_' rejected by the
+      //               generator's do/while. See generateCaseId() in
+      //               routes/api.intake.js:72.
+      // A digits-only guard here silently drops every case from the workspace URL,
+      // which is exactly the bug this line replaces.
+      //
+      // The charset also has to exclude the fileSpec delimiters — ',' between
+      // tokens and '~' before a sub-tab — and [A-Za-z0-9] does.
+      const _rawId = String(fileID);
+      const _id = _rawId.split("&")[0];
+      const _sub = /(?:^|&)tab=([A-Za-z0-9_-]+)/.exec(_rawId);
+      const _kind =
+        fileType === "case" ? "c"
+        : fileType === "client" || fileType === "contact" ? "p"
+        : fileType === "bill" ? "b"
+        : "";
+
+      // ── Dedup: focus an already-open file instead of opening a twin ──────
+      // Match on kind+id only — a file opened earlier via ?tab=docs and a plain
+      // re-open of the same entity are the same file, so the ~sub suffix is
+      // stripped from the stored spec before comparing.
+      //
+      // On a hit: focus the existing view, honour a requested sub-tab, and pull
+      // fresh data through the entity page's own refreshEntityData() — the same
+      // hook the form-saved path uses, whose per-form dirty guard (YCForm.refresh)
+      // means unsaved edits are never clobbered. If the twin's iframe hasn't
+      // finished booting yet, both calls no-op: it's mid-load with fresh data
+      // anyway.
+      if (_kind && /^[A-Za-z0-9_-]+$/.test(_id)) {
+        const _base = _kind + _id;
+        const _twin = Array.from(
+          document.querySelectorAll("#tabOpenFiles .file-button")
+        ).find((b) => (b.dataset.fileSpec || "").split("~")[0] === _base);
+        if (_twin) {
+          // Keep the sidebar label current — the entity may have been renamed
+          // since the file was first opened. The updated title also flows into
+          // the sessionStorage label cache via openMainTab → syncWorkspaceUrl →
+          // currentOpenFilesUrl (which reads btn.title).
+          const _span = _twin.querySelector("span");
+          if (_span && fileName) {
+            _span.textContent = fileName;
+            _twin.title = fileName;
+            _twin.name = fileName;
+          }
+          openMainTab(_twin.dataset.fileId);
+          const _div = E(_twin.dataset.fileId);
+          const _w = _div && _div.querySelector("iframe")?.contentWindow;
+          try {
+            if (_sub && _w?.document) {
+              // Mirror the entity pages' ?tab= boot convention (`${tab}Button`,
+              // see case.html initial load). Guard on .tab class — contact.html
+              // has non-tab buttons whose ids match the convention by accident
+              // (tabLogButton / tabTasksButton are SEARCH buttons; clicking
+              // them would fire a search, not switch tabs).
+              const _btn = _w.document.getElementById(_sub[1] + "Button");
+              if (_btn && _btn.classList.contains("tab")) _btn.click();
+            }
+            if (typeof _w?.refreshEntityData === "function") {
+              Promise.resolve(_w.refreshEntityData()).catch((err) =>
+                console.warn("[addFile] refresh on refocus failed:", err)
+              );
+            }
+          } catch (_) { /* cross-frame hiccup — file is focused, good enough */ }
+          return _twin.dataset.fileId;
+        }
+      }
+
       const fileButtonContainer = E("tabOpenFiles");
       const fileButton = document.createElement("div");
       const file = document.createElement("div");
@@ -3100,32 +3174,14 @@ async function initAuth() {
       fileButton.title = fileName;
 
       // Restore token, read back by currentOpenFilesUrl(). Compact on purpose —
-      // it ends up in the address bar. `fileID` arrives as either "123" or
-      // "123&tab=docs" (see quickPick), so split the sub-tab back out.
+      // it ends up in the address bar.
       //
       // IDs ONLY. Never the name: a client's name in the query string would leak
       // to any external site they click through to, via the Referer header. Names
       // ride in a sessionStorage label cache instead — see currentOpenFilesUrl().
       //
-      // ID SHAPES — do not "simplify" this to /^\d+$/:
-      //   contact_id  numeric        (1405)
-      //   case_id     [A-Za-z0-9]{8} (DnmGvcrB) — crypto.randomBytes(6) →
-      //               base64url, sliced to 8, with '-' and '_' rejected by the
-      //               generator's do/while. See generateCaseId() in
-      //               routes/api.intake.js:72.
-      // A digits-only guard here silently drops every case from the workspace URL,
-      // which is exactly the bug this line replaces.
-      //
-      // The charset also has to exclude the delimiters we use below — ',' between
-      // tokens and '~' before a sub-tab — and [A-Za-z0-9] does.
-      const _rawId = String(fileID);
-      const _id = _rawId.split("&")[0];
-      const _sub = /(?:^|&)tab=([A-Za-z0-9_-]+)/.exec(_rawId);
-      const _kind =
-        fileType === "case" ? "c"
-        : fileType === "client" || fileType === "contact" ? "p"
-        : fileType === "bill" ? "b"
-        : "";
+      // _kind/_id/_sub are parsed at the top of this function — the dedup guard
+      // needs them before the button exists. ID-shape rationale lives up there.
       if (_kind && /^[A-Za-z0-9_-]+$/.test(_id)) {
         fileButton.dataset.fileSpec = _kind + _id + (_sub ? "~" + _sub[1] : "");
       }
@@ -3162,6 +3218,7 @@ async function initAuth() {
       E('sbOpenFiles').classList.remove('sb-collapsed');
       E('tabOpenFiles').style.display = '';
       openMainTab(file.id);
+      return file.id;
     }
 
     function updateOpenFilesUI() {
@@ -3390,8 +3447,12 @@ async function initAuth() {
 
       const divIds = found.map((f) => {
         if (!f) return null;
-        addFile(f.name, f.type, f.id + (f.sub ? `&tab=${f.sub}` : ""));
-        return "file-div" + (fileCounter - 1); // addFile() increments after use
+        // addFile() returns the target div id — the freshly created one, or, if
+        // the spec carried duplicate tokens (a pre-dedup URL), the already-open
+        // twin it focused instead. Using the return value keeps ?open=file:<n>
+        // pointing at the right entity in both cases; the old
+        // fileCounter-1 arithmetic drifted whenever a dedup skipped a create.
+        return addFile(f.name, f.type, f.id + (f.sub ? `&tab=${f.sub}` : ""));
       });
 
       const missing = found.filter((f) => !f).length;
