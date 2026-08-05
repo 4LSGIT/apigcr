@@ -40,11 +40,20 @@
 -- only pre-deploy effect is that a fresh staff login can SELECT users.roles
 -- once D4 deploys (column must exist first).
 --
--- ── IDEMPOTENT ──────────────────────────────────────────────────────────────
--- MySQL 8.4 has NO "ADD COLUMN IF NOT EXISTS", so every ALTER is guarded by
--- an information_schema check via PREPARE/EXECUTE. CREATE TABLE IF NOT
--- EXISTS for the two new tables. The roles backfill is guarded by
--- `AND roles = ''` so re-runs never clobber later manual role edits.
+-- ── IDEMPOTENT / RE-RUN POSTURE ─────────────────────────────────────────────
+-- The ALTERs are PLAIN — MySQL 8.4 has no "ADD COLUMN IF NOT EXISTS", and
+-- the guarded PREPARE/EXECUTE pattern this file originally used SILENTLY
+-- NO-OPS in the admin DB console: the console executes each statement on a
+-- separate pooled connection, so session variables (@ddl) and prepared
+-- handlers do not survive between statements (incident, 2026-08-05 — the
+-- first run half-applied). CONVENTION for console-run migrations: every
+-- statement must be single-statement-self-contained — no session vars, no
+-- PREPARE/EXECUTE, no cross-statement transaction assumptions.
+-- Re-run posture: on an already-migrated DB the three ALTERs fail with
+-- "Duplicate column name" — HARMLESS, and itself the already-applied
+-- signal; everything else is truly idempotent (CREATE TABLE IF NOT EXISTS;
+-- backfill guarded by `AND roles = ''` so re-runs never clobber later
+-- manual role edits).
 -- app_settings inserts use INSERT ... ON DUPLICATE KEY UPDATE with `value`
 -- deliberately absent from the UPDATE list (house pattern — see
 -- 2026-07-19_esign_phase1c.sql): re-running refreshes metadata but never
@@ -75,39 +84,21 @@
 -- ── 1. contacts.portal_enabled ──────────────────────────────────────────────
 -- Default 1: every contact can use the portal unless staff disables them.
 
-SET @ddl = (SELECT IF(COUNT(*) = 0,
-  'ALTER TABLE contacts ADD COLUMN portal_enabled tinyint(1) NOT NULL DEFAULT 1',
-  'SELECT 1')
-  FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'contacts'
-    AND COLUMN_NAME = 'portal_enabled');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
+ALTER TABLE contacts ADD COLUMN portal_enabled tinyint(1) NOT NULL DEFAULT 1;
 
 
 -- ── 2. contacts.portal_session_version ──────────────────────────────────────
 -- Portal JWTs carry ver = this value at sign time; requireAuth rejects any
 -- mismatch. Bumping it is the all-device revoke for one contact.
 
-SET @ddl = (SELECT IF(COUNT(*) = 0,
-  'ALTER TABLE contacts ADD COLUMN portal_session_version int NOT NULL DEFAULT 1',
-  'SELECT 1')
-  FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'contacts'
-    AND COLUMN_NAME = 'portal_session_version');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
+ALTER TABLE contacts ADD COLUMN portal_session_version int NOT NULL DEFAULT 1;
 
 
 -- ── 3. users.roles ──────────────────────────────────────────────────────────
 -- SET column: a user may hold several roles. mysql2 returns SET values as a
 -- comma-joined string; auth.login splits it into the roles JWT claim.
 
-SET @ddl = (SELECT IF(COUNT(*) = 0,
-  'ALTER TABLE users ADD COLUMN roles SET(''it'',''admin'',''staff'',''attorney'',''automation'') NOT NULL DEFAULT ''''',
-  'SELECT 1')
-  FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'
-    AND COLUMN_NAME = 'roles');
-PREPARE s FROM @ddl; EXECUTE s; DEALLOCATE PREPARE s;
+ALTER TABLE users ADD COLUMN roles SET('it','admin','staff','attorney','automation') NOT NULL DEFAULT '';
 
 
 -- ── 4. Roles backfill ───────────────────────────────────────────────────────
