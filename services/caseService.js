@@ -953,6 +953,8 @@ async function listCaseWorkflows(db, caseId, {
   if (clientIds === null) return null;
   if (!clientIds.length)  return { workflows: [], total: 0, active_total: 0 };
 
+  // 'held' (intercept-parked, capture slice) is excluded on purpose — it's an
+  // operator diagnostic state, not client automation in flight.
   const NON_TERMINAL = ['active', 'processing', 'delayed'];
 
   const whereParts  = ['we.contact_id IN (?)'];

@@ -337,7 +337,7 @@ router.get('/api/contacts/:id/workflows', jwtOrApiKey, async (req, res) => {
     const offset = Math.max(0, parseInt(req.query.offset) || 0);
 
     const VALID_STATUSES = [
-      'active', 'processing', 'delayed',
+      'active', 'processing', 'delayed', 'held',
       'completed', 'completed_with_errors', 'failed', 'cancelled',
     ];
     const status = req.query.status || null;

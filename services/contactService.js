@@ -2589,6 +2589,8 @@ async function listContactWorkflows(db, contactId, {
   );
   if (!row) return null;
 
+  // 'held' (intercept-parked, capture slice) is excluded on purpose — it's an
+  // operator diagnostic state, not client automation in flight.
   const NON_TERMINAL = ['active', 'processing', 'delayed'];
 
   const whereParts  = ['we.contact_id = ?'];
