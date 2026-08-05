@@ -1,5 +1,5 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-02T11:26:14.635Z
+-- Generated: 2026-08-05T22:40:15.501Z
 -- Source: POST /admin/db/schema/save-to-ref
 -- Contains schema only (no data, no database identifier).
 
@@ -307,6 +307,7 @@ CREATE TABLE `campaigns` (
   `subject` text COLLATE utf8mb4_general_ci,
   `body` mediumtext COLLATE utf8mb4_general_ci NOT NULL,
   `attachment_url` varchar(500) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `include_signature` tinyint(1) NOT NULL DEFAULT '0',
   `created` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `status` enum('draft','scheduled','sending','sent','failed','partial_fail','canceled') COLLATE utf8mb4_general_ci DEFAULT 'draft',
   `scheduled_time` datetime DEFAULT NULL,
@@ -367,6 +368,27 @@ DELIMITER ;
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `case_stage_log`
+--
+
+DROP TABLE IF EXISTS `case_stage_log`;
+CREATE TABLE `case_stage_log` (
+  `id` bigint unsigned NOT NULL,
+  `case_id` varchar(20) COLLATE utf8mb4_general_ci NOT NULL,
+  `template_id` int unsigned DEFAULT NULL,
+  `stage_id` int unsigned DEFAULT NULL,
+  `stage_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
+  `case_stage` enum('Open','Pending','Filed','Concluded','Closed') COLLATE utf8mb4_general_ci NOT NULL,
+  `status_label` varchar(100) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `entered_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `entered_by` tinyint DEFAULT NULL,
+  `source` enum('manual','system','import') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'manual',
+  `note` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `cases`
 --
 
@@ -411,7 +433,7 @@ CREATE TABLE `cases` (
   `case_ISSN_form` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_form` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `case_341_form` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `case_source` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_source` varchar(40) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_source_ref` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_dropbox` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `case_primary_reason` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
@@ -750,7 +772,9 @@ CREATE TABLE `contacts` (
   `contact_updated` timestamp NULL DEFAULT NULL,
   `contact_sms_optout` tinyint(1) NOT NULL DEFAULT '0',
   `contact_email_optout` tinyint(1) NOT NULL DEFAULT '0',
-  `booking_token` char(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'opaque link-prefill id'
+  `booking_token` char(32) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'opaque link-prefill id',
+  `portal_enabled` tinyint(1) NOT NULL DEFAULT '1',
+  `portal_session_version` int NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -1077,7 +1101,10 @@ CREATE TABLE `email_credentials` (
   `smtp_secure` tinyint(1) NOT NULL DEFAULT '1',
   `provider` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'smtp',
   `credential_id` int DEFAULT NULL,
-  `from_name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL
+  `from_name` varchar(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `signature_html` mediumtext COLLATE utf8mb4_general_ci,
+  `signature_text` text COLLATE utf8mb4_general_ci,
+  `owner_user` tinyint DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -1152,6 +1179,7 @@ DROP TABLE IF EXISTS `email_ingest_rule_actions`;
 CREATE TABLE `email_ingest_rule_actions` (
   `id` int unsigned NOT NULL,
   `rule_id` int unsigned NOT NULL,
+  `name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `position` int NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `action_type` enum('workflow','sequence','hook','internal_function','http') COLLATE utf8mb4_general_ci NOT NULL,
@@ -1769,6 +1797,7 @@ DROP TABLE IF EXISTS `phone_ingest_rule_actions`;
 CREATE TABLE `phone_ingest_rule_actions` (
   `id` int unsigned NOT NULL,
   `rule_id` int unsigned NOT NULL,
+  `name` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `position` int NOT NULL DEFAULT '0',
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `action_type` enum('workflow','sequence','hook','internal_function','http') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
@@ -1836,6 +1865,90 @@ CREATE TABLE `phone_log_suppressions` (
   `last_modified_by` int DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `pipeline_stages`
+--
+
+DROP TABLE IF EXISTS `pipeline_stages`;
+CREATE TABLE `pipeline_stages` (
+  `id` int unsigned NOT NULL,
+  `template_id` int unsigned NOT NULL,
+  `stage_number` int NOT NULL,
+  `stage_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
+  `internal_label` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `client_label` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `case_stage` enum('Open','Pending','Filed','Concluded','Closed') COLLATE utf8mb4_general_ci NOT NULL,
+  `client_visible` tinyint(1) NOT NULL DEFAULT '1',
+  `is_terminal` tinyint(1) NOT NULL DEFAULT '0',
+  `default_rec` varchar(128) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `config` json DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `pipeline_templates`
+--
+
+DROP TABLE IF EXISTS `pipeline_templates`;
+CREATE TABLE `pipeline_templates` (
+  `id` int unsigned NOT NULL,
+  `name` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `case_type` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `case_subtype` varchar(40) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `role` enum('intake','case') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'case',
+  `is_default` tinyint(1) NOT NULL DEFAULT '0',
+  `description` text COLLATE utf8mb4_general_ci,
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `portal_access_log`
+--
+
+DROP TABLE IF EXISTS `portal_access_log`;
+CREATE TABLE `portal_access_log` (
+  `id` int unsigned NOT NULL,
+  `contact_id` int unsigned DEFAULT NULL,
+  `case_id` varchar(8) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `route` varchar(255) COLLATE utf8mb4_general_ci NOT NULL,
+  `method` varchar(8) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+  `status` smallint DEFAULT NULL,
+  `event` varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `meta` json DEFAULT NULL,
+  `ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `portal_login_pins`
+--
+
+DROP TABLE IF EXISTS `portal_login_pins`;
+CREATE TABLE `portal_login_pins` (
+  `id` int unsigned NOT NULL,
+  `contact_id` int unsigned NOT NULL,
+  `channel` enum('sms','email') COLLATE utf8mb4_general_ci NOT NULL,
+  `destination` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `pin_hash` char(64) COLLATE utf8mb4_general_ci NOT NULL,
+  `expires_at` datetime NOT NULL,
+  `attempts` tinyint unsigned NOT NULL DEFAULT '0',
+  `consumed_at` datetime DEFAULT NULL,
+  `ip` varchar(45) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2048,9 +2161,10 @@ CREATE TABLE `scheduled_jobs` (
   `id` bigint NOT NULL,
   `type` enum('one_time','recurring','workflow_resume','sequence_step','hook_retry') COLLATE utf8mb4_general_ci NOT NULL,
   `scheduled_time` datetime NOT NULL,
-  `status` enum('pending','running','completed','failed') COLLATE utf8mb4_general_ci DEFAULT 'pending',
+  `status` enum('pending','running','completed','failed','cancelled') COLLATE utf8mb4_general_ci DEFAULT 'pending',
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `name` varchar(200) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `description` text COLLATE utf8mb4_general_ci,
   `data` json NOT NULL,
   `recurrence_rule` varchar(100) COLLATE utf8mb4_general_ci DEFAULT NULL,
   `workflow_execution_id` bigint DEFAULT NULL,
@@ -2229,7 +2343,10 @@ CREATE TABLE `sequence_templates` (
   `active` tinyint(1) NOT NULL DEFAULT '1',
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  `test_input` json DEFAULT NULL
+  `test_input` json DEFAULT NULL,
+  `capture_mode` enum('off','capturing') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'off',
+  `captured_input` json DEFAULT NULL,
+  `captured_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
@@ -2639,6 +2756,7 @@ CREATE TABLE `users` (
   `does_appts` tinyint(1) NOT NULL DEFAULT '0',
   `freebusy_calendar_ids` json DEFAULT NULL,
   `user_gcal_id` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL COMMENT 'provider secondary calendar id (firm Google account)',
+  `roles` set('it','admin','staff','attorney','automation') COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
   CONSTRAINT `chk_does_appts_requires_phone` CHECK (((`does_appts` = 0) or (`default_phone` is not null)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -2735,7 +2853,7 @@ CREATE TABLE `workflow_executions` (
   `id` bigint NOT NULL,
   `workflow_id` int NOT NULL,
   `contact_id` int DEFAULT NULL,
-  `status` enum('pending','active','processing','delayed','completed','completed_with_errors','failed','cancelled') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
+  `status` enum('pending','active','processing','delayed','completed','completed_with_errors','failed','cancelled','held') COLLATE utf8mb4_unicode_ci DEFAULT 'pending',
   `init_data` json DEFAULT NULL,
   `variables` json DEFAULT NULL,
   `current_step_number` int DEFAULT '1',
@@ -2758,6 +2876,8 @@ CREATE TABLE `workflow_steps` (
   `workflow_id` int NOT NULL,
   `step_number` int NOT NULL,
   `type` enum('webhook','internal_function','custom_code') COLLATE utf8mb4_unicode_ci NOT NULL,
+  `label` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `note` text COLLATE utf8mb4_unicode_ci,
   `config` json NOT NULL,
   `error_policy` json DEFAULT NULL,
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
@@ -2779,7 +2899,10 @@ CREATE TABLE `workflows` (
   `created_at` datetime DEFAULT CURRENT_TIMESTAMP,
   `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `default_contact_id_from` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `test_input` json DEFAULT NULL
+  `test_input` json DEFAULT NULL,
+  `capture_mode` enum('off','capturing','intercept') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'off',
+  `captured_input` json DEFAULT NULL,
+  `captured_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
@@ -2895,6 +3018,14 @@ ALTER TABLE `case_relate`
   ADD PRIMARY KEY (`case_relate_id`),
   ADD UNIQUE KEY `uc_case_relate_unique` (`case_relate_case_id`,`case_relate_client_id`,`case_relate_type`),
   ADD KEY `idx_case_relate_client` (`case_relate_client_id`,`case_relate_case_id`);
+
+--
+-- Indexes for table `case_stage_log`
+--
+ALTER TABLE `case_stage_log`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_case_time` (`case_id`,`entered_at`),
+  ADD KEY `idx_stage` (`stage_id`);
 
 --
 -- Indexes for table `cases`
@@ -3305,6 +3436,37 @@ ALTER TABLE `phone_log_suppressions`
   ADD KEY `idx_active` (`active`);
 
 --
+-- Indexes for table `pipeline_stages`
+--
+ALTER TABLE `pipeline_stages`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_template_key` (`template_id`,`stage_key`),
+  ADD KEY `idx_template_order` (`template_id`,`stage_number`);
+
+--
+-- Indexes for table `pipeline_templates`
+--
+ALTER TABLE `pipeline_templates`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_type_subtype` (`case_type`,`case_subtype`),
+  ADD KEY `idx_role_active` (`role`,`active`);
+
+--
+-- Indexes for table `portal_access_log`
+--
+ALTER TABLE `portal_access_log`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_pal_contact` (`contact_id`,`created_at`),
+  ADD KEY `idx_pal_event` (`event`);
+
+--
+-- Indexes for table `portal_login_pins`
+--
+ALTER TABLE `portal_login_pins`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_pins_contact` (`contact_id`,`created_at`);
+
+--
 -- Indexes for table `query_log`
 --
 ALTER TABLE `query_log`
@@ -3385,7 +3547,8 @@ ALTER TABLE `rw_scratch`
 ALTER TABLE `scheduled_jobs`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_scheduled_pending` (`status`,`scheduled_time`),
-  ADD KEY `idx_seq_enrollment` (`sequence_enrollment_id`);
+  ADD KEY `idx_seq_enrollment` (`sequence_enrollment_id`),
+  ADD KEY `idx_sj_wf_exec` (`workflow_execution_id`,`type`,`status`);
 
 --
 -- Indexes for table `seq_steps`
@@ -3691,6 +3854,12 @@ ALTER TABLE `case_relate`
   MODIFY `case_relate_id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `case_stage_log`
+--
+ALTER TABLE `case_stage_log`
+  MODIFY `id` bigint unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `checkitems`
 --
 ALTER TABLE `checkitems`
@@ -3976,6 +4145,30 @@ ALTER TABLE `phone_lines`
 -- AUTO_INCREMENT for table `phone_log_suppressions`
 --
 ALTER TABLE `phone_log_suppressions`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `pipeline_stages`
+--
+ALTER TABLE `pipeline_stages`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `pipeline_templates`
+--
+ALTER TABLE `pipeline_templates`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `portal_access_log`
+--
+ALTER TABLE `portal_access_log`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `portal_login_pins`
+--
+ALTER TABLE `portal_login_pins`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
