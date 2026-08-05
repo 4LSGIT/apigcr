@@ -87,6 +87,25 @@
   .name-row input { flex: 1 1 auto; }
   .saved-actions { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
 
+  /* Import-cURL modal */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+                    display: flex; align-items: flex-start; justify-content: center;
+                    padding: 60px 16px; z-index: 50; }
+  .modal-backdrop[hidden] { display: none; }   /* display:flex would beat [hidden] */
+  .modal { background: #141821; border: 1px solid #2a3040; border-radius: 8px;
+           padding: 14px; width: min(820px, 100%); max-height: 80vh; overflow: auto;
+           box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+  .modal h3 { margin: 0 0 8px 0; font-size: 11px; text-transform: uppercase;
+              letter-spacing: 0.6px; color: #8a93ad; display: flex;
+              justify-content: space-between; align-items: center; }
+  .modal textarea { min-height: 150px; font-size: 12px; }
+  .curl-preview { margin-top: 10px; font-size: 12px; }
+  .curl-preview table { width: 100%; border-collapse: collapse; font-family: ui-monospace, monospace; }
+  .curl-preview th { text-align: left; color: #8a93ad; font-weight: 500; padding: 3px 6px;
+                     white-space: nowrap; vertical-align: top; width: 110px; }
+  .curl-preview td { padding: 3px 6px; word-break: break-word; }
+  .curl-preview .kv { color: #b3bacb; }
+
   @media (max-width: 1300px) {
     .app { grid-template-columns: 200px 1fr; }
     .pane.response-pane { grid-column: 1 / -1; }
@@ -194,6 +213,7 @@
 
     <div class="row" style="margin-top: 10px;">
       <button id="btnCurl">Copy as cURL</button>
+      <button id="btnCurlImport">Import cURL</button>
       <button id="btnClear">Clear</button>
     </div>
   </div>
@@ -255,6 +275,31 @@
     </thead>
     <tbody id="historyBody"></tbody>
   </table>
+</div>
+
+<!-- Import cURL modal -->
+<div class="modal-backdrop" id="curlModal" hidden>
+  <div class="modal">
+    <h3>
+      Import cURL
+      <button id="btnCurlClose" class="small">✕</button>
+    </h3>
+    <div class="muted" style="margin-bottom:6px;">
+      Paste a curl command (Chrome/Firefox “Copy as cURL”, or hand-written).
+      Bash, PowerShell and cmd line-continuations are all accepted.
+    </div>
+    <textarea id="curlInput" spellcheck="false"
+      placeholder="curl 'https://api.example.com/v1/things?limit=5' \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  --data-raw '{&quot;name&quot;:&quot;test&quot;}'"></textarea>
+    <div class="curl-preview" id="curlPreview"></div>
+    <div class="row" style="margin-top: 10px;">
+      <button id="btnCurlApply" class="primary" disabled>Import into panel</button>
+      <button id="btnCurlCancel">Cancel</button>
+      <span class="muted">Esc closes · ⌘/Ctrl+Enter imports</span>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -771,6 +816,10 @@ $("btnCurl").addEventListener("click", () => {
   if (body && method !== "GET" && method !== "HEAD") {
     lines.push(`  --data ${shellQuote(body)}`);
   }
+  // Emit the panel options too, so Copy → Import round-trips faithfully.
+  if ($("followRedirects").checked) lines.push("  -L");
+  const tmo = Number($("timeoutMs").value);
+  if (tmo && tmo !== 30000) lines.push(`  --max-time ${Math.round(tmo / 1000)}`);
   let out = lines.join(" \\\n");
   if (credId) {
     out = `# NOTE: credential #${credId} was injected by YC and is NOT included here.\n# Add the appropriate -H 'Authorization: ...' yourself.\n` + out;
@@ -781,6 +830,434 @@ $("btnCurl").addEventListener("click", () => {
   const orig = btn.textContent;
   btn.textContent = "Copied!";
   setTimeout(() => { btn.textContent = orig; }, 1200);
+});
+
+// ── import cURL ─────────────────────────────────────────────────────────────
+// Entirely client-side: tokenize the command with bash-ish quoting rules, map
+// the flags onto panel fields, and surface everything we could NOT represent as
+// a warning instead of silently dropping it.
+
+// Shell tokenizer. Handles '…', "…" (with \" \\ \$ \` escapes), $'…' (ANSI-C),
+// bare backslash escapes, and bash \ / cmd ^ / PowerShell ` line continuations.
+function tokenizeCurl(input) {
+  let s = String(input || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/^[ \t]*#[^\n]*$/gm, "");   // drop comment lines (our own export adds them)
+  // Chrome's "Copy as cURL (cmd)" caret-escapes shell metacharacters (^{ ^& ^\
+  // ^" …) and uses "^\n" for continuations. cmd strips those carets before the
+  // program sees the argument, so do the same — but only when the input really
+  // looks like cmd output, so a literal ^ in a bash body survives.
+  if (/\^["^\n&{}|<>%]/.test(s)) {
+    s = s.replace(/\^\n/g, "").replace(/\^([\s\S])/g, "$1");
+  }
+  s = s
+    .replace(/\\\n/g, " ")
+    .replace(/\^\n/g, " ")
+    .replace(/`\n/g, " ");
+  const tokens = [];
+  let cur = "", has = false, i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "'") {
+      has = true; i++;
+      while (i < s.length && s[i] !== "'") cur += s[i++];
+      i++;
+    } else if (c === '"') {
+      has = true; i++;
+      while (i < s.length && s[i] !== '"') {
+        if (s[i] === "\\" && i + 1 < s.length && '"\\$`'.includes(s[i + 1])) { cur += s[i + 1]; i += 2; }
+        else cur += s[i++];
+      }
+      i++;
+    } else if (c === "$" && s[i + 1] === "'") {
+      has = true; i += 2;
+      while (i < s.length && s[i] !== "'") {
+        if (s[i] === "\\" && i + 1 < s.length) {
+          const n = s[i + 1];
+          cur += n === "n" ? "\n" : n === "t" ? "\t" : n === "r" ? "\r" : n;
+          i += 2;
+        } else cur += s[i++];
+      }
+      i++;
+    } else if (c === "\\" && i + 1 < s.length) {
+      has = true; cur += s[i + 1]; i += 2;
+    } else if (/\s/.test(c)) {
+      if (has) { tokens.push(cur); cur = ""; has = false; }
+      i++;
+    } else {
+      has = true; cur += c; i++;
+    }
+  }
+  if (has) tokens.push(cur);
+  return tokens;
+}
+
+// Options that consume a value (long-name canonical form).
+const CURL_VALUE_OPTS = new Set([
+  "request", "header", "data", "data-raw", "data-binary", "data-ascii",
+  "data-urlencode", "json", "form", "form-string", "user", "user-agent",
+  "referer", "cookie", "cookie-jar", "url", "max-time", "connect-timeout",
+  "output", "proxy", "proxy-user", "upload-file", "write-out", "dump-header",
+  "cert", "key", "cacert", "range", "config", "retry", "retry-delay",
+  "retry-max-time", "limit-rate", "interface", "resolve", "oauth2-bearer",
+  "aws-sigv4", "unix-socket", "local-port", "hostpubmd5", "header-file",
+]);
+// Known no-value options — listed only so we don't warn about them.
+const CURL_BOOL_OPTS = new Set([
+  "location", "location-trusted", "insecure", "compressed", "silent",
+  "show-error", "include", "verbose", "fail", "fail-with-body", "globoff",
+  "head", "get", "no-buffer", "http1.0", "http1.1", "http2",
+  "http2-prior-knowledge", "http3", "tlsv1.2", "tlsv1.3", "ipv4", "ipv6",
+  "raw", "path-as-is", "no-keepalive", "progress-bar", "remote-name",
+  "remote-header-name", "junk-session-cookies", "netrc", "anyauth", "basic",
+  "digest", "ntlm", "negotiate", "tcp-nodelay", "disable", "trace-time",
+  "styled-output", "proxytunnel", "no-progress-meter",
+]);
+const CURL_SHORT_MAP = {
+  X: "request", H: "header", d: "data", F: "form", u: "user", A: "user-agent",
+  e: "referer", b: "cookie", c: "cookie-jar", o: "output", m: "max-time",
+  T: "upload-file", x: "proxy", U: "proxy-user", w: "write-out",
+  D: "dump-header", E: "cert", r: "range", K: "config",
+  L: "location", k: "insecure", I: "head", G: "get", s: "silent",
+  S: "show-error", i: "include", v: "verbose", f: "fail", g: "globoff",
+  N: "no-buffer", O: "remote-name", J: "remote-header-name",
+  j: "junk-session-cookies", n: "netrc", p: "proxytunnel",
+  "#": "progress-bar", "4": "ipv4", "6": "ipv6",
+};
+// Dropped on import: the proxy sets them, or they break response decoding.
+const CURL_DROP_HEADERS = new Set([
+  "host", "content-length", "connection", "accept-encoding", "transfer-encoding",
+]);
+const HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+const hasHeaderKey = (obj, name) =>
+  Object.keys(obj).some(k => k.toLowerCase() === name.toLowerCase());
+
+function looksLikeUrl(s) {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(s) || /^[\w.-]+\.[a-z]{2,}(?::\d+)?(?:[/?#]|$)/i.test(s);
+}
+
+function b64(s) {
+  try { return btoa(unescape(encodeURIComponent(s))); } catch { return btoa(s); }
+}
+
+function parseCurl(text) {
+  const out = {
+    method: "", url: "", headers: {}, contentType: "", body: "",
+    followRedirects: false, timeoutMs: null, warnings: [], notes: [],
+  };
+  if (/\b(Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b/i.test(text)) {
+    out.warnings.push('This looks like PowerShell Invoke-WebRequest syntax, not cURL. ' +
+                      'In the browser devtools use "Copy as cURL (bash)".');
+  }
+  const tokens = tokenizeCurl(text);
+  if (!tokens.length) return out;
+
+  const cmdIdx = tokens.findIndex(t => /(^|[\\/])curl(\.exe)?$/i.test(t));
+  if (cmdIdx === -1) out.warnings.push('No "curl" token found — parsed the whole input as arguments.');
+  const args = tokens.slice(cmdIdx + 1);
+
+  // ── pass 1: normalize argv into {name, value} pairs ──────────────────────
+  const opts = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--") {
+      for (const t of args.slice(i + 1)) opts.push({ name: "", value: t });
+      break;
+    }
+    if (a.startsWith("--")) {
+      let name = a.slice(2), value = null;
+      const eq = name.indexOf("=");
+      if (eq !== -1) { value = name.slice(eq + 1); name = name.slice(0, eq); }
+      if (!CURL_VALUE_OPTS.has(name) && !CURL_BOOL_OPTS.has(name)) {
+        out.warnings.push(`Unknown option --${name} ignored.`);
+        continue;
+      }
+      if (value === null && CURL_VALUE_OPTS.has(name)) {
+        if (i + 1 >= args.length) { out.warnings.push(`--${name} is missing its value.`); continue; }
+        value = args[++i];
+      }
+      opts.push({ name, value });
+    } else if (a.startsWith("-") && a.length > 1) {
+      // Bundled shorts (-sSL); a value-taking short swallows the rest of the
+      // token. Bundling is only accepted when every char up to the first
+      // value-taking short is a known flag — otherwise things like PowerShell's
+      // "-Method" would silently decompose into -M -e"thod".
+      let ok = true;
+      for (let c = 1; c < a.length; c++) {
+        const n = CURL_SHORT_MAP[a[c]];
+        if (!n) { ok = false; break; }
+        if (CURL_VALUE_OPTS.has(n)) break;
+      }
+      if (!ok) { out.warnings.push(`Unrecognized option "${a}" ignored.`); continue; }
+      for (let c = 1; c < a.length; c++) {
+        const ch = a[c];
+        const name = CURL_SHORT_MAP[ch];
+        if (!name) { out.warnings.push(`Unknown option -${ch} ignored.`); continue; }
+        if (CURL_VALUE_OPTS.has(name)) {
+          let value = a.slice(c + 1);
+          if (!value) {
+            if (i + 1 >= args.length) { out.warnings.push(`-${ch} is missing its value.`); break; }
+            value = args[++i];
+          }
+          opts.push({ name, value });
+          break;
+        }
+        opts.push({ name, value: null });
+      }
+    } else {
+      opts.push({ name: "", value: a });
+    }
+  }
+
+  // ── pass 2: map onto panel fields ────────────────────────────────────────
+  const dataParts = [];
+  let isGet = false, sawHead = false, sawForm = false, sawData = false, strayCount = 0;
+
+  const addHeader = (line) => {
+    const raw = String(line);
+    const idx = raw.indexOf(":");
+    if (idx === -1) {
+      if (raw.trim().endsWith(";")) { out.headers[raw.trim().slice(0, -1)] = ""; return; }
+      out.warnings.push(`Ignored malformed header: ${raw}`);
+      return;
+    }
+    const k = raw.slice(0, idx).trim();
+    const v = raw.slice(idx + 1).trim();
+    if (!k || !HEADER_NAME_RE.test(k)) { out.warnings.push(`Ignored invalid header name: ${raw}`); return; }
+    out.headers[k] = v;
+  };
+
+  for (const { name, value } of opts) {
+    switch (name) {
+      case "":
+        if (!out.url && looksLikeUrl(value)) out.url = value;
+        else if (looksLikeUrl(value)) out.warnings.push(`Extra URL ignored (only one per import): ${value}`);
+        else if (++strayCount <= 3) out.warnings.push(`Ignored stray token: ${value}`);
+        else if (strayCount === 4) out.warnings.push("…more stray tokens ignored.");
+        break;
+      case "url": out.url = value; break;
+      case "request": out.method = String(value).trim().toUpperCase(); break;
+      case "header": addHeader(value); break;
+      case "data": case "data-binary": case "data-ascii":
+        sawData = true;
+        if (String(value).startsWith("@")) {
+          out.warnings.push(`Cannot read local file "${value}" — paste its contents into Body manually.`);
+        } else dataParts.push({ kind: "raw", value: String(value) });
+        break;
+      case "data-raw": sawData = true; dataParts.push({ kind: "raw", value: String(value) }); break;
+      case "data-urlencode": sawData = true; dataParts.push({ kind: "urlencode", value: String(value) }); break;
+      case "json":
+        sawData = true;
+        dataParts.push({ kind: "raw", value: String(value) });
+        if (!hasHeaderKey(out.headers, "content-type")) out.headers["Content-Type"] = "application/json";
+        if (!hasHeaderKey(out.headers, "accept")) out.headers["Accept"] = "application/json";
+        break;
+      case "form": case "form-string": sawForm = true; sawData = true; break;
+      case "user": {
+        const v = String(value);
+        out.headers["Authorization"] = "Basic " + b64(v.includes(":") ? v : v + ":");
+        out.notes.push("-u/--user converted to an Authorization: Basic header.");
+        break;
+      }
+      case "oauth2-bearer": out.headers["Authorization"] = "Bearer " + value; break;
+      case "user-agent": out.headers["User-Agent"] = value; break;
+      case "referer": out.headers["Referer"] = value; break;
+      case "cookie":
+        if (String(value).includes("=")) out.headers["Cookie"] = value;
+        else out.warnings.push(`-b "${value}" looks like a cookie file — not supported.`);
+        break;
+      case "head": sawHead = true; break;
+      case "get": isGet = true; break;
+      case "location": case "location-trusted": out.followRedirects = true; break;
+      case "max-time": {
+        const ms = Math.round(parseFloat(value) * 1000);
+        if (Number.isFinite(ms) && ms > 0) out.timeoutMs = Math.min(60000, Math.max(1000, ms));
+        break;
+      }
+      case "insecure":
+        out.notes.push("-k/--insecure ignored — TLS verification is always on server-side.");
+        break;
+      case "upload-file": case "proxy": case "proxy-user": case "cert": case "key":
+      case "cacert": case "config": case "unix-socket": case "resolve":
+      case "interface": case "aws-sigv4": case "range":
+        out.warnings.push(`--${name} has no equivalent here and was dropped.`);
+        break;
+      default: break;   // cosmetic flags (-s, -v, --compressed, …)
+    }
+  }
+
+  if (sawForm) {
+    out.warnings.push("-F/--form (multipart) can't be reconstructed — build the body manually.");
+  }
+
+  // data parts → body (or query string with -G)
+  const encodePart = (v) => {
+    if (v.includes("@")) {
+      const at = v.indexOf("@");
+      const eq = v.indexOf("=");
+      if (eq === -1 || at < eq) {
+        out.warnings.push(`--data-urlencode "${v}" reads a file — not supported.`);
+        return "";
+      }
+    }
+    const eq = v.indexOf("=");
+    if (eq === -1) return encodeURIComponent(v);
+    const k = v.slice(0, eq);
+    const val = encodeURIComponent(v.slice(eq + 1));
+    return k ? `${k}=${val}` : val;
+  };
+  let data = dataParts
+    .map(p => (p.kind === "raw" ? p.value : encodePart(p.value)))
+    .filter(s => s !== "")
+    .join("&");
+
+  if (isGet && data) {
+    out.url += (out.url.includes("?") ? "&" : "?") + data;
+    data = "";
+    out.notes.push("-G/--get: data appended to the query string.");
+  }
+  out.body = data;
+
+  if (!out.method) out.method = sawHead ? "HEAD" : ((sawData && !isGet) ? "POST" : "GET");
+
+  // Content-Type lives in its own panel field, not in the header rows.
+  for (const k of Object.keys(out.headers)) {
+    if (k.toLowerCase() === "content-type") {
+      out.contentType = out.headers[k];
+      delete out.headers[k];
+    }
+  }
+  if (!out.contentType && data) {
+    out.contentType = "application/x-www-form-urlencoded";
+    out.notes.push("No Content-Type given — applied curl's default (application/x-www-form-urlencoded).");
+  }
+
+  // Headers the proxy strips / that would break response decoding.
+  for (const k of Object.keys(out.headers)) {
+    if (CURL_DROP_HEADERS.has(k.toLowerCase())) {
+      delete out.headers[k];
+      out.notes.push(`Dropped ${k} — set by the proxy.`);
+    }
+  }
+
+  // URL sanity
+  if (!out.url) {
+    out.warnings.push("No URL found in the command.");
+  } else {
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(out.url)) {
+      out.url = "https://" + out.url;
+      out.notes.push("URL had no scheme — assumed https://.");
+    }
+    if (!/^https?:\/\//i.test(out.url)) {
+      out.warnings.push("Only http/https URLs can be sent — the server will reject this one.");
+    }
+  }
+  return out;
+}
+
+// ── import cURL: modal wiring ───────────────────────────────────────────────
+let curlParsed = null;
+
+function renderCurlPreview() {
+  const box = $("curlPreview");
+  const text = $("curlInput").value.trim();
+  if (!text) {
+    box.innerHTML = '<span class="muted">Nothing to parse yet.</span>';
+    curlParsed = null;
+    $("btnCurlApply").disabled = true;
+    return;
+  }
+  let p;
+  try { p = parseCurl(text); }
+  catch (e) {
+    box.innerHTML = `<div class="notice err">Parse failed: ${escapeHtml(e.message || String(e))}</div>`;
+    curlParsed = null;
+    $("btnCurlApply").disabled = true;
+    return;
+  }
+  curlParsed = p;
+  $("btnCurlApply").disabled = !p.url;
+
+  const hdrRows = Object.entries(p.headers);
+  const rows = [
+    ["Method", escapeHtml(p.method)],
+    ["URL", escapeHtml(p.url) || '<span class="muted">(none)</span>'],
+    ["Headers", hdrRows.length
+      ? hdrRows.map(([k, v]) => `<div class="kv">${escapeHtml(k)}: ${escapeHtml(v)}</div>`).join("")
+      : '<span class="muted">(none)</span>'],
+    ["Content-Type", escapeHtml(p.contentType) || '<span class="muted">(none)</span>'],
+    ["Body", p.body
+      ? `<div class="kv">${escapeHtml(p.body.length > 400 ? p.body.slice(0, 400) + " …" : p.body)}</div>
+         <span class="muted">${p.body.length.toLocaleString()} bytes</span>`
+      : '<span class="muted">(none)</span>'],
+    ["Options", `<span class="kv">follow redirects: ${p.followRedirects ? "on" : "off"}${
+      p.timeoutMs ? ` · timeout: ${p.timeoutMs}ms` : ""}</span>`],
+  ];
+  let html = "<table>" + rows.map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join("") + "</table>";
+  for (const n of p.notes) html += `<div class="notice">${escapeHtml(n)}</div>`;
+  for (const w of p.warnings) html += `<div class="notice warn">${escapeHtml(w)}</div>`;
+  box.innerHTML = html;
+}
+
+function openCurlModal(prefill) {
+  $("curlInput").value = prefill || "";
+  $("curlModal").hidden = false;
+  renderCurlPreview();
+  $("curlInput").focus();
+}
+function closeCurlModal() {
+  $("curlModal").hidden = true;
+  $("curlInput").value = "";
+  curlParsed = null;
+}
+
+function applyCurl(p) {
+  if (!p || !p.url) return;
+  if (dirty && !confirm("Discard unsaved changes and import this cURL?")) return;
+  currentSavedId = null;
+  clearPanel();
+  populating = true;
+  try {
+    setMethod(p.method);
+    $("url").value = p.url;
+    setHeaders(p.headers);
+    $("body").value = p.body || "";
+    $("contentType").value = p.contentType || "";
+    $("credential").value = "";
+    $("followRedirects").checked = !!p.followRedirects;
+    if (p.timeoutMs) $("timeoutMs").value = p.timeoutMs;
+  } finally {
+    populating = false;
+  }
+  clearDirty();
+  updateSavedHint();
+  renderSavedList();
+  closeCurlModal();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+$("btnCurlImport").addEventListener("click", () => openCurlModal(""));
+$("btnCurlClose").addEventListener("click", closeCurlModal);
+$("btnCurlCancel").addEventListener("click", closeCurlModal);
+$("btnCurlApply").addEventListener("click", () => applyCurl(curlParsed));
+$("curlInput").addEventListener("input", renderCurlPreview);
+$("curlModal").addEventListener("click", (e) => { if (e.target === $("curlModal")) closeCurlModal(); });
+$("curlModal").addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); applyCurl(curlParsed); }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("curlModal").hidden) closeCurlModal();
+});
+
+// Pasting a whole curl command into the URL box opens the importer instead of
+// dumping the command text into the field.
+$("url").addEventListener("paste", (e) => {
+  const text = (e.clipboardData || window.clipboardData)?.getData("text") || "";
+  if (/^\s*(?:\$\s*)?curl[\s'"]/i.test(text)) {
+    e.preventDefault();
+    openCurlModal(text.trim());
+  }
 });
 
 // ── clear ───────────────────────────────────────────────────────────────────
