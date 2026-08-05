@@ -150,6 +150,7 @@
     <div class="saved-actions">
       <button id="btnSave" class="small">Save</button>
       <button id="btnSaveAs" class="small">Save As</button>
+      <button id="btnRunSaved" class="small primary" title="Run the SAVED version server-side">Run</button>
       <button id="btnDelete" class="small danger-text">Delete</button>
       <span class="muted" id="savedHint" style="align-self:center;"></span>
     </div>
@@ -214,8 +215,6 @@
       <button id="btnCurl">Copy as cURL</button>
       <button id="btnCurlImport">Import cURL</button>
       <button id="btnClear">Clear</button>
-      <button id="btnRunSaved" class="primary" style="margin-left: auto;"
-              title="Run the SAVED version server-side (Send runs what's in the panel)">Run saved</button>
     </div>
   </div>
 
@@ -647,7 +646,7 @@ $("btnDelete").addEventListener("click", async () => {
 $("btnRunSaved").addEventListener("click", async () => {
   if (!currentSavedId) {
     alert("Nothing saved to run.\n\n" +
-          "“Run saved” executes the version stored in the DB — pick a saved request " +
+          "“Run” executes the version stored in the DB — pick a saved request " +
           "from the sidebar, or hit Save / Save As first.\n\n" +
           "To run what's currently in the panel, use Send.");
     return;
