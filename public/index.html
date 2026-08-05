@@ -269,12 +269,15 @@
     }
     #appSidebar .sb-sublist .file-button:hover .file-close { opacity: 0.8; }
     #appSidebar .sb-sublist .file-button .file-close:hover { opacity: 1; color: var(--logout-color); }
-    #appSidebar .sb-sublist #closeAllFiles {
-      padding: 6px 18px 6px 38px; font-size: 12px;
-      color: var(--text-muted); cursor: pointer;
-      border-top: 1px dashed var(--border); margin-top: 4px;
+    /* Close-all X on the Open Files header. Base opacity keeps it visible
+       (and tappable on the mobile drawer — no hover there); row hover
+       brightens it, matching the per-file .file-close behavior. */
+    #appSidebar #sbCloseAll {
+      font-size: 13px; color: var(--text-muted); opacity: 0.45;
+      padding: 2px; cursor: pointer; margin-left: -4px;
     }
-    #appSidebar .sb-sublist #closeAllFiles:hover { color: var(--logout-color); }
+    #appSidebar #sbOpenFiles:hover #sbCloseAll { opacity: 0.85; }
+    #appSidebar #sbCloseAll:hover { opacity: 1; color: var(--logout-color); }
     #appSidebar .sb-sublist #noOpenFiles { display: none !important; }
 
     /* Sidebar footer + collapse bar */
@@ -317,15 +320,41 @@
       body.sidebar-skinny #appSidebar .sb-item .sb-caret,
       body.sidebar-skinny #appSidebar .sb-section-label,
       body.sidebar-skinny #appSidebar .sb-version,
-      body.sidebar-skinny #appSidebar .sb-sublist .file-button span,
-      body.sidebar-skinny #appSidebar .sb-sublist .file-button .file-close,
-      body.sidebar-skinny #appSidebar #closeAllFiles { display: none !important; }
+      body.sidebar-skinny #appSidebar .sb-sublist .file-button span { display: none !important; }
       body.sidebar-skinny #appSidebar .sb-item {
         padding: 12px 0; justify-content: center;
       }
       body.sidebar-skinny #appSidebar .sb-item i { font-size: 18px; }
       body.sidebar-skinny #appSidebar .sb-sublist .file-button {
         padding: 8px 0; justify-content: center;
+        position: relative; /* anchor for the hover-reveal close badge */
+      }
+      /* Per-file close in skinny mode: hover-reveal X in the button's corner
+         (vertical-browser-tab pattern). The handler is unchanged — same Swal
+         confirm, same stopPropagation — so a stray click on the small target
+         still has to get past "Did you save all the forms?". Hover-only is
+         fine here: this whole block is desktop-only (min-width media query);
+         mobile uses the full-width drawer where the inline X shows normally. */
+      body.sidebar-skinny #appSidebar .sb-sublist .file-button .file-close {
+        display: none; position: absolute; top: 0; right: 2px;
+        margin-left: 0; padding: 2px; font-size: 12px;
+      }
+      body.sidebar-skinny #appSidebar .sb-sublist .file-button:hover .file-close {
+        display: block; opacity: 0.8;
+      }
+      /* Close All in skinny mode: hover-reveal corner badge on the Open
+         Files folder icon — same pattern as the per-file X. Absolute position
+         takes it out of the flex flow, so the folder icon stays centered.
+         Base display:none here loses to nothing: when count > 1 the JS clears
+         the inline style, this rule hides it until row hover; when count <= 1
+         the inline display:none wins everywhere. */
+      body.sidebar-skinny #appSidebar #sbOpenFiles { position: relative; }
+      body.sidebar-skinny #appSidebar #sbCloseAll {
+        display: none; position: absolute; top: 1px; right: 3px;
+        margin: 0; padding: 2px; font-size: 12px;
+      }
+      body.sidebar-skinny #appSidebar #sbOpenFiles:hover #sbCloseAll {
+        display: block; opacity: 0.85;
       }
       body.sidebar-skinny #appSidebar .sb-collapse-bar {
         flex-direction: column; gap: 6px; padding: 6px;
@@ -561,12 +590,13 @@
       <i class="fa-solid fa-folder-open"></i><span>Open Files</span>
       <span class="sb-badge" id="sbOpenFilesCount">0</span>
       <i class="fa-solid fa-chevron-down sb-caret"></i>
+      <!-- Close All lives on the header row, mirroring the per-file X.
+           Visibility is JS-managed by updateOpenFilesUI (count > 1). -->
+      <i class="fa-solid fa-circle-xmark" id="sbCloseAll" style="display:none"
+         title="Close All Files" onclick="event.stopPropagation(); closeAllFiles(this)"></i>
     </div>
     <div id="tabOpenFiles" class="sb-sublist" style="display:none">
       <div id="noOpenFiles">There are no open files at the moment!</div>
-      <div id="closeAllFiles" style="display:none" onclick="closeAllFiles(this)">
-        <i class="fa-solid fa-circle-xmark"></i> Close All
-      </div>
       <!-- file buttons get appended here by addFile() -->
     </div>
 
@@ -3231,12 +3261,12 @@ async function initAuth() {
         sbOpenFiles.style.display = 'none';
         container.style.display = 'none';
         badge.style.display = 'none';
-        E('closeAllFiles').style.display = 'none';
+        E('sbCloseAll').style.display = 'none';
       } else {
         sbOpenFiles.style.display = '';
         badge.style.display = '';
         badge.textContent = count;
-        E('closeAllFiles').style.display = count > 1 ? '' : 'none';
+        E('sbCloseAll').style.display = count > 1 ? '' : 'none';
       }
       // Every workspace mutation (open, close, close-all) flows through here —
       // mirror it into the address bar.
@@ -3647,7 +3677,7 @@ async function initAuth() {
       const sb = document.getElementById('appSidebar');
       sb.addEventListener('pointerover', (e) => {
         if (!skinnyDesktop()) { hide(); return; }
-        const el = e.target.closest('.sb-item, .sb-sublist .file-button');
+        const el = e.target.closest('#sbCloseAll, .sb-item, .sb-sublist .file-button');
         if (!el) { hide(); return; }
         if (el === curr) return;
         hide();
