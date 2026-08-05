@@ -357,6 +357,7 @@
     .exec-status-active                { background: #dbeafe; color: #1e40af; }
     .exec-status-processing            { background: #e0e7ff; color: #3730a3; }
     .exec-status-delayed               { background: #fef9c3; color: #854d0e; }
+    .exec-status-held                  { background: #fde68a; color: #92400e; }
     .exec-status-completed             { background: #dcfce7; color: #166534; }
     .exec-status-completed_with_errors { background: #fed7aa; color: #9a3412; }
     .exec-status-failed                { background: #fee2e2; color: #991b1b; }
@@ -2083,8 +2084,12 @@ function wfRenderWfMeta() {
   // Description deliberately NOT rendered here (crowds the first step card) —
   // it lives in the Edit modal and the Explain doc. The strip only surfaces
   // the transient capture-armed state.
-  if (wf && wf.capture_mode === 'capturing') {
-    d.innerHTML = `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-satellite-dish"></i> Capturing next run's init_data…</span>`;
+  const capMode = wf ? wf.capture_mode : 'off';
+  if (capMode === 'capturing') {
+    d.innerHTML = `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-satellite-dish"></i> Capturing next run's init_data (tap — the run still executes)…</span>`;
+    d.style.display = 'block';
+  } else if (capMode === 'intercept') {
+    d.innerHTML = `<span style="color:#b45309;font-weight:600"><i class="fa-solid fa-hand"></i> Intercepting next run — it will be recorded and HELD before step 1…</span>`;
     d.style.display = 'block';
   } else {
     d.style.display = 'none';
@@ -2093,86 +2098,194 @@ function wfRenderWfMeta() {
   // Reflect capture state on the toolbar button.
   const btn = document.getElementById('wf-capture-btn');
   if (btn) {
-    btn.innerHTML = wf.capture_mode === 'capturing'
+    btn.innerHTML = capMode === 'capturing'
       ? '<i class="fa-solid fa-satellite-dish fa-beat"></i> Capturing…'
-      : '<i class="fa-solid fa-satellite-dish"></i> Capture';
+      : capMode === 'intercept'
+        ? '<i class="fa-solid fa-hand fa-beat"></i> Intercepting…'
+        : '<i class="fa-solid fa-satellite-dish"></i> Capture';
   }
 }
 
 // Capture slice — arm/disarm one-shot capture of the next real execution's
-// init_data, view the last captured sample, replay it, or promote it to
-// test_input. Mirrors the hooks capture lifecycle: arming does NOT clear
-// the previous sample; the next capture overwrites it.
+// init_data. Two modes:
+//   tap       — record init_data, the run still executes normally
+//   intercept — the execution is created, recorded, and parked 'held'
+//               before step 1 ("step 0"); release it via Run / Run with
+//               edited data / Discard below. Parents keep a real
+//               execution id either way.
+// Arming does NOT clear the previous sample; the next capture overwrites it.
 async function wfCaptureModal() {
   if (!WF.activeWfId) return;
-  let cap;
+  let cap, held = null;
   try {
     cap = await api(`/workflows/${WF.activeWfId}/captured`);
+    const hr = await api(`/workflows/${WF.activeWfId}/executions?status=held&limit=1&sort=created_at:desc`);
+    held = (hr.executions || [])[0] || null;
   } catch (e) {
     Swal.fire('Error', e.message, 'error');
     return;
   }
-  const capturing = cap.capture_mode === 'capturing';
+  const mode = cap.capture_mode;
   const sample = cap.captured_input;
+  WF._capSample = sample;                     // for the button handlers below
+  WF._capHeldId = held ? held.id : null;
   const sampleJson = sample != null ? JSON.stringify(sample, null, 2) : null;
   const when = cap.captured_at ? new Date(cap.captured_at).toLocaleString() : null;
 
-  const res = await Swal.fire({
+  const statusLine = mode === 'capturing'
+    ? '<span style="color:#b45309;font-weight:600">armed — tap</span> <span style="color:#64748b">(next run recorded; it still executes)</span>'
+    : mode === 'intercept'
+      ? '<span style="color:#b45309;font-weight:600">armed — intercept</span> <span style="color:#64748b">(next run recorded and held before step 1)</span>'
+      : '<span style="color:#64748b">off</span>';
+
+  const heldHtml = held ? `
+    <div style="border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;padding:10px 12px;margin:0 0 12px">
+      <div style="font-weight:600;color:#92400e;margin-bottom:6px"><i class="fa-solid fa-hand"></i>
+        Execution #${held.id} is held before step 1 <span style="font-weight:400;color:#a16207">(${esc(new Date(held.created_at).toLocaleString())})</span></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="wfCapRunHeld()"><i class="fa-solid fa-play"></i> Run it now</button>
+        <button class="btn btn-outline btn-sm" onclick="wfCapRunHeldEdited()"><i class="fa-solid fa-pen"></i> Run with edited data…</button>
+        <button class="btn btn-danger btn-sm" onclick="wfCapDiscardHeld()"><i class="fa-solid fa-trash"></i> Discard</button>
+      </div>
+    </div>` : '';
+
+  const sampleHtml = sampleJson != null ? `
+    <div style="font-weight:600;margin-bottom:4px">Last captured${when ? ` — ${esc(when)}` : ''}</div>
+    <pre style="max-height:220px;overflow:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:11px;text-align:left;margin:0 0 8px">${esc(sampleJson)}</pre>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button class="btn btn-outline btn-sm" onclick="wfCapRunSample()"><i class="fa-solid fa-play"></i> Start new run with sample</button>
+      <button class="btn btn-outline btn-sm" onclick="wfCapSaveSample()"><i class="fa-regular fa-floppy-disk"></i> Save as Test Input</button>
+    </div>` : `<div style="color:#94a3b8;margin-bottom:12px">No sample captured yet.</div>`;
+
+  const armHtml = mode === 'off' ? `
+    <div style="border-top:1px solid #e2e8f0;padding-top:10px">
+      <div style="font-weight:600;margin-bottom:6px">Arm capture</div>
+      <label style="display:block;margin-bottom:4px;cursor:pointer">
+        <input type="radio" name="wf-cap-mode" value="tap" checked>
+        <b>Tap</b> — record the next run's init_data; the run still executes normally.
+      </label>
+      <label style="display:block;margin-bottom:8px;cursor:pointer">
+        <input type="radio" name="wf-cap-mode" value="intercept">
+        <b>Intercept</b> — record it and hold the execution before step 1; release it from here.
+      </label>
+      <button class="btn btn-primary btn-sm" onclick="wfCapArm()"><i class="fa-solid fa-satellite-dish"></i> Arm</button>
+    </div>` : `
+    <div style="border-top:1px solid #e2e8f0;padding-top:10px">
+      <button class="btn btn-outline btn-sm" onclick="wfCapDisarm()"><i class="fa-solid fa-ban"></i> Disarm</button>
+    </div>`;
+
+  await Swal.fire({
     title: 'Capture init_data',
-    width: 640,
+    width: 680,
     html: `
       <div style="text-align:left;font-size:13px">
-        <p style="margin:0 0 10px;color:#475569">Arms a one-shot capture: the next execution of this workflow — from any
-        source (hook, ingest rule, sequence, wf→wf, manual/scheduled start) — records its init_data here, then disarms itself.</p>
-        <p style="margin:0 0 10px;color:#475569"><b>The execution still runs normally</b> — this capture observes without
-        holding it. (Hook capture is the opposite: it intercepts and halts delivery. To block-and-grab, keep the workflow
-        inactive and arm capture on the upstream hook instead.)</p>
-        <p style="margin:0 0 10px"><b>Status:</b> ${capturing
-          ? '<span style="color:#b45309;font-weight:600">armed — waiting for next run</span>'
-          : '<span style="color:#64748b">off</span>'}</p>
-        ${sampleJson != null ? `
-          <div style="font-weight:600;margin-bottom:4px">Last captured${when ? ` — ${esc(when)}` : ''}</div>
-          <pre style="max-height:260px;overflow:auto;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:11px;text-align:left;margin:0">${esc(sampleJson)}</pre>
-        ` : `<div style="color:#94a3b8">No sample captured yet.</div>`}
+        <p style="margin:0 0 10px"><b>Status:</b> ${statusLine}</p>
+        ${heldHtml}
+        ${sampleHtml}
+        ${armHtml}
+      </div>`,
+    showConfirmButton: false,
+    showCloseButton: true,
+  });
+}
+
+async function wfCapArm() {
+  const mode = document.querySelector('input[name="wf-cap-mode"]:checked')?.value || 'tap';
+  Swal.close();
+  try {
+    await api(`/workflows/${WF.activeWfId}/capture/start`, 'POST', { mode });
+    await loadWfSteps(WF.activeWfId);
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success',
+      title: mode === 'intercept' ? 'Intercept armed — next run will be held' : 'Tap armed — next run will be recorded',
+      timer: 2600, showConfirmButton: false });
+  } catch (e) { Swal.fire('Error', e.message, 'error'); }
+}
+
+async function wfCapDisarm() {
+  Swal.close();
+  try {
+    await api(`/workflows/${WF.activeWfId}/capture/stop`, 'POST', {});
+    await loadWfSteps(WF.activeWfId);
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Capture disarmed', timer: 2200, showConfirmButton: false });
+  } catch (e) { Swal.fire('Error', e.message, 'error'); }
+}
+
+async function wfCapRunHeld() {
+  const id = WF._capHeldId;
+  if (!id) return;
+  Swal.close();
+  try {
+    await api(`/executions/${id}/resume`, 'POST', { mode: 'resume', step_number: 1 });
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Execution #${id} released`, timer: 2400, showConfirmButton: false });
+    if (WF.tab === 'executions') loadWorkflowExecutions();
+  } catch (e) { Swal.fire('Error', e.message, 'error'); }
+}
+
+// "Run with this data" — the resume endpoint's variables-replace IS the
+// mechanism: variables were seeded from init_data at creation, so replacing
+// them replays the execution with edited input. init_data itself stays as
+// the historical record of what actually arrived.
+async function wfCapRunHeldEdited() {
+  const id = WF._capHeldId;
+  if (!id) return;
+  const seed = JSON.stringify(WF._capSample ?? {}, null, 2);
+  Swal.close();
+  const res = await Swal.fire({
+    title: `Run execution #${id} with edited data`,
+    width: 600,
+    html: `
+      <div style="text-align:left;font-size:13px">
+        <label style="display:block;font-weight:600;margin-bottom:4px">Variables (JSON object — full replace)</label>
+        <textarea id="wf-cap-edit-json" rows="14" style="width:100%;font-family:monospace;font-size:12px;box-sizing:border-box">${esc(seed)}</textarea>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Seeded from the captured init_data. The stored init_data is untouched.</div>
       </div>`,
     showCancelButton: true,
-    cancelButtonText: 'Close',
-    confirmButtonText: capturing ? 'Disarm' : 'Arm capture',
-    showDenyButton: sampleJson != null,
-    denyButtonText: 'Use sample…',
-    denyButtonColor: '#0f4c81',
-  });
-
-  try {
-    if (res.isConfirmed) {
-      await api(`/workflows/${WF.activeWfId}/capture/${capturing ? 'stop' : 'start'}`, 'POST', {});
-      await loadWfSteps(WF.activeWfId);   // refreshes WF.activeWf → meta strip + button
-      Swal.fire({ toast: true, position: 'top-end', icon: 'success',
-        title: capturing ? 'Capture disarmed' : 'Capture armed — next run will be recorded',
-        timer: 2500, showConfirmButton: false });
-    } else if (res.isDenied && sampleJson != null) {
-      const pick = await Swal.fire({
-        title: 'Use captured sample',
-        showCancelButton: true,
-        confirmButtonText: 'Run workflow with it',
-        showDenyButton: true,
-        denyButtonText: 'Save as Test Input',
-        denyButtonColor: '#0f4c81',
-      });
-      if (pick.isConfirmed) {
-        wfRunWorkflow({ initData: sample });
-      } else if (pick.isDenied) {
-        // Promote to authorial test_input — deliberate, explicit action so
-        // the doc field is never clobbered by capture itself.
-        await api(`/workflows/${WF.activeWfId}`, 'PUT', { test_input: sample });
-        WF.testerState = {};
-        await loadWfSteps(WF.activeWfId);
-        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Saved as test_input', timer: 2200, showConfirmButton: false });
+    confirmButtonText: 'Run',
+    preConfirm: () => {
+      try {
+        const v = JSON.parse(document.getElementById('wf-cap-edit-json').value || '{}');
+        if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('must be a JSON object');
+        return v;
+      } catch (e) {
+        Swal.showValidationMessage(`Invalid JSON: ${e.message}`);
+        return false;
       }
     }
-  } catch (e) {
-    Swal.fire('Error', e.message, 'error');
-  }
+  });
+  if (!res.isConfirmed) return;
+  try {
+    await api(`/executions/${id}/resume`, 'POST', { mode: 'resume', step_number: 1, variables: res.value });
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Execution #${id} released with edited data`, timer: 2600, showConfirmButton: false });
+    if (WF.tab === 'executions') loadWorkflowExecutions();
+  } catch (e) { Swal.fire('Error', e.message, 'error'); }
+}
+
+async function wfCapDiscardHeld() {
+  const id = WF._capHeldId;
+  if (!id) return;
+  Swal.close();
+  const r = await Swal.fire({ title: `Discard held execution #${id}?`, icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Discard' });
+  if (!r.isConfirmed) return;
+  try {
+    await api(`/executions/${id}/cancel`, 'POST', { reason: 'Discarded held capture' });
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Held execution discarded', timer: 2200, showConfirmButton: false });
+    if (WF.tab === 'executions') loadWorkflowExecutions();
+  } catch (e) { Swal.fire('Error', e.message, 'error'); }
+}
+
+function wfCapRunSample() {
+  Swal.close();
+  wfRunWorkflow({ initData: WF._capSample ?? {} });
+}
+
+async function wfCapSaveSample() {
+  Swal.close();
+  try {
+    await api(`/workflows/${WF.activeWfId}`, 'PUT', { test_input: WF._capSample ?? null });
+    WF.testerState = {};
+    await loadWfSteps(WF.activeWfId);
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Saved as test_input', timer: 2200, showConfirmButton: false });
+  } catch (e) { Swal.fire('Error', e.message, 'error'); }
 }
 
 async function wfStepDelete(idx) {
@@ -3621,6 +3734,14 @@ window.wfExecNextPage           = wfExecNextPage;
 window.viewWorkflowExecution    = viewWorkflowExecution;
 window.cancelWorkflowExecution  = cancelWorkflowExecution;
 window.wfResumeExecution        = wfResumeExecution;
+window.wfCaptureModal           = wfCaptureModal;
+window.wfCapArm                 = wfCapArm;
+window.wfCapDisarm              = wfCapDisarm;
+window.wfCapRunHeld             = wfCapRunHeld;
+window.wfCapRunHeldEdited       = wfCapRunHeldEdited;
+window.wfCapDiscardHeld         = wfCapDiscardHeld;
+window.wfCapRunSample           = wfCapRunSample;
+window.wfCapSaveSample          = wfCapSaveSample;
 
 // ── Boot ───────────────────────────────────────────────────────
 (function waitForShell() {

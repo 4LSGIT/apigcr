@@ -1955,7 +1955,7 @@ router.post("/executions/:id/cancel", jwtOrApiKey, async (req, res) => {
       SELECT status 
       FROM workflow_executions 
       WHERE id = ? 
-        AND status IN ('active', 'processing', 'delayed')
+        AND status IN ('active', 'processing', 'delayed', 'held')
       `,
       [executionId]
     );
@@ -2370,16 +2370,22 @@ router.post("/workflows/:id/capture/start", jwtOrApiKey, async (req, res) => {
   if (isNaN(workflowId) || workflowId <= 0) {
     return res.status(400).json({ error: "Invalid workflow ID" });
   }
+  // Intercept slice — body.mode selects semantics:
+  //   'tap'       (default) → 'capturing': record init_data, run proceeds
+  //   'intercept'           → 'intercept': record init_data, execution is
+  //                            created then parked 'held' before step 1
+  //                            (see workflow_engine step-0 block)
+  const captureMode = (req.body && req.body.mode === 'intercept') ? 'intercept' : 'capturing';
   try {
     const [r] = await db.query(
-      `UPDATE workflows SET capture_mode = 'capturing' WHERE id = ?`,
-      [workflowId]
+      `UPDATE workflows SET capture_mode = ? WHERE id = ?`,
+      [captureMode, workflowId]
     );
     if (r.affectedRows === 0 && r.changedRows === 0) {
       const [[row]] = await db.query(`SELECT id FROM workflows WHERE id = ?`, [workflowId]);
       if (!row) return res.status(404).json({ error: "Workflow not found" });
     }
-    res.json({ status: 'success', capture_mode: 'capturing' });
+    res.json({ status: 'success', capture_mode: captureMode });
   } catch (err) {
     console.error("[WF CAPTURE START] Failed:", err);
     res.status(500).json({ error: "Failed to start capture", message: err.message });
