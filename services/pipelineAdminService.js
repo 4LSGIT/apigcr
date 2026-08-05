@@ -701,8 +701,10 @@ function boardNorm(v) {
  *             stages: object[],           // active, stage_number order, incl. client_visible
  *             columns: { unstaged: object[], [stage_key]: object[] } }}
  *   Card: { case_id, case_display, primary_contact_name, case_stage,
- *           case_status, current_stage_key, current_entered_at,
- *           days_in_stage }  (the last three null for unstaged-no-history)
+ *           case_status, case_type, case_subtype, case_open_date,
+ *           current_stage_key, current_entered_at, current_note,
+ *           days_in_stage }  (the current_* trio + days null when unstaged
+ *           with no history; case_open_date null when unset — 167 live rows)
  * @throws 400 bad template_id; 404 unknown template
  */
 async function getBoard(db, templateId, { includeClosed = false } = {}) {
@@ -833,6 +835,7 @@ async function getBoard(db, templateId, { includeClosed = false } = {}) {
     `SELECT c.case_id,
             COALESCE(NULLIF(c.case_number_full, ''), NULLIF(c.case_number, ''), c.case_id) AS case_display,
             c.case_stage, c.case_status,
+            c.case_type, c.case_subtype, c.case_open_date,
             pc.contact_name AS primary_contact_name
        FROM cases c
        LEFT JOIN (
@@ -851,7 +854,7 @@ async function getBoard(db, templateId, { includeClosed = false } = {}) {
   // the exact ordering advanceStage/getPipeline use for "latest". One
   // set-based self-join over the (tiny) log; merged in JS.
   const [latestRows] = await db.query(
-    `SELECT l.case_id, l.stage_key, l.entered_at,
+    `SELECT l.case_id, l.stage_key, l.entered_at, l.note,
             GREATEST(TIMESTAMPDIFF(DAY, l.entered_at, NOW()), 0) AS days_in_stage
        FROM case_stage_log l
        LEFT JOIN case_stage_log l2
@@ -872,8 +875,12 @@ async function getBoard(db, templateId, { includeClosed = false } = {}) {
       primary_contact_name: r.primary_contact_name || null,
       case_stage: r.case_stage,
       case_status: r.case_status,
+      case_type: r.case_type,
+      case_subtype: r.case_subtype,
+      case_open_date: r.case_open_date || null,
       current_stage_key: latest ? latest.stage_key : null,
       current_entered_at: latest ? latest.entered_at : null,
+      current_note: latest ? (latest.note || null) : null,
       days_in_stage: latest ? Number(latest.days_in_stage) : null,
     };
     // Latest key not in THIS template's active stages (no history, or history

@@ -68,6 +68,9 @@ const CARD = (case_id, extra = {}) => ({
   case_display: case_id,
   case_stage: 'Open',
   case_status: 'Lead',
+  case_type: 'Bankruptcy',
+  case_subtype: 'Chapter 7',
+  case_open_date: '2026-01-15',
   primary_contact_name: 'Test Person',
   ...extra,
 });
@@ -210,30 +213,42 @@ describe('getBoard placement', () => {
   ]);
 
   test('latest key in template → its column; no log → unstaged; foreign key → unstaged keeping case_status', async () => {
-    const out = await svc.getBoard(boot(
+    const db = boot(
       [
         CARD('AAAA0001'),                                    // no log → unstaged
         CARD('BBBB0002', { case_status: 'Filed' }),          // latest 'filed' → filed col
-        CARD('CCCC0003', { case_status: 'Retained' }),       // latest 'retained' (intake key) → unstaged
+        CARD('CCCC0003', { case_status: 'Retained', case_open_date: null }),  // latest 'retained' (intake key) → unstaged
       ],
       [
-        { case_id: 'BBBB0002', stage_key: 'filed',    entered_at: '2026-08-01 10:00:00', days_in_stage: 4 },
-        { case_id: 'CCCC0003', stage_key: 'retained', entered_at: '2026-07-01 10:00:00', days_in_stage: 35 },
+        { case_id: 'BBBB0002', stage_key: 'filed',    entered_at: '2026-08-01 10:00:00', note: 'petition in', days_in_stage: 4 },
+        { case_id: 'CCCC0003', stage_key: 'retained', entered_at: '2026-07-01 10:00:00', note: null, days_in_stage: 35 },
       ]
-    ), 2);
+    );
+    const out = await svc.getBoard(db, 2);
+
+    // C3.1: cards scan carries type/subtype/open date; latest-log carries note.
+    expect(db.calls[3].sql).toContain('c.case_type, c.case_subtype, c.case_open_date');
+    expect(db.calls[4].sql).toContain('l.note');
 
     expect(out.columns.filed.map(c => c.case_id)).toEqual(['BBBB0002']);
     expect(out.columns.docs).toEqual([]);
     const un = out.columns.unstaged;
     expect(un.map(c => c.case_id).sort()).toEqual(['AAAA0001', 'CCCC0003']);
 
+    const staged = out.columns.filed[0];
+    expect(staged.current_note).toBe('petition in');
+    expect(staged.case_open_date).toBe('2026-01-15');
+    expect(staged.case_type).toBe('Bankruptcy');
+
     const noLog = un.find(c => c.case_id === 'AAAA0001');
     expect(noLog.current_stage_key).toBeNull();
+    expect(noLog.current_note).toBeNull();
     expect(noLog.days_in_stage).toBeNull();
 
     const branched = un.find(c => c.case_id === 'CCCC0003');
     expect(branched.current_stage_key).toBe('retained');  // visible, just not a column
     expect(branched.case_status).toBe('Retained');        // live status kept on the card
+    expect(branched.case_open_date).toBeNull();
     expect(branched.days_in_stage).toBe(35);
   });
 
