@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-06T11:57:59.845Z
--- Source: POST /admin/db/schema/save-to-ref
--- Fingerprint: sha256:604146bebc54f13873cc87cc010c942e
+-- Generated: 2026-08-06T12:19:56.416Z
+-- Source: scripts/dump-schema.js
+-- Fingerprint: sha256:5103c9201649267d7484fa785a96d331
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2639,7 +2639,8 @@ CREATE TABLE `test` (
   `json` json NOT NULL,
   `fname` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `mname` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
-  `lname` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL
+  `lname` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+  `test` int NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
