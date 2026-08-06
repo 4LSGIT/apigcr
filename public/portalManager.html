@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Case Config</title>
+  <title>Portal Manager</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
   <style>
     /* ══════════════════════════════════════════════
@@ -131,7 +131,7 @@
 
 <!-- ── Topbar (generated into by boot script) ── -->
 <div id="topbar">
-  <div class="title">Yisra<span>Case</span> — Case Config</div>
+  <div class="title">Yisra<span>Case</span> — Portal Manager</div>
   <div class="tab-nav" id="tab-nav"></div>
   <div class="topbar-actions">
     <button class="btn btn-ghost" id="btn-refresh" style="display:none" onclick="onTopbarRefresh()" title="Refresh">
@@ -154,7 +154,7 @@
 
 <script>
 // ═══════════════════════════════════════════════════════════════
-// CASE CONFIG MANAGER — SHELL
+// PORTAL MANAGER — SHELL (Client Portal admin home)
 // ═══════════════════════════════════════════════════════════════
 //
 // Structure and protocol copied from automationManager.html: sub-pages
@@ -166,7 +166,7 @@
 //     onNew) exposed on their own window, which the shell calls.
 //
 // The firmData-select helper suite (fdPhoneLines etc.) is deliberately
-// NOT duplicated here — no Case Config sub-page needs phone/email
+// NOT duplicated here — no Portal Manager sub-page needs phone/email
 // pickers. If one ever does, lift the helpers from automationManager.
 // ═══════════════════════════════════════════════════════════════
 
@@ -190,14 +190,15 @@ function esc(s) {
 // ═══════════════════════════════════════════════════════════════
 // SUB-PAGE REGISTRY
 //
-// Types & Subtypes is ONE combined sub-page (not two tabs): both edit
-// the single fe-case_types blob, and two live working copies of the
-// same row would clobber each other. See caseconfig/types.html.
+// The staff-side admin home for everything client-portal: Cards
+// (portal_cards engine, E2), Access (per-contact portal logins +
+// force-logout), Settings (global kill switch + SMS cap, backed by
+// the generic app_settings API). Sub-pages live in public/portaladmin/.
 // ═══════════════════════════════════════════════════════════════
 const SUB_PAGES = [
-  { id: 'types',     title: 'Types & Subtypes', icon: 'tags',          src: '/caseconfig/types.html',     newLabel: 'New Type' },
-  { id: 'pipelines', title: 'Pipelines',        icon: 'timeline',      src: '/caseconfig/pipelines.html', newLabel: 'New Template' },
-  { id: 'fields',    title: 'Fields',           icon: 'table-columns', src: '/caseconfig/fields.html',    newLabel: '' },
+  { id: 'cards',    title: 'Cards',    icon: 'address-card', src: '/portaladmin/portalCards.html',    newLabel: 'New Card' },
+  { id: 'access',   title: 'Access',   icon: 'user-lock',    src: '/portaladmin/portalAccess.html',   newLabel: '' },
+  { id: 'settings', title: 'Settings', icon: 'sliders',      src: '/portaladmin/portalSettings.html', newLabel: '' },
 ];
 
 // ── Shell state ────────────────────────────────────────────────

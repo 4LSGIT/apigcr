@@ -176,7 +176,6 @@ public/case.html
 public/caseConfigManager.html
 public/caseconfig/fields.html
 public/caseconfig/pipelines.html
-public/caseconfig/portalCards.html
 public/caseconfig/types.html
 public/caseerror.html
 public/communicate.html
@@ -225,6 +224,10 @@ public/portal/home.html
 public/portal/index.html
 public/portal/login.html
 public/portal/portal.js
+public/portalManager.html
+public/portaladmin/portalAccess.html
+public/portaladmin/portalCards.html
+public/portaladmin/portalSettings.html
 public/rating.html
 public/readonlyKeys.html
 public/redirects.html
@@ -317,6 +320,7 @@ routes/api.phoneLines.js
 routes/api.pipeline.js
 routes/api.pipelineAdmin.js
 routes/api.pipelineBoard.js
+routes/api.portalAccessAdmin.js
 routes/api.portalCardsAdmin.js
 routes/api.readonly.js
 routes/api.readonlyKeys.js
@@ -554,6 +558,7 @@ tests/phoneingestservice.dedup.test.js
 tests/pipelineAdminService.test.js
 tests/pipelineBoard.test.js
 tests/pipelineService.test.js
+tests/portalAccessAdmin.test.js
 tests/portalAuth.test.js
 tests/portalCallbackService.test.js
 tests/portalCardEngine.test.js

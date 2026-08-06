@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portal Access</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* Shared tokens duplicated from the shell (house pattern). */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --navy: #1a1a2e; --blue: #4f8ef7; --blue2: #3a7de8;
+      --green: #22c55e; --red: #ef4444; --amber: #f59e0b;
+      --bg: #f1f5f9; --surface: #ffffff; --border: #e2e8f0;
+      --muted: #94a3b8; --text: #1e293b; --text2: #475569;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px; color: var(--text); background: var(--bg);
+      height: 100vh; overflow: hidden; display: flex; flex-direction: column;
+    }
+    .head {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 12px 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    .head .hint { font-size: 12px; color: var(--muted); }
+    .search { position: relative; flex: 1; min-width: 240px; max-width: 420px; }
+    .search input {
+      width: 100%; padding: 8px 10px 8px 32px; border: 1px solid var(--border);
+      border-radius: 8px; font-size: 13px; outline: none;
+    }
+    .search input:focus { border-color: var(--blue); }
+    .search i { position: absolute; left: 11px; top: 10px; color: var(--muted); font-size: 12px; }
+
+    #list-wrap { flex: 1; overflow-y: auto; padding: 14px 18px; }
+    table { width: 100%; border-collapse: collapse; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+    th {
+      text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--muted); background: #f8fafc; padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    td { padding: 9px 12px; border-bottom: 1px solid var(--bg); font-size: 13px; vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr.disabled td { color: var(--muted); }
+    td .sub { font-size: 11px; color: var(--muted); }
+    .pill {
+      font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px;
+      text-transform: uppercase; letter-spacing: 0.03em;
+    }
+    .pill-on  { background: #dcfce7; color: #15803d; }
+    .pill-off { background: #fee2e2; color: #b91c1c; }
+
+    .tgl { position: relative; display: inline-block; width: 32px; height: 18px; vertical-align: middle; }
+    .tgl input { opacity: 0; width: 0; height: 0; }
+    .tgl .slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 18px; transition: .15s; cursor: pointer; }
+    .tgl .slider:before { content: ""; position: absolute; height: 14px; width: 14px; left: 2px; top: 2px;
+      background: #fff; border-radius: 50%; transition: .15s; }
+    .tgl input:checked + .slider { background: var(--green); }
+    .tgl input:checked + .slider:before { transform: translateX(14px); }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 11px; border-radius: 6px; border: 1px solid var(--border);
+      font-size: 11.5px; font-weight: 500; cursor: pointer; background: var(--bg);
+      color: var(--text2); transition: all 0.12s; white-space: nowrap;
+    }
+    .btn:hover { background: var(--border); }
+    .btn-warn:hover { background: #fef3c7; border-color: #fde68a; color: #b45309; }
+
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 60px 20px; color: var(--muted); gap: 10px; text-align: center;
+    }
+    .empty-state i { font-size: 34px; opacity: 0.25; }
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<div class="head">
+  <div class="search">
+    <i class="fa-solid fa-magnifying-glass"></i>
+    <input type="text" id="q" placeholder="Search contacts (name, email, phone, id)…"
+           oninput="onSearch(this.value)" autocomplete="off">
+  </div>
+  <div class="hint" id="head-hint">Recent portal logins</div>
+</div>
+
+<div id="list-wrap">
+  <div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// PORTAL ACCESS SUB-PAGE (Portal Manager)
+//
+// Per-contact portal access over /api/portal-access-admin/*. Portal
+// access is two contacts columns re-checked on EVERY portal request
+// (lib/auth.requireAuth contact branch), so both levers here are
+// immediate:
+//   • portal_enabled toggle — 0 locks the account (login refused,
+//     existing sessions rejected on their next request). NOTE the
+//     schema default is 1: every contact CAN log in unless disabled
+//     here, which is why this tab exists.
+//   • Force logout — portal_session_version + 1 revokes every device
+//     without locking the account (they can log straight back in).
+//
+// Default view (empty search): most recent successful portal logins —
+// "who actually uses the portal". last_login/login_count derive from
+// portal_login_pins.consumed_at (consumed pin = successful login).
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = id => document.getElementById(id);
+const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+function fmtDT(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  return isNaN(d) ? esc(v) : d.toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  });
+}
+
+let rows = [];
+let searchTimer = null;
+let currentQ = '';
+
+async function load(q = currentQ) {
+  currentQ = q;
+  try {
+    const data = await api('/api/portal-access-admin/contacts', 'GET',
+      q ? { q, limit: 50 } : { limit: 50 });
+    rows = data.contacts || [];
+    E('head-hint').textContent = q
+      ? `${rows.length} match${rows.length === 1 ? '' : 'es'}`
+      : 'Recent portal logins';
+    render();
+  } catch (e) {
+    E('list-wrap').innerHTML = `<div class="empty-state">
+      <i class="fa-solid fa-triangle-exclamation"></i><div>${esc(e.message)}</div></div>`;
+  }
+}
+
+function onSearch(v) {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => load(v.trim()), 300);
+}
+window.onSearch = onSearch;
+
+function render() {
+  const host = E('list-wrap');
+  if (!rows.length) {
+    host.innerHTML = `<div class="empty-state"><i class="fa-solid fa-user-lock"></i>
+      <div>${currentQ ? 'No matching contacts' : 'No portal logins yet'}</div></div>`;
+    return;
+  }
+  host.innerHTML = `<table>
+    <thead><tr>
+      <th>Contact</th><th>Email / Phone</th><th>Last login</th>
+      <th>Logins</th><th>Portal</th><th></th>
+    </tr></thead>
+    <tbody>${rows.map(r => `
+      <tr class="${r.portal_enabled ? '' : 'disabled'}">
+        <td>
+          <div>${esc(r.contact_pname || r.contact_name || ('#' + r.contact_id))}</div>
+          <div class="sub">#${r.contact_id}${r.contact_name && r.contact_pname && r.contact_name !== r.contact_pname ? ' · ' + esc(r.contact_name) : ''}</div>
+        </td>
+        <td>
+          <div>${esc(r.contact_email || '—')}</div>
+          <div class="sub">${esc(r.contact_phone || '')}</div>
+        </td>
+        <td>${fmtDT(r.last_login)}</td>
+        <td>${Number(r.login_count) || 0}</td>
+        <td>
+          <label class="tgl" title="${r.portal_enabled ? 'Disable portal access' : 'Enable portal access'}">
+            <input type="checkbox" ${r.portal_enabled ? 'checked' : ''}
+                   onchange="toggleEnabled(${r.contact_id}, this)">
+            <span class="slider"></span>
+          </label>
+          <span class="pill ${r.portal_enabled ? 'pill-on' : 'pill-off'}" style="margin-left:6px">
+            ${r.portal_enabled ? 'enabled' : 'disabled'}</span>
+        </td>
+        <td style="text-align:right">
+          <button class="btn btn-warn" title="Revoke every device's session (they can log back in)"
+                  onclick="forceLogout(${r.contact_id}, '${esc(r.contact_pname || r.contact_name || '#' + r.contact_id)}')">
+            <i class="fa-solid fa-right-from-bracket"></i> Force logout
+          </button>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+  <div style="font-size:11px;color:var(--muted);margin-top:8px">
+    Both levers act on the contact's <b>next portal request</b> — access is re-checked
+    on every request, no token-expiry wait. Disabling does not delete anything;
+    re-enable restores access as it was.
+  </div>`;
+}
+
+async function toggleEnabled(contactId, checkbox) {
+  const enabling = checkbox.checked;
+  if (!enabling) {
+    const { isConfirmed } = await Swal.fire({
+      icon: 'warning',
+      title: 'Disable portal access?',
+      text: 'Their login stops working and any open session is rejected on its next request.',
+      showCancelButton: true, confirmButtonText: 'Disable', confirmButtonColor: '#ef4444',
+    });
+    if (!isConfirmed) { checkbox.checked = true; return; }
+  }
+  try {
+    await api(`/api/portal-access-admin/contacts/${contactId}`, 'PUT',
+      { portal_enabled: enabling ? 1 : 0 });
+    Toast.fire({ icon: 'success', title: enabling ? 'Portal access enabled' : 'Portal access disabled' });
+    load();
+  } catch (e) {
+    checkbox.checked = !enabling;
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+window.toggleEnabled = toggleEnabled;
+
+async function forceLogout(contactId, label) {
+  const { isConfirmed } = await Swal.fire({
+    icon: 'question',
+    title: `Force logout ${label}?`,
+    text: 'Every device is signed out immediately. They can log back in right away (this does not disable access).',
+    showCancelButton: true, confirmButtonText: 'Force logout',
+  });
+  if (!isConfirmed) return;
+  try {
+    await api(`/api/portal-access-admin/contacts/${contactId}/force-logout`, 'POST', {});
+    Toast.fire({ icon: 'success', title: 'All sessions revoked' });
+    load();
+  } catch (e) {
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+window.forceLogout = forceLogout;
+
+// ── Lifecycle (Portal Manager shell protocol) ──────────────────
+function onShow()    { P.setTopbarButtons({ refresh: true }); load(); }
+function onHide()    {}
+function onRefresh() { load(); }
+window.onShow = onShow; window.onHide = onHide; window.onRefresh = onRefresh;
+
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    P.setTopbarButtons({ refresh: true });
+    return load('');
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>

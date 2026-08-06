@@ -21,11 +21,28 @@ const router = express.Router();
 
 const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
 const requireAuth = require('../lib/auth.requireAuth');
+const { isPortalLive } = requireAuth;
 const portalAuth = require('../services/portalAuthService');
 const { alert } = require('../lib/alerting');
 
 const requestPinLimited = makeLimiter(15 * 60 * 1000, 5);   // 5 / 15min / IP
 const verifyPinLimited = makeLimiter(15 * 60 * 1000, 10);   // 10 / 15min / IP
+
+// Global kill switch (app_settings.portal_live, read via requireAuth's
+// isPortalLive — one implementation). Session-protected routes already 401
+// through requireAuth when the switch is off; the two login endpoints get
+// this FRIENDLY 503 instead, so clients see a message rather than a login
+// that mysteriously never works. Read errors fail OPEN (a DB hiccup must
+// not present as "portal disabled"; the real error then surfaces through
+// the endpoint's own handling). Not part of the no-oracle surface: the
+// switch's state is global, not per-account (RATE_LIMITED precedent).
+const PORTAL_DOWN = {
+  status: 'error',
+  message: 'The client portal is temporarily unavailable. Please try again later or call our office.',
+};
+async function portalDown(db) {
+  try { return !(await isPortalLive(db)); } catch (_) { return false; }
+}
 
 const GENERIC_REQUEST_OK = {
   status: 'success',
@@ -40,6 +57,9 @@ router.post('/api/portal/request-pin', async (req, res) => {
   const ip = getClientIp(req);
   if (requestPinLimited(ip)) {
     return res.status(429).json(RATE_LIMITED);
+  }
+  if (await portalDown(req.db)) {
+    return res.status(503).json(PORTAL_DOWN);
   }
 
   const { identifier } = req.body || {};
@@ -72,6 +92,9 @@ router.post('/api/portal/verify-pin', async (req, res) => {
   const ip = getClientIp(req);
   if (verifyPinLimited(ip)) {
     return res.status(429).json(RATE_LIMITED);
+  }
+  if (await portalDown(req.db)) {
+    return res.status(503).json(PORTAL_DOWN);
   }
 
   const { identifier, pin, trust_device } = req.body || {};

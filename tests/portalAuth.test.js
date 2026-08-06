@@ -596,6 +596,60 @@ describe('requireAuth({audience:"contact"})', () => {
     expect(() => requireAuth({ audience: 'martian' })).toThrow(/unknown audience/);
     expect(() => requireAuth({})).toThrow(/unknown audience/);
   });
+
+  // ── global kill switch (app_settings.portal_live) ─────────────────────────
+  // settingsService is jest-mocked file-wide (top of file), so the switch is
+  // driven through getSetting's mock, not DB stub rows. The suite default
+  // (jest.fn() → undefined) reads as LIVE — which is itself the fail-open
+  // contract under test. getSetting (singular) has no other caller in this
+  // suite (requestPin's SMS cap uses getSettings), so resetting it is safe.
+
+  describe('portal_live kill switch', () => {
+    const { getSetting } = require('../services/settingsService');
+    afterEach(() => getSetting.mockReset());
+
+    test("isPortalLive: only an explicit '0' takes the portal down (fail-open)", async () => {
+      const dummyDb = {};   // getSetting is mocked — db is passed through, unused
+      for (const [v, expected] of [
+        [null, true],       // row absent
+        [undefined, true],  // defensive: not a real getSetting return, still live
+        ['1', true],
+        ['0', false],
+        [' 0 ', false],     // trimmed
+        ['yes', true],      // junk = live
+        ['', true],
+      ]) {
+        getSetting.mockResolvedValueOnce(v);
+        await expect(requireAuth.isPortalLive(dummyDb)).resolves.toBe(expected);
+      }
+      expect(getSetting).toHaveBeenCalledWith(dummyDb, 'portal_live');
+    });
+
+    test("portal_live '0': valid token still 401s — contacts never read (portal is DOWN)", async () => {
+      getSetting.mockResolvedValue('0');
+      const db = contactDb();
+      const req = baseReq({ db, headers: { authorization: 'Bearer ' + contactToken() } });
+      const out = await runMw(mw, req, stubRes());
+      expect(out).toMatchObject({ via: 'res', status: 401, body: { error: 'Unauthorized' } });
+      expect(db.calls.some(c => /FROM contacts/.test(c.sql))).toBe(false);
+      expect(getSetting).toHaveBeenCalledWith(db, 'portal_live');
+    });
+
+    test("portal_live '1': valid token passes as normal", async () => {
+      getSetting.mockResolvedValue('1');
+      const db = contactDb();
+      const req = baseReq({ db, headers: { authorization: 'Bearer ' + contactToken() } });
+      const out = await runMw(mw, req, stubRes());
+      expect(out.via).toBe('next');
+      expect(req.auth).toEqual({ type: 'portal', contactId: 7 });
+    });
+
+    test('switch read happens AFTER token checks — junk requests never cost it', async () => {
+      getSetting.mockResolvedValue('0');
+      await runMw(mw, baseReq({ db: contactDb(), headers: {} }), stubRes());   // no token
+      expect(getSetting).not.toHaveBeenCalled();
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
