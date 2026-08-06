@@ -5,7 +5,8 @@
 //   • refuse-never-strip template enforcement (+ once-per-boot alert gate)
 //   • rules-mode operator matrix, all/any, nesting, fail-closed posture
 //   • sql-mode param pinning (config-supplied ids rejected) + error → hidden
-//   • server-side HTML escaping of resolved bodies; unresolved-token strip
+//   • RAW resolved bodies (rider 2026-08-08 — the CLIENT escapes at
+//     insertion; see the client-contract notes below); unresolved-token strip
 //   • PARITY — representative cases produce the same visible card set +
 //     341 data presence as the pre-E1 hardcoded logic (oracle replica below)
 //
@@ -438,10 +439,17 @@ describe('sql mode', () => {
 // Escaping + link guard + mechanics
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('body escaping and rendering mechanics', () => {
+describe('body content and rendering mechanics', () => {
   const args = { caseId: 'AbCdEf12', contactId: 42 };
 
-  test('resolved value containing HTML is server-escaped — renders inert', async () => {
+  // CLIENT CONTRACT (rider 2026-08-08): payload bodies are RAW resolved
+  // text. public/portal/case.html escText's card.body AT INSERTION, exactly
+  // like every other payload string (title, docket, labels) — the portal's
+  // client-side symmetry. These two tests pin the engine's half of that
+  // contract: ship the text verbatim, no server-side HTML transform in
+  // EITHER direction (no escaping, no sanitizing).
+
+  test('resolved value containing HTML ships RAW — the client escapes at insertion', async () => {
     const hostile = '<img src=x onerror=alert(1)>&"\'';
     const db = stubDb(scriptRenderCards(
       [cardRow({ card_key: 'x', body_template: 'Hi {{contacts.contact_fname}}!' })],
@@ -449,17 +457,17 @@ describe('body escaping and rendering mechanics', () => {
       [[{ contacts__contact_id: 42, contacts__contact_fname: hostile }]]
     ));
     const [card] = await engine.renderCards(db, args);
-    expect(card.body).toBe('Hi &lt;img src=x onerror=alert(1)&gt;&amp;&quot;&#39;!');
-    expect(card.body).not.toMatch(/<|>/);
+    expect(card.body).toBe('Hi <img src=x onerror=alert(1)>&"\'!');   // verbatim
+    expect(card.body).not.toContain('&amp;');                          // and never pre-escaped
   });
 
-  test('staff-typed HTML in the template itself is escaped too (text, never HTML)', async () => {
+  test('staff-typed HTML in the template ships RAW (text, never HTML — client escapes)', async () => {
     // No placeholders → no resolver query (resolve short-circuits).
     const db = stubDb(scriptRenderCards(
       [cardRow({ card_key: 'x', body_template: '<b>Bold?</b>' })]
     ));
     const [card] = await engine.renderCards(db, args);
-    expect(card.body).toBe('&lt;b&gt;Bold?&lt;/b&gt;');
+    expect(card.body).toBe('<b>Bold?</b>');
   });
 
   test('unresolved placeholders (NULL column, no default) are STRIPPED, never shipped raw', async () => {

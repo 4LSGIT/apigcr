@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Portal Cards</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <style>
+    /* ══════════════════════════════════════════════
+       PORTAL CARDS SUB-PAGE — self-contained styles.
+       Shared tokens duplicated from the shell (house pattern —
+       see caseconfig/pipelines.html).
+       ══════════════════════════════════════════════ */
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy: #1a1a2e; --blue: #4f8ef7; --blue2: #3a7de8;
+      --green: #22c55e; --red: #ef4444; --amber: #f59e0b; --purple: #8b5cf6;
+      --bg: #f1f5f9; --surface: #ffffff; --border: #e2e8f0;
+      --muted: #94a3b8; --text: #1e293b; --text2: #475569;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 14px; color: var(--text); background: var(--bg);
+      display: flex; height: 100vh; overflow: hidden;
+    }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: var(--blue2); }
+    .btn-danger  { background: var(--red); color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-outline { background: var(--bg); border: 1px solid var(--border); color: var(--text2); }
+    .btn-outline:hover { background: var(--border); }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Left panel: card list ── */
+    .panel-left {
+      width: 300px; flex-shrink: 0; background: var(--surface);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    }
+    .panel-left-head {
+      padding: 10px 14px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700;
+      color: var(--text2);
+    }
+    #card-list { flex: 1; overflow-y: auto; }
+
+    .card-item {
+      padding: 10px 14px; border-bottom: 1px solid var(--bg); cursor: pointer;
+      transition: background 0.12s;
+    }
+    .card-item:hover { background: #f8fafc; }
+    .card-item.active { background: #eff6ff; border-left: 3px solid var(--blue); padding-left: 11px; }
+    .card-item .name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+    .card-item .meta { font-size: 11px; color: var(--muted); margin-top: 2px;
+      display: flex; align-items: center; gap: 6px; }
+    .card-item.inactive .name { color: var(--muted); text-decoration: line-through; }
+
+    .badge {
+      font-size: 9px; font-weight: 700; padding: 1px 6px; border-radius: 4px;
+      text-transform: uppercase; letter-spacing: 0.03em; flex-shrink: 0;
+    }
+    .badge-template { background: #dbeafe; color: var(--blue2); }
+    .badge-coded    { background: #ede9fe; color: var(--purple); }
+    .badge-top      { background: #fef3c7; color: #b45309; text-transform: none; }
+    .badge-case     { background: #f1f5f9; color: var(--text2); text-transform: none; }
+    .badge-inactive { background: #f1f5f9; color: var(--muted); }
+    .badge-unsaved  { background: #fee2e2; color: var(--red); }
+
+    /* list-inline active toggle */
+    .tgl { position: relative; display: inline-block; width: 30px; height: 17px; vertical-align: middle; flex-shrink: 0; }
+    .tgl input { opacity: 0; width: 0; height: 0; }
+    .tgl .slider { position: absolute; inset: 0; background: #cbd5e1; border-radius: 17px; transition: .15s; cursor: pointer; }
+    .tgl .slider:before { content: ""; position: absolute; height: 13px; width: 13px; left: 2px; top: 2px;
+      background: #fff; border-radius: 50%; transition: .15s; }
+    .tgl input:checked + .slider { background: var(--green); }
+    .tgl input:checked + .slider:before { transform: translateX(13px); }
+
+    /* ── Right panel ── */
+    .panel-right { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+    .card-header {
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 12px 18px; display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+    .card-header .title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+
+    #editor-wrap { flex: 1; overflow-y: auto; padding: 16px 18px; }
+
+    .editor-grid { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(320px, 420px); gap: 16px; align-items: start; }
+    @media (max-width: 980px) { .editor-grid { grid-template-columns: 1fr; } }
+
+    .box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px; margin-bottom: 14px;
+    }
+    .box h3 {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--muted); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
+    }
+    .box h3 .spacer { flex: 1; }
+
+    .fld label { display: block; font-size: 11px; font-weight: 600; color: var(--text2);
+      margin: 10px 0 3px; text-transform: uppercase; letter-spacing: 0.03em; }
+    .fld label:first-child { margin-top: 0; }
+    .fld input[type=text], .fld input[type=number], .fld select, .fld textarea {
+      width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px;
+      font-size: 13px; outline: none; font-family: inherit; background: var(--surface); color: var(--text);
+    }
+    .fld input:focus, .fld select:focus, .fld textarea:focus { border-color: var(--blue); }
+    .fld textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+      resize: vertical; }
+    .fld input:disabled, .fld select:disabled { background: var(--bg); color: var(--muted); cursor: not-allowed; }
+    .row2 { display: flex; gap: 12px; }
+    .row2 > div { flex: 1; min-width: 0; }
+    .row3 { display: flex; gap: 12px; align-items: flex-end; }
+    .row3 > div { min-width: 0; }
+    .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+    .locked-note { font-size: 11px; color: #b45309; background: #fef3c7;
+      border-radius: 6px; padding: 6px 8px; margin-top: 6px; }
+    .warn-note { font-size: 11px; color: #b91c1c; background: #fee2e2;
+      border-radius: 6px; padding: 6px 8px; margin-top: 6px; }
+
+    /* whitelist reference chips */
+    .wl-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+    .wl-chip {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+      padding: 2px 7px; cursor: pointer; color: var(--text2);
+    }
+    .wl-chip:hover { border-color: var(--blue); color: var(--blue); }
+
+    /* conditions builder */
+    .cond-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+    .cond-tab {
+      padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text2); font-size: 11.5px; font-weight: 600; cursor: pointer;
+    }
+    .cond-tab.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+    .rule-group {
+      border: 1px solid var(--border); border-left: 3px solid var(--blue);
+      border-radius: 8px; padding: 10px; margin-top: 8px; background: #fbfdff;
+    }
+    .rule-group .rg-head { display: flex; align-items: center; gap: 8px; font-size: 11.5px;
+      color: var(--text2); margin-bottom: 6px; flex-wrap: wrap; }
+    .rule-group .rg-head select { width: auto; padding: 3px 6px; font-size: 11.5px;
+      border: 1px solid var(--border); border-radius: 5px; }
+    .rule-row { display: flex; gap: 6px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+    .rule-row select, .rule-row input {
+      padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; font-size: 12px;
+      background: var(--surface); color: var(--text);
+    }
+    .rule-row .rr-field { min-width: 190px; }
+    .rule-row .rr-op { min-width: 130px; }
+    .rule-row .rr-val { flex: 1; min-width: 120px; }
+
+    .icon-btn {
+      border: 1px solid var(--border); background: var(--surface);
+      border-radius: 6px; width: 24px; height: 24px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--text2); font-size: 10.5px; transition: all 0.12s; flex-shrink: 0;
+    }
+    .icon-btn:hover { background: var(--bg); }
+    .icon-btn.del:hover { background: #fee2e2; color: var(--red); border-color: #fecaca; }
+
+    /* preview */
+    .pv-picker { position: relative; }
+    .pv-results {
+      position: absolute; left: 0; right: 0; top: 100%; z-index: 5;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 0 0 8px 8px;
+      max-height: 220px; overflow-y: auto; box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+    }
+    .pv-result { padding: 7px 10px; font-size: 12px; cursor: pointer; border-bottom: 1px solid var(--bg); }
+    .pv-result:hover { background: #f8fafc; }
+    .pv-result .sub { font-size: 10.5px; color: var(--muted); }
+
+    .pv-chosen { font-size: 12px; color: var(--text2); margin-top: 6px; }
+    .pv-chosen b { color: var(--text); }
+
+    .cond-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11px; border-radius: 6px; padding: 3px 8px; margin: 3px 4px 0 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .cond-chip.pass { background: #dcfce7; color: #15803d; }
+    .cond-chip.fail { background: #fee2e2; color: #b91c1c; }
+
+    /* portal-look preview card (mirrors public/portal/case.html shells) */
+    .pv-stage { background: #ffffff; border: 1px dashed var(--border); border-radius: 10px;
+      padding: 14px; margin-top: 10px; }
+    .pv-card {
+      background: #f9fafb; border: 1px solid #e5e7eb;
+      border-radius: 10px; padding: 16px;
+      font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 15px; line-height: 1.45; color: #1f2937;
+    }
+    .pv-card h2 {
+      margin: 0 0 12px; font-size: 14px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280;
+    }
+    .pv-card .pv-body { margin: 0; white-space: pre-line; }
+    .pv-card .pv-btn {
+      display: block; text-align: center; text-decoration: none;
+      padding: 11px 14px; font-size: 15.5px; font-weight: 600;
+      border-radius: 8px; background: #2563eb; color: #ffffff; margin-top: 12px;
+      pointer-events: none;
+    }
+    .pv-card .pv-note { font-size: 12.5px; color: #6b7280; margin: 10px 0 0; text-align: center; }
+    .pv-coded-note { font-size: 12px; color: var(--muted); font-style: italic; margin-top: 6px; }
+    .pv-hidden {
+      border: 1px dashed #fecaca; background: #fef2f2; color: #b91c1c;
+      border-radius: 10px; padding: 12px; font-size: 12.5px; margin-top: 10px;
+    }
+    .pv-errors {
+      border: 1px solid #fecaca; background: #fef2f2; color: #b91c1c;
+      border-radius: 10px; padding: 10px 12px; font-size: 12px; margin-top: 10px;
+    }
+    .pv-errors li { margin-left: 16px; margin-top: 3px; }
+
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; height: 100%; color: var(--muted);
+      gap: 10px; text-align: center; padding: 20px;
+    }
+    .empty-state i { font-size: 36px; opacity: 0.25; }
+
+    .spin { animation: spin 0.8s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Left: card list ── -->
+<div class="panel-left">
+  <div class="panel-left-head">
+    <i class="fa-solid fa-address-card"></i> Portal Cards
+    <span style="flex:1"></span>
+    <button class="btn btn-primary btn-sm" onclick="newCard()"><i class="fa-solid fa-plus"></i> New</button>
+  </div>
+  <div id="card-list">
+    <div class="empty-state"><i class="fa-solid fa-spinner spin"></i><div>Loading…</div></div>
+  </div>
+</div>
+
+<!-- ── Right: editor + preview ── -->
+<div class="panel-right">
+  <div class="card-header" id="card-header" style="display:none"></div>
+  <div id="editor-wrap">
+    <div class="empty-state"><i class="fa-solid fa-address-card"></i>
+      <div>Select a card to edit, or create a new one</div></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// PORTAL CARDS SUB-PAGE (Case Config manager) — Client Portal E2
+//
+// Staff CRUD over portal_cards through /api/portal-cards-admin/*
+// (routes/api.portalCardsAdmin.js; validation = portalCardEngine.
+// validateCard — save REJECTS with named errors, never strips).
+//
+// Left pane: card list (type/placement badges, sort, inline active
+// toggle). Right pane: editor for the selected card (or an unsaved
+// draft) + a live preview pane that renders the CURRENT WORKING
+// DRAFT through the REAL engine pipeline pinned to an admin-chosen
+// case and that case's Primary contact (server-resolved).
+//
+// Server-rule surfacing:
+//   - the field whitelist panel is READ-ONLY reference (it's a code
+//     constant in lib/portalCardEngine.js — never editable here);
+//     chips insert {{refs}} into the body at the cursor.
+//   - body_type is immutable after create; a coded card's coded_key
+//     is locked (the code binding) and its body fields are hidden.
+//   - DELETE on a coded card 409s → offer deactivate instead
+//     (pipelines.html pattern).
+//   - conditions: structured RULES builder (field/op dropdowns over
+//     the whitelist, nested groups to depth 5) + a raw-JSON escape
+//     hatch (required for sql mode) with its own warning text.
+//   - save 400s carry `errors: []` (err.body.errors via apiSend) —
+//     shown as a list, matching what the preview pane reports.
+//
+// Preview contract (rider 2026-08-08): card bodies arrive RAW and
+// are escaped AT INSERTION (esc()) with white-space:pre-line — the
+// same contract as public/portal/case.html's escText + .card-body,
+// so the preview matches production rendering exactly.
+//
+// Shell protocol: P.apiSend relay; onShow/onRefresh/onNew/onSave
+// hooks; topbar buttons via P.setTopbarButtons.
+// ═══════════════════════════════════════════════════════════════
+
+const P = window.parent;
+const api = (...args) => P.apiSend(...args);
+const E = id => document.getElementById(id);
+const Toast = Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 2500 });
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Ops that take no value; ops with typed values (mirrors validateCard).
+const NO_VALUE_OPS = ['empty', 'not_empty', 'date_future', 'date_past'];
+const RULE_MAX_DEPTH = 5;
+
+// ── State ──────────────────────────────────────────────────────
+let meta = { whitelist: [], operators: [], placements: ['case_top','case'], coded_keys: [] };
+let cards = [];            // list rows
+let activeId = null;       // selected card id; null = unsaved draft
+let working = null;        // the editor's working copy (draft object)
+let condMode = 'none';     // 'none' | 'rules' | 'raw'
+let condModel = null;      // rules-builder model ({match, rules}) when condMode==='rules'
+let rawCondText = null;    // unsaved raw-JSON textarea text (survives re-renders)
+let previewCase = null;    // { case_id, label }
+let searchTimer = null;
+let loaded = false;
+
+// ── Loads ──────────────────────────────────────────────────────
+
+async function loadMeta() {
+  const data = await api('/api/portal-cards-admin/meta');
+  meta = data;
+}
+
+async function loadCards(keepSelection = true) {
+  const data = await api('/api/portal-cards-admin/cards');
+  cards = data.cards || [];
+  if (keepSelection && activeId && !cards.some(c => c.id === activeId)) {
+    activeId = null; working = null;
+    E('card-header').style.display = 'none';
+    E('editor-wrap').innerHTML = `<div class="empty-state"><i class="fa-solid fa-address-card"></i>
+      <div>Select a card to edit, or create a new one</div></div>`;
+  }
+  renderList();
+}
+
+// ── Left pane ──────────────────────────────────────────────────
+
+function renderList() {
+  const host = E('card-list');
+  if (!cards.length) {
+    host.innerHTML = `<div class="empty-state" style="height:auto;padding:40px 0">
+      <i class="fa-solid fa-address-card"></i><div>No cards yet</div></div>`;
+    return;
+  }
+  host.innerHTML = cards.map(c => `
+    <div class="card-item ${c.id === activeId ? 'active' : ''} ${c.active ? '' : 'inactive'}"
+         onclick="selectCard(${c.id})">
+      <div class="name">${esc(c.title)}
+        <span class="badge badge-${esc(c.body_type)}">${esc(c.body_type)}</span>
+        ${c.active ? '' : '<span class="badge badge-inactive">inactive</span>'}
+      </div>
+      <div class="meta">
+        <span class="badge ${c.placement === 'case_top' ? 'badge-top' : 'badge-case'}">${esc(c.placement)}</span>
+        <span title="Sort order"><i class="fa-solid fa-arrow-down-1-9" style="font-size:9px"></i> ${Number(c.sort)}</span>
+        <code style="font-size:10px">${esc(c.card_key)}</code>
+        <span style="flex:1"></span>
+        <label class="tgl" title="${c.active ? 'Deactivate' : 'Activate'}" onclick="event.stopPropagation()">
+          <input type="checkbox" ${c.active ? 'checked' : ''} onchange="toggleActive(${c.id}, this)">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function toggleActive(id, checkbox) {
+  try {
+    await api(`/api/portal-cards-admin/cards/${id}`, 'PUT', { active: checkbox.checked ? 1 : 0 });
+    Toast.fire({ icon: 'success', title: checkbox.checked ? 'Card activated' : 'Card deactivated' });
+    await loadCards();
+    if (activeId === id) { selectCard(id); }
+  } catch (e) {
+    checkbox.checked = !checkbox.checked;
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+window.toggleActive = toggleActive;
+
+function selectCard(id) {
+  const row = cards.find(c => c.id === id);
+  if (!row) return;
+  activeId = id;
+  working = JSON.parse(JSON.stringify(row));
+  initCondState(working.conditions);
+  renderList();
+  renderEditor();
+}
+window.selectCard = selectCard;
+
+function newCard() {
+  activeId = null;
+  working = {
+    id: null, card_key: '', title: '', body_type: 'template', body_template: '',
+    coded_key: null, link_url: '', link_label: '', conditions: null,
+    placement: 'case', sort: 10, active: 1,
+  };
+  initCondState(null);
+  renderList();
+  renderEditor();
+}
+window.newCard = newCard;
+
+// ── Conditions state helpers ───────────────────────────────────
+
+function initCondState(conditions) {
+  rawCondText = null;
+  if (conditions == null) { condMode = 'none'; condModel = null; return; }
+  const mode = conditions.mode || 'rules';
+  if (mode === 'rules' && Array.isArray(conditions.rules)) {
+    condMode = 'rules';
+    condModel = JSON.parse(JSON.stringify({
+      match: conditions.match === 'any' ? 'any' : 'all',
+      rules: conditions.rules,
+    }));
+  } else {
+    condMode = 'raw';   // sql mode (or anything non-builder) lives in raw JSON
+    condModel = null;
+  }
+}
+
+/** Walk the builder model: idxPath is a list of indexes into nested rules. */
+function ruleAt(idxPath) {            // idxPath = [2] or [0,1] …
+  let arr = condModel.rules, node = null;
+  for (const i of idxPath) { node = arr[i]; arr = node && node.rules; }
+  return node;
+}
+function parentRulesOf(idxPath) {
+  let arr = condModel.rules;
+  for (const i of idxPath.slice(0, -1)) arr = arr[i].rules;
+  return arr;
+}
+
+// ── Right pane: editor ─────────────────────────────────────────
+
+function renderEditor() {
+  const w = working;
+  const head = E('card-header');
+  head.style.display = '';
+  head.innerHTML = `
+    <div class="title">${w.id ? esc(w.title || w.card_key) : 'New card'}
+      <span class="badge badge-${esc(w.body_type)}">${esc(w.body_type)}</span>
+      ${w.id ? '' : '<span class="badge badge-unsaved">unsaved</span>'}
+    </div>
+    <span style="flex:1"></span>
+    <button class="btn btn-primary btn-sm" onclick="saveCard()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+    ${w.id ? `<button class="btn btn-outline btn-sm" onclick="deleteCard()"><i class="fa-solid fa-trash"></i> Delete</button>` : ''}
+  `;
+
+  const isCoded = w.body_type === 'coded';
+  const wrap = E('editor-wrap');
+  wrap.innerHTML = `
+  <div class="editor-grid">
+    <div><!-- ── form column ── -->
+
+      <div class="box fld">
+        <h3><i class="fa-solid fa-id-card"></i> Identity</h3>
+        <div class="row2">
+          <div>
+            <label>Card key</label>
+            <input type="text" id="f-key" value="${esc(w.card_key)}" placeholder="e.g. payment">
+            <div class="hint">Stable identifier — letters, digits, _ and -, max 50. Unique.</div>
+          </div>
+          <div>
+            <label>Title (shown to clients)</label>
+            <input type="text" id="f-title" value="${esc(w.title)}" maxlength="100">
+          </div>
+        </div>
+        <div class="row2" style="margin-top:2px">
+          <div>
+            <label>Body type</label>
+            <select id="f-btype" ${w.id ? 'disabled' : ''} onchange="onBodyTypeChange()">
+              <option value="template" ${!isCoded ? 'selected' : ''}>template — staff-written text</option>
+              <option value="coded" ${isCoded ? 'selected' : ''}>coded — body rendered by portal code</option>
+            </select>
+            ${w.id ? '<div class="hint">Body type is fixed once a card exists.</div>' : ''}
+          </div>
+          <div id="f-codedkey-wrap" style="${isCoded ? '' : 'display:none'}">
+            <label>Coded renderer</label>
+            <select id="f-codedkey" ${w.id ? 'disabled' : ''}>
+              ${(meta.coded_keys || []).map(k =>
+                `<option value="${esc(k)}" ${w.coded_key === k ? 'selected' : ''}>${esc(k)}</option>`).join('')}
+            </select>
+            ${w.id ? '<div class="locked-note"><i class="fa-solid fa-lock"></i> coded_key binds this card to its portal renderer — locked. New renderers ship with code.</div>'
+                   : '<div class="hint">Renderers are code — only shipped renderers are listed.</div>'}
+          </div>
+        </div>
+        <div class="row3" style="margin-top:10px">
+          <div style="width:160px">
+            <label>Placement</label>
+            <select id="f-placement">
+              ${(meta.placements || []).map(p =>
+                `<option value="${esc(p)}" ${w.placement === p ? 'selected' : ''}>${esc(p)}${p === 'case_top' ? ' (above timeline)' : ' (below timeline)'}</option>`).join('')}
+            </select>
+          </div>
+          <div style="width:100px">
+            <label>Sort</label>
+            <input type="number" id="f-sort" value="${Number(w.sort) || 0}" step="1">
+          </div>
+          <div style="padding-bottom:7px">
+            <span style="display:inline-flex;align-items:center;gap:8px;font-size:12.5px">
+              <label class="tgl" style="margin:0">
+                <input type="checkbox" id="f-active" ${w.active ? 'checked' : ''}>
+                <span class="slider"></span>
+              </label>
+              Active
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="box fld" id="body-box">
+        ${isCoded ? `
+          <h3><i class="fa-solid fa-microchip"></i> Body — coded</h3>
+          <div class="locked-note">
+            This card's body is rendered by portal code (renderer
+            <code>${esc(w.coded_key || '')}</code>). There are no body fields to edit —
+            title, link, conditions, placement, sort and active remain yours.
+          </div>
+        ` : `
+          <h3><i class="fa-solid fa-align-left"></i> Body template</h3>
+          <textarea id="f-body" rows="6"
+            placeholder="Plain text with {{table.column}} placeholders. Newlines are kept.">${esc(w.body_template ?? '')}</textarea>
+          <div class="hint">
+            Text only — HTML is shown to clients as literal characters, never rendered.
+            NULL fields resolve to nothing; use <code>{{field|default:…}}</code> for a fallback.
+            Any reference outside the whitelist below makes the card REFUSE to save (and to render).
+          </div>
+          <label style="margin-top:12px">Field whitelist (click to insert)</label>
+          <div class="wl-chips">
+            ${(meta.whitelist || []).map(f =>
+              `<span class="wl-chip" onclick="insertRef('${esc(f)}')">${esc(f)}</span>`).join('')}
+          </div>
+          <div class="hint">Read-only reference — this list is a code constant
+            (<code>lib/portalCardEngine.js</code>); additions ship with code after review.</div>
+        `}
+      </div>
+
+      <div class="box fld">
+        <h3><i class="fa-solid fa-link"></i> Action link</h3>
+        <div class="row2">
+          <div>
+            <label>Link URL</label>
+            <input type="text" id="f-linkurl" value="${esc(w.link_url ?? '')}"
+              placeholder="https://… or /r/payment">
+            <div class="hint">http(s) or a site-relative path starting with a single “/”. Opens in a new tab.</div>
+          </div>
+          <div style="max-width:180px">
+            <label>Button label</label>
+            <input type="text" id="f-linklabel" value="${esc(w.link_label ?? '')}" maxlength="50" placeholder="Open">
+          </div>
+        </div>
+      </div>
+
+      <div class="box fld">
+        <h3><i class="fa-solid fa-filter"></i> Conditions
+          <span class="spacer"></span>
+          <span class="hint" style="margin:0">who sees this card</span></h3>
+        <div class="cond-tabs">
+          <button class="cond-tab ${condMode === 'none'  ? 'active' : ''}" onclick="setCondMode('none')">Always show</button>
+          <button class="cond-tab ${condMode === 'rules' ? 'active' : ''}" onclick="setCondMode('rules')">Rules</button>
+          <button class="cond-tab ${condMode === 'raw'   ? 'active' : ''}" onclick="setCondMode('raw')">Raw JSON</button>
+        </div>
+        <div id="cond-body"></div>
+      </div>
+
+    </div>
+    <div><!-- ── preview column ── -->
+      <div class="box fld">
+        <h3><i class="fa-solid fa-eye"></i> Preview as case</h3>
+        <div class="pv-picker">
+          <input type="text" id="pv-search" placeholder="Search a case (number, caption, client…)"
+                 oninput="onPreviewSearch(this.value)" autocomplete="off">
+          <div class="pv-results" id="pv-results" style="display:none"></div>
+        </div>
+        <div class="pv-chosen" id="pv-chosen">${previewCase
+          ? `Previewing against <b>${esc(previewCase.label)}</b>` : 'No case selected yet.'}</div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+          <button class="btn btn-primary btn-sm" onclick="doPreview()"><i class="fa-solid fa-play"></i> Preview</button>
+          <span class="hint" style="margin:0">Runs the current (unsaved) draft through the real
+            engine, pinned to this case + its Primary contact.</span>
+        </div>
+        <div id="pv-out"></div>
+      </div>
+    </div>
+  </div>`;
+
+  renderCondBody();
+}
+
+function insertRef(field) {
+  const ta = E('f-body');
+  if (!ta) return;
+  const token = '{{' + field + '}}';
+  const s = ta.selectionStart ?? ta.value.length, e2 = ta.selectionEnd ?? ta.value.length;
+  ta.value = ta.value.slice(0, s) + token + ta.value.slice(e2);
+  ta.focus();
+  ta.selectionStart = ta.selectionEnd = s + token.length;
+}
+window.insertRef = insertRef;
+
+function onBodyTypeChange() {
+  // New (unsaved) cards only — the select is disabled once saved.
+  working.body_type = E('f-btype').value;
+  if (working.body_type === 'coded') {
+    working.body_template = null;
+    working.coded_key = (meta.coded_keys || [])[0] || null;
+  } else {
+    working.coded_key = null;
+    working.body_template = working.body_template || '';
+  }
+  captureFormLight();
+  renderEditor();
+}
+window.onBodyTypeChange = onBodyTypeChange;
+
+/** Capture cheap fields into `working` before a re-render loses them. */
+function captureFormLight() {
+  const g = id => E(id);
+  if (g('f-key'))       working.card_key   = g('f-key').value;
+  if (g('f-title'))     working.title      = g('f-title').value;
+  if (g('f-placement')) working.placement  = g('f-placement').value;
+  if (g('f-sort'))      working.sort       = g('f-sort').value;
+  if (g('f-active'))    working.active     = g('f-active').checked ? 1 : 0;
+  if (g('f-linkurl'))   working.link_url   = g('f-linkurl').value;
+  if (g('f-linklabel')) working.link_label = g('f-linklabel').value;
+  if (g('f-body') && working.body_type === 'template') working.body_template = g('f-body').value;
+  if (g('f-codedkey') && working.body_type === 'coded') working.coded_key = g('f-codedkey').value;
+  if (condMode === 'raw' && g('cond-raw')) rawCondText = g('cond-raw').value;
+}
+
+// ── Conditions UI ──────────────────────────────────────────────
+
+function setCondMode(mode) {
+  captureFormLight();
+  if (mode === condMode) return;
+
+  if (mode === 'rules') {
+    if (condMode === 'raw') {
+      // Raw → rules only when the JSON is rules-shaped.
+      const parsed = readRawConditions();
+      if (parsed === undefined) return;                    // broken JSON — toast shown
+      if (parsed && (parsed.mode || 'rules') !== 'rules') {
+        Toast.fire({ icon: 'warning', title: 'sql-mode conditions can only be edited as raw JSON' });
+        return;
+      }
+      condModel = parsed && Array.isArray(parsed.rules)
+        ? { match: parsed.match === 'any' ? 'any' : 'all', rules: parsed.rules }
+        : { match: 'all', rules: [] };
+    } else if (!condModel) {
+      condModel = { match: 'all', rules: [] };
+    }
+  }
+  if (mode === 'raw' && condMode === 'rules') {
+    working.conditions = condModel && condModel.rules.length
+      ? { mode: 'rules', match: condModel.match, rules: condModel.rules } : null;
+    rawCondText = null;                                    // serialize fresh from the builder
+  }
+  condMode = mode;
+  renderEditor();
+}
+window.setCondMode = setCondMode;
+
+function renderCondBody() {
+  const host = E('cond-body');
+  if (!host) return;
+
+  if (condMode === 'none') {
+    host.innerHTML = `<div class="hint">This card shows on every case view (subject to Active).</div>`;
+    return;
+  }
+
+  if (condMode === 'raw') {
+    const txt = rawCondText !== null
+      ? rawCondText
+      : (working.conditions ? JSON.stringify(working.conditions, null, 2)
+        : (condModel && condModel.rules.length
+            ? JSON.stringify({ mode: 'rules', match: condModel.match, rules: condModel.rules }, null, 2)
+            : ''));
+    host.innerHTML = `
+      <textarea id="cond-raw" rows="10" spellcheck="false"
+        oninput="rawCondText=this.value">${esc(txt)}</textarea>
+      <div class="warn-note"><i class="fa-solid fa-triangle-exclamation"></i>
+        <b>sql mode</b> is the power escape hatch:
+        <code>{"mode":"sql","condition":{"query","params","assert","assert_mode"}}</code>.
+        The query must be a <b>SELECT</b>; <code>params</code> values may ONLY name the pinned
+        session paths <code>case_id</code> / <code>contact_id</code>
+        (optionally <code>trigger_data.</code>-prefixed) — the config can never supply its own
+        entity ids. Anything else is rejected at save and fails closed at render.</div>
+      <div class="hint">Leave empty for “always show”.</div>`;
+    return;
+  }
+
+  // rules builder
+  host.innerHTML = `
+    <div class="rg-head" style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2)">
+      Show this card when
+      <select onchange="condModel.match=this.value">
+        <option value="all" ${condModel.match !== 'any' ? 'selected' : ''}>ALL</option>
+        <option value="any" ${condModel.match === 'any' ? 'selected' : ''}>ANY</option>
+      </select>
+      of these are true:
+    </div>
+    <div id="cond-rules">${condModel.rules.map((r, i) => ruleHtml(r, [i], 1)).join('')}</div>
+    <div style="margin-top:8px;display:flex;gap:6px">
+      <button class="btn btn-outline btn-sm" onclick="addRule([])"><i class="fa-solid fa-plus"></i> Rule</button>
+      <button class="btn btn-outline btn-sm" onclick="addGroup([])"><i class="fa-solid fa-layer-group"></i> Group</button>
+    </div>
+    ${condModel.rules.length === 0 ? '<div class="hint" style="margin-top:6px">No rules yet — an EMPTY rule set never shows the card; add a rule or switch to “Always show”.</div>' : ''}`;
+}
+
+function ruleHtml(r, idxPath, depth) {
+  const pathAttr = idxPath.join('.');
+  if (r && Array.isArray(r.rules)) {
+    return `
+      <div class="rule-group">
+        <div class="rg-head">
+          <i class="fa-solid fa-layer-group" style="font-size:10px"></i>
+          <select onchange="ruleAtPath('${pathAttr}').match=this.value">
+            <option value="all" ${r.match !== 'any' ? 'selected' : ''}>ALL</option>
+            <option value="any" ${r.match === 'any' ? 'selected' : ''}>ANY</option>
+          </select>
+          of:
+          <span style="flex:1"></span>
+          ${depth < RULE_MAX_DEPTH ? `
+            <button class="icon-btn" title="Add rule" onclick="addRule('${pathAttr}')"><i class="fa-solid fa-plus"></i></button>
+            <button class="icon-btn" title="Add nested group" onclick="addGroup('${pathAttr}')"><i class="fa-solid fa-layer-group"></i></button>
+          ` : `
+            <button class="icon-btn" title="Add rule" onclick="addRule('${pathAttr}')"><i class="fa-solid fa-plus"></i></button>
+          `}
+          <button class="icon-btn del" title="Remove group" onclick="removeRule('${pathAttr}')"><i class="fa-solid fa-trash"></i></button>
+        </div>
+        ${r.rules.map((c, i) => ruleHtml(c, idxPath.concat(i), depth + 1)).join('')}
+      </div>`;
+  }
+  const op = r.op || (meta.operators || [])[0] || 'not_empty';
+  return `
+    <div class="rule-row">
+      <select class="rr-field" onchange="ruleAtPath('${pathAttr}').field=this.value">
+        ${(meta.whitelist || []).map(f =>
+          `<option value="${esc(f)}" ${r.field === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}
+      </select>
+      <select class="rr-op" onchange="onOpChange('${pathAttr}', this.value)">
+        ${(meta.operators || []).map(o =>
+          `<option value="${esc(o)}" ${op === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+      </select>
+      ${ruleValueInput(r, op, pathAttr)}
+      <button class="icon-btn del" title="Remove rule" onclick="removeRule('${pathAttr}')"><i class="fa-solid fa-trash"></i></button>
+    </div>`;
+}
+
+function ruleValueInput(r, op, pathAttr) {
+  if (NO_VALUE_OPS.includes(op)) return '';
+  if (op === 'in') {
+    const val = Array.isArray(r.value) ? r.value.join(', ') : (r.value ?? '');
+    return `<input class="rr-val" type="text" placeholder="values, comma-separated"
+      value="${esc(val)}" oninput="ruleAtPath('${pathAttr}').value=this.value.split(',').map(s=>s.trim()).filter(Boolean)">`;
+  }
+  if (op === 'date_within_days') {
+    return `<input class="rr-val" type="number" min="0" step="1" placeholder="days"
+      style="max-width:100px" value="${esc(r.value ?? '')}"
+      oninput="ruleAtPath('${pathAttr}').value=this.value===''?'':Number(this.value)">`;
+  }
+  return `<input class="rr-val" type="text" placeholder="value"
+    value="${esc(r.value ?? '')}" oninput="ruleAtPath('${pathAttr}').value=this.value">`;
+}
+
+function ruleAtPath(pathAttr) {
+  return ruleAt(pathAttr === '' ? [] : pathAttr.split('.').map(Number));
+}
+window.ruleAtPath = ruleAtPath;
+
+function targetRules(pathAttr) {
+  if (pathAttr === '' || (Array.isArray(pathAttr) && pathAttr.length === 0)) return condModel.rules;
+  return ruleAtPath(String(pathAttr)).rules;
+}
+
+function addRule(pathAttr) {
+  captureFormLight();
+  targetRules(pathAttr).push({ field: (meta.whitelist || [])[0] || '', op: 'not_empty' });
+  renderEditor();
+}
+function addGroup(pathAttr) {
+  captureFormLight();
+  targetRules(pathAttr).push({ match: 'any', rules: [] });
+  renderEditor();
+}
+function removeRule(pathAttr) {
+  captureFormLight();
+  const idx = String(pathAttr).split('.').map(Number);
+  parentRulesOf(idx).splice(idx[idx.length - 1], 1);
+  renderEditor();
+}
+function onOpChange(pathAttr, op) {
+  captureFormLight();
+  const r = ruleAtPath(pathAttr);
+  r.op = op;
+  if (NO_VALUE_OPS.includes(op)) delete r.value;
+  else if (op === 'in' && !Array.isArray(r.value)) r.value = [];
+  else if (op === 'date_within_days' && typeof r.value !== 'number') r.value = '';
+  renderEditor();
+}
+window.addRule = addRule; window.addGroup = addGroup;
+window.removeRule = removeRule; window.onOpChange = onOpChange;
+
+/** Read the raw textarea. '' → null (always show); broken JSON → toast + undefined. */
+function readRawConditions() {
+  const ta = E('cond-raw');
+  const txt = ta ? ta.value.trim() : (rawCondText || '').trim();
+  if (!txt) return null;
+  try { return JSON.parse(txt); }
+  catch (e) {
+    Toast.fire({ icon: 'error', title: 'Conditions JSON does not parse: ' + e.message });
+    return undefined;
+  }
+}
+
+// ── Gather + save / delete ─────────────────────────────────────
+
+/** The full draft payload from the editor. undefined = abort (bad raw JSON). */
+function gatherDraft() {
+  captureFormLight();
+  let conditions = null;
+  if (condMode === 'rules') {
+    conditions = condModel && condModel.rules.length
+      ? { mode: 'rules', match: condModel.match === 'any' ? 'any' : 'all', rules: condModel.rules }
+      : null;
+  } else if (condMode === 'raw') {
+    conditions = readRawConditions();
+    if (conditions === undefined) return undefined;
+  }
+  const draft = {
+    card_key:   working.card_key,
+    title:      working.title,
+    body_type:  working.body_type,
+    link_url:   working.link_url || null,
+    link_label: working.link_label || null,
+    conditions,
+    placement:  working.placement,
+    sort:       working.sort,
+    active:     working.active,
+  };
+  if (working.body_type === 'template') {
+    draft.body_template = working.body_template ?? '';
+    draft.coded_key = null;
+  } else {
+    draft.body_template = null;
+    draft.coded_key = working.coded_key;
+  }
+  return draft;
+}
+
+function showValidationErrors(title, errors) {
+  Swal.fire({
+    icon: 'error', title,
+    html: `<div style="font-size:13px;text-align:left"><ul style="margin-left:18px">` +
+          errors.map(e => `<li style="margin-top:5px">${esc(e)}</li>`).join('') +
+          `</ul></div>`,
+    width: 620,
+  });
+}
+
+async function saveCard() {
+  const draft = gatherDraft();
+  if (draft === undefined) return;
+  try {
+    let saved;
+    if (activeId) {
+      // PUT sends the full editable set; body_type rides along untouched
+      // (immutable server-side — same value is a no-op).
+      saved = (await api(`/api/portal-cards-admin/cards/${activeId}`, 'PUT', draft)).card;
+    } else {
+      saved = (await api('/api/portal-cards-admin/cards', 'POST', draft)).card;
+    }
+    Toast.fire({ icon: 'success', title: 'Card saved' });
+    activeId = saved.id;
+    await loadCards();
+    selectCard(saved.id);
+  } catch (e) {
+    const errs = e.body && Array.isArray(e.body.errors) ? e.body.errors : null;
+    if (errs && errs.length) showValidationErrors('Card failed validation', errs);
+    else Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+window.saveCard = saveCard;
+
+async function deleteCard() {
+  if (!activeId || !working) return;
+  const { isConfirmed } = await Swal.fire({
+    icon: 'warning',
+    title: `Delete card "${working.card_key}"?`,
+    text: 'It disappears from every client portal immediately.',
+    showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: '#ef4444',
+  });
+  if (!isConfirmed) return;
+  try {
+    await api(`/api/portal-cards-admin/cards/${activeId}`, 'DELETE');
+    Toast.fire({ icon: 'success', title: 'Card deleted' });
+    activeId = null; working = null;
+    await loadCards(false);
+    E('card-header').style.display = 'none';
+    E('editor-wrap').innerHTML = `<div class="empty-state"><i class="fa-solid fa-address-card"></i>
+      <div>Select a card to edit, or create a new one</div></div>`;
+  } catch (e) {
+    if (e.status === 409) {
+      const { isConfirmed: deact } = await Swal.fire({
+        icon: 'info',
+        title: 'Coded cards can’t be deleted',
+        html: `<div style="font-size:13px;text-align:left">${esc(e.message)}<br><br>Deactivate it instead?
+               (Inactive cards vanish from the portal but keep their config.)</div>`,
+        showCancelButton: true, confirmButtonText: 'Deactivate',
+      });
+      if (deact) {
+        try {
+          await api(`/api/portal-cards-admin/cards/${activeId}`, 'PUT', { active: 0 });
+          Toast.fire({ icon: 'success', title: 'Card deactivated' });
+          await loadCards();
+          selectCard(activeId);
+        } catch (e2) { Toast.fire({ icon: 'error', title: e2.message }); }
+      }
+      return;
+    }
+    Toast.fire({ icon: 'error', title: e.message });
+  }
+}
+window.deleteCard = deleteCard;
+
+// ── Preview ────────────────────────────────────────────────────
+
+function onPreviewSearch(q) {
+  clearTimeout(searchTimer);
+  const host = E('pv-results');
+  if (!q || q.trim().length < 2) { host.style.display = 'none'; return; }
+  searchTimer = setTimeout(async () => {
+    try {
+      const data = await api('/api/cases/search', 'GET', { q: q.trim(), limit: 8 });
+      const rows = data.cases || [];
+      if (!rows.length) {
+        host.innerHTML = `<div class="pv-result" style="color:var(--muted)">No matches</div>`;
+      } else {
+        host.innerHTML = rows.map(c => {
+          const docket = c.case_number_full || c.case_number || c.case_id;
+          const label = `${docket}${c.primary_contact_name ? ' — ' + c.primary_contact_name : ''}`;
+          return `<div class="pv-result" onclick="pickPreviewCase('${esc(c.case_id)}','${esc(label)}')">
+                    <div>${esc(docket)} <span class="sub">${esc(c.case_type || '')}${c.case_chapter ? ' ch ' + esc(c.case_chapter) : ''}</span></div>
+                    <div class="sub">${esc(c.primary_contact_name || '(no Primary contact)')} · ${esc(c.case_id)}</div>
+                  </div>`;
+        }).join('');
+      }
+      host.style.display = '';
+    } catch (e) {
+      host.style.display = 'none';
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }, 250);
+}
+window.onPreviewSearch = onPreviewSearch;
+
+function pickPreviewCase(caseId, label) {
+  previewCase = { case_id: caseId, label };
+  E('pv-results').style.display = 'none';
+  E('pv-search').value = '';
+  E('pv-chosen').innerHTML = `Previewing against <b>${esc(label)}</b>`;
+  doPreview();
+}
+window.pickPreviewCase = pickPreviewCase;
+
+async function doPreview() {
+  if (!previewCase) {
+    Toast.fire({ icon: 'info', title: 'Pick a case to preview against first' });
+    return;
+  }
+  const draft = gatherDraft();
+  if (draft === undefined) return;
+  const host = E('pv-out');
+  host.innerHTML = `<div class="hint" style="margin-top:10px"><i class="fa-solid fa-spinner spin"></i> Rendering…</div>`;
+  try {
+    const out = await api('/api/portal-cards-admin/preview', 'POST', {
+      card: draft, case_id: previewCase.case_id,
+    });
+    renderPreviewResult(out);
+  } catch (e) {
+    host.innerHTML = `<div class="pv-hidden"><i class="fa-solid fa-triangle-exclamation"></i> ${esc(e.message)}</div>`;
+  }
+}
+window.doPreview = doPreview;
+
+function renderPreviewResult(out) {
+  const host = E('pv-out');
+  let html = '';
+
+  if (out.validation && !out.validation.valid) {
+    html += `<div class="pv-errors"><b>Won’t save — validation errors:</b>
+      <ul>${out.validation.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul></div>`;
+    host.innerHTML = html;
+    return;
+  }
+
+  const pc = out.preview_case || {};
+  html += `<div class="pv-chosen" style="margin-top:10px">
+    Case <b>${esc(pc.docket || pc.case_id || '')}</b> ·
+    Primary: <b>${esc(pc.primary_contact_name || '(none)')}</b></div>`;
+  if (out.note) html += `<div class="warn-note">${esc(out.note)}</div>`;
+
+  // condition chips
+  const cond = out.conditions || {};
+  if (cond.mode && cond.mode !== 'none') {
+    html += `<div style="margin-top:8px">
+      <span class="cond-chip ${out.passes ? 'pass' : 'fail'}"><i class="fa-solid fa-${out.passes ? 'check' : 'xmark'}"></i>
+        ${cond.mode === 'rules' ? (cond.match === 'any' ? 'ANY of:' : 'ALL of:') : 'sql:'}</span>
+      ${(cond.groups || []).map(g =>
+        `<span class="cond-chip ${g.passes ? 'pass' : 'fail'}">
+           <i class="fa-solid fa-${g.passes ? 'check' : 'xmark'}"></i> ${esc(g.label)}</span>`).join('')}
+    </div>`;
+  } else {
+    html += `<div class="hint" style="margin-top:8px">No conditions — always shows.</div>`;
+  }
+
+  // the card itself, exactly as the portal lays it out
+  if (out.card) {
+    const c = out.card;
+    let inner = '';
+    if (c.coded_key) {
+      inner += `<div class="pv-coded-note">(coded body — rendered by the portal's
+        “${esc(c.coded_key)}” renderer from live case data)</div>`;
+    } else if (c.body) {
+      // RAW body, escaped AT INSERTION — the exact case.html contract
+      // (escText + white-space:pre-line).
+      inner += `<p class="pv-body">${esc(c.body)}</p>`;
+    }
+    if (c.link && c.link.url) {
+      inner += `<a class="pv-btn">${esc(c.link.label || 'Open')}</a>
+                <p class="pv-note">Opens in a new tab.</p>`;
+    }
+    html += `<div class="pv-stage">
+      <div class="hint" style="margin-bottom:8px">Placement: <b>${esc(c.placement)}</b>
+        ${c.placement === 'case_top' ? '(above the progress timeline)' : '(below the progress timeline)'}</div>
+      <div class="pv-card"><h2>${esc(c.title)}</h2>${inner}</div>
+    </div>`;
+  } else {
+    html += `<div class="pv-hidden"><i class="fa-solid fa-eye-slash"></i>
+      Card is HIDDEN for this case${out.hidden_reason ? ' — ' + esc(out.hidden_reason) : ''}.
+      Hidden cards are absent from the portal payload entirely.</div>`;
+  }
+
+  host.innerHTML = html;
+}
+
+// close preview dropdown on outside click
+document.addEventListener('click', (e) => {
+  const res = E('pv-results');
+  if (res && !e.target.closest('.pv-picker')) res.style.display = 'none';
+});
+
+// ── Lifecycle ──────────────────────────────────────────────────
+
+async function init() {
+  P.setTopbarButtons({ new: true, refresh: true });
+  try {
+    await loadMeta();
+    await loadCards();
+    loaded = true;
+  } catch (e) {
+    E('card-list').innerHTML = `<div class="empty-state" style="height:auto;padding:40px 12px">
+      <i class="fa-solid fa-triangle-exclamation"></i><div>${esc(e.message)}</div></div>`;
+  }
+}
+
+function onShow() {
+  P.setTopbarButtons({ new: true, refresh: true });
+  if (loaded) loadCards();
+}
+function onHide()    {}
+function onRefresh() { loadCards(); }
+function onNew()     { newCard(); }
+
+window.onShow = onShow;
+window.onHide = onHide;
+window.onRefresh = onRefresh;
+window.onNew = onNew;
+
+// ── Boot ───────────────────────────────────────────────────────
+(function waitForShell() {
+  if (P && typeof P.apiSend === 'function' && typeof P.setTopbarButtons === 'function') {
+    return init();
+  }
+  setTimeout(waitForShell, 50);
+})();
+</script>
+</body>
+</html>

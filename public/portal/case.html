@@ -87,7 +87,7 @@
   .pay-note { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; text-align: center; }
 
   /* E1 template-card body: pre-line keeps staff-typed newlines without any
-     HTML transform (body text is server-escaped — see renderCard). */
+     HTML transform (body text is escText'd at insertion — see renderCard). */
   .card-body { margin: 0; white-space: pre-line; }
   .card-body + .pay-btn { margin-top: 12px; }
 
@@ -206,11 +206,11 @@
       return fn ? fn(card, c) : '';
     }
     // Template card: title + body + optional link button.
-    // card.body is SERVER-ESCAPED text (portalCardEngine escapes resolved
-    // output before it enters the payload — ratified model item 4). Insert
-    // as-is; do NOT escText it — that would double-escape (&amp;amp;).
+    // card.body is RAW resolved text (ratified model item 4, rider
+    // 2026-08-08) — escText it at insertion, exactly like every other
+    // payload string on this page.
     var inner = '';
-    if (card.body) inner += '<p class="card-body">' + card.body + '</p>';
+    if (card.body) inner += '<p class="card-body">' + escText(card.body) + '</p>';
     inner += linkBtn(card.link);
     if (!inner) return '';   // nothing to show → skip the empty shell
     return cardShell(card.title, inner);

@@ -175,6 +175,7 @@ public/case.html
 public/caseConfigManager.html
 public/caseconfig/fields.html
 public/caseconfig/pipelines.html
+public/caseconfig/portalCards.html
 public/caseconfig/types.html
 public/caseerror.html
 public/communicate.html
@@ -313,6 +314,7 @@ routes/api.phoneLines.js
 routes/api.pipeline.js
 routes/api.pipelineAdmin.js
 routes/api.pipelineBoard.js
+routes/api.portalCardsAdmin.js
 routes/api.readonly.js
 routes/api.readonlyKeys.js
 routes/api.redirects.js
@@ -549,6 +551,7 @@ tests/pipelineBoard.test.js
 tests/pipelineService.test.js
 tests/portalAuth.test.js
 tests/portalCardEngine.test.js
+tests/portalCardsAdmin.test.js
 tests/portalCaseService.test.js
 tests/portalDocsService.test.js
 tests/refreshonmiss.k3.test.js

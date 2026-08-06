@@ -1,14 +1,22 @@
-// Where do the ~4 seconds go: the network, or the server?
-// No dependencies. Run: node scripts/probe-db-connect.js
+// Measures where connection setup time goes: the network, or the server.
 //
-//   tcp ~160ms, greeting ~4s  -> the SERVER is stalling. Almost always
-//                                reverse-DNS on connect: SHOW VARIABLES LIKE
-//                                'skip_name_resolve' (want ON).
-//   tcp ~4s                   -> the NETWORK path is slow: firewall, proxy,
-//                                or route. Nothing MySQL can fix.
-//   both fast                 -> the cost is in auth; check the auth plugin.
+// FINDING (2026-08-06) — this DB stalls ~4s before its handshake greeting:
+//   tcp        13 ms   <- network is fine
+//   greeting 3964 ms   <- server stalls here
 //
-// Throwaway diagnostic — delete once the 4s connect is understood.
+// Cause: skip_name_resolve = OFF, so MySQL does a reverse-DNS lookup of the
+// client IP on every new connection. A laptop on a residential IP with no PTR
+// record waits for that lookup to time out. Cloud Run is unaffected — GCP
+// egress IPs have valid PTR records, so it resolves instantly (confirmed:
+// admin_audit_log shows ~77ms avg over 1351 db_console calls).
+//
+// Host is giowm1139.siteground.biz (SiteGround shared, MySQL 8.4.6), so
+// skip_name_resolve is not ours to change. scripts/dump-schema.js works around
+// it by running in the background from .githooks/pre-commit.
+//
+// Re-run if connect times change: node scripts/probe-db-connect.js
+//   tcp fast, greeting slow -> server-side stall (reverse DNS again?)
+//   tcp itself slow         -> network path: firewall, proxy, route
 const net = require("net"), fs = require("fs"), path = require("path");
 const env = Object.fromEntries(
   fs.readFileSync(path.join(__dirname, "..", ".env"), "utf8").split("\n")
