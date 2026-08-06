@@ -129,18 +129,22 @@
     initChrome(opts) {
       const authed = !opts || opts.authed !== false;
 
-      // Styles (once).
+      // Styles (once). S5.1: centered, properly sized logo (the corner
+      // thumbnail read as an afterthought); logout pins right.
       if (!document.getElementById('portal-chrome-style')) {
         const style = document.createElement('style');
         style.id = 'portal-chrome-style';
         style.textContent =
           '.portal-chrome{background:#ffffff;border-bottom:1px solid #e5e7eb;}' +
-          '.portal-chrome-inner{max-width:520px;margin:0 auto;padding:10px 16px;' +
-            'display:flex;align-items:center;justify-content:space-between;gap:12px;}' +
-          '.portal-chrome-brand{display:inline-flex;align-items:center;gap:8px;' +
-            'text-decoration:none;color:#1f2937;font-weight:700;font-size:15px;min-width:0;}' +
-          '.portal-chrome-brand img{display:block;height:30px;max-width:220px;object-fit:contain;}' +
-          '.portal-chrome-logout{border:1px solid #e5e7eb;border-radius:8px;background:#ffffff;' +
+          '.portal-chrome-inner{max-width:520px;margin:0 auto;padding:12px 16px;' +
+            'position:relative;display:flex;align-items:center;justify-content:center;' +
+            'min-height:64px;}' +
+          '.portal-chrome-brand{display:inline-flex;align-items:center;justify-content:center;' +
+            'text-decoration:none;color:#1f2937;font-weight:700;font-size:17px;min-width:0;}' +
+          '.portal-chrome-brand img{display:block;height:48px;max-width:min(60vw,280px);' +
+            'object-fit:contain;}' +
+          '.portal-chrome-logout{position:absolute;right:16px;top:50%;transform:translateY(-50%);' +
+            'border:1px solid #e5e7eb;border-radius:8px;background:#ffffff;' +
             'color:#6b7280;font:inherit;font-size:13px;font-weight:600;padding:6px 12px;' +
             'cursor:pointer;flex-shrink:0;}' +
           '.portal-chrome-logout:hover{color:#2563eb;border-color:#2563eb;}' +

@@ -5,15 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Home — Client Portal</title>
 <style>
-  /* Client Portal Slice 5 — home. Replaces the S2 redirect stub with a real
-     landing page: greeting, case summary, and the engine's 'home'-placement
-     cards (the staff-authored announcements channel). Visual language from
-     cases.html / case.html; the shared branded header + favicon come from
-     Portal.initChrome (portal.js).
+  /* Client Portal Slice 5 (+ S5.1 layout) — home. Greeting + the engine's
+     'home'-placement cards, nothing else: the S5 inline case list is gone
+     (S5.1) — navigation to the cases list rides the seeded 'myCases'
+     engine card, staff-orderable next to the welcome card in Portal
+     Manager. Visual language from case.html; the shared branded header +
+     favicon come from Portal.initChrome (portal.js).
 
      NO AUTO-REDIRECT here — deliberate. cases.html keeps its single-case
-     auto-redirect; if home also redirected, a single-case client could
-     ping-pong home → cases → case with no way back to home. */
+     auto-redirect (so the myCases card is one tap into the case for
+     single-case clients); if home also redirected, a single-case client
+     could ping-pong home → cases → case with no way back to home. */
   :root {
     --accent: #2563eb;
     --accent-text: #ffffff;
@@ -34,35 +36,6 @@
   .wrap { max-width: 520px; margin: 0 auto; padding: 28px 16px 40px; }
 
   .greet h1 { margin: 0; font-size: 22px; font-weight: 700; }
-
-  .section-label {
-    margin: 22px 0 10px; font-size: 14px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
-  }
-
-  /* case summary — cases.html visual shells */
-  .case-card {
-    display: block; text-decoration: none; color: inherit;
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 16px; margin-bottom: 12px;
-    cursor: pointer;
-  }
-  .case-card:hover, .case-card:focus {
-    border-color: var(--accent); outline: none;
-  }
-  .case-card .title { font-size: 16px; font-weight: 600; margin: 0; }
-  .case-card .docket { font-size: 12.5px; color: var(--muted); margin: 3px 0 0; }
-  .case-card .chip {
-    display: inline-block; margin-top: 10px;
-    padding: 3px 10px; border-radius: 999px;
-    background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
-    font-size: 12.5px; font-weight: 600;
-  }
-  .empty {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 22px 16px; text-align: center;
-    color: var(--muted); font-size: 14.5px;
-  }
 
   /* engine cards — case.html visual shells + the same body/link contract */
   .card {
@@ -116,29 +89,6 @@
     return 'Good evening';
   }
 
-  function caseHref(id) {
-    return 'case.html?id=' + encodeURIComponent(id);
-  }
-
-  function renderCases(cases) {
-    if (!cases.length) {
-      // Zero cases is a friendly state, not an error.
-      return '<div class="empty">No cases to show &mdash; contact our office if you were expecting one here.</div>';
-    }
-    return cases.map(function (c) {
-      var docket = c.docket
-        ? '<p class="docket">Case no. ' + escText(c.docket) + '</p>'
-        : '';
-      var chip = c.current_stage_label
-        ? '<span class="chip">' + escText(c.current_stage_label) + '</span>'
-        : '';
-      return '<a class="case-card" href="' + caseHref(c.case_id) + '">' +
-               '<p class="title">' + escText(c.title) + '</p>' +
-               docket + chip +
-             '</a>';
-    }).join('');
-  }
-
   // ── engine cards — the case.html contract, home edition ──────────────────
   // Cards come CONFIGURED from the server (placement 'home'); failed /
   // refused cards are ABSENT from the array. Bodies arrive RAW and are
@@ -180,9 +130,8 @@
               escText(greetingWord() + (data.name ? ', ' + data.name : '')) +
             '</h1></div>';
 
-    html += '<div class="section-label">Your Cases</div>';
-    html += renderCases(data.cases || []);
-
+    // Engine cards in sort order — welcome, My Cases, and whatever staff
+    // add next. Zero cards is just a quiet greeting, not an error.
     (data.cards || []).forEach(function (card) {
       html += renderCard(card);
     });
@@ -194,7 +143,7 @@
     try {
       var res = await Portal.fetch('/api/portal/home');
       var data = await res.json();
-      if (!data || data.status !== 'success' || !Array.isArray(data.cases)) {
+      if (!data || data.status !== 'success' || !Array.isArray(data.cards)) {
         document.getElementById('content').innerHTML =
           '<p class="msg">Something went wrong &mdash; try refreshing.</p>';
         return;

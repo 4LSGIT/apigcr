@@ -5,21 +5,25 @@
 // { status:'success', ... } / { status:'error', message } (portal.cases.js
 // style).
 //
-//   GET /api/portal/home → { status:'success', name, cases, cards }
+//   GET /api/portal/home → { status:'success', name, cards }
 //
 //     name   — portalAuthService.getMe (the contact's first name)
-//     cases  — portalCaseService.listCases (the same list /api/portal/cases
-//              serves — title/docket/current_stage_label per case)
 //     cards  — portalCardEngine.renderCards pinned to the authed contact
 //              with placement 'home' and caseId NULL: the home surface is
 //              CASE-LESS by contract (S5). No req.portalCaseId is ever set
 //              here — the access-log row for this route carries no case,
 //              correctly.
 //
+//     S5.1: `cases` DROPPED from the aggregate — home no longer renders an
+//     inline case list; navigation to cases.html rides the seeded 'myCases'
+//     engine card instead (staff-orderable next to the welcome card). This
+//     also drops listCases' per-case pipeline reads from every home view.
+//     /api/portal/cases is unchanged and remains the list's endpoint.
+//
 // Shape rationale (manager judgment, flagged): one aggregate endpoint =
 // one round-trip for home.html and exactly one portal_access_log row per
-// home view, instead of three. The pieces stay independently reachable
-// (/me, /cases) for pages that need them alone.
+// home view. The pieces stay independently reachable (/me, /cases) for
+// pages that need them alone.
 //
 // Rate limiting: none per-route — authed read, every request logs
 // (portal.cases.js precedent).
@@ -31,19 +35,17 @@ const router = express.Router();
 
 const requireAuth = require('../lib/auth.requireAuth');
 const portalAuth  = require('../services/portalAuthService');
-const portalCases = require('../services/portalCaseService');
 const cardEngine  = require('../lib/portalCardEngine');
 
 /** The aggregate payload for one authed contact. */
 async function getHome(db, contactId) {
-  // renderCards fails closed internally ([] on any engine-level error); the
-  // other two throw upward to the route's 500 like their own routes do.
-  const [me, cases, cards] = await Promise.all([
+  // renderCards fails closed internally ([] on any engine-level error);
+  // getMe throws upward to the route's 500 like its own route does.
+  const [me, cards] = await Promise.all([
     portalAuth.getMe(db, contactId),
-    portalCases.listCases(db, contactId),
     cardEngine.renderCards(db, { caseId: null, contactId, placement: 'home' }),
   ]);
-  return { name: me.name, cases, cards };
+  return { name: me.name, cards };
 }
 
 // ── GET /api/portal/home ────────────────────────────────────────────────────
