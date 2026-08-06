@@ -208,6 +208,13 @@ describe('validateCard — coded cards', () => {
     expect(msg).toContain('no_such_renderer');
     expect(msg).toContain('meeting341');       // the known set is named
   });
+
+  test('R2: docsNav is a known coded renderer — admin can save/deactivate it', () => {
+    const card = valid(coded({
+      card_key: 'docsNav', coded_key: 'docsNav', placement: 'case',
+    }));
+    expect(card).toMatchObject({ body_type: 'coded', coded_key: 'docsNav', placement: 'case' });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

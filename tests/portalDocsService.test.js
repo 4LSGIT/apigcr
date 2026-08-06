@@ -23,11 +23,22 @@ jest.mock('../services/emailService', () => ({
 jest.mock('../services/logService', () => ({
   createLogEntry: jest.fn(),
 }));
+jest.mock('../services/settingsService', () => ({
+  getSettings: jest.fn(),
+}));
 
 const dropbox      = require('../services/dropboxService');
 const emailService = require('../services/emailService');
 const logService   = require('../services/logService');
+const { getSettings } = require('../services/settingsService');
 const svc          = require('../services/portalDocsService');
+
+// R1 seeds (ref/2026-08-09_portal_r1_r2.sql) — the migration values that
+// keep behavior identical to the pre-R1 hardcode. Keep in sync.
+const SEEDED_SETTINGS = {
+  portal_docs_notify_from: 'automations@4lsg.com',
+  portal_docs_notify_to:   'rena@4lsg.com',
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs / fixtures
@@ -354,14 +365,51 @@ describe('sendUploadNotifications', () => {
   beforeEach(() => {
     emailService.sendEmail.mockResolvedValue({});
     logService.createLogEntry.mockResolvedValue({});
+    // R1 default: seeded settings → pre-R1 behavior.
+    getSettings.mockResolvedValue({ ...SEEDED_SETTINGS });
   });
 
-  test('email recipient/sender parity with the public flow', async () => {
+  test('recipient/sender resolve from app_settings; seeded values ≡ the public flow (pre-R1 parity)', async () => {
     await svc.sendUploadNotifications({}, ctxFixture());
+    expect(getSettings).toHaveBeenCalledWith({},
+      ['portal_docs_notify_from', 'portal_docs_notify_to']);
     const arg = emailService.sendEmail.mock.calls[0][1];
     expect(arg.from).toBe('automations@4lsg.com');
     expect(arg.to).toBe('rena@4lsg.com');
     expect(arg.subject).toBe('New Documents Uploaded \u2014 Jane Doe (24-40226-mlo)');
+  });
+
+  test('R1: edited settings retarget the email — no hardcode left', async () => {
+    getSettings.mockResolvedValue({
+      portal_docs_notify_from: 'office@4lsg.com',
+      portal_docs_notify_to:   'shoshana@4lsg.com',
+    });
+    await svc.sendUploadNotifications({}, ctxFixture());
+    const arg = emailService.sendEmail.mock.calls[0][1];
+    expect(arg.from).toBe('office@4lsg.com');
+    expect(arg.to).toBe('shoshana@4lsg.com');
+  });
+
+  test('R1: blank/missing setting → email SKIPPED (off-switch), log entry still written', async () => {
+    getSettings.mockResolvedValue({
+      portal_docs_notify_from: 'automations@4lsg.com',
+      portal_docs_notify_to:   '   ',                    // blank = off
+    });
+    await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
+
+    getSettings.mockResolvedValue({});                   // both keys absent → undefined
+    await svc.sendUploadNotifications({}, ctxFixture());
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    expect(logService.createLogEntry).toHaveBeenCalledTimes(2);
+  });
+
+  test('R1: settings read failure → email skipped self-caught, log entry still written', async () => {
+    getSettings.mockRejectedValueOnce(new Error('db down'));
+    await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
+    expect(emailService.sendEmail).not.toHaveBeenCalled();
+    expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
   });
 
   test('EVERY interpolated HTML value is escaped — hostile filename, comment, item name, href', async () => {

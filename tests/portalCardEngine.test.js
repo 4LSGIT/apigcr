@@ -119,9 +119,27 @@ const MEETING341_CONDITIONS = {
   ],
 };
 
-// Seed rows exactly as the migration inserts them (payment first → lower id).
+// Seed rows exactly as the migrations insert them, in the renderCards
+// SELECT's ORDER BY sort ASC, id ASC (the stub returns this array AS the
+// query result, so array order must mirror the SQL order):
+//   docsNav(sort 2, id 3) → callback(sort 4, id 4) → payment(sort 10, id 1)
+//   → meeting341(sort 10, id 2).
+// E1 rows: ref/2026-08-07_portal_cards_e1.sql (payment first → lower id).
+// R2 rows: ref/2026-08-09_portal_r1_r2.sql (nav cards, sorted AHEAD of
+// payment to mirror the pre-R2 hardcoded visual order). KEEP IN SYNC.
 function seedCards() {
   return [
+    cardRow({
+      id: 3, card_key: 'docsNav', title: 'Documents',
+      body_type: 'coded', body_template: null, coded_key: 'docsNav',
+      conditions: null, placement: 'case', sort: 2,
+    }),
+    cardRow({
+      id: 4, card_key: 'callback', title: 'Need a call?', body_type: 'template',
+      body_template: null,
+      link_url: '/portal/callback.html', link_label: 'Request a callback',
+      conditions: null, placement: 'case', sort: 4,
+    }),
     cardRow({
       id: 1, card_key: 'payment', title: 'Payments', body_type: 'template',
       body_template: 'You can make a secure online payment toward your account at any time.',
@@ -637,16 +655,36 @@ describe('PARITY — engine + seeds reproduce pre-E1 behavior', () => {
       // 341 data presence + values ≡ pre-E1.
       expect(view.meeting341).toEqual(oracle);
 
-      // Visible card set ≡ pre-E1: payment always; 341 iff the oracle shows.
+      // Visible card set ≡ pre-R2: docsNav/callback/payment always
+      // (unconditional, like the hardcoded cards they replace); 341 iff
+      // the oracle shows.
       const keys = view.cards.map(c => c.key).sort();
-      expect(keys).toEqual(oracle ? ['meeting341', 'payment'] : ['payment']);
+      expect(keys).toEqual(oracle
+        ? ['callback', 'docsNav', 'meeting341', 'payment']
+        : ['callback', 'docsNav', 'payment']);
 
-      // Placement parity: 341 above the timeline, payment below.
+      // R2 ORDER parity — the pre-R2 visual order below the timeline was
+      // Documents → Need a call? → Payments; the client lays out 'case'
+      // cards in payload order, so the (sort,id)-ordered payload must
+      // carry exactly that subsequence.
+      const caseKeys = view.cards.filter(c => c.placement === 'case').map(c => c.key);
+      expect(caseKeys).toEqual(['docsNav', 'callback', 'payment']);
+
+      // Placement/shape parity per card.
       const pay = view.cards.find(c => c.key === 'payment');
       expect(pay).toMatchObject({
         placement: 'case',
         coded_key: null,
         link: { url: '/r/payment', label: 'Make a payment' },
+      });
+      expect(view.cards.find(c => c.key === 'docsNav')).toMatchObject({
+        placement: 'case', coded_key: 'docsNav', body: null, link: null,
+      });
+      expect(view.cards.find(c => c.key === 'callback')).toMatchObject({
+        placement: 'case', coded_key: null,
+        body: '',                      // NULL template → empty body; the
+                                       // client renders no body paragraph
+        link: { url: '/portal/callback.html', label: 'Request a callback' },
       });
       if (oracle) {
         expect(view.cards.find(c => c.key === 'meeting341')).toMatchObject({
@@ -666,7 +704,8 @@ describe('PARITY — engine + seeds reproduce pre-E1 behavior', () => {
     ]);
     pipelineService.getPipeline.mockResolvedValueOnce(PIPELINE);
     const view = await portalCases.getCaseView(db, 42, 'AbCdEf12');
-    expect(view.cards.map(c => c.key)).toEqual([]);
+    // R2: the nav cards are independent rows — killing payment leaves them.
+    expect(view.cards.map(c => c.key)).toEqual(['docsNav', 'callback']);
     expect(view.meeting341).toBeNull();
   });
 
@@ -684,6 +723,6 @@ describe('PARITY — engine + seeds reproduce pre-E1 behavior', () => {
     pipelineService.getPipeline.mockResolvedValueOnce(PIPELINE);
     const view = await portalCases.getCaseView(db, 42, 'AbCdEf12');
     expect(view.meeting341).toBeNull();
-    expect(view.cards.map(c => c.key)).toEqual(['payment']);
+    expect(view.cards.map(c => c.key)).toEqual(['docsNav', 'callback', 'payment']);
   });
 });

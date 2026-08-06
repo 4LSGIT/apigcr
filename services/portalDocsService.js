@@ -61,6 +61,7 @@
 const dropbox      = require('./dropboxService');
 const emailService = require('./emailService');
 const logService   = require('./logService');
+const { getSettings } = require('./settingsService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LIMITS (S3 — proposed values, enforced server-side; see slice report)
@@ -85,10 +86,19 @@ const MAX_UPLOAD_FILES    = 50;
 const MAX_UPLOAD_FILENAME = 255;
 const MAX_UPLOAD_COMMENT  = 2000;
 
-// Notification recipients — PARITY with the public upload-complete route
-// (api.checklists.js: automations@4lsg.com → rena@4lsg.com). Keep in sync.
-const NOTIFY_FROM = 'automations@4lsg.com';
-const NOTIFY_TO   = 'rena@4lsg.com';
+// Notification recipients — resolved from app_settings at send time (R1,
+// 2026-08-09; previously hardcoded here). The migration
+// (ref/2026-08-09_portal_r1_r2.sql) seeds both keys with the values that
+// were hardcoded — automations@4lsg.com → rena@4lsg.com — so behavior is
+// unchanged. PARITY NOTE: the public upload-complete route
+// (api.checklists.js:541-542) still HARDCODES those same values; editing
+// these settings retargets the PORTAL notification only. Keep the seed /
+// checklists pair in sync until that route is settings-driven too.
+// Blank/missing value ⇒ the email is SKIPPED with a console warning (the
+// case-log entry still writes) — the apptService office_alerts_to
+// "empty ⇒ feature off" precedent, deliberate staff off-switch semantics.
+const NOTIFY_FROM_KEY = 'portal_docs_notify_from';
+const NOTIFY_TO_KEY   = 'portal_docs_notify_to';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -401,13 +411,19 @@ async function completeUpload(db, contactId, caseId, { files, comment } = {}) {
  * one failing never blocks the other. Returns the settled promise for
  * tests.
  *
+ * R1 (2026-08-09): the email's from/to resolve from app_settings
+ * (NOTIFY_FROM_KEY / NOTIFY_TO_KEY) per send — live edits apply to the
+ * next upload, no restart. A failed settings read, or a blank/missing
+ * value, SKIPS the email (warning logged) and never blocks the case-log
+ * entry; the route's .catch stays a dead-man's brake only.
+ *
  * Escaping discipline (public-route parity): EVERY value interpolated into
  * the HTML body is escaped — filenames and comment are client input, and
  * DB-derived values (item names are staff free-text; dropboxLink sits in
  * an href) are escaped as defence in depth. The subject is a MIME header,
  * not HTML — deliberately NOT escaped (repo convention).
  */
-function sendUploadNotifications(db, ctx) {
+async function sendUploadNotifications(db, ctx) {
   const {
     case_id, contact_id, clientName, caseDisplay, dropboxLink,
     fileCount, omittedCount, files, comment,
@@ -457,12 +473,31 @@ function sendUploadNotifications(db, ctx) {
       : '<p><em>No Dropbox link on file for this case.</em></p>'}
   `.trim();
 
-  const emailP = emailService.sendEmail(db, {
-    from: NOTIFY_FROM,
-    to:   NOTIFY_TO,
-    subject,
-    html,
-  }).catch(err => console.error('[portal] upload notification email failed:', err.message));
+  // R1: recipients from app_settings. Read failure or blank/missing value
+  // → skip the email (loudly), never the log entry below.
+  let notifyFrom = '';
+  let notifyTo = '';
+  try {
+    const s = await getSettings(db, [NOTIFY_FROM_KEY, NOTIFY_TO_KEY]);
+    notifyFrom = String(s[NOTIFY_FROM_KEY] == null ? '' : s[NOTIFY_FROM_KEY]).trim();
+    notifyTo   = String(s[NOTIFY_TO_KEY]   == null ? '' : s[NOTIFY_TO_KEY]).trim();
+  } catch (err) {
+    console.error('[portal] upload notification settings read failed — email skipped:', err.message);
+  }
+
+  const emailP = (notifyFrom && notifyTo)
+    ? emailService.sendEmail(db, {
+        from: notifyFrom,
+        to:   notifyTo,
+        subject,
+        html,
+      }).catch(err => console.error('[portal] upload notification email failed:', err.message))
+    : Promise.resolve().then(() => {
+        console.warn(
+          `[portal] upload notification email skipped — ` +
+          `${NOTIFY_FROM_KEY}/${NOTIFY_TO_KEY} unset or blank (blank = notifications off)`
+        );
+      });
 
   const logP = logService.createLogEntry(db, {
     type:      'docs',

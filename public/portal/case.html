@@ -160,16 +160,28 @@
     return '<div class="card"><h2>' + escText(title) + '</h2>' + inner + '</div>';
   }
 
-  // ALL card links open top-level/new-tab: target=_blank + rel=noopener is
-  // REQUIRED — the Clio page behind /r/payment refuses to load in an iframe,
-  // so links must be top-level/new-tab navigations, never embedded. (The
-  // engine only emits http(s)/site-relative urls; escText makes the value
-  // attribute-safe.) FUTURE SWAP POINT (in-house payments): the payment
-  // card's /r/payment link now lives in the portal_cards `payment` row —
-  // the in-house payment flow swaps that row's link (or a coded_key), not
-  // this file.
+  // Card links (R2 amendment, 2026-08-09):
+  //   PORTAL-INTERNAL ('/portal/…' exactly): plain same-tab navigation, no
+  //     note — these are the portal's own pages (callback.html et al.); the
+  //     pre-R2 hardcoded nav cards navigated same-tab and this preserves
+  //     that. The test is the /portal/ PREFIX, not "site-relative": /r/…
+  //     rows are site-relative REDIRECTS to external pages (the Clio
+  //     payment page) and must keep the external treatment below.
+  //   EVERYTHING ELSE (http(s) absolute, /r/…, any other path):
+  //     top-level/new-tab, target=_blank + rel=noopener REQUIRED — the
+  //     Clio page behind /r/payment refuses to load in an iframe, so these
+  //     links must never be embedded; the "Opens in a new tab." note
+  //     renders under the button. Unknown paths get this safe default.
+  // (escText makes the value attribute-safe.) FUTURE SWAP POINT (in-house
+  // payments): the payment card's /r/payment link now lives in the
+  // portal_cards `payment` row — the in-house payment flow swaps that
+  // row's link (or a coded_key), not this file.
   function linkBtn(link) {
     if (!link || !link.url) return '';
+    if (link.url.indexOf('/portal/') === 0) {
+      return '<a class="pay-btn" href="' + escText(link.url) + '">' +
+               escText(link.label || 'Open') + '</a>';
+    }
     return '<a class="pay-btn" href="' + escText(link.url) +
              '" target="_blank" rel="noopener">' + escText(link.label || 'Open') + '</a>' +
            '<p class="pay-note">Opens in a new tab.</p>';
@@ -191,12 +203,23 @@
                     escText(fmtDateTime(c.meeting341.date, c.meeting341.time)) +
                   '</p>';
       if (c.meeting341.link) {
-        // Same top-level/new-tab rule as every card link — never embed.
+        // Same external-link rule as every http(s) card link — never embed.
         inner += '<a class="pay-btn" style="margin-top:12px;" href="' +
                    escText(c.meeting341.link) +
                  '" target="_blank" rel="noopener">Join your meeting</a>';
       }
       return cardShell(card.title, inner);
+    },
+
+    // Documents nav (R2, 2026-08-09) — replaces the hardcoded Documents
+    // card. CODED because the link is per-case (docs.html?id=<case_id>):
+    // a static link_url cannot carry the id and URL templating is
+    // deliberately NOT being added. Inner HTML is byte-identical to the
+    // pre-R2 hardcoded card (relative href, same-tab, same label).
+    docsNav: function (card, c) {
+      return cardShell(card.title,
+        '<a class="pay-btn" href="docs.html?id=' + encodeURIComponent(c.case_id) +
+        '">View &amp; upload documents</a>');
     }
   };
 
@@ -257,13 +280,13 @@
                    : '<p class="msg" style="padding:6px 0;">No progress to show yet.</p>') +
             '</div>';
 
-    // Documents (S3): checklist + uploads for this case.
-    html += '<div class="card"><h2>Documents</h2><a class="pay-btn" href="docs.html?id=' + encodeURIComponent(c.case_id) + '">View &amp; upload documents</a></div>';
-
-    // Callback request: contact-level route — no ?id= needed.
-    html += '<div class="card"><h2>Need a call?</h2><a class="pay-btn" href="callback.html">Request a callback</a></div>';
-
-    // Cards below the timeline (placement 'case' — the payment card).
+    // Cards below the timeline (placement 'case'). R2 (2026-08-09): the
+    // previously hardcoded Documents + "Need a call?" cards now ride the
+    // engine — the 'docsNav' CODED card (renderer above carries the
+    // per-case URL) and the 'callback' TEMPLATE row (static
+    // link_url /portal/callback.html), seeded at sort 2 and 4 so they
+    // render ahead of payment (sort 10) in the pre-R2 visual order:
+    // Documents, Need a call?, Payments.
     html += renderCards(c.cards, c, false);
 
     document.getElementById('content').innerHTML = html;
