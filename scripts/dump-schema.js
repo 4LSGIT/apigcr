@@ -22,11 +22,13 @@
 // 2 = error. Without --strict a DB failure warns and exits 0, so a commit made
 // offline or on a plane still goes through.
 
-require("dotenv").config();
-
 const fs    = require("fs/promises");
 const path  = require("path");
 const mysql = require("mysql2");
+
+// Explicit path, not cwd-relative: git runs hooks from the repo root, but a
+// human running this from scripts/ shouldn't get a silent "missing env var".
+require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
 const { buildSchemaDump, schemaFingerprint, FINGERPRINT_RE } = require("../lib/schemaDump");
 

@@ -4,8 +4,6 @@
 .gitignore
 Dockerfile
 TRACKED_FILES.txt
-_to_delete/index.lock.stale
-_to_delete/index.lock.stale2
 jest.config.js
 lib/actionDispatchers.js
 lib/aiPrompts/courtExtract.js
@@ -254,6 +252,7 @@ ref/2026-07-31_contract_followup_seq.sql
 ref/2026-08-02_pipeline_engine_slice_a.sql
 ref/2026-08-03_issn_tabs_definition.json
 ref/2026-08-05_portal_s1.sql
+ref/2026-08-07_portal_cards_e1.sql
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/database.sql
 ref/files.md
