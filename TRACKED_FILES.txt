@@ -263,6 +263,7 @@ ref/2026-08-07_portal_cards_e1.sql
 ref/2026-08-09_portal_r1_r2.sql
 ref/2026-08-09_portal_s5.sql
 ref/2026-08-10_portal_s5_1.sql
+ref/2026-08-10_portal_s5_2.sql
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/database.sql
 ref/files.md

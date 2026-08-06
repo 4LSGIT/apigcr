@@ -97,11 +97,12 @@
         _brandingPromise = fetch('/api/portal/branding')
           .then(r => (r.ok ? r.json() : null))
           .then(d => ({
-            logo_url: (d && d.logo_url) || null,
-            site_url: (d && d.site_url) || null,
-            phone:    (d && d.phone)    || null,
+            logo_url:    (d && d.logo_url)    || null,
+            favicon_url: (d && d.favicon_url) || null,
+            site_url:    (d && d.site_url)    || null,
+            phone:       (d && d.phone)       || null,
           }))
-          .catch(() => ({ logo_url: null, site_url: null, phone: null }));
+          .catch(() => ({ logo_url: null, favicon_url: null, site_url: null, phone: null }));
       }
       return _brandingPromise;
     },
@@ -129,21 +130,21 @@
     initChrome(opts) {
       const authed = !opts || opts.authed !== false;
 
-      // Styles (once). S5.1: centered, properly sized logo (the corner
-      // thumbnail read as an afterthought); logout pins right.
+      // Styles (once). S5.1/S5.2: centered hero-sized logo (120px — the
+      // corner thumbnail read as an afterthought); logout pins to the TOP
+      // right corner so it doesn't float mid-header next to the tall logo.
       if (!document.getElementById('portal-chrome-style')) {
         const style = document.createElement('style');
         style.id = 'portal-chrome-style';
         style.textContent =
           '.portal-chrome{background:#ffffff;border-bottom:1px solid #e5e7eb;}' +
-          '.portal-chrome-inner{max-width:520px;margin:0 auto;padding:12px 16px;' +
-            'position:relative;display:flex;align-items:center;justify-content:center;' +
-            'min-height:64px;}' +
+          '.portal-chrome-inner{max-width:520px;margin:0 auto;padding:14px 16px;' +
+            'position:relative;display:flex;align-items:center;justify-content:center;}' +
           '.portal-chrome-brand{display:inline-flex;align-items:center;justify-content:center;' +
             'text-decoration:none;color:#1f2937;font-weight:700;font-size:17px;min-width:0;}' +
-          '.portal-chrome-brand img{display:block;height:48px;max-width:min(60vw,280px);' +
+          '.portal-chrome-brand img{display:block;height:120px;max-width:min(78vw,360px);' +
             'object-fit:contain;}' +
-          '.portal-chrome-logout{position:absolute;right:16px;top:50%;transform:translateY(-50%);' +
+          '.portal-chrome-logout{position:absolute;right:16px;top:10px;' +
             'border:1px solid #e5e7eb;border-radius:8px;background:#ffffff;' +
             'color:#6b7280;font:inherit;font-size:13px;font-weight:600;padding:6px 12px;' +
             'cursor:pointer;flex-shrink:0;}' +
@@ -183,14 +184,16 @@
 
       // Branding (async): favicon + logo image.
       Portal.branding().then(b => {
-        if (!b.logo_url) return;
-        // Favicon — the firm logo (png favicons are fine everywhere modern).
-        if (!document.querySelector('link[rel="icon"]')) {
+        // Favicon — portal_favicon_url with server-side fallback to the
+        // effective logo; belt-fallback here too.
+        const fav = b.favicon_url || b.logo_url;
+        if (fav && !document.querySelector('link[rel="icon"]')) {
           const link = document.createElement('link');
           link.rel = 'icon';
-          link.href = b.logo_url;
+          link.href = fav;
           document.head.appendChild(link);
         }
+        if (!b.logo_url) return;
         // Logo image replaces the text fallback once it actually loads —
         // a broken URL keeps the text, never a broken-image icon.
         const brand = bar.querySelector('.portal-chrome-brand');

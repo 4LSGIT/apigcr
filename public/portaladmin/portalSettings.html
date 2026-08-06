@@ -57,6 +57,19 @@
       border-radius: 6px; font-size: 13px; outline: none;
     }
     input[type=number]:focus { border-color: var(--blue); }
+    input[type=text] {
+      width: 100%; padding: 7px 9px; border: 1px solid var(--border);
+      border-radius: 6px; font-size: 13px; outline: none;
+    }
+    input[type=text]:focus { border-color: var(--blue); }
+    .brand-preview {
+      margin-top: 8px; padding: 10px; border: 1px dashed var(--border);
+      border-radius: 8px; background: #fbfdff; text-align: center;
+    }
+    .brand-preview img { max-height: 80px; max-width: 100%; object-fit: contain; }
+    .brand-preview .none { font-size: 11.5px; color: var(--muted); }
+    .brand-row { display: flex; gap: 10px; align-items: flex-start; }
+    .brand-row > div:first-child { flex: 1; }
     label { display: block; font-size: 11px; font-weight: 600; color: var(--text2);
       margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.03em; }
     code { background: var(--bg); border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
@@ -89,6 +102,13 @@
 //                           default 300 when the row is absent).
 //   portal_sms_counter      read-only usage JSON, shown if the row is
 //                           visible through the settings API.
+//   portal_logo_url         (S5.2) portal header/login logo. Blank =
+//                           fall back to the firm-wide fe-firm_logo_url.
+//   portal_favicon_url      (S5.2) portal favicon. Blank = use the
+//                           effective logo. Both served to clients by the
+//                           PUBLIC GET /api/portal/branding (fixed-set
+//                           endpoint; 5-minute client cache — edits take
+//                           up to 5 min to reach client browsers).
 //
 // Rows are created on first use via POST /api/app-settings when
 // missing (signed-in staff only — the API rejects api-key creation by
@@ -122,6 +142,10 @@ function render() {
   const live = isLive();
   const capRow = settings['portal_sms_monthly_cap'];
   const counterRow = settings['portal_sms_counter'];
+  const logoRow = settings['portal_logo_url'];
+  const favRow = settings['portal_favicon_url'];
+  const firmLogoRow = settings['fe-firm_logo_url'];
+  const firmLogo = firmLogoRow && firmLogoRow.value ? String(firmLogoRow.value).trim() : '';
 
   let counterHtml = '';
   if (counterRow && counterRow.value) {
@@ -168,8 +192,98 @@ function render() {
         PINs unaffected) and an alert fires. Absent = service default of 300.
       </div>
       ${counterHtml}
+    </div>
+
+    <div class="box">
+      <h3><i class="fa-solid fa-image"></i> Branding</h3>
+      <div class="brand-row">
+        <div>
+          <label>Portal logo URL</label>
+          <input type="text" id="brand-logo" value="${esc(logoRow ? logoRow.value : '')}"
+                 placeholder="Blank = firm-wide logo (${esc(firmLogo || 'not set')})"
+                 oninput="previewBrand('logo')">
+        </div>
+        <button class="btn btn-primary" style="margin-top:19px" onclick="saveBrand('logo')">
+          <i class="fa-solid fa-floppy-disk"></i> Save</button>
+      </div>
+      <div class="brand-preview" id="brand-logo-preview"></div>
+
+      <div class="brand-row" style="margin-top:14px">
+        <div>
+          <label>Favicon URL (browser-tab icon)</label>
+          <input type="text" id="brand-favicon" value="${esc(favRow ? favRow.value : '')}"
+                 placeholder="Blank = use the logo" oninput="previewBrand('favicon')">
+        </div>
+        <button class="btn btn-primary" style="margin-top:19px" onclick="saveBrand('favicon')">
+          <i class="fa-solid fa-floppy-disk"></i> Save</button>
+      </div>
+      <div class="brand-preview" id="brand-favicon-preview"></div>
+
+      <div class="hint">
+        Shown on every portal page, login included, via the public
+        <code>GET /api/portal/branding</code> endpoint (a fixed set of settings — nothing
+        else is readable through it). The logo renders 120px tall in the portal header —
+        a wide, transparent-background image works best. Client browsers cache branding
+        for 5 minutes, so edits take up to 5 minutes to appear. Blank logo falls back to
+        the firm-wide <code>fe-firm_logo_url</code>; blank favicon uses the logo.
+      </div>
     </div>`;
+
+  previewBrand('logo');
+  previewBrand('favicon');
 }
+
+// ── branding (S5.2) ────────────────────────────────────────────
+
+function effectiveBrandUrl(kind) {
+  const raw = E(kind === 'logo' ? 'brand-logo' : 'brand-favicon');
+  const v = raw ? raw.value.trim() : '';
+  if (v) return v;
+  if (kind === 'favicon') return effectiveBrandUrl('logo');       // favicon → logo
+  const firm = settings['fe-firm_logo_url'];                      // logo → firm-wide
+  return firm && firm.value ? String(firm.value).trim() : '';
+}
+
+function previewBrand(kind) {
+  const host = E('brand-' + kind + '-preview');
+  if (!host) return;
+  const url = effectiveBrandUrl(kind);
+  if (!url) {
+    host.innerHTML = '<span class="none">Nothing to show — no URL set and no fallback.</span>';
+    return;
+  }
+  const own = E(kind === 'logo' ? 'brand-logo' : 'brand-favicon').value.trim();
+  const tag = own ? '' : ' <span class="none">(fallback)</span>';
+  // Property assignment for the URL — never markup.
+  host.innerHTML = '';
+  const img = document.createElement('img');
+  if (kind === 'favicon') img.style.maxHeight = '32px';
+  img.onerror = () => { host.innerHTML = '<span class="none">Image failed to load — check the URL.</span>'; };
+  img.src = url;
+  host.appendChild(img);
+  if (tag) host.insertAdjacentHTML('beforeend', tag);
+}
+window.previewBrand = previewBrand;
+
+async function saveBrand(kind) {
+  const key = kind === 'logo' ? 'portal_logo_url' : 'portal_favicon_url';
+  const raw = E(kind === 'logo' ? 'brand-logo' : 'brand-favicon').value.trim();
+  if (raw && !/^https?:\/\//i.test(raw)) {
+    Toast.fire({ icon: 'error', title: 'Must be a full http(s) URL — or blank for the fallback' });
+    return;
+  }
+  await writeSetting(key, raw, kind === 'logo'
+    ? { category: 'Portal', label: 'Portal logo URL', type: 'text', sort_order: 60,
+        description: 'Logo shown in the client-portal header on every page including ' +
+          'login (served by the public GET /api/portal/branding). Blank = fall back ' +
+          'to the firm-wide fe-firm_logo_url. Renders 120px tall.' }
+    : { category: 'Portal', label: 'Portal favicon URL', type: 'text', sort_order: 70,
+        description: 'Browser-tab icon for the client portal (served by the public ' +
+          'GET /api/portal/branding). Blank = use the effective portal logo.' });
+  Toast.fire({ icon: 'success', title: kind === 'logo' ? 'Logo saved' : 'Favicon saved' });
+  load();
+}
+window.saveBrand = saveBrand;
 
 // ── portal_live ────────────────────────────────────────────────
 

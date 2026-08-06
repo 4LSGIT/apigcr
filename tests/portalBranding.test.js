@@ -1,10 +1,15 @@
 // tests/portalBranding.test.js
 //
-// S5 — the PUBLIC branding endpoint (routes/portal.branding.js):
-//   • FIXED-SET INVARIANT — the handler serves the three hardcoded fe- keys
-//     and NOTHING request-derived can reach the query: a request stuffed
-//     with key names in query/params/body/headers still binds EXACTLY the
-//     constant key set, and the response carries exactly the three fields.
+// S5 (+ S5.2 portal overrides) — the PUBLIC branding endpoint
+// (routes/portal.branding.js):
+//   • FIXED-SET INVARIANT — the handler serves the FIVE hardcoded keys
+//     (portal_logo_url / portal_favicon_url / the three fe- firm keys) and
+//     NOTHING request-derived can reach the query: a request stuffed with
+//     key names in query/params/body/headers still binds EXACTLY the
+//     constant key set, and the response carries exactly the four fields.
+//   • FALLBACKS (S5.2) — logo_url = portal_logo_url || fe-firm_logo_url;
+//     favicon_url = portal_favicon_url || the effective logo (resolved
+//     server-side).
 //   • Missing rows → nulls, 200. Empty / JSON-quoted / non-scalar values
 //     normalize per the api.firmData.js convention.
 //   • DB error → fail-soft 200 with nulls (never a broken login page).
@@ -20,7 +25,10 @@
 
 const branding = require('../routes/portal.branding');
 
-const EXPECTED_KEYS = ['fe-firm_logo_url', 'fe-firm_site_url', 'fe-firm_phone'];
+const EXPECTED_KEYS = [
+  'portal_logo_url', 'portal_favicon_url',
+  'fe-firm_logo_url', 'fe-firm_site_url', 'fe-firm_phone',
+];
 
 // Plain pool stub: query() shifts the next scripted [rows] result.
 function stubDb(script) {
@@ -76,21 +84,52 @@ describe('getBranding', () => {
     expect(db.calls).toHaveLength(1);
     expect(db.calls[0].params.sort()).toEqual([...EXPECTED_KEYS].sort());
     expect(out).toEqual({
-      logo_url: 'https://iili.io/x.png',
+      logo_url: 'https://iili.io/x.png',       // firm fallback (no portal row)
+      favicon_url: 'https://iili.io/x.png',    // → effective logo
       site_url: 'https://legalsolutions.group',
       phone: '2484179800',
     });
-    // The exported constant is the whole surface — three fields, frozen.
+    // The exported constant is the whole surface — five keys, frozen.
     expect(Object.isFrozen(branding._BRANDING_KEYS)).toBe(true);
     expect(Object.values(branding._BRANDING_KEYS).sort()).toEqual([...EXPECTED_KEYS].sort());
   });
 
   test('missing rows → nulls; partial rows → partial nulls', async () => {
     expect(await branding._getBranding(stubDb([[]])))
-      .toEqual({ logo_url: null, site_url: null, phone: null });
+      .toEqual({ logo_url: null, favicon_url: null, site_url: null, phone: null });
     expect(await branding._getBranding(stubDb([settingRows({
       'fe-firm_logo_url': 'https://iili.io/x.png',
-    })]))).toEqual({ logo_url: 'https://iili.io/x.png', site_url: null, phone: null });
+    })]))).toEqual({ logo_url: 'https://iili.io/x.png',
+                     favicon_url: 'https://iili.io/x.png',
+                     site_url: null, phone: null });
+  });
+
+  test('S5.2 fallbacks: portal logo beats firm logo; portal favicon beats logo; blanks fall through', async () => {
+    // Portal rows set → they win.
+    expect(await branding._getBranding(stubDb([settingRows({
+      'portal_logo_url': 'https://legalsolutions.group/assets/lsg-logo.webp',
+      'portal_favicon_url': 'https://legalsolutions.group/assets/fav.png',
+      'fe-firm_logo_url': 'https://iili.io/x.png',
+    })]))).toMatchObject({
+      logo_url: 'https://legalsolutions.group/assets/lsg-logo.webp',
+      favicon_url: 'https://legalsolutions.group/assets/fav.png',
+    });
+    // Blank portal rows (the seeded-blank favicon shape) fall through.
+    expect(await branding._getBranding(stubDb([settingRows({
+      'portal_logo_url': 'https://legalsolutions.group/assets/lsg-logo.webp',
+      'portal_favicon_url': '   ',
+      'fe-firm_logo_url': 'https://iili.io/x.png',
+    })]))).toMatchObject({
+      logo_url: 'https://legalsolutions.group/assets/lsg-logo.webp',
+      favicon_url: 'https://legalsolutions.group/assets/lsg-logo.webp',
+    });
+    expect(await branding._getBranding(stubDb([settingRows({
+      'portal_logo_url': '',
+      'fe-firm_logo_url': 'https://iili.io/x.png',
+    })]))).toMatchObject({
+      logo_url: 'https://iili.io/x.png',
+      favicon_url: 'https://iili.io/x.png',
+    });
   });
 
   test('value normalization — firmData convention: JSON-parse w/ raw fallback, trim, scalars only', async () => {
@@ -101,6 +140,7 @@ describe('getBranding', () => {
     })]));
     expect(out).toEqual({
       logo_url: 'https://iili.io/quoted.png',
+      favicon_url: 'https://iili.io/quoted.png',   // → effective logo
       site_url: null,
       phone: '2484179800',
     });
@@ -133,12 +173,14 @@ describe('brandingHandler', () => {
     expect(db.calls).toHaveLength(1);
     expect(db.calls[0].params.sort()).toEqual([...EXPECTED_KEYS].sort());
     for (const p of db.calls[0].params) {
-      expect(String(p).startsWith('fe-firm_')).toBe(true);
+      expect(/^(fe-firm_|portal_)/.test(String(p))).toBe(true);
     }
-    // Response projection: envelope + exactly the three branding fields.
+    // Response projection: envelope + exactly the four branding fields.
     expect(res.statusCode).toBe(200);
-    expect(Object.keys(res.body).sort()).toEqual(['logo_url', 'phone', 'site_url', 'status']);
-    expect(res.body).toEqual({ status: 'success', logo_url: null, site_url: null, phone: null });
+    expect(Object.keys(res.body).sort())
+      .toEqual(['favicon_url', 'logo_url', 'phone', 'site_url', 'status']);
+    expect(res.body).toEqual({ status: 'success',
+      logo_url: null, favicon_url: null, site_url: null, phone: null });
   });
 
   test('Cache-Control: public, max-age=300', async () => {
@@ -151,7 +193,8 @@ describe('brandingHandler', () => {
     const res = fakeRes();
     await branding._brandingHandler(fakeReq(stubDb([new Error('boom')])), res);
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ status: 'success', logo_url: null, site_url: null, phone: null });
+    expect(res.body).toEqual({ status: 'success',
+      logo_url: null, favicon_url: null, site_url: null, phone: null });
   });
 
   test('per-IP limiter: 61st call within the window → 429', async () => {
