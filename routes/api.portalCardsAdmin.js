@@ -20,15 +20,19 @@
  *          CODED cards: 409 — their renderer is code (case.html
  *          CODED_RENDERERS); orphaning it is a deploy-level decision.
  *          Deactivate instead (PUT { active: 0 }).
- * POST   /api/portal-cards-admin/preview     — { card: <draft>, case_id }:
- *          validate the draft, then run it through the REAL engine pipeline
- *          (portalCardEngine.previewCard) pinned to that case and its
- *          Primary contact (resolved SERVER-side — the admin picks a case,
- *          never a contact; same MIN(contact_id)-among-Primary rule as
- *          caseService.searchCases). Returns the would-be portal payload
- *          card + per-condition-group pass/fail. Invalid drafts return 200
- *          with { validation: { valid:false, errors } } — the preview pane
- *          is a "what would happen" surface, and validation errors ARE the
+ * POST   /api/portal-cards-admin/preview     — { card: <draft>, case_id }
+ *          for case placements / { card, contact_id } for placement 'home'
+ *          (S5): validate the draft, then run it through the REAL engine
+ *          pipeline (portalCardEngine.previewCard). Case placements pin to
+ *          that case and its Primary contact (resolved SERVER-side — the
+ *          admin picks a case; same MIN(contact_id)-among-Primary rule as
+ *          caseService.searchCases). Home drafts pin to the admin-chosen
+ *          CONTACT and render CASE-LESS (caseId null) — the home surface
+ *          has no case, so there is no case to derive anything from.
+ *          Returns the would-be portal payload card + per-condition-group
+ *          pass/fail. Invalid drafts return 200 with
+ *          { validation: { valid:false, errors } } — the preview pane is a
+ *          "what would happen" surface, and validation errors ARE the
  *          answer (saves still 400).
  *
  * SECURITY MODEL (see lib/portalCardEngine.js header — binding):
@@ -228,19 +232,60 @@ async function deleteCard(db, id) {
 }
 
 /**
- * Preview: validate the draft; resolve the pinned session (case + its
- * Primary contact, server-side); run the REAL pipeline. See the route-table
- * comment for the 200-with-validation-errors contract.
+ * Preview: validate the draft; resolve the pinned session; run the REAL
+ * pipeline. See the route-table comment for the 200-with-validation-errors
+ * contract.
+ *
+ * S5 — the pin is PLACEMENT-SHAPED (validation therefore runs FIRST, so
+ * the placement is known; an invalid draft returns its validation errors
+ * without needing any pin at all):
+ *   case placements: body.case_id (existing path — case + server-resolved
+ *     Primary contact; same MIN(contact_id)-among-'Primary' rule as
+ *     caseService.searchCases).
+ *   'home': body.contact_id — the home surface HAS no case; the admin
+ *     picks the contact directly and the pipeline runs case-less
+ *     (caseId null), exactly as /api/portal/home renders it. Returns
+ *     preview_contact instead of preview_case.
  */
 async function previewDraft(db, body) {
   body = body && typeof body === 'object' ? body : {};
-  const caseId = String(body.case_id == null ? '' : body.case_id).trim();
-  if (!caseId) throw httpError(400, 'case_id is required');
 
   const v = engine.validateCard(body.card || {});
   if (!v.valid) {
     return { validation: { valid: false, errors: v.errors } };
   }
+
+  // ── home: pin to a contact, render case-less ──────────────────────────────
+  if (v.card.placement === 'home') {
+    const contactId = String(body.contact_id == null ? '' : body.contact_id).trim();
+    if (!contactId) {
+      throw httpError(400, `contact_id is required to preview a home-placement card (home has no case)`);
+    }
+    const [[contactRow]] = await db.query(
+      `SELECT contact_id, contact_name FROM contacts WHERE contact_id = ? LIMIT 1`,
+      [contactId]
+    );
+    if (!contactRow) throw httpError(404, `Unknown contact '${contactId}'`);
+
+    const preview = await engine.previewCard(db, v.card, {
+      caseId: null,                       // the home surface's contract
+      contactId: contactRow.contact_id,   // canonical value from contacts
+    });
+
+    return {
+      validation: { valid: true, errors: [] },
+      preview_contact: {
+        contact_id: contactRow.contact_id,
+        contact_name: contactRow.contact_name || null,
+      },
+      note: null,
+      ...preview,   // passes, conditions, card, hidden_reason
+    };
+  }
+
+  // ── case placements: existing path ────────────────────────────────────────
+  const caseId = String(body.case_id == null ? '' : body.case_id).trim();
+  if (!caseId) throw httpError(400, 'case_id is required');
 
   // Pin the preview session server-side: the admin chooses a CASE; the
   // contact is that case's Primary — MIN(contact_id) among 'Primary'
@@ -297,6 +342,11 @@ router.get('/api/portal-cards-admin/meta', jwtOrApiKey, async (req, res) => {
       placements: engine.VALID_PLACEMENTS,
       coded_keys: engine.KNOWN_CODED_KEYS,
       sql_param_paths: [...engine.ALLOWED_SQL_PARAM_PATHS],
+      // S5: the subset a 'home' card's sql paramMap may use, and the tables
+      // whose whitelist fields the home surface accepts (UI hints — the
+      // engine's validateCard is the enforcement).
+      sql_param_paths_home: [...engine.ALLOWED_SQL_PARAM_PATHS_HOME],
+      home_tables: [...engine.HOME_ALLOWED_TABLES],
     });
   } catch (err) {
     fail(res, 'meta', err);

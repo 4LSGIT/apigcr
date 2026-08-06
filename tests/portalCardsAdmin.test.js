@@ -378,11 +378,18 @@ describe('validateCard — identity, link, placement, normalization', () => {
   });
 
   test('placement pinned to the portal surfaces — error names them', () => {
-    const msg = invalid(tplCard({ placement: 'home' }));
-    expect(msg).toContain("placement 'home'");
+    // S5: 'home' is a real surface now — the unknown example moves on.
+    const msg = invalid(tplCard({ placement: 'sidebar' }));
+    expect(msg).toContain("placement 'sidebar'");
     expect(msg).toContain('case_top');
+    expect(msg).toContain('home');                    // listed as valid
     expect(msg).toContain('renders nowhere');
     valid(tplCard({ placement: 'case_top' }));
+    // 'home' accepts a contacts-only template card (tplCard's default body
+    // carries a cases.* ref, which the home surface rejects — covered in the
+    // S5 suite; here just prove the placement itself is valid).
+    valid(tplCard({ placement: 'home',
+                    body_template: 'Hi {{contacts.contact_fname}}.' }));
   });
 
   test('sort must be an integer; active must be 0/1-ish', () => {

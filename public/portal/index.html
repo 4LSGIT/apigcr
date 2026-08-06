@@ -7,8 +7,9 @@
 <!--
   Client Portal Slice 2 — /portal/ entry router. express.static's default
   directory redirect sends bare /portal → /portal/ → this file; it forwards
-  to cases.html (token present) or login.html. location.replace on purpose:
-  this page must never sit in the back-button history.
+  to home.html (token present — S5: home is the landing page) or login.html.
+  location.replace on purpose: this page must never sit in the back-button
+  history. No Portal.initChrome here — this page never paints.
 -->
 </head>
 <body>
@@ -17,7 +18,7 @@
   'use strict';
   var token = null;
   try { token = localStorage.getItem('portal_token'); } catch (_) {}
-  window.location.replace(token ? '/portal/cases.html' : '/portal/login.html');
+  window.location.replace(token ? '/portal/home.html' : '/portal/login.html');
 })();
 </script>
 <noscript>

@@ -6,8 +6,9 @@
 <title>Case Status — Client Portal</title>
 <style>
   /* Client Portal Slice 2 + E1 — case view. Visual language from login.html /
-     cases.html (S1/S2 minimal). Branding/favicon still deliberately
-     excluded — polish rides a later slice. E1: the payment/341 cards render
+     cases.html (S1/S2 minimal). S5: branded header + favicon ride the shared
+     chrome (Portal.initChrome) — NOTHING about the case view's own
+     rendering changed. E1: the payment/341 cards render
      from the server's `cards` array (portal_cards config) instead of
      hardcoding — same visual shells. */
   :root {
@@ -105,6 +106,8 @@
 <script>
 (function () {
   'use strict';
+
+  Portal.initChrome({ authed: true });
 
   function escText(s) {
     return String(s == null ? '' : s)

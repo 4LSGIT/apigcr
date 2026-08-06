@@ -7,8 +7,10 @@
 <style>
   /*
    * Client Portal Slice 1 — login. Visual language from public/manage.html
-   * (mobile-first, self-contained, default accent). Plain "Client Portal"
-   * heading on purpose — S2's UX pass owns branding.
+   * (mobile-first, self-contained, default accent). S5: the firm logo +
+   * favicon ride the shared chrome (Portal.initChrome, authed:false —
+   * plain logo, no logout); the "Client Portal" heading below stays as the
+   * page title.
    */
   :root {
     --accent: #2563eb;
@@ -108,8 +110,12 @@
   'use strict';
 
   // Already signed in? Straight to home (a stale token bounces back via
-  // Portal.fetch's 401 handling once home calls /me).
+  // Portal.fetch's 401 handling once home calls the API).
   if (Portal.getToken()) { window.location.href = 'home.html'; return; }
+
+  // S5: branded header + favicon (PUBLIC branding endpoint — no auth
+  // needed). authed:false → plain logo, no home link, no logout.
+  Portal.initChrome({ authed: false });
 
   const $ = id => document.getElementById(id);
   const msg = $('msg');

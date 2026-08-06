@@ -6,8 +6,9 @@
 <title>Your Cases — Client Portal</title>
 <style>
   /* Client Portal Slice 2 — cases list. Visual language from login.html /
-     home.html (S1). Branding/favicon still deliberately excluded — polish
-     rides a later slice. */
+     home.html (S1). S5: branded header + favicon ride the shared chrome
+     (Portal.initChrome); logout moved into that header — the old bottom
+     Log out button is gone. Single-case auto-redirect UNCHANGED. */
   :root {
     --accent: #2563eb;
     --accent-text: #ffffff;
@@ -70,14 +71,14 @@
   </div>
 
   <div id="list"><p class="msg">Loading&hellip;</p></div>
-
-  <button class="btn" id="btn-logout">Log out</button>
 </div>
 
 <script src="portal.js"></script>
 <script>
 (function () {
   'use strict';
+
+  Portal.initChrome({ authed: true });
 
   function escText(s) {
     return String(s == null ? '' : s)
@@ -135,17 +136,7 @@
     }
   }
 
-  async function logout() {
-    const btn = document.getElementById('btn-logout');
-    btn.disabled = true;
-    try {
-      await Portal.fetch('/api/portal/logout', { method: 'POST' });
-    } catch (_) { /* best-effort — token discard is what matters */ }
-    Portal.clearToken();
-    Portal.toLogin();
-  }
-
-  document.getElementById('btn-logout').addEventListener('click', logout);
+  // Logout lives in the shared header (Portal.initChrome → Portal.logout).
   load();
 })();
 </script>

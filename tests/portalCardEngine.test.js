@@ -379,10 +379,22 @@ describe('rules mode', () => {
     expect(await evalC(MEETING341_CONDITIONS, ctx({ case_341_current: null }))).toBe(false);
   });
 
-  test('missing ctx row → field reads null → gated ops fail closed', async () => {
+  test('anchor present but row missing → field reads null (E1 semantics stand)', async () => {
+    // caseId PRESENT, row missing (deleted entity) — value null; empty PASSES.
+    const rowGone = { caseRow: null, contactRow: contactCtxRow(), caseId: 'AbCdEf12', contactId: 42 };
+    expect(await evalC(one({ field: 'cases.case_type', op: 'not_empty' }), rowGone)).toBe(false);
+    expect(await evalC(one({ field: 'cases.case_type', op: 'empty' }), rowGone)).toBe(true);
+  });
+
+  test('S5 anchor gate: NO case anchor in context → cases.* rules fail CLOSED (even `empty`)', async () => {
+    // The home surface's context — caseId null. Pre-S5 an `empty` rule on a
+    // cases.* column would PASS here (implicit all-NULL row); the anchor
+    // gate closes exactly that leak.
     const noCase = { caseRow: null, contactRow: contactCtxRow(), caseId: null, contactId: 42 };
     expect(await evalC(one({ field: 'cases.case_type', op: 'not_empty' }), noCase)).toBe(false);
-    expect(await evalC(one({ field: 'cases.case_type', op: 'empty' }), noCase)).toBe(true);
+    expect(await evalC(one({ field: 'cases.case_type', op: 'empty' }), noCase)).toBe(false);
+    // contacts.* rules still evaluate normally in the same context.
+    expect(await evalC(one({ field: 'contacts.contact_fname', op: 'not_empty' }), noCase)).toBe(true);
   });
 });
 

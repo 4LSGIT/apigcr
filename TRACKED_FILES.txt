@@ -261,6 +261,7 @@ ref/2026-08-05_portal_s1.sql
 ref/2026-08-06_portal_s3_5.sql
 ref/2026-08-07_portal_cards_e1.sql
 ref/2026-08-09_portal_r1_r2.sql
+ref/2026-08-09_portal_s5.sql
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/database.sql
 ref/files.md
@@ -368,9 +369,11 @@ routes/manuals.js
 routes/pageLanding.js
 routes/pages.js
 routes/portal.auth.js
+routes/portal.branding.js
 routes/portal.callback.js
 routes/portal.cases.js
 routes/portal.docs.js
+routes/portal.home.js
 routes/process_jobs.js
 routes/renaReminder.jsx
 routes/resolver.js
@@ -561,11 +564,14 @@ tests/pipelineBoard.test.js
 tests/pipelineService.test.js
 tests/portalAccessAdmin.test.js
 tests/portalAuth.test.js
+tests/portalBranding.test.js
 tests/portalCallbackService.test.js
+tests/portalCardEngine.home.test.js
 tests/portalCardEngine.test.js
 tests/portalCardsAdmin.test.js
 tests/portalCaseService.test.js
 tests/portalDocsService.test.js
+tests/portalHome.test.js
 tests/refreshonmiss.k3.test.js
 tests/taskService.test.js
 tests/test-credential-crypto.js

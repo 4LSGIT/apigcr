@@ -3,18 +3,211 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Client Portal</title>
-<!--
-  Client Portal Slice 2 — the S1 home stub is retired; cases.html is the
-  landing page. This redirect keeps S1-era bookmarks and login.html's
-  post-login target working (login.html deliberately untouched — it still
-  points here). location.replace so this hop never enters history; meta
-  refresh is the no-JS fallback.
--->
-<meta http-equiv="refresh" content="0; url=cases.html">
+<title>Home — Client Portal</title>
+<style>
+  /* Client Portal Slice 5 — home. Replaces the S2 redirect stub with a real
+     landing page: greeting, case summary, and the engine's 'home'-placement
+     cards (the staff-authored announcements channel). Visual language from
+     cases.html / case.html; the shared branded header + favicon come from
+     Portal.initChrome (portal.js).
+
+     NO AUTO-REDIRECT here — deliberate. cases.html keeps its single-case
+     auto-redirect; if home also redirected, a single-case client could
+     ping-pong home → cases → case with no way back to home. */
+  :root {
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --bg: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --panel: #f9fafb;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.45;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 28px 16px 40px; }
+
+  .greet h1 { margin: 0; font-size: 22px; font-weight: 700; }
+
+  .section-label {
+    margin: 22px 0 10px; font-size: 14px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+  }
+
+  /* case summary — cases.html visual shells */
+  .case-card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-bottom: 12px;
+    cursor: pointer;
+  }
+  .case-card:hover, .case-card:focus {
+    border-color: var(--accent); outline: none;
+  }
+  .case-card .title { font-size: 16px; font-weight: 600; margin: 0; }
+  .case-card .docket { font-size: 12.5px; color: var(--muted); margin: 3px 0 0; }
+  .case-card .chip {
+    display: inline-block; margin-top: 10px;
+    padding: 3px 10px; border-radius: 999px;
+    background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
+    font-size: 12.5px; font-weight: 600;
+  }
+  .empty {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 22px 16px; text-align: center;
+    color: var(--muted); font-size: 14.5px;
+  }
+
+  /* engine cards — case.html visual shells + the same body/link contract */
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-top: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px; font-size: 14px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+  }
+  /* Template-card body: pre-line keeps staff-typed newlines without any
+     HTML transform (body text is escText'd at insertion — case.html's
+     rider-2026-08-08 contract, identical here). */
+  .card-body { margin: 0; white-space: pre-line; }
+  .card-body + .pay-btn { margin-top: 12px; }
+  .pay-btn {
+    display: block; text-align: center; text-decoration: none;
+    padding: 11px 14px; font-size: 15.5px; font-weight: 600;
+    border-radius: 8px;
+    background: var(--accent); color: var(--accent-text);
+  }
+  .pay-note { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; text-align: center; }
+
+  .msg { text-align: center; color: var(--muted); padding: 24px 0; }
+</style>
 </head>
 <body>
-<script>window.location.replace('cases.html');</script>
-<noscript><p><a href="cases.html">Continue to your cases</a></p></noscript>
+<div class="wrap">
+  <div id="content"><p class="msg">Loading&hellip;</p></div>
+</div>
+
+<script src="portal.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  Portal.initChrome({ authed: true });
+
+  function escText(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Time-of-day greeting — the CLIENT's clock on purpose (a client checking
+  // from another timezone gets their own morning, not the firm's).
+  function greetingWord() {
+    var h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 18) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  function caseHref(id) {
+    return 'case.html?id=' + encodeURIComponent(id);
+  }
+
+  function renderCases(cases) {
+    if (!cases.length) {
+      // Zero cases is a friendly state, not an error.
+      return '<div class="empty">No cases to show &mdash; contact our office if you were expecting one here.</div>';
+    }
+    return cases.map(function (c) {
+      var docket = c.docket
+        ? '<p class="docket">Case no. ' + escText(c.docket) + '</p>'
+        : '';
+      var chip = c.current_stage_label
+        ? '<span class="chip">' + escText(c.current_stage_label) + '</span>'
+        : '';
+      return '<a class="case-card" href="' + caseHref(c.case_id) + '">' +
+               '<p class="title">' + escText(c.title) + '</p>' +
+               docket + chip +
+             '</a>';
+    }).join('');
+  }
+
+  // ── engine cards — the case.html contract, home edition ──────────────────
+  // Cards come CONFIGURED from the server (placement 'home'); failed /
+  // refused cards are ABSENT from the array. Bodies arrive RAW and are
+  // escText'd at insertion (rider 2026-08-08). Link rule is the ratified R2
+  // /portal/-prefix split: portal-internal links navigate same-tab,
+  // everything else opens a new tab with the note.
+
+  function cardShell(title, inner) {
+    return '<div class="card"><h2>' + escText(title) + '</h2>' + inner + '</div>';
+  }
+
+  function linkBtn(link) {
+    if (!link || !link.url) return '';
+    if (link.url.indexOf('/portal/') === 0) {
+      return '<a class="pay-btn" href="' + escText(link.url) + '">' +
+               escText(link.label || 'Open') + '</a>';
+    }
+    return '<a class="pay-btn" href="' + escText(link.url) +
+             '" target="_blank" rel="noopener">' + escText(link.label || 'Open') + '</a>' +
+           '<p class="pay-note">Opens in a new tab.</p>';
+  }
+
+  function renderCard(card) {
+    // Home has NO coded renderers — the engine already rejects/hides coded
+    // home cards; this skip is the client-side belt (case.html's
+    // unknown-coded_key posture).
+    if (card.coded_key) return '';
+    var inner = '';
+    if (card.body) inner += '<p class="card-body">' + escText(card.body) + '</p>';
+    inner += linkBtn(card.link);
+    if (!inner) return '';   // nothing to show → skip the empty shell
+    return cardShell(card.title, inner);
+  }
+
+  function render(data) {
+    var html = '';
+
+    html += '<div class="greet"><h1>' +
+              escText(greetingWord() + (data.name ? ', ' + data.name : '')) +
+            '</h1></div>';
+
+    html += '<div class="section-label">Your Cases</div>';
+    html += renderCases(data.cases || []);
+
+    (data.cards || []).forEach(function (card) {
+      html += renderCard(card);
+    });
+
+    document.getElementById('content').innerHTML = html;
+  }
+
+  async function load() {
+    try {
+      var res = await Portal.fetch('/api/portal/home');
+      var data = await res.json();
+      if (!data || data.status !== 'success' || !Array.isArray(data.cases)) {
+        document.getElementById('content').innerHTML =
+          '<p class="msg">Something went wrong &mdash; try refreshing.</p>';
+        return;
+      }
+      render(data);
+    } catch (_) {
+      document.getElementById('content').innerHTML =
+        '<p class="msg">Connection problem &mdash; try refreshing.</p>';
+    }
+  }
+
+  load();
+})();
+</script>
 </body>
 </html>

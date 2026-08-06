@@ -74,6 +74,7 @@
     .badge-coded    { background: #ede9fe; color: var(--purple); }
     .badge-top      { background: #fef3c7; color: #b45309; text-transform: none; }
     .badge-case     { background: #f1f5f9; color: var(--text2); text-transform: none; }
+    .badge-home     { background: #dcfce7; color: #15803d; text-transform: none; }
     .badge-inactive { background: #f1f5f9; color: var(--muted); }
     .badge-unsaved  { background: #fee2e2; color: var(--red); }
 
@@ -280,8 +281,12 @@
 // Left pane: card list (type/placement badges, sort, inline active
 // toggle). Right pane: editor for the selected card (or an unsaved
 // draft) + a live preview pane that renders the CURRENT WORKING
-// DRAFT through the REAL engine pipeline pinned to an admin-chosen
-// case and that case's Primary contact (server-resolved).
+// DRAFT through the REAL engine pipeline. Case placements pin to an
+// admin-chosen case and that case's Primary contact (server-resolved);
+// S5 'home' placements pin to an admin-chosen CONTACT and render
+// case-less — the home surface has no case. The placement select also
+// drives the field subset (home → contacts.* only) across the chips,
+// the rules builder, and the sql-mode note.
 //
 // Server-rule surfacing:
 //   - the field whitelist panel is READ-ONLY reference (it's a code
@@ -319,6 +324,22 @@ function esc(s) {
 const NO_VALUE_OPS = ['empty', 'not_empty', 'date_future', 'date_past'];
 const RULE_MAX_DEPTH = 5;
 
+// S5 — placement labels + the home surface's field subset (the engine's
+// validateCard is the enforcement; these are UI honesty).
+const PLACEMENT_LABELS = {
+  case_top: ' (above timeline)',
+  case:     ' (below timeline)',
+  home:     ' (home page)',
+};
+function plLabel(p) { return PLACEMENT_LABELS[p] ?? ''; }
+function isHomePlacement() { return working && working.placement === 'home'; }
+function wlFields() {
+  const wl = meta.whitelist || [];
+  if (!isHomePlacement()) return wl;
+  const tables = meta.home_tables || ['contacts'];
+  return wl.filter(f => tables.includes(f.split('.')[0]));
+}
+
 // ── State ──────────────────────────────────────────────────────
 let meta = { whitelist: [], operators: [], placements: ['case_top','case'], coded_keys: [] };
 let cards = [];            // list rows
@@ -327,7 +348,8 @@ let working = null;        // the editor's working copy (draft object)
 let condMode = 'none';     // 'none' | 'rules' | 'raw'
 let condModel = null;      // rules-builder model ({match, rules}) when condMode==='rules'
 let rawCondText = null;    // unsaved raw-JSON textarea text (survives re-renders)
-let previewCase = null;    // { case_id, label }
+let previewCase = null;    // { case_id, label }      — case-placement preview pin
+let previewContact = null; // { contact_id, label }   — home-placement preview pin (S5)
 let searchTimer = null;
 let loaded = false;
 
@@ -367,7 +389,7 @@ function renderList() {
         ${c.active ? '' : '<span class="badge badge-inactive">inactive</span>'}
       </div>
       <div class="meta">
-        <span class="badge ${c.placement === 'case_top' ? 'badge-top' : 'badge-case'}">${esc(c.placement)}</span>
+        <span class="badge ${c.placement === 'case_top' ? 'badge-top' : c.placement === 'home' ? 'badge-home' : 'badge-case'}">${esc(c.placement)}</span>
         <span title="Sort order"><i class="fa-solid fa-arrow-down-1-9" style="font-size:9px"></i> ${Number(c.sort)}</span>
         <code style="font-size:10px">${esc(c.card_key)}</code>
         <span style="flex:1"></span>
@@ -504,9 +526,9 @@ function renderEditor() {
         <div class="row3" style="margin-top:10px">
           <div style="width:160px">
             <label>Placement</label>
-            <select id="f-placement">
+            <select id="f-placement" onchange="onPlacementChange()">
               ${(meta.placements || []).map(p =>
-                `<option value="${esc(p)}" ${w.placement === p ? 'selected' : ''}>${esc(p)}${p === 'case_top' ? ' (above timeline)' : ' (below timeline)'}</option>`).join('')}
+                `<option value="${esc(p)}" ${w.placement === p ? 'selected' : ''}>${esc(p)}${esc(plLabel(p))}</option>`).join('')}
             </select>
           </div>
           <div style="width:100px">
@@ -542,9 +564,12 @@ function renderEditor() {
             NULL fields resolve to nothing; use <code>{{field|default:…}}</code> for a fallback.
             Any reference outside the whitelist below makes the card REFUSE to save (and to render).
           </div>
+          ${isHomePlacement() ? `<div class="locked-note"><i class="fa-solid fa-house"></i>
+            Home cards render on the portal home page, where there is NO case —
+            only <b>contacts.*</b> whitelist fields are available (body, rules and sql params).</div>` : ''}
           <label style="margin-top:12px">Field whitelist (click to insert)</label>
           <div class="wl-chips">
-            ${(meta.whitelist || []).map(f =>
+            ${wlFields().map(f =>
               `<span class="wl-chip" onclick="insertRef('${esc(f)}')">${esc(f)}</span>`).join('')}
           </div>
           <div class="hint">Read-only reference — this list is a code constant
@@ -583,6 +608,22 @@ function renderEditor() {
     </div>
     <div><!-- ── preview column ── -->
       <div class="box fld">
+        ${isHomePlacement() ? `
+        <!-- S5: home cards preview against a CONTACT — home has no case. -->
+        <h3><i class="fa-solid fa-eye"></i> Preview as client (home)</h3>
+        <div class="pv-picker">
+          <input type="text" id="pv-search" placeholder="Search a contact (name, id, phone, email…)"
+                 oninput="onPreviewContactSearch(this.value)" autocomplete="off">
+          <div class="pv-results" id="pv-results" style="display:none"></div>
+        </div>
+        <div class="pv-chosen" id="pv-chosen">${previewContact
+          ? `Previewing against <b>${esc(previewContact.label)}</b>` : 'No contact selected yet.'}</div>
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+          <button class="btn btn-primary btn-sm" onclick="doPreview()"><i class="fa-solid fa-play"></i> Preview</button>
+          <span class="hint" style="margin:0">Runs the current (unsaved) draft through the real
+            engine, case-less, pinned to this contact — exactly as the portal home page renders.</span>
+        </div>
+        ` : `
         <h3><i class="fa-solid fa-eye"></i> Preview as case</h3>
         <div class="pv-picker">
           <input type="text" id="pv-search" placeholder="Search a case (number, caption, client…)"
@@ -596,6 +637,7 @@ function renderEditor() {
           <span class="hint" style="margin:0">Runs the current (unsaved) draft through the real
             engine, pinned to this case + its Primary contact.</span>
         </div>
+        `}
         <div id="pv-out"></div>
       </div>
     </div>
@@ -629,6 +671,15 @@ function onBodyTypeChange() {
   renderEditor();
 }
 window.onBodyTypeChange = onBodyTypeChange;
+
+function onPlacementChange() {
+  // S5: the placement drives the field subset (chips + rules dropdowns),
+  // the home warning notes, and WHICH preview pin the panel asks for —
+  // re-render so all of them track.
+  captureFormLight();
+  renderEditor();
+}
+window.onPlacementChange = onPlacementChange;
 
 /** Capture cheap fields into `working` before a re-render loses them. */
 function captureFormLight() {
@@ -700,8 +751,11 @@ function renderCondBody() {
         <b>sql mode</b> is the power escape hatch:
         <code>{"mode":"sql","condition":{"query","params","assert","assert_mode"}}</code>.
         The query must be a <b>SELECT</b>; <code>params</code> values may ONLY name the pinned
-        session paths <code>case_id</code> / <code>contact_id</code>
-        (optionally <code>trigger_data.</code>-prefixed) — the config can never supply its own
+        session paths ${isHomePlacement()
+          ? `<code>contact_id</code> (optionally <code>trigger_data.</code>-prefixed) — home
+             cards have NO <code>case_id</code>: there is no case on the home page`
+          : `<code>case_id</code> / <code>contact_id</code>
+             (optionally <code>trigger_data.</code>-prefixed)`} — the config can never supply its own
         entity ids. Anything else is rejected at save and fails closed at render.</div>
       <div class="hint">Leave empty for “always show”.</div>`;
     return;
@@ -750,10 +804,16 @@ function ruleHtml(r, idxPath, depth) {
       </div>`;
   }
   const op = r.op || (meta.operators || [])[0] || 'not_empty';
+  // S5: the field list follows the placement (home → contacts.* only). A
+  // rule carrying a now-disallowed field (placement switched under it)
+  // stays visible, flagged — save/preview name the rejection.
+  const fields = wlFields();
+  const stray = r.field && !fields.includes(r.field)
+    ? `<option value="${esc(r.field)}" selected>${esc(r.field)} (not allowed here)</option>` : '';
   return `
     <div class="rule-row">
       <select class="rr-field" onchange="ruleAtPath('${pathAttr}').field=this.value">
-        ${(meta.whitelist || []).map(f =>
+        ${stray}${fields.map(f =>
           `<option value="${esc(f)}" ${r.field === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}
       </select>
       <select class="rr-op" onchange="onOpChange('${pathAttr}', this.value)">
@@ -981,19 +1041,66 @@ function pickPreviewCase(caseId, label) {
 }
 window.pickPreviewCase = pickPreviewCase;
 
+// ── S5: home-placement preview pins to a CONTACT ───────────────
+// Same debounce/dropdown pattern as the case picker; GET /api/contacts is
+// the staff contact search ({ contacts, total } — no status envelope).
+
+function onPreviewContactSearch(q) {
+  clearTimeout(searchTimer);
+  const host = E('pv-results');
+  if (!q || q.trim().length < 2) { host.style.display = 'none'; return; }
+  searchTimer = setTimeout(async () => {
+    try {
+      const data = await api('/api/contacts', 'GET', { q: q.trim(), limit: 8 });
+      const rows = (data && data.contacts) || [];
+      if (!rows.length) {
+        host.innerHTML = `<div class="pv-result" style="color:var(--muted)">No matches</div>`;
+      } else {
+        host.innerHTML = rows.map(c => {
+          const label = `${c.contact_name || '(unnamed)'} · #${c.contact_id}`;
+          return `<div class="pv-result" onclick="pickPreviewContact(${Number(c.contact_id)},'${esc(label)}')">
+                    <div>${esc(c.contact_name || '(unnamed)')} <span class="sub">#${esc(c.contact_id)}</span></div>
+                    <div class="sub">${esc(c.contact_type || '')}${c.contact_email ? ' · ' + esc(c.contact_email) : ''}${c.contact_phone ? ' · ' + esc(c.contact_phone) : ''}</div>
+                  </div>`;
+        }).join('');
+      }
+      host.style.display = '';
+    } catch (e) {
+      host.style.display = 'none';
+      Toast.fire({ icon: 'error', title: e.message });
+    }
+  }, 250);
+}
+window.onPreviewContactSearch = onPreviewContactSearch;
+
+function pickPreviewContact(contactId, label) {
+  previewContact = { contact_id: contactId, label };
+  E('pv-results').style.display = 'none';
+  E('pv-search').value = '';
+  E('pv-chosen').innerHTML = `Previewing against <b>${esc(label)}</b>`;
+  doPreview();
+}
+window.pickPreviewContact = pickPreviewContact;
+
 async function doPreview() {
-  if (!previewCase) {
+  const draft = gatherDraft();
+  if (draft === undefined) return;
+  const isHome = draft.placement === 'home';
+  if (isHome && !previewContact) {
+    Toast.fire({ icon: 'info', title: 'Pick a contact to preview against first' });
+    return;
+  }
+  if (!isHome && !previewCase) {
     Toast.fire({ icon: 'info', title: 'Pick a case to preview against first' });
     return;
   }
-  const draft = gatherDraft();
-  if (draft === undefined) return;
   const host = E('pv-out');
   host.innerHTML = `<div class="hint" style="margin-top:10px"><i class="fa-solid fa-spinner spin"></i> Rendering…</div>`;
   try {
-    const out = await api('/api/portal-cards-admin/preview', 'POST', {
-      card: draft, case_id: previewCase.case_id,
-    });
+    const out = await api('/api/portal-cards-admin/preview', 'POST',
+      isHome
+        ? { card: draft, contact_id: previewContact.contact_id }
+        : { card: draft, case_id: previewCase.case_id });
     renderPreviewResult(out);
   } catch (e) {
     host.innerHTML = `<div class="pv-hidden"><i class="fa-solid fa-triangle-exclamation"></i> ${esc(e.message)}</div>`;
@@ -1012,10 +1119,18 @@ function renderPreviewResult(out) {
     return;
   }
 
-  const pc = out.preview_case || {};
-  html += `<div class="pv-chosen" style="margin-top:10px">
-    Case <b>${esc(pc.docket || pc.case_id || '')}</b> ·
-    Primary: <b>${esc(pc.primary_contact_name || '(none)')}</b></div>`;
+  if (out.preview_contact) {
+    // S5 home preview — pinned to a contact, no case.
+    const pv = out.preview_contact;
+    html += `<div class="pv-chosen" style="margin-top:10px">
+      Contact <b>${esc(pv.contact_name || '(unnamed)')}</b> · #${esc(pv.contact_id)}
+      <span class="sub">(case-less — the home surface)</span></div>`;
+  } else {
+    const pc = out.preview_case || {};
+    html += `<div class="pv-chosen" style="margin-top:10px">
+      Case <b>${esc(pc.docket || pc.case_id || '')}</b> ·
+      Primary: <b>${esc(pc.primary_contact_name || '(none)')}</b></div>`;
+  }
   if (out.note) html += `<div class="warn-note">${esc(out.note)}</div>`;
 
   // condition chips
@@ -1050,7 +1165,9 @@ function renderPreviewResult(out) {
     }
     html += `<div class="pv-stage">
       <div class="hint" style="margin-bottom:8px">Placement: <b>${esc(c.placement)}</b>
-        ${c.placement === 'case_top' ? '(above the progress timeline)' : '(below the progress timeline)'}</div>
+        ${c.placement === 'case_top' ? '(above the progress timeline)'
+          : c.placement === 'home' ? '(the portal home page)'
+          : '(below the progress timeline)'}</div>
       <div class="pv-card"><h2>${esc(c.title)}</h2>${inner}</div>
     </div>`;
   } else {

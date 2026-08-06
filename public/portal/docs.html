@@ -6,8 +6,8 @@
 <title>Documents — Client Portal</title>
 <style>
   /* Client Portal Slice 3 — documents. Visual language from login.html /
-     cases.html / case.html (S1/S2 minimal). Branding/favicon still
-     deliberately excluded — polish rides a later slice. */
+     cases.html / case.html (S1/S2 minimal). S5: branded header + favicon
+     ride the shared chrome (Portal.initChrome). */
   :root {
     --accent: #2563eb;
     --accent-text: #ffffff;
@@ -122,6 +122,8 @@
 <script>
 (function () {
   'use strict';
+
+  Portal.initChrome({ authed: true });
 
   // Client-side HINTS mirroring the server limits (services/
   // portalDocsService.js is the enforcement — this is UX only).

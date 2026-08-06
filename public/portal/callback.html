@@ -98,6 +98,8 @@
 (function () {
   'use strict';
 
+  Portal.initChrome({ authed: true });
+
   // Client-side HINTS mirroring the server rules (services/
   // portalCallbackService.js is the enforcement — this is UX only).
   var MESSAGE_MAX = 800;
