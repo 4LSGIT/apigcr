@@ -6,12 +6,13 @@
 //
 // Cost model, measured against this DB from a laptop:
 //   opening a connection  ~4000 ms   ← dominates everything
-//   one query               ~40 ms
-//   SHOW CREATE TABLE ×118  ~5000 ms (8 concurrent)
+//   round trip per query   ~160 ms   ← a 0-row query still costs this
+//   SHOW CREATE TABLE ×118 ~2400 ms  (8 concurrent, once connected)
 //
-// So: the common "did anything change?" path uses ONE connection and runs its
-// queries in series. A pool is created only when a full dump is actually
-// needed, because there the per-table round trips are worth 8 handshakes.
+// Both numbers say the same thing: minimise connections first, round trips
+// second. So the common "did anything change?" path runs its queries in series
+// over a single pooled connection — one handshake — and the pool only ramps to
+// 8 if a full dump is actually needed.
 //
 // The check compares a structural fingerprint against the `-- Fingerprint:`
 // line in the existing ref/database.sql. Match -> exit, file untouched, no diff
@@ -120,19 +121,24 @@ async function existingFingerprint() {
 }
 
 (async () => {
-  let conn, pool;
+  let pool;
   try {
     mark("require");
 
-    // Single connection for the check — one handshake, queries in series.
+    // ONE pool, opened lazily. Because schemaFingerprint runs its queries in
+    // series, the pool only ever opens a single connection for the check — so
+    // this costs exactly one handshake, same as a bare connection would. If a
+    // dump follows, the same pool ramps to 8 on demand instead of paying for a
+    // second warm-up.
     status.write("connecting…");
-    conn = mysql.createConnection(dbConfig()).promise();
-    await conn.query("SELECT 1");
+    pool = mysql.createPool({ ...dbConfig(), connectionLimit: 8, waitForConnections: true })
+                .promise();
+    await pool.query("SELECT 1");
     mark("connect");
 
     status.write("checking schema…");
     const previous = await existingFingerprint();
-    const current  = await schemaFingerprint(conn, {
+    const current  = await schemaFingerprint(pool, {
       onQuery: ({ name, ms, rows }) => {
         if (TIMING) submark(`${name} (${rows} rows)`, ms);
         status.write(`checking schema… ${name}`);
@@ -155,14 +161,8 @@ async function existingFingerprint() {
       return 1;
     }
 
-    // Only now is a pool worth its handshakes: 118 SHOW CREATE TABLE round
-    // trips, 8 at a time, beats 118 in series on the one connection we have.
-    status.write("opening pool…");
-    pool = mysql.createPool({ ...dbConfig(), connectionLimit: 8, waitForConnections: true })
-                .promise();
-    await pool.query("SELECT 1");
-    mark("pool");
-
+    // The remaining 7 connections open in parallel as concurrency ramps — one
+    // wave of handshakes, not a serialized second warm-up.
     const { body, tableCount } = await buildSchemaDump(pool, "scripts/dump-schema.js", {
       fingerprint: current,
       concurrency: 8,
@@ -184,7 +184,6 @@ async function existingFingerprint() {
     return STRICT || CHECK ? 2 : 0;
   } finally {
     status.clear();
-    if (conn) await conn.end().catch(() => {});
     if (pool) await pool.end().catch(() => {});
   }
 })().then((code) => process.exit(code));

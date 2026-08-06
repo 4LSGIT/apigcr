@@ -390,6 +390,7 @@ scripts/encrypt-smtp-passwords.js
 scripts/esign_e2e_check.js
 scripts/esign_zoho_smoke.js
 scripts/gen_signatures.js
+scripts/probe-db-connect.js
 scripts/sweep_validate_live.js
 scripts/test_availability.js
 scripts/test_court_revert.js
