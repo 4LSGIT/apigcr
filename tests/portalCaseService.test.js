@@ -1,14 +1,23 @@
 // tests/portalCaseService.test.js
 //
-// Slice 2 service assertions for services/portalCaseService.js — the portal
-// contract tests: scope gating, ratified visibility rules, projection
-// whitelist, title/docket derivation.
+// Slice 2 (+E1) service assertions for services/portalCaseService.js — the
+// portal contract tests: scope gating, ratified visibility rules, projection
+// whitelist, title/docket derivation, and (E1) the cards/meeting341 wiring.
 //
 // Stub pattern from tests/pipelineService.test.js (scripted mysql2 pool);
 // pipelineService is jest-mocked (esign-suite precedent) so these tests
 // exercise portalCaseService's rules against getPipeline's OUTPUT SHAPE
 // rather than re-driving pipelineService's own queries (that service has its
 // own suite).
+//
+// E1 AMENDMENT (2026-08-07, flagged for ratification): the card engine is
+// jest-mocked here the same way — this suite tests the SERVICE contract
+// (cards ride the payload; meeting341 data appears iff the engine passed the
+// coded 341 card). The engine's own rules — including the 341 gates that
+// MOVED out of this service (BK-exclusivity, past-date suppression) — are
+// pinned by tests/portalCardEngine.test.js, whose PARITY section drives the
+// REAL engine through the REAL getCaseView against the pre-E1 oracle. No
+// pre-E1 protection was dropped; the moved assertions live there.
 //
 // Run:
 //   npx jest tests/portalCaseService.test.js
@@ -18,9 +27,19 @@
 jest.mock('../services/pipelineService', () => ({
   getPipeline: jest.fn(),
 }));
+jest.mock('../lib/portalCardEngine', () => ({
+  renderCards: jest.fn(),
+}));
 
 const pipelineService = require('../services/pipelineService');
+const portalCardEngine = require('../lib/portalCardEngine');
 const svc = require('../services/portalCaseService');
+
+// The coded 341 card as the (mocked) engine emits it when its conditions pass.
+const CARD_341 = () => ({
+  key: 'meeting341', title: 'Meeting of Creditors (341)',
+  body: null, link: null, coded_key: 'meeting341', placement: 'case_top',
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs / fixtures
@@ -107,6 +126,10 @@ function pipelinePayload(over = {}) {
   };
 }
 
+beforeEach(() => {
+  // Default: no configured cards pass (tests that need the 341 card override).
+  portalCardEngine.renderCards.mockResolvedValue([]);
+});
 afterEach(() => jest.clearAllMocks());
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -278,7 +301,8 @@ describe('projection whitelist', () => {
 
     const view = await svc.getCaseView(db, 42, 'AbCdEf12');
 
-    expect(Object.keys(view).sort()).toEqual(['case_id', 'docket', 'meeting341', 'timeline', 'title']);
+    expect(Object.keys(view).sort()).toEqual(['cards', 'case_id', 'docket', 'meeting341', 'timeline', 'title']);
+    expect(view.cards).toEqual([]);       // engine mocked: nothing passed
     expect(view.meeting341).toBeNull();   // fixture has no 341 date set
     expect(Object.keys(view.timeline).sort()).toEqual(['current', 'done', 'upcoming']);
     view.timeline.done.forEach(d => expect(Object.keys(d).sort()).toEqual(['date', 'label']));
@@ -399,26 +423,25 @@ function wallDate(firmLocalDt, hhmm = '10:00') {
 
 const todayFirm = () => DateTime.now().setZone(FIRM_TZ).startOf('day');
 
-describe('meeting341 (S2.1)', () => {
-  const m = svc._buildMeeting341;
+describe('meeting341 formatter (S2.1, reshaped by E1)', () => {
+  const m = svc._formatMeeting341;
 
-  test('null case_341_current → null (card not rendered)', () => {
+  // E1: the BK-exclusivity and past-date-suppression assertions that lived
+  // here MOVED with the gates onto the card engine's conditions — see the
+  // rules + PARITY sections of tests/portalCardEngine.test.js (which pin the
+  // identical behavior against the pre-E1 oracle). What remains here is the
+  // pure formatter contract.
+
+  test('null case_341_current → null (nothing to format)', () => {
     expect(m(caseRow({ case_341_current: null }))).toBeNull();
   });
 
-  test('PAST meeting is suppressed server-side (firm-local date compare)', () => {
-    expect(m(caseRow({ case_341_current: wallDate(todayFirm().minus({ days: 1 })) }))).toBeNull();
-    expect(m(caseRow({ case_341_current: wallDate(todayFirm().minus({ years: 2 })) }))).toBeNull();
-  });
-
-  test('TODAY renders — boundary is >= today, firm-local, time-of-day ignored', () => {
-    // 00:05 wall clock: earlier than "now" in most runs, but same firm-local
-    // DATE — must render (suppression is date-only by ruling).
+  test('TODAY formats — time-of-day never nulls the block', () => {
     const out = m(caseRow({ case_341_current: wallDate(todayFirm(), '00:05') }));
     expect(out).toEqual({ date: todayFirm().toISODate(), time: '00:05', link: null });
   });
 
-  test('FUTURE renders with wall components preserved — NO timezone shift', () => {
+  test('FUTURE formats with wall components preserved — NO timezone shift', () => {
     const tomorrow = todayFirm().plus({ days: 1 });
     const out = m(caseRow({ case_341_current: wallDate(tomorrow, '09:30') }));
     // formatLocal semantics: 09:30 stays 09:30 (a UTC→Detroit conversion
@@ -426,18 +449,17 @@ describe('meeting341 (S2.1)', () => {
     expect(out).toEqual({ date: tomorrow.toISODate(), time: '09:30', link: null });
   });
 
-  test('341 is bankruptcy-exclusive — non-BK case with a 341 date → null', () => {
-    const future = wallDate(todayFirm().plus({ days: 7 }));
-    expect(m(caseRow({
-      case_chapter: '', case_type: 'Adversary Proceeding', case_341_current: future,
-    }))).toBeNull();
-    expect(m(caseRow({
-      case_chapter: '', case_type: '', case_341_current: future,
-    }))).toBeNull();
-    // Chapter set with blank type still counts as BK (title vocabulary).
-    expect(m(caseRow({
-      case_chapter: '13', case_type: '', case_341_current: future,
-    }))).not.toBeNull();
+  test('formatter is GATE-FREE — past dates and non-BK rows still format (gates live in the engine)', () => {
+    // The service must NOT re-apply the moved gates (double-gating hides
+    // bugs). getCaseView only calls the formatter after the engine passed
+    // the card; whether these rows' cards appear is the engine's decision.
+    const past = m(caseRow({ case_341_current: wallDate(todayFirm().minus({ days: 30 }), '10:00') }));
+    expect(past).toEqual({ date: todayFirm().minus({ days: 30 }).toISODate(), time: '10:00', link: null });
+    const nonBk = m(caseRow({
+      case_chapter: '', case_type: 'Adversary Proceeding',
+      case_341_current: wallDate(todayFirm().plus({ days: 7 }), '11:00'),
+    }));
+    expect(nonBk).not.toBeNull();
   });
 
   test('NO status wording — output keys are exactly date/time/link', () => {
@@ -458,12 +480,13 @@ describe('meeting341 (S2.1)', () => {
     expect(link('javascript:alert(1)')).toBeNull();          // unsafe scheme
   });
 
-  test('getCaseView carries meeting341 through; raw 341 columns never surface', async () => {
+  test('getCaseView carries meeting341 through WHEN the engine passed the card; raw 341 columns never surface', async () => {
     const db = stubDb([[caseRow({
       case_341_current: wallDate(todayFirm().plus({ days: 5 }), '13:00'),
       case_341_link: 'https://meet.zoom.us/j/999',
     })]]);
     pipelineService.getPipeline.mockResolvedValueOnce(pipelinePayload());
+    portalCardEngine.renderCards.mockResolvedValueOnce([CARD_341()]);
 
     const view = await svc.getCaseView(db, 42, 'AbCdEf12');
     expect(view.meeting341).toEqual({
@@ -471,21 +494,58 @@ describe('meeting341 (S2.1)', () => {
       time: '13:00',
       link: 'https://meet.zoom.us/j/999',
     });
+    expect(view.cards.map(c => c.coded_key)).toEqual(['meeting341']);
+    // Engine invoked with the pinned session + the case-view placements.
+    expect(portalCardEngine.renderCards).toHaveBeenCalledWith(db, {
+      caseId: 'AbCdEf12', contactId: 42, placement: ['case_top', 'case'],
+    });
     expect(db.calls[0].sql).toContain('case_341_current');
     const keys = deepKeys(view);
     for (const k of FORBIDDEN_KEYS) expect(keys.has(k)).toBe(false);
   });
 
-  test('getCaseView with a suppressed (past) meeting → meeting341: null in the payload', async () => {
+  test('engine did NOT pass the 341 card (e.g. past/non-BK conditions) → meeting341: null, link never leaves', async () => {
+    // E1: suppression is the ENGINE's ruling (seeded conditions — parity
+    // pinned in tests/portalCardEngine.test.js); the service must not ship
+    // 341 data without the card.
     const db = stubDb([[caseRow({
       case_341_current: wallDate(todayFirm().minus({ days: 30 })),
-      case_341_link: 'https://meet.zoom.us/j/999',           // link suppressed with the card
+      case_341_link: 'https://meet.zoom.us/j/999',           // suppressed with the card
     })]]);
     pipelineService.getPipeline.mockResolvedValueOnce(pipelinePayload());
+    // default renderCards mock → []
 
     const view = await svc.getCaseView(db, 42, 'AbCdEf12');
     expect(view.meeting341).toBeNull();
+    expect(view.cards).toEqual([]);
     expect(JSON.stringify(view)).not.toContain('meet.zoom.us');
+  });
+
+  test('passed 341 card with nothing formattable → card dropped fail-closed (no empty shell)', async () => {
+    const db = stubDb([[caseRow({ case_341_current: new Date('invalid') })]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(pipelinePayload());
+    portalCardEngine.renderCards.mockResolvedValueOnce([CARD_341()]);
+
+    const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+    expect(view.meeting341).toBeNull();
+    expect(view.cards).toEqual([]);
+  });
+
+  test('non-341 cards pass through untouched alongside the 341 card', async () => {
+    const payment = {
+      key: 'payment', title: 'Payments', body: 'Pay here.',
+      link: { url: '/r/payment', label: 'Make a payment' },
+      coded_key: null, placement: 'case',
+    };
+    const db = stubDb([[caseRow({
+      case_341_current: wallDate(todayFirm().plus({ days: 5 }), '13:00'),
+    })]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(pipelinePayload());
+    portalCardEngine.renderCards.mockResolvedValueOnce([CARD_341(), payment]);
+
+    const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+    expect(view.cards).toEqual([CARD_341(), payment]);
+    expect(view.meeting341).not.toBeNull();
   });
 
   test('listCases rows still have NO meeting341 (view-only field)', async () => {

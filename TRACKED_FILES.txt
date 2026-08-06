@@ -1,8 +1,11 @@
 .dockerignore
+.githooks/pre-commit
 .github/workflows/node.js.yml
 .gitignore
 Dockerfile
 TRACKED_FILES.txt
+_to_delete/index.lock.stale
+_to_delete/index.lock.stale2
 jest.config.js
 lib/actionDispatchers.js
 lib/aiPrompts/courtExtract.js
@@ -57,10 +60,12 @@ lib/job_executor.js
 lib/legacyTrap.js
 lib/logMeta.js
 lib/parseName.js
+lib/portalCardEngine.js
 lib/rateLimiter.js
 lib/reportSchema/manifest.js
 lib/reportSchema/validator.js
 lib/responseObserver.js
+lib/schemaDump.js
 lib/sequenceEngine.js
 lib/signatureValidation.js
 lib/sqlGuard.js
@@ -214,6 +219,7 @@ public/pageManager.html
 public/pipelineBoard.html
 public/portal/case.html
 public/portal/cases.html
+public/portal/docs.html
 public/portal/home.html
 public/portal/index.html
 public/portal/login.html
@@ -354,6 +360,7 @@ routes/pageLanding.js
 routes/pages.js
 routes/portal.auth.js
 routes/portal.cases.js
+routes/portal.docs.js
 routes/process_jobs.js
 routes/renaReminder.jsx
 routes/resolver.js
@@ -379,6 +386,7 @@ scripts/courtCitationTest.js
 scripts/courtReviewTest.js
 scripts/courtSummaryTest.js
 scripts/courtTitleMatchTest.js
+scripts/dump-schema.js
 scripts/encrypt-smtp-passwords.js
 scripts/esign_e2e_check.js
 scripts/esign_zoho_smoke.js
@@ -462,6 +470,7 @@ services/pipelineAdminService.js
 services/pipelineService.js
 services/portalAuthService.js
 services/portalCaseService.js
+services/portalDocsService.js
 services/quoService.js
 services/reportAuthorService.js
 services/reportService.js
@@ -539,7 +548,9 @@ tests/pipelineAdminService.test.js
 tests/pipelineBoard.test.js
 tests/pipelineService.test.js
 tests/portalAuth.test.js
+tests/portalCardEngine.test.js
 tests/portalCaseService.test.js
+tests/portalDocsService.test.js
 tests/refreshonmiss.k3.test.js
 tests/taskService.test.js
 tests/test-credential-crypto.js

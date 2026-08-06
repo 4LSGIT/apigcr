@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Documents — Client Portal</title>
+<style>
+  /* Client Portal Slice 3 — documents. Visual language from login.html /
+     cases.html / case.html (S1/S2 minimal). Branding/favicon still
+     deliberately excluded — polish rides a later slice. */
+  :root {
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --bg: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --panel: #f9fafb;
+    --done: #059669;
+    --fail: #dc2626;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.45;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 32px 16px 40px; }
+
+  .backlink {
+    display: inline-block; margin-bottom: 14px;
+    color: var(--muted); text-decoration: none; font-size: 13.5px;
+  }
+  .backlink:hover { color: var(--accent); }
+
+  .head h1 { margin: 0; font-size: 22px; font-weight: 700; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-top: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px; font-size: 14px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+  }
+  .card .note { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+
+  /* item list */
+  .doc { display: flex; align-items: flex-start; gap: 10px;
+         padding: 11px 0; border-bottom: 1px solid var(--border); }
+  .doc:last-child { border-bottom: none; }
+  .doc .body { flex: 1; min-width: 0; }
+  .doc .name { font-size: 14.5px; overflow-wrap: break-word; }
+  .doc .chip {
+    display: inline-block; margin-top: 5px;
+    padding: 2px 9px; border-radius: 999px;
+    font-size: 12px; font-weight: 600;
+  }
+  .chip.needed   { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+  .chip.received { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+  .doc .up {
+    flex-shrink: 0; margin-top: 1px;
+    padding: 7px 12px; font-size: 13.5px; font-weight: 600;
+    border: 1px solid var(--accent); border-radius: 8px; cursor: pointer;
+    background: var(--bg); color: var(--accent);
+  }
+  .doc .up:disabled { opacity: 0.5; cursor: default; }
+
+  .empty {
+    text-align: center; color: var(--done);
+    font-size: 14.5px; padding: 8px 0;
+  }
+
+  textarea {
+    width: 100%; padding: 10px; margin-bottom: 12px;
+    border: 1px solid var(--border); border-radius: 8px;
+    font-family: inherit; font-size: 14px; resize: vertical;
+  }
+  .btn {
+    display: block; width: 100%;
+    padding: 11px 14px; font-size: 15px; font-weight: 600;
+    border: 1px solid var(--accent); border-radius: 8px; cursor: pointer;
+    background: var(--bg); color: var(--accent);
+  }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .hint { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+
+  /* upload progress */
+  #progress-card { display: none; }
+  .prog { margin-bottom: 10px; }
+  .prog:last-child { margin-bottom: 0; }
+  .prog .row { display: flex; justify-content: space-between; gap: 8px;
+               font-size: 13.5px; margin-bottom: 4px; }
+  .prog .fname { overflow-wrap: anywhere; }
+  .prog .pct { flex-shrink: 0; color: var(--muted); }
+  .prog .track { height: 6px; background: var(--border);
+                 border-radius: 3px; overflow: hidden; }
+  .prog .bar { height: 100%; width: 0; background: var(--accent);
+               transition: width 0.3s; }
+  .prog.ok .fname { color: var(--done); }
+  .prog.ok .bar { background: var(--done); }
+  .prog.err .fname { color: var(--fail); }
+  .prog.err .bar { background: var(--fail); }
+  #progress-summary { font-size: 13.5px; color: var(--muted); margin: 12px 0 0; }
+
+  .msg { text-align: center; color: var(--muted); padding: 24px 0; }
+  .msg a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="backlink" id="backlink" href="cases.html">&larr; Back to your case</a>
+  <div id="content"><p class="msg">Loading&hellip;</p></div>
+</div>
+
+<input type="file" id="file-input" multiple style="display:none"
+       accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.jpg,.jpeg,.png,.gif,.tif,.tiff,.bmp,.heic,.webp,.rtf,.odt,.ods" />
+
+<script src="portal.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // Client-side HINTS mirroring the server limits (services/
+  // portalDocsService.js is the enforcement — this is UX only).
+  var MAX_FILE_SIZE = 50 * 1024 * 1024;
+  var ALLOWED_EXTENSIONS = {
+    pdf:1, doc:1, docx:1, xls:1, xlsx:1, csv:1, txt:1,
+    jpg:1, jpeg:1, png:1, gif:1, tif:1, tiff:1, bmp:1, heic:1, webp:1,
+    rtf:1, odt:1, ods:1
+  };
+
+  var caseId = new URLSearchParams(window.location.search).get('id');
+  var state = { items: [], hasUpload: false, uploading: false };
+  var pendingItem = null;   // { id, name } | null — set before the picker opens
+
+  function escText(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function apiBase() {
+    return '/api/portal/cases/' + encodeURIComponent(caseId) + '/docs';
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  function render() {
+    var html = '<div class="head"><h1>Documents</h1></div>';
+
+    // Checklist card.
+    html += '<div class="card"><h2>Requested Documents</h2>';
+    if (!state.items.length) {
+      html += '<p class="empty">Nothing is being requested right now.</p>';
+    } else {
+      var needed = 0;
+      state.items.forEach(function (it) { if (it.status === 'needed') needed++; });
+      if (!needed) {
+        html += '<p class="empty">&#10003; All requested documents have been received. Thank you!</p>';
+      } else {
+        html += '<p class="note">Please provide the following. Tap Upload next to an item to send files for it.</p>';
+      }
+      state.items.forEach(function (it) {
+        var chip = it.status === 'received'
+          ? '<span class="chip received">Received</span>'
+          : '<span class="chip needed">Needed</span>';
+        var up = (state.hasUpload && it.status === 'needed')
+          ? '<button class="up" data-item="' + it.id + '"' +
+            (state.uploading ? ' disabled' : '') + '>Upload</button>'
+          : '';
+        html += '<div class="doc"><div class="body">' +
+                  '<div class="name">' + escText(it.name) + '</div>' + chip +
+                '</div>' + up + '</div>';
+      });
+    }
+    html += '</div>';
+
+    // Progress card (hidden until an upload starts).
+    html += '<div class="card" id="progress-card"><h2>Uploading</h2>' +
+              '<div id="progress-list"></div>' +
+              '<p id="progress-summary"></p>' +
+            '</div>';
+
+    // Other documents card.
+    if (state.hasUpload) {
+      html += '<div class="card"><h2>Other Documents</h2>' +
+                '<p class="note">Have something that isn&rsquo;t listed above? Send it here.</p>' +
+                '<textarea id="comment" rows="3" placeholder="Optional: any comments or notes about these documents"></textarea>' +
+                '<button class="btn" id="btn-other"' + (state.uploading ? ' disabled' : '') + '>Choose files &amp; upload</button>' +
+                '<p class="hint">Accepted: PDF, Word, Excel, images, and text files. Max 50 MB per file.</p>' +
+              '</div>';
+    } else {
+      html += '<div class="card"><h2>Uploads</h2>' +
+                '<p class="note" style="margin:0;">Online uploads aren&rsquo;t available for this case yet &mdash; please contact our office to send documents.</p>' +
+              '</div>';
+    }
+
+    document.getElementById('content').innerHTML = html;
+
+    // Wire buttons.
+    var buttons = document.querySelectorAll('button.up');
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].addEventListener('click', onItemUploadClick);
+    }
+    var other = document.getElementById('btn-other');
+    if (other) other.addEventListener('click', onOtherUploadClick);
+  }
+
+  function showNotFound() {
+    document.getElementById('content').innerHTML =
+      '<p class="msg">We couldn&rsquo;t find that case. ' +
+      '<a href="cases.html">Back to your cases</a></p>';
+  }
+
+  // ── Load ──────────────────────────────────────────────────────────────────
+
+  async function load() {
+    if (!caseId) { window.location.replace('cases.html'); return; }
+    document.getElementById('backlink').href = 'case.html?id=' + encodeURIComponent(caseId);
+
+    try {
+      var res = await Portal.fetch(apiBase());
+      if (res.status === 404) { showNotFound(); return; }
+      var data = await res.json();
+      if (!data || data.status !== 'success' || !Array.isArray(data.items)) {
+        document.getElementById('content').innerHTML =
+          '<p class="msg">Something went wrong &mdash; try refreshing.</p>';
+        return;
+      }
+      state.items = data.items;
+      state.hasUpload = !!data.has_upload;
+      render();
+    } catch (_) {
+      document.getElementById('content').innerHTML =
+        '<p class="msg">Connection problem &mdash; try refreshing.</p>';
+    }
+  }
+
+  // ── Upload flow ───────────────────────────────────────────────────────────
+  // Per batch: pick files → per file (upload-link → POST bytes to Dropbox)
+  // → ONE upload-complete for the batch's successes → refresh the list.
+  // Per-item batches carry the item id; "Other documents" batches don't.
+
+  var fileInput = document.getElementById('file-input');
+
+  function onItemUploadClick(e) {
+    if (state.uploading) return;
+    var id = parseInt(e.currentTarget.getAttribute('data-item'), 10);
+    pendingItem = { id: id };
+    fileInput.value = '';
+    fileInput.click();
+  }
+
+  function onOtherUploadClick() {
+    if (state.uploading) return;
+    pendingItem = null;
+    fileInput.value = '';
+    fileInput.click();
+  }
+
+  fileInput.addEventListener('change', function () {
+    if (!fileInput.files.length) return;
+    var files = Array.prototype.slice.call(fileInput.files);
+
+    // Client-side hint pass (the server enforces the same rules).
+    var errors = [];
+    files.forEach(function (f) {
+      var dot = f.name.lastIndexOf('.');
+      var ext = dot >= 0 ? f.name.slice(dot + 1).toLowerCase() : '';
+      if (!ALLOWED_EXTENSIONS[ext]) errors.push('"' + f.name + '" \u2014 file type isn\u2019t accepted.');
+      else if (f.size === 0)        errors.push('"' + f.name + '" \u2014 file is empty.');
+      else if (f.size > MAX_FILE_SIZE) errors.push('"' + f.name + '" \u2014 exceeds the 50 MB limit.');
+    });
+    if (errors.length) {
+      alert('Some files can\u2019t be uploaded:\n\n' + errors.join('\n'));
+      return;
+    }
+
+    startBatch(files, pendingItem ? pendingItem.id : null);
+  });
+
+  async function startBatch(files, itemId) {
+    state.uploading = true;
+    render();
+
+    var progressCard = document.getElementById('progress-card');
+    var progressList = document.getElementById('progress-list');
+    var summary = document.getElementById('progress-summary');
+    progressCard.style.display = 'block';
+    progressCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+
+    var commentEl = document.getElementById('comment');
+    var comment = (itemId == null && commentEl) ? commentEl.value.trim() : '';
+
+    var rows = [];
+    progressList.innerHTML = files.map(function (f, i) {
+      return '<div class="prog" id="prog-' + i + '">' +
+               '<div class="row"><span class="fname">' + escText(f.name) + '</span>' +
+               '<span class="pct" id="pct-' + i + '">0%</span></div>' +
+               '<div class="track"><div class="bar" id="bar-' + i + '"></div></div>' +
+             '</div>';
+    }).join('');
+    files.forEach(function (_, i) {
+      rows.push({
+        wrap: document.getElementById('prog-' + i),
+        pct:  document.getElementById('pct-' + i),
+        bar:  document.getElementById('bar-' + i),
+      });
+    });
+
+    var successes = [];
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      var row = rows[i];
+      try {
+        var linkRes = await Portal.fetch(apiBase() + '/upload-link', {
+          method: 'POST',
+          body: JSON.stringify({
+            item_id: itemId,
+            filename: file.name,
+            size: file.size,
+            content_type: file.type || null,
+          }),
+        });
+        var linkData = await linkRes.json().catch(function () { return null; });
+        if (!linkRes.ok || !linkData || linkData.status !== 'success' || !linkData.link) {
+          throw new Error((linkData && linkData.message) || 'Could not start the upload.');
+        }
+
+        await postToDropbox(linkData.link, file, function (percent) {
+          row.bar.style.width = percent + '%';
+          row.pct.textContent = percent + '%';
+        });
+
+        row.wrap.className = 'prog ok';
+        row.pct.textContent = '100%';
+        row.bar.style.width = '100%';
+        successes.push({ name: file.name, item_id: itemId });
+      } catch (err) {
+        row.wrap.className = 'prog err';
+        row.pct.textContent = 'Failed';
+        row.bar.style.width = '100%';
+      }
+      summary.textContent = (i + 1) + ' of ' + files.length + ' files processed';
+    }
+
+    // One notification per batch (mirrors the public flow's auto-notify).
+    if (successes.length) {
+      try {
+        await Portal.fetch(apiBase() + '/upload-complete', {
+          method: 'POST',
+          body: JSON.stringify({ files: successes, comment: comment || null }),
+        });
+      } catch (_) { /* best-effort — the files themselves already landed */ }
+      if (commentEl && itemId == null) commentEl.value = '';
+    }
+
+    summary.textContent = successes.length === files.length
+      ? 'All ' + files.length + ' file' + (files.length > 1 ? 's' : '') + ' uploaded. Our team has been notified.'
+      : successes.length + ' of ' + files.length + ' files uploaded' +
+        (successes.length ? '. Our team has been notified of the successful uploads.' : '. Please try again.');
+
+    state.uploading = false;
+
+    // Refresh statuses without wiping the progress card: re-fetch, re-render,
+    // then re-show the finished summary.
+    var finishedHtml = progressList.innerHTML;
+    var finishedSummary = summary.textContent;
+    try {
+      var res = await Portal.fetch(apiBase());
+      if (res.ok) {
+        var data = await res.json();
+        if (data && data.status === 'success' && Array.isArray(data.items)) {
+          state.items = data.items;
+          state.hasUpload = !!data.has_upload;
+        }
+      }
+    } catch (_) { /* keep the stale list */ }
+    render();
+    var card = document.getElementById('progress-card');
+    document.getElementById('progress-list').innerHTML = finishedHtml;
+    document.getElementById('progress-summary').textContent = finishedSummary;
+    card.style.display = 'block';
+  }
+
+  // Dropbox temporary upload links take a POST with octet-stream bytes
+  // (same mechanics as public/docReq.html — XHR for real progress events).
+  function postToDropbox(url, file, onProgress) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', url);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.upload.onprogress = function (e) {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = function () {
+        if (xhr.status === 200) resolve();
+        else reject(new Error('Upload failed (' + xhr.status + ')'));
+      };
+      xhr.onerror = function () { reject(new Error('Network error')); };
+      xhr.send(file);
+    });
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

@@ -1,12 +1,24 @@
 // services/portalCaseService.js
 //
 /**
- * portalCaseService.js — Client Portal Slice 2: read-only case status.
+ * portalCaseService.js — Client Portal Slice 2 + E1: read-only case status.
  *
  * Backs routes/portal.cases.js. Owns:
  *   - listCases   — the contact's Primary/Secondary cases, list-shaped.
- *   - getCaseView — one case with the client-facing pipeline timeline;
+ *   - getCaseView — one case with the client-facing pipeline timeline plus
+ *                   the configurable cards array (E1 card engine);
  *                   returns null when out of scope (route → uniform 404).
+ *
+ * E1 (card engine): the payload gains `cards` from
+ * lib/portalCardEngine.renderCards — the configurable replacement for the
+ * previously hardcoded payment + 341 cards. The 341 card's GATES (BK-only,
+ * past-date suppression) now live SOLELY in the engine's conditions (the
+ * seeded meeting341 row — ref/2026-08-07_portal_cards_e1.sql translates the
+ * shipped gates exactly); this service no longer applies them. Double-gating
+ * hides bugs — the engine decides whether the 341 card appears, and
+ * formatMeeting341 below is a pure FORMATTER included when (and only when)
+ * that card passed. Parity with pre-E1 output is pinned by
+ * tests/portalCardEngine.test.js.
  *
  * HARD INVARIANTS (portal contract — violating any is a defect):
  *   - Hidden stages never leave the server. ALL client_visible filtering
@@ -53,7 +65,8 @@
 'use strict';
 
 const pipelineService = require('./pipelineService');
-const { utcToLocal, nowLocal } = require('./timezoneService');
+const portalCardEngine = require('../lib/portalCardEngine');
+const { utcToLocal } = require('./timezoneService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED HELPERS
@@ -87,48 +100,43 @@ function deriveDocket(caseRow) {
   return caseRow.case_number_full || caseRow.case_number || null;
 }
 
-/** 341 meetings are exclusive to bankruptcy cases (Fred, 2026-08-06).
- *  BK = chapter set OR case_type 'Bankruptcy' (mirrors title vocabulary;
- *  live data pairs chapters only with 'Bankruptcy'). Zero non-BK cases
- *  carry a 341 date today — this gate is belt-and-suspenders. */
-function isBankruptcyCase(caseRow) {
-  const chapter = String(caseRow.case_chapter == null ? '' : caseRow.case_chapter).trim();
-  const type = String(caseRow.case_type == null ? '' : caseRow.case_type).trim();
-  return Boolean(chapter) || type === 'Bankruptcy';
-}
-
 /**
- * S2.1 (D8): the client-facing 341 block, or null when there is nothing
- * safe to show.
+ * S2.1 (D8), reshaped by E1: the client-facing 341 block — now a pure
+ * FORMATTER. The former gates (BK-exclusivity, past-date suppression) moved
+ * VERBATIM onto the meeting341 card's engine conditions
+ * (ref/2026-08-07_portal_cards_e1.sql — the single place they live;
+ * double-gating hides bugs, per the E1 ruling). getCaseView calls this only
+ * after the engine has passed the card; parity with the pre-E1 gated output
+ * is pinned by tests/portalCardEngine.test.js.
  *
  * case_341_current is FIRM-LOCAL WALL TIME (apptService writes appt_date —
  * the local column — into it; live values sit at 8:30a–1:00p). mysql2
  * (timezone:'Z') hands it back as a fake-UTC Date whose naive components
  * ARE the firm-local wall clock — so this reads the components with NO
  * timezone conversion (formatLocal semantics), unlike the S2 timeline
- * dates, which are real UTC.
+ * dates, which are real UTC. The engine's date_future operator reads the
+ * column the SAME naive way — the two stay in lockstep by design.
  *
- * Manager ruling 2026-08-06 (divergence upheld):
+ * Manager ruling 2026-08-06 (still binding):
  *   - NO status wording. Live `341_status` reads 'Continued' on 100% of
  *     rows (NOT-NULL enum, no default → first member is the de-facto unset
  *     state), so any mapping from it would put a false statement on nearly
  *     every card. When the write path becomes trustworthy, a server-side
  *     mapping drops in here with zero client change.
- *   - PAST-DATE SUPPRESSION, server-side: firm-local DATE must be >= today
- *     (firm-local). Closed cases stay portal-visible and nearly all carry a
- *     stale past 341 — without this, most closed cases would render phantom
- *     meetings. Suppressed meetings never leave the server (hidden-stage
- *     principle).
  *   - `link` (Fred ruling: link in): case_341_link passes through only when
  *     it is a real http(s) URL — staff-entered varchar; the scheme guard
- *     keeps '' and non-URL junk out of an href. Same upcoming-window
- *     suppression as the card itself (it only exists inside the card).
+ *     keeps '' and non-URL junk out of an href. The link only exists inside
+ *     the card, so it is suppressed with the card.
+ *
+ * Formatting-integrity nulls remain (no 341 value / unparseable value →
+ * null): those are "nothing safe to format", not gates. getCaseView treats a
+ * null here on a PASSED card as a defect signal and drops the card
+ * (fail-closed) rather than shipping an empty coded card.
  *
  * @returns {{ date:string, time:string, link:string|null } | null}
  *          date 'YYYY-MM-DD', time 'HH:mm' — both firm-local wall values.
  */
-function buildMeeting341(caseRow) {
-  if (!isBankruptcyCase(caseRow)) return null;
+function formatMeeting341(caseRow) {
   if (!caseRow.case_341_current) return null;
 
   const d = caseRow.case_341_current instanceof Date
@@ -139,8 +147,6 @@ function buildMeeting341(caseRow) {
   const naive = d.toISOString().slice(0, 19);   // firm-local wall clock
   const date = naive.slice(0, 10);
   const time = naive.slice(11, 16);
-
-  if (date < nowLocal().toISODate()) return null;   // past-date suppression
 
   const rawLink = String(caseRow.case_341_link == null ? '' : caseRow.case_341_link).trim();
   const link = /^https?:\/\//i.test(rawLink) ? rawLink : null;
@@ -295,6 +301,14 @@ async function listCases(db, contactId) {
  * One case, portal-shaped. Scope check FIRST; out-of-scope and nonexistent
  * are both null — the route turns null into the uniform 404 (no oracle).
  *
+ * E1: `cards` = portalCardEngine.renderCards for the case-view placements
+ * ('case_top' above the timeline, 'case' below — the client splits by each
+ * card's placement). `meeting341` is included when — and ONLY when — the
+ * engine passed the coded meeting341 card; its gates live in that card's
+ * conditions, not here. A card that passed but yields nothing formattable
+ * (formatMeeting341 → null; a datetime column makes this near-impossible) is
+ * dropped fail-closed rather than shipped empty.
+ *
  * @param {object} db        mysql2 pool
  * @param {number} contactId authenticated portal contact
  * @param {string} caseId    requested cases.case_id
@@ -302,7 +316,10 @@ async function listCases(db, contactId) {
  *   meeting341: { date:string, time:string, link:string|null } | null,
  *   timeline: { done: {label:string, date:string|null}[],
  *               current: {label:string, since:string|null} | null,
- *               upcoming: {label:string}[] }} | null>}
+ *               upcoming: {label:string}[] },
+ *   cards: Array<{key:string, title:string, body:string|null,
+ *                 link:{url:string,label:string}|null,
+ *                 coded_key:string|null, placement:string}>} | null>}
  */
 async function getCaseView(db, contactId, caseId) {
   const [[row]] = await db.query(
@@ -327,12 +344,35 @@ async function getCaseView(db, contactId, caseId) {
     throw err;
   }
 
+  // E1 card engine — fail-closed internally; never throws, never 500s the
+  // view. Refs/params inside are pinned to (contactId, row.case_id).
+  const cards = await portalCardEngine.renderCards(db, {
+    caseId: row.case_id,
+    contactId,
+    placement: ['case_top', 'case'],
+  });
+
+  // 341 data rides ONLY behind the engine-passed coded card (dispatch is by
+  // coded_key — the code binding; card_key is staff vocabulary).
+  let meeting341 = null;
+  const idx341 = cards.findIndex(c => c.coded_key === 'meeting341');
+  if (idx341 !== -1) {
+    meeting341 = formatMeeting341(row);
+    if (!meeting341) {
+      // Passed card with nothing formattable = misconfig/defect — drop the
+      // card (fail-closed) instead of rendering an empty shell.
+      console.warn('[portalCaseService] meeting341 card passed but formatter returned null — card dropped');
+      cards.splice(idx341, 1);
+    }
+  }
+
   return {
     case_id: row.case_id,
     title: deriveTitle(row),
     docket: deriveDocket(row),
-    meeting341: buildMeeting341(row),
+    meeting341,
     timeline: buildClientTimeline(pipeline),
+    cards,
   };
 }
 
@@ -344,8 +384,10 @@ module.exports = {
   listCases,
   getCaseView,
   // Exposed for tests (repo pattern: logService cross-exports its helpers).
+  // E1: _buildMeeting341 → _formatMeeting341 (gates moved to the card
+  // engine's conditions; this is the pure formatter).
   _buildClientTimeline: buildClientTimeline,
-  _buildMeeting341: buildMeeting341,
+  _formatMeeting341: formatMeeting341,
   _deriveTitle: deriveTitle,
   _deriveDocket: deriveDocket,
 };

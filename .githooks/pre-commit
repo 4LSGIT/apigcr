@@ -1,0 +1,18 @@
+#!/bin/sh
+# .githooks/pre-commit — tracked in the repo. Enable once with:
+#   git config core.hooksPath .githooks
+#
+# 1. Refresh ref/database.sql if the live schema changed (no-op + ~1 round trip
+#    when it didn't; silently skipped if the DB is unreachable).
+# 2. Refresh TRACKED_FILES.txt.
+# Both files are staged into the commit being made.
+#
+# Skip the schema step for one commit:  SKIP_SCHEMA_DUMP=1 git commit -m "..."
+
+if [ -z "$SKIP_SCHEMA_DUMP" ] && [ -f scripts/dump-schema.js ] && command -v node >/dev/null 2>&1; then
+  node scripts/dump-schema.js --quiet
+  [ -f ref/database.sql ] && git add ref/database.sql
+fi
+
+git ls-files > TRACKED_FILES.txt
+git add TRACKED_FILES.txt

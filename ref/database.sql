@@ -1,6 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-05T22:40:15.501Z
+-- Generated: 2026-08-06T11:57:59.845Z
 -- Source: POST /admin/db/schema/save-to-ref
+-- Fingerprint: sha256:604146bebc54f13873cc87cc010c942e
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1934,6 +1935,30 @@ CREATE TABLE `portal_access_log` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `portal_cards`
+--
+
+DROP TABLE IF EXISTS `portal_cards`;
+CREATE TABLE `portal_cards` (
+  `id` int unsigned NOT NULL,
+  `card_key` varchar(50) COLLATE utf8mb4_general_ci NOT NULL,
+  `title` varchar(100) COLLATE utf8mb4_general_ci NOT NULL,
+  `body_type` enum('template','coded') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'template',
+  `body_template` text COLLATE utf8mb4_general_ci,
+  `coded_key` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `link_url` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `link_label` varchar(50) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `conditions` json DEFAULT NULL,
+  `placement` varchar(20) COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'case',
+  `sort` int NOT NULL DEFAULT '0',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `portal_login_pins`
 --
 
@@ -3460,6 +3485,13 @@ ALTER TABLE `portal_access_log`
   ADD KEY `idx_pal_event` (`event`);
 
 --
+-- Indexes for table `portal_cards`
+--
+ALTER TABLE `portal_cards`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_portal_cards_key` (`card_key`);
+
+--
 -- Indexes for table `portal_login_pins`
 --
 ALTER TABLE `portal_login_pins`
@@ -4163,6 +4195,12 @@ ALTER TABLE `pipeline_templates`
 -- AUTO_INCREMENT for table `portal_access_log`
 --
 ALTER TABLE `portal_access_log`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `portal_cards`
+--
+ALTER TABLE `portal_cards`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --

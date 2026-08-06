@@ -5,9 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Case Status — Client Portal</title>
 <style>
-  /* Client Portal Slice 2 — case view. Visual language from login.html /
+  /* Client Portal Slice 2 + E1 — case view. Visual language from login.html /
      cases.html (S1/S2 minimal). Branding/favicon still deliberately
-     excluded — polish rides a later slice. */
+     excluded — polish rides a later slice. E1: the payment/341 cards render
+     from the server's `cards` array (portal_cards config) instead of
+     hardcoding — same visual shells. */
   :root {
     --accent: #2563eb;
     --accent-text: #ffffff;
@@ -84,6 +86,11 @@
   }
   .pay-note { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; text-align: center; }
 
+  /* E1 template-card body: pre-line keeps staff-typed newlines without any
+     HTML transform (body text is server-escaped — see renderCard). */
+  .card-body { margin: 0; white-space: pre-line; }
+  .card-body + .pay-btn { margin-top: 12px; }
+
   .msg { text-align: center; color: var(--muted); padding: 24px 0; }
   .msg a { color: var(--accent); }
 </style>
@@ -141,6 +148,84 @@
     return out;
   }
 
+  // ── E1 card engine rendering ──────────────────────────────────────────────
+  // Cards come CONFIGURED from the server (portal_cards via
+  // portalCardEngine.renderCards). The server has already decided WHICH cards
+  // exist — failed-condition / refused cards are ABSENT from the array (never
+  // hidden client-side). This file only lays them out:
+  //   placement 'case_top' → above the progress timeline (the 341 card lives
+  //   here), everything else ('case', default) → below it (payment).
+
+  function cardShell(title, inner) {
+    return '<div class="card"><h2>' + escText(title) + '</h2>' + inner + '</div>';
+  }
+
+  // ALL card links open top-level/new-tab: target=_blank + rel=noopener is
+  // REQUIRED — the Clio page behind /r/payment refuses to load in an iframe,
+  // so links must be top-level/new-tab navigations, never embedded. (The
+  // engine only emits http(s)/site-relative urls; escText makes the value
+  // attribute-safe.) FUTURE SWAP POINT (in-house payments): the payment
+  // card's /r/payment link now lives in the portal_cards `payment` row —
+  // the in-house payment flow swaps that row's link (or a coded_key), not
+  // this file.
+  function linkBtn(link) {
+    if (!link || !link.url) return '';
+    return '<a class="pay-btn" href="' + escText(link.url) +
+             '" target="_blank" rel="noopener">' + escText(link.label || 'Open') + '</a>' +
+           '<p class="pay-note">Opens in a new tab.</p>';
+  }
+
+  // Coded-card renderers, dispatched by card.coded_key. The card's TITLE is
+  // staff-configured (card.title); the BODY is code. Unknown coded_key →
+  // card skipped (a config row shipped ahead of its renderer must not break
+  // the page).
+  var CODED_RENDERERS = {
+    // Meeting of Creditors (341) — S2.1 render, E1-dispatched. The server
+    // includes c.meeting341 only when the engine passed this card
+    // (bankruptcy-only + past-date gates live in the card's CONDITIONS now;
+    // no status wording per the 2026-08-06 ruling). Render-ready or absent —
+    // nothing to decide here.
+    meeting341: function (card, c) {
+      if (!c.meeting341) return '';
+      var inner = '<p style="margin:0;font-size:15.5px;font-weight:600;">' +
+                    escText(fmtDateTime(c.meeting341.date, c.meeting341.time)) +
+                  '</p>';
+      if (c.meeting341.link) {
+        // Same top-level/new-tab rule as every card link — never embed.
+        inner += '<a class="pay-btn" style="margin-top:12px;" href="' +
+                   escText(c.meeting341.link) +
+                 '" target="_blank" rel="noopener">Join your meeting</a>';
+      }
+      return cardShell(card.title, inner);
+    }
+  };
+
+  function renderCard(card, c) {
+    if (card.coded_key) {
+      var fn = CODED_RENDERERS[card.coded_key];
+      return fn ? fn(card, c) : '';
+    }
+    // Template card: title + body + optional link button.
+    // card.body is SERVER-ESCAPED text (portalCardEngine escapes resolved
+    // output before it enters the payload — ratified model item 4). Insert
+    // as-is; do NOT escText it — that would double-escape (&amp;amp;).
+    var inner = '';
+    if (card.body) inner += '<p class="card-body">' + card.body + '</p>';
+    inner += linkBtn(card.link);
+    if (!inner) return '';   // nothing to show → skip the empty shell
+    return cardShell(card.title, inner);
+  }
+
+  function renderCards(cards, c, top) {
+    var html = '';
+    (cards || []).forEach(function (card) {
+      var isTop = card.placement === 'case_top';
+      if (isTop !== top) return;
+      html += renderCard(card, c);
+    });
+    return html;
+  }
+
   function render(c) {
     var html = '';
 
@@ -150,22 +235,8 @@
               (c.docket ? '<p class="docket">Case no. ' + escText(c.docket) + '</p>' : '') +
             '</div>';
 
-    // Meeting of Creditors (341) — S2.1. Server owns ALL suppression
-    // (bankruptcy-only, past-date, no status wording per 2026-08-06 ruling):
-    // meeting341 is either render-ready or null, nothing to decide here.
-    if (c.meeting341) {
-      html += '<div class="card"><h2>Meeting of Creditors (341)</h2>' +
-                '<p style="margin:0;font-size:15.5px;font-weight:600;">' +
-                  escText(fmtDateTime(c.meeting341.date, c.meeting341.time)) +
-                '</p>';
-      if (c.meeting341.link) {
-        // Same top-level/new-tab rule as the payment link — never embed.
-        html += '<a class="pay-btn" style="margin-top:12px;" href="' +
-                  escText(c.meeting341.link) +
-                '" target="_blank" rel="noopener">Join your meeting</a>';
-      }
-      html += '</div>';
-    }
+    // Cards above the timeline (placement 'case_top' — the 341 card).
+    html += renderCards(c.cards, c, true);
 
     // Progress timeline: done → current (marked) → upcoming. No current →
     // done + upcoming render without a marker.
@@ -186,17 +257,11 @@
                    : '<p class="msg" style="padding:6px 0;">No progress to show yet.</p>') +
             '</div>';
 
-    // Payment card.
-    // FUTURE SWAP POINT (in-house payments): this static /r/payment link is
-    // the whole of S2's payment surface. The planned in-house payment flow
-    // (multi-deploy feature) replaces this card's href/handler — keep the
-    // swap contained here. target=_blank + rel=noopener is REQUIRED: the
-    // Clio page behind /r/payment refuses to load in an iframe, so it must
-    // be a top-level/new-tab navigation — never embed.
-    html += '<div class="card"><h2>Payments</h2>' +
-              '<a class="pay-btn" href="/r/payment" target="_blank" rel="noopener">Make a payment</a>' +
-              '<p class="pay-note">Opens our secure payment page in a new tab.</p>' +
-            '</div>';
+    // Documents (S3): checklist + uploads for this case.
+    html += '<div class="card"><h2>Documents</h2><a class="pay-btn" href="docs.html?id=' + encodeURIComponent(c.case_id) + '">View &amp; upload documents</a></div>';
+
+    // Cards below the timeline (placement 'case' — the payment card).
+    html += renderCards(c.cards, c, false);
 
     document.getElementById('content').innerHTML = html;
   }
