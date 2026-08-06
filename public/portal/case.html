@@ -260,6 +260,9 @@
     // Documents (S3): checklist + uploads for this case.
     html += '<div class="card"><h2>Documents</h2><a class="pay-btn" href="docs.html?id=' + encodeURIComponent(c.case_id) + '">View &amp; upload documents</a></div>';
 
+    // Callback request: contact-level route — no ?id= needed.
+    html += '<div class="card"><h2>Need a call?</h2><a class="pay-btn" href="callback.html">Request a callback</a></div>';
+
     // Cards below the timeline (placement 'case' — the payment card).
     html += renderCards(c.cards, c, false);
 

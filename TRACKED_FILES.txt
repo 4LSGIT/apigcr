@@ -48,6 +48,7 @@ lib/internal_functions/index.js
 lib/internal_functions/log.js
 lib/internal_functions/pdf.js
 lib/internal_functions/pipeline.js
+lib/internal_functions/portalCallback.js
 lib/internal_functions/reports.js
 lib/internal_functions/sequences.js
 lib/internal_functions/system.js
@@ -216,6 +217,7 @@ public/manage.html
 public/manuals.html
 public/pageManager.html
 public/pipelineBoard.html
+public/portal/callback.html
 public/portal/case.html
 public/portal/cases.html
 public/portal/docs.html
@@ -253,6 +255,7 @@ ref/2026-07-31_contract_followup_seq.sql
 ref/2026-08-02_pipeline_engine_slice_a.sql
 ref/2026-08-03_issn_tabs_definition.json
 ref/2026-08-05_portal_s1.sql
+ref/2026-08-06_portal_s3_5.sql
 ref/2026-08-07_portal_cards_e1.sql
 ref/FORM_TEMPLATE_SCHEMA_V1.md
 ref/database.sql
@@ -360,6 +363,7 @@ routes/manuals.js
 routes/pageLanding.js
 routes/pages.js
 routes/portal.auth.js
+routes/portal.callback.js
 routes/portal.cases.js
 routes/portal.docs.js
 routes/process_jobs.js
@@ -471,6 +475,7 @@ services/phoneService.js
 services/pipelineAdminService.js
 services/pipelineService.js
 services/portalAuthService.js
+services/portalCallbackService.js
 services/portalCaseService.js
 services/portalDocsService.js
 services/quoService.js
@@ -550,6 +555,7 @@ tests/pipelineAdminService.test.js
 tests/pipelineBoard.test.js
 tests/pipelineService.test.js
 tests/portalAuth.test.js
+tests/portalCallbackService.test.js
 tests/portalCardEngine.test.js
 tests/portalCardsAdmin.test.js
 tests/portalCaseService.test.js

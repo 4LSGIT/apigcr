@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Request a Callback — Client Portal</title>
+<style>
+  /* Client Portal Slice 3.5 — callback requests. Visual language from
+     docs.html / case.html (S1–S3 minimal). Branding/favicon still
+     deliberately excluded — polish rides a later slice. */
+  :root {
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --bg: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --panel: #f9fafb;
+    --done: #059669;
+    --fail: #dc2626;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.45;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 32px 16px 40px; }
+
+  .backlink {
+    display: inline-block; margin-bottom: 14px;
+    color: var(--muted); text-decoration: none; font-size: 13.5px;
+  }
+  .backlink:hover { color: var(--accent); }
+
+  .head h1 { margin: 0; font-size: 22px; font-weight: 700; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-top: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px; font-size: 14px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+  }
+  .card .note { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+  .chip-btn {
+    padding: 8px 12px; font-size: 13.5px; font-weight: 600;
+    border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+    background: var(--bg); color: var(--text);
+  }
+  .chip-btn.sel { border-color: var(--accent); color: var(--accent);
+                  background: #eff6ff; }
+  .chip-btn:disabled { opacity: 0.4; cursor: default; }
+
+  label.fld { display: block; font-size: 13px; font-weight: 600;
+              color: var(--muted); margin: 14px 0 5px; }
+  input[type="tel"], textarea {
+    width: 100%; padding: 10px;
+    border: 1px solid var(--border); border-radius: 8px;
+    font-family: inherit; font-size: 14px; background: var(--bg);
+  }
+  textarea { resize: vertical; min-height: 84px; }
+
+  .btn {
+    display: block; width: 100%; margin-top: 14px;
+    padding: 11px 14px; font-size: 15px; font-weight: 600;
+    border: 1px solid var(--accent); border-radius: 8px; cursor: pointer;
+    background: var(--accent); color: var(--accent-text);
+  }
+  .btn.secondary { background: var(--bg); color: var(--accent); }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+
+  .err { color: var(--fail); font-size: 13.5px; margin: 10px 0 0; }
+  .ok-banner {
+    background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46;
+    border-radius: 10px; padding: 12px 14px; margin-top: 16px;
+    font-size: 14px;
+  }
+  .pend-line { font-size: 14.5px; margin: 0 0 4px; }
+  .pend-sub { font-size: 13px; color: var(--muted); margin: 0; }
+  .hint { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .msg { text-align: center; color: var(--muted); padding: 24px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="backlink" href="cases.html">&larr; Back</a>
+  <div id="content"><p class="msg">Loading&hellip;</p></div>
+</div>
+
+<script src="portal.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // Client-side HINTS mirroring the server rules (services/
+  // portalCallbackService.js is the enforcement — this is UX only).
+  var MESSAGE_MAX = 800;
+
+  var state = {
+    pending: null,      // { day_label, window_label, requested_at } | null
+    days: [],           // [{ date, label, windows:[{key,label,available}] }]
+    phone: '',
+    selDate: null,
+    selWindow: null,
+    busy: false,
+    justSubmitted: false
+  };
+
+  function escText(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function fmtPhone(d) {
+    d = String(d || '').replace(/\D/g, '');
+    if (d.length !== 10) return d;
+    return '(' + d.slice(0, 3) + ') ' + d.slice(3, 6) + '-' + d.slice(6);
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  function render() {
+    var html = '<div class="head"><h1>Request a Callback</h1></div>';
+
+    if (state.pending) {
+      html += renderPending();
+    } else {
+      html += renderForm();
+    }
+    document.getElementById('content').innerHTML = html;
+    bind();
+  }
+
+  function renderPending() {
+    var p = state.pending;
+    var when = [p.day_label, p.window_label].filter(Boolean).join(', ');
+    var html = '';
+    if (state.justSubmitted) {
+      html += '<div class="ok-banner">Thanks &mdash; we\u2019ll do our best to call you ' +
+              (when ? '<strong>' + escText(when) + '</strong>' : 'then') + '.</div>';
+    }
+    html += '<div class="card"><h2>Pending Request</h2>' +
+            '<p class="pend-line">We\u2019ll call you <strong>' +
+            (when ? escText(when) : 'as requested') + '</strong>.</p>' +
+            (p.requested_at
+              ? '<p class="pend-sub">Requested ' + escText(String(p.requested_at).slice(0, 10)) + '</p>'
+              : '') +
+            '<button class="btn secondary" id="cancel-btn">Cancel this request</button>' +
+            '<p class="err" id="cancel-err" style="display:none"></p>' +
+            '</div>';
+    return html;
+  }
+
+  function renderForm() {
+    var html = '<div class="card">' +
+      '<h2>Pick a Day &amp; Time</h2>' +
+      '<p class="note">Choose a window and we\u2019ll do our best to call you during it.</p>';
+
+    // Day chips — a day is disabled when every window is unavailable.
+    html += '<div class="chips" id="day-chips">';
+    state.days.forEach(function (d) {
+      var anyOpen = d.windows.some(function (w) { return w.available; });
+      html += '<button type="button" class="chip-btn' +
+        (state.selDate === d.date ? ' sel' : '') + '"' +
+        (anyOpen ? '' : ' disabled') +
+        ' data-date="' + escText(d.date) + '">' + escText(d.label) + '</button>';
+    });
+    html += '</div>';
+
+    // Window chips for the selected day.
+    var day = state.days.find(function (d) { return d.date === state.selDate; });
+    if (day) {
+      html += '<label class="fld">Time window</label><div class="chips" id="win-chips">';
+      day.windows.forEach(function (w) {
+        html += '<button type="button" class="chip-btn' +
+          (state.selWindow === w.key ? ' sel' : '') + '"' +
+          (w.available ? '' : ' disabled') +
+          ' data-win="' + escText(w.key) + '">' + escText(w.label) + '</button>';
+      });
+      html += '</div>';
+    }
+
+    html += '<label class="fld" for="phone">Phone number to call</label>' +
+      '<input type="tel" id="phone" autocomplete="tel" value="' +
+      escText(fmtPhone(state.phone)) + '" placeholder="(000) 000-0000">';
+
+    html += '<label class="fld" for="message">What\u2019s the call about?</label>' +
+      '<textarea id="message" maxlength="' + MESSAGE_MAX + '" ' +
+      'placeholder="A sentence or two is fine."></textarea>';
+
+    html += '<button class="btn" id="submit-btn">Request Callback</button>' +
+      '<p class="err" id="form-err" style="display:none"></p>' +
+      '<p class="hint">Need a specific appointment instead? Contact our office.</p>' +
+      '</div>';
+    return html;
+  }
+
+  // ── Events ────────────────────────────────────────────────────────────────
+
+  function bind() {
+    var dayChips = document.getElementById('day-chips');
+    if (dayChips) {
+      dayChips.addEventListener('click', function (e) {
+        var b = e.target.closest('button[data-date]');
+        if (!b || b.disabled) return;
+        state.selDate = b.getAttribute('data-date');
+        state.selWindow = null;
+        render();
+      });
+    }
+    var winChips = document.getElementById('win-chips');
+    if (winChips) {
+      winChips.addEventListener('click', function (e) {
+        var b = e.target.closest('button[data-win]');
+        if (!b || b.disabled) return;
+        state.selWindow = b.getAttribute('data-win');
+        // Toggle selection classes in place (avoid re-render clearing inputs).
+        winChips.querySelectorAll('.chip-btn').forEach(function (c) {
+          c.classList.toggle('sel', c === b);
+        });
+      });
+    }
+    var submit = document.getElementById('submit-btn');
+    if (submit) submit.addEventListener('click', onSubmit);
+    var cancel = document.getElementById('cancel-btn');
+    if (cancel) cancel.addEventListener('click', onCancel);
+  }
+
+  function showErr(id, msg) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = msg;
+    el.style.display = msg ? 'block' : 'none';
+  }
+
+  function onSubmit() {
+    if (state.busy) return;
+    showErr('form-err', '');
+
+    if (!state.selDate)   return showErr('form-err', 'Please choose a day.');
+    if (!state.selWindow) return showErr('form-err', 'Please choose a time window.');
+    var phone = (document.getElementById('phone').value || '').replace(/\D/g, '');
+    if (phone.length === 11 && phone[0] === '1') phone = phone.slice(1);
+    if (phone.length !== 10) return showErr('form-err', 'Please enter a valid 10-digit phone number.');
+    var message = (document.getElementById('message').value || '').trim();
+    if (!message) return showErr('form-err', 'Please tell us briefly what the call is about.');
+
+    state.busy = true;
+    document.getElementById('submit-btn').disabled = true;
+
+    Portal.fetch('/api/portal/callback', {
+      method: 'POST',
+      body: JSON.stringify({
+        date: state.selDate, window: state.selWindow,
+        phone: phone, message: message
+      })
+    }).then(function (res) { return res.json().then(function (d) { return { res: res, d: d }; }); })
+      .then(function (r) {
+        state.busy = false;
+        if (r.res.ok && r.d.status === 'success') {
+          state.pending = r.d.pending || {};
+          state.justSubmitted = true;
+          render();
+          return;
+        }
+        if (r.res.status === 409 && r.d.pending) {
+          state.pending = r.d.pending;
+          state.justSubmitted = false;
+          render();
+          return;
+        }
+        var btn = document.getElementById('submit-btn');
+        if (btn) btn.disabled = false;
+        showErr('form-err', (r.d && r.d.message) || 'Something went wrong. Please try again.');
+      })
+      .catch(function () {
+        state.busy = false;
+        var btn = document.getElementById('submit-btn');
+        if (btn) btn.disabled = false;
+        showErr('form-err', 'Something went wrong. Please try again.');
+      });
+  }
+
+  function onCancel() {
+    if (state.busy) return;
+    if (!window.confirm('Cancel your callback request?')) return;
+    state.busy = true;
+    showErr('cancel-err', '');
+    document.getElementById('cancel-btn').disabled = true;
+
+    Portal.fetch('/api/portal/callback/cancel', { method: 'POST', body: '{}' })
+      .then(function (res) { return res.json().then(function (d) { return { res: res, d: d }; }); })
+      .then(function (r) {
+        state.busy = false;
+        if (r.res.ok || r.res.status === 404) {
+          // 404 = it was already gone — either way, back to the form.
+          state.pending = null;
+          state.justSubmitted = false;
+          load();
+          return;
+        }
+        var btn = document.getElementById('cancel-btn');
+        if (btn) btn.disabled = false;
+        showErr('cancel-err', (r.d && r.d.message) || 'Something went wrong. Please try again.');
+      })
+      .catch(function () {
+        state.busy = false;
+        var btn = document.getElementById('cancel-btn');
+        if (btn) btn.disabled = false;
+        showErr('cancel-err', 'Something went wrong. Please try again.');
+      });
+  }
+
+  // ── Load ──────────────────────────────────────────────────────────────────
+
+  function load() {
+    Portal.fetch('/api/portal/callback')
+      .then(function (res) { return res.json(); })
+      .then(function (d) {
+        if (d.status !== 'success') throw new Error(d.message || 'load failed');
+        state.pending = d.pending || null;
+        state.days = d.days || [];
+        state.phone = d.phone || '';
+        // Preselect the first day with an open window.
+        if (!state.pending) {
+          var first = state.days.find(function (day) {
+            return day.windows.some(function (w) { return w.available; });
+          });
+          state.selDate = first ? first.date : null;
+          state.selWindow = null;
+        }
+        render();
+      })
+      .catch(function () {
+        document.getElementById('content').innerHTML =
+          '<p class="msg">Could not load right now. Please try again shortly.</p>';
+      });
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>
