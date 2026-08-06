@@ -9,7 +9,8 @@
  * extended with tasks and log.
  *
  * Important:
- *   - case_id is varchar(20), 8-char alphanumeric (e.g. "uT7EU36v")
+ *   - case_id is varchar(20), 8 opaque chars — new ids uppercase Base32,
+ *     legacy ids mixed-case base64url; minted only by lib/caseId.js
  *   - case_judge / case_trustee are name strings, NOT FK IDs
  *     Join: cases.case_judge = judges.judge_name
  *     Join: cases.case_trustee = trustees.trustee_full_name

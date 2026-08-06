@@ -73,7 +73,8 @@ async function expectCode(promise, code) {
 describe('updateLogLink — happy path per link_type', () => {
   test.each([
     ['contact', '412',      '412'],
-    ['case',    'a1B2c3D4', 'a1B2c3D4'],   // case_id is 8-char base64url, not numeric
+    ['case',    'a1B2c3D4', 'a1B2c3D4'],   // legacy 8-char base64url shape (new ids
+                                           // are Base32) — keep as-is, not numeric
     ['appt',    '9021',     '9021'],
     ['bill',    '77',       '77'],
   ])('%s → stores link_id as-is and MIRRORS it into log_link', async (link_type, input, expected) => {

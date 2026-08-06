@@ -3112,10 +3112,10 @@ async function initAuth() {
       //
       // ID SHAPES — do not "simplify" this to /^\d+$/:
       //   contact_id  numeric        (1405)
-      //   case_id     [A-Za-z0-9]{8} (DnmGvcrB) — crypto.randomBytes(6) →
-      //               base64url, sliced to 8, with '-' and '_' rejected by the
-      //               generator's do/while. See generateCaseId() in
-      //               routes/api.intake.js:72.
+      //   case_id     8 opaque chars — new ids uppercase Crockford Base32
+      //               (0-9 + A-Z minus ILOU, never all-digit); legacy ids
+      //               mixed-case base64url, may contain '-' or '_'.
+      //               See generateCaseId() in lib/caseId.js.
       // A digits-only guard here silently drops every case from the workspace URL,
       // which is exactly the bug this line replaces.
       //
@@ -3433,10 +3433,11 @@ async function initAuth() {
     async function restoreOpenFiles(spec, open) {
       const KIND = { c: "case", p: "client", b: "bill" };
 
-      // [A-Za-z0-9]+ for the id, NOT \d+ — case_id is an 8-char alphanumeric
-      // (DnmGvcrB), only contact_id is numeric. The kind is always exactly one
-      // leading char, so `cDnmGvcrB` parses unambiguously even though the id can
-      // itself start with a c/p/b.
+      // [A-Za-z0-9_-]+ for the id, NOT \d+ — case_id is 8 opaque chars (new:
+      // uppercase Base32; legacy: mixed-case base64url incl. -/_), only
+      // contact_id is numeric. The kind is always exactly one leading char, so
+      // `cDnmGvcrB` parses unambiguously even though the id can itself start
+      // with a c/p/b (Base32 has C, B, P; legacy ids can start lowercase).
       const want = [];
       for (const tok of String(spec).split(",")) {
         const m = /^([cpb])([A-Za-z0-9_-]+)(?:~([A-Za-z0-9_-]+))?$/.exec(tok.trim());

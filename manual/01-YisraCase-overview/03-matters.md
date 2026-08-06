@@ -6,7 +6,7 @@ A matter — called a *case* in the system — is a legal engagement. It represe
 
 ## Case Identifiers
 
-Each case is assigned a short unique ID when it is created (e.g. `uT7EU36v`). This is the internal identifier used throughout the system. Separately, once a case is filed with the court, it receives a court-assigned case number, which is stored alongside the internal ID.
+Each case is assigned a short unique ID when it is created. This is the internal identifier used throughout the system. IDs created from August 2026 onward are 8 uppercase characters drawn from an alphabet with the letters I, L, O, and U removed (e.g. `7XK4MQ2R`) — so there is no 1-vs-I or 0-vs-O ambiguity when an ID is read aloud, handwritten, or typed. Older IDs (e.g. `uT7EU36v`) remain valid and are not renamed. Separately, once a case is filed with the court, it receives a court-assigned case number, which is stored alongside the internal ID.
 
 ---
 

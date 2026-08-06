@@ -17,6 +17,7 @@ lib/auth.readonly.js
 lib/auth.requireAuth.js
 lib/auth.superuser.js
 lib/blankDateToNull.js
+lib/caseId.js
 lib/contactMirror.js
 lib/courtCitation.js
 lib/courtResolve.js
@@ -480,6 +481,7 @@ tests/adminapikeys.k2.test.js
 tests/aiService.attachments.test.js
 tests/apiAppSettings.validate.test.js
 tests/apikeys.k1.test.js
+tests/caseId.test.js
 tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
 tests/esignActionsUi.test.js

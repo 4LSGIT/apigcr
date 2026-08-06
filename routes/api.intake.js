@@ -54,29 +54,16 @@
  */
 
 const express = require("express");
-const crypto = require("crypto");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { parseName } = require("../lib/parseName");
+const { generateCaseId } = require("../lib/caseId");
 const caseService = require("../services/caseService");
 const contactService = require('../services/contactService');
 
 // ─────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────
-
-/**
- * Generate an 8-char alphanumeric case ID using crypto, excluding '-' and '_'
- * (base64url's two non-alphanumeric characters) for URL/copy-paste cleanliness.
- */
-function generateCaseId() {
-  let id;
-  do {
-    // 6 random bytes → base64url → take first 8 chars
-    id = crypto.randomBytes(6).toString("base64url").slice(0, 8);
-  } while (id.includes('-') || id.includes('_'));
-  return id;
-}
 
 /**
  * Normalize phone to 10-digit string.

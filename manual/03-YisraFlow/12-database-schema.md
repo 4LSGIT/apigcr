@@ -475,6 +475,6 @@ The hook + email-router log tables and `job_results` are intentionally **soft-li
 1. **`scheduled_jobs.type` is a 5-value enum, not 8.** Older docs conflate it with `data.type`. See chapter 4.
 2. **`phone_lines.provider` is `('ringcentral','quo')`** — only two values. The AI context document is wrong on this.
 3. **`appt_status` and `campaigns.status` use `'canceled'` (one L)** — not `'cancelled'` (two Ls). `sequence_enrollments.status` and `workflow_executions.status` use `'cancelled'` (two Ls). Inconsistent across the schema; don't typo.
-4. **`cases.case_id` is varchar** (8-char alphanumeric like `"uT7EU36v"`) — not an int. Workflow `init_data.case_id` and sequence `trigger_data.case_id` should be string.
+4. **`cases.case_id` is varchar** (8 opaque chars — new ids uppercase Base32 like `"7XK4MQ2R"`, legacy ids mixed-case base64url like `"uT7EU36v"`) — not an int. Workflow `init_data.case_id` and sequence `trigger_data.case_id` should be string.
 5. **`users.user` is the PK** of the users table — not `users.user_id` or `users.id`. `req.auth.userId` is the property name on the auth context.
 6. **Two `condition` columns are reserved-word in MySQL** — `sequence_templates.condition` and `sequence_steps.condition`. Always backtick-quote them in raw SQL: `\`condition\``.

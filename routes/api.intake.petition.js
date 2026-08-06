@@ -64,24 +64,16 @@
  */
 
 const express = require("express");
-const crypto = require("crypto");
 const router = express.Router();
 const jwtOrApiKey = require("../lib/auth.jwtOrApiKey");
 const { parseName } = require("../lib/parseName");
+const { generateCaseId } = require("../lib/caseId");
 const contactService = require("../services/contactService");
 const pipelineService = require("../services/pipelineService");
 
 // ─────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────
-
-function generateCaseId() {
-  let id;
-  do {
-    id = crypto.randomBytes(6).toString("base64url").slice(0, 8);
-  } while (id.includes("-") || id.includes("_"));
-  return id;
-}
 
 function splitDebtors(caseName) {
   return String(caseName)

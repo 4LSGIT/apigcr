@@ -41,7 +41,9 @@ const {
   LINKABLE_TYPES,
 } = esignService;
 
-const CASE_ID  = 'AbC12dEf';          // 8 chars, matches every live cases.case_id
+const CASE_ID  = 'AbC12dEf';          // 8 chars, legacy mixed-case shape — permanent
+                                      // production data; do NOT convert to Base32
+                                      // (tripwire against read-side over-tightening)
 const LONGEST_KIND = 'retainer_postpetition';
 const USER_STUART = 1;
 

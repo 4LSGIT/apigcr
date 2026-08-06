@@ -168,9 +168,11 @@ const MAX_TRACKING_ID   = 80;
  *   Hex, not base64url, precisely BECAUSE base64url contains '-' and would
  *   make the id look parseable-by-splitting when it is not.
  *
- * The id is OPAQUE. Do not parse it to recover the case or kind — 1 of the
- * 1066 live cases.case_id values already contains a base64url '-', so splitting
- * on '-' is wrong today, not merely fragile.
+ * The id is OPAQUE. Do not parse it to recover the case or kind — at least
+ * one live legacy cases.case_id value contains a base64url '-', so splitting
+ * on '-' is wrong today, not merely fragile. New ids (lib/caseId.js, upper-
+ * case Base32) contain no '-', but legacy ids are never migrated, so the
+ * never-split rule stands unconditionally.
  *
  * Length budget against VARCHAR(80):
  *   worst REAL case  — 'YC-'(3) + case_id(8) + '-'(1)

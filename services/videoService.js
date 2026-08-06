@@ -20,7 +20,8 @@
  *   - getRelatedVideos: hand-picked first, then tag-overlap auto-fill
  *
  * Notes on case_id resolution:
- *   - cases.case_id is varchar(20) (8-char alphanumeric).
+ *   - cases.case_id is varchar(20) — 8 opaque chars, new ids uppercase
+ *     Base32 / legacy ids mixed-case base64url (minted only by lib/caseId.js).
  *   - video_views.case_id was migrated from int → varchar(20) for Slice 2.
  *   - Resolution rule: most recent OPEN case where contact is the PRIMARY
  *     party (case_relate.case_relate_type = 'Primary').
