@@ -2,16 +2,32 @@
 # .githooks/pre-commit — tracked in the repo. Enable once with:
 #   git config core.hooksPath .githooks
 #
-# 1. Refresh ref/database.sql if the live schema changed (no-op + ~1 round trip
-#    when it didn't; silently skipped if the DB is unreachable).
-# 2. Refresh TRACKED_FILES.txt.
-# Both files are staged into the commit being made.
+# 1. Refresh ref/database.sql if the live schema changed. Runs in the BACKGROUND
+#    so it adds no latency to a commit: opening a connection to this DB costs
+#    ~4s from a laptop, which is not a price worth paying on every commit for a
+#    file that is documentation. A schema change therefore lands in the NEXT
+#    commit — `git add .` picks it up.
+# 2. Refresh TRACKED_FILES.txt (local, instant, stays synchronous).
 #
-# Skip the schema step for one commit:  SKIP_SCHEMA_DUMP=1 git commit -m "..."
+# Skip the schema step:             SKIP_SCHEMA_DUMP=1 git commit -m "..."
+# Force it inline (blocking):       SCHEMA_DUMP_SYNC=1 git commit -m "..."
+#   ^ use after applying a migration, when you want the ref in THIS commit.
 
 if [ -z "$SKIP_SCHEMA_DUMP" ] && [ -f scripts/dump-schema.js ] && command -v node >/dev/null 2>&1; then
-  node scripts/dump-schema.js --quiet
-  [ -f ref/database.sql ] && git add ref/database.sql
+  if [ -n "$SCHEMA_DUMP_SYNC" ]; then
+    node scripts/dump-schema.js --quiet
+    [ -f ref/database.sql ] && git add ref/database.sql
+  else
+    LOCK=".git/schema-dump.lock"
+    # Reap a lock left behind by a killed run (closed terminal, reboot).
+    if [ -d "$LOCK" ] && [ -z "$(find "$LOCK" -maxdepth 0 -mmin -10 2>/dev/null)" ]; then
+      rmdir "$LOCK" 2>/dev/null
+    fi
+    # mkdir is atomic — first commit wins, concurrent ones skip rather than pile up.
+    if mkdir "$LOCK" 2>/dev/null; then
+      ( node scripts/dump-schema.js --quiet >/dev/null 2>&1; rmdir "$LOCK" 2>/dev/null ) &
+    fi
+  fi
 fi
 
 git ls-files > TRACKED_FILES.txt

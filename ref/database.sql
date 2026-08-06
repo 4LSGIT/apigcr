@@ -1,5 +1,5 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-06T12:19:56.416Z
+-- Generated: 2026-08-06T12:42:59.824Z
 -- Source: scripts/dump-schema.js
 -- Fingerprint: sha256:5103c9201649267d7484fa785a96d331
 -- Contains schema only (no data, no database identifier).
