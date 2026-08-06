@@ -127,6 +127,20 @@
            '</li>';
   }
 
+  // '2026-08-28' + '10:00' (firm-local wall values, server-computed) →
+  // 'Aug 28, 2026 at 10:00 AM'. Component split, same reasoning as fmtDate —
+  // never Date-parse naive strings.
+  function fmtDateTime(isoDate, hhmm) {
+    var out = fmtDate(isoDate);
+    if (hhmm && /^\d{2}:\d{2}$/.test(hhmm)) {
+      var h = parseInt(hhmm.slice(0, 2), 10);
+      var ampm = h >= 12 ? 'PM' : 'AM';
+      var h12 = h % 12 === 0 ? 12 : h % 12;
+      out += ' at ' + h12 + ':' + hhmm.slice(3) + ' ' + ampm;
+    }
+    return out;
+  }
+
   function render(c) {
     var html = '';
 
@@ -135,6 +149,23 @@
               '<h1>' + escText(c.title) + '</h1>' +
               (c.docket ? '<p class="docket">Case no. ' + escText(c.docket) + '</p>' : '') +
             '</div>';
+
+    // Meeting of Creditors (341) — S2.1. Server owns ALL suppression
+    // (bankruptcy-only, past-date, no status wording per 2026-08-06 ruling):
+    // meeting341 is either render-ready or null, nothing to decide here.
+    if (c.meeting341) {
+      html += '<div class="card"><h2>Meeting of Creditors (341)</h2>' +
+                '<p style="margin:0;font-size:15.5px;font-weight:600;">' +
+                  escText(fmtDateTime(c.meeting341.date, c.meeting341.time)) +
+                '</p>';
+      if (c.meeting341.link) {
+        // Same top-level/new-tab rule as the payment link — never embed.
+        html += '<a class="pay-btn" style="margin-top:12px;" href="' +
+                  escText(c.meeting341.link) +
+                '" target="_blank" rel="noopener">Join your meeting</a>';
+      }
+      html += '</div>';
+    }
 
     // Progress timeline: done → current (marked) → upcoming. No current →
     // done + upcoming render without a marker.

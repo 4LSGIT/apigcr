@@ -53,7 +53,7 @@
 'use strict';
 
 const pipelineService = require('./pipelineService');
-const { utcToLocal } = require('./timezoneService');
+const { utcToLocal, nowLocal } = require('./timezoneService');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SHARED HELPERS
@@ -85,6 +85,67 @@ function deriveTitle(caseRow) {
  *  NEVER parsed / validated / split (case-number principle). */
 function deriveDocket(caseRow) {
   return caseRow.case_number_full || caseRow.case_number || null;
+}
+
+/** 341 meetings are exclusive to bankruptcy cases (Fred, 2026-08-06).
+ *  BK = chapter set OR case_type 'Bankruptcy' (mirrors title vocabulary;
+ *  live data pairs chapters only with 'Bankruptcy'). Zero non-BK cases
+ *  carry a 341 date today — this gate is belt-and-suspenders. */
+function isBankruptcyCase(caseRow) {
+  const chapter = String(caseRow.case_chapter == null ? '' : caseRow.case_chapter).trim();
+  const type = String(caseRow.case_type == null ? '' : caseRow.case_type).trim();
+  return Boolean(chapter) || type === 'Bankruptcy';
+}
+
+/**
+ * S2.1 (D8): the client-facing 341 block, or null when there is nothing
+ * safe to show.
+ *
+ * case_341_current is FIRM-LOCAL WALL TIME (apptService writes appt_date —
+ * the local column — into it; live values sit at 8:30a–1:00p). mysql2
+ * (timezone:'Z') hands it back as a fake-UTC Date whose naive components
+ * ARE the firm-local wall clock — so this reads the components with NO
+ * timezone conversion (formatLocal semantics), unlike the S2 timeline
+ * dates, which are real UTC.
+ *
+ * Manager ruling 2026-08-06 (divergence upheld):
+ *   - NO status wording. Live `341_status` reads 'Continued' on 100% of
+ *     rows (NOT-NULL enum, no default → first member is the de-facto unset
+ *     state), so any mapping from it would put a false statement on nearly
+ *     every card. When the write path becomes trustworthy, a server-side
+ *     mapping drops in here with zero client change.
+ *   - PAST-DATE SUPPRESSION, server-side: firm-local DATE must be >= today
+ *     (firm-local). Closed cases stay portal-visible and nearly all carry a
+ *     stale past 341 — without this, most closed cases would render phantom
+ *     meetings. Suppressed meetings never leave the server (hidden-stage
+ *     principle).
+ *   - `link` (Fred ruling: link in): case_341_link passes through only when
+ *     it is a real http(s) URL — staff-entered varchar; the scheme guard
+ *     keeps '' and non-URL junk out of an href. Same upcoming-window
+ *     suppression as the card itself (it only exists inside the card).
+ *
+ * @returns {{ date:string, time:string, link:string|null } | null}
+ *          date 'YYYY-MM-DD', time 'HH:mm' — both firm-local wall values.
+ */
+function buildMeeting341(caseRow) {
+  if (!isBankruptcyCase(caseRow)) return null;
+  if (!caseRow.case_341_current) return null;
+
+  const d = caseRow.case_341_current instanceof Date
+    ? caseRow.case_341_current
+    : new Date(caseRow.case_341_current);
+  if (isNaN(d.getTime())) return null;
+
+  const naive = d.toISOString().slice(0, 19);   // firm-local wall clock
+  const date = naive.slice(0, 10);
+  const time = naive.slice(11, 16);
+
+  if (date < nowLocal().toISODate()) return null;   // past-date suppression
+
+  const rawLink = String(caseRow.case_341_link == null ? '' : caseRow.case_341_link).trim();
+  const link = /^https?:\/\//i.test(rawLink) ? rawLink : null;
+
+  return { date, time, link };
 }
 
 /** True only for an explicit visible flag (tinyint 1 / boolean true). */
@@ -154,6 +215,11 @@ function buildClientTimeline(pipeline) {
 // among them) that must never ride along.
 const SCOPE_COLUMNS =
   `c.case_id, c.case_chapter, c.case_type, c.case_number, c.case_number_full`;
+
+// getCaseView additionally reads the 341 columns (S2.1). List rows never
+// need them — the list payload has no meeting341.
+const VIEW_COLUMNS =
+  `${SCOPE_COLUMNS}, c.case_341_current, c.case_341_link`;
 
 /** Fetch the contact's in-scope case rows (whitelisted columns), newest
  *  case_open_date first (NULL dates last), deterministic tiebreak. */
@@ -233,13 +299,14 @@ async function listCases(db, contactId) {
  * @param {number} contactId authenticated portal contact
  * @param {string} caseId    requested cases.case_id
  * @returns {Promise<{case_id:string, title:string, docket:string|null,
+ *   meeting341: { date:string, time:string, link:string|null } | null,
  *   timeline: { done: {label:string, date:string|null}[],
  *               current: {label:string, since:string|null} | null,
  *               upcoming: {label:string}[] }} | null>}
  */
 async function getCaseView(db, contactId, caseId) {
   const [[row]] = await db.query(
-    `SELECT ${SCOPE_COLUMNS}
+    `SELECT ${VIEW_COLUMNS}
        FROM case_relate cr
        JOIN cases c ON c.case_id = cr.case_relate_case_id
       WHERE cr.case_relate_client_id = ?
@@ -264,6 +331,7 @@ async function getCaseView(db, contactId, caseId) {
     case_id: row.case_id,
     title: deriveTitle(row),
     docket: deriveDocket(row),
+    meeting341: buildMeeting341(row),
     timeline: buildClientTimeline(pipeline),
   };
 }
@@ -277,6 +345,7 @@ module.exports = {
   getCaseView,
   // Exposed for tests (repo pattern: logService cross-exports its helpers).
   _buildClientTimeline: buildClientTimeline,
+  _buildMeeting341: buildMeeting341,
   _deriveTitle: deriveTitle,
   _deriveDocket: deriveDocket,
 };

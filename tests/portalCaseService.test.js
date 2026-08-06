@@ -48,6 +48,8 @@ function caseRow(over = {}) {
     case_number: '24-40226',
     case_number_full: '24-40226-mlo',
     case_open_date: null,           // listCases scope query only (ORDER BY fuel)
+    case_341_current: null,         // S2.1 view columns
+    case_341_link: '',
   }, over);
 }
 
@@ -266,6 +268,7 @@ function deepKeys(v, acc = new Set()) {
 const FORBIDDEN_KEYS = [
   'case_status', 'internal_label', 'note', 'entered_by', 'source',
   'status_label', 'stage_key', 'stage_id',
+  '341_status', 'case_341_current', 'case_341_link',   // raw 341 columns never surface
 ];
 
 describe('projection whitelist', () => {
@@ -275,7 +278,8 @@ describe('projection whitelist', () => {
 
     const view = await svc.getCaseView(db, 42, 'AbCdEf12');
 
-    expect(Object.keys(view).sort()).toEqual(['case_id', 'docket', 'timeline', 'title']);
+    expect(Object.keys(view).sort()).toEqual(['case_id', 'docket', 'meeting341', 'timeline', 'title']);
+    expect(view.meeting341).toBeNull();   // fixture has no 341 date set
     expect(Object.keys(view.timeline).sort()).toEqual(['current', 'done', 'upcoming']);
     view.timeline.done.forEach(d => expect(Object.keys(d).sort()).toEqual(['date', 'label']));
     expect(Object.keys(view.timeline.current).sort()).toEqual(['label', 'since']);
@@ -376,5 +380,119 @@ describe('docket passthrough', () => {
     const weird = ' 24-48734-mlo (amended) //v2 ';
     expect(d({ case_number_full: weird, case_number: 'x' })).toBe(weird);
     expect(d({ case_number_full: null, case_number: 'NOT A DOCKET @all' })).toBe('NOT A DOCKET @all');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S2.1 (D8/D9) — Meeting of Creditors (341)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const { DateTime } = require('luxon');
+const { FIRM_TZ } = require('../services/timezoneService');
+
+// Build a fake-UTC Date whose NAIVE components are the given firm-local wall
+// clock — exactly what mysql2 (timezone:'Z') hands back for the local-stored
+// case_341_current column.
+function wallDate(firmLocalDt, hhmm = '10:00') {
+  return new Date(firmLocalDt.toFormat('yyyy-MM-dd') + 'T' + hhmm + ':00Z');
+}
+
+const todayFirm = () => DateTime.now().setZone(FIRM_TZ).startOf('day');
+
+describe('meeting341 (S2.1)', () => {
+  const m = svc._buildMeeting341;
+
+  test('null case_341_current → null (card not rendered)', () => {
+    expect(m(caseRow({ case_341_current: null }))).toBeNull();
+  });
+
+  test('PAST meeting is suppressed server-side (firm-local date compare)', () => {
+    expect(m(caseRow({ case_341_current: wallDate(todayFirm().minus({ days: 1 })) }))).toBeNull();
+    expect(m(caseRow({ case_341_current: wallDate(todayFirm().minus({ years: 2 })) }))).toBeNull();
+  });
+
+  test('TODAY renders — boundary is >= today, firm-local, time-of-day ignored', () => {
+    // 00:05 wall clock: earlier than "now" in most runs, but same firm-local
+    // DATE — must render (suppression is date-only by ruling).
+    const out = m(caseRow({ case_341_current: wallDate(todayFirm(), '00:05') }));
+    expect(out).toEqual({ date: todayFirm().toISODate(), time: '00:05', link: null });
+  });
+
+  test('FUTURE renders with wall components preserved — NO timezone shift', () => {
+    const tomorrow = todayFirm().plus({ days: 1 });
+    const out = m(caseRow({ case_341_current: wallDate(tomorrow, '09:30') }));
+    // formatLocal semantics: 09:30 stays 09:30 (a UTC→Detroit conversion
+    // would have shifted it to 05:30/04:30 — the defect this test pins).
+    expect(out).toEqual({ date: tomorrow.toISODate(), time: '09:30', link: null });
+  });
+
+  test('341 is bankruptcy-exclusive — non-BK case with a 341 date → null', () => {
+    const future = wallDate(todayFirm().plus({ days: 7 }));
+    expect(m(caseRow({
+      case_chapter: '', case_type: 'Adversary Proceeding', case_341_current: future,
+    }))).toBeNull();
+    expect(m(caseRow({
+      case_chapter: '', case_type: '', case_341_current: future,
+    }))).toBeNull();
+    // Chapter set with blank type still counts as BK (title vocabulary).
+    expect(m(caseRow({
+      case_chapter: '13', case_type: '', case_341_current: future,
+    }))).not.toBeNull();
+  });
+
+  test('NO status wording — output keys are exactly date/time/link', () => {
+    const out = m(caseRow({ case_341_current: wallDate(todayFirm().plus({ days: 3 })) }));
+    expect(Object.keys(out).sort()).toEqual(['date', 'link', 'time']);
+    expect(JSON.stringify(out)).not.toMatch(/status|Continued|Completed|Scheduled/i);
+  });
+
+  test('link guard: http(s) passes through; empty/junk/unsafe schemes → null', () => {
+    const future = wallDate(todayFirm().plus({ days: 3 }));
+    const link = (v) => m(caseRow({ case_341_current: future, case_341_link: v })).link;
+    expect(link('https://meet.zoom.us/j/123?pwd=x')).toBe('https://meet.zoom.us/j/123?pwd=x');
+    expect(link('http://example.com/341')).toBe('http://example.com/341');
+    expect(link('')).toBeNull();
+    expect(link('   ')).toBeNull();
+    expect(link(null)).toBeNull();
+    expect(link('meet.zoom.us/j/123')).toBeNull();          // schemeless
+    expect(link('javascript:alert(1)')).toBeNull();          // unsafe scheme
+  });
+
+  test('getCaseView carries meeting341 through; raw 341 columns never surface', async () => {
+    const db = stubDb([[caseRow({
+      case_341_current: wallDate(todayFirm().plus({ days: 5 }), '13:00'),
+      case_341_link: 'https://meet.zoom.us/j/999',
+    })]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(pipelinePayload());
+
+    const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+    expect(view.meeting341).toEqual({
+      date: todayFirm().plus({ days: 5 }).toISODate(),
+      time: '13:00',
+      link: 'https://meet.zoom.us/j/999',
+    });
+    expect(db.calls[0].sql).toContain('case_341_current');
+    const keys = deepKeys(view);
+    for (const k of FORBIDDEN_KEYS) expect(keys.has(k)).toBe(false);
+  });
+
+  test('getCaseView with a suppressed (past) meeting → meeting341: null in the payload', async () => {
+    const db = stubDb([[caseRow({
+      case_341_current: wallDate(todayFirm().minus({ days: 30 })),
+      case_341_link: 'https://meet.zoom.us/j/999',           // link suppressed with the card
+    })]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(pipelinePayload());
+
+    const view = await svc.getCaseView(db, 42, 'AbCdEf12');
+    expect(view.meeting341).toBeNull();
+    expect(JSON.stringify(view)).not.toContain('meet.zoom.us');
+  });
+
+  test('listCases rows still have NO meeting341 (view-only field)', async () => {
+    const db = stubDb([[caseRow({ case_341_current: wallDate(todayFirm().plus({ days: 5 })) })]]);
+    pipelineService.getPipeline.mockResolvedValueOnce(pipelinePayload());
+    const cases = await svc.listCases(db, 42);
+    expect(Object.keys(cases[0]).sort())
+      .toEqual(['case_id', 'current_stage_label', 'docket', 'title']);
   });
 });
