@@ -4,7 +4,7 @@
 // (routes/ readdir).
 //
 //   GET /api/portal/branding → { status:'success', logo_url, favicon_url,
-//                                site_url, phone }             (each string|null)
+//                                logo_href, site_url, phone }  (each string|null)
 //
 // WHY PUBLIC: the login page needs the firm logo/favicon BEFORE any auth
 // exists, and GET /api/firm-data (the staff settings feed) is
@@ -25,7 +25,14 @@
 //   favicon_url = portal_favicon_url || the effective logo (resolved
 //                 SERVER-side so the client stays dumb; blank favicon =
 //                 "use the logo")
-// The constant set grows to five keys — the invariant is unchanged.
+//   logo_href   = portal_logo_href (S5.3) — where the header logo links.
+//                 Blank/absent → null; the CLIENT then applies its default
+//                 (home.html on authed pages, no link on login). Values are
+//                 normalized to the structured-link rule (http(s) absolute
+//                 or a single-'/' site-relative path — safeLink's rule from
+//                 the card engine); anything else → null, so a bad setting
+//                 can never put a javascript: URI in an href.
+// The constant set grows to six keys — the invariant is unchanged.
 //
 // Value handling mirrors api.firmData.js's settings map: values are
 // JSON-parsed with a raw-string fallback (rows today are plain strings),
@@ -55,6 +62,7 @@ const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
 const BRANDING_KEYS = Object.freeze({
   portal_logo:    'portal_logo_url',
   portal_favicon: 'portal_favicon_url',
+  logo_href:      'portal_logo_href',
   firm_logo:      'fe-firm_logo_url',
   site_url:       'fe-firm_site_url',
   phone:          'fe-firm_phone',
@@ -76,6 +84,17 @@ function toValue(raw) {
 }
 
 /**
+ * href guard — the card engine's safeLink rule: http(s) absolute, or
+ * site-relative starting with a single '/'. Anything else → null (never
+ * ship a javascript:/data: URI as a clickable href).
+ */
+function safeHref(v) {
+  if (!v) return null;
+  const ok = /^https?:\/\//i.test(v) || (v.startsWith('/') && !v.startsWith('//'));
+  return ok ? v : null;
+}
+
+/**
  * The branding payload. Takes ONLY the db — no request-derived input can
  * reach the query (fixed-set invariant). Missing rows → nulls; portal
  * overrides fall back per the header note.
@@ -83,7 +102,7 @@ function toValue(raw) {
 async function getBranding(db) {
   const keys = Object.values(BRANDING_KEYS);
   const [rows] = await db.query(
-    'SELECT `key`, `value` FROM app_settings WHERE `key` IN (?, ?, ?, ?, ?)',
+    'SELECT `key`, `value` FROM app_settings WHERE `key` IN (?, ?, ?, ?, ?, ?)',
     keys
   );
   const byKey = {};
@@ -94,6 +113,7 @@ async function getBranding(db) {
   return {
     logo_url:    logo,
     favicon_url: val('portal_favicon') || logo,
+    logo_href:   safeHref(val('logo_href')),
     site_url:    val('site_url'),
     phone:       val('phone'),
   };
@@ -107,7 +127,7 @@ async function brandingHandler(req, res) {
   }
   res.set('Cache-Control', 'public, max-age=300');
 
-  let branding = { logo_url: null, favicon_url: null, site_url: null, phone: null };
+  let branding = { logo_url: null, favicon_url: null, logo_href: null, site_url: null, phone: null };
   try {
     branding = await getBranding(req.db);
   } catch (err) {

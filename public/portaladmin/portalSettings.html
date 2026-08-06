@@ -105,10 +105,15 @@
 //   portal_logo_url         (S5.2) portal header/login logo. Blank =
 //                           fall back to the firm-wide fe-firm_logo_url.
 //   portal_favicon_url      (S5.2) portal favicon. Blank = use the
-//                           effective logo. Both served to clients by the
-//                           PUBLIC GET /api/portal/branding (fixed-set
-//                           endpoint; 5-minute client cache — edits take
-//                           up to 5 min to reach client browsers).
+//                           effective logo.
+//   portal_logo_href        (S5.3) where the header logo links. Blank =
+//                           default (portal home on signed-in pages, no
+//                           link on login). http(s) or a single-'/' path;
+//                           anything else is dropped server-side.
+//                           All three served to clients by the PUBLIC
+//                           GET /api/portal/branding (fixed-set endpoint;
+//                           5-minute client cache — edits take up to
+//                           5 min to reach client browsers).
 //
 // Rows are created on first use via POST /api/app-settings when
 // missing (signed-in staff only — the API rejects api-key creation by
@@ -144,6 +149,7 @@ function render() {
   const counterRow = settings['portal_sms_counter'];
   const logoRow = settings['portal_logo_url'];
   const favRow = settings['portal_favicon_url'];
+  const hrefRow = settings['portal_logo_href'];
   const firmLogoRow = settings['fe-firm_logo_url'];
   const firmLogo = firmLogoRow && firmLogoRow.value ? String(firmLogoRow.value).trim() : '';
 
@@ -219,6 +225,21 @@ function render() {
       </div>
       <div class="brand-preview" id="brand-favicon-preview"></div>
 
+      <div class="brand-row" style="margin-top:14px">
+        <div>
+          <label>Logo link (where clicking the logo goes)</label>
+          <input type="text" id="brand-href" value="${esc(hrefRow ? hrefRow.value : '')}"
+                 placeholder="Blank = portal home">
+        </div>
+        <button class="btn btn-primary" style="margin-top:19px" onclick="saveBrand('href')">
+          <i class="fa-solid fa-floppy-disk"></i> Save</button>
+      </div>
+      <div class="hint" style="margin-top:4px">
+        Full http(s) URL (e.g. the firm website) or a portal path starting with
+        <code>/</code>. Blank = the default: portal home when signed in, not clickable
+        on the login page. When set, it applies on every page — login included.
+      </div>
+
       <div class="hint">
         Shown on every portal page, login included, via the public
         <code>GET /api/portal/branding</code> endpoint (a fixed set of settings — nothing
@@ -265,22 +286,47 @@ function previewBrand(kind) {
 }
 window.previewBrand = previewBrand;
 
+const BRAND_FIELDS = {
+  logo: {
+    key: 'portal_logo_url', input: 'brand-logo', toast: 'Logo saved',
+    hrefOk: false,
+    meta: { category: 'Portal', label: 'Portal logo URL', type: 'text', sort_order: 60,
+      description: 'Logo shown in the client-portal header on every page including ' +
+        'login (served by the public GET /api/portal/branding). Blank = fall back ' +
+        'to the firm-wide fe-firm_logo_url. Renders 120px tall.' },
+  },
+  favicon: {
+    key: 'portal_favicon_url', input: 'brand-favicon', toast: 'Favicon saved',
+    hrefOk: false,
+    meta: { category: 'Portal', label: 'Portal favicon URL', type: 'text', sort_order: 70,
+      description: 'Browser-tab icon for the client portal (served by the public ' +
+        'GET /api/portal/branding). Blank = use the effective portal logo.' },
+  },
+  href: {
+    key: 'portal_logo_href', input: 'brand-href', toast: 'Logo link saved',
+    hrefOk: true,   // http(s) OR a single-'/' portal path
+    meta: { category: 'Portal', label: 'Portal logo link', type: 'text', sort_order: 80,
+      description: 'Where the client-portal header logo links (served by the public ' +
+        'GET /api/portal/branding). http(s) URL or a single-\'/\' site path. Blank = ' +
+        'default: portal home on signed-in pages, not clickable on login. Applies on ' +
+        'every page when set, login included.' },
+  },
+};
+
 async function saveBrand(kind) {
-  const key = kind === 'logo' ? 'portal_logo_url' : 'portal_favicon_url';
-  const raw = E(kind === 'logo' ? 'brand-logo' : 'brand-favicon').value.trim();
-  if (raw && !/^https?:\/\//i.test(raw)) {
-    Toast.fire({ icon: 'error', title: 'Must be a full http(s) URL — or blank for the fallback' });
+  const f = BRAND_FIELDS[kind];
+  const raw = E(f.input).value.trim();
+  const ok = raw === '' ||
+    /^https?:\/\//i.test(raw) ||
+    (f.hrefOk && raw.charAt(0) === '/' && raw.charAt(1) !== '/');
+  if (!ok) {
+    Toast.fire({ icon: 'error', title: f.hrefOk
+      ? 'Must be a full http(s) URL or a path starting with a single "/" — or blank'
+      : 'Must be a full http(s) URL — or blank for the fallback' });
     return;
   }
-  await writeSetting(key, raw, kind === 'logo'
-    ? { category: 'Portal', label: 'Portal logo URL', type: 'text', sort_order: 60,
-        description: 'Logo shown in the client-portal header on every page including ' +
-          'login (served by the public GET /api/portal/branding). Blank = fall back ' +
-          'to the firm-wide fe-firm_logo_url. Renders 120px tall.' }
-    : { category: 'Portal', label: 'Portal favicon URL', type: 'text', sort_order: 70,
-        description: 'Browser-tab icon for the client portal (served by the public ' +
-          'GET /api/portal/branding). Blank = use the effective portal logo.' });
-  Toast.fire({ icon: 'success', title: kind === 'logo' ? 'Logo saved' : 'Favicon saved' });
+  await writeSetting(f.key, raw, f.meta);
+  Toast.fire({ icon: 'success', title: f.toast });
   load();
 }
 window.saveBrand = saveBrand;

@@ -8,7 +8,8 @@
   /* Client Portal Slice 2 — cases list. Visual language from login.html /
      home.html (S1). S5: branded header + favicon ride the shared chrome
      (Portal.initChrome); logout moved into that header — the old bottom
-     Log out button is gone. Single-case auto-redirect UNCHANGED. */
+     Log out button is gone. S5.3: backlink to home (the case view's
+     backlink pattern). Single-case auto-redirect UNCHANGED. */
   :root {
     --accent: #2563eb;
     --accent-text: #ffffff;
@@ -26,7 +27,14 @@
     font-size: 15px; line-height: 1.45;
     -webkit-text-size-adjust: 100%;
   }
-  .wrap { max-width: 520px; margin: 0 auto; padding: 40px 16px; }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 32px 16px 40px; }
+
+  .backlink {
+    display: inline-block; margin-bottom: 14px;
+    color: var(--muted); text-decoration: none; font-size: 13.5px;
+  }
+  .backlink:hover { color: var(--accent); }
+
   .head { text-align: center; margin-bottom: 20px; }
   .head h1 { margin: 0; font-size: 22px; font-weight: 700; }
 
@@ -66,6 +74,7 @@
 </head>
 <body>
 <div class="wrap">
+  <a class="backlink" href="home.html">&larr; Home</a>
   <div class="head">
     <h1>Your Cases</h1>
   </div>

@@ -99,10 +99,12 @@
           .then(d => ({
             logo_url:    (d && d.logo_url)    || null,
             favicon_url: (d && d.favicon_url) || null,
+            logo_href:   (d && d.logo_href)   || null,
             site_url:    (d && d.site_url)    || null,
             phone:       (d && d.phone)       || null,
           }))
-          .catch(() => ({ logo_url: null, favicon_url: null, site_url: null, phone: null }));
+          .catch(() => ({ logo_url: null, favicon_url: null, logo_href: null,
+                          site_url: null, phone: null }));
       }
       return _brandingPromise;
     },
@@ -126,6 +128,10 @@
      * @param {object} [opts]
      * @param {boolean} [opts.authed=true]  authed pages: logo links to
      *        home.html + a Log out button. Login: plain logo, no logout.
+     *        S5.3: the portal_logo_href setting, when set, OVERRIDES the
+     *        logo link on every page (login included) — the server has
+     *        already normalized it to http(s)/single-'/' (safeHref);
+     *        the same rule is belt-checked here before it touches an href.
      */
     initChrome(opts) {
       const authed = !opts || opts.authed !== false;
@@ -163,7 +169,10 @@
         const inner = document.createElement('div');
         inner.className = 'portal-chrome-inner';
 
-        const brand = document.createElement(authed ? 'a' : 'span');
+        // Always an <a> (an href-less anchor renders + styles like a span);
+        // default target by page type, overridable by portal_logo_href once
+        // branding resolves below.
+        const brand = document.createElement('a');
         brand.className = 'portal-chrome-brand';
         if (authed) brand.href = 'home.html';
         brand.textContent = 'Client Portal';        // text fallback until/if a logo loads
@@ -182,8 +191,16 @@
         document.body.insertBefore(bar, document.body.firstChild);
       }
 
-      // Branding (async): favicon + logo image.
+      // Branding (async): favicon + logo image + logo link override.
       Portal.branding().then(b => {
+        // Logo link override (S5.3) — server-normalized; belt-check the
+        // same rule before assigning (never a javascript: href).
+        if (b.logo_href &&
+            (/^https?:\/\//i.test(b.logo_href) ||
+             (b.logo_href.charAt(0) === '/' && b.logo_href.charAt(1) !== '/'))) {
+          const brandEl = bar.querySelector('.portal-chrome-brand');
+          if (brandEl) brandEl.href = b.logo_href;
+        }
         // Favicon — portal_favicon_url with server-side fallback to the
         // effective logo; belt-fallback here too.
         const fav = b.favicon_url || b.logo_url;
