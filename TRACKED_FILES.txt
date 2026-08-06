@@ -211,7 +211,10 @@ public/manage.html
 public/manuals.html
 public/pageManager.html
 public/pipelineBoard.html
+public/portal/case.html
+public/portal/cases.html
 public/portal/home.html
+public/portal/index.html
 public/portal/login.html
 public/portal/portal.js
 public/rating.html
@@ -349,6 +352,7 @@ routes/manuals.js
 routes/pageLanding.js
 routes/pages.js
 routes/portal.auth.js
+routes/portal.cases.js
 routes/process_jobs.js
 routes/renaReminder.jsx
 routes/resolver.js
@@ -456,6 +460,7 @@ services/phoneService.js
 services/pipelineAdminService.js
 services/pipelineService.js
 services/portalAuthService.js
+services/portalCaseService.js
 services/quoService.js
 services/reportAuthorService.js
 services/reportService.js
@@ -532,6 +537,7 @@ tests/pipelineAdminService.test.js
 tests/pipelineBoard.test.js
 tests/pipelineService.test.js
 tests/portalAuth.test.js
+tests/portalCaseService.test.js
 tests/refreshonmiss.k3.test.js
 tests/taskService.test.js
 tests/test-credential-crypto.js

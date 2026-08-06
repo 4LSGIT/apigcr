@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Case Status — Client Portal</title>
+<style>
+  /* Client Portal Slice 2 — case view. Visual language from login.html /
+     cases.html (S1/S2 minimal). Branding/favicon still deliberately
+     excluded — polish rides a later slice. */
+  :root {
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --bg: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --panel: #f9fafb;
+    --done: #059669;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.45;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 32px 16px 40px; }
+
+  .backlink {
+    display: inline-block; margin-bottom: 14px;
+    color: var(--muted); text-decoration: none; font-size: 13.5px;
+  }
+  .backlink:hover { color: var(--accent); }
+
+  .head h1 { margin: 0; font-size: 22px; font-weight: 700; }
+  .head .docket { margin: 5px 0 0; color: var(--muted); font-size: 13.5px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-top: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px; font-size: 14px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted);
+  }
+
+  /* timeline */
+  .tl { list-style: none; margin: 0; padding: 0; }
+  .tl li {
+    position: relative; padding: 0 0 18px 26px;
+  }
+  .tl li:last-child { padding-bottom: 0; }
+  .tl li::before {          /* connector */
+    content: ""; position: absolute; left: 7px; top: 18px; bottom: 0;
+    width: 2px; background: var(--border);
+  }
+  .tl li:last-child::before { display: none; }
+  .tl .dot {
+    position: absolute; left: 0; top: 3px;
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 2px solid var(--border); background: var(--bg);
+  }
+  .tl .lbl { font-size: 15px; }
+  .tl .when { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
+
+  .tl li.done .dot { border-color: var(--done); background: var(--done); }
+  .tl li.done .lbl { color: var(--text); }
+
+  .tl li.current .dot {
+    border-color: var(--accent); background: var(--accent);
+    box-shadow: 0 0 0 4px #dbeafe;
+  }
+  .tl li.current .lbl { font-weight: 700; color: var(--accent); }
+
+  .tl li.upcoming .lbl { color: var(--muted); }
+
+  .pay-btn {
+    display: block; text-align: center; text-decoration: none;
+    padding: 11px 14px; font-size: 15.5px; font-weight: 600;
+    border-radius: 8px;
+    background: var(--accent); color: var(--accent-text);
+  }
+  .pay-note { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; text-align: center; }
+
+  .msg { text-align: center; color: var(--muted); padding: 24px 0; }
+  .msg a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="backlink" href="cases.html">&larr; Your cases</a>
+  <div id="content"><p class="msg">Loading&hellip;</p></div>
+</div>
+
+<script src="portal.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  function escText(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  // 'YYYY-MM-DD' (firm-local, server-computed) → 'Aug 5, 2026'.
+  // Component split on purpose — new Date('YYYY-MM-DD') parses as UTC
+  // midnight and shifts a day west of Greenwich.
+  function fmtDate(iso) {
+    if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso || '';
+    var p = iso.split('-');
+    var m = parseInt(p[1], 10);
+    if (!(m >= 1 && m <= 12)) return iso;
+    return MONTHS[m - 1] + ' ' + parseInt(p[2], 10) + ', ' + p[0];
+  }
+
+  function tlItem(cls, label, when) {
+    return '<li class="' + cls + '">' +
+             '<span class="dot"></span>' +
+             '<div class="lbl">' + escText(label) + '</div>' +
+             (when ? '<div class="when">' + escText(when) + '</div>' : '') +
+           '</li>';
+  }
+
+  function render(c) {
+    var html = '';
+
+    // Identity block.
+    html += '<div class="head">' +
+              '<h1>' + escText(c.title) + '</h1>' +
+              (c.docket ? '<p class="docket">Case no. ' + escText(c.docket) + '</p>' : '') +
+            '</div>';
+
+    // Progress timeline: done → current (marked) → upcoming. No current →
+    // done + upcoming render without a marker.
+    var tl = c.timeline || {};
+    var items = '';
+    (tl.done || []).forEach(function (d) {
+      items += tlItem('done', d.label, fmtDate(d.date));
+    });
+    if (tl.current) {
+      items += tlItem('current', tl.current.label,
+        tl.current.since ? 'Since ' + fmtDate(tl.current.since) : '');
+    }
+    (tl.upcoming || []).forEach(function (u) {
+      items += tlItem('upcoming', u.label, '');
+    });
+    html += '<div class="card"><h2>Case Progress</h2>' +
+            (items ? '<ul class="tl">' + items + '</ul>'
+                   : '<p class="msg" style="padding:6px 0;">No progress to show yet.</p>') +
+            '</div>';
+
+    // Payment card.
+    // FUTURE SWAP POINT (in-house payments): this static /r/payment link is
+    // the whole of S2's payment surface. The planned in-house payment flow
+    // (multi-deploy feature) replaces this card's href/handler — keep the
+    // swap contained here. target=_blank + rel=noopener is REQUIRED: the
+    // Clio page behind /r/payment refuses to load in an iframe, so it must
+    // be a top-level/new-tab navigation — never embed.
+    html += '<div class="card"><h2>Payments</h2>' +
+              '<a class="pay-btn" href="/r/payment" target="_blank" rel="noopener">Make a payment</a>' +
+              '<p class="pay-note">Opens our secure payment page in a new tab.</p>' +
+            '</div>';
+
+    document.getElementById('content').innerHTML = html;
+  }
+
+  function showNotFound() {
+    document.getElementById('content').innerHTML =
+      '<p class="msg">We couldn&rsquo;t find that case. ' +
+      '<a href="cases.html">Back to your cases</a></p>';
+  }
+
+  async function load() {
+    var id = new URLSearchParams(window.location.search).get('id');
+    if (!id) { window.location.replace('cases.html'); return; }
+
+    try {
+      var res = await Portal.fetch('/api/portal/cases/' + encodeURIComponent(id));
+      if (res.status === 404) { showNotFound(); return; }
+      var data = await res.json();
+      if (!data || data.status !== 'success' || !data.case) {
+        document.getElementById('content').innerHTML =
+          '<p class="msg">Something went wrong &mdash; try refreshing.</p>';
+        return;
+      }
+      render(data.case);
+    } catch (_) {
+      document.getElementById('content').innerHTML =
+        '<p class="msg">Connection problem &mdash; try refreshing.</p>';
+    }
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

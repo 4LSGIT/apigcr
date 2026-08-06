@@ -4,95 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Client Portal</title>
-<style>
-  /* Client Portal Slice 1 — home stub. Same visual language as login.html.
-     S2 replaces this shell with the real data-driven-tab layout (the /me
-     features object is the hook). */
-  :root {
-    --accent: #2563eb;
-    --accent-text: #ffffff;
-    --bg: #ffffff;
-    --text: #1f2937;
-    --muted: #6b7280;
-    --border: #e5e7eb;
-    --panel: #f9fafb;
-  }
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body {
-    margin: 0; padding: 0;
-    background: var(--bg); color: var(--text);
-    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    font-size: 15px; line-height: 1.45;
-    -webkit-text-size-adjust: 100%;
-  }
-  .wrap { max-width: 520px; margin: 0 auto; padding: 40px 16px; }
-  .head { text-align: center; margin-bottom: 20px; }
-  .head h1 { margin: 0; font-size: 22px; font-weight: 700; }
-
-  .card {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 18px 16px; text-align: center;
-  }
-  .card .who { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
-  .card .note { font-size: 13.5px; color: var(--muted); margin: 0; }
-
-  .btn {
-    display: block; width: 100%; margin-top: 16px;
-    padding: 11px 14px; font-size: 15.5px; font-weight: 600;
-    border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
-    background: var(--bg); color: var(--text);
-  }
-  .btn:disabled { opacity: 0.6; cursor: default; }
-</style>
+<!--
+  Client Portal Slice 2 — the S1 home stub is retired; cases.html is the
+  landing page. This redirect keeps S1-era bookmarks and login.html's
+  post-login target working (login.html deliberately untouched — it still
+  points here). location.replace so this hop never enters history; meta
+  refresh is the no-JS fallback.
+-->
+<meta http-equiv="refresh" content="0; url=cases.html">
 </head>
 <body>
-<div class="wrap">
-  <div class="head">
-    <h1>Client Portal</h1>
-  </div>
-
-  <div class="card">
-    <p class="who" id="who">Loading&hellip;</p>
-    <p class="note">More features are coming soon.</p>
-  </div>
-
-  <button class="btn" id="btn-logout">Log out</button>
-</div>
-
-<script src="portal.js"></script>
-<script>
-(function () {
-  'use strict';
-
-  async function load() {
-    try {
-      const res = await Portal.fetch('/api/portal/me');
-      const data = await res.json();
-      if (data && data.status === 'success') {
-        document.getElementById('who').textContent =
-          'Logged in as ' + (data.name || 'client');
-        // data.features — S2 hook: empty object this slice.
-      } else {
-        document.getElementById('who').textContent = 'Logged in';
-      }
-    } catch (_) {
-      document.getElementById('who').textContent = 'Connection problem — try refreshing.';
-    }
-  }
-
-  async function logout() {
-    const btn = document.getElementById('btn-logout');
-    btn.disabled = true;
-    try {
-      await Portal.fetch('/api/portal/logout', { method: 'POST' });
-    } catch (_) { /* best-effort — token discard is what matters */ }
-    Portal.clearToken();
-    Portal.toLogin();
-  }
-
-  document.getElementById('btn-logout').addEventListener('click', logout);
-  load();
-})();
-</script>
+<script>window.location.replace('cases.html');</script>
+<noscript><p><a href="cases.html">Continue to your cases</a></p></noscript>
 </body>
 </html>

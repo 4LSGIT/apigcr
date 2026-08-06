@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Your Cases — Client Portal</title>
+<style>
+  /* Client Portal Slice 2 — cases list. Visual language from login.html /
+     home.html (S1). Branding/favicon still deliberately excluded — polish
+     rides a later slice. */
+  :root {
+    --accent: #2563eb;
+    --accent-text: #ffffff;
+    --bg: #ffffff;
+    --text: #1f2937;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --panel: #f9fafb;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.45;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 520px; margin: 0 auto; padding: 40px 16px; }
+  .head { text-align: center; margin-bottom: 20px; }
+  .head h1 { margin: 0; font-size: 22px; font-weight: 700; }
+
+  .case-card {
+    display: block; text-decoration: none; color: inherit;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-bottom: 12px;
+    cursor: pointer;
+  }
+  .case-card:hover, .case-card:focus {
+    border-color: var(--accent); outline: none;
+  }
+  .case-card .title { font-size: 16px; font-weight: 600; margin: 0; }
+  .case-card .docket { font-size: 12.5px; color: var(--muted); margin: 3px 0 0; }
+  .case-card .chip {
+    display: inline-block; margin-top: 10px;
+    padding: 3px 10px; border-radius: 999px;
+    background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
+    font-size: 12.5px; font-weight: 600;
+  }
+
+  .empty {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 22px 16px; text-align: center;
+    color: var(--muted); font-size: 14.5px;
+  }
+  .msg { text-align: center; color: var(--muted); padding: 20px 0; }
+
+  .btn {
+    display: block; width: 100%; margin-top: 16px;
+    padding: 11px 14px; font-size: 15.5px; font-weight: 600;
+    border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+    background: var(--bg); color: var(--text);
+  }
+  .btn:disabled { opacity: 0.6; cursor: default; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <h1>Your Cases</h1>
+  </div>
+
+  <div id="list"><p class="msg">Loading&hellip;</p></div>
+
+  <button class="btn" id="btn-logout">Log out</button>
+</div>
+
+<script src="portal.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  function escText(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function caseHref(id) {
+    return 'case.html?id=' + encodeURIComponent(id);
+  }
+
+  function render(cases) {
+    const list = document.getElementById('list');
+
+    if (!cases.length) {
+      // Zero cases is a friendly state, not an error.
+      list.innerHTML =
+        '<div class="empty">No cases to show &mdash; contact our office if you were expecting one here.</div>';
+      return;
+    }
+
+    list.innerHTML = cases.map(function (c) {
+      const docket = c.docket
+        ? '<p class="docket">Case no. ' + escText(c.docket) + '</p>'
+        : '';
+      const chip = c.current_stage_label
+        ? '<span class="chip">' + escText(c.current_stage_label) + '</span>'
+        : '';
+      return '<a class="case-card" href="' + caseHref(c.case_id) + '">' +
+               '<p class="title">' + escText(c.title) + '</p>' +
+               docket + chip +
+             '</a>';
+    }).join('');
+  }
+
+  async function load() {
+    try {
+      const res = await Portal.fetch('/api/portal/cases');
+      const data = await res.json();
+      if (!data || data.status !== 'success' || !Array.isArray(data.cases)) {
+        document.getElementById('list').innerHTML =
+          '<p class="msg">Something went wrong &mdash; try refreshing.</p>';
+        return;
+      }
+      if (data.cases.length === 1) {
+        // Single case → straight into it. replace, not assign — no
+        // back-button loop through this page.
+        window.location.replace(caseHref(data.cases[0].case_id));
+        return;
+      }
+      render(data.cases);
+    } catch (_) {
+      document.getElementById('list').innerHTML =
+        '<p class="msg">Connection problem &mdash; try refreshing.</p>';
+    }
+  }
+
+  async function logout() {
+    const btn = document.getElementById('btn-logout');
+    btn.disabled = true;
+    try {
+      await Portal.fetch('/api/portal/logout', { method: 'POST' });
+    } catch (_) { /* best-effort — token discard is what matters */ }
+    Portal.clearToken();
+    Portal.toLogin();
+  }
+
+  document.getElementById('btn-logout').addEventListener('click', logout);
+  load();
+})();
+</script>
+</body>
+</html>

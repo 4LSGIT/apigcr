@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Client Portal</title>
+<!--
+  Client Portal Slice 2 — /portal/ entry router. express.static's default
+  directory redirect sends bare /portal → /portal/ → this file; it forwards
+  to cases.html (token present) or login.html. location.replace on purpose:
+  this page must never sit in the back-button history.
+-->
+</head>
+<body>
+<script>
+(function () {
+  'use strict';
+  var token = null;
+  try { token = localStorage.getItem('portal_token'); } catch (_) {}
+  window.location.replace(token ? '/portal/cases.html' : '/portal/login.html');
+})();
+</script>
+<noscript>
+  <p><a href="/portal/login.html">Continue to the Client Portal sign-in</a></p>
+</noscript>
+</body>
+</html>
