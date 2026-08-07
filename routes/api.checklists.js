@@ -27,9 +27,12 @@ const express      = require('express');
 const router       = express.Router();
 const rateLimit    = require('express-rate-limit');
 const jwtOrApiKey  = require('../lib/auth.jwtOrApiKey');
-const dropbox      = require('../services/dropboxService');
 const emailService = require('../services/emailService');
 const logService   = require('../services/logService');
+const uploadTarget = require('../services/uploadTargetService');
+const { getSetting } = require('../services/settingsService');
+const { cfg } = require('../lib/firmConfig');
+const { NOTIFY_TO_KEY } = require('../services/portalDocsService');
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -412,35 +415,20 @@ router.post('/api/public/get-upload-link', uploadRateLimit, async (req, res) => 
       String(filename).replace(/[\/\\]/g, '_').replace(/^\.+/, '').slice(0, 200)
       || 'upload.dat';
  
-    // Look up the case's Dropbox shared link
-    const [[caseRow]] = await req.db.query(
-      'SELECT case_dropbox FROM cases WHERE case_id = ?',
-      [case_id]
-    );
- 
-    if (!caseRow) {
-      return res.status(404).json({ status: 'error', message: 'Case not found' });
-    }
- 
-    const sharedLink = caseRow.case_dropbox;
-    if (!sharedLink) {
-      return res.status(400).json({ status: 'error', message: 'No Dropbox folder linked to this case' });
-    }
- 
-    // Resolve link → folder → temp upload link in one service call. The
-    // service validates the link resolves to a folder; subfolder preserves
-    // the legacy "Client Uploads" destination (no longer hardcoded in the
-    // service).
+    // Upload-target ladder (services/uploadTargetService.js): the case's
+    // Dropbox folder → auto-created folder → unsorted client-uploads folder.
+    // A client always has a way to upload; the old "No Dropbox folder linked
+    // to this case" dead end is gone. Total failure (Dropbox unreachable)
+    // throws into the catch-all 500 below.
     let link;
     try {
-      ({ link } = await dropbox.getTemporaryUploadLink(req.db, {
-        sharedLink,
+      ({ link } = await uploadTarget.issueClientUploadLink(req.db, {
+        caseId: case_id,
         filename: safeFilename,
-        subfolder: 'Client Uploads',
       }));
     } catch (err) {
-      if ((err.message || '').includes('expected a folder')) {
-        return res.status(400).json({ status: 'error', message: 'Shared link is not a folder' });
+      if (err.code === 'CASE_NOT_FOUND') {
+        return res.status(404).json({ status: 'error', message: 'Case not found' });
       }
       throw err;
     }
@@ -504,6 +492,17 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
     );
     const clientName = primary?.contact_name || 'Unknown client';
  
+    // Where did the batch land? Re-derived server-side — nothing trustworthy
+    // travels from link issuance through the client (see uploadTargetService,
+    // complete-time inspection). Null (case vanished) already handled above;
+    // an inspection ERROR degrades to the legacy wording below.
+    let dest = null;
+    try {
+      dest = await uploadTarget.inspectUploadDestination(req.db, case_id);
+    } catch (e) {
+      console.warn('Upload destination inspection failed:', e.message);
+    }
+
     // Build file list for email. EVERY interpolated value is escaped: the
     // filenames and comment are attacker-controlled (public route), and the
     // DB-derived values are escaped as defence in depth — case_dropbox in
@@ -513,10 +512,27 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
     const omittedHtml = omittedCount > 0
       ? `\n        <li><em>… and ${omittedCount} more file${omittedCount > 1 ? 's' : ''} not listed</em></li>`
       : '';
-    const dropboxLink = caseRow.case_dropbox || '';
     const commentBlock = safeComment
       ? `<p><strong>Client comment:</strong> ${escapeHtml(safeComment)}</p>`
       : '';
+
+    // Placement-aware Dropbox paragraph. Unsorted placement gets a loud note
+    // + a staff task (below); dest === null (inspection error) degrades to
+    // the legacy case_dropbox wording.
+    let dropboxHtml;
+    if (dest && dest.placement === 'unsorted') {
+      const where = dest.link
+        ? `<a href="${escapeHtml(dest.link)}">unsorted client uploads folder</a>`
+        : `unsorted client uploads folder (<code>${escapeHtml(dest.path)}</code>)`;
+      dropboxHtml =
+        `<p><strong>Note:</strong> this case has no working Dropbox folder — the files were ` +
+        `placed in the ${where}. Please move them into the case's folder.</p>`;
+    } else {
+      const dropboxLink = (dest && dest.sharedLink) || caseRow.case_dropbox || '';
+      dropboxHtml = dropboxLink
+        ? `<p><a href="${escapeHtml(dropboxLink)}">Open Dropbox Folder</a> — review, rename, and move files from the "Client Uploads" subfolder.</p>`
+        : '<p><em>No Dropbox link on file for this case.</em></p>';
+    }
  
     // Subject is a MIME header, not HTML — deliberately NOT escaped
     // (matches services/taskService.js convention).
@@ -531,18 +547,47 @@ router.post('/api/public/upload-complete', notifyRateLimit, async (req, res) => 
  
       ${commentBlock}
  
-      ${dropboxLink
-        ? `<p><a href="${escapeHtml(dropboxLink)}">Open Dropbox Folder</a> — review, rename, and move files from the "Client Uploads" subfolder.</p>`
-        : '<p><em>No Dropbox link on file for this case.</em></p>'}
+      ${dropboxHtml}
     `.trim();
  
-    // Send notification email
-    emailService.sendEmail(req.db, {
-      from: 'automations@4lsg.com',
-      to:   'rena@4lsg.com',
-      subject,
-      html
-    }).catch(err => console.error('Upload notification email failed:', err.message));
+    // Recipient from app_settings — the SAME key the portal flow reads
+    // (services/portalDocsService.js NOTIFY_TO_KEY), so editing the setting
+    // retargets BOTH upload surfaces. Sender = the firm-wide automations
+    // address (cfg('email_automations'), AUTO_EMAIL env fallback — the
+    // taskService / featureRequests / auth.password convention).
+    // Blank/missing recipient ⇒ email skipped with a warning (the case-log
+    // entry below still writes) — deliberate staff off-switch semantics.
+    let notifyTo = '';
+    try {
+      notifyTo = String((await getSetting(req.db, NOTIFY_TO_KEY)) ?? '').trim();
+    } catch (e) {
+      console.error('Upload notification settings read failed — email skipped:', e.message);
+    }
+    if (notifyTo) {
+      emailService.sendEmail(req.db, {
+        from: cfg('email_automations') || 'automations@4lsg.com',
+        to:   notifyTo,
+        subject,
+        html
+      }).catch(err => console.error('Upload notification email failed:', err.message));
+    } else {
+      console.warn(
+        `Upload notification email skipped — ${NOTIFY_TO_KEY} unset or blank ` +
+        `(blank = notifications off)`
+      );
+    }
+
+    // Unsorted placement is easy to lose in an inbox — raise a staff task
+    // (best-effort, self-caught in the service) so the files get moved.
+    if (dest && dest.placement === 'unsorted') {
+      uploadTarget.raiseUnsortedUploadTask(req.db, {
+        caseId:     case_id,
+        clientName,
+        fileCount,
+        path:       dest.path,
+        link:       dest.link,
+      });
+    }
  
     // Log the upload event on the case
     logService.createLogEntry(req.db, {
