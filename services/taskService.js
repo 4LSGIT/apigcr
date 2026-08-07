@@ -164,6 +164,31 @@ function fmtDateShort(d) {
   } catch { return '—'; }
 }
 
+/**
+ * Format a stored DATETIME (tasks.task_date etc.) as a firm-timezone calendar
+ * date. Do NOT use fmtDate() for these: it slices the UTC ISO string, so
+ * anything written after 8 PM Detroit reports the following day.
+ *
+ * The pool is configured with timezone:"Z" (startup/db.js), so mysql2 hands
+ * back a Date at the correct absolute instant; we only need to re-render it
+ * in FIRM_TZ.
+ *
+ * Year is included — an assignment date can be months old, unlike a due date.
+ *
+ * @param {string|Date} d
+ * @returns {string} e.g. "April 10, 2026"
+ */
+function fmtStampDate(d) {
+  if (!d) return '—';
+  try {
+    const dt = d instanceof Date
+      ? DateTime.fromJSDate(d, { zone: 'utc' })
+      : DateTime.fromISO(String(d).trim().replace(' ', 'T'), { zone: 'utc' });
+    if (!dt.isValid) return String(d).slice(0, 10);
+    return dt.setZone(FIRM_TZ).toFormat('MMMM d, yyyy');
+  } catch { return String(d).slice(0, 10); }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // EMAIL HTML BUILDERS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -397,6 +422,7 @@ function buildDueReminderEmail(task) {
     <table cellpadding="0" cellspacing="0" style="margin:8px 0 20px">
       ${metaRow('Due date',    fmtDate(task.due))}
       ${metaRow('Assigned by', htmlEscape(task.from.name || '—'))}
+      ${task.created ? metaRow('Assigned on', fmtStampDate(task.created)) : ''}
     </table>
 
     ${buildActionBlock(task)}
@@ -1142,5 +1168,6 @@ module.exports = {
   renderDescHtml,
   getFromEmail,
   getSmsFrom,
-  fmtDate
+  fmtDate,
+  fmtStampDate
 };
