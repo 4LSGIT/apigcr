@@ -2,21 +2,43 @@
 //
 // Slice 3 service assertions for services/portalDocsService.js — the portal
 // docs contract: scope gating, item-belongs-to-case enforcement, server-side
-// upload limits, projection whitelist, notification escaping.
+// upload limits, projection whitelist, notification escaping + routing.
 //
-// Stub pattern from tests/portalCaseService.test.js (scripted mysql2 pool);
-// dropboxService / emailService / logService are jest-mocked so these tests
-// exercise portalDocsService's rules, not the adapters (which have their own
-// coverage).
+// Stub pattern from tests/portalCaseService.test.js (scripted mysql2 pool).
+// Mocked collaborators — these tests exercise portalDocsService's RULES, not
+// the adapters (which have their own coverage):
+//
+//   services/uploadTargetService  the upload-target LADDER (case folder →
+//                                 auto-created folder → unsorted). Mocking it
+//                                 also keeps taskService / esignAlertService /
+//                                 dropboxService out of this suite's require
+//                                 graph entirely.
+//   services/emailService         sendEmail
+//   services/logService           createLogEntry
+//   services/settingsService      getSetting  ← SINGULAR (getSettings is
+//                                 mocked as a throwing tripwire). The service calls
+//                                 getSetting(db, key) once per key, NOT
+//                                 getSettings(db, [keys]). A `getSettings`
+//                                 mock leaves `getSetting` undefined, which
+//                                 makes the notification path throw into its
+//                                 own try/catch and SKIP the email — the
+//                                 "email not sent" assertions below would then
+//                                 pass for the wrong reason. Hence the
+//                                 explicit happy-path test that asserts the
+//                                 email IS sent.
+//   lib/firmConfig                cfg('email_automations') — the SENDER. The
+//                                 per-feature portal_docs_notify_from key was
+//                                 dropped in the 2026-08 upload-fallback
+//                                 change (absent from live app_settings);
+//                                 mocking cfg is cleaner than seeding
+//                                 AUTO_EMAIL because it lets the hardcoded
+//                                 last-resort default be tested too.
 //
 // Run:
 //   npx jest tests/portalDocsService.test.js
 
 'use strict';
 
-jest.mock('../services/dropboxService', () => ({
-  getTemporaryUploadLink: jest.fn(),
-}));
 jest.mock('../services/emailService', () => ({
   sendEmail: jest.fn(),
 }));
@@ -24,21 +46,42 @@ jest.mock('../services/logService', () => ({
   createLogEntry: jest.fn(),
 }));
 jest.mock('../services/settingsService', () => ({
-  getSettings: jest.fn(),
+  getSetting: jest.fn(),
+  // TRIPWIRE, not a working mock. If a future edit reintroduces a
+  // getSettings(db, [keys]) call here, the service's own try/catch would
+  // swallow it and silently skip the email again — exactly the failure this
+  // suite was blind to. The throw makes the cause legible in the console; the
+  // `expect(getSettings).not.toHaveBeenCalled()` assertion in the happy-path
+  // test is what actually fails the run, since an assertion can't be caught
+  // by production code.
+  getSettings: jest.fn(() => {
+    throw new Error(
+      'settingsService.getSettings is not the portal-docs contract — ' +
+      'the service reads ONE key via getSetting(db, NOTIFY_TO_KEY)'
+    );
+  }),
+}));
+jest.mock('../services/uploadTargetService', () => ({
+  issueClientUploadLink:   jest.fn(),
+  inspectUploadDestination: jest.fn(),
+  raiseUnsortedUploadTask:  jest.fn(),
+}));
+jest.mock('../lib/firmConfig', () => ({
+  cfg: jest.fn(),
 }));
 
-const dropbox      = require('../services/dropboxService');
-const emailService = require('../services/emailService');
-const logService   = require('../services/logService');
-const { getSettings } = require('../services/settingsService');
-const svc          = require('../services/portalDocsService');
+const emailService  = require('../services/emailService');
+const logService    = require('../services/logService');
+const uploadTarget  = require('../services/uploadTargetService');
+const { getSetting, getSettings } = require('../services/settingsService');
+const { cfg }        = require('../lib/firmConfig');
+const svc            = require('../services/portalDocsService');
 
-// R1 seeds (ref/2026-08-09_portal_r1_r2.sql) — the migration values that
-// keep behavior identical to the pre-R1 hardcode. Keep in sync.
-const SEEDED_SETTINGS = {
-  portal_docs_notify_from: 'automations@4lsg.com',
-  portal_docs_notify_to:   'rena@4lsg.com',
-};
+// Live app_settings / firm-config values as they actually stand (verified
+// against app_settings 2026-08-07). portal_docs_notify_from is GONE — the
+// sender is the firm-wide automations address. Keep in sync.
+const SEEDED_NOTIFY_TO   = 'rena@4lsg.com';
+const SEEDED_SENDER      = 'automations@4lsg.com';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stubs / fixtures
@@ -98,7 +141,8 @@ describe('scope gate', () => {
       { filename: 'a.pdf', size: 100 })).toBeNull();
     expect(await svc.completeUpload(stubDb([[]]), 42, 'NotYours1',
       { files: [{ name: 'a.pdf' }] })).toBeNull();
-    expect(dropbox.getTemporaryUploadLink).not.toHaveBeenCalled();
+    // Scope failure must short-circuit BEFORE the upload-target ladder.
+    expect(uploadTarget.issueClientUploadLink).not.toHaveBeenCalled();
   });
 
   test('scope queries restrict to Primary/Secondary (Other/Bystander excluded)', async () => {
@@ -154,18 +198,23 @@ describe('listDocs', () => {
     expect(sql).toContain('ORDER BY ci.position ASC, ci.id ASC');
   });
 
-  test('has_upload is a bare boolean — the Dropbox link itself never leaves', async () => {
+  test('has_upload is ALWAYS true (the ladder guarantees a destination) and the Dropbox link never leaves', async () => {
+    // Pre-fallback this was `!!case_dropbox`. The upload-target ladder now
+    // guarantees a destination for every case, so the field is a constant
+    // kept for page-contract compatibility — a null/blank case_dropbox no
+    // longer takes the upload button away from the client.
     const noDb = stubDb([[scopeRow({ case_dropbox: null })], []]);
-    const out1 = await svc.listDocs(noDb, 42, 'AbCdEf12');
-    expect(out1.has_upload).toBe(false);
+    expect((await svc.listDocs(noDb, 42, 'AbCdEf12')).has_upload).toBe(true);
 
     const blankDb = stubDb([[scopeRow({ case_dropbox: '   ' })], []]);
-    expect((await svc.listDocs(blankDb, 42, 'AbCdEf12')).has_upload).toBe(false);
+    expect((await svc.listDocs(blankDb, 42, 'AbCdEf12')).has_upload).toBe(true);
 
     const yesDb = stubDb([[scopeRow()], []]);
-    const out2 = await svc.listDocs(yesDb, 42, 'AbCdEf12');
-    expect(out2.has_upload).toBe(true);
-    expect(JSON.stringify(out2)).not.toContain('dropbox.com');
+    const out = await svc.listDocs(yesDb, 42, 'AbCdEf12');
+    expect(out.has_upload).toBe(true);
+    // The link itself is staff-facing and must never reach the client.
+    expect(JSON.stringify(out)).not.toContain('dropbox.com');
+    expect(deepKeys(out).has('case_dropbox')).toBe(false);
   });
 
   test('empty checklist → empty items array (friendly state, not an error)', async () => {
@@ -187,12 +236,13 @@ describe('createUploadLink limits (server-side, at link issuance)', () => {
       await expect(svc.createUploadLink(db, 42, 'AbCdEf12', { filename, size: 100 }))
         .rejects.toMatchObject({ status: 400, portalCaseId: 'AbCdEf12' });
     }
-    expect(dropbox.getTemporaryUploadLink).not.toHaveBeenCalled();
+    expect(uploadTarget.issueClientUploadLink).not.toHaveBeenCalled();
   });
 
   test('extension check is case-insensitive on the accept side', async () => {
     const db = stubDb([[scopeRow()]]);
-    dropbox.getTemporaryUploadLink.mockResolvedValueOnce({ link: 'https://up', path: '/p' });
+    uploadTarget.issueClientUploadLink.mockResolvedValueOnce(
+      { case_id: 'AbCdEf12', link: 'https://up', placement: 'case' });
     const out = await svc.createUploadLink(db, 42, 'AbCdEf12', { filename: 'ID.JPG', size: 100 });
     expect(out.link).toBe('https://up');
   });
@@ -203,43 +253,73 @@ describe('createUploadLink limits (server-side, at link issuance)', () => {
       await expect(svc.createUploadLink(db, 42, 'AbCdEf12', { filename: 'a.pdf', size }))
         .rejects.toMatchObject({ status: 400 });
     }
+    expect(uploadTarget.issueClientUploadLink).not.toHaveBeenCalled();
+
     // Boundary: exactly MAX passes.
     const db = stubDb([[scopeRow()]]);
-    dropbox.getTemporaryUploadLink.mockResolvedValueOnce({ link: 'https://up', path: '/p' });
+    uploadTarget.issueClientUploadLink.mockResolvedValueOnce(
+      { case_id: 'AbCdEf12', link: 'https://up', placement: 'case' });
     await expect(svc.createUploadLink(db, 42, 'AbCdEf12',
       { filename: 'a.pdf', size: svc.MAX_FILE_SIZE })).resolves.toBeTruthy();
   });
 
-  test('filename is sanitized before it reaches Dropbox (path steering stripped)', async () => {
+  test('filename is sanitized before it reaches the upload-target ladder (path steering stripped)', async () => {
     const db = stubDb([[scopeRow()]]);
-    dropbox.getTemporaryUploadLink.mockResolvedValueOnce({ link: 'https://up', path: '/p' });
+    uploadTarget.issueClientUploadLink.mockResolvedValueOnce(
+      { case_id: 'AbCdEf12', link: 'https://up', placement: 'case' });
     await svc.createUploadLink(db, 42, 'AbCdEf12',
       { filename: '../..\\..\\secret/../x.pdf', size: 100 });
-    const arg = dropbox.getTemporaryUploadLink.mock.calls[0][1];
+
+    // WHERE the file lands is uploadTargetService's business now (sharedLink /
+    // subfolder / unsorted path all live in the ladder). This service's
+    // contract at the seam is exactly two things: the CANONICAL case id, and a
+    // filename that carries no path steering.
+    const arg = uploadTarget.issueClientUploadLink.mock.calls[0][1];
+    expect(arg.caseId).toBe('AbCdEf12');
     expect(arg.filename).not.toMatch(/[\/\\]/);
     expect(arg.filename[0]).not.toBe('.');
-    expect(arg.subfolder).toBe('Client Uploads');
-    expect(arg.sharedLink).toBe('https://www.dropbox.com/sh/abc123');
+    expect(Object.keys(arg).sort()).toEqual(['caseId', 'filename']);
+    // The scope-row db handle is passed through so the ladder reads one pool.
+    expect(uploadTarget.issueClientUploadLink.mock.calls[0][0]).toBe(db);
   });
 
-  test('no case_dropbox → 400 with client-safe wording (no infra naming)', async () => {
+  test('no case_dropbox is NO LONGER a dead end — the ladder is consulted and a link comes back', async () => {
+    // Replaces the deleted "no case_dropbox → 400" test. The 2026-08
+    // upload-fallback change moved destination resolution into
+    // uploadTargetService: this service no longer inspects case_dropbox at
+    // issuance at all, it just calls the ladder and returns what it gets.
     const db = stubDb([[scopeRow({ case_dropbox: null })]]);
-    const err = await svc.createUploadLink(db, 42, 'AbCdEf12', good).catch(e => e);
-    expect(err.status).toBe(400);
-    expect(err.message).not.toMatch(/dropbox/i);
+    uploadTarget.issueClientUploadLink.mockResolvedValueOnce(
+      { case_id: 'AbCdEf12', link: 'https://up/unsorted', placement: 'unsorted',
+        path: '/  Law Office/   Cases/  Unsorted Client Uploads/AbCdEf12 - Doe, Jane' });
+
+    const out = await svc.createUploadLink(db, 42, 'AbCdEf12', good);
+
+    expect(uploadTarget.issueClientUploadLink).toHaveBeenCalledTimes(1);
+    expect(uploadTarget.issueClientUploadLink.mock.calls[0][1].caseId).toBe('AbCdEf12');
+    expect(out).toEqual({ case_id: 'AbCdEf12', link: 'https://up/unsorted' });
+    // Placement / path are ladder internals — they never reach the client.
+    expect(Object.keys(out).sort()).toEqual(['case_id', 'link']);
   });
 
-  test("Dropbox 'expected a folder' → 400 client-safe; other errors propagate with portalCaseId", async () => {
+  test('ladder CASE_NOT_FOUND (row vanished mid-request) → uniform 404; every other error propagates with portalCaseId', async () => {
     const db1 = stubDb([[scopeRow()]]);
-    dropbox.getTemporaryUploadLink.mockRejectedValueOnce(new Error('link expected a folder'));
+    const gone = new Error('issueClientUploadLink: case AbCdEf12 not found');
+    gone.code = 'CASE_NOT_FOUND';
+    uploadTarget.issueClientUploadLink.mockRejectedValueOnce(gone);
     const err1 = await svc.createUploadLink(db1, 42, 'AbCdEf12', good).catch(e => e);
-    expect(err1.status).toBe(400);
-    expect(err1.message).not.toMatch(/dropbox|folder/i);
+    expect(err1.status).toBe(404);
+    expect(err1.message).toBe('Not found');
+    expect(err1.portalCaseId).toBe('AbCdEf12');
 
+    // Total ladder failure (Dropbox unreachable) → route's 500 'Server error',
+    // but attributed so the access log still names the case.
     const db2 = stubDb([[scopeRow()]]);
-    dropbox.getTemporaryUploadLink.mockRejectedValueOnce(new Error('boom'));
+    uploadTarget.issueClientUploadLink.mockRejectedValueOnce(
+      new Error('unsorted upload fallback failed (boom)'));
     const err2 = await svc.createUploadLink(db2, 42, 'AbCdEf12', good).catch(e => e);
-    expect(err2.message).toBe('boom');
+    expect(err2.status).toBeUndefined();
+    expect(err2.message).toBe('unsorted upload fallback failed (boom)');
     expect(err2.portalCaseId).toBe('AbCdEf12');
   });
 });
@@ -258,12 +338,13 @@ describe('createUploadLink item-belongs-to-case gate', () => {
       expect(err.message).toBe('Not found');
       expect(err.portalCaseId).toBe('AbCdEf12');
     }
-    expect(dropbox.getTemporaryUploadLink).not.toHaveBeenCalled();
+    expect(uploadTarget.issueClientUploadLink).not.toHaveBeenCalled();
   });
 
   test('item lookup is scoped to THIS case via Docs Needed checklists', async () => {
     const db = stubDb([[scopeRow()], [item(7, 'Pay stubs')]]);
-    dropbox.getTemporaryUploadLink.mockResolvedValueOnce({ link: 'https://up', path: '/p' });
+    uploadTarget.issueClientUploadLink.mockResolvedValueOnce(
+      { case_id: 'AbCdEf12', link: 'https://up', placement: 'case' });
     await svc.createUploadLink(db, 42, 'AbCdEf12', { itemId: 7, filename: 'a.pdf', size: 100 });
     const sql = db.calls[1].sql;
     expect(sql).toContain(`cl.link_type = 'case'`);
@@ -273,7 +354,8 @@ describe('createUploadLink item-belongs-to-case gate', () => {
 
   test('omitted itemId is fine — general uploads stay supported', async () => {
     const db = stubDb([[scopeRow()]]);
-    dropbox.getTemporaryUploadLink.mockResolvedValueOnce({ link: 'https://up', path: '/p' });
+    uploadTarget.issueClientUploadLink.mockResolvedValueOnce(
+      { case_id: 'AbCdEf12', link: 'https://up', placement: 'case' });
     const out = await svc.createUploadLink(db, 42, 'AbCdEf12', { filename: 'a.pdf', size: 100 });
     expect(out).toEqual({ case_id: 'AbCdEf12', link: 'https://up' });
   });
@@ -341,7 +423,7 @@ describe('completeUpload', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// sendUploadNotifications — parity + escaping
+// sendUploadNotifications — routing, placement wording, parity + escaping
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ctxFixture(over = {}) {
@@ -361,56 +443,153 @@ function ctxFixture(over = {}) {
   }, over);
 }
 
+/** inspectUploadDestination result for the ordinary "landed in the case
+ *  folder" outcome. sharedLink deliberately carries the same quote as the
+ *  fixture's dropboxLink so the href-escaping assertion holds either way. */
+function destCase(over = {}) {
+  return Object.assign({
+    case_id: 'AbCdEf12',
+    placement: 'case',
+    sharedLink: 'https://www.dropbox.com/sh/abc"123',
+  }, over);
+}
+
 describe('sendUploadNotifications', () => {
   beforeEach(() => {
     emailService.sendEmail.mockResolvedValue({});
     logService.createLogEntry.mockResolvedValue({});
-    // R1 default: seeded settings → pre-R1 behavior.
-    getSettings.mockResolvedValue({ ...SEEDED_SETTINGS });
+    uploadTarget.inspectUploadDestination.mockResolvedValue(destCase());
+    uploadTarget.raiseUnsortedUploadTask.mockResolvedValue({ ok: true, taskId: 1 });
+    // Live defaults: recipient from app_settings, sender from firm config.
+    getSetting.mockImplementation(async (db, key) =>
+      key === svc.NOTIFY_TO_KEY ? SEEDED_NOTIFY_TO : null);
+    cfg.mockImplementation(key =>
+      key === 'email_automations' ? SEEDED_SENDER : null);
   });
 
-  test('recipient/sender resolve from app_settings; seeded values ≡ the public flow (pre-R1 parity)', async () => {
+  // ── recipient / sender resolution ─────────────────────────────────────────
+
+  test('POSITIVE: happy path SENDS the email — recipient from app_settings, sender from firm config', async () => {
+    // The contrast case for the two skip tests below. Without this, a broken
+    // settings mock makes "sendEmail was not called" pass everywhere and the
+    // off-switch assertions prove nothing.
     await svc.sendUploadNotifications({}, ctxFixture());
-    expect(getSettings).toHaveBeenCalledWith({},
-      ['portal_docs_notify_from', 'portal_docs_notify_to']);
+
+    expect(getSetting).toHaveBeenCalledTimes(1);
+    expect(getSetting).toHaveBeenCalledWith({}, svc.NOTIFY_TO_KEY);
+    expect(getSettings).not.toHaveBeenCalled();      // singular, one key — see mock
+    expect(svc.NOTIFY_TO_KEY).toBe('portal_docs_notify_to');
+    expect(cfg).toHaveBeenCalledWith('email_automations');
+
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
     const arg = emailService.sendEmail.mock.calls[0][1];
-    expect(arg.from).toBe('automations@4lsg.com');
-    expect(arg.to).toBe('rena@4lsg.com');
+    expect(arg.to).toBe(SEEDED_NOTIFY_TO);
+    expect(arg.from).toBe(SEEDED_SENDER);
     expect(arg.subject).toBe('New Documents Uploaded \u2014 Jane Doe (24-40226-mlo)');
+    expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
   });
 
-  test('R1: edited settings retarget the email — no hardcode left', async () => {
-    getSettings.mockResolvedValue({
-      portal_docs_notify_from: 'office@4lsg.com',
-      portal_docs_notify_to:   'shoshana@4lsg.com',
-    });
+  test('edited recipient setting retargets the email — no hardcoded recipient left', async () => {
+    getSetting.mockImplementation(async (db, key) =>
+      key === svc.NOTIFY_TO_KEY ? 'shoshana@4lsg.com' : null);
     await svc.sendUploadNotifications({}, ctxFixture());
-    const arg = emailService.sendEmail.mock.calls[0][1];
-    expect(arg.from).toBe('office@4lsg.com');
-    expect(arg.to).toBe('shoshana@4lsg.com');
+    expect(emailService.sendEmail.mock.calls[0][1].to).toBe('shoshana@4lsg.com');
   });
 
-  test('R1: blank/missing setting → email SKIPPED (off-switch), log entry still written', async () => {
-    getSettings.mockResolvedValue({
-      portal_docs_notify_from: 'automations@4lsg.com',
-      portal_docs_notify_to:   '   ',                    // blank = off
-    });
+  test('sender follows cfg(email_automations) — one firm-wide setting moves every automation', async () => {
+    cfg.mockImplementation(key => key === 'email_automations' ? 'office@4lsg.com' : null);
+    await svc.sendUploadNotifications({}, ctxFixture());
+    expect(emailService.sendEmail.mock.calls[0][1].from).toBe('office@4lsg.com');
+  });
+
+  test('sender falls back to the hardcoded automations address when firm config is unset', async () => {
+    cfg.mockReturnValue(null);
+    await svc.sendUploadNotifications({}, ctxFixture());
+    expect(emailService.sendEmail.mock.calls[0][1].from).toBe('automations@4lsg.com');
+  });
+
+  test('blank/missing recipient → email SKIPPED (off-switch), log entry still written', async () => {
+    getSetting.mockResolvedValue('   ');                 // blank = off
     await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
+    expect(getSetting).toHaveBeenCalledTimes(1);          // the mock IS live
     expect(emailService.sendEmail).not.toHaveBeenCalled();
     expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
 
-    getSettings.mockResolvedValue({});                   // both keys absent → undefined
+    getSetting.mockResolvedValue(null);                   // key absent
     await svc.sendUploadNotifications({}, ctxFixture());
     expect(emailService.sendEmail).not.toHaveBeenCalled();
     expect(logService.createLogEntry).toHaveBeenCalledTimes(2);
   });
 
-  test('R1: settings read failure → email skipped self-caught, log entry still written', async () => {
-    getSettings.mockRejectedValueOnce(new Error('db down'));
+  test('settings read failure → email skipped self-caught, log entry still written', async () => {
+    getSetting.mockRejectedValueOnce(new Error('db down'));
     await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
+    expect(getSetting).toHaveBeenCalledTimes(1);          // the mock IS live
     expect(emailService.sendEmail).not.toHaveBeenCalled();
     expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
   });
+
+  // ── placement wording (complete-time re-inspection) ───────────────────────
+
+  test('placement is re-derived server-side at complete time, not carried from issuance', async () => {
+    await svc.sendUploadNotifications({}, ctxFixture());
+    expect(uploadTarget.inspectUploadDestination).toHaveBeenCalledWith({}, 'AbCdEf12');
+    const { html } = emailService.sendEmail.mock.calls[0][1];
+    expect(html).toContain('Open Dropbox Folder');
+    expect(uploadTarget.raiseUnsortedUploadTask).not.toHaveBeenCalled();
+  });
+
+  test('unsorted placement → warning wording, unsorted link, and a staff task', async () => {
+    uploadTarget.inspectUploadDestination.mockResolvedValue({
+      case_id: 'AbCdEf12',
+      placement: 'unsorted',
+      path: '/  Law Office/   Cases/  Unsorted Client Uploads/AbCdEf12 - Doe, Jane',
+      link: 'https://www.dropbox.com/sh/unsorted',
+    });
+    await svc.sendUploadNotifications({}, ctxFixture());
+
+    const { html } = emailService.sendEmail.mock.calls[0][1];
+    expect(html).toContain('no working Dropbox folder');
+    expect(html).toContain('href="https://www.dropbox.com/sh/unsorted"');
+    expect(html).not.toContain('Open Dropbox Folder');
+
+    expect(uploadTarget.raiseUnsortedUploadTask).toHaveBeenCalledTimes(1);
+    expect(uploadTarget.raiseUnsortedUploadTask.mock.calls[0][1]).toEqual({
+      caseId: 'AbCdEf12',
+      clientName: 'Jane Doe',
+      fileCount: 2,
+      path: '/  Law Office/   Cases/  Unsorted Client Uploads/AbCdEf12 - Doe, Jane',
+      link: 'https://www.dropbox.com/sh/unsorted',
+    });
+  });
+
+  test('unsorted with no shared link → the path is shown instead, escaped', async () => {
+    uploadTarget.inspectUploadDestination.mockResolvedValue({
+      case_id: 'AbCdEf12',
+      placement: 'unsorted',
+      path: '/Unsorted/<AbCdEf12>',
+      link: null,
+    });
+    await svc.sendUploadNotifications({}, ctxFixture());
+    const { html } = emailService.sendEmail.mock.calls[0][1];
+    expect(html).toContain('<code>/Unsorted/&lt;AbCdEf12&gt;</code>');
+    expect(html).not.toContain('<code>/Unsorted/<AbCdEf12>');
+  });
+
+  test('inspection failure or null degrades to the ctx dropboxLink — never blocks the email', async () => {
+    uploadTarget.inspectUploadDestination.mockRejectedValueOnce(new Error('dropbox down'));
+    await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+    expect(emailService.sendEmail.mock.calls[0][1].html).toContain('Open Dropbox Folder');
+    expect(uploadTarget.raiseUnsortedUploadTask).not.toHaveBeenCalled();
+
+    uploadTarget.inspectUploadDestination.mockResolvedValueOnce(null);
+    await svc.sendUploadNotifications({}, ctxFixture({ dropboxLink: '' }));
+    expect(emailService.sendEmail.mock.calls[1][1].html)
+      .toContain('No Dropbox link on file for this case.');
+  });
+
+  // ── body construction ─────────────────────────────────────────────────────
 
   test('EVERY interpolated HTML value is escaped — hostile filename, comment, item name, href', async () => {
     await svc.sendUploadNotifications({}, ctxFixture({
@@ -426,7 +605,7 @@ describe('sendUploadNotifications', () => {
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;.pdf');
     expect(html).toContain('Stubs &lt;script&gt;');
     expect(html).toContain('&quot;&gt;&lt;script&gt;steal()&lt;/script&gt;');
-    // dropboxLink sits in an href — the quote must not break the attribute.
+    // The folder link sits in an href — the quote must not break the attribute.
     expect(html).toContain('href="https://www.dropbox.com/sh/abc&quot;123"');
     // Subject is a MIME header — deliberately NOT escaped (repo convention).
     expect(subject).toContain('Jane <b>Doe</b>');
@@ -439,6 +618,12 @@ describe('sendUploadNotifications', () => {
     expect(html).toContain('<strong>Other documents</strong>');
     expect(html.indexOf('Pay stubs')).toBeLessThan(html.indexOf('Other documents'));
     expect(html).toContain('via the client portal');
+  });
+
+  test('omitted files are acknowledged rather than silently dropped', async () => {
+    await svc.sendUploadNotifications({}, ctxFixture({ fileCount: 52, omittedCount: 2 }));
+    expect(emailService.sendEmail.mock.calls[0][1].html)
+      .toContain('and 2 more files not listed');
   });
 
   test('case log entry: type docs on the case, by 0, incoming, portal-tagged data', async () => {
@@ -461,6 +646,10 @@ describe('sendUploadNotifications', () => {
     emailService.sendEmail.mockRejectedValueOnce(new Error('smtp down'));
     await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
     expect(logService.createLogEntry).toHaveBeenCalledTimes(1);
+
+    logService.createLogEntry.mockRejectedValueOnce(new Error('db down'));
+    await expect(svc.sendUploadNotifications({}, ctxFixture())).resolves.toBeDefined();
+    expect(emailService.sendEmail).toHaveBeenCalledTimes(2);
   });
 });
 

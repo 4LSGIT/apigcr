@@ -575,6 +575,7 @@ tests/portalCardEngine.home.test.js
 tests/portalCardEngine.test.js
 tests/portalCardsAdmin.test.js
 tests/portalCaseService.test.js
+tests/portalDocsRoutes.test.js
 tests/portalDocsService.test.js
 tests/portalHome.test.js
 tests/refreshonmiss.k3.test.js
