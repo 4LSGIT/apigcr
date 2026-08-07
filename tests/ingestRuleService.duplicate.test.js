@@ -120,7 +120,7 @@ const SRC_RULE = {
 };
 
 const SRC_ACTIONS = [
-  { id: 7, rule_id: 42, position: 0, active: 1, action_type: 'internal_function',
+  { id: 7, rule_id: 42, name: 'fwd to SB', position: 0, active: 1, action_type: 'internal_function',
     config: { function_name: 'forward_as_email', params_mapping: { event: '$', to: "'sb@4lsg.com'" } } },
   { id: 8, rule_id: 42, position: 1, active: 0, action_type: 'workflow',
     config: { workflow_id: 23 } },
@@ -154,8 +154,8 @@ describe.each([
     // action inserts: both rows, config stringified, active + position preserved
     expect(db.state.actionInserts).toHaveLength(2);
     const [a0, a1] = db.state.actionInserts;
-    expect(a0.params).toEqual([900, 0, 1, 'internal_function', JSON.stringify(SRC_ACTIONS[0].config)]);
-    expect(a1.params).toEqual([900, 1, 0, 'workflow', JSON.stringify(SRC_ACTIONS[1].config)]);
+    expect(a0.params).toEqual([900, 'fwd to SB', 0, 1, 'internal_function', JSON.stringify(SRC_ACTIONS[0].config)]);
+    expect(a1.params).toEqual([900, null, 1, 0, 'workflow', JSON.stringify(SRC_ACTIONS[1].config)]);
 
     // returned shape: the fresh row with its copied actions
     expect(out.id).toBe(900);
