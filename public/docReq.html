@@ -134,7 +134,8 @@
       <ul class="doc-list" id="doc-list"></ul>
 
       <div class="empty-state" id="all-clear" style="display:none">
-        <i>✓</i> All documents have been received. Thank you!
+        <i>✓</i> No outstanding document requests right now — but you can
+        still upload documents below and our team will be notified.
       </div>
     </div>
 
@@ -206,9 +207,11 @@ if (!caseId) {
 
       const list = document.getElementById('doc-list');
       if (items.length === 0) {
+        // No open items (no checklist, or everything received). The upload
+        // card STAYS visible — a client must always have a way to upload
+        // (server-side the upload-target ladder guarantees a destination).
         list.style.display = 'none';
         document.getElementById('all-clear').style.display = 'block';
-        document.getElementById('upload-card').style.display = 'none';
       } else {
         items.forEach((item, i) => {
           const li = document.createElement('li');
