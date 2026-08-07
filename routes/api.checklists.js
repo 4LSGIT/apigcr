@@ -32,7 +32,14 @@ const logService   = require('../services/logService');
 const uploadTarget = require('../services/uploadTargetService');
 const { getSetting } = require('../services/settingsService');
 const { cfg } = require('../lib/firmConfig');
-const { NOTIFY_TO_KEY } = require('../services/portalDocsService');
+const {
+  NOTIFY_TO_KEY,
+  // ONE rule set, shared with the authenticated portal upload path
+  // (services/portalDocsService.createUploadLink). Do not fork these.
+  ALLOWED_EXTENSIONS,
+  MAX_FILE_SIZE,
+  _extOf: extOf,
+} = require('../services/portalDocsService');
 
 // ─── Helpers ────────────────────────────────────────────────────
 
@@ -403,7 +410,7 @@ const notifyRateLimit = rateLimit({
  */
 router.post('/api/public/get-upload-link', uploadRateLimit, async (req, res) => {
   try {
-    const { case_id, filename } = req.body;
+    const { case_id, filename, size } = req.body;
  
     if (!case_id || !filename) {
       return res.status(400).json({ status: 'error', message: 'case_id and filename are required' });
@@ -414,6 +421,43 @@ router.post('/api/public/get-upload-link', uploadRateLimit, async (req, res) => 
     const safeFilename =
       String(filename).replace(/[\/\\]/g, '_').replace(/^\.+/, '').slice(0, 200)
       || 'upload.dat';
+
+    // ── Server-side upload limits (parity with the authenticated portal
+    // path — same ALLOWED_EXTENSIONS / MAX_FILE_SIZE, imported above).
+    //
+    // Honest limitation, same as the portal's: the browser POSTs bytes
+    // straight to Dropbox, so this instance never sees them. Enforcement is
+    // on DECLARED metadata at link issuance — the strongest gate available
+    // without proxying uploads. The extension check is the real one (the
+    // filename determines the Dropbox path, so a rejected extension cannot
+    // land); declared size is accident/UX protection, not a security control.
+    //
+    // `size` is OPTIONAL here (unlike the portal, whose client always sends
+    // it): older docReq.html builds in the wild post { case_id, filename }
+    // only, and 400-ing those would break every live link. Validated when
+    // present. public/docReq.html now sends it.
+    const ext = extOf(safeFilename);
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'That file type isn\u2019t accepted. Please upload PDF, Word, Excel, image, or text files.',
+      });
+    }
+    if (size !== undefined && size !== null && size !== '') {
+      const sizeNum = Number(size);
+      if (!Number.isInteger(sizeNum) || sizeNum <= 0) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'size must be a positive whole number of bytes.',
+        });
+      }
+      if (sizeNum > MAX_FILE_SIZE) {
+        return res.status(400).json({
+          status: 'error',
+          message: 'Files must be 50 MB or smaller.',
+        });
+      }
+    }
  
     // Upload-target ladder (services/uploadTargetService.js): the case's
     // Dropbox folder → auto-created folder → unsorted client-uploads folder.

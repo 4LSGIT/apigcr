@@ -332,7 +332,7 @@ async function startUpload(files, comment) {
       const linkRes = await fetch('/api/public/get-upload-link', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ case_id: caseId, filename: file.name })
+        body: JSON.stringify({ case_id: caseId, filename: file.name, size: file.size })
       });
 
       if (!linkRes.ok) {

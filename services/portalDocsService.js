@@ -567,5 +567,9 @@ module.exports = {
   // Exposed for tests (repo pattern).
   _escapeHtml: escapeHtml,
   _sanitizeFilename: sanitizeFilename,
+  // Exported (not just for tests) so the PUBLIC docReq route in
+  // routes/api.checklists.js can apply the SAME extension rule against
+  // ALLOWED_EXTENSIONS rather than forking a second copy of it.
+  _extOf: extOf,
   _clientStatus: clientStatus,
 };

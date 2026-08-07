@@ -38,8 +38,10 @@
  *                          recoverable: "refresh the page")
  *   "Silent fake success" returns the normal { success, thankyou_html }
  *   response without creating anything — bots can't distinguish it.
- *   Client IP = cf-connecting-ip falling back to req.ip (same convention
- *   as routes/pageLanding.js; trust proxy is 1).
+ *   Client IP = lib/rateLimiter.getClientIp — the LAST X-Forwarded-For
+ *   element (the GFE-appended peer). NOT cf-connecting-ip: app.4lsg.com is
+ *   direct Cloud Run, so that header is client-suppliable and keying on it
+ *   handed every request its own bucket. See lib/rateLimiter.js.
  *
  * ── Concurrency ──────────────────────────────────────────────
  * Per-provider MySQL named lock `book:<provider>` held on a DEDICATED pool
@@ -86,6 +88,7 @@ const { resolve: resolveTemplate } = require('../services/resolverService');
 const { getSettings }  = require('../services/settingsService');
 const { FIRM_TZ }      = require('../services/timezoneService');
 const { alert }        = require('../lib/alerting');
+const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -108,11 +111,6 @@ const DEFAULT_THANKYOU_HTML =
 // Helpers — IP, HMAC, rate limiting
 // ─────────────────────────────────────────────────────────────
 
-/** Same convention as routes/pageLanding.js (trust proxy = 1). */
-function clientIp(req) {
-  return req.headers['cf-connecting-ip'] || req.ip;
-}
-
 function signTs(ts) {
   return crypto
     .createHmac('sha256', process.env.JWT_SECRET)
@@ -130,31 +128,8 @@ function sigValid(ts, sig) {
   }
 }
 
-/**
- * Fixed-window in-memory rate limiter factory (pattern copied from
- * routes/pageLanding.js). Per-instance on Cloud Run — accepted best-effort.
- */
-function makeLimiter(windowMs, max) {
-  const buckets = new Map(); // ip -> { windowStart, count }
-  setInterval(() => {
-    const cutoff = Date.now() - windowMs;
-    for (const [ip, b] of buckets) {
-      if (b.windowStart < cutoff) buckets.delete(ip);
-    }
-  }, 5 * 60 * 1000).unref();
-
-  return function limited(ip) {
-    const now = Date.now();
-    let b = buckets.get(ip);
-    if (!b || now - b.windowStart >= windowMs) {
-      b = { windowStart: now, count: 0 };
-      buckets.set(ip, b);
-    }
-    b.count += 1;
-    return b.count > max;
-  };
-}
-
+// makeLimiter now comes from lib/rateLimiter (the local copy it replaces was
+// byte-identical). Windows/maxes unchanged.
 const readLimited = makeLimiter(60 * 1000, 30);       // config + slots
 const postLimited = makeLimiter(10 * 60 * 1000, 5);   // bookings
 
@@ -361,7 +336,7 @@ router.get('/book/:slug', (req, res) => {
 
 router.get('/api/book/:slug/config', async (req, res) => {
   try {
-    if (readLimited(clientIp(req))) {
+    if (readLimited(getClientIp(req))) {
       return res.status(429).json({ status: 'error', code: 'rate_limited' });
     }
     const view = await loadView(req.db, req.params.slug);
@@ -491,7 +466,7 @@ function maskBookingEmail(email) {
 
 router.get('/api/book/:slug/contact', async (req, res) => {
   try {
-    if (readLimited(clientIp(req))) {
+    if (readLimited(getClientIp(req))) {
       return res.status(429).json({ status: 'error', code: 'rate_limited' });
     }
     const view = await loadView(req.db, req.params.slug);
@@ -550,7 +525,7 @@ function slotProviders(view, providerParam) {
 
 router.get('/api/book/:slug/slots', async (req, res) => {
   try {
-    if (readLimited(clientIp(req))) {
+    if (readLimited(getClientIp(req))) {
       return res.status(429).json({ status: 'error', code: 'rate_limited' });
     }
     const view = await loadView(req.db, req.params.slug);
@@ -850,7 +825,7 @@ router.post('/api/book/:slug', async (req, res) => {
     if (!view) return res.status(404).json({ status: 'error', code: 'not_found' });
 
     const body = req.body || {};
-    const ip = clientIp(req);
+    const ip = getClientIp(req);
 
     // ── 1. Rate limit (silent fake success — bots can't tell) ──
     if (postLimited(ip)) return fakeSuccess(res, view);

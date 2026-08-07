@@ -85,6 +85,7 @@ const { resolve: resolveTemplate } = require('../services/resolverService');
 const { getSettings } = require('../services/settingsService');
 const { FIRM_TZ }     = require('../services/timezoneService');
 const { alert }       = require('../lib/alerting');
+const { makeLimiter, getClientIp } = require('../lib/rateLimiter');
 
 // ─────────────────────────────────────────────────────────────
 // Constants
@@ -102,33 +103,14 @@ const DEFAULT_CUTOFF_MIN   = 240;
 const DEFAULT_HORIZON_DAYS = 30;
 
 // ─────────────────────────────────────────────────────────────
-// Helpers — IP + rate limiting (pattern copied from routes/booking.js)
+// Helpers — rate limiting
 // ─────────────────────────────────────────────────────────────
-
-function clientIp(req) {
-  return req.headers['cf-connecting-ip'] || req.ip;
-}
-
-function makeLimiter(windowMs, max) {
-  const buckets = new Map(); // ip -> { windowStart, count }
-  setInterval(() => {
-    const cutoff = Date.now() - windowMs;
-    for (const [ip, b] of buckets) {
-      if (b.windowStart < cutoff) buckets.delete(ip);
-    }
-  }, 5 * 60 * 1000).unref();
-
-  return function limited(ip) {
-    const now = Date.now();
-    let b = buckets.get(ip);
-    if (!b || now - b.windowStart >= windowMs) {
-      b = { windowStart: now, count: 0 };
-      buckets.set(ip, b);
-    }
-    b.count += 1;
-    return b.count > max;
-  };
-}
+//
+// makeLimiter + getClientIp come from lib/rateLimiter (the local makeLimiter
+// they replace was byte-identical). Keying is the LAST X-Forwarded-For
+// element — NOT the old cf-connecting-ip||req.ip: app.4lsg.com is direct
+// Cloud Run, so cf-connecting-ip was client-suppliable and handed every
+// request a fresh bucket. Windows/maxes unchanged.
 
 const readLimited = makeLimiter(60 * 1000, 30);      // GET summary + slots
 const postLimited = makeLimiter(10 * 60 * 1000, 5);  // cancel / reschedule
@@ -435,7 +417,7 @@ router.get('/api/manage-config', async (req, res) => {
 
 router.get('/api/m/:token', async (req, res) => {
   try {
-    if (readLimited(clientIp(req))) {
+    if (readLimited(getClientIp(req))) {
       return res.status(429).json({ status: 'error', code: 'rate_limited' });
     }
     const appt = await loadApptByToken(req.db, req.params.token);
@@ -519,7 +501,7 @@ router.get('/api/m/:token', async (req, res) => {
 
 router.get('/api/m/:token/slots', async (req, res) => {
   try {
-    if (readLimited(clientIp(req))) {
+    if (readLimited(getClientIp(req))) {
       return res.status(429).json({ status: 'error', code: 'rate_limited' });
     }
     const appt = await loadApptByToken(req.db, req.params.token);
@@ -564,7 +546,7 @@ router.get('/api/m/:token/slots', async (req, res) => {
 
 router.post('/api/m/:token/cancel', async (req, res) => {
   try {
-    if (postLimited(clientIp(req))) {
+    if (postLimited(getClientIp(req))) {
       return res.status(429).json({ status: 'error', code: 'rate_limited' });
     }
     const appt = await loadApptByToken(req.db, req.params.token);
@@ -611,7 +593,7 @@ router.post('/api/m/:token/cancel', async (req, res) => {
 
 router.post('/api/m/:token/reschedule', async (req, res) => {
   try {
-    if (postLimited(clientIp(req))) {
+    if (postLimited(getClientIp(req))) {
       return res.status(429).json({ status: 'error', code: 'rate_limited' });
     }
     const appt = await loadApptByToken(req.db, req.params.token);
