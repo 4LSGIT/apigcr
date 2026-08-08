@@ -5,31 +5,32 @@
  *
  *   npx jest tests/courtexecutor.eventlog.test.js
  *
- * The executor's doCreateEvent used to run a RAW `INSERT INTO events`, which
- * wrote NO `log` row — so court-created events were invisible in the case /
- * contact activity feed while wf24's (created via createEvent) were not. The
- * change routes the executor through eventService.createEvent. The ONLY intended
- * behavior change is that a `log` row now appears. createEvent does three other
- * things the raw INSERT did not; all three are neutralized by the exact argument
- * set doCreateEvent passes. These tests assert BOTH halves:
+ * The executor's doCreateEvent used to run a RAW `INSERT INTO events` (no log
+ * row → invisible in the activity feed); it now routes through
+ * eventService.createEvent. The SHOW-CAUSE ARC (2026-08) then un-neutralized
+ * two of createEvent's side effects on purpose. Current contract under test:
  *
  *   THE FIX          — a live court create produces a `log` row (type 'event',
  *                      link_type 'case', link_id the docket, action 'created'),
  *                      via the REAL createEvent path (logService is spied only to
  *                      capture the write, NOT to replace createEvent).
- *   NEUTRALIZED #2   — event_calendar_id 'none' → GCal sync is a no-op (gcal
- *                      never called; 'none' persisted on the row).
- *   NEUTRALIZED #3   — no `reminder` key → no reminder task spawned.
- *   NEUTRALIZED #4   — dedupe:false → the executor's OWN upstream findDuplicateEvent
- *                      guard still owns the 'event_exists' / 'event_slot_exists'
- *                      skip-reason contract, and createEvent is never reached on a
- *                      dup (no double-guard).
- *   ROW SHAPE        — event_created_by NULL (acting_user_id 0), event_with NULL,
- *                      event_length NULL — identical to the raw INSERT's row
- *                      (the raw INSERT omitted with/length; DB defaults are NULL,
- *                      verified against live rows). Notably event_with is NULL
- *                      even for a TIMED event (older executor rows carried
- *                      event_with=1; this change does NOT reintroduce that).
+ *   CALENDAR POLICY  — timed events persist event_calendar_id 'primary'
+ *                      (Stuart's own Google calendar) and event_with=1 (blocks
+ *                      only SS in availabilityService); all-day events persist
+ *                      calendar_id NULL (firm group calendar) and with NULL
+ *                      (all-day never blocks). GCal sync is LIVE for both.
+ *   SHOW CAUSE       — an OSC create ALSO (a) converges cases.show_cause to the
+ *                      hearing datetime — including on a dedup-skip, so email
+ *                      replays converge the column — and (b) spawns a
+ *                      filing-fee reminder task to billing (app_settings
+ *                      billing_tasks_to, fallback user 5), due clamped to
+ *                      today. Non-show-cause types get NO reminder.
+ *   DEDUP CONTRACT   — dedupe:false → the executor's OWN upstream
+ *                      findDuplicateEvent guard still owns the 'event_exists' /
+ *                      'event_slot_exists' skip-reason strings, and createEvent
+ *                      is never reached on a dup (no double-guard).
+ *   ROW SHAPE        — event_created_by NULL (acting_user_id 0), event_length
+ *                      NULL, AI_DISCLAIMER note, all_day derived from time.
  *   DRY-RUN          — dry-run creates NOTHING: createEvent is never invoked.
  *
  * db-stub convention mirrors tests/eventDedup.phaseB.test.js: a stateful stub
@@ -188,9 +189,11 @@ function makeDb(seedEvents = []) {
       return [row ? [{ ...row }] : []];
     }
 
-    // ── _normalizeEventWith users lookup (never hit: event_with is null) ────
+    // ── _normalizeEventWith users lookup — SS (user 1) IS a provider, matching
+    //    the live row (users.does_appts=1 verified 2026-08). Timed court events
+    //    now pass event_with=1 through this validator.
     if (/FROM users WHERE user = \? AND does_appts = 1/i.test(sql)) {
-      return [[]];
+      return [Number(params[0]) === 1 ? [{ user: 1 }] : []];
     }
 
     // ── Generic fallback: court_ai_log INSERT, ai_change_log INSERT, the
@@ -228,9 +231,14 @@ function createEventPayload(fields, { messageId = 'court-eventlog-run', caseNumb
 beforeEach(() => {
   eventService.createEvent   = jest.fn((...a) => realCreateEvent(...a));
   logService.createLogEntry  = jest.fn(async () => 999);     // capture the log write
-  gcalService.createEvent    = jest.fn(async () => ({ id: 'gcal_should_not_be_called' }));
-  taskService.createTask     = jest.fn(async () => 888);     // reminder task target
+  gcalService.createEvent    = jest.fn(async () => ({ id: 'gcal_evt_1' }));
+  taskService.createTask     = jest.fn(async () => ({ task_id: 888 })); // spawnReminderTask reads .task_id
 });
+
+// createEvent fires syncEventToCalendar + spawnReminderTask WITHOUT awaiting
+// (`.catch()` fire-and-forget). Flush the microtask/immediate queue so those
+// spies settle deterministically before asserting on them.
+const flushAsync = () => new Promise((r) => setImmediate(r));
 afterAll(() => {
   eventService.createEvent  = realCreateEvent;
 });
@@ -239,9 +247,11 @@ afterAll(() => {
 // 1. THE FIX + neutralized deltas — one live create through the REAL createEvent.
 // ─────────────────────────────────────────────────────────────
 describe('live court create → createEvent', () => {
-  // A TIMED event on purpose: proves event_with stays NULL even when timed
-  // (legacy executor rows carried event_with=1 for timed events; this change
-  // must not reintroduce that).
+  // A TIMED Show Cause on purpose: exercises the calendar policy (timed →
+  // 'primary' + event_with=1), the show_cause column write, AND the billing
+  // reminder task in one create. Date is intentionally "today or past" —
+  // the reminder due-date clamp must never let spawnReminderTask's past-due
+  // guard silently refuse the task.
   const FIELDS = {
     event_type: 'Show Cause',
     event_title: 'Show Cause Hearing',
@@ -272,27 +282,57 @@ describe('live court create → createEvent', () => {
     expect(appliedEvent.entity_id).toBe(String(evId));
   });
 
-  test('does NOT spawn a reminder task (no reminder passed) — neutralized #3', async () => {
+  test('Show Cause spawns the billing reminder task (fallback user 5, due clamped to today)', async () => {
     const db = makeDb([]);
     await executeCourtActions(db, { ...createEventPayload(FIELDS), dryRun: false });
+    await flushAsync(); // spawnReminderTask is fire-and-forget inside createEvent
+    expect(taskService.createTask).toHaveBeenCalledTimes(1);
+    const t = taskService.createTask.mock.calls[0][1];
+    expect(t.to).toBe(5);                          // app_settings read misses → fallback Shoshana
+    expect(t.link_type).toBe('event');
+    expect(t.title).toMatch(/^Filing fee — Show Cause 2026-08-07/);
+    // due = hearing − 7d clamped to today (never < today, so the past-due
+    // guard in spawnReminderTask can never refuse it).
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.FIRM_TIMEZONE || 'UTC' }).format(new Date());
+    expect(t.due >= today || t.due === today).toBe(true);
+  });
+
+  test('non-show-cause court event spawns NO reminder task', async () => {
+    const db = makeDb([]);
+    await executeCourtActions(db, {
+      ...createEventPayload({ event_type: 'Confirmation Hearing', event_title: 'Confirmation Hearing', date: '2026-09-14', time: '10:00' }),
+      dryRun: false,
+    });
+    await flushAsync();
     expect(taskService.createTask).not.toHaveBeenCalled();
   });
 
-  test('persists event_calendar_id "none" and never calls GCal — neutralized #2', async () => {
+  test('timed event persists calendar_id "primary" + event_with 1, and GCal sync fires', async () => {
     const db = makeDb([]);
     await executeCourtActions(db, { ...createEventPayload(FIELDS), dryRun: false });
     const params = db.eventInserts[0].params;
-    expect(params[I.calendar_id]).toBe('none');
-    expect(gcalService.createEvent).not.toHaveBeenCalled();
+    expect(params[I.calendar_id]).toBe('primary'); // Stuart's own calendar
+    expect(params[I.with]).toBe(1);                // blocks only SS's availability
+    await flushAsync(); // syncEventToCalendar is fire-and-forget
+    expect(gcalService.createEvent).toHaveBeenCalledTimes(1);
   });
 
-  test('event_created_by NULL, event_with NULL, event_length NULL — row shape unchanged', async () => {
+  test('OSC converges cases.show_cause to the hearing datetime', async () => {
+    const db = makeDb([]);
+    const res = await executeCourtActions(db, { ...createEventPayload(FIELDS), dryRun: false });
+    const sc = res.applied.find(a => a.entity_type === 'case' && a.field === 'show_cause');
+    expect(sc).toBeTruthy();
+    expect(sc.new_value).toBe('2026-08-07 09:30');
+    // The UPDATE actually ran (live, not dry).
+    expect(db.query.mock.calls.some(([sql]) => /UPDATE cases SET show_cause=\?/i.test(sql))).toBe(true);
+  });
+
+  test('event_created_by NULL, event_length NULL — row shape', async () => {
     const db = makeDb([]);
     await executeCourtActions(db, { ...createEventPayload(FIELDS), dryRun: false });
     const params = db.eventInserts[0].params;
     expect(params[I.created_by]).toBeNull();   // acting_user_id 0 → NULL
-    expect(params[I.with]).toBeNull();         // timed event, still NULL (no legacy =1)
-    expect(params[I.length]).toBeNull();       // matches raw INSERT omission (DB default NULL)
+    expect(params[I.length]).toBeNull();       // DB default NULL (availability blocks 60 min)
     expect(params[I.note]).toBe(AI_DISCLAIMER);
     expect(params[I.all_day]).toBe(0);         // timed → 0 (derived from event_time)
     expect(params[I.time]).toBe('09:30:00');   // normalized
@@ -300,7 +340,7 @@ describe('live court create → createEvent', () => {
     expect(params[I.link_id]).toBe('26-47542');
   });
 
-  test('all-day court event derives event_all_day=1 and event_time NULL', async () => {
+  test('all-day court event: all_day=1, time NULL, calendar NULL (firm), with NULL (never blocks)', async () => {
     const db = makeDb([]);
     const allDay = { event_type: 'poc_due', event_title: 'Proof of Claim Deadline', date: '2026-09-11' };
     await executeCourtActions(db, { ...createEventPayload(allDay), dryRun: false });
@@ -308,6 +348,24 @@ describe('live court create → createEvent', () => {
     expect(params[I.all_day]).toBe(1);
     expect(params[I.time]).toBeNull();
     expect(params[I.with]).toBeNull();
+    expect(params[I.calendar_id]).toBeNull();  // firm group calendar via app_settings
+  });
+
+  test('dedup-skipped OSC replay STILL converges cases.show_cause', async () => {
+    // Seed the exact natural key so findDuplicateEvent hits → 'event_exists'.
+    const db = makeDb([{
+      event_id: 601, event_link_type: 'case_number', event_link_id: '26-47542',
+      event_type: 'Show Cause', event_title: 'Show Cause Hearing',
+      event_date: '2026-08-07', event_time: '09:30:00',
+    }]);
+    const res = await executeCourtActions(db, { ...createEventPayload(FIELDS), dryRun: false });
+    const sk = res.skipped.find(s => s.type === 'create_event');
+    expect(sk && sk.reason).toBe('event_exists');
+    expect(eventService.createEvent).not.toHaveBeenCalled();
+    // …but the case column still converged (writeShowCauseColumn runs BEFORE
+    // the dedup guard, exactly so replays repair a missing/ stale column).
+    const sc = res.applied.find(a => a.entity_type === 'case' && a.field === 'show_cause');
+    expect(sc && sc.new_value).toBe('2026-08-07 09:30');
   });
 });
 

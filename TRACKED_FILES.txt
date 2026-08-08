@@ -398,6 +398,7 @@ scripts/add-path-headers.js
 scripts/backfill-password-hashes.js
 scripts/backfillAppts.js
 scripts/backfillCampaignContacts.js
+scripts/backfill_court_event_calendars_2026_08.js
 scripts/cleanup_court_event_dupes_2026_07.js
 scripts/courtBacktest.js
 scripts/courtCitationTest.js
@@ -512,6 +513,7 @@ tests/aiService.attachments.test.js
 tests/apiAppSettings.validate.test.js
 tests/apikeys.k1.test.js
 tests/caseId.test.js
+tests/courtexecutor.cancel.test.js
 tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
 tests/esignActionsUi.test.js

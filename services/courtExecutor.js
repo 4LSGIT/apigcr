@@ -28,12 +28,26 @@
 //              does localToUTC itself AND owns cases.case_341_current /
 //              341_appt_id (we never write those).
 //   event    : event_link_type='case_number', event_link_id=resolved.case_number
-//              (SHORT docket), event_status='Scheduled', event_calendar_id='none',
-//              event_created_by=NULL, event_all_day=(time?0:1), event_time=time||NULL.
+//              (SHORT docket), event_status='Scheduled', event_created_by=NULL,
+//              event_all_day=(time?0:1), event_time=time||NULL.
+//              CALENDAR/BLOCKING POLICY (show-cause arc, 2026-08):
+//                timed   → event_calendar_id='primary' (Stuart's own Google
+//                          calendar — gcal credential 11 IS stuart@4lsg.com),
+//                          event_with=COURT_EVENT_PROVIDER (blocks only SS in
+//                          availabilityService, not RG's intake slots).
+//                all-day → event_calendar_id=NULL (firm group calendar via
+//                          app_settings gcal_calendar_id, same as wf24
+//                          deadlines), event_with=NULL. All-day never blocks
+//                          (normalizeBusyForProvider skips event_all_day=1).
+//              Show Cause events ALSO get a reminder task (billing_tasks_to →
+//              Shoshana) and write cases.show_cause — see doCreateEvent.
 //
 // ── update_case_fields COLUMN POLICY ──────────────────────────────────────
 //   fill_only  (write only if current NULL/''): case_file_date, case_judge, case_close_date
-//   overwrite  (write if new !== current)     : case_chapter, case_trustee, case_objection
+//   overwrite  (write if new !== current)     : case_chapter, case_trustee, case_objection,
+//                                               show_cause (datetime — normally
+//                                               written executor-side on an OSC,
+//                                               allowlisted so revert works)
 //   FORBIDDEN  (ignored)                       : case_341_current, 341_appt_id, anything else
 // A Ch7-341-on-a-Ch13 CONVERSION needs no special code: chapter/trustee/objection
 // overwrite here, and the 341 supersedes via apptService.
@@ -49,8 +63,12 @@ const CASE_FIELD_POLICY = {
   case_chapter:    'overwrite',
   case_trustee:    'overwrite',
   case_objection:  'overwrite',
+  show_cause:      'overwrite',
 };
 const CASE_DATE_FIELDS = new Set(['case_file_date', 'case_close_date', 'case_objection']);
+// DATETIME columns get their own normalize/compare ('YYYY-MM-DD HH:MM') —
+// CASE_DATE_FIELDS' toDatePart would silently drop the hearing time.
+const CASE_DATETIME_FIELDS = new Set(['show_cause']);
 
 const { resolveCase } = require('../lib/courtResolve');
 const { checkCitations } = require('../lib/courtCitation');
@@ -80,6 +98,7 @@ const {
   titlesSimilarLoose,
   _titleCore,
   _titleNorm,
+  _normType,
 } = eventService;
 
 // Minimal, present provenance marker stamped on the NOTE field of every
@@ -89,6 +108,56 @@ const {
 // already lives in ai_change_log; this is the human-facing "don't trust blindly"
 // flag that appears in BOTH dry-run plans and live writes.
 const AI_DISCLAIMER = '[AI] Auto-created from a court email — verify.';
+
+// ── COURT-EVENT CALENDAR / BLOCKING / REMINDER POLICY (show-cause arc) ─────
+// Timed court events are attendance obligations of the attorney: they land on
+// Stuart's OWN Google calendar ('primary' resolves to stuart@4lsg.com because
+// gcal credential 11 is his Workspace OAuth) and block only HIS availability.
+// All-day court events (deadlines) are firm-tracking artifacts: they go to the
+// shared firm calendar (event_calendar_id NULL → app_settings gcal_calendar_id)
+// and never block anyone. Change TIMED_COURT_CALENDAR_ID to move hearings to a
+// different calendar; both values ride through eventService untouched.
+const TIMED_COURT_CALENDAR_ID = 'primary';
+// Blocks only this provider's slots in availabilityService (validated against
+// users.does_appts=1 by eventService._normalizeEventWith — user 1 = Stuart).
+const COURT_EVENT_PROVIDER = 1;
+// Show Cause reminder task assignee: app_settings 'billing_tasks_to', falling
+// back to user 5 (Shoshana — filing-fee collection is a billing function; the
+// pre-automation routine was Stuart forwarding every OSC email to her).
+const SHOW_CAUSE_TASK_FALLBACK_USER = 5;
+// Reminder due date = hearing date minus this many days (clamped to today so
+// spawnReminderTask's past-due guard never silently refuses a short-notice OSC).
+const SHOW_CAUSE_TASK_LEAD_DAYS = 7;
+
+const { FIRM_TZ } = require('./timezoneService');
+
+/** Is this create/cancel target a show-cause event? Tolerates the type drift
+ *  already in production ('Show Cause' vs 'Show Cause Hearing'). */
+function isShowCauseType(eventType) {
+  return /show\s*cause/i.test(String(eventType || ''));
+}
+
+/** 'YYYY-MM-DD' minus n days (pure date math, UTC-safe for date-only). */
+function dateMinusDays(dateStr, n) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Today as 'YYYY-MM-DD' in the firm timezone. */
+function firmToday() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: FIRM_TZ }).format(new Date());
+}
+
+/** mysql DATETIME value (Date | string) → 'YYYY-MM-DD HH:MM' | null. */
+function toDateTimeMin(v) {
+  if (v == null || v === '') return null;
+  const d = toDatePart(v);
+  if (!d) return null;
+  const t = toTimePart(v) || '00:00';
+  return `${d} ${t}`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // small helpers
@@ -365,6 +434,65 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
     });
   };
 
+  // Executor-derived cases.show_cause write ('YYYY-MM-DD HH:MM:00' datetime).
+  // Called from every path that establishes or moves a Show Cause hearing:
+  // doCreateEvent (create AND dedup-skip — a replayed OSC email must still
+  // converge the column) and the update_event reschedule branch. Compare-first
+  // so replays are noops; pushes an ai_change_log row so revert restores it.
+  // NOT an AI action — the datetime is derived from the already-cited event
+  // fields, so no prompt change and no new citation surface.
+  async function writeShowCauseColumn(idx, dateStr, timeStr) {
+    if (!dateStr) return;
+    if (!curCaseRow) {
+      const [rows] = await db.query(
+        `SELECT case_file_date, case_judge, case_close_date,
+                case_chapter, case_trustee, case_objection, show_cause
+           FROM cases WHERE case_id=? LIMIT 1`,
+        [resolved.case_id]
+      );
+      curCaseRow = rows[0] || {};
+    }
+    const curNorm = toDateTimeMin(curCaseRow.show_cause);
+    const newNorm = `${dateStr} ${timeStr || '00:00'}`;
+    if (curNorm === newNorm) return; // converged — no write, no change row
+    if (!effectiveDryRun) {
+      await db.query(`UPDATE cases SET show_cause=? WHERE case_id=?`, [`${newNorm}:00`, resolved.case_id]);
+      curCaseRow.show_cause = `${newNorm}:00`;
+    }
+    pushChange('case', resolved.case_id, 'show_cause', curNorm, newNorm);
+    applied.push({ action_index: idx, type: 'update_case_fields', entity_type: 'case',
+      entity_id: resolved.case_id, field: 'show_cause', old_value: curNorm, new_value: newNorm });
+    appliedOrIntended++;
+  }
+
+  // Inverse of writeShowCauseColumn: a dissolved/vacated OSC means there is no
+  // pending show cause, full stop — so this runs on EVERY show-cause
+  // cancel_event, even when no event row was found to cancel (the column may
+  // predate the event pipeline, or the event may already be Canceled from a
+  // prior replay). Compare-first noop keeps replays quiet; the change row makes
+  // revert restore the prior datetime.
+  async function clearShowCauseColumn(idx) {
+    if (!curCaseRow) {
+      const [rows] = await db.query(
+        `SELECT case_file_date, case_judge, case_close_date,
+                case_chapter, case_trustee, case_objection, show_cause
+           FROM cases WHERE case_id=? LIMIT 1`,
+        [resolved.case_id]
+      );
+      curCaseRow = rows[0] || {};
+    }
+    const curNorm = toDateTimeMin(curCaseRow.show_cause);
+    if (curNorm == null) return; // already clear — no write, no change row
+    if (!effectiveDryRun) {
+      await db.query(`UPDATE cases SET show_cause=NULL WHERE case_id=?`, [resolved.case_id]);
+      curCaseRow.show_cause = null;
+    }
+    pushChange('case', resolved.case_id, 'show_cause', curNorm, null);
+    applied.push({ action_index: idx, type: 'update_case_fields', entity_type: 'case',
+      entity_id: resolved.case_id, field: 'show_cause', old_value: curNorm, new_value: null });
+    appliedOrIntended++;
+  }
+
   // create_event used both by the create_event action AND by the ambiguous
   // update_event fallback. Honors the natural-key guard; returns event_id|null.
   async function doCreateEvent(idx, fields) {
@@ -379,7 +507,11 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       event_all_day: time ? 0 : 1,
       event_location: fields.location || null,
       event_status: 'Scheduled',
-      event_calendar_id: 'none',
+      // CALENDAR/BLOCKING POLICY (see module constants): timed hearings go on
+      // Stuart's own calendar and block only his availability; all-day
+      // deadlines go to the firm group calendar and never block.
+      event_calendar_id: time ? TIMED_COURT_CALENDAR_ID : null,
+      event_with: time ? COURT_EVENT_PROVIDER : null,
       event_created_by: null,
       // Provenance marker. The model does not supply an event note, so this is
       // the whole note. Built here (not inside the dry-run branch) so preview
@@ -390,6 +522,12 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       reviewReasons.push('event_missing_date');
       skipped.push({ action_index: idx, type: 'create_event', reason: 'event_missing_date' });
       return null;
+    }
+    // Show Cause ⇒ converge cases.show_cause BEFORE the dedup guard, so a
+    // replayed / second-copy OSC email still sets the column even when the
+    // event itself dedup-skips.
+    if (isShowCauseType(ev.event_type)) {
+      await writeShowCauseColumn(idx, ev.event_date, time);
     }
     // ── DUPLICATE GUARD — one shared helper, three rules ───────────────────
     // Replaces the two inline SELECTs that used to live here (the exact
@@ -434,27 +572,53 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       // via createEvent, were not (Slice 4 finding). The log row is the ENTIRE
       // intended behavior change.
       //
-      // createEvent does three other things the raw INSERT did not; all three
-      // are deliberately neutralized so nothing else about a court event changes:
-      //   - GCal sync: event_calendar_id:'none' makes _shouldSyncGcal
-      //     short-circuit, so syncEventToCalendar is a no-op (court events do NOT
-      //     start syncing to GCal here — that is a separate, unmade decision).
-      //   - Reminder task: no `reminder` key is passed, so spawnReminderTask is
-      //     never reached (court events do NOT grow reminder tasks here).
+      // createEvent side effects, deliberately configured (show-cause arc —
+      // this replaces the old "all three neutralized" stance):
+      //   - GCal sync: LIVE. ev.event_calendar_id is 'primary' (timed → SS's
+      //     own calendar) or NULL (all-day → firm group calendar). Only the
+      //     literal 'none' suppresses sync, and nothing writes 'none' anymore.
+      //   - Blocking: ev.event_with = COURT_EVENT_PROVIDER on timed events, so
+      //     hearings block Stuart's availability only — not RG's intake slots
+      //     the way event_with NULL (firm-wide) did.
+      //   - Reminder task: Show Cause ONLY. Filing-fee collection is billing —
+      //     the task goes to app_settings billing_tasks_to (fallback Shoshana),
+      //     due LEAD_DAYS before the hearing, clamped to today so a
+      //     short-notice OSC never trips spawnReminderTask's past-due refusal.
+      //     cancelEvent → cancelReminderTasks deletes it automatically when the
+      //     OSC is dissolved (Slice B) or the event is reverted. Every other
+      //     court event type still gets NO reminder.
       //   - Dedupe: dedupe:false. doCreateEvent already ran findDuplicateEvent
       //     ABOVE and owns the 'event_exists'/'event_slot_exists' skip-reason
       //     contract that court.js DEDUP_SKIP_REASONS + the weekly digest depend
       //     on. dedupe:true would double-guard and could bypass that contract.
       //
-      // Value mappings preserve the raw INSERT's row shape exactly:
+      // Value mappings:
       //   - acting_user_id:0 → createEvent's createdBy rule writes event_created_by
       //     NULL (matches the old event_created_by:null).
       //   - event_all_day is DERIVED by createEvent from event_time (time → 0,
-      //     no time → 1), matching the old ev.event_all_day = time ? 0 : 1.
+      //     no time → 1), matching ev.event_all_day = time ? 0 : 1.
       //   - event_status is hard-coded 'Scheduled' inside createEvent (matches).
-      //   - event_with / event_length / event_link are unset here and default to
-      //     NULL — identical to the columns the raw INSERT omitted (DB defaults
-      //     are NULL; verified against live rows).
+      //   - event_length / event_link stay unset → NULL (availabilityService
+      //     defaults a timed event's block to 60 min).
+      let reminder = null;
+      if (isShowCauseType(ev.event_type)) {
+        let to = SHOW_CAUSE_TASK_FALLBACK_USER;
+        try {
+          const [[s]] = await db.query(
+            `SELECT \`value\` FROM app_settings WHERE \`key\`='billing_tasks_to' LIMIT 1`);
+          if (s && Number(s.value) > 0) to = Number(s.value);
+        } catch (_) { /* setting read failure → fallback user */ }
+        const today = firmToday();
+        let due = dateMinusDays(ev.event_date, SHOW_CAUSE_TASK_LEAD_DAYS);
+        if (due < today) due = today;
+        const t = ev.event_time ? ` ${ev.event_time}` : '';
+        reminder = {
+          to,
+          date: due,
+          // spawnReminderTask clamps >100 chars; keep it tight anyway.
+          title: `Filing fee — Show Cause ${ev.event_date}${t} — ${caseName || resolved.case_number}`,
+        };
+      }
       const created = await eventService.createEvent(db, {
         event_type:        ev.event_type,
         event_link_type:   ev.event_link_type,   // 'case_number'
@@ -464,10 +628,11 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         event_time:        ev.event_time,        // createEvent derives all_day from this
         event_location:    ev.event_location,
         event_note:        ev.event_note,        // AI_DISCLAIMER
-        event_calendar_id: 'none',               // keeps GCal sync a no-op
+        event_calendar_id: ev.event_calendar_id, // 'primary' (timed) | NULL (all-day)
+        event_with:        ev.event_with,        // SS-only blocking on timed
         acting_user_id:    0,                     // system-authored → event_created_by NULL
         dedupe:            false,                 // executor already guarded upstream
-        // NO reminder key — court events must not grow reminder tasks here.
+        ...(reminder && { reminder }),
       });
       eventId = created.event_id;
     }
@@ -603,11 +768,23 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
         const oldSummary = eventSummary(toDatePart(old.event_date), toTimePart(old.event_time), old.event_location);
         const newSummary = eventSummary(newDate, newTime, newLoc);
         if (!effectiveDryRun) {
-          await db.query(
-            `UPDATE events SET event_date=?, event_time=?, event_all_day=?, event_location=?
-              WHERE event_id=?`,
-            [newDate, newTime, newTime ? 0 : 1, newLoc, old.event_id]
-          );
+          // Through eventService.updateEvent, NOT raw SQL: date/time/location
+          // are GCAL_AFFECTING, so updateEvent delete-then-recreates the Google
+          // Calendar copy. The raw UPDATE this replaces left a stale GCal entry
+          // on every adjournment once court events started syncing (and was the
+          // pattern the 2026-07 dupe-cleanup script warned against copying).
+          // Also writes an 'updated' log row → the reschedule surfaces in the
+          // case activity feed.
+          await eventService.updateEvent(db, old.event_id, {
+            event_date:     newDate,
+            event_time:     newTime,
+            event_all_day:  newTime ? 0 : 1,
+            event_location: newLoc,
+          }, 0);
+        }
+        // A rescheduled Show Cause hearing moves cases.show_cause with it.
+        if (isShowCauseType(eventType) || isShowCauseType(old.event_title)) {
+          await writeShowCauseColumn(i, toDatePart(newDate) || newDate, newTime);
         }
         // Slice 4b D4: persist STRUCTURED before/after state (not lossy summaries)
         // so revertCourtActions can reconstruct the row. Summaries stay in
@@ -644,11 +821,98 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
       continue;
     }
 
+    if (type === 'cancel_event') {
+      // A dissolved/vacated order (prompt v6): find the matching event for
+      // this case and cancel it via eventService.cancelEvent — which also
+      // deletes the Google Calendar copy, soft-deletes the reminder task(s)
+      // (Show Cause spawns one at create; dissolve kills it for free), and
+      // writes a 'canceled' log row.
+      const eventType = fields.event_type || null;
+      const wantShow = isShowCauseType(eventType) || isShowCauseType(fields.event_title);
+
+      // Show cause dissolved ⇒ no pending show cause. Converge the case column
+      // FIRST, unconditionally — even if the event is already Canceled (replay)
+      // or was never created (column predates the pipeline).
+      if (wantShow) {
+        await clearShowCauseColumn(i);
+      }
+
+      // Candidate pool: ALL events of the case, any status, any date. No
+      // event_type<=>? in SQL (unlike update_event) because the live data
+      // already carries type drift ('Show Cause' vs 'Show Cause Hearing') —
+      // matching happens in JS. No date floor: the dissolution email is
+      // authoritative, and canceling a stale past-dated Scheduled row is
+      // hygiene, not a hazard.
+      const [candidates] = await db.query(
+        `SELECT event_id, event_type, event_title, event_date, event_time,
+                event_all_day, event_location, event_status, event_calendar_id
+           FROM events
+          WHERE event_link_type='case_number' AND event_link_id=?`,
+        [resolved.case_number]
+      );
+      const sameType = (m) =>
+        eventType && m.event_type && _normType(m.event_type) === _normType(eventType);
+      const sameTitle = (m) =>
+        fields.event_title && titlesMatch(m.event_title, fields.event_title, identityTokens);
+      const showDrift = (m) =>
+        wantShow && (isShowCauseType(m.event_type) || isShowCauseType(m.event_title));
+      let matches = candidates.filter((m) => sameType(m) || sameTitle(m) || showDrift(m));
+      // A stated date is a disambiguator, never a hard filter (dissolution
+      // emails usually omit it).
+      if (fields.date) {
+        const dated = matches.filter((m) => toDatePart(m.event_date) === fields.date);
+        if (dated.length) matches = dated;
+      }
+      const scheduled = matches.filter((m) => m.event_status === 'Scheduled');
+
+      if (scheduled.length === 1) {
+        const tgt = scheduled[0];
+        if (!effectiveDryRun) {
+          await eventService.cancelEvent(db, tgt.event_id, 0);
+        }
+        // Structured before-state so revertCourtActions can restore the row
+        // AND resync GCal (calendar_id is what the revert's updateEvent
+        // re-asserts to trigger the recreate).
+        const oldState = JSON.stringify({
+          status: 'Scheduled',
+          date: toDatePart(tgt.event_date),
+          time: toTimePart(tgt.event_time),
+          all_day: tgt.event_all_day,
+          location: tgt.event_location == null ? null : tgt.event_location,
+          calendar_id: tgt.event_calendar_id == null ? null : tgt.event_calendar_id,
+        });
+        pushChange('event', String(tgt.event_id), 'cancel', oldState, JSON.stringify({ status: 'Canceled' }));
+        applied.push({ action_index: i, type, entity_type: 'event', entity_id: String(tgt.event_id),
+          summary: `cancel ${tgt.event_type || 'event'}: ${tgt.event_title} @ ${eventSummary(toDatePart(tgt.event_date), toTimePart(tgt.event_time), tgt.event_location)}` });
+        appliedOrIntended++;
+      } else if (scheduled.length === 0 && matches.length > 0) {
+        // Matched only non-Scheduled rows — a replayed dissolution, or a human
+        // already canceled it. Converged; quiet skip, NO review.
+        skipped.push({ action_index: i, type, reason: 'cancel_already_done',
+          event_ids: matches.map((m) => m.event_id) });
+      } else if (scheduled.length === 0) {
+        // Nothing matched at all — the OSC event was never created (or lives
+        // under a shape the matcher can't see). A human should look.
+        reviewReasons.push('cancel_no_match');
+        skipped.push({ action_index: i, type, reason: 'cancel_no_match' });
+      } else {
+        // 2+ Scheduled matches — canceling more than one risks killing a
+        // DIFFERENT obligation (the 26-44274 same-slot Confirmation+OSC pair
+        // is the standing false-positive proof). Cancel nothing; queue.
+        reviewReasons.push('cancel_ambiguous');
+        skipped.push({ action_index: i, type, reason: 'cancel_ambiguous',
+          event_ids: scheduled.map((m) => m.event_id) });
+      }
+      continue;
+    }
+
     if (type === 'update_case_fields') {
       if (!curCaseRow) {
+        // Column list MUST stay identical to writeShowCauseColumn's lazy
+        // loader — they share the curCaseRow cache.
         const [rows] = await db.query(
           `SELECT case_file_date, case_judge, case_close_date,
-                  case_chapter, case_trustee, case_objection
+                  case_chapter, case_trustee, case_objection, show_cause
              FROM cases WHERE case_id=? LIMIT 1`,
           [resolved.case_id]
         );
@@ -666,10 +930,16 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
           continue;
         }
         const isDate = CASE_DATE_FIELDS.has(col);
+        const isDateTime = CASE_DATETIME_FIELDS.has(col);
         const curRaw = curCaseRow[col];
 
         let curNorm, equal, occupied, writeVal;
-        if (isDate) {
+        if (isDateTime) {
+          curNorm = toDateTimeMin(curRaw);              // 'YYYY-MM-DD HH:MM' | null
+          writeVal = toDateTimeMin(newVal) || newVal;   // normalize incoming
+          equal = curNorm != null && curNorm === writeVal;
+          occupied = curNorm != null;
+        } else if (isDate) {
           curNorm = toDatePart(curRaw);                 // 'YYYY-MM-DD' | null
           writeVal = toDatePart(newVal) || newVal;      // normalize incoming
           equal = curNorm != null && curNorm === writeVal;
@@ -872,9 +1142,12 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
       if (!cur.length) { skipped.push({ change_log_id: id, reason: 'entity_missing' }); continue; }
 
       const isDate = CASE_DATE_FIELDS.has(field);
+      const isDateTime = CASE_DATETIME_FIELDS.has(field);
       const curVal = cur[0].v;
       let matches;
-      if (isDate) {
+      if (isDateTime) {
+        matches = toDateTimeMin(curVal) === toDateTimeMin(new_value);
+      } else if (isDate) {
         matches = toDatePart(curVal) === toDatePart(new_value);
       } else {
         matches = (curVal == null ? '' : String(curVal).trim()) === (new_value == null ? '' : String(new_value).trim());
@@ -882,7 +1155,7 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
       if (!matches) { skipped.push({ change_log_id: id, reason: 'modified_since' }); continue; }
 
       if (!dryRun) {
-        const writeBack = (old_value == null || old_value === '') && isDate ? null : old_value;
+        const writeBack = (old_value == null || old_value === '') && (isDate || isDateTime) ? null : old_value;
         await db.query(`UPDATE cases SET \`${field}\`=? WHERE case_id=?`, [writeBack, entity_id]);
       }
       await stamp(id);
@@ -899,7 +1172,12 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
       if (!cur.length) { skipped.push({ change_log_id: id, reason: 'already_gone' }); continue; }
       if (cur[0].event_status !== 'Scheduled') { skipped.push({ change_log_id: id, reason: 'already_gone' }); continue; }
       if (!dryRun) {
-        await db.query(`UPDATE events SET event_status='Canceled' WHERE event_id=?`, [entity_id]);
+        // Through eventService.cancelEvent, NOT raw SQL: also deletes the
+        // Google Calendar copy, soft-deletes the event's reminder task(s)
+        // (killing their scheduled due jobs), and writes a 'canceled' log row.
+        // The raw status flip this replaces orphaned all three — the exact
+        // defect the 2026-07 dupe-cleanup script documented and refused to copy.
+        await eventService.cancelEvent(db, entity_id, actingUserId);
       }
       await stamp(id);
       reverted.push({ change_log_id: id, entity_type, entity_id: String(entity_id), field, action: 'canceled' });
@@ -930,10 +1208,48 @@ async function revertCourtActions(db, { messageId, changeLogIds, dryRun = true, 
       if (!matches) { skipped.push({ change_log_id: id, reason: 'modified_since' }); continue; }
 
       if (!dryRun) {
-        await db.query(
-          `UPDATE events SET event_date=?, event_time=?, event_all_day=?, event_location=? WHERE event_id=?`,
-          [oldState.date, oldState.time, oldState.all_day, oldState.location, entity_id]
-        );
+        // Through eventService.updateEvent so the Google Calendar copy is
+        // delete-then-recreated at the restored slot (raw SQL left it stale).
+        await eventService.updateEvent(db, entity_id, {
+          event_date:     oldState.date,
+          event_time:     oldState.time,
+          event_all_day:  oldState.all_day,
+          event_location: oldState.location,
+        }, actingUserId);
+      }
+      await stamp(id);
+      reverted.push({ change_log_id: id, entity_type, entity_id: String(entity_id), field, action: 'restored' });
+      continue;
+    }
+
+    // ── event/cancel (cancel_event action, prompt v6) ───────────────────
+    // Restore a court-canceled event to Scheduled. Goes through
+    // eventService.updateEvent with the event's OWN calendar_id re-asserted:
+    // event_calendar_id is GCAL_AFFECTING, so updateEvent recreates the Google
+    // Calendar entry cancelEvent deleted (event_gcal is NULL post-cancel, so
+    // the resync path is a pure create). KNOWN GAP: the reminder task(s)
+    // cancelEvent soft-deleted are NOT resurrected — the reviewer recreates
+    // one by hand if the hearing is a Show Cause.
+    if (entity_type === 'event' && field === 'cancel') {
+      let oldState;
+      try { oldState = JSON.parse(old_value); } catch (_) {
+        skipped.push({ change_log_id: id, reason: 'unrevertable' });
+        continue;
+      }
+      const [cur] = await db.query(
+        `SELECT event_status, event_calendar_id FROM events WHERE event_id=? LIMIT 1`,
+        [entity_id]
+      );
+      if (!cur.length) { skipped.push({ change_log_id: id, reason: 'entity_missing' }); continue; }
+      if (cur[0].event_status !== 'Canceled') { skipped.push({ change_log_id: id, reason: 'modified_since' }); continue; }
+
+      if (!dryRun) {
+        await eventService.updateEvent(db, entity_id, {
+          event_status: 'Scheduled',
+          event_calendar_id: (oldState.calendar_id !== undefined)
+            ? oldState.calendar_id
+            : (cur[0].event_calendar_id ?? null),
+        }, actingUserId);
       }
       await stamp(id);
       reverted.push({ change_log_id: id, entity_type, entity_id: String(entity_id), field, action: 'restored' });
