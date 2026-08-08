@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-06T12:42:59.824Z
+-- Generated: 2026-08-08T18:54:48.152Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:5103c9201649267d7484fa785a96d331
+-- Fingerprint: sha256:dc6b6b1495c0735b35036915ee633d9c
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -447,7 +447,6 @@ CREATE TABLE `cases` (
   `case_objection` date DEFAULT NULL,
   `case_180` date DEFAULT NULL,
   `case_preference` date DEFAULT NULL,
-  `case_show_cause` datetime DEFAULT NULL,
   `clio_matter` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
   `341_appt_id` int NOT NULL,
   `341_status` enum('Continued','Completed') CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,

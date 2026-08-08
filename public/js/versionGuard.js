@@ -94,6 +94,9 @@
  *                                            banner blames you for changes you
  *                                            didn't make.
  *   VersionGuard.info()                    → current state
+ *   VersionGuard.versionText()             → the build label in the sidebar
+ *                                            ("b26.0808.1434"), derived from the
+ *                                            deploy stamp — nothing hand-typed
  *   VersionGuard.simulate('soft'|'hard')   → fake a server update; no deploy, no DB
  *   VersionGuard.simulate(false)           → stop faking
  *   VersionGuard.graceMs = 20000           → shorten the countdown to watch it land
@@ -169,6 +172,65 @@
   function num(v, fallback) {
     var n = Number(v);
     return n > 0 ? n : fallback;
+  }
+
+  // ── The version label in the chrome ─────────────────────────────────────────
+  /**
+   * The sidebar used to carry a hand-typed "Ver b0.50" that nobody ever
+   * remembered to bump, so it lied about which build was on screen — exactly the
+   * question you need answered on a support call. We already know: bootMtime is
+   * the deploy stamp this tab booted on, straight off /api/version, at no extra
+   * network cost.
+   *
+   *   b26.0808.1434   =  build of 2026-08-08, 14:34 LOCAL
+   *
+   * Local, not UTC, on purpose: it is read out loud by someone comparing it to
+   * "when did you deploy?", not parsed. The tooltip carries the authoritative
+   * build id (K_REVISION in production) and the full timestamp.
+   *
+   * Not a semver — deliberately. Nothing here is hand-maintained, so a number
+   * that pretends to encode intent would be the same lie in a new format. This
+   * says only what it knows: which deploy you are running.
+   *
+   * Paints every [data-app-version] element; the attribute's value, if any, is
+   * used as a prefix (data-app-version="Ver" → "Ver b26.0808.1434"). Elements
+   * keep their hard-coded text until /api/version answers, so an offline boot
+   * shows something stale rather than something blank.
+   */
+  function two(n) {
+    return (n < 10 ? "0" : "") + n;
+  }
+
+  function buildLabel(ms) {
+    var d = new Date(ms);
+    return (
+      "b" +
+      String(d.getFullYear()).slice(-2) +
+      "." +
+      two(d.getMonth() + 1) +
+      two(d.getDate()) +
+      "." +
+      two(d.getHours()) +
+      two(d.getMinutes())
+    );
+  }
+
+  function paintVersion() {
+    if (!bootMtime) return; // nothing to say — leave the fallback text alone
+    var label = buildLabel(bootMtime);
+    var title =
+      "Build " + (bootBuild || "?") + "\n" + new Date(bootMtime).toLocaleString();
+    var els;
+    try {
+      els = document.querySelectorAll("[data-app-version]");
+    } catch (_) {
+      return;
+    }
+    for (var i = 0; i < els.length; i++) {
+      var prefix = (els[i].getAttribute("data-app-version") || "").trim();
+      els[i].textContent = prefix ? prefix + " " + label : label;
+      els[i].title = title;
+    }
   }
 
   // ── Server state ────────────────────────────────────────────────────────────
@@ -873,7 +935,13 @@
         if (!bootBuild) {
           bootBuild = v.build;
           bootMtime = v.mtime || 0;
-          log("booted on build", bootBuild, "(mtime " + bootMtime + ")");
+          log(
+            "booted on build",
+            bootBuild,
+            "(mtime " + bootMtime + ")",
+            bootMtime ? "— " + buildLabel(bootMtime) : ""
+          );
+          paintVersion();
           return null;
         }
 
@@ -935,6 +1003,14 @@
   VG.check = function () {
     check(true);
   };
+
+  /** The label this tab is running, e.g. "b26.0808.1434". null until first fetch. */
+  VG.versionText = function () {
+    return bootMtime ? buildLabel(bootMtime) : null;
+  };
+
+  /** Re-stamp [data-app-version] — call it if you render chrome after boot. */
+  VG.paintVersion = paintVersion;
 
   /**
    * WHICH forms claim to be dirty, and WHICH fields they think changed.
