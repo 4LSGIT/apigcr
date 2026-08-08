@@ -345,6 +345,7 @@ routes/api.temp.zohosign.js
 routes/api.users.js
 routes/api.version.js
 routes/api.videos.js
+routes/auth.customTab.js
 routes/auth.login.js
 routes/auth.password.js
 routes/auth.profile.js

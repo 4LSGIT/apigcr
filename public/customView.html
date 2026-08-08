@@ -20,10 +20,15 @@
   using the parent's apiSend for auth — same pattern as reports.html /
   readonlyKeys.html. Boot waits for the parent to expose apiSend.
 
-  URL contract:
-    ?key=<report_key>  open that view directly
-    (none)             list visible views; sessionStorage remembers the last
-                       opened key and reopens it
+  URL contract — stateless, and deliberately so:
+    ?key=<report_key>  pinned: open exactly that view
+    (none)             browse: list the views this user can see
+  Nothing is remembered between loads. An earlier build stashed the last
+  opened key in session storage; combined with a back link that hid itself
+  when only one view existed, that made the page a one-way door — and session
+  storage survives refreshes and cache clears, so it looked unfixable from the
+  outside. A pinned tab gets its view from its URL; a browse tab always starts
+  at the list. There is no third state worth keeping.
 
   ── ACTION REGISTRY ──────────────────────────────────────────────────────────
   columns_meta[].action carries ONLY a registry name plus column references
@@ -256,10 +261,9 @@ async function init() {
     return;
   }
 
-  const urlKey = new URLSearchParams(location.search).get("key");
-  const key = urlKey || sessionStorage.getItem("yv_last_key");
+  const key = new URLSearchParams(location.search).get("key");
   const hit = key && views.find(v => v.report_key === key);
-  if (hit) openView(hit.id, hit.report_key);
+  if (hit) openView(hit.id);
   else showList();
 }
 
@@ -276,16 +280,13 @@ function showList() {
     </button>`).join("");
   E("listEmpty").classList.toggle("hidden", views.length > 0);
   box.querySelectorAll(".viewcard").forEach(b => {
-    b.onclick = () => {
-      const v = views[Number(b.dataset.i)];
-      openView(v.id, v.report_key);
-    };
+    b.onclick = () => openView(views[Number(b.dataset.i)].id);
   });
 }
 
 // ── View mode ───────────────────────────────────────────────────────────────
 
-async function openView(id, key) {
+async function openView(id) {
   try {
     const d = await P.apiSend(`/api/reports/${id}`, "GET");
     currentView = d.report;
@@ -294,14 +295,15 @@ async function openView(id, key) {
     E("vError").classList.remove("hidden");
     return;
   }
-  sessionStorage.setItem("yv_last_key", key);
   sortKey = null; sortDir = 1; pageNo = 0; lastResult = null;
 
   E("listPane").classList.add("hidden");
   E("viewPane").classList.remove("hidden");
   E("vTitle").textContent = currentView.title;
   E("vDesc").textContent = currentView.description || "";
-  E("vBack").classList.toggle("hidden", views.length < 2);
+  // ALWAYS reachable, including pinned mode — a refresh re-reads ?key= and
+  // comes straight back here, so the link can never strand anyone.
+  E("vBack").classList.remove("hidden");
   E("thead").innerHTML = "";
   E("tbody").innerHTML = "";
   E("vStatus").textContent = "";

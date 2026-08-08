@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-08T18:54:48.152Z
+-- Generated: 2026-08-08T21:48:20.846Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:dc6b6b1495c0735b35036915ee633d9c
+-- Fingerprint: sha256:92afa725756241429dd1d00cd0584f64
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2109,6 +2109,8 @@ CREATE TABLE `report_definitions` (
   `title` varchar(150) NOT NULL,
   `description` text,
   `category` varchar(40) NOT NULL DEFAULT 'General',
+  `kind` enum('report','view') NOT NULL DEFAULT 'report',
+  `visibility` enum('private','shared') NOT NULL DEFAULT 'shared',
   `sql_text` text NOT NULL,
   `params` json DEFAULT NULL,
   `columns_meta` json DEFAULT NULL,
@@ -3549,7 +3551,8 @@ ALTER TABLE `redirects`
 ALTER TABLE `report_definitions`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `uniq_report_key` (`report_key`),
-  ADD KEY `idx_active_category` (`is_active`,`category`);
+  ADD KEY `idx_active_category` (`is_active`,`category`),
+  ADD KEY `idx_kind_active` (`kind`,`is_active`);
 
 --
 -- Indexes for table `report_runs`

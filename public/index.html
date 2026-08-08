@@ -2260,6 +2260,7 @@
   <br><br>
   <button class="big-button" data-target="caseConfigDiv" data-exclusive-group="more" data-hover-anim="fa-fade" style="--fa-animation-duration:1.4s"><i class="fa-solid fa-sliders fa-2xl"></i><br><br>Case Config</button>
   <button class="big-button" data-target="portalManagerDiv" data-exclusive-group="more" data-hover-anim="fa-flip" style="--fa-animation-duration:1.6s"><i class="fa-solid fa-door-open fa-2xl"></i><br><br>Portal Manager</button>
+  <button class="big-button" data-target="viewsDiv" data-exclusive-group="more" data-hover-anim="fa-beat" style="--fa-beat-scale:1.12; --fa-animation-duration:1.2s"><i class="fa-solid fa-table-list fa-2xl"></i><br><br>Views</button>
 
 
   <div id="manualsDiv"         class="more-panel" style="display:none">
@@ -2311,6 +2312,11 @@
   </div>
   <div id="portalManagerDiv" class="more-panel" style="display:none">
     <iframe data-src="/portalManager.html"></iframe>
+  </div>
+  <!-- YisraView: no ?key= means browse mode — lists every view the user can
+       see. A pinned single view lives on the custom tab instead. -->
+  <div id="viewsDiv" class="more-panel" style="display:none">
+    <iframe data-src="/customView.html"></iframe>
   </div>
 </div>
 <script>
@@ -2615,6 +2621,85 @@
     logs = "";
     offsets = { cases: 0, contacts: 0, appts: 0, events: 0, tasks: 0, logs: 0, custom: 0,  };
     customTabVar = ""
+
+    /**
+     * Wire the per-user custom tab from users.user_custom_tab.
+     * Shape: { src, icon, title, loadFunc }.
+     *
+     * `src`, `icon` and `title` are USER-EDITABLE (Settings → My Custom Tab),
+     * so all three are escaped here before they reach innerHTML. The server
+     * validates them as well (routes/auth.customTab.js); this is the
+     * render-side half of that pair and costs nothing.
+     *
+     * `loadFunc` stays ADMIN-ONLY — the settings endpoint preserves it and
+     * never writes it. It is wrapped in try/catch because it is glued in front
+     * of openMainTab(): an admin-set loadFunc written for a page the user has
+     * since changed away from would otherwise throw first and leave the tab
+     * permanently unopenable.
+     *
+     * Idempotent and re-runnable — settings.html calls it after a save so the
+     * sidebar updates without a reload. That is why the "no tab" branch hides
+     * the iframe instead of blowing away tabCustom's innerHTML, which is what
+     * the original inline version did (and which destroyed #tabCustomFrame).
+     */
+    function applyCustomTab(cfg) {
+      const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => (
+        { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+      ));
+
+      const frame = E('tabCustomFrame');
+      const tcb   = E('tabCustomButton');
+      const sbc   = E('sbCustom');
+      const tab   = E('tabCustom');
+
+      let empty = E('tabCustomEmpty');
+      if (!empty && tab) {
+        empty = document.createElement('div');
+        empty.id = 'tabCustomEmpty';
+        empty.innerHTML = '<h1>Custom Tab</h1>' +
+          '<p>Pick a page for this tab in Settings &rarr; My Custom Tab.</p>';
+        tab.appendChild(empty);
+      }
+
+      const on = !!(cfg && cfg.src);
+
+      if (tcb) tcb.style.display = on ? '' : 'none';
+      if (sbc) sbc.style.display = on ? '' : 'none';
+      if (frame) frame.style.display = on ? '' : 'none';
+      if (empty) empty.style.display = on ? 'none' : '';
+
+      if (!on) {
+        if (frame) { frame.removeAttribute('src'); delete frame.dataset.src; }
+        return;
+      }
+
+      const icon  = esc(cfg.icon || 'bug');
+      const title = esc(cfg.title || 'Custom Tab');
+      const raw   = cfg.loadFunc ? String(cfg.loadFunc) : '';
+      const click = raw
+        ? `try{ ${raw} }catch(e){ console.error('custom tab loadFunc:', e) } openMainTab('tabCustom')`
+        : "openMainTab('tabCustom')";
+
+      if (tcb) {
+        tcb.innerHTML = `<i class="fa-solid fa-${icon} fa-2xl"></i><br /><br />${title}`;
+        tcb.setAttribute('onclick', click);
+      }
+      if (sbc) {
+        sbc.innerHTML = `<i class="fa-solid fa-${icon}"></i><span>${title}</span>`;
+        sbc.setAttribute('onclick', click);
+        sbc.setAttribute('title', title);
+      }
+
+      // Lazy-load like every other tab iframe — openMainTab() promotes
+      // data-src → src on first open. Eagerly assigning .src loaded the custom
+      // page on every login even when the tab was never visited. Clearing src
+      // first makes a re-apply after a settings save actually reload.
+      if (frame) {
+        frame.removeAttribute('src');
+        frame.dataset.src = cfg.src;
+      }
+    }
+    window.applyCustomTab = applyCustomTab;
 
     function openMainTab(tabName) {
       var i, tabs;
@@ -2925,30 +3010,7 @@ async function initAuth() {
         timer: 1000
       });
 
-      const customConfig = user.user_custom_tab ? user.user_custom_tab : null;
-      if (customConfig && customConfig.src) {
-        const icon = customConfig.icon || 'bug';
-        const title = customConfig.title || 'Custom Tab';
-        const loadFunc = customConfig.loadFunc ? customConfig.loadFunc + "openMainTab('tabCustom')" : "openMainTab('tabCustom')";
-        // Update home grid button (if still present) and sidebar item
-        const tcb = E('tabCustomButton');
-        if (tcb) {
-          tcb.innerHTML = `<i class="fa-solid fa-${icon} fa-2xl"></i><br /><br />${title}`;
-          tcb.setAttribute('onclick', loadFunc);
-        }
-        const sbc = E('sbCustom');
-        if (sbc) {
-          sbc.innerHTML = `<i class="fa-solid fa-${icon}"></i><span>${title}</span>`;
-          sbc.setAttribute('onclick', loadFunc);
-          sbc.setAttribute('title', title);
-        }
-        E('tabCustomFrame').src = customConfig.src;
-      } else {
-        E('tabCustom').innerHTML = `
-        <h1>Custom Tab</h1>
-        <p style="color:#e74c3c;">Speak to IT to get this set up for you.</p>
-        `;
-      }
+      applyCustomTab(user.user_custom_tab || null);
 
       // ?open= is either a main tab id, or `file:<n>` pointing into ?files=.
       // Everything else is rejected: E('file:0') is null, E('whatever-a-user-typed')
