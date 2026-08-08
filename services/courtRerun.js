@@ -92,6 +92,17 @@ function parsePayload(raw) {
  *        the stored actions cannot fix a bad extraction. Bypasses BOTH the
  *        stored-payload replay AND the allowExtract skip (allowExtract still
  *        governs the payload-null SWEEP case; forceExtract is the user's button).
+ * @param {boolean} [opts.forceCitations=false]  human "FORCE APPLY" for a
+ *        citation_miss row: stored-payload branch ONLY. Superset of force —
+ *        strips needs_review AND passes skipCitationGate:true to the executor,
+ *        which disables ONLY STEP 4's queue short-circuit. The citation check
+ *        still runs (misses recorded in citations_json) and the resulting row's
+ *        review_reason is stamped 'citation_override:<fields> by <who>'. Every
+ *        LATER safety (341 dup-guard, update_event single-match,
+ *        CASE_FIELD_POLICY) still applies. Ignored on the fresh-extract branch —
+ *        a fresh extraction writes its own row through the normal gates.
+ * @param {(string|number|null)} [opts.overrideBy]  who vouched (user id or
+ *        'api:<label>'); stamped into the citation_override note only.
  * @returns {Promise<{
  *   status:'reran'|'skipped',
  *   reason?:string,
@@ -101,7 +112,8 @@ function parsePayload(raw) {
  *   result?:object            // executor return (or a normalized extract result)
  * }>}
  */
-async function rerunCalRow(db, calRow, { allowExtract = true, force = false, forceExtract = false } = {}) {
+async function rerunCalRow(db, calRow, { allowExtract = true, force = false, forceExtract = false,
+                                         forceCitations = false, overrideBy = null } = {}) {
   const dryRun  = !(await isLive(db));
   const payload = parsePayload(calRow.raw_response);
   const { subject, body, from_email } = await fetchEmail(db, calRow.message_id);
@@ -119,9 +131,13 @@ async function rerunCalRow(db, calRow, { allowExtract = true, force = false, for
     // CASE_FIELD_POLICY) run AFTER STEP 3 and are NOT affected here, so an
     // approved row that citation-misses or is ambiguous STILL queues. Approve
     // overrides the holistic "needs a human" judgment, not the hard gates.
-    if (force && payload && typeof payload === 'object') delete payload.needs_review;
+    // forceCitations is a superset of force (a human vouching for the values
+    // is a fortiori vouching over the model's soft flag).
+    if ((force || forceCitations) && payload && typeof payload === 'object') delete payload.needs_review;
     const result = await courtExecutor.executeCourtActions(db, {
       payload, subject, body, dryRun,
+      skipCitationGate: !!forceCitations,
+      overrideBy: forceCitations ? overrideBy : null,
     });
     return {
       status: 'reran',

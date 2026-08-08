@@ -310,6 +310,47 @@ router.post('/api/court-review/approve', jwtOrApiKey, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// POST /api/court-review/force-apply { court_ai_log_id }
+//   HUMAN OVERRIDE for a CITATION_MISS queued row — the ONE deliberate
+//   exception to /approve's "the citation gate stays in force" rule. The
+//   substring check false-positives on real-but-elided or reordered quotes
+//   (and a value can be genuinely unquotable); a human who has read the email
+//   can vouch for the values. Replays the stored payload with
+//   forceCitations:true → executor skipCitationGate: STEP 4's QUEUE
+//   short-circuit is disabled but the check STILL RUNS — the misses land in
+//   citations_json and the resulting row's review_reason is stamped
+//   'citation_override:<fields> by <who>' (JWT userId, or 'api:<label>' for
+//   api-key callers). Every LATER safety (341 dup-guard, update_event
+//   single-match, CASE_FIELD_POLICY) still applies — a force-applied row that
+//   is ambiguous STILL queues. Also strips the soft needs_review flag
+//   (superset of approve). allowExtract:false for the same reason as /approve:
+//   only meaningful with a stored payload. Honors court_ingest_live for
+//   dry/live exactly like /rerun.
+//   → { ok, status, ai, dry_run, new_court_ai_log_id, result }
+// ─────────────────────────────────────────────────────────────────────────
+router.post('/api/court-review/force-apply', jwtOrApiKey, async (req, res) => {
+  try {
+    const id = Number((req.body || {}).court_ai_log_id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ ok: false, error: 'court_ai_log_id required' });
+    }
+    const row = await loadRow(req.db, id);
+    if (!row) return res.status(404).json({ ok: false, error: 'court_ai_log row not found' });
+
+    const a = req.auth || {};
+    const overrideBy = a.userId != null ? a.userId : (a.key_label ? `api:${a.key_label}` : null);
+
+    const r = await courtRerun.rerunCalRow(req.db, row, {
+      allowExtract: false, force: true, forceCitations: true, overrideBy,
+    });
+    res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error('[courtReview] /force-apply error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // POST /api/court-review/adopt-rerun { court_ai_log_id, case_id }
 //   Write the queued row's docket onto the chosen case (ADDITIVE — mirrors
 //   PATCH /api/cases/:id/docket guards), then re-run. 409 (no re-run) when the

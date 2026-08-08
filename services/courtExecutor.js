@@ -256,10 +256,25 @@ async function flushChangeRows(db, rows, courtLogId) {
  * @param {string} opts.subject  trusted email subject (citation haystack)
  * @param {string} opts.body     raw email body (citation haystack)
  * @param {boolean} [opts.dryRun]  defaults true; forced true for -test- ids
+ * @param {boolean} [opts.skipCitationGate=false]  HUMAN FORCE-APPLY (review-queue
+ *        "Force apply" on a citation_miss row, via courtRerun forceCitations).
+ *        Does NOT skip the CHECK — checkCitations still runs and its full
+ *        result (pass:false + misses) is written to citations_json on every
+ *        downstream log row — it skips only STEP 4's QUEUE short-circuit. The
+ *        override is stamped into review_reason at STEP 6 as
+ *        'citation_override:<fields> by <who>' so the audit trail shows both
+ *        the unverified quotes AND who vouched for them. Every LATER safety
+ *        (341 dup-guard, update_event single-match, CASE_FIELD_POLICY) still
+ *        applies. This is the ONE deliberate exception to the "approve never
+ *        touches the citation gate" rule documented on routes/courtReview.js
+ *        /approve — /approve itself is unchanged.
+ * @param {(string|number|null)} [opts.overrideBy]  who vouched (user id or
+ *        'api:<label>'); recorded in the citation_override stamp only.
  * @returns {Promise<{ outcome:string, court_ai_log_id:(number|null),
  *   applied:Array, skipped:Array, review_reason:(string|null), already_processed?:boolean }>}
  */
-async function executeCourtActions(db, { payload, subject, body, dryRun, preview = false } = {}) {
+async function executeCourtActions(db, { payload, subject, body, dryRun, preview = false,
+                                         skipCitationGate = false, overrideBy = null } = {}) {
   payload = payload || {};
   const messageId = payload.message_id || null;
   const aiCallId = payload.ai_call_id ?? null;
@@ -387,7 +402,15 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   // ── STEP 4: CITATIONS ─────────────────────────────────────────────────
   const actions = Array.isArray(payload.actions) ? payload.actions : [];
   const citation = checkCitations(subject, body, actions);
-  if (!citation.pass) {
+  // Force-apply (skipCitationGate): record the failure, don't queue — see the
+  // JSDoc above. The note is merged into review_reason at STEP 6 WITHOUT
+  // flipping the outcome to 'queued' (reviewReasons stays dispatch-only).
+  let citationOverrideNote = null;
+  if (!citation.pass && skipCitationGate) {
+    const missFields = [...new Set(citation.misses.map(m => m.field))].join(',');
+    citationOverrideNote = `citation_override:${missFields}` +
+      (overrideBy != null ? ` by ${overrideBy}` : '');
+  } else if (!citation.pass) {
     const first = citation.misses[0];
     const reason = `citation_miss:${first ? first.field : 'unknown'}`;
     const courtLogId = await doLog({
@@ -1018,7 +1041,12 @@ async function executeCourtActions(db, { payload, subject, body, dryRun, preview
   else if (appliedOrIntended >= 1) outcome = 'executed';
   else outcome = 'none';
 
-  const reviewReason = reviewReasons.length ? [...new Set(reviewReasons)].join('; ') : null;
+  // citationOverrideNote (force-apply) rides along in review_reason for audit
+  // but does NOT affect the outcome above — only reviewReasons (dispatch-level
+  // holds) can queue.
+  const reasonParts = [...new Set(reviewReasons)];
+  if (citationOverrideNote) reasonParts.push(citationOverrideNote);
+  const reviewReason = reasonParts.length ? reasonParts.join('; ').slice(0, 255) : null;
 
   const courtLogId = await doLog({
     message_id: messageId,

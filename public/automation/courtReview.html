@@ -310,6 +310,20 @@ function reasonLabel(cat){
          </button>`
       : '';
 
+    // ── FORCE APPLY button — citation_miss rows ONLY ────────────────────────
+    // The citation gate false-positived (elided/reordered quote of real email
+    // text) or the value is genuinely unquotable. A human who has READ the
+    // email vouches for the values: /force-apply replays the stored payload
+    // with the citation gate's queue short-circuit disabled. The check still
+    // runs and its misses are recorded; the resulting row is stamped
+    // 'citation_override:<fields> by <user>'. Duplicate / single-match /
+    // field-policy safeties still apply.
+    const forceBtn = cat === 'citation_miss'
+      ? `<button class="btn btn-danger btn-sm" onclick="window.crForceApply(${r.id})" title="Apply these actions even though a citation failed verification — you are vouching, having read the email, that the values are correct. Duplicate / single-match / field-policy checks still apply. The override is recorded with your user id.">
+           <i class="fa-solid fa-bolt"></i> Force apply
+         </button>`
+      : '';
+
     const resolveHtml = resolvesNow
       ? `<div class="resolve-box resolve-ok"><i class="fa-solid fa-circle-check"></i> Docket resolves to <b>${esc(caseLabel)}</b>${res.primary_contact_name ? ' · '+esc(res.primary_contact_name) : ''} (case_id ${esc(res.case_id)})</div>`
       : `<div class="resolve-box resolve-no"><i class="fa-solid fa-triangle-exclamation"></i> No case resolves for <b class="mono">${esc(docket)}</b> — adopt the docket onto an existing case, or create one, to proceed.</div>`;
@@ -335,6 +349,7 @@ function reasonLabel(cat){
         </button>
         ${approveBtn}
         ${reextractBtn}
+        ${forceBtn}
         <button class="btn btn-green btn-sm" onclick="window.crAdopt(${r.id})" ${docket==='(no docket)'?'disabled':''}>
           <i class="fa-solid fa-folder-plus"></i> Adopt → case…
         </button>
@@ -426,6 +441,73 @@ function reasonLabel(cat){
       Toast.fire({ icon:'info', title:'Approved: nothing to apply' });
     else
       Toast.fire({ icon:'warning', title:'Approved but still queued ('+(out.review_reason||'review')+') — a safety check held, so it was not applied' });
+  }
+
+  // ── Force apply (citation-gate override for a citation_miss row) ────────
+  // Fetch the item so the confirm shows the exact unverified quote(s) from
+  // citations_json.misses AND the planned actions, then POST /force-apply
+  // (forceCitations:true on the server). The confirm is deliberately loud:
+  // the user is vouching for values the system could not verify.
+  async function forceApply(id){
+    let item;
+    try { item = await api('/api/court-review/item/' + id, 'GET'); }
+    catch (e) { Toast.fire({ icon:'error', title: e.message }); return; }
+
+    const misses = (item.row && item.row.citations && Array.isArray(item.row.citations.misses))
+      ? item.row.citations.misses : [];
+    const missHtml = misses.length
+      ? `<div style="text-align:left;margin-top:10px">
+           <div style="font-size:11px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:.04em">Unverified citation${misses.length>1?'s':''}</div>
+           ${misses.map(m => `<div class="cite" style="margin-top:4px"><b>${esc(m.field)}</b>: ${m.value == null ? '<i>(no citation given)</i>' : '\u201c'+esc(m.value)+'\u201d'}</div>`).join('')}
+         </div>`
+      : '';
+
+    const acts    = (item.payload && Array.isArray(item.payload.actions)) ? item.payload.actions : [];
+    const hasAppt = acts.some(a => a && a.type === 'create_appointment');
+    const liveWarn = hasAppt
+      ? `<div style="margin-top:10px;color:#991b1b;font-weight:600;text-align:left">⚠ This runs the actions live, bypassing citation verification. A 341 appointment is involved — the client will be scheduled/rescheduled AND notified by SMS.</div>`
+      : `<div style="margin-top:10px;color:#991b1b;font-weight:600;text-align:left">⚠ This runs the actions live, bypassing citation verification.</div>`;
+
+    const { isConfirmed } = await Swal.fire({
+      title: 'Force apply',
+      html: `
+        <div style="font-size:12.5px;color:#475569;text-align:left">
+          The quote(s) below could not be verified as literal text of this email. By continuing you
+          are vouching — having read the email yourself — that the planned values are correct. The
+          override is recorded on the log row with your user id. The duplicate guard, single-match
+          check, and field policy still apply.
+        </div>
+        ${missHtml}
+        <div style="text-align:left;margin-top:10px">${renderActions(item.payload)}</div>
+        ${liveWarn}`,
+      width: 560,
+      showCancelButton: true,
+      confirmButtonText: 'Force apply',
+      confirmButtonColor: '#ef4444',
+      showCloseButton: true,
+    });
+    if (!isConfirmed) return;
+
+    try {
+      const r = await api('/api/court-review/force-apply', 'POST', { court_ai_log_id: id });
+      reportForceApply(r);
+      await load();
+    } catch (e) { Toast.fire({ icon:'error', title: e.message }); }
+  }
+
+  function reportForceApply(r){
+    const out  = r.result || {};
+    const live = r.dry_run === false;
+    if (r.status === 'skipped')
+      Toast.fire({ icon:'warning', title:'Force apply skipped: '+(r.reason || 'no stored payload to run') });
+    else if (out.outcome === 'executed' && live)
+      Toast.fire({ icon:'success', title:'Force-applied (live)' });
+    else if (out.outcome === 'executed')
+      Toast.fire({ icon:'info', title:'Force-applied — dry-run only (court_ingest_live is off); still queued' });
+    else if (out.outcome === 'none')
+      Toast.fire({ icon:'info', title:'Force apply: nothing to apply' });
+    else
+      Toast.fire({ icon:'warning', title:'Force apply still queued ('+(out.review_reason||'review')+') — a different safety check held' });
   }
 
   // ── Re-extract (fresh AI pass for a wrong-OUTPUT row) ───────────────────
@@ -632,6 +714,7 @@ function reasonLabel(cat){
   window.crRerun       = rerun;
   window.crReextract   = reextract;
   window.crApprove     = approve;
+  window.crForceApply  = forceApply;
   window.crAdopt       = adopt;
   window.crGroupAdopt  = groupAdopt;
   window.crCreateCase  = createCase;
