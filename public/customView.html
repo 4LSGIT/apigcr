@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Views</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script src="/js/reportCharts.js"></script>
+<!--
+  public/customView.html — YisraView renderer (S1).
+
+  A "view" is a row in report_definitions with kind='view': AI- or hand-authored
+  SQL rendered as an interactive work list. This page is the DETERMINISTIC half
+  of the bargain — no model is ever in the loop here. It fetches a saved
+  definition, binds declared params to the sql's '?' placeholders server-side,
+  and draws the result with client-side sort, paging, and a fixed action
+  registry.
+
+  Runs as an iframe child inside index.html (custom tab or any nav entry),
+  using the parent's apiSend for auth — same pattern as reports.html /
+  readonlyKeys.html. Boot waits for the parent to expose apiSend.
+
+  URL contract:
+    ?key=<report_key>  open that view directly
+    (none)             list visible views; sessionStorage remembers the last
+                       opened key and reopens it
+
+  ── ACTION REGISTRY ──────────────────────────────────────────────────────────
+  columns_meta[].action carries ONLY a registry name plus column references
+  ({type, idKey, labelKey?}); implementations live here and nowhere else. A
+  definition can never inject a URL, an href, or JS through an action — the
+  server's sanitizeColumnsMeta enforces that at save time and this renderer
+  re-checks membership and idKey presence at render time, because the SQL can
+  change under a definition.
+
+    open_case     P.addFile(label, 'case',   row[idKey])
+    open_contact  P.addFile(label, 'client', row[idKey])   ('client', not 'contact')
+    open_bill     P.addFile(label, 'bill',   row[idKey])
+    copy          copy row[idKey ?? key] to clipboard, toast
+
+  ── PARAM CONTROLS ───────────────────────────────────────────────────────────
+  params[].control 'select' renders a dropdown from params[].options. An option
+  whose value is null means "send nothing" — the server then applies the
+  param's default (or binds NULL). Because buildBindValues re-applies a
+  default over an explicit null, a defaulted param that needs a real "All"
+  choice must declare it as a sentinel the SQL understands (see the
+  lead_followups seed: value '__all__' + NULLIF(?, '__all__') in the SQL).
+  This renderer stays deliberately dumb about that — it just sends the
+  option's value.
+
+  ── ESCAPING ─────────────────────────────────────────────────────────────────
+  Every definition-supplied string (title, description, labels, caveats,
+  option labels) and every cell value is model- or client-written text and
+  goes through esc() before reaching the DOM. Actions use event delegation
+  with data-* indices — never inline handlers with interpolated values.
+-->
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2430; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #2563eb; --accent-dark: #1d4ed8; --ok: #16a34a;
+    --warn: #d97706; --danger: #dc2626; --panel: #f9fafb;
+  }
+  body.dark {
+    --bg: #151a23; --fg: #e6e8ee; --muted: #9aa3b2; --line: #2a313d;
+    --accent: #60a5fa; --accent-dark: #3b82f6; --ok: #4ade80;
+    --warn: #fbbf24; --danger: #f87171; --panel: #1d2230;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+  }
+  h2 { margin: 0; font-size: 17px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 14px; margin-bottom: 14px;
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .hidden { display: none !important; }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+    padding: 7px 12px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: var(--accent-dark); }
+  button.ghost {
+    background: transparent; color: var(--fg); border: 1px solid var(--line);
+  }
+  button.ghost:hover { border-color: var(--accent); color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  label.fld { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); }
+  input, select {
+    background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 8px; font-size: 13px;
+  }
+  .viewcard {
+    display: block; width: 100%; text-align: left; background: var(--panel);
+    color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 10px; cursor: pointer;
+  }
+  .viewcard:hover { border-color: var(--accent); background: var(--panel); }
+  .viewcard .t { font-weight: 600; }
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td {
+    padding: 7px 10px; border-bottom: 1px solid var(--line);
+    text-align: left; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; max-width: 340px; vertical-align: top;
+  }
+  th {
+    background: var(--panel); position: sticky; top: 0; cursor: pointer;
+    user-select: none; font-size: 12px; text-transform: none;
+  }
+  th .dir { color: var(--accent); margin-left: 4px; }
+  td.num, th.num { text-align: right; }
+  td.ctr, th.ctr { text-align: center; }
+  td.wrap { white-space: normal; }
+  tr:hover td { background: rgba(96,165,250,.06); }
+  a.act { color: var(--accent); text-decoration: none; }
+  a.act:hover { text-decoration: underline; }
+  .copybtn {
+    background: none; border: 0; color: var(--muted); cursor: pointer;
+    padding: 0 4px; font-size: 12px;
+  }
+  .copybtn:hover { color: var(--accent); }
+  .caveat { color: var(--warn); font-size: 12px; margin: 2px 0; }
+  details { margin-top: 10px; }
+  details pre {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 10px; overflow-x: auto; font-size: 12px; white-space: pre-wrap;
+  }
+  #toast {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    background: var(--fg); color: var(--bg); padding: 8px 14px;
+    border-radius: 6px; font-size: 13px; opacity: 0; transition: opacity .2s;
+    pointer-events: none; z-index: 50;
+  }
+  #toast.show { opacity: .95; }
+  .err { color: var(--danger); }
+</style>
+</head>
+<body>
+
+<!-- List mode -->
+<div id="listPane" class="hidden">
+  <div class="row" style="justify-content: space-between; margin-bottom: 12px;">
+    <h2>Views</h2>
+  </div>
+  <div id="viewList"></div>
+  <div id="listEmpty" class="muted hidden">No views are available yet.</div>
+</div>
+
+<!-- View mode -->
+<div id="viewPane" class="hidden">
+  <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+    <div class="row">
+      <h2 id="vTitle"></h2>
+      <span id="vBack" class="small" style="cursor:pointer; color: var(--accent);">
+        <i class="fa-solid fa-list"></i> all views</span>
+    </div>
+    <div class="row">
+      <button class="ghost" onclick="runCurrent()" title="Refresh">
+        <i class="fa-solid fa-rotate"></i></button>
+      <button class="ghost" onclick="exportCsv()" title="Download CSV">
+        <i class="fa-solid fa-download"></i> CSV</button>
+    </div>
+  </div>
+  <div id="vDesc" class="muted small" style="margin-bottom: 8px;"></div>
+  <div class="panel">
+    <div id="paramRow" class="row"></div>
+  </div>
+  <div id="vStatus" class="muted small" style="margin-bottom: 6px;"></div>
+  <div id="vError" class="err hidden" style="margin-bottom: 8px;"></div>
+  <div class="tablewrap"><table>
+    <thead id="thead"></thead>
+    <tbody id="tbody"></tbody>
+  </table></div>
+  <div class="row" style="justify-content: space-between; margin-top: 8px;">
+    <div id="pageInfo" class="muted small"></div>
+    <div class="row">
+      <button class="ghost" id="pgPrev" onclick="page(-1)">&laquo; Prev</button>
+      <button class="ghost" id="pgNext" onclick="page(1)">Next &raquo;</button>
+    </div>
+  </div>
+  <div id="vCaveats" style="margin-top: 10px;"></div>
+  <details id="sqlDetails" class="hidden">
+    <summary class="muted small">Show the SQL behind this view</summary>
+    <pre id="vSql"></pre>
+  </details>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const P = window.parent;
+const RC = window.ReportCharts;
+const PAGE_SIZE = 100;
+
+// Renderer-owned action registry: type → addFile kind. `copy` is special-cased.
+const ACTION_FILE_KIND = { open_case: "case", open_contact: "client", open_bill: "bill" };
+
+let views = [];            // list from GET /api/reports?kind=view
+let currentView = null;    // full definition (GET /api/reports/:id)
+let lastResult = null;     // last run payload
+let displayCols = [];      // computed visible column model
+let sortKey = null, sortDir = 1;
+let pageNo = 0;
+
+function E(id) { return document.getElementById(id); }
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+function errText(e) {
+  const detail = e && e.body && e.body.detail;
+  return esc(e.message) + (detail ? `<br><span class="muted small">${esc(detail)}</span>` : "");
+}
+function toast(msg) {
+  const t = E("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._tm);
+  t._tm = setTimeout(() => t.classList.remove("show"), 1600);
+}
+
+// Wait for the parent shell to expose apiSend before booting — same pattern
+// as reports.html / readonlyKeys.html.
+(function waitForParent() {
+  if (P && P.apiSend) return init();
+  setTimeout(waitForParent, 100);
+})();
+
+async function init() {
+  // Follow the parent's dark mode, live.
+  try {
+    const syncTheme = () =>
+      document.body.classList.toggle("dark", P.document.body.classList.contains("dark"));
+    syncTheme();
+    new MutationObserver(syncTheme).observe(P.document.body, {
+      attributes: true, attributeFilter: ["class"],
+    });
+  } catch (_) {}
+
+  E("vBack").onclick = showList;
+  E("tbody").addEventListener("click", onCellClick);
+
+  try {
+    const d = await P.apiSend("/api/reports?kind=view", "GET");
+    views = d.reports || [];
+  } catch (e) {
+    document.body.innerHTML = `<div class="err">Could not load views: ${errText(e)}</div>`;
+    return;
+  }
+
+  const urlKey = new URLSearchParams(location.search).get("key");
+  const key = urlKey || sessionStorage.getItem("yv_last_key");
+  const hit = key && views.find(v => v.report_key === key);
+  if (hit) openView(hit.id, hit.report_key);
+  else showList();
+}
+
+// ── List mode ───────────────────────────────────────────────────────────────
+
+function showList() {
+  E("viewPane").classList.add("hidden");
+  E("listPane").classList.remove("hidden");
+  const box = E("viewList");
+  box.innerHTML = views.map((v, i) => `
+    <button class="viewcard" data-i="${i}">
+      <div class="t">${esc(v.title)}</div>
+      ${v.description ? `<div class="muted small">${esc(v.description)}</div>` : ""}
+    </button>`).join("");
+  E("listEmpty").classList.toggle("hidden", views.length > 0);
+  box.querySelectorAll(".viewcard").forEach(b => {
+    b.onclick = () => {
+      const v = views[Number(b.dataset.i)];
+      openView(v.id, v.report_key);
+    };
+  });
+}
+
+// ── View mode ───────────────────────────────────────────────────────────────
+
+async function openView(id, key) {
+  try {
+    const d = await P.apiSend(`/api/reports/${id}`, "GET");
+    currentView = d.report;
+  } catch (e) {
+    E("vError").innerHTML = errText(e);
+    E("vError").classList.remove("hidden");
+    return;
+  }
+  sessionStorage.setItem("yv_last_key", key);
+  sortKey = null; sortDir = 1; pageNo = 0; lastResult = null;
+
+  E("listPane").classList.add("hidden");
+  E("viewPane").classList.remove("hidden");
+  E("vTitle").textContent = currentView.title;
+  E("vDesc").textContent = currentView.description || "";
+  E("vBack").classList.toggle("hidden", views.length < 2);
+  E("thead").innerHTML = "";
+  E("tbody").innerHTML = "";
+  E("vStatus").textContent = "";
+  E("vError").classList.add("hidden");
+
+  renderParams();
+  renderCaveats();
+  E("vSql").textContent = currentView.sql_text || "";
+  E("sqlDetails").classList.toggle("hidden", !currentView.sql_text);
+
+  runCurrent();
+}
+
+function renderParams() {
+  const box = E("paramRow");
+  const ps = currentView.params || [];
+  if (!ps.length) { box.innerHTML = '<span class="muted small">No filters.</span>'; }
+  else {
+    box.innerHTML = ps.map(p => {
+      const name = esc(p.name);
+      const label = esc(p.label || p.name);
+      if (p.control === "select" && Array.isArray(p.options) && p.options.length) {
+        const opts = p.options.slice(0, 50).map(o => {
+          const isNull = o.value === null || o.value === undefined;
+          const val = isNull ? "" : esc(String(o.value));
+          const sel = !isNull && p.default != null && String(o.value) === String(p.default)
+            ? " selected" : "";
+          return `<option value="${val}"${isNull ? ' data-null="1"' : ""}${sel}>${esc(o.label ?? String(o.value ?? "All"))}</option>`;
+        }).join("");
+        return `<label class="fld">${label}
+          <select id="p_${name}" data-name="${name}">${opts}</select></label>`;
+      }
+      const type = p.type === "number" ? "number" : (p.type === "date" ? "date" : "text");
+      const dflt = p.default != null && !/^-\d+[dm]$|^today$|^yesterday$|^month_start$|^last_month_start$|^last_month_end$|^year_start$/i
+        .test(String(p.default)) ? esc(String(p.default)) : "";
+      const ph = dflt === "" && p.default != null ? ` placeholder="${esc(String(p.default))}"` : "";
+      return `<label class="fld">${label}
+        <input id="p_${name}" type="${type}" data-name="${name}" value="${dflt}"${ph}
+               onkeypress="if(event.key==='Enter') runCurrent()"></label>`;
+    }).join("");
+    box.querySelectorAll("select").forEach(s => s.onchange = () => runCurrent());
+  }
+  const go = document.createElement("button");
+  go.innerHTML = '<i class="fa-solid fa-play"></i> Run';
+  go.onclick = runCurrent;
+  box.appendChild(go);
+}
+
+function collectParams() {
+  const out = {};
+  for (const el of E("paramRow").querySelectorAll("[data-name]")) {
+    const name = el.dataset.name;
+    if (el.tagName === "SELECT") {
+      const opt = el.selectedOptions[0];
+      if (opt && !opt.dataset.null) out[name] = opt.value;
+      // data-null option → omit → server applies the param's default / NULL
+    } else if (el.value !== "") {
+      out[name] = el.value;
+    }
+  }
+  return out;
+}
+
+async function runCurrent() {
+  if (!currentView) return;
+  E("vStatus").textContent = "Running…";
+  E("vError").classList.add("hidden");
+  try {
+    const d = await P.apiSend(`/api/reports/${currentView.id}/run`, "POST",
+      { params: collectParams() });
+    lastResult = d;
+    pageNo = 0;
+    buildColumns();
+    renderTable();
+    const bits = [`${d.rowCount ?? (d.rows || []).length} rows`, `${d.durationMs} ms`];
+    if (d.truncated) bits.push(`showing first ${(d.rows || []).length} — narrow the filters`);
+    E("vStatus").textContent = bits.join(" · ");
+  } catch (e) {
+    E("vStatus").textContent = "";
+    E("vError").innerHTML = errText(e);
+    E("vError").classList.remove("hidden");
+  }
+}
+
+/**
+ * Compute the visible column model: columns_meta order first (skipping hidden
+ * and keys the SQL no longer returns), then any un-described result columns
+ * appended with humanized labels — a definition edit can never silently hide
+ * new data.
+ */
+function buildColumns() {
+  const rows = (lastResult && lastResult.rows) || [];
+  const meta = (currentView.columns_meta || []).filter(c => c && c.key);
+  const resultKeys = rows.length ? Object.keys(rows[0])
+    : (lastResult.fields || []).map(f => f.name);
+  const profile = RC.profileColumns(rows, lastResult.fields);
+  const profByKey = {};
+  for (const p of profile) profByKey[p.key] = p;
+
+  const seen = new Set();
+  const cols = [];
+  for (const m of meta) {
+    if (!resultKeys.includes(m.key)) continue;
+    seen.add(m.key);
+    if (m.hidden) continue;
+    cols.push(makeCol(m, profByKey[m.key]));
+  }
+  for (const k of resultKeys) {
+    if (seen.has(k)) continue;
+    cols.push(makeCol({ key: k }, profByKey[k]));
+  }
+  displayCols = cols;
+}
+
+function makeCol(m, prof) {
+  const kind = prof ? prof.kind : "text";
+  const action = sanitizeAction(m.action);
+  return {
+    key: m.key,
+    label: m.label || (prof ? prof.label : RC.humanize(m.key)),
+    format: m.format || (kind === "date" ? "date" : kind === "number" ? RC.guessFormat(m.key) : "text"),
+    align: m.align || (kind === "number" && !action ? "right" : "left"),
+    width: m.width || null,
+    kind,
+    allInteger: prof ? prof.allInteger : false,
+    action,
+  };
+}
+
+/** Render-time re-check of the save-time sanitiser — the SQL can change. */
+function sanitizeAction(a) {
+  if (!a || typeof a !== "object") return null;
+  if (a.type === "copy") return { type: "copy", idKey: a.idKey || null };
+  if (!ACTION_FILE_KIND[a.type]) return null;
+  if (!a.idKey) return null;
+  return { type: a.type, idKey: String(a.idKey), labelKey: a.labelKey ? String(a.labelKey) : null };
+}
+
+// ── Table rendering ─────────────────────────────────────────────────────────
+
+function alignClass(c) { return c.align === "right" ? "num" : c.align === "center" ? "ctr" : ""; }
+
+function sortedRows() {
+  const rows = ((lastResult && lastResult.rows) || []).slice();
+  if (!sortKey) return rows;
+  const col = displayCols.find(c => c.key === sortKey);
+  const kind = col ? col.kind : "text";
+  const blank = v => v === null || v === undefined || v === "";
+  rows.sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (blank(x) && blank(y)) return 0;
+    if (blank(x)) return 1;              // blanks last, either direction
+    if (blank(y)) return -1;
+    let r;
+    if (kind === "number") r = Number(x) - Number(y);
+    else r = String(x).localeCompare(String(y)); // ISO datetimes sort lexically
+    return r * sortDir;
+  });
+  return rows;
+}
+
+function renderTable() {
+  // Header
+  E("thead").innerHTML = "<tr>" + displayCols.map(c => {
+    const dir = c.key === sortKey ? `<span class="dir">${sortDir === 1 ? "▲" : "▼"}</span>` : "";
+    const w = c.width ? ` style="width:${c.width}px; max-width:${c.width}px"` : "";
+    return `<th class="${alignClass(c)}" data-key="${esc(c.key)}"${w}>${esc(c.label)}${dir}</th>`;
+  }).join("") + "</tr>";
+  E("thead").querySelectorAll("th").forEach(th => {
+    th.onclick = () => {
+      const k = th.dataset.key;
+      if (sortKey === k) sortDir = -sortDir;
+      else { sortKey = k; sortDir = 1; }
+      pageNo = 0;
+      renderTable();
+    };
+  });
+
+  // Body (one page)
+  const rows = sortedRows();
+  const start = pageNo * PAGE_SIZE;
+  const slice = rows.slice(start, start + PAGE_SIZE);
+  E("tbody").innerHTML = slice.map((row, ri) =>
+    "<tr>" + displayCols.map(c => cellHtml(row, c, start + ri)).join("") + "</tr>"
+  ).join("");
+
+  // Pager
+  const total = rows.length;
+  const from = total ? start + 1 : 0;
+  const to = Math.min(start + PAGE_SIZE, total);
+  E("pageInfo").textContent = total > PAGE_SIZE ? `${from}–${to} of ${total}` : `${total} rows`;
+  E("pgPrev").disabled = pageNo === 0;
+  E("pgNext").disabled = to >= total;
+}
+
+function displayValue(v, c) {
+  if (v === null || v === undefined || v === "") return "—";
+  if (c.format === "date") return RC.shortDate(v);
+  if (c.format === "text") return String(v);
+  return RC.formatValue(v, c.format, c.allInteger);
+}
+
+function cellHtml(row, c, absIdx) {
+  const v = row[c.key];
+  const shown = esc(displayValue(v, c));
+  const w = c.width ? ` style="max-width:${c.width}px"` : "";
+  const wrap = c.kind === "text" && String(v ?? "").length > 60 ? " wrap" : "";
+  const title = ` title="${esc(v ?? "")}"`;
+
+  const a = c.action;
+  if (a && a.type === "copy") {
+    return `<td class="${alignClass(c)}${wrap}"${w}${title}>${shown}
+      <button class="copybtn" data-act="copy" data-r="${absIdx}" data-k="${esc(c.key)}"
+        title="Copy"><i class="fa-regular fa-copy"></i></button></td>`;
+  }
+  if (a && ACTION_FILE_KIND[a.type]) {
+    const id = row[a.idKey];
+    if (id !== null && id !== undefined && id !== "") {
+      const label = a.labelKey && row[a.labelKey] != null && row[a.labelKey] !== ""
+        ? String(row[a.labelKey]) : String(v ?? id);
+      return `<td class="${alignClass(c)}"${w}${title}>
+        <a href="#" class="act" data-act="${esc(a.type)}" data-r="${absIdx}"
+           data-k="${esc(c.key)}">${esc(label)}</a></td>`;
+    }
+  }
+  return `<td class="${alignClass(c)}${wrap}"${w}${title}>${shown}</td>`;
+}
+
+/** Delegated action handler — no inline JS with interpolated row values. */
+function onCellClick(ev) {
+  const el = ev.target.closest("[data-act]");
+  if (!el) return;
+  ev.preventDefault();
+  const rows = sortedRows();
+  const row = rows[Number(el.dataset.r)];
+  const col = displayCols.find(c => c.key === el.dataset.k);
+  if (!row || !col || !col.action) return;
+  const a = col.action;
+
+  if (a.type === "copy") {
+    const val = String(row[a.idKey || col.key] ?? "");
+    (navigator.clipboard ? navigator.clipboard.writeText(val) : Promise.reject())
+      .then(() => toast("Copied"))
+      .catch(() => {
+        const t = document.createElement("textarea");
+        t.value = val; document.body.appendChild(t); t.select();
+        try { document.execCommand("copy"); toast("Copied"); } catch (_) {}
+        t.remove();
+      });
+    return;
+  }
+
+  const kind = ACTION_FILE_KIND[a.type];
+  const id = row[a.idKey];
+  if (!kind || id === null || id === undefined || id === "") return;
+  const label = a.labelKey && row[a.labelKey] != null && row[a.labelKey] !== ""
+    ? String(row[a.labelKey]) : String(row[col.key] ?? id);
+  try { P.addFile(label, kind, String(id)); } catch (e) { toast("Could not open"); }
+}
+
+// ── Paging / CSV ────────────────────────────────────────────────────────────
+
+function page(d) {
+  pageNo = Math.max(0, pageNo + d);
+  renderTable();
+}
+
+function exportCsv() {
+  if (!lastResult || !lastResult.rows) return;
+  const cols = displayCols;
+  const csvCell = (v) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [cols.map(c => csvCell(c.label)).join(",")];
+  for (const row of sortedRows()) {
+    lines.push(cols.map(c =>
+      csvCell(c.format === "date" ? RC.shortDate(row[c.key] ?? "") : row[c.key])
+    ).join(","));
+  }
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${(currentView && currentView.report_key) || "view"}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function renderCaveats() {
+  const cs = currentView.caveats || [];
+  E("vCaveats").innerHTML = cs.map(c =>
+    `<div class="caveat"><i class="fa-solid fa-triangle-exclamation"></i> ${esc(c)}</div>`
+  ).join("");
+}
+</script>
+</body>
+</html>

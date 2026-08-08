@@ -3,7 +3,7 @@
 /**
  * routes/api.reports.js — REST routes for the reports engine (Slice 1).
  *
- * GET    /api/reports                 — list active reports (add ?all=1 for inactive too)
+ * GET    /api/reports                 — list active reports (?all=1 inactive too, ?kind=view|report to filter)
  * GET    /api/reports/schema          — curated manifest summary (what reports can see)
  * GET    /api/reports/runs            — recent run history across all reports
  * POST   /api/reports/draft           — SU: plain-English question → validated draft definition
@@ -176,6 +176,7 @@ router.get("/api/reports", jwtOrApiKey, async (req, res) => {
   try {
     const reports = await svc.listReports(req.db, {
       includeInactive: req.query.all === "1",
+      kind: req.query.kind || null,
     });
     res.json({ status: "success", reports });
   } catch (e) {

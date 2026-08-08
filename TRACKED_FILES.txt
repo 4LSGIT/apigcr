@@ -183,6 +183,7 @@ public/connections.html
 public/contact.html
 public/courtpreview.html
 public/css/yc-forms.css
+public/customView.html
 public/dbConsole.html
 public/docReq.html
 public/docs.html

@@ -31,7 +31,9 @@
 // site below does that explicitly.
 
 const roPool = require("../startup/dbReadonly");
-const { validateSql, validateParams, sanitizeViz } = require("../lib/reportSchema/validator");
+const {
+  validateSql, validateParams, sanitizeViz, sanitizeColumnsMeta,
+} = require("../lib/reportSchema/validator");
 
 // Execution caps. Deliberately tighter than /api/readonly/sql: that endpoint
 // serves a human debugging with a short-lived key; this one serves nine staff
@@ -46,6 +48,14 @@ const EXEC_TIMEOUT_MS = 20000;
 const MAX_ESTIMATED_ROWS = 500000;
 
 const REPORT_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;
+
+// A "view" is a report whose purpose is a work LIST rather than a number:
+// kind='view', viz.type='table', columns_meta may carry renderer actions.
+// Same table, same validator, same pools — deliberately NOT a parallel system.
+// `visibility` is stored now and ENFORCED in a later slice; today every
+// definition is SU-authored and behaves as shared.
+const KINDS = new Set(["report", "view"]);
+const VISIBILITIES = new Set(["private", "shared"]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Errors
@@ -357,6 +367,8 @@ function shapeRow(r) {
     title: r.title,
     description: r.description,
     category: r.category,
+    kind: r.kind || "report",
+    visibility: r.visibility || "shared",
     sql_text: r.sql_text,
     params: parseJsonCol(r.params, []),
     columns_meta: parseJsonCol(r.columns_meta, []),
@@ -372,13 +384,21 @@ function shapeRow(r) {
   };
 }
 
-async function listReports(db, { includeInactive = false } = {}) {
+async function listReports(db, { includeInactive = false, kind = null } = {}) {
+  if (kind != null && !KINDS.has(kind)) {
+    throw err(400, `kind must be one of ${[...KINDS].join(", ")}`);
+  }
+  const where = [];
+  const binds = [];
+  if (!includeInactive) where.push("is_active = 1");
+  if (kind != null) { where.push("kind = ?"); binds.push(kind); }
   const [rows] = await db.query(
-    `SELECT id, report_key, title, description, category, params, viz, caveats,
-            is_active, source, created_by, updated_at
+    `SELECT id, report_key, title, description, category, kind, visibility,
+            params, viz, caveats, is_active, source, created_by, updated_at
        FROM report_definitions
-      ${includeInactive ? "" : "WHERE is_active = 1"}
-      ORDER BY category, title`
+      ${where.length ? "WHERE " + where.join(" AND ") : ""}
+      ORDER BY category, title`,
+    binds
   );
   return rows.map((r) => ({
     id: r.id,
@@ -386,6 +406,8 @@ async function listReports(db, { includeInactive = false } = {}) {
     title: r.title,
     description: r.description,
     category: r.category,
+    kind: r.kind || "report",
+    visibility: r.visibility || "shared",
     params: parseJsonCol(r.params, []),
     viz: parseJsonCol(r.viz, null),
     caveats: parseJsonCol(r.caveats, []),
@@ -407,7 +429,13 @@ async function createReport(db, body = {}, userId = null) {
     report_key, title, description = null, category = "General",
     sql_text, params = [], columns_meta = [], viz = null, caveats = [],
     row_limit = DEFAULT_ROW_LIMIT, source = "manual",
+    kind = "report", visibility = "shared",
   } = body;
+
+  if (!KINDS.has(kind)) throw err(400, `kind must be one of ${[...KINDS].join(", ")}`);
+  if (!VISIBILITIES.has(visibility)) {
+    throw err(400, `visibility must be one of ${[...VISIBILITIES].join(", ")}`);
+  }
 
   if (!REPORT_KEY_RE.test(String(report_key || ""))) {
     throw err(400, "report_key must be lowercase letters, digits and underscores, 3–60 chars, starting with a letter");
@@ -420,20 +448,23 @@ async function createReport(db, body = {}, userId = null) {
   const sv = validateSql(sql_text, { expectedParams: (params || []).length });
   if (!sv.ok) throw err(400, sv.error, sv.detail);
 
-  // A bad chart hint is stripped, not fatal — the SQL is the valuable part.
-  // The warning rides back on the created row so the caller can surface it.
+  // A bad chart or column hint is stripped, not fatal — the SQL is the
+  // valuable part. Warnings ride back on the created row so the caller can
+  // surface them.
   const vz = sanitizeViz(viz);
+  const cm = sanitizeColumnsMeta(columns_meta);
 
   try {
     const [res] = await db.query(
       `INSERT INTO report_definitions
-         (report_key, title, description, category, sql_text, params,
-          columns_meta, viz, caveats, row_limit, created_by, updated_by, source)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         (report_key, title, description, category, kind, visibility, sql_text,
+          params, columns_meta, viz, caveats, row_limit, created_by, updated_by,
+          source)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
-        report_key, title, description, category, sql_text,
+        report_key, title, description, category, kind, visibility, sql_text,
         JSON.stringify(params || []),
-        JSON.stringify(columns_meta || []),
+        JSON.stringify(cm.columns_meta),
         vz.viz ? JSON.stringify(vz.viz) : null,
         JSON.stringify(caveats || []),
         Math.max(1, Math.min(Number(row_limit) || DEFAULT_ROW_LIMIT, HARD_MAX_ROWS)),
@@ -442,6 +473,7 @@ async function createReport(db, body = {}, userId = null) {
     );
     const created = await getReport(db, res.insertId);
     if (vz.warning) created.vizWarning = vz.warning;
+    if (cm.warnings.length) created.columnsMetaWarnings = cm.warnings;
     return created;
   } catch (e) {
     if (e.code === "ER_DUP_ENTRY") {
@@ -464,6 +496,8 @@ async function updateReport(db, id, body = {}, userId = null) {
     title: body.title ?? existing.title,
     description: body.description !== undefined ? body.description : existing.description,
     category: body.category ?? existing.category,
+    kind: body.kind ?? existing.kind ?? "report",
+    visibility: body.visibility ?? existing.visibility ?? "shared",
     sql_text: body.sql_text ?? existing.sql_text,
     params: body.params ?? existing.params,
     columns_meta: body.columns_meta ?? existing.columns_meta,
@@ -473,6 +507,11 @@ async function updateReport(db, id, body = {}, userId = null) {
     is_active: body.is_active !== undefined ? (body.is_active ? 1 : 0) : (existing.is_active ? 1 : 0),
   };
 
+  if (!KINDS.has(next.kind)) throw err(400, `kind must be one of ${[...KINDS].join(", ")}`);
+  if (!VISIBILITIES.has(next.visibility)) {
+    throw err(400, `visibility must be one of ${[...VISIBILITIES].join(", ")}`);
+  }
+
   const pv = validateParams(next.params);
   if (!pv.ok) throw err(400, pv.error);
 
@@ -480,17 +519,19 @@ async function updateReport(db, id, body = {}, userId = null) {
   if (!sv.ok) throw err(400, sv.error, sv.detail);
 
   const vz = sanitizeViz(next.viz);
+  const cm = sanitizeColumnsMeta(next.columns_meta);
 
   await db.query(
     `UPDATE report_definitions
-        SET title = ?, description = ?, category = ?, sql_text = ?, params = ?,
-            columns_meta = ?, viz = ?, caveats = ?, row_limit = ?, is_active = ?,
-            updated_by = ?
+        SET title = ?, description = ?, category = ?, kind = ?, visibility = ?,
+            sql_text = ?, params = ?, columns_meta = ?, viz = ?, caveats = ?,
+            row_limit = ?, is_active = ?, updated_by = ?
       WHERE id = ?`,
     [
-      next.title, next.description, next.category, next.sql_text,
+      next.title, next.description, next.category, next.kind, next.visibility,
+      next.sql_text,
       JSON.stringify(next.params || []),
-      JSON.stringify(next.columns_meta || []),
+      JSON.stringify(cm.columns_meta),
       vz.viz ? JSON.stringify(vz.viz) : null,
       JSON.stringify(next.caveats || []),
       Math.max(1, Math.min(Number(next.row_limit) || DEFAULT_ROW_LIMIT, HARD_MAX_ROWS)),
@@ -499,6 +540,7 @@ async function updateReport(db, id, body = {}, userId = null) {
   );
   const updated = await getReport(db, id);
   if (vz.warning) updated.vizWarning = vz.warning;
+  if (cm.warnings.length) updated.columnsMetaWarnings = cm.warnings;
   return updated;
 }
 
@@ -541,6 +583,7 @@ async function runReport(db, id, suppliedParams = {}, userId = null) {
       report_key: report.report_key,
       title: report.title,
       description: report.description,
+      kind: report.kind,
       columns_meta: report.columns_meta,
       viz: report.viz,
       caveats: report.caveats,
