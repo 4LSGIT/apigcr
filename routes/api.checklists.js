@@ -31,6 +31,10 @@
  * owner, superuser, or api_key caller. Every other link_type is open to any
  * authenticated staff user, and reads are never gated.
  *
+ * TAGS: `tag` is a system field on both tables — writes are api_key/SU only,
+ * via mayWriteTag(). Staff edit titles; tags are set by machines. Surfaces
+ * should render the tag as an immutable badge, never an input.
+ *
  * mayMutate() is deliberately NOT exported. Test it the way
  * tests/portalDocsRoutes.js tests its route: mount this router in a real
  * express app on an ephemeral port with jwtOrApiKey mocked to inject req.auth,
@@ -157,6 +161,33 @@ function denyPersonal(res) {
   return res.status(403).json({
     status: 'error',
     message: 'That personal checklist belongs to another user.',
+  });
+}
+
+/**
+ * `tag` is the MACHINE key, not a label — invariants hang off it. Today
+ * tag='docs_needed' drives portalDocsService and docReq; more tagged list
+ * types are planned, so the field gets more load-bearing, not less.
+ *
+ * A staff user must not be able to PATCH tag='docs_needed' onto an arbitrary
+ * list (two docs lists on one case) or clear it off the real one (portal card
+ * silently goes blank). So writes are machine/SU only:
+ *   - api_key callers set tags at creation (upsert-items, workflows, hooks)
+ *   - superusers need it to repair data
+ *   - everyone else: title is theirs to edit, tag is not
+ *
+ * checklists.tag AND checkitems.tag are both covered. checkitems.tag is 100%
+ * NULL today and nothing reads it, but it is the same kind of field and
+ * carving out an exception now just means someone has to notice later.
+ */
+function mayWriteTag(auth) {
+  return auth?.type === 'api_key' || isSuperuser(auth);
+}
+
+function denyTag(res) {
+  return res.status(403).json({
+    status: 'error',
+    message: 'tag is a system field and cannot be set here. Edit the title instead.',
   });
 }
 
@@ -362,6 +393,10 @@ router.post('/checklists', jwtOrApiKey, async (req, res) => {
   }
   // Can't create a personal list in someone else's name.
   if (!mayMutate(req.auth, link_type, link)) return denyPersonal(res);
+  // Tag is machine/SU only — on the list and on any items created with it.
+  if (tag != null && tag !== '' && !mayWriteTag(req.auth)) return denyTag(res);
+  if (Array.isArray(items) && items.some(i => i?.tag != null && i.tag !== '')
+      && !mayWriteTag(req.auth)) return denyTag(res);
 
   try {
     const [result] = await req.db.query(
@@ -400,6 +435,8 @@ router.patch('/checklists/:id', jwtOrApiKey, async (req, res) => {
   if (link      !== undefined) { fields.push('link = ?');      params.push(link); }
   if (link_type !== undefined) { fields.push('link_type = ?'); params.push(link_type); }
   if (!fields.length) return res.status(400).json({ status: 'error', message: 'Nothing to update' });
+
+  if (tag !== undefined && !mayWriteTag(req.auth)) return denyTag(res);
 
   if (link_type !== undefined && link_type !== null && link_type !== ''
       && !LINK_TYPES.includes(link_type)) {
@@ -463,6 +500,7 @@ router.delete('/checklists/:id', jwtOrApiKey, async (req, res) => {
 router.post('/checklists/:id/items', jwtOrApiKey, async (req, res) => {
   const { name, status = 'incomplete', position, tag } = req.body;
   if (!name?.trim()) return res.status(400).json({ status: 'error', message: 'name is required' });
+  if (tag != null && tag !== '' && !mayWriteTag(req.auth)) return denyTag(res);
 
   try {
     const [[parent]] = await req.db.query(
@@ -503,6 +541,8 @@ router.patch('/checkitems/:id', jwtOrApiKey, async (req, res) => {
   if (position !== undefined) { fields.push('position = ?'); params.push(position); }
   if (tag      !== undefined) { fields.push('tag = ?');      params.push(tag); }
   if (!fields.length) return res.status(400).json({ status: 'error', message: 'Nothing to update' });
+
+  if (tag !== undefined && !mayWriteTag(req.auth)) return denyTag(res);
 
   if (status !== undefined && !STATUSES.includes(status)) {
     return res.status(400).json({
