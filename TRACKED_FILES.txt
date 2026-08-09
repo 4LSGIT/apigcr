@@ -19,6 +19,7 @@ lib/auth.requireAuth.js
 lib/auth.superuser.js
 lib/blankDateToNull.js
 lib/caseId.js
+lib/checklistStatus.js
 lib/contactMirror.js
 lib/courtCitation.js
 lib/courtResolve.js

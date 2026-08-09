@@ -39,6 +39,9 @@ const crypto = require('crypto');
 const { stripSsn } = require('./contactService');
 const logService = require('./logService');
 const { blankDatesToNull } = require('../lib/blankDateToNull');
+// Merge consolidation recomputes the survivor's docs-checklist status. Shared
+// with routes/api.checklists.js — one copy of the rule, see the lib.
+const { computeAndSaveStatus } = require('../lib/checklistStatus');
 
 
 // ─────────────────────────────────────────────────────────────
@@ -1252,6 +1255,25 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
       `UPDATE ai_change_log SET entity_id = ? WHERE entity_type = 'case' AND entity_id = ?`],
   ];
 
+  // ── tagged-checklist consolidation ──
+  // checklists.link used to carry a UNIQUE index, which made the repoint below
+  // throw ER_DUP_ENTRY and roll the whole merge back whenever both cases had a
+  // checklist. That index is gone. The repoint now SUCCEEDS — and leaves the
+  // survivor holding two tag='docs_needed' lists, which silently breaks the
+  // one-docs-checklist-per-case invariant that api.checklists upsert-items
+  // (ORDER BY … LIMIT 1) and portalDocsService both assume.
+  //
+  // So: for every tag present on BOTH sides, fold the loser's items into the
+  // survivor's same-tag list and drop the emptied loser list. UNTAGGED lists
+  // are deliberately left alone — they're staff working lists and the survivor
+  // legitimately ends up with both.
+  const CONSOLIDATE_FIND_SQL =
+    `SELECT l.id AS loser_list, s.id AS survivor_list, l.tag
+       FROM checklists l
+       JOIN checklists s
+         ON s.link_type = 'case' AND s.link = ? AND s.tag = l.tag
+      WHERE l.link_type = 'case' AND l.link = ? AND l.tag IS NOT NULL`;
+
   // case_relate dedupe count (rows that would violate the uniqueness trigger
   // and are therefore deleted, not moved).
   const DEDUPE_COUNT_SQL =
@@ -1306,6 +1328,8 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     }
     const [[{ c: dedupeC }]] = await db.query(DEDUPE_COUNT_SQL, [survivorId, loserId]);
     plan.children.case_relate_deduped = dedupeC;
+    const [dupTags] = await db.query(CONSOLIDATE_FIND_SQL, [survivorId, loserId]);
+    plan.children.checklists_consolidated = dupTags.length;
     return plan;
   }
 
@@ -1317,6 +1341,33 @@ async function mergeCases(db, survivorId, loserId, { dryRun = false, force = fal
     // 1. case_relate dedupe-delete (trigger would 45000 on the UPDATE otherwise)
     const [dedupeRes] = await conn.query(DEDUPE_DELETE_SQL, [survivorId, loserId]);
     plan.children.case_relate_deduped = dedupeRes.affectedRows;
+
+    // 1b. tagged-checklist consolidation — MUST run before the repoint in step
+    //     2, which would otherwise carry the loser's tagged list across intact.
+    //     See CONSOLIDATE_FIND_SQL above for why.
+    const [dupTags] = await conn.query(CONSOLIDATE_FIND_SQL, [survivorId, loserId]);
+    for (const d of dupTags) {
+      // Append after the survivor's existing items. COALESCE because
+      // checkitems.position is nullable, and NULL + n is NULL — which would
+      // sort the folded-in items to the TOP under `ORDER BY position ASC`.
+      const [[{ maxPos }]] = await conn.query(
+        'SELECT COALESCE(MAX(position), 0) AS maxPos FROM checkitems WHERE checklist_id = ?',
+        [d.survivor_list]
+      );
+      await conn.query(
+        `UPDATE checkitems
+            SET checklist_id = ?, position = COALESCE(position, 0) + ?
+          WHERE checklist_id = ?`,
+        [d.survivor_list, maxPos, d.loser_list]
+      );
+      // Emptied by the UPDATE above; the FK is ON DELETE CASCADE but there is
+      // nothing left to cascade.
+      await conn.query('DELETE FROM checklists WHERE id = ?', [d.loser_list]);
+      // Folding items in can flip the survivor list incomplete — recompute on
+      // `conn` so it rolls back with the rest of the merge.
+      await computeAndSaveStatus(conn, d.survivor_list);
+    }
+    plan.children.checklists_consolidated = dupTags.length;
 
     // 2. child repoints
     for (const [label, , updateSql] of CHILDREN) {
