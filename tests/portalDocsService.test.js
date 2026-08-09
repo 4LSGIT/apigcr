@@ -194,7 +194,7 @@ describe('listDocs', () => {
     await svc.listDocs(db, 42, 'AbCdEf12');
     const sql = db.calls[1].sql;
     expect(sql).toContain(`cl.link_type = 'case'`);
-    expect(sql).toContain(`cl.title = 'Docs Needed'`);
+    expect(sql).toContain(`cl.tag = 'docs_needed'`);
     expect(sql).toContain('ORDER BY ci.position ASC, ci.id ASC');
   });
 
@@ -348,7 +348,7 @@ describe('createUploadLink item-belongs-to-case gate', () => {
     await svc.createUploadLink(db, 42, 'AbCdEf12', { itemId: 7, filename: 'a.pdf', size: 100 });
     const sql = db.calls[1].sql;
     expect(sql).toContain(`cl.link_type = 'case'`);
-    expect(sql).toContain(`cl.title = 'Docs Needed'`);
+    expect(sql).toContain(`cl.tag = 'docs_needed'`);
     expect(db.calls[1].params).toEqual([[7], 'AbCdEf12']);
   });
 

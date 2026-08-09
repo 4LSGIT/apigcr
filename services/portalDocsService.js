@@ -34,7 +34,7 @@
  *     extension allowlist is the canonical check (matches docReq.html's
  *     published client-side rules); contentType is accepted but advisory.
  *   - Optional per-item association (itemId): validated to belong to THIS
- *     case's 'Docs Needed' checklist; foreign/unknown itemId on link
+ *     case's docs checklist (tag='docs_needed'); foreign/unknown itemId on link
  *     issuance → 404-shaped error (no item-id probing oracle). itemId is
  *     OPTIONAL — clients also upload documents that don't map to a listed
  *     item ("Other documents"), same capability the public flow has.
@@ -187,12 +187,19 @@ async function _scopedCaseRow(db, contactId, caseId) {
  * The case's client-facing document checklist.
  *
  * Source scope matches the public docs GET: checklists with
- * link_type='case', link=<case>, title='Docs Needed' — other checklist
- * titles (none exist on cases today, but the filter is the guarantee) are
- * staff surfaces and never reach the client. UNLIKE the public GET
- * (incomplete-only), the portal shows ALL items with a mapped status so
- * clients see progress — completed items expose nothing new (the client
- * saw those names while they were incomplete) plus a positive status.
+ * link_type='case', link=<case>, tag='docs_needed'. The TAG is the
+ * client-facing guarantee — every other checklist on the case is a staff
+ * surface and never reaches the client. Do not read the title as identity:
+ * it is staff-editable in checklist.html, so cases legitimately carry many
+ * differently-titled checklists, and a docs checklist may be retitled
+ * without ceasing to be one. (The title='Docs Needed' arm of the WHERE
+ * below is a transition fallback for rows predating tag coverage, not a
+ * second identity; drop it once every case checklist has a tag.)
+ *
+ * UNLIKE the public GET (incomplete-only), the portal shows ALL items with
+ * a mapped status so clients see progress — completed items expose nothing
+ * new (the client saw those names while they were incomplete) plus a
+ * positive status.
  *
  * @returns {Promise<{case_id:string, has_upload:boolean,
  *   items:{id:number, name:string, status:'needed'|'received'}[]} | null>}
@@ -208,7 +215,7 @@ async function listDocs(db, contactId, caseId) {
        JOIN checklists cl ON cl.id = ci.checklist_id
       WHERE cl.link_type = 'case'
         AND cl.link = ?
-        AND cl.title = 'Docs Needed'
+        AND (cl.tag = 'docs_needed' OR cl.title = 'Docs Needed')
       ORDER BY ci.position ASC, ci.id ASC`,
     [caseRow.case_id]
   );
@@ -231,7 +238,7 @@ async function listDocs(db, contactId, caseId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Item ids that belong to THIS case's 'Docs Needed' checklist(s), as a
+ * Item ids that belong to THIS case's docs checklist(s) (tag='docs_needed'), as a
  * Map(id → name). Used for the belongs-to-case gate and for resolving item
  * names in notifications (names come from the DB, never from the client).
  */
@@ -245,7 +252,7 @@ async function _caseItemMap(db, canonicalCaseId, itemIds) {
       WHERE ci.id IN (?)
         AND cl.link_type = 'case'
         AND cl.link = ?
-        AND cl.title = 'Docs Needed'`,
+        AND (cl.tag = 'docs_needed' OR cl.title = 'Docs Needed')`,
     [ids, canonicalCaseId]
   );
   return new Map(rows.map(r => [r.id, r.name]));
@@ -336,7 +343,7 @@ async function createUploadLink(db, contactId, caseId, opts = {}) {
  * sendUploadNotifications(ctx) fire-and-forget.
  *
  * files: array of { name, item_id? } (bare strings tolerated as { name }).
- * item_id entries that don't resolve to THIS case's 'Docs Needed' items are
+ * item_id entries that don't resolve to THIS case's docs-checklist items are
  * grouped as general ("Other documents") rather than rejected — the bytes
  * already landed in Dropbox at this point; failing the notification would
  * only lose the audit trail. Resolved item NAMES come from the DB, never

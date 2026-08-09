@@ -11,7 +11,7 @@
  * POST   /checklists/:id/items                add item
  * PATCH  /checkitems/:id                      update item (name, status)
  * DELETE /checkitems/:id                      delete item
- * POST   /checklists/upsert-items             find-or-create 'Docs Needed' + upsert items
+ * POST   /checklists/upsert-items             find-or-create docs checklist (tag='docs_needed') + upsert items
  *
  * Public (no auth):
  * GET    /api/public/docs/:caseId             rate-limited, returns name + incomplete docs items
@@ -287,26 +287,41 @@ router.delete('/checkitems/:id', jwtOrApiKey, async (req, res) => {
 
 // POST /checklists/upsert-items
 // Replaces the Pabbly/Trello "Docs Needed" upsert logic.
-// Finds or creates a 'Docs Needed' checklist for the case,
-// then for each item: removes any existing item matching the first 22 chars, inserts fresh.
+// Finds or creates the case's docs checklist — identified by tag='docs_needed',
+// not by title (see below) — then for each item: removes any existing item
+// matching the first 22 chars, inserts fresh.
 router.post('/checklists/upsert-items', jwtOrApiKey, async (req, res) => {
   const { case_id, items } = req.body;
   if (!case_id) return res.status(400).json({ status: 'error', message: 'case_id is required' });
   if (!Array.isArray(items) || !items.length) return res.status(400).json({ status: 'error', message: 'items must be a non-empty array' });
 
   try {
-    // Find or create the 'Docs Needed' checklist for this case
+    // Find or create the docs checklist for this case.
+    // Identity is tag='docs_needed', NOT the title — the title is staff-editable
+    // in checklist.html. The title clause is a transition fallback for rows
+    // created between the backfill and this deploy; drop it once tag coverage
+    // is 100% (SELECT COUNT(*) FROM checklists WHERE link_type='case' AND tag IS NULL).
     let [[checklist]] = await req.db.query(
-      `SELECT id FROM checklists WHERE link_type = 'case' AND link = ? AND title = 'Docs Needed' LIMIT 1`,
+      `SELECT id, tag FROM checklists
+        WHERE link_type = 'case' AND link = ?
+          AND (tag = 'docs_needed' OR title = 'Docs Needed')
+        ORDER BY (tag = 'docs_needed') DESC, id ASC
+        LIMIT 1`,
       [case_id]
     );
 
     if (!checklist) {
       const [result] = await req.db.query(
-        `INSERT INTO checklists (title, created_by, link, link_type) VALUES ('Docs Needed', ?, ?, 'case')`,
+        `INSERT INTO checklists (title, created_by, link, link_type, tag) VALUES ('Docs Needed', ?, ?, 'case', 'docs_needed')`,
         [req.auth.userId || 0, case_id]
       );
       checklist = { id: result.insertId };
+    } else if (!checklist.tag) {
+      // Self-heal a legacy untagged row so the title fallback can retire.
+      await req.db.query(
+        `UPDATE checklists SET tag = 'docs_needed' WHERE id = ? AND tag IS NULL`,
+        [checklist.id]
+      );
     }
 
     const checklistId = checklist.id;
@@ -371,7 +386,7 @@ router.get('/api/public/docs/:caseId', docsRateLimit, async (req, res) => {
        JOIN checklists cl ON ci.checklist_id = cl.id
        WHERE cl.link_type = 'case'
          AND cl.link = ?
-         AND cl.title = 'Docs Needed'
+         AND (cl.tag = 'docs_needed' OR cl.title = 'Docs Needed')
          AND ci.status = 'incomplete'
        ORDER BY ci.position ASC, ci.id ASC`,
       [caseId]
