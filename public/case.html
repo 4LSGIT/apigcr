@@ -1470,7 +1470,7 @@ function applyCaseType(c) {
 
     E("SendingForm").src = `sendingform-bk.html?case_id=${c.case_id}`;
     E("caseForm").src    = `forms/casedetails-bk.html?case_id=${c.case_id}`;
-    E("341").src         = `/forms/341notes.html?case_id=${c.case_id}`;
+    E("341").src         = `/forms/render.html?form_key=341_notes&case_id=${c.case_id}`;
     E("det").src         = c.case_detailed_link || "about:blank";
   }
   // ↓↓↓ NEW CASE TYPES GO HERE — copy this template, uncomment, rename ↓↓↓
