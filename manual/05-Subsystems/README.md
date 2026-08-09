@@ -11,6 +11,14 @@ lives behind the **More** menu in the main navigation.
 | 2 | [02-redirects.md](02-redirects.md) | Short, branded links (`app.4lsg.com/r/<slug>`) for long URLs like Clio payment links. (More → Redirects Manager) |
 | 3 | [03-landing-pages.md](03-landing-pages.md) | Hosted marketing/intake pages, optionally on a custom domain, with form submissions wired into a YisraHook. (More → Landing Pages) |
 | 4 | [04-feature-requests.md](04-feature-requests.md) | Staff feature-request and bug board — submit, vote, comment, track stages. (More → Feature Requests) |
+| 5 | [05-document-requests.md](05-document-requests.md) | Asking a client for documents and receiving them back — no attachments, no logins, nothing landing on our servers. |
+| 6 | [06-reports.md](06-reports.md) | Saved questions that answer with a number — charts, filters, CSV, scheduled emails, and an AI that drafts new ones. (More → Reports) |
+| 7 | [07-YisraView.md](07-YisraView.md) | Working lists built on the same engine — filter, sort, and click straight into a case. Pin one to your own sidebar tab. (More → Views) |
+
+> **Reports and Views are the same system.** One saved SQL definition, one
+> curated schema, one set of guards — a report renders it as a number, a view
+> renders it as a clickable list. Read whichever matches the question you have;
+> each page links to the other.
 
 ---
 

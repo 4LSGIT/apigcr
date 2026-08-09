@@ -124,6 +124,8 @@ manual/05-Subsystems/02-redirects.md
 manual/05-Subsystems/03-landing-pages.md
 manual/05-Subsystems/04-feature-requests.md
 manual/05-Subsystems/05-document-requests.md
+manual/05-Subsystems/06-reports.md
+manual/05-Subsystems/07-YisraView.md
 manual/05-Subsystems/README.md
 manual/06-Admin-Tools/01-db-console.md
 manual/06-Admin-Tools/02-readonly-keys.md
