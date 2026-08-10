@@ -36,7 +36,7 @@
   /* Custom tab editor */
   .icon-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr));
-    gap: 6px; max-height: 210px; overflow-y: auto; padding: 8px;
+    gap: 6px; max-height: 300px; overflow-y: auto; padding: 8px;
     border: 1px solid var(--border); border-radius: 6px;
   }
   .icon-grid button {
@@ -1400,31 +1400,42 @@ async function saveFreebusyCals() {
 
 const CTAB_ICONS = [
   // work / lists
-  'list-check','table-list','rectangle-list','list-ol','clipboard-list','clipboard-check',
-  'square-poll-vertical','chart-column','chart-line','chart-pie','table-cells',
+  'list-check','table-list','rectangle-list','list-ol','list-ul','clipboard-list','clipboard-check',
+  'clipboard-user','square-check','bars-progress','square-poll-vertical','chart-column','chart-line',
+  'chart-pie','chart-area','table','table-cells','layer-group',
   // legal
-  'gavel','scale-balanced','landmark','building-columns','file-signature','file-contract',
-  'stamp','book','book-open','folder-open','folder-tree','file-lines','box-archive',
+  'gavel','scale-balanced','scale-unbalanced','landmark','building-columns','file-signature',
+  'file-contract','file-pen','file-shield','signature','stamp','scroll','briefcase','id-card',
+  'book','book-open','folder-open','folder-plus','folder-tree','file-lines','box-archive',
+  'paperclip','floppy-disk','vault','pen-fancy','highlighter',
   // money
-  'money-bill','money-check-dollar','file-invoice-dollar','receipt','sack-dollar',
-  'hand-holding-dollar','credit-card','piggy-bank',
+  'money-bill','money-check-dollar','file-invoice-dollar','receipt','sack-dollar','coins',
+  'hand-holding-dollar','credit-card','piggy-bank','wallet','calculator','percent',
   // people / comms
-  'user','users','user-tie','address-book','address-card','phone','comments','comment-dots',
-  'envelope','envelopes-bulk','inbox','paper-plane','headset',
+  'user','users','user-group','user-tie','user-plus','user-shield','address-book','address-card',
+  'phone','comments','comment-dots','message','envelope','envelopes-bulk','inbox','paper-plane',
+  'headset','handshake','at','bullhorn','share-nodes',
   // time
-  'calendar','calendar-days','calendar-check','calendar-week','clock','hourglass-half',
-  'bell','stopwatch',
+  'calendar','calendar-days','calendar-check','calendar-week','calendar-day','clock',
+  'clock-rotate-left','hourglass-half','bell','stopwatch',
   // flags / status
-  'flag','star','bookmark','thumbtack','circle-check','triangle-exclamation','circle-question',
-  'lightbulb','fire','bolt','heart','shield-halved','lock','key',
+  'flag','star','bookmark','thumbtack','tags','eye','circle-check','triangle-exclamation',
+  'circle-exclamation','circle-question','circle-info','lightbulb','fire','bolt','heart',
+  'shield-halved','lock','key',
   // tools
-  'gear','sliders','wrench','screwdriver-wrench','robot','database','server','cloud',
-  'magnifying-glass','filter','link','signs-post','sitemap','diagram-project','code',
+  'gear','sliders','wrench','screwdriver-wrench','toolbox','robot','database','server','cloud',
+  'magnifying-glass','binoculars','microscope','flask','filter','arrows-rotate','right-left',
+  'file-export','print','qrcode','link','signs-post','sitemap','diagram-project','circle-nodes','code',
+  'mobile','laptop','desktop','keyboard','tv','wifi','tower-broadcast','satellite-dish',
   // places / things
-  'house','map','map-location-dot','compass','globe','truck','car','plane','rocket',
+  'house','building','city','warehouse','map','map-location-dot','location-dot','compass','globe',
+  'truck','car','bicycle','plane','ship','rocket',
   // fun
-  'paintbrush','palette','photo-film','video','music','mug-hot','cake-candles','trophy',
-  'medal','crown','gem','puzzle-piece','dice','gamepad','paw','dog','cat','bug','ghost',
+  'paintbrush','palette','photo-film','video','music','newspaper','mug-hot','ice-cream',
+  'beer-mug-empty','cake-candles','trophy','medal','crown','gem','graduation-cap','anchor',
+  'seedling','tree','sun','moon','snowflake','umbrella','feather','wand-magic-sparkles','hat-wizard',
+  'puzzle-piece','dice','gamepad','chess','football','paw','dog','cat','horse','fish','frog','crow',
+  'otter','spider','bug','dragon','ghost',
 ];
 
 // Same-origin pages worth offering. Kept short on purpose — the long tail lives
