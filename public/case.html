@@ -44,7 +44,7 @@
       <button
         class="tab"
         id="checklistsButton"
-        onclick="openTab(this, 'checklists'); if (!E('checklistFrame').src) E('checklistFrame').src = `checklist.html?link_type=case&link=${caseID}`; else E('checklistFrame').contentWindow?.reloadChecklists?.();"
+        onclick="openTab(this, 'checklists'); if (!E('checklistFrame').src) E('checklistFrame').src = `checklistView.html?link_type=case&link=${caseID}`; else E('checklistFrame').contentWindow?.reloadChecklists?.();"
       >
         <i class="fa-solid fa-list-check"></i> Checklists
       </button>

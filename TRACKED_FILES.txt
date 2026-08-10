@@ -181,7 +181,8 @@ public/caseconfig/fields.html
 public/caseconfig/pipelines.html
 public/caseconfig/types.html
 public/caseerror.html
-public/checklist.html
+public/checklistView.html
+public/checklistsView.html
 public/communicate.html
 public/connections.html
 public/contact.html

@@ -190,7 +190,7 @@ async function _scopedCaseRow(db, contactId, caseId) {
  * link_type='case', link=<case>, tag='docs_needed'. The TAG is the
  * client-facing guarantee — every other checklist on the case is a staff
  * surface and never reaches the client. Do not read the title as identity:
- * it is staff-editable in checklist.html, so cases legitimately carry many
+ * it is staff-editable in checklistView.html, so cases legitimately carry many
  * differently-titled checklists, and a docs checklist may be retitled
  * without ceasing to be one. (The title='Docs Needed' arm of the WHERE
  * below is a transition fallback for rows predating tag coverage, not a

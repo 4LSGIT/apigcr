@@ -23,13 +23,14 @@
  * into SQL, and escapeHtml() it before it reaches an email body.
  *
  * IDENTITY: the case docs checklist is identified by tag='docs_needed', NOT by
- * title — titles are staff-editable from checklist.html. The same predicate
+ * title — titles are staff-editable from checklistView.html. The same predicate
  * lives in services/portalDocsService.js (listDocs, _caseItemMap); change one
  * without the other and the client portal / docReq silently go blank.
  *
- * OWNERSHIP: mutations on link_type='user' rows are gated by mayMutate() —
- * owner, superuser, or api_key caller. Every other link_type is open to any
- * authenticated staff user, and reads are never gated.
+ * OWNERSHIP: link_type='user' rows are gated against DETACHMENT only —
+ * deleting one, or re-homing it away from its owner — via mayDetachPersonal().
+ * Creating a list FOR another user, and adding/checking/renaming/removing its
+ * items, are all open: delegation is the point. Reads are never gated.
  *
  * TAGS: `tag` is a system field on both tables — writes are api_key/SU only,
  * via mayWriteTag(). Staff edit titles; tags are set by machines. Surfaces
@@ -41,7 +42,7 @@
  * violation as 409, not 500. upsert-items instead RECOVERS from it — a
  * concurrent caller winning the insert race is not an error there.
  *
- * mayMutate() is deliberately NOT exported. Test it the way
+ * mayDetachPersonal() is deliberately NOT exported. Test it the way
  * tests/portalDocsRoutes.js tests its route: mount this router in a real
  * express app on an ephemeral port with jwtOrApiKey mocked to inject req.auth,
  * and drive owner / non-owner / SU / api_key across PATCH + DELETE over HTTP.
@@ -138,11 +139,23 @@ const DEFAULT_ORDER = 'created_asc';
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT     = 1000;
 
-// ─── Personal-list ownership gate ────────────────────────────────
+// ─── Personal-list detach gate ───────────────────────────────────
 /**
- * Only link_type='user' rows are gated. Everything else (case/contact/bill/
- * appt/task lists, and unlinked lists) stays open to any authenticated staff
- * user — same posture as every other entity surface in the app.
+ * Only link_type='user' rows are gated, and only against being DETACHED from
+ * their owner — deleted, or re-homed to a different link. Everything else
+ * (case/contact/bill/appt/task lists, and unlinked lists) is open to any
+ * authenticated staff user, same posture as every other entity surface here.
+ *
+ * WHY THIS IS NARROW. An earlier revision gated every write on a user list.
+ * That broke the actual use case: user A making a list FOR user B, then adding
+ * items to it. Delegation is the point of a personal list you didn't create.
+ * So creating a list for someone, adding/checking/renaming/removing its items,
+ * and renaming the list are all open. What stays closed is the pair of actions
+ * that take the list AWAY from its owner in one click and can't be undone.
+ *
+ * Emptying someone's list item by item is still possible. That is deliberate:
+ * it costs N deliberate clicks with a confirm each, where DELETE costs one, and
+ * pretending otherwise would mean blocking the collaboration this exists for.
  *
  * Passes:
  *   - api_key callers. YisraFlow steps, hooks and the internal self-credential
@@ -152,11 +165,10 @@ const MAX_LIMIT     = 1000;
  *   - superusers, per lib/auth.superuser.isSuperuser (JWT + user_auth === SU).
  *   - the owner: req.auth.userId === checklists.link.
  *
- * READS are deliberately NOT gated — the index page and the case tab both need
- * to list across owners, and a personal to-do list is not a secret in a
- * five-person firm. This gate is about not letting someone delete your list.
+ * READS are never gated — a personal to-do list is not a secret in a
+ * five-person firm, and the index page lists across owners.
  */
-function mayMutate(auth, linkType, link) {
+function mayDetachPersonal(auth, linkType, link) {
   if (linkType !== 'user') return true;
   if (auth?.type === 'api_key') return true;
   if (isSuperuser(auth)) return true;
@@ -166,7 +178,8 @@ function mayMutate(auth, linkType, link) {
 function denyPersonal(res) {
   return res.status(403).json({
     status: 'error',
-    message: 'That personal checklist belongs to another user.',
+    message: "That personal checklist belongs to another user — you can add to it, "
+           + 'but only its owner can delete or move it.',
   });
 }
 
@@ -374,7 +387,19 @@ router.get('/checklists', jwtOrApiKey, async (req, res) => {
       }
     }
 
-    res.json({ checklists: rows, total: Number(total), limit: lim, offset: off });
+    // Opt-in facet: the distinct tag vocabulary, so an index page can build a
+    // tag filter that maintains itself instead of hardcoding 'docs_needed'.
+    // Behind ?facets=1 on purpose — the case tab hits this route on every tab
+    // open and has no filter UI, so it shouldn't pay for a second query.
+    const facets = {};
+    if (req.query.facets === '1') {
+      const [tagRows] = await req.db.query(
+        `SELECT DISTINCT tag FROM checklists WHERE tag IS NOT NULL AND tag <> '' ORDER BY tag ASC`
+      );
+      facets.tags = tagRows.map(r => r.tag);
+    }
+
+    res.json({ checklists: rows, total: Number(total), limit: lim, offset: off, ...facets });
   } catch (err) {
     console.error('GET /checklists error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to fetch checklists' });
@@ -404,16 +429,15 @@ router.post('/checklists', jwtOrApiKey, async (req, res) => {
       message: `link_type must be one of: ${LINK_TYPES.join(', ')}`,
     });
   }
-  // A personal list with no owner is meaningless, and mayMutate() would reject
-  // it as "belongs to another user" — a 403 that reads as a permissions bug.
+  // Creating a list FOR another user is allowed — that is delegation, and the
+  // whole reason a personal list you didn't create is useful. Only detaching
+  // one from its owner is gated (see mayDetachPersonal).
   if (link_type === 'user' && (link == null || link === '')) {
     return res.status(400).json({
       status: 'error',
       message: 'link (the user id) is required when link_type is "user".',
     });
   }
-  // Can't create a personal list in someone else's name.
-  if (!mayMutate(req.auth, link_type, link)) return denyPersonal(res);
   // Tag is machine/SU only — on the list and on any items created with it.
   if (tag != null && tag !== '' && !mayWriteTag(req.auth)) return denyTag(res);
   if (Array.isArray(items) && items.some(i => i?.tag != null && i.tag !== '')
@@ -487,8 +511,6 @@ router.patch('/checklists/:id', jwtOrApiKey, async (req, res) => {
     );
     if (!current) return res.status(404).json({ status: 'error', message: 'Checklist not found' });
 
-    if (!mayMutate(req.auth, current.link_type, current.link)) return denyPersonal(res);
-
     const nextType = link_type !== undefined ? link_type : current.link_type;
     const nextLink = link      !== undefined ? link      : current.link;
     if (nextType === 'user' && (nextLink == null || nextLink === '')) {
@@ -497,7 +519,14 @@ router.patch('/checklists/:id', jwtOrApiKey, async (req, res) => {
         message: 'link (the user id) is required when link_type is "user".',
       });
     }
-    if (!mayMutate(req.auth, nextType, nextLink)) return denyPersonal(res);
+    // Renaming someone else's list is fine. MOVING it away from them is not:
+    // that is a detach, same as a delete. Gate on the CURRENT owner, and only
+    // when link/link_type is actually changing.
+    const detaching = (link_type !== undefined && link_type !== current.link_type)
+                   || (link      !== undefined && String(link) !== String(current.link));
+    if (detaching && !mayDetachPersonal(req.auth, current.link_type, current.link)) {
+      return denyPersonal(res);
+    }
 
     params.push(req.params.id);
     await req.db.query(`UPDATE checklists SET ${fields.join(', ')} WHERE id = ?`, params);
@@ -526,7 +555,7 @@ router.delete('/checklists/:id', jwtOrApiKey, async (req, res) => {
       'SELECT id, link_type, link FROM checklists WHERE id = ?', [req.params.id]
     );
     if (!current) return res.status(404).json({ status: 'error', message: 'Checklist not found' });
-    if (!mayMutate(req.auth, current.link_type, current.link)) return denyPersonal(res);
+    if (!mayDetachPersonal(req.auth, current.link_type, current.link)) return denyPersonal(res);
 
     const [result] = await req.db.query('DELETE FROM checklists WHERE id = ?', [req.params.id]);
     if (!result.affectedRows) return res.status(404).json({ status: 'error', message: 'Checklist not found' });
@@ -548,7 +577,6 @@ router.post('/checklists/:id/items', jwtOrApiKey, async (req, res) => {
       'SELECT id, link_type, link FROM checklists WHERE id = ?', [req.params.id]
     );
     if (!parent) return res.status(404).json({ status: 'error', message: 'Checklist not found' });
-    if (!mayMutate(req.auth, parent.link_type, parent.link)) return denyPersonal(res);
 
     // `position` may legitimately be 0. The old `if (!pos)` treated an
     // explicit 0 as "not supplied" and silently pushed the item to the end.
@@ -597,7 +625,6 @@ router.patch('/checkitems/:id', jwtOrApiKey, async (req, res) => {
     // recompute needs checklist_id anyway (the old code re-read it after).
     const parent = await getItemParent(req.db, req.params.id);
     if (!parent) return res.status(404).json({ status: 'error', message: 'Item not found' });
-    if (!mayMutate(req.auth, parent.link_type, parent.link)) return denyPersonal(res);
 
     params.push(req.params.id);
     await req.db.query(`UPDATE checkitems SET ${fields.join(', ')} WHERE id = ?`, params);
@@ -617,7 +644,6 @@ router.delete('/checkitems/:id', jwtOrApiKey, async (req, res) => {
   try {
     const parent = await getItemParent(req.db, req.params.id);
     if (!parent) return res.status(404).json({ status: 'error', message: 'Item not found' });
-    if (!mayMutate(req.auth, parent.link_type, parent.link)) return denyPersonal(res);
 
     await req.db.query('DELETE FROM checkitems WHERE id = ?', [req.params.id]);
     await computeAndSaveStatus(req.db, parent.checklist_id);
@@ -641,7 +667,7 @@ router.post('/checklists/upsert-items', jwtOrApiKey, async (req, res) => {
   try {
     // Find or create the docs checklist for this case.
     // Identity is tag='docs_needed', NOT the title — the title is staff-editable
-    // in checklist.html. The title clause is a transition fallback for rows
+    // in checklistView.html. The title clause is a transition fallback for rows
     // created between the backfill and this deploy; drop it once tag coverage
     // is 100% (SELECT COUNT(*) FROM checklists WHERE link_type='case' AND tag IS NULL).
     const FIND_DOCS_SQL =

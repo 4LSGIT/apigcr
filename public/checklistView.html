@@ -74,6 +74,14 @@
       padding: 2px 6px;
       cursor: default;
     }
+    /* Superuser only — the badge becomes an edit affordance. Staff never see
+       this class, and the backend rejects them anyway (mayWriteTag). */
+    .ck-tag.ck-tag-su { cursor: pointer; }
+    .ck-tag.ck-tag-su:hover { background: #bfdbfe; }
+    .ck-tag.ck-tag-empty {
+      color: #94a3b8; background: #f8fafc; border-color: #e2e8f0;
+      font-weight: 600; text-transform: none;
+    }
 
     .ck-progress {
       margin-left: auto;
@@ -211,7 +219,7 @@
 
 <script>
 /* ═══════════════════════════════════════════════════════════════════
-   checklist.html — stacked checklist surface.
+   checklistView.html — stacked checklist surface.
 
    MODES (from the query string):
      ?id=123                          one list
@@ -260,6 +268,16 @@ function api(...args) {
    the column. The shell already has the answer. */
 function myUserId() {
   try { return window.top.firmData?.currentUser?.user ?? null; } catch (_) { return null; }
+}
+
+/* Mirrors lib/auth.superuser.isSuperuser, which is the server's single source
+   of truth: JWT + user_auth === 'authorized - SU'. api.firmData's USER_STRIP
+   only removes password fields, so user_auth reaches the client intact.
+   This gates the UI ONLY — mayWriteTag() on the server is the real check, and
+   a staff member editing the DOM gets a 403, not a corrupted invariant. */
+function isSU() {
+  try { return window.top.firmData?.currentUser?.user_auth === 'authorized - SU'; }
+  catch (_) { return false; }
 }
 
 /* The scope a newly-created list should be attached to. In `single` mode there
@@ -353,11 +371,18 @@ function renderCard(cl) {
   title.onclick = () => editTitle(cl, title);
   head.appendChild(title);
 
-  if (cl.tag) {
+  if (cl.tag || isSU()) {
     const badge = document.createElement('span');
-    badge.className = 'ck-tag';
-    badge.textContent = cl.tag;
-    badge.title = 'System tag — set automatically, not editable';
+    badge.className = 'ck-tag'
+      + (isSU() ? ' ck-tag-su' : '')
+      + (cl.tag ? '' : ' ck-tag-empty');
+    badge.textContent = cl.tag || '+ tag';
+    if (isSU()) {
+      badge.title = 'Superuser: click to edit the system tag';
+      badge.onclick = () => editTag(cl, badge);
+    } else {
+      badge.title = 'System tag — set automatically, not editable';
+    }
     head.appendChild(badge);
   }
 
@@ -452,7 +477,7 @@ function renderNewListFooter() {
 // ── Inline editing ────────────────────────────────────────────────
 /* Shared swap-to-input helper. Commits on Enter or blur, cancels on Escape,
    and no-ops when the value is unchanged so a stray click costs no request. */
-function inlineEdit(el, current, inputClass, onCommit) {
+function inlineEdit(el, current, inputClass, onCommit, allowEmpty) {
   const input = document.createElement('input');
   input.type = 'text';
   input.className = inputClass;
@@ -464,7 +489,7 @@ function inlineEdit(el, current, inputClass, onCommit) {
     settled = true;
     const next = input.value.trim();
     input.replaceWith(el);
-    if (commit && next && next !== current) onCommit(next);
+    if (commit && next !== current && (next || allowEmpty)) onCommit(next);
   };
 
   input.onkeydown = (e) => {
@@ -486,6 +511,41 @@ function editTitle(cl, el) {
       render();
     } catch (err) { apiError(err, 'Could not rename checklist'); render(); }
   });
+}
+
+/* SU-only. Tags are what automation matches on: tag='docs_needed' is the
+   identity used by services/portalDocsService.js and the public docReq route.
+   Renaming or clearing it does NOT error — the portal card and document
+   requests just go quietly empty. Hence the explicit confirm naming the
+   consequence, rather than a generic "are you sure".
+   Adding a duplicate is already impossible: uq_link_tag returns 409. */
+function editTag(cl, el) {
+  const current = cl.tag || '';
+  const warn = current
+    ? `The tag "${current}" is how automation finds this checklist.\n\n`
+      + (current === 'docs_needed'
+          ? 'This is the list the client portal and document requests read. '
+            + 'Renaming or clearing it will make both go blank for this case '
+            + '— silently, with no error.\n\n'
+          : 'Changing it will detach this list from whatever matches that tag.\n\n')
+      + 'Clear the box to remove the tag entirely.\n\nContinue?'
+    : 'Tags are matched by automation, not shown to clients. Only set one if '
+      + 'you know what reads it.\n\nContinue?';
+  if (!confirm(warn)) return;
+
+  inlineEdit(el, current, 'ck-title-input', async (next) => {
+    try {
+      await api('/checklists/' + cl.id, 'PATCH', { tag: next || null });
+      cl.tag = next || null;
+      // Re-pin: tagged lists sort above untagged ones.
+      lists.sort((a, b) => (b.tag ? 1 : 0) - (a.tag ? 1 : 0));
+      render();
+    } catch (err) {
+      // 409 = another list on this entity already holds that tag (uq_link_tag).
+      apiError(err, 'Could not change tag');
+      render();
+    }
+  }, true);
 }
 
 function editItemName(cl, item, el) {

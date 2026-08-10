@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checklists</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <style>
+    body { margin: 0; padding: 12px; background: #fff; }
+    /* .cx- prefix scopes this page; .ck- belongs to checklistView.html. */
+    .cx-wrap { max-width: 860px; margin: 0 auto; }
+
+    .cx-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 4px 0 14px; flex-wrap: wrap;
+    }
+    .cx-scope { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; }
+    .cx-scope button {
+      background: #fff; border: none; padding: 6px 14px;
+      font-size: 13px; cursor: pointer; color: #334155; font-family: inherit;
+    }
+    .cx-scope button.active { background: #2563eb; color: #fff; }
+    .cx-scope button:not(.active):hover { background: #f1f5f9; }
+
+    .cx-search {
+      flex: 1; min-width: 160px; font-size: 14px; padding: 6px 8px;
+      border: 1px solid #cbd5e1; border-radius: 6px; font-family: inherit;
+    }
+    .cx-search:focus { outline: none; border-color: #2563eb; }
+
+    .cx-newfor {
+      font-size: 13px; padding: 6px 8px; border: 1px solid #cbd5e1;
+      border-radius: 6px; font-family: inherit; color: #334155; background: #fff;
+    }
+
+    /* Mine / Unlinked delegate to checklistView.html, which already renders
+       stacked and fully editable. No second implementation of the card. */
+    .cx-frame { width: 100%; border: none; min-height: 420px; }
+
+    /* Browse = a compact index across every list. */
+    .cx-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 10px; border: 1px solid #e2e8f0; border-radius: 8px;
+      margin-bottom: 7px; cursor: pointer; background: #fff;
+    }
+    .cx-row:hover { background: #f8fafc; border-color: #cbd5e1; }
+    .cx-row-title { font-size: 14px; font-weight: 600; color: #0f172a; }
+    .cx-row-scope {
+      font-size: 12px; color: #64748b; white-space: nowrap;
+    }
+    .cx-row-scope a { color: #2563eb; text-decoration: none; }
+    .cx-row-scope a:hover { text-decoration: underline; }
+    .cx-tag {
+      font-size: 10px; font-weight: 700; letter-spacing: .02em; text-transform: uppercase;
+      color: #1e40af; background: #dbeafe; border: 1px solid #bfdbfe;
+      border-radius: 4px; padding: 1px 5px;
+    }
+    .cx-prog {
+      margin-left: auto; font-size: 13px; font-weight: 600;
+      color: #475569; white-space: nowrap;
+    }
+    .cx-prog.done { color: #15803d; }
+
+    .cx-back {
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 5px 12px; font-size: 13px; cursor: pointer;
+      color: #334155; font-family: inherit; margin-bottom: 10px;
+    }
+    .cx-back:hover { background: #f1f5f9; }
+
+    .cx-note { color: #64748b; font-size: 13px; padding: 14px 2px; }
+    .cx-more {
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 6px 14px; font-size: 13px; cursor: pointer;
+      color: #334155; font-family: inherit; margin-top: 4px;
+    }
+    .cx-more:hover { background: #f1f5f9; }
+    .cx-error {
+      color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca;
+      border-radius: 6px; padding: 10px 12px; font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="cx-wrap">
+    <div class="cx-head" id="cxHead"></div>
+    <div id="cxBody"><div class="cx-note">Loading…</div></div>
+  </div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   checklistsView.html — the index. Three scopes:
+
+     Mine      link_type=user & link=me   — delegated to checklistView.html
+     Unlinked  link IS NULL               — delegated to checklistView.html
+     Browse    everything, searchable     — rendered here, click to open
+
+   Mine and Unlinked are small and want full editing, so they load
+   checklistView.html in an iframe rather than reimplementing the card. Browse is
+   a picker across ~all lists, so it stays compact and opens one on click.
+
+   "Mine" is link_type=user & link=me, NOT created_by=me. Those diverge as soon
+   as someone makes a list FOR someone else, which the API now allows —
+   creating a personal list for another user is open; only deleting or
+   re-homing one is gated. So the list belongs to whoever it is LINKED to, and
+   created_by is shown as a byline.
+
+   TRANSPORT: window.top.apiSend (the shell owns the JWT). No standalone mode.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const PAGE = 50;                     // Browse page size
+/* Browse, not Mine. Mine is legitimately empty until someone creates their
+   first personal list — and there are zero link_type='user' rows today — so
+   defaulting there shows "No checklists yet." to every user on day one. */
+let scope   = 'browse';
+let q       = '';
+let tagFilter = '';          // '' = all, 'none' = untagged, else a tag value
+let tagOptions = [];         // from the API's ?facets=1 payload
+let rows    = [];
+let total   = 0;
+let offset  = 0;
+let openId  = null;                  // Browse: currently-opened list
+/* Whose personal lists the Mine tab is showing. Held OUTSIDE the DOM on
+   purpose: render() calls renderHead() first, which rebuilds the <select>, so
+   reading the selection back off the element would always yield the default. */
+let forUser = null;
+
+function api(...a) {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function')
+      return window.top.apiSend.apply(window.top, a);
+  } catch (_) {}
+  return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
+}
+function shell() { try { return window.top; } catch (_) { return null; } }
+function myUserId() { return shell()?.firmData?.currentUser?.user ?? null; }
+function users()    { return shell()?.firmData?.users || []; }
+function userName(id) {
+  const u = users().find(x => String(x.user) === String(id));
+  return u ? (u.user_name || u.user_initials || ('user ' + id)) : ('user ' + id);
+}
+function toast(icon, title, text) {
+  try { Toast.fire({ icon, title, text }); } catch (_) { console.error(title, text); }
+}
+
+// ── Chrome ────────────────────────────────────────────────────────
+function renderHead() {
+  const head = E('cxHead');
+  head.innerHTML = '';
+
+  const grp = document.createElement('div');
+  grp.className = 'cx-scope';
+  [['mine','Mine'], ['unlinked','Unlinked'], ['browse','Browse']].forEach(([k, label]) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    if (scope === k) b.classList.add('active');
+    // start(), not render(): Browse needs a fetch before it has anything to
+    // draw, and render() alone would show a bare "No checklists yet."
+    b.onclick = () => { if (scope === k) return; scope = k; openId = null; offset = 0; rows = []; start(); };
+    grp.appendChild(b);
+  });
+  head.appendChild(grp);
+
+  if (scope === 'browse') {
+    const s = document.createElement('input');
+    s.type = 'search';
+    s.className = 'cx-search';
+    s.placeholder = 'Search checklist titles…';
+    s.value = q;
+    let t;
+    s.oninput = () => { clearTimeout(t); t = setTimeout(() => {
+      q = s.value.trim(); offset = 0; openId = null; loadBrowse();
+    }, 250); };
+    head.appendChild(s);
+
+    // Tag filter. Options come from the API facet rather than a hardcoded
+    // list, so a new tag type shows up here with no frontend change.
+    const tsel = document.createElement('select');
+    tsel.className = 'cx-newfor';
+    const opts = [['', 'All tags'], ['none', 'Untagged']]
+      .concat(tagOptions.map(t => [t, t]));
+    opts.forEach(([v, label]) => {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = label;
+      if (v === tagFilter) o.selected = true;
+      tsel.appendChild(o);
+    });
+    tsel.onchange = () => {
+      tagFilter = tsel.value; offset = 0; openId = null; loadBrowse();
+    };
+    head.appendChild(tsel);
+  }
+
+  if (scope === 'mine') {
+    // Delegation: pick who a new personal list is for. Defaults to me.
+    const sel = document.createElement('select');
+    sel.className = 'cx-newfor';
+    sel.id = 'cxNewFor';
+    const me = myUserId();
+    if (forUser == null) forUser = me;
+    users().forEach(u => {
+      const o = document.createElement('option');
+      o.value = u.user;
+      o.textContent = String(u.user) === String(me)
+        ? 'My lists' : ('Lists for ' + (u.user_name || u.user_initials || u.user));
+      if (String(u.user) === String(forUser)) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.onchange = () => { forUser = sel.value; render(); };
+    if (users().length) head.appendChild(sel);
+  }
+}
+
+function viewingUserId() {
+  return forUser != null ? forUser : myUserId();
+}
+
+// ── Render ────────────────────────────────────────────────────────
+function render() {
+  renderHead();
+  const body = E('cxBody');
+  body.innerHTML = '';
+
+  if (scope === 'mine') {
+    const uid = viewingUserId();
+    if (!uid) {
+      body.innerHTML = '<div class="cx-note">No current user — reload the page.</div>';
+      return;
+    }
+    body.appendChild(frameTo('checklistView.html?link_type=user&link=' + encodeURIComponent(uid)));
+    return;
+  }
+
+  if (scope === 'unlinked') {
+    body.appendChild(frameTo('checklistView.html?unlinked=1'));
+    return;
+  }
+
+  // ── Browse ──
+  if (openId != null) {
+    const back = document.createElement('button');
+    back.className = 'cx-back';
+    back.innerHTML = '<i class="fa-solid fa-arrow-left"></i> Back to all checklists';
+    back.onclick = () => { openId = null; render(); };
+    body.appendChild(back);
+    body.appendChild(frameTo('checklistView.html?id=' + encodeURIComponent(openId)));
+    return;
+  }
+
+  if (!rows.length) {
+    body.innerHTML = '<div class="cx-note">'
+      + (q ? 'No checklists match that search.' : 'No checklists yet.') + '</div>';
+    return;
+  }
+
+  rows.forEach(cl => body.appendChild(browseRow(cl)));
+
+  if (rows.length < total) {
+    const more = document.createElement('button');
+    more.className = 'cx-more';
+    more.textContent = `Show more (${rows.length} of ${total})`;
+    more.onclick = () => { offset += PAGE; loadBrowse(true); };
+    body.appendChild(more);
+  }
+}
+
+/* checklistView.html sizes to its own content; without this the iframe keeps the
+   default 150px and the lists get their own scrollbar. */
+function frameTo(src) {
+  const f = document.createElement('iframe');
+  f.className = 'cx-frame';
+  f.src = src;
+  f.onload = () => { try { autoSize(f); } catch (_) {} };
+  return f;
+}
+function autoSize(f) {
+  const fit = () => {
+    try {
+      const h = f.contentDocument?.body?.scrollHeight;
+      if (h) f.style.height = (h + 24) + 'px';
+    } catch (_) {}
+  };
+  fit();
+  // The widget re-renders on every edit, so watch it rather than measuring once.
+  try {
+    const obs = new f.contentWindow.MutationObserver(fit);
+    obs.observe(f.contentDocument.body, { childList: true, subtree: true });
+  } catch (_) { setInterval(fit, 700); }
+}
+
+function browseRow(cl) {
+  const row = document.createElement('div');
+  row.className = 'cx-row';
+  row.onclick = () => { openId = cl.id; render(); };
+
+  const title = document.createElement('span');
+  title.className = 'cx-row-title';
+  title.textContent = cl.title;
+  row.appendChild(title);
+
+  if (cl.tag) {
+    const t = document.createElement('span');
+    t.className = 'cx-tag';
+    t.textContent = cl.tag;
+    row.appendChild(t);
+  }
+
+  const scopeEl = document.createElement('span');
+  scopeEl.className = 'cx-row-scope';
+  if (!cl.link) {
+    scopeEl.textContent = 'unlinked';
+  } else if (cl.link_type === 'user') {
+    scopeEl.textContent = userName(cl.link);
+  } else if (cl.link_type === 'case') {
+    // The API returns the raw case_id; resolving it to a docket number would
+    // need a join the list route doesn't do. The link still navigates.
+    const a = document.createElement('a');
+    a.href = '#';
+    a.textContent = 'case ' + cl.link;
+    a.onclick = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      try { shell().addFile('case', cl.link); } catch (_) { toast('error', 'Could not open case'); }
+    };
+    scopeEl.appendChild(a);
+  } else {
+    scopeEl.textContent = (cl.link_type || '?') + ' ' + cl.link;
+  }
+  row.appendChild(scopeEl);
+
+  const prog = document.createElement('span');
+  const done = cl.items_done, tot = cl.items_total;
+  prog.className = 'cx-prog' + (tot && done === tot ? ' done' : '');
+  prog.textContent = tot ? `${done}/${tot}` : 'empty';
+  row.appendChild(prog);
+
+  return row;
+}
+
+// ── Browse loading ────────────────────────────────────────────────
+async function loadBrowse(append) {
+  try {
+    // Defined keys only — apiSend stringifies undefined to the literal
+    // "undefined" via URLSearchParams.
+    const params = {
+      order: 'updated_desc', limit: String(PAGE), offset: String(offset),
+      facets: '1',
+    };
+    if (q)         params.q   = q;
+    if (tagFilter) params.tag = tagFilter;   // 'none' means IS NULL, per the route
+    const data = await api('/checklists', 'GET', params);
+    const batch = data?.checklists || [];
+    rows  = append ? rows.concat(batch) : batch;
+    total = Number(data?.total || 0);
+    if (Array.isArray(data?.tags)) tagOptions = data.tags;
+    render();
+  } catch (err) {
+    E('cxBody').innerHTML = '';
+    const box = document.createElement('div');
+    box.className = 'cx-error';
+    box.textContent = 'Could not load checklists: ' + (err?.message || 'unknown error');
+    E('cxBody').appendChild(box);
+  }
+}
+
+function start() {
+  if (scope === 'browse') loadBrowse();
+  else render();
+}
+
+// Re-entry hook, matching checklistView.html's reloadChecklists.
+window.reloadChecklists = () => { offset = 0; openId = null; rows = []; start(); };
+
+// ── Boot ──────────────────────────────────────────────────────────
+(function waitForShell() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') return start();
+  } catch (_) {}
+  setTimeout(waitForShell, 100);
+})();
+</script>
+</body>
+</html>
