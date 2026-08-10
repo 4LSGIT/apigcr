@@ -2,19 +2,30 @@
 # .githooks/pre-commit — tracked in the repo. Enable once with:
 #   git config core.hooksPath .githooks
 #
-# 1. Refresh ref/database.sql if the live schema changed. Runs in the BACKGROUND
-#    so it adds no latency to a commit: opening a connection to this DB costs
-#    ~4s from a laptop, which is not a price worth paying on every commit for a
-#    file that is documentation. A schema change therefore lands in the NEXT
-#    commit — `git add .` picks it up.
-# 2. Refresh TRACKED_FILES.txt (local, instant, stays synchronous).
+# 1. Refresh ref/database.sql if the live schema changed. Runs INLINE (blocking)
+#    so the fingerprint is checked against the live DB on every commit and any
+#    drift is staged into THIS commit, not the next one. Costs ~4s per commit:
+#    that is the connection handshake plus the fingerprint queries, paid whether
+#    or not the schema moved. The full dump only runs when the fingerprint
+#    actually differs.
+# 2. Refresh TRACKED_FILES.txt (local, instant, always synchronous).
+#
+# TEMPORARY (2026-08-10): the default used to be BACKGROUND — no commit latency,
+# but a schema change landed one commit late, which is how the ai_match_sets /
+# court_item_* tables missed commit 0ddfea7 by 14 seconds. Flip SCHEMA_DUMP_MODE
+# back to "async" below to restore the old behaviour.
 #
 # Skip the schema step:             SKIP_SCHEMA_DUMP=1 git commit -m "..."
-# Force it inline (blocking):       SCHEMA_DUMP_SYNC=1 git commit -m "..."
-#   ^ use after applying a migration, when you want the ref in THIS commit.
+# Background it for one commit:     SCHEMA_DUMP_ASYNC=1 git commit -m "..."
+#   ^ use when the DB is slow or unreachable and you just want to commit.
+
+# "sync" = block on the check every commit; "async" = old background behaviour.
+SCHEMA_DUMP_MODE="sync"
+[ -n "$SCHEMA_DUMP_ASYNC" ] && SCHEMA_DUMP_MODE="async"
+[ -n "$SCHEMA_DUMP_SYNC" ]  && SCHEMA_DUMP_MODE="sync"
 
 if [ -z "$SKIP_SCHEMA_DUMP" ] && [ -f scripts/dump-schema.js ] && command -v node >/dev/null 2>&1; then
-  if [ -n "$SCHEMA_DUMP_SYNC" ]; then
+  if [ "$SCHEMA_DUMP_MODE" = "sync" ]; then
     node scripts/dump-schema.js --quiet
     [ -f ref/database.sql ] && git add ref/database.sql
   else
