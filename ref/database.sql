@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-09T20:19:57.673Z
+-- Generated: 2026-08-10T14:48:21.466Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:5fd907f10b3bf69e77f7a79efe4f3510
+-- Fingerprint: sha256:3912e2b43f65a0927162e8f0b9e8b6ca
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -101,6 +101,52 @@ CREATE TABLE `ai_change_log` (
   `undone_at` datetime DEFAULT NULL,
   `undone_by` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `ai_match_sets`
+--
+
+DROP TABLE IF EXISTS `ai_match_sets`;
+CREATE TABLE `ai_match_sets` (
+  `id` int unsigned NOT NULL,
+  `set_key` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `description` text COLLATE utf8mb4_general_ci,
+  `prompt_preamble` text COLLATE utf8mb4_general_ci,
+  `version` int unsigned NOT NULL DEFAULT '1',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `ai_match_types`
+--
+
+DROP TABLE IF EXISTS `ai_match_types`;
+CREATE TABLE `ai_match_types` (
+  `id` int unsigned NOT NULL,
+  `set_id` int unsigned NOT NULL,
+  `type_key` varchar(60) COLLATE utf8mb4_general_ci NOT NULL,
+  `label` varchar(120) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `disposition` enum('act','ignore','out_of_scope') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'ignore',
+  `item_type` varchar(60) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `verb` enum('scheduled','rescheduled','cancelled','occurred','status_changed') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `subject_match` json DEFAULT NULL,
+  `recognition_hints` json DEFAULT NULL,
+  `fields` json DEFAULT NULL,
+  `collapse_same_date` tinyint(1) NOT NULL DEFAULT '0',
+  `workflow_id` int DEFAULT NULL,
+  `sort_order` int NOT NULL DEFAULT '0',
+  `active` tinyint(1) NOT NULL DEFAULT '1',
+  `notes` text COLLATE utf8mb4_general_ci,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
 
@@ -1041,6 +1087,38 @@ DROP TABLE IF EXISTS `court_emails2`;
 CREATE TABLE `court_emails2` (
   `subject` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL,
   `count` int DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `court_item_policy`
+--
+
+DROP TABLE IF EXISTS `court_item_policy`;
+CREATE TABLE `court_item_policy` (
+  `type_id` int unsigned NOT NULL,
+  `storage` enum('appt','event','none') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `attendance` enum('none','ss','ss_client','client','staff') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `blocks` enum('none','ss','firm') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `calendar` enum('ss','firm','none') COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `court_item_reminders`
+--
+
+DROP TABLE IF EXISTS `court_item_reminders`;
+CREATE TABLE `court_item_reminders` (
+  `id` int unsigned NOT NULL,
+  `type_id` int unsigned NOT NULL,
+  `assignee` int DEFAULT NULL,
+  `lead_days` int NOT NULL DEFAULT '7',
+  `title_template` varchar(255) COLLATE utf8mb4_general_ci DEFAULT NULL,
+  `active` tinyint(1) NOT NULL DEFAULT '1'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------
@@ -2969,6 +3047,21 @@ ALTER TABLE `ai_change_log`
   ADD KEY `idx_ai_change_log_entity` (`entity_type`,`entity_id`);
 
 --
+-- Indexes for table `ai_match_sets`
+--
+ALTER TABLE `ai_match_sets`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_set_key` (`set_key`);
+
+--
+-- Indexes for table `ai_match_types`
+--
+ALTER TABLE `ai_match_types`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_set_type` (`set_id`,`type_key`),
+  ADD KEY `idx_set_disposition` (`set_id`,`disposition`);
+
+--
 -- Indexes for table `alert_state`
 --
 ALTER TABLE `alert_state`
@@ -3176,6 +3269,19 @@ ALTER TABLE `court_emails`
 --
 ALTER TABLE `court_emails2`
   ADD UNIQUE KEY `subject` (`subject`);
+
+--
+-- Indexes for table `court_item_policy`
+--
+ALTER TABLE `court_item_policy`
+  ADD PRIMARY KEY (`type_id`);
+
+--
+-- Indexes for table `court_item_reminders`
+--
+ALTER TABLE `court_item_reminders`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_cir_type` (`type_id`);
 
 --
 -- Indexes for table `credentials`
@@ -3835,6 +3941,18 @@ ALTER TABLE `ai_change_log`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT for table `ai_match_sets`
+--
+ALTER TABLE `ai_match_sets`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `ai_match_types`
+--
+ALTER TABLE `ai_match_types`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT for table `api_keys`
 --
 ALTER TABLE `api_keys`
@@ -3959,6 +4077,12 @@ ALTER TABLE `contract_templates`
 --
 ALTER TABLE `court_ai_log`
   MODIFY `id` int NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `court_item_reminders`
+--
+ALTER TABLE `court_item_reminders`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT for table `credentials`
@@ -4445,6 +4569,12 @@ ALTER TABLE `workflows`
 --
 
 --
+-- Constraints for table `ai_match_types`
+--
+ALTER TABLE `ai_match_types`
+  ADD CONSTRAINT `fk_amt_set` FOREIGN KEY (`set_id`) REFERENCES `ai_match_sets` (`id`);
+
+--
 -- Constraints for table `campaign_contacts`
 --
 ALTER TABLE `campaign_contacts`
@@ -4482,6 +4612,18 @@ ALTER TABLE `contact_relations`
   ADD CONSTRAINT `fk_cr_contact_a` FOREIGN KEY (`contact_a_id`) REFERENCES `contacts` (`contact_id`) ON DELETE RESTRICT,
   ADD CONSTRAINT `fk_cr_contact_b` FOREIGN KEY (`contact_b_id`) REFERENCES `contacts` (`contact_id`) ON DELETE RESTRICT,
   ADD CONSTRAINT `fk_cr_type_code` FOREIGN KEY (`type_code`) REFERENCES `contact_relation_types` (`type_code`) ON DELETE RESTRICT;
+
+--
+-- Constraints for table `court_item_policy`
+--
+ALTER TABLE `court_item_policy`
+  ADD CONSTRAINT `fk_cip_type` FOREIGN KEY (`type_id`) REFERENCES `ai_match_types` (`id`) ON DELETE CASCADE;
+
+--
+-- Constraints for table `court_item_reminders`
+--
+ALTER TABLE `court_item_reminders`
+  ADD CONSTRAINT `fk_cir_type` FOREIGN KEY (`type_id`) REFERENCES `ai_match_types` (`id`) ON DELETE CASCADE;
 
 --
 -- Constraints for table `email_credentials`
