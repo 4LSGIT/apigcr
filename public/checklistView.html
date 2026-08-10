@@ -295,6 +295,61 @@ function toast(icon, title, text) {
   catch (_) { console.error(title, text); }
 }
 
+/* Confirmation dialogs render through the SHELL's Swal, not this iframe's.
+   This page is nested two deep (index.html > case.html > here), and a modal
+   fired from inside the iframe is clipped to the iframe's box — it centres
+   itself in a panel, not on screen. window.top.Swal always exists (the shell
+   loads it) and overlays the whole app.
+   Falls back to the local Swal, then to confirm(), so the page still works if
+   it is ever opened somewhere without a shell. */
+function swal() {
+  try { if (window.top && window.top.Swal) return window.top.Swal; } catch (_) {}
+  return (typeof Swal !== 'undefined') ? Swal : null;
+}
+
+/**
+ * @param {object} o  title, html, confirmText, danger
+ * @returns {Promise<boolean>}
+ */
+async function confirmDialog(o) {
+  const S = swal();
+  if (!S) {
+    // Last-resort fallback — strip tags so the plain dialog stays readable.
+    const plain = String(o.html || '').replace(/<br\s*\/?>/gi, '\n')
+                                      .replace(/<[^>]+>/g, '');
+    return window.confirm((o.title ? o.title + '\n\n' : '') + plain);
+  }
+  const r = await S.fire({
+    title: o.title,
+    html: o.html,
+    icon: o.danger ? 'warning' : 'question',
+    showCancelButton: true,
+    confirmButtonText: o.confirmText || 'OK',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: o.danger ? '#b91c1c' : '#2563eb',
+    cancelButtonColor: '#64748b',
+    reverseButtons: true,
+    focusCancel: !!o.danger,
+    // Cross-frame: this dialog lives in the shell but the thing that should
+    // hold focus afterwards (the tag input) lives in THIS iframe. Swal's
+    // default would hand focus back to the shell document and blur it away.
+    returnFocus: false,
+    // Swal mutates the host body's height by default; suppress it so opening
+    // a dialog can't jog the shell's scroll position.
+    heightAuto: false,
+  });
+  return !!r.isConfirmed;
+}
+
+/* Escapes values interpolated into Swal `html`. Checklist titles and item
+   names are free text typed by staff — without this, a title containing
+   markup would render as markup inside the dialog. */
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 /* Surfaces the API's own message. The route layer returns real ones —
    409 on a tag collision, 403 on someone else's personal list — and they are
    more useful than anything this page could invent. */
@@ -519,19 +574,26 @@ function editTitle(cl, el) {
    requests just go quietly empty. Hence the explicit confirm naming the
    consequence, rather than a generic "are you sure".
    Adding a duplicate is already impossible: uq_link_tag returns 409. */
-function editTag(cl, el) {
+async function editTag(cl, el) {
   const current = cl.tag || '';
-  const warn = current
-    ? `The tag "${current}" is how automation finds this checklist.\n\n`
+  const body = current
+    ? `<p style="text-align:left">The tag <code>${esc(current)}</code> is how automation finds this checklist.</p>`
       + (current === 'docs_needed'
-          ? 'This is the list the client portal and document requests read. '
-            + 'Renaming or clearing it will make both go blank for this case '
-            + '— silently, with no error.\n\n'
-          : 'Changing it will detach this list from whatever matches that tag.\n\n')
-      + 'Clear the box to remove the tag entirely.\n\nContinue?'
-    : 'Tags are matched by automation, not shown to clients. Only set one if '
-      + 'you know what reads it.\n\nContinue?';
-  if (!confirm(warn)) return;
+          ? '<p style="text-align:left;color:#b91c1c"><b>This is the list the client portal '
+            + 'and document requests read.</b> Renaming or clearing it makes both go blank '
+            + 'for this case &mdash; silently, with no error.</p>'
+          : '<p style="text-align:left">Changing it detaches this list from whatever matches that tag.</p>')
+      + '<p style="text-align:left;color:#64748b">Clear the box to remove the tag entirely.</p>'
+    : '<p style="text-align:left">Tags are matched by automation and never shown to clients. '
+      + 'Only set one if you know what reads it.</p>';
+
+  const ok = await confirmDialog({
+    title: current ? 'Edit system tag' : 'Add a system tag',
+    html: body,
+    confirmText: 'Edit tag',
+    danger: current === 'docs_needed',
+  });
+  if (!ok) return;
 
   inlineEdit(el, current, 'ck-title-input', async (next) => {
     try {
@@ -605,7 +667,13 @@ function refocusAddInput(clId) {
 }
 
 async function deleteItem(cl, item) {
-  if (!confirm(`Delete "${item.name}"?`)) return;
+  const ok = await confirmDialog({
+    title: 'Delete item?',
+    html: `<p style="text-align:left">${esc(item.name)}</p>`,
+    confirmText: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api('/checkitems/' + item.id, 'DELETE');
     cl.items = (cl.items || []).filter(i => i.id !== item.id);
@@ -619,10 +687,21 @@ async function deleteItem(cl, item) {
 async function deleteList(cl) {
   const n = (cl.items || []).length;
   const warn = cl.tag
-    ? `"${cl.title}" is a system list (${cl.tag}). Deleting it will remove it `
-      + `from the client portal and document requests until it is recreated.\n\n`
+    ? `<p style="text-align:left;color:#b91c1c"><b>This is a system list `
+      + `(<code>${esc(cl.tag)}</code>).</b> Deleting it removes it from the client `
+      + `portal and document requests until it is recreated.</p>`
     : '';
-  if (!confirm(`${warn}Delete checklist "${cl.title}"${n ? ` and its ${n} item(s)` : ''}?`)) return;
+  const ok = await confirmDialog({
+    title: 'Delete checklist?',
+    html: warn
+        + `<p style="text-align:left">${esc(cl.title)}`
+        + (n ? ` <span style="color:#64748b">&mdash; ${n} item${n === 1 ? '' : 's'} `
+             + `will be deleted too.</span>` : '')
+        + '</p>',
+    confirmText: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
   try {
     await api('/checklists/' + cl.id, 'DELETE');
     lists = lists.filter(l => l.id !== cl.id);
