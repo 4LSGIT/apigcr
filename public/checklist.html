@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Checklists</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="/scripts.js"></script>
+  <link rel="stylesheet" type="text/css" href="/style.css">
+  <style>
+    /* Widget chrome (esign/caseWidget + automationsWidget idiom). */
+    body { margin: 0; padding: 12px; background: #fff; }
+
+    /* All classes prefixed .ck- for scoping — this file is iframed into
+       case.html and the shell, both of which have their own global CSS. */
+
+    .ck-wrap { max-width: 760px; margin: 0 auto; }
+
+    .ck-empty {
+      color: #64748b;
+      font-size: 14px;
+      padding: 18px 4px;
+    }
+
+    /* ── One checklist card ── */
+    .ck-card {
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      margin-bottom: 14px;
+      background: #fff;
+    }
+    .ck-card-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      flex-wrap: wrap;
+    }
+    .ck-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      cursor: text;
+      padding: 2px 4px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+    }
+    .ck-title:hover { background: #f8fafc; border-color: #e2e8f0; }
+    .ck-title-input {
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      padding: 2px 4px;
+      border: 1px solid #2563eb;
+      border-radius: 4px;
+      font-family: inherit;
+      min-width: 180px;
+    }
+
+    /* Tag is a SYSTEM field — rendered as a badge, never an input. The
+       backend enforces this too (mayWriteTag: api_key/SU only), so a staff
+       user editing the DOM gets a 403 rather than a corrupted invariant. */
+    .ck-tag {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      color: #1e40af;
+      background: #dbeafe;
+      border: 1px solid #bfdbfe;
+      border-radius: 4px;
+      padding: 2px 6px;
+      cursor: default;
+    }
+
+    .ck-progress {
+      margin-left: auto;
+      font-size: 13px;
+      font-weight: 600;
+      color: #475569;
+      white-space: nowrap;
+    }
+    .ck-progress.done { color: #15803d; }
+
+    .ck-icon-btn {
+      background: #fff;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 13px;
+      cursor: pointer;
+      color: #334155;
+      line-height: 1;
+    }
+    .ck-icon-btn:hover { background: #f1f5f9; }
+    .ck-icon-btn.danger:hover { background: #fee2e2; border-color: #fca5a5; color: #b91c1c; }
+
+    /* ── Items ── */
+    .ck-items { padding: 6px 12px 2px; }
+    .ck-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 4px 0;
+      border-bottom: 1px solid #f8fafc;
+    }
+    .ck-row:last-child { border-bottom: none; }
+    .ck-box {
+      transform: scale(1.25);
+      margin-top: 4px;
+      cursor: pointer;
+      flex: none;
+    }
+    .ck-name {
+      flex: 1;
+      font-size: 15px;
+      color: #0f172a;
+      cursor: text;
+      padding: 2px 4px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      word-break: break-word;
+    }
+    .ck-name:hover { background: #f8fafc; border-color: #e2e8f0; }
+    .ck-row.complete .ck-name { text-decoration: line-through; color: #94a3b8; }
+    .ck-name-input {
+      flex: 1;
+      font-size: 15px;
+      padding: 2px 4px;
+      border: 1px solid #2563eb;
+      border-radius: 4px;
+      font-family: inherit;
+    }
+    .ck-row-del {
+      background: none;
+      border: none;
+      color: #cbd5e1;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 2px 6px;
+      line-height: 1;
+      flex: none;
+    }
+    .ck-row:hover .ck-row-del { color: #94a3b8; }
+    .ck-row-del:hover { color: #b91c1c; }
+
+    /* ── Add-item row: an always-present input, not a prompt() ── */
+    .ck-add {
+      display: flex;
+      gap: 8px;
+      padding: 8px 12px 12px;
+    }
+    .ck-add input {
+      flex: 1;
+      font-size: 14px;
+      padding: 6px 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-family: inherit;
+    }
+    .ck-add input:focus { outline: none; border-color: #2563eb; }
+
+    .ck-btn {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .ck-btn:hover { background: #1d4ed8; }
+    .ck-btn:disabled { background: #cbd5e1; cursor: default; }
+
+    /* ── New-checklist footer ── */
+    .ck-newlist {
+      display: flex;
+      gap: 8px;
+      padding: 12px 0 4px;
+      border-top: 1px solid #e2e8f0;
+      margin-top: 6px;
+    }
+    .ck-newlist input {
+      flex: 1;
+      font-size: 14px;
+      padding: 6px 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-family: inherit;
+    }
+    .ck-newlist input:focus { outline: none; border-color: #2563eb; }
+
+    .ck-loading { color: #64748b; font-size: 14px; padding: 18px 4px; }
+    .ck-error {
+      color: #b91c1c;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="ck-wrap">
+    <div id="ckBody"><div class="ck-loading">Loading…</div></div>
+  </div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════
+   checklist.html — stacked checklist surface.
+
+   MODES (from the query string):
+     ?id=123                          one list
+     ?link_type=case&link=rIxpyvYG    every list on that entity
+     ?link_type=user&link=me          the caller's personal lists
+     (no params) or ?unlinked=1       lists with no link
+
+   `link` is the column name and the API's param name — NOT `link_id`.
+
+   TRANSPORT: window.top.apiSend, NOT P.apiSend. When this page is iframed
+   into case.html, scripts.js's `P` is window.parent === case.html, whose own
+   apiSend relay may not have run yet. window.top is always the index.html
+   shell, which owns the JWT. There is no standalone mode: the shell is the
+   only thing on this origin that can mint a token, so opening this file
+   directly leaves it with no way to authenticate.
+
+   The tag is rendered as a read-only badge. Titles are staff-editable and
+   nothing keys off them (identity is tag='docs_needed'); tags are machine
+   fields and the backend 403s a non-SU write, so the UI just agrees.
+   ═══════════════════════════════════════════════════════════════════ */
+
+const params = new URLSearchParams(location.search);
+const P_ID        = params.get('id');
+const P_LINK_TYPE = params.get('link_type') || null;
+const P_LINK      = params.get('link') || null;
+const P_UNLINKED  = params.get('unlinked') === '1';
+
+const MODE = P_ID ? 'single'
+           : (P_LINK_TYPE && P_LINK && !P_UNLINKED) ? 'entity'
+           : 'unlinked';
+
+let lists   = [];
+let busy    = false;   // suppresses re-entrant writes from double-Enter
+
+function api(...args) {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') {
+      return window.top.apiSend.apply(window.top, args);
+    }
+  } catch (_) { /* cross-origin — cannot happen same-origin, but don't throw */ }
+  return Promise.reject(new Error('apiSend unavailable — open this page inside YisraCase.'));
+}
+
+/* `link=me` is resolved server-side for READS (the GET route accepts it), but
+   a write must store a real id — otherwise the literal string 'me' lands in
+   the column. The shell already has the answer. */
+function myUserId() {
+  try { return window.top.firmData?.currentUser?.user ?? null; } catch (_) { return null; }
+}
+
+/* The scope a newly-created list should be attached to. In `single` mode there
+   is no scope — the footer is hidden. */
+function newListScope() {
+  if (MODE === 'entity') {
+    const link = (P_LINK === 'me') ? myUserId() : P_LINK;
+    return { link_type: P_LINK_TYPE, link };
+  }
+  return { link_type: null, link: null };
+}
+
+function toast(icon, title, text) {
+  try { Toast.fire({ icon, title, text }); }
+  catch (_) { console.error(title, text); }
+}
+
+/* Surfaces the API's own message. The route layer returns real ones —
+   409 on a tag collision, 403 on someone else's personal list — and they are
+   more useful than anything this page could invent. */
+function apiError(err, fallback) {
+  toast('error', fallback, err?.message || '');
+}
+
+// ── Load ──────────────────────────────────────────────────────────
+async function load() {
+  try {
+    if (MODE === 'single') {
+      const one = await api('/checklists/' + encodeURIComponent(P_ID), 'GET');
+      lists = one ? [one] : [];
+    } else {
+      // Build the query object with DEFINED keys only: apiSend does
+      // `new URLSearchParams(payload)`, which stringifies undefined to the
+      // literal "undefined" and would silently filter on garbage.
+      const q = { include: 'items', order: 'created_asc' };
+      if (MODE === 'entity') { q.link_type = P_LINK_TYPE; q.link = P_LINK; }
+      else                   { q.unlinked = '1'; }
+      const data = await api('/checklists', 'GET', q);
+      lists = data?.checklists || [];
+    }
+    // Tagged lists pin to the top — on a case that means Docs Needed sits
+    // above whatever working lists staff have added.
+    lists.sort((a, b) => (b.tag ? 1 : 0) - (a.tag ? 1 : 0));
+    render();
+  } catch (err) {
+    E('ckBody').innerHTML = '';
+    const box = document.createElement('div');
+    box.className = 'ck-error';
+    box.textContent = 'Could not load checklists: ' + (err?.message || 'unknown error');
+    E('ckBody').appendChild(box);
+  }
+}
+
+// Called by case.html on tab re-entry (autoFrame idiom) so the lists are fresh.
+window.reloadChecklists = load;
+
+// ── Render ────────────────────────────────────────────────────────
+function render() {
+  const body = E('ckBody');
+  body.innerHTML = '';
+
+  if (!lists.length) {
+    const empty = document.createElement('div');
+    empty.className = 'ck-empty';
+    empty.textContent = MODE === 'single'
+      ? 'Checklist not found.'
+      : 'No checklists yet.';
+    body.appendChild(empty);
+  }
+
+  lists.forEach(cl => body.appendChild(renderCard(cl)));
+
+  if (MODE !== 'single') body.appendChild(renderNewListFooter());
+}
+
+function renderCard(cl) {
+  const card = document.createElement('section');
+  card.className = 'ck-card';
+
+  const items = cl.items || [];
+  const done  = items.filter(i => i.status === 'complete').length;
+
+  // ── header ──
+  const head = document.createElement('div');
+  head.className = 'ck-card-head';
+
+  const title = document.createElement('span');
+  title.className = 'ck-title';
+  title.textContent = cl.title;
+  title.title = 'Click to rename';
+  title.onclick = () => editTitle(cl, title);
+  head.appendChild(title);
+
+  if (cl.tag) {
+    const badge = document.createElement('span');
+    badge.className = 'ck-tag';
+    badge.textContent = cl.tag;
+    badge.title = 'System tag — set automatically, not editable';
+    head.appendChild(badge);
+  }
+
+  const prog = document.createElement('span');
+  prog.className = 'ck-progress' + (items.length && done === items.length ? ' done' : '');
+  prog.textContent = items.length ? `${done}/${items.length}` : 'empty';
+  head.appendChild(prog);
+
+  const del = document.createElement('button');
+  del.className = 'ck-icon-btn danger';
+  del.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+  del.title = 'Delete this checklist';
+  del.onclick = () => deleteList(cl);
+  head.appendChild(del);
+
+  card.appendChild(head);
+
+  // ── items ──
+  const wrap = document.createElement('div');
+  wrap.className = 'ck-items';
+  items.forEach(item => wrap.appendChild(renderRow(cl, item)));
+  card.appendChild(wrap);
+
+  // ── add item ──
+  const add = document.createElement('div');
+  add.className = 'ck-add';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'Add an item…';
+  const btn = document.createElement('button');
+  btn.className = 'ck-btn';
+  btn.textContent = 'Add';
+  const submit = () => addItem(cl, input);
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+  };
+  btn.onclick = submit;
+  add.appendChild(input);
+  add.appendChild(btn);
+  card.appendChild(add);
+
+  return card;
+}
+
+function renderRow(cl, item) {
+  const row = document.createElement('div');
+  row.className = 'ck-row' + (item.status === 'complete' ? ' complete' : '');
+
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.className = 'ck-box';
+  box.checked = item.status === 'complete';
+  box.onchange = () => toggleItem(cl, item, box);
+  row.appendChild(box);
+
+  const name = document.createElement('span');
+  name.className = 'ck-name';
+  name.textContent = item.name;
+  name.title = 'Click to edit';
+  name.onclick = () => editItemName(cl, item, name);
+  row.appendChild(name);
+
+  const del = document.createElement('button');
+  del.className = 'ck-row-del';
+  del.innerHTML = '&#x2716;';
+  del.title = 'Delete item';
+  del.onclick = () => deleteItem(cl, item);
+  row.appendChild(del);
+
+  return row;
+}
+
+function renderNewListFooter() {
+  const foot = document.createElement('div');
+  foot.className = 'ck-newlist';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'New checklist name…';
+  const btn = document.createElement('button');
+  btn.className = 'ck-btn';
+  btn.textContent = 'New Checklist';
+  const submit = () => addList(input);
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+  };
+  btn.onclick = submit;
+  foot.appendChild(input);
+  foot.appendChild(btn);
+  return foot;
+}
+
+// ── Inline editing ────────────────────────────────────────────────
+/* Shared swap-to-input helper. Commits on Enter or blur, cancels on Escape,
+   and no-ops when the value is unchanged so a stray click costs no request. */
+function inlineEdit(el, current, inputClass, onCommit) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = inputClass;
+  input.value = current;
+
+  let settled = false;
+  const finish = (commit) => {
+    if (settled) return;
+    settled = true;
+    const next = input.value.trim();
+    input.replaceWith(el);
+    if (commit && next && next !== current) onCommit(next);
+  };
+
+  input.onkeydown = (e) => {
+    if (e.key === 'Enter')  { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+  };
+  input.onblur = () => finish(true);
+
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+function editTitle(cl, el) {
+  inlineEdit(el, cl.title, 'ck-title-input', async (next) => {
+    try {
+      await api('/checklists/' + cl.id, 'PATCH', { title: next });
+      cl.title = next;
+      render();
+    } catch (err) { apiError(err, 'Could not rename checklist'); render(); }
+  });
+}
+
+function editItemName(cl, item, el) {
+  inlineEdit(el, item.name, 'ck-name-input', async (next) => {
+    try {
+      await api('/checkitems/' + item.id, 'PATCH', { name: next });
+      item.name = next;
+      render();
+    } catch (err) { apiError(err, 'Could not rename item'); render(); }
+  });
+}
+
+// ── Mutations ─────────────────────────────────────────────────────
+async function toggleItem(cl, item, box) {
+  const next = box.checked ? 'complete' : 'incomplete';
+  const prev = item.status;
+  item.status = next;          // optimistic — the checkbox already moved
+  render();
+  try {
+    await api('/checkitems/' + item.id, 'PATCH', { status: next });
+    // The parent's status is recomputed server-side; refetch is overkill for
+    // a checkbox, so recompute the same rule locally for the progress badge.
+    const items = cl.items || [];
+    cl.status = items.length && items.every(i => i.status === 'complete')
+      ? 'complete' : 'incomplete';
+  } catch (err) {
+    item.status = prev;
+    apiError(err, 'Could not update item');
+    render();
+  }
+}
+
+async function addItem(cl, input) {
+  const name = input.value.trim();
+  if (!name || busy) return;
+  busy = true;
+  try {
+    // POST /checklists/:id/items returns the WHOLE checklist with items.
+    const updated = await api('/checklists/' + cl.id + '/items', 'POST', { name });
+    Object.assign(cl, updated);
+    render();
+    // Re-focus this card's input so several items can be typed in a row.
+    refocusAddInput(cl.id);
+  } catch (err) {
+    apiError(err, 'Could not add item');
+  } finally { busy = false; }
+}
+
+/* render() rebuilds the DOM, so the input that was just typed into is gone.
+   Find the rebuilt one for the same card and put the cursor back. */
+function refocusAddInput(clId) {
+  const idx = lists.findIndex(l => l.id === clId);
+  if (idx < 0) return;
+  const cards = document.querySelectorAll('.ck-card');
+  const input = cards[idx]?.querySelector('.ck-add input');
+  if (input) input.focus();
+}
+
+async function deleteItem(cl, item) {
+  if (!confirm(`Delete "${item.name}"?`)) return;
+  try {
+    await api('/checkitems/' + item.id, 'DELETE');
+    cl.items = (cl.items || []).filter(i => i.id !== item.id);
+    const items = cl.items;
+    cl.status = items.length && items.every(i => i.status === 'complete')
+      ? 'complete' : 'incomplete';
+    render();
+  } catch (err) { apiError(err, 'Could not delete item'); }
+}
+
+async function deleteList(cl) {
+  const n = (cl.items || []).length;
+  const warn = cl.tag
+    ? `"${cl.title}" is a system list (${cl.tag}). Deleting it will remove it `
+      + `from the client portal and document requests until it is recreated.\n\n`
+    : '';
+  if (!confirm(`${warn}Delete checklist "${cl.title}"${n ? ` and its ${n} item(s)` : ''}?`)) return;
+  try {
+    await api('/checklists/' + cl.id, 'DELETE');
+    lists = lists.filter(l => l.id !== cl.id);
+    render();
+  } catch (err) { apiError(err, 'Could not delete checklist'); }
+}
+
+async function addList(input) {
+  const title = input.value.trim();
+  if (!title || busy) return;
+  const scope = newListScope();
+  if (scope.link_type === 'user' && !scope.link) {
+    toast('error', 'Could not create list', 'No current user — reload the page.');
+    return;
+  }
+  busy = true;
+  try {
+    const created = await api('/checklists', 'POST', {
+      title,
+      link:      scope.link,
+      link_type: scope.link_type,
+    });
+    created.items = created.items || [];
+    lists.push(created);
+    render();
+  } catch (err) {
+    // 409 (tag collision) and 403 (someone else's personal list) both arrive
+    // here with a real message from the route.
+    apiError(err, 'Could not create checklist');
+  } finally { busy = false; }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────
+// Wait for the shell to expose apiSend (esign/automationsWidget idiom). The
+// iframe can parse before index.html has finished defining it.
+(function waitForShell() {
+  try {
+    if (window.top && typeof window.top.apiSend === 'function') return load();
+  } catch (_) { /* fall through to retry */ }
+  setTimeout(waitForShell, 100);
+})();
+</script>
+</body>
+</html>

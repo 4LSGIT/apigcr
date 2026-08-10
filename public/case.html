@@ -39,10 +39,12 @@
       <button class="tab" onclick="openTab(this, 'tabEvents'); if (typeof events==='undefined' || !events.length) refreshEvents();">
         <i class="fa-solid fa-calendar-day"></i> Events
       </button>
+      <!-- Checklists widget. Lazy iframe src on first open (esignButton
+           idiom); on re-entry pushes a reload so the lists are fresh. -->
       <button
         class="tab"
         id="checklistsButton"
-        onclick="openTab(this, 'checklists');if (checklists.length == 0) getChecklists();"
+        onclick="openTab(this, 'checklists'); if (!E('checklistFrame').src) E('checklistFrame').src = `checklist.html?link_type=case&link=${caseID}`; else E('checklistFrame').contentWindow?.reloadChecklists?.();"
       >
         <i class="fa-solid fa-list-check"></i> Checklists
       </button>
@@ -588,16 +590,10 @@
         });
       }
     </script>
-    <div
-      id="checklists"
-      class="tab-content"
-      style="width: 650px; text-align: left; margin: 0 auto"
-    >
-      <h1>Checklists</h1>
-      <div
-        style="border: 1px solid grey; padding: 20px"
-        id="checklistDiv"
-      ></div>
+    <!-- Checklists widget (public/checklist.html). Stacked: every list on the
+         case, tagged ones pinned first. src set lazily by the tab button. -->
+    <div id="checklists" class="tab-content">
+      <iframe id="checklistFrame"></iframe>
     </div>
 
     <!-- Signatures widget (Phase 2C). src set lazily by the tab button. -->
@@ -1300,7 +1296,6 @@ window.entityData = {
   tasks:   [],
   log:     []
 };
-let checklists = [];     // on-demand, not part of entity data
 let PC = null, SC = null; // convenience refs for primary/secondary contacts
 
 // ── Data loading ────────────────────────────────────────────
@@ -1831,138 +1826,6 @@ processing();
     P.Toast.fire({ icon: "error", title: "Error loading case", text: err.message });
   }
 })();
-
-// ── Checklists (on-demand, not part of entityData) ──────────
-
-async function getChecklists() {
-  processing();
-  try {
-    const data = await P.apiSend('/checklists', 'GET', { link_type: 'case', link: caseID, include: 'items' });
-    checklists = data.checklists;
-    displayCheck();
-  } catch (err) {
-    Swal.close();
-    Toast.fire({ icon: 'error', title: 'Error loading checklists', text: err.message });
-  }
-}
-
-async function checkDelete(checklistIdx, itemIdx, itemId) {
-  if (!confirm(`Delete "${checklists[checklistIdx].items[itemIdx].name}"?`)) return;
-  processing();
-  try {
-    await P.apiSend(`/checkitems/${itemId}`, 'DELETE');
-    checklists[checklistIdx].items.splice(itemIdx, 1);
-    displayCheck();
-  } catch (err) {
-    Swal.close();
-    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
-  }
-}
-
-async function checklistDelete(checklistIdx, checklistId) {
-  if (!confirm(`Delete checklist "${checklists[checklistIdx].title}"?`)) return;
-  processing();
-  try {
-    await P.apiSend(`/checklists/${checklistId}`, 'DELETE');
-    checklists.splice(checklistIdx, 1);
-    displayCheck();
-  } catch (err) {
-    Swal.close();
-    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
-  }
-}
-
-async function checkItem(itemId, checklistId, complete) {
-  try {
-    await P.apiSend(`/checkitems/${itemId}`, 'PATCH', {
-      status: complete ? 'complete' : 'incomplete'
-    });
-    for (const cl of checklists) {
-      const item = cl.items.find(i => i.id === itemId);
-      if (item) { item.status = complete ? 'complete' : 'incomplete'; break; }
-    }
-  } catch (err) {
-    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
-  }
-}
-
-async function addCheckItem(checklistId, checklistName, checklistIdx) {
-  const name = prompt(`Add item to "${checklistName}":`);
-  if (!name?.trim()) return;
-  processing();
-  try {
-    const updated = await P.apiSend(`/checklists/${checklistId}/items`, 'POST',
-      { name: name.trim() });
-    checklists[checklistIdx] = updated;
-    displayCheck();
-  } catch (err) {
-    Swal.close();
-    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
-  }
-}
-
-async function addChecklist() {
-  const name = prompt('New checklist name:');
-  if (!name?.trim()) return;
-  processing();
-  try {
-    const newChecklist = await P.apiSend('/checklists', 'POST', {
-      title: name.trim(),
-      link: caseID,
-      link_type: 'case'
-    });
-    newChecklist.items = newChecklist.items || [];
-    checklists.push(newChecklist);
-    displayCheck();
-  } catch (err) {
-    Swal.close();
-    Toast.fire({ icon: 'error', title: 'Error', text: err.message });
-  }
-}
-
-function displayCheck() {
-  const div = E('checklistDiv');
-  div.innerHTML = '';
-  if (checklists && checklists.length) {
-    checklists.forEach((cl, clIdx) => {
-      const head = document.createElement('h3');
-      head.innerHTML = `${cl.title} <span style="font-size:12px;color:${cl.status==='complete'?'green':'#999'}">${cl.status}</span>
-        <button onclick="checklistDelete(${clIdx},${cl.id})"><i class="fa-solid fa-trash-can"></i></button>`;
-      div.appendChild(head);
-
-      (cl.items || []).forEach((item, itemIdx) => {
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.checked = item.status === 'complete';
-        checkbox.style.cssText = 'width:5%;transform:scale(1.4)';
-        checkbox.onchange = () => checkItem(item.id, cl.id, checkbox.checked);
-
-        const label = document.createElement('span');
-        label.innerHTML = `${item.name} <a href="#" onclick="checkDelete(${clIdx},${itemIdx},${item.id})">&#x2716;</a>`;
-        label.style.cssText = 'padding-left:5px;width:95%;font-size:18px';
-
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:baseline;margin-bottom:2px';
-        row.appendChild(checkbox);
-        row.appendChild(label);
-        div.appendChild(row);
-      });
-
-      const addLink = document.createElement('span');
-      addLink.innerHTML = `<a href="#" onclick="addCheckItem(${cl.id},'${cl.title.replace(/'/g,"\\'")}',${clIdx})">&#43; New Item</a>`;
-      addLink.style.paddingLeft = '10px';
-      div.appendChild(addLink);
-    });
-  }
-
-  const newBtn = document.createElement('button');
-  newBtn.textContent = 'New Checklist';
-  newBtn.onclick = addChecklist;
-  div.appendChild(document.createElement('br'));
-  div.appendChild(document.createElement('br'));
-  div.appendChild(newBtn);
-  Swal.close();
-}
 
 async function newDB() {
   Swal.fire({
