@@ -204,7 +204,10 @@ describe('validateParamsAgainstMeta — behavior fixtures', () => {
     ['eval multi valid',              'evaluate_condition', { conditions: [{ variable: 'x', operator: '==', value: 'y' }], match: 'all', then: 5 }, null],
     ['eval neither',                  'evaluate_condition', { then: 5 }, 'must include exactly one'],
     ['eval both modes',               'evaluate_condition', { variable: 'x', operator: '==', conditions: [], then: 5 }, 'must include only one'],
-    ['eval missing then',             'evaluate_condition', { variable: 'x', operator: '==' }, 'then is required'],
+    // `then` moved into requiredWith [['then','branches']] when branch mode
+    // landed (court pipeline v2): a step must carry a top-level then OR
+    // branches. Same rejection, different message.
+    ['eval missing then',             'evaluate_condition', { variable: 'x', operator: '==' }, 'at least one of: then, branches'],
     ['eval bad operator',             'evaluate_condition', { variable: 'x', operator: 'INVALID', then: 5 }, 'must be one of'],
 
     // enroll_sequence — exclusiveOneOf

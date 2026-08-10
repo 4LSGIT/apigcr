@@ -30,6 +30,7 @@ lib/firmConfig.js
 lib/ingestSampleProjection.js
 lib/internal_functions/README.md
 lib/internal_functions/ai.js
+lib/internal_functions/ai_match.js
 lib/internal_functions/appointments.js
 lib/internal_functions/calendar.js
 lib/internal_functions/cases.js
@@ -269,6 +270,7 @@ ref/2026-08-07_client_upload_fallback.sql
 ref/2026-08-07_portal_cards_e1.sql
 ref/2026-08-09_portal_r1_r2.sql
 ref/2026-08-09_portal_s5.sql
+ref/2026-08-10_ai_match_registry.sql
 ref/2026-08-10_portal_s5_1.sql
 ref/2026-08-10_portal_s5_2.sql
 ref/2026-08-10_portal_s5_3.sql
@@ -433,6 +435,7 @@ services/adapters/email/pabbly.js
 services/adapters/email/smtp.js
 services/adapters/phone/quo.js
 services/adapters/phone/ringcentral.js
+services/aiMatchService.js
 services/aiService.js
 services/apptService.js
 services/assetService.js
@@ -517,9 +520,11 @@ startup/dbReadonly.js
 startup/init.js
 tests/adminapikeys.k2.test.js
 tests/aiService.attachments.test.js
+tests/aimatch.service.test.js
 tests/apiAppSettings.validate.test.js
 tests/apikeys.k1.test.js
 tests/caseId.test.js
+tests/control.flow.test.js
 tests/courtexecutor.cancel.test.js
 tests/courtexecutor.eventlog.test.js
 tests/emailservice.normalizebodies.test.js
