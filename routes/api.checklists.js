@@ -35,6 +35,12 @@
  * via mayWriteTag(). Staff edit titles; tags are set by machines. Surfaces
  * should render the tag as an immutable badge, never an input.
  *
+ * UNIQUENESS: UNIQUE KEY uq_link_tag (link_type, link, tag) allows at most one
+ * TAGGED checklist per entity per tag, while leaving untagged lists unlimited
+ * (MySQL exempts rows with a NULL in the key). POST and PATCH surface a
+ * violation as 409, not 500. upsert-items instead RECOVERS from it — a
+ * concurrent caller winning the insert race is not an error there.
+ *
  * mayMutate() is deliberately NOT exported. Test it the way
  * tests/portalDocsRoutes.js tests its route: mount this router in a real
  * express app on an ephemeral port with jwtOrApiKey mocked to inject req.auth,
@@ -189,6 +195,21 @@ function denyTag(res) {
     status: 'error',
     message: 'tag is a system field and cannot be set here. Edit the title instead.',
   });
+}
+
+/**
+ * UNIQUE KEY uq_link_tag (link_type, link, tag) enforces "at most one tagged
+ * checklist per entity per tag". MySQL treats a row as non-duplicate when ANY
+ * column of a unique key is NULL, so untagged lists stay unlimited per entity
+ * — which is exactly the invariant we want and is why the constraint is on the
+ * three columns rather than on `link` alone (the old, since-dropped index).
+ *
+ * PRIMARY is auto-increment, so any ER_DUP_ENTRY on a checklists write is this
+ * key. The sqlMessage check is belt-and-braces: MySQL 8 renders the key as
+ * 'checklists.uq_link_tag' and 5.7 as 'uq_link_tag', so match on the substring.
+ */
+function isDupTag(err) {
+  return !!err && (err.code === 'ER_DUP_ENTRY' || err.errno === 1062);
 }
 
 /** Minimal parent row for a checkitem — id + the two gate columns. */
@@ -421,6 +442,17 @@ router.post('/checklists', jwtOrApiKey, async (req, res) => {
     const checklist = await getChecklistWithItems(req.db, checklistId);
     res.status(201).json(checklist);
   } catch (err) {
+    if (isDupTag(err)) {
+      // An untagged POST cannot actually collide (NULL exempts the row from
+      // uq_link_tag), but don't interpolate `undefined` into a user-facing
+      // string on the strength of that reasoning.
+      const which = tag ? `tagged "${tag}"` : 'with that tag';
+      return res.status(409).json({
+        status: 'error',
+        message: `A checklist ${which} already exists on that ${link_type || 'entity'}. `
+               + 'Only one tagged checklist is allowed per entity per tag.',
+      });
+    }
     console.error('POST /checklists error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to create checklist' });
   }
@@ -473,6 +505,15 @@ router.patch('/checklists/:id', jwtOrApiKey, async (req, res) => {
     if (!checklist) return res.status(404).json({ status: 'error', message: 'Checklist not found' });
     res.json(checklist);
   } catch (err) {
+    if (isDupTag(err)) {
+      // Re-homing a tagged list onto an entity that already has that tag, or
+      // setting a tag that collides where the list already sits.
+      return res.status(409).json({
+        status: 'error',
+        message: 'The target already has a checklist with that tag. '
+               + 'Only one tagged checklist is allowed per entity per tag.',
+      });
+    }
     console.error('PATCH /checklists/:id error:', err);
     res.status(500).json({ status: 'error', message: 'Failed to update checklist' });
   }
@@ -603,23 +644,36 @@ router.post('/checklists/upsert-items', jwtOrApiKey, async (req, res) => {
     // in checklist.html. The title clause is a transition fallback for rows
     // created between the backfill and this deploy; drop it once tag coverage
     // is 100% (SELECT COUNT(*) FROM checklists WHERE link_type='case' AND tag IS NULL).
-    let [[checklist]] = await req.db.query(
+    const FIND_DOCS_SQL =
       `SELECT id, tag FROM checklists
         WHERE link_type = 'case' AND link = ?
           AND (tag = 'docs_needed' OR title = 'Docs Needed')
         ORDER BY (tag = 'docs_needed') DESC, id ASC
-        LIMIT 1`,
-      [case_id]
-    );
+        LIMIT 1`;
+
+    let [[checklist]] = await req.db.query(FIND_DOCS_SQL, [case_id]);
 
     if (!checklist) {
-      const [result] = await req.db.query(
-        `INSERT INTO checklists (title, created_by, link, link_type, tag) VALUES ('Docs Needed', ?, ?, 'case', 'docs_needed')`,
-        [req.auth.userId || 0, case_id]
-      );
-      checklist = { id: result.insertId };
+      try {
+        const [result] = await req.db.query(
+          `INSERT INTO checklists (title, created_by, link, link_type, tag) VALUES ('Docs Needed', ?, ?, 'case', 'docs_needed')`,
+          [req.auth.userId || 0, case_id]
+        );
+        checklist = { id: result.insertId };
+      } catch (err) {
+        if (!isDupTag(err)) throw err;
+        // Lost a race: a concurrent upsert-items for this case inserted between
+        // our SELECT and our INSERT, and uq_link_tag rejected the second row.
+        // The caller wants the list, not an error — re-read the winner. Before
+        // the constraint existed this race silently produced TWO docs lists.
+        const [[raced]] = await req.db.query(FIND_DOCS_SQL, [case_id]);
+        if (!raced) throw err;
+        checklist = raced;
+      }
     } else if (!checklist.tag) {
       // Self-heal a legacy untagged row so the title fallback can retire.
+      // Cannot collide with uq_link_tag: the ORDER BY above prefers a tagged
+      // row, so reaching this branch proves no tagged row exists for the case.
       await req.db.query(
         `UPDATE checklists SET tag = 'docs_needed' WHERE id = ? AND tag IS NULL`,
         [checklist.id]

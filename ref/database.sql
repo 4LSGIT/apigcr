@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-09T18:44:53.685Z
+-- Generated: 2026-08-09T20:19:57.673Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:2963a666f17f9c420db5fbb3c0ae01a2
+-- Fingerprint: sha256:5fd907f10b3bf69e77f7a79efe4f3510
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -3080,6 +3080,7 @@ ALTER TABLE `checkitems1`
 --
 ALTER TABLE `checklists`
   ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_link_tag` (`link_type`,`link`,`tag`),
   ADD KEY `idx_link` (`link_type`,`link`);
 
 --
