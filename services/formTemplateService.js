@@ -62,6 +62,16 @@ const OPTIONS_TYPES = new Set(['select', 'radio', 'checkgroup']); // options iff
 const VISIBILITIES  = new Set(['internal', 'portal', 'public']);
 const BADLINK_MODES = new Set(['reject', 'degrade']);
 
+// urlParam (X2, Fred-ratified 2026-08-11): staff-declared per-field URL
+// prefill param. Reserved names are the params the route/renderer themselves
+// consume — the credential and mode switches must never be shadowable by a
+// prefill declaration.
+const URL_PARAM_RE = /^[a-zA-Z0-9_-]{1,50}$/;
+const URL_PARAM_RESERVED = new Set([
+  'form_key', 'ext', 'preview', 'template_id', 'link_id',
+  'case_id', 'contact_id', 'appt_id',
+]);
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ERROR HELPERS
@@ -130,6 +140,7 @@ function validateDefinition(def) {
   const repFieldRefs  = [];         // { name, path } — cross-checked vs topLevel in a second pass
   const condRefs      = [];         // { path, field, op, key } collected for the second pass
   let hasSaveColumn   = false;      // any field with a SAVE-direction apiColumn (string, or {save}) — 2.5B B3
+  const urlParamNames = new Set();  // X2: urlParam values, unique form-wide (last-write-wins is a footgun)
 
   // One normalized condition { field, op, value }. `key` names the carrying
   // property ("showWhen" / "requiredWhen") for error messages.
@@ -214,12 +225,32 @@ function validateDefinition(def) {
         }
       }
       for (const bad of ['required', 'apiColumn', 'prefill', 'mask', 'options',
-                         'optionsFrom', 'readonly', 'requiredWhen']) {
+                         'optionsFrom', 'readonly', 'requiredWhen', 'urlParam']) {
         const v = field[bad];
         if (v !== undefined && v !== null && v !== false && v !== '') {
           throw badRequest(`${path}.${bad} is not allowed on type "embed" (display-only field)`);
         }
       }
+    }
+
+    // urlParam (X2): staff-declared URL prefill param. Top-level value-carrying
+    // fields only (repeater rows cannot be addressed by one param; embeds have
+    // no value — rejected in the embed block above). Unique form-wide, safe
+    // token shape, and never one of the reserved route/renderer params.
+    if (field.urlParam !== undefined && field.urlParam !== null && field.urlParam !== '') {
+      if (!topLevelField) {
+        throw badRequest(`${path}.urlParam is not supported inside repeaters`);
+      }
+      if (typeof field.urlParam !== 'string' || !URL_PARAM_RE.test(field.urlParam)) {
+        throw badRequest(`${path}.urlParam must match ^[a-zA-Z0-9_-]{1,50}$`);
+      }
+      if (URL_PARAM_RESERVED.has(field.urlParam)) {
+        throw badRequest(`${path}.urlParam "${field.urlParam}" is reserved (route/renderer parameter)`);
+      }
+      if (urlParamNames.has(field.urlParam)) {
+        throw badRequest(`${path}.urlParam "${field.urlParam}" is declared on more than one field`);
+      }
+      urlParamNames.add(field.urlParam);
     }
 
     // options present iff type is select/radio/checkgroup

@@ -26,6 +26,7 @@ class YCForm {
       readonly:      true,
       external:      false,
       baseUrl:       '',
+      submitUrl:     '',             // external mode: where save() POSTs { case_id?, values }
       fields:        {},
       repeaters:     {},
       validation:    {},
@@ -166,15 +167,25 @@ if (this.config.endpoints.load) {
   }
 }
 
-      // 8. Fetch latest draft + submission
+      // 8. Fetch latest draft + submission.
+      //    External mode (X2): /api/forms/latest is an authed staff route —
+      //    external drafts are localStorage-only (EXTERNAL_FORMS_DESIGN
+      //    §5.3.8; anonymous server drafts would collide globally on the
+      //    draft_key generated column). The localStorage record carries the
+      //    same { data, updated_at, schema_version } shape, so the banner /
+      //    restore / version-warning machinery below runs unchanged.
       let latest = { submitted: null, draft: null };
-      try {
-        latest = await this._api(
-          `/api/forms/latest?form_key=${encodeURIComponent(this.config.formKey)}&link_type=${encodeURIComponent(this.config.linkType)}&link_id=${encodeURIComponent(this.config.linkId)}`,
-          'GET'
-        );
-      } catch (err) {
-        console.warn('[YCForm] Could not fetch form submissions:', err);
+      if (this.config.external) {
+        latest.draft = this._readLocalDraft();
+      } else {
+        try {
+          latest = await this._api(
+            `/api/forms/latest?form_key=${encodeURIComponent(this.config.formKey)}&link_type=${encodeURIComponent(this.config.linkType)}&link_id=${encodeURIComponent(this.config.linkId)}`,
+            'GET'
+          );
+        } catch (err) {
+          console.warn('[YCForm] Could not fetch form submissions:', err);
+        }
       }
       this._submittedData = latest.submitted;
       this._draftData = latest.draft;
@@ -335,13 +346,17 @@ if (this.config.endpoints.load) {
     // Discard button
     if (discardBtn) {
       discardBtn.onclick = async () => {
-        try {
-          await this._api(
-            `/api/forms/draft?form_key=${encodeURIComponent(this.config.formKey)}&link_type=${encodeURIComponent(this.config.linkType)}&link_id=${encodeURIComponent(this.config.linkId)}`,
-            'DELETE'
-          );
-        } catch (err) {
-          console.warn('[YCForm] Draft discard failed:', err);
+        if (this.config.external) {
+          this._clearLocalDraft();                 // X2: localStorage draft
+        } else {
+          try {
+            await this._api(
+              `/api/forms/draft?form_key=${encodeURIComponent(this.config.formKey)}&link_type=${encodeURIComponent(this.config.linkType)}&link_id=${encodeURIComponent(this.config.linkId)}`,
+              'DELETE'
+            );
+          } catch (err) {
+            console.warn('[YCForm] Draft discard failed:', err);
+          }
         }
         this._draftData = null;
         this._draftBannerEl.style.display = 'none';
@@ -772,22 +787,36 @@ if (this.config.endpoints.load) {
         }
       }
 
-      // 4. Record submission in form_submissions (always)
-      const submitResult = await this._api('/api/forms/submit', 'POST', {
-        form_key:       this.config.formKey,
-        link_type:      this.config.linkType,
-        link_id:        this.config.linkId,
-        schema_version: this.config.schemaVersion,
-        data:           this.collect(),
-      });
+      // 4. Record submission. External mode (X2): the authed /api/forms/submit
+      //    is unreachable and its body shape (client-named link_type/link_id)
+      //    is exactly what the external surface must never accept — the
+      //    external route takes { case_id?, values } and resolves linkage
+      //    server-side (EXTERNAL_FORMS_DESIGN §2 inversion rule). Its success
+      //    body is minimal ({ status }), so external submitResult carries no
+      //    id/version — every later consumer is internal-gated.
+      let submitResult;
+      if (this.config.external) {
+        const extBody = { values: this.collect() };
+        if (this.config.linkId) extBody.case_id = this.config.linkId;
+        submitResult = await this._api(this.config.submitUrl, 'POST', extBody);
+        this._clearLocalDraft();                   // 4b equivalent
+      } else {
+        submitResult = await this._api('/api/forms/submit', 'POST', {
+          form_key:       this.config.formKey,
+          link_type:      this.config.linkType,
+          link_id:        this.config.linkId,
+          schema_version: this.config.schemaVersion,
+          data:           this.collect(),
+        });
 
-      // 4b. Clean up the now-superseded draft row (non-blocking). Leaving it
-      // keeps dead rows around and invites a confusing draft banner on a
-      // timestamp tie.
-      this._api(
-        `/api/forms/draft?form_key=${encodeURIComponent(this.config.formKey)}&link_type=${encodeURIComponent(this.config.linkType)}&link_id=${encodeURIComponent(this.config.linkId)}`,
-        'DELETE'
-      ).catch(err => console.warn('[YCForm] Draft cleanup failed (non-blocking):', err));
+        // 4b. Clean up the now-superseded draft row (non-blocking). Leaving it
+        // keeps dead rows around and invites a confusing draft banner on a
+        // timestamp tie.
+        this._api(
+          `/api/forms/draft?form_key=${encodeURIComponent(this.config.formKey)}&link_type=${encodeURIComponent(this.config.linkType)}&link_id=${encodeURIComponent(this.config.linkId)}`,
+          'DELETE'
+        ).catch(err => console.warn('[YCForm] Draft cleanup failed (non-blocking):', err));
+      }
       this._draftData = null;
       if (this._draftBannerEl) this._draftBannerEl.style.display = 'none';
 
@@ -813,8 +842,9 @@ if (this.config.endpoints.load) {
         });
       }
 
-      // 6. Log the diff
-      try {
+      // 6. Log the diff (internal only — /api/log is an authed staff route;
+      //    the external route records the submission itself)
+      if (!this.config.external) try {
         await this._api('/api/log', 'POST', {
           type:      'form',
           link_type: this.config.linkType,
@@ -837,19 +867,22 @@ if (this.config.endpoints.load) {
       // 8. Update status
       this._showStatus('Saved just now');
 
-      // 8b. Update submission metadata for snapshot banner
-      let currentUserName = null;
-      try {
-        currentUserName = window.parent.firmData?.currentUser?.user_name || null;
-      } catch (_) { /* cross-origin */ }
+      // 8b. Update submission metadata for snapshot banner (internal only —
+      //     the external success body deliberately carries no id/version)
+      if (!this.config.external) {
+        let currentUserName = null;
+        try {
+          currentUserName = window.parent.firmData?.currentUser?.user_name || null;
+        } catch (_) { /* cross-origin */ }
 
-      this._submittedData = {
-        version: submitResult.version,
-        updated_at: submitResult.updated_at,
-        user_name: currentUserName,
-        submitted_by: null,
-      };
-      this._showSnapshotBanner();
+        this._submittedData = {
+          version: submitResult.version,
+          updated_at: submitResult.updated_at,
+          user_name: currentUserName,
+          submitted_by: null,
+        };
+        this._showSnapshotBanner();
+      }
 
       // 9. Return to view mode (only if the form uses view/edit toggle)
       if (this.config.readonly) {
@@ -955,6 +988,24 @@ if (this.config.endpoints.load) {
     const currentJson = JSON.stringify(this.collect());
     if (currentJson === this._lastAutosaveJson) return; // No-op: nothing changed
 
+    // External mode (X2): localStorage-only drafts (§5.3.8) — same record
+    // shape the banner machinery reads. localStorage can throw (private
+    // browsing, quota) — a failed draft save degrades silently.
+    if (this.config.external) {
+      try {
+        localStorage.setItem(this._localDraftKey(), JSON.stringify({
+          data: this.collect(),
+          updated_at: new Date().toISOString(),
+          schema_version: this.config.schemaVersion,
+        }));
+        this._lastAutosaveJson = currentJson;
+        this._showStatus('Draft saved just now');
+      } catch (err) {
+        console.warn('[YCForm] Local draft save failed:', err);
+      }
+      return;
+    }
+
     try {
       this._showStatus('Saving draft...', true);
 
@@ -972,6 +1023,37 @@ if (this.config.endpoints.load) {
       console.warn('[YCForm] Autosave failed:', err);
       this._showStatus('Draft save failed');
     }
+  }
+
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EXTERNAL LOCAL DRAFTS (X2 — EXTERNAL_FORMS_DESIGN §5.3.8)
+  //
+  // External mode has no server draft identity (anonymous drafts would
+  // collide globally on the draft_key generated column), so drafts live in
+  // localStorage, keyed per form + link. Every access is try/caught:
+  // localStorage may be unavailable (private browsing) or throw on write —
+  // drafts are a convenience, never a failure mode.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  _localDraftKey() {
+    return 'ycExtDraft:' + this.config.formKey + ':' + (this.config.linkId || 'anon');
+  }
+
+  _readLocalDraft() {
+    try {
+      const raw = localStorage.getItem(this._localDraftKey());
+      if (!raw) return null;
+      const d = JSON.parse(raw);
+      if (!d || typeof d !== 'object' || !d.data) return null;
+      return d;                       // { data, updated_at, schema_version }
+    } catch (err) {
+      return null;
+    }
+  }
+
+  _clearLocalDraft() {
+    try { localStorage.removeItem(this._localDraftKey()); } catch (_) { /* ok */ }
   }
 
 

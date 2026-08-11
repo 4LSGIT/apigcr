@@ -165,6 +165,11 @@
 
   var params  = new URLSearchParams(location.search);
   var preview = params.get('preview') === '1';
+  // X2 external mode (EXTERNAL_FORMS_DESIGN §5): ext=1 boots WITHOUT the
+  // parent iframe chain — the /api/ext payload is fetched directly and the
+  // server-computed `load` object replaces parent entityData. Filled in by
+  // startExternal(): { load, linked }.
+  var EXT = (!preview && params.get('ext') === '1') ? {} : null;
 
   // ── DOM builder (no innerHTML; text via textContent, attrs via setAttribute) ──
   function el(tag, attrs, kids) {
@@ -723,6 +728,7 @@
     var forwardMap = {};   // fieldName -> apiColumn (only fields with apiColumn)
     var readonlySet = {};
     var prefills = [];     // [{ name, expr, mode }] — batched /resolve in onLoad (§5)
+    var urlParams = [];    // [{ name, param, mode }] — X2 URL prefill (last value wins)
     var loadPrefills = []; // [{ name, expr, mode }] — "$load.…" paths, resolved locally (§5, 2.5A)
     var optionsFroms = []; // [{ name, cfg, placeholder }] — dynamic select options (2.5B B1)
 
@@ -774,6 +780,17 @@
         };
         if (f.prefill.indexOf('$load') === 0) loadPrefills.push(pf);
         else prefills.push(pf);
+      }
+
+      // urlParam (X2): staff-declared URL prefill param, top-level fields
+      // only (validated at publish). Applied by the generated onLoad through
+      // writePrefill — same prefillMode/normalization as every other prefill.
+      if (typeof f.urlParam === 'string' && f.urlParam) {
+        urlParams.push({
+          name: f.name,
+          param: f.urlParam,
+          mode: f.prefillMode === 'always' ? 'always' : 'ifEmpty'
+        });
       }
 
       // Validation derivation (§4.3). pattern MUST be a RegExp — validate()
@@ -917,6 +934,7 @@
 
     return { fields: fields, validation: validation, apiMap: apiMap,
              repeaters: repeaters, prefills: prefills, loadPrefills: loadPrefills,
+             urlParams: urlParams,
              optionsFroms: optionsFroms,
              forwardMap: forwardMap, readonlySet: readonlySet };
   }
@@ -1207,6 +1225,18 @@
       onSubmit:      def.onSubmit || {}
     };
 
+    // External mode (X2): direct-fetch transport, the external submit route,
+    // and NO staff endpoints. The projected definition already carries no
+    // endpoints/onSubmit — these flags make the transport match. linkId here
+    // is the case_id bearer (or '' in degrade-anonymous mode) — it rides the
+    // submit body as case_id; the server re-resolves it regardless (§2).
+    if (EXT) {
+      config.external  = true;
+      config.baseUrl   = '';
+      config.submitUrl = '/api/ext/forms/' + encodeURIComponent(meta.formKey) + '/submit';
+      config.onSubmit  = {};
+    }
+
     // endpoints.load: pass through the definition's. Skipped entirely in
     // preview-without-entity (pure layout). Included (read-only GET) when a
     // link_id is present.
@@ -1216,7 +1246,7 @@
     // Prefill is active only in normal mode with a linkId. (Preview never
     // executes prefill — a preview must not fire resolver calls; and without a
     // linkId there is nothing to anchor the refs on.)
-    var wantPrefill = maps.prefills.length > 0 && !preview && !!meta.linkId;
+    var wantPrefill = maps.prefills.length > 0 && !preview && !!meta.linkId && !EXT;
     if (maps.prefills.length && !wantPrefill) {
       warn('prefill skipped (' + (preview ? 'preview mode' : 'no linkId') + ')');
     }
@@ -1225,10 +1255,12 @@
     // no write — so unlike resolver prefill it ALSO runs in preview whenever a
     // link_id supplied endpoints.load (wantLoad). Without endpoints.load there
     // is no payload to read.
-    var wantLoadPrefill = maps.loadPrefills.length > 0 && !!wantLoad;
+    var wantLoadPrefill = maps.loadPrefills.length > 0 && (!!wantLoad || !!(EXT && EXT.load));
     if (maps.loadPrefills.length && !wantLoadPrefill) {
-      warn('$load prefill skipped (' + (def.endpoints && def.endpoints.load
-        ? 'no entity loaded' : 'definition has no endpoints.load') + ')');
+      warn('$load prefill skipped (' + (EXT
+        ? 'no load payload — anonymous mode'
+        : (def.endpoints && def.endpoints.load
+            ? 'no entity loaded' : 'definition has no endpoints.load')) + ')');
     }
 
     // derive rules (2.5B B2) — local, deterministic, no requests: active in
@@ -1280,6 +1312,26 @@
         } catch (e) {
           console.warn('[render] prefill failed:', e);
         }
+      }
+
+      // urlParam prefill (X2, Fred-ratified 2026-08-11): staff-declared
+      // per-field URL params, applied AFTER server/$load/resolver prefill —
+      // under the default ifEmpty, server data wins and params fill gaps
+      // (declare prefillMode "always" for param-wins). Same write helper:
+      // mask/date normalization, select/radio values that match no option
+      // silently don't stick. Duplicate params in the URL: the LAST one wins
+      // — deliberate getAll().pop(); the native URLSearchParams.get() returns
+      // the FIRST, so do not "simplify" this. Local + deterministic, runs in
+      // every mode (like derive).
+      if (maps.urlParams.length) {
+        var usp = new URLSearchParams(location.search);
+        maps.urlParams.forEach(function (u) {
+          var all = usp.getAll(u.param);
+          if (!all.length) return;
+          var uv = all[all.length - 1];
+          if (uv === '') return;
+          writePrefill(form_, maps.fields, u.name, uv, u.mode);
+        });
       }
 
       // optionsFrom rebuild (2.5B B1) — AFTER populate (init step 10) and
@@ -1341,6 +1393,11 @@
     };
 
     var form_ = new YCForm(config);
+
+    // External mode: the server-computed load object IS the load payload —
+    // $load prefill reads form._loadResult, which init step 7 never touches
+    // here (config.endpoints.load is absent externally by projection).
+    if (EXT) form_._loadResult = EXT.load || null;
 
     // derive change listeners (2.5B B2): a USER change of the source
     // recomputes the target UNCONDITIONALLY — including clearing it when the
@@ -1474,6 +1531,49 @@
       return;
     }
 
+    // External mode (X2): fetch the one /api/ext payload directly — no
+    // parent, no authed routes. Error mapping (§5.4/§6): a badLink-reject
+    // response renders the standing Unauthorized-Link copy; every other
+    // failure (the one generic 404, network trouble) renders a generic
+    // unavailable message that confirms nothing.
+    if (EXT) {
+      var extKey = params.get('form_key');
+      if (!extKey) return fatal('Missing form_key parameter.');
+      var extCaseId = params.get('case_id') || '';
+      var extUrl = '/api/ext/forms/' + encodeURIComponent(extKey) +
+                   (extCaseId ? '?case_id=' + encodeURIComponent(extCaseId) : '');
+      fetch(extUrl)
+        .then(function (resp) {
+          return resp.json().catch(function () { return {}; }).then(function (body) {
+            if (!resp.ok || !body || body.status !== 'success' || !body.definition) {
+              if (body && body.badLink) {
+                // §6 reject copy — matches the standing go.4lsg.com behavior.
+                return fatal('Unauthorized Link or Client ID — Sorry, the link you '
+                  + 'followed is unauthorized or the client ID is invalid. Please '
+                  + 'contact us if you believe that this error is an error.');
+              }
+              return fatal('Sorry, this form is not available.');
+            }
+            EXT.load   = body.load || null;
+            EXT.linked = !!body.linked;
+            boot(body.definition, {
+              formKey:       extKey,
+              schemaVersion: body.schema_version,
+              linkType:      body.link_type,
+              title:         body.title,
+              // linkId only when the server confirmed the link — a degraded
+              // anonymous boot must not carry a dead case_id into the submit
+              // body or the draft key.
+              linkId:        EXT.linked ? extCaseId : ''
+            });
+          });
+        })
+        .catch(function (e) {
+          fatal('Sorry, this form is not available.');
+        });
+      return;
+    }
+
     // Normal mode
     var formKey = params.get('form_key');
     if (!formKey) return fatal('Missing form_key parameter.');
@@ -1496,7 +1596,8 @@
       .catch(function (e) { fatal('Could not load form: ' + (e && e.message || e)); });
   }
 
-  waitForParent(start);
+  if (EXT) start();            // X2: no parent chain to wait for
+  else waitForParent(start);
 })();
 </script>
 </body>

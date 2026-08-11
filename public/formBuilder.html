@@ -3392,6 +3392,19 @@ function insField(ins, f, inRepeater) {
             [['ifEmpty', 'ifEmpty (default — fill only when empty)'], ['always', 'always (overwrite every load)']],
             v => { if (v === 'ifEmpty') delete f.prefillMode; else f.prefillMode = v; touched(); })
         : null),
+      (f.type !== 'embed'
+        ? pText('URL prefill param', f.urlParam || '', v => { setOrDel(f, 'urlParam', v); touched(); }, {
+            mono: true, placeholder: 'src',
+            validate: raw => {
+              if (raw === '') return null;
+              if (!/^[a-zA-Z0-9_-]{1,50}$/.test(raw)) return 'letters, digits, _ and - only (max 50)';
+              if (['form_key','ext','preview','template_id','link_id','case_id','contact_id','appt_id'].includes(raw))
+                return '"' + raw + '" is reserved';
+              return null;
+            },
+            help: 'X2: prefills this field from ?param= in the form URL (tracking, website embeds, quick backup prefill). Empty = not allowed. Server/entity data wins unless prefill mode is "always"; repeated params in a URL: last one wins. Anyone can set a URL param — never rely on it for sensitive or trusted values.'
+          })
+        : null),
       pCheck('Read-only', !!f.readonly, v => {
         if (v) f.readonly = true; else { delete f.readonly; delete f.lockedMsg; }
         touched(); renderInspector();

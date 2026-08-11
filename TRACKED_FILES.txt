@@ -277,6 +277,7 @@ ref/2026-08-10_portal_s5_3.sql
 ref/2026-08-11_form_templates_visibility.sql
 ref/EXTERNAL_FORMS_DESIGN.md
 ref/FORM_TEMPLATE_SCHEMA_V1.md
+ref/X2_DESIGN_AMENDMENTS.md
 ref/database.sql
 ref/files.md
 ref/gas.js
@@ -316,6 +317,7 @@ routes/api.esign.actions.js
 routes/api.esign.js
 routes/api.esign.templates.js
 routes/api.events.js
+routes/api.ext.forms.js
 routes/api.featureRequests.js
 routes/api.firmData.js
 routes/api.formTemplates.js
@@ -368,6 +370,7 @@ routes/db.jwt.js
 routes/db64.js
 routes/dbQuery.js
 routes/dropbox.js
+routes/f.js
 routes/freelook.js
 routes/functions.js
 routes/internal.js
@@ -475,6 +478,7 @@ services/esignService.js
 services/esignTemplateService.js
 services/esignWebhookService.js
 services/eventService.js
+services/extFormService.js
 services/firmBlocksService.js
 services/formService.js
 services/formTemplateService.js
@@ -519,6 +523,7 @@ services/videoService.js
 startup/db.js
 startup/dbReadonly.js
 startup/init.js
+tests/ formrender.x2external.test.js
 tests/adminapikeys.k2.test.js
 tests/aiService.attachments.test.js
 tests/aimatch.service.test.js
@@ -549,6 +554,7 @@ tests/esignTemplates.test.js
 tests/esignWebhook.test.js
 tests/eventDedup.phaseB.test.js
 tests/eventservice.remindertitle.test.js
+tests/extforms.x2.test.js
 tests/firmConfig.test.js
 tests/fixtures/slice26/legacy_case_details_bk2.js
 tests/fixtures/slice26/legacy_notes_341.js

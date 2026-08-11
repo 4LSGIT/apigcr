@@ -194,6 +194,12 @@ Only `name` and `type` are required; everything else optional. `name` matches `^
 | `columns` | 1 \| 2 \| 3 | Checkgroup only (A5). Emits an inline `grid-template-columns` override (`1fr` for 1, `repeat(N,1fr)` for 2/3), matching casedetails-bk's hand-built pattern. Absent → the stylesheet default (3 columns, collapsing to 1 on mobile). NOTE: an explicit value — including an explicit 3 — is an inline style and therefore also overrides the mobile media query. |
 | `note` | string | Documentation only — see §3. |
 
+**Additional field keys (X2, 2026-08-11):**
+
+| Key | Type | Notes |
+|---|---|---|
+| `urlParam` | string | **(X2, Fred-ratified)** Names a URL query param that prefills this field (`?src=facebook`) — tracking, website iframe embeds, quick backup prefill. Empty/absent = not allowed (the default). Applied through the same write helper as every prefill, AFTER server/`$load`/resolver prefill and honoring `prefillMode` (`ifEmpty` default — server data wins, params fill gaps; declare `always` for param-wins). Repeated params in one URL: the **last** one wins (deliberate `getAll().pop()`; native `.get()` returns the first). Select/radio values matching no option silently don't stick. Works in internal AND external render modes. Rules (§7): token shape `^[a-zA-Z0-9_-]{1,50}$`, unique form-wide, never a reserved route/renderer param (`form_key ext preview template_id link_id case_id contact_id appt_id`), top-level fields only (not repeaters), not on embeds. Anyone can set a URL param — never a channel for sensitive or trusted values. |
+
 **Additional field keys (2.5B):**
 
 | Key | Type | Notes |
@@ -348,6 +354,7 @@ Reject with a message naming the offending path:
 - `onSubmit.patch` requires at least one field with a SAVE-direction `apiColumn` (a plain string, or an object carrying `save` — load-only columns don't count).
 - `hooks`, if set, matches `^[a-zA-Z0-9_-]{1,50}$` (path traversal guard).
 - `external` (X1): object with only the key `badLink`; `badLink`, if present, is `reject` or `degrade`.
+- `urlParam` (X2): string matching `^[a-zA-Z0-9_-]{1,50}$`; not a reserved param; unique form-wide; top-level fields only; rejected on embeds and inside repeaters.
 - `note` (form/section/row/field) is explicitly ignored — no validation, no rendering, no signature impact.
 
 ---
