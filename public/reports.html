@@ -94,6 +94,32 @@
   table.rpt tr:hover td { background: var(--panel); }
   .scroll-x { overflow-x: auto; }
 
+  /* AI refine banner */
+  .refine-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    flex-wrap: wrap; border: 1px solid var(--accent); border-radius: 6px;
+    padding: 8px 11px; margin-bottom: 10px; font-size: 13px; line-height: 1.45;
+  }
+
+  /* Line diffs (draft-vs-base, version-vs-current). rgba backgrounds so the
+     same rules read correctly on the dark theme. */
+  .diffbox {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px;
+    line-height: 1.55; border: 1px solid var(--line); border-radius: 6px;
+    margin: 6px 0 10px; overflow-x: auto; background: var(--bg);
+  }
+  .diffbox .dl { white-space: pre; padding: 0 9px; }
+  .diffbox .dl.add { background: rgba(22, 163, 74, .14); }
+  .diffbox .dl.del { background: rgba(220, 38, 38, .13); }
+  .diffbox .dl.skip { color: var(--muted); font-style: italic; padding: 1px 9px; }
+  .diff-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); font-weight: 600; margin-top: 8px;
+  }
+  .diff-inline { font-size: 13px; margin: 3px 0; }
+  .diff-inline .del { background: rgba(220, 38, 38, .13); text-decoration: line-through; padding: 0 3px; border-radius: 3px; }
+  .diff-inline .add { background: rgba(22, 163, 74, .14); padding: 0 3px; border-radius: 3px; }
+
   /* Charts */
   .chart-wrap {
     position: relative; height: 320px; margin: 4px 0 12px;
@@ -162,7 +188,12 @@
 <body>
 
 <div id="askPanel" class="panel hidden">
-  <h3><i class="fa-solid fa-wand-magic-sparkles"></i> Ask for a report</h3>
+  <h3 id="askHeading"><i class="fa-solid fa-wand-magic-sparkles"></i> Ask for a report</h3>
+  <div id="refineBanner" class="refine-banner hidden">
+    <span>Refining <b id="refineTitle"></b> — describe the change. Everything you don't
+    mention (filters, clickable links, chart, key) is kept.</span>
+    <button class="mini" onclick="exitRefine()">Start fresh instead</button>
+  </div>
   <p class="muted small" style="margin-top:0; line-height:1.5">
     Describe what you want to see. This writes the query — it doesn't answer the
     question. Review the SQL and the sample rows, then save it as a report that
@@ -205,6 +236,7 @@
       <select id="reportSwitcher" onchange="openReport(Number(this.value))" style="max-width:260px"></select>
     </div>
     <div class="row">
+      <button id="askEditBtn" class="ghost hidden" onclick="openAskRefine(currentReport)"><i class="fa-solid fa-wand-magic-sparkles"></i> Ask AI to change this</button>
       <button id="editBtn" class="ghost hidden" onclick="openEditor(currentReport)"><i class="fa-solid fa-pen"></i> Edit</button>
     </div>
   </div>
@@ -272,6 +304,16 @@
     <span id="edMsg" class="small"></span>
   </div>
   <div id="edResult" style="margin-top:10px"></div>
+
+  <details id="histWrap" class="hidden" style="margin-top:14px" ontoggle="if (this.open) loadHistory()">
+    <summary style="cursor:pointer; font-weight:600">History</summary>
+    <p class="muted small" style="margin:6px 0 0; line-height:1.5">
+      Every save archives the outgoing version first, so anything here can be
+      brought back. Restoring archives the current state too — a restore is
+      always undoable.
+    </p>
+    <div id="histBody" style="margin-top:8px"></div>
+  </details>
 </div>
 
 <script>
@@ -284,6 +326,14 @@ let lastFields = null;
 let isSU = false;
 let editingId = null;
 let lastSaveWarning = null;
+
+// Fields the editor form has no inputs for (kind, columns_meta, visibility,
+// row_limit) but which must survive a round trip through it. Populated by
+// openEditor / openEditorFromDraft, merged back in by readEditor. Without
+// this, saving an AI-drafted VIEW through "Edit first" would create it as a
+// plain report with no clickable columns.
+let editorExtras = { kind: "report", columns_meta: [], visibility: "shared", row_limit: null };
+let histLoadedFor = null;   // report id whose history is currently rendered
 
 // Wait for the parent shell to expose apiSend before booting — same pattern
 // as readonlyKeys.html.
@@ -319,6 +369,7 @@ function init() {
     document.getElementById("newBtn").classList.remove("hidden");
     document.getElementById("editBtn").classList.remove("hidden");
     document.getElementById("askToggle").classList.remove("hidden");
+    document.getElementById("askEditBtn").classList.remove("hidden");
   }
 
   loadReports();
@@ -469,19 +520,41 @@ function renderParams() {
   if (!ps.length) { row.innerHTML = ""; return; }
 
   row.innerHTML = ps.map(p => {
+    const name = esc(p.name);
+    const label = esc(p.label || p.name);
+
+    // control:'select' — same contract as customView.html: a null-valued
+    // option carries data-null and is OMITTED on collect, so the server
+    // applies the param's default (or binds NULL). Without this branch the
+    // views' dropdown filters render as free-text boxes on this page.
+    if (p.control === "select" && Array.isArray(p.options) && p.options.length) {
+      const opts = p.options.slice(0, 50).map(o => {
+        const isNull = o.value === null || o.value === undefined;
+        const val = isNull ? "" : esc(String(o.value));
+        const sel = !isNull && p.default != null && String(o.value) === String(p.default)
+          ? " selected" : "";
+        return `<option value="${val}"${isNull ? ' data-null="1"' : ""}${sel}>${esc(o.label ?? String(o.value ?? "All"))}</option>`;
+      }).join("");
+      return `<label class="fld">${label}
+        <select id="p_${name}" data-name="${name}" onchange="runCurrent()">${opts}</select>
+      </label>`;
+    }
+
     const type = p.type === "number" ? "number" : (p.type === "date" ? "date" : "text");
-    return `<label class="fld">${esc(p.label || p.name)}
-      <input id="p_${esc(p.name)}" type="${type}" data-name="${esc(p.name)}"
+    return `<label class="fld">${label}
+      <input id="p_${name}" type="${type}" data-name="${name}"
              onkeypress="if(event.key==='Enter') runCurrent()">
     </label>`;
   }).join("");
 
   // Resolve relative defaults client-side purely for display. The SERVER
   // resolves them again on run, and the server's value is authoritative —
-  // this is only so the boxes aren't empty.
+  // this is only so the boxes aren't empty. Selects handle their own default
+  // via the `selected` attribute above.
   for (const p of ps) {
     const el = E(`p_${p.name}`);
-    if (!el || p.default === undefined || p.default === null) continue;
+    if (!el || el.tagName === "SELECT") continue;
+    if (p.default === undefined || p.default === null) continue;
     el.value = p.type === "date" ? displayDate(p.default) : p.default;
   }
 }
@@ -506,7 +579,14 @@ function collectParams() {
   const out = {};
   for (const p of (currentReport.params || [])) {
     const el = E(`p_${p.name}`);
-    if (el && el.value !== "") out[p.name] = el.value;
+    if (!el) continue;
+    if (el.tagName === "SELECT") {
+      const opt = el.selectedOptions[0];
+      // data-null option → omit → server applies the param's default / NULL.
+      if (opt && !opt.dataset.null) out[p.name] = opt.value;
+    } else if (el.value !== "") {
+      out[p.name] = el.value;
+    }
   }
   return out;
 }
@@ -771,29 +851,99 @@ function downloadCsv() {
 }
 
 // ─── AI author (SU only) ─────────────────────────────────────────────────────
+//
+// Three entry points, one loop:
+//   Ask (header)              → new definition        body { question }
+//   Ask AI to change this     → refine a SAVED one    body { report_id, instruction }
+//   Refine (under a draft)    → iterate on the draft  body { previous, instruction }
+//
+// The server pins report_key / kind / category / visibility from the base and
+// inherits columns_meta + viz when the model drops them, so a refine cannot
+// silently rename a view or strip its click-through actions. The UI's job is
+// the review: show the diff against the base, and make Save mean PUT (update
+// in place) when there is a base, POST (create) when there isn't.
+//
+// lastDraftBaseId is the single source of truth for that decision. It comes
+// from the server's baseId on a saved-report refine, and is threaded back as
+// previous.id on every iterate so it survives any number of refine turns.
 
-let lastDraft = null;   // the definition currently on screen, pre-save
+let lastDraft = null;         // the definition currently on screen, pre-save
+let lastDraftBaseId = null;   // saved report id this draft updates, or null
+let lastDraftBase = null;     // base snapshot from the server, for the diff
+let refineTarget = null;      // {id, title} while the ask panel is in refine mode
+
+function resetAskState() {
+  lastDraft = null;
+  lastDraftBaseId = null;
+  lastDraftBase = null;
+}
 
 function toggleAsk() {
   const p = E("askPanel");
+  const opening = p.classList.contains("hidden");
   p.classList.toggle("hidden");
-  if (!p.classList.contains("hidden")) E("askQ").focus();
+  if (opening) {
+    // The header button always means "ask something new". If the panel was
+    // left in refine mode, drop out of it rather than surprising the user
+    // with a refine of a report they may have forgotten they opened.
+    if (refineTarget) exitRefine();
+    E("askQ").focus();
+  }
+}
+
+/** Enter refine mode against a saved report/view (run-panel button). */
+function openAskRefine(report) {
+  if (!report) return;
+  refineTarget = { id: report.id, title: report.title };
+  resetAskState();
+  showView("list");
+  E("askPanel").classList.remove("hidden");
+  E("askHeading").innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Ask for a change`;
+  E("refineBanner").classList.remove("hidden");
+  E("refineTitle").textContent = report.title;
+  E("askQ").value = "";
+  E("askQ").placeholder = "e.g. add a year filter · hide closed cases · sort by hearing date";
+  E("askResult").innerHTML = "";
+  E("askQ").focus();
+}
+
+/** Leave refine mode and return the panel to new-definition mode. */
+function exitRefine() {
+  refineTarget = null;
+  resetAskState();
+  E("askHeading").innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Ask for a report`;
+  E("refineBanner").classList.add("hidden");
+  E("askQ").placeholder = "e.g. appointment no-show rate by month for the last 6 months";
+  E("askResult").innerHTML = "";
 }
 
 async function askDraft(refineInstruction) {
   const q = E("askQ").value.trim();
-  if (!q) { E("askQ").focus(); return; }
+
+  let body;
+  if (refineInstruction && lastDraft) {
+    // Iterate on the draft already on screen. previous.id keeps the PUT
+    // target alive across turns; _base_id is UI bookkeeping the server
+    // doesn't need.
+    const prev = Object.assign({}, lastDraft);
+    delete prev._base_id;
+    if (lastDraftBaseId != null) prev.id = lastDraftBaseId;
+    body = { previous: prev, instruction: refineInstruction };
+  } else if (refineTarget) {
+    if (!q) { E("askQ").focus(); return; }
+    // First turn against a saved definition: send only the id. The server
+    // loads the base from the DB, so a stale client copy can never be the
+    // thing that gets refined.
+    body = { report_id: refineTarget.id, instruction: q };
+  } else {
+    if (!q) { E("askQ").focus(); return; }
+    body = { question: q };
+  }
 
   const btn = E("askBtn");
   btn.disabled = true;
   E("askMsg").innerHTML = `<i class="fa-solid fa-spinner spin"></i> Writing the query…`;
   E("askResult").innerHTML = "";
-
-  const body = { question: q };
-  if (refineInstruction && lastDraft) {
-    body.previous = lastDraft;
-    body.instruction = refineInstruction;
-  }
 
   try {
     const d = await P.apiSend("/api/reports/draft", "POST", body);
@@ -812,7 +962,7 @@ function renderDraft(d) {
 
   // Refusal — a legitimate answer, not an error. Present it as information.
   if (d.outcome === "refused") {
-    lastDraft = null;
+    resetAskState();
     box.innerHTML = `
       <div class="caveat">
         <b>This can't be answered from the data as it stands</b>
@@ -825,7 +975,7 @@ function renderDraft(d) {
   // Generated but wouldn't validate or run. Show the SQL so the failure is
   // diagnosable rather than mysterious.
   if (d.outcome === "invalid") {
-    lastDraft = null;
+    resetAskState();
     box.innerHTML = `
       <div class="errbox"><b>${esc(d.error)}</b>${d.detail ? "<br>" + esc(d.detail) : ""}</div>
       ${d.definition ? `<div class="sqlbox">${esc(d.definition.sql_text)}</div>` : ""}
@@ -836,15 +986,31 @@ function renderDraft(d) {
   const def = d.definition;
   const pv = d.preview;
   lastDraft = def;
+  delete lastDraft._base_id;                       // tracked separately below
+  lastDraftBaseId = d.baseId != null ? d.baseId : null;
+  lastDraftBase = d.base || null;
+
+  const isUpdate = lastDraftBaseId != null;
+  const isView = def.kind === "view";
 
   let html = `<div style="border:1px solid var(--line); border-radius:8px; padding:12px">
     <div style="font-weight:600; font-size:15px">${esc(def.title)}</div>
     <div class="muted small" style="margin-top:4px; line-height:1.5">${esc(def.description || "")}</div>
     <div style="margin-top:7px">
+      <span class="pill">${isView ? "view" : "report"}</span>
       <span class="pill">${esc(def.category)}</span>
       <span class="pill">${def.params.length} parameter${def.params.length === 1 ? "" : "s"}</span>
+      ${isUpdate ? `<span class="pill" style="border-color:var(--accent); color:var(--accent)">updates ${esc(def.report_key)}</span>` : ""}
       ${d.attempts > 1 ? `<span class="pill">repaired on attempt ${d.attempts}</span>` : ""}
     </div>`;
+
+  // The review step for an update: what actually changed. The subtle damage
+  // hides in the SQL (sentinels, SET-column handling) and in dropped params
+  // or actions — this makes all of it visible before anything is saved.
+  if (isUpdate && lastDraftBase) {
+    const diff = renderDefinitionDiff(lastDraftBase, def);
+    html += `<details open style="margin-top:10px"><summary style="cursor:pointer; font-weight:600">What changed</summary>${diff}</details>`;
+  }
 
   if (pv.rows && pv.rows.length) {
     const cols = Object.keys(pv.rows[0]);
@@ -869,13 +1035,16 @@ function renderDraft(d) {
   html += `<details style="margin-top:10px"><summary>Show the SQL</summary>
     <div class="sqlbox">${esc(def.sql_text)}</div></details>`;
 
+  const saveLabel = isUpdate
+    ? "Save changes"
+    : (isView ? "Save as view" : "Save as report");
   html += `<div class="row" style="margin-top:11px">
-      <button onclick="saveDraft()"><i class="fa-solid fa-floppy-disk"></i> Save as report</button>
+      <button onclick="saveDraft()"><i class="fa-solid fa-floppy-disk"></i> ${saveLabel}</button>
       <button class="ghost" onclick="openEditorFromDraft()"><i class="fa-solid fa-pen"></i> Edit first</button>
       <span id="draftMsg" class="small"></span>
     </div>
     <div class="row" style="margin-top:9px">
-      <input id="refineBox" placeholder="Change something — e.g. break it down by month" style="flex:1; min-width:200px"
+      <input id="refineBox" placeholder="Change something else — e.g. break it down by month" style="flex:1; min-width:200px"
              onkeypress="if(event.key==='Enter') doRefine()">
       <button class="ghost" onclick="doRefine()">Refine</button>
     </div>
@@ -921,6 +1090,105 @@ function drawStandaloneChart(hostId, rows, fields, savedViz) {
   }
 }
 
+// ─── diff rendering ──────────────────────────────────────────────────────────
+//
+// Plain LCS line diff. Inputs here are report SQL (~20 lines) and pretty-
+// printed JSON blocks (~100 lines), so the O(n·m) table is nothing. Runs of
+// unchanged lines longer than 4 collapse to a count so the changed lines are
+// what the eye lands on.
+
+function lineDiff(aText, bText) {
+  const a = String(aText ?? "").split("\n");
+  const b = String(bText ?? "").split("\n");
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { out.push({ t: " ", s: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: "-", s: a[i] }); i++; }
+    else { out.push({ t: "+", s: b[j] }); j++; }
+  }
+  while (i < m) out.push({ t: "-", s: a[i++] });
+  while (j < n) out.push({ t: "+", s: b[j++] });
+  return out;
+}
+
+/** Line-diff two texts into a .diffbox, or null when they are identical. */
+function diffBoxHtml(aText, bText) {
+  const d = lineDiff(aText, bText);
+  if (!d.some(x => x.t !== " ")) return null;
+
+  const parts = [];
+  let run = [];
+  const flushRun = (isLastBlock) => {
+    if (!run.length) return;
+    if (run.length > 4) {
+      // Keep one line of context at each visible edge of the collapse.
+      const head = parts.length ? [run[0]] : [];
+      const tail = isLastBlock ? [] : [run[run.length - 1]];
+      const hidden = run.length - head.length - tail.length;
+      for (const s of head) parts.push(`<div class="dl">${esc(s) || " "}</div>`);
+      parts.push(`<div class="dl skip">⋯ ${hidden} unchanged line${hidden === 1 ? "" : "s"}</div>`);
+      for (const s of tail) parts.push(`<div class="dl">${esc(s) || " "}</div>`);
+    } else {
+      for (const s of run) parts.push(`<div class="dl">${esc(s) || " "}</div>`);
+    }
+    run = [];
+  };
+  for (const x of d) {
+    if (x.t === " ") { run.push(x.s); continue; }
+    flushRun(false);
+    parts.push(`<div class="dl ${x.t === "+" ? "add" : "del"}">${esc((x.t === "+" ? "+ " : "− ") + x.s)}</div>`);
+  }
+  flushRun(true);
+  return `<div class="diffbox">${parts.join("")}</div>`;
+}
+
+/** One-line before → after for scalar fields. */
+function inlineDiffHtml(label, a, b) {
+  const av = a == null ? "" : String(a);
+  const bv = b == null ? "" : String(b);
+  if (av === bv) return "";
+  return `<div class="diff-inline"><b>${esc(label)}:</b> <span class="del">${esc(av) || "(empty)"}</span> → <span class="add">${esc(bv) || "(empty)"}</span></div>`;
+}
+
+const stableJson = (v) => JSON.stringify(v ?? null, null, 2);
+
+/**
+ * Full base-vs-draft comparison: scalar fields inline, SQL and the JSON
+ * payloads (params, columns_meta, viz, caveats) as line diffs. Unchanged
+ * sections render nothing — the empty case gets an explicit "no changes"
+ * line, which usually means the model returned the definition untouched and
+ * saving would only burn a version number.
+ */
+function renderDefinitionDiff(base, def) {
+  let out = "";
+  out += inlineDiffHtml("Title", base.title, def.title);
+  out += inlineDiffHtml("Kind", base.kind || "report", def.kind || "report");
+  out += inlineDiffHtml("Category", base.category, def.category);
+  out += inlineDiffHtml("Description", base.description || "", def.description || "");
+  out += inlineDiffHtml("Row limit", base.row_limit ?? "", def.row_limit ?? "");
+
+  const sqlDiff = diffBoxHtml(base.sql_text, def.sql_text);
+  if (sqlDiff) out += `<div class="diff-label">SQL</div>${sqlDiff}`;
+
+  for (const [label, key] of [
+    ["Parameters", "params"], ["Columns", "columns_meta"],
+    ["Chart", "viz"], ["Caveats", "caveats"],
+  ]) {
+    const d = diffBoxHtml(stableJson(base[key]), stableJson(def[key]));
+    if (d) out += `<div class="diff-label">${label}</div>${d}`;
+  }
+
+  return out || `<p class="muted small" style="margin:6px 0 0">No changes — the definition came back identical. Saving would archive a version for nothing.</p>`;
+}
+
 function doRefine() {
   const v = E("refineBox").value.trim();
   if (v) askDraft(v);
@@ -930,13 +1198,34 @@ async function saveDraft() {
   if (!lastDraft) return;
   const msg = E("draftMsg");
   msg.innerHTML = `<i class="fa-solid fa-spinner spin"></i> Saving…`;
+
+  const body = Object.assign({}, lastDraft);
+  delete body._base_id;
+
   try {
-    const d = await P.apiSend("/api/reports", "POST", lastDraft);
-    msg.innerHTML = `<span style="color:var(--ok)">Saved.</span>`;
+    let d;
+    if (lastDraftBaseId != null) {
+      // Update in place. The server snapshots the outgoing version before the
+      // write, so this is always recoverable from History.
+      delete body.report_key;   // immutable server-side; don't even send it
+      d = await P.apiSend(`/api/reports/${lastDraftBaseId}`, "PUT", body);
+    } else {
+      d = await P.apiSend("/api/reports", "POST", body);
+    }
+
+    const warns = []
+      .concat(d.report.vizWarning ? [d.report.vizWarning] : [])
+      .concat(d.report.columnsMetaWarnings || []);
+    msg.innerHTML = `<span style="color:var(--ok)">Saved.</span>` +
+      (warns.length ? ` <span style="color:var(--warn)">${esc(warns.join(" "))}</span>` : "");
+
+    const openId = d.report.id;
+    if (refineTarget) exitRefine(); else resetAskState();
     await loadReports();
-    openReport(d.report.id);
+    openReport(openId);
   } catch (e) {
-    // Most likely a duplicate report_key — actionable, so say so plainly.
+    // Duplicate report_key on create, or a validation failure — actionable,
+    // so say so plainly and leave the draft on screen.
     msg.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
   }
 }
@@ -944,6 +1233,27 @@ async function saveDraft() {
 function openEditorFromDraft() {
   if (!lastDraft) return;
   openEditor(null);
+
+  // A draft refining a saved report edits THAT report — otherwise Save would
+  // POST a duplicate report_key and fail. editingId flips the editor into
+  // update mode exactly as if the report had been opened with Edit.
+  if (lastDraftBaseId != null) {
+    editingId = lastDraftBaseId;
+    E("editorTitle").textContent = `Edit: ${lastDraft.title}`;
+    E("edKey").disabled = true;
+    E("edDelete").classList.remove("hidden");
+    E("histWrap").classList.remove("hidden");
+  }
+
+  // Fields the form has no inputs for ride along invisibly — this is what
+  // keeps an AI-drafted VIEW a view (with its actions) through "Edit first".
+  editorExtras = {
+    kind: lastDraft.kind || "report",
+    columns_meta: lastDraft.columns_meta || [],
+    visibility: lastDraft.visibility || "shared",
+    row_limit: lastDraft.row_limit || null,
+  };
+
   E("edKey").value      = lastDraft.report_key;
   E("edTitle").value    = lastDraft.title;
   E("edCategory").value = lastDraft.category;
@@ -962,6 +1272,24 @@ function openEditor(report) {
   E("editorTitle").textContent = report ? `Edit: ${report.title}` : "New report";
   E("edMsg").textContent = "";
   E("edResult").innerHTML = "";
+
+  // Hidden round-trip fields (see editorExtras declaration).
+  editorExtras = report
+    ? {
+        kind: report.kind || "report",
+        columns_meta: report.columns_meta || [],
+        visibility: report.visibility || "shared",
+        row_limit: report.row_limit || null,
+      }
+    : { kind: "report", columns_meta: [], visibility: "shared", row_limit: null };
+
+  // History exists only for saved definitions. Collapse + clear so a stale
+  // list from the previous report can never show under this one.
+  const hw = E("histWrap");
+  hw.classList.toggle("hidden", !editingId);
+  hw.open = false;
+  E("histBody").innerHTML = "";
+  histLoadedFor = null;
 
   E("edKey").value      = report ? report.report_key : "";
   E("edKey").disabled   = !!report;
@@ -991,14 +1319,23 @@ function readEditor() {
   try { viz = JSON.parse(E("edViz").value || "null"); }
   catch { throw new Error("Chart is not valid JSON"); }
 
-  return {
+  const body = {
     report_key: E("edKey").value.trim(),
     title: E("edTitle").value.trim(),
     category: E("edCategory").value.trim() || "General",
     description: E("edDesc").value.trim() || null,
     sql_text: E("edSql").value.trim(),
     params, caveats, viz,
+    // Round-trip fields the form has no inputs for. On an update these match
+    // the existing row (the server's ?? fallbacks would preserve them anyway);
+    // on a CREATE they are what stops a drafted view collapsing into a plain
+    // report with no clickable columns.
+    kind: editorExtras.kind || "report",
+    columns_meta: editorExtras.columns_meta || [],
+    visibility: editorExtras.visibility || "shared",
   };
+  if (editorExtras.row_limit) body.row_limit = editorExtras.row_limit;
+  return body;
 }
 
 async function saveReport() {
@@ -1025,6 +1362,11 @@ async function saveReport() {
       msg.innerHTML += ` <span style="color:var(--warn)">${esc(lastSaveWarning)}</span>`;
       lastSaveWarning = null;
     }
+    // The save just archived a version; anything the History panel is showing
+    // is now one behind. A newly-created report gains a History section too.
+    E("histWrap").classList.remove("hidden");
+    histLoadedFor = null;
+    if (E("histWrap").open) loadHistory();
     await loadReports();
   } catch (e) {
     msg.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
@@ -1064,6 +1406,93 @@ async function previewEditor() {
     }
   } catch (e) {
     E("edResult").innerHTML = `<div class="errbox">${errText(e)}</div>`;
+  }
+}
+
+// ─── version history ─────────────────────────────────────────────────────────
+//
+// A version row is the PRE-CHANGE state, archived by the server before every
+// update and delete. Restore round-trips through the normal update path, so
+// the current state is archived first — a restore is always undoable. A
+// restore CAN legitimately fail: if the schema manifest has since retired a
+// table the old SQL reads, validation rejects it, which beats restoring a
+// definition that would break on its first run.
+
+async function loadHistory() {
+  if (!editingId) return;
+  if (histLoadedFor === editingId) return;
+  const box = E("histBody");
+  box.innerHTML = `<span class="muted small"><i class="fa-solid fa-spinner spin"></i> Loading…</span>`;
+  try {
+    const d = await P.apiSend(`/api/reports/${editingId}/versions`, "GET");
+    const vs = d.versions || [];
+    histLoadedFor = editingId;
+    if (!vs.length) {
+      box.innerHTML = `<span class="muted small">No archived versions yet — one is written each time this definition is saved.</span>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="scroll-x"><table class="rpt">
+        <thead><tr><th>v</th><th>When</th><th>What</th><th>Title then</th><th></th></tr></thead>
+        <tbody>${vs.map(v => `
+          <tr>
+            <td>v${v.version_no}</td>
+            <td style="white-space:nowrap">${esc(String(v.created_at || "").replace("T", " ").slice(0, 16))}</td>
+            <td>${esc(v.change_note || "")}</td>
+            <td>${esc(v.title || "")}</td>
+            <td style="white-space:nowrap">
+              <button class="mini" onclick="viewVersion(${v.version_no})">View</button>
+              <button class="mini" onclick="restoreVersionUi(${v.version_no})">Restore</button>
+            </td>
+          </tr>`).join("")}
+        </tbody>
+      </table></div>
+      <div id="histView" style="margin-top:8px"></div>`;
+  } catch (e) {
+    histLoadedFor = null;
+    box.innerHTML = `<div class="errbox">${errText(e)}</div>`;
+  }
+}
+
+async function viewVersion(versionNo) {
+  const host = E("histView");
+  host.innerHTML = `<span class="muted small"><i class="fa-solid fa-spinner spin"></i> Loading v${versionNo}…</span>`;
+  try {
+    const d = await P.apiSend(`/api/reports/${editingId}/versions/${versionNo}`, "GET");
+    const v = d.version;
+    // Diff the ARCHIVED sql against what is in the editor right now — that is
+    // the question being asked ("what would restoring change?").
+    const sqlDiff = diffBoxHtml(E("edSql").value, v.sql_text);
+    host.innerHTML = `
+      <div style="border:1px solid var(--line); border-radius:8px; padding:11px">
+        <div style="font-weight:600">v${v.version_no} — ${esc(v.title)}</div>
+        <div class="muted small" style="margin-top:3px">${esc(v.change_note || "")} · ${esc(String(v.created_at || "").replace("T", " ").slice(0, 16))}</div>
+        ${sqlDiff
+          ? `<div class="diff-label">Restoring would change the SQL like this (− current, + archived)</div>${sqlDiff}`
+          : `<p class="muted small" style="margin:8px 0 0">SQL is identical to what's in the editor — the differences, if any, are in the metadata below.</p>`}
+        <details style="margin-top:8px"><summary>Archived definition</summary>
+          <div class="sqlbox">${esc(v.sql_text)}</div>
+          <div class="diff-label">Parameters</div><div class="sqlbox">${esc(stableJson(v.params))}</div>
+          <div class="diff-label">Columns</div><div class="sqlbox">${esc(stableJson(v.columns_meta))}</div>
+          <div class="diff-label">Chart</div><div class="sqlbox">${esc(stableJson(v.viz))}</div>
+        </details>
+      </div>`;
+  } catch (e) {
+    host.innerHTML = `<div class="errbox">${errText(e)}</div>`;
+  }
+}
+
+async function restoreVersionUi(versionNo) {
+  if (!confirm(`Restore version ${versionNo} over the current definition?\nThe current state is archived first, so this can be undone.`)) return;
+  try {
+    const d = await P.apiSend(`/api/reports/${editingId}/versions/${versionNo}/restore`, "POST", {});
+    openEditor(d.report);                          // reload every field from the restored row
+    E("edMsg").innerHTML = `<span style="color:var(--ok)">Restored v${versionNo}.</span>`;
+    await loadReports();
+  } catch (e) {
+    // Most likely: the manifest retired a table the old SQL reads. The old
+    // definition genuinely isn't runnable any more — nothing was changed.
+    E("edMsg").innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`;
   }
 }
 

@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-11T18:19:00.232Z
+-- Generated: 2026-08-11T21:48:24.755Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:ee2e680b5f21bc60ff9530b5832a7d32
+-- Fingerprint: sha256:775afc40fb883ae57dfce27b8a1893ed
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -2178,6 +2178,36 @@ CREATE TABLE `redirects` (
 -- --------------------------------------------------------
 
 --
+-- Table structure for table `report_definition_versions`
+--
+
+DROP TABLE IF EXISTS `report_definition_versions`;
+CREATE TABLE `report_definition_versions` (
+  `id` int unsigned NOT NULL,
+  `report_id` int unsigned NOT NULL,
+  `version_no` int unsigned NOT NULL,
+  `report_key` varchar(60) NOT NULL DEFAULT '',
+  `title` varchar(150) NOT NULL DEFAULT '',
+  `description` text,
+  `category` varchar(40) NOT NULL DEFAULT 'General',
+  `kind` enum('report','view') NOT NULL DEFAULT 'report',
+  `visibility` enum('private','shared') NOT NULL DEFAULT 'shared',
+  `sql_text` text NOT NULL,
+  `params` json DEFAULT NULL,
+  `columns_meta` json DEFAULT NULL,
+  `viz` json DEFAULT NULL,
+  `caveats` json DEFAULT NULL,
+  `row_limit` int unsigned NOT NULL DEFAULT '1000',
+  `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `source` varchar(16) NOT NULL DEFAULT 'manual',
+  `change_note` varchar(255) DEFAULT NULL,
+  `snapshot_by` int DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Table structure for table `report_definitions`
 --
 
@@ -3653,6 +3683,14 @@ ALTER TABLE `redirects`
   ADD UNIQUE KEY `uk_slug` (`slug`);
 
 --
+-- Indexes for table `report_definition_versions`
+--
+ALTER TABLE `report_definition_versions`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uq_rdv_report_version` (`report_id`,`version_no`),
+  ADD KEY `idx_rdv_report` (`report_id`,`id`);
+
+--
 -- Indexes for table `report_definitions`
 --
 ALTER TABLE `report_definitions`
@@ -4371,6 +4409,12 @@ ALTER TABLE `readonly_query_log`
 -- AUTO_INCREMENT for table `redirects`
 --
 ALTER TABLE `redirects`
+  MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `report_definition_versions`
+--
+ALTER TABLE `report_definition_versions`
   MODIFY `id` int unsigned NOT NULL AUTO_INCREMENT;
 
 --

@@ -3,17 +3,20 @@
 /**
  * routes/api.reports.js — REST routes for the reports engine (Slice 1).
  *
- * GET    /api/reports                 — list active reports (?all=1 inactive too, ?kind=view|report to filter)
- * GET    /api/reports/schema          — curated manifest summary (what reports can see)
- * GET    /api/reports/runs            — recent run history across all reports
- * POST   /api/reports/draft           — SU: plain-English question → validated draft definition
- * POST   /api/reports/preview         — SU: validate + run an unsaved definition, never persisted
- * GET    /api/reports/:id             — full definition incl. sql_text
- * POST   /api/reports/:id/run         — run it; body { params: {...} }
- * GET    /api/reports/:id/runs        — run history for one report
- * POST   /api/reports                 — create
- * PUT    /api/reports/:id             — update (report_key immutable)
- * DELETE /api/reports/:id             — delete
+ * GET    /api/reports                        — list active reports (?all=1 inactive too, ?kind=view|report to filter)
+ * GET    /api/reports/schema                 — curated manifest summary (what reports can see)
+ * GET    /api/reports/runs                   — recent run history across all reports
+ * POST   /api/reports/draft                  — SU: question (or report_id + instruction) → validated draft
+ * POST   /api/reports/preview                — SU: validate + run an unsaved definition, never persisted
+ * GET    /api/reports/:id                    — full definition incl. sql_text
+ * POST   /api/reports/:id/run                — run it; body { params: {...} }
+ * GET    /api/reports/:id/runs               — run history for one report
+ * GET    /api/reports/:id/versions           — version history (metadata only)
+ * GET    /api/reports/:id/versions/:v        — one archived version, full payload
+ * POST   /api/reports/:id/versions/:v/restore— SU: restore that version over the live definition
+ * POST   /api/reports                        — create
+ * PUT    /api/reports/:id                    — update (report_key immutable; snapshots first)
+ * DELETE /api/reports/:id                    — delete (snapshots first)
  *
  * Auto-mounted from routes/ (server.js readdir loop).
  *
@@ -98,26 +101,48 @@ router.get("/api/reports/runs", jwtOrApiKey, async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/reports/draft — AI author (SU only)
 //
-// Body: { question, previous?, instruction? }
-//   question    plain-English request
-//   previous    a prior definition, when refining
-//   instruction what to change about it
+// Body: { question?, report_id?, previous?, instruction? }
+//   question    plain-English request (new definition)
+//   report_id   refine a SAVED definition — the base is loaded from the DB here
+//   previous    refine an UNSAVED draft the UI is holding — base comes from the
+//               client, because there is nothing to load
+//   instruction what to change ("add a year filter")
+//
+// report_id WINS over previous. The base for a saved definition is read
+// server-side rather than trusted from the request: the client's copy can be
+// stale, and a stale base is how you get a "refine" that silently reverts
+// somebody else's edit. It also means the refine cannot be used to smuggle SQL
+// past the base — but note that is not a security boundary anyway, since
+// /preview already accepts arbitrary SU-authored SQL by design.
 //
 // Returns one of three outcomes, all HTTP 200 — none of these is a server
 // error, and the UI renders each differently:
-//   { outcome:'drafted',  definition, preview, attempts, repairs, usage }
-//   { outcome:'refused',  reason, suggestion }   ← data can't answer it
-//   { outcome:'invalid',  definition, error, detail, attempts }
+//   { outcome:'drafted', definition, base, baseId, preview, attempts, repairs, usage }
+//   { outcome:'refused', reason, suggestion, baseId }   ← data can't answer it
+//   { outcome:'invalid', definition, baseId, error, detail, attempts }
 //
-// Nothing is persisted. The user reviews the draft and POSTs it to
-// /api/reports to save, which re-validates on the way in.
+// Nothing is persisted. baseId tells the UI whether Save means POST (new) or
+// PUT (update in place); both re-validate on the way in, and PUT snapshots the
+// outgoing version first.
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.post("/api/reports/draft", jwtOrApiKey, requireSU, async (req, res) => {
   try {
-    const { question, previous, instruction } = req.body || {};
+    const { question, report_id, previous, instruction } = req.body || {};
+
+    let base = null;
+    if (report_id != null && String(report_id).trim() !== "") {
+      const id = Number(report_id);
+      if (!Number.isInteger(id) || id <= 0) {
+        throw Object.assign(new Error("report_id must be a positive integer"), { status: 400 });
+      }
+      base = await svc.getReport(req.db, id);   // 404s if it isn't there
+    } else if (previous && typeof previous === "object") {
+      base = previous;                          // unsaved draft; no id
+    }
+
     const result = await authorSvc.draft(req.db, {
-      question, previous, instruction, userId: userId(req),
+      question, base, instruction, userId: userId(req),
     });
     res.json({ status: "success", ...result });
   } catch (e) {
@@ -206,6 +231,54 @@ router.get("/api/reports/:id(\\d+)/runs", jwtOrApiKey, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Version history
+//
+// A version is the PRE-CHANGE state, written by reportService immediately
+// before every update and every delete. Reading history is open to any
+// authorised user (it is the same definition text they can already read);
+// RESTORING is a write and is SU-gated like every other write.
+//
+// History survives a delete, so /versions on a deleted id still returns rows.
+// That is deliberate — the accidental delete is the case this table exists for.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get("/api/reports/:id(\\d+)/versions", jwtOrApiKey, async (req, res) => {
+  try {
+    const versions = await svc.listVersions(req.db, Number(req.params.id), {
+      limit: req.query.limit,
+    });
+    res.json({ status: "success", versions });
+  } catch (e) {
+    fail(res, "versions", e);
+  }
+});
+
+router.get("/api/reports/:id(\\d+)/versions/:v(\\d+)", jwtOrApiKey, async (req, res) => {
+  try {
+    const version = await svc.getVersion(req.db, Number(req.params.id), Number(req.params.v));
+    res.json({ status: "success", version });
+  } catch (e) {
+    fail(res, "version", e);
+  }
+});
+
+router.post(
+  "/api/reports/:id(\\d+)/versions/:v(\\d+)/restore",
+  jwtOrApiKey,
+  requireSU,
+  async (req, res) => {
+    try {
+      const report = await svc.restoreVersion(
+        req.db, Number(req.params.id), Number(req.params.v), userId(req)
+      );
+      res.json({ status: "success", report });
+    } catch (e) {
+      fail(res, "restore", e);
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Run
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -243,7 +316,7 @@ router.put("/api/reports/:id(\\d+)", jwtOrApiKey, requireSU, async (req, res) =>
 
 router.delete("/api/reports/:id(\\d+)", jwtOrApiKey, requireSU, async (req, res) => {
   try {
-    const result = await svc.deleteReport(req.db, req.params.id);
+    const result = await svc.deleteReport(req.db, req.params.id, userId(req));
     res.json({ status: "success", ...result });
   } catch (e) {
     fail(res, "delete", e);

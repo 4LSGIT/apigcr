@@ -1,9 +1,9 @@
 // services/reportAuthorService.js
 //
-// Slice 3: turns a plain-English question into a VALIDATED, DRY-RUN report
-// definition. It never saves anything — the caller reviews and then POSTs to
-// the normal SU-gated create path. Nothing this model produces reaches the
-// database without a superuser explicitly saving it.
+// Turns a plain-English question into a VALIDATED, DRY-RUN report or view
+// definition. It never saves anything — the caller reviews and then POSTs or
+// PUTs through the normal SU-gated paths. Nothing this model produces reaches
+// the database without a superuser explicitly saving it.
 //
 // ── THE LOOP ────────────────────────────────────────────────────────────────
 //   1. Ask the model for a definition (JSON).
@@ -16,9 +16,33 @@
 //      retry once. Validation and MySQL errors are both precise and
 //      mechanical, which is exactly the kind of thing one repair turn fixes.
 //
+// ── REFINE IS NOT REPAIR ────────────────────────────────────────────────────
+// Two different things used to share one code path, and the framing was wrong
+// for both. A REPAIR turn says "this SQL failed, here is the error, fix it" and
+// the prompt tells the model not to restate the same SQL. A REFINE turn says
+// "this definition WORKS, change one thing about it" and the model must keep
+// everything it wasn't asked to touch. Sending a refine down the repair path
+// meant the model saw working SQL labelled "fix this" with no error, and was
+// told not to repeat it — the opposite of the instruction it needed.
+//
+// They are now distinct blocks in buildUserInput() and distinct sections in the
+// prompt, and a refine carries the WHOLE base definition (params, columns_meta,
+// viz, caveats), not just sql_text. The model cannot preserve what it cannot
+// see, and views carry most of their value outside the SQL: the action wiring
+// that makes a row clickable and the select controls that make a param usable
+// both live in columns_meta / params.
+//
+// ── IDENTITY IS PINNED, NOT SUGGESTED ───────────────────────────────────────
+// report_key is immutable server-side (reportService.updateReport rejects a
+// change), and the model regenerates a key on every turn. On a refine we
+// therefore OVERWRITE the model's key with the base's, rather than hoping it
+// echoed it back. Same defensive posture for visibility, and base-fallbacks for
+// kind / category / row_limit so a refine can't silently demote a view to a
+// report or move it out of its nav group.
+//
 // ── WHAT THE MODEL IS ALLOWED TO SEE ────────────────────────────────────────
-// The question, the curated schema, and — on a repair turn — its own previous
-// SQL plus the error text and the row count.
+// The question, the curated schema, the base definition on a refine, and — on a
+// repair turn — its own previous SQL plus the error text and the row count.
 //
 // It NEVER sees result rows. case_notes, contact_notes, 341_notes and
 // docs_missing are partly client-written through intake forms, so feeding rows
@@ -27,11 +51,9 @@
 // row counts are integers. Both are safe; rows are not.
 //
 // ── COST ────────────────────────────────────────────────────────────────────
-// The embedded schema is ~4.5k input tokens, output ~600. That is roughly 2-3
-// cents per attempt at sonnet rates, so a worst-case draft with one repair is
-// about a nickel. Every attempt is stamped on ai_calls with
-// consumer_ref='report_author', so cost and JSON-parse rate for this feature
-// can be queried separately from court_extract.
+// The embedded schema is ~4.5k input tokens, output ~600. A refine adds the
+// base definition, typically another ~400. Every attempt is stamped on ai_calls
+// with consumer_ref='report_author'.
 
 const aiService = require("./aiService");
 const reportService = require("./reportService");
@@ -49,9 +71,17 @@ function err(status, message, detail) {
 }
 
 const REPORT_KEY_RE = /^[a-z][a-z0-9_]{2,59}$/;
+
+// "Views" is in this set because all three hand-authored views live in it and
+// it is the nav grouping customView.html browses by. Leaving it out meant every
+// AI refine of a view silently relabelled it "General" and dropped it out of
+// the group — a data-loss bug disguised as a default.
 const ALLOWED_CATEGORIES = new Set([
-  "Cases", "Contacts", "Appointments", "Activity", "Tasks", "Campaigns", "General",
+  "Cases", "Contacts", "Appointments", "Activity", "Tasks", "Campaigns",
+  "Views", "General",
 ]);
+
+const ALLOWED_KINDS = new Set(["report", "view"]);
 
 /**
  * Structural check on the model's JSON, before the SQL validator sees it.
@@ -70,37 +100,151 @@ function shapeCheck(j) {
   if (j.params != null && !Array.isArray(j.params)) return "params must be an array";
   if (j.caveats != null && !Array.isArray(j.caveats)) return "caveats must be an array";
   if (j.columns_meta != null && !Array.isArray(j.columns_meta)) return "columns_meta must be an array";
+  if (j.kind != null && !ALLOWED_KINDS.has(String(j.kind))) {
+    return `kind must be "report" or "view" (got "${j.kind}")`;
+  }
   const pv = validateParams(j.params || []);
   if (!pv.ok) return pv.error;
   return null;
 }
 
-/** Normalise the model's definition into the shape the create endpoint takes. */
-function toDefinition(j) {
-  return {
-    report_key: String(j.report_key).trim(),
+/**
+ * Normalise the model's definition into the shape the create/update endpoints
+ * take, merged over a base definition when refining.
+ *
+ * The merge is deliberately asymmetric. Content the user asked about (title,
+ * description, sql, params, caveats) comes from the model. Identity and
+ * placement come from the base, and where a field is BOTH high-value and
+ * silently-lost, the base wins whenever the model left it blank.
+ *
+ * Every rule below exists because the prompt alone is not a guarantee. The
+ * prompt tells the model to preserve these things; this function makes it so
+ * even when the model doesn't. Prompts are best-effort, invariants are not.
+ *
+ *   report_key   PINNED to base. Immutable server-side, and the model re-derives
+ *                a key from the title every single turn — "add a year filter"
+ *                came back as `filing_fees_by_year` in testing.
+ *   visibility   PINNED to base. Not part of the model's output contract.
+ *   kind         Model-first. "Turn this report into a clickable view" is a
+ *                legitimate refine, so this one genuinely must be changeable.
+ *   category     PINNED to base WHEN KIND IS UNCHANGED. Otherwise the model's
+ *                subject-area instinct ("Cases") drags views out of the "Views"
+ *                nav group that customView.html browses by — a valid-looking
+ *                value that quietly hides the view. Re-picked only when the
+ *                kind conversion makes the old grouping wrong. Recategorising
+ *                without converting is a one-field manual edit.
+ *   columns_meta Base wins when the model returns NOTHING and the base had
+ *                something. This is the action wiring — open_case, open_contact,
+ *                the hidden id columns. Losing it turns a work list into a dead
+ *                table, and nobody notices until they try to click a row.
+ *   viz          Same rule. On a refine, a null viz almost always means the
+ *                model forgot, not "please discard the combo chart".
+ *
+ * @param {object} j          the model's JSON
+ * @param {object|null} base  the definition being refined, if any
+ */
+function toDefinition(j, base = null) {
+  const kind = ALLOWED_KINDS.has(String(j.kind))
+    ? String(j.kind)
+    : (base && base.kind) || "report";
+
+  const kindUnchanged = !!base && kind === ((base.kind) || "report");
+
+  let category;
+  if (base && kindUnchanged) {
+    category = base.category || (kind === "view" ? "Views" : "General");
+  } else if (ALLOWED_CATEGORIES.has(j.category)) {
+    category = j.category;
+  } else {
+    category = kind === "view" ? "Views" : "General";
+  }
+
+  const modelMeta = Array.isArray(j.columns_meta) ? j.columns_meta : [];
+  const baseMeta = (base && Array.isArray(base.columns_meta)) ? base.columns_meta : [];
+  const columns_meta = modelMeta.length ? modelMeta : baseMeta;
+
+  const modelViz = j.viz && typeof j.viz === "object" ? j.viz : null;
+  const viz = modelViz || (base ? (base.viz || null) : null);
+
+  const def = {
+    report_key: base ? base.report_key : String(j.report_key).trim(),
     title: String(j.title).trim(),
-    category: ALLOWED_CATEGORIES.has(j.category) ? j.category : "General",
+    category,
+    kind,
+    visibility: (base && base.visibility) || "shared",
     description: j.description ? String(j.description).trim() : null,
     sql_text: String(j.sql).trim(),
     params: Array.isArray(j.params) ? j.params : [],
-    columns_meta: Array.isArray(j.columns_meta) ? j.columns_meta : [],
-    viz: j.viz && typeof j.viz === "object" ? j.viz : null,
+    columns_meta,
+    viz,
     caveats: Array.isArray(j.caveats) ? j.caveats : [],
     source: "ai",
+  };
+
+  const rl = Number(j.row_limit);
+  if (Number.isFinite(rl) && rl > 0) def.row_limit = Math.round(rl);
+  else if (base && base.row_limit) def.row_limit = base.row_limit;
+
+  // Tells the UI whether Save means POST or PUT. Harmless if it leaks through
+  // to either endpoint — both destructure known fields and ignore the rest —
+  // but the UI strips it anyway.
+  if (base && base.id != null) def._base_id = base.id;
+
+  return def;
+}
+
+/**
+ * The subset of a definition the model needs in order to preserve it.
+ *
+ * Deliberately excludes id / created_by / updated_at — provenance the model has
+ * no use for and could only get wrong. report_key is included as read-only
+ * context so the model doesn't invent a rename it would then be told to undo.
+ */
+function baseForPrompt(base) {
+  return {
+    report_key: base.report_key,
+    title: base.title,
+    category: base.category,
+    kind: base.kind || "report",
+    description: base.description || null,
+    sql: base.sql_text,
+    params: base.params || [],
+    columns_meta: base.columns_meta || [],
+    viz: base.viz || null,
+    caveats: base.caveats || [],
+    row_limit: base.row_limit || null,
   };
 }
 
 /**
  * Build the user-message text for one attempt.
  * Everything here rides inside aiService's <untrusted_user_input> wrapper.
+ *
+ * Three blocks, at most two of which appear at once:
+ *   QUESTION            — always
+ *   CURRENT DEFINITION  — refine: this works, change one thing about it
+ *   PREVIOUS ATTEMPT    — repair: this failed, here is the error
  */
-function buildUserInput({ question, previous, previousError, previousRowCount }) {
-  const parts = [`QUESTION: ${question}`];
+function buildUserInput({ question, base, instruction, previous, previousError, previousRowCount }) {
+  const parts = [];
+
+  if (base && instruction) {
+    parts.push(`CHANGE REQUESTED: ${instruction}`);
+    parts.push("");
+    parts.push("CURRENT DEFINITION (refine this — keep everything you were not asked to change):");
+    parts.push(JSON.stringify(baseForPrompt(base), null, 2));
+  } else {
+    parts.push(`QUESTION: ${question}`);
+    if (base) {
+      parts.push("");
+      parts.push("CURRENT DEFINITION (refine this — keep everything you were not asked to change):");
+      parts.push(JSON.stringify(baseForPrompt(base), null, 2));
+    }
+  }
 
   if (previous && previous.sql_text) {
     parts.push("");
-    parts.push("PREVIOUS ATTEMPT (fix this):");
+    parts.push("PREVIOUS ATTEMPT (this one failed — fix this specific error):");
     parts.push(previous.sql_text);
     if (previousError) {
       parts.push("");
@@ -115,34 +259,41 @@ function buildUserInput({ question, previous, previousError, previousRowCount })
 }
 
 /**
- * Draft a report definition from a question.
+ * Draft a report or view definition.
+ *
+ * Three calling shapes:
+ *   { question }                        new definition from scratch
+ *   { base, instruction }               refine an existing one
+ *   { question, base, instruction }     same; question is ignored when an
+ *                                       instruction is present
  *
  * @param {object} db
  * @param {object} opts
- * @param {string} opts.question            plain-English request
- * @param {object} [opts.previous]          prior definition, for a refine turn
- * @param {string} [opts.instruction]       refine instruction ("break it down by month")
+ * @param {string} [opts.question]       plain-English request
+ * @param {object} [opts.base]           the definition being refined (saved or
+ *                                       in-flight draft), full shape
+ * @param {string} [opts.instruction]    what to change ("add a year filter")
  * @param {number|null} [opts.userId]
  * @returns {Promise<object>} see the route docs for the response shapes
  */
-async function draft(db, { question, previous = null, instruction = null, userId = null } = {}) {
+async function draft(db, { question, base = null, instruction = null, userId = null } = {}) {
   const q = String(question || "").trim();
-  if (!q) throw err(400, "A question is required");
-  if (q.length > 2000) throw err(400, "Question is too long (2000 character limit)");
+  const instr = String(instruction || "").trim();
 
-  // A refine turn is just a draft whose question carries the prior SQL and the
-  // new instruction. Same prompt, same rules, no separate code path.
-  let effectiveQuestion = q;
-  if (previous && instruction) {
-    effectiveQuestion = `${q}\n\nREFINE THIS EXISTING REPORT: ${instruction}`;
+  if (!q && !(base && instr)) {
+    throw err(400, "A question is required (or a definition to refine plus an instruction)");
   }
+  if (q.length > 2000) throw err(400, "Question is too long (2000 character limit)");
+  if (instr.length > 2000) throw err(400, "Instruction is too long (2000 character limit)");
 
   const attempts = [];
-  let carry = { previous, previousError: null, previousRowCount: null };
+  let carry = { previous: null, previousError: null, previousRowCount: null };
 
   for (let n = 1; n <= MAX_ATTEMPTS; n++) {
     const userInput = buildUserInput({
-      question: effectiveQuestion,
+      question: q,
+      base,
+      instruction: instr || null,
       previous: carry.previous,
       previousError: carry.previousError,
       previousRowCount: carry.previousRowCount,
@@ -174,6 +325,7 @@ async function draft(db, { question, previous = null, instruction = null, userId
         outcome: "refused",
         reason: j.reason || "The available data cannot answer this question.",
         suggestion: j.suggestion || null,
+        baseId: base && base.id != null ? base.id : null,
         attempts: n,
         callId: ai.callId,
       };
@@ -194,7 +346,7 @@ async function draft(db, { question, previous = null, instruction = null, userId
       continue;
     }
 
-    const definition = toDefinition(j);
+    const definition = toDefinition(j, base);
 
     // ── SQL validation ────────────────────────────────────────────────────
     const v = validateSql(definition.sql_text, {
@@ -208,6 +360,7 @@ async function draft(db, { question, previous = null, instruction = null, userId
         return {
           outcome: "invalid",
           definition,
+          baseId: base && base.id != null ? base.id : null,
           error: v.error,
           detail: v.detail || null,
           attempts: attempts,
@@ -227,7 +380,7 @@ async function draft(db, { question, previous = null, instruction = null, userId
         rowLimit: PREVIEW_ROW_LIMIT,
         expectedParams: definition.params.length,
         logMeta: {
-          report_id: null,
+          report_id: base && base.id != null ? base.id : null,
           report_key: definition.report_key,
           run_by: userId,
           params_json: { _source: "ai_draft", attempt: n },
@@ -242,6 +395,7 @@ async function draft(db, { question, previous = null, instruction = null, userId
         return {
           outcome: "invalid",
           definition,
+          baseId: base && base.id != null ? base.id : null,
           error: "The generated SQL did not run",
           detail: msg,
           attempts,
@@ -255,6 +409,23 @@ async function draft(db, { question, previous = null, instruction = null, userId
     return {
       outcome: "drafted",
       definition,
+      // The UI diffs against this and decides POST vs PUT from baseId.
+      base: base
+        ? {
+            id: base.id != null ? base.id : null,
+            report_key: base.report_key,
+            title: base.title,
+            kind: base.kind || "report",
+            category: base.category,
+            sql_text: base.sql_text,
+            params: base.params || [],
+            columns_meta: base.columns_meta || [],
+            viz: base.viz || null,
+            caveats: base.caveats || [],
+            row_limit: base.row_limit || null,
+          }
+        : null,
+      baseId: base && base.id != null ? base.id : null,
       preview: {
         rows: preview.rows,
         fields: preview.fields,
@@ -274,4 +445,10 @@ async function draft(db, { question, previous = null, instruction = null, userId
   throw err(500, "Report author loop exited unexpectedly");
 }
 
-module.exports = { draft, MAX_ATTEMPTS, PREVIEW_ROW_LIMIT };
+module.exports = {
+  draft,
+  MAX_ATTEMPTS,
+  PREVIEW_ROW_LIMIT,
+  ALLOWED_CATEGORIES,
+  ALLOWED_KINDS,
+};

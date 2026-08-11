@@ -350,6 +350,165 @@ async function execute(db, opts = {}) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Versioning
+//
+// A row in report_definition_versions is the PRE-CHANGE state. We snapshot
+// immediately before every UPDATE and before every DELETE; nothing is written
+// on create, so a definition that has never been edited has no history (its
+// current state is its original state).
+//
+// The snapshot is a HARD dependency of updateReport: if it fails, the update
+// does NOT proceed. That is the whole point — the AI author can now overwrite
+// hand-tuned SQL, and an overwrite you cannot undo is worse than a save that
+// refuses. The consequence is that an un-migrated database rejects every save,
+// which is why the migration ships first.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const VERSION_LIST_LIMIT = 50;
+
+/**
+ * Snapshot a definition into report_definition_versions.
+ *
+ * version_no is assigned by MAX+1 inside the same statement, so a concurrent
+ * save can't silently reuse a number — the UNIQUE key rejects the loser and
+ * the caller's save fails loudly instead of losing history.
+ *
+ * @param {object} db
+ * @param {object} report   a shapeRow()'d definition (the CURRENT state)
+ * @param {object} [opts]   { userId, note }
+ */
+async function snapshotVersion(db, report, { userId = null, note = null } = {}) {
+  try {
+    await db.query(
+      `INSERT INTO report_definition_versions
+         (report_id, version_no, report_key, title, description, category, kind,
+          visibility, sql_text, params, columns_meta, viz, caveats, row_limit,
+          is_active, source, change_note, snapshot_by)
+       SELECT ?, COALESCE(MAX(version_no), 0) + 1,
+              ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+         FROM report_definition_versions
+        WHERE report_id = ?`,
+      [
+        report.id,
+        report.report_key,
+        report.title,
+        report.description ?? null,
+        report.category,
+        report.kind || "report",
+        report.visibility || "shared",
+        report.sql_text,
+        JSON.stringify(report.params || []),
+        JSON.stringify(report.columns_meta || []),
+        report.viz ? JSON.stringify(report.viz) : null,
+        JSON.stringify(report.caveats || []),
+        Number(report.row_limit) || DEFAULT_ROW_LIMIT,
+        report.is_active ? 1 : 0,
+        report.source || "manual",
+        note ? String(note).slice(0, 255) : null,
+        userId,
+        report.id,
+      ]
+    );
+  } catch (e) {
+    console.error("[reportService] version snapshot failed:", e.message);
+    throw err(
+      500,
+      "Could not save: the previous version could not be archived",
+      `${e.message}. Nothing was changed. If report_definition_versions is missing, run ref/2026-08-09_report_definition_versions.sql.`
+    );
+  }
+}
+
+/** Version history for one report, newest first. Payload columns excluded. */
+async function listVersions(db, reportId, { limit = VERSION_LIST_LIMIT } = {}) {
+  const lim = Math.max(1, Math.min(Number(limit) || VERSION_LIST_LIMIT, 200));
+  const [rows] = await db.query(
+    `SELECT id, report_id, version_no, report_key, title, category, kind,
+            row_limit, is_active, source, change_note, snapshot_by, created_at
+       FROM report_definition_versions
+      WHERE report_id = ?
+      ORDER BY version_no DESC
+      LIMIT ?`,
+    [reportId, lim]
+  );
+  return rows;
+}
+
+/** One archived version, full payload — for diffing and restore. */
+async function getVersion(db, reportId, versionNo) {
+  const [rows] = await db.query(
+    `SELECT * FROM report_definition_versions
+      WHERE report_id = ? AND version_no = ? LIMIT 1`,
+    [reportId, versionNo]
+  );
+  if (!rows.length) {
+    throw err(404, `Version ${versionNo} of report ${reportId} not found`);
+  }
+  const r = rows[0];
+  return {
+    id: r.id,
+    report_id: r.report_id,
+    version_no: r.version_no,
+    report_key: r.report_key,
+    title: r.title,
+    description: r.description,
+    category: r.category,
+    kind: r.kind || "report",
+    visibility: r.visibility || "shared",
+    sql_text: r.sql_text,
+    params: parseJsonCol(r.params, []),
+    columns_meta: parseJsonCol(r.columns_meta, []),
+    viz: parseJsonCol(r.viz, null),
+    caveats: parseJsonCol(r.caveats, []),
+    row_limit: r.row_limit,
+    is_active: !!r.is_active,
+    source: r.source,
+    change_note: r.change_note,
+    snapshot_by: r.snapshot_by,
+    created_at: r.created_at,
+  };
+}
+
+/**
+ * Restore an archived version over the live definition.
+ *
+ * Routes through updateReport, so the CURRENT state is itself snapshotted
+ * first — a restore is always undoable.
+ *
+ * report_key is not carried across: it is immutable, so the archived value
+ * necessarily equals the live one, and sending it would only risk tripping the
+ * immutability guard if that ever stopped being true.
+ *
+ * A restore can legitimately FAIL: if the manifest has since retired a table
+ * the old SQL reads, validateSql rejects it. That is correct — the old
+ * definition genuinely is no longer runnable, and failing loudly beats
+ * restoring something that would break at run time.
+ */
+async function restoreVersion(db, reportId, versionNo, userId = null) {
+  const v = await getVersion(db, reportId, versionNo);
+  return updateReport(
+    db,
+    reportId,
+    {
+      title: v.title,
+      description: v.description,
+      category: v.category,
+      kind: v.kind,
+      visibility: v.visibility,
+      sql_text: v.sql_text,
+      params: v.params,
+      columns_meta: v.columns_meta,
+      viz: v.viz,
+      caveats: v.caveats,
+      row_limit: v.row_limit,
+      is_active: v.is_active,
+    },
+    userId,
+    { changeNote: `restored from v${versionNo}` }
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CRUD
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -483,7 +642,7 @@ async function createReport(db, body = {}, userId = null) {
   }
 }
 
-async function updateReport(db, id, body = {}, userId = null) {
+async function updateReport(db, id, body = {}, userId = null, opts = {}) {
   const existing = await getReport(db, id);
 
   // report_key is immutable — it is the stable handle a saved link or a future
@@ -521,6 +680,15 @@ async function updateReport(db, id, body = {}, userId = null) {
   const vz = sanitizeViz(next.viz);
   const cm = sanitizeColumnsMeta(next.columns_meta);
 
+  // Archive the OUTGOING state — after validation (don't burn a version number
+  // on a save that was going to be rejected anyway) and before the write.
+  // Throws on failure, which aborts the update: never overwrite what cannot be
+  // recovered.
+  await snapshotVersion(db, existing, {
+    userId,
+    note: opts.changeNote || (body.source === "ai" ? "ai refine" : "manual edit"),
+  });
+
   await db.query(
     `UPDATE report_definitions
         SET title = ?, description = ?, category = ?, kind = ?, visibility = ?,
@@ -544,7 +712,19 @@ async function updateReport(db, id, body = {}, userId = null) {
   return updated;
 }
 
-async function deleteReport(db, id) {
+/**
+ * Delete a definition, archiving it first.
+ *
+ * The version rows survive the delete (no FK), so an accidental delete is
+ * still readable — and that is the single most valuable thing in the history
+ * table. Re-creating from it is a manual step today: report_key is unique, so
+ * an automated "undelete" would need to handle the case where the key has
+ * since been reused. Not worth building until it happens.
+ */
+async function deleteReport(db, id, userId = null) {
+  const existing = await getReport(db, id);   // 404s if it isn't there
+  await snapshotVersion(db, existing, { userId, note: "deleted" });
+
   const [res] = await db.query(`DELETE FROM report_definitions WHERE id = ?`, [id]);
   if (!res.affectedRows) throw err(404, `Report ${id} not found`);
   return { deleted: true, id: Number(id) };
@@ -622,6 +802,10 @@ module.exports = {
   deleteReport,
   runReport,
   listRuns,
+  listVersions,
+  getVersion,
+  restoreVersion,
+  snapshotVersion,
   execute,
   buildBindValues,
   resolveDateToken,
