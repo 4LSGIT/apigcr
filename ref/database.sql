@@ -1,7 +1,7 @@
 -- DB Console schema snapshot
--- Generated: 2026-08-10T14:48:21.466Z
+-- Generated: 2026-08-11T18:19:00.232Z
 -- Source: scripts/dump-schema.js
--- Fingerprint: sha256:3912e2b43f65a0927162e8f0b9e8b6ca
+-- Fingerprint: sha256:ee2e680b5f21bc60ff9530b5832a7d32
 -- Contains schema only (no data, no database identifier).
 
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
@@ -1480,7 +1480,8 @@ CREATE TABLE `form_templates` (
   `published_at` datetime DEFAULT NULL,
   `updated_by` int unsigned DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `visibility` enum('internal','portal','public') COLLATE utf8mb4_general_ci NOT NULL DEFAULT 'internal'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 -- --------------------------------------------------------

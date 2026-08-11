@@ -9,6 +9,12 @@
  * POST   /api/form-templates                  — create { form_key, title, link_type, draft_definition }
  * PUT    /api/form-templates/:id              — update { title?, draft_definition?, form_key? }
  * POST   /api/form-templates/:id/publish      — publish (§6): { schema_version, bumped }
+ *                                               (+ external_refusals[] advisory when the
+ *                                               template is externally visible — X1)
+ * POST   /api/form-templates/:id/visibility   — X1 (EXTERNAL_FORMS_DESIGN §3): set
+ *                                               { visibility: internal|portal|public };
+ *                                               refused off-internal while the published
+ *                                               definition carries code/css/hooks/embed
  * DELETE /api/form-templates/:id              — delete (never-published AND no-submissions only)
  * GET    /api/form-templates/:id/versions             — publish history (no definitions; computed schema_changed)
  * GET    /api/form-templates/:id/versions/:versionId  — one version row incl. definition
@@ -124,6 +130,26 @@ router.post('/api/form-templates/:id/publish', jwtOrApiKey, async (req, res) => 
     res.json({ status: 'success', ...result });
   } catch (err) {
     fail(res, 'publish', err);
+  }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/form-templates/:id/visibility — X1 (EXTERNAL_FORMS_DESIGN §3)
+// Explicit act, separate from publish. The service refuses off-internal flips
+// while the PUBLISHED definition carries any externally-refused key (§4) —
+// the 400 message names them (authed surface; no-oracle governs the external
+// routes only). Flipping back to internal always succeeds.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post('/api/form-templates/:id/visibility', jwtOrApiKey, async (req, res) => {
+  try {
+    const out = await svc.setVisibility(
+      req.db, req.params.id, req.body && req.body.visibility, userId(req)
+    );
+    res.json({ status: 'success', ...out });
+  } catch (err) {
+    fail(res, 'visibility', err);
   }
 });
 

@@ -39,6 +39,8 @@ Single row per `form_key`; published + draft coexist as two JSON columns (no dup
 
 **mysql2 hazard (known):** native `json` columns come back as parsed objects and must be `JSON.stringify()`-ed before binding to `?` placeholders.
 
+**X1 (2026-08-11, ref/EXTERNAL_FORMS_DESIGN.md §3):** `visibility ENUM('internal','portal','public') NOT NULL DEFAULT 'internal'` added (`ref/2026-08-11_form_templates_visibility.sql`). Policy lives in this COLUMN, not the definition JSON — external routes serve the PUBLISHED definition only, and only when visibility permits; `internal` serves nothing externally. Flipping is an explicit act (its own route below), refused off-`internal` while the published definition carries `code`, `css`, `hooks`, or an `embed` field (§4-of-the-external-doc refusal invariant — refuse, never strip).
+
 ---
 
 ## 2. API routes (`routes/api.formTemplates.js`, auto-mounted)
@@ -52,6 +54,14 @@ POST   /api/form-templates                    — create { form_key, title, link
 PUT    /api/form-templates/:id                — update { title?, draft_definition? }; form_key change rejected if any
                                                 form_submissions row exists for the old key
 POST   /api/form-templates/:id/publish        — publish flow (§6); returns { schema_version, bumped: bool }
+                                                (+ external_refusals: string[] advisory, X1 — present only
+                                                when the row is externally visible AND the just-published
+                                                definition carries refused keys; publish never blocks on it)
+POST   /api/form-templates/:id/visibility     — X1: { visibility: 'internal'|'portal'|'public' }.
+                                                Refused (400, keys named) off-internal while the PUBLISHED
+                                                definition carries code/css/hooks/embed; back-to-internal
+                                                always allowed; never-published templates may hold any value
+                                                (nothing serves until publish; X2 re-scans per request).
 DELETE /api/form-templates/:id                — allowed only if never published AND no submissions
 GET    /api/form-templates/render/:form_key   — published { title, link_type, schema_version, definition } only.
                                                 What render.html consumes. 404 if unpublished.
@@ -107,6 +117,7 @@ Server-side validation on create/update: `form_key` matches `^[a-z0-9_]{1,50}$`;
 | `note` | string, optional | **Documentation only, explicitly ignored** (2.5A). Valid at form, section, row, and field level. Never rendered, never validated beyond being ignored, never part of the schema signature (§6 hashes `(name, type)` only). The migration ports use it to record why a field exists. |
 | `derive` | rule[], optional | **(2.5B B2)** Date suggestions from a fixed verb registry — no expressions, no eval. Each rule: `{ "target": "case_180", "from": "case_file_date", "op": "addDays", "n": 180 }`. Verbs: `addDays` (date + N days; `n` REQUIRED, may be negative) and `dateFromDatetime` (date part of a `datetime` value ± N days; `n` optional, absent = pure extraction). Semantics — the casedetails-bk lessons, now contract: (1) fill **only when the target is empty**, inside the generated `onLoad`, i.e. BEFORE init 13c's `resetBaseline` — later than that and the form reports dirty forever on a form nobody touched, which also blocks versionGuard's forced reload; (2) a derived value the user never edits is not in `getDiff()` and is **not persisted** — it is a deterministic function of its source, recomputed on every load; (3) a USER `change` of the source recomputes the target **unconditionally** (including clearing it when the source is cleared) — fill-only-empty is a LOAD-time rule; on live change the suggestion follows the source (this is the hand-built listener's exact behaviour). One rule per target; `target`/`from` must name existing top-level FIELDS (`target ≠ from`). Local + deterministic → active in preview too. |
 | `css` | string, optional | **(2.5B B4)** Per-form CSS, injected by the renderer as a `<style>` element via `textContent` (never innerHTML) appended to `<head>` AFTER the shared stylesheet — wins ties at equal specificity. `textContent` means the string can only ever be CSS text — no element/script injection path (§8). **INTERNAL-ONLY pending the portal security review**: CSS on an untrusted rendering surface is a lower-grade but real injection channel (exfiltration selectors, UI redress) — same review bucket as `type:"embed"` and external mode (§9). |
+| `external` | object, optional | **(X1, EXTERNAL_FORMS_DESIGN §6)** `{ "badLink": "reject" \| "degrade" }` — the external routes' behavior on an invalid/missing `case_id`. `reject` (the default when absent): the standing Unauthorized-Link error page. `degrade` (intake's mode): anonymous mode — form works, submission lands unlinked, RG alert fires. Exact-key enforced (only `badLink` allowed); validated whenever present regardless of the row's visibility. Ignored by internal rendering entirely. |
 
 `formKey`, `linkType`, `title`, `schemaVersion` are NOT in the JSON — they come from the template row (single source of truth).
 
@@ -336,6 +347,7 @@ Reject with a message naming the offending path:
 - `pattern`, if present, compiles under `new RegExp`.
 - `onSubmit.patch` requires at least one field with a SAVE-direction `apiColumn` (a plain string, or an object carrying `save` — load-only columns don't count).
 - `hooks`, if set, matches `^[a-zA-Z0-9_-]{1,50}$` (path traversal guard).
+- `external` (X1): object with only the key `badLink`; `badLink`, if present, is `reject` or `degrade`.
 - `note` (form/section/row/field) is explicitly ignored — no validation, no rendering, no signature impact.
 
 ---

@@ -80,6 +80,10 @@
   .badge.link  { background: rgba(7,173,239,.15);  color: var(--accent); }
   .badge.pub   { background: rgba(74,210,139,.15); color: var(--ok); }
   .badge.draft { background: rgba(224,179,65,.15); color: var(--warn); }
+  .badge.vis   { background: rgba(240,111,111,.15); color: var(--danger); margin-left: 6px; text-transform: uppercase; }
+  /* X1 visibility select (EXTERNAL_FORMS_DESIGN §3) — badge-sized control */
+  #visSelect { width: auto; font-size: 11px; padding: 2px 4px; }
+  #visSelect.exposed { border-color: var(--danger); color: var(--danger); font-weight: 600; }
   #dirtyDot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); display: none; }
   #topSpacer { flex: 1; }
   #errBar { max-width: 420px; }
@@ -294,6 +298,12 @@
     <div id="keyWrap"></div>
     <span id="linkBadge" class="badge link"></span>
     <span id="verBadge" class="badge draft"></span>
+    <select id="visSelect"
+            title="External visibility (X1) — who the external form routes may serve the PUBLISHED definition to. 'internal' serves nothing externally. The server refuses exposing a template whose published definition carries code, css, hooks, or an embed field.">
+      <option value="internal">internal</option>
+      <option value="portal">portal</option>
+      <option value="public">public</option>
+    </select>
     <span id="dirtyDot" title="Unsaved changes"></span>
     <div id="topSpacer"></div>
     <span id="errBar" class="err"></span>
@@ -786,6 +796,12 @@ function renderOpList() {
     const verBadge = t.published_at
       ? el('span', { class: 'badge pub', text: 'v' + t.schema_version, title: 'published ' + t.published_at })
       : el('span', { class: 'badge draft', text: 'never published' });
+    const verCell = el('td', null, verBadge);
+    // X1: surface external exposure in the admin list (audit-at-a-glance).
+    if (t.visibility && t.visibility !== 'internal') {
+      verCell.appendChild(el('span', { class: 'badge vis', text: t.visibility,
+        title: 'Externally visible — external routes may serve the published definition' }));
+    }
     const acts = el('td', { class: 'acts' }, [
       el('button', { class: 'small', text: 'Open', onclick: () => gotoTemplate(t.id) }),
     ]);
@@ -801,7 +817,7 @@ function renderOpList() {
       el('td', { class: 'mono', text: t.form_key }),
       el('td', { text: t.title }),
       el('td', null, el('span', { class: 'badge link', text: t.link_type })),
-      el('td', null, verBadge),
+      verCell,
       el('td', { class: 'muted', text: fmtWhen(t.updated_at) }),
       acts,
     ]));
@@ -959,6 +975,17 @@ function renderTopbar() {
   }
 
   E('linkBadge').textContent = ROW.link_type;
+
+  // X1 visibility (EXTERNAL_FORMS_DESIGN §3): an explicit act, separate from
+  // publish — its own control and its own POST, never part of saveDraft. The
+  // server refuses off-internal while the PUBLISHED definition carries
+  // code/css/hooks/embed; that 400 is surfaced verbatim and the select
+  // reverted. Older rows predating the migration default to 'internal'.
+  const vs = E('visSelect');
+  vs.value = ROW.visibility || 'internal';
+  vs.classList.toggle('exposed', vs.value !== 'internal');
+  vs.onchange = () => visFlow(vs);
+
   const vb = E('verBadge');
   if (ROW.published_at) {
     vb.className = 'badge pub';
@@ -969,6 +996,45 @@ function renderTopbar() {
     vb.textContent = 'never published';
     vb.title = '';
   }
+}
+
+// ── Visibility flip (X1, EXTERNAL_FORMS_DESIGN §3) ──────────────────────────
+// Confirm before exposing; POST the flip; on server refusal (published
+// definition carries code/css/hooks/embed — §4 refuse-never-strip) revert the
+// select and show the path-named 400 verbatim. Back-to-internal never asks.
+async function visFlow(sel) {
+  const errBar = E('errBar'), okBar = E('okBar');
+  errBar.textContent = ''; okBar.textContent = '';
+  const from = ROW.visibility || 'internal';
+  const to = sel.value;
+  if (to === from) return;
+
+  if (to !== 'internal') {
+    const ok = await ycConfirm(
+      `Expose "${FKEY}" externally as ${to.toUpperCase()}?\n\n` +
+      (to === 'public'
+        ? 'The external form routes will serve the PUBLISHED definition to anyone holding a link (and to portal clients).'
+        : 'The external form routes will serve the PUBLISHED definition to logged-in portal clients only.') +
+      '\n\nNothing is served until a definition is published, and templates carrying code/css/hooks/embed are refused.',
+      { confirmText: 'Expose' }
+    );
+    if (!ok) {
+      sel.value = from;
+      sel.classList.toggle('exposed', from !== 'internal');
+      return;
+    }
+  }
+
+  try {
+    const res = await P.apiSend('/api/form-templates/' + ROW.id + '/visibility', 'POST', { visibility: to });
+    ROW.visibility = res.visibility;
+    okBar.textContent = 'Visibility: ' + res.visibility;
+    setTimeout(() => { if (!isDirty()) okBar.textContent = ''; }, 2500);
+  } catch (err) {
+    sel.value = from;                       // server refused — revert
+    errBar.textContent = err.message;       // names the offending keys, verbatim
+  }
+  sel.classList.toggle('exposed', (ROW.visibility || 'internal') !== 'internal');
 }
 
 function markDirty() {
@@ -2394,6 +2460,15 @@ async function publishFlow() {
     renderTopbar();
     okBar.textContent = `Published v${result.schema_version}` +
       (result.bumped ? ' (schema version bumped)' : ' (no schema change)');
+    // X1 advisory: the publish succeeded, but this externally-visible
+    // template now carries refused keys — external requests get the generic
+    // 404 until a clean definition is published or visibility goes back to
+    // internal. Non-blocking by design (publish and visibility independent).
+    if (result.external_refusals && result.external_refusals.length) {
+      errBar.textContent = 'Warning: this template is externally visible but the published definition carries ' +
+        result.external_refusals.join(', ') +
+        ' — external requests are refused until a clean definition is published or visibility is set to internal.';
+    }
   } catch (err) {
     errBar.textContent = err.message;   // server message verbatim
   }

@@ -58,6 +58,10 @@ const KNOWN_TYPES = new Set([
 
 const OPTIONS_TYPES = new Set(['select', 'radio', 'checkgroup']); // options iff these
 
+// External forms (X1, ref/EXTERNAL_FORMS_DESIGN.md §3/§6):
+const VISIBILITIES  = new Set(['internal', 'portal', 'public']);
+const BADLINK_MODES = new Set(['reject', 'degrade']);
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ERROR HELPERS
@@ -537,6 +541,26 @@ function validateDefinition(def) {
   if (def.code && def.hooks) {
     throw badRequest('code and hooks are mutually exclusive — a form uses DB-stored code OR a repo hook file, not both');
   }
+
+  // external (X1, EXTERNAL_FORMS_DESIGN §6): per-template badLink mode for the
+  // external render/submit routes. Exact-key enforced (the tabs precedent — a
+  // typo'd "badlink" silently falling back to the reject default would be
+  // invisible until a client hits it). Validated whenever present, regardless
+  // of the row's visibility: the definition is content and must be well-formed
+  // either way (validateDefinition never sees the row).
+  if (def.external !== undefined && def.external !== null) {
+    if (typeof def.external !== 'object' || Array.isArray(def.external)) {
+      throw badRequest('external must be an object');
+    }
+    for (const k of Object.keys(def.external)) {
+      if (k !== 'badLink') {
+        throw badRequest(`external has unknown key "${k}" (allowed: badLink)`);
+      }
+    }
+    if (def.external.badLink !== undefined && !BADLINK_MODES.has(def.external.badLink)) {
+      throw badRequest('external.badLink must be "reject" or "degrade"');
+    }
+  }
 }
 
 
@@ -589,6 +613,44 @@ function fieldSignature(def) {
   return parts.sort().join('|');
 }
 
+/**
+ * X1 (EXTERNAL_FORMS_DESIGN §4): scan a definition for the keys the external
+ * surface refuses — `code`, `css`, `hooks` (present as non-empty strings) and
+ * any `type:"embed"` field in any container (sections | tabs + sticky
+ * regions, standard rows and repeaters alike). Returns the list of refusal
+ * reasons (empty array = clean). null/undefined definitions (never published)
+ * scan clean — there is nothing to serve, let alone refuse.
+ *
+ * Consumers: setVisibility (flip-time gate, this file), publishTemplate
+ * (non-blocking advisory), and the X2 external routes (per-request
+ * belt-and-suspenders — publish can change the definition after the flip).
+ * REFUSE, never strip: a template carrying any of these is not served
+ * externally at all. The walk is defensive against shape surprises, but
+ * every published definition has already passed validateDefinition.
+ */
+function scanExternalRefusals(def) {
+  const refused = [];
+  if (!def || typeof def !== 'object') return refused;
+  for (const k of ['code', 'css', 'hooks']) {
+    const v = def[k];
+    if (v != null && v !== '') refused.push(k);   // `hooks: null` (the §3 example) scans clean
+  }
+  for (const sections of allSectionLists(def)) {
+    for (const section of sections || []) {
+      if (!section || typeof section !== 'object') continue;
+      const fieldLists = Object.prototype.hasOwnProperty.call(section, 'repeater')
+        ? [section.fields || []]
+        : (section.rows || []).map((r) => (r && r.fields) || []);
+      for (const fields of fieldLists) {
+        for (const f of fields) {
+          if (f && f.type === 'embed') refused.push(`embed field "${f.name}"`);
+        }
+      }
+    }
+  }
+  return refused;
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // INTERNAL HELPERS
@@ -614,7 +676,7 @@ function parseJsonCol(v) {
 
 async function fetchRow(db, id) {
   const [[row]] = await db.query(
-    `SELECT id, form_key, title, link_type, schema_version,
+    `SELECT id, form_key, title, link_type, schema_version, visibility,
             definition, draft_definition, published_at, updated_by,
             created_at, updated_at
      FROM form_templates WHERE id = ? LIMIT 1`,
@@ -637,7 +699,7 @@ async function fetchRow(db, id) {
  */
 async function listTemplates(db) {
   const [rows] = await db.query(
-    `SELECT id, form_key, title, link_type, schema_version, published_at, updated_at
+    `SELECT id, form_key, title, link_type, schema_version, visibility, published_at, updated_at
      FROM form_templates
      ORDER BY updated_at DESC`
   );
@@ -817,7 +879,67 @@ async function publishTemplate(db, id, userId) {
     [newVersion, userId, id]
   );
 
-  return { schema_version: newVersion, bumped };
+  // X1 advisory (non-blocking): publishing refused keys onto an externally
+  // visible template makes it go dark externally — the X2 per-request scan
+  // refuses with a generic 404 (§4 belt-and-suspenders). Publish semantics
+  // are unchanged (publish and visibility stay independent, §3); the builder
+  // surfaces this so staff aren't left debugging a silent external 404.
+  const externalRefusals =
+    row.visibility && row.visibility !== 'internal' ? scanExternalRefusals(draft) : [];
+
+  return {
+    schema_version: newVersion,
+    bumped,
+    ...(externalRefusals.length ? { external_refusals: externalRefusals } : {}),
+  };
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VISIBILITY — X1 (EXTERNAL_FORMS_DESIGN §3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Set a template's visibility ('internal' | 'portal' | 'public'). An explicit
+ * builder act, separate from publish — policy lives in the COLUMN, the
+ * definition is content. Flipping OFF 'internal' is REFUSED while the
+ * PUBLISHED definition carries any externally-refused key (§4 — refuse,
+ * never strip); flipping back to 'internal' is always allowed.
+ *
+ * A never-published template (definition NULL) may hold any visibility: the
+ * external routes serve the published definition only, so it serves nothing
+ * until publish — and the X2 per-request scan re-checks at serve time
+ * regardless (publish can change the definition after the flip).
+ *
+ * This is the AUTHED builder surface — the refusal message names the
+ * offending keys. The no-oracle rule governs the external routes, not this
+ * one.
+ *
+ * @returns {{ visibility: string }}
+ */
+async function setVisibility(db, id, visibility, userId) {
+  if (!VISIBILITIES.has(visibility)) {
+    throw badRequest('visibility must be one of internal, portal, public');
+  }
+  const row = await fetchRow(db, id);
+  if (!row) throw notFound(`Template ${id} not found`);
+
+  if (visibility !== 'internal') {
+    const refused = scanExternalRefusals(row.definition);
+    if (refused.length) {
+      throw badRequest(
+        `cannot set visibility "${visibility}": the published definition carries ` +
+        `${refused.join(', ')} — refused on external surfaces ` +
+        '(EXTERNAL_FORMS_DESIGN §4). Publish a definition without them first.'
+      );
+    }
+  }
+
+  await db.query(
+    'UPDATE form_templates SET visibility = ?, updated_by = ? WHERE id = ?',
+    [visibility, userId, id]
+  );
+  return { visibility };
 }
 
 
@@ -990,6 +1112,7 @@ module.exports = {
   updateTemplate,
   publishTemplate,
   deleteTemplate,
+  setVisibility,
   getPublishedByKey,
   listVersions,
   getVersion,
@@ -997,4 +1120,5 @@ module.exports = {
   // exported for tests / reuse:
   validateDefinition,
   fieldSignature,
+  scanExternalRefusals,   // X1 — shared with the X2 external routes (per-request scan)
 };
